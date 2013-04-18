@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cstring>
 #include "libretro.h"
 #import "jaguar.h"
 #import "file.h"
