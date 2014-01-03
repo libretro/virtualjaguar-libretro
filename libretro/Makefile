@@ -20,7 +20,7 @@ ifeq ($(platform), unix)
    FLAGS +=
 else ifeq ($(platform), osx)
    TARGET := libretro.dylib
-   fpic := -fPIC
+   fpic := -fPIC -mmacosx-version-min=10.6
    SHARED := -dynamiclib
    ENDIANNESS_DEFINES := -DLSB_FIRST
    FLAGS +=
