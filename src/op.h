@@ -5,24 +5,19 @@
 #ifndef __OBJECTP_H__
 #define __OBJECTP_H__
 
-#include "types.h"
+#include <stdint.h>
 
 void OPInit(void);
 void OPReset(void);
 void OPDone(void);
 
-uint64 OPLoadPhrase(uint32 offset);
+uint64_t OPLoadPhrase(uint32_t offset);
 
 void OPProcessList(int scanline, bool render);
-uint32 OPGetListPointer(void);
-void OPSetStatusRegister(uint32 data);
-uint32 OPGetStatusRegister(void);
-void OPSetCurrentObject(uint64 object);
-
-//uint8 OPReadByte(uint32, uint32 who = UNKNOWN);
-//uint16 OPReadWord(uint32, uint32 who = UNKNOWN);
-//void OPWriteByte(uint32, uint8, uint32 who = UNKNOWN);
-//void OPWriteWord(uint32, uint16, uint32 who = UNKNOWN);
+uint32_t OPGetListPointer(void);
+void OPSetStatusRegister(uint32_t data);
+uint32_t OPGetStatusRegister(void);
+void OPSetCurrentObject(uint64_t object);
 
 #define OPFLAG_RELEASE		8					// Bus release bit
 #define OPFLAG_TRANS		4					// Transparency bit
@@ -31,6 +26,6 @@ void OPSetCurrentObject(uint64 object);
 
 // Exported variables
 
-extern uint8 objectp_running;
+extern uint8_t objectp_running;
 
 #endif	// __OBJECTP_H__

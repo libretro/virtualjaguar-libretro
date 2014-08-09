@@ -3,7 +3,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
-/*
+
 struct ZipFileEntry
 {
 	uint32_t signature;
@@ -22,5 +22,5 @@ struct ZipFileEntry
 
 bool GetZIPHeader(FILE *, ZipFileEntry &);
 int UncompressFileFromZIP(FILE *, ZipFileEntry, uint8_t *);
-*/
+
 #endif	// __UNZIP_H__

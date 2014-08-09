@@ -88,7 +88,7 @@ void CDIntfDone(void)
 #endif
 }
 
-bool CDIntfReadBlock(uint32 sector, uint8 * buffer)
+bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer)
 {
 #warning "!!! FIX !!! CDIntfReadBlock not implemented!"
 	// !!! FIX !!!
@@ -96,7 +96,7 @@ bool CDIntfReadBlock(uint32 sector, uint8 * buffer)
 	return false;
 }
 
-uint32 CDIntfGetNumSessions(void)
+uint32_t CDIntfGetNumSessions(void)
 {
 #warning "!!! FIX !!! CDIntfGetNumSessions not implemented!"
 	// !!! FIX !!!
@@ -104,14 +104,14 @@ uint32 CDIntfGetNumSessions(void)
 	return 2;
 }
 
-void CDIntfSelectDrive(uint32 driveNum)
+void CDIntfSelectDrive(uint32_t driveNum)
 {
 #warning "!!! FIX !!! CDIntfSelectDrive not implemented!"
 	// !!! FIX !!!
 	WriteLog("CDINTF: SelectDrive unimplemented!\n");
 }
 
-uint32 CDIntfGetCurrentDrive(void)
+uint32_t CDIntfGetCurrentDrive(void)
 {
 #warning "!!! FIX !!! CDIntfGetCurrentDrive not implemented!"
 	// !!! FIX !!!
@@ -119,22 +119,22 @@ uint32 CDIntfGetCurrentDrive(void)
 	return 0;
 }
 
-const uint8 * CDIntfGetDriveName(uint32 driveNum)
+const uint8_t * CDIntfGetDriveName(uint32_t driveNum)
 {
 #warning "!!! FIX !!! CDIntfGetDriveName driveNum is currently ignored!"
 	// driveNum is currently ignored... !!! FIX !!!
 
 #ifdef HAVE_LIB_CDIO
-	uint8 * driveName = (uint8 *)cdio_get_default_device(cdioPtr);
+	uint8_t * driveName = (uint8_t *)cdio_get_default_device(cdioPtr);
 	WriteLog("CDINTF: The drive name for the current driver is %s.\n", driveName);
 
 	return driveName;
 #else
-	return (uint8 *)"NONE";
+	return (uint8_t *)"NONE";
 #endif
 }
 
-uint8 CDIntfGetSessionInfo(uint32 session, uint32 offset)
+uint8_t CDIntfGetSessionInfo(uint32_t session, uint32_t offset)
 {
 #warning "!!! FIX !!! CDIntfGetSessionInfo not implemented!"
 	// !!! FIX !!!
@@ -142,7 +142,7 @@ uint8 CDIntfGetSessionInfo(uint32 session, uint32 offset)
 	return 0xFF;
 }
 
-uint8 CDIntfGetTrackInfo(uint32 track, uint32 offset)
+uint8_t CDIntfGetTrackInfo(uint32_t track, uint32_t offset)
 {
 #warning "!!! FIX !!! CDIntfTrackInfo not implemented!"
 	// !!! FIX !!!

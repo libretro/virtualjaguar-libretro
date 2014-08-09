@@ -349,32 +349,32 @@
 //(It's easier to do it here, though...)
 //#define TOM_DEBUG
 
-uint8 tomRam8[0x4000];
-uint32 tomWidth, tomHeight;
-uint32 tomTimerPrescaler;
-uint32 tomTimerDivider;
-int32 tomTimerCounter;
-uint16 tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
+uint8_t tomRam8[0x4000];
+uint32_t tomWidth, tomHeight;
+uint32_t tomTimerPrescaler;
+uint32_t tomTimerDivider;
+int32_t tomTimerCounter;
+uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
 	tom_gpu_int_pending, tom_video_int_pending;
 
 // These are set by the "user" of the Jaguar core lib, since these are
 // OS/system dependent.
-uint32 * screenBuffer;
-uint32 screenPitch;
+uint32_t * screenBuffer;
+uint32_t screenPitch;
 
 static const char * videoMode_to_str[8] =
 	{ "16 BPP CRY", "24 BPP RGB", "16 BPP DIRECT", "16 BPP RGB",
 	  "Mixed mode", "24 BPP RGB", "16 BPP DIRECT", "16 BPP RGB" };
 
-typedef void (render_xxx_scanline_fn)(uint32 *);
+typedef void (render_xxx_scanline_fn)(uint32_t *);
 
 // Private function prototypes
 
-void tom_render_16bpp_cry_scanline(uint32 * backbuffer);
-void tom_render_24bpp_scanline(uint32 * backbuffer);
-void tom_render_16bpp_direct_scanline(uint32 * backbuffer);
-void tom_render_16bpp_rgb_scanline(uint32 * backbuffer);
-void tom_render_16bpp_cry_rgb_mix_scanline(uint32 * backbuffer);
+void tom_render_16bpp_cry_scanline(uint32_t * backbuffer);
+void tom_render_24bpp_scanline(uint32_t * backbuffer);
+void tom_render_16bpp_direct_scanline(uint32_t * backbuffer);
+void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer);
+void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer);
 
 //render_xxx_scanline_fn * scanline_render_normal[] =
 render_xxx_scanline_fn * scanline_render[] =
@@ -559,9 +559,9 @@ Trevor McFur
 Vertical resolution: 238 lines
 */
 
-uint32 RGB16ToRGB32[0x10000];
-uint32 CRY16ToRGB32[0x10000];
-uint32 MIX16ToRGB32[0x10000];
+uint32_t RGB16ToRGB32[0x10000];
+uint32_t CRY16ToRGB32[0x10000];
+uint32_t MIX16ToRGB32[0x10000];
 
 
 #warning "This is not endian-safe. !!! FIX !!!"
@@ -569,7 +569,7 @@ void TOMFillLookupTables(void)
 {
 	// NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
 	//       RRRR RBBB BBGG GGGG
-	for(uint32 i=0; i<0x10000; i++)
+	for(uint32_t i=0; i<0x10000; i++)
 //hm.		RGB16ToRGB32[i] = 0xFF000000
 //			| ((i & 0xF100) >> 8)  | ((i & 0xE000) >> 13)
 //			| ((i & 0x07C0) << 13) | ((i & 0x0700) << 8)
@@ -579,15 +579,15 @@ void TOMFillLookupTables(void)
 			| ((i & 0x003F) << 18)					// Green
 			| ((i & 0x07C0) << 5);					// Blue
 
-	for(uint32 i=0; i<0x10000; i++)
+	for(uint32_t i=0; i<0x10000; i++)
 	{
-		uint32 cyan = (i & 0xF000) >> 12,
+		uint32_t cyan = (i & 0xF000) >> 12,
 			red = (i & 0x0F00) >> 8,
 			intensity = (i & 0x00FF);
 
-		uint32 r = (((uint32)redcv[cyan][red]) * intensity) >> 8,
-			g = (((uint32)greencv[cyan][red]) * intensity) >> 8,
-			b = (((uint32)bluecv[cyan][red]) * intensity) >> 8;
+		uint32_t r = (((uint32_t)redcv[cyan][red]) * intensity) >> 8,
+			g = (((uint32_t)greencv[cyan][red]) * intensity) >> 8,
+			b = (((uint32_t)bluecv[cyan][red]) * intensity) >> 8;
 
 //hm.		CRY16ToRGB32[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
 		CRY16ToRGB32[i] = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
@@ -626,22 +626,22 @@ void TOMSetPendingVideoInt(void)
 }
 
 
-uint8 * TOMGetRamPointer(void)
+uint8_t * TOMGetRamPointer(void)
 {
 	return tomRam8;
 }
 
 
-uint8 TOMGetVideoMode(void)
+uint8_t TOMGetVideoMode(void)
 {
-	uint16 vmode = GET16(tomRam8, VMODE);
+	uint16_t vmode = GET16(tomRam8, VMODE);
 	return ((vmode & VARMOD) >> 6) | ((vmode & MODE) >> 1);
 }
 
 
 //Used in only one place (and for debug purposes): OBJECTP.CPP
 #warning "Used in only one place (and for debug purposes): OBJECTP.CPP !!! FIX !!!"
-uint16 TOMGetVDB(void)
+uint16_t TOMGetVDB(void)
 {
 	return GET16(tomRam8, VDB);
 }
@@ -651,22 +651,22 @@ uint16 TOMGetVDB(void)
 //
 // 16 BPP CRY/RGB mixed mode rendering
 //
-void tom_render_16bpp_cry_rgb_mix_scanline(uint32 * backbuffer)
+void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 {
 //CHANGED TO 32BPP RENDERING
-	uint16 width = tomWidth;
-	uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
+	uint16_t width = tomWidth;
+	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
 	//New stuff--restrict our drawing...
-	uint8 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+	uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 	//NOTE: May have to check HDB2 as well!
 	// Get start position in HC ticks
-	int16 startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+	int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
 	// Convert to pixels
 	startPos /= pwidth;
 
 	if (startPos < 0)
-		// This is x2 because current_line_buffer is uint8 & we're in a 16bpp mode
+		// This is x2 because current_line_buffer is uint8_t & we're in a 16bpp mode
 		current_line_buffer += 2 * -startPos;
 	else
 //This case doesn't properly handle the "start on the right side of virtual screen" case
@@ -677,10 +677,10 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32 * backbuffer)
 // and so is the backbuffer.
 #ifdef LEFT_BG_FIX
 	{
-		uint8 g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32 pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
 
-		for(int16 i=0; i<startPos; i++)
+		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -691,7 +691,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32 * backbuffer)
 
 	while (width)
 	{
-		uint16 color = (*current_line_buffer++) << 8;
+		uint16_t color = (*current_line_buffer++) << 8;
 		color |= *current_line_buffer++;
 		*backbuffer++ = MIX16ToRGB32[color];
 		width--;
@@ -702,26 +702,26 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32 * backbuffer)
 //
 // 16 BPP CRY mode rendering
 //
-void tom_render_16bpp_cry_scanline(uint32 * backbuffer)
+void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 {
 //CHANGED TO 32BPP RENDERING
-	uint16 width = tomWidth;
-	uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
+	uint16_t width = tomWidth;
+	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
 	//New stuff--restrict our drawing...
-	uint8 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+	uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 	//NOTE: May have to check HDB2 as well!
-	int16 startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);// Get start position in HC ticks
+	int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);// Get start position in HC ticks
 	startPos /= pwidth;
 	if (startPos < 0)
 		current_line_buffer += 2 * -startPos;
 	else
 #ifdef LEFT_BG_FIX
 	{
-		uint8 g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32 pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
 
-		for(int16 i=0; i<startPos; i++)
+		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -733,7 +733,7 @@ void tom_render_16bpp_cry_scanline(uint32 * backbuffer)
 
 	while (width)
 	{
-		uint16 color = (*current_line_buffer++) << 8;
+		uint16_t color = (*current_line_buffer++) << 8;
 		color |= *current_line_buffer++;
 		*backbuffer++ = CRY16ToRGB32[color];
 		width--;
@@ -744,26 +744,26 @@ void tom_render_16bpp_cry_scanline(uint32 * backbuffer)
 //
 // 24 BPP mode rendering
 //
-void tom_render_24bpp_scanline(uint32 * backbuffer)
+void tom_render_24bpp_scanline(uint32_t * backbuffer)
 {
 //CHANGED TO 32BPP RENDERING
-	uint16 width = tomWidth;
-	uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
+	uint16_t width = tomWidth;
+	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
 	//New stuff--restrict our drawing...
-	uint8 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+	uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 	//NOTE: May have to check HDB2 as well!
-	int16 startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
+	int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
 	startPos /= pwidth;
 	if (startPos < 0)
 		current_line_buffer += 4 * -startPos;
 	else
 #ifdef LEFT_BG_FIX
 	{
-		uint8 g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32 pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
 
-		for(int16 i=0; i<startPos; i++)
+		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -775,10 +775,10 @@ void tom_render_24bpp_scanline(uint32 * backbuffer)
 
 	while (width)
 	{
-		uint32 g = *current_line_buffer++;
-		uint32 r = *current_line_buffer++;
+		uint32_t g = *current_line_buffer++;
+		uint32_t r = *current_line_buffer++;
 		current_line_buffer++;
-		uint32 b = *current_line_buffer++;
+		uint32_t b = *current_line_buffer++;
 //hm.		*backbuffer++ = 0xFF000000 | (b << 16) | (g << 8) | r;
 		*backbuffer++ = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
 		width--;
@@ -791,14 +791,14 @@ void tom_render_24bpp_scanline(uint32 * backbuffer)
 //
 // 16 BPP direct mode rendering
 //
-void tom_render_16bpp_direct_scanline(uint32 * backbuffer)
+void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
 {
-	uint16 width = tomWidth;
-	uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
+	uint16_t width = tomWidth;
+	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
 	while (width)
 	{
-		uint16 color = (*current_line_buffer++) << 8;
+		uint16_t color = (*current_line_buffer++) << 8;
 		color |= *current_line_buffer++;
 		*backbuffer++ = color >> 1;
 		width--;
@@ -809,18 +809,18 @@ void tom_render_16bpp_direct_scanline(uint32 * backbuffer)
 //
 // 16 BPP RGB mode rendering
 //
-void tom_render_16bpp_rgb_scanline(uint32 * backbuffer)
+void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 {
 //CHANGED TO 32BPP RENDERING
 	// 16 BPP RGB: 0-5 green, 6-10 blue, 11-15 red
 
-	uint16 width = tomWidth;
-	uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
+	uint16_t width = tomWidth;
+	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
 	//New stuff--restrict our drawing...
-	uint8 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+	uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 	//NOTE: May have to check HDB2 as well!
-	int16 startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
+	int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
 	startPos /= pwidth;
 
 	if (startPos < 0)
@@ -828,10 +828,10 @@ void tom_render_16bpp_rgb_scanline(uint32 * backbuffer)
 	else
 #ifdef LEFT_BG_FIX
 	{
-		uint8 g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32 pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
 
-		for(int16 i=0; i<startPos; i++)
+		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -843,7 +843,7 @@ void tom_render_16bpp_rgb_scanline(uint32 * backbuffer)
 
 	while (width)
 	{
-		uint32 color = (*current_line_buffer++) << 8;
+		uint32_t color = (*current_line_buffer++) << 8;
 		color |= *current_line_buffer++;
 		*backbuffer++ = RGB16ToRGB32[color];
 		width--;
@@ -855,7 +855,7 @@ void tom_render_16bpp_rgb_scanline(uint32 * backbuffer)
 // Process a single scanline
 // (this is bad terminology; each tick of the VC is actually a half-line)
 //
-void TOMExecHalfline(uint16 halfline, bool render)
+void TOMExecHalfline(uint16_t halfline, bool render)
 {
 #warning "!!! Need to handle multiple fields properly !!!"
 	// We ignore the problem for now
@@ -921,8 +921,8 @@ TOM: Vertical Interrupt written by M68K: 491
 */
 #if 1
 	// Initial values that "well behaved" programs use
-	uint16 startingHalfline = GET16(tomRam8, VDB);
-	uint16 endingHalfline = GET16(tomRam8, VDE);
+	uint16_t startingHalfline = GET16(tomRam8, VDB);
+	uint16_t endingHalfline = GET16(tomRam8, VDE);
 
 	// Simulate the OP start bug here!
 	// Really, this value is somewhere around 507 for an NTSC Jaguar. But this
@@ -931,21 +931,21 @@ TOM: Vertical Interrupt written by M68K: 491
 		startingHalfline = 0;
 
 	if (halfline >= startingHalfline && halfline < endingHalfline)
-//	if (halfline >= 0 && halfline < (uint16)GET16(tomRam8, VDE))
+//	if (halfline >= 0 && halfline < (uint16_t)GET16(tomRam8, VDE))
 // 16 isn't enough, and neither is 32 for raptgun. 32 fucks up Rayman
-//	if (halfline >= ((uint16)GET16(tomRam8, VDB) / 2) && halfline < ((uint16)GET16(tomRam8, VDE) / 2))
-//	if (halfline >= ((uint16)GET16(tomRam8, VDB) - 16) && halfline < (uint16)GET16(tomRam8, VDE))
-//	if (halfline >= 20 && halfline < (uint16)GET16(tomRam8, VDE))
-//	if (halfline >= (uint16)GET16(tomRam8, VDB) && halfline < (uint16)GET16(tomRam8, VDE))
+//	if (halfline >= ((uint16_t)GET16(tomRam8, VDB) / 2) && halfline < ((uint16_t)GET16(tomRam8, VDE) / 2))
+//	if (halfline >= ((uint16_t)GET16(tomRam8, VDB) - 16) && halfline < (uint16_t)GET16(tomRam8, VDE))
+//	if (halfline >= 20 && halfline < (uint16_t)GET16(tomRam8, VDE))
+//	if (halfline >= (uint16_t)GET16(tomRam8, VDB) && halfline < (uint16_t)GET16(tomRam8, VDE))
 	{
 		if (render)
 		{
-			uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
-			uint8 bgHI = tomRam8[BG], bgLO = tomRam8[BG + 1];
+			uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+			uint8_t bgHI = tomRam8[BG], bgLO = tomRam8[BG + 1];
 
 			// Clear line buffer with BG
 			if (GET16(tomRam8, VMODE) & BGEN) // && (CRY or RGB16)...
-				for(uint32 i=0; i<720; i++)
+				for(uint32_t i=0; i<720; i++)
 					*current_line_buffer++ = bgHI, *current_line_buffer++ = bgLO;
 
 			OPProcessList(halfline, render);
@@ -955,19 +955,19 @@ TOM: Vertical Interrupt written by M68K: 491
 		inActiveDisplayArea = false;
 #else
 	inActiveDisplayArea =
-		(halfline >= (uint16)GET16(tomRam8, VDB) && halfline < (uint16)GET16(tomRam8, VDE)
+		(halfline >= (uint16_t)GET16(tomRam8, VDB) && halfline < (uint16_t)GET16(tomRam8, VDE)
 			? true : false);
 
-	if (halfline < (uint16)GET16(tomRam8, VDE))
+	if (halfline < (uint16_t)GET16(tomRam8, VDE))
 	{
 		if (render)//With JaguarExecuteNew() this is always true...
 		{
-			uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
-			uint8 bgHI = tomRam8[BG], bgLO = tomRam8[BG + 1];
+			uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+			uint8_t bgHI = tomRam8[BG], bgLO = tomRam8[BG + 1];
 
 			// Clear line buffer with BG
 			if (GET16(tomRam8, VMODE) & BGEN) // && (CRY or RGB16)...
-				for(uint32 i=0; i<720; i++)
+				for(uint32_t i=0; i<720; i++)
 					*current_line_buffer++ = bgHI, *current_line_buffer++ = bgLO;
 
 //			OPProcessList(halfline, render);
@@ -979,9 +979,9 @@ TOM: Vertical Interrupt written by M68K: 491
 
 	// Try to take PAL into account... [We do now!]
 
-	uint16 topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL),
+	uint16_t topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL),
 		bottomVisible = (vjs.hardwareTypeNTSC ? BOTTOM_VISIBLE_VC : BOTTOM_VISIBLE_VC_PAL);
-	uint32 * TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);
+	uint32_t * TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);
 
 	// Here's our virtualized scanline code...
 
@@ -1009,8 +1009,8 @@ TOM: Vertical Interrupt written by M68K: 491
 #define   MODE		0x0006		// Line buffer to video generator mode
 #define   VARMOD	0x0100		// Mixed CRY/RGB16 mode (only works in MODE 0!)
 */
-				uint8 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-				uint8 mode = ((GET16(tomRam8, VMODE) & MODE) >> 1);
+				uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+				uint8_t mode = ((GET16(tomRam8, VMODE) & MODE) >> 1);
 				bool varmod = GET16(tomRam8, VMODE) & VARMOD;
 //The video texture line buffer ranges from 0 to 1279, with its left edge starting at
 //LEFT_VISIBLE_HC. So, we need to start writing into the backbuffer at HDB1, using pwidth
@@ -1023,16 +1023,16 @@ TOM: Vertical Interrupt written by M68K: 491
 //
 // 24 BPP mode rendering
 //
-void tom_render_24bpp_scanline(uint32 * backbuffer)
+void tom_render_24bpp_scanline(uint32_t * backbuffer)
 {
 //CHANGED TO 32BPP RENDERING
-	uint16 width = tomWidth;
-	uint8 * current_line_buffer = (uint8 *)&tomRam8[0x1800];
+	uint16_t width = tomWidth;
+	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
 	//New stuff--restrict our drawing...
-	uint8 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+	uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 	//NOTE: May have to check HDB2 as well!
-	int16 startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
+	int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
 	startPos /= pwidth;
 	if (startPos < 0)
 		current_line_buffer += 4 * -startPos;
@@ -1042,10 +1042,10 @@ void tom_render_24bpp_scanline(uint32 * backbuffer)
 
 	while (width)
 	{
-		uint32 g = *current_line_buffer++;
-		uint32 r = *current_line_buffer++;
+		uint32_t g = *current_line_buffer++;
+		uint32_t r = *current_line_buffer++;
 		current_line_buffer++;
-		uint32 b = *current_line_buffer++;
+		uint32_t b = *current_line_buffer++;
 		*backbuffer++ = 0xFF000000 | (b << 16) | (g << 8) | r;
 		width--;
 	}
@@ -1057,12 +1057,12 @@ void tom_render_24bpp_scanline(uint32 * backbuffer)
 		else
 		{
 			// If outside of VDB & VDE, then display the border color
-			uint32 * currentLineBuffer = TOMCurrentLine;
-			uint8 g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-//Hm.			uint32 pixel = 0xFF000000 | (b << 16) | (g << 8) | r;
-			uint32 pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+			uint32_t * currentLineBuffer = TOMCurrentLine;
+			uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+//Hm.			uint32_t pixel = 0xFF000000 | (b << 16) | (g << 8) | r;
+			uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
 
-			for(uint32 i=0; i<tomWidth; i++)
+			for(uint32_t i=0; i<tomWidth; i++)
 				*currentLineBuffer++ = pixel;
 		}
 	}
@@ -1097,12 +1097,12 @@ void TOMDone(void)
 }
 
 
-uint32 TOMGetVideoModeWidth(void)
+uint32_t TOMGetVideoModeWidth(void)
 {
 	//These widths are pretty bogus. Should use HDB1/2 & HDE/HBB & PWIDTH to calc the width...
-//	uint32 width[8] = { 1330, 665, 443, 332, 266, 222, 190, 166 };
+//	uint32_t width[8] = { 1330, 665, 443, 332, 266, 222, 190, 166 };
 //Temporary, for testing Doom...
-//	uint32 width[8] = { 1330, 665, 443, 332, 266, 222, 190, 332 };
+//	uint32_t width[8] = { 1330, 665, 443, 332, 266, 222, 190, 332 };
 
 	// Note that the following PWIDTH values have the following pixel aspect ratios:
 	// PWIDTH = 1 -> 0.25:1 (1:4) pixels (X:Y ratio)
@@ -1123,7 +1123,7 @@ uint32 TOMGetVideoModeWidth(void)
 //	return width[(GET16(tomRam8, VMODE) & PWIDTH) >> 9];
 
 	// Now, we just calculate it...
-/*	uint16 hdb1 = GET16(tomRam8, HDB1), hde = GET16(tomRam8, HDE),
+/*	uint16_t hdb1 = GET16(tomRam8, HDB1), hde = GET16(tomRam8, HDE),
 		hbb = GET16(tomRam8, HBB), pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 //	return ((hbb < hde ? hbb : hde) - hdb1) / pwidth;
 //Temporary, for testing Doom...
@@ -1131,7 +1131,7 @@ uint32 TOMGetVideoModeWidth(void)
 
 	// To make it easier to make a quasi-fixed display size, we restrict the viewing
 	// area to an arbitrary range of the Horizontal Count.
-	uint16 pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+	uint16_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
 	return (vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC - LEFT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL - LEFT_VISIBLE_HC_PAL) / pwidth;
 //Temporary, for testing Doom...
 //	return (RIGHT_VISIBLE_HC - LEFT_VISIBLE_HC) / (pwidth == 8 ? 4 : pwidth);
@@ -1162,14 +1162,14 @@ uint32 TOMGetVideoModeWidth(void)
 // Same with the width... [Width is pretty much virtualized now.]
 
 // Now that that the width is virtualized, let's virtualize the height. :-)
-uint32 TOMGetVideoModeHeight(void)
+uint32_t TOMGetVideoModeHeight(void)
 {
-//	uint16 vmode = GET16(tomRam8, VMODE);
-//	uint16 vbe = GET16(tomRam8, VBE);
-//	uint16 vbb = GET16(tomRam8, VBB);
-//	uint16 vdb = GET16(tomRam8, VDB);
-//	uint16 vde = GET16(tomRam8, VDE);
-//	uint16 vp = GET16(tomRam8, VP);
+//	uint16_t vmode = GET16(tomRam8, VMODE);
+//	uint16_t vbe = GET16(tomRam8, VBE);
+//	uint16_t vbb = GET16(tomRam8, VBB);
+//	uint16_t vdb = GET16(tomRam8, VDB);
+//	uint16_t vde = GET16(tomRam8, VDE);
+//	uint16_t vp = GET16(tomRam8, VP);
 
 /*	if (vde == 0xFFFF)
 		vde = vbb;//*/
@@ -1299,7 +1299,7 @@ void TOMReset(void)
 //
 // TOM byte access (read)
 //
-uint8 TOMReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
+uint8_t TOMReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 //???Is this needed???
 // It seems so. Perhaps it's the +$8000 offset being written to (32-bit interface)?
@@ -1335,7 +1335,7 @@ uint8 TOMReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
 //
 // TOM word access (read)
 //
-uint16 TOMReadWord(uint32 offset, uint32 who/*=UNKNOWN*/)
+uint16_t TOMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 //???Is this needed???
 //	offset &= 0xFF3FFF;
@@ -1348,7 +1348,7 @@ if (offset >= 0xF02000 && offset <= 0xF020FF)
 	if (offset == 0xF000E0)
 	{
 		// For reading, should only return the lower 5 bits...
-		uint16 data = (tom_jerry_int_pending << 4) | (tom_timer_int_pending << 3)
+		uint16_t data = (tom_jerry_int_pending << 4) | (tom_timer_int_pending << 3)
 			| (tom_object_int_pending << 2) | (tom_gpu_int_pending << 1)
 			| (tom_video_int_pending << 0);
 		//WriteLog("tom: interrupt status is 0x%.4x \n",data);
@@ -1394,7 +1394,7 @@ if (offset >= 0xF02000 && offset <= 0xF020FF)
 //
 // TOM byte access (write)
 //
-void TOMWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
+void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef TOM_DEBUG
 	WriteLog("TOM: Writing byte %02X at %06X", data, offset);
@@ -1477,7 +1477,7 @@ void TOMWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
 //
 // TOM word access (write)
 //
-void TOMWriteWord(uint32 offset, uint16 data, uint32 who/*=UNKNOWN*/)
+void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef TOM_DEBUG
 	WriteLog("TOM: Writing byte %04X at %06X", data, offset);
@@ -1658,7 +1658,7 @@ if (offset == HEQ)
 #if 1
 	if ((offset >= 0x28) && (offset <= 0x4F))
 	{
-		uint32 width = TOMGetVideoModeWidth(), height = TOMGetVideoModeHeight();
+		uint32_t width = TOMGetVideoModeWidth(), height = TOMGetVideoModeHeight();
 
 		if ((width != tomWidth) || (height != tomHeight))
 		{
@@ -1719,7 +1719,7 @@ void TOMResetPIT(void)
 //
 //NOTE: This is only used by the old execution code... Safe to remove
 //      once the timer system is stable.
-void TOMExecPIT(uint32 cycles)
+void TOMExecPIT(uint32_t cycles)
 {
 	if (tomTimerPrescaler)
 	{

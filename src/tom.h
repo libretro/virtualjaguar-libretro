@@ -29,23 +29,23 @@ void TOMInit(void);
 void TOMReset(void);
 void TOMDone(void);
 
-uint8 TOMReadByte(uint32 offset, uint32 who = UNKNOWN);
-uint16 TOMReadWord(uint32 offset, uint32 who = UNKNOWN);
-void TOMWriteByte(uint32 offset, uint8 data, uint32 who = UNKNOWN);
-void TOMWriteWord(uint32 offset, uint16 data, uint32 who = UNKNOWN);
+uint8_t TOMReadByte(uint32_t offset, uint32_t who = UNKNOWN);
+uint16_t TOMReadWord(uint32_t offset, uint32_t who = UNKNOWN);
+void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who = UNKNOWN);
+void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who = UNKNOWN);
 
-void TOMExecHalfline(uint16 halfline, bool render);
-uint32 TOMGetVideoModeWidth(void);
-uint32 TOMGetVideoModeHeight(void);
-uint8 TOMGetVideoMode(void);
-uint8 * TOMGetRamPointer(void);
-uint16 TOMGetHDB(void);
-uint16 TOMGetVDB(void);
+void TOMExecHalfline(uint16_t halfline, bool render);
+uint32_t TOMGetVideoModeWidth(void);
+uint32_t TOMGetVideoModeHeight(void);
+uint8_t TOMGetVideoMode(void);
+uint8_t * TOMGetRamPointer(void);
+uint16_t TOMGetHDB(void);
+uint16_t TOMGetVDB(void);
 
 int TOMIRQEnabled(int irq);
-uint16 TOMIRQControlReg(void);
+uint16_t TOMIRQControlReg(void);
 void TOMSetIRQLatch(int irq, int enabled);
-void TOMExecPIT(uint32 cycles);
+void TOMExecPIT(uint32_t cycles);
 void TOMSetPendingJERRYInt(void);
 void TOMSetPendingTimerInt(void);
 void TOMSetPendingObjectInt(void);
@@ -55,14 +55,14 @@ void TOMResetPIT(void);
 
 // Exported variables
 
-extern uint32 tomWidth;
-extern uint32 tomHeight;
-extern uint8 tomRam8[];
-extern uint32 tomTimerPrescaler;
-extern uint32 tomTimerDivider;
-extern int32 tomTimerCounter;
+extern uint32_t tomWidth;
+extern uint32_t tomHeight;
+extern uint8_t tomRam8[];
+extern uint32_t tomTimerPrescaler;
+extern uint32_t tomTimerDivider;
+extern int32_t tomTimerCounter;
 
-extern uint32 screenPitch;
-extern uint32 * screenBuffer;
+extern uint32_t screenPitch;
+extern uint32_t * screenBuffer;
 
 #endif	// __TOM_H__

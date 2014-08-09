@@ -28,14 +28,22 @@
 #include "jaguar.h"
 #include "log.h"
 //#include "memory.h"
+#include "settings.h"
 
 // Various conditional compilation goodies...
 
 //#define LOG_BLITS
 
-//#define USE_ORIGINAL_BLITTER
+#define USE_ORIGINAL_BLITTER
 //#define USE_MIDSUMMER_BLITTER
 #define USE_MIDSUMMER_BLITTER_MKII
+
+#ifdef USE_ORIGINAL_BLITTER
+#ifdef USE_MIDSUMMER_BLITTER_MKII
+#define USE_BOTH_BLITTERS
+#endif
+#endif
+
 
 // External global variables
 
@@ -44,60 +52,62 @@ extern int jaguar_active_memory_dumps;
 // Local global variables
 
 int start_logging = 0;
-uint8 blitter_working = 0;
+uint8_t blitter_working = 0;
+bool startConciseBlitLogging = false;
+bool logBlit = false;
 
 // Blitter register RAM (most of it is hidden from the user)
 
-static uint8 blitter_ram[0x100];
+static uint8_t blitter_ram[0x100];
 
 // Other crapola
 
 bool specialLog = false;
 extern int effect_start;
 extern int blit_start_log;
-void BlitterMidsummer(uint32 cmd);
+void BlitterMidsummer(uint32_t cmd);
 void BlitterMidsummer2(void);
 
-#define REG(A)	(((uint32)blitter_ram[(A)] << 24) | ((uint32)blitter_ram[(A)+1] << 16) \
-				| ((uint32)blitter_ram[(A)+2] << 8) | (uint32)blitter_ram[(A)+3])
+#define REG(A)	(((uint32_t)blitter_ram[(A)] << 24) | ((uint32_t)blitter_ram[(A)+1] << 16) \
+				| ((uint32_t)blitter_ram[(A)+2] << 8) | (uint32_t)blitter_ram[(A)+3])
 #define WREG(A,D)	(blitter_ram[(A)] = ((D)>>24)&0xFF, blitter_ram[(A)+1] = ((D)>>16)&0xFF, \
 					blitter_ram[(A)+2] = ((D)>>8)&0xFF, blitter_ram[(A)+3] = (D)&0xFF)
 
 // Blitter registers (offsets from F02200)
 
-#define A1_BASE			((uint32)0x00)
-#define A1_FLAGS		((uint32)0x04)
-#define A1_CLIP			((uint32)0x08)	// Height and width values for clipping
-#define A1_PIXEL		((uint32)0x0C)	// Integer part of the pixel (Y.i and X.i)
-#define A1_STEP			((uint32)0x10)	// Integer part of the step
-#define A1_FSTEP		((uint32)0x14)	// Fractional part of the step
-#define A1_FPIXEL		((uint32)0x18)	// Fractional part of the pixel (Y.f and X.f)
-#define A1_INC			((uint32)0x1C)	// Integer part of the increment
-#define A1_FINC			((uint32)0x20)	// Fractional part of the increment
-#define A2_BASE			((uint32)0x24)
-#define A2_FLAGS		((uint32)0x28)
-#define A2_MASK			((uint32)0x2C)	// Modulo values for x and y (M.y  and M.x)
-#define A2_PIXEL		((uint32)0x30)	// Integer part of the pixel (no fractional part for A2)
-#define A2_STEP			((uint32)0x34)	// Integer part of the step (no fractional part for A2)
-#define COMMAND			((uint32)0x38)
-#define PIXLINECOUNTER	((uint32)0x3C)	// Inner & outer loop values
-#define SRCDATA			((uint32)0x40)
-#define DSTDATA			((uint32)0x48)
-#define DSTZ			((uint32)0x50)
-#define SRCZINT			((uint32)0x58)
-#define SRCZFRAC		((uint32)0x60)
-#define PATTERNDATA		((uint32)0x68)
-#define INTENSITYINC	((uint32)0x70)
-#define ZINC			((uint32)0x74)
-#define COLLISIONCTRL	((uint32)0x78)
-#define PHRASEINT0		((uint32)0x7C)
-#define PHRASEINT1		((uint32)0x80)
-#define PHRASEINT2		((uint32)0x84)
-#define PHRASEINT3		((uint32)0x88)
-#define PHRASEZ0		((uint32)0x8C)
-#define PHRASEZ1		((uint32)0x90)
-#define PHRASEZ2		((uint32)0x94)
-#define PHRASEZ3		((uint32)0x98)
+#define A1_BASE			((uint32_t)0x00)
+#define A1_FLAGS		((uint32_t)0x04)
+#define A1_CLIP			((uint32_t)0x08)	// Height and width values for clipping
+#define A1_PIXEL		((uint32_t)0x0C)	// Integer part of the pixel (Y.i and X.i)
+#define A1_STEP			((uint32_t)0x10)	// Integer part of the step
+#define A1_FSTEP		((uint32_t)0x14)	// Fractional part of the step
+#define A1_FPIXEL		((uint32_t)0x18)	// Fractional part of the pixel (Y.f and X.f)
+#define A1_INC			((uint32_t)0x1C)	// Integer part of the increment
+#define A1_FINC			((uint32_t)0x20)	// Fractional part of the increment
+#define A2_BASE			((uint32_t)0x24)
+#define A2_FLAGS		((uint32_t)0x28)
+#define A2_MASK			((uint32_t)0x2C)	// Modulo values for x and y (M.y  and M.x)
+#define A2_PIXEL		((uint32_t)0x30)	// Integer part of the pixel (no fractional part for A2)
+#define A2_STEP			((uint32_t)0x34)	// Integer part of the step (no fractional part for A2)
+#define COMMAND			((uint32_t)0x38)
+#define PIXLINECOUNTER	((uint32_t)0x3C)	// Inner & outer loop values
+#define SRCDATA			((uint32_t)0x40)
+#define DSTDATA			((uint32_t)0x48)
+#define DSTZ			((uint32_t)0x50)
+#define SRCZINT			((uint32_t)0x58)
+#define SRCZFRAC		((uint32_t)0x60)
+#define PATTERNDATA		((uint32_t)0x68)
+#define INTENSITYINC	((uint32_t)0x70)
+#define ZINC			((uint32_t)0x74)
+#define COLLISIONCTRL	((uint32_t)0x78)
+#define PHRASEINT0		((uint32_t)0x7C)
+#define PHRASEINT1		((uint32_t)0x80)
+#define PHRASEINT2		((uint32_t)0x84)
+#define PHRASEINT3		((uint32_t)0x88)
+#define PHRASEZ0		((uint32_t)0x8C)
+#define PHRASEZ1		((uint32_t)0x90)
+#define PHRASEZ2		((uint32_t)0x94)
+#define PHRASEZ3		((uint32_t)0x98)
 
 // Blitter command bits
 
@@ -160,34 +170,34 @@ void BlitterMidsummer2(void);
 //Put 'em back, once we fix the problem!!! [KO]
 // 1 bpp pixel read
 #define PIXEL_SHIFT_1(a)      (((~a##_x) >> 16) & 7)
-#define PIXEL_OFFSET_1(a)     (((((uint32)a##_y >> 16) * a##_width / 8) + (((uint32)a##_x >> 19) & ~7)) * (1 + a##_pitch) + (((uint32)a##_x >> 19) & 7))
+#define PIXEL_OFFSET_1(a)     (((((uint32_t)a##_y >> 16) * a##_width / 8) + (((uint32_t)a##_x >> 19) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 19) & 7))
 #define READ_PIXEL_1(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a), BLITTER) >> PIXEL_SHIFT_1(a)) & 0x01)
 //#define READ_PIXEL_1(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a)) >> PIXEL_SHIFT_1(a)) & 0x01)
 
 // 2 bpp pixel read
 #define PIXEL_SHIFT_2(a)      (((~a##_x) >> 15) & 6)
-#define PIXEL_OFFSET_2(a)     (((((uint32)a##_y >> 16) * a##_width / 4) + (((uint32)a##_x >> 18) & ~7)) * (1 + a##_pitch) + (((uint32)a##_x >> 18) & 7))
+#define PIXEL_OFFSET_2(a)     (((((uint32_t)a##_y >> 16) * a##_width / 4) + (((uint32_t)a##_x >> 18) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 18) & 7))
 #define READ_PIXEL_2(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a), BLITTER) >> PIXEL_SHIFT_2(a)) & 0x03)
 //#define READ_PIXEL_2(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a)) >> PIXEL_SHIFT_2(a)) & 0x03)
 
 // 4 bpp pixel read
 #define PIXEL_SHIFT_4(a)      (((~a##_x) >> 14) & 4)
-#define PIXEL_OFFSET_4(a)     (((((uint32)a##_y >> 16) * (a##_width/2)) + (((uint32)a##_x >> 17) & ~7)) * (1 + a##_pitch) + (((uint32)a##_x >> 17) & 7))
+#define PIXEL_OFFSET_4(a)     (((((uint32_t)a##_y >> 16) * (a##_width/2)) + (((uint32_t)a##_x >> 17) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 17) & 7))
 #define READ_PIXEL_4(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a), BLITTER) >> PIXEL_SHIFT_4(a)) & 0x0f)
 //#define READ_PIXEL_4(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a)) >> PIXEL_SHIFT_4(a)) & 0x0f)
 
 // 8 bpp pixel read
-#define PIXEL_OFFSET_8(a)     (((((uint32)a##_y >> 16) * a##_width) + (((uint32)a##_x >> 16) & ~7)) * (1 + a##_pitch) + (((uint32)a##_x >> 16) & 7))
+#define PIXEL_OFFSET_8(a)     (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 7))
 #define READ_PIXEL_8(a)       (JaguarReadByte(a##_addr+PIXEL_OFFSET_8(a), BLITTER))
 //#define READ_PIXEL_8(a)       (JaguarReadByte(a##_addr+PIXEL_OFFSET_8(a)))
 
 // 16 bpp pixel read
-#define PIXEL_OFFSET_16(a)    (((((uint32)a##_y >> 16) * a##_width) + (((uint32)a##_x >> 16) & ~3)) * (1 + a##_pitch) + (((uint32)a##_x >> 16) & 3))
+#define PIXEL_OFFSET_16(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~3)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 3))
 #define READ_PIXEL_16(a)       (JaguarReadWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), BLITTER))
 //#define READ_PIXEL_16(a)       (JaguarReadWord(a##_addr+(PIXEL_OFFSET_16(a)<<1)))
 
 // 32 bpp pixel read
-#define PIXEL_OFFSET_32(a)    (((((uint32)a##_y >> 16) * a##_width) + (((uint32)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32)a##_x >> 16) & 1))
+#define PIXEL_OFFSET_32(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
 #define READ_PIXEL_32(a)      (JaguarReadLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), BLITTER))
 //#define READ_PIXEL_32(a)      (JaguarReadLong(a##_addr+(PIXEL_OFFSET_32(a)<<2)))
 
@@ -216,22 +226,22 @@ void BlitterMidsummer2(void);
 #define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
 
 // 1 bpp r data read
-#define READ_RDATA_1(r,a,p)  ((p) ?  ((REG(r+(((uint32)a##_x >> 19) & 0x04))) >> (((uint32)a##_x >> 16) & 0x1F)) & 0x0001 : (REG(r) & 0x0001))
+#define READ_RDATA_1(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 19) & 0x04))) >> (((uint32_t)a##_x >> 16) & 0x1F)) & 0x0001 : (REG(r) & 0x0001))
 
 // 2 bpp r data read
-#define READ_RDATA_2(r,a,p)  ((p) ?  ((REG(r+(((uint32)a##_x >> 18) & 0x04))) >> (((uint32)a##_x >> 15) & 0x3E)) & 0x0003 : (REG(r) & 0x0003))
+#define READ_RDATA_2(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 18) & 0x04))) >> (((uint32_t)a##_x >> 15) & 0x3E)) & 0x0003 : (REG(r) & 0x0003))
 
 // 4 bpp r data read
-#define READ_RDATA_4(r,a,p)  ((p) ?  ((REG(r+(((uint32)a##_x >> 17) & 0x04))) >> (((uint32)a##_x >> 14) & 0x28)) & 0x000F : (REG(r) & 0x000F))
+#define READ_RDATA_4(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 17) & 0x04))) >> (((uint32_t)a##_x >> 14) & 0x28)) & 0x000F : (REG(r) & 0x000F))
 
 // 8 bpp r data read
-#define READ_RDATA_8(r,a,p)  ((p) ?  ((REG(r+(((uint32)a##_x >> 16) & 0x04))) >> (((uint32)a##_x >> 13) & 0x18)) & 0x00FF : (REG(r) & 0x00FF))
+#define READ_RDATA_8(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 16) & 0x04))) >> (((uint32_t)a##_x >> 13) & 0x18)) & 0x00FF : (REG(r) & 0x00FF))
 
 // 16 bpp r data read
-#define READ_RDATA_16(r,a,p)  ((p) ? ((REG(r+(((uint32)a##_x >> 15) & 0x04))) >> (((uint32)a##_x >> 12) & 0x10)) & 0xFFFF : (REG(r) & 0xFFFF))
+#define READ_RDATA_16(r,a,p)  ((p) ? ((REG(r+(((uint32_t)a##_x >> 15) & 0x04))) >> (((uint32_t)a##_x >> 12) & 0x10)) & 0xFFFF : (REG(r) & 0xFFFF))
 
 // 32 bpp r data read
-#define READ_RDATA_32(r,a,p)  ((p) ? REG(r+(((uint32)a##_x >> 14) & 0x04)) : REG(r))
+#define READ_RDATA_32(r,a,p)  ((p) ? REG(r+(((uint32_t)a##_x >> 14) & 0x04)) : REG(r))
 
 // register data read
 #define READ_RDATA(r,a,f,p) (\
@@ -285,7 +295,7 @@ void BlitterMidsummer2(void);
 // as a floating point bit pattern being followed by a number of zeroes. So, e.g., 001101 translates to
 // 1.01 (the "1." being implied) x (2 ^ 3) or 1010 -> 10 in base 10 (i.e., 1.01 with the decimal place
 // being shifted to the right 3 places).
-/*static uint32 blitter_scanline_width[48] =
+/*static uint32_t blitter_scanline_width[48] =
 {
      0,    0,    0,    0,					// Note: This would really translate to 1, 1, 1, 1
      2,    0,    0,    0,
@@ -301,62 +311,62 @@ void BlitterMidsummer2(void);
   2048, 2560, 3072, 3584
 };//*/
 
-//static uint8 * tom_ram_8;
-//static uint8 * paletteRam;
-static uint8 src;
-static uint8 dst;
-static uint8 misc;
-static uint8 a1ctl;
-static uint8 mode;
-static uint8 ity;
-static uint8 zop;
-static uint8 op;
-static uint8 ctrl;
-static uint32 a1_addr;
-static uint32 a2_addr;
-static int32 a1_zoffs;
-static int32 a2_zoffs;
-static uint32 xadd_a1_control;
-static uint32 xadd_a2_control;
-static int32 a1_pitch;
-static int32 a2_pitch;
-static uint32 n_pixels;
-static uint32 n_lines;
-static int32 a1_x;
-static int32 a1_y;
-static int32 a1_width;
-static int32 a2_x;
-static int32 a2_y;
-static int32 a2_width;
-static int32 a2_mask_x;
-static int32 a2_mask_y;
-static int32 a1_xadd;
-static int32 a1_yadd;
-static int32 a2_xadd;
-static int32 a2_yadd;
-static uint8 a1_phrase_mode;
-static uint8 a2_phrase_mode;
-static int32 a1_step_x = 0;
-static int32 a1_step_y = 0;
-static int32 a2_step_x = 0;
-static int32 a2_step_y = 0;
-static uint32 outer_loop;
-static uint32 inner_loop;
-static uint32 a2_psize;
-static uint32 a1_psize;
-static uint32 gouraud_add;
-//static uint32 gouraud_data;
-//static uint16 gint[4];
-//static uint16 gfrac[4];
-//static uint8  gcolour[4];
+//static uint8_t * tom_ram_8;
+//static uint8_t * paletteRam;
+static uint8_t src;
+static uint8_t dst;
+static uint8_t misc;
+static uint8_t a1ctl;
+static uint8_t mode;
+static uint8_t ity;
+static uint8_t zop;
+static uint8_t op;
+static uint8_t ctrl;
+static uint32_t a1_addr;
+static uint32_t a2_addr;
+static int32_t a1_zoffs;
+static int32_t a2_zoffs;
+static uint32_t xadd_a1_control;
+static uint32_t xadd_a2_control;
+static int32_t a1_pitch;
+static int32_t a2_pitch;
+static uint32_t n_pixels;
+static uint32_t n_lines;
+static int32_t a1_x;
+static int32_t a1_y;
+static int32_t a1_width;
+static int32_t a2_x;
+static int32_t a2_y;
+static int32_t a2_width;
+static int32_t a2_mask_x;
+static int32_t a2_mask_y;
+static int32_t a1_xadd;
+static int32_t a1_yadd;
+static int32_t a2_xadd;
+static int32_t a2_yadd;
+static uint8_t a1_phrase_mode;
+static uint8_t a2_phrase_mode;
+static int32_t a1_step_x = 0;
+static int32_t a1_step_y = 0;
+static int32_t a2_step_x = 0;
+static int32_t a2_step_y = 0;
+static uint32_t outer_loop;
+static uint32_t inner_loop;
+static uint32_t a2_psize;
+static uint32_t a1_psize;
+static uint32_t gouraud_add;
+//static uint32_t gouraud_data;
+//static uint16_t gint[4];
+//static uint16_t gfrac[4];
+//static uint8_t  gcolour[4];
 static int gd_i[4];
 static int gd_c[4];
 static int gd_ia, gd_ca;
 static int colour_index = 0;
-static int32 zadd;
-static uint32 z_i[4];
+static int32_t zadd;
+static uint32_t z_i[4];
 
-static int32 a1_clip_x, a1_clip_y;
+static int32_t a1_clip_x, a1_clip_y;
 
 // In the spirit of "get it right first, *then* optimize" I've taken the liberty
 // of removing all the unnecessary code caching. If it turns out to be a good way
@@ -365,7 +375,7 @@ static int32 a1_clip_x, a1_clip_y;
 //
 // Generic blit handler
 //
-void blitter_generic(uint32 cmd)
+void blitter_generic(uint32_t cmd)
 {
 /*
 Blit! (0018FA70 <- 008DDC40) count: 2 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
@@ -381,9 +391,9 @@ Blit! (0018FA70 <- 008DDC40) count: 2 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 
 /*if (cmd == 0x1401060C && blit_start_log)
 	specialLog = true;//*/
 //Testing only!
-//uint32 logGo = ((cmd == 0x01800E01 && REG(A1_BASE) == 0x898000) ? 1 : 0);
-	uint32 srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
-	uint32 bppSrc = (DSTA2 ? 1 << ((REG(A1_FLAGS) >> 3) & 0x07) : 1 << ((REG(A2_FLAGS) >> 3) & 0x07));
+//uint32_t logGo = ((cmd == 0x01800E01 && REG(A1_BASE) == 0x898000) ? 1 : 0);
+	uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
+	uint32_t bppSrc = (DSTA2 ? 1 << ((REG(A1_FLAGS) >> 3) & 0x07) : 1 << ((REG(A2_FLAGS) >> 3) & 0x07));
 
 if (specialLog)
 {
@@ -404,7 +414,7 @@ if (specialLog)
 {
 	WriteLog("  A1_X/Y = %08X/%08X, A2_X/Y = %08X/%08X\n", a1_x, a1_y, a2_x, a2_y);
 }
-		uint32 a1_start = a1_x, a2_start = a2_x, bitPos = 0;
+		uint32_t a1_start = a1_x, a2_start = a2_x, bitPos = 0;
 
 		//Kludge for Hover Strike...
 		//I wonder if this kludge is in conjunction with the SRCENX down below...
@@ -497,7 +507,7 @@ if (specialLog)
 //and *then* we can do the bit stepping from there the way it's *supposed* to be done... !!! FIX !!!
 //[DONE]
 	{
-		uint32 pixShift = (~bitPos) & (bppSrc - 1);
+		uint32_t pixShift = (~bitPos) & (bppSrc - 1);
 		srcdata = (srcdata >> pixShift) & 0x01;
 
 		bitPos++;
@@ -578,7 +588,7 @@ Blit! (000B8250 <- 0012C3A0) count: 16 x 1, A1/2_FLAGS: 00014420/00012000 [cmd: 
 /*						if (srcdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
 //						if (srcdata != READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
 							inhibit = 1;//*/
-/*						uint32 A2bpp = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
+/*						uint32_t A2bpp = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
 						if (A2bpp == 1 || A2bpp == 16 || A2bpp == 8)
 							inhibit = (srcdata == 0 ? 1: 0);
 //							inhibit = !srcdata;
@@ -659,16 +669,16 @@ Blit! (00098D90 <- 0081DDC0) count: 320 x 287, A1/2_FLAGS: 00004220/00004020 [cm
 						if (!TOPBEN)
 						{
 //This is correct now, but slow...
-							int16 s = (srcdata & 0xFF) | (srcdata & 0x80 ? 0xFF00 : 0x0000),
+							int16_t s = (srcdata & 0xFF) | (srcdata & 0x80 ? 0xFF00 : 0x0000),
 								d = dstdata & 0xFF;
-							int16 sum = s + d;
+							int16_t sum = s + d;
 
 							if (sum < 0)
 								writedata = 0x00;
 							else if (sum > 0xFF)
 								writedata = 0xFF;
 							else
-								writedata = (uint32)sum;
+								writedata = (uint32_t)sum;
 						}
 
 //This doesn't seem right... Looks like it would muck up the low byte... !!! FIX !!!
@@ -722,8 +732,8 @@ Blit! (00098D90 <- 0081DDC0) count: 320 x 287, A1/2_FLAGS: 00004220/00004020 [cm
 				{
 /*if (((REG(A1_FLAGS) >> 3) & 0x07) == 5)
 {
-	uint32 offset = a1_addr+(PIXEL_OFFSET_32(a1)<<2);
-// (((((uint32)a##_y >> 16) * a##_width) + (((uint32)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32)a##_x >> 16) & 1))
+	uint32_t offset = a1_addr+(PIXEL_OFFSET_32(a1)<<2);
+// (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
 	if ((offset >= 0x1FF020 && offset <= 0x1FF03F) || (offset >= 0x1FF820 && offset <= 0x1FF83F))
 		WriteLog("32bpp pixel write: A1 Phrase mode --> ");
 }//*/
@@ -792,7 +802,7 @@ Blit! (00098D90 <- 0081DDC0) count: 320 x 287, A1/2_FLAGS: 00004220/00004020 [cm
 // AvP: This is causing blocks to be written instead of bit patterns...
 // Works now...
 // NOTE: We really should separate out the BCOMPEN & DCOMPEN stuff!
-/*						uint32 A1bpp = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
+/*						uint32_t A1bpp = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
 						if (A1bpp == 1 || A1bpp == 16 || A1bpp == 8)
 							inhibit = (srcdata == 0 ? 1: 0);
 						else
@@ -878,8 +888,8 @@ Blit! (00098D90 <- 0081DDC0) count: 320 x 287, A1/2_FLAGS: 00004220/00004020 [cm
 				{
 /*if (logGo)
 {
-	uint32 offset = a2_addr+(PIXEL_OFFSET_16(a2)<<1);
-// (((((uint32)a##_y >> 16) * a##_width) + (((uint32)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32)a##_x >> 16) & 1))
+	uint32_t offset = a2_addr+(PIXEL_OFFSET_16(a2)<<1);
+// (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
 	WriteLog("[%08X:%04X] ", offset, writedata);
 }//*/
 					// write to the destination
@@ -923,13 +933,13 @@ Blit! (00098D90 <- 0081DDC0) count: 320 x 287, A1/2_FLAGS: 00004220/00004020 [cm
 				gd_i[colour_index] += gd_ia;
 //Hmm, this doesn't seem to do anything...
 //But it is correct according to the JTRM...!
-if ((int32)gd_i[colour_index] < 0)
+if ((int32_t)gd_i[colour_index] < 0)
 	gd_i[colour_index] = 0;
 if (gd_i[colour_index] > 0x00FFFFFF)
 	gd_i[colour_index] = 0x00FFFFFF;//*/
 
 				gd_c[colour_index] += gd_ca;
-if ((int32)gd_c[colour_index] < 0)
+if ((int32_t)gd_c[colour_index] < 0)
 	gd_c[colour_index] = 0;
 if (gd_c[colour_index] > 0x000000FF)
 	gd_c[colour_index] = 0x000000FF;//*/
@@ -989,17 +999,17 @@ Lesse, with pre-add we'd have:
 		{
 			// Bump the pointer to the next phrase boundary
 			// Even though it works, this is crappy... Clean it up!
-			uint32 size = 64 / a1_psize;
+			uint32_t size = 64 / a1_psize;
 
 			// Crappy kludge... ('aligning' source to destination)
 			if (a2_phrase_mode && DSTA2)
 			{
-				uint32 extra = (a2_start >> 16) % size;
+				uint32_t extra = (a2_start >> 16) % size;
 				a1_x += extra << 16;
 			}
 
-			uint32 newx = (a1_x >> 16) / size;
-			uint32 newxrem = (a1_x >> 16) % size;
+			uint32_t newx = (a1_x >> 16) / size;
+			uint32_t newxrem = (a1_x >> 16) % size;
 			a1_x &= 0x0000FFFF;
 			a1_x |= (((newx + (newxrem == 0 ? 0 : 1)) * size) & 0xFFFF) << 16;
 		}//*/
@@ -1007,16 +1017,16 @@ Lesse, with pre-add we'd have:
 		{
 			// Bump the pointer to the next phrase boundary
 			// Even though it works, this is crappy... Clean it up!
-			uint32 size = 64 / a1_psize;
+			uint32_t size = 64 / a1_psize;
 
 			// Crappy kludge... ('aligning' source to destination)
 			if (a2_phrase_mode && DSTA2)
 			{
-				uint32 extra = (a2_start >> 16) % size;
+				uint32_t extra = (a2_start >> 16) % size;
 				a1_x += extra << 16;
 			}
 
-			uint32 pixelSize = (size - 1) << 16;
+			uint32_t pixelSize = (size - 1) << 16;
 			a1_x = (a1_x + pixelSize) & ~pixelSize;
 		}
 
@@ -1024,18 +1034,18 @@ Lesse, with pre-add we'd have:
 		{
 			// Bump the pointer to the next phrase boundary
 			// Even though it works, this is crappy... Clean it up!
-			uint32 size = 64 / a2_psize;
+			uint32_t size = 64 / a2_psize;
 
 			// Crappy kludge... ('aligning' source to destination)
 			// Prolly should do this for A1 channel as well... [DONE]
 			if (a1_phrase_mode && !DSTA2)
 			{
-				uint32 extra = (a1_start >> 16) % size;
+				uint32_t extra = (a1_start >> 16) % size;
 				a2_x += extra << 16;
 			}
 
-			uint32 newx = (a2_x >> 16) / size;
-			uint32 newxrem = (a2_x >> 16) % size;
+			uint32_t newx = (a2_x >> 16) / size;
+			uint32_t newxrem = (a2_x >> 16) % size;
 			a2_x &= 0x0000FFFF;
 			a2_x |= (((newx + (newxrem == 0 ? 0 : 1)) * size) & 0xFFFF) << 16;
 		}//*/
@@ -1043,17 +1053,17 @@ Lesse, with pre-add we'd have:
 		{
 			// Bump the pointer to the next phrase boundary
 			// Even though it works, this is crappy... Clean it up!
-			uint32 size = 64 / a2_psize;
+			uint32_t size = 64 / a2_psize;
 
 			// Crappy kludge... ('aligning' source to destination)
 			// Prolly should do this for A1 channel as well... [DONE]
 			if (a1_phrase_mode && !DSTA2)
 			{
-				uint32 extra = (a1_start >> 16) % size;
+				uint32_t extra = (a1_start >> 16) % size;
 				a2_x += extra << 16;
 			}
 
-			uint32 pixelSize = (size - 1) << 16;
+			uint32_t pixelSize = (size - 1) << 16;
 			a2_x = (a2_x + pixelSize) & ~pixelSize;
 		}
 
@@ -1074,7 +1084,7 @@ Lesse, with pre-add we'd have:
 specialLog = false;
 }
 
-void blitter_blit(uint32 cmd)
+void blitter_blit(uint32_t cmd)
 {
 //Apparently this is doing *something*, just not sure exactly what...
 /*if (cmd == 0x41802E01)
@@ -1084,7 +1094,7 @@ void blitter_blit(uint32 cmd)
 	WriteLog("Is: %08X\n", cmd);
 }//*/
 
-	uint32 pitchValue[4] = { 0, 1, 3, 2 };
+	uint32_t pitchValue[4] = { 0, 1, 3, 2 };
 	colour_index = 0;
 	src = cmd & 0x07;
 	dst = (cmd >> 3) & 0x07;
@@ -1125,7 +1135,7 @@ void blitter_blit(uint32 cmd)
 //	a1_width = blitter_scanline_width[((REG(A1_FLAGS) & 0x00007E00) >> 9)];
 // According to JTRM, this must give a *whole number* of phrases in the current
 // pixel size (this means the lookup above is WRONG)... !!! FIX !!!
-	uint32 m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
+	uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
 	a1_width = ((0x04 | m) << e) >> 2;//*/
 
 	a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
@@ -1188,7 +1198,7 @@ void blitter_blit(uint32 cmd)
 //  A1 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 128 (1C), addctl: XADDINC YADD1 XSIGNADD YSIGNADD
 //  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 320 (21), addctl: XADD0 YADD1 XSIGNADD YSIGNADD
 //if (YADD1_A1 && YADD1_A2 && xadd_a2_control == XADD0 && xadd_a1_control == XADDINC)// &&
-//	uint32 a1f = REG(A1_FLAGS), a2f = REG(A2_FLAGS);
+//	uint32_t a1f = REG(A1_FLAGS), a2f = REG(A2_FLAGS);
 //Ok, so this ISN'T it... Prolly the XADDPHR code above that's doing it...
 //if (REG(A1_FLAGS) == 0x00073820 && REG(A2_FLAGS) == 0x00064220 && cmd == 0x41802801)
 //        A1 x/y: 14368/7, A2 x/y: 150/36
@@ -1278,20 +1288,20 @@ WriteLog("BLIT: Asked to use invalid bit combo (XADDINC) for A2...\n");
 	if (GOURD || GOURZ || SRCSHADE)
 	{
 		gd_c[0] = blitter_ram[PATTERNDATA + 6];
-		gd_i[0]	= ((uint32)blitter_ram[PATTERNDATA + 7] << 16)
-			| ((uint32)blitter_ram[SRCDATA + 6] << 8) | blitter_ram[SRCDATA + 7];
+		gd_i[0]	= ((uint32_t)blitter_ram[PATTERNDATA + 7] << 16)
+			| ((uint32_t)blitter_ram[SRCDATA + 6] << 8) | blitter_ram[SRCDATA + 7];
 
 		gd_c[1] = blitter_ram[PATTERNDATA + 4];
-		gd_i[1]	= ((uint32)blitter_ram[PATTERNDATA + 5] << 16)
-			| ((uint32)blitter_ram[SRCDATA + 4] << 8) | blitter_ram[SRCDATA + 5];
+		gd_i[1]	= ((uint32_t)blitter_ram[PATTERNDATA + 5] << 16)
+			| ((uint32_t)blitter_ram[SRCDATA + 4] << 8) | blitter_ram[SRCDATA + 5];
 
 		gd_c[2] = blitter_ram[PATTERNDATA + 2];
-		gd_i[2]	= ((uint32)blitter_ram[PATTERNDATA + 3] << 16)
-			| ((uint32)blitter_ram[SRCDATA + 2] << 8) | blitter_ram[SRCDATA + 3];
+		gd_i[2]	= ((uint32_t)blitter_ram[PATTERNDATA + 3] << 16)
+			| ((uint32_t)blitter_ram[SRCDATA + 2] << 8) | blitter_ram[SRCDATA + 3];
 
 		gd_c[3] = blitter_ram[PATTERNDATA + 0];
-		gd_i[3]	= ((uint32)blitter_ram[PATTERNDATA + 1] << 16)
-			| ((uint32)blitter_ram[SRCDATA + 0] << 8) | blitter_ram[SRCDATA + 1];
+		gd_i[3]	= ((uint32_t)blitter_ram[PATTERNDATA + 1] << 16)
+			| ((uint32_t)blitter_ram[SRCDATA + 0] << 8) | blitter_ram[SRCDATA + 1];
 
 		gouraud_add = REG(INTENSITYINC);
 
@@ -1469,21 +1479,21 @@ Blit! (00110000 <- 0010B2A8) count: 12 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd:
 //extern int op_start_log;
 if (blit_start_log)
 {
-	char * ctrlStr[4] = { "XADDPHR\0", "XADDPIX\0", "XADD0\0", "XADDINC\0" };
-	char * bppStr[8] = { "1bpp\0", "2bpp\0", "4bpp\0", "8bpp\0", "16bpp\0", "32bpp\0", "???\0", "!!!\0" };
-	char * opStr[16] = { "LFU_CLEAR", "LFU_NSAND", "LFU_NSAD", "LFU_NOTS", "LFU_SAND", "LFU_NOTD", "LFU_N_SXORD", "LFU_NSORND",
+	const char * ctrlStr[4] = { "XADDPHR\0", "XADDPIX\0", "XADD0\0", "XADDINC\0" };
+	const char * bppStr[8] = { "1bpp\0", "2bpp\0", "4bpp\0", "8bpp\0", "16bpp\0", "32bpp\0", "???\0", "!!!\0" };
+	const char * opStr[16] = { "LFU_CLEAR", "LFU_NSAND", "LFU_NSAD", "LFU_NOTS", "LFU_SAND", "LFU_NOTD", "LFU_N_SXORD", "LFU_NSORND",
 		"LFU_SAD", "LFU_XOR", "LFU_D", "LFU_NSORD", "LFU_REPLACE", "LFU_SORND", "LFU_SORD", "LFU_ONE" };
-	uint32 /*src = cmd & 0x07, dst = (cmd >> 3) & 0x07, misc = (cmd >> 6) & 0x03,
+	uint32_t /*src = cmd & 0x07, dst = (cmd >> 3) & 0x07, misc = (cmd >> 6) & 0x03,
 		a1ctl = (cmd >> 8) & 0x07,*/ mode = (cmd >> 11) & 0x07/*, ity = (cmd >> 14) & 0x0F,
 		zop = (cmd >> 18) & 0x07, op = (cmd >> 21) & 0x0F, ctrl = (cmd >> 25) & 0x3F*/;
-	uint32 a1f = REG(A1_FLAGS), a2f = REG(A2_FLAGS);
-	uint32 p1 = a1f & 0x07, p2 = a2f & 0x07,
+	uint32_t a1f = REG(A1_FLAGS), a2f = REG(A2_FLAGS);
+	uint32_t p1 = a1f & 0x07, p2 = a2f & 0x07,
 		d1 = (a1f >> 3) & 0x07, d2 = (a2f >> 3) & 0x07,
 		zo1 = (a1f >> 6) & 0x07, zo2 = (a2f >> 6) & 0x07,
 		w1 = (a1f >> 9) & 0x3F, w2 = (a2f >> 9) & 0x3F,
 		ac1 = (a1f >> 16) & 0x1F, ac2 = (a2f >> 16) & 0x1F;
-	uint32 iw1 = ((0x04 | (w1 & 0x03)) << ((w1 & 0x3C) >> 2)) >> 2;
-	uint32 iw2 = ((0x04 | (w2 & 0x03)) << ((w2 & 0x3C) >> 2)) >> 2;
+	uint32_t iw1 = ((0x04 | (w1 & 0x03)) << ((w1 & 0x3C) >> 2)) >> 2;
+	uint32_t iw2 = ((0x04 | (w2 & 0x03)) << ((w2 & 0x3C) >> 2)) >> 2;
 	WriteLog("Blit! (%08X %s %08X) count: %d x %d, A1/2_FLAGS: %08X/%08X [cmd: %08X]\n", a1_addr, (mode&0x01 ? "->" : "<-"), a2_addr, n_pixels, n_lines, a1f, a2f, cmd);
 //	WriteLog(" CMD -> src: %d, dst: %d, misc: %d, a1ctl: %d, mode: %d, ity: %1X, z-op: %d, op: %1X, ctrl: %02X\n", src, dst, misc, a1ctl, mode, ity, zop, op, ctrl);
 
@@ -1537,22 +1547,26 @@ if (blit_start_log)
 ********************** STUFF CUT ABOVE THIS LINE! ******************************
 *******************************************************************************/
 
+
 void BlitterInit(void)
 {
 	BlitterReset();
 }
+
 
 void BlitterReset(void)
 {
 	memset(blitter_ram, 0x00, 0xA0);
 }
 
+
 void BlitterDone(void)
 {
 	WriteLog("BLIT: Done.\n");
 }
 
-uint8 BlitterReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
+
+uint8_t BlitterReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	offset &= 0xFF;
 
@@ -1582,19 +1596,22 @@ uint8 BlitterReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
 	return blitter_ram[offset];
 }
 
-//Crappy!
-uint16 BlitterReadWord(uint32 offset, uint32 who/*=UNKNOWN*/)
-{
-	return ((uint16)BlitterReadByte(offset, who) << 8) | (uint16)BlitterReadByte(offset+1, who);
-}
 
 //Crappy!
-uint32 BlitterReadLong(uint32 offset, uint32 who/*=UNKNOWN*/)
+uint16_t BlitterReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+{
+	return ((uint16_t)BlitterReadByte(offset, who) << 8) | (uint16_t)BlitterReadByte(offset+1, who);
+}
+
+
+//Crappy!
+uint32_t BlitterReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	return (BlitterReadWord(offset, who) << 16) | BlitterReadWord(offset+2, who);
 }
 
-void BlitterWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
+
+void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
 /*if (offset & 0xFF == 0x7B)
 	WriteLog("--> Wrote to B_STOP: value -> %02X\n", data);*/
@@ -1680,7 +1697,8 @@ void BlitterWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
 		blitter_ram[offset] = data;
 }
 
-void BlitterWriteWord(uint32 offset, uint16 data, uint32 who/*=UNKNOWN*/)
+
+void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
 /*if (((offset & 0xFF) >= PATTERNDATA) && ((offset & 0xFF) < PATTERNDATA + 8))
 {
@@ -1715,6 +1733,7 @@ if (blit_start_log)
 	WriteLog("BLIT: Blitter started by %s...\n", whoName[who]);
 	doGPUDis = true;
 }//*/
+#ifndef USE_BOTH_BLITTERS
 #ifdef USE_ORIGINAL_BLITTER
 		blitter_blit(GET32(blitter_ram, 0x38));
 #endif
@@ -1724,10 +1743,19 @@ if (blit_start_log)
 #ifdef USE_MIDSUMMER_BLITTER_MKII
 		BlitterMidsummer2();
 #endif
+#else
+	{
+		if (vjs.useFastBlitter)
+			blitter_blit(GET32(blitter_ram, 0x38));
+		else
+			BlitterMidsummer2();
+	}
+#endif
 }
 //F02278,9,A,B
 
-void BlitterWriteLong(uint32 offset, uint32 data, uint32 who/*=UNKNOWN*/)
+
+void BlitterWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 {
 /*if (((offset & 0xFF) >= PATTERNDATA) && ((offset & 0xFF) < PATTERNDATA + 8))
 {
@@ -1747,15 +1775,16 @@ doGPUDis = true;
 	BlitterWriteWord(offset + 2, data & 0xFFFF, who);
 }
 
+
 void LogBlit(void)
 {
 	const char * opStr[16] = { "LFU_CLEAR", "LFU_NSAND", "LFU_NSAD", "LFU_NOTS", "LFU_SAND", "LFU_NOTD", "LFU_N_SXORD", "LFU_NSORND",
 		"LFU_SAD", "LFU_XOR", "LFU_D", "LFU_NSORD", "LFU_REPLACE", "LFU_SORND", "LFU_SORD", "LFU_ONE" };
-	uint32 cmd = GET32(blitter_ram, 0x38);
-	uint32 m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
-	uint32 a1_width = ((0x04 | m) << e) >> 2;
+	uint32_t cmd = GET32(blitter_ram, 0x38);
+	uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
+	uint32_t a1_width = ((0x04 | m) << e) >> 2;
 	m = (REG(A2_FLAGS) >> 9) & 0x03, e = (REG(A2_FLAGS) >> 11) & 0x0F;
-	uint32 a2_width = ((0x04 | m) << e) >> 2;
+	uint32_t a2_width = ((0x04 | m) << e) >> 2;
 
 	WriteLog("Blit!\n");
 	WriteLog("  COMMAND  = %08X\n", cmd);
@@ -1784,11 +1813,11 @@ void LogBlit(void)
 		REG(A1_FLAGS) & 0x00003, (REG(A1_FLAGS) & 0x00038) >> 3,
 		(REG(A1_FLAGS) & 0x001C0) >> 6,  a1_width, (REG(A1_FLAGS) & 0x30000) >> 16);
 	WriteLog("  a1_clip  = %u, %u (%08X)\n", GET16(blitter_ram, A1_CLIP + 2), GET16(blitter_ram, A1_CLIP + 0), GET32(blitter_ram, A1_CLIP));
-	WriteLog("  a1_pixel = %d, %d (%08X)\n", (int16)GET16(blitter_ram, A1_PIXEL + 2), (int16)GET16(blitter_ram, A1_PIXEL + 0), GET32(blitter_ram, A1_PIXEL));
-	WriteLog("  a1_step  = %d, %d (%08X)\n", (int16)GET16(blitter_ram, A1_STEP + 2), (int16)GET16(blitter_ram, A1_STEP + 0), GET32(blitter_ram, A1_STEP));
+	WriteLog("  a1_pixel = %d, %d (%08X)\n", (int16_t)GET16(blitter_ram, A1_PIXEL + 2), (int16_t)GET16(blitter_ram, A1_PIXEL + 0), GET32(blitter_ram, A1_PIXEL));
+	WriteLog("  a1_step  = %d, %d (%08X)\n", (int16_t)GET16(blitter_ram, A1_STEP + 2), (int16_t)GET16(blitter_ram, A1_STEP + 0), GET32(blitter_ram, A1_STEP));
 	WriteLog("  a1_fstep = %u, %u (%08X)\n", GET16(blitter_ram, A1_FSTEP + 2), GET16(blitter_ram, A1_FSTEP + 0), GET32(blitter_ram, A1_FSTEP));
 	WriteLog("  a1_fpixel= %u, %u (%08X)\n", GET16(blitter_ram, A1_FPIXEL + 2), GET16(blitter_ram, A1_FPIXEL + 0), GET32(blitter_ram, A1_FPIXEL));
-	WriteLog("  a1_inc   = %d, %d (%08X)\n", (int16)GET16(blitter_ram, A1_INC + 2), (int16)GET16(blitter_ram, A1_INC + 0), GET32(blitter_ram, A1_INC));
+	WriteLog("  a1_inc   = %d, %d (%08X)\n", (int16_t)GET16(blitter_ram, A1_INC + 2), (int16_t)GET16(blitter_ram, A1_INC + 0), GET32(blitter_ram, A1_INC));
 	WriteLog("  a1_finc  = %u, %u (%08X)\n", GET16(blitter_ram, A1_FINC + 2), GET16(blitter_ram, A1_FINC + 0), GET32(blitter_ram, A1_FINC));
 
 	WriteLog("  a2_base  = %08X\n", REG(A2_BASE));
@@ -1817,8 +1846,8 @@ void LogBlit(void)
 		REG(A2_FLAGS) & 0x00003, (REG(A2_FLAGS) & 0x00038) >> 3,
 		(REG(A2_FLAGS) & 0x001C0) >> 6,  a2_width, (REG(A2_FLAGS) & 0x30000) >> 16);
 	WriteLog("  a2_mask  = %u, %u (%08X)\n", GET16(blitter_ram, A2_MASK + 2), GET16(blitter_ram, A2_MASK + 0), GET32(blitter_ram, A2_MASK));
-	WriteLog("  a2_pixel = %d, %d (%08X)\n", (int16)GET16(blitter_ram, A2_PIXEL + 2), (int16)GET16(blitter_ram, A2_PIXEL + 0), GET32(blitter_ram, A2_PIXEL));
-	WriteLog("  a2_step  = %d, %d (%08X)\n", (int16)GET16(blitter_ram, A2_STEP + 2), (int16)GET16(blitter_ram, A2_STEP + 0), GET32(blitter_ram, A2_STEP));
+	WriteLog("  a2_pixel = %d, %d (%08X)\n", (int16_t)GET16(blitter_ram, A2_PIXEL + 2), (int16_t)GET16(blitter_ram, A2_PIXEL + 0), GET32(blitter_ram, A2_PIXEL));
+	WriteLog("  a2_step  = %d, %d (%08X)\n", (int16_t)GET16(blitter_ram, A2_STEP + 2), (int16_t)GET16(blitter_ram, A2_STEP + 0), GET32(blitter_ram, A2_STEP));
 
 	WriteLog("  count    = %d x %d\n", GET16(blitter_ram, PIXLINECOUNTER + 2), GET16(blitter_ram, PIXLINECOUNTER));
 
@@ -1861,20 +1890,20 @@ void LogBlit(void)
 #define TXTEXT  (false)
 #define POLYGON (false)
 
-void BlitterMidsummer(uint32 cmd)
+void BlitterMidsummer(uint32_t cmd)
 {
 #ifdef LOG_BLITS
 	LogBlit();
 #endif
-uint32 outer_loop, inner_loop, a1_addr, a2_addr;
-int32 a1_x, a1_y, a2_x, a2_y, a1_width, a2_width;
-uint8 a1_phrase_mode, a2_phrase_mode;
+uint32_t outer_loop, inner_loop, a1_addr, a2_addr;
+int32_t a1_x, a1_y, a2_x, a2_y, a1_width, a2_width;
+uint8_t a1_phrase_mode, a2_phrase_mode;
 
 	a1_addr = REG(A1_BASE) & 0xFFFFFFF8;
 	a2_addr = REG(A2_BASE) & 0xFFFFFFF8;
 	a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
 	a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
-	uint32 m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
+	uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
 	a1_width = ((0x04 | m) << e) >> 2;//*/
 	a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
 	a2_y = (REG(A2_PIXEL) & 0xFFFF0000);
@@ -1903,14 +1932,14 @@ if (cmd != 0x00010200 && cmd != 0x01800001 && cmd != 0x01800005
 	LogBlit();
 }//*/
 
-	uint64 srcData = GET64(blitter_ram, SRCDATA), srcXtraData,
+	uint64_t srcData = GET64(blitter_ram, SRCDATA), srcXtraData,
 		dstData = GET64(blitter_ram, DSTDATA), writeData;
-	uint32 srcAddr, dstAddr;
-	uint8 bitCount, a1PixelSize, a2PixelSize;
+	uint32_t srcAddr, dstAddr;
+	uint8_t bitCount, a1PixelSize, a2PixelSize;
 
 	// JTRM says phrase mode only works for 8BPP or higher, so let's try this...
-	uint32 phraseOffset[8] = { 8, 8, 8, 8, 4, 2, 0, 0 };
-	uint8 pixelShift[8] = { 3, 2, 1, 0, 1, 2, 0, 0 };
+	uint32_t phraseOffset[8] = { 8, 8, 8, 8, 4, 2, 0, 0 };
+	uint8_t pixelShift[8] = { 3, 2, 1, 0, 1, 2, 0, 0 };
 
 	a1PixelSize = (blitter_ram[A1_FLAGS + 3] >> 3) & 0x07;
 	a2PixelSize = (blitter_ram[A2_FLAGS + 3] >> 3) & 0x07;
@@ -2077,10 +2106,10 @@ sread:							// Source data read
 	}
 	else*/
 	{
-//		uint32 pixAddr = ((DSTA2 ? a1_x : a2_x) >> 16)
+//		uint32_t pixAddr = ((DSTA2 ? a1_x : a2_x) >> 16)
 //			+ (((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
-		int32 pixAddr = (int16)((DSTA2 ? a1_x : a2_x) >> 16)
-			+ ((int16)((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
+		int32_t pixAddr = (int16_t)((DSTA2 ? a1_x : a2_x) >> 16)
+			+ ((int16_t)((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
 
 		if ((DSTA2 ? a1PixelSize : a2PixelSize) < 3)
 			pixAddr >>= pixelShift[(DSTA2 ? a1PixelSize : a2PixelSize)];
@@ -2094,8 +2123,8 @@ sread:							// Source data read
 
 	if ((DSTA2 ? a1_phrase_mode : a2_phrase_mode) == 1)
 	{
-		srcData = ((uint64)JaguarReadLong(srcAddr, BLITTER) << 32)
-			| (uint64)JaguarReadLong(srcAddr + 4, BLITTER);
+		srcData = ((uint64_t)JaguarReadLong(srcAddr, BLITTER) << 32)
+			| (uint64_t)JaguarReadLong(srcAddr + 4, BLITTER);
 	}
 	else
 	{
@@ -2116,7 +2145,7 @@ sread:							// Source data read
 
 #ifdef LOG_BLITTER_MEMORY_ACCESSES
 if (logBlit)
-	WriteLog("BLITTER: srcAddr=%08X,   srcData=%08X %08X\n", srcAddr, (uint32)(srcData >> 32), (uint32)(srcData & 0xFFFFFFFF));
+	WriteLog("BLITTER: srcAddr=%08X,   srcData=%08X %08X\n", srcAddr, (uint32_t)(srcData >> 32), (uint32_t)(srcData & 0xFFFFFFFF));
 #endif
 
 	if (SRCENZ)
@@ -2158,10 +2187,10 @@ if STEP
 	dstAddr = (DSTA2 ? a2_addr : a1_addr);
 
 	{
-//	uint32 pixAddr = ((DSTA2 ? a2_x : a1_x) >> 16)
+//	uint32_t pixAddr = ((DSTA2 ? a2_x : a1_x) >> 16)
 //		+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
-	int32 pixAddr = (int16)((DSTA2 ? a2_x : a1_x) >> 16)
-		+ ((int16)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
+	int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
+		+ ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 
 	if ((DSTA2 ? a2PixelSize : a1PixelSize) < 3)
 		pixAddr >>= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
@@ -2175,8 +2204,8 @@ if STEP
 
 	if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
 	{
-		dstData = ((uint64)JaguarReadLong(srcAddr, BLITTER) << 32)
-			| (uint64)JaguarReadLong(srcAddr + 4, BLITTER);
+		dstData = ((uint64_t)JaguarReadLong(srcAddr, BLITTER) << 32)
+			| (uint64_t)JaguarReadLong(srcAddr + 4, BLITTER);
 	}
 	else
 	{
@@ -2197,7 +2226,7 @@ if STEP
 
 #ifdef LOG_BLITTER_MEMORY_ACCESSES
 if (logBlit)
-	WriteLog("BLITTER (dread): dstAddr=%08X,   dstData=%08X %08X\n", dstAddr, (uint32)(dstData >> 32), (uint32)(dstData & 0xFFFFFFFF));
+	WriteLog("BLITTER (dread): dstAddr=%08X,   dstData=%08X %08X\n", dstAddr, (uint32_t)(dstData >> 32), (uint32_t)(dstData & 0xFFFFFFFF));
 #endif
 
 	if (DSTENZ)
@@ -2266,7 +2295,7 @@ Blit!
 
 	if (CLIPA1)
 	{
-		uint16 x = a1_x >> 16, y = a1_y >> 16;
+		uint16_t x = a1_x >> 16, y = a1_y >> 16;
 
 		if (x >= GET16(blitter_ram, A1_CLIP + 2) || y >= GET16(blitter_ram, A1_CLIP))
 			goto inhibitWrite;
@@ -2322,10 +2351,10 @@ Blit!
 	{
 /*		dstAddr += ((DSTA2 ? a2_x : a1_x) >> 16)
 			+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));*/
-//		uint32 pixAddr = ((DSTA2 ? a2_x : a1_x) >> 16)
+//		uint32_t pixAddr = ((DSTA2 ? a2_x : a1_x) >> 16)
 //			+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
-		int32 pixAddr = (int16)((DSTA2 ? a2_x : a1_x) >> 16)
-			+ ((int16)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
+		int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
+			+ ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 
 		if ((DSTA2 ? a2PixelSize : a1PixelSize) < 3)
 			pixAddr >>= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
@@ -2361,7 +2390,7 @@ Blit!
 
 #ifdef LOG_BLITTER_MEMORY_ACCESSES
 if (logBlit)
-	WriteLog("BLITTER: dstAddr=%08X, writeData=%08X %08X\n", dstAddr, (uint32)(writeData >> 32), (uint32)(writeData & 0xFFFFFFFF));
+	WriteLog("BLITTER: dstAddr=%08X, writeData=%08X %08X\n", dstAddr, (uint32_t)(writeData >> 32), (uint32_t)(writeData & 0xFFFFFFFF));
 #endif
 
 inhibitWrite://Should this go here? or on the other side of the X/Y incrementing?
@@ -2503,18 +2532,18 @@ a1fupdate    A1 step fraction is added to A1 pointer fraction
 goto a1update
 */
 /*
-#define A1_PIXEL		((uint32)0x0C)	// Integer part of the pixel (Y.i and X.i)
-#define A1_STEP			((uint32)0x10)	// Integer part of the step
-#define A1_FSTEP		((uint32)0x14)	// Fractional part of the step
-#define A1_FPIXEL		((uint32)0x18)	// Fractional part of the pixel (Y.f and X.f)
+#define A1_PIXEL		((uint32_t)0x0C)	// Integer part of the pixel (Y.i and X.i)
+#define A1_STEP			((uint32_t)0x10)	// Integer part of the step
+#define A1_FSTEP		((uint32_t)0x14)	// Fractional part of the step
+#define A1_FPIXEL		((uint32_t)0x18)	// Fractional part of the pixel (Y.f and X.f)
 */
 
 // This is all kinda murky. All we have are the Midsummer docs to give us any guidance,
 // and it's incomplete or filled with errors (like above). Aarrrgggghhhhh!
 
 //This isn't right. Is it? I don't think the fractional parts are signed...
-//	a1_x += (int32)((int16)GET16(blitter_ram, A1_FSTEP + 2));
-//	a1_y += (int32)((int16)GET16(blitter_ram, A1_FSTEP + 0));
+//	a1_x += (int32_t)((int16_t)GET16(blitter_ram, A1_FSTEP + 2));
+//	a1_y += (int32_t)((int16_t)GET16(blitter_ram, A1_FSTEP + 0));
 	a1_x += GET16(blitter_ram, A1_FSTEP + 2);
 	a1_y += GET16(blitter_ram, A1_FSTEP + 0);
 
@@ -2538,8 +2567,8 @@ else if UPDA2 goto a2update
 else if DATINIT goto init_if
 else restart inner
 */
-	a1_x += (int32)(GET16(blitter_ram, A1_STEP + 2) << 16);
-	a1_y += (int32)(GET16(blitter_ram, A1_STEP + 0) << 16);
+	a1_x += (int32_t)(GET16(blitter_ram, A1_STEP + 2) << 16);
+	a1_y += (int32_t)(GET16(blitter_ram, A1_STEP + 0) << 16);
 
 
 //kill this, for now...
@@ -2582,8 +2611,8 @@ a2update     A2 step is added to the A2 pointer
 if DATINIT goto init_if
 else restart inner
 */
-	a2_x += (int32)(GET16(blitter_ram, A2_STEP + 2) << 16);
-	a2_y += (int32)(GET16(blitter_ram, A2_STEP + 0) << 16);
+	a2_x += (int32_t)(GET16(blitter_ram, A2_STEP + 2) << 16);
+	a2_y += (int32_t)(GET16(blitter_ram, A2_STEP + 0) << 16);
 
 
 	if (DATINIT)
@@ -2653,47 +2682,50 @@ blitter_done:
 
 #ifdef USE_MIDSUMMER_BLITTER_MKII
 
-void ADDRGEN(uint32 &, uint32 &, bool, bool,
-	uint16, uint16, uint32, uint8, uint8, uint8, uint8,
-	uint16, uint16, uint32, uint8, uint8, uint8, uint8);
-void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
-	uint64 dstd, uint32 iinc, uint8 initcin[], uint64 initinc, uint16 initpix,
-	uint32 istep, uint64 patd, uint64 srcd, uint64 srcz1, uint64 srcz2,
-	uint32 zinc, uint32 zstep);
-void ADD16SAT(uint16 &r, uint8 &co, uint16 a, uint16 b, uint8 cin, bool sat, bool eightbit, bool hicinh);
-void ADDAMUX(int16 &adda_x, int16 &adda_y, uint8 addasel, int16 a1_step_x, int16 a1_step_y,
-	int16 a1_stepf_x, int16 a1_stepf_y, int16 a2_step_x, int16 a2_step_y,
-	int16 a1_inc_x, int16 a1_inc_y, int16 a1_incf_x, int16 a1_incf_y, uint8 adda_xconst,
+void ADDRGEN(uint32_t &, uint32_t &, bool, bool,
+	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
+	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t);
+void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
+	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
+	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
+	uint32_t zinc, uint32_t zstep);
+void ADD16SAT(uint16_t &r, uint8_t &co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh);
+void ADDAMUX(int16_t &adda_x, int16_t &adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
+	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y);
-void ADDBMUX(int16 &addb_x, int16 &addb_y, uint8 addbsel, int16 a1_x, int16 a1_y,
-	int16 a2_x, int16 a2_y, int16 a1_frac_x, int16 a1_frac_y);
-void DATAMUX(int16 &data_x, int16 &data_y, uint32 gpu_din, int16 addq_x, int16 addq_y, bool addqsel);
-void ADDRADD(int16 &addq_x, int16 &addq_y, bool a1fracldi,
-	uint16 adda_x, uint16 adda_y, uint16 addb_x, uint16 addb_y, uint8 modx, bool suba_x, bool suba_y);
-void DATA(uint64 &wdata, uint8 &dcomp, uint8 &zcomp, bool &nowrite,
-	bool big_pix, bool cmpdst, uint8 daddasel, uint8 daddbsel, uint8 daddmode, bool daddq_sel, uint8 data_sel,
-	uint8 dbinh, uint8 dend, uint8 dstart, uint64 dstd, uint32 iinc, uint8 lfu_func, uint64 &patd, bool patdadd,
-	bool phrase_mode, uint64 srcd, bool srcdread, bool srczread, bool srcz2add, uint8 zmode,
-	bool bcompen, bool bkgwren, bool dcompen, uint8 icount, uint8 pixsize,
-	uint64 &srcz, uint64 dstz, uint32 zinc);
-void COMP_CTRL(uint8 &dbinh, bool &nowrite,
-	bool bcompen, bool big_pix, bool bkgwren, uint8 dcomp, bool dcompen, uint8 icount,
-	uint8 pixsize, bool phrase_mode, uint8 srcd, uint8 zcomp);
+void ADDBMUX(int16_t &addb_x, int16_t &addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y);
+void DATAMUX(int16_t &data_x, int16_t &data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel);
+void ADDRADD(int16_t &addq_x, int16_t &addq_y, bool a1fracldi,
+	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y);
+void DATA(uint64_t &wdata, uint8_t &dcomp, uint8_t &zcomp, bool &nowrite,
+	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
+	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t &patd, bool patdadd,
+	bool phrase_mode, uint64_t srcd, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
+	bool bcompen, bool bkgwren, bool dcompen, uint8_t icount, uint8_t pixsize,
+	uint64_t &srcz, uint64_t dstz, uint32_t zinc);
+void COMP_CTRL(uint8_t &dbinh, bool &nowrite,
+	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
+	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp);
 #define VERBOSE_BLITTER_LOGGING
-bool logBlit = false;
 
 void BlitterMidsummer2(void)
 {
 #ifdef LOG_BLITS
 	LogBlit();
 #endif
+	if (startConciseBlitLogging)
+		LogBlit();
+
 	// Here's what the specs say the state machine does. Note that this can probably be
 	// greatly simplified (also, it's different from what John has in his Oberon docs):
 //Will remove stuff that isn't in Jaguar I once fully described (stuff like texture won't
 //be described here at all)...
 
-	uint32 cmd = GET32(blitter_ram, COMMAND);
+	uint32_t cmd = GET32(blitter_ram, COMMAND);
 
+#if 0
 logBlit = false;
 if (
 	cmd != 0x00010200 &&	// PATDSEL
@@ -2739,9 +2771,15 @@ if (
 //	&& cmd != 0x09800F41	// SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 DSTA2 LFUFUNC=C DCOMPEN
 	)
 	logBlit = true;//*/
-//logBlit = true;
+#else
+logBlit = true;
+#endif
 if (blit_start_log == 0)	// Wait for the signal...
 	logBlit = false;//*/
+//temp, for testing...
+/*if (cmd != 0x49820609)
+	logBlit = false;//*/
+
 /*
 Some T2K unique blits:
 logBlit = F, cmd = 00010200 *
@@ -2795,7 +2833,7 @@ if (cmd == 0x00011040
 		patdsel = (PATDSEL), adddsel = (ADDDSEL), cmpdst = (CMPDST), bcompen = (BCOMPEN),
 		dcompen = (DCOMPEN), bkgwren = (BKGWREN), srcshade = (SRCSHADE);
 
-	uint8 zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
+	uint8_t zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
 //Missing: BUSHI
 //Where to find various lines:
 // clip_a1  -> inner
@@ -2811,23 +2849,22 @@ if (cmd == 0x00011040
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-char zfs[512], lfus[512];
-zfs[0] = lfus[0] = 0;
-if (dstwrz || dstenz || gourz)
-	sprintf(zfs, " ZMODE=%X", zmode);
-if (!(patdsel || adddsel))
-	sprintf(lfus, " LFUFUNC=%X", lfufunc);
-printf("\nBlit! (CMD = %08X)\nFlags:%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", cmd,
-	(srcen ? " SRCEN" : ""), (srcenx ? " SRCENX" : ""), (srcenz ? " SRCENZ" : ""),
-	(dsten ? " DSTEN" : ""), (dstenz ? " DSTENZ" : ""), (dstwrz ? " DSTWRZ" : ""),
-	(clip_a1 ? " CLIP_A1" : ""), (upda1 ? " UPDA1" : ""), (upda1f ? " UPDA1F" : ""),
-	(upda2 ? " UPDA2" : ""), (dsta2 ? " DSTA2" : ""), (gourd ? " GOURD" : ""),
-	(gourz ? " GOURZ" : ""), (topben ? " TOPBEN" : ""), (topnen ? " TOPNEN" : ""),
-	(patdsel ? " PATDSEL" : ""), (adddsel ? " ADDDSEL" : ""), zfs, lfus, (cmpdst ? " CMPDST" : ""),
-	(bcompen ? " BCOMPEN" : ""), (dcompen ? " DCOMPEN" : ""), (bkgwren ? " BKGWREN" : ""),
-	(srcshade ? " SRCSHADE" : ""));
-printf("  count = %d x %d\n", GET16(blitter_ram, PIXLINECOUNTER + 2), GET16(blitter_ram, PIXLINECOUNTER));
-fflush(stdout);
+	char zfs[512], lfus[512];
+	zfs[0] = lfus[0] = 0;
+	if (dstwrz || dstenz || gourz)
+		sprintf(zfs, " ZMODE=%X", zmode);
+	if (!(patdsel || adddsel))
+		sprintf(lfus, " LFUFUNC=%X", lfufunc);
+	WriteLog("\nBlit! (CMD = %08X)\nFlags:%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", cmd,
+		(srcen ? " SRCEN" : ""), (srcenx ? " SRCENX" : ""), (srcenz ? " SRCENZ" : ""),
+		(dsten ? " DSTEN" : ""), (dstenz ? " DSTENZ" : ""), (dstwrz ? " DSTWRZ" : ""),
+		(clip_a1 ? " CLIP_A1" : ""), (upda1 ? " UPDA1" : ""), (upda1f ? " UPDA1F" : ""),
+		(upda2 ? " UPDA2" : ""), (dsta2 ? " DSTA2" : ""), (gourd ? " GOURD" : ""),
+		(gourz ? " GOURZ" : ""), (topben ? " TOPBEN" : ""), (topnen ? " TOPNEN" : ""),
+		(patdsel ? " PATDSEL" : ""), (adddsel ? " ADDDSEL" : ""), zfs, lfus, (cmpdst ? " CMPDST" : ""),
+		(bcompen ? " BCOMPEN" : ""), (dcompen ? " DCOMPEN" : ""), (bkgwren ? " BKGWREN" : ""),
+		(srcshade ? " SRCSHADE" : ""));
+	WriteLog("  count = %d x %d\n", GET16(blitter_ram, PIXLINECOUNTER + 2), GET16(blitter_ram, PIXLINECOUNTER));
 }
 #endif
 
@@ -2852,57 +2889,57 @@ fflush(stdout);
 
 	// Various registers set up by user
 
-	uint16 ocount = GET16(blitter_ram, PIXLINECOUNTER);
-	uint8 a1_pitch = blitter_ram[A1_FLAGS + 3] & 0x03;
-	uint8 a2_pitch = blitter_ram[A2_FLAGS + 3] & 0x03;
-	uint8 a1_pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
-	uint8 a2_pixsize = (blitter_ram[A2_FLAGS + 3] & 0x38) >> 3;
-	uint8 a1_zoffset = (GET16(blitter_ram, A1_FLAGS + 2) >> 6) & 0x07;
-	uint8 a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
-	uint8 a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
-	uint8 a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
+	uint16_t ocount = GET16(blitter_ram, PIXLINECOUNTER);
+	uint8_t a1_pitch = blitter_ram[A1_FLAGS + 3] & 0x03;
+	uint8_t a2_pitch = blitter_ram[A2_FLAGS + 3] & 0x03;
+	uint8_t a1_pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
+	uint8_t a2_pixsize = (blitter_ram[A2_FLAGS + 3] & 0x38) >> 3;
+	uint8_t a1_zoffset = (GET16(blitter_ram, A1_FLAGS + 2) >> 6) & 0x07;
+	uint8_t a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
+	uint8_t a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
+	uint8_t a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
 	bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
-	uint8 a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
+	uint8_t a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
 	bool a1addy = blitter_ram[A1_FLAGS + 1] & 0x04, a2addy = blitter_ram[A2_FLAGS + 1] & 0x04;
 	bool a1xsign = blitter_ram[A1_FLAGS + 1] & 0x08, a2xsign = blitter_ram[A2_FLAGS + 1] & 0x08;
 	bool a1ysign = blitter_ram[A1_FLAGS + 1] & 0x10, a2ysign = blitter_ram[A2_FLAGS + 1] & 0x10;
-	uint32 a1_base = GET32(blitter_ram, A1_BASE) & 0xFFFFFFF8;	// Phrase aligned by ignoring bottom 3 bits
-	uint32 a2_base = GET32(blitter_ram, A2_BASE) & 0xFFFFFFF8;
+	uint32_t a1_base = GET32(blitter_ram, A1_BASE) & 0xFFFFFFF8;	// Phrase aligned by ignoring bottom 3 bits
+	uint32_t a2_base = GET32(blitter_ram, A2_BASE) & 0xFFFFFFF8;
 
-	uint16 a1_win_x = GET16(blitter_ram, A1_CLIP + 2) & 0x7FFF;
-	uint16 a1_win_y = GET16(blitter_ram, A1_CLIP + 0) & 0x7FFF;
-	int16 a1_x = (int16)GET16(blitter_ram, A1_PIXEL + 2);
-	int16 a1_y = (int16)GET16(blitter_ram, A1_PIXEL + 0);
-	int16 a1_step_x = (int16)GET16(blitter_ram, A1_STEP + 2);
-	int16 a1_step_y = (int16)GET16(blitter_ram, A1_STEP + 0);
-	uint16 a1_stepf_x = GET16(blitter_ram, A1_FSTEP + 2);
-	uint16 a1_stepf_y = GET16(blitter_ram, A1_FSTEP + 0);
-	uint16 a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
-	uint16 a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
-	int16 a1_inc_x = (int16)GET16(blitter_ram, A1_INC + 2);
-	int16 a1_inc_y = (int16)GET16(blitter_ram, A1_INC + 0);
-	uint16 a1_incf_x = GET16(blitter_ram, A1_FINC + 2);
-	uint16 a1_incf_y = GET16(blitter_ram, A1_FINC + 0);
+	uint16_t a1_win_x = GET16(blitter_ram, A1_CLIP + 2) & 0x7FFF;
+	uint16_t a1_win_y = GET16(blitter_ram, A1_CLIP + 0) & 0x7FFF;
+	int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
+	int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
+	int16_t a1_step_x = (int16_t)GET16(blitter_ram, A1_STEP + 2);
+	int16_t a1_step_y = (int16_t)GET16(blitter_ram, A1_STEP + 0);
+	uint16_t a1_stepf_x = GET16(blitter_ram, A1_FSTEP + 2);
+	uint16_t a1_stepf_y = GET16(blitter_ram, A1_FSTEP + 0);
+	uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
+	uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
+	int16_t a1_inc_x = (int16_t)GET16(blitter_ram, A1_INC + 2);
+	int16_t a1_inc_y = (int16_t)GET16(blitter_ram, A1_INC + 0);
+	uint16_t a1_incf_x = GET16(blitter_ram, A1_FINC + 2);
+	uint16_t a1_incf_y = GET16(blitter_ram, A1_FINC + 0);
 
-	int16 a2_x = (int16)GET16(blitter_ram, A2_PIXEL + 2);
-	int16 a2_y = (int16)GET16(blitter_ram, A2_PIXEL + 0);
-	uint16 a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
-	uint16 a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
-	int16 a2_step_x = (int16)GET16(blitter_ram, A2_STEP + 2);
-	int16 a2_step_y = (int16)GET16(blitter_ram, A2_STEP + 0);
+	int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
+	int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
+	uint16_t a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
+	uint16_t a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
+	int16_t a2_step_x = (int16_t)GET16(blitter_ram, A2_STEP + 2);
+	int16_t a2_step_y = (int16_t)GET16(blitter_ram, A2_STEP + 0);
 
-	uint64 srcd1 = GET64(blitter_ram, SRCDATA);
-	uint64 srcd2 = 0;
-	uint64 dstd = GET64(blitter_ram, DSTDATA);
-	uint64 patd = GET64(blitter_ram, PATTERNDATA);
-	uint32 iinc = GET32(blitter_ram, INTENSITYINC);
-	uint64 srcz1 = GET64(blitter_ram, SRCZINT);
-	uint64 srcz2 = GET64(blitter_ram, SRCZFRAC);
-	uint64 dstz = GET64(blitter_ram, DSTZ);
-	uint32 zinc = GET32(blitter_ram, ZINC);
-	uint32 collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
+	uint64_t srcd1 = GET64(blitter_ram, SRCDATA);
+	uint64_t srcd2 = 0;
+	uint64_t dstd = GET64(blitter_ram, DSTDATA);
+	uint64_t patd = GET64(blitter_ram, PATTERNDATA);
+	uint32_t iinc = GET32(blitter_ram, INTENSITYINC);
+	uint64_t srcz1 = GET64(blitter_ram, SRCZINT);
+	uint64_t srcz2 = GET64(blitter_ram, SRCZFRAC);
+	uint64_t dstz = GET64(blitter_ram, DSTZ);
+	uint32_t zinc = GET32(blitter_ram, ZINC);
+	uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
 
-	uint8 pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
+	uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
 
 //Testing Trevor McFur--I *think* it's the circle on the lower RHS of the screen...
 /*logBlit = false;
@@ -3019,24 +3056,24 @@ Flags: UPDA1 PATDSEL
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  a1_base = %08X, a2_base = %08X\n", a1_base, a2_base);
-printf("  a1_x = %04X, a1_y = %04X, a1_frac_x = %04X, a1_frac_y = %04X, a2_x = %04X, a2_y = %04X\n", (uint16)a1_x, (uint16)a1_y, a1_frac_x, a1_frac_y, (uint16)a2_x, (uint16)a2_y);
-printf("  a1_step_x = %04X, a1_step_y = %04X, a1_stepf_x = %04X, a1_stepf_y = %04X, a2_step_x = %04X, a2_step_y = %04X\n", (uint16)a1_step_x, (uint16)a1_step_y, a1_stepf_x, a1_stepf_y, (uint16)a2_step_x, (uint16)a2_step_y);
-printf("  a1_inc_x = %04X, a1_inc_y = %04X, a1_incf_x = %04X, a1_incf_y = %04X\n", (uint16)a1_inc_x, (uint16)a1_inc_y, a1_incf_x, a1_incf_y);
-printf("  a1_win_x = %04X, a1_win_y = %04X, a2_mask_x = %04X, a2_mask_y = %04X\n", a1_win_x, a1_win_y, a2_mask_x, a2_mask_y);
-char x_add_str[4][4] = { "phr", "1", "0", "inc" };
-printf("  a2_mask=%s a1add=%s%s/%s%s a2add=%s%s/%s%s\n", (a2_mask ? "T" : "F"), (a1xsign ? "-" : "+"), x_add_str[a1addx],
-	(a1ysign ? "-" : "+"), (a1addy ? "1" : "0"), (a2xsign ? "-" : "+"), x_add_str[a2addx],
-	(a2ysign ? "-" : "+"), (a2addy ? "1" : "0"));
-printf("  a1_pixsize = %u, a2_pixsize = %u\n", a1_pixsize, a2_pixsize);
-printf("   srcd=%08X%08X  dstd=%08X%08X patd=%08X%08X iinc=%08X\n",
-	(uint32)(srcd1 >> 32), (uint32)(srcd1 & 0xFFFFFFFF),
-	(uint32)(dstd >> 32), (uint32)(dstd & 0xFFFFFFFF),
-	(uint32)(patd >> 32), (uint32)(patd & 0xFFFFFFFF), iinc);
-printf("  srcz1=%08X%08X srcz2=%08X%08X dstz=%08X%08X zinc=%08X, coll=%X\n",
-	(uint32)(srcz1 >> 32), (uint32)(srcz1 & 0xFFFFFFFF),
-	(uint32)(srcz2 >> 32), (uint32)(srcz2 & 0xFFFFFFFF),
-	(uint32)(dstz >> 32), (uint32)(dstz & 0xFFFFFFFF), zinc, collision);
+	WriteLog("  a1_base = %08X, a2_base = %08X\n", a1_base, a2_base);
+	WriteLog("  a1_x = %04X, a1_y = %04X, a1_frac_x = %04X, a1_frac_y = %04X, a2_x = %04X, a2_y = %04X\n", (uint16_t)a1_x, (uint16_t)a1_y, a1_frac_x, a1_frac_y, (uint16_t)a2_x, (uint16_t)a2_y);
+	WriteLog("  a1_step_x = %04X, a1_step_y = %04X, a1_stepf_x = %04X, a1_stepf_y = %04X, a2_step_x = %04X, a2_step_y = %04X\n", (uint16_t)a1_step_x, (uint16_t)a1_step_y, a1_stepf_x, a1_stepf_y, (uint16_t)a2_step_x, (uint16_t)a2_step_y);
+	WriteLog("  a1_inc_x = %04X, a1_inc_y = %04X, a1_incf_x = %04X, a1_incf_y = %04X\n", (uint16_t)a1_inc_x, (uint16_t)a1_inc_y, a1_incf_x, a1_incf_y);
+	WriteLog("  a1_win_x = %04X, a1_win_y = %04X, a2_mask_x = %04X, a2_mask_y = %04X\n", a1_win_x, a1_win_y, a2_mask_x, a2_mask_y);
+	char x_add_str[4][4] = { "phr", "1", "0", "inc" };
+	WriteLog("  a2_mask=%s a1add=%s%s/%s%s a2add=%s%s/%s%s\n", (a2_mask ? "T" : "F"), (a1xsign ? "-" : "+"), x_add_str[a1addx],
+		(a1ysign ? "-" : "+"), (a1addy ? "1" : "0"), (a2xsign ? "-" : "+"), x_add_str[a2addx],
+		(a2ysign ? "-" : "+"), (a2addy ? "1" : "0"));
+	WriteLog("  a1_pixsize = %u, a2_pixsize = %u\n", a1_pixsize, a2_pixsize);
+	WriteLog("   srcd=%08X%08X  dstd=%08X%08X patd=%08X%08X iinc=%08X\n",
+		(uint32_t)(srcd1 >> 32), (uint32_t)(srcd1 & 0xFFFFFFFF),
+		(uint32_t)(dstd >> 32), (uint32_t)(dstd & 0xFFFFFFFF),
+		(uint32_t)(patd >> 32), (uint32_t)(patd & 0xFFFFFFFF), iinc);
+	WriteLog("  srcz1=%08X%08X srcz2=%08X%08X dstz=%08X%08X zinc=%08X, coll=%X\n",
+		(uint32_t)(srcz1 >> 32), (uint32_t)(srcz1 & 0xFFFFFFFF),
+		(uint32_t)(srcz2 >> 32), (uint32_t)(srcz2 & 0xFFFFFFFF),
+		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF), zinc, collision);
 }
 #endif
 
@@ -3045,16 +3082,13 @@ printf("  srcz1=%08X%08X srcz2=%08X%08X dstz=%08X%08X zinc=%08X, coll=%X\n",
 	bool phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Phrase mode is %s\n", (phrase_mode ? "ON" : "off"));
-fflush(stdout);
-}
+	WriteLog("  Phrase mode is %s\n", (phrase_mode ? "ON" : "off"));
 #endif
 //logBlit = false;
 
 	// Stopgap vars to simulate various lines
 
-	uint16 a1FracCInX = 0, a1FracCInY = 0;
+	uint16_t a1FracCInX = 0, a1FracCInY = 0;
 
 	while (true)
 	{
@@ -3064,10 +3098,7 @@ fflush(stdout);
 		{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering IDLE state...\n");
-fflush(stdout);
-}
+	WriteLog("  Entering IDLE state...\n");
 #endif
 			idlei = true;
 
@@ -3209,13 +3240,11 @@ Now:
 // * denotes states that will never assert for Jaguar I
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  [in=%c a1f=%c a1=%c zf=%c z=%c a2=%c iif=%c iii=%c izf=%c izi=%c]\n",
-	(inner ? 'T' : 'F'), (a1fupdate ? 'T' : 'F'), (a1update ? 'T' : 'F'), (zfupdate ? 'T' : 'F'),
-	(zupdate ? 'T' : 'F'), (a2update ? 'T' : 'F'), (init_if ? 'T' : 'F'), (init_ii ? 'T' : 'F'),
-	(init_zf ? 'T' : 'F'), (init_zi ? 'T' : 'F'));
-fflush(stdout);
-}
+	WriteLog("  [in=%c a1f=%c a1=%c zf=%c z=%c a2=%c iif=%c iii=%c izf=%c izi=%c]\n",
+		(inner ? 'T' : 'F'), (a1fupdate ? 'T' : 'F'), (a1update ? 'T' : 'F'),
+		(zfupdate ? 'T' : 'F'), (zupdate ? 'T' : 'F'), (a2update ? 'T' : 'F'),
+		(init_if ? 'T' : 'F'), (init_ii ? 'T' : 'F'), (init_zf ? 'T' : 'F'),
+		(init_zi ? 'T' : 'F'));
 #endif
 
 // Now, depending on how we want to handle things, we could either put the implementation
@@ -3228,12 +3257,9 @@ fflush(stdout);
 			indone = false;
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering INNER state...\n");
-fflush(stdout);
-}
+	WriteLog("  Entering INNER state...\n");
 #endif
-			uint16 icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
+			uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
 			bool idle_inner = true, step = true, sreadx = false, szreadx = false, sread = false,
 				szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
 			bool inner0 = false;
@@ -3244,7 +3270,7 @@ fflush(stdout);
 			bool textext = false, txtread = false;
 
 //other stuff
-uint8 srcshift = 0;
+uint8_t srcshift = 0;
 bool sshftld = true; // D flipflop (D -> Q): instart -> sshftld
 //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
 /*
@@ -3286,10 +3312,7 @@ Flags: SRCEN SRCENX LFUFUNC=C
 				{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering IDLE_INNER state...\n");
-fflush(stdout);
-}
+	WriteLog("  Entering IDLE_INNER state...\n");
 #endif
 					idle_inneri = true;
 break;
@@ -3467,7 +3490,7 @@ bit 0 = /a2update . ( a1fupdate
 The /a2update term on bits 0 and 1 is redundant.
 Now look-ahead based
 */
-				uint8 addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
+				uint8_t addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
 				addasel |= (a1_add && a1addx == 3 ? 0x02 : 0x00);
 				addasel |= (a2update ? 0x04 : 0x00);
 /* Address adder input A X constant selection
@@ -3482,7 +3505,7 @@ for A1
 similarly for A2
 JLH: Also, 11 will likewise set the value to 111
 */
-				uint8 a1_xconst = 6 - a1_pixsize, a2_xconst = 6 - a2_pixsize;
+				uint8_t a1_xconst = 6 - a1_pixsize, a2_xconst = 6 - a2_pixsize;
 
 				if (a1addx == 1)
 				    a1_xconst = 0;
@@ -3494,7 +3517,7 @@ JLH: Also, 11 will likewise set the value to 111
 				else if (a2addx & 0x02)
 				    a2_xconst = 7;
 
-				uint8 adda_xconst = (a2_add ? a2_xconst : a1_xconst);
+				uint8_t adda_xconst = (a2_add ? a2_xconst : a1_xconst);
 /* Address adder input A Y constant selection
 22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
 Therefore, the selection has to be controlled by a bug fix bit.
@@ -3530,7 +3553,7 @@ Bit 0 =   a2update + a2_add
 		+ a1update . a1_stepld
 		+ a2update . a2_stepld
 */
-				uint8 addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
+				uint8_t addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
 				    || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x01 : 0x00);
 				addbsel |= (a1fupdate || (a1_add && a1addx == 3) || (a1fupdate && a1_stepld)
 				    || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x02 : 0x00);
@@ -3546,9 +3569,9 @@ it is being updated by one phrase
 Masking is enabled for a1 when a1addx[0..1] is 00, and the value
 is 6 - the pixel size (again!)
 */
-				uint8 maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
-				uint8 maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
-				uint8 modx = (a2_add ? maska2 : maska1);
+				uint8_t maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
+				uint8_t maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
+				uint8_t modx = (a2_add ? maska2 : maska1);
 /* Generate load strobes for the increment updates */
 
 /*A1pldt		:= NAN2 (a1pldt, atick[1], a1_add);
@@ -3588,7 +3611,7 @@ Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
 Bit 2 =   (gourd + gourz) . /(init_if + init_ii + init_zf + init_zi)
 	+ dwrite  . srcshade
 */
-uint8 daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
+uint8_t daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
 	|| init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
 daddasel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
 daddasel |= (((gourd || gourz) && !(init_if || init_ii || init_zf || init_zi))
@@ -3620,7 +3643,7 @@ Bit 2 =   dwrite  . gourd . (atick[0] + atick[1])
 	+ istepadd + istepfadd + zstepadd + zstepfadd
 Bit 3 =   istepadd + istepfadd + zstepadd + zstepfadd
 */
-uint8 daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
+uint8_t daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
 	|| istepadd || zstepadd || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
 daddbsel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
 daddbsel |= ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
@@ -3668,7 +3691,7 @@ Bit 2 =   /gourd . /gourz
 	+ istepadd . ext_int
 	+ init_ii . ext_int
 */
-uint8 daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
+uint8_t daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
 	|| (dwrite && gourd && topnen && topben && !ext_int) || zstepadd
 	|| (istepadd && !topnen && !topben && !ext_int)
 	|| (istepadd && topnen && topben && !ext_int) || (!gourd && !gourz && !topnen && !topben)
@@ -3720,10 +3743,10 @@ Bit 0 =  /patdsel . /adddsel
 Bit 1 =   adddsel
 	+ dzwrite1d
 */
-uint8 data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
+uint8_t data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
 	| (adddsel || dzwrite ? 0x02 : 0x00);
 
-uint32 address, pixAddr;
+uint32_t address, pixAddr;
 ADDRGEN(address, pixAddr, gena2i, zaddr,
 	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
 	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
@@ -3750,12 +3773,12 @@ phrase of the destination X pointer, in pixels.
 
 Source shifting is disabled when srcen is not set.
 */
-uint8 dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
-uint8 srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
-uint8 shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
+uint8_t dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+uint8_t srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
+uint8_t shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
 /* The phrase mode alignment count is given by the phrase offset
 of the first pixel, for bit to byte expansion */
-uint8 pobb = 0;
+uint8_t pobb = 0;
 
 if (pixsize == 3)
 	pobb = dstxp & 0x07;
@@ -3765,8 +3788,8 @@ if (pixsize == 5)
 	pobb = dstxp & 0x01;
 
 bool pobbsel = phrase_mode && bcompen;
-uint8 loshd = (pobbsel ? pobb : shftv) & 0x07;
-uint8 shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
+uint8_t loshd = (pobbsel ? pobb : shftv) & 0x07;
+uint8_t shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
 /* Enable for high bits is srcen . phrase_mode */
 shfti |= (srcen && phrase_mode ? (sshftld ? shftv & 0x38 : srcshift & 0x38) : 0);
 srcshift = shfti;
@@ -3775,19 +3798,15 @@ srcshift = shfti;
 				{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering SREADX state...");
-//printf(" [dstart=%X dend=%X pwidth=%X srcshift=%X]\n", dstart, dend, pwidth, srcshift);
-fflush(stdout);
-}
+	WriteLog("  Entering SREADX state...");
 #endif
-//uint32 srcAddr, pixAddr;
+//uint32_t srcAddr, pixAddr;
 //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
 //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
 //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
 					srcd2 = srcd1;
-					srcd1 = ((uint64)JaguarReadLong(address + 0, BLITTER) << 32)
-						| (uint64)JaguarReadLong(address + 4, BLITTER);
+					srcd1 = ((uint64_t)JaguarReadLong(address + 0, BLITTER) << 32)
+						| (uint64_t)JaguarReadLong(address + 4, BLITTER);
 //Kludge to take pixel size into account...
 //Hmm. If we're not in phrase mode, this is most likely NOT going to be used...
 //Actually, it would be--because of BCOMPEN expansion, for example...
@@ -3807,11 +3826,8 @@ if (!phrase_mode)
 }//*/
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("    Source extra read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-	(uint32)(srcd1 >> 32), (uint32)(srcd1 & 0xFFFFFFFF));
-fflush(stdout);
-}
+	WriteLog("    Source extra read address/pix address: %08X/%1X [%08X%08X]\n",
+		address, pixAddr, (uint32_t)(srcd1 >> 32), (uint32_t)(srcd1 & 0xFFFFFFFF));
 #endif
 				}
 
@@ -3819,20 +3835,14 @@ fflush(stdout);
 				{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering SZREADX state...");
-fflush(stdout);
-}
+	WriteLog("  Entering SZREADX state...");
 #endif
 					srcz2 = srcz1;
-					srcz1 = ((uint64)JaguarReadLong(address, BLITTER) << 32) | (uint64)JaguarReadLong(address + 4, BLITTER);
+					srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf(" Src Z extra read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-		(uint32)(dstz >> 32), (uint32)(dstz & 0xFFFFFFFF));
-	fflush(stdout);
-}
+	WriteLog(" Src Z extra read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
+		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF));
 #endif
 				}
 
@@ -3840,18 +3850,14 @@ if (logBlit)
 				{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering SREAD state...");
-//printf(" [dstart=%X dend=%X pwidth=%X srcshift=%X]\n", dstart, dend, pwidth, srcshift);
-fflush(stdout);
-}
+	WriteLog("  Entering SREAD state...");
 #endif
-//uint32 srcAddr, pixAddr;
+//uint32_t srcAddr, pixAddr;
 //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
 //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
 //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
 srcd2 = srcd1;
-srcd1 = ((uint64)JaguarReadLong(address, BLITTER) << 32) | (uint64)JaguarReadLong(address + 4, BLITTER);
+srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 //Kludge to take pixel size into account...
 if (!phrase_mode)
 {
@@ -3870,9 +3876,9 @@ if (!phrase_mode)
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("     Source read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-	(uint32)(srcd1 >> 32), (uint32)(srcd1 & 0xFFFFFFFF));
-fflush(stdout);
+WriteLog("     Source read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
+	(uint32_t)(srcd1 >> 32), (uint32_t)(srcd1 & 0xFFFFFFFF));
+//fflush(stdout);
 }
 #endif
 				}
@@ -3882,12 +3888,12 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  Entering SZREAD state...");
-fflush(stdout);
+WriteLog("  Entering SZREAD state...");
+//fflush(stdout);
 }
 #endif
 					srcz2 = srcz1;
-					srcz1 = ((uint64)JaguarReadLong(address, BLITTER) << 32) | (uint64)JaguarReadLong(address + 4, BLITTER);
+					srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
 if (!phrase_mode && pixsize == 4)
 	srcz1 >>= 48;
@@ -3895,9 +3901,8 @@ if (!phrase_mode && pixsize == 4)
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-	printf("     Src Z read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-		(uint32)(dstz >> 32), (uint32)(dstz & 0xFFFFFFFF));
-	fflush(stdout);
+	WriteLog("     Src Z read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
+		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF));
 }
 #endif
 				}
@@ -3906,16 +3911,13 @@ if (logBlit)
 				{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering DREAD state...");
-fflush(stdout);
-}
+	WriteLog("  Entering DREAD state...");
 #endif
-//uint32 dstAddr, pixAddr;
+//uint32_t dstAddr, pixAddr;
 //ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
 //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
 //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-dstd = ((uint64)JaguarReadLong(address, BLITTER) << 32) | (uint64)JaguarReadLong(address + 4, BLITTER);
+dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 //Kludge to take pixel size into account...
 if (!phrase_mode)
 {
@@ -3928,11 +3930,8 @@ if (!phrase_mode)
 }
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("       Dest read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-	(uint32)(dstd >> 32), (uint32)(dstd & 0xFFFFFFFF));
-fflush(stdout);
-}
+	WriteLog("       Dest read address/pix address: %08X/%1X [%08X%08X]\n", address,
+		pixAddr, (uint32_t)(dstd >> 32), (uint32_t)(dstd & 0xFFFFFFFF));
 #endif
 				}
 
@@ -3941,52 +3940,43 @@ fflush(stdout);
 // Is Z always 64 bit read? Or sometimes 16 bit (dependent on phrase_mode)?
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf("  Entering DZREAD state...");
-	fflush(stdout);
-}
+	WriteLog("  Entering DZREAD state...");
 #endif
-					dstz = ((uint64)JaguarReadLong(address, BLITTER) << 32) | (uint64)JaguarReadLong(address + 4, BLITTER);
+					dstz = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
 if (!phrase_mode && pixsize == 4)
 	dstz >>= 48;
 
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf("    Dest Z read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-		(uint32)(dstz >> 32), (uint32)(dstz & 0xFFFFFFFF));
-	fflush(stdout);
-}
+	WriteLog("    Dest Z read address/pix address: %08X/%1X [%08X%08X]\n", address,
+		pixAddr, (uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF));
 #endif
 				}
 
 // These vars should probably go further up in the code... !!! FIX !!!
 // We can't preassign these unless they're static...
-//uint64 srcz = 0;			// These are assigned to shut up stupid compiler warnings--dwrite is ALWAYS asserted
+//uint64_t srcz = 0;			// These are assigned to shut up stupid compiler warnings--dwrite is ALWAYS asserted
 //bool winhibit = false;
-uint64 srcz;
+uint64_t srcz;
 bool winhibit;
 //NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
 				if (dwrite)
 				{
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-printf("  Entering DWRITE state...");
-fflush(stdout);
-}
+	WriteLog("  Entering DWRITE state...");
 #endif
 //Counter is done on the dwrite state...! (We'll do it first, since it affects dstart/dend calculations.)
 //Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
-					int8 inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
-					uint8 inc = 0;
+					int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
+					uint8_t inc = 0;
 					inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
 					inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || pixsize == 5 && !(inct & 0x01)) ? 0x02 : 0x00);
 					inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
 					inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
 
-					uint16 oldicount = icount;	// Save icount to detect underflow...
+					uint16_t oldicount = icount;	// Save icount to detect underflow...
 					icount -= inc;
 
 					if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
@@ -3997,7 +3987,7 @@ fflush(stdout);
 //Start & end write mask computations...
 //*********************************************************************************
 
-uint8 dstart = 0;
+uint8_t dstart = 0;
 
 if (pixsize == 3)
 	dstart = (dstxp & 0x07) << 3;
@@ -4009,12 +3999,12 @@ if (pixsize == 5)
 dstart = (phrase_mode ? dstart : pixAddr & 0x07);
 
 //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
-uint16 dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
-uint16 pseq = dstxwr ^ (a1_win_x & 0x7FFE);
+uint16_t dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+uint16_t pseq = dstxwr ^ (a1_win_x & 0x7FFE);
 pseq = (pixsize == 5 ? pseq : pseq & 0x7FFC);
 pseq = ((pixsize & 0x06) == 4 ? pseq : pseq & 0x7FF8);
 bool penden = clip_a1 && (pseq == 0);
-uint8 window_mask = 0;
+uint8_t window_mask = 0;
 
 if (pixsize == 3)
 	window_mask = (a1_win_x & 0x07) << 3;
@@ -4050,7 +4040,7 @@ NOTE! This doesn't fix the problem because inner0 is asserted too late to help h
 
 /* The mask to be used if within one phrase of the end of the inner
 loop, similarly */
-uint8 inner_mask = 0;
+uint8_t inner_mask = 0;
 
 if (pixsize == 3)
 	inner_mask = (icount & 0x07) << 3;
@@ -4064,12 +4054,12 @@ if (!inner0)
 the inner mask, where is all cases 000 means 1000. */
 window_mask = (window_mask == 0 ? 0x40 : window_mask);
 inner_mask = (inner_mask == 0 ? 0x40 : inner_mask);
-uint8 emask = (window_mask > inner_mask ? inner_mask : window_mask);
+uint8_t emask = (window_mask > inner_mask ? inner_mask : window_mask);
 /* The mask to be used for the pixel size, to which must be added
 the bit offset */
-uint8 pma = pixAddr + (1 << pixsize);
+uint8_t pma = pixAddr + (1 << pixsize);
 /* Select the mask */
-uint8 dend = (phrase_mode ? emask : pma);
+uint8_t dend = (phrase_mode ? emask : pma);
 
 /* The cycle width in phrase mode is normally one phrase.  However,
 at the start and end it may be narrower.  The start and end masks
@@ -4081,24 +4071,21 @@ are used to generate this.  The width is given by:
 This is only used for writes in phrase mode.
 Start and end from the address level of the pipeline are used.
 */
-uint8 pwidth = (((dend | dstart) & 0x07) == 0 ? 0x08 : (dend - dstart) & 0x07);
+uint8_t pwidth = (((dend | dstart) & 0x07) == 0 ? 0x08 : (dend - dstart) & 0x07);
 
-//uint32 dstAddr, pixAddr;
+//uint32_t dstAddr, pixAddr;
 //ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
 //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
 //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf("     Dest write address/pix address: %08X/%1X", address, pixAddr);
-	fflush(stdout);
-}
+	WriteLog("     Dest write address/pix address: %08X/%1X", address, pixAddr);
 #endif
 
 //More testing... This is almost certainly wrong, but how else does this work???
 //Seems to kinda work... But still, this doesn't seem to make any sense!
 if (phrase_mode && !dsten)
-	dstd = ((uint64)JaguarReadLong(address, BLITTER) << 32) | (uint64)JaguarReadLong(address + 4, BLITTER);
+	dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 
 //Testing only... for now...
 //This is wrong because the write data is a combination of srcd and dstd--either run
@@ -4108,7 +4095,7 @@ if (phrase_mode && !dsten)
 //Now it does!
 
 // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
-uint64 srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
+uint64_t srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
 //bleh, ugly ugly ugly
 if (srcshift == 0)
 	srcd = srcd1;
@@ -4131,30 +4118,27 @@ Odd. It's equating 0 with 0... Even though ZMODE is $04 (less than)!
 if (gourz)
 {
 /*
-void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
-	uint64 dstd, uint32 iinc, uint8 initcin[], uint64 initinc, uint16 initpix,
-	uint32 istep, uint64 patd, uint64 srcd, uint64 srcz1, uint64 srcz2,
-	uint32 zinc, uint32 zstep)
+void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
+	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
+	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
+	uint32_t zinc, uint32_t zstep)
 */
-	uint16 addq[4];
-	uint8 initcin[4] = { 0, 0, 0, 0 };
+	uint16_t addq[4];
+	uint8_t initcin[4] = { 0, 0, 0, 0 };
 	ADDARRAY(addq, 7/*daddasel*/, 6/*daddbsel*/, 0/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
-	srcz2 = ((uint64)addq[3] << 48) | ((uint64)addq[2] << 32) | ((uint64)addq[1] << 16) | (uint64)addq[0];
+	srcz2 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 	ADDARRAY(addq, 6/*daddasel*/, 7/*daddbsel*/, 1/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
-	srcz1 = ((uint64)addq[3] << 48) | ((uint64)addq[2] << 32) | ((uint64)addq[1] << 16) | (uint64)addq[0];
+	srcz1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 
 #if 0//def VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf("\n[srcz1=%08X%08X, srcz2=%08X%08X, zinc=%08X",
-		(uint32)(srcz1 >> 32), (uint32)(srcz1 & 0xFFFFFFFF),
-		(uint32)(srcz2 >> 32), (uint32)(srcz2 & 0xFFFFFFFF), zinc);
-	fflush(stdout);
-}
+	WriteLog("\n[srcz1=%08X%08X, srcz2=%08X%08X, zinc=%08X",
+		(uint32_t)(srcz1 >> 32), (uint32_t)(srcz1 & 0xFFFFFFFF),
+		(uint32_t)(srcz2 >> 32), (uint32_t)(srcz2 & 0xFFFFFFFF), zinc);
 #endif
 }
 
-uint8 zSrcShift = srcshift & 0x30;
+uint8_t zSrcShift = srcshift & 0x30;
 srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
 //bleh, ugly ugly ugly
 if (zSrcShift == 0)
@@ -4162,10 +4146,7 @@ if (zSrcShift == 0)
 
 #if 0//def VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf(" srcz=%08X%08X]\n", (uint32)(srcz >> 32), (uint32)(srcz & 0xFFFFFFFF));
-	fflush(stdout);
-}
+	WriteLog(" srcz=%08X%08X]\n", (uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF));
 #endif
 
 //When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
@@ -4178,10 +4159,10 @@ if (srcshade)
 //NOTE: This is basically doubling the work done by DATA--since this is what
 //      ADDARRAY is loaded with when srschshade is enabled... !!! FIX !!!
 //      Also note that it doesn't work properly unless GOURZ is set--there's the clue!
-	uint16 addq[4];
-	uint8 initcin[4] = { 0, 0, 0, 0 };
+	uint16_t addq[4];
+	uint8_t initcin[4] = { 0, 0, 0, 0 };
 	ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
-	srcd = ((uint64)addq[3] << 48) | ((uint64)addq[2] << 32) | ((uint64)addq[1] << 16) | (uint64)addq[0];
+	srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 }
 //Seems to work... Not 100% sure tho.
 //end try this
@@ -4192,10 +4173,10 @@ if (srcshade)
 //Seems the carry out is lost again... !!! FIX !!! [DONE--see below]
 if (patfadd)
 {
-	uint16 addq[4];
-	uint8 initcin[4] = { 0, 0, 0, 0 };
+	uint16_t addq[4];
+	uint8_t initcin[4] = { 0, 0, 0, 0 };
 	ADDARRAY(addq, 4/*daddasel*/, 4/*daddbsel*/, 0/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
-	srcd1 = ((uint64)addq[3] << 48) | ((uint64)addq[2] << 32) | ((uint64)addq[1] << 16) | (uint64)addq[0];
+	srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 }
 
 //Note that we still don't take atick[0] & [1] into account here, so this will skip half of the data needed... !!! FIX !!!
@@ -4203,8 +4184,8 @@ if (patfadd)
 //Also, should do srcshift on the z value in phrase mode... !!! FIX !!! [DONE]
 //As well as add a srcz variable we can set external to this state... !!! FIX !!! [DONE]
 
-uint64 wdata;
-uint8 dcomp, zcomp;
+uint64_t wdata;
+uint8_t dcomp, zcomp;
 DATA(wdata, dcomp, zcomp, winhibit,
 	true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
 	dend, dstart, dstd, iinc, lfufunc, patd, patdadd,
@@ -4317,11 +4298,10 @@ if (!winhibit)
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-	printf(" [%08X%08X]%s", (uint32)(wdata >> 32), (uint32)(wdata & 0xFFFFFFFF), (winhibit ? "[X]" : ""));
-	printf(" (icount=%04X, inc=%u)\n", icount, (uint16)inc);
-	printf("    [dstart=%X dend=%X pwidth=%X srcshift=%X]", dstart, dend, pwidth, srcshift);
-	printf("[daas=%X dabs=%X dam=%X ds=%X daq=%s]\n", daddasel, daddbsel, daddmode, data_sel, (daddq_sel ? "T" : "F"));
-	fflush(stdout);
+	WriteLog(" [%08X%08X]%s", (uint32_t)(wdata >> 32), (uint32_t)(wdata & 0xFFFFFFFF), (winhibit ? "[X]" : ""));
+	WriteLog(" (icount=%04X, inc=%u)\n", icount, (uint16_t)inc);
+	WriteLog("    [dstart=%X dend=%X pwidth=%X srcshift=%X]", dstart, dend, pwidth, srcshift);
+	WriteLog("[daas=%X dabs=%X dam=%X ds=%X daq=%s]\n", daddasel, daddbsel, daddmode, data_sel, (daddq_sel ? "T" : "F"));
 }
 #endif
 				}
@@ -4338,10 +4318,9 @@ if (logBlit)
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-	printf("  Entering DZWRITE state...");
-	printf("  Dest Z write address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-		(uint32)(srcz >> 32), (uint32)(srcz & 0xFFFFFFFF));
-	fflush(stdout);
+	WriteLog("  Entering DZWRITE state...");
+	WriteLog("  Dest Z write address/pix address: %08X/%1X [%08X%08X]\n", address,
+		pixAddr, (uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF));
 }
 #endif
 //This is not correct... !!! FIX !!!
@@ -4365,12 +4344,12 @@ if (!winhibit)
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-//	printf(" [%08X%08X]\n", (uint32)(srcz >> 32), (uint32)(srcz & 0xFFFFFFFF));
+//	printf(" [%08X%08X]\n", (uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF));
 //	fflush(stdout);
 //printf(" [dstart=%X dend=%X pwidth=%X srcshift=%X]", dstart, dend, pwidth, srcshift);
-	printf("    [dstart=? dend=? pwidth=? srcshift=%X]", srcshift);
-	printf("[daas=%X dabs=%X dam=%X ds=%X daq=%s]\n", daddasel, daddbsel, daddmode, data_sel, (daddq_sel ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("    [dstart=? dend=? pwidth=? srcshift=%X]", srcshift);
+	WriteLog("[daas=%X dabs=%X dam=%X ds=%X daq=%s]\n", daddasel, daddbsel, daddmode, data_sel, (daddq_sel ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 				}
@@ -4441,11 +4420,11 @@ Flags: PATDSEL
 if (logBlit)
 {
 //printf("  Entering A1_ADD state [addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-printf("  Entering A1_ADD state [a1_x=%04X, a1_y=%04X, addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", a1_x, a1_y, addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-fflush(stdout);
+WriteLog("  Entering A1_ADD state [a1_x=%04X, a1_y=%04X, addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", a1_x, a1_y, addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
+//fflush(stdout);
 }
 #endif
-int16 adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
+int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
 ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
 	a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
 ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
@@ -4454,8 +4433,8 @@ ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x,
 #if 0//def VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  [adda_x=%d, adda_y=%d, addb_x=%d, addb_y=%d, addq_x=%d, addq_y=%d]\n", adda_x, adda_y, addb_x, addb_y, addq_x, addq_y);
-fflush(stdout);
+WriteLog("  [adda_x=%d, adda_y=%d, addb_x=%d, addb_y=%d, addq_x=%d, addq_y=%d]\n", adda_x, adda_y, addb_x, addb_y, addq_x, addq_y);
+//fflush(stdout);
 }
 #endif
 //Now, write to what???
@@ -4488,20 +4467,20 @@ else
 if (logBlit)
 {
 //printf("  Entering A2_ADD state [addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-printf("  Entering A2_ADD state [a2_x=%04X, a2_y=%04X, addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", a2_x, a2_y, addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-fflush(stdout);
+WriteLog("  Entering A2_ADD state [a2_x=%04X, a2_y=%04X, addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", a2_x, a2_y, addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
+//fflush(stdout);
 }
 #endif
-//void ADDAMUX(int16 &adda_x, int16 &adda_y, uint8 addasel, int16 a1_step_x, int16 a1_step_y,
-//	int16 a1_stepf_x, int16 a1_stepf_y, int16 a2_step_x, int16 a2_step_y,
-//	int16 a1_inc_x, int16 a1_inc_y, int16 a1_incf_x, int16 a1_incf_y, uint8 adda_xconst,
+//void ADDAMUX(int16_t &adda_x, int16_t &adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+//	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
+//	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 //	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
-//void ADDBMUX(int16 &addb_x, int16 &addb_y, uint8 addbsel, int16 a1_x, int16 a1_y,
-//	int16 a2_x, int16 a2_y, int16 a1_frac_x, int16 a1_frac_y)
-//void ADDRADD(int16 &addq_x, int16 &addq_y, bool a1fracldi,
-//	int16 adda_x, int16 adda_y, int16 addb_x, int16 addb_y, uint8 modx, bool suba_x, bool suba_y)
-//void DATAMUX(int16 &data_x, int16 &data_y, uint32 gpu_din, int16 addq_x, int16 addq_y, bool addqsel)
-int16 adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
+//void ADDBMUX(int16_t &addb_x, int16_t &addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+//	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
+//void ADDRADD(int16_t &addq_x, int16_t &addq_y, bool a1fracldi,
+//	int16_t adda_x, int16_t adda_y, int16_t addb_x, int16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
+//void DATAMUX(int16_t &data_x, int16_t &data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
+int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
 ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
 	a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
 ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
@@ -4510,8 +4489,8 @@ ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x,
 #if 0//def VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  [adda_x=%d, adda_y=%d, addb_x=%d, addb_y=%d, addq_x=%d, addq_y=%d]\n", adda_x, adda_y, addb_x, addb_y, addq_x, addq_y);
-fflush(stdout);
+WriteLog("  [adda_x=%d, adda_y=%d, addb_x=%d, addb_y=%d, addq_x=%d, addq_y=%d]\n", adda_x, adda_y, addb_x, addb_y, addq_x, addq_y);
+//fflush(stdout);
 }
 #endif
 //Now, write to what???
@@ -4577,8 +4556,8 @@ Flags: SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 DSTA2 GOURZ ZMODE=0 LFUFUNC=C SRCSHADE
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  Leaving INNER state...");
-fflush(stdout);
+WriteLog("  Leaving INNER state...");
+//fflush(stdout);
 }
 #endif
 			indone = true;
@@ -4600,8 +4579,8 @@ cause the inner state to go active */
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf(" (ocount=%04X)\n", ocount);
-fflush(stdout);
+WriteLog(" (ocount=%04X)\n", ocount);
+//fflush(stdout);
 }
 #endif
 		}
@@ -4611,16 +4590,16 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  Entering A1FUPDATE state...\n");
-fflush(stdout);
+WriteLog("  Entering A1FUPDATE state...\n");
+//fflush(stdout);
 }
 #endif
-			uint32 a1_frac_xt = (uint32)a1_frac_x + (uint32)a1_stepf_x;
-			uint32 a1_frac_yt = (uint32)a1_frac_y + (uint32)a1_stepf_y;
+			uint32_t a1_frac_xt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
+			uint32_t a1_frac_yt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
 			a1FracCInX = a1_frac_xt >> 16;
 			a1FracCInY = a1_frac_yt >> 16;
-			a1_frac_x = (uint16)(a1_frac_xt & 0xFFFF);
-			a1_frac_y = (uint16)(a1_frac_yt & 0xFFFF);
+			a1_frac_x = (uint16_t)(a1_frac_xt & 0xFFFF);
+			a1_frac_y = (uint16_t)(a1_frac_yt & 0xFFFF);
 		}
 
 		if (a1update)
@@ -4628,8 +4607,8 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  Entering A1UPDATE state... (%d/%d -> ", a1_x, a1_y);
-fflush(stdout);
+WriteLog("  Entering A1UPDATE state... (%d/%d -> ", a1_x, a1_y);
+//fflush(stdout);
 }
 #endif
 			a1_x += a1_step_x + a1FracCInX;
@@ -4637,8 +4616,8 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("%d/%d)\n", a1_x, a1_y);
-fflush(stdout);
+WriteLog("%d/%d)\n", a1_x, a1_y);
+//fflush(stdout);
 }
 #endif
 		}
@@ -4648,8 +4627,8 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("  Entering A2UPDATE state... (%d/%d -> ", a2_x, a2_y);
-fflush(stdout);
+WriteLog("  Entering A2UPDATE state... (%d/%d -> ", a2_x, a2_y);
+//fflush(stdout);
 }
 #endif
 			a2_x += a2_step_x;
@@ -4657,8 +4636,8 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("%d/%d)\n", a2_x, a2_y);
-fflush(stdout);
+WriteLog("%d/%d)\n", a2_x, a2_y);
+//fflush(stdout);
 }
 #endif
 		}
@@ -4669,14 +4648,14 @@ fflush(stdout);
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-	printf("Done!\na1_x=%04X a1_y=%04X a1_frac_x=%04X a1_frac_y=%04X a2_x=%04X a2_y%04X\n",
+	WriteLog("Done!\na1_x=%04X a1_y=%04X a1_frac_x=%04X a1_frac_y=%04X a2_x=%04X a2_y%04X\n",
 		GET16(blitter_ram, A1_PIXEL + 2),
 		GET16(blitter_ram, A1_PIXEL + 0),
 		GET16(blitter_ram, A1_FPIXEL + 2),
 		GET16(blitter_ram, A1_FPIXEL + 0),
 		GET16(blitter_ram, A2_PIXEL + 2),
 		GET16(blitter_ram, A2_PIXEL + 0));
-	fflush(stdout);
+//	fflush(stdout);
 }
 #endif
 
@@ -4691,25 +4670,26 @@ if (logBlit)
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-	printf("Writeback!\na1_x=%04X a1_y=%04X a1_frac_x=%04X a1_frac_y=%04X a2_x=%04X a2_y%04X\n",
+	WriteLog("Writeback!\na1_x=%04X a1_y=%04X a1_frac_x=%04X a1_frac_y=%04X a2_x=%04X a2_y%04X\n",
 		GET16(blitter_ram, A1_PIXEL + 2),
 		GET16(blitter_ram, A1_PIXEL + 0),
 		GET16(blitter_ram, A1_FPIXEL + 2),
 		GET16(blitter_ram, A1_FPIXEL + 0),
 		GET16(blitter_ram, A2_PIXEL + 2),
 		GET16(blitter_ram, A2_PIXEL + 0));
-	fflush(stdout);
+//	fflush(stdout);
 }
 #endif
 }
 
+
 /*
-	int16 a1_x = (int16)GET16(blitter_ram, A1_PIXEL + 2);
-	int16 a1_y = (int16)GET16(blitter_ram, A1_PIXEL + 0);
-	uint16 a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
-	uint16 a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
-	int16 a2_x = (int16)GET16(blitter_ram, A2_PIXEL + 2);
-	int16 a2_y = (int16)GET16(blitter_ram, A2_PIXEL + 0);
+	int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
+	int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
+	uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
+	uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
+	int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
+	int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
 
 Seems that the ending a1_x should be written between blits, but it doesn't seem to be...
 
@@ -4774,43 +4754,43 @@ INT21/	a2_base
 		:IN);
 */
 
-void ADDRGEN(uint32 &address, uint32 &pixa, bool gena2, bool zaddr,
-	uint16 a1_x, uint16 a1_y, uint32 a1_base, uint8 a1_pitch, uint8 a1_pixsize, uint8 a1_width, uint8 a1_zoffset,
-	uint16 a2_x, uint16 a2_y, uint32 a2_base, uint8 a2_pitch, uint8 a2_pixsize, uint8 a2_width, uint8 a2_zoffset)
+void ADDRGEN(uint32_t &address, uint32_t &pixa, bool gena2, bool zaddr,
+	uint16_t a1_x, uint16_t a1_y, uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width, uint8_t a1_zoffset,
+	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset)
 {
-//	uint16 x = (gena2 ? a2_x : a1_x) & 0x7FFF;
-	uint16 x = (gena2 ? a2_x : a1_x) & 0xFFFF;	// Actually uses all 16 bits to generate address...!
-	uint16 y = (gena2 ? a2_y : a1_y) & 0x0FFF;
-	uint8 width = (gena2 ? a2_width : a1_width);
-	uint8 pixsize = (gena2 ? a2_pixsize : a1_pixsize);
-	uint8 pitch = (gena2 ? a2_pitch : a1_pitch);
-	uint32 base = (gena2 ? a2_base : a1_base) >> 3;//Only upper 21 bits are passed around the bus? Seems like it...
-	uint8 zoffset = (gena2 ? a2_zoffset : a1_zoffset);
+//	uint16_t x = (gena2 ? a2_x : a1_x) & 0x7FFF;
+	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	// Actually uses all 16 bits to generate address...!
+	uint16_t y = (gena2 ? a2_y : a1_y) & 0x0FFF;
+	uint8_t width = (gena2 ? a2_width : a1_width);
+	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
+	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
+	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;//Only upper 21 bits are passed around the bus? Seems like it...
+	uint8_t zoffset = (gena2 ? a2_zoffset : a1_zoffset);
 
-	uint32 ytm = ((uint32)y << 2) + (width & 0x02 ? (uint32)y << 1 : 0) + (width & 0x01 ? (uint32)y : 0);
+	uint32_t ytm = ((uint32_t)y << 2) + (width & 0x02 ? (uint32_t)y << 1 : 0) + (width & 0x01 ? (uint32_t)y : 0);
 
-	uint32 ya = (ytm << (width >> 2)) >> 2;
+	uint32_t ya = (ytm << (width >> 2)) >> 2;
 
-	uint32 pa = ya + x;
+	uint32_t pa = ya + x;
 
 	/*uint32*/ pixa = pa << pixsize;
 
-	uint8 pt = ((pitch & 0x01) && !(pitch & 0x02) ? 0x01 : 0x00)
+	uint8_t pt = ((pitch & 0x01) && !(pitch & 0x02) ? 0x01 : 0x00)
 		| (!(pitch & 0x01) && (pitch & 0x02) ? 0x02 : 0x00);
-//	uint32 phradr = pixa << pt;
-	uint32 phradr = (pixa >> 6) << pt;
-	uint32 shup = (pitch == 0x03 ? (pixa >> 6) : 0);
+//	uint32_t phradr = pixa << pt;
+	uint32_t phradr = (pixa >> 6) << pt;
+	uint32_t shup = (pitch == 0x03 ? (pixa >> 6) : 0);
 
-	uint8 za = (zaddr ? zoffset : 0) & 0x03;
-//	uint32 addr = za + (phradr & 0x07) + (shup << 1) + base;
-	uint32 addr = za + phradr + (shup << 1) + base;
+	uint8_t za = (zaddr ? zoffset : 0) & 0x03;
+//	uint32_t addr = za + (phradr & 0x07) + (shup << 1) + base;
+	uint32_t addr = za + phradr + (shup << 1) + base;
 	/*uint32*/ address = ((pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
 #if 0//def VERBOSE_BLITTER_LOGGING
 if (logBlit)
 {
-printf("    [gena2=%s, x=%04X, y=%04X, w=%1X, pxsz=%1X, ptch=%1X, b=%08X, zoff=%1X]\n", (gena2 ? "T" : "F"), x, y, width, pixsize, pitch, base, zoffset);
-printf("    [ytm=%X, ya=%X, pa=%X, pixa=%X, pt=%X, phradr=%X, shup=%X, za=%X, addr=%X, address=%X]\n", ytm, ya, pa, pixa, pt, phradr, shup, za, addr, address);
-fflush(stdout);
+WriteLog("    [gena2=%s, x=%04X, y=%04X, w=%1X, pxsz=%1X, ptch=%1X, b=%08X, zoff=%1X]\n", (gena2 ? "T" : "F"), x, y, width, pixsize, pitch, base, zoffset);
+WriteLog("    [ytm=%X, ya=%X, pa=%X, pixa=%X, pt=%X, phradr=%X, shup=%X, za=%X, addr=%X, address=%X]\n", ytm, ya, pa, pixa, pt, phradr, shup, za, addr, address);
+//fflush(stdout);
 }
 #endif
 	pixa &= 0x07;
@@ -4967,6 +4947,7 @@ Dstzread	:= AN2 (dstzread, dstzpend, read_ack);
 
 }*/
 
+
 ////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////
 // Here's an important bit: The source data adder logic. Need to track down the inputs!!! //
@@ -4997,13 +4978,13 @@ INT32/  zinc
 INT32/  zstep
         :IN);
 */
-void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
-	uint64 dstd, uint32 iinc, uint8 initcin[], uint64 initinc, uint16 initpix,
-	uint32 istep, uint64 patd, uint64 srcd, uint64 srcz1, uint64 srcz2,
-	uint32 zinc, uint32 zstep)
+void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
+	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
+	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
+	uint32_t zinc, uint32_t zstep)
 {
-	uint32 initpix2 = ((uint32)initpix << 16) | initpix;
-	uint32 addalo[8], addahi[8];
+	uint32_t initpix2 = ((uint32_t)initpix << 16) | initpix;
+	uint32_t addalo[8], addahi[8];
 	addalo[0] = dstd & 0xFFFFFFFF;
 	addalo[1] = initpix2;
 	addalo[2] = 0;
@@ -5020,13 +5001,13 @@ void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
 	addahi[5] = patd >> 32;
 	addahi[6] = srcz1 >> 32;
 	addahi[7] = srcz2 >> 32;
-	uint16 adda[4];
+	uint16_t adda[4];
 	adda[0] = addalo[daddasel] & 0xFFFF;
 	adda[1] = addalo[daddasel] >> 16;
 	adda[2] = addahi[daddasel] & 0xFFFF;
 	adda[3] = addahi[daddasel] >> 16;
 
-	uint16 wordmux[8];
+	uint16_t wordmux[8];
 	wordmux[0] = iinc & 0xFFFF;
 	wordmux[1] = iinc >> 16;
 	wordmux[2] = zinc & 0xFFFF;
@@ -5035,8 +5016,8 @@ void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
 	wordmux[5] = istep >> 16;;
 	wordmux[6] = zstep & 0xFFFF;
 	wordmux[7] = zstep >> 16;;
-	uint16 word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
-	uint16 addb[4];
+	uint16_t word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
+	uint16_t addb[4];
 	bool dbsel2 = daddbsel & 0x04;
 	bool iincsel = (daddbsel & 0x01) && !(daddbsel & 0x04);
 
@@ -5055,10 +5036,10 @@ void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
 	else
 		addb[0] = addb[1] = addb[2] = addb[3] = 0;
 
-	uint8 cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
+	uint8_t cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
 
-static uint8 co[4];//These are preserved between calls...
-	uint8 cin[4];
+static uint8_t co[4];//These are preserved between calls...
+	uint8_t cin[4];
 
 	for(int i=0; i<4; i++)
 		cin[i] = initcin[i] | (co[i] & cinsel);
@@ -5071,6 +5052,7 @@ static uint8 co[4];//These are preserved between calls...
 	for(int i=0; i<4; i++)
 		ADD16SAT(addq[i], co[i], adda[i], addb[i], cin[i], sat, eightbit, hicinh);
 }
+
 
 /*
 DEF ADD16SAT (
@@ -5085,17 +5067,17 @@ INT16/  b
         hicinh
         :IN);
 */
-void ADD16SAT(uint16 &r, uint8 &co, uint16 a, uint16 b, uint8 cin, bool sat, bool eightbit, bool hicinh)
+void ADD16SAT(uint16_t &r, uint8_t &co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
 /*if (logBlit)
 {
 	printf("--> [sat=%s 8b=%s hicinh=%s] %04X + %04X (+ %u) = ", (sat ? "T" : "F"), (eightbit ? "T" : "F"), (hicinh ? "T" : "F"), a, b, cin);
 	fflush(stdout);
 }*/
-	uint8 carry[4];
-	uint32 qt = (a & 0xFF) + (b & 0xFF) + cin;
+	uint8_t carry[4];
+	uint32_t qt = (a & 0xFF) + (b & 0xFF) + cin;
 	carry[0] = (qt & 0x0100 ? 1 : 0);
-	uint16 q = qt & 0x00FF;
+	uint16_t q = qt & 0x00FF;
 	carry[1] = (carry[0] && !eightbit ? carry[0] : 0);
 	qt = (a & 0x0F00) + (b & 0x0F00) + (carry[1] << 8);
 	carry[2] = (qt & 0x1000 ? 1 : 0);
@@ -5105,8 +5087,8 @@ void ADD16SAT(uint16 &r, uint8 &co, uint16 a, uint16 b, uint8 cin, bool sat, boo
 	co = (qt & 0x10000 ? 1 : 0);
 	q |= qt & 0xF000;
 
-	uint8 btop = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
-	uint8 ctop = (eightbit ? carry[0] : co);
+	uint8_t btop = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
+	uint8_t ctop = (eightbit ? carry[0] : co);
 
 	bool saturate = sat && (btop ^ ctop);
 	bool hisaturate = saturate && !eightbit;
@@ -5124,6 +5106,7 @@ void ADD16SAT(uint16 &r, uint8 &co, uint16 a, uint16 b, uint8 cin, bool sat, boo
 	fflush(stdout);
 }*/
 }
+
 
 /**  ADDAMUX - Address adder input A selection  *******************
 
@@ -5173,9 +5156,9 @@ INT16/	a1_incf_y
 	suba_x
 	suba_y :IN);
 */
-void ADDAMUX(int16 &adda_x, int16 &adda_y, uint8 addasel, int16 a1_step_x, int16 a1_step_y,
-	int16 a1_stepf_x, int16 a1_stepf_y, int16 a2_step_x, int16 a2_step_y,
-	int16 a1_inc_x, int16 a1_inc_y, int16 a1_incf_x, int16 a1_incf_y, uint8 adda_xconst,
+void ADDAMUX(int16_t &adda_x, int16_t &adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
+	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
 {
 
@@ -5195,11 +5178,11 @@ Addart_y	:= MX4 (addart_y, a1_step_y, a1_stepf_y, a1_inc_y, a1_incf_y, addaselb[
 Addar_y		:= MX2 (addar_y, addart_y, a2_step_y, addaselb[2]);*/
 
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16 xterm[4], yterm[4];
+	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
 	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
-	int16 addar_x = (addasel & 0x04 ? a2_step_x : xterm[addasel & 0x03]);
-	int16 addar_y = (addasel & 0x04 ? a2_step_y : yterm[addasel & 0x03]);
+	int16_t addar_x = (addasel & 0x04 ? a2_step_x : xterm[addasel & 0x03]);
+	int16_t addar_y = (addasel & 0x04 ? a2_step_y : yterm[addasel & 0x03]);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Generate a constant value - this is a power of 2 in the range
@@ -5214,8 +5197,8 @@ Addac_x		:= JOIN (addac_x, addac_x[0..6], zero, zero, zero, zero, zero, zero, ze
 Addac_y		:= JOIN (addac_y, adda_yconst, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
 			zero, zero, zero, zero, zero);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16 addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
-	int16 addac_y = (adda_yconst ? 0x01 : 0);
+	int16_t addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
+	int16_t addac_y = (adda_yconst ? 0x01 : 0);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Select between constant value and register value */
@@ -5223,8 +5206,8 @@ Addac_y		:= JOIN (addac_y, adda_yconst, zero, zero, zero, zero, zero, zero, zero
 /*Addas_x		:= MX2 (addas_x, addac_x, addar_x, addareg);
 Addas_y		:= MX2 (addas_y, addac_y, addar_y, addareg);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16 addas_x = (addareg ? addar_x : addac_x);
-	int16 addas_y = (addareg ? addar_y : addac_y);
+	int16_t addas_x = (addareg ? addar_x : addac_x);
+	int16_t addas_y = (addareg ? addar_y : addac_y);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Complement these values (complement flag gives adder carry in)*/
@@ -5242,6 +5225,7 @@ Adda_y		:= EO (adda_y, suba_y16, addas_y);*/
 
 //END;
 }
+
 
 /**  ADDBMUX - Address adder input B selection  *******************
 
@@ -5265,8 +5249,8 @@ INT16/	a1_frac_y
 	:IN);
 INT16/	zero16 :LOCAL;
 BEGIN*/
-void ADDBMUX(int16 &addb_x, int16 &addb_y, uint8 addbsel, int16 a1_x, int16 a1_y,
-	int16 a2_x, int16 a2_y, int16 a1_frac_x, int16 a1_frac_y)
+void ADDBMUX(int16_t &addb_x, int16_t &addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
 {
 
 /*Zero		:= TIE0 (zero);
@@ -5276,7 +5260,7 @@ Addbselb[0-1]	:= BUF8 (addbselb[0-1], addbsel[0-1]);
 Addb_x		:= MX4 (addb_x, a1_x, a2_x, a1_frac_x, zero16, addbselb[0..1]);
 Addb_y		:= MX4 (addb_y, a1_y, a2_y, a1_frac_y, zero16, addbselb[0..1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16 xterm[4], yterm[4];
+	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_x, xterm[1] = a2_x, xterm[2] = a1_frac_x, xterm[3] = 0;
 	yterm[0] = a1_y, yterm[1] = a2_y, yterm[2] = a1_frac_y, yterm[3] = 0;
 	addb_x = xterm[addbsel & 0x03];
@@ -5285,6 +5269,7 @@ Addb_y		:= MX4 (addb_y, a1_y, a2_y, a1_frac_y, zero16, addbselb[0..1]);*/
 
 //END;
 }
+
 
 /**  DATAMUX - Address local data bus selection  ******************
 
@@ -5304,7 +5289,7 @@ INT16/	addq_y
 INT16/	gpu_lo, gpu_hi
 :LOCAL;
 BEGIN*/
-void DATAMUX(int16 &data_x, int16 &data_y, uint32 gpu_din, int16 addq_x, int16 addq_y, bool addqsel)
+void DATAMUX(int16_t &data_x, int16_t &data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
 {
 /*Gpu_lo		:= JOIN (gpu_lo, gpu_din{0..15});
 Gpu_hi		:= JOIN (gpu_hi, gpu_din{16..31});
@@ -5313,12 +5298,13 @@ Addqselb	:= BUF8 (addqselb, addqsel);
 Data_x		:= MX2 (data_x, gpu_lo, addq_x, addqselb);
 Data_y		:= MX2 (data_y, gpu_hi, addq_y, addqselb);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	data_x = (addqsel ? addq_x : (int16)(gpu_din & 0xFFFF));
-	data_y = (addqsel ? addq_y : (int16)(gpu_din >> 16));
+	data_x = (addqsel ? addq_x : (int16_t)(gpu_din & 0xFFFF));
+	data_y = (addqsel ? addq_y : (int16_t)(gpu_din >> 16));
 //////////////////////////////////////////////////////////////////////////////////////
 
 //END;
 }
+
 
 /******************************************************************
 addradd
@@ -5360,8 +5346,8 @@ INT16/	addb_y
 BEGIN
 
 Zero		:= TIE0 (zero);*/
-void ADDRADD(int16 &addq_x, int16 &addq_y, bool a1fracldi,
-	uint16 adda_x, uint16 adda_y, uint16 addb_x, uint16 addb_y, uint8 modx, bool suba_x, bool suba_y)
+void ADDRADD(int16_t &addq_x, int16_t &addq_y, bool a1fracldi,
+	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
 {
 
 /* Perform the addition */
@@ -5381,11 +5367,11 @@ Ci_y		:= EO (ci_y, cyt[1], suba_y);*/
 
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 //I'm sure the following will generate a bunch of warnings, but will have to do for now.
-	static uint16 co_x = 0, co_y = 0;	// Carry out has to propogate between function calls...
-	uint16 ci_x = co_x ^ (suba_x ? 1 : 0);
-	uint16 ci_y = co_y ^ (suba_y ? 1 : 0);
-	uint32 addqt_x = adda_x + addb_x + ci_x;
-	uint32 addqt_y = adda_y + addb_y + ci_y;
+	static uint16_t co_x = 0, co_y = 0;	// Carry out has to propogate between function calls...
+	uint16_t ci_x = co_x ^ (suba_x ? 1 : 0);
+	uint16_t ci_y = co_y ^ (suba_y ? 1 : 0);
+	uint32_t addqt_x = adda_x + addb_x + ci_x;
+	uint32_t addqt_y = adda_y + addb_y + ci_y;
 	co_x = ((addqt_x & 0x10000) && a1fracldi ? 1 : 0);
 	co_y = ((addqt_y & 0x10000) && a1fracldi ? 1 : 0);
 //////////////////////////////////////////////////////////////////////////////////////
@@ -5411,6 +5397,7 @@ Addq_y		:= JOIN (addq_y, addq_y[0..15]);*/
 
 //END;
 }
+
 
 /*
 DEF DATA (
@@ -5478,12 +5465,12 @@ INT32/	gpu_din			// GPU data bus
 		:IN);
 */
 
-void DATA(uint64 &wdata, uint8 &dcomp, uint8 &zcomp, bool &nowrite,
-	bool big_pix, bool cmpdst, uint8 daddasel, uint8 daddbsel, uint8 daddmode, bool daddq_sel, uint8 data_sel,
-	uint8 dbinh, uint8 dend, uint8 dstart, uint64 dstd, uint32 iinc, uint8 lfu_func, uint64 &patd, bool patdadd,
-	bool phrase_mode, uint64 srcd, bool srcdread, bool srczread, bool srcz2add, uint8 zmode,
-	bool bcompen, bool bkgwren, bool dcompen, uint8 icount, uint8 pixsize,
-	uint64 &srcz, uint64 dstz, uint32 zinc)
+void DATA(uint64_t &wdata, uint8_t &dcomp, uint8_t &zcomp, bool &nowrite,
+	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
+	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t &patd, bool patdadd,
+	bool phrase_mode, uint64_t srcd, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
+	bool bcompen, bool bkgwren, bool dcompen, uint8_t icount, uint8_t pixsize,
+	uint64_t &srcz, uint64_t dstz, uint32_t zinc)
 {
 /*
   Stuff we absolutely *need* to have passed in/out:
@@ -5529,12 +5516,12 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
 
 /*Lfu		:= LFU (lfu[0..1], srcdlo, srcdhi, dstdlo, dstdhi, lfu_func[0..3]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint64 funcmask[2] = { 0, 0xFFFFFFFFFFFFFFFFLL };
-	uint64 func0 = funcmask[lfu_func & 0x01];
-	uint64 func1 = funcmask[(lfu_func >> 1) & 0x01];
-	uint64 func2 = funcmask[(lfu_func >> 2) & 0x01];
-	uint64 func3 = funcmask[(lfu_func >> 3) & 0x01];
-	uint64 lfu = (~srcd & ~dstd & func0) | (~srcd & dstd & func1) | (srcd & ~dstd & func2) | (srcd & dstd & func3);
+	uint64_t funcmask[2] = { 0, 0xFFFFFFFFFFFFFFFFLL };
+	uint64_t func0 = funcmask[lfu_func & 0x01];
+	uint64_t func1 = funcmask[(lfu_func >> 1) & 0x01];
+	uint64_t func2 = funcmask[(lfu_func >> 2) & 0x01];
+	uint64_t func3 = funcmask[(lfu_func >> 3) & 0x01];
+	uint64_t lfu = (~srcd & ~dstd & func0) | (~srcd & dstd & func1) | (srcd & ~dstd & func2) | (srcd & dstd & func3);
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Increment and Step Registers
@@ -5551,7 +5538,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	dcomp = 0;
-	uint64 cmpd = patd ^ (cmpdst ? dstd : srcd);
+	uint64_t cmpd = patd ^ (cmpdst ? dstd : srcd);
 
 	if ((cmpd & 0x00000000000000FFLL) == 0)
 		dcomp |= 0x01;
@@ -5612,7 +5599,7 @@ with srcshift bits 4 & 5 selecting the start position
 // We'll do the comparison/bit/byte inhibits here, since that's they way it happens
 // in the real thing (dcomp goes out to COMP_CTRL and back into DATA through dbinh)...
 #if 1
-	uint8 dbinht;
+	uint8_t dbinht;
 //	bool nowrite;
 	COMP_CTRL(dbinht, nowrite,
 		bcompen, true/*big_pix*/, bkgwren, dcomp, dcompen, icount, pixsize, phrase_mode, srcd & 0xFF, zcomp);
@@ -5623,10 +5610,7 @@ with srcshift bits 4 & 5 selecting the start position
 #if 1
 #ifdef VERBOSE_BLITTER_LOGGING
 if (logBlit)
-{
-	printf("\n[dcomp=%02X zcomp=%02X dbinh=%02X]\n", dcomp, zcomp, dbinh);
-	fflush(stdout);
-}//*/
+	WriteLog("\n[dcomp=%02X zcomp=%02X dbinh=%02X]\n", dcomp, zcomp, dbinh);
 #endif
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -5642,13 +5626,13 @@ if (logBlit)
 /*Addarray	:= ADDARRAY (addq[0..3], clk, daddasel[0..2], daddbsel[0..3], daddmode[0..2], dstdlo, dstdhi, iinc,
 			initcin[0..3], initinc[0..63], initpix[0..15], istep, patdv[0..1], srcdlo, srcdhi, srcz1[0..1],
 			srcz2[0..1], reset\, zinc, zstep);*/
-/*void ADDARRAY(uint16 * addq, uint8 daddasel, uint8 daddbsel, uint8 daddmode,
-	uint64 dstd, uint32 iinc, uint8 initcin[], uint64 initinc, uint16 initpix,
-	uint32 istep, uint64 patd, uint64 srcd, uint64 srcz1, uint64 srcz2,
-	uint32 zinc, uint32 zstep)*/
+/*void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
+	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
+	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
+	uint32_t zinc, uint32_t zstep)*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16 addq[4];
-	uint8 initcin[4] = { 0, 0, 0, 0 };
+	uint16_t addq[4];
+	uint8_t initcin[4] = { 0, 0, 0, 0 };
 	ADDARRAY(addq, daddasel, daddbsel, daddmode, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
 
 	//This is normally done asynchronously above (thru local_data) when in patdadd mode...
@@ -5656,7 +5640,7 @@ if (logBlit)
 //But it's causing some serious fuck-ups in T2K now... !!! FIX !!! [DONE--???]
 //Weird! It doesn't anymore...!
 	if (patdadd)
-		patd = ((uint64)addq[3] << 48) | ((uint64)addq[2] << 32) | ((uint64)addq[1] << 16) | (uint64)addq[0];
+		patd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Local data bus multiplexer
@@ -5714,15 +5698,15 @@ Ecoarse		:= DECL38E (e_coarse\[0..7], dend[3..5], edis\);
 E_coarse[0]	:= INV1 (e_coarse[0], e_coarse\[0]);
 Efine		:= DECL38E (unused[0], e_fine\[1..7], dend[0..2], e_coarse[0]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint8 decl38e[2][8] = { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },
+	uint8_t decl38e[2][8] = { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },
 		{ 0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F } };
-	uint8 dech38[8] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
-	uint8 dech38el[2][8] = { { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },
+	uint8_t dech38[8] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
+	uint8_t dech38el[2][8] = { { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
 
 			int en = (dend & 0x3F ? 1 : 0);
-	uint8 e_coarse = decl38e[en][(dend & 0x38) >> 3];		// Actually, this is e_coarse inverted...
-	uint8 e_fine = decl38e[(e_coarse & 0x01) ^ 0x01][dend & 0x07];
+	uint8_t e_coarse = decl38e[en][(dend & 0x38) >> 3];		// Actually, this is e_coarse inverted...
+	uint8_t e_fine = decl38e[(e_coarse & 0x01) ^ 0x01][dend & 0x07];
 	e_fine &= 0xFE;
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -5730,14 +5714,14 @@ Efine		:= DECL38E (unused[0], e_fine\[1..7], dend[0..2], e_coarse[0]);*/
 Sfen\		:= INV1 (sfen\, s_coarse[0]);
 Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint8 s_coarse = dech38[(dstart & 0x38) >> 3];
-	uint8 s_fine = dech38el[(s_coarse & 0x01) ^ 0x01][dstart & 0x07];
+	uint8_t s_coarse = dech38[(dstart & 0x38) >> 3];
+	uint8_t s_fine = dech38el[(s_coarse & 0x01) ^ 0x01][dstart & 0x07];
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16 maskt = s_fine & 0x0001;
+	uint16_t maskt = s_fine & 0x0001;
 	maskt |= (((maskt & 0x0001) || (s_fine & 0x02)) && (e_fine & 0x02) ? 0x0002 : 0x0000);
 	maskt |= (((maskt & 0x0002) || (s_fine & 0x04)) && (e_fine & 0x04) ? 0x0004 : 0x0000);
 	maskt |= (((maskt & 0x0004) || (s_fine & 0x08)) && (e_fine & 0x08) ? 0x0008 : 0x0000);
@@ -5788,7 +5772,7 @@ Masku[14]	:= MX2 (masku[14], maskt[14], maskt[0],  mir_byte);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	bool mir_bit = true/*big_pix*/ && !phrase_mode;
 	bool mir_byte = true/*big_pix*/ && phrase_mode;
-	uint16 masku = maskt;
+	uint16_t masku = maskt;
 
 	if (mir_bit)
 	{
@@ -5831,8 +5815,8 @@ inhibit terms can override these */
 /*Mask[0-7]	:= AN2 (mask[0-7], masku[0-7], dbinh\[0]);
 Mask[8-14]	:= AN2H (mask[8-14], masku[8-14], dbinh\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16 mask = masku & (!(dbinh & 0x01) ? 0xFFFF : 0xFF00);
-	mask &= ~(((uint16)dbinh & 0x00FE) << 7);
+	uint16_t mask = masku & (!(dbinh & 0x01) ? 0xFFFF : 0xFF00);
+	mask &= ~(((uint16_t)dbinh & 0x00FE) << 7);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Addql[0]	:= JOIN (addql[0], addq[0..1]);
@@ -5843,12 +5827,12 @@ Dsel1b[0-1]	:= BUF8 (dsel1b[0-1], data_sel[1]);
 Ddatlo		:= MX4 (ddatlo, patd[0], lfu[0], addql[0], zero32, dsel0b[0], dsel1b[0]);
 Ddathi		:= MX4 (ddathi, patd[1], lfu[1], addql[1], zero32, dsel0b[1], dsel1b[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint64 dmux[4];
+	uint64_t dmux[4];
 	dmux[0] = patd;
 	dmux[1] = lfu;
-	dmux[2] = ((uint64)addq[3] << 48) | ((uint64)addq[2] << 32) | ((uint64)addq[1] << 16) | (uint64)addq[0];
+	dmux[2] = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 	dmux[3] = 0;
-	uint64 ddat = dmux[data_sel];
+	uint64_t ddat = dmux[data_sel];
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Zed_sel		:= AN2 (zed_sel, data_sel[0..1]);
@@ -5874,13 +5858,13 @@ Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srcz
 /*if (logBlit)
 {
 	printf("\n[ddat=%08X%08X dstd=%08X%08X wdata=%08X%08X mask=%04X]\n",
-		(uint32)(ddat >> 32), (uint32)(ddat & 0xFFFFFFFF),
-		(uint32)(dstd >> 32), (uint32)(dstd & 0xFFFFFFFF),
-		(uint32)(wdata >> 32), (uint32)(wdata & 0xFFFFFFFF), mask);
+		(uint32_t)(ddat >> 32), (uint32_t)(ddat & 0xFFFFFFFF),
+		(uint32_t)(dstd >> 32), (uint32_t)(dstd & 0xFFFFFFFF),
+		(uint32_t)(wdata >> 32), (uint32_t)(wdata & 0xFFFFFFFF), mask);
 	fflush(stdout);
 }//*/
 //This is a crappy way of handling this, but it should work for now...
-	uint64 zwdata;
+	uint64_t zwdata;
 	zwdata = ((srcz & mask) | (dstz & ~mask)) & 0x00000000000000FFLL;
 	zwdata |= (mask & 0x0100 ? srcz : dstz) & 0x000000000000FF00LL;
 	zwdata |= (mask & 0x0200 ? srcz : dstz) & 0x0000000000FF0000LL;
@@ -5891,11 +5875,11 @@ Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srcz
 	zwdata |= (mask & 0x4000 ? srcz : dstz) & 0xFF00000000000000LL;
 if (logBlit)
 {
-	printf("\n[srcz=%08X%08X dstz=%08X%08X zwdata=%08X%08X mask=%04X]\n",
-		(uint32)(srcz >> 32), (uint32)(srcz & 0xFFFFFFFF),
-		(uint32)(dstz >> 32), (uint32)(dstz & 0xFFFFFFFF),
-		(uint32)(zwdata >> 32), (uint32)(zwdata & 0xFFFFFFFF), mask);
-	fflush(stdout);
+	WriteLog("\n[srcz=%08X%08X dstz=%08X%08X zwdata=%08X%08X mask=%04X]\n",
+		(uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF),
+		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF),
+		(uint32_t)(zwdata >> 32), (uint32_t)(zwdata & 0xFFFFFFFF), mask);
+//	fflush(stdout);
 }//*/
 	srcz = zwdata;
 //////////////////////////////////////////////////////////////////////////////////////
@@ -5908,6 +5892,7 @@ Unused[0]	:= DUMMY (unused[0]);
 
 END;*/
 }
+
 
 /**  COMP_CTRL - Comparator output control logic  *****************
 
@@ -5957,9 +5942,9 @@ pipe-lining the comparator inputs where appropriate.
 	step_inner	// inner loop advance
 	zcomp[0..3]	// output of word zed comparators
 	:IN);*/
-void COMP_CTRL(uint8 &dbinh, bool &nowrite,
-	bool bcompen, bool big_pix, bool bkgwren, uint8 dcomp, bool dcompen, uint8 icount,
-	uint8 pixsize, bool phrase_mode, uint8 srcd, uint8 zcomp)
+void COMP_CTRL(uint8_t &dbinh, bool &nowrite,
+	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
+	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp)
 {
 //BEGIN
 
@@ -5987,13 +5972,13 @@ Bcompbit\	:= INV1 (bcompbit\, bcompbit);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("\n     [bcompen=%s dcompen=%s phrase_mode=%s bkgwren=%s dcomp=%02X zcomp=%02X]", (bcompen ? "T" : "F"), (dcompen ? "T" : "F"), (phrase_mode ? "T" : "F"), (bkgwren ? "T" : "F"), dcomp, zcomp);
-	printf("\n     ");
-	fflush(stdout);
+	WriteLog("\n     [bcompen=%s dcompen=%s phrase_mode=%s bkgwren=%s dcomp=%02X zcomp=%02X]", (bcompen ? "T" : "F"), (dcompen ? "T" : "F"), (phrase_mode ? "T" : "F"), (bkgwren ? "T" : "F"), dcomp, zcomp);
+	WriteLog("\n     ");
+//	fflush(stdout);
 }
 #endif
-	uint8 bcompselt = (big_pix ? ~icount : icount) & 0x07;
-	uint8 bitmask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
+	uint8_t bcompselt = (big_pix ? ~icount : icount) & 0x07;
+	uint8_t bitmask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
 	bool bcompbit = srcd & bitmask[bcompselt];
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -6041,8 +6026,8 @@ Winhibit	:= NAN4 (winhibit, winht, nowt[1..3]);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[nw=%s wi=%s]", (nowrite ? "T" : "F"), (winhibit ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[nw=%s wi=%s]", (nowrite ? "T" : "F"), (winhibit ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6077,8 +6062,8 @@ Dbinh[0]	:= ANR1P (dbinh\[0], di0t[4], phrase_mode, winhibit);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di0t0_1=%s di0t4=%s]", (di0t0_1 ? "T" : "F"), (di0t4 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di0t0_1=%s di0t4=%s]", (di0t0_1 ? "T" : "F"), (di0t4 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6095,8 +6080,8 @@ Dbinh[1]	:= ANR1 (dbinh\[1], di1t[2], phrase_mode, winhibit);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di1t2=%s]", (di1t2 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di1t2=%s]", (di1t2 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6120,8 +6105,8 @@ Dbinh[2]	:= ANR1 (dbinh\[2], di2t[4], phrase_mode, winhibit);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di2t0_1=%s di2t4=%s]", (di2t0_1 ? "T" : "F"), (di2t4 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di2t0_1=%s di2t4=%s]", (di2t0_1 ? "T" : "F"), (di2t4 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6138,8 +6123,8 @@ Dbinh[3]	:= ANR1 (dbinh\[3], di3t[2], phrase_mode, winhibit);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di3t2=%s]", (di3t2 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di3t2=%s]", (di3t2 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6160,8 +6145,8 @@ Dbinh[4]	:= NAN2 (dbinh\[4], di4t[4], phrase_mode);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di4t0_1=%s di2t4=%s]", (di4t0_1 ? "T" : "F"), (di4t4 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di4t0_1=%s di2t4=%s]", (di4t0_1 ? "T" : "F"), (di4t4 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6178,8 +6163,8 @@ Dbinh[5]	:= NAN2 (dbinh\[5], di5t[2], phrase_mode);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di5t2=%s]", (di5t2 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di5t2=%s]", (di5t2 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6200,8 +6185,8 @@ Dbinh[6]	:= NAN2 (dbinh\[6], di6t[4], phrase_mode);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di6t0_1=%s di6t4=%s]", (di6t0_1 ? "T" : "F"), (di6t4 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di6t0_1=%s di6t4=%s]", (di6t0_1 ? "T" : "F"), (di6t4 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6218,8 +6203,8 @@ Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[di7t2=%s]", (di7t2 ? "T" : "F"));
-	fflush(stdout);
+	WriteLog("[di7t2=%s]", (di7t2 ? "T" : "F"));
+//	fflush(stdout);
 }
 #endif
 //////////////////////////////////////////////////////////////////////////////////////
@@ -6230,8 +6215,8 @@ dbinh = ~dbinh;
 #ifdef LOG_COMP_CTRL
 if (logBlit)
 {
-	printf("[dcomp=$%02X dbinh=$%02X]\n    ", dcomp, dbinh);
-	fflush(stdout);
+	WriteLog("[dcomp=$%02X dbinh=$%02X]\n    ", dcomp, dbinh);
+//	fflush(stdout);
 }
 #endif
 }

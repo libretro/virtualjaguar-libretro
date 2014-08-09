@@ -32,7 +32,7 @@
 
 static int gzfilelength(gzFile gd);
 static bool CheckExtension(const char * filename, const char * ext);
-//static int ParseFileType(uint8 header1, uint8 header2, uint32 size);
+//static int ParseFileType(uint8_t header1, uint8_t header2, uint32_t size);
 
 // Private variables/enums
 
@@ -40,12 +40,12 @@ static bool CheckExtension(const char * filename, const char * ext);
 //
 // Generic ROM loading
 //
-uint32 JaguarLoadROM(uint8 * &rom, char * path)
+uint32_t JaguarLoadROM(uint8_t * &rom, char * path)
 {
 // We really should have some kind of sanity checking for the ROM size here to prevent
 // a buffer overflow... !!! FIX !!!
 #warning "!!! FIX !!! Should have sanity checking for ROM size to prevent buffer overflow!"
-	uint32 romSize = 0;
+	uint32_t romSize = 0;
 
 	WriteLog("JaguarLoadROM: Attempting to load file '%s'...", path);
 	char * ext = strrchr(path, '.');
@@ -61,8 +61,8 @@ uint32 JaguarLoadROM(uint8 * &rom, char * path)
 
 	WriteLog("Succeeded in finding extension (%s)!\n", ext);
 	WriteLog("VJ: Loading \"%s\"...", path);
-
-	/*if (strcasecmp(ext, ".zip") == 0)
+#if 0
+	if (strcasecmp(ext, ".zip") == 0)
 	{
 		// Handle ZIP file loading here...
 		WriteLog("(ZIPped)...");
@@ -83,7 +83,7 @@ uint32 JaguarLoadROM(uint8 * &rom, char * path)
 	else
 	{
 		// Handle gzipped files transparently [Adam Green]...
-*/
+#endif
 		FILE *fp = fopen(path, "rb");
 
 		if (fp == NULL)
@@ -92,9 +92,9 @@ uint32 JaguarLoadROM(uint8 * &rom, char * path)
 			return 0;
 		}
 
-        fseek(fp, 0, SEEK_END);
+		fseek(fp, 0, SEEK_END);
         romSize = (uint32_t)ftell(fp);
-        rom = new uint8[romSize];
+        rom = new uint8_t[romSize];
 		fseek(fp, 0, SEEK_SET);
 		fread(rom, 1, romSize, fp);
 		fclose(fp);
@@ -113,7 +113,7 @@ uint32 JaguarLoadROM(uint8 * &rom, char * path)
 //
 bool JaguarLoadFile(char * path)
 {
-	uint8 * buffer = NULL;
+	uint8_t * buffer = NULL;
 	jaguarROMSize = JaguarLoadROM(buffer, path);
 
 	if (jaguarROMSize == 0)
@@ -124,26 +124,21 @@ bool JaguarLoadFile(char * path)
 	}
 
 	jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
-    
 	WriteLog("CRC: %08X\n", (unsigned int)jaguarMainROMCRC32);
-    // TODO: Check for EEPROM file in ZIP file. If there is no EEPROM in the user's EEPROM
-    //       directory, copy the one from the ZIP file, if it exists.
-    
+// TODO: Check for EEPROM file in ZIP file. If there is no EEPROM in the user's EEPROM
+//       directory, copy the one from the ZIP file, if it exists.
 	EepromInit();
 	jaguarRunAddress = 0x802000;					// For non-BIOS runs, this is true
-    
 	int fileType = ParseFileType(buffer, jaguarROMSize);
 	jaguarCartInserted = false;
 
 	if (fileType == JST_ROM)
 	{
 		jaguarCartInserted = true;
-        
 		memcpy(jagMemSpace + 0x800000, buffer, jaguarROMSize);
-        
-        // Checking something...
-        jaguarRunAddress = GET32(jagMemSpace, 0x800404);
-        WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress);
+// Checking something...
+jaguarRunAddress = GET32(jagMemSpace, 0x800404);
+WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress);
 		delete[] buffer;
 		return true;
 	}
@@ -155,7 +150,7 @@ bool JaguarLoadFile(char * path)
 		memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
 		delete[] buffer;
 
-        // Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
+// Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
 		// Try setting the vector to say, $1000 and putting an instruction there that loops forever:
 		// This kludge works! Yeah!
 		SET32(jaguarMainRAM, 0x10, 0x00001000);
@@ -165,7 +160,7 @@ bool JaguarLoadFile(char * path)
 	else if (fileType == JST_ABS_TYPE1)
 	{
 		// For ABS type 1, run address == load address
-		uint32 loadAddress = GET32(buffer, 0x16),
+		uint32_t loadAddress = GET32(buffer, 0x16),
 			codeSize = GET32(buffer, 0x02) + GET32(buffer, 0x06);
 		WriteLog("FILE: Setting up homebrew (ABS-1)... Run address: %08X, length: %08X\n", loadAddress, codeSize);
 		memcpy(jagMemSpace + loadAddress, buffer + 0x24, codeSize);
@@ -175,7 +170,7 @@ bool JaguarLoadFile(char * path)
 	}
 	else if (fileType == JST_ABS_TYPE2)
 	{
-		uint32 loadAddress = GET32(buffer, 0x28), runAddress = GET32(buffer, 0x24),
+		uint32_t loadAddress = GET32(buffer, 0x28), runAddress = GET32(buffer, 0x24),
 			codeSize = GET32(buffer, 0x18) + GET32(buffer, 0x1C);
 		WriteLog("FILE: Setting up homebrew (ABS-2)... Run address: %08X, length: %08X\n", runAddress, codeSize);
 		memcpy(jagMemSpace + loadAddress, buffer + 0xA8, codeSize);
@@ -224,11 +219,16 @@ bool JaguarLoadFile(char * path)
 //		{
 			// Still need to do some checking here for type 2 vs. type 3. This assumes 3
 			// Also, JAGR vs. JAGL (word command size vs. long command size)
-			uint32 loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
+			uint32_t loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
 			WriteLog("FILE: Setting up homebrew (Jag Server)... Run address: $%X, length: $%X\n", runAddress, jaguarROMSize - 0x2E);
 			memcpy(jagMemSpace + loadAddress, buffer + 0x2E, jaguarROMSize - 0x2E);
 			delete[] buffer;
 			jaguarRunAddress = runAddress;
+
+// Hmm. Is this kludge necessary?
+SET32(jaguarMainRAM, 0x10, 0x00001000);		// Set Exception #4 (Illegal Instruction)
+SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
+
 			return true;
 //		}
 //		else // Special WTFOMGBBQ type here...
@@ -252,18 +252,20 @@ bool JaguarLoadFile(char * path)
 	}
 
 	// We can assume we have JST_NONE at this point. :-P
+	WriteLog("FILE: Failed to load headerless file.\n");
 	return false;
 }
 
 
 //
 // "Alpine" file loading
-// Since the developers were coming after us with torches and pitchforks, we decided to
-// allow this kind of thing. ;-) But ONLY FOR THE DEVS, DAMMIT! >:-U O_O
+// Since the developers were coming after us with torches and pitchforks, we
+// decided to allow this kind of thing. ;-) But ONLY FOR THE DEVS, DAMMIT! >:-U
+// O_O
 //
 bool AlpineLoadFile(char * path)
 {
-	uint8 * buffer = NULL;
+	uint8_t * buffer = NULL;
 	jaguarROMSize = JaguarLoadROM(buffer, path);
 
 	if (jaguarROMSize == 0)
@@ -325,7 +327,7 @@ static int gzfilelength(gzFile gd)
 //
 // Compare extension to passed in filename. If equal, return true; otherwise false.
 //
-static bool CheckExtension(const uint8 * filename, const char * ext)
+static bool CheckExtension(const uint8_t * filename, const char * ext)
 {
 	// Sanity checking...
 	if ((filename == NULL) || (ext == NULL))
@@ -346,9 +348,7 @@ static bool CheckExtension(const uint8 * filename, const char * ext)
 // NOTE: If the thing we're looking for is found, it allocates it in the passed in buffer.
 //       Which means we have to deallocate it later.
 //
-
-/*
-uint32 GetFileFromZIP(const char * zipFile, FileType type, uint8 * &buffer)
+/*uint32_t GetFileFromZIP(const char * zipFile, FileType type, uint8_t * &buffer)
 {
 // NOTE: We could easily check for this by discarding anything that's larger than the RAM/ROM
 //       size of the Jaguar console.
@@ -403,13 +403,13 @@ uint32 GetFileFromZIP(const char * zipFile, FileType type, uint8 * &buffer)
 			fseek(zip, ze.compressedSize, SEEK_CUR);
 	}
 
-	uint32 fileSize = 0;
+	uint32_t fileSize = 0;
 
 	if (found)
 	{
 		WriteLog("FILE: Uncompressing...");
 // Insert file size sanity check here...
-		buffer = new uint8[ze.uncompressedSize];
+		buffer = new uint8_t[ze.uncompressedSize];
 
 //		if (readuncompresszip(zip, ze.compressedSize, buffer) == 0)
 //		if (UncompressFileFromZIP(zip, ze.compressedSize, buffer) == 0)
@@ -433,9 +433,9 @@ uint32 GetFileFromZIP(const char * zipFile, FileType type, uint8 * &buffer)
 	fclose(zip);
 	return fileSize;
 }
-*/
 
-/*uint32_t GetFileDBIdentityFromZIP(const char * zipFile)
+
+uint32_t GetFileDBIdentityFromZIP(const char * zipFile)
 {
 	FILE * zip = fopen(zipFile, "rb");
 
@@ -473,7 +473,7 @@ uint32 GetFileFromZIP(const char * zipFile, FileType type, uint8 * &buffer)
 }
 
 
-bool FindFileInZIPWithCRC32(const char * zipFile, uint32 crc)
+bool FindFileInZIPWithCRC32(const char * zipFile, uint32_t crc)
 {
 	FILE * zip = fopen(zipFile, "rb");
 
@@ -499,13 +499,13 @@ bool FindFileInZIPWithCRC32(const char * zipFile, uint32 crc)
 
 	fclose(zip);
 	return false;
-}
-*/
+}*/
+
 
 //
 // Parse the file type based upon file size and/or headers.
 //
-uint32 ParseFileType(uint8_t * buffer, uint32 size)
+uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 {
 	// Check headers first...
 
@@ -546,7 +546,7 @@ uint32 ParseFileType(uint8_t * buffer, uint32 size)
 //
 // Check for universal header
 //
-bool HasUniversalHeader(uint8 * rom, uint32 romSize)
+bool HasUniversalHeader(uint8_t * rom, uint32_t romSize)
 {
 	// Sanity check
 	if (romSize < 8192)

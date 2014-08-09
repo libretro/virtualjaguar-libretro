@@ -14,7 +14,7 @@
 // JLH  05/31/2012  Rewrote everything and removed all MAME code
 //
 
-/*#include "unzip.h"
+#include "unzip.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -134,4 +134,3 @@ int UncompressFileFromZIP(FILE * fp, ZipFileEntry ze, uint8_t * buffer)
 
 	return (ret == Z_STREAM_END ? Z_OK : Z_DATA_ERROR);
 }
-*/

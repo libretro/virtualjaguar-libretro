@@ -15,9 +15,22 @@ void DACDone(void);
 
 // DAC memory access
 
-void DACWriteByte(uint32 offset, uint8 data, uint32 who = UNKNOWN);
-void DACWriteWord(uint32 offset, uint16 data, uint32 who = UNKNOWN);
-uint8 DACReadByte(uint32 offset, uint32 who = UNKNOWN);
-uint16 DACReadWord(uint32 offset, uint32 who = UNKNOWN);
+void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who = UNKNOWN);
+void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who = UNKNOWN);
+uint8_t DACReadByte(uint32_t offset, uint32_t who = UNKNOWN);
+uint16_t DACReadWord(uint32_t offset, uint32_t who = UNKNOWN);
+
+void audio_callback_batch(uint16_t *buff, int len);
+void SDLSoundCallback(void * userdata, uint16_t * buffer, int length);
+extern uint16_t *sampleBuffer;
+
+// DAC defines
+
+#define SMODE_INTERNAL		0x01
+#define SMODE_MODE			0x02
+#define SMODE_WSEN			0x04
+#define SMODE_RISING		0x08
+#define SMODE_FALLING		0x10
+#define SMODE_EVERYWORD		0x20
 
 #endif	// __DAC_H__

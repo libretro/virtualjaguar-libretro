@@ -37,7 +37,7 @@ SB_TIME   equ  BUTCH+$20	; Subcode time and compare enable (D24)
 FIFO_DATA equ  BUTCH+$24	; i2s FIFO data
 I2SDAT1   equ  BUTCH+$24	; i2s FIFO data
 I2SDAT2   equ  BUTCH+$28	; i2s FIFO data
-2C = ?
+          equ  BUTCH+$2C	; CD EEPROM interface
 
 ;
 ; Butch's hardware registers
@@ -112,26 +112,53 @@ $70nn - Set oversampling mode
 
 Commands send through serial bus:
 
-$100 - ? Acknowledge ?
-$130 - ? (Seems to always prefix the $14n commands)
-$140 - Returns ACK (1) (Write to NVRAM?)
+$100 - ? Acknowledge ? (Erase/Write disable)
+$130 - ? (Seems to always prefix the $14n commands) (Erase/Write enable)
+$140 - Returns ACK (1) (Write to NVRAM?) (Write selected register)
 $141 - Returns ACK (1)
 $142 - Returns ACK (1)
 $143 - Returns ACK (1)
 $144 - Returns ACK (1)
 $145 - Returns ACK (1)
-$180 - Returns 16-bit value (NVRAM?)
+$180 - Returns 16-bit value (NVRAM?) (read from EEPROM)
 $181 - Returns 16-bit value
 $182 - Returns 16-bit value
 $183 - Returns 16-bit value
 $184 - Returns 16-bit value
 $185 - Returns 16-bit value
+
+;  The BUTCH interface for the CD-ROM module is a long-word register,
+;   where only the least signifigant 4 bits are used
+;
+eeprom	equ	$DFFF2c			;interface to CD-eeprom
+;
+;  bit3 - busy if 0 after write cmd, or Data In after read cmd 
+;  bit2 - Data Out
+;  bit1 - clock
+;  bit0 - Chip Select (CS)
+;
+;
+;   Commands specific to the National Semiconductor NM93C14
+;
+;
+;  9-bit commands..
+;			 876543210
+eREAD	equ	%110000000		;read from EEPROM
+eEWEN	equ	%100110000		;Erase/write Enable
+eERASE	equ	%111000000		;Erase selected register
+eWRITE	equ	%101000000		;Write selected register
+eERAL	equ	%100100000		;Erase all registers
+eWRAL	equ	%100010000		;Writes all registers
+eEWDS	equ	%100000000		;Erase/Write disable (default)
+
+So... are there $40 words of memory? 128 bytes?
+
 */
 
 // Private function prototypes
 
-static void CDROMBusWrite(uint16);
-static uint16 CDROMBusRead(void);
+static void CDROMBusWrite(uint16_t);
+static uint16_t CDROMBusRead(void);
 
 #define BUTCH		0x00				// base of Butch == interrupt control register, R/W
 #define DSCNTRL 	BUTCH + 0x04		// DSA control register, R/W
@@ -150,12 +177,12 @@ const char * BReg[12] = { "BUTCH", "DSCNTRL", "DS_DATA", "???", "I2CNTRL", "SBCN
 //extern const char * whoName[9];
 
 
-static uint8 cdRam[0x100];
-static uint16 cdCmd = 0, cdPtr = 0;
+static uint8_t cdRam[0x100];
+static uint16_t cdCmd = 0, cdPtr = 0;
 static bool haveCDGoodness;
-static uint32 min, sec, frm, block;
-static uint8 cdBuf[2352 + 96];
-static uint32 cdBufPtr = 2352;
+static uint32_t min, sec, frm, block;
+static uint8_t cdBuf[2352 + 96];
+static uint32_t cdBufPtr = 2352;
 //Also need to set up (save/restore) the CD's NVRAM
 
 
@@ -165,8 +192,8 @@ void CDROMInit(void)
 	haveCDGoodness = CDIntfInit();
 
 //GetRawTOC();
-/*uint8 buf[2448];
-uint32 sec = 18667 - 150;
+/*uint8_t buf[2448];
+uint32_t sec = 18667 - 150;
 memset(buf, 0, 2448);
 if (!CDIntfReadBlock(sec, buf))
 {
@@ -199,7 +226,7 @@ for(int i=0; i<6; i++)
 WriteLog("\nP subchannel data: ");
 for(int i=0; i<96; i+=8)
 {
-	uint8 b = 0;
+	uint8_t b = 0;
 	for(int j=0; j<8; j++)
 		b |= ((buf[2352 + i + j] & 0x80) >> 7) << (7 - j);
 
@@ -208,7 +235,7 @@ for(int i=0; i<96; i+=8)
 WriteLog("\nQ subchannel data: ");
 for(int i=0; i<96; i+=8)
 {
-	uint8 b = 0;
+	uint8_t b = 0;
 	for(int j=0; j<8; j++)
 		b |= ((buf[2352 + i + j] & 0x40) >> 6) << (7 - j);
 
@@ -235,16 +262,16 @@ void CDROMDone(void)
 // interrupts are handled as they're generated--instead of the current
 // scheme where they're handled on scanline boundaries.
 //
-void BUTCHExec(uint32 cycles)
+void BUTCHExec(uint32_t cycles)
 {
 #if 1
 // We're chickening out for now...
 return;
 #else
-//	extern uint8 * jerry_ram_8;					// Hmm.
+//	extern uint8_t * jerry_ram_8;					// Hmm.
 
 	// For now, we just do the FIFO interrupt. Timing is also likely to be WRONG as well.
-	uint32 cdState = GET32(cdRam, BUTCH);
+	uint32_t cdState = GET32(cdRam, BUTCH);
 
 	if (!(cdState & 0x01))						// No BUTCH interrupts enabled
 		return;
@@ -266,7 +293,7 @@ return;
 // CD-ROM memory access functions
 //
 
-uint8 CDROMReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
+uint8_t CDROMReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef CDROM_LOG
 	if ((offset & 0xFF) < 12 * 4)
@@ -276,16 +303,16 @@ uint8 CDROMReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
 	return cdRam[offset & 0xFF];
 }
 
-static uint8 trackNum = 1, minTrack, maxTrack;
-//static uint8 minutes[16] = {  0,  0,  2,  5,  7, 10, 12, 15, 17, 20, 22, 25, 27, 30, 32, 35 };
-//static uint8 seconds[16] = {  0,  0, 30,  0, 30,  0, 30,  0, 30,  0, 30,  0, 30,  0, 30,  0 };
-//static uint8 frames[16]  = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 };
-//static uint16 sd = 0;
-uint16 CDROMReadWord(uint32 offset, uint32 who/*=UNKNOWN*/)
+static uint8_t trackNum = 1, minTrack, maxTrack;
+//static uint8_t minutes[16] = {  0,  0,  2,  5,  7, 10, 12, 15, 17, 20, 22, 25, 27, 30, 32, 35 };
+//static uint8_t seconds[16] = {  0,  0, 30,  0, 30,  0, 30,  0, 30,  0, 30,  0, 30,  0, 30,  0 };
+//static uint8_t frames[16]  = {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 };
+//static uint16_t sd = 0;
+uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	offset &= 0xFF;
 
-	uint16 data = 0x0000;
+	uint16_t data = 0x0000;
 
 	if (offset == BUTCH)
 		data = 0x0000;
@@ -561,7 +588,7 @@ if (offset == 0x2E)
 	return data;
 }
 
-void CDROMWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
+void CDROMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
 	offset &= 0xFF;
 	cdRam[offset] = data;
@@ -573,7 +600,7 @@ void CDROMWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
 #endif
 }
 
-void CDROMWriteWord(uint32 offset, uint16 data, uint32 who/*=UNKNOWN*/)
+void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
 	offset &= 0xFF;
 	SET16(cdRam, offset, data);
@@ -634,7 +661,7 @@ void CDROMWriteWord(uint32 offset, uint16 data, uint32 who/*=UNKNOWN*/)
 		else if ((data & 0xFF00) == 0x7000)			// Set oversampling rate
 		{
 			// 1 = none, 2 = 2x, 3 = 4x, 4 = 8x
-			uint32 rates[5] = { 0, 1, 2, 4, 8 };
+			uint32_t rates[5] = { 0, 1, 2, 4, 8 };
 			WriteLog("CDROM: Setting oversample rate to %uX\n", rates[(data & 0xFF)]);
 		}
 		else
@@ -658,14 +685,14 @@ void CDROMWriteWord(uint32 offset, uint16 data, uint32 who/*=UNKNOWN*/)
 
 enum ButchState { ST_INIT, ST_RISING, ST_FALLING };
 static ButchState currentState = ST_INIT;
-static uint16 counter = 0;
+static uint16_t counter = 0;
 static bool cmdTx = false;
-static uint16 busCmd;
-static uint16 rxData, txData;
-static uint16 rxDataBit;
+static uint16_t busCmd;
+static uint16_t rxData, txData;
+static uint16_t rxDataBit;
 static bool firstTime = false;
 
-static void CDROMBusWrite(uint16 data)
+static void CDROMBusWrite(uint16_t data)
 {
 //This is kinda lame. What we should do is check for a 0->1 transition on either bits 0 or 1...
 //!!! FIX !!!
@@ -750,7 +777,7 @@ static void CDROMBusWrite(uint16 data)
 	}
 }
 
-static uint16 CDROMBusRead(void)
+static uint16_t CDROMBusRead(void)
 {
 // It seems the counter == 0 simply waits for a single bit acknowledge-- !!! FIX !!!
 // Or does it? Hmm. It still "pumps" 16 bits through above, so how is this special?
@@ -780,8 +807,8 @@ static uint16 CDROMBusRead(void)
 // This simulates a read from BUTCH over the SSI to JERRY. Uses real reading!
 //
 //temp, until I can fix my CD image... Argh!
-static uint8 cdBuf2[2532 + 96], cdBuf3[2532 + 96];
-uint16 GetWordFromButchSSI(uint32 offset, uint32 who/*= UNKNOWN*/)
+static uint8_t cdBuf2[2532 + 96], cdBuf3[2532 + 96];
+uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 {
 	bool go = ((offset & 0x0F) == 0x0A || (offset & 0x0F) == 0x0E ? true : false);
 

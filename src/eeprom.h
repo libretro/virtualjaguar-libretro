@@ -5,16 +5,15 @@
 #ifndef __EEPROM_H__
 #define __EEPROM_H__
 
-#include "types.h"
+#include <stdint.h>
 
 void EepromInit(void);
 void EepromReset(void);
 void EepromDone(void);
-void EepromUpdate(void);
 
-uint8 EepromReadByte(uint32 offset);
-uint16 EepromReadWord(uint32 offset);
-void EepromWriteByte(uint32 offset, uint8 data);
-void EepromWriteWord(uint32 offset, uint16 data);
+uint8_t EepromReadByte(uint32_t offset);
+uint16_t EepromReadWord(uint32_t offset);
+void EepromWriteByte(uint32_t offset, uint8_t data);
+void EepromWriteWord(uint32_t offset, uint16_t data);
 
 #endif	// __EEPROM_H__

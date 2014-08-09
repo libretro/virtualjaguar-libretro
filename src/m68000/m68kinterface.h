@@ -90,6 +90,17 @@ int irq_ack_handler(int);
 
 // Convenience functions
 
+// Uncomment this to have the emulated CPU call a hook function after every instruction
+// NB: This must be implemented by the user!
+#define M68K_HOOK_FUNCTION
+#ifdef M68K_HOOK_FUNCTION
+void M68KInstructionHook(void);
+#endif
+
+// Functions to allow debugging
+void M68KDebugHalt(void);
+void M68KDebugResume(void);
+
 /* Peek at the internals of a CPU context.  This can either be a context
  * retrieved using m68k_get_context() or the currently running context.
  * If context is NULL, the currently running CPU context will be used.

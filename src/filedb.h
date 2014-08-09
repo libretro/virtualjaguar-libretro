@@ -5,7 +5,7 @@
 #ifndef __FILEDB_H__
 #define __FILEDB_H__
 
-#include "types.h"
+#include <stdint.h>
 
 // Useful enumerations
 
@@ -15,10 +15,10 @@ enum FileFlags { FF_ROM=0x01, FF_ALPINE=0x02, FF_BIOS=0x04, FF_REQ_DSP=0x08, FF_
 
 struct RomIdentifier
 {
-	const uint32 crc32;
+	const uint32_t crc32;
 	const char name[128];
-//	const uint8 compatibility;
-	const uint32 flags;
+//	const uint8_t compatibility;
+	const uint32_t flags;
 };
 
 // So other stuff can pull this in...

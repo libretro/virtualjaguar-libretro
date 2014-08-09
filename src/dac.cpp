@@ -19,10 +19,6 @@
 // work correctly...! Perhaps just need to set up SSI stuff so BUTCH doesn't get
 // confused...
 
-// ALSO: Need to implement some form of proper locking to replace the clusterfuck
-//       that is the current spinlock implementation. Since the DSP is a separate
-//       entity, could we get away with running it in the sound IRQ?
-
 // After testing on a real Jaguar, it seems clear that the I2S interrupt drives
 // the audio subsystem. So while you can drive the audio at a *slower* rate than
 // set by SCLK, you can't drive it any *faster*. Also note, that if the I2S
@@ -47,7 +43,6 @@
 #include "dac.h"
 
 #include "SDL.h"
-
 #include "cdrom.h"
 #include "dsp.h"
 #include "event.h"
@@ -76,18 +71,17 @@
 // Global variables
 
 // These are defined in memory.h/cpp
-//uint16 lrxd, rrxd;							// I2S ports (into Jaguar)
+//uint16_t lrxd, rrxd;							// I2S ports (into Jaguar)
 
 // Local variables
 
 static SDL_AudioSpec desired;
 static bool SDLSoundInitialized;
-static uint8 SCLKFrequencyDivider = 19;			// Default is roughly 22 KHz (20774 Hz in NTSC mode)
-/*static*/ uint16 serialMode = 0;
+//static uint8_t SCLKFrequencyDivider = 19;			// Default is roughly 22 KHz (20774 Hz in NTSC mode)
+// /*static*/ uint16_t serialMode = 0;
 
 // Private function prototypes
 
-void SDLSoundCallback(void * userdata, uint8_t * buffer, int length);
 void DSPSampleCallback(void);
 
 
@@ -106,25 +100,25 @@ void DACInit(void)
 	}
 
 	desired.freq = DAC_AUDIO_RATE;
-    
 	//desired.format = AUDIO_S16SYS;
-    
-    desired.channels = 2;
+	desired.channels = 2;
 	desired.samples = 2048;						// 2K buffer = audio delay of 42.67 ms (@ 48 KHz)
-	desired.callback = SDLSoundCallback;
+	//desired.callback = SDLSoundCallback;
 
 	/*if (SDL_OpenAudio(&desired, NULL) < 0)		// NULL means SDL guarantees what we want
 		WriteLog("DAC: Failed to initialize SDL sound...\n");
-    else
+	else
 	{
 		SDLSoundInitialized = true;
 		DACReset();
 		SDL_PauseAudio(false);					// Start playback!
 		WriteLog("DAC: Successfully initialized. Sample rate: %u\n", desired.freq);
 	}*/
+    
     DACReset();
 
 	ltxd = lrxd = desired.silence;
+	sclk = 19;									// Default is roughly 22 KHz
 
 	uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
 	uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
@@ -147,7 +141,7 @@ void DACReset(void)
 //
 void DACPauseAudioThread(bool state/*= true*/)
 {
-//		SDL_PauseAudio(state);
+		//SDL_PauseAudio(state);
 }
 
 
@@ -158,8 +152,8 @@ void DACDone(void)
 {
 	if (SDLSoundInitialized)
 	{
-//		SDL_PauseAudio(true);
-//		SDL_CloseAudio();
+		//SDL_PauseAudio(true);
+		//SDL_CloseAudio();
 	}
 
 	WriteLog("DAC: Done.\n");
@@ -181,13 +175,11 @@ void DACDone(void)
 // Note: The samples are packed in the buffer in 16 bit left/16 bit right pairs.
 //       Also, length is the length of the buffer in BYTES
 //
-static uint8_t * sampleBuffer;
+uint16_t * sampleBuffer;
 static int bufferIndex = 0;
 static int numberOfSamples = 0;
 static bool bufferDone = false;
-
-
-void SDLSoundCallback(void * userdata, uint8_t * buffer, int length)
+void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 {
 	// 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit.
 
@@ -195,8 +187,8 @@ void SDLSoundCallback(void * userdata, uint8_t * buffer, int length)
 	{
 		for(int i=0; i<(length/2); i+=2)
 		{
-			((uint16_t *)buffer)[i + 0] = ltxd;
-			((uint16_t *)buffer)[i + 1] = rtxd;
+			buffer[i + 0] = ltxd;
+			buffer[i + 1] = rtxd;
 		}
 
 		return;
@@ -204,8 +196,8 @@ void SDLSoundCallback(void * userdata, uint8_t * buffer, int length)
 
 	// The length of time we're dealing with here is 1/48000 s, so we multiply this
 	// by the number of cycles per second to get the number of cycles for one sample.
-	uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-	uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
+	//uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+	//uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
 	// This is the length of time
 //	timePerSample = (1000000.0 / (double)riscClockRate) * ();
 
@@ -213,12 +205,14 @@ void SDLSoundCallback(void * userdata, uint8_t * buffer, int length)
 
 	bufferIndex = 0;
 	sampleBuffer = buffer;
+// If length is the length of the sample buffer in BYTES, then shouldn't the # of
+// samples be / 4? No, because we bump the sample count by 2, so this is OK.
 	numberOfSamples = length / 2;
 	bufferDone = false;
 
 	SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 
-	// These timings are tied to NTSC, need to fix that in event.cpp/h!
+	// These timings are tied to NTSC, need to fix that in event.cpp/h! [FIXED]
 	do
 	{
 		double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
@@ -234,14 +228,15 @@ void SDLSoundCallback(void * userdata, uint8_t * buffer, int length)
 		HandleNextEvent(EVENT_JERRY);
 	}
 	while (!bufferDone);
+    
+    audio_callback_batch(sampleBuffer, length);
 }
- 
 
 
 void DSPSampleCallback(void)
 {
-	((uint16_t *)sampleBuffer)[bufferIndex + 0] = ltxd;
-	((uint16_t *)sampleBuffer)[bufferIndex + 1] = rtxd;
+	sampleBuffer[bufferIndex + 0] = ltxd;
+	sampleBuffer[bufferIndex + 1] = rtxd;
 	bufferIndex += 2;
 
 	if (bufferIndex == numberOfSamples)
@@ -272,15 +267,15 @@ int GetCalculatedFrequency(void)
 //
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)
 //
-void DACWriteByte(uint32 offset, uint8 data, uint32 who/*= UNKNOWN*/)
+void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who/*= UNKNOWN*/)
 {
 	WriteLog("DAC: %s writing BYTE %02X at %08X\n", whoName[who], data, offset);
 	if (offset == SCLK + 3)
-		DACWriteWord(offset - 3, (uint16)data);
+		DACWriteWord(offset - 3, (uint16_t)data);
 }
 
 
-void DACWriteWord(uint32 offset, uint16 data, uint32 who/*= UNKNOWN*/)
+void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
 {
 	if (offset == LTXD + 2)
 	{
@@ -292,14 +287,17 @@ void DACWriteWord(uint32 offset, uint16 data, uint32 who/*= UNKNOWN*/)
 	}
 	else if (offset == SCLK + 2)					// Sample rate
 	{
-		WriteLog("DAC: Writing %u to SCLK...\n", data);
+		WriteLog("DAC: Writing %u to SCLK (by %s)...\n", data, whoName[who]);
 
-		if ((uint8)data != SCLKFrequencyDivider)
-			SCLKFrequencyDivider = (uint8)data;
+		sclk = data & 0xFF;
+		JERRYI2SInterruptTimer = -1;
+		RemoveCallback(JERRYI2SCallback);
+		JERRYI2SCallback();
 	}
 	else if (offset == SMODE + 2)
 	{
-		serialMode = data;
+//		serialMode = data;
+		smode = data;
 		WriteLog("DAC: %s writing to SMODE. Bits: %s%s%s%s%s%s [68K PC=%08X]\n", whoName[who],
 			(data & 0x01 ? "INTERNAL " : ""), (data & 0x02 ? "MODE " : ""),
 			(data & 0x04 ? "WSEN " : ""), (data & 0x08 ? "RISING " : ""),
@@ -312,15 +310,15 @@ void DACWriteWord(uint32 offset, uint16 data, uint32 who/*= UNKNOWN*/)
 //
 // LRXD/RRXD/SSTAT ($F1A148/4C/50)
 //
-uint8 DACReadByte(uint32 offset, uint32 who/*= UNKNOWN*/)
+uint8_t DACReadByte(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 {
 //	WriteLog("DAC: %s reading byte from %08X\n", whoName[who], offset);
 	return 0xFF;
 }
 
 
-//static uint16 fakeWord = 0;
-uint16 DACReadWord(uint32 offset, uint32 who/*= UNKNOWN*/)
+//static uint16_t fakeWord = 0;
+uint16_t DACReadWord(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 {
 //	WriteLog("DAC: %s reading word from %08X\n", whoName[who], offset);
 //	return 0xFFFF;
@@ -339,3 +337,4 @@ uint16 DACReadWord(uint32 offset, uint32 who/*= UNKNOWN*/)
 
 	return 0xFFFF;	// May need SSTAT as well... (but may be a Jaguar II only feature)
 }
+

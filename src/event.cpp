@@ -19,8 +19,8 @@
 
 #include "event.h"
 
+#include <stdint.h>
 #include "log.h"
-#include "types.h"
 
 
 //#define EVENT_LIST_SIZE       512
@@ -37,7 +37,7 @@
 // list.
 
 // Although if we used an insertion sort we could, but it wouldn't work for adjusting
-// times...
+// times... (For that, you would have to remove the event then reinsert it.)
 
 struct Event
 {

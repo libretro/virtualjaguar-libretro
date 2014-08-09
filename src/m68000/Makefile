@@ -13,6 +13,8 @@
 CC      := $(CROSS)gcc
 LD      := $(CROSS)gcc
 AR      := $(CROSS)ar
+HOSTCC  := gcc
+
 ARFLAGS := -rs
 GCC_DEPS = -MMD
 INCS    := -I. -I./obj `$(CROSS)sdl-config --cflags`
@@ -58,7 +60,7 @@ obj/cpustbl.c: obj/gencpu
 
 obj/gencpu: obj/cpudefs.c
 	@echo -e "\033[01;33m***\033[00;32m Generating gencpu...\033[00m"
-	@gcc $(GCC_DEPS) $(CFLAGS) gencpu.c readcpu.c obj/cpudefs.c -o obj/gencpu -I. -I./obj
+	@$(HOSTCC) $(GCC_DEPS) $(CFLAGS) gencpu.c readcpu.c obj/cpudefs.c -o obj/gencpu -I. -I./obj
 
 obj/cpudefs.c: obj/build68k
 	@echo -e "\033[01;33m***\033[00;32m Generating cpudefs.c...\033[00m"
@@ -66,7 +68,7 @@ obj/cpudefs.c: obj/build68k
 
 obj/build68k: build68k.c
 	@echo -e "\033[01;33m***\033[00;32m Compiling build68k.c...\033[00m"
-	@gcc $(GCC_DEPS) $(CFLAGS) build68k.c -o obj/build68k
+	@$(HOSTCC) $(GCC_DEPS) $(CFLAGS) build68k.c -o obj/build68k
 
 clean:
 	@echo -ne "\033[01;33m***\033[00;32m Cleaning out the garbage...\033[00m"

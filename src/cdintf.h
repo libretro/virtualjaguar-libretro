@@ -7,16 +7,16 @@
 #ifndef __CDINTF_H__
 #define __CDINTF_H__
 
-#include "types.h"
+#include <stdint.h>
 
 bool CDIntfInit(void);
 void CDIntfDone(void);
-bool CDIntfReadBlock(uint32, uint8 *);
-uint32 CDIntfGetNumSessions(void);
-void CDIntfSelectDrive(uint32);
-uint32 CDIntfGetCurrentDrive(void);
-const uint8 * CDIntfGetDriveName(uint32);
-uint8 CDIntfGetSessionInfo(uint32, uint32);
-uint8 CDIntfGetTrackInfo(uint32, uint32);
+bool CDIntfReadBlock(uint32_t, uint8_t *);
+uint32_t CDIntfGetNumSessions(void);
+void CDIntfSelectDrive(uint32_t);
+uint32_t CDIntfGetCurrentDrive(void);
+const uint8_t * CDIntfGetDriveName(uint32_t);
+uint8_t CDIntfGetSessionInfo(uint32_t, uint32_t);
+uint8_t CDIntfGetTrackInfo(uint32_t, uint32_t);
 
 #endif	// __CDINTF_H__

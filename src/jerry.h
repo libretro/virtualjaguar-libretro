@@ -12,13 +12,13 @@ void JERRYInit(void);
 void JERRYReset(void);
 void JERRYDone(void);
 
-uint8 JERRYReadByte(uint32 offset, uint32 who = UNKNOWN);
-uint16 JERRYReadWord(uint32 offset, uint32 who = UNKNOWN);
-void JERRYWriteByte(uint32 offset, uint8 data, uint32 who = UNKNOWN);
-void JERRYWriteWord(uint32 offset, uint16 data, uint32 who = UNKNOWN);
+uint8_t JERRYReadByte(uint32_t offset, uint32_t who = UNKNOWN);
+uint16_t JERRYReadWord(uint32_t offset, uint32_t who = UNKNOWN);
+void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who = UNKNOWN);
+void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who = UNKNOWN);
 
-void JERRYExecPIT(uint32 cycles);
-void JERRYI2SExec(uint32 cycles);
+void JERRYExecPIT(uint32_t cycles);
+void JERRYI2SExec(uint32_t cycles);
 
 int JERRYGetPIT1Frequency(void);
 int JERRYGetPIT2Frequency(void);
@@ -37,7 +37,7 @@ void JERRYI2SCallback(void);
 
 // External variables
 
-extern uint32 JERRYI2SInterruptDivide;
-extern int32 JERRYI2SInterruptTimer;
+//extern uint32_t JERRYI2SInterruptDivide;
+extern int32_t JERRYI2SInterruptTimer;
 
 #endif

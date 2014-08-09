@@ -12,13 +12,13 @@
 //#include "types.h"
 #include "memory.h"
 
-void MMUWrite8(uint32 address, uint8 data, uint32 who = UNKNOWN);
-void MMUWrite16(uint32 address, uint16 data, uint32 who = UNKNOWN);
-void MMUWrite32(uint32 address, uint32 data, uint32 who = UNKNOWN);
-void MMUWrite64(uint32 address, uint64 data, uint32 who = UNKNOWN);
-uint8 MMURead8(uint32 address, uint32 who = UNKNOWN);
-uint16 MMURead16(uint32 address, uint32 who = UNKNOWN);
-uint32 MMURead32(uint32 address, uint32 who = UNKNOWN);
-uint64 MMURead64(uint32 address, uint32 who = UNKNOWN);
+void MMUWrite8(uint32_t address, uint8_t data, uint32_t who = UNKNOWN);
+void MMUWrite16(uint32_t address, uint16_t data, uint32_t who = UNKNOWN);
+void MMUWrite32(uint32_t address, uint32_t data, uint32_t who = UNKNOWN);
+void MMUWrite64(uint32_t address, uint64_t data, uint32_t who = UNKNOWN);
+uint8_t MMURead8(uint32_t address, uint32_t who = UNKNOWN);
+uint16_t MMURead16(uint32_t address, uint32_t who = UNKNOWN);
+uint32_t MMURead32(uint32_t address, uint32_t who = UNKNOWN);
+uint64_t MMURead64(uint32_t address, uint32_t who = UNKNOWN);
 
 #endif	// __MMU_H__

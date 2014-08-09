@@ -17,10 +17,10 @@
 #if 0
 struct RomIdentifier
 {
-	const uint32 crc32;
+	const uint32_t crc32;
 	const char name[128];
-//	const uint8 compatibility;
-	const uint32 flags;
+//	const uint8_t compatibility;
+	const uint32_t flags;
 };
 
 enum FileFlags { FF_ROM=1, FF_ALPINE=2, FF_BIOS=4, FF_REQ_DSP=8, FF_REQ_BIOS=16, FF_NON_WORKING=32, FF_BAD_DUMP=64, FF_VERIFIED=128 };
@@ -82,6 +82,7 @@ RomIdentifier romList[] = {
 	{ 0x732FFAB6, "Soccer Kid (World)", FF_ROM | FF_VERIFIED },
 	{ 0x817A2273, "Pitfall - The Mayan Adventure (World)", FF_ROM | FF_VERIFIED },
 	{ 0x83A3FB5D, "Towers II", FF_ROM | FF_VERIFIED },
+	{ 0x85919165, "Superfly DX (v1.1)", FF_ROM | FF_VERIFIED },
 	{ 0x892BC67C, "Flip Out! (World)", FF_ROM | FF_VERIFIED },
 	{ 0x8975F48B, "Zool 2 (World)", FF_ROM | FF_VERIFIED },
 	{ 0x89DA21FF, "Phase Zero", FF_ALPINE | FF_VERIFIED | FF_REQ_DSP },
@@ -131,5 +132,6 @@ RomIdentifier romList[] = {
 // is this really a BIOS???
 // No, it's really a cart, complete with RSA header. So need to fix so it can load.
 	{ 0xFDF37F47, "Memory Track Cartridge (World)", FF_ROM | FF_VERIFIED },
+	{ 0xF7756A03, "Tripper Getem (World)", FF_ROM | FF_VERIFIED },
 	{ 0xFFFFFFFF, "***END***", 0 }
 };

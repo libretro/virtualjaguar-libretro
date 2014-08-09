@@ -16,12 +16,9 @@
 
 #include "jaguar.h"
 
+#include <time.h>
 #include "SDL.h"
-
-//FIXME: determine whats needed in this file
 //#include "SDL_opengl.h"
-
-
 #include "blitter.h"
 #include "cdrom.h"
 #include "dac.h"
@@ -37,23 +34,26 @@
 #include "mmu.h"
 #include "settings.h"
 #include "tom.h"
-#include "string.h"
+#include <string.h>
+#include <stdlib.h>
 
 #define CPU_DEBUG
 //Do this in makefile??? Yes! Could, but it's easier to define here...
 //#define LOG_UNMAPPED_MEMORY_ACCESSES
 //#define ABORT_ON_UNMAPPED_MEMORY_ACCESS
-#define ABORT_ON_ILLEGAL_INSTRUCTIONS
+//#define ABORT_ON_ILLEGAL_INSTRUCTIONS
 //#define ABORT_ON_OFFICIAL_ILLEGAL_INSTRUCTION
 #define CPU_DEBUG_MEMORY
 //#define LOG_CD_BIOS_CALLS
+#define CPU_DEBUG_TRACING
+#define ALPINE_FUNCTIONS
 
 // Private function prototypes
 
-unsigned jaguar_unknown_readbyte(unsigned address, uint32 who = UNKNOWN);
-unsigned jaguar_unknown_readword(unsigned address, uint32 who = UNKNOWN);
-void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32 who = UNKNOWN);
-void jaguar_unknown_writeword(unsigned address, unsigned data, uint32 who = UNKNOWN);
+unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who = UNKNOWN);
+unsigned jaguar_unknown_readword(unsigned address, uint32_t who = UNKNOWN);
+void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who = UNKNOWN);
+void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who = UNKNOWN);
 void M68K_show_context(void);
 
 // External variables
@@ -65,24 +65,46 @@ extern int effect_start2, effect_start3, effect_start4, effect_start5, effect_st
 #endif
 
 // Really, need to include memory.h for this, but it might interfere with some stuff...
-extern uint8 jagMemSpace[];
+extern uint8_t jagMemSpace[];
 
 // Internal variables
 
-uint32 jaguar_active_memory_dumps = 0;
+uint32_t jaguar_active_memory_dumps = 0;
 
-uint32 jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
+uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 bool jaguarCartInserted = false;
 bool lowerField = false;
 
 #ifdef CPU_DEBUG_MEMORY
-uint8 writeMemMax[0x400000], writeMemMin[0x400000];
-uint8 readMem[0x400000];
-uint32 returnAddr[4000], raPtr = 0xFFFFFFFF;
+uint8_t writeMemMax[0x400000], writeMemMin[0x400000];
+uint8_t readMem[0x400000];
+uint32_t returnAddr[4000], raPtr = 0xFFFFFFFF;
 #endif
 
-uint32 pcQueue[0x400];
-uint32 pcQPtr = 0;
+uint32_t pcQueue[0x400];
+uint32_t a0Queue[0x400];
+uint32_t a1Queue[0x400];
+uint32_t a2Queue[0x400];
+uint32_t a3Queue[0x400];
+uint32_t a4Queue[0x400];
+uint32_t a5Queue[0x400];
+uint32_t a6Queue[0x400];
+uint32_t a7Queue[0x400];
+uint32_t d0Queue[0x400];
+uint32_t d1Queue[0x400];
+uint32_t d2Queue[0x400];
+uint32_t d3Queue[0x400];
+uint32_t d4Queue[0x400];
+uint32_t d5Queue[0x400];
+uint32_t d6Queue[0x400];
+uint32_t d7Queue[0x400];
+uint32_t pcQPtr = 0;
+bool startM68KTracing = false;
+
+// Breakpoint on memory access vars (exported)
+bool bpmActive = false;
+uint32_t bpmAddress1;
+
 
 //
 // Callback function to detect illegal instructions
@@ -93,7 +115,7 @@ static bool start = false;
 
 void M68KInstructionHook(void)
 {
-	uint32 m68kPC = m68k_get_reg(NULL, M68K_REG_PC);
+	uint32_t m68kPC = m68k_get_reg(NULL, M68K_REG_PC);
 // Temp, for comparing...
 {
 /*	static char buffer[2048];//, mem[64];
@@ -126,9 +148,37 @@ if (inRoutine)
 	instSeen++;
 #endif
 
+// For code tracing...
+#ifdef CPU_DEBUG_TRACING
+	if (startM68KTracing)
+	{
+		static char buffer[2048];
+
+		m68k_disassemble(buffer, m68kPC, 0);
+		WriteLog("%06X: %s\n", m68kPC, buffer);
+	}
+#endif
+
 // For tracebacks...
 // Ideally, we'd save all the registers as well...
-	pcQueue[pcQPtr++] = m68kPC;
+	pcQueue[pcQPtr] = m68kPC;
+	a0Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A0);
+	a1Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A1);
+	a2Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A2);
+	a3Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A3);
+	a4Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A4);
+	a5Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A5);
+	a6Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A6);
+	a7Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A7);
+	d0Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D0);
+	d1Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D1);
+	d2Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D2);
+	d3Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D3);
+	d4Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D4);
+	d5Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D5);
+	d6Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D6);
+	d7Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D7);
+	pcQPtr++;
 	pcQPtr &= 0x3FF;
 
 	if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
@@ -138,12 +188,14 @@ if (inRoutine)
 		static char buffer[2048];
 		for(int i=0; i<0x400; i++)
 		{
+//			WriteLog("[A2=%08X, D0=%08X]\n", a2Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF]);
+			WriteLog("[A0=%08X, A1=%08X, A2=%08X, A3=%08X, A4=%08X, A5=%08X, A6=%08X, A7=%08X, D0=%08X, D1=%08X, D2=%08X, D3=%08X, D4=%08X, D5=%08X, D6=%08X, D7=%08X]\n", a0Queue[(pcQPtr + i) & 0x3FF], a1Queue[(pcQPtr + i) & 0x3FF], a2Queue[(pcQPtr + i) & 0x3FF], a3Queue[(pcQPtr + i) & 0x3FF], a4Queue[(pcQPtr + i) & 0x3FF], a5Queue[(pcQPtr + i) & 0x3FF], a6Queue[(pcQPtr + i) & 0x3FF], a7Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF], d1Queue[(pcQPtr + i) & 0x3FF], d2Queue[(pcQPtr + i) & 0x3FF], d3Queue[(pcQPtr + i) & 0x3FF], d4Queue[(pcQPtr + i) & 0x3FF], d5Queue[(pcQPtr + i) & 0x3FF], d6Queue[(pcQPtr + i) & 0x3FF], d7Queue[(pcQPtr + i) & 0x3FF]);
 			m68k_disassemble(buffer, pcQueue[(pcQPtr + i) & 0x3FF], 0);//M68K_CPU_TYPE_68000);
 			WriteLog("\t%08X: %s\n", pcQueue[(pcQPtr + i) & 0x3FF], buffer);
 		}
 		WriteLog("\n");
 
-		uint32 topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
+		uint32_t topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
 		WriteLog("M68K: Top of stack: %08X. Stack trace:\n", JaguarReadLong(topOfStack));
 		for(int i=0; i<10; i++)
 			WriteLog("%06X: %08X\n", topOfStack - (i * 4), JaguarReadLong(topOfStack - (i * 4)));
@@ -179,17 +231,17 @@ if (inRoutine)
 		log_done();
 		exit(0);
 	}//*/
-/*	uint16 opcode = JaguarReadWord(m68kPC);
+/*	uint16_t opcode = JaguarReadWord(m68kPC);
 	if (opcode == 0x4E75)	// RTS
 	{
 		if (startMemLog)
 //			WriteLog("Jaguar: Returning from subroutine to %08X\n", JaguarReadLong(m68k_get_reg(NULL, M68K_REG_A7)));
 		{
-			uint32 addr = JaguarReadLong(m68k_get_reg(NULL, M68K_REG_A7));
+			uint32_t addr = JaguarReadLong(m68k_get_reg(NULL, M68K_REG_A7));
 			bool found = false;
 			if (raPtr != 0xFFFFFFFF)
 			{
-				for(uint32 i=0; i<=raPtr; i++)
+				for(uint32_t i=0; i<=raPtr; i++)
 				{
 					if (returnAddr[i] == addr)
 					{
@@ -275,7 +327,7 @@ if (m68kPC == 0x802058) start = true;
 			m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
 			m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1), m68k_get_reg(NULL, M68K_REG_D2));
 	}//*/
-	if (m68kPC == 0x82E1A)
+/*	if (m68kPC == 0x82E1A)
 	{
 		static char buffer[2048];
 		m68k_disassemble(buffer, m68kPC, 0);//M68K_CPU_TYPE_68000);
@@ -284,7 +336,7 @@ if (m68kPC == 0x802058) start = true;
 			m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
 			m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1), m68k_get_reg(NULL, M68K_REG_D2));
 	}//*/
-	if (m68kPC == 0x82E58)
+/*	if (m68kPC == 0x82E58)
 		WriteLog("--> [Routine end]\n");
 	if (m68kPC == 0x80004)
 	{
@@ -379,9 +431,9 @@ CD_switch::	-> $306C
 #endif
 
 		WriteLog("\nM68K encountered an illegal instruction at %08X!!!\n\nAborting!\n", m68kPC);
-		uint32 topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
+		uint32_t topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
 		WriteLog("M68K: Top of stack: %08X. Stack trace:\n", JaguarReadLong(topOfStack));
-		uint32 address = topOfStack - (4 * 4 * 3);
+		uint32_t address = topOfStack - (4 * 4 * 3);
 
 		for(int i=0; i<10; i++)
 		{
@@ -502,17 +554,17 @@ ADDRESS_MAP_END
 #define NEW_TIMER_SYSTEM
 
 /*
-uint8 jaguarMainRAM[0x400000];						// 68K CPU RAM
-uint8 jaguarMainROM[0x600000];						// 68K CPU ROM
-uint8 jaguarBootROM[0x040000];						// 68K CPU BIOS ROM--uses only half of this!
-uint8 jaguarCDBootROM[0x040000];					// 68K CPU CD BIOS ROM
+uint8_t jaguarMainRAM[0x400000];						// 68K CPU RAM
+uint8_t jaguarMainROM[0x600000];						// 68K CPU ROM
+uint8_t jaguarBootROM[0x040000];						// 68K CPU BIOS ROM--uses only half of this!
+uint8_t jaguarCDBootROM[0x040000];					// 68K CPU CD BIOS ROM
 bool BIOSLoaded = false;
 bool CDBIOSLoaded = false;
 
-uint8 cdRAM[0x100];
-uint8 tomRAM[0x4000];
-uint8 jerryRAM[0x10000];
-static uint16 eeprom_ram[64];
+uint8_t cdRAM[0x100];
+uint8_t tomRAM[0x4000];
+uint8_t jerryRAM[0x10000];
+static uint16_t eeprom_ram[64];
 
 // NOTE: CD BIOS ROM is read from cartridge space @ $802000 (it's a cartridge, after all)
 */
@@ -520,7 +572,7 @@ static uint16 eeprom_ram[64];
 enum MemType { MM_NOP = 0, MM_RAM, MM_ROM, MM_IO };
 
 // M68K Memory map/handlers
-uint32 	{
+uint32_t 	{
 	{ 0x000000, 0x3FFFFF, MM_RAM, jaguarMainRAM },
 	{ 0x800000, 0xDFFEFF, MM_ROM, jaguarMainROM },
 // Note that this is really memory mapped I/O region...
@@ -610,7 +662,7 @@ C3 = C2 = 1 means std. Jag. cntrlr. or nothing attached.
 */
 };
 
-void WriteByte(uint32 address, uint8 byte, uint32 who/*=UNKNOWN*/)
+void WriteByte(uint32_t address, uint8_t byte, uint32_t who/*=UNKNOWN*/)
 {
 	// Not sure, but I think the system only has 24 address bits...
 	address &= 0x00FFFFFF;
@@ -646,7 +698,7 @@ void WriteByte(uint32 address, uint8 byte, uint32 who/*=UNKNOWN*/)
 	{
 		if (address == 0xF00050)
 		{
-			tomTimerPrescaler = (tomTimerPrescaler & 0x00FF) | ((uint16)byte << 8);
+			tomTimerPrescaler = (tomTimerPrescaler & 0x00FF) | ((uint16_t)byte << 8);
 			TOMResetPIT();
 			return;
 		}
@@ -658,7 +710,7 @@ void WriteByte(uint32 address, uint8 byte, uint32 who/*=UNKNOWN*/)
 		}
 		else if (address == 0xF00052)
 		{
-			tomTimerDivider = (tomTimerDivider & 0x00FF) | ((uint16)byte << 8);
+			tomTimerDivider = (tomTimerDivider & 0x00FF) | ((uint16_t)byte << 8);
 			TOMResetPIT();
 			return;
 		}
@@ -717,9 +769,9 @@ void WriteByte(uint32 address, uint8 byte, uint32 who/*=UNKNOWN*/)
 		{
 //		WriteLog("JERRY: Writing %02X to SCLK...\n", data);
 			if ((address & 0x03) == 2)
-				JERRYI2SInterruptDivide = (JERRYI2SInterruptDivide & 0x00FF) | ((uint32)byte << 8);
+				JERRYI2SInterruptDivide = (JERRYI2SInterruptDivide & 0x00FF) | ((uint32_t)byte << 8);
 			else
-				JERRYI2SInterruptDivide = (JERRYI2SInterruptDivide & 0xFF00) | (uint32)byte;
+				JERRYI2SInterruptDivide = (JERRYI2SInterruptDivide & 0xFF00) | (uint32_t)byte;
 
 			JERRYI2SInterruptTimer = -1;
 #ifndef NEW_TIMER_SYSTEM
@@ -815,26 +867,32 @@ WriteLog("JERRY: (68K int en/lat - Unhandled!) Tried to write $%02X to $%08X!\n"
 		;	// Do nothing
 }
 
-void WriteWord(uint32 adddress, uint16 word)
+
+void WriteWord(uint32_t adddress, uint16_t word)
 {
 }
 
-void WriteDWord(uint32 adddress, uint32 dword)
+
+void WriteDWord(uint32_t adddress, uint32_t dword)
 {
 }
 
-uint8 ReadByte(uint32 adddress)
+
+uint8_t ReadByte(uint32_t adddress)
 {
 }
 
-uint16 ReadWord(uint32 adddress)
+
+uint16_t ReadWord(uint32_t adddress)
 {
 }
 
-uint32 ReadDWord(uint32 adddress)
+
+uint32_t ReadDWord(uint32_t adddress)
 {
 }
 #endif
+
 
 void ShowM68KContext(void)
 {
@@ -868,6 +926,7 @@ void ShowM68KContext(void)
 	}
 	while (disPC < (currpc + 10));
 }
+
 
 //
 // Custom UAE 68000 read/write/IRQ functions
@@ -934,6 +993,13 @@ handler:
 #endif
 int irq_ack_handler(int level)
 {
+#ifdef CPU_DEBUG_TRACING
+	if (startM68KTracing)
+	{
+		WriteLog("irq_ack_handler: M68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
+	}
+#endif
+
 	// Tracing the IPL lines on the Jaguar schematic yields the following:
 	// IPL1 is connected to INTL on TOM (OUT to 68K)
 	// IPL0-2 are also tied to Vcc via 4.7K resistors!
@@ -953,10 +1019,17 @@ int irq_ack_handler(int level)
 	return M68K_INT_ACK_AUTOVECTOR;
 }
 
+
 //#define USE_NEW_MMU
 
 unsigned int m68k_read_memory_8(unsigned int address)
 {
+#ifdef ALPINE_FUNCTIONS
+	// Check if breakpoint on memory is active, and deal with it
+	if (bpmActive && address == bpmAddress1)
+		M68KDebugHalt();
+#endif
+
 	// Musashi does this automagically for you, UAE core does not :-P
 	address &= 0x00FFFFFF;
 #ifdef CPU_DEBUG_MEMORY
@@ -1004,11 +1077,18 @@ unsigned int m68k_read_memory_8(unsigned int address)
 #endif
 }
 
+
 void gpu_dump_disassembly(void);
 void gpu_dump_registers(void);
 
 unsigned int m68k_read_memory_16(unsigned int address)
 {
+#ifdef ALPINE_FUNCTIONS
+	// Check if breakpoint on memory is active, and deal with it
+	if (bpmActive && address == bpmAddress1)
+		M68KDebugHalt();
+#endif
+
 	// Musashi does this automagically for you, UAE core does not :-P
 	address &= 0x00FFFFFF;
 #ifdef CPU_DEBUG_MEMORY
@@ -1108,8 +1188,15 @@ unsigned int m68k_read_memory_16(unsigned int address)
 #endif
 }
 
+
 unsigned int m68k_read_memory_32(unsigned int address)
 {
+#ifdef ALPINE_FUNCTIONS
+	// Check if breakpoint on memory is active, and deal with it
+	if (bpmActive && address == bpmAddress1)
+		M68KDebugHalt();
+#endif
+
 	// Musashi does this automagically for you, UAE core does not :-P
 	address &= 0x00FFFFFF;
 //; So, it seems that it stores the returned DWORD at $51136 and $FB074.
@@ -1124,8 +1211,15 @@ unsigned int m68k_read_memory_32(unsigned int address)
 #endif
 }
 
+
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
+#ifdef ALPINE_FUNCTIONS
+	// Check if breakpoint on memory is active, and deal with it
+	if (bpmActive && address == bpmAddress1)
+		M68KDebugHalt();
+#endif
+
 	// Musashi does this automagically for you, UAE core does not :-P
 	address &= 0x00FFFFFF;
 #ifdef CPU_DEBUG_MEMORY
@@ -1174,8 +1268,15 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 #endif
 }
 
+
 void m68k_write_memory_16(unsigned int address, unsigned int value)
 {
+#ifdef ALPINE_FUNCTIONS
+	// Check if breakpoint on memory is active, and deal with it
+	if (bpmActive && address == bpmAddress1)
+		M68KDebugHalt();
+#endif
+
 	// Musashi does this automagically for you, UAE core does not :-P
 	address &= 0x00FFFFFF;
 #ifdef CPU_DEBUG_MEMORY
@@ -1184,7 +1285,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 	{
 		if (startMemLog)
 		{
-			uint8 hi = value >> 8, lo = value & 0xFF;
+			uint8_t hi = value >> 8, lo = value & 0xFF;
 
 			if (hi > writeMemMax[address])
 				writeMemMax[address] = hi;
@@ -1207,7 +1308,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 //	WriteLog("M68K: Writing to blitter --> %04X at %08X\n", value, address);
 //if (address >= 0x0E75D0 && address <= 0x0E75E7)
 //	WriteLog("M68K: Writing %04X at %08X, M68K PC=%08X\n", value, address, m68k_get_reg(NULL, M68K_REG_PC));
-/*extern uint32 totalFrames;
+/*extern uint32_t totalFrames;
 if (address == 0xF02114)
 	WriteLog("M68K: Writing to GPU_CTRL (frame:%u)... [M68K PC:%08X]\n", totalFrames, m68k_get_reg(NULL, M68K_REG_PC));
 if (address == 0xF02110)
@@ -1262,8 +1363,15 @@ if (address == 0xF02110)
 #endif
 }
 
+
 void m68k_write_memory_32(unsigned int address, unsigned int value)
 {
+#ifdef ALPINE_FUNCTIONS
+	// Check if breakpoint on memory is active, and deal with it
+	if (bpmActive && address == bpmAddress1)
+		M68KDebugHalt();
+#endif
+
 	// Musashi does this automagically for you, UAE core does not :-P
 	address &= 0x00FFFFFF;
 /*if (address == 0x4E00)
@@ -1297,16 +1405,18 @@ if (address == 0xF03214 && value == 0x88E30047)
 }
 
 
-uint32 JaguarGetHandler(uint32 i)
+uint32_t JaguarGetHandler(uint32_t i)
 {
 	return JaguarReadLong(i * 4);
 }
 
-bool JaguarInterruptHandlerIsValid(uint32 i) // Debug use only...
+
+bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
 {
-	uint32 handler = JaguarGetHandler(i);
+	uint32_t handler = JaguarGetHandler(i);
 	return (handler && (handler != 0xFFFFFFFF) ? true : false);
 }
+
 
 void M68K_show_context(void)
 {
@@ -1351,7 +1461,7 @@ void M68K_show_context(void)
 	for(int i=0; i<256; i++)
 	{
 		WriteLog("handler %03i at ", i);//$%08X\n", i, (unsigned int)JaguarGetHandler(i));
-		uint32 address = (uint32)JaguarGetHandler(i);
+		uint32_t address = (uint32_t)JaguarGetHandler(i);
 
 		if (address == 0)
 			WriteLog(".........\n");
@@ -1359,6 +1469,7 @@ void M68K_show_context(void)
 			WriteLog("$%08X\n", address);
 	}
 }
+
 
 //
 // Unknown read/write byte/word routines
@@ -1380,7 +1491,7 @@ void M68K_show_context(void)
 // in. This mistake causes it to try and overwrite approximately $700000 worth of address
 // space! (That is, unless the 68K causes a bus error...)
 
-void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32 who/*=UNKNOWN*/)
+void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown byte %02X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1394,7 +1505,8 @@ void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32 who/*=UNKN
 #endif
 }
 
-void jaguar_unknown_writeword(unsigned address, unsigned data, uint32 who/*=UNKNOWN*/)
+
+void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown word %04X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1408,7 +1520,8 @@ void jaguar_unknown_writeword(unsigned address, unsigned data, uint32 who/*=UNKN
 #endif
 }
 
-unsigned jaguar_unknown_readbyte(unsigned address, uint32 who/*=UNKNOWN*/)
+
+unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown byte read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1423,7 +1536,8 @@ unsigned jaguar_unknown_readbyte(unsigned address, uint32 who/*=UNKNOWN*/)
     return 0xFF;
 }
 
-unsigned jaguar_unknown_readword(unsigned address, uint32 who/*=UNKNOWN*/)
+
+unsigned jaguar_unknown_readword(unsigned address, uint32_t who/*=UNKNOWN*/)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown word read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1438,6 +1552,7 @@ unsigned jaguar_unknown_readword(unsigned address, uint32 who/*=UNKNOWN*/)
     return 0xFFFF;
 }
 
+
 //
 // Disassemble M68K instructions at the given offset
 //
@@ -1447,23 +1562,26 @@ unsigned int m68k_read_disassembler_8(unsigned int address)
 	return m68k_read_memory_8(address);
 }
 
+
 unsigned int m68k_read_disassembler_16(unsigned int address)
 {
 	return m68k_read_memory_16(address);
 }
+
 
 unsigned int m68k_read_disassembler_32(unsigned int address)
 {
 	return m68k_read_memory_32(address);
 }
 
-void JaguarDasm(uint32 offset, uint32 qt)
+
+void JaguarDasm(uint32_t offset, uint32_t qt)
 {
 #ifdef CPU_DEBUG
 	static char buffer[2048];//, mem[64];
 	int pc = offset, oldpc;
 
-	for(uint32 i=0; i<qt; i++)
+	for(uint32_t i=0; i<qt; i++)
 	{
 /*		oldpc = pc;
 		for(int j=0; j<64; j++)
@@ -1478,14 +1596,16 @@ void JaguarDasm(uint32 offset, uint32 qt)
 #endif
 }
 
-uint8 JaguarReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
-{
-	uint8 data = 0x00;
 
+uint8_t JaguarReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+{
+	uint8_t data = 0x00;
 	offset &= 0xFFFFFF;
-	if (offset < 0x200000)
-		data = jaguarMainRAM[offset & 0x3FFFFF];
-	else if ((offset >= 0x800000) && (offset < 0xC00000))
+
+	// First 2M is mirrored in the $0 - $7FFFFF range
+	if (offset < 0x800000)
+		data = jaguarMainRAM[offset & 0x1FFFFF];
+	else if ((offset >= 0x800000) && (offset < 0xDFFF00))
 		data = jaguarMainROM[offset - 0x800000];
 	else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
 		data = CDROMReadByte(offset, who);
@@ -1503,14 +1623,17 @@ uint8 JaguarReadByte(uint32 offset, uint32 who/*=UNKNOWN*/)
 	return data;
 }
 
-uint16 JaguarReadWord(uint32 offset, uint32 who/*=UNKNOWN*/)
+
+uint16_t JaguarReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	offset &= 0xFFFFFF;
-	if (offset <= 0x1FFFFE)
+
+	// First 2M is mirrored in the $0 - $7FFFFF range
+	if (offset < 0x800000)
 	{
 		return (jaguarMainRAM[(offset+0) & 0x1FFFFF] << 8) | jaguarMainRAM[(offset+1) & 0x1FFFFF];
 	}
-	else if ((offset >= 0x800000) && (offset <= 0xBFFFFE))
+	else if ((offset >= 0x800000) && (offset < 0xDFFF00))
 	{
 		offset -= 0x800000;
 		return (jaguarMainROM[offset+0] << 8) | jaguarMainROM[offset+1];
@@ -1530,7 +1653,8 @@ uint16 JaguarReadWord(uint32 offset, uint32 who/*=UNKNOWN*/)
 	return jaguar_unknown_readword(offset, who);
 }
 
-void JaguarWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
+
+void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
 /*	if (offset >= 0x4E00 && offset < 0x4E04)
 		WriteLog("JWB: Byte %02X written at %08X by %s\n", data, offset, whoName[who]);//*/
@@ -1540,7 +1664,9 @@ void JaguarWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
 		WriteLog("JWB: Byte %02X written at %08X by %s\n", data, offset, whoName[who]);//*/
 
 	offset &= 0xFFFFFF;
-	if (offset < 0x200000)
+
+	// First 2M is mirrored in the $0 - $7FFFFF range
+	if (offset < 0x800000)
 	{
 		jaguarMainRAM[offset & 0x1FFFFF] = data;
 		return;
@@ -1564,8 +1690,9 @@ void JaguarWriteByte(uint32 offset, uint8 data, uint32 who/*=UNKNOWN*/)
 	jaguar_unknown_writebyte(offset, data, who);
 }
 
-uint32 starCount;
-void JaguarWriteWord(uint32 offset, uint16 data, uint32 who/*=UNKNOWN*/)
+
+uint32_t starCount;
+void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
 /*	if (offset >= 0x4E00 && offset < 0x4E04)
 		WriteLog("JWW: Word %04X written at %08X by %s\n", data, offset, whoName[who]);//*/
@@ -1584,7 +1711,8 @@ if (offset == 0x0102)//64*4)
 
 	offset &= 0xFFFFFF;
 
-	if (offset <= 0x1FFFFE)
+	// First 2M is mirrored in the $0 - $7FFFFF range
+	if (offset <= 0x7FFFFE)
 	{
 /*
 GPU Table (CD BIOS)
@@ -1624,12 +1752,12 @@ if ((data & 0xFF00) != 0x7700)
 /*extern bool doGPUDis;
 if (offset == 0x120216 && who == GPU)
 	doGPUDis = true;//*/
-/*extern uint32 gpu_pc;
+/*extern uint32_t gpu_pc;
 if (who == GPU && (gpu_pc == 0xF03604 || gpu_pc == 0xF03638))
 {
-	uint32 base = offset - (offset > 0x148000 ? 0x148000 : 0x100000);
-	uint32 y = base / 0x300;
-	uint32 x = (base - (y * 0x300)) / 2;
+	uint32_t base = offset - (offset > 0x148000 ? 0x148000 : 0x100000);
+	uint32_t y = base / 0x300;
+	uint32_t x = (base - (y * 0x300)) / 2;
 	WriteLog("JWW: Writing starfield star %04X at %08X (%u/%u) [%s]\n", data, offset, x, y, (gpu_pc == 0xF03604 ? "s" : "L"));
 }//*/
 /*
@@ -1639,7 +1767,7 @@ JWW: Writing starfield star 775E at 0011F650 (555984/1447)
 /*if (who == GPU && offset == (0x001E17F8 + 0x34))
 	data = 0xFE3C;//*/
 //	WriteLog("JWW: Write at %08X written to by %s.\n", 0x001E17F8 + 0x34, whoName[who]);//*/
-/*extern uint32 gpu_pc;
+/*extern uint32_t gpu_pc;
 if (who == GPU && (gpu_pc == 0xF03604 || gpu_pc == 0xF03638))
 {
 	extern int objectPtr;
@@ -1652,9 +1780,9 @@ if (who == GPU && (gpu_pc == 0xF03604 || gpu_pc == 0xF03638))
 //	if (starCount == 1)
 //		WriteLog("--> Drawing 1st star...\n");
 //
-//	uint32 base = offset - (offset > 0x148000 ? 0x148000 : 0x100000);
-//	uint32 y = base / 0x300;
-//	uint32 x = (base - (y * 0x300)) / 2;
+//	uint32_t base = offset - (offset > 0x148000 ? 0x148000 : 0x100000);
+//	uint32_t y = base / 0x300;
+//	uint32_t x = (base - (y * 0x300)) / 2;
 //	WriteLog("JWW: Writing starfield star %04X at %08X (%u/%u) [%s]\n", data, offset, x, y, (gpu_pc == 0xF03604 ? "s" : "L"));
 
 //A star of interest...
@@ -1698,14 +1826,16 @@ if (offset == 0x11D31A + 0x48000 || offset == 0x11D31A)
 	jaguar_unknown_writeword(offset, data, who);
 }
 
+
 // We really should re-do this so that it does *real* 32-bit access... !!! FIX !!!
-uint32 JaguarReadLong(uint32 offset, uint32 who/*=UNKNOWN*/)
+uint32_t JaguarReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
 }
 
+
 // We really should re-do this so that it does *real* 32-bit access... !!! FIX !!!
-void JaguarWriteLong(uint32 offset, uint32 data, uint32 who/*=UNKNOWN*/)
+void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 {
 /*	extern bool doDSPDis;
 	if (offset < 0x400 && !doDSPDis)
@@ -1720,54 +1850,72 @@ void JaguarWriteLong(uint32 offset, uint32 data, uint32 who/*=UNKNOWN*/)
 	JaguarWriteWord(offset+2, data & 0xFFFF, who);
 }
 
-void JaguarSetScreenBuffer(uint32 * buffer)
+
+void JaguarSetScreenBuffer(uint32_t * buffer)
 {
 	// This is in TOM, but we set it here...
 	screenBuffer = buffer;
 }
 
-void JaguarSetScreenPitch(uint32 pitch)
+
+void JaguarSetScreenPitch(uint32_t pitch)
 {
 	// This is in TOM, but we set it here...
 	screenPitch = pitch;
 }
+
 
 //
 // Jaguar console initialization
 //
 void JaguarInit(void)
 {
+	// For randomizing RAM
+	srand(time(NULL));
+
+	// Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
+	for(uint32_t i=0; i<0x200000; i+=4)
+		*((uint32_t *)(&jaguarMainRAM[i])) = rand();
+
 #ifdef CPU_DEBUG_MEMORY
 	memset(readMem, 0x00, 0x400000);
 	memset(writeMemMin, 0xFF, 0x400000);
 	memset(writeMemMax, 0x00, 0x400000);
 #endif
-	memset(jaguarMainRAM, 0x00, 0x200000);
+//	memset(jaguarMainRAM, 0x00, 0x200000);
 //	memset(jaguar_mainRom, 0xFF, 0x200000);	// & set it to all Fs...
 //	memset(jaguar_mainRom, 0x00, 0x200000);	// & set it to all 0s...
 //NOTE: This *doesn't* fix FlipOut...
 //Or does it? Hmm...
 //Seems to want $01010101... Dunno why. Investigate!
-	memset(jaguarMainROM, 0x01, 0x600000);	// & set it to all 01s...
+//	memset(jaguarMainROM, 0x01, 0x600000);	// & set it to all 01s...
 //	memset(jaguar_mainRom, 0xFF, 0x600000);	// & set it to all Fs...
 	lowerField = false;							// Reset the lower field flag
 //temp, for crappy crap that sux
 memset(jaguarMainRAM + 0x804, 0xFF, 4);
 
-//	m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 	m68k_pulse_reset();							// Need to do this so UAE disasm doesn't segfault on exit
 	GPUInit();
 	DSPInit();
 	TOMInit();
 	JERRYInit();
 	CDROMInit();
+    
+    sampleBuffer = (uint16_t *)malloc(2048 * sizeof(uint16_t)); //or 65536?
+    memset(sampleBuffer, 0, 2048 * sizeof(uint16_t)); //or 65536?
 }
+
 
 //New timer based code stuffola...
 void HalflineCallback(void);
 void RenderCallback(void);
 void JaguarReset(void)
 {
+	// Only problem with this approach: It wipes out RAM loaded files...!
+	// Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
+	for(uint32_t i=8; i<0x200000; i+=4)
+		*((uint32_t *)(&jaguarMainRAM[i])) = rand();
+
 	// New timer base code stuffola...
 	InitializeEventList();
 //Need to change this so it uses the single RAM space and load the BIOS
@@ -1795,12 +1943,13 @@ void JaguarReset(void)
 	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
 }
 
+
 void JaguarDone(void)
 {
 #ifdef CPU_DEBUG_MEMORY
 /*	WriteLog("\nJaguar: Memory Usage Stats (return addresses)\n\n");
 
-	for(uint32 i=0; i<=raPtr; i++)
+	for(uint32_t i=0; i<=raPtr; i++)
 	{
 		WriteLog("\t%08X\n", returnAddr[i]);
 		WriteLog("M68000 disassembly at $%08X...\n", returnAddr[i] - 16);
@@ -1834,13 +1983,13 @@ void JaguarDone(void)
 //#ifdef CPU_DEBUG
 //	for(int i=M68K_REG_A0; i<=M68K_REG_A7; i++)
 //		WriteLog("\tA%i = 0x%.8x\n", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-	int32 topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
+	int32_t topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
 	WriteLog("M68K: Top of stack: %08X -> (%08X). Stack trace:\n", topOfStack, JaguarReadLong(topOfStack));
 #if 0
 	for(int i=-2; i<9; i++)
 		WriteLog("%06X: %08X\n", topOfStack + (i * 4), JaguarReadLong(topOfStack + (i * 4)));
 #else
-	uint32 address = topOfStack - (4 * 4 * 3);
+	uint32_t address = topOfStack - (4 * 4 * 3);
 
 	for(int i=0; i<10; i++)
 	{
@@ -1892,17 +2041,13 @@ void JaguarDone(void)
 	M68K_show_context();
 //#endif
 
-#if 0	// This is drawn already...
-	WriteLog("Jaguar: 68K AutoVector table:\n", JaguarReadWord(0x3004));
-	for(uint32 i=0x64; i<=0x7C; i+=4)
-		WriteLog("  #%u: %08X\n", (i-0x64)/4, JaguarReadLong(i));
-#endif
-
 	CDROMDone();
 	GPUDone();
 	DSPDone();
 	TOMDone();
 	JERRYDone();
+    
+    free(sampleBuffer);
 
 	// temp, until debugger is in place
 //00802016: jsr     $836F1A.l
@@ -1956,12 +2101,12 @@ void DumpMainMemory(void)
 	if (fp == NULL)
 		return;
 
-	fwrite(jaguarMainRAM, 1, 0x400000, fp);
+	fwrite(jaguarMainRAM, 1, 0x200000, fp);
 	fclose(fp);
 }
 
 
-uint8 * GetRamPtr(void)
+uint8_t * GetRamPtr(void)
 {
 	return jaguarMainRAM;
 }
@@ -1989,6 +2134,8 @@ void JaguarExecuteNew(void)
 		HandleNextEvent();
  	}
 	while (!frameDone);
+    
+    SDLSoundCallback(NULL, sampleBuffer, 2048*2);
 }
 
 
@@ -2019,16 +2166,16 @@ void HalflineCallback(void)
 //OK, this is hardwired to run in NTSC, and for who knows how long.
 //Need to fix this so that it does a half-line in the correct amount of time
 //and number of lines, depending on which mode we're in. [FIXED]
-	uint16 vc = TOMReadWord(0xF00006, JAGUAR);
-	uint16 vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
-	uint16 vi = TOMReadWord(0xF0004E, JAGUAR);
-//	uint16 vbb = TOMReadWord(0xF00040, JAGUAR);
+	uint16_t vc = TOMReadWord(0xF00006, JAGUAR);
+	uint16_t vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
+	uint16_t vi = TOMReadWord(0xF0004E, JAGUAR);
+//	uint16_t vbb = TOMReadWord(0xF00040, JAGUAR);
 	vc++;
 
 #ifdef USE_CORRECT_PAL_TIMINGS
 	// Each # of lines is for a full frame == 1/30s (NTSC), 1/25s (PAL).
 	// So we cut the number of half-lines in a frame in half. :-P
-	uint16 numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+	uint16_t numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
 
 	if ((vc & 0x7FF) >= numHalfLines)
 #else
@@ -2064,7 +2211,7 @@ void HalflineCallback(void)
 	if ((vc & 0x7FF) == 0)
 //	if (vc == vbb)
 	{
-		//JoystickExec();
+		JoystickExec();
 		frameDone = true;
 	}//*/
 

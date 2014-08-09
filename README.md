@@ -3,4 +3,8 @@ virtualjaguar-libretro
 
 Port of Virtual Jaguar to Libretro
 
-WORK IN PROGRESS (NO SOUND)
+Upstream: `git clone http://shamusworld.gotdns.org/git/virtualjaguar`
+
+Unofficial GitHub mirror: https://github.com/mirror/virtualjaguar
+
+Needs battery saves

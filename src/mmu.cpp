@@ -186,13 +186,13 @@ Should we have a read mask as well, for the purposes of reading?
 */
 
 struct MemDesc {
-	uint32 startAddr;
-	uint32 endAddr;
+	uint32_t startAddr;
+	uint32_t endAddr;
 	MemType type;
 //	(void (* ioFunc)(uint32, uint32)); // <-- could also be a pointer to RAM...
 	void * readFunc;					// This is read & write with MM_IO
 	void * writeFunc;
-	uint32 mask;
+	uint32_t mask;
 };
 
 
@@ -376,7 +376,7 @@ MemDesc memoryMap[] = {
 #if 0
 
 // Jaguar Memory map/handlers
-uint32 memoryMap[] = {
+uint32_t memoryMap[] = {
 	{ 0x000000, 0x3FFFFF, MM_RAM, jaguarMainRAM },
 	{ 0x800000, 0xDFFEFF, MM_ROM, jaguarMainROM },
 // Note that this is really memory mapped I/O region...
@@ -467,31 +467,31 @@ C3 = C2 = 1 means std. Jag. cntrlr. or nothing attached.
 };
 #endif
 
-void MMUWrite8(uint32 address, uint8 data, uint32 who/*= UNKNOWN*/)
+void MMUWrite8(uint32_t address, uint8_t data, uint32_t who/*= UNKNOWN*/)
 {
 }
 
-void MMUWrite16(uint32 address, uint16 data, uint32 who/*= UNKNOWN*/)
+void MMUWrite16(uint32_t address, uint16_t data, uint32_t who/*= UNKNOWN*/)
 {
 }
 
-void MMUWrite32(uint32 address, uint32 data, uint32 who/*= UNKNOWN*/)
+void MMUWrite32(uint32_t address, uint32_t data, uint32_t who/*= UNKNOWN*/)
 {
 }
 
-void MMUWrite64(uint32 address, uint64 data, uint32 who/*= UNKNOWN*/)
+void MMUWrite64(uint32_t address, uint64_t data, uint32_t who/*= UNKNOWN*/)
 {
 }
 
-uint8 MMURead8(uint32 address, uint32 who/*= UNKNOWN*/)
+uint8_t MMURead8(uint32_t address, uint32_t who/*= UNKNOWN*/)
 {
 	// Search for address in the memory map
 	// NOTE: This assumes that all entries are linear and sorted in ascending order!
 
 	MemDesc memory;
-	uint8 byte = 0xFE;
+	uint8_t byte = 0xFE;
 
-	uint32 i = 0;
+	uint32_t i = 0;
 	while (true)
 	{
 		if (address <= memoryMap[i].endAddr)
@@ -511,13 +511,13 @@ uint8 MMURead8(uint32 address, uint32 who/*= UNKNOWN*/)
 			return 0xFF;		// Exhausted the list, so bail!
 	}
 
-	uint32 offset = address - memory.startAddr;
-	uint32 size = memory.endAddr - memory.startAddr + 1;
-	uint8 byteShift[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
+	uint32_t offset = address - memory.startAddr;
+	uint32_t size = memory.endAddr - memory.startAddr + 1;
+	uint8_t byteShift[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
 
 	if (memory.type == MM_RAM || memory.type == MM_ROM)
 	{
-		byte = ((uint8 *)memory.readFunc)[offset];
+		byte = ((uint8_t *)memory.readFunc)[offset];
 	}
 	else if (memory.type == MM_IO_R || memory.type == MM_IO)
 	{
@@ -527,14 +527,14 @@ uint8 MMURead8(uint32 address, uint32 who/*= UNKNOWN*/)
 		// still have the problem of, say, taking a byte from a 32-bit value.
 /*
 We can do like so:
-	uint8 byteShift[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
+	uint8_t byteShift[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
 	size = memory.endAddr - memory.startAddr + 1;
 	byte = (returnValFromFunc >> byteShift[offset]) & 0xFF;
 
 Let's see, will this work depending on the endianess?
-uint32 dword
+uint32_t dword
 accessing it like so:
-((uint8 *)dword &)[0] --> should give us high byte
+((uint8_t *)dword &)[0] --> should give us high byte
 but if we assign it directly...
 dword = 0x12345678 --> becomes 78 56 34 12 in memory, ptr[0] will be 78 in LE!
 dword = 0x12345678 --> becomes 12 34 56 78 in memory, ptr[0] will be 12 in BE!
@@ -544,7 +544,7 @@ So we're in danger if we use the variables directly! We'd need something like
 #define ENDIAN_SAFE_16(x)  do nothing on BE systems
 
 Then, if we want to use a jaguar variable, we need to cast it like so:
-uint16 my_vbb = ENDIAN_SAFE_16(vbb);
+uint16_t my_vbb = ENDIAN_SAFE_16(vbb);
 
 We have something like this already in jaguar.h, since we treat I/O spaces like
 contiguous memory anyway... For reference:
@@ -573,11 +573,11 @@ contiguous memory anyway... For reference:
 		// function that it points to. Clear as mud? Yeah, I hate function
 		// pointers too, but what else are you gonna do?
 //		mainWindow = (*(Window *(*)(void))event.user.data1)();
-//		uint32 retVal = (*(uint32(*)(uint32))memory.readFunc)(offset);
+//		uint32_t retVal = (*(uint32(*)(uint32))memory.readFunc)(offset);
 //#define FUNC_CAST(x) (*(uint32(*)(uint32))x)
-//		uint32 retVal = FUNC_CAST(memory.readFunc)(offset);
+//		uint32_t retVal = FUNC_CAST(memory.readFunc)(offset);
 #define FUNC_CAST(retVal, function, params) (*(retVal(*)(params))function)
-		uint64 retVal = FUNC_CAST(uint64, memory.readFunc, uint32)(offset);
+		uint64_t retVal = FUNC_CAST(uint64_t, memory.readFunc, uint32_t)(offset);
 		byte = (retVal >> byteShift[offset]) & 0xFF;
 	}
 	else if (memory.type == MM_IO_W)
@@ -588,17 +588,17 @@ contiguous memory anyway... For reference:
 	return byte;
 }
 
-uint16 MMURead16(uint32 address, uint32 who/*= UNKNOWN*/)
+uint16_t MMURead16(uint32_t address, uint32_t who/*= UNKNOWN*/)
 {
 	return 0;
 }
 
-uint32 MMURead32(uint32 address, uint32 who/*= UNKNOWN*/)
+uint32_t MMURead32(uint32_t address, uint32_t who/*= UNKNOWN*/)
 {
 	return 0;
 }
 
-uint64 MMURead64(uint32 address, uint32 who/*= UNKNOWN*/)
+uint64_t MMURead64(uint32_t address, uint32_t who/*= UNKNOWN*/)
 {
 	return 0;
 }

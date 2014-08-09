@@ -1,10 +1,9 @@
-#ifndef VirtualJaguar_SDL_h
-#define VirtualJaguar_SDL_h
+#ifndef __SDL_H__
+#define __SDL_H__
 
-// SDL stub for now
-// remove later
+// SDL stubs
 
-#include "types.h"
+#define AUDIO_S16SYS 0
 
 typedef struct{
     int freq;
@@ -17,4 +16,11 @@ typedef struct{
     void *userdata;
 } SDL_AudioSpec;
 
+//inline int SDL_OpenAudio(SDL_AudioSpec*, SDL_AudioSpec*);
+//inline void SDL_PauseAudio(int number);
+//inline void SDL_CloseAudio(void);
+
+//int SDL_OpenAudio(SDL_AudioSpec*, SDL_AudioSpec*) {return 1;}
+//void SDL_PauseAudio(int thenumber) {}
+//void SDL_CloseAudio() {}
 #endif

@@ -1639,6 +1639,7 @@ if ((dsp_pc < 0xF1B000 || dsp_pc > 0xF1CFFE) && !tripwire)
 	dsp_in_exec--;
 }
 
+
 //
 // DSP opcode handlers
 //
@@ -1681,6 +1682,7 @@ const char * condition[32] =
 #endif
 }
 
+
 static void dsp_opcode_jr(void)
 {
 #ifdef DSP_DIS_JR
@@ -1717,6 +1719,7 @@ const char * condition[32] =
 #endif
 }
 
+
 static void dsp_opcode_add(void)
 {
 #ifdef DSP_DIS_ADD
@@ -1731,6 +1734,7 @@ static void dsp_opcode_add(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_addc(void)
 {
@@ -1750,6 +1754,7 @@ static void dsp_opcode_addc(void)
 #endif
 }
 
+
 static void dsp_opcode_addq(void)
 {
 #ifdef DSP_DIS_ADDQ
@@ -1766,6 +1771,7 @@ static void dsp_opcode_addq(void)
 #endif
 }
 
+
 static void dsp_opcode_sub(void)
 {
 #ifdef DSP_DIS_SUB
@@ -1781,21 +1787,25 @@ static void dsp_opcode_sub(void)
 #endif
 }
 
+
 static void dsp_opcode_subc(void)
 {
 #ifdef DSP_DIS_SUBC
 	if (doDSPDis)
 		WriteLog("%06X: SUBC   R%02u, R%02u [NCZ:%u%u%u, R%02u=%08X, R%02u=%08X] -> ", dsp_pc-2, IMM_1, IMM_2, dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
-	uint32_t res = RN - RM - dsp_flag_c;
-	uint32_t borrow = dsp_flag_c;
-	SET_ZNC_SUB(RN - borrow, RM, res);
-	RN = res;
+	// This is how the DSP ALU does it--Two's complement with inverted carry
+	uint64_t res = (uint64_t)RN + (uint64_t)(RM ^ 0xFFFFFFFF) + (dsp_flag_c ^ 1);
+	// Carry out of the result is inverted too
+	dsp_flag_c = ((res >> 32) & 0x01) ^ 1;
+	RN = (res & 0xFFFFFFFF);
+	SET_ZN(RN);
 #ifdef DSP_DIS_SUBC
 	if (doDSPDis)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_subq(void)
 {
@@ -1813,6 +1823,7 @@ static void dsp_opcode_subq(void)
 #endif
 }
 
+
 static void dsp_opcode_cmp(void)
 {
 #ifdef DSP_DIS_CMP
@@ -1826,6 +1837,7 @@ static void dsp_opcode_cmp(void)
 		WriteLog("[NCZ:%u%u%u]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z);
 #endif
 }
+
 
 static void dsp_opcode_cmpq(void)
 {
@@ -1844,6 +1856,7 @@ static void dsp_opcode_cmpq(void)
 #endif
 }
 
+
 static void dsp_opcode_and(void)
 {
 #ifdef DSP_DIS_AND
@@ -1857,6 +1870,7 @@ static void dsp_opcode_and(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_or(void)
 {
@@ -1872,6 +1886,7 @@ static void dsp_opcode_or(void)
 #endif
 }
 
+
 static void dsp_opcode_xor(void)
 {
 #ifdef DSP_DIS_XOR
@@ -1885,6 +1900,7 @@ static void dsp_opcode_xor(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_not(void)
 {
@@ -1900,10 +1916,12 @@ static void dsp_opcode_not(void)
 #endif
 }
 
+
 static void dsp_opcode_move_pc(void)
 {
 	RN = dsp_pc - 2;
 }
+
 
 static void dsp_opcode_store_r14_indexed(void)
 {
@@ -1918,6 +1936,7 @@ static void dsp_opcode_store_r14_indexed(void)
 #endif
 }
 
+
 static void dsp_opcode_store_r15_indexed(void)
 {
 #ifdef DSP_DIS_STORE15I
@@ -1930,6 +1949,7 @@ static void dsp_opcode_store_r15_indexed(void)
 	DSPWriteLong(dsp_reg[15] + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
 #endif
 }
+
 
 static void dsp_opcode_load_r14_ri(void)
 {
@@ -1948,6 +1968,7 @@ static void dsp_opcode_load_r14_ri(void)
 #endif
 }
 
+
 static void dsp_opcode_load_r15_ri(void)
 {
 #ifdef DSP_DIS_LOAD15R
@@ -1965,15 +1986,18 @@ static void dsp_opcode_load_r15_ri(void)
 #endif
 }
 
+
 static void dsp_opcode_store_r14_ri(void)
 {
 	DSPWriteLong(dsp_reg[14] + RM, RN, DSP);
 }
 
+
 static void dsp_opcode_store_r15_ri(void)
 {
 	DSPWriteLong(dsp_reg[15] + RM, RN, DSP);
 }
+
 
 static void dsp_opcode_nop(void)
 {
@@ -1982,6 +2006,7 @@ static void dsp_opcode_nop(void)
 		WriteLog("%06X: NOP    [NCZ:%u%u%u]\n", dsp_pc-2, dsp_flag_n, dsp_flag_c, dsp_flag_z);
 #endif
 }
+
 
 static void dsp_opcode_storeb(void)
 {
@@ -1994,6 +2019,7 @@ static void dsp_opcode_storeb(void)
 	else
 		JaguarWriteByte(RM, RN, DSP);
 }
+
 
 static void dsp_opcode_storew(void)
 {
@@ -2014,6 +2040,7 @@ static void dsp_opcode_storew(void)
 #endif
 }
 
+
 static void dsp_opcode_store(void)
 {
 #ifdef DSP_DIS_STORE
@@ -2026,6 +2053,7 @@ static void dsp_opcode_store(void)
 	DSPWriteLong(RM, RN, DSP);
 #endif
 }
+
 
 static void dsp_opcode_loadb(void)
 {
@@ -2042,6 +2070,7 @@ static void dsp_opcode_loadb(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_loadw(void)
 {
@@ -2066,6 +2095,7 @@ static void dsp_opcode_loadw(void)
 #endif
 }
 
+
 static void dsp_opcode_load(void)
 {
 #ifdef DSP_DIS_LOAD
@@ -2082,6 +2112,7 @@ static void dsp_opcode_load(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_load_r14_indexed(void)
 {
@@ -2100,6 +2131,7 @@ static void dsp_opcode_load_r14_indexed(void)
 #endif
 }
 
+
 static void dsp_opcode_load_r15_indexed(void)
 {
 #ifdef DSP_DIS_LOAD15I
@@ -2117,6 +2149,7 @@ static void dsp_opcode_load_r15_indexed(void)
 #endif
 }
 
+
 static void dsp_opcode_movei(void)
 {
 #ifdef DSP_DIS_MOVEI
@@ -2132,6 +2165,7 @@ static void dsp_opcode_movei(void)
 #endif
 }
 
+
 static void dsp_opcode_moveta(void)
 {
 #ifdef DSP_DIS_MOVETA
@@ -2144,6 +2178,7 @@ static void dsp_opcode_moveta(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u(alt)=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, ALTERNATE_RN);
 #endif
 }
+
 
 static void dsp_opcode_movefa(void)
 {
@@ -2158,6 +2193,7 @@ static void dsp_opcode_movefa(void)
 #endif
 }
 
+
 static void dsp_opcode_move(void)
 {
 #ifdef DSP_DIS_MOVE
@@ -2170,6 +2206,7 @@ static void dsp_opcode_move(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_moveq(void)
 {
@@ -2184,6 +2221,7 @@ static void dsp_opcode_moveq(void)
 #endif
 }
 
+
 static void dsp_opcode_resmac(void)
 {
 #ifdef DSP_DIS_RESMAC
@@ -2196,6 +2234,7 @@ static void dsp_opcode_resmac(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_imult(void)
 {
@@ -2211,6 +2250,7 @@ static void dsp_opcode_imult(void)
 #endif
 }
 
+
 static void dsp_opcode_mult(void)
 {
 #ifdef DSP_DIS_MULT
@@ -2224,6 +2264,7 @@ static void dsp_opcode_mult(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_bclr(void)
 {
@@ -2240,6 +2281,7 @@ static void dsp_opcode_bclr(void)
 #endif
 }
 
+
 static void dsp_opcode_btst(void)
 {
 #ifdef DSP_DIS_BTST
@@ -2252,6 +2294,7 @@ static void dsp_opcode_btst(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_bset(void)
 {
@@ -2268,6 +2311,7 @@ static void dsp_opcode_bset(void)
 #endif
 }
 
+
 static void dsp_opcode_subqt(void)
 {
 #ifdef DSP_DIS_SUBQT
@@ -2281,6 +2325,7 @@ static void dsp_opcode_subqt(void)
 #endif
 }
 
+
 static void dsp_opcode_addqt(void)
 {
 #ifdef DSP_DIS_ADDQT
@@ -2293,6 +2338,7 @@ static void dsp_opcode_addqt(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_imacn(void)
 {
@@ -2309,11 +2355,13 @@ static void dsp_opcode_imacn(void)
 #endif
 }
 
+
 static void dsp_opcode_mtoi(void)
 {
 	RN = (((int32_t)RM >> 8) & 0xFF800000) | (RM & 0x007FFFFF);
 	SET_ZN(RN);
 }
+
 
 static void dsp_opcode_normi(void)
 {
@@ -2336,6 +2384,7 @@ static void dsp_opcode_normi(void)
 	RN = res;
 	SET_ZN(RN);
 }
+
 
 static void dsp_opcode_mmult(void)
 {
@@ -2378,6 +2427,7 @@ static void dsp_opcode_mmult(void)
 	SET_ZN(RN);
 }
 
+
 static void dsp_opcode_abs(void)
 {
 #ifdef DSP_DIS_ABS
@@ -2401,32 +2451,10 @@ static void dsp_opcode_abs(void)
 #endif
 }
 
+
 static void dsp_opcode_div(void)
 {
 #if 0
-	uint32_t _Rm=RM;
-	uint32_t _Rn=RN;
-
-	if (_Rm)
-	{
-		if (dsp_div_control & 1)
-		{
-			dsp_remain = (((uint64_t)_Rn) << 16) % _Rm;
-			if (dsp_remain&0x80000000)
-				dsp_remain-=_Rm;
-			RN = (((uint64_t)_Rn) << 16) / _Rm;
-		}
-		else
-		{
-			dsp_remain = _Rn % _Rm;
-			if (dsp_remain&0x80000000)
-				dsp_remain-=_Rm;
-			RN/=_Rm;
-		}
-	}
-	else
-		RN=0xffffffff;
-#else
 	if (RM)
 	{
 		if (dsp_div_control & 0x01)		// 16.16 division
@@ -2442,17 +2470,37 @@ static void dsp_opcode_div(void)
 			RN = RN / RM;
 		}
 
-// What we really should do here is figure out why this condition
-// happens in the real divide unit and emulate *that* behavior.
-#if 0
-		if ((gpu_remain - RM) & 0x80000000)	// If the result would have been negative...
-			gpu_remain -= RM;			// Then make it negative!
-#endif
 	}
 	else
+	{
+		// This is what happens according to SCPCD. NYAN!
 		RN = 0xFFFFFFFF;
+		dsp_remain = 0;
+	}
+#else
+	// Real algorithm, courtesy of SCPCD: NYAN!
+	uint32_t q = RN;
+	uint32_t r = 0;
+
+	// If 16.16 division, stuff top 16 bits of RN into remainder and put the
+	// bottom 16 of RN in top 16 of quotient
+	if (dsp_div_control & 0x01)
+		q <<= 16, r = RN >> 16;
+
+	for(int i=0; i<32; i++)
+	{
+//		uint32_t sign = (r >> 31) & 0x01;
+		uint32_t sign = r & 0x80000000;
+		r = (r << 1) | ((q >> 31) & 0x01);
+		r += (sign ? RM : -RM);
+		q = (q << 1) | (((~r) >> 31) & 0x01);
+	}
+
+	RN = q;
+	dsp_remain = r;
 #endif
 }
+
 
 static void dsp_opcode_imultn(void)
 {
@@ -2470,6 +2518,7 @@ static void dsp_opcode_imultn(void)
 #endif
 }
 
+
 static void dsp_opcode_neg(void)
 {
 #ifdef DSP_DIS_NEG
@@ -2484,6 +2533,7 @@ static void dsp_opcode_neg(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_shlq(void)
 {
@@ -2502,6 +2552,7 @@ static void dsp_opcode_shlq(void)
 #endif
 }
 
+
 static void dsp_opcode_shrq(void)
 {
 #ifdef DSP_DIS_SHRQ
@@ -2517,6 +2568,7 @@ static void dsp_opcode_shrq(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_ror(void)
 {
@@ -2534,6 +2586,7 @@ static void dsp_opcode_ror(void)
 #endif
 }
 
+
 static void dsp_opcode_rorq(void)
 {
 #ifdef DSP_DIS_RORQ
@@ -2550,6 +2603,7 @@ static void dsp_opcode_rorq(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_sha(void)
 {
@@ -2582,6 +2636,7 @@ static void dsp_opcode_sha(void)
 	SET_ZN(RN);
 }
 
+
 static void dsp_opcode_sharq(void)
 {
 #ifdef DSP_DIS_SHARQ
@@ -2596,6 +2651,7 @@ static void dsp_opcode_sharq(void)
 		WriteLog("[NCZ:%u%u%u, R%02u=%08X]\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, IMM_2, RN);
 #endif
 }
+
 
 static void dsp_opcode_sh(void)
 {
