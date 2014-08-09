@@ -1,9 +1,10 @@
 #include <iostream>
 #include <cstring>
+#include <cstdlib>
 #include "libretro.h"
-#import "file.h"
-#import "jagbios.h"
-#import "jaguar.h"
+#include "file.h"
+#include "jagbios.h"
+#include "jaguar.h"
 #include "dac.h"
 #include "dsp.h"
 #include "joystick.h"
