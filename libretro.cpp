@@ -188,6 +188,8 @@ size_t retro_get_memory_size(unsigned id)
 
 void retro_init(void)
 {
+   unsigned level = 18;
+
    videoWidth = 320;
    videoHeight = 240;
    videoBuffer = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
@@ -197,7 +199,6 @@ void retro_init(void)
    game_width = 320;
    game_height = 240;
 
-   unsigned level = 3;
    environ_cb(RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL, &level);
 }
 
