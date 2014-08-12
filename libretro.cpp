@@ -228,6 +228,8 @@ void retro_init(void)
    videoWidth = 320;
    videoHeight = 240;
    videoBuffer = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
+   sampleBuffer = (uint16_t *)malloc(2048 * sizeof(uint16_t)); //found in dac.h
+   memset(sampleBuffer, 0, 2048 * sizeof(uint16_t));
 
    //game_width = TOMGetVideoModeWidth();
    //game_height = TOMGetVideoModeHeight();
@@ -241,6 +243,7 @@ void retro_deinit(void)
 {
    JaguarDone();
    free(videoBuffer);
+   free(sampleBuffer); //found in dac.h
 }
 
 void retro_reset(void)
@@ -258,6 +261,8 @@ void retro_run(void)
    update_input();
 
    JaguarExecuteNew();
+   
+   SDLSoundCallback(NULL, sampleBuffer, 2048*2);
 
    // Virtual Jaguar outputs RGBA, so convert to XRGB8888
    for(int h=0;h<240;h++)
@@ -276,4 +281,5 @@ void retro_run(void)
    }
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
+   audio_batch_cb((int16_t *)sampleBuffer, 2048*2);
 }

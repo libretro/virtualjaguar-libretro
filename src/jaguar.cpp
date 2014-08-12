@@ -1901,8 +1901,6 @@ memset(jaguarMainRAM + 0x804, 0xFF, 4);
 	JERRYInit();
 	CDROMInit();
     
-    sampleBuffer = (uint16_t *)malloc(2048 * sizeof(uint16_t)); //or 65536?
-    memset(sampleBuffer, 0, 2048 * sizeof(uint16_t)); //or 65536?
 }
 
 
@@ -2047,7 +2045,6 @@ void JaguarDone(void)
 	TOMDone();
 	JERRYDone();
     
-    free(sampleBuffer);
 
 	// temp, until debugger is in place
 //00802016: jsr     $836F1A.l
@@ -2135,7 +2132,6 @@ void JaguarExecuteNew(void)
  	}
 	while (!frameDone);
     
-    SDLSoundCallback(NULL, sampleBuffer, 2048*2);
 }
 
 
