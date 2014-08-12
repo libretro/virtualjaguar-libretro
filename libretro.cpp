@@ -25,12 +25,44 @@ static retro_input_state_t input_state_cb;
 static retro_environment_t environ_cb;
 static retro_audio_sample_batch_t audio_batch_cb;
 
-void retro_set_environment(retro_environment_t cb) { environ_cb = cb; }
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
+
+void retro_set_environment(retro_environment_t cb)
+{
+   environ_cb = cb;
+
+   struct retro_variable variables[] = {
+      {
+         "useFastBlitter",
+         "Fast Blitter; disabled|enabled",
+
+      },
+      { NULL, NULL },
+   };
+
+   cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
+}
+
+static void update_variables(void)
+{
+   struct retro_variable var = {
+      .key = "useFastBlitter",
+   };
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+  {
+      if (strcmp(var.value, "enabled") == 0)
+		vjs.useFastBlitter=1;
+      if (strcmp(var.value, "disabled") == 0)
+		vjs.useFastBlitter=0;
+  }
+
+} 
+
 
 static void update_input()
 {
@@ -137,6 +169,8 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.useJaguarBIOS = false;
    vjs.renderType = 0;
 
+   update_variables();
+
    //strcpy(vjs.EEPROMPath, "/path/to/eeproms/");   // battery saves
    JaguarInit();                                             // set up hardware
    memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000);   // Use the stock BIOS
@@ -215,6 +249,8 @@ void retro_reset(void)
 
 void retro_run(void)
 {
+   update_variables();
+
    update_input();
 
    JaguarExecuteNew();
