@@ -249,7 +249,10 @@ void retro_reset(void)
 
 void retro_run(void)
 {
-   update_variables();
+
+   bool updated = false;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+   	update_variables();
 
    update_input();
 
