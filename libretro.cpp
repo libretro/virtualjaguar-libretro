@@ -4,6 +4,7 @@
 #include "libretro.h"
 #include "file.h"
 #include "jagbios.h"
+#include "jagbios2.h"
 #include "jaguar.h"
 #include "dac.h"
 #include "dsp.h"
@@ -173,7 +174,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    //strcpy(vjs.EEPROMPath, "/path/to/eeproms/");   // battery saves
    JaguarInit();                                             // set up hardware
-   memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000);   // Use the stock BIOS
+   memcpy(jagMemSpace + 0xE00000, (vjs.biosType == BT_K_SERIES ? jaguarBootROM : jaguarBootROM2), 0x20000); // Use the stock BIOS
 
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
