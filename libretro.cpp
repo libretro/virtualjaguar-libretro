@@ -37,7 +37,7 @@ void retro_set_environment(retro_environment_t cb)
 
    struct retro_variable variables[] = {
       {
-         "useFastBlitter",
+         "virtualjaguar_usefastblitter",
          "Fast Blitter; disabled|enabled",
 
       },
@@ -47,24 +47,24 @@ void retro_set_environment(retro_environment_t cb)
    cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
 }
 
-static void update_variables(void)
+static void check_variables(void)
 {
-   struct retro_variable var = {
-      .key = "useFastBlitter",
-   };
+   struct retro_variable var;
+   var.key = "virtualjaguar_usefastblitter";
+   var.value = NULL;
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-  {
+   {
       if (strcmp(var.value, "enabled") == 0)
-		vjs.useFastBlitter=1;
+         vjs.useFastBlitter=1;
       if (strcmp(var.value, "disabled") == 0)
-		vjs.useFastBlitter=0;
-  }
-
+         vjs.useFastBlitter=0;
+   }
+   else
+      vjs.useFastBlitter=0;
 } 
 
-
-static void update_input()
+static void update_input(void)
 {
    if (!input_poll_cb)
       return;
@@ -169,7 +169,7 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.useJaguarBIOS = false;
    vjs.renderType = 0;
 
-   update_variables();
+   check_variables();
 
    //strcpy(vjs.EEPROMPath, "/path/to/eeproms/");   // battery saves
    JaguarInit();                                             // set up hardware
@@ -249,7 +249,10 @@ void retro_reset(void)
 
 void retro_run(void)
 {
-   update_variables();
+   bool updated = false;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+      check_variables();
 
    update_input();
 
