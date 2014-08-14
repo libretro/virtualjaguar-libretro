@@ -83,11 +83,6 @@ static void update_input(void)
    input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT) ? joypad0Buttons[BUTTON_OPTION] = 0xff : joypad0Buttons[BUTTON_OPTION] = 0x00;
 }
 
-void audio_callback_batch(uint16_t *buff, int len)
-{
-   audio_batch_cb((int16_t *)buff, len);
-}
-
 /************************************
  * libretro implementation
  ************************************/

@@ -20,7 +20,6 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who = UNKNOWN);
 uint8_t DACReadByte(uint32_t offset, uint32_t who = UNKNOWN);
 uint16_t DACReadWord(uint32_t offset, uint32_t who = UNKNOWN);
 
-void audio_callback_batch(uint16_t *buff, int len);
 void SDLSoundCallback(void * userdata, uint16_t * buffer, int length);
 extern uint16_t *sampleBuffer;
 
