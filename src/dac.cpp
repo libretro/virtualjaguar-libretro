@@ -185,7 +185,7 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 
 	if (!DSPIsRunning())
 	{
-		for(int i=0; i<(length/2); i+=2)
+		for(int i=0; i<length; i+=2)
 		{
 			buffer[i + 0] = ltxd;
 			buffer[i + 1] = rtxd;
@@ -207,7 +207,7 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 	sampleBuffer = buffer;
 // If length is the length of the sample buffer in BYTES, then shouldn't the # of
 // samples be / 4? No, because we bump the sample count by 2, so this is OK.
-	numberOfSamples = length / 2;
+	numberOfSamples = length;
 	bufferDone = false;
 
 	SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
