@@ -32,6 +32,8 @@ void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_c
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 
+int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
+
 void retro_set_environment(retro_environment_t cb)
 {
    environ_cb = cb;
@@ -40,6 +42,11 @@ void retro_set_environment(retro_environment_t cb)
       {
          "virtualjaguar_usefastblitter",
          "Fast Blitter; disabled|enabled",
+
+      },
+      {
+         "virtualjaguar_doom_res_hack",
+         "Doom Res Hack; disabled|enabled",
 
       },
       { NULL, NULL },
@@ -63,6 +70,19 @@ static void check_variables(void)
    }
    else
       vjs.useFastBlitter=0;
+
+   var.key = "virtualjaguar_doom_res_hack";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         doom_res_hack=1;
+      if (strcmp(var.value, "disabled") == 0)
+         doom_res_hack=0;
+   }
+   else
+      doom_res_hack=0;
 } 
 
 static void update_input(void)
@@ -258,10 +278,6 @@ void retro_run(void)
    JaguarExecuteNew();
    
    SDLSoundCallback(NULL, sampleBuffer, 1600);
-
-   // Virtual Jaguar outputs RGBA, so convert to XRGB8888
-   for (int i = 0; i < videoWidth * videoHeight; ++i)
-      videoBuffer[i] >>= 8;
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
    audio_batch_cb((int16_t *)sampleBuffer, 1600/2);
