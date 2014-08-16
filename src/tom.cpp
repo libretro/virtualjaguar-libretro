@@ -349,6 +349,10 @@
 //(It's easier to do it here, though...)
 //#define TOM_DEBUG
 
+#ifdef __LIBRETRO__
+extern int doom_res_hack;
+#endif
+
 uint8_t tomRam8[0x4000];
 uint32_t tomWidth, tomHeight;
 uint32_t tomTimerPrescaler;
@@ -736,6 +740,11 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 		uint16_t color = (*current_line_buffer++) << 8;
 		color |= *current_line_buffer++;
 		*backbuffer++ = CRY16ToRGB32[color];
+#ifdef __LIBRETRO__
+//Double pixel screen on doom if pwidth=8 -> (163*2)
+if(doom_res_hack==1)
+	if(pwidth==8)*backbuffer++ = CRY16ToRGB32[color];
+#endif
 		width--;
 	}
 }
