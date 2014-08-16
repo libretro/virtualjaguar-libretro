@@ -578,10 +578,10 @@ void TOMFillLookupTables(void)
 //			| ((i & 0xF100) >> 8)  | ((i & 0xE000) >> 13)
 //			| ((i & 0x07C0) << 13) | ((i & 0x0700) << 8)
 //			| ((i & 0x003F) << 10) | ((i & 0x0030) << 4);
-		RGB16ToRGB32[i] = 0x000000FF
-			| ((i & 0xF100) << 16)					// Red
-			| ((i & 0x003F) << 18)					// Green
-			| ((i & 0x07C0) << 5);					// Blue
+		RGB16ToRGB32[i] = 0xFF000000
+			| ((i & 0xF100) << 8)					// Red
+			| ((i & 0x003F) << 10)					// Green
+			| ((i & 0x07C0) >> 3);					// Blue
 
 	for(uint32_t i=0; i<0x10000; i++)
 	{
@@ -594,7 +594,7 @@ void TOMFillLookupTables(void)
 			b = (((uint32_t)bluecv[cyan][red]) * intensity) >> 8;
 
 //hm.		CRY16ToRGB32[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
-		CRY16ToRGB32[i] = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		CRY16ToRGB32[i] = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 		MIX16ToRGB32[i] = (i & 0x01 ? RGB16ToRGB32[i] : CRY16ToRGB32[i]);
 	}
 }
@@ -682,7 +682,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 #ifdef LEFT_BG_FIX
 	{
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
 		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
@@ -723,7 +723,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 #ifdef LEFT_BG_FIX
 	{
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
 		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
@@ -770,7 +770,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 #ifdef LEFT_BG_FIX
 	{
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
 		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
@@ -789,7 +789,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 		current_line_buffer++;
 		uint32_t b = *current_line_buffer++;
 //hm.		*backbuffer++ = 0xFF000000 | (b << 16) | (g << 8) | r;
-		*backbuffer++ = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		*backbuffer++ = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 		width--;
 	}
 }
@@ -838,7 +838,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 #ifdef LEFT_BG_FIX
 	{
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
 		for(int16_t i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
@@ -1069,7 +1069,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 			uint32_t * currentLineBuffer = TOMCurrentLine;
 			uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
 //Hm.			uint32_t pixel = 0xFF000000 | (b << 16) | (g << 8) | r;
-			uint32_t pixel = 0x000000FF | (r << 24) | (g << 16) | (b << 8);
+			uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
 			for(uint32_t i=0; i<tomWidth; i++)
 				*currentLineBuffer++ = pixel;

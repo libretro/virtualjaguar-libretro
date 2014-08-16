@@ -279,10 +279,6 @@ void retro_run(void)
    
    SDLSoundCallback(NULL, sampleBuffer, 1600);
 
-   // Virtual Jaguar outputs RGBA, so convert to XRGB8888
-   for (int i = 0; i < videoWidth * videoHeight; ++i)
-      videoBuffer[i] >>= 8;
-
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
    audio_batch_cb((int16_t *)sampleBuffer, 1600/2);
 }
