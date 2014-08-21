@@ -8,7 +8,9 @@
 // MAX_PATH isn't defined in stdlib.h on *nix, so we do it here...
 #ifdef __GCCUNIX__
 #include <limits.h>
-#define MAX_PATH		_POSIX_PATH_MAX
+#ifndef MAX_PATH
+#define MAX_PATH		4096
+#endif
 #else
 #include <stdlib.h>								// for MAX_PATH on MinGW/Darwin
 #endif
