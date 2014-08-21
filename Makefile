@@ -153,7 +153,7 @@ else
 FLAGS += -O3 -ffast-math -fomit-frame-pointer -DNDEBUG
 endif
 
-LDFLAGS += $(fpic) -lz $(SHARED)
+LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic) 
 FLAGS += -I. -Isrc -Isrc/m68000
 
