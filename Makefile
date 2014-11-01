@@ -104,52 +104,13 @@ else
    SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
    LDFLAGS += -static-libgcc -static-libstdc++ -lwinmm
 endif
-VIRTUALJAGUAR_DIR := src
 
-VIRTUALJAGUAR_SOURCES := $(VIRTUALJAGUAR_DIR)/blitter.cpp \
-	$(VIRTUALJAGUAR_DIR)/cdintf.cpp \
-	$(VIRTUALJAGUAR_DIR)/cdrom.cpp \
-	$(VIRTUALJAGUAR_DIR)/crc32.cpp \
-	$(VIRTUALJAGUAR_DIR)/dac.cpp \
-	$(VIRTUALJAGUAR_DIR)/dsp.cpp \
-	$(VIRTUALJAGUAR_DIR)/eeprom.cpp \
-	$(VIRTUALJAGUAR_DIR)/event.cpp \
-	$(VIRTUALJAGUAR_DIR)/file.cpp \
-	$(VIRTUALJAGUAR_DIR)/filedb.cpp \
-	$(VIRTUALJAGUAR_DIR)/gpu.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagbios.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagbios2.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagcdbios.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagdasm.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagdevcdbios.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagstub1bios.cpp \
-	$(VIRTUALJAGUAR_DIR)/jagstub2bios.cpp \
-	$(VIRTUALJAGUAR_DIR)/jaguar.cpp \
-	$(VIRTUALJAGUAR_DIR)/jerry.cpp \
-	$(VIRTUALJAGUAR_DIR)/joystick.cpp \
-	$(VIRTUALJAGUAR_DIR)/log.cpp \
-	$(VIRTUALJAGUAR_DIR)/memory.cpp \
-	$(VIRTUALJAGUAR_DIR)/mmu.cpp \
-	$(VIRTUALJAGUAR_DIR)/op.cpp \
-	$(VIRTUALJAGUAR_DIR)/settings.cpp \
-	$(VIRTUALJAGUAR_DIR)/state.cpp \
-	$(VIRTUALJAGUAR_DIR)/tom.cpp \
-	$(VIRTUALJAGUAR_DIR)/universalhdr.cpp \
-	$(VIRTUALJAGUAR_DIR)/wavetable.cpp
+CORE_DIR     := src
+LIBRETRO_DIR := .
 
-LIBRETRO_SOURCES := libretro.cpp
+include Makefile.common
 
-SOURCES_C := $(VIRTUALJAGUAR_DIR)/m68000/cpustbl.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/cpudefs.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/cpuemu.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/cpuextra.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/gencpu.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/m68kdasm.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/m68kinterface.c \
-	$(VIRTUALJAGUAR_DIR)/m68000/readcpu.c
-
-SOURCES := $(LIBRETRO_SOURCES) $(VIRTUALJAGUAR_SOURCES)
-OBJECTS := $(SOURCES:.cpp=.o) $(SOURCES_C:.c=.o)
+OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
 
 all: $(TARGET)
 
@@ -161,7 +122,7 @@ endif
 
 LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic) 
-FLAGS += -I. -Isrc -Isrc/m68000
+FLAGS += $(INCFLAGS)
 
 ifeq ($(OLD_GCC), 1)
 WARNINGS := -Wall

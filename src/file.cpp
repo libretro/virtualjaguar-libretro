@@ -23,7 +23,7 @@
 #include "eeprom.h"
 #include "jaguar.h"
 #include "log.h"
-#include "memory.h"
+#include "vjag_memory.h"
 #include "universalhdr.h"
 
 // Private function prototypes

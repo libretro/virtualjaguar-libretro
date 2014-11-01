@@ -17,7 +17,7 @@
 #include <stdlib.h>								// For NULL definition
 #include "dac.h"
 //#include "jaguar.h"
-//#include "memory.h"
+//#include "vjag_memory.h"
 #include "jagbios.h"
 #include "wavetable.h"
 

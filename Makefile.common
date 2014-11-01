@@ -1,0 +1,43 @@
+INCFLAGS := -I$(LIBRETRO_DIR) -I$(CORE_DIR) -I$(CORE_DIR)/m68000
+
+SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
+	$(CORE_DIR)/cdintf.cpp \
+	$(CORE_DIR)/cdrom.cpp \
+	$(CORE_DIR)/crc32.cpp \
+	$(CORE_DIR)/dac.cpp \
+	$(CORE_DIR)/dsp.cpp \
+	$(CORE_DIR)/eeprom.cpp \
+	$(CORE_DIR)/event.cpp \
+	$(CORE_DIR)/file.cpp \
+	$(CORE_DIR)/filedb.cpp \
+	$(CORE_DIR)/gpu.cpp \
+	$(CORE_DIR)/jagbios.cpp \
+	$(CORE_DIR)/jagbios2.cpp \
+	$(CORE_DIR)/jagcdbios.cpp \
+	$(CORE_DIR)/jagdasm.cpp \
+	$(CORE_DIR)/jagdevcdbios.cpp \
+	$(CORE_DIR)/jagstub1bios.cpp \
+	$(CORE_DIR)/jagstub2bios.cpp \
+	$(CORE_DIR)/jaguar.cpp \
+	$(CORE_DIR)/jerry.cpp \
+	$(CORE_DIR)/joystick.cpp \
+	$(CORE_DIR)/log.cpp \
+	$(CORE_DIR)/vjag_memory.cpp \
+	$(CORE_DIR)/mmu.cpp \
+	$(CORE_DIR)/op.cpp \
+	$(CORE_DIR)/settings.cpp \
+	$(CORE_DIR)/state.cpp \
+	$(CORE_DIR)/tom.cpp \
+	$(CORE_DIR)/universalhdr.cpp \
+	$(CORE_DIR)/wavetable.cpp
+
+SOURCES_CXX += $(LIBRETRO_DIR)/libretro.cpp
+
+SOURCES_C := $(CORE_DIR)/m68000/cpustbl.c \
+	$(CORE_DIR)/m68000/cpudefs.c \
+	$(CORE_DIR)/m68000/cpuemu.c \
+	$(CORE_DIR)/m68000/cpuextra.c \
+	$(CORE_DIR)/m68000/gencpu.c \
+	$(CORE_DIR)/m68000/m68kdasm.c \
+	$(CORE_DIR)/m68000/m68kinterface.c \
+	$(CORE_DIR)/m68000/readcpu.c

@@ -264,7 +264,7 @@
 #include "jaguar.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
-//#include "memory.h"
+//#include "vjag_memory.h"
 #include "op.h"
 #include "settings.h"
 

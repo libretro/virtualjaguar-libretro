@@ -30,7 +30,7 @@
 #include "joystick.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
-//#include "memory.h"
+//#include "vjag_memory.h"
 #include "mmu.h"
 #include "settings.h"
 #include "tom.h"

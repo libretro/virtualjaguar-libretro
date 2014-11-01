@@ -2,7 +2,7 @@
 #define __JAGUAR_H__
 
 #include <stdint.h>
-#include "memory.h"							// For "UNKNOWN" enum
+#include "vjag_memory.h"							// For "UNKNOWN" enum
 
 void JaguarSetScreenBuffer(uint32_t * buffer);
 void JaguarSetScreenPitch(uint32_t pitch);

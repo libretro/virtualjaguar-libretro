@@ -6,7 +6,7 @@
 #define __JERRY_H__
 
 //#include "types.h"
-#include "memory.h"
+#include "vjag_memory.h"
 
 void JERRYInit(void);
 void JERRYReset(void);

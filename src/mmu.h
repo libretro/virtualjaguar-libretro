@@ -10,7 +10,7 @@
 #define __MMU_H__
 
 //#include "types.h"
-#include "memory.h"
+#include "vjag_memory.h"
 
 void MMUWrite8(uint32_t address, uint8_t data, uint32_t who = UNKNOWN);
 void MMUWrite16(uint32_t address, uint16_t data, uint32_t who = UNKNOWN);

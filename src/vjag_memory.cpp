@@ -25,7 +25,7 @@ correctly since some registers do not fall on the same address as far as reading
 goes... Still completely doable though. :-)
 */
 
-#include "memory.h"
+#include "vjag_memory.h"
 
 uint8_t jagMemSpace[0xF20000];					// The entire memory space of the Jaguar...!
 

@@ -25,7 +25,7 @@
 #include "jerry.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
-//#include "memory.h"
+//#include "vjag_memory.h"
 
 
 // Seems alignment in loads & stores was off...

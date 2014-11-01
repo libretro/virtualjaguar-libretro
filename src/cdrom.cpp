@@ -18,7 +18,7 @@
 #include <string.h>									// For memset, etc.
 //#include "jaguar.h"									// For GET32/SET32 macros
 //#include "m68k.h"	//???
-//#include "memory.h"
+//#include "vjag_memory.h"
 #include "cdintf.h"									// System agnostic CD interface functions
 #include "log.h"
 #include "dac.h"

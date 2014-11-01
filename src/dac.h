@@ -5,7 +5,7 @@
 #ifndef __DAC_H__
 #define __DAC_H__
 
-#include "memory.h"
+#include "vjag_memory.h"
 
 void DACInit(void);
 void DACReset(void);
