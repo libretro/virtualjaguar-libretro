@@ -5,15 +5,13 @@
 #ifndef __SETTINGS_H__
 #define __SETTINGS_H__
 
-// MAX_PATH isn't defined in stdlib.h on *nix, so we do it here...
-#ifdef __GCCUNIX__
+#include <stdlib.h>								// for MAX_PATH on MinGW/Darwin
 #include <limits.h>
+
 #ifndef MAX_PATH
 #define MAX_PATH		4096
 #endif
-#else
-#include <stdlib.h>								// for MAX_PATH on MinGW/Darwin
-#endif
+
 #include <stdint.h>
 
 // Settings struct
