@@ -10,7 +10,6 @@
 #include "dsp.h"
 #include "joystick.h"
 #include "log.h"
-#include "memory.h"
 #include "settings.h"
 #include "tom.h"
 
