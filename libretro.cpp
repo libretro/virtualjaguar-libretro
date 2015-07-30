@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
+#include <string.h>
 #include "libretro.h"
 #include "file.h"
 #include "jagbios.h"

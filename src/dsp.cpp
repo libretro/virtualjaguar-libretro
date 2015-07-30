@@ -1169,7 +1169,7 @@ void DSPSetIRQLine(int irqline, int state)
 	dsp_control &= ~mask;							// Clear the latch bit
 //CC only!
 #ifdef DSP_DEBUG_CC
-ctrl1[8] = ctrl2[8] = dsp_control;
+   ctrl1[8] = ctrl2[8] = dsp_control;
 #endif
 //!!!!!!!!
 

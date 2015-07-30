@@ -11,6 +11,7 @@
 #define __INLINES_H__
 
 #include "cpudefs.h"
+#include "m68kinterface.h"
 
 STATIC_INLINE int cctrue(const int cc)
 {

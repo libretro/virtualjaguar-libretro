@@ -1675,21 +1675,23 @@ void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 
 	// It looks weird, but this is how the 64 bit registers are actually handled...!
 
-	else if ((offset >= SRCDATA + 0) && (offset <= SRCDATA + 3)
-		|| (offset >= DSTDATA + 0) && (offset <= DSTDATA + 3)
-		|| (offset >= DSTZ + 0) && (offset <= DSTZ + 3)
-		|| (offset >= SRCZINT + 0) && (offset <= SRCZINT + 3)
-		|| (offset >= SRCZFRAC + 0) && (offset <= SRCZFRAC + 3)
-		|| (offset >= PATTERNDATA + 0) && (offset <= PATTERNDATA + 3))
+	else if (((offset >= SRCDATA + 0) && (offset <= SRCDATA + 3))
+		|| ((offset >= DSTDATA + 0) && (offset <= DSTDATA + 3))
+		|| ((offset >= DSTZ + 0) && (offset <= DSTZ + 3))
+		|| ((offset >= SRCZINT + 0) && (offset <= SRCZINT + 3))
+		|| ((offset >= SRCZFRAC + 0) && (offset <= SRCZFRAC + 3))
+		|| ((offset >= PATTERNDATA + 0) && (offset <= PATTERNDATA + 3))
+      )
 	{
 		blitter_ram[offset + 4] = data;
 	}
-	else if ((offset >= SRCDATA + 4) && (offset <= SRCDATA + 7)
-		|| (offset >= DSTDATA + 4) && (offset <= DSTDATA + 7)
-		|| (offset >= DSTZ + 4) && (offset <= DSTZ + 7)
-		|| (offset >= SRCZINT + 4) && (offset <= SRCZINT + 7)
-		|| (offset >= SRCZFRAC + 4) && (offset <= SRCZFRAC + 7)
-		|| (offset >= PATTERNDATA + 4) && (offset <= PATTERNDATA + 7))
+	else if (((offset >= SRCDATA + 4) && (offset <= SRCDATA + 7))
+		|| ((offset >= DSTDATA + 4) && (offset <= DSTDATA + 7))
+		|| ((offset >= DSTZ + 4) && (offset <= DSTZ + 7))
+		|| ((offset >= SRCZINT + 4) && (offset <= SRCZINT + 7))
+		|| ((offset >= SRCZFRAC + 4) && (offset <= SRCZFRAC + 7))
+		|| ((offset >= PATTERNDATA + 4) && (offset <= PATTERNDATA + 7))
+      )
 	{
 		blitter_ram[offset - 4] = data;
 	}
@@ -3972,7 +3974,7 @@ if (logBlit)
 					int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
 					uint8_t inc = 0;
 					inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
-					inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || pixsize == 5 && !(inct & 0x01)) ? 0x02 : 0x00);
+					inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
 					inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
 					inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
 
