@@ -795,27 +795,22 @@ OP: Scaled bitmap 4x? 4bpp at 34,? hscale=80 fpix=0 data=000756E8 pitch 1 hflipp
 		case OBJECT_TYPE_BRANCH:
 		{
 			uint16_t ypos = (p0 >> 3) & 0x7FF;
-// NOTE: The JTRM sez there are only 2 bits used for the CC, but lists *five*
-//       conditions! Need at least one more bit for that! :-P
-// Also, the ASIC nets imply that it uses bits 14-16 (height in BM & SBM objects)
-#warning "!!! Possibly bad CC handling in OP (missing 1 bit) !!!"
-			uint8_t  cc   = (p0 >> 14) & 0x03;
+         // JTRM is wrong: CC is bits 14-16 (3 bits, *not* 2)
+			uint8_t  cc   = (p0 >> 14) & 0x07;
 			uint32_t link = (p0 >> 21) & 0x3FFFF8;
 
-//			if ((ypos!=507)&&(ypos!=25))
-//				WriteLog("\t%i%s%i link=0x%.8x\n",halfline,condition_to_str[cc],ypos>>1,link);
 			switch (cc)
 			{
 			case CONDITION_EQUAL:
-				if (TOMReadWord(0xF00006, OP) == ypos || ypos == 0x7FF)
+            if (halfline == ypos || ypos == 0x7FF)
 					op_pointer = link;
 				break;
 			case CONDITION_LESS_THAN:
-				if (TOMReadWord(0xF00006, OP) < ypos)
+            if (halfline < ypos)
 					op_pointer = link;
 				break;
 			case CONDITION_GREATER_THAN:
-				if (TOMReadWord(0xF00006, OP) > ypos)
+            if (halfline > ypos)
 					op_pointer = link;
 				break;
 			case CONDITION_OP_FLAG_SET:
@@ -823,15 +818,9 @@ OP: Scaled bitmap 4x? 4bpp at 34,? hscale=80 fpix=0 data=000756E8 pitch 1 hflipp
 					op_pointer = link;
 				break;
 			case CONDITION_SECOND_HALF_LINE:
-//Here's the ASIC code:
-//  ND4(cctrue5, newheight[2], heightl[1], heightl[0], hcb[10]);
-//which means, do the link if bit 10 of HC is set...
-
-				// This basically means branch if bit 10 of HC is set
-#warning "Unhandled condition code causes emulator to crash... !!! FIX !!!"
-				WriteLog("OP: Unexpected CONDITION_SECOND_HALF_LINE in BRANCH object\nOP: shutting down!\n");
-				LogDone();
-				exit(0);
+            // Branch if bit 10 of HC is set...
+            if (TOMGetHC() & 0x0400)
+               op_pointer = link;
 				break;
 			default:
 				// Basically, if you do this, the OP does nothing. :-)
@@ -841,30 +830,19 @@ OP: Scaled bitmap 4x? 4bpp at 34,? hscale=80 fpix=0 data=000756E8 pitch 1 hflipp
 		}
 		case OBJECT_TYPE_STOP:
 		{
-//op_start_log = 0;
-			// unsure
-//WriteLog("OP: --> STOP\n");
-//			op_set_status_register(((p0>>3) & 0xFFFFFFFF));
-//This seems more likely...
 			OPSetCurrentObject(p0);
 
-			if (p0 & 0x08)
+         if ((p0 & 0x08) && TOMIRQEnabled(IRQ_OPFLAG))
 			{
-				// We need to check whether these interrupts are enabled or not, THEN
-				// set an IRQ + pending flag if necessary...
-				if (TOMIRQEnabled(IRQ_OPFLAG))
-				{
-					TOMSetPendingObjectInt();
-					m68k_set_irq(2);				// Cause a 68K IPL 2 to occur...
-				}
+            TOMSetPendingObjectInt();
+            m68k_set_irq(2);				// Cause a 68K IPL 2 to occur...
 			}
 
+         /* Bail out, we're done... */
 			return;
-//			break;
 		}
 		default:
-//			WriteLog("op: unknown object type %i\n", ((uint8_t)p0 & 0x07));
-			return;
+         WriteLog("OP: Unknown object type %i\n", (uint8_t)p0 & 0x07);
 		}
 
 		// Here is a little sanity check to keep the OP from locking up the machine
@@ -890,12 +868,10 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 	int32_t xpos = ((int16_t)((p1 << 4) & 0xFFFF)) >> 4;// Image xpos in LBUF
 	uint32_t iwidth = (p1 >> 28) & 0x3FF;				// Image width in *phrases*
 	uint32_t data = (p0 >> 40) & 0xFFFFF8;			// Pixel data address
-//#ifdef OP_DEBUG_BMP
 	uint32_t firstPix = (p1 >> 49) & 0x3F;
 	// "The LSB is significant only for scaled objects..." -JTRM
 	// "In 1 BPP mode, all five bits are significant. In 2 BPP mode, the top four are significant..."
 	firstPix &= 0x3E;
-//#endif
 // We can ignore the RELEASE (high order) bit for now--probably forever...!
 //	uint8_t flags = (p1 >> 45) & 0x0F;	// REFLECT, RMW, TRANS, RELEASE
 //Optimize: break these out to their own BOOL values
@@ -955,12 +931,6 @@ if (depth == 5)	// i.e., 24bpp mode...
 		: -((phraseWidthToPixels[depth] * iwidth) + 1));
 	uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;//, phrasePixel = 0;
 	bool in24BPPMode = (((GET16(tomRam8, 0x0028) >> 1) & 0x03) == 1 ? true : false);	// VMODE
-	// Not sure if this is Jaguar Two only location or what...
-	// From the docs, it is... If we want to limit here we should think of something else.
-//	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
-//	int32_t limit = 720;
-//	int32_t lbufWidth = (!in24BPPMode ? limit - 1 : (limit / 2) - 1);	// Zero based limit...
-//printf("[OP:xpos=%i,spos=%i,epos=%i>", xpos, startPos, endPos);
 	// This is correct, the OP line buffer is a constant size... 
 	int32_t limit = 720;
 	int32_t lbufWidth = 719;
