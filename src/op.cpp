@@ -558,14 +558,12 @@ WriteLog("    --> List end\n\n");
 		{
 		case OBJECT_TYPE_BITMAP:
 		{
-//WAS:			uint16_t ypos = (p0 >> 3) & 0x3FF;
 			uint16_t ypos = (p0 >> 3) & 0x7FF;
-// This is only theory implied by Rayman...!
-// It seems that if the YPOS is zero, then bump the YPOS value so that it coincides with
-// the VDB value. With interlacing, this would be slightly more tricky.
-// There's probably another bit somewhere that enables this mode--but so far, doesn't seem
-// to affect any other game in a negative way (that I've seen).
-// Either that, or it's an undocumented bug...
+         // It seems that if the YPOS is zero, then bump the YPOS value so that it
+         // coincides with the VDB value. With interlacing, this would be slightly more
+         // tricky. There's probably another bit somewhere that enables this mode--but so
+         // far, doesn't seem to affect any other game in a negative way (that I've
+         // seen). Either that, or it's an undocumented bug...
 
 //No, the reason this was needed is that the OP code before was wrong. Any value
 //less than VDB will get written to the top line of the display!
@@ -575,9 +573,9 @@ WriteLog("    --> List end\n\n");
 			if (ypos == 0)
 				ypos = TOMReadWord(0xF00046, OP) / 2;			// Get the VDB value
 #endif
-// Actually, no. Any item less than VDB will get only the lines that hang over VDB displayed.
-// Actually, this is incorrect. It seems that VDB value is wrong somewhere and that's
-// what's causing things to fuck up. Still no idea why.
+// Actually, no. Any item less than VDB will get only the lines that hang over
+// VDB displayed. Actually, this is incorrect. It seems that VDB value is wrong
+// somewhere and that's what's causing things to fuck up. Still no idea why.
 
 			uint32_t height = (p0 & 0xFFC000) >> 14;
 			uint32_t oldOPP = op_pointer - 8;
@@ -589,8 +587,11 @@ if (!inhibit)	// For OP testing only!
 // *** END OP PROCESSOR TESTING ONLY ***
 			if (halfline >= ypos && height > 0)
 			{
-				uint64_t p1 = OPLoadPhrase(op_pointer);
-				op_pointer += 8;
+            // Believe it or not, this is what the OP actually does...
+				// which is why they're required to be on a dphrase boundary!
+				uint64_t p1 = OPLoadPhrase(op_pointer | 0x08);
+            uint64_t p2 = OPLoadPhrase(op_pointer | 0x10);
+				op_pointer += 16;
 //WriteLog("OP: Writing halfline %d with ypos == %d...\n", halfline, ypos);
 //WriteLog("--> Writing %u BPP bitmap...\n", op_bitmap_bit_depth[(p1 >> 12) & 0x07]);
 //				OPProcessFixedBitmap(halfline, p0, p1, render);
@@ -621,23 +622,18 @@ if (!inhibit)	// For OP testing only!
 				OPStorePhrase(oldOPP, p0);
 			}
 //WriteLog("\t\tOld OP: %08X -> ", op_pointer);
-//Temp, for testing...
-//No doubt, this type of check will break all kinds of stuff... !!! FIX !!!
-//And it does! !!! FIX !!!
-//Let's remove this "fix" since it screws up more than it fixes.
-/*	if (op_pointer > ((p0 & 0x000007FFFF000000LL) >> 21))
-		return;*/
 
-// NOTE: The link address only replaces bits 3-21 in the OLP, and this replaces
-//       EVERYTHING. !!! FIX !!! [DONE]
-#warning "!!! Link address is not linked properly for all object types !!!"
-#warning "!!! Only BITMAP is properly handled !!!"
-			op_pointer &= 0xFFC00007;
-			op_pointer |= (p0 & 0x000007FFFF000000LL) >> 21;
+         // OP bottom 3 bits are hardwired to zero. The link address reflects
+			// this, so we only need the top 19 bits of the address (which is
+			// why we only shift 21, and not 24).
+			op_pointer = (p0 & 0x000007FFFF000000LL) >> 21;
+
 //WriteLog("New OP: %08X\n", op_pointer);
-//kludge: Seems that memory access is mirrored in the first 8MB of memory...
-if (op_pointer > 0x1FFFFF && op_pointer < 0x800000)
-	op_pointer &= 0xFF1FFFFF;	// Knock out bits 21-23
+//kludge: Seems that memory access is mirrored in the first 8MB of
+			// memory...
+			if (op_pointer > 0x1FFFFF && op_pointer < 0x800000)
+				op_pointer &= 0xFF1FFFFF;	// Knock out bits 21-23
+
 
 			break;
 		}
@@ -769,7 +765,16 @@ OP: Scaled bitmap 4x? 4bpp at 34,? hscale=80 fpix=0 data=000756E8 pitch 1 hflipp
 //WriteLog(" [after]: rem=%02X, vscale=%02X\n", remainder, vscale);
 			}
 
+         // OP bottom 3 bits are hardwired to zero. The link address reflects
+			// this, so we only need the top 19 bits of the address (which is
+			// why we only shift 21, and not 24).
 			op_pointer = (p0 & 0x000007FFFF000000LL) >> 21;
+
+         //kludge: Seems that memory access is mirrored in the first 8MB of
+			// memory...
+			if (op_pointer > 0x1FFFFF && op_pointer < 0x800000)
+				op_pointer &= 0xFF1FFFFF;	// Knock out bits 21-23
+
 			break;
 		}
 		case OBJECT_TYPE_GPU:
@@ -796,10 +801,6 @@ OP: Scaled bitmap 4x? 4bpp at 34,? hscale=80 fpix=0 data=000756E8 pitch 1 hflipp
 #warning "!!! Possibly bad CC handling in OP (missing 1 bit) !!!"
 			uint8_t  cc   = (p0 >> 14) & 0x03;
 			uint32_t link = (p0 >> 21) & 0x3FFFF8;
-
-         // If no branch is taken, we need to ensure that it goes to the
-			// next object (it doesn't go +8, but +16 to following object)
-			op_pointer += 8;
 
 //			if ((ypos!=507)&&(ypos!=25))
 //				WriteLog("\t%i%s%i link=0x%.8x\n",halfline,condition_to_str[cc],ypos>>1,link);
