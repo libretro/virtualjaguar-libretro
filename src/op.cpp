@@ -797,6 +797,10 @@ OP: Scaled bitmap 4x? 4bpp at 34,? hscale=80 fpix=0 data=000756E8 pitch 1 hflipp
 			uint8_t  cc   = (p0 >> 14) & 0x03;
 			uint32_t link = (p0 >> 21) & 0x3FFFF8;
 
+         // If no branch is taken, we need to ensure that it goes to the
+			// next object (it doesn't go +8, but +16 to following object)
+			op_pointer += 8;
+
 //			if ((ypos!=507)&&(ypos!=25))
 //				WriteLog("\t%i%s%i link=0x%.8x\n",halfline,condition_to_str[cc],ypos>>1,link);
 			switch (cc)
