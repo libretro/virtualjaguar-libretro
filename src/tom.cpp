@@ -579,7 +579,7 @@ void TOMFillLookupTables(void)
 //			| ((i & 0x07C0) << 13) | ((i & 0x0700) << 8)
 //			| ((i & 0x003F) << 10) | ((i & 0x0030) << 4);
 		RGB16ToRGB32[i] = 0xFF000000
-			| ((i & 0xF100) << 8)					// Red
+			| ((i & 0xF800) << 8)					// Red
 			| ((i & 0x003F) << 10)					// Green
 			| ((i & 0x07C0) >> 3);					// Blue
 

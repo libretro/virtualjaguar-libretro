@@ -183,7 +183,7 @@ if (inRoutine)
 
 	if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
 	{
-		WriteLog("M68K: Attempted to execute from an odd adress!\n\nBacktrace:\n\n");
+		WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
 
 		static char buffer[2048];
 		for(int i=0; i<0x400; i++)
