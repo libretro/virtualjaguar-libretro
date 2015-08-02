@@ -230,9 +230,12 @@ void OPDiscoverObjects(uint32_t address)
 
 		if (objectType == 3)
 		{
-			// Recursion needed to follow all links! This does depth-first recursion
-			// on the not-taken objects
-			OPDiscoverObjects(address + 8);
+         // Branch if YPOS < 2047 can be treated as a GOTO, so don't do any
+			// discovery in that case. Otherwise, have at it:
+			if ((lo & 0xFFFF) != 0x7FFB)
+				// Recursion needed to follow all links! This does depth-first
+				// recursion on the not-taken objects
+				OPDiscoverObjects(address + 8);
 		}
 
 		// Get the next object...
@@ -252,7 +255,7 @@ void OPDumpObjectList(void)
 		uint32_t lo = JaguarReadLong(address + 4, OP);
 		uint8_t objectType = lo & 0x07;
 		uint32_t link = ((hi << 11) | (lo >> 21)) & 0x3FFFF8;
-		WriteLog("%08X: %08X %08X %s -> $08X", address, hi, lo, opType[objectType], link);
+      WriteLog("%08X: %08X %08X %s -> $%08X", address, hi, lo, opType[objectType], link);
 
 		if (objectType == 3)
 		{
@@ -263,12 +266,15 @@ void OPDumpObjectList(void)
 
 		WriteLog("\n");
 
+      // Yes, this is how the OP finds follow-on phrases for bitmap/scaled
+		// bitmap objects...!
 		if (objectType == 0)
-			DumpFixedObject(OPLoadPhrase(address + 0), OPLoadPhrase(address + 8));
+         DumpFixedObject(OPLoadPhrase(address + 0),
+               OPLoadPhrase(address | 0x08));
 
 		if (objectType == 1)
-			DumpScaledObject(OPLoadPhrase(address + 0), OPLoadPhrase(address + 8),
-				OPLoadPhrase(address + 16));
+         DumpScaledObject(OPLoadPhrase(address + 0),
+               OPLoadPhrase(address | 0x08), OPLoadPhrase(address | 0x10));
 
 		if (address == link)	// Ruh roh...
 		{
@@ -442,12 +448,16 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
 void OPProcessList(int halfline, bool render)
 {
 #warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
-// We ignore them, for now; not good
+// We ignore them, for now; not good D-:
+// N.B.: Half-lines are exactly that, half-lines. When in interlaced mode, it
+//       draws the screen exactly the same way as it does in non, one line at a
+//       time. The only way you know you're in field #2 is that the topmost bit
+//       of VC is set. Half-line mode is so you can draw higher horizontal
+//       resolutions than you normally could, as the line buffer is only 720
+//       pixels wide...
 	halfline &= 0x7FF;
 
 extern int op_start_log;
-//	char * condition_to_str[8] =
-//		{ "==", "<", ">", "(opflag set)", "(second half line)", "?", "?", "?" };
 
 	op_pointer = OPGetListPointer();
 
@@ -561,8 +571,8 @@ WriteLog("    --> List end\n\n");
 			uint16_t ypos = (p0 >> 3) & 0x7FF;
          // It seems that if the YPOS is zero, then bump the YPOS value so that it
          // coincides with the VDB value. With interlacing, this would be slightly more
-         // tricky. There's probably another bit somewhere that enables this mode--but so
-         // far, doesn't seem to affect any other game in a negative way (that I've
+         // tricky. There's probably another bit somewhere that enables this mode--but
+         // so far, doesn't seem to affect any other game in a negative way (that I've
          // seen). Either that, or it's an undocumented bug...
 
 //No, the reason this was needed is that the OP code before was wrong. Any value
@@ -589,8 +599,8 @@ if (!inhibit)	// For OP testing only!
 			{
             // Believe it or not, this is what the OP actually does...
 				// which is why they're required to be on a dphrase boundary!
-				uint64_t p1 = OPLoadPhrase(op_pointer | 0x08);
-            uint64_t p2 = OPLoadPhrase(op_pointer | 0x10);
+				uint64_t p1 = OPLoadPhrase(oldOPP | 0x08);
+            uint64_t p2 = OPLoadPhrase(oldOPP | 0x10);
 				op_pointer += 16;
 //WriteLog("OP: Writing halfline %d with ypos == %d...\n", halfline, ypos);
 //WriteLog("--> Writing %u BPP bitmap...\n", op_bitmap_bit_depth[(p1 >> 12) & 0x07]);
@@ -599,17 +609,6 @@ if (!inhibit)	// For OP testing only!
 
 				// OP write-backs
 
-//???Does this really happen??? Doesn't seem to work if you do this...!
-//Probably not. Must be a bug in the documentation...!
-//				uint32_t link = (p0 & 0x7FFFF000000) >> 21;
-//				SET16(tom_ram_8, 0x20, link & 0xFFFF);	// OLP
-//				SET16(tom_ram_8, 0x22, link >> 16);
-/*				uint32_t height = (p0 & 0xFFC000) >> 14;
-				if (height - 1 > 0)
-					height--;*/
-				// NOTE: Would subtract 2 if in interlaced mode...!
-//				uint64_t height = ((p0 & 0xFFC000) - 0x4000) & 0xFFC000;
-//				if (height)
 				height--;
 
 				uint64_t data = (p0 & 0xFFFFF80000000000LL) >> 40;
