@@ -26,8 +26,6 @@ struct VJSettings
 	bool DSPEnabled;
 	bool usePipelinedDSP;
 	bool fullscreen;
-	bool useOpenGL;
-	uint32_t glFilter;
 	bool hardwareTypeAlpine;
 	bool audioEnabled;
 	uint32_t frameSkip;
