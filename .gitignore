@@ -3,3 +3,5 @@
 *.dll
 *.dylib
 *.exe
+*.js
+*.bc
