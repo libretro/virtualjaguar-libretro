@@ -12,12 +12,12 @@
 // JLH  11/25/2009  Created this file. :-)
 //
 
+#include <stdlib.h>								// For NULL definition
+
+#include <boolean.h>
+
 #include "mmu.h"
 
-#include <stdlib.h>								// For NULL definition
-#include "dac.h"
-//#include "jaguar.h"
-//#include "vjag_memory.h"
 #include "jagbios.h"
 #include "wavetable.h"
 
@@ -188,7 +188,7 @@ Should we have a read mask as well, for the purposes of reading?
 struct MemDesc {
 	uint32_t startAddr;
 	uint32_t endAddr;
-	MemType type;
+	enum MemType type;
 //	(void (* ioFunc)(uint32, uint32)); // <-- could also be a pointer to RAM...
 	void * readFunc;					// This is read & write with MM_IO
 	void * writeFunc;
@@ -196,9 +196,9 @@ struct MemDesc {
 };
 
 
-MemDesc memoryMap[] = {
-	{ 0x000000, 0x3FFFFF, MM_RAM,  jaguarMainRAM },
-	{ 0x800000, 0xDFFEFF, MM_ROM,  jaguarMainROM },
+struct MemDesc memoryMap[] = {
+	{ 0x000000, 0x3FFFFF, MM_RAM,  &jaguarMainRAM },
+	{ 0x800000, 0xDFFEFF, MM_ROM,  &jaguarMainROM },
 
 	{ 0xDFFF00, 0xDFFF03, MM_IO,   &butch }, // base of Butch == interrupt control register, R/W
 	{ 0xDFFF04, 0xDFFF07, MM_IO,   &dscntrl }, // DSA control register, R/W
@@ -253,9 +253,9 @@ MemDesc memoryMap[] = {
 	{ 0xF000E2, 0xF000E3, MM_IO_W, &int2 }, // INT2		CPU Interrupt Resume Register		F000E2		WO
 //Some of these RAM spaces may be 16- or 32-bit only... in which case, we need
 //to cast appropriately (in memory.cpp, that is)...
-	{ 0xF00400, 0xF005FF, MM_RAM,  clut }, // CLUT		Colour Look-Up Table				F00400-7FE	RW
-	{ 0xF00600, 0xF007FF, MM_RAM,  clut },
-	{ 0xF00800, 0xF01D9F, MM_RAM,  lbuf }, // LBUF		Line Buffer							F00800-1D9E	RW
+	{ 0xF00400, 0xF005FF, MM_RAM,  &clut }, // CLUT		Colour Look-Up Table				F00400-7FE	RW
+	{ 0xF00600, 0xF007FF, MM_RAM,  &clut },
+	{ 0xF00800, 0xF01D9F, MM_RAM,  &lbuf }, // LBUF		Line Buffer							F00800-1D9E	RW
 //Need high speed RAM interface for GPU & DSP (we have it now...)
 
 	// GPU REGISTERS
@@ -269,7 +269,7 @@ MemDesc memoryMap[] = {
 	{ 0xF02118, 0xF0211B, MM_IO,   &g_hidata }, // G_HIDATA	High Data Register					F02118		RW
 	{ 0xF0211C, 0xF0211F, MM_IO,   &g_remain, &g_divctrl }, // G_REMAIN	Divide Unit Remainder				F0211C		RO
 											// G_DIVCTRL	Divide Unit Control					F0211C		WO
-	{ 0xF03000, 0xF03FFF, MM_RAM,  gpuRAM },
+	{ 0xF03000, 0xF03FFF, MM_RAM,  &gpuRAM },
 
 	// BLITTER REGISTERS
 
@@ -319,7 +319,7 @@ MemDesc memoryMap[] = {
 	{ 0xF0A114, 0xF0A117, MM_IO_W, &g_ctrl }, // G_CTRL		GPU Control/Status Register			F02114		RW
 	{ 0xF0A118, 0xF0A11B, MM_IO_W, &g_hidata }, // G_HIDATA	High Data Register					F02118		RW
 	{ 0xF0A11C, 0xF0A11F, MM_IO_W, &g_divctrl }, // G_REMAIN	Divide Unit Remainder				F0211C		RO
-	{ 0xF0B000, 0xF0BFFF, MM_IO_W, gpuRAM }, // "Fast" interface to GPU RAM
+	{ 0xF0B000, 0xF0BFFF, MM_IO_W, &gpuRAM }, // "Fast" interface to GPU RAM
 
 	// JERRY REGISTERS
 
@@ -367,7 +367,7 @@ MemDesc memoryMap[] = {
 	// SSTAT		Serial Status						F1A150		RO
 	{ 0xF1A154, 0xF1A157, MM_IO_W, &smode }, // SMODE		Serial Mode							F1A154		WO
 
-	{ 0xF1B000, 0xF1CFFF, MM_RAM,  dspRAM }, // F1B000-F1CFFF   R/W   xxxxxxxx xxxxxxxx   Local DSP RAM
+	{ 0xF1B000, 0xF1CFFF, MM_RAM,  &dspRAM }, // F1B000-F1CFFF   R/W   xxxxxxxx xxxxxxxx   Local DSP RAM
 	{ 0xF1D000, 0xF1DFFF, MM_ROM,  waveTableROM },
 // hi-speed interface for DSP??? Ain't no such thang...
 	{ 0xFFFFFF, 0xFFFFFF, MM_NOP } // End of memory address sentinel
@@ -488,7 +488,7 @@ uint8_t MMURead8(uint32_t address, uint32_t who/*= UNKNOWN*/)
 	// Search for address in the memory map
 	// NOTE: This assumes that all entries are linear and sorted in ascending order!
 
-	MemDesc memory;
+	struct MemDesc memory;
 	uint8_t byte = 0xFE;
 
 	uint32_t i = 0;
@@ -588,17 +588,17 @@ contiguous memory anyway... For reference:
 	return byte;
 }
 
-uint16_t MMURead16(uint32_t address, uint32_t who/*= UNKNOWN*/)
+uint16_t MMURead16(uint32_t address, uint32_t who)
 {
 	return 0;
 }
 
-uint32_t MMURead32(uint32_t address, uint32_t who/*= UNKNOWN*/)
+uint32_t MMURead32(uint32_t address, uint32_t who)
 {
 	return 0;
 }
 
-uint64_t MMURead64(uint32_t address, uint32_t who/*= UNKNOWN*/)
+uint64_t MMURead64(uint32_t address, uint32_t who)
 {
 	return 0;
 }

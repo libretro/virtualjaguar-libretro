@@ -8,7 +8,6 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/jagdasm.cpp \
 	$(CORE_DIR)/jaguar.cpp \
 	$(CORE_DIR)/jerry.cpp \
-	$(CORE_DIR)/mmu.cpp \
 	$(CORE_DIR)/op.cpp \
 	$(CORE_DIR)/tom.cpp  \
 	$(LIBRETRO_DIR)/libretro.cpp
@@ -36,6 +35,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/jagstub2bios.c \
 	$(CORE_DIR)/joystick.c \
 	$(CORE_DIR)/log.c \
+	$(CORE_DIR)/mmu.c \
 	$(CORE_DIR)/settings.c \
 	$(CORE_DIR)/state.c \
 	$(CORE_DIR)/vjag_memory.c \
