@@ -22,6 +22,7 @@
 //  things too damn much. Jury is still out whether or not to make this
 //  change permanent.)
 
+#include <boolean.h>
 #include "cdintf.h"								// Every OS has to implement these
 
 #include "log.h"
@@ -53,22 +54,21 @@ static void TestCDIO(void)
 
 bool CDIntfInit(void)
 {
-		WriteLog("CDINTF: No suitable CD-ROM driver found.\n");
-		return false;
+   WriteLog("CDINTF: No suitable CD-ROM driver found.\n");
+   return false;
 }
 
 void CDIntfDone(void)
 {
-	WriteLog("CDINTF: Shutting down CD-ROM subsystem.\n");
-
+   WriteLog("CDINTF: Shutting down CD-ROM subsystem.\n");
 }
 
 bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer)
 {
 #warning "!!! FIX !!! CDIntfReadBlock not implemented!"
-	// !!! FIX !!!
-	WriteLog("CDINTF: ReadBlock unimplemented!\n");
-	return false;
+   // !!! FIX !!!
+   WriteLog("CDINTF: ReadBlock unimplemented!\n");
+   return false;
 }
 
 uint32_t CDIntfGetNumSessions(void)
