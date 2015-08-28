@@ -165,28 +165,11 @@ void AdjustCallbackTime(void (* callback)(void), double time)
 //
 double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 {
+   double time;
    unsigned i;
-#if 0
-	double time = 0;
-	bool firstTime = true;
-
-	for(uint32 i=0; i<EVENT_LIST_SIZE; i++)
-	{
-		if (eventList[i].valid)
-		{
-			if (firstTime)
-				time = eventList[i].eventTime, nextEvent = i, firstTime = false;
-			else
-			{
-				if (eventList[i].eventTime < time)
-					time = eventList[i].eventTime, nextEvent = i;
-			}
-		}
-	}
-#else
 	if (type == EVENT_MAIN)
 	{
-		double time = eventList[0].eventTime;
+		time      = eventList[0].eventTime;
 		nextEvent = 0;
 
 		for(i = 1; i < EVENT_LIST_SIZE; i++)
@@ -197,12 +180,10 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 				nextEvent = i;
 			}
 		}
-
-		return time;
 	}
 	else
 	{
-		double time = eventListJERRY[0].eventTime;
+		time           = eventListJERRY[0].eventTime;
 		nextEventJERRY = 0;
 
 		for(i = 1; i < EVENT_LIST_SIZE; i++)
@@ -213,10 +194,9 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 				nextEventJERRY = i;
 			}
 		}
-
-		return time;
 	}
-#endif
+
+   return time;
 }
 
 
@@ -261,89 +241,3 @@ void HandleNextEvent(int type/*= EVENT_MAIN*/)
       (*event)();
    }
 }
-
-
-/*
-void OPCallback(void)
-{
-	DoFunkyOPStuffHere();
-
-	SetCallbackTime(OPCallback, HORIZ_PERIOD_IN_USEC);
-}
-
-void VICallback(void)
-{
-	double oneFrameInUsec = 16666.66666666;
-	SetCallbackTime(VICallback, oneFrameInUsec / numberOfLines);
-}
-
-void JaguarInit(void)
-{
-	double oneFrameInUsec = 16666.66666666;
-	SetCallbackTime(VICallback, oneFrameInUsec / numberOfLines);
-	SetCallbackTime(OPCallback, );
-}
-
-void JaguarExec(void)
-{
-	while (true)
-	{
-		double timeToNextEvent = GetTimeToNextEvent();
-
-		m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
-		GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-		DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-
-		if (!HandleNextEvent())
-			break;
-	}
-}
-
-// NOTES: The timers count RISC cycles, and when the dividers count down to zero they can interrupt either the DSP and/or CPU.
-
-// NEW:
-// TOM Programmable Interrupt Timer handler
-// NOTE: TOM's PIT is only enabled if the prescaler is != 0
-//       The PIT only generates an interrupt when it counts down to zero, not when loaded!
-
-void TOMResetPIT()
-{
-	// Need to remove previous timer from the queue, if it exists...
-	RemoveCallback(TOMPITCallback);
-
-	if (TOMPITPrescaler)
-	{
-		double usecs = (TOMPITPrescaler + 1) * (TOMPITDivider + 1) * RISC_CYCLE_IN_USEC;
-		SetCallbackTime(TOMPITCallback, usecs);
-	}
-}
-
-void TOMPITCallback(void)
-{
-	INT1_RREG |= 0x08;                         // Set TOM PIT interrupt pending
-	GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE);  // It does the 'IRQ enabled' checking
-
-	if (INT1_WREG & 0x08)
-		m68k_set_irq(2);                       // Generate 68K NMI
-
-	TOMResetPIT();
-}
-
-// Small problem with this approach: If a timer interrupt is already pending,
-// the pending timer needs to be replaced with the new one! (Taken care of above, BTW...)
-
-TOMWriteWord(uint32 address, uint16 data)
-{
-	if (address == PIT0)
-	{
-		TOMPITPrescaler = data;
-		TOMResetPIT();
-	}
-	else if (address == PIT1)
-	{
-		TOMPITDivider = data;
-		TOMResetPIT();
-	}
-}
-
-*/
