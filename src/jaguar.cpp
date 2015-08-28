@@ -1057,7 +1057,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
 //		retVal = jaguarDevBootROM1[address - 0xE00000];
 		retVal = jagMemSpace[address];
 	else if ((address >= 0xDFFF00) && (address <= 0xDFFFFF))
-		retVal = CDROMReadByte(address);
+		retVal = CDROMReadByte(address, UNKNOWN);
 	else if ((address >= 0xF00000) && (address <= 0xF0FFFF))
 		retVal = TOMReadByte(address, M68K);
 	else if ((address >= 0xF10000) && (address <= 0xF1FFFF))

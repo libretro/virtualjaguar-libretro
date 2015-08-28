@@ -683,7 +683,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 //
 
 enum ButchState { ST_INIT, ST_RISING, ST_FALLING };
-static ButchState currentState = ST_INIT;
+static enum ButchState currentState = ST_INIT;
 static uint16_t counter = 0;
 static bool cmdTx = false;
 static uint16_t busCmd;

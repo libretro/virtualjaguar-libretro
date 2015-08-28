@@ -94,8 +94,9 @@ void DACInit(void)
 
    DACReset();
 
-   ltxd = lrxd = SILENCE;
-   sclk = 19;									// Default is roughly 22 KHz
+   *ltxd = SILENCE;
+   lrxd = SILENCE;
+   *sclk = 19;									// Default is roughly 22 KHz
 
    uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
    uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
@@ -106,7 +107,8 @@ void DACInit(void)
 // Reset the sound buffer FIFOs
 void DACReset(void)
 {
-	ltxd = lrxd = SILENCE;
+   *ltxd = SILENCE;
+   lrxd = SILENCE;
 }
 
 void DACPauseAudioThread(bool state/*= true*/)
@@ -147,8 +149,8 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 	{
 		for(int i=0; i<length; i+=2)
 		{
-			buffer[i + 0] = ltxd;
-			buffer[i + 1] = rtxd;
+			buffer[i + 0] = *ltxd;
+			buffer[i + 1] = *rtxd;
 		}
 
 		return;
@@ -193,8 +195,8 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 
 void DSPSampleCallback(void)
 {
-	sampleBuffer[bufferIndex + 0] = ltxd;
-	sampleBuffer[bufferIndex + 1] = rtxd;
+	sampleBuffer[bufferIndex + 0] = *ltxd;
+	sampleBuffer[bufferIndex + 1] = *rtxd;
 	bufferIndex += 2;
 
 	if (bufferIndex == numberOfSamples)
@@ -233,14 +235,14 @@ void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who/*= UNKNOWN*/)
 void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
 {
 	if (offset == LTXD + 2)
-		ltxd = data;
+		*ltxd = data;
 	else if (offset == RTXD + 2)
-		rtxd = data;
+		*rtxd = data;
 	else if (offset == SCLK + 2)					// Sample rate
 	{
 		WriteLog("DAC: Writing %u to SCLK (by %s)...\n", data, whoName[who]);
 
-		sclk = data & 0xFF;
+		*sclk = data & 0xFF;
 		JERRYI2SInterruptTimer = -1;
 		RemoveCallback(JERRYI2SCallback);
 		JERRYI2SCallback();
@@ -248,7 +250,7 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
 	else if (offset == SMODE + 2)
 	{
 //		serialMode = data;
-		smode = data;
+		*smode = data;
 		WriteLog("DAC: %s writing to SMODE. Bits: %s%s%s%s%s%s [68K PC=%08X]\n", whoName[who],
 			(data & 0x01 ? "INTERNAL " : ""), (data & 0x02 ? "MODE " : ""),
 			(data & 0x04 ? "WSEN " : ""), (data & 0x08 ? "RISING " : ""),

@@ -206,9 +206,7 @@ void JERRYI2SCallback(void);
 
 void JERRYResetI2S(void)
 {
-	//WriteLog("i2s: reseting\n");
-//This is really SCLK... !!! FIX !!!
-	sclk = 8;
+	*sclk = 8;
 	JERRYI2SInterruptTimer = -1;
 }
 
@@ -288,12 +286,12 @@ void JERRYI2SCallback(void)
 // in one second. For example, if the sample rate is 44100, we divide the clock rate by
 // this: 26590906 / 44100 = 602 cycles.
 // Which means, every 602 cycles that go by we have to generate an interrupt.
-	jerryI2SCycles = 32 * (2 * (sclk + 1));
+	jerryI2SCycles = 32 * (2 * (*sclk + 1));
 //This makes audio faster, but not enough and the pitch is wrong besides
 //	jerryI2SCycles = 32 * (2 * (sclk - 1));
 
 	// If INTERNAL flag is set, then JERRY's SCLK is master
-	if (smode & SMODE_INTERNAL)
+	if (*smode & SMODE_INTERNAL)
 	{
 		// This does the 'IRQ enabled' checking...
 		DSPSetIRQLine(DSPIRQ_SSI, ASSERT_LINE);

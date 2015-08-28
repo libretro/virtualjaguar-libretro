@@ -1,7 +1,6 @@
 INCFLAGS := -I$(LIBRETRO_DIR) -I$(CORE_DIR) -I$(CORE_DIR)/m68000
 
 SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
-	$(CORE_DIR)/cdrom.cpp \
 	$(CORE_DIR)/dac.cpp \
 	$(CORE_DIR)/dsp.cpp \
 	$(CORE_DIR)/eeprom.cpp \
@@ -19,6 +18,7 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 
 SOURCES_C :=  \
 	$(CORE_DIR)/cdintf.c \
+	$(CORE_DIR)/cdrom.c \
 	$(CORE_DIR)/crc32.c \
 	$(CORE_DIR)/event.c \
 	$(CORE_DIR)/filedb.c \
