@@ -28,8 +28,7 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/settings.cpp \
 	$(CORE_DIR)/state.cpp \
 	$(CORE_DIR)/tom.cpp \
-	$(CORE_DIR)/universalhdr.cpp \
-	$(CORE_DIR)/wavetable.cpp
+	$(CORE_DIR)/universalhdr.cpp
 
 SOURCES_CXX += $(LIBRETRO_DIR)/libretro.cpp
 
@@ -40,4 +39,5 @@ SOURCES_C := $(CORE_DIR)/m68000/cpustbl.c \
 	$(CORE_DIR)/m68000/gencpu.c \
 	$(CORE_DIR)/m68000/m68kdasm.c \
 	$(CORE_DIR)/m68000/m68kinterface.c \
-	$(CORE_DIR)/m68000/readcpu.c
+	$(CORE_DIR)/m68000/readcpu.c \
+	$(CORE_DIR)/wavetable.c

@@ -11,7 +11,15 @@
 #ifndef __WAVETABLE_H__
 #define __WAVETABLE_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // How to preserve const-ness of this stuff without introducing tons of hairiness?
 extern /*const*/ unsigned char waveTableROM[];
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	// __WAVETABLE_H__
