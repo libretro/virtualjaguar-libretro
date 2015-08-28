@@ -33,7 +33,6 @@
 #include "jaguar.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
-//#include "vjag_memory.h"
 #include "tom.h"
 
 
@@ -402,15 +401,17 @@ uint32_t GPUGetPC(void)
 
 void build_branch_condition_table(void)
 {
+   unsigned i, j;
+
 	if (!branch_condition_table)
 	{
 		branch_condition_table = (uint8_t *)malloc(32 * 8 * sizeof(branch_condition_table[0]));
 
 		if (branch_condition_table)
 		{
-			for(int i=0; i<8; i++)
+			for(i=0; i<8; i++)
 			{
-				for(int j=0; j<32; j++)
+				for(j=0; j<32; j++)
 				{
 					int result = 1;
 					if (j & 1)
@@ -744,164 +745,60 @@ WriteLog("GPU: %s setting GPU PC to %08X %s\n", whoName[who], gpu_pc, (GPU_RUNNI
 #endif	// GPU_DEBUG
 			break;
 		case 0x14:
-		{
-//			uint32_t gpu_was_running = GPU_RUNNING;
-			data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
+         {
+            data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
 
-			// check for GPU -> CPU interrupt
-			if (data & 0x02)
-			{
-//WriteLog("GPU->CPU interrupt\n");
-				if (TOMIRQEnabled(IRQ_GPU))
-				{
-//This is the programmer's responsibility, to make sure the handler is valid, not ours!
-//					if ((TOMIRQEnabled(IRQ_GPU))// && (JaguarInterruptHandlerIsValid(64)))
-					{
-						TOMSetPendingGPUInt();
-						m68k_set_irq(2);			// Set 68000 IPL 2
-						GPUReleaseTimeslice();
-					}
-				}
-				data &= ~0x02;
-			}
+            // check for GPU -> CPU interrupt
+            if (data & 0x02)
+            {
+               //WriteLog("GPU->CPU interrupt\n");
+               if (TOMIRQEnabled(IRQ_GPU))
+               {
+                  //This is the programmer's responsibility, to make sure the handler is valid, not ours!
+                  //					if ((TOMIRQEnabled(IRQ_GPU))// && (JaguarInterruptHandlerIsValid(64)))
+                  {
+                     TOMSetPendingGPUInt();
+                     m68k_set_irq(2);			// Set 68000 IPL 2
+                     GPUReleaseTimeslice();
+                  }
+               }
+               data &= ~0x02;
+            }
 
-			// check for CPU -> GPU interrupt #0
-			if (data & 0x04)
-			{
-//WriteLog("CPU->GPU interrupt\n");
-				GPUSetIRQLine(0, ASSERT_LINE);
-				m68k_end_timeslice();
-				DSPReleaseTimeslice();
-				data &= ~0x04;
-			}
+            // check for CPU -> GPU interrupt #0
+            if (data & 0x04)
+            {
+               //WriteLog("CPU->GPU interrupt\n");
+               GPUSetIRQLine(0, ASSERT_LINE);
+               m68k_end_timeslice();
+               DSPReleaseTimeslice();
+               data &= ~0x04;
+            }
 
-			// single stepping
-			if (data & 0x10)
-			{
-				//WriteLog("asked to perform a single step (single step is %senabled)\n",(data&0x8)?"":"not ");
-			}
+            gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
 
-			gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
-
-			// if gpu wasn't running but is now running, execute a few cycles
-#ifndef GPU_SINGLE_STEPPING
-/*			if (!gpu_was_running && GPU_RUNNING)
+            // if gpu wasn't running but is now running, execute a few cycles
+#ifdef GPU_SINGLE_STEPPING
+            if (gpu_control & 0x18)
+               GPUExec(1);
+#endif
 #ifdef GPU_DEBUG
-			{
-				WriteLog("GPU: Write32--About to do stupid braindead GPU execution for 200 cycles.\n");
+            WriteLog("Write to GPU CTRL by %s: %08X ", whoName[who], data);
+            if (GPU_RUNNING)
+               WriteLog(" --> Starting to run at %08X by %s...", gpu_pc, whoName[who]);
+            else
+               WriteLog(" --> Stopped by %s! (GPU_PC: %08X)", whoName[who], gpu_pc);
+            WriteLog("\n");
 #endif	// GPU_DEBUG
-				GPUExec(200);
-#ifdef GPU_DEBUG
-			}
-#endif	// GPU_DEBUG//*/
-#else
-			if (gpu_control & 0x18)
-				GPUExec(1);
-#endif	// #ifndef GPU_SINGLE_STEPPING
-#ifdef GPU_DEBUG
-WriteLog("Write to GPU CTRL by %s: %08X ", whoName[who], data);
-if (GPU_RUNNING)
-	WriteLog(" --> Starting to run at %08X by %s...", gpu_pc, whoName[who]);
-else
-	WriteLog(" --> Stopped by %s! (GPU_PC: %08X)", whoName[who], gpu_pc);
-WriteLog("\n");
-#endif	// GPU_DEBUG
-//if (GPU_RUNNING)
-//	GPUDumpDisassembly();
-/*if (GPU_RUNNING)
-{
-	if (gpu_pc == 0xF035D8)
-	{
-//		GPUDumpDisassembly();
-//		log_done();
-//		exit(1);
-		gpu_control &= 0xFFFFFFFE;	// Don't run it and let's see what happens!
-//Hmm. Seems to lock up when going into the demo...
-//Try to disable the collision altogether!
-	}
-}//*/
-extern int effect_start5;
-static bool finished = false;
-//if (GPU_RUNNING && effect_start5 && !finished)
-if (GPU_RUNNING && effect_start5 && gpu_pc == 0xF035D8)
-{
-	// Let's do a dump of $6528!
-/*	uint32_t numItems = JaguarReadWord(0x6BD6);
-	WriteLog("\nDump of $6528: %u items.\n\n", numItems);
-	for(int i=0; i<numItems*3*4; i+=3*4)
-	{
-		WriteLog("\t%04X: %08X %08X %08X -> ", 0x6528+i, JaguarReadLong(0x6528+i),
-			JaguarReadLong(0x6528+i+4), JaguarReadLong(0x6528+i+8));
-		uint16_t link = JaguarReadWord(0x6528+i+8+2);
-		for(int j=0; j<40; j+=4)
-			WriteLog("%08X ", JaguarReadLong(link + j));
-		WriteLog("\n");
-	}
-	WriteLog("\n");//*/
-	// Let's try a manual blit here...
-//This isn't working the way it should! !!! FIX !!!
-//Err, actually, it is.
-// NOW, it works right! Problem solved!!! It's a blitter bug!
-/*	uint32_t src = 0x4D54, dst = 0xF03000, width = 10 * 4;
-	for(int y=0; y<127; y++)
-	{
-		for(int x=0; x<2; x++)
-		{
-			JaguarWriteLong(dst, JaguarReadLong(src));
-
-			src += 4;
-			dst += 4;
-		}
-		src += width - (2 * 4);
-	}//*/
-/*	finished = true;
-	doGPUDis = true;
-	WriteLog("\nGPU: About to execute collision detection code.\n\n");//*/
-
-/*	WriteLog("\nGPU: About to execute collision detection code. Data @ 4D54:\n\n");
-	int count = 0;
-	for(int i=0x004D54; i<0x004D54+2048; i++)
-	{
-		WriteLog("%02X ", JaguarReadByte(i));
-		count++;
-		if (count == 32)
-		{
-			count = 0;
-			WriteLog("\n");
-		}
-	}
-	WriteLog("\n\nData @ F03000:\n\n");
-	count = 0;
-	for(int i=0xF03000; i<0xF03200; i++)
-	{
-		WriteLog("%02X ", JaguarReadByte(i));
-		count++;
-		if (count == 32)
-		{
-			count = 0;
-			WriteLog("\n");
-		}
-	}
-	WriteLog("\n\n");
-	log_done();
-	exit(0);//*/
-}
-//if (!GPU_RUNNING)
-//	doGPUDis = false;
-/*if (!GPU_RUNNING && finished)
-{
-	WriteLog("\nGPU: Finished collision detection code. Exiting!\n\n");
-	GPUDumpRegisters();
-	log_done();
-	exit(0);
-}//*/
-			// (?) If we're set running by the M68K (or DSP?) then end its timeslice to
-			// allow the GPU a chance to run...
-			// Yes! This partially fixed Trevor McFur...
-			if (GPU_RUNNING)
-				m68k_end_timeslice();
-			break;
-		}
+            extern int effect_start5;
+            static bool finished = false;
+            // (?) If we're set running by the M68K (or DSP?) then end its timeslice to
+            // allow the GPU a chance to run...
+            // Yes! This partially fixed Trevor McFur...
+            if (GPU_RUNNING)
+               m68k_end_timeslice();
+            break;
+         }
 		case 0x18:
 			gpu_hidata = data;
 			break;
@@ -1019,6 +916,8 @@ void GPUInit(void)
 
 void GPUReset(void)
 {
+   unsigned i;
+
 	// GPU registers (directly visible)
 	gpu_flags			  = 0x00000000;
 	gpu_matrix_control    = 0x00000000;
@@ -1036,7 +935,7 @@ void GPUReset(void)
 	gpu_reg = gpu_reg_bank_0;
 	gpu_alternate_reg = gpu_reg_bank_1;
 
-	for(int i=0; i<32; i++)
+	for(i=0; i<32; i++)
 		gpu_reg[i] = gpu_alternate_reg[i] = 0x00000000;
 
 	CLR_ZNC;
@@ -1046,7 +945,7 @@ void GPUReset(void)
 	GPUResetStats();
 
 	// Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
-	for(uint32_t i=0; i<4096; i+=4)
+	for(i=0; i<4096; i+=4)
 		*((uint32_t *)(&gpu_ram_8[i])) = rand();
 }
 
@@ -1057,7 +956,8 @@ uint32_t GPUReadPC(void)
 
 void GPUResetStats(void)
 {
-	for(uint32_t i=0; i<64; i++)
+   unsigned i;
+	for(i=0; i<64; i++)
 		gpu_opcode_use[i] = 0;
 	WriteLog("--> GPU stats were reset!\n");
 }
@@ -1078,9 +978,10 @@ void GPUDumpDisassembly(void)
 
 void GPUDumpRegisters(void)
 {
+   unsigned j;
 	WriteLog("\n---[GPU flags: NCZ %d%d%d]-----------------------\n", gpu_flag_n, gpu_flag_c, gpu_flag_z);
 	WriteLog("\nRegisters bank 0\n");
-	for(int j=0; j<8; j++)
+	for(j=0; j<8; j++)
 	{
 		WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
 						  (j << 2) + 0, gpu_reg_bank_0[(j << 2) + 0],
@@ -1089,7 +990,7 @@ void GPUDumpRegisters(void)
 						  (j << 2) + 3, gpu_reg_bank_0[(j << 2) + 3]);
 	}
 	WriteLog("Registers bank 1\n");
-	for(int j=0; j<8; j++)
+	for(j=0; j<8; j++)
 	{
 		WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
 						  (j << 2) + 0, gpu_reg_bank_1[(j << 2) + 0],
@@ -1101,240 +1002,106 @@ void GPUDumpRegisters(void)
 
 void GPUDumpMemory(void)
 {
+   unsigned i;
 	WriteLog("\n---[GPU data at 00F03000]---------------------------\n");
-	for(int i=0; i<0xFFF; i+=4)
+	for(i=0; i<0xFFF; i+=4)
 		WriteLog("\t%08X: %02X %02X %02X %02X\n", 0xF03000+i, gpu_ram_8[i],
 			gpu_ram_8[i+1], gpu_ram_8[i+2], gpu_ram_8[i+3]);
 }
 
 void GPUDone(void)
 {
-	WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
+   unsigned i;
+   WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
 
-	// Get the interrupt latch & enable bits
-	uint8_t bits = (gpu_control >> 6) & 0x1F, mask = (gpu_flags >> 4) & 0x1F;
-	WriteLog("GPU: Latch bits = %02X, enable bits = %02X\n", bits, mask);
+   // Get the interrupt latch & enable bits
+   uint8_t bits = (gpu_control >> 6) & 0x1F, mask = (gpu_flags >> 4) & 0x1F;
+   WriteLog("GPU: Latch bits = %02X, enable bits = %02X\n", bits, mask);
 
-	GPUDumpRegisters();
-	GPUDumpDisassembly();
+   GPUDumpRegisters();
+   GPUDumpDisassembly();
 
-	WriteLog("\nGPU opcodes use:\n");
-	for(int i=0; i<64; i++)
-	{
-		if (gpu_opcode_use[i])
-			WriteLog("\t%17s %lu\n", gpu_opcode_str[i], gpu_opcode_use[i]);
-	}
-	WriteLog("\n");
-
-//	memory_free(gpu_ram_8);
-//	memory_free(gpu_reg_bank_0);
-//	memory_free(gpu_reg_bank_1);
+   WriteLog("\nGPU opcodes use:\n");
+   for(i=0; i<64; i++)
+   {
+      if (gpu_opcode_use[i])
+         WriteLog("\t%17s %lu\n", gpu_opcode_str[i], gpu_opcode_use[i]);
+   }
+   WriteLog("\n");
 }
 
-//
 // Main GPU execution core
-//
 static int testCount = 1;
 static int len = 0;
 static bool tripwire = false;
+
 void GPUExec(int32_t cycles)
 {
-	if (!GPU_RUNNING)
-		return;
+   if (!GPU_RUNNING)
+      return;
 
 #ifdef GPU_SINGLE_STEPPING
-	if (gpu_control & 0x18)
-	{
-		cycles = 1;
-		gpu_control &= ~0x10;
-	}
+   if (gpu_control & 0x18)
+   {
+      cycles = 1;
+      gpu_control &= ~0x10;
+   }
 #endif
-	GPUHandleIRQs();
-	gpu_releaseTimeSlice_flag = 0;
-	gpu_in_exec++;
+   GPUHandleIRQs();
+   gpu_releaseTimeSlice_flag = 0;
+   gpu_in_exec++;
 
-	while (cycles > 0 && GPU_RUNNING)
-	{
-if (gpu_ram_8[0x054] == 0x98 && gpu_ram_8[0x055] == 0x0A && gpu_ram_8[0x056] == 0x03
-	&& gpu_ram_8[0x057] == 0x00 && gpu_ram_8[0x058] == 0x00 && gpu_ram_8[0x059] == 0x00)
-{
-	if (gpu_pc == 0xF03000)
-	{
-		extern uint32_t starCount;
-		starCount = 0;
-/*		WriteLog("GPU: Starting starfield generator... Dump of [R03=%08X]:\n", gpu_reg_bank_0[03]);
-		uint32_t base = gpu_reg_bank_0[3];
-		for(uint32_t i=0; i<0x100; i+=16)
-		{
-			WriteLog("%02X: ", i);
-			for(uint32_t j=0; j<16; j++)
-			{
-				WriteLog("%02X ", JaguarReadByte(base + i + j));
-			}
-			WriteLog("\n");
-		}*/
-	}
-//	if (gpu_pc == 0xF03)
-	{
-	}
-}//*/
-/*if (gpu_pc == 0xF03B9E && gpu_reg_bank_0[01] == 0)
-{
-	GPUDumpRegisters();
-	WriteLog("GPU: Starting disassembly log...\n");
-	doGPUDis = true;
-}//*/
-/*if (gpu_pc == 0xF0359A)
-{
-	doGPUDis = true;
-	GPUDumpRegisters();
-}*/
-/*		gpu_flag_c = (gpu_flag_c ? 1 : 0);
-		gpu_flag_z = (gpu_flag_z ? 1 : 0);
-		gpu_flag_n = (gpu_flag_n ? 1 : 0);*/
-#if 0
-if (gpu_pc == 0xF03200)
-	doGPUDis = true;
-#endif
+   while (cycles > 0 && GPU_RUNNING)
+   {
+      if (gpu_ram_8[0x054] == 0x98 && gpu_ram_8[0x055] == 0x0A && gpu_ram_8[0x056] == 0x03
+            && gpu_ram_8[0x057] == 0x00 && gpu_ram_8[0x058] == 0x00 && gpu_ram_8[0x059] == 0x00)
+      {
+         if (gpu_pc == 0xF03000)
+         {
+            extern uint32_t starCount;
+            starCount = 0;
+         }
+      }
+      uint16_t opcode = GPUReadWord(gpu_pc, GPU);
+      uint32_t index = opcode >> 10;
+      gpu_instruction = opcode;				// Added for GPU #3...
+      gpu_opcode_first_parameter = (opcode >> 5) & 0x1F;
+      gpu_opcode_second_parameter = opcode & 0x1F;
 
-		uint16_t opcode = GPUReadWord(gpu_pc, GPU);
-		uint32_t index = opcode >> 10;
-		gpu_instruction = opcode;				// Added for GPU #3...
-		gpu_opcode_first_parameter = (opcode >> 5) & 0x1F;
-		gpu_opcode_second_parameter = opcode & 0x1F;
-/*if (gpu_pc == 0xF03BE8)
-WriteLog("Start of OP frame write...\n");
-if (gpu_pc == 0xF03EEE)
-WriteLog("--> Writing BRANCH object ---\n");
-if (gpu_pc == 0xF03F62)
-WriteLog("--> Writing BITMAP object ***\n");//*/
-/*if (gpu_pc == 0xF03546)
-{
-	WriteLog("\n--> GPU PC: F03546\n");
-	GPUDumpRegisters();
-	GPUDumpDisassembly();
-}//*/
-/*if (gpu_pc == 0xF033F6)
-{
-	WriteLog("\n--> GPU PC: F033F6\n");
-	GPUDumpRegisters();
-	GPUDumpDisassembly();
-}//*/
-/*if (gpu_pc == 0xF033CC)
-{
-	WriteLog("\n--> GPU PC: F033CC\n");
-	GPUDumpRegisters();
-	GPUDumpDisassembly();
-}//*/
-/*if (gpu_pc == 0xF033D6)
-{
-	WriteLog("\n--> GPU PC: F033D6 (#%d)\n", testCount++);
-	GPUDumpRegisters();
-	GPUDumpMemory();
-}//*/
-/*if (gpu_pc == 0xF033D8)
-{
-	WriteLog("\n--> GPU PC: F033D8 (#%d)\n", testCount++);
-	GPUDumpRegisters();
-	GPUDumpMemory();
-}//*/
-/*if (gpu_pc == 0xF0358E)
-{
-	WriteLog("\n--> GPU PC: F0358E (#%d)\n", testCount++);
-	GPUDumpRegisters();
-	GPUDumpMemory();
-}//*/
-/*if (gpu_pc == 0xF034CA)
-{
-	WriteLog("\n--> GPU PC: F034CA (#%d)\n", testCount++);
-	GPUDumpRegisters();
-}//*/
-/*if (gpu_pc == 0xF034CA)
-{
-	len = gpu_reg[1] + 4;//, r9save = gpu_reg[9];
-	WriteLog("\nAbout to subtract [#%d] (R14=%08X, R15=%08X, R9=%08X):\n   ", testCount++, gpu_reg[14], gpu_reg[15], gpu_reg[9]);
-	for(int i=0; i<len; i+=4)
-		WriteLog(" %08X", GPUReadLong(gpu_reg[15]+i));
-	WriteLog("\n   ");
-	for(int i=0; i<len; i+=4)
-		WriteLog(" %08X", GPUReadLong(gpu_reg[14]+i));
-	WriteLog("\n\n");
-}
-if (gpu_pc == 0xF034DE)
-{
-	WriteLog("\nSubtracted! (R14=%08X, R15=%08X):\n   ", gpu_reg[14], gpu_reg[15]);
-	for(int i=0; i<len; i+=4)
-		WriteLog(" %08X", GPUReadLong(gpu_reg[15]+i));
-	WriteLog("\n   ");
-	for(int i=0; i<len; i+=4)
-		WriteLog(" %08X", GPUReadLong(gpu_reg[14]+i));
-	WriteLog("\n   ");
-	for(int i=0; i<len; i+=4)
-		WriteLog(" --------");
-	WriteLog("\n   ");
-	for(int i=0; i<len; i+=4)
-		WriteLog(" %08X", GPUReadLong(gpu_reg[9]+4+i));
-	WriteLog("\n\n");
-}//*/
-/*if (gpu_pc == 0xF035C8)
-{
-	WriteLog("\n--> GPU PC: F035C8 (#%d)\n", testCount++);
-	GPUDumpRegisters();
-	GPUDumpDisassembly();
-}//*/
+      if (gpu_start_log)
+      {
+         //	gpu_reset_stats();
+         static char buffer[512];
+         dasmjag(JAGUAR_GPU, buffer, gpu_pc);
+         WriteLog("GPU: [%08X] %s (RM=%08X, RN=%08X) -> ", gpu_pc, buffer, RM, RN);
+      }//*/
+      //$E400 -> 1110 01 -> $39 -> 57
+      //GPU #1
+      gpu_pc += 2;
+      gpu_opcode[index]();
+      //GPU #2
+      //		gpu2_opcode[index]();
+      //		gpu_pc += 2;
+      //GPU #3				(Doesn't show ATARI logo! #1 & #2 do...)
+      //		gpu_pc += 2;
+      //		gpu3_opcode[index]();
 
-if (gpu_start_log)
-{
-//	gpu_reset_stats();
-static char buffer[512];
-dasmjag(JAGUAR_GPU, buffer, gpu_pc);
-WriteLog("GPU: [%08X] %s (RM=%08X, RN=%08X) -> ", gpu_pc, buffer, RM, RN);
-}//*/
-//$E400 -> 1110 01 -> $39 -> 57
-//GPU #1
-		gpu_pc += 2;
-		gpu_opcode[index]();
-//GPU #2
-//		gpu2_opcode[index]();
-//		gpu_pc += 2;
-//GPU #3				(Doesn't show ATARI logo! #1 & #2 do...)
-//		gpu_pc += 2;
-//		gpu3_opcode[index]();
+      // BIOS hacking
+      //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
+      //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
 
-// BIOS hacking
-//GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
-/*static bool firstTime = true;
-if (gpu_pc == 0xF03548 && firstTime)
-{
-	gpu_flag_z = 1;
-//	firstTime = false;
+      cycles -= gpu_opcode_cycles[index];
+      gpu_opcode_use[index]++;
+      if (gpu_start_log)
+         WriteLog("(RM=%08X, RN=%08X)\n", RM, RN);//*/
+      if ((gpu_pc < 0xF03000 || gpu_pc > 0xF03FFF) && !tripwire)
+      {
+         WriteLog("GPU: Executing outside local RAM! GPU_PC: %08X\n", gpu_pc);
+         tripwire = true;
+      }
+   }
 
-//static char buffer[512];
-//int k=0xF03548;
-//while (k<0xF0356C)
-//{
-//int oldk = k;
-//k += dasmjag(JAGUAR_GPU, buffer, k);
-//WriteLog("GPU: [%08X] %s\n", oldk, buffer);
-//}
-//	gpu_start_log = 1;
-}//*/
-//GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
-/*if (gpu_pc == 0xF0354C)
-	gpu_flag_z = 0;//, gpu_start_log = 1;//*/
-
-		cycles -= gpu_opcode_cycles[index];
-		gpu_opcode_use[index]++;
-if (gpu_start_log)
-	WriteLog("(RM=%08X, RN=%08X)\n", RM, RN);//*/
-if ((gpu_pc < 0xF03000 || gpu_pc > 0xF03FFF) && !tripwire)
-{
-	WriteLog("GPU: Executing outside local RAM! GPU_PC: %08X\n", gpu_pc);
-	tripwire = true;
-}
-	}
-
-	gpu_in_exec--;
+   gpu_in_exec--;
 }
 
 //
@@ -2320,6 +2087,7 @@ static void gpu_opcode_normi(void)
 
 static void gpu_opcode_mmult(void)
 {
+   unsigned i;
 	int count	= gpu_matrix_control & 0x0F;	// Matrix width
 	uint32_t addr = gpu_pointer_to_matrix;		// In the GPU's RAM
 	int64_t accum = 0;
@@ -2327,7 +2095,7 @@ static void gpu_opcode_mmult(void)
 
 	if (gpu_matrix_control & 0x10)				// Column stepping
 	{
-		for(int i=0; i<count; i++)
+		for(i=0; i<count; i++)
 		{
 			int16_t a;
 			if (i & 0x01)
@@ -2342,7 +2110,7 @@ static void gpu_opcode_mmult(void)
 	}
 	else										// Row stepping
 	{
-		for(int i=0; i<count; i++)
+		for(i=0; i<count; i++)
 		{
 			int16_t a;
 			if (i & 0x01)
@@ -2386,33 +2154,11 @@ static void gpu_opcode_abs(void)
 
 static void gpu_opcode_div(void)	// RN / RM
 {
+   unsigned i;
 #ifdef GPU_DIS_DIV
 	if (doGPUDis)
 		WriteLog("%06X: DIV    R%02u, R%02u (%s) [NCZ:%u%u%u, R%02u=%08X, R%02u=%08X] -> ", gpu_pc-2, IMM_1, IMM_2, (gpu_div_control & 0x01 ? "16.16" : "32"), gpu_flag_n, gpu_flag_c, gpu_flag_z, IMM_1, RM, IMM_2, RN);
 #endif
-#if 0
-	if (RM)
-	{
-		if (gpu_div_control & 0x01)		// 16.16 division
-		{
-			gpu_remain = ((uint64_t)RN << 16) % RM;
-			RN = ((uint64_t)RN << 16) / RM;
-		}
-		else
-		{
-			// We calculate the remainder first because we destroy RN after
-			// this by assigning it to itself.
-			gpu_remain = RN % RM;
-			RN = RN / RM;
-		}
-	}
-	else
-	{
-		// This is what happens according to SCPCD. NYAN!
-		RN = 0xFFFFFFFF;
-		gpu_remain = 0;
-	}
-#else
 	// Real algorithm, courtesy of SCPCD: NYAN!
 	uint32_t q = RN;
 	uint32_t r = 0;
@@ -2422,9 +2168,8 @@ static void gpu_opcode_div(void)	// RN / RM
 	if (gpu_div_control & 0x01)
 		q <<= 16, r = RN >> 16;
 
-	for(int i=0; i<32; i++)
+	for(i=0; i<32; i++)
 	{
-//		uint32_t sign = (r >> 31) & 0x01;
 		uint32_t sign = r & 0x80000000;
 		r = (r << 1) | ((q >> 31) & 0x01);
 		r += (sign ? RM : -RM);
@@ -2433,7 +2178,6 @@ static void gpu_opcode_div(void)	// RN / RM
 
 	RN = q;
 	gpu_remain = r;
-#endif
 
 #ifdef GPU_DIS_DIV
 	if (doGPUDis)

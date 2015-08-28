@@ -570,32 +570,33 @@ uint32_t MIX16ToRGB32[0x10000];
 #warning "This is not endian-safe. !!! FIX !!!"
 void TOMFillLookupTables(void)
 {
-	// NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
-	//       RRRR RBBB BBGG GGGG
-	for(uint32_t i=0; i<0x10000; i++)
-//hm.		RGB16ToRGB32[i] = 0xFF000000
-//			| ((i & 0xF100) >> 8)  | ((i & 0xE000) >> 13)
-//			| ((i & 0x07C0) << 13) | ((i & 0x0700) << 8)
-//			| ((i & 0x003F) << 10) | ((i & 0x0030) << 4);
-		RGB16ToRGB32[i] = 0xFF000000
-			| ((i & 0xF800) << 8)					// Red
-			| ((i & 0x003F) << 10)					// Green
-			| ((i & 0x07C0) >> 3);					// Blue
+   unsigned i;
+   // NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
+   //       RRRR RBBB BBGG GGGG
+   for(i=0; i<0x10000; i++)
+      //hm.		RGB16ToRGB32[i] = 0xFF000000
+      //			| ((i & 0xF100) >> 8)  | ((i & 0xE000) >> 13)
+      //			| ((i & 0x07C0) << 13) | ((i & 0x0700) << 8)
+      //			| ((i & 0x003F) << 10) | ((i & 0x0030) << 4);
+      RGB16ToRGB32[i] = 0xFF000000
+         | ((i & 0xF800) << 8)					// Red
+         | ((i & 0x003F) << 10)					// Green
+         | ((i & 0x07C0) >> 3);					// Blue
 
-	for(uint32_t i=0; i<0x10000; i++)
-	{
-		uint32_t cyan = (i & 0xF000) >> 12,
-			red = (i & 0x0F00) >> 8,
-			intensity = (i & 0x00FF);
+   for(i=0; i<0x10000; i++)
+   {
+      uint32_t cyan = (i & 0xF000) >> 12,
+               red = (i & 0x0F00) >> 8,
+               intensity = (i & 0x00FF);
 
-		uint32_t r = (((uint32_t)redcv[cyan][red]) * intensity) >> 8,
-			g = (((uint32_t)greencv[cyan][red]) * intensity) >> 8,
-			b = (((uint32_t)bluecv[cyan][red]) * intensity) >> 8;
+      uint32_t r = (((uint32_t)redcv[cyan][red]) * intensity) >> 8,
+               g = (((uint32_t)greencv[cyan][red]) * intensity) >> 8,
+               b = (((uint32_t)bluecv[cyan][red]) * intensity) >> 8;
 
-//hm.		CRY16ToRGB32[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
-		CRY16ToRGB32[i] = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
-		MIX16ToRGB32[i] = (i & 0x01 ? RGB16ToRGB32[i] : CRY16ToRGB32[i]);
-	}
+      //hm.		CRY16ToRGB32[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+      CRY16ToRGB32[i] = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+      MIX16ToRGB32[i] = (i & 0x01 ? RGB16ToRGB32[i] : CRY16ToRGB32[i]);
+   }
 }
 
 
@@ -690,10 +691,11 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 // and so is the backbuffer.
 #ifdef LEFT_BG_FIX
 	{
+      unsigned i;
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
 		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
-		for(int16_t i=0; i<startPos; i++)
+		for(i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -717,6 +719,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 //
 void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 {
+   unsigned i;
 //CHANGED TO 32BPP RENDERING
 	uint16_t width = tomWidth;
 	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
@@ -734,7 +737,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
 		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
-		for(int16_t i=0; i<startPos; i++)
+		for(i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -764,6 +767,7 @@ if(doom_res_hack==1)
 //
 void tom_render_24bpp_scanline(uint32_t * backbuffer)
 {
+   unsigned i;
 //CHANGED TO 32BPP RENDERING
 	uint16_t width = tomWidth;
 	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
@@ -781,7 +785,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
 		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
-		for(int16_t i=0; i<startPos; i++)
+		for(i=0; i<startPos; i++)
 			*backbuffer++ = pixel;
 
 		width -= startPos;
@@ -829,43 +833,44 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
 //
 void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 {
-//CHANGED TO 32BPP RENDERING
-	// 16 BPP RGB: 0-5 green, 6-10 blue, 11-15 red
+   unsigned i;
+   //CHANGED TO 32BPP RENDERING
+   // 16 BPP RGB: 0-5 green, 6-10 blue, 11-15 red
 
-	uint16_t width = tomWidth;
-	uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint16_t width = tomWidth;
+   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
 
-	//New stuff--restrict our drawing...
-	uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-	//NOTE: May have to check HDB2 as well!
-	int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
-	startPos /= pwidth;
+   //New stuff--restrict our drawing...
+   uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+   //NOTE: May have to check HDB2 as well!
+   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
+   startPos /= pwidth;
 
-	if (startPos < 0)
-		current_line_buffer += 2 * -startPos;
-	else
+   if (startPos < 0)
+      current_line_buffer += 2 * -startPos;
+   else
 #ifdef LEFT_BG_FIX
-	{
-		uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-		uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+   {
+      uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+      uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
-		for(int16_t i=0; i<startPos; i++)
-			*backbuffer++ = pixel;
+      for(i=0; i<startPos; i++)
+         *backbuffer++ = pixel;
 
-		width -= startPos;
-	}
+      width -= startPos;
+   }
 #else
-//This should likely be 4 instead of 2 (?--not sure)
-		backbuffer += 2 * startPos, width -= startPos;
+   //This should likely be 4 instead of 2 (?--not sure)
+   backbuffer += 2 * startPos, width -= startPos;
 #endif
 
-	while (width)
-	{
-		uint32_t color = (*current_line_buffer++) << 8;
-		color |= *current_line_buffer++;
-		*backbuffer++ = RGB16ToRGB32[color];
-		width--;
-	}
+   while (width)
+   {
+      uint32_t color = (*current_line_buffer++) << 8;
+      color |= *current_line_buffer++;
+      *backbuffer++ = RGB16ToRGB32[color];
+      width--;
+   }
 }
 
 
@@ -874,6 +879,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 //
 void TOMExecHalfline(uint16_t halfline, bool render)
 {
+   unsigned i;
    uint16_t field2 = halfline & 0x0800;
 	halfline &= 0x07FF;
 
@@ -961,7 +967,7 @@ TOM: Vertical Interrupt written by M68K: 491
 
 			// Clear line buffer with BG
 			if (GET16(tomRam8, VMODE) & BGEN) // && (CRY or RGB16)...
-				for(uint32_t i=0; i<720; i++)
+				for(i=0; i<720; i++)
 					*current_line_buffer++ = bgHI, *current_line_buffer++ = bgLO;
 
 			OPProcessList(halfline, render);
@@ -1062,7 +1068,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 //Hm.			uint32_t pixel = 0xFF000000 | (b << 16) | (g << 8) | r;
 			uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
-			for(uint32_t i=0; i<tomWidth; i++)
+			for(i=0; i<tomWidth; i++)
 				*currentLineBuffer++ = pixel;
 		}
 	}

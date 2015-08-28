@@ -350,7 +350,8 @@ void FlushDSPPipeline(void);
 
 void dsp_reset_stats(void)
 {
-	for(int i=0; i<65; i++)
+   unsigned i;
+	for(i=0; i<65; i++)
 		dsp_opcode_use[i] = 0;
 }
 
@@ -362,8 +363,11 @@ void DSPReleaseTimeslice(void)
 
 void dsp_build_branch_condition_table(void)
 {
-	// Fill in the mirror table
-	for(int i=0; i<65536; i++)
+   unsigned i, j;
+
+	/* Fill in the mirror table */
+
+	for(i=0; i<65536; i++)
 	{
 		mirror_table[i] = ((i >> 15) & 0x0001) | ((i >> 13) & 0x0002)
 			| ((i >> 11) & 0x0004) | ((i >> 9)  & 0x0008)
@@ -376,9 +380,9 @@ void dsp_build_branch_condition_table(void)
 	}
 
 	// Fill in the condition table
-	for(int i=0; i<8; i++)
+	for(i=0; i<8; i++)
 	{
-		for(int j=0; j<32; j++)
+		for(j=0; j<32; j++)
 		{
 			int result = 1;
 
@@ -1017,6 +1021,8 @@ void DSPInit(void)
 
 void DSPReset(void)
 {
+   unsigned i;
+
 	dsp_pc				  = 0x00F1B000;
 	dsp_acc				  = 0x00000000;
 	dsp_remain			  = 0x00000000;
@@ -1032,7 +1038,7 @@ void DSPReset(void)
 	dsp_reg = dsp_reg_bank_0;
 	dsp_alternate_reg = dsp_reg_bank_1;
 
-	for(int i=0; i<32; i++)
+	for(i=0; i<32; i++)
 		dsp_reg[i] = dsp_alternate_reg[i] = 0x00000000;
 
 	CLR_ZNC;
@@ -1041,7 +1047,7 @@ void DSPReset(void)
 	dsp_reset_stats();
 
 	// Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
-	for(uint32_t i=0; i<8192; i+=4)
+	for(i=0; i<8192; i+=4)
 		*((uint32_t *)(&dsp_ram_8[i])) = rand();
 }
 
@@ -1062,29 +1068,31 @@ void DSPDumpDisassembly(void)
 
 void DSPDumpRegisters(void)
 {
-//Shoud add modulus, etc to dump here...
-	WriteLog("\n---[DSP flags: NCZ %d%d%d, DSP PC: %08X]------------\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, dsp_pc);
-	WriteLog("\nRegisters bank 0\n");
+   unsigned j;
 
-	for(int j=0; j<8; j++)
-	{
-		WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-			(j << 2) + 0, dsp_reg_bank_0[(j << 2) + 0],
-			(j << 2) + 1, dsp_reg_bank_0[(j << 2) + 1],
-			(j << 2) + 2, dsp_reg_bank_0[(j << 2) + 2],
-			(j << 2) + 3, dsp_reg_bank_0[(j << 2) + 3]);
-	}
+   /*Should add modulus, etc to dump here... */
+   WriteLog("\n---[DSP flags: NCZ %d%d%d, DSP PC: %08X]------------\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, dsp_pc);
+   WriteLog("\nRegisters bank 0\n");
 
-	WriteLog("Registers bank 1\n");
+   for(j=0; j<8; j++)
+   {
+      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
+            (j << 2) + 0, dsp_reg_bank_0[(j << 2) + 0],
+            (j << 2) + 1, dsp_reg_bank_0[(j << 2) + 1],
+            (j << 2) + 2, dsp_reg_bank_0[(j << 2) + 2],
+            (j << 2) + 3, dsp_reg_bank_0[(j << 2) + 3]);
+   }
 
-	for(int j=0; j<8; j++)
-	{
-		WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-			(j << 2) + 0, dsp_reg_bank_1[(j << 2) + 0],
-			(j << 2) + 1, dsp_reg_bank_1[(j << 2) + 1],
-			(j << 2) + 2, dsp_reg_bank_1[(j << 2) + 2],
-			(j << 2) + 3, dsp_reg_bank_1[(j << 2) + 3]);
-	}
+   WriteLog("Registers bank 1\n");
+
+   for(j=0; j<8; j++)
+   {
+      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
+            (j << 2) + 0, dsp_reg_bank_1[(j << 2) + 0],
+            (j << 2) + 1, dsp_reg_bank_1[(j << 2) + 1],
+            (j << 2) + 2, dsp_reg_bank_1[(j << 2) + 2],
+            (j << 2) + 3, dsp_reg_bank_1[(j << 2) + 3]);
+   }
 }
 
 void DSPDone(void)
@@ -1104,7 +1112,7 @@ void DSPDone(void)
 		(mask & 0x10 ? "Ext0 " : ""), (mask & 0x20 ? "Ext1" : ""));
 	WriteLog("\nRegisters bank 0\n");
 
-	for(int j=0; j<8; j++)
+	for(j=0; j<8; j++)
 	{
 		WriteLog("\tR%02i=%08X R%02i=%08X R%02i=%08X R%02i=%08X\n",
 						  (j << 2) + 0, dsp_reg_bank_0[(j << 2) + 0],
@@ -2150,43 +2158,44 @@ static void dsp_opcode_normi(void)
 
 static void dsp_opcode_mmult(void)
 {
-	int count	= dsp_matrix_control&0x0f;
-	uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
-	int64_t accum = 0;
-	uint32_t res;
+   uint32_t res;
+   unsigned i;
+   int count	= dsp_matrix_control&0x0f;
+   uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
+   int64_t accum = 0;
 
-	if (!(dsp_matrix_control & 0x10))
-	{
-		for (int i = 0; i < count; i++)
-		{
-			int16_t a;
-			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
-			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
-			int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
-			accum += a*b;
-			addr += 4;
-		}
-	}
-	else
-	{
-		for (int i = 0; i < count; i++)
-		{
-			int16_t a;
-			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
-			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
-			int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
-			accum += a*b;
-			addr += 4 * count;
-		}
-	}
-	RN = res = (int32_t)accum;
-	// carry flag to do
-//NOTE: The flags are set based upon the last add/multiply done...
-	SET_ZN(RN);
+   if (!(dsp_matrix_control & 0x10))
+   {
+      for (i = 0; i < count; i++)
+      {
+         int16_t a;
+         if (i&0x01)
+            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+         else
+            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+         int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
+         accum += a*b;
+         addr += 4;
+      }
+   }
+   else
+   {
+      for (i = 0; i < count; i++)
+      {
+         int16_t a;
+         if (i&0x01)
+            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+         else
+            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+         int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
+         accum += a*b;
+         addr += 4 * count;
+      }
+   }
+   RN = res = (int32_t)accum;
+   // carry flag to do
+   //NOTE: The flags are set based upon the last add/multiply done...
+   SET_ZN(RN);
 }
 
 
@@ -2216,6 +2225,7 @@ static void dsp_opcode_abs(void)
 
 static void dsp_opcode_div(void)
 {
+   unsigned i;
 #if 0
 	if (RM)
 	{
@@ -2249,7 +2259,7 @@ static void dsp_opcode_div(void)
 	if (dsp_div_control & 0x01)
 		q <<= 16, r = RN >> 16;
 
-	for(int i=0; i<32; i++)
+	for(i=0; i<32; i++)
 	{
 //		uint32_t sign = (r >> 31) & 0x01;
 		uint32_t sign = r & 0x80000000;
@@ -2635,12 +2645,14 @@ bool isLoadStore[65] =
 
 void FlushDSPPipeline(void)
 {
+   unsigned i;
+
 	plPtrFetch = 3, plPtrRead = 2, plPtrExec = 1, plPtrWrite = 0;
 
-	for(int i=0; i<4; i++)
+	for(i=0; i<4; i++)
 		pipeline[i].opcode = PIPELINE_STALL;
 
-	for(int i=0; i<32; i++)
+	for(i=0; i<32; i++)
 		scoreboard[i] = 0;
 }
 
@@ -3485,14 +3497,15 @@ static void DSP_mirror(void)
 
 static void DSP_mmult(void)
 {
+	uint32_t res;
+   unsigned i;
 	int count	= dsp_matrix_control&0x0f;
 	uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
 	int64_t accum = 0;
-	uint32_t res;
 
 	if (!(dsp_matrix_control & 0x10))
 	{
-		for (int i = 0; i < count; i++)
+		for (i = 0; i < count; i++)
 		{
 			int16_t a;
 			if (i&0x01)
@@ -3506,7 +3519,7 @@ static void DSP_mmult(void)
 	}
 	else
 	{
-		for (int i = 0; i < count; i++)
+		for (i = 0; i < count; i++)
 		{
 			int16_t a;
 			if (i&0x01)

@@ -49,9 +49,7 @@
 #include "jaguar.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
-//#include "vjag_memory.h"
 #include "settings.h"
-
 
 //#define DEBUG_DAC
 
@@ -154,11 +152,13 @@ void DSPSampleCallback(void)
 
 void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 {
-	// 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit.
+   unsigned i;
+
+	/* 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit. */
 
 	if (!DSPIsRunning())
 	{
-		for(int i=0; i<length; i+=2)
+		for(i = 0; i < length; i += 2)
 		{
 			buffer[i + 0] = *ltxd;
 			buffer[i + 1] = *rtxd;

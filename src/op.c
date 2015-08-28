@@ -86,10 +86,12 @@ int32_t phraseWidthToPixels[8] = { 64, 32, 16, 8, 4, 2, 0, 0 };
 //
 void OPInit(void)
 {
+   unsigned i;
+
 	// Here we calculate the saturating blend of a signed 4-bit value and an
 	// existing Cyan/Red value as well as a signed 8-bit value and an existing intensity...
 	// Note: CRY is 4 bits Cyan, 4 bits Red, 16 bits intensitY
-	for(int i=0; i<256*256; i++)
+	for(i=0; i<256*256; i++)
 	{
 		int y = (i >> 8) & 0xFF;
 		int dy = (int8_t)i;					// Sign extend the Y index
@@ -172,8 +174,10 @@ void OPDone(void)
 
 bool OPObjectExists(uint32_t address)
 {
+   unsigned i;
+
 	// Yes, we really do a linear search, every time. :-/
-	for(uint32_t i=0; i<numberOfObjects; i++)
+	for(i=0; i<numberOfObjects; i++)
 	{
 		if (address == object[i])
 			return true;
@@ -221,7 +225,9 @@ void OPDiscoverObjects(uint32_t address)
 
 void OPDumpObjectList(void)
 {
-	for(uint32_t i=0; i<numberOfObjects; i++)
+   unsigned i;
+
+	for(i=0; i<numberOfObjects; i++)
 	{
 		uint32_t address = object[i];
 
@@ -529,7 +535,8 @@ if ((p0 & 0x07) == OBJECT_TYPE_BRANCH)
 WriteLog(" (BRANCH)\n");
 uint8_t * jaguarMainRam = GetRamPtr();
 WriteLog("[RAM] --> ");
-for(int k=0; k<8; k++)
+unsigned k;
+for(k=0; k<8; k++)
 	WriteLog("%02X ", jaguarMainRam[op_pointer-8 + k]);
 WriteLog("\n");
 }
@@ -1075,11 +1082,12 @@ if (firstPix)
 
 		while (iwidth--)
 		{
+         unsigned i;
 			// Fetch phrase...
 			uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 			data += pitch;
 
-			for(int i=0; i<32; i++)
+			for(i=0; i<32; i++)
 			{
 				uint8_t bits = pixels >> 62;
 // Seems to me that both of these are in the same endian, so we could cast it as
@@ -1119,11 +1127,12 @@ if (firstPix)
 
 		while (iwidth--)
 		{
+         unsigned i;
 			// Fetch phrase...
 			uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 			data += pitch;
 
-			for(int i=0; i<16; i++)
+			for(i=0; i<16; i++)
 			{
 				uint8_t bits = pixels >> 60;
 // Seems to me that both of these are in the same endian, so we could cast it as
@@ -1214,11 +1223,12 @@ if (firstPix)
 
 		while (iwidth--)
 		{
+         unsigned i;
 			// Fetch phrase...
 			uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 			data += pitch;
 
-			for(int i=0; i<4; i++)
+			for(i=0; i<4; i++)
 			{
 				uint8_t bitsHi = pixels >> 56, bitsLo = pixels >> 48;
 // Seems to me that both of these are in the same endian, so we could cast it as
@@ -1261,11 +1271,12 @@ if (firstPix)
 
 		while (iwidth--)
 		{
+         unsigned i;
 			// Fetch phrase...
 			uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 			data += pitch;
 
-			for(int i=0; i<2; i++)
+			for(i=0; i<2; i++)
 			{
 				// We don't use a 32-bit var here because of endian issues...!
 				uint8_t bits3 = pixels >> 56, bits2 = pixels >> 48,
@@ -1833,11 +1844,12 @@ if (firstPix != 0)
 
 		while (iwidth--)
 		{
+         unsigned i;
 			// Fetch phrase...
 			uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 			data += pitch << 3;						// Multiply pitch * 8 (optimize: precompute this value)
 
-			for(int i=0; i<2; i++)
+			for(i=0; i<2; i++)
 			{
 				uint8_t bits3 = pixels >> 56, bits2 = pixels >> 48,
 					bits1 = pixels >> 40, bits0 = pixels >> 32;

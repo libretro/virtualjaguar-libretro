@@ -32,8 +32,6 @@
 
 // Various conditional compilation goodies...
 
-//#define LOG_BLITS
-
 #define USE_ORIGINAL_BLITTER
 //#define USE_MIDSUMMER_BLITTER
 #define USE_MIDSUMMER_BLITTER_MKII
@@ -1086,13 +1084,7 @@ specialLog = false;
 
 void blitter_blit(uint32_t cmd)
 {
-//Apparently this is doing *something*, just not sure exactly what...
-/*if (cmd == 0x41802E01)
-{
-	WriteLog("BLIT: Found our blit. Was: %08X ", cmd);
-	cmd = 0x01800E01;
-	WriteLog("Is: %08X\n", cmd);
-}//*/
+   unsigned v;
 
 	uint32_t pitchValue[4] = { 0, 1, 3, 2 };
 	colour_index = 0;
@@ -1280,7 +1272,7 @@ WriteLog("BLIT: Asked to use invalid bit combo (XADDINC) for A2...\n");
 	{
 		zadd = REG(ZINC);
 
-		for(int v=0; v<4; v++)
+		for(v = 0; v < 4; v++)
 			z_i[v] = REG(PHRASEZ0 + v*4);
 	}
 
@@ -1315,168 +1307,12 @@ WriteLog("BLIT: Asked to use invalid bit combo (XADDINC) for A2...\n");
 	}
 
 	// Bit comparitor fixing...
-/*	if (BCOMPEN)
-	{
-		// Determine the data flow direction...
-		if (!DSTA2)
-			a2_step_x /= (1 << ((REG(A2_FLAGS) >> 3) & 0x07));
-		else
-			;//add this later
-	}//*/
-/*	if (BCOMPEN)//Kludge for Hover Strike... !!! FIX !!!
-	{
-		// Determine the data flow direction...
-		if (!DSTA2)
-			a2_x <<= 3;
-	}//*/
-
-#ifdef LOG_BLITS
-	if (start_logging)
-	{
-		WriteLog("Blit!\n");
-		WriteLog("  cmd      = 0x%.8x\n",cmd);
-		WriteLog("  a1_base  = %08X\n", a1_addr);
-		WriteLog("  a1_pitch = %d\n", a1_pitch);
-		WriteLog("  a1_psize = %d\n", a1_psize);
-		WriteLog("  a1_width = %d\n", a1_width);
-		WriteLog("  a1_xadd  = %f (phrase=%d)\n", (float)a1_xadd / 65536.0, a1_phrase_mode);
-		WriteLog("  a1_yadd  = %f\n", (float)a1_yadd / 65536.0);
-		WriteLog("  a1_xstep = %f\n", (float)a1_step_x / 65536.0);
-		WriteLog("  a1_ystep = %f\n", (float)a1_step_y / 65536.0);
-		WriteLog("  a1_x     = %f\n", (float)a1_x / 65536.0);
-		WriteLog("  a1_y     = %f\n", (float)a1_y / 65536.0);
-		WriteLog("  a1_zoffs = %i\n",a1_zoffs);
-
-		WriteLog("  a2_base  = %08X\n", a2_addr);
-		WriteLog("  a2_pitch = %d\n", a2_pitch);
-		WriteLog("  a2_psize = %d\n", a2_psize);
-		WriteLog("  a2_width = %d\n", a2_width);
-		WriteLog("  a2_xadd  = %f (phrase=%d)\n", (float)a2_xadd / 65536.0, a2_phrase_mode);
-		WriteLog("  a2_yadd  = %f\n", (float)a2_yadd / 65536.0);
-		WriteLog("  a2_xstep = %f\n", (float)a2_step_x / 65536.0);
-		WriteLog("  a2_ystep = %f\n", (float)a2_step_y / 65536.0);
-		WriteLog("  a2_x     = %f\n", (float)a2_x / 65536.0);
-		WriteLog("  a2_y     = %f\n", (float)a2_y / 65536.0);
-		WriteLog("  a2_mask_x= 0x%.4x\n",a2_mask_x);
-		WriteLog("  a2_mask_y= 0x%.4x\n",a2_mask_y);
-		WriteLog("  a2_zoffs = %i\n",a2_zoffs);
-
-		WriteLog("  count    = %d x %d\n", n_pixels, n_lines);
-
-		WriteLog("  command  = %08X\n", cmd);
-		WriteLog("  dsten    = %i\n",DSTEN);
-		WriteLog("  srcen    = %i\n",SRCEN);
-		WriteLog("  patdsel  = %i\n",PATDSEL);
-		WriteLog("  color    = 0x%.8x\n",REG(PATTERNDATA));
-		WriteLog("  dcompen  = %i\n",DCOMPEN);
-		WriteLog("  bcompen  = %i\n",BCOMPEN);
-		WriteLog("  cmpdst   = %i\n",CMPDST);
-		WriteLog("  GOURZ   = %i\n",GOURZ);
-		WriteLog("  GOURD   = %i\n",GOURD);
-		WriteLog("  SRCSHADE= %i\n",SRCSHADE);
-	}
-#endif
 
 //NOTE: Pitch is ignored!
 
 //This *might* be the altimeter blits (they are)...
 //On captured screen, x-pos for black (inner) is 259, for pink is 257
 //Black is short by 3, pink is short by 1...
-/*
-Blit! (00110000 <- 000BF010) count: 9 x 31, A1/2_FLAGS: 000042E2/00010020 [cmd: 00010200]
- CMD -> src:  dst:  misc:  a1ctl: UPDA1  mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl:
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 262/124, A2 x/y: 128/0
-Blit! (00110000 <- 000BF010) count: 5 x 38, A1/2_FLAGS: 000042E2/00010020 [cmd: 00010200]
- CMD -> src:  dst:  misc:  a1ctl: UPDA1  mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl:
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 264/117, A2 x/y: 407/0
-
-Blit! (00110000 <- 000BF010) count: 9 x 23, A1/2_FLAGS: 000042E2/00010020 [cmd: 00010200]
- CMD -> src:  dst:  misc:  a1ctl: UPDA1  mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl:
-  A1 step values: -10 (X), 1 (Y)
-  A1 -> pitch: 4(2) phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1(0) phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 262/132, A2 x/y: 129/0
-Blit! (00110000 <- 000BF010) count: 5 x 27, A1/2_FLAGS: 000042E2/00010020 [cmd: 00010200]
- CMD -> src:  dst:  misc:  a1ctl: UPDA1  mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl:
-  A1 step values: -8 (X), 1 (Y)
-  A1 -> pitch: 4(2) phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1(0) phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 264/128, A2 x/y: 336/0
-
-  264v       vCursor ends up here...
-     xxxxx...`
-     111122223333
-
-262v         vCursor ends up here...
-   xxxxxxxxx.'
- 1111222233334444
-
-Fixed! Now for more:
-
-; This looks like the ship icon in the upper left corner...
-
-Blit! (00110000 <- 0010B2A8) count: 11 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd: 09800609]
- CMD -> src: SRCEN  dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity:  z-op:  op: LFU_REPLACE ctrl: DCOMPEN
-  A1 step values: -12 (X), 1 (Y)
-  A2 step values: 0 (X), 0 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 20/24, A2 x/y: 5780/0
-
-Also fixed!
-
-More (not sure this is a blitter problem as much as it's a GPU problem):
-All but the "M" are trashed...
-This does *NOT* look like a blitter problem, as it's rendering properly...
-Actually, if you look at the A1 step values, there IS a discrepancy!
-
-; D
-
-Blit! (00110000 <- 0010B2A8) count: 12 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd: 09800609]
- CMD -> src: SRCEN  dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity:  z-op:  op: LFU_REPLACE ctrl: DCOMPEN
-  A1 step values: -14 (X), 1 (Y)
-  A2 step values: -4 (X), 0 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 134/144, A2 x/y: 2516/0
-;129,146: +5,-2
-
-; E
-
-Blit! (00110000 <- 0010B2A8) count: 12 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd: 09800609]
- CMD -> src: SRCEN  dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity:  z-op:  op: LFU_REPLACE ctrl: DCOMPEN
-  A1 step values: -13 (X), 1 (Y)
-  A2 step values: -4 (X), 0 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 147/144, A2 x/y: 2660/0
-
-; M
-
-Blit! (00110000 <- 0010B2A8) count: 12 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd: 09800609]
- CMD -> src: SRCEN  dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity:  z-op:  op: LFU_REPLACE ctrl: DCOMPEN
-  A1 step values: -12 (X), 1 (Y)
-  A2 step values: 0 (X), 0 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 160/144, A2 x/y: 3764/0
-
-; O
-
-Blit! (00110000 <- 0010B2A8) count: 12 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd: 09800609]
- CMD -> src: SRCEN  dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity:  z-op:  op: LFU_REPLACE ctrl: DCOMPEN
-  A1 step values: -15 (X), 1 (Y)
-  A2 step values: -4 (X), 0 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 173/144, A2 x/y: 4052/0
-
-*/
-//extern int op_start_log;
 if (blit_start_log)
 {
 	const char * ctrlStr[4] = { "XADDPHR\0", "XADDPIX\0", "XADD0\0", "XADDINC\0" };
@@ -1495,7 +1331,6 @@ if (blit_start_log)
 	uint32_t iw1 = ((0x04 | (w1 & 0x03)) << ((w1 & 0x3C) >> 2)) >> 2;
 	uint32_t iw2 = ((0x04 | (w2 & 0x03)) << ((w2 & 0x3C) >> 2)) >> 2;
 	WriteLog("Blit! (%08X %s %08X) count: %d x %d, A1/2_FLAGS: %08X/%08X [cmd: %08X]\n", a1_addr, (mode&0x01 ? "->" : "<-"), a2_addr, n_pixels, n_lines, a1f, a2f, cmd);
-//	WriteLog(" CMD -> src: %d, dst: %d, misc: %d, a1ctl: %d, mode: %d, ity: %1X, z-op: %d, op: %1X, ctrl: %02X\n", src, dst, misc, a1ctl, mode, ity, zop, op, ctrl);
 
 	WriteLog(" CMD -> src: %s%s%s ", (cmd & 0x0001 ? "SRCEN " : ""), (cmd & 0x0002 ? "SRCENZ " : ""), (cmd & 0x0004 ? "SRCENX" : ""));
 	WriteLog("dst: %s%s%s ", (cmd & 0x0008 ? "DSTEN " : ""), (cmd & 0x0010 ? "DSTENZ " : ""), (cmd & 0x0020 ? "DSTWRZ" : ""));
@@ -1516,33 +1351,14 @@ if (blit_start_log)
 	WriteLog("  A1 -> pitch: %d phrases, depth: %s, z-off: %d, width: %d (%02X), addctl: %s %s %s %s\n", 1 << p1, bppStr[d1], zo1, iw1, w1, ctrlStr[ac1&0x03], (ac1&0x04 ? "YADD1" : "YADD0"), (ac1&0x08 ? "XSIGNSUB" : "XSIGNADD"), (ac1&0x10 ? "YSIGNSUB" : "YSIGNADD"));
 	WriteLog("  A2 -> pitch: %d phrases, depth: %s, z-off: %d, width: %d (%02X), addctl: %s %s %s %s\n", 1 << p2, bppStr[d2], zo2, iw2, w2, ctrlStr[ac2&0x03], (ac2&0x04 ? "YADD1" : "YADD0"), (ac2&0x08 ? "XSIGNSUB" : "XSIGNADD"), (ac2&0x10 ? "YSIGNSUB" : "YSIGNADD"));
 	WriteLog("        A1 x/y: %d/%d, A2 x/y: %d/%d Pattern: %08X%08X SRCDATA: %08X%08X\n", a1_x >> 16, a1_y >> 16, a2_x >> 16, a2_y >> 16, REG(PATTERNDATA), REG(PATTERNDATA + 4), REG(SRCDATA), REG(SRCDATA + 4));
-//	blit_start_log = 0;
-//	op_start_log = 1;
 }
 
 	blitter_working = 1;
-//#ifndef USE_GENERIC_BLITTER
-//	if (!blitter_execute_cached_code(blitter_in_cache(cmd)))
-//#endif
 	blitter_generic(cmd);
-
-/*if (blit_start_log)
-{
-	if (a1_addr == 0xF03000 && a2_addr == 0x004D58)
-	{
-		WriteLog("\nBytes at 004D58:\n");
-		for(int i=0x004D58; i<0x004D58+(10*127*4); i++)
-			WriteLog("%02X ", JaguarReadByte(i));
-		WriteLog("\nBytes at F03000:\n");
-		for(int i=0xF03000; i<0xF03000+(6*127*4); i++)
-			WriteLog("%02X ", JaguarReadByte(i));
-		WriteLog("\n\n");
-	}
-}//*/
 
 	blitter_working = 0;
 }
-#endif											// of the #if 0 near the top...
+#endif
 /*******************************************************************************
 ********************** STUFF CUT ABOVE THIS LINE! ******************************
 *******************************************************************************/
@@ -1613,14 +1429,7 @@ uint32_t BlitterReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
-/*if (offset & 0xFF == 0x7B)
-	WriteLog("--> Wrote to B_STOP: value -> %02X\n", data);*/
 	offset &= 0xFF;
-/*if ((offset >= PATTERNDATA) && (offset < PATTERNDATA + 8))
-{
-	printf("--> %s wrote %02X to byte %u of PATTERNDATA...\n", whoName[who], data, offset - PATTERNDATA);
-	fflush(stdout);
-}//*/
 
 	// This handles writes to INTENSITY0-3 by also writing them to their proper places in
 	// PATTERNDATA & SOURCEDATA (should do the same for the Z registers! !!! FIX !!! [DONE])
@@ -1702,39 +1511,12 @@ void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 
 void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
-/*if (((offset & 0xFF) >= PATTERNDATA) && ((offset & 0xFF) < PATTERNDATA + 8))
-{
-	printf("----> %s wrote %04X to byte %u of PATTERNDATA...\n", whoName[who], data, offset - (0xF02200 + PATTERNDATA));
-	fflush(stdout);
-}*/
-//#if 1
-/*	if (offset & 0xFF == A1_PIXEL && data == 14368)
-	{
-		WriteLog("\n1\nA1_PIXEL written by %s (%u)...\n\n\n", whoName[who], data);
-extern bool doGPUDis;
-doGPUDis = true;
-	}
-	if ((offset & 0xFF) == (A1_PIXEL + 2) && data == 14368)
-	{
-		WriteLog("\n2\nA1_PIXEL written by %s (%u)...\n\n\n", whoName[who], data);
-extern bool doGPUDis;
-doGPUDis = true;
-	}//*/
-//#endif
-
 	BlitterWriteByte(offset + 0, data >> 8, who);
 	BlitterWriteByte(offset + 1, data & 0xFF, who);
 
 	if ((offset & 0xFF) == 0x3A)
 	// I.e., the second write of 32-bit value--not convinced this is the best way to do this!
 	// But then again, according to the Jaguar docs, this is correct...!
-/*extern int blit_start_log;
-extern bool doGPUDis;
-if (blit_start_log)
-{
-	WriteLog("BLIT: Blitter started by %s...\n", whoName[who]);
-	doGPUDis = true;
-}//*/
 #ifndef USE_BOTH_BLITTERS
 #ifdef USE_ORIGINAL_BLITTER
 		blitter_blit(GET32(blitter_ram, 0x38));
@@ -1759,20 +1541,6 @@ if (blit_start_log)
 
 void BlitterWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 {
-/*if (((offset & 0xFF) >= PATTERNDATA) && ((offset & 0xFF) < PATTERNDATA + 8))
-{
-	printf("------> %s wrote %08X to byte %u of PATTERNDATA...\n", whoName[who], data, offset - (0xF02200 + PATTERNDATA));
-	fflush(stdout);
-}//*/
-//#if 1
-/*	if ((offset & 0xFF) == A1_PIXEL && (data & 0xFFFF) == 14368)
-	{
-		WriteLog("\n3\nA1_PIXEL written by %s (%u)...\n\n\n", whoName[who], data);
-extern bool doGPUDis;
-doGPUDis = true;
-	}//*/
-//#endif
-
 	BlitterWriteWord(offset + 0, data >> 16, who);
 	BlitterWriteWord(offset + 2, data & 0xFFFF, who);
 }
@@ -1886,7 +1654,6 @@ void LogBlit(void)
 // Here's an attempt to write a blitter that conforms to the Midsummer specs--since
 // it's supposedly backwards compatible, it should work well...
 //
-//#define LOG_BLITTER_MEMORY_ACCESSES
 
 #define DATINIT (false)
 #define TXTEXT  (false)
@@ -1894,9 +1661,6 @@ void LogBlit(void)
 
 void BlitterMidsummer(uint32_t cmd)
 {
-#ifdef LOG_BLITS
-	LogBlit();
-#endif
 uint32_t outer_loop, inner_loop, a1_addr, a2_addr;
 int32_t a1_x, a1_y, a2_x, a2_y, a1_width, a2_width;
 uint8_t a1_phrase_mode, a2_phrase_mode;
@@ -1926,13 +1690,6 @@ uint8_t a1_phrase_mode, a2_phrase_mode;
 // $01800005 has SRCENX, may have to investigate further...
 // $00011008 has GOURD & DSTEN.
 // $41802F41 has SRCSHADE, CLIPA1
-/*bool logBlit = false;
-if (cmd != 0x00010200 && cmd != 0x01800001 && cmd != 0x01800005
-	&& cmd != 0x00011008 && cmd !=0x41802F41)
-{
-	logBlit = true;
-	LogBlit();
-}//*/
 
 	uint64_t srcData = GET64(blitter_ram, SRCDATA), srcXtraData,
 		dstData = GET64(blitter_ram, DSTDATA), writeData;
@@ -2101,15 +1858,7 @@ sread:							// Source data read
 //for 8BPP. !!! FIX !!!
 	srcAddr = (DSTA2 ? a1_addr : a2_addr);
 
-/*	if ((DSTA2 ? a1_phrase_mode : a2_phrase_mode) == 1)
 	{
-		srcAddr += (((DSTA2 ? a1_x : a2_x) >> 16)
-			+ (((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width)));
-	}
-	else*/
-	{
-//		uint32_t pixAddr = ((DSTA2 ? a1_x : a2_x) >> 16)
-//			+ (((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
 		int32_t pixAddr = (int16_t)((DSTA2 ? a1_x : a2_x) >> 16)
 			+ ((int16_t)((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
 
@@ -2144,11 +1893,6 @@ sread:							// Source data read
 		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 5)		// 32 BPP
 			srcData = JaguarReadLong(srcAddr, BLITTER);
 	}
-
-#ifdef LOG_BLITTER_MEMORY_ACCESSES
-if (logBlit)
-	WriteLog("BLITTER: srcAddr=%08X,   srcData=%08X %08X\n", srcAddr, (uint32_t)(srcData >> 32), (uint32_t)(srcData & 0xFFFFFFFF));
-#endif
 
 	if (SRCENZ)
 		goto szread;
@@ -2225,11 +1969,6 @@ if STEP
 		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 5)		// 32 BPP
 			dstData = JaguarReadLong(dstAddr, BLITTER);
 	}
-
-#ifdef LOG_BLITTER_MEMORY_ACCESSES
-if (logBlit)
-	WriteLog("BLITTER (dread): dstAddr=%08X,   dstData=%08X %08X\n", dstAddr, (uint32_t)(dstData >> 32), (uint32_t)(dstData & 0xFFFFFFFF));
-#endif
 
 	if (DSTENZ)
 		goto dzread;
@@ -2389,11 +2128,6 @@ Blit!
 		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 5)		// 32 BPP
 			JaguarWriteLong(dstAddr, writeData, BLITTER);
 	}
-
-#ifdef LOG_BLITTER_MEMORY_ACCESSES
-if (logBlit)
-	WriteLog("BLITTER: dstAddr=%08X, writeData=%08X %08X\n", dstAddr, (uint32_t)(writeData >> 32), (uint32_t)(writeData & 0xFFFFFFFF));
-#endif
 
 inhibitWrite://Should this go here? or on the other side of the X/Y incrementing?
 //Seems OK here... for now.
@@ -2710,873 +2444,569 @@ void DATA(uint64_t *wdata, uint8_t *dcomp, uint8_t *zcomp, bool *nowrite,
 void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
 	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp);
-#define VERBOSE_BLITTER_LOGGING
 
 void BlitterMidsummer2(void)
 {
-#ifdef LOG_BLITS
-	LogBlit();
-#endif
-	if (startConciseBlitLogging)
-		LogBlit();
+   if (startConciseBlitLogging)
+      LogBlit();
 
-	// Here's what the specs say the state machine does. Note that this can probably be
-	// greatly simplified (also, it's different from what John has in his Oberon docs):
-//Will remove stuff that isn't in Jaguar I once fully described (stuff like texture won't
-//be described here at all)...
+   // Here's what the specs say the state machine does. Note that this can probably be
+   // greatly simplified (also, it's different from what John has in his Oberon docs):
+   //Will remove stuff that isn't in Jaguar I once fully described (stuff like texture won't
+   //be described here at all)...
 
-	uint32_t cmd = GET32(blitter_ram, COMMAND);
+   uint32_t cmd = GET32(blitter_ram, COMMAND);
 
-#if 0
-logBlit = false;
-if (
-	cmd != 0x00010200 &&	// PATDSEL
-	cmd != 0x01800001		// SRCEN LFUFUNC=C
-	&& cmd != 0x01800005
-//Boot ROM ATARI letters:
-	&& cmd != 0x00011008	// DSTEN GOURD PATDSEL
-//Boot ROM spinning cube:
-	&& cmd != 0x41802F41	// SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 DSTA2 GOURZ ZMODE=0 LFUFUNC=C SRCSHADE
-//T2K intro screen:
-	&& cmd != 0x01800E01	// SRCEN UPDA1 UPDA2 DSTA2 LFUFUNC=C
-//T2K TEMPEST letters:
-	&& cmd != 0x09800741	// SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 LFUFUNC=C DCOMPEN
-//Static letters on Cybermorph intro screen:
-	&& cmd != 0x09800609	// SRCEN DSTEN UPDA1 UPDA2 LFUFUNC=C DCOMPEN
-//Static pic on title screen:
-	&& cmd != 0x01800601	// SRCEN UPDA1 UPDA2 LFUFUNC=C
-//Turning letters on Cybermorph intro screen:
-//	&& cmd != 0x09800F41	// SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 DSTA2 LFUFUNC=C DCOMPEN
-	&& cmd != 0x00113078	// DSTEN DSTENZ DSTWRZ CLIP_A1 GOURD GOURZ PATDSEL ZMODE=4
-	&& cmd != 0x09900F39	// SRCEN DSTEN DSTENZ DSTWRZ UPDA1 UPDA1F UPDA2 DSTA2 ZMODE=4 LFUFUNC=C DCOMPEN
-	&& cmd != 0x09800209	// SRCEN DSTEN UPDA1 LFUFUNC=C DCOMPEN
-	&& cmd != 0x00011200	// UPDA1 GOURD PATDSEL
-//Start of Hover Strike (clearing screen):
-	&& cmd != 0x00010000	// PATDSEL
-//Hover Strike text:
-	&& cmd != 0x1401060C	// SRCENX DSTEN UPDA1 UPDA2 PATDSEL BCOMPEN BKGWREN
-//Hover Strike 3D stuff
-	&& cmd != 0x01902839	// SRCEN DSTEN DSTENZ DSTWRZ DSTA2 GOURZ ZMODE=4 LFUFUNC=C
-//Hover Strike darkening on intro to play (briefing) screen
-	&& cmd != 0x00020208	// DSTEN UPDA1 ADDDSEL
-//Trevor McFur stuff:
-	&& cmd != 0x05810601	// SRCEN UPDA1 UPDA2 PATDSEL BCOMPEN
-	&& cmd != 0x01800201	// SRCEN UPDA1 LFUFUNC=C
-//T2K:
-	&& cmd != 0x00011000	// GOURD PATDSEL
-	&& cmd != 0x00011040	// CLIP_A1 GOURD PATDSEL
-//Checkered flag:
-	&& cmd != 0x01800000	// LFUFUNC=C
-	&& cmd != 0x01800401	//
-	&& cmd != 0x01800040	//
-	&& cmd != 0x00020008	//
-//	&& cmd != 0x09800F41	// SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 DSTA2 LFUFUNC=C DCOMPEN
-	)
-	logBlit = true;//*/
-#else
-logBlit = true;
-#endif
-if (blit_start_log == 0)	// Wait for the signal...
-	logBlit = false;//*/
-//temp, for testing...
-/*if (cmd != 0x49820609)
-	logBlit = false;//*/
+   logBlit = false;
+   if (blit_start_log == 0)	// Wait for the signal...
+      logBlit = false;//*/
 
-/*
-Some T2K unique blits:
-logBlit = F, cmd = 00010200 *
-logBlit = F, cmd = 00011000
-logBlit = F, cmd = 00011040
-logBlit = F, cmd = 01800005 *
-logBlit = F, cmd = 09800741 *
+   // Line states passed in via the command register
 
-Hover Strike mission selection screen:
-Blit! (CMD = 01902839)	// SRCEN DSTEN DSTENZ DSTWRZ DSTA2 GOURZ ZMODE=4 LFUFUNC=C
+   bool srcen = (SRCEN), srcenx = (SRCENX), srcenz = (SRCENZ),
+        dsten = (DSTEN), dstenz = (DSTENZ), dstwrz = (DSTWRZ), clip_a1 = (CLIPA1),
+        upda1 = (UPDA1), upda1f = (UPDA1F), upda2 = (UPDA2), dsta2 = (DSTA2),
+        gourd = (GOURD), gourz = (GOURZ), topben = (TOPBEN), topnen = (TOPNEN),
+        patdsel = (PATDSEL), adddsel = (ADDDSEL), cmpdst = (CMPDST), bcompen = (BCOMPEN),
+        dcompen = (DCOMPEN), bkgwren = (BKGWREN), srcshade = (SRCSHADE);
 
-Checkered Flag blits in the screw up zone:
-Blit! (CMD = 01800001)	// SRCEN LFUFUNC=C
-Blit! (CMD = 01800000)	// LFUFUNC=C
-Blit! (CMD = 00010000)	// PATDSEL
+   uint8_t zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
+   //Missing: BUSHI
+   //Where to find various lines:
+   // clip_a1  -> inner
+   // gourd    -> dcontrol, inner, outer, state
+   // gourz    -> dcontrol, inner, outer, state
+   // cmpdst   -> blit, data, datacomp, state
+   // bcompen  -> acontrol, inner, mcontrol, state
+   // dcompen  -> inner, state
+   // bkgwren  -> inner, state
+   // srcshade -> dcontrol, inner, state
+   // adddsel  -> dcontrol
+   //NOTE: ADDDSEL takes precedence over PATDSEL, PATDSEL over LFU_FUNC
 
-Wolfenstein 3D in the fuckup zone:
-Blit! (CMD = 01800000)	// LFUFUNC=C
-*/
+   // Lines that don't exist in Jaguar I (and will never be asserted)
 
-//printf("logBlit = %s, cmd = %08X\n", (logBlit ? "T" : "F"), cmd);
-//fflush(stdout);
-//logBlit = true;
+   bool polygon = false, datinit = false, a1_stepld = false, a2_stepld = false, ext_int = false;
+   bool istepadd = false, istepfadd = false, finneradd = false, inneradd = false;
+   bool zstepfadd = false, zstepadd = false;
 
-/*
-Blit! (CMD = 00011040)
-Flags: CLIP_A1 GOURD PATDSEL
-  count = 18 x 1
-  a1_base = 00100000, a2_base = 0081F6A8
-  a1_x = 00A7, a1_y = 0014, a1_frac_x = 0000, a1_frac_y = 0000, a2_x = 0001, a2_y = 0000
-  a1_step_x = FE80, a1_step_y = 0001, a1_stepf_x = 0000, a1_stepf_y = 0000, a2_step_x = FFF8, a2_step_y = 0001
-  a1_inc_x = 0001, a1_inc_y = 0000, a1_incf_x = 0000, a1_incf_y = 0000
-  a1_win_x = 0180, a1_win_y = 0118, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+phr/+0 a2add=+phr/+0
-  a1_pixsize = 4, a2_pixsize = 4
-*/
-//Testing T2K...
-/*logBlit = false;
-if (cmd == 0x00011040
-	&& (GET16(blitter_ram, A1_PIXEL + 2) == 0x00A7) && (GET16(blitter_ram, A1_PIXEL + 0) == 0x0014)
-	&& (GET16(blitter_ram, A2_PIXEL + 2) == 0x0001) && (GET16(blitter_ram, A2_PIXEL + 0) == 0x0000)
-	&& (GET16(blitter_ram, PIXLINECOUNTER + 2) == 18))
-	logBlit = true;*/
+   // Various state lines (initial state--basically the reset state of the FDSYNCs)
 
-	// Line states passed in via the command register
+   bool go = true, idle = true, inner = false, a1fupdate = false, a1update = false,
+        zfupdate = false, zupdate = false, a2update = false, init_if = false, init_ii = false,
+        init_zf = false, init_zi = false;
 
-	bool srcen = (SRCEN), srcenx = (SRCENX), srcenz = (SRCENZ),
-		dsten = (DSTEN), dstenz = (DSTENZ), dstwrz = (DSTWRZ), clip_a1 = (CLIPA1),
-		upda1 = (UPDA1), upda1f = (UPDA1F), upda2 = (UPDA2), dsta2 = (DSTA2),
-		gourd = (GOURD), gourz = (GOURZ), topben = (TOPBEN), topnen = (TOPNEN),
-		patdsel = (PATDSEL), adddsel = (ADDDSEL), cmpdst = (CMPDST), bcompen = (BCOMPEN),
-		dcompen = (DCOMPEN), bkgwren = (BKGWREN), srcshade = (SRCSHADE);
+   bool outer0 = false, indone = false;
 
-	uint8_t zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
-//Missing: BUSHI
-//Where to find various lines:
-// clip_a1  -> inner
-// gourd    -> dcontrol, inner, outer, state
-// gourz    -> dcontrol, inner, outer, state
-// cmpdst   -> blit, data, datacomp, state
-// bcompen  -> acontrol, inner, mcontrol, state
-// dcompen  -> inner, state
-// bkgwren  -> inner, state
-// srcshade -> dcontrol, inner, state
-// adddsel  -> dcontrol
-//NOTE: ADDDSEL takes precedence over PATDSEL, PATDSEL over LFU_FUNC
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	char zfs[512], lfus[512];
-	zfs[0] = lfus[0] = 0;
-	if (dstwrz || dstenz || gourz)
-		sprintf(zfs, " ZMODE=%X", zmode);
-	if (!(patdsel || adddsel))
-		sprintf(lfus, " LFUFUNC=%X", lfufunc);
-	WriteLog("\nBlit! (CMD = %08X)\nFlags:%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", cmd,
-		(srcen ? " SRCEN" : ""), (srcenx ? " SRCENX" : ""), (srcenz ? " SRCENZ" : ""),
-		(dsten ? " DSTEN" : ""), (dstenz ? " DSTENZ" : ""), (dstwrz ? " DSTWRZ" : ""),
-		(clip_a1 ? " CLIP_A1" : ""), (upda1 ? " UPDA1" : ""), (upda1f ? " UPDA1F" : ""),
-		(upda2 ? " UPDA2" : ""), (dsta2 ? " DSTA2" : ""), (gourd ? " GOURD" : ""),
-		(gourz ? " GOURZ" : ""), (topben ? " TOPBEN" : ""), (topnen ? " TOPNEN" : ""),
-		(patdsel ? " PATDSEL" : ""), (adddsel ? " ADDDSEL" : ""), zfs, lfus, (cmpdst ? " CMPDST" : ""),
-		(bcompen ? " BCOMPEN" : ""), (dcompen ? " DCOMPEN" : ""), (bkgwren ? " BKGWREN" : ""),
-		(srcshade ? " SRCSHADE" : ""));
-	WriteLog("  count = %d x %d\n", GET16(blitter_ram, PIXLINECOUNTER + 2), GET16(blitter_ram, PIXLINECOUNTER));
-}
-#endif
+   bool idlei, inneri, a1fupdatei, a1updatei, zfupdatei, zupdatei, a2updatei, init_ifi, init_iii,
+        init_zfi, init_zii;
 
-	// Lines that don't exist in Jaguar I (and will never be asserted)
+   bool notgzandp = !(gourz && polygon);
 
-	bool polygon = false, datinit = false, a1_stepld = false, a2_stepld = false, ext_int = false;
-	bool istepadd = false, istepfadd = false, finneradd = false, inneradd = false;
-	bool zstepfadd = false, zstepadd = false;
+   // Various registers set up by user
 
-	// Various state lines (initial state--basically the reset state of the FDSYNCs)
+   uint16_t ocount = GET16(blitter_ram, PIXLINECOUNTER);
+   uint8_t a1_pitch = blitter_ram[A1_FLAGS + 3] & 0x03;
+   uint8_t a2_pitch = blitter_ram[A2_FLAGS + 3] & 0x03;
+   uint8_t a1_pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
+   uint8_t a2_pixsize = (blitter_ram[A2_FLAGS + 3] & 0x38) >> 3;
+   uint8_t a1_zoffset = (GET16(blitter_ram, A1_FLAGS + 2) >> 6) & 0x07;
+   uint8_t a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
+   uint8_t a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
+   uint8_t a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
+   bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
+   uint8_t a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
+   bool a1addy = blitter_ram[A1_FLAGS + 1] & 0x04, a2addy = blitter_ram[A2_FLAGS + 1] & 0x04;
+   bool a1xsign = blitter_ram[A1_FLAGS + 1] & 0x08, a2xsign = blitter_ram[A2_FLAGS + 1] & 0x08;
+   bool a1ysign = blitter_ram[A1_FLAGS + 1] & 0x10, a2ysign = blitter_ram[A2_FLAGS + 1] & 0x10;
+   uint32_t a1_base = GET32(blitter_ram, A1_BASE) & 0xFFFFFFF8;	// Phrase aligned by ignoring bottom 3 bits
+   uint32_t a2_base = GET32(blitter_ram, A2_BASE) & 0xFFFFFFF8;
 
-	bool go = true, idle = true, inner = false, a1fupdate = false, a1update = false,
-		zfupdate = false, zupdate = false, a2update = false, init_if = false, init_ii = false,
-		init_zf = false, init_zi = false;
+   uint16_t a1_win_x = GET16(blitter_ram, A1_CLIP + 2) & 0x7FFF;
+   uint16_t a1_win_y = GET16(blitter_ram, A1_CLIP + 0) & 0x7FFF;
+   int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
+   int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
+   int16_t a1_step_x = (int16_t)GET16(blitter_ram, A1_STEP + 2);
+   int16_t a1_step_y = (int16_t)GET16(blitter_ram, A1_STEP + 0);
+   uint16_t a1_stepf_x = GET16(blitter_ram, A1_FSTEP + 2);
+   uint16_t a1_stepf_y = GET16(blitter_ram, A1_FSTEP + 0);
+   uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
+   uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
+   int16_t a1_inc_x = (int16_t)GET16(blitter_ram, A1_INC + 2);
+   int16_t a1_inc_y = (int16_t)GET16(blitter_ram, A1_INC + 0);
+   uint16_t a1_incf_x = GET16(blitter_ram, A1_FINC + 2);
+   uint16_t a1_incf_y = GET16(blitter_ram, A1_FINC + 0);
 
-	bool outer0 = false, indone = false;
+   int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
+   int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
+   uint16_t a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
+   uint16_t a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
+   int16_t a2_step_x = (int16_t)GET16(blitter_ram, A2_STEP + 2);
+   int16_t a2_step_y = (int16_t)GET16(blitter_ram, A2_STEP + 0);
 
-	bool idlei, inneri, a1fupdatei, a1updatei, zfupdatei, zupdatei, a2updatei, init_ifi, init_iii,
-		init_zfi, init_zii;
+   uint64_t srcd1 = GET64(blitter_ram, SRCDATA);
+   uint64_t srcd2 = 0;
+   uint64_t dstd = GET64(blitter_ram, DSTDATA);
+   uint64_t patd = GET64(blitter_ram, PATTERNDATA);
+   uint32_t iinc = GET32(blitter_ram, INTENSITYINC);
+   uint64_t srcz1 = GET64(blitter_ram, SRCZINT);
+   uint64_t srcz2 = GET64(blitter_ram, SRCZFRAC);
+   uint64_t dstz = GET64(blitter_ram, DSTZ);
+   uint32_t zinc = GET32(blitter_ram, ZINC);
+   uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
 
-	bool notgzandp = !(gourz && polygon);
+   uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
 
-	// Various registers set up by user
+   // Bugs in Jaguar I
 
-	uint16_t ocount = GET16(blitter_ram, PIXLINECOUNTER);
-	uint8_t a1_pitch = blitter_ram[A1_FLAGS + 3] & 0x03;
-	uint8_t a2_pitch = blitter_ram[A2_FLAGS + 3] & 0x03;
-	uint8_t a1_pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
-	uint8_t a2_pixsize = (blitter_ram[A2_FLAGS + 3] & 0x38) >> 3;
-	uint8_t a1_zoffset = (GET16(blitter_ram, A1_FLAGS + 2) >> 6) & 0x07;
-	uint8_t a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
-	uint8_t a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
-	uint8_t a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
-	bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
-	uint8_t a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
-	bool a1addy = blitter_ram[A1_FLAGS + 1] & 0x04, a2addy = blitter_ram[A2_FLAGS + 1] & 0x04;
-	bool a1xsign = blitter_ram[A1_FLAGS + 1] & 0x08, a2xsign = blitter_ram[A2_FLAGS + 1] & 0x08;
-	bool a1ysign = blitter_ram[A1_FLAGS + 1] & 0x10, a2ysign = blitter_ram[A2_FLAGS + 1] & 0x10;
-	uint32_t a1_base = GET32(blitter_ram, A1_BASE) & 0xFFFFFFF8;	// Phrase aligned by ignoring bottom 3 bits
-	uint32_t a2_base = GET32(blitter_ram, A2_BASE) & 0xFFFFFFF8;
+   a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
 
-	uint16_t a1_win_x = GET16(blitter_ram, A1_CLIP + 2) & 0x7FFF;
-	uint16_t a1_win_y = GET16(blitter_ram, A1_CLIP + 0) & 0x7FFF;
-	int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
-	int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
-	int16_t a1_step_x = (int16_t)GET16(blitter_ram, A1_STEP + 2);
-	int16_t a1_step_y = (int16_t)GET16(blitter_ram, A1_STEP + 0);
-	uint16_t a1_stepf_x = GET16(blitter_ram, A1_FSTEP + 2);
-	uint16_t a1_stepf_y = GET16(blitter_ram, A1_FSTEP + 0);
-	uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
-	uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
-	int16_t a1_inc_x = (int16_t)GET16(blitter_ram, A1_INC + 2);
-	int16_t a1_inc_y = (int16_t)GET16(blitter_ram, A1_INC + 0);
-	uint16_t a1_incf_x = GET16(blitter_ram, A1_FINC + 2);
-	uint16_t a1_incf_y = GET16(blitter_ram, A1_FINC + 0);
+   // Various state lines set up by user
 
-	int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
-	int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
-	uint16_t a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
-	uint16_t a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
-	int16_t a2_step_x = (int16_t)GET16(blitter_ram, A2_STEP + 2);
-	int16_t a2_step_y = (int16_t)GET16(blitter_ram, A2_STEP + 0);
+   bool phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
 
-	uint64_t srcd1 = GET64(blitter_ram, SRCDATA);
-	uint64_t srcd2 = 0;
-	uint64_t dstd = GET64(blitter_ram, DSTDATA);
-	uint64_t patd = GET64(blitter_ram, PATTERNDATA);
-	uint32_t iinc = GET32(blitter_ram, INTENSITYINC);
-	uint64_t srcz1 = GET64(blitter_ram, SRCZINT);
-	uint64_t srcz2 = GET64(blitter_ram, SRCZFRAC);
-	uint64_t dstz = GET64(blitter_ram, DSTZ);
-	uint32_t zinc = GET32(blitter_ram, ZINC);
-	uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
+   // Stopgap vars to simulate various lines
 
-	uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
+   uint16_t a1FracCInX = 0, a1FracCInY = 0;
 
-//Testing Trevor McFur--I *think* it's the circle on the lower RHS of the screen...
-/*logBlit = false;
-if (cmd == 0x05810601 && (GET16(blitter_ram, PIXLINECOUNTER + 2) == 96)
-	&& (GET16(blitter_ram, PIXLINECOUNTER + 0) == 72))
-	logBlit = true;//*/
-//Testing...
-//if (cmd == 0x1401060C) patd = 0xFFFFFFFFFFFFFFFFLL;
-//if (cmd == 0x1401060C) patd = 0x00000000000000FFLL;
-//If it's still not working (bcompen-patd) then see who's writing what to patd and where...
-//Still not OK. Check to see who's writing what to where in patd!
-//It looks like M68K is writing to the top half of patd... Hmm...
-/*
-----> M68K wrote 0000 to byte 15737344 of PATTERNDATA...
---> M68K wrote 00 to byte 0 of PATTERNDATA...
---> M68K wrote 00 to byte 1 of PATTERNDATA...
-----> M68K wrote 00FF to byte 15737346 of PATTERNDATA...
---> M68K wrote 00 to byte 2 of PATTERNDATA...
---> M68K wrote FF to byte 3 of PATTERNDATA...
-logBlit = F, cmd = 1401060C
+   while (true)
+   {
+      // IDLE
 
-Wren0 := ND6 (wren\[0], gpua\[5], gpua\[6..8], bliten, gpu_memw);
-Wren1 := ND6 (wren\[1], gpua[5], gpua\[6..8], bliten, gpu_memw);
-Wren2 := ND6 (wren\[2], gpua\[5], gpua[6], gpua\[7..8], bliten, gpu_memw);
-Wren3 := ND6 (wren\[3], gpua[5], gpua[6], gpua\[7..8], bliten, gpu_memw);
+      if ((idle && !go) || (inner && outer0 && indone))
+      {
+         idlei = true;
 
---> 0 000x xx00
-Dec0  := D38GH (a1baseld, a1flagld, a1winld, a1ptrld, a1stepld, a1stepfld, a1fracld, a1incld, gpua[2..4], wren\[0]);
---> 0 001x xx00
-Dec1  := D38GH (a1incfld, a2baseld, a2flagld, a2maskld, a2ptrldg, a2stepld, cmdldt, countldt, gpua[2..4], wren\[1]);
---> 0 010x xx00
-Dec2  := D38GH (srcd1ldg[0..1], dstdldg[0..1], dstzldg[0..1], srcz1ldg[0..1], gpua[2..4], wren\[2]);
---> 0 011x xx00
-Dec3  := D38GH (srcz2ld[0..1], patdld[0..1], iincld, zincld, stopld, intld[0], gpua[2..4], wren\[3]);
+         //Instead of a return, let's try breaking out of the loop...
+         break;
+         //			return;
+      }
+      else
+         idlei = false;
 
-wren[3] is asserted when gpu address bus = 0 011x xx00
-patdld[0] -> 0 0110 1000 -> $F02268 (lo 32 bits)
-patdld[1] -> 0 0110 1100 -> $F0226C (hi 32 bits)
-
-So... It's reversed! The data organization of the patd register is [low 32][high 32]! !!! FIX !!! [DONE]
-And fix all the other 64 bit registers [DONE]
-*/
-/*if (cmd == 0x1401060C)
-{
-	printf("logBlit = %s, cmd = %08X\n", (logBlit ? "T" : "F"), cmd);
-	fflush(stdout);
-}*/
-/*logBlit = false;
-if ((cmd == 0x00010200) && (GET16(blitter_ram, PIXLINECOUNTER + 2) == 9))
-	logBlit = true;
-
-; Pink altimeter bar
-
-Blit! (00110000 <- 000BF010) count: 9 x 23, A1/2_FLAGS: 000042E2/00010020 [cmd: 00010200]
- CMD -> src:  dst:  misc:  a1ctl: UPDA1  mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl:
-  A1 step values: -10 (X), 1 (Y)
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 262/132, A2 x/y: 129/0
-;x-coord is 257 in pic, so add 5
-;20 for ship, 33 for #... Let's see if we can find 'em!
-
-; Black altimeter bar
-
-Blit! (00110000 <- 000BF010) count: 5 x 29, A1/2_FLAGS: 000042E2/00010020 [cmd: 00010200]
- CMD -> src:  dst:  misc:  a1ctl: UPDA1  mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl:
-  A1 step values: -8 (X), 1 (Y)
-  A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-        A1 x/y: 264/126, A2 x/y: 336/0
-
-Here's the pink bar--note that it's phrase mode without dread, so how does this work???
-Not sure, but I *think* that somehow it MUXes the data at the write site in on the left or right side
-of the write data when masked in phrase mode. I'll have to do some tracing to see if this is the mechanism
-it uses or not...
-
-Blit! (CMD = 00010200)
-Flags: UPDA1 PATDSEL
-  count = 9 x 11
-  a1_base = 00110010, a2_base = 000BD7E0
-  a1_x = 0106, a1_y = 0090, a1_frac_x = 0000, a1_frac_y = 8000, a2_x = 025A, a2_y = 0000
-  a1_step_x = FFF6, a1_step_y = 0001, a1_stepf_x = 5E00, a1_stepf_y = D100, a2_step_x = FFF7, a2_step_y = 0001
-  a1_inc_x = 0001, a1_inc_y = FFFF, a1_incf_x = 0000, a1_incf_y = E000
-  a1_win_x = 0000, a1_win_y = 0000, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+phr/+0 a2add=+1/+0
-  a1_pixsize = 4, a2_pixsize = 4
-   srcd=BAC673AC2C92E578  dstd=0000000000000000 patd=74C074C074C074C0 iinc=0002E398
-  srcz1=7E127E12000088DA srcz2=DBE06DF000000000 dstz=0000000000000000 zinc=FFFE4840, coll=0
-  Phrase mode is ON
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-  Entering DWRITE state...
-     Dest write address/pix address: 0016A830/0 [dstart=20 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F] [7400000074C074C0] (icount=0007, inc=2)
-  Entering A1_ADD state [a1_x=0106, a1_y=0090, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0016A850/0 [dstart=0 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F] [74C074C074C074C0] (icount=0003, inc=4)
-  Entering A1_ADD state [a1_x=0108, a1_y=0090, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0016A870/0 [dstart=0 dend=30 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F] [74C074C074C00000] (icount=FFFF, inc=4)
-  Entering A1_ADD state [a1_x=010C, a1_y=0090, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering IDLE_INNER state...
-  Leaving INNER state... (ocount=000A)
-  [in=F a1f=F a1=T zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering A1UPDATE state... (272/144 -> 262/145)
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-*/
-
-	// Bugs in Jaguar I
-
-	a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
-
-//if (logBlit && (ocount > 20)) logBlit = false;
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	WriteLog("  a1_base = %08X, a2_base = %08X\n", a1_base, a2_base);
-	WriteLog("  a1_x = %04X, a1_y = %04X, a1_frac_x = %04X, a1_frac_y = %04X, a2_x = %04X, a2_y = %04X\n", (uint16_t)a1_x, (uint16_t)a1_y, a1_frac_x, a1_frac_y, (uint16_t)a2_x, (uint16_t)a2_y);
-	WriteLog("  a1_step_x = %04X, a1_step_y = %04X, a1_stepf_x = %04X, a1_stepf_y = %04X, a2_step_x = %04X, a2_step_y = %04X\n", (uint16_t)a1_step_x, (uint16_t)a1_step_y, a1_stepf_x, a1_stepf_y, (uint16_t)a2_step_x, (uint16_t)a2_step_y);
-	WriteLog("  a1_inc_x = %04X, a1_inc_y = %04X, a1_incf_x = %04X, a1_incf_y = %04X\n", (uint16_t)a1_inc_x, (uint16_t)a1_inc_y, a1_incf_x, a1_incf_y);
-	WriteLog("  a1_win_x = %04X, a1_win_y = %04X, a2_mask_x = %04X, a2_mask_y = %04X\n", a1_win_x, a1_win_y, a2_mask_x, a2_mask_y);
-	char x_add_str[4][4] = { "phr", "1", "0", "inc" };
-	WriteLog("  a2_mask=%s a1add=%s%s/%s%s a2add=%s%s/%s%s\n", (a2_mask ? "T" : "F"), (a1xsign ? "-" : "+"), x_add_str[a1addx],
-		(a1ysign ? "-" : "+"), (a1addy ? "1" : "0"), (a2xsign ? "-" : "+"), x_add_str[a2addx],
-		(a2ysign ? "-" : "+"), (a2addy ? "1" : "0"));
-	WriteLog("  a1_pixsize = %u, a2_pixsize = %u\n", a1_pixsize, a2_pixsize);
-	WriteLog("   srcd=%08X%08X  dstd=%08X%08X patd=%08X%08X iinc=%08X\n",
-		(uint32_t)(srcd1 >> 32), (uint32_t)(srcd1 & 0xFFFFFFFF),
-		(uint32_t)(dstd >> 32), (uint32_t)(dstd & 0xFFFFFFFF),
-		(uint32_t)(patd >> 32), (uint32_t)(patd & 0xFFFFFFFF), iinc);
-	WriteLog("  srcz1=%08X%08X srcz2=%08X%08X dstz=%08X%08X zinc=%08X, coll=%X\n",
-		(uint32_t)(srcz1 >> 32), (uint32_t)(srcz1 & 0xFFFFFFFF),
-		(uint32_t)(srcz2 >> 32), (uint32_t)(srcz2 & 0xFFFFFFFF),
-		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF), zinc, collision);
-}
-#endif
-
-	// Various state lines set up by user
-
-	bool phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Phrase mode is %s\n", (phrase_mode ? "ON" : "off"));
-#endif
-//logBlit = false;
-
-	// Stopgap vars to simulate various lines
-
-	uint16_t a1FracCInX = 0, a1FracCInY = 0;
-
-	while (true)
-	{
-		// IDLE
-
-		if ((idle && !go) || (inner && outer0 && indone))
-		{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering IDLE state...\n");
-#endif
-			idlei = true;
-
-//Instead of a return, let's try breaking out of the loop...
-break;
-//			return;
-		}
-		else
-			idlei = false;
-
-		// INNER LOOP ACTIVE
-/*
-  Entering DWRITE state... (icount=0000, inc=4)
-  Entering IDLE_INNER state...
-  Leaving INNER state... (ocount=00EF)
-  [in=T a1f=F a1=T zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
+      // INNER LOOP ACTIVE
+      /*
+         Entering DWRITE state... (icount=0000, inc=4)
+         Entering IDLE_INNER state...
+         Leaving INNER state... (ocount=00EF)
+         [in=T a1f=F a1=T zf=F z=F a2=F iif=F iii=F izf=F izi=F]
+         Entering INNER state...
 Now:
-  [in=F a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
+[in=F a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
 */
 
-		if ((idle && go && !datinit)
-			|| (inner && !indone)
-			|| (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && !datinit)
-			|| (a1update && !upda2 && notgzandp && !datinit)
-			|| (zupdate && !upda2 && !datinit)
-			|| (a2update && !datinit)
-			|| (init_ii && !gourz)
-			|| (init_zi))
-		{
-			inneri = true;
-		}
-		else
-			inneri = false;
+      if ((idle && go && !datinit)
+            || (inner && !indone)
+            || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && !datinit)
+            || (a1update && !upda2 && notgzandp && !datinit)
+            || (zupdate && !upda2 && !datinit)
+            || (a2update && !datinit)
+            || (init_ii && !gourz)
+            || (init_zi))
+      {
+         inneri = true;
+      }
+      else
+         inneri = false;
 
-		// A1 FRACTION UPDATE
+      // A1 FRACTION UPDATE
 
-		if (inner && indone && !outer0 && upda1f)
-		{
-			a1fupdatei = true;
-		}
-		else
-			a1fupdatei = false;
+      if (inner && indone && !outer0 && upda1f)
+      {
+         a1fupdatei = true;
+      }
+      else
+         a1fupdatei = false;
 
-		// A1 POINTER UPDATE
+      // A1 POINTER UPDATE
 
-		if ((a1fupdate)
-			|| (inner && indone && !outer0 && !upda1f && upda1))
-		{
-			a1updatei = true;
-		}
-		else
-			a1updatei = false;
+      if ((a1fupdate)
+            || (inner && indone && !outer0 && !upda1f && upda1))
+      {
+         a1updatei = true;
+      }
+      else
+         a1updatei = false;
 
-		// Z FRACTION UPDATE
+      // Z FRACTION UPDATE
 
-		if ((a1update && gourz && polygon)
-			|| (inner && indone && !outer0 && !upda1f && !upda1 && gourz && polygon))
-		{
-			zfupdatei = true;
-		}
-		else
-			zfupdatei = false;
+      if ((a1update && gourz && polygon)
+            || (inner && indone && !outer0 && !upda1f && !upda1 && gourz && polygon))
+      {
+         zfupdatei = true;
+      }
+      else
+         zfupdatei = false;
 
-		// Z INTEGER UPDATE
+      // Z INTEGER UPDATE
 
-		if (zfupdate)
-		{
-			zupdatei = true;
-		}
-		else
-			zupdatei = false;
+      if (zfupdate)
+      {
+         zupdatei = true;
+      }
+      else
+         zupdatei = false;
 
-		// A2 POINTER UPDATE
+      // A2 POINTER UPDATE
 
-		if ((a1update && upda2 && notgzandp)
-			|| (zupdate && upda2)
-			|| (inner && indone && !outer0 && !upda1f && notgzandp && !upda1 && upda2))
-		{
-			a2updatei = true;
-		}
-		else
-			a2updatei = false;
+      if ((a1update && upda2 && notgzandp)
+            || (zupdate && upda2)
+            || (inner && indone && !outer0 && !upda1f && notgzandp && !upda1 && upda2))
+      {
+         a2updatei = true;
+      }
+      else
+         a2updatei = false;
 
-		// INITIALIZE INTENSITY FRACTION
+      // INITIALIZE INTENSITY FRACTION
 
-		if ((zupdate && !upda2 && datinit)
-			|| (a1update && !upda2 && datinit && notgzandp)
-			|| (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && datinit)
-			|| (a2update && datinit)
-			|| (idle && go && datinit))
-		{
-			init_ifi = true;
-		}
-		else
-			init_ifi = false;
+      if ((zupdate && !upda2 && datinit)
+            || (a1update && !upda2 && datinit && notgzandp)
+            || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && datinit)
+            || (a2update && datinit)
+            || (idle && go && datinit))
+      {
+         init_ifi = true;
+      }
+      else
+         init_ifi = false;
 
-		// INITIALIZE INTENSITY INTEGER
+      // INITIALIZE INTENSITY INTEGER
 
-		if (init_if)
-		{
-			init_iii = true;
-		}
-		else
-			init_iii = false;
+      if (init_if)
+      {
+         init_iii = true;
+      }
+      else
+         init_iii = false;
 
-		// INITIALIZE Z FRACTION
+      // INITIALIZE Z FRACTION
 
-		if (init_ii && gourz)
-		{
-			init_zfi = true;
-		}
-		else
-			init_zfi = false;
+      if (init_ii && gourz)
+      {
+         init_zfi = true;
+      }
+      else
+         init_zfi = false;
 
-		// INITIALIZE Z INTEGER
+      // INITIALIZE Z INTEGER
 
-		if (init_zf)
-		{
-			init_zii = true;
-		}
-		else
-			init_zii = false;
+      if (init_zf)
+      {
+         init_zii = true;
+      }
+      else
+         init_zii = false;
 
-// Here we move the fooi into their foo counterparts in order to simulate the moving
-// of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
+      // Here we move the fooi into their foo counterparts in order to simulate the moving
+      // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
 
-		idle = idlei;
-		inner = inneri;
-		a1fupdate = a1fupdatei;
-		a1update = a1updatei;
-		zfupdate = zfupdatei;		// *
-		zupdate = zupdatei;			// *
-		a2update = a2updatei;
-		init_if = init_ifi;			// *
-		init_ii = init_iii;			// *
-		init_zf = init_zfi;			// *
-		init_zi = init_zii;			// *
-// * denotes states that will never assert for Jaguar I
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  [in=%c a1f=%c a1=%c zf=%c z=%c a2=%c iif=%c iii=%c izf=%c izi=%c]\n",
-		(inner ? 'T' : 'F'), (a1fupdate ? 'T' : 'F'), (a1update ? 'T' : 'F'),
-		(zfupdate ? 'T' : 'F'), (zupdate ? 'T' : 'F'), (a2update ? 'T' : 'F'),
-		(init_if ? 'T' : 'F'), (init_ii ? 'T' : 'F'), (init_zf ? 'T' : 'F'),
-		(init_zi ? 'T' : 'F'));
-#endif
+      idle = idlei;
+      inner = inneri;
+      a1fupdate = a1fupdatei;
+      a1update = a1updatei;
+      zfupdate = zfupdatei;		// *
+      zupdate = zupdatei;			// *
+      a2update = a2updatei;
+      init_if = init_ifi;			// *
+      init_ii = init_iii;			// *
+      init_zf = init_zfi;			// *
+      init_zi = init_zii;			// *
+      // * denotes states that will never assert for Jaguar I
 
-// Now, depending on how we want to handle things, we could either put the implementation
-// of the various pieces up above, or handle them down below here.
+      // Now, depending on how we want to handle things, we could either put the implementation
+      // of the various pieces up above, or handle them down below here.
 
-// Let's try postprocessing for now...
+      // Let's try postprocessing for now...
 
-		if (inner)
-		{
-			indone = false;
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering INNER state...\n");
-#endif
-			uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
-			bool idle_inner = true, step = true, sreadx = false, szreadx = false, sread = false,
-				szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
-			bool inner0 = false;
-			bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
+      if (inner)
+      {
+         indone = false;
+         uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
+         bool idle_inner = true, step = true, sreadx = false, szreadx = false, sread = false,
+              szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
+         bool inner0 = false;
+         bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
 
-			// State lines that will never assert in Jaguar I
+         // State lines that will never assert in Jaguar I
 
-			bool textext = false, txtread = false;
+         bool textext = false, txtread = false;
 
-//other stuff
-uint8_t srcshift = 0;
-bool sshftld = true; // D flipflop (D -> Q): instart -> sshftld
-//NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
-/*
-Blit! (CMD = 01800005)
-Flags: SRCEN SRCENX LFUFUNC=C
-  count = 626 x 1
-  a1_base = 00037290, a2_base = 000095D0
-  a1_x = 0000, a1_y = 0000, a2_x = 0002, a2_y = 0000
-  a1_pixsize = 4, a2_pixsize = 4
-  srcd=0000000000000000, dstd=0000000000000000, patd=0000000000000000
-  Phrase mode is ON
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-  Entering SREADX state... [dstart=0 dend=20 pwidth=8 srcshift=20]
-    Source extra read address/pix address: 000095D4/0 [0000001C00540038]
-  Entering A2_ADD state [a2_x=0002, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering SREAD state... [dstart=0 dend=20 pwidth=8 srcshift=0]
-    Source read address/pix address: 000095D8/0 [0054003800009814]
-  Entering A2_ADD state [a2_x=0004, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 00037290/0 [dstart=0 dend=20 pwidth=8 srcshift=0] (icount=026E, inc=4)
-  Entering A1_ADD state [a1_x=0000, a1_y=0000, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering SREAD state... [dstart=0 dend=20 pwidth=8 srcshift=0]
-    Source read address/pix address: 000095E0/0 [00009968000377C7]
-  Entering A2_ADD state [a2_x=0008, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 00037298/0 [dstart=0 dend=20 pwidth=8 srcshift=0] (icount=026A, inc=4)
-  Entering A1_ADD state [a1_x=0004, a1_y=0000, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-*/
+         //other stuff
+         uint8_t srcshift = 0;
+         bool sshftld = true; // D flipflop (D -> Q): instart -> sshftld
+         //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
 
-//			while (!idle_inner)
-			while (true)
-			{
-				// IDLE
+         //			while (!idle_inner)
+         while (true)
+         {
+            // IDLE
 
-				if ((idle_inner && !step)
-					|| (dzwrite && step && inner0)
-					|| (dwrite && step && !dstwrz && inner0))
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering IDLE_INNER state...\n");
-#endif
-					idle_inneri = true;
-break;
-				}
-				else
-					idle_inneri = false;
+            if ((idle_inner && !step)
+                  || (dzwrite && step && inner0)
+                  || (dwrite && step && !dstwrz && inner0))
+            {
+               idle_inneri = true;
+               break;
+            }
+            else
+               idle_inneri = false;
 
-				// EXTRA SOURCE DATA READ
+            // EXTRA SOURCE DATA READ
 
-				if ((idle_inner && step && srcenx)
-					|| (sreadx && !step))
-				{
-					sreadxi = true;
-				}
-				else
-					sreadxi = false;
+            if ((idle_inner && step && srcenx)
+                  || (sreadx && !step))
+            {
+               sreadxi = true;
+            }
+            else
+               sreadxi = false;
 
-				// EXTRA SOURCE ZED READ
+            // EXTRA SOURCE ZED READ
 
-				if ((sreadx && step && srcenz)
-					|| (szreadx && !step))
-				{
-					szreadxi = true;
-				}
-				else
-					szreadxi = false;
+            if ((sreadx && step && srcenz)
+                  || (szreadx && !step))
+            {
+               szreadxi = true;
+            }
+            else
+               szreadxi = false;
 
-				// TEXTURE DATA READ (not implemented because not in Jaguar I)
+            // TEXTURE DATA READ (not implemented because not in Jaguar I)
 
-				// SOURCE DATA READ
+            // SOURCE DATA READ
 
-				if ((szreadx && step && !textext)
-					|| (sreadx && step && !srcenz && srcen)
-					|| (idle_inner && step && !srcenx && !textext && srcen)
-					|| (dzwrite && step && !inner0 && !textext && srcen)
-					|| (dwrite && step && !dstwrz && !inner0 && !textext && srcen)
-					|| (txtread && step && srcen)
-					|| (sread && !step))
-				{
-					sreadi = true;
-				}
-				else
-					sreadi = false;
+            if ((szreadx && step && !textext)
+                  || (sreadx && step && !srcenz && srcen)
+                  || (idle_inner && step && !srcenx && !textext && srcen)
+                  || (dzwrite && step && !inner0 && !textext && srcen)
+                  || (dwrite && step && !dstwrz && !inner0 && !textext && srcen)
+                  || (txtread && step && srcen)
+                  || (sread && !step))
+            {
+               sreadi = true;
+            }
+            else
+               sreadi = false;
 
-				// SOURCE ZED READ
+            // SOURCE ZED READ
 
-				if ((sread && step && srcenz)
-					|| (szread && !step))
-				{
-					szreadi = true;
-				}
-				else
-					szreadi = false;
+            if ((sread && step && srcenz)
+                  || (szread && !step))
+            {
+               szreadi = true;
+            }
+            else
+               szreadi = false;
 
-				// DESTINATION DATA READ
+            // DESTINATION DATA READ
 
-				if ((szread && step && dsten)
-					|| (sread && step && !srcenz && dsten)
-					|| (sreadx && step && !srcenz && !textext && !srcen && dsten)
-					|| (idle_inner && step && !srcenx && !textext && !srcen && dsten)
-					|| (dzwrite && step && !inner0 && !textext && !srcen && dsten)
-					|| (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && dsten)
-					|| (txtread && step && !srcen && dsten)
-					|| (dread && !step))
-				{
-					dreadi = true;
-				}
-				else
-					dreadi = false;
+            if ((szread && step && dsten)
+                  || (sread && step && !srcenz && dsten)
+                  || (sreadx && step && !srcenz && !textext && !srcen && dsten)
+                  || (idle_inner && step && !srcenx && !textext && !srcen && dsten)
+                  || (dzwrite && step && !inner0 && !textext && !srcen && dsten)
+                  || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && dsten)
+                  || (txtread && step && !srcen && dsten)
+                  || (dread && !step))
+            {
+               dreadi = true;
+            }
+            else
+               dreadi = false;
 
-				// DESTINATION ZED READ
+            // DESTINATION ZED READ
 
-				if ((dread && step && dstenz)
-					|| (szread && step && !dsten && dstenz)
-					|| (sread && step && !srcenz && !dsten && dstenz)
-					|| (sreadx && step && !srcenz && !textext && !srcen && !dsten && dstenz)
-					|| (idle_inner && step && !srcenx && !textext && !srcen && !dsten && dstenz)
-					|| (dzwrite && step && !inner0 && !textext && !srcen && !dsten && dstenz)
-					|| (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && dstenz)
-					|| (txtread && step && !srcen && !dsten && dstenz)
-					|| (dzread && !step))
-				{
-					dzreadi = true;
-				}
-				else
-					dzreadi = false;
+            if ((dread && step && dstenz)
+                  || (szread && step && !dsten && dstenz)
+                  || (sread && step && !srcenz && !dsten && dstenz)
+                  || (sreadx && step && !srcenz && !textext && !srcen && !dsten && dstenz)
+                  || (idle_inner && step && !srcenx && !textext && !srcen && !dsten && dstenz)
+                  || (dzwrite && step && !inner0 && !textext && !srcen && !dsten && dstenz)
+                  || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && dstenz)
+                  || (txtread && step && !srcen && !dsten && dstenz)
+                  || (dzread && !step))
+            {
+               dzreadi = true;
+            }
+            else
+               dzreadi = false;
 
-				// DESTINATION DATA WRITE
+            // DESTINATION DATA WRITE
 
-				if ((dzread && step)
-					|| (dread && step && !dstenz)
-					|| (szread && step && !dsten && !dstenz)
-					|| (sread && step && !srcenz && !dsten && !dstenz)
-					|| (txtread && step && !srcen && !dsten && !dstenz)
-					|| (sreadx && step && !srcenz && !textext && !srcen && !dsten && !dstenz)
-					|| (idle_inner && step && !srcenx && !textext && !srcen && !dsten && !dstenz)
-					|| (dzwrite && step && !inner0 && !textext && !srcen && !dsten && !dstenz)
-					|| (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && !dstenz)
-					|| (dwrite && !step))
-				{
-					dwritei = true;
-				}
-				else
-					dwritei = false;
+            if ((dzread && step)
+                  || (dread && step && !dstenz)
+                  || (szread && step && !dsten && !dstenz)
+                  || (sread && step && !srcenz && !dsten && !dstenz)
+                  || (txtread && step && !srcen && !dsten && !dstenz)
+                  || (sreadx && step && !srcenz && !textext && !srcen && !dsten && !dstenz)
+                  || (idle_inner && step && !srcenx && !textext && !srcen && !dsten && !dstenz)
+                  || (dzwrite && step && !inner0 && !textext && !srcen && !dsten && !dstenz)
+                  || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && !dstenz)
+                  || (dwrite && !step))
+            {
+               dwritei = true;
+            }
+            else
+               dwritei = false;
 
-				// DESTINATION ZED WRITE
+            // DESTINATION ZED WRITE
 
-				if ((dzwrite && !step)
-					|| (dwrite && step && dstwrz))
-				{
-					dzwritei = true;
-				}
-				else
-					dzwritei = false;
+            if ((dzwrite && !step)
+                  || (dwrite && step && dstwrz))
+            {
+               dzwritei = true;
+            }
+            else
+               dzwritei = false;
 
-//Kludge: A QnD way to make sure that sshftld is asserted only for the first
-//        cycle of the inner loop...
-sshftld = idle_inner;
+            //Kludge: A QnD way to make sure that sshftld is asserted only for the first
+            //        cycle of the inner loop...
+            sshftld = idle_inner;
 
-// Here we move the fooi into their foo counterparts in order to simulate the moving
-// of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
+            // Here we move the fooi into their foo counterparts in order to simulate the moving
+            // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
 
-				idle_inner = idle_inneri;
-				sreadx = sreadxi;
-				szreadx = szreadxi;
-				sread = sreadi;
-				szread = szreadi;
-				dread = dreadi;
-				dzread = dzreadi;
-				dwrite = dwritei;
-				dzwrite = dzwritei;
+            idle_inner = idle_inneri;
+            sreadx = sreadxi;
+            szreadx = szreadxi;
+            sread = sreadi;
+            szread = szreadi;
+            dread = dreadi;
+            dzread = dzreadi;
+            dwrite = dwritei;
+            dzwrite = dzwritei;
 
-// Here's a few more decodes--not sure if they're supposed to go here or not...
+            // Here's a few more decodes--not sure if they're supposed to go here or not...
 
-				bool srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
+            bool srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
 
-				bool dsta_addi = (dwritei && !dstwrz) || dzwritei;
+            bool dsta_addi = (dwritei && !dstwrz) || dzwritei;
 
-				bool gensrc = sreadxi || szreadxi || sreadi || szreadi;
-				bool gendst = dreadi || dzreadi || dwritei || dzwritei;
-				bool gena2i = (gensrc && !dsta2) || (gendst && dsta2);
+            bool gensrc = sreadxi || szreadxi || sreadi || szreadi;
+            bool gendst = dreadi || dzreadi || dwritei || dzwritei;
+            bool gena2i = (gensrc && !dsta2) || (gendst && dsta2);
 
-				bool zaddr = szreadx || szread || dzread || dzwrite;
+            bool zaddr = szreadx || szread || dzread || dzwrite;
 
-// Some stuff from MCONTROL.NET--not sure if this is the correct use of this decode or not...
-/*Fontread\	:= OND1 (fontread\, sread[1], sreadx[1], bcompen);
+            // Some stuff from MCONTROL.NET--not sure if this is the correct use of this decode or not...
+            /*Fontread\	:= OND1 (fontread\, sread[1], sreadx[1], bcompen);
 Fontread	:= INV1 (fontread, fontread\);
 Justt		:= NAN3 (justt, fontread\, phrase_mode, tactive\);
 Justify		:= TS (justify, justt, busen);*/
-bool fontread = (sread || sreadx) && bcompen;
-bool justify = !(!fontread && phrase_mode /*&& tactive*/);
+            bool fontread = (sread || sreadx) && bcompen;
+            bool justify = !(!fontread && phrase_mode /*&& tactive*/);
 
-/* Generate inner loop update enables */
-/*
+            /* Generate inner loop update enables */
+            /*
 A1_addi		:= MX2 (a1_addi, dsta_addi, srca_addi, dsta2);
 A2_addi		:= MX2 (a2_addi, srca_addi, dsta_addi, dsta2);
 A1_add		:= FD1 (a1_add, a1_add\, a1_addi, clk);
 A2_add		:= FD1 (a2_add, a2_add\, a2_addi, clk);
 A2_addb		:= BUF1 (a2_addb, a2_add);
 */
-				bool a1_add = (dsta2 ? srca_addi : dsta_addi);
-				bool a2_add = (dsta2 ? dsta_addi : srca_addi);
+            bool a1_add = (dsta2 ? srca_addi : dsta_addi);
+            bool a2_add = (dsta2 ? dsta_addi : srca_addi);
 
-/* Address adder input A register selection
-000	A1 step integer part
-001	A1 step fraction part
-010	A1 increment integer part
-011	A1 increment fraction part
-100	A2 step
+            /* Address adder input A register selection
+               000	A1 step integer part
+               001	A1 step fraction part
+               010	A1 increment integer part
+               011	A1 increment fraction part
+               100	A2 step
 
-bit 2 = a2update
-bit 1 = /a2update . (a1_add . a1addx[0..1])
-bit 0 = /a2update . ( a1fupdate
-				    + a1_add . atick[0] . a1addx[0..1])
-The /a2update term on bits 0 and 1 is redundant.
-Now look-ahead based
-*/
-				uint8_t addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
-				addasel |= (a1_add && a1addx == 3 ? 0x02 : 0x00);
-				addasel |= (a2update ? 0x04 : 0x00);
-/* Address adder input A X constant selection
-adda_xconst[0..2] generate a power of 2 in the range 1-64 or all
-zeroes when they are all 1
-Remember - these are pixels, so to add one phrase the pixel size
-has to be taken into account to get the appropriate value.
-for A1
-		if a1addx[0..1] are 00 set 6 - pixel size
-		if a1addx[0..1] are 01 set the value 000
-		if a1addx[0..1] are 10 set the value 111
-similarly for A2
+               bit 2 = a2update
+               bit 1 = /a2update . (a1_add . a1addx[0..1])
+               bit 0 = /a2update . ( a1fupdate
+               + a1_add . atick[0] . a1addx[0..1])
+               The /a2update term on bits 0 and 1 is redundant.
+               Now look-ahead based
+               */
+            uint8_t addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
+            addasel |= (a1_add && a1addx == 3 ? 0x02 : 0x00);
+            addasel |= (a2update ? 0x04 : 0x00);
+            /* Address adder input A X constant selection
+               adda_xconst[0..2] generate a power of 2 in the range 1-64 or all
+               zeroes when they are all 1
+               Remember - these are pixels, so to add one phrase the pixel size
+               has to be taken into account to get the appropriate value.
+               for A1
+               if a1addx[0..1] are 00 set 6 - pixel size
+               if a1addx[0..1] are 01 set the value 000
+               if a1addx[0..1] are 10 set the value 111
+               similarly for A2
 JLH: Also, 11 will likewise set the value to 111
 */
-				uint8_t a1_xconst = 6 - a1_pixsize, a2_xconst = 6 - a2_pixsize;
+            uint8_t a1_xconst = 6 - a1_pixsize, a2_xconst = 6 - a2_pixsize;
 
-				if (a1addx == 1)
-				    a1_xconst = 0;
-				else if (a1addx & 0x02)
-				    a1_xconst = 7;
+            if (a1addx == 1)
+               a1_xconst = 0;
+            else if (a1addx & 0x02)
+               a1_xconst = 7;
 
-				if (a2addx == 1)
-				    a2_xconst = 0;
-				else if (a2addx & 0x02)
-				    a2_xconst = 7;
+            if (a2addx == 1)
+               a2_xconst = 0;
+            else if (a2addx & 0x02)
+               a2_xconst = 7;
 
-				uint8_t adda_xconst = (a2_add ? a2_xconst : a1_xconst);
-/* Address adder input A Y constant selection
-22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
-Therefore, the selection has to be controlled by a bug fix bit.
+            uint8_t adda_xconst = (a2_add ? a2_xconst : a1_xconst);
+            /* Address adder input A Y constant selection
+               22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
+               Therefore, the selection has to be controlled by a bug fix bit.
 JLH: Bug fix bit in Jaguar II--not in Jaguar I!
 */
-				bool adda_yconst = a1addy;
-/* Address adder input A register versus constant selection
-given by	  a1_add . a1addx[0..1]
-				+ a1update
-				+ a1fupdate
-				+ a2_add . a2addx[0..1]
-				+ a2update
-*/
-				bool addareg = ((a1_add && a1addx == 3) || a1update || a1fupdate
-					|| (a2_add && a2addx == 3) || a2update ? true : false);
-/* The adders can be put into subtract mode in add pixel size
-mode when the corresponding flags are set */
-				bool suba_x = ((a1_add && a1xsign && a1addx == 1) || (a2_add && a2xsign && a2addx == 1) ? true : false);
-				bool suba_y = ((a1_add && a1addy && a1ysign) || (a2_add && a2addy && a2ysign) ? true : false);
-/* Address adder input B selection
-00	A1 pointer
-01	A2 pointer
-10	A1 fraction
-11	Zero
+            bool adda_yconst = a1addy;
+            /* Address adder input A register versus constant selection
+               given by	  a1_add . a1addx[0..1]
+               + a1update
+               + a1fupdate
+               + a2_add . a2addx[0..1]
+               + a2update
+               */
+            bool addareg = ((a1_add && a1addx == 3) || a1update || a1fupdate
+                  || (a2_add && a2addx == 3) || a2update ? true : false);
+            /* The adders can be put into subtract mode in add pixel size
+               mode when the corresponding flags are set */
+            bool suba_x = ((a1_add && a1xsign && a1addx == 1) || (a2_add && a2xsign && a2addx == 1) ? true : false);
+            bool suba_y = ((a1_add && a1addy && a1ysign) || (a2_add && a2addy && a2ysign) ? true : false);
+            /* Address adder input B selection
+               00	A1 pointer
+               01	A2 pointer
+               10	A1 fraction
+               11	Zero
 
-Bit 1 =   a1fupdate
-		+ (a1_add . atick[0] . a1addx[0..1])
-		+ a1fupdate . a1_stepld
-		+ a1update . a1_stepld
-		+ a2update . a2_stepld
-Bit 0 =   a2update + a2_add
-		+ a1fupdate . a1_stepld
-		+ a1update . a1_stepld
-		+ a2update . a2_stepld
-*/
-				uint8_t addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
-				    || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x01 : 0x00);
-				addbsel |= (a1fupdate || (a1_add && a1addx == 3) || (a1fupdate && a1_stepld)
-				    || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x02 : 0x00);
+               Bit 1 =   a1fupdate
+               + (a1_add . atick[0] . a1addx[0..1])
+               + a1fupdate . a1_stepld
+               + a1update . a1_stepld
+               + a2update . a2_stepld
+               Bit 0 =   a2update + a2_add
+               + a1fupdate . a1_stepld
+               + a1update . a1_stepld
+               + a2update . a2_stepld
+               */
+            uint8_t addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
+                  || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x01 : 0x00);
+            addbsel |= (a1fupdate || (a1_add && a1addx == 3) || (a1fupdate && a1_stepld)
+                  || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x02 : 0x00);
 
-/* The modulo bits are used to align X onto a phrase boundary when
-it is being updated by one phrase
-000	no mask
-001	mask bit 0
-010	mask bits 1-0
-..
-110  	mask bits 5-0
+            /* The modulo bits are used to align X onto a phrase boundary when
+               it is being updated by one phrase
+               000	no mask
+               001	mask bit 0
+               010	mask bits 1-0
+               ..
+               110  	mask bits 5-0
 
-Masking is enabled for a1 when a1addx[0..1] is 00, and the value
-is 6 - the pixel size (again!)
-*/
-				uint8_t maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
-				uint8_t maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
-				uint8_t modx = (a2_add ? maska2 : maska1);
-/* Generate load strobes for the increment updates */
+               Masking is enabled for a1 when a1addx[0..1] is 00, and the value
+               is 6 - the pixel size (again!)
+               */
+            uint8_t maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
+            uint8_t maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
+            uint8_t modx = (a2_add ? maska2 : maska1);
+            /* Generate load strobes for the increment updates */
 
-/*A1pldt		:= NAN2 (a1pldt, atick[1], a1_add);
+            /*A1pldt		:= NAN2 (a1pldt, atick[1], a1_add);
 A1ptrldi	:= NAN2 (a1ptrldi, a1update\, a1pldt);
 
 A1fldt		:= NAN4 (a1fldt, atick[0], a1_add, a1addx[0..1]);
@@ -3584,1145 +3014,686 @@ A1fracldi	:= NAN2 (a1fracldi, a1fupdate\, a1fldt);
 
 A2pldt		:= NAN2 (a2pldt, atick[1], a2_add);
 A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
-				bool a1fracldi = a1fupdate || (a1_add && a1addx == 3);
+            bool a1fracldi = a1fupdate || (a1_add && a1addx == 3);
 
-// Some more from DCONTROL...
-// atick[] just MAY be important here! We're assuming it's true and dropping the term...
-// That will probably screw up some of the lower terms that seem to rely on the timing of it...
+            // Some more from DCONTROL...
+            // atick[] just MAY be important here! We're assuming it's true and dropping the term...
+            // That will probably screw up some of the lower terms that seem to rely on the timing of it...
 #warning srcdreadd is not properly initialized!
-bool srcdreadd = false;						// Set in INNER.NET
-//Shadeadd\	:= NAN2H (shadeadd\, dwrite, srcshade);
-//Shadeadd	:= INV2 (shadeadd, shadeadd\);
-bool shadeadd = dwrite && srcshade;
-/* Data adder control, input A selection
-000   Destination data
-001   Initialiser pixel value
-100   Source data      - computed intensity fraction
-101   Pattern data     - computed intensity
-110   Source zed 1     - computed zed
-111   Source zed 2     - computed zed fraction
+            bool srcdreadd = false;						// Set in INNER.NET
+            //Shadeadd\	:= NAN2H (shadeadd\, dwrite, srcshade);
+            //Shadeadd	:= INV2 (shadeadd, shadeadd\);
+            bool shadeadd = dwrite && srcshade;
+            /* Data adder control, input A selection
+               000   Destination data
+               001   Initialiser pixel value
+               100   Source data      - computed intensity fraction
+               101   Pattern data     - computed intensity
+               110   Source zed 1     - computed zed
+               111   Source zed 2     - computed zed fraction
 
-Bit 0 =   dwrite  . gourd . atick[1]
-	+ dzwrite . gourz . atick[0]
-	+ istepadd
-	+ zstepfadd
-	+ init_if + init_ii + init_zf + init_zi
-Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
-	+ zstepadd
-	+ zstepfadd
-Bit 2 =   (gourd + gourz) . /(init_if + init_ii + init_zf + init_zi)
-	+ dwrite  . srcshade
-*/
-uint8_t daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
-	|| init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
-daddasel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
-daddasel |= (((gourd || gourz) && !(init_if || init_ii || init_zf || init_zi))
-	|| (dwrite && srcshade) ? 0x04 : 0x00);
-/* Data adder control, input B selection
-0000	Source data
-0001	Data initialiser increment
-0100	Bottom 16 bits of I increment repeated four times
-0101	Top 16 bits of I increment repeated four times
-0110	Bottom 16 bits of Z increment repeated four times
-0111	Top 16 bits of Z increment repeated four times
-1100	Bottom 16 bits of I step repeated four times
-1101	Top 16 bits of I step repeated four times
-1110	Bottom 16 bits of Z step repeated four times
-1111	Top 16 bits of Z step repeated four times
+               Bit 0 =   dwrite  . gourd . atick[1]
+               + dzwrite . gourz . atick[0]
+               + istepadd
+               + zstepfadd
+               + init_if + init_ii + init_zf + init_zi
+               Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
+               + zstepadd
+               + zstepfadd
+               Bit 2 =   (gourd + gourz) . /(init_if + init_ii + init_zf + init_zi)
+               + dwrite  . srcshade
+               */
+            uint8_t daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
+                  || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
+            daddasel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
+            daddasel |= (((gourd || gourz) && !(init_if || init_ii || init_zf || init_zi))
+                  || (dwrite && srcshade) ? 0x04 : 0x00);
+            /* Data adder control, input B selection
+               0000	Source data
+               0001	Data initialiser increment
+               0100	Bottom 16 bits of I increment repeated four times
+               0101	Top 16 bits of I increment repeated four times
+               0110	Bottom 16 bits of Z increment repeated four times
+               0111	Top 16 bits of Z increment repeated four times
+               1100	Bottom 16 bits of I step repeated four times
+               1101	Top 16 bits of I step repeated four times
+               1110	Bottom 16 bits of Z step repeated four times
+               1111	Top 16 bits of Z step repeated four times
 
-Bit 0 =   dwrite  . gourd . atick[1]
-	+ dzwrite . gourz . atick[1]
-	+ dwrite  . srcshade
-	+ istepadd
-	+ zstepadd
-	+ init_if + init_ii + init_zf + init_zi
-Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
-	+ zstepadd
-	+ zstepfadd
-Bit 2 =   dwrite  . gourd . (atick[0] + atick[1])
-	+ dzwrite . gourz . (atick[0] + atick[1])
-	+ dwrite  . srcshade
-	+ istepadd + istepfadd + zstepadd + zstepfadd
-Bit 3 =   istepadd + istepfadd + zstepadd + zstepfadd
-*/
-uint8_t daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
-	|| istepadd || zstepadd || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
-daddbsel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
-daddbsel |= ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
-	|| istepadd || istepfadd || zstepadd || zstepfadd ? 0x04 : 0x00);
-daddbsel |= (istepadd && istepfadd && zstepadd && zstepfadd ? 0x08 : 0x00);
-/* Data adder mode control
-000	16-bit normal add
-001	16-bit saturating add with carry
-010	8-bit saturating add with carry, carry into top byte is
-	inhibited (YCrCb)
-011	8-bit saturating add with carry, carry into top byte and
-	between top nybbles is inhibited (CRY)
-100	16-bit normal add with carry
-101	16-bit saturating add
-110	8-bit saturating add, carry into top byte is inhibited
-111	8-bit saturating add, carry into top byte and between top
-	nybbles is inhibited
+               Bit 0 =   dwrite  . gourd . atick[1]
+               + dzwrite . gourz . atick[1]
+               + dwrite  . srcshade
+               + istepadd
+               + zstepadd
+               + init_if + init_ii + init_zf + init_zi
+               Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
+               + zstepadd
+               + zstepfadd
+               Bit 2 =   dwrite  . gourd . (atick[0] + atick[1])
+               + dzwrite . gourz . (atick[0] + atick[1])
+               + dwrite  . srcshade
+               + istepadd + istepfadd + zstepadd + zstepfadd
+               Bit 3 =   istepadd + istepfadd + zstepadd + zstepfadd
+               */
+            uint8_t daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
+                  || istepadd || zstepadd || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
+            daddbsel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
+            daddbsel |= ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
+                  || istepadd || istepfadd || zstepadd || zstepfadd ? 0x04 : 0x00);
+            daddbsel |= (istepadd && istepfadd && zstepadd && zstepfadd ? 0x08 : 0x00);
+            /* Data adder mode control
+               000	16-bit normal add
+               001	16-bit saturating add with carry
+               010	8-bit saturating add with carry, carry into top byte is
+               inhibited (YCrCb)
+               011	8-bit saturating add with carry, carry into top byte and
+               between top nybbles is inhibited (CRY)
+               100	16-bit normal add with carry
+               101	16-bit saturating add
+               110	8-bit saturating add, carry into top byte is inhibited
+               111	8-bit saturating add, carry into top byte and between top
+               nybbles is inhibited
 
-The first five are used for Gouraud calculations, the latter three
-for adding source and destination data
+               The first five are used for Gouraud calculations, the latter three
+               for adding source and destination data
 
-Bit 0 =   dzwrite . gourz . atick[1]
-	+ dwrite  . gourd . atick[1] . /topnen . /topben . /ext_int
-	+ dwrite  . gourd . atick[1] .  topnen .  topben . /ext_int
-	+ zstepadd
-	+ istepadd . /topnen . /topben . /ext_int
-	+ istepadd .  topnen .  topben . /ext_int
-	+ /gourd . /gourz . /topnen . /topben
-	+ /gourd . /gourz .  topnen .  topben
-	+ shadeadd . /topnen . /topben
-	+ shadeadd .  topnen .  topben
-	+ init_ii . /topnen . /topben . /ext_int
-	+ init_ii .  topnen .  topben . /ext_int
-	+ init_zi
+               Bit 0 =   dzwrite . gourz . atick[1]
+               + dwrite  . gourd . atick[1] . /topnen . /topben . /ext_int
+               + dwrite  . gourd . atick[1] .  topnen .  topben . /ext_int
+               + zstepadd
+               + istepadd . /topnen . /topben . /ext_int
+               + istepadd .  topnen .  topben . /ext_int
+               + /gourd . /gourz . /topnen . /topben
+               + /gourd . /gourz .  topnen .  topben
+               + shadeadd . /topnen . /topben
+               + shadeadd .  topnen .  topben
+               + init_ii . /topnen . /topben . /ext_int
+               + init_ii .  topnen .  topben . /ext_int
+               + init_zi
 
-Bit 1 =   dwrite . gourd . atick[1] . /topben . /ext_int
-	+ istepadd . /topben . /ext_int
-	+ /gourd . /gourz .  /topben
-	+ shadeadd .  /topben
-	+ init_ii .  /topben . /ext_int
+               Bit 1 =   dwrite . gourd . atick[1] . /topben . /ext_int
+               + istepadd . /topben . /ext_int
+               + /gourd . /gourz .  /topben
+               + shadeadd .  /topben
+               + init_ii .  /topben . /ext_int
 
-Bit 2 =   /gourd . /gourz
-	+ shadeadd
-	+ dwrite  . gourd . atick[1] . ext_int
-	+ istepadd . ext_int
-	+ init_ii . ext_int
-*/
-uint8_t daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
-	|| (dwrite && gourd && topnen && topben && !ext_int) || zstepadd
-	|| (istepadd && !topnen && !topben && !ext_int)
-	|| (istepadd && topnen && topben && !ext_int) || (!gourd && !gourz && !topnen && !topben)
-	|| (!gourd && !gourz && topnen && topben) || (shadeadd && !topnen && !topben)
-	|| (shadeadd && topnen && topben) || (init_ii && !topnen && !topben && !ext_int)
-	|| (init_ii && topnen && topben && !ext_int) || init_zi ? 0x01 : 0x00);
-daddmode |= ((dwrite && gourd && !topben && !ext_int) || (istepadd && !topben && !ext_int)
-	|| (!gourd && !gourz && !topben) || (shadeadd && !topben)
-	|| (init_ii && !topben && !ext_int) ? 0x02 : 0x00);
-daddmode |= ((!gourd && !gourz) || shadeadd || (dwrite && gourd && ext_int)
-	|| (istepadd && ext_int) || (init_ii && ext_int) ? 0x04 : 0x00);
-/* Data add load controls
-Pattern fraction (dest data) is loaded on
-	  dwrite . gourd . atick[0]
-	+ istepfadd . /datinit
-	+ init_if
-Pattern data is loaded on
-	  dwrite . gourd . atick[1]
-	+ istepadd . /datinit . /datinit
-	+ init_ii
-Source z1 is loaded on
-	  dzwrite . gourz . atick[1]
-	+ zstepadd . /datinit . /datinit
-	+ init_zi
-Source z2 is loaded on
-	  dzwrite . gourz . atick[0]
-	+ zstepfadd
-	+ init_zf
-Texture map shaded data is loaded on
-	srcdreadd . srcshade
-*/
-bool patfadd = (dwrite && gourd) || (istepfadd && !datinit) || init_if;
-bool patdadd = (dwrite && gourd) || (istepadd && !datinit) || init_ii;
-bool srcz1add = (dzwrite && gourz) || (zstepadd && !datinit) || init_zi;
-bool srcz2add = (dzwrite && gourz) || zstepfadd || init_zf;
-bool srcshadd = srcdreadd && srcshade;
-bool daddq_sel = patfadd || patdadd || srcz1add || srcz2add || srcshadd;
-/* Select write data
-This has to be controlled from stage 1 of the pipe-line, delayed
-by one tick, as the write occurs in the cycle after the ack.
+               Bit 2 =   /gourd . /gourz
+               + shadeadd
+               + dwrite  . gourd . atick[1] . ext_int
+               + istepadd . ext_int
+               + init_ii . ext_int
+               */
+            uint8_t daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
+                  || (dwrite && gourd && topnen && topben && !ext_int) || zstepadd
+                  || (istepadd && !topnen && !topben && !ext_int)
+                  || (istepadd && topnen && topben && !ext_int) || (!gourd && !gourz && !topnen && !topben)
+                  || (!gourd && !gourz && topnen && topben) || (shadeadd && !topnen && !topben)
+                  || (shadeadd && topnen && topben) || (init_ii && !topnen && !topben && !ext_int)
+                  || (init_ii && topnen && topben && !ext_int) || init_zi ? 0x01 : 0x00);
+            daddmode |= ((dwrite && gourd && !topben && !ext_int) || (istepadd && !topben && !ext_int)
+                  || (!gourd && !gourz && !topben) || (shadeadd && !topben)
+                  || (init_ii && !topben && !ext_int) ? 0x02 : 0x00);
+            daddmode |= ((!gourd && !gourz) || shadeadd || (dwrite && gourd && ext_int)
+                  || (istepadd && ext_int) || (init_ii && ext_int) ? 0x04 : 0x00);
 
-00	pattern data
-01	lfu data
-10	adder output
-11	source zed
+            bool patfadd = (dwrite && gourd) || (istepfadd && !datinit) || init_if;
+            bool patdadd = (dwrite && gourd) || (istepadd && !datinit) || init_ii;
+            bool srcz1add = (dzwrite && gourz) || (zstepadd && !datinit) || init_zi;
+            bool srcz2add = (dzwrite && gourz) || zstepfadd || init_zf;
+            bool srcshadd = srcdreadd && srcshade;
+            bool daddq_sel = patfadd || patdadd || srcz1add || srcz2add || srcshadd;
+            /* Select write data
+               This has to be controlled from stage 1 of the pipe-line, delayed
+               by one tick, as the write occurs in the cycle after the ack.
 
-Bit 0 =  /patdsel . /adddsel
-	+ dzwrite1d
-Bit 1 =   adddsel
-	+ dzwrite1d
-*/
-uint8_t data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
-	| (adddsel || dzwrite ? 0x02 : 0x00);
+               00	pattern data
+               01	lfu data
+               10	adder output
+               11	source zed
 
-uint32_t address, pixAddr;
-ADDRGEN(address, pixAddr, gena2i, zaddr,
-	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
+               Bit 0 =  /patdsel . /adddsel
+               + dzwrite1d
+               Bit 1 =   adddsel
+               + dzwrite1d
+               */
+            uint8_t data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
+               | (adddsel || dzwrite ? 0x02 : 0x00);
 
-//Here's my guess as to how the addresses get truncated to phrase boundaries in phrase mode...
-if (!justify)
-	address &= 0xFFFFF8;
+            uint32_t address, pixAddr;
+            ADDRGEN(address, pixAddr, gena2i, zaddr,
+                  a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                  a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
 
-/* Generate source alignment shift
-   -------------------------------
-The source alignment shift for data move is the difference between
-the source and destination X pointers, multiplied by the pixel
-size.  Only the low six bits of the pointers are of interest, as
-pixel sizes are always a power of 2 and window rows are always
-phrase aligned.
+            //Here's my guess as to how the addresses get truncated to phrase boundaries in phrase mode...
+            if (!justify)
+               address &= 0xFFFFF8;
 
-When not in phrase mode, the top 3 bits of the shift value are
-set to zero (2/26).
+            /* Generate source alignment shift
+               -------------------------------
+               The source alignment shift for data move is the difference between
+               the source and destination X pointers, multiplied by the pixel
+               size.  Only the low six bits of the pointers are of interest, as
+               pixel sizes are always a power of 2 and window rows are always
+               phrase aligned.
 
-Source shifting is also used to extract bits for bit-to-byte
-expansion in phrase mode.  This involves only the bottom three
-bits of the shift value, and is based on the offset within the
-phrase of the destination X pointer, in pixels.
+               When not in phrase mode, the top 3 bits of the shift value are
+               set to zero (2/26).
 
-Source shifting is disabled when srcen is not set.
-*/
-uint8_t dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
-uint8_t srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
-uint8_t shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
-/* The phrase mode alignment count is given by the phrase offset
-of the first pixel, for bit to byte expansion */
-uint8_t pobb = 0;
+               Source shifting is also used to extract bits for bit-to-byte
+               expansion in phrase mode.  This involves only the bottom three
+               bits of the shift value, and is based on the offset within the
+               phrase of the destination X pointer, in pixels.
 
-if (pixsize == 3)
-	pobb = dstxp & 0x07;
-if (pixsize == 4)
-	pobb = dstxp & 0x03;
-if (pixsize == 5)
-	pobb = dstxp & 0x01;
+               Source shifting is disabled when srcen is not set.
+               */
+            uint8_t dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+            uint8_t srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
+            uint8_t shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
+            /* The phrase mode alignment count is given by the phrase offset
+               of the first pixel, for bit to byte expansion */
+            uint8_t pobb = 0;
 
-bool pobbsel = phrase_mode && bcompen;
-uint8_t loshd = (pobbsel ? pobb : shftv) & 0x07;
-uint8_t shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
-/* Enable for high bits is srcen . phrase_mode */
-shfti |= (srcen && phrase_mode ? (sshftld ? shftv & 0x38 : srcshift & 0x38) : 0);
-srcshift = shfti;
+            if (pixsize == 3)
+               pobb = dstxp & 0x07;
+            if (pixsize == 4)
+               pobb = dstxp & 0x03;
+            if (pixsize == 5)
+               pobb = dstxp & 0x01;
 
-				if (sreadx)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering SREADX state...");
-#endif
-//uint32_t srcAddr, pixAddr;
-//ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
-//	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-//	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-					srcd2 = srcd1;
-					srcd1 = ((uint64_t)JaguarReadLong(address + 0, BLITTER) << 32)
-						| (uint64_t)JaguarReadLong(address + 4, BLITTER);
-//Kludge to take pixel size into account...
-//Hmm. If we're not in phrase mode, this is most likely NOT going to be used...
-//Actually, it would be--because of BCOMPEN expansion, for example...
-if (!phrase_mode)
-{
-	if (bcompen)
-		srcd1 >>= 56;
-	else
-	{
-		if (pixsize == 5)
-			srcd1 >>= 32;
-		else if (pixsize == 4)
-			srcd1 >>= 48;
-		else
-			srcd1 >>= 56;
-	}
-}//*/
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("    Source extra read address/pix address: %08X/%1X [%08X%08X]\n",
-		address, pixAddr, (uint32_t)(srcd1 >> 32), (uint32_t)(srcd1 & 0xFFFFFFFF));
-#endif
-				}
+            bool pobbsel = phrase_mode && bcompen;
+            uint8_t loshd = (pobbsel ? pobb : shftv) & 0x07;
+            uint8_t shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
+            /* Enable for high bits is srcen . phrase_mode */
+            shfti |= (srcen && phrase_mode ? (sshftld ? shftv & 0x38 : srcshift & 0x38) : 0);
+            srcshift = shfti;
 
-				if (szreadx)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering SZREADX state...");
-#endif
-					srcz2 = srcz1;
-					srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog(" Src Z extra read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF));
-#endif
-				}
+            if (sreadx)
+            {
+               //uint32_t srcAddr, pixAddr;
+               //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
+               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
+               srcd2 = srcd1;
+               srcd1 = ((uint64_t)JaguarReadLong(address + 0, BLITTER) << 32)
+                  | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               //Kludge to take pixel size into account...
+               //Hmm. If we're not in phrase mode, this is most likely NOT going to be used...
+               //Actually, it would be--because of BCOMPEN expansion, for example...
+               if (!phrase_mode)
+               {
+                  if (bcompen)
+                     srcd1 >>= 56;
+                  else
+                  {
+                     if (pixsize == 5)
+                        srcd1 >>= 32;
+                     else if (pixsize == 4)
+                        srcd1 >>= 48;
+                     else
+                        srcd1 >>= 56;
+                  }
+               }//*/
+            }
 
-				if (sread)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering SREAD state...");
-#endif
-//uint32_t srcAddr, pixAddr;
-//ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
-//	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-//	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-srcd2 = srcd1;
-srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-//Kludge to take pixel size into account...
-if (!phrase_mode)
-{
-	if (bcompen)
-		srcd1 >>= 56;
-	else
-	{
-		if (pixsize == 5)
-			srcd1 >>= 32;
-		else if (pixsize == 4)
-			srcd1 >>= 48;
-		else
-			srcd1 >>= 56;
-	}
-}
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("     Source read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-	(uint32_t)(srcd1 >> 32), (uint32_t)(srcd1 & 0xFFFFFFFF));
-//fflush(stdout);
-}
-#endif
-				}
+            if (szreadx)
+            {
+               srcz2 = srcz1;
+               srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+            }
 
-				if (szread)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  Entering SZREAD state...");
-//fflush(stdout);
-}
-#endif
-					srcz2 = srcz1;
-					srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-//Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
-if (!phrase_mode && pixsize == 4)
-	srcz1 >>= 48;
+            if (sread)
+            {
+               //uint32_t srcAddr, pixAddr;
+               //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
+               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
+               srcd2 = srcd1;
+               srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               //Kludge to take pixel size into account...
+               if (!phrase_mode)
+               {
+                  if (bcompen)
+                     srcd1 >>= 56;
+                  else
+                  {
+                     if (pixsize == 5)
+                        srcd1 >>= 32;
+                     else if (pixsize == 4)
+                        srcd1 >>= 48;
+                     else
+                        srcd1 >>= 56;
+                  }
+               }
+            }
 
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	WriteLog("     Src Z read address/pix address: %08X/%1X [%08X%08X]\n", address, pixAddr,
-		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF));
-}
-#endif
-				}
+            if (szread)
+            {
+               srcz2 = srcz1;
+               srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
+               if (!phrase_mode && pixsize == 4)
+                  srcz1 >>= 48;
 
-				if (dread)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering DREAD state...");
-#endif
-//uint32_t dstAddr, pixAddr;
-//ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
-//	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-//	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-//Kludge to take pixel size into account...
-if (!phrase_mode)
-{
-	if (pixsize == 5)
-		dstd >>= 32;
-	else if (pixsize == 4)
-		dstd >>= 48;
-	else
-		dstd >>= 56;
-}
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("       Dest read address/pix address: %08X/%1X [%08X%08X]\n", address,
-		pixAddr, (uint32_t)(dstd >> 32), (uint32_t)(dstd & 0xFFFFFFFF));
-#endif
-				}
+            }
 
-				if (dzread)
-				{
-// Is Z always 64 bit read? Or sometimes 16 bit (dependent on phrase_mode)?
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering DZREAD state...");
-#endif
-					dstz = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-//Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
-if (!phrase_mode && pixsize == 4)
-	dstz >>= 48;
+            if (dread)
+            {
+               //uint32_t dstAddr, pixAddr;
+               //ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
+               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
+               dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               //Kludge to take pixel size into account...
+               if (!phrase_mode)
+               {
+                  if (pixsize == 5)
+                     dstd >>= 32;
+                  else if (pixsize == 4)
+                     dstd >>= 48;
+                  else
+                     dstd >>= 56;
+               }
+            }
 
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("    Dest Z read address/pix address: %08X/%1X [%08X%08X]\n", address,
-		pixAddr, (uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF));
-#endif
-				}
+            if (dzread)
+            {
+               // Is Z always 64 bit read? Or sometimes 16 bit (dependent on phrase_mode)?
+               dstz = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
+               if (!phrase_mode && pixsize == 4)
+                  dstz >>= 48;
 
-// These vars should probably go further up in the code... !!! FIX !!!
-// We can't preassign these unless they're static...
-uint64_t srcz;
-bool winhibit;
-//NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
-				if (dwrite)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("  Entering DWRITE state...");
-#endif
-//Counter is done on the dwrite state...! (We'll do it first, since it affects dstart/dend calculations.)
-//Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
-					int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
-					uint8_t inc = 0;
-					inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
-					inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
-					inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
-					inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
+            }
 
-					uint16_t oldicount = icount;	// Save icount to detect underflow...
-					icount -= inc;
+            // These vars should probably go further up in the code... !!! FIX !!!
+            // We can't preassign these unless they're static...
+            uint64_t srcz;
+            bool winhibit;
+            //NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
+            if (dwrite)
+            {
+               //Counter is done on the dwrite state...! (We'll do it first, since it affects dstart/dend calculations.)
+               //Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
+               int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
+               uint8_t inc = 0;
+               inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
+               inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
+               inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
+               inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
 
-					if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
-						inner0 = true;
-// X/Y stepping is also done here, I think...No. It's done when a1_add or a2_add is asserted...
+               uint16_t oldicount = icount;	// Save icount to detect underflow...
+               icount -= inc;
 
-//*********************************************************************************
-//Start & end write mask computations...
-//*********************************************************************************
+               if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
+                  inner0 = true;
+               // X/Y stepping is also done here, I think...No. It's done when a1_add or a2_add is asserted...
 
-uint8_t dstart = 0;
+               //*********************************************************************************
+               //Start & end write mask computations...
+               //*********************************************************************************
 
-if (pixsize == 3)
-	dstart = (dstxp & 0x07) << 3;
-if (pixsize == 4)
-	dstart = (dstxp & 0x03) << 4;
-if (pixsize == 5)
-	dstart = (dstxp & 0x01) << 5;
+               uint8_t dstart = 0;
 
-dstart = (phrase_mode ? dstart : pixAddr & 0x07);
+               if (pixsize == 3)
+                  dstart = (dstxp & 0x07) << 3;
+               if (pixsize == 4)
+                  dstart = (dstxp & 0x03) << 4;
+               if (pixsize == 5)
+                  dstart = (dstxp & 0x01) << 5;
 
-//This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
-uint16_t dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
-uint16_t pseq = dstxwr ^ (a1_win_x & 0x7FFE);
-pseq = (pixsize == 5 ? pseq : pseq & 0x7FFC);
-pseq = ((pixsize & 0x06) == 4 ? pseq : pseq & 0x7FF8);
-bool penden = clip_a1 && (pseq == 0);
-uint8_t window_mask = 0;
+               dstart = (phrase_mode ? dstart : pixAddr & 0x07);
 
-if (pixsize == 3)
-	window_mask = (a1_win_x & 0x07) << 3;
-if (pixsize == 4)
-	window_mask = (a1_win_x & 0x03) << 4;
-if (pixsize == 5)
-	window_mask = (a1_win_x & 0x01) << 5;
+               //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
+               uint16_t dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               uint16_t pseq = dstxwr ^ (a1_win_x & 0x7FFE);
+               pseq = (pixsize == 5 ? pseq : pseq & 0x7FFC);
+               pseq = ((pixsize & 0x06) == 4 ? pseq : pseq & 0x7FF8);
+               bool penden = clip_a1 && (pseq == 0);
+               uint8_t window_mask = 0;
 
-window_mask = (penden ? window_mask : 0);
+               if (pixsize == 3)
+                  window_mask = (a1_win_x & 0x07) << 3;
+               if (pixsize == 4)
+                  window_mask = (a1_win_x & 0x03) << 4;
+               if (pixsize == 5)
+                  window_mask = (a1_win_x & 0x01) << 5;
 
-/*
-  Entering SREADX state... [dstart=0 dend=20 pwidth=8 srcshift=20]
-    Source extra read address/pix address: 000095D0/0 [000004E40000001C]
-  Entering A2_ADD state [a2_x=0002, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering SREAD state... [dstart=0 dend=20 pwidth=8 srcshift=20]
-    Source read address/pix address: 000095D8/0 [0054003800009814]
-  Entering A2_ADD state [a2_x=0004, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 00037290/0 [dstart=0 dend=20 pwidth=8 srcshift=20][daas=0 dabs=0 dam=7 ds=1 daq=F] [0000001C00000000] (icount=026E, inc=4)
-  Entering A1_ADD state [a1_x=0000, a1_y=0000, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
+               window_mask = (penden ? window_mask : 0);
 
-(icount=026E, inc=4)
-icount & 0x03 = 0x02
-         << 4 = 0x20
 
-window_mask = 0x1000
+               /* The mask to be used if within one phrase of the end of the inner
+                  loop, similarly */
+               uint8_t inner_mask = 0;
 
-Therefore, it chooses the inner_mask over the window_mask every time! Argh!
-This is because we did this wrong:
-Innerm[3-5]	:= AN2 (inner_mask[3-5], imb[3-5], inner0);
-NOTE! This doesn't fix the problem because inner0 is asserted too late to help here. !!! FIX !!! [Should be DONE]
-*/
+               if (pixsize == 3)
+                  inner_mask = (icount & 0x07) << 3;
+               if (pixsize == 4)
+                  inner_mask = (icount & 0x03) << 4;
+               if (pixsize == 5)
+                  inner_mask = (icount & 0x01) << 5;
+               if (!inner0)
+                  inner_mask = 0;
+               /* The actual mask used should be the lesser of the window masks and
+                  the inner mask, where is all cases 000 means 1000. */
+               window_mask = (window_mask == 0 ? 0x40 : window_mask);
+               inner_mask = (inner_mask == 0 ? 0x40 : inner_mask);
+               uint8_t emask = (window_mask > inner_mask ? inner_mask : window_mask);
+               /* The mask to be used for the pixel size, to which must be added
+                  the bit offset */
+               uint8_t pma = pixAddr + (1 << pixsize);
+               /* Select the mask */
+               uint8_t dend = (phrase_mode ? emask : pma);
 
-/* The mask to be used if within one phrase of the end of the inner
-loop, similarly */
-uint8_t inner_mask = 0;
+               /* The cycle width in phrase mode is normally one phrase.  However,
+                  at the start and end it may be narrower.  The start and end masks
+                  are used to generate this.  The width is given by:
 
-if (pixsize == 3)
-	inner_mask = (icount & 0x07) << 3;
-if (pixsize == 4)
-	inner_mask = (icount & 0x03) << 4;
-if (pixsize == 5)
-	inner_mask = (icount & 0x01) << 5;
-if (!inner0)
-	inner_mask = 0;
-/* The actual mask used should be the lesser of the window masks and
-the inner mask, where is all cases 000 means 1000. */
-window_mask = (window_mask == 0 ? 0x40 : window_mask);
-inner_mask = (inner_mask == 0 ? 0x40 : inner_mask);
-uint8_t emask = (window_mask > inner_mask ? inner_mask : window_mask);
-/* The mask to be used for the pixel size, to which must be added
-the bit offset */
-uint8_t pma = pixAddr + (1 << pixsize);
-/* Select the mask */
-uint8_t dend = (phrase_mode ? emask : pma);
+                  8 - start mask - (8 - end mask)
+                  =	end mask - start mask
 
-/* The cycle width in phrase mode is normally one phrase.  However,
-at the start and end it may be narrower.  The start and end masks
-are used to generate this.  The width is given by:
+                  This is only used for writes in phrase mode.
+                  Start and end from the address level of the pipeline are used.
+                  */
+               uint8_t pwidth = (((dend | dstart) & 0x07) == 0 ? 0x08 : (dend - dstart) & 0x07);
 
-	8 - start mask - (8 - end mask)
-=	end mask - start mask
+               //uint32_t dstAddr, pixAddr;
+               //ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
+               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
 
-This is only used for writes in phrase mode.
-Start and end from the address level of the pipeline are used.
-*/
-uint8_t pwidth = (((dend | dstart) & 0x07) == 0 ? 0x08 : (dend - dstart) & 0x07);
+               //More testing... This is almost certainly wrong, but how else does this work???
+               //Seems to kinda work... But still, this doesn't seem to make any sense!
+               if (phrase_mode && !dsten)
+                  dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 
-//uint32_t dstAddr, pixAddr;
-//ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
-//	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-//	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("     Dest write address/pix address: %08X/%1X", address, pixAddr);
-#endif
+               //Testing only... for now...
+               //This is wrong because the write data is a combination of srcd and dstd--either run
+               //thru the LFU or in PATDSEL or ADDDSEL mode. [DONE now, thru DATA module]
+               // Precedence is ADDDSEL > PATDSEL > LFU.
+               //Also, doesn't take into account the start & end masks, or the phrase width...
+               //Now it does!
 
-//More testing... This is almost certainly wrong, but how else does this work???
-//Seems to kinda work... But still, this doesn't seem to make any sense!
-if (phrase_mode && !dsten)
-	dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
+               uint64_t srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
+               //bleh, ugly ugly ugly
+               if (srcshift == 0)
+                  srcd = srcd1;
 
-//Testing only... for now...
-//This is wrong because the write data is a combination of srcd and dstd--either run
-//thru the LFU or in PATDSEL or ADDDSEL mode. [DONE now, thru DATA module]
-// Precedence is ADDDSEL > PATDSEL > LFU.
-//Also, doesn't take into account the start & end masks, or the phrase width...
-//Now it does!
+               //NOTE: This only works with pixel sizes less than 8BPP...
+               //DOUBLE NOTE: Still need to do regression testing to ensure that this doesn't break other stuff... !!! CHECK !!!
+               if (!phrase_mode && srcshift != 0)
+                  srcd = ((srcd2 & 0xFF) << (8 - srcshift)) | ((srcd1 & 0xFF) >> srcshift);
 
-// srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
-uint64_t srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
-//bleh, ugly ugly ugly
-if (srcshift == 0)
-	srcd = srcd1;
+               //Z DATA() stuff done here... And it has to be done before any Z shifting...
+               //Note that we need to have phrase mode start/end support here... (Not since we moved it from dzwrite...!)
+               /*
+                  Here are a couple of Cybermorph blits with Z:
+                  $00113078	// DSTEN DSTENZ DSTWRZ CLIP_A1 GOURD GOURZ PATDSEL ZMODE=4
+                  $09900F39	// SRCEN DSTEN DSTENZ DSTWRZ UPDA1 UPDA1F UPDA2 DSTA2 ZMODE=4 LFUFUNC=C DCOMPEN
 
-//NOTE: This only works with pixel sizes less than 8BPP...
-//DOUBLE NOTE: Still need to do regression testing to ensure that this doesn't break other stuff... !!! CHECK !!!
-if (!phrase_mode && srcshift != 0)
-	srcd = ((srcd2 & 0xFF) << (8 - srcshift)) | ((srcd1 & 0xFF) >> srcshift);
+                  We're having the same phrase mode overwrite problem we had with the pixels... !!! FIX !!!
+                  Odd. It's equating 0 with 0... Even though ZMODE is $04 (less than)!
+                  */
+               if (gourz)
+               {
+                  /*
+                     void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
+                     uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
+                     uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
+                     uint32_t zinc, uint32_t zstep)
+                     */
+                  uint16_t addq[4];
+                  uint8_t initcin[4] = { 0, 0, 0, 0 };
+                  ADDARRAY(addq, 7/*daddasel*/, 6/*daddbsel*/, 0/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
+                  srcz2 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+                  ADDARRAY(addq, 6/*daddasel*/, 7/*daddbsel*/, 1/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
+                  srcz1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 
-//Z DATA() stuff done here... And it has to be done before any Z shifting...
-//Note that we need to have phrase mode start/end support here... (Not since we moved it from dzwrite...!)
-/*
-Here are a couple of Cybermorph blits with Z:
-$00113078	// DSTEN DSTENZ DSTWRZ CLIP_A1 GOURD GOURZ PATDSEL ZMODE=4
-$09900F39	// SRCEN DSTEN DSTENZ DSTWRZ UPDA1 UPDA1F UPDA2 DSTA2 ZMODE=4 LFUFUNC=C DCOMPEN
+               }
 
-We're having the same phrase mode overwrite problem we had with the pixels... !!! FIX !!!
-Odd. It's equating 0 with 0... Even though ZMODE is $04 (less than)!
-*/
-if (gourz)
-{
-/*
-void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
-	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
-	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
-	uint32_t zinc, uint32_t zstep)
-*/
-	uint16_t addq[4];
-	uint8_t initcin[4] = { 0, 0, 0, 0 };
-	ADDARRAY(addq, 7/*daddasel*/, 6/*daddbsel*/, 0/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
-	srcz2 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-	ADDARRAY(addq, 6/*daddasel*/, 7/*daddbsel*/, 1/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
-	srcz1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+               uint8_t zSrcShift = srcshift & 0x30;
+               srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
+               //bleh, ugly ugly ugly
+               if (zSrcShift == 0)
+                  srcz = srcz1;
 
-#if 0//def VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("\n[srcz1=%08X%08X, srcz2=%08X%08X, zinc=%08X",
-		(uint32_t)(srcz1 >> 32), (uint32_t)(srcz1 & 0xFFFFFFFF),
-		(uint32_t)(srcz2 >> 32), (uint32_t)(srcz2 & 0xFFFFFFFF), zinc);
-#endif
-}
 
-uint8_t zSrcShift = srcshift & 0x30;
-srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
-//bleh, ugly ugly ugly
-if (zSrcShift == 0)
-	srcz = srcz1;
+               //When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
+               //According to following line, it gets LFU mode. But does it feed the source into the LFU
+               //after the add?
+               //Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
+               //Let's try this:
+               if (srcshade)
+               {
+                  //NOTE: This is basically doubling the work done by DATA--since this is what
+                  //      ADDARRAY is loaded with when srschshade is enabled... !!! FIX !!!
+                  //      Also note that it doesn't work properly unless GOURZ is set--there's the clue!
+                  uint16_t addq[4];
+                  uint8_t initcin[4] = { 0, 0, 0, 0 };
+                  ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
+                  srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+               }
+               //Seems to work... Not 100% sure tho.
+               //end try this
 
-#if 0//def VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog(" srcz=%08X%08X]\n", (uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF));
-#endif
+               //Temporary kludge, to see if the fractional pattern does anything...
+               //This works, BTW
+               //But it seems to mess up in Cybermorph... the shading should be smooth but it isn't...
+               //Seems the carry out is lost again... !!! FIX !!! [DONE--see below]
+               if (patfadd)
+               {
+                  uint16_t addq[4];
+                  uint8_t initcin[4] = { 0, 0, 0, 0 };
+                  ADDARRAY(addq, 4/*daddasel*/, 4/*daddbsel*/, 0/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
+                  srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+               }
 
-//When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
-//According to following line, it gets LFU mode. But does it feed the source into the LFU
-//after the add?
-//Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
-//Let's try this:
-if (srcshade)
-{
-//NOTE: This is basically doubling the work done by DATA--since this is what
-//      ADDARRAY is loaded with when srschshade is enabled... !!! FIX !!!
-//      Also note that it doesn't work properly unless GOURZ is set--there's the clue!
-	uint16_t addq[4];
-	uint8_t initcin[4] = { 0, 0, 0, 0 };
-	ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
-	srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-}
-//Seems to work... Not 100% sure tho.
-//end try this
+               //Note that we still don't take atick[0] & [1] into account here, so this will skip half of the data needed... !!! FIX !!!
+               //Not yet enumerated: dbinh, srcdread, srczread
+               //Also, should do srcshift on the z value in phrase mode... !!! FIX !!! [DONE]
+               //As well as add a srcz variable we can set external to this state... !!! FIX !!! [DONE]
 
-//Temporary kludge, to see if the fractional pattern does anything...
-//This works, BTW
-//But it seems to mess up in Cybermorph... the shading should be smooth but it isn't...
-//Seems the carry out is lost again... !!! FIX !!! [DONE--see below]
-if (patfadd)
-{
-	uint16_t addq[4];
-	uint8_t initcin[4] = { 0, 0, 0, 0 };
-	ADDARRAY(addq, 4/*daddasel*/, 4/*daddbsel*/, 0/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
-	srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-}
+               uint64_t wdata;
+               uint8_t dcomp, zcomp;
+               DATA(wdata, dcomp, zcomp, &winhibit,
+                     true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
+                     dend, dstart, dstd, iinc, lfufunc, patd, patdadd,
+                     phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
+                     bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
+                     srcz, dstz, zinc);
 
-//Note that we still don't take atick[0] & [1] into account here, so this will skip half of the data needed... !!! FIX !!!
-//Not yet enumerated: dbinh, srcdread, srczread
-//Also, should do srcshift on the z value in phrase mode... !!! FIX !!! [DONE]
-//As well as add a srcz variable we can set external to this state... !!! FIX !!! [DONE]
+               //Why isn't this taken care of in DATA? Because, DATA is modifying its local copy instead of the one used here.
+               //!!! FIX !!! [DONE]
+               //if (patdadd)
+               //	patd = wdata;
 
-uint64_t wdata;
-uint8_t dcomp, zcomp;
-DATA(wdata, dcomp, zcomp, &winhibit,
-	true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
-	dend, dstart, dstd, iinc, lfufunc, patd, patdadd,
-	phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
-	bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
-	srcz, dstz, zinc);
-/*
-Seems that the phrase mode writes with DCOMPEN and DSTEN are corrupting inside of DATA: !!! FIX !!!
-It's fairly random as well. 7CFE -> 7DFE, 7FCA -> 78CA, 7FA4 -> 78A4, 7F88 -> 8F88
-It could be related to an uninitialized variable, like the zmode bug...
-[DONE]
-It was a bug in the dech38el data--it returned $FF for ungated instead of $00...
+               //if (patfadd)
+               //	srcd1 = wdata;
 
-Blit! (CMD = 09800609)
-Flags: SRCEN DSTEN UPDA1 UPDA2 LFUFUNC=C DCOMPEN
-  count = 10 x 12
-  a1_base = 00110000, a2_base = 0010B2A8
-  a1_x = 004B, a1_y = 00D8, a1_frac_x = 0000, a1_frac_y = 0000, a2_x = 0704, a2_y = 0000
-  a1_step_x = FFF3, a1_step_y = 0001, a1_stepf_x = 0000, a1_stepf_y = 0000, a2_step_x = FFFC, a2_step_y = 0000
-  a1_inc_x = 0000, a1_inc_y = 0000, a1_incf_x = 0000, a1_incf_y = 0000
-  a1_win_x = 0000, a1_win_y = 0000, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+phr/+0 a2add=+phr/+0
-  a1_pixsize = 4, a2_pixsize = 4
-   srcd=0000000000000000  dstd=0000000000000000 patd=0000000000000000 iinc=00000000
-  srcz1=0000000000000000 srcz2=0000000000000000 dstz=0000000000000000 zinc=00000000, coll=0
-  Phrase mode is ON
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-  Entering SREAD state...    Source read address/pix address: 0010C0B0/0 [0000000078047804]
-  Entering A2_ADD state [a2_x=0704, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DREAD state...
-      Dest read address/pix address: 00197240/0 [0000000000000028]
-  Entering DWRITE state...
-     Dest write address/pix address: 00197240/0 [dstart=30 dend=40 pwidth=8 srcshift=30][daas=0 dabs=0 dam=7 ds=1 daq=F] [0000000000000028] (icount=0009, inc=1)
-  Entering A1_ADD state [a1_x=004B, a1_y=00D8, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering SREAD state...    Source read address/pix address: 0010C0B8/0 [7804780478047804]
-  Entering A2_ADD state [a2_x=0708, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DREAD state...
-      Dest read address/pix address: 00197260/0 [0028000000200008]
-  Entering DWRITE state...
-     Dest write address/pix address: 00197260/0 [dstart=0 dend=40 pwidth=8 srcshift=30][daas=0 dabs=0 dam=7 ds=1 daq=F] [0028780478047804] (icount=0005, inc=4)
-  Entering A1_ADD state [a1_x=004C, a1_y=00D8, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering SREAD state...    Source read address/pix address: 0010C0C0/0 [0000000000000000]
-  Entering A2_ADD state [a2_x=070C, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DREAD state...
-      Dest read address/pix address: 00197280/0 [0008001800180018]
-  Entering DWRITE state...
-     Dest write address/pix address: 00197280/0 [dstart=0 dend=40 pwidth=8 srcshift=30][daas=0 dabs=0 dam=7 ds=1 daq=F] [7804780478040018] (icount=0001, inc=4)
-  Entering A1_ADD state [a1_x=0050, a1_y=00D8, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering SREAD state...    Source read address/pix address: 0010C0C8/0 [000078047BFE7BFE]
-  Entering A2_ADD state [a2_x=0710, a2_y=0000, addasel=0, addbsel=1, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering DREAD state...
-      Dest read address/pix address: 001972A0/0 [0008002000000000]
-  Entering DWRITE state...
-     Dest write address/pix address: 001972A0/0 [dstart=0 dend=10 pwidth=8 srcshift=30][daas=0 dabs=0 dam=7 ds=1 daq=F] [0008002000000000] (icount=FFFD, inc=4)
-  Entering A1_ADD state [a1_x=0054, a1_y=00D8, addasel=0, addbsel=0, modx=2, addareg=F, adda_xconst=2, adda_yconst=0]...
-  Entering IDLE_INNER state...
-*/
+               /*
+                  DEF ADDRCOMP (
+                  a1_outside	// A1 pointer is outside window bounds
+                  :OUT;
+                  INT16/	a1_x
+                  INT16/	a1_y
+                  INT15/	a1_win_x
+                  INT15/	a1_win_y
+                  :IN);
+                  BEGIN
 
-//Why isn't this taken care of in DATA? Because, DATA is modifying its local copy instead of the one used here.
-//!!! FIX !!! [DONE]
-//if (patdadd)
-//	patd = wdata;
-
-//if (patfadd)
-//	srcd1 = wdata;
-
-/*
-DEF ADDRCOMP (
-	a1_outside	// A1 pointer is outside window bounds
-	:OUT;
-INT16/	a1_x
-INT16/	a1_y
-INT15/	a1_win_x
-INT15/	a1_win_y
-	:IN);
-BEGIN
-
-// The address is outside if negative, or if greater than or equal
-// to the window size
+               // The address is outside if negative, or if greater than or equal
+               // to the window size
 
 A1_xcomp	:= MAG_15 (a1xgr, a1xeq, a1xlt, a1_x{0..14}, a1_win_x{0..14});
 A1_ycomp	:= MAG_15 (a1ygr, a1yeq, a1ylt, a1_y{0..14}, a1_win_y{0..14});
 A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 */
-//NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
-//      Actually, seems to be related to phrase mode writes...
-//      Or is it? Could be related to non-15-bit compares as above?
-if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
-	winhibit = true;
+               //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
+               //      Actually, seems to be related to phrase mode writes...
+               //      Or is it? Could be related to non-15-bit compares as above?
+               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+                  winhibit = true;
 
-if (!winhibit)
-{
-	if (phrase_mode)
-	{
-		JaguarWriteLong(address + 0, wdata >> 32, BLITTER);
-		JaguarWriteLong(address + 4, wdata & 0xFFFFFFFF, BLITTER);
-	}
-	else
-	{
-		if (pixsize == 5)
-			JaguarWriteLong(address, wdata & 0xFFFFFFFF, BLITTER);
-		else if (pixsize == 4)
-			JaguarWriteWord(address, wdata & 0x0000FFFF, BLITTER);
-		else
-			JaguarWriteByte(address, wdata & 0x000000FF, BLITTER);
-	}
+               if (!winhibit)
+               {
+                  if (phrase_mode)
+                  {
+                     JaguarWriteLong(address + 0, wdata >> 32, BLITTER);
+                     JaguarWriteLong(address + 4, wdata & 0xFFFFFFFF, BLITTER);
+                  }
+                  else
+                  {
+                     if (pixsize == 5)
+                        JaguarWriteLong(address, wdata & 0xFFFFFFFF, BLITTER);
+                     else if (pixsize == 4)
+                        JaguarWriteWord(address, wdata & 0x0000FFFF, BLITTER);
+                     else
+                        JaguarWriteByte(address, wdata & 0x000000FF, BLITTER);
+                  }
+               }
+
+            }
+
+            if (dzwrite)
+            {
+               // OK, here's the big insight: When NOT in GOURZ mode, srcz1 & 2 function EXACTLY the same way that
+               // srcd1 & 2 work--there's an implicit shift from srcz1 to srcz2 whenever srcz1 is read.
+               // OTHERWISE, srcz1 is the integer for the computed Z and srcz2 is the fractional part.
+               // Writes to srcz1 & 2 follow the same pattern as the other 64-bit registers--low 32 at the low address,
+               // high 32 at the high address (little endian!).
+               // NOTE: GOURZ is still not properly supported. Check patd/patf handling...
+               //       Phrase mode start/end masks are not properly supported either...
+               //This is not correct... !!! FIX !!!
+               //Should be OK now... We'll see...
+               //Nope. Having the same starstep write problems in phrase mode as we had with pixels... !!! FIX !!!
+               //This is not causing the problem in Hover Strike... :-/
+               //The problem was with the SREADX not shifting. Still problems with Z comparisons & other text in pregame screen...
+               if (!winhibit)
+               {
+                  if (phrase_mode)
+                  {
+                     JaguarWriteLong(address + 0, srcz >> 32, BLITTER);
+                     JaguarWriteLong(address + 4, srcz & 0xFFFFFFFF, BLITTER);
+                  }
+                  else
+                  {
+                     if (pixsize == 4)
+                        JaguarWriteWord(address, srcz & 0x0000FFFF, BLITTER);
+                  }
+               }//*/
+            }
+
+
+            if (a1_add)
+            {
+               int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
+               ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
+               ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+
+               //Now, write to what???
+               //a2ptrld comes from a2ptrldi...
+               //I believe it's addbsel that determines the writeback...
+               // This is where atick[0] & [1] come in, in determining which part (fractional, integer)
+               // gets written to...
+               //a1_x = addq_x;
+               //a1_y = addq_y;
+               //Kludge, to get A1 channel increment working...
+               if (a1addx == 3)
+               {
+                  a1_frac_x = addq_x, a1_frac_y = addq_y;
+
+                  addasel = 2, addbsel = 0, a1fracldi = false;
+                  ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                        a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
+                  ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+
+                  a1_x = addq_x, a1_y = addq_y;
+               }
+               else
+                  a1_x = addq_x, a1_y = addq_y;
+            }
+
+            if (a2_add)
+            {
+               //void ADDAMUX(int16_t &adda_x, int16_t &adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+               //	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
+               //	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
+               //	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
+               //void ADDBMUX(int16_t &addb_x, int16_t &addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+               //	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
+               //void ADDRADD(int16_t &addq_x, int16_t &addq_y, bool a1fracldi,
+               //	int16_t adda_x, int16_t adda_y, int16_t addb_x, int16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
+               //void DATAMUX(int16_t &data_x, int16_t &data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
+               int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
+               ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
+               ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+
+               //Now, write to what???
+               //a2ptrld comes from a2ptrldi...
+               //I believe it's addbsel that determines the writeback...
+               a2_x = addq_x;
+               a2_y = addq_y;
+            }
+         }
+
+         indone = true;
+         // The outer counter is updated here as well on the clock cycle...
+
+         /* the inner loop is started whenever another state is about to
+            cause the inner state to go active */
+         //Instart		:= ND7 (instart, innert[0], innert[2..7]);
+
+         //Actually, it's done only when inner gets asserted without the 2nd line of conditions
+         //(inner AND !indone)
+         //fixed now...
+         //Since we don't get here until the inner loop is finished (indone = true) we can get
+         //away with doing it here...!
+         ocount--;
+
+         if (ocount == 0)
+            outer0 = true;
+      }
+
+      if (a1fupdate)
+      {
+         uint32_t a1_frac_xt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
+         uint32_t a1_frac_yt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
+         a1FracCInX = a1_frac_xt >> 16;
+         a1FracCInY = a1_frac_yt >> 16;
+         a1_frac_x = (uint16_t)(a1_frac_xt & 0xFFFF);
+         a1_frac_y = (uint16_t)(a1_frac_yt & 0xFFFF);
+      }
+
+      if (a1update)
+      {
+         a1_x += a1_step_x + a1FracCInX;
+         a1_y += a1_step_y + a1FracCInY;
+      }
+
+      if (a2update)
+      {
+         a2_x += a2_step_x;
+         a2_y += a2_step_y;
+      }
+   }
+
+   // We never get here! !!! FIX !!!
+
+
+   // Write values back to registers (in real blitter, these are continuously updated)
+   SET16(blitter_ram, A1_PIXEL + 2, a1_x);
+   SET16(blitter_ram, A1_PIXEL + 0, a1_y);
+   SET16(blitter_ram, A1_FPIXEL + 2, a1_frac_x);
+   SET16(blitter_ram, A1_FPIXEL + 0, a1_frac_y);
+   SET16(blitter_ram, A2_PIXEL + 2, a2_x);
+   SET16(blitter_ram, A2_PIXEL + 0, a2_y);
+
 }
-
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	WriteLog(" [%08X%08X]%s", (uint32_t)(wdata >> 32), (uint32_t)(wdata & 0xFFFFFFFF), (winhibit ? "[X]" : ""));
-	WriteLog(" (icount=%04X, inc=%u)\n", icount, (uint16_t)inc);
-	WriteLog("    [dstart=%X dend=%X pwidth=%X srcshift=%X]", dstart, dend, pwidth, srcshift);
-	WriteLog("[daas=%X dabs=%X dam=%X ds=%X daq=%s]\n", daddasel, daddbsel, daddmode, data_sel, (daddq_sel ? "T" : "F"));
-}
-#endif
-				}
-
-				if (dzwrite)
-				{
-// OK, here's the big insight: When NOT in GOURZ mode, srcz1 & 2 function EXACTLY the same way that
-// srcd1 & 2 work--there's an implicit shift from srcz1 to srcz2 whenever srcz1 is read.
-// OTHERWISE, srcz1 is the integer for the computed Z and srcz2 is the fractional part.
-// Writes to srcz1 & 2 follow the same pattern as the other 64-bit registers--low 32 at the low address,
-// high 32 at the high address (little endian!).
-// NOTE: GOURZ is still not properly supported. Check patd/patf handling...
-//       Phrase mode start/end masks are not properly supported either...
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	WriteLog("  Entering DZWRITE state...");
-	WriteLog("  Dest Z write address/pix address: %08X/%1X [%08X%08X]\n", address,
-		pixAddr, (uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF));
-}
-#endif
-//This is not correct... !!! FIX !!!
-//Should be OK now... We'll see...
-//Nope. Having the same starstep write problems in phrase mode as we had with pixels... !!! FIX !!!
-//This is not causing the problem in Hover Strike... :-/
-//The problem was with the SREADX not shifting. Still problems with Z comparisons & other text in pregame screen...
-if (!winhibit)
-{
-	if (phrase_mode)
-	{
-		JaguarWriteLong(address + 0, srcz >> 32, BLITTER);
-		JaguarWriteLong(address + 4, srcz & 0xFFFFFFFF, BLITTER);
-	}
-	else
-	{
-		if (pixsize == 4)
-			JaguarWriteWord(address, srcz & 0x0000FFFF, BLITTER);
-	}
-}//*/
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-//	printf(" [%08X%08X]\n", (uint32_t)(srcz >> 32), (uint32_t)(srcz & 0xFFFFFFFF));
-//	fflush(stdout);
-//printf(" [dstart=%X dend=%X pwidth=%X srcshift=%X]", dstart, dend, pwidth, srcshift);
-	WriteLog("    [dstart=? dend=? pwidth=? srcshift=%X]", srcshift);
-	WriteLog("[daas=%X dabs=%X dam=%X ds=%X daq=%s]\n", daddasel, daddbsel, daddmode, data_sel, (daddq_sel ? "T" : "F"));
-//	fflush(stdout);
-}
-#endif
-				}
-
-/*
-This is because the address generator was using only 15 bits of the X when it should have
-used 16!
-
-There's a slight problem here: The X pointer isn't wrapping like it should when it hits
-the edge of the window... Notice how the X isn't reset at the edge of the window:
-
-Blit! (CMD = 00010000)
-Flags: PATDSEL
-  count = 160 x 261
-  a1_base = 000E8008, a2_base = 0001FA68
-  a1_x = 0000, a1_y = 0000, a1_frac_x = 0000, a1_frac_y = 0000, a2_x = 0000, a2_y = 0000
-  a1_step_x = 0000, a1_step_y = 0000, a1_stepf_x = 0000, a1_stepf_y = 0000, a2_step_x = 0000, a2_step_y = 0000
-  a1_inc_x = 0000, a1_inc_y = 0000, a1_incf_x = 0000, a1_incf_y = 0000
-  a1_win_x = 0000, a1_win_y = 0000, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+phr/+0 a2add=+phr/+0
-  a1_pixsize = 5, a2_pixsize = 5
-   srcd=7717771777177717  dstd=0000000000000000 patd=7730773077307730 iinc=00000000
-  srcz1=0000000000000000 srcz2=0000000000000000 dstz=0000000000000000 zinc=00000000, coll=0
-  Phrase mode is ON
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-  Entering DWRITE state...     Dest write address/pix address: 000E8008/0 [7730773077307730] (icount=009E, inc=2)
- srcz=0000000000000000][dcomp=AA zcomp=00 dbinh=00]
-[srcz=0000000000000000 dstz=0000000000000000 zwdata=0000000000000000 mask=7FFF]
-    [dstart=0 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F]
-  Entering A1_ADD state [a1_x=0000, a1_y=0000, addasel=0, addbsel=0, modx=1, addareg=F, adda_xconst=1, adda_yconst=0]...
-  Entering DWRITE state...     Dest write address/pix address: 000E8018/0 [7730773077307730] (icount=009C, inc=2)
- srcz=0000000000000000][dcomp=AA zcomp=00 dbinh=00]
-[srcz=0000000000000000 dstz=0000000000000000 zwdata=0000000000000000 mask=7FFF]
-    [dstart=0 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F]
-  Entering A1_ADD state [a1_x=0002, a1_y=0000, addasel=0, addbsel=0, modx=1, addareg=F, adda_xconst=1, adda_yconst=0]...
-
-...
-
-  Entering A1_ADD state [a1_x=009C, a1_y=0000, addasel=0, addbsel=0, modx=1, addareg=F, adda_xconst=1, adda_yconst=0]...
-  Entering DWRITE state...     Dest write address/pix address: 000E84F8/0 [7730773077307730] (icount=0000, inc=2)
- srcz=0000000000000000][dcomp=AA zcomp=00 dbinh=00]
-[srcz=0000000000000000 dstz=0000000000000000 zwdata=0000000000000000 mask=7FFF]
-    [dstart=0 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F]
-  Entering A1_ADD state [a1_x=009E, a1_y=0000, addasel=0, addbsel=0, modx=1, addareg=F, adda_xconst=1, adda_yconst=0]...
-  Entering IDLE_INNER state...
-
-  Leaving INNER state... (ocount=0104)
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-
-  Entering INNER state...
-  Entering DWRITE state...     Dest write address/pix address: 000E8508/0 [7730773077307730] (icount=009E, inc=2)
- srcz=0000000000000000][dcomp=AA zcomp=00 dbinh=00]
-[srcz=0000000000000000 dstz=0000000000000000 zwdata=0000000000000000 mask=7FFF]
-    [dstart=0 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F]
-  Entering A1_ADD state [a1_x=00A0, a1_y=0000, addasel=0, addbsel=0, modx=1, addareg=F, adda_xconst=1, adda_yconst=0]...
-  Entering DWRITE state...     Dest write address/pix address: 000E8518/0 [7730773077307730] (icount=009C, inc=2)
- srcz=0000000000000000][dcomp=AA zcomp=00 dbinh=00]
-[srcz=0000000000000000 dstz=0000000000000000 zwdata=0000000000000000 mask=7FFF]
-    [dstart=0 dend=40 pwidth=8 srcshift=0][daas=0 dabs=0 dam=7 ds=0 daq=F]
-  Entering A1_ADD state [a1_x=00A2, a1_y=0000, addasel=0, addbsel=0, modx=1, addareg=F, adda_xconst=1, adda_yconst=0]...
-
-*/
-
-				if (a1_add)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-//printf("  Entering A1_ADD state [addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-WriteLog("  Entering A1_ADD state [a1_x=%04X, a1_y=%04X, addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", a1_x, a1_y, addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-//fflush(stdout);
-}
-#endif
-int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
-ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
-	a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
-
-#if 0//def VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  [adda_x=%d, adda_y=%d, addb_x=%d, addb_y=%d, addq_x=%d, addq_y=%d]\n", adda_x, adda_y, addb_x, addb_y, addq_x, addq_y);
-//fflush(stdout);
-}
-#endif
-//Now, write to what???
-//a2ptrld comes from a2ptrldi...
-//I believe it's addbsel that determines the writeback...
-// This is where atick[0] & [1] come in, in determining which part (fractional, integer)
-// gets written to...
-//a1_x = addq_x;
-//a1_y = addq_y;
-//Kludge, to get A1 channel increment working...
-if (a1addx == 3)
-{
-	a1_frac_x = addq_x, a1_frac_y = addq_y;
-
-addasel = 2, addbsel = 0, a1fracldi = false;
-ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
-	a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
-
-	a1_x = addq_x, a1_y = addq_y;
-}
-else
-	a1_x = addq_x, a1_y = addq_y;
-				}
-
-				if (a2_add)
-				{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-//printf("  Entering A2_ADD state [addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-WriteLog("  Entering A2_ADD state [a2_x=%04X, a2_y=%04X, addasel=%X, addbsel=%X, modx=%X, addareg=%s, adda_xconst=%u, adda_yconst=%s]...\n", a2_x, a2_y, addasel, addbsel, modx, (addareg ? "T" : "F"), adda_xconst, (adda_yconst ? "1" : "0"));
-//fflush(stdout);
-}
-#endif
-//void ADDAMUX(int16_t &adda_x, int16_t &adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
-//	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
-//	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
-//	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
-//void ADDBMUX(int16_t &addb_x, int16_t &addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
-//	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
-//void ADDRADD(int16_t &addq_x, int16_t &addq_y, bool a1fracldi,
-//	int16_t adda_x, int16_t adda_y, int16_t addb_x, int16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
-//void DATAMUX(int16_t &data_x, int16_t &data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
-int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
-ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
-	a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
-
-#if 0//def VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  [adda_x=%d, adda_y=%d, addb_x=%d, addb_y=%d, addq_x=%d, addq_y=%d]\n", adda_x, adda_y, addb_x, addb_y, addq_x, addq_y);
-//fflush(stdout);
-}
-#endif
-//Now, write to what???
-//a2ptrld comes from a2ptrldi...
-//I believe it's addbsel that determines the writeback...
-a2_x = addq_x;
-a2_y = addq_y;
-				}
-			}
-/*
-Flags: SRCEN CLIP_A1 UPDA1 UPDA1F UPDA2 DSTA2 GOURZ ZMODE=0 LFUFUNC=C SRCSHADE
-  count = 64 x 55
-  a1_base = 0015B000, a2_base = 0014B000
-  a1_x = 0000, a1_y = 0000, a1_frac_x = 8000, a1_frac_y = 8000, a2_x = 001F, a2_y = 0038
-  a1_step_x = FFFFFFC0, a1_step_y = 0001, a1_stepf_x = 0000, a1_stepf_y = 2AAA, a2_step_x = FFFFFFC0, a2_step_y = 0001
-  a1_inc_x = 0001, a1_inc_y = 0000, a1_incf_x = 0000, a1_incf_y = 0000
-  a1_win_x = 0040, a1_win_y = 0040, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+inc/+0 a2add=+1/+0
-  a1_pixsize = 4, a2_pixsize = 4
-   srcd=FF00FF00FF00FF00  dstd=0000000000000000 patd=0000000000000000 iinc=00000000
-  srcz1=0000000000000000 srcz2=0000000000000000 dstz=0000000000000000 zinc=00000000, col=0
-  Phrase mode is off
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-  Entering SREAD state...    Source read address/pix address: 0015B000/0 [6505650565056505]
-  Entering A1_ADD state [a1_x=0000, a1_y=0000, addasel=3, addbsel=2, modx=0, addareg=T, adda_xconst=7, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
-  Entering A2_ADD state [a2_x=001F, a2_y=0038, addasel=0, addbsel=1, modx=0, addareg=F, adda_xconst=0, adda_yconst=0]...
-  Entering SREAD state...    Source read address/pix address: 0015B000/0 [6505650565056505]
-  Entering A1_ADD state [a1_x=FFFF8000, a1_y=FFFF8000, addasel=3, addbsel=2, modx=0, addareg=T, adda_xconst=7, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0014E942/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003E, inc=1)
-  Entering A2_ADD state [a2_x=0021, a2_y=0039, addasel=0, addbsel=1, modx=0, addareg=F, adda_xconst=0, adda_yconst=0]...
-  Entering SREAD state...    Source read address/pix address: 0015B000/0 [6505650565056505]
-  Entering A1_ADD state [a1_x=FFFF8000, a1_y=FFFF8000, addasel=3, addbsel=2, modx=0, addareg=T, adda_xconst=7, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0014EA46/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003D, inc=1)
-  Entering A2_ADD state [a2_x=0023, a2_y=003A, addasel=0, addbsel=1, modx=0, addareg=F, adda_xconst=0, adda_yconst=0]...
-  Entering SREAD state...    Source read address/pix address: 0015B000/0 [6505650565056505]
-  Entering A1_ADD state [a1_x=FFFF8000, a1_y=FFFF8000, addasel=3, addbsel=2, modx=0, addareg=T, adda_xconst=7, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0014EB4A/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003C, inc=1)
-  Entering A2_ADD state [a2_x=0025, a2_y=003B, addasel=0, addbsel=1, modx=0, addareg=F, adda_xconst=0, adda_yconst=0]...
-  ...
-  Entering SREAD state...    Source read address/pix address: 0015B000/0 [6505650565056505]
-  Entering A1_ADD state [a1_x=FFFF8000, a1_y=FFFF8000, addasel=3, addbsel=2, modx=0, addareg=T, adda_xconst=7, adda_yconst=0]...
-  Entering DWRITE state...
-     Dest write address/pix address: 0015283A/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=0000, inc=1)
-  Entering A2_ADD state [a2_x=009D, a2_y=0077, addasel=0, addbsel=1, modx=0, addareg=F, adda_xconst=0, adda_yconst=0]...
-  Entering IDLE_INNER state...
-  Leaving INNER state... (ocount=0036)
-  [in=F a1f=T a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering A1FUPDATE state...
-  [in=F a1f=F a1=T zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering A1UPDATE state... (-32768/-32768 -> 32704/-32767)
-  [in=F a1f=F a1=F zf=F z=F a2=T iif=F iii=F izf=F izi=F]
-  Entering A2UPDATE state... (159/120 -> 95/121)
-  [in=T a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-  Entering INNER state...
-*/
-
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  Leaving INNER state...");
-//fflush(stdout);
-}
-#endif
-			indone = true;
-// The outer counter is updated here as well on the clock cycle...
-
-/* the inner loop is started whenever another state is about to
-cause the inner state to go active */
-//Instart		:= ND7 (instart, innert[0], innert[2..7]);
-
-//Actually, it's done only when inner gets asserted without the 2nd line of conditions
-//(inner AND !indone)
-//fixed now...
-//Since we don't get here until the inner loop is finished (indone = true) we can get
-//away with doing it here...!
-			ocount--;
-
-			if (ocount == 0)
-				outer0 = true;
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog(" (ocount=%04X)\n", ocount);
-//fflush(stdout);
-}
-#endif
-		}
-
-		if (a1fupdate)
-		{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  Entering A1FUPDATE state...\n");
-//fflush(stdout);
-}
-#endif
-			uint32_t a1_frac_xt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
-			uint32_t a1_frac_yt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
-			a1FracCInX = a1_frac_xt >> 16;
-			a1FracCInY = a1_frac_yt >> 16;
-			a1_frac_x = (uint16_t)(a1_frac_xt & 0xFFFF);
-			a1_frac_y = (uint16_t)(a1_frac_yt & 0xFFFF);
-		}
-
-		if (a1update)
-		{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  Entering A1UPDATE state... (%d/%d -> ", a1_x, a1_y);
-//fflush(stdout);
-}
-#endif
-			a1_x += a1_step_x + a1FracCInX;
-			a1_y += a1_step_y + a1FracCInY;
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("%d/%d)\n", a1_x, a1_y);
-//fflush(stdout);
-}
-#endif
-		}
-
-		if (a2update)
-		{
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("  Entering A2UPDATE state... (%d/%d -> ", a2_x, a2_y);
-//fflush(stdout);
-}
-#endif
-			a2_x += a2_step_x;
-			a2_y += a2_step_y;
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-WriteLog("%d/%d)\n", a2_x, a2_y);
-//fflush(stdout);
-}
-#endif
-		}
-	}
-
-// We never get here! !!! FIX !!!
-
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	WriteLog("Done!\na1_x=%04X a1_y=%04X a1_frac_x=%04X a1_frac_y=%04X a2_x=%04X a2_y%04X\n",
-		GET16(blitter_ram, A1_PIXEL + 2),
-		GET16(blitter_ram, A1_PIXEL + 0),
-		GET16(blitter_ram, A1_FPIXEL + 2),
-		GET16(blitter_ram, A1_FPIXEL + 0),
-		GET16(blitter_ram, A2_PIXEL + 2),
-		GET16(blitter_ram, A2_PIXEL + 0));
-//	fflush(stdout);
-}
-#endif
-
-	// Write values back to registers (in real blitter, these are continuously updated)
-	SET16(blitter_ram, A1_PIXEL + 2, a1_x);
-	SET16(blitter_ram, A1_PIXEL + 0, a1_y);
-	SET16(blitter_ram, A1_FPIXEL + 2, a1_frac_x);
-	SET16(blitter_ram, A1_FPIXEL + 0, a1_frac_y);
-	SET16(blitter_ram, A2_PIXEL + 2, a2_x);
-	SET16(blitter_ram, A2_PIXEL + 0, a2_y);
-
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-{
-	WriteLog("Writeback!\na1_x=%04X a1_y=%04X a1_frac_x=%04X a1_frac_y=%04X a2_x=%04X a2_y%04X\n",
-		GET16(blitter_ram, A1_PIXEL + 2),
-		GET16(blitter_ram, A1_PIXEL + 0),
-		GET16(blitter_ram, A1_FPIXEL + 2),
-		GET16(blitter_ram, A1_FPIXEL + 0),
-		GET16(blitter_ram, A2_PIXEL + 2),
-		GET16(blitter_ram, A2_PIXEL + 0));
-//	fflush(stdout);
-}
-#endif
-}
-
-
-/*
-	int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
-	int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
-	uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
-	uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
-	int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
-	int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
-
-Seems that the ending a1_x should be written between blits, but it doesn't seem to be...
-
-Blit! (CMD = 01800000)
-Flags: LFUFUNC=C
-  count = 28672 x 1
-  a1_base = 00050000, a2_base = 00070000
-  a1_x = 0000, a1_y = 0000, a1_frac_x = 49CD, a1_frac_y = 0000, a2_x = 0033, a2_y = 0001
-  a1_step_x = 0000, a1_step_y = 0000, a1_stepf_x = 939A, a1_stepf_y = 0000, a2_step_x = 0000, a2_step_y = 0000
-  a1_inc_x = 0000, a1_inc_y = 0000, a1_incf_x = 0000, a1_incf_y = 0000
-  a1_win_x = 0100, a1_win_y = 0020, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+phr/+0 a2add=+phr/+0
-  a1_pixsize = 4, a2_pixsize = 3
-   srcd=DEDEDEDEDEDEDEDE  dstd=0000000000000000 patd=0000000000000000 iinc=00000000
-  srcz1=0000000000000000 srcz2=0000000000000000 dstz=0000000000000000 zinc=00000000, coll=0
-  Phrase mode is ON
-
-Blit! (CMD = 01800000)
-Flags: LFUFUNC=C
-  count = 28672 x 1
-  a1_base = 00050000, a2_base = 00070000
-  a1_x = 0000, a1_y = 0000, a1_frac_x = 49CD, a1_frac_y = 0000, a2_x = 0033, a2_y = 0001
-  a1_step_x = 0000, a1_step_y = 0000, a1_stepf_x = 939A, a1_stepf_y = 0000, a2_step_x = 0000, a2_step_y = 0000
-  a1_inc_x = 0000, a1_inc_y = 0000, a1_incf_x = 0000, a1_incf_y = 0000
-  a1_win_x = 0100, a1_win_y = 0020, a2_mask_x = 0000, a2_mask_y = 0000
-  a2_mask=F a1add=+phr/+0 a2add=+phr/+0
-  a1_pixsize = 4, a2_pixsize = 3
-   srcd=D6D6D6D6D6D6D6D6  dstd=0000000000000000 patd=0000000000000000 iinc=00000000
-  srcz1=0000000000000000 srcz2=0000000000000000 dstz=0000000000000000 zinc=00000000, coll=0
-  Phrase mode is ON
-*/
-
-
 
 // Various pieces of the blitter puzzle are teased out here...
 
@@ -4898,74 +3869,75 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
 	uint32_t zinc, uint32_t zstep)
 {
-	uint32_t initpix2 = ((uint32_t)initpix << 16) | initpix;
-	uint32_t addalo[8], addahi[8];
-	addalo[0] = dstd & 0xFFFFFFFF;
-	addalo[1] = initpix2;
-	addalo[2] = 0;
-	addalo[3] = 0;
-	addalo[4] = srcd & 0xFFFFFFFF;
-	addalo[5] = patd & 0xFFFFFFFF;
-	addalo[6] = srcz1 & 0xFFFFFFFF;
-	addalo[7] = srcz2 & 0xFFFFFFFF;
-	addahi[0] = dstd >> 32;
-	addahi[1] = initpix2;
-	addahi[2] = 0;
-	addahi[3] = 0;
-	addahi[4] = srcd >> 32;
-	addahi[5] = patd >> 32;
-	addahi[6] = srcz1 >> 32;
-	addahi[7] = srcz2 >> 32;
-	uint16_t adda[4];
-	adda[0] = addalo[daddasel] & 0xFFFF;
-	adda[1] = addalo[daddasel] >> 16;
-	adda[2] = addahi[daddasel] & 0xFFFF;
-	adda[3] = addahi[daddasel] >> 16;
+   unsigned i;
+   uint32_t initpix2 = ((uint32_t)initpix << 16) | initpix;
+   uint32_t addalo[8], addahi[8];
+   addalo[0] = dstd & 0xFFFFFFFF;
+   addalo[1] = initpix2;
+   addalo[2] = 0;
+   addalo[3] = 0;
+   addalo[4] = srcd & 0xFFFFFFFF;
+   addalo[5] = patd & 0xFFFFFFFF;
+   addalo[6] = srcz1 & 0xFFFFFFFF;
+   addalo[7] = srcz2 & 0xFFFFFFFF;
+   addahi[0] = dstd >> 32;
+   addahi[1] = initpix2;
+   addahi[2] = 0;
+   addahi[3] = 0;
+   addahi[4] = srcd >> 32;
+   addahi[5] = patd >> 32;
+   addahi[6] = srcz1 >> 32;
+   addahi[7] = srcz2 >> 32;
+   uint16_t adda[4];
+   adda[0] = addalo[daddasel] & 0xFFFF;
+   adda[1] = addalo[daddasel] >> 16;
+   adda[2] = addahi[daddasel] & 0xFFFF;
+   adda[3] = addahi[daddasel] >> 16;
 
-	uint16_t wordmux[8];
-	wordmux[0] = iinc & 0xFFFF;
-	wordmux[1] = iinc >> 16;
-	wordmux[2] = zinc & 0xFFFF;
-	wordmux[3] = zinc >> 16;;
-	wordmux[4] = istep & 0xFFFF;
-	wordmux[5] = istep >> 16;;
-	wordmux[6] = zstep & 0xFFFF;
-	wordmux[7] = zstep >> 16;;
-	uint16_t word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
-	uint16_t addb[4];
-	bool dbsel2 = daddbsel & 0x04;
-	bool iincsel = (daddbsel & 0x01) && !(daddbsel & 0x04);
+   uint16_t wordmux[8];
+   wordmux[0] = iinc & 0xFFFF;
+   wordmux[1] = iinc >> 16;
+   wordmux[2] = zinc & 0xFFFF;
+   wordmux[3] = zinc >> 16;;
+   wordmux[4] = istep & 0xFFFF;
+   wordmux[5] = istep >> 16;;
+   wordmux[6] = zstep & 0xFFFF;
+   wordmux[7] = zstep >> 16;;
+   uint16_t word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
+   uint16_t addb[4];
+   bool dbsel2 = daddbsel & 0x04;
+   bool iincsel = (daddbsel & 0x01) && !(daddbsel & 0x04);
 
-	if (!dbsel2 && !iincsel)
-		addb[0] = srcd & 0xFFFF,
-		addb[1] = (srcd >> 16) & 0xFFFF,
-		addb[2] = (srcd >> 32) & 0xFFFF,
-		addb[3] = (srcd >> 48) & 0xFFFF;
-	else if (dbsel2 && !iincsel)
-		addb[0] = addb[1] = addb[2] = addb[3] = word;
-	else if (!dbsel2 && iincsel)
-		addb[0] = initinc & 0xFFFF,
-		addb[1] = (initinc >> 16) & 0xFFFF,
-		addb[2] = (initinc >> 32) & 0xFFFF,
-		addb[3] = (initinc >> 48) & 0xFFFF;
-	else
-		addb[0] = addb[1] = addb[2] = addb[3] = 0;
+   if (!dbsel2 && !iincsel)
+      addb[0] = srcd & 0xFFFF,
+         addb[1] = (srcd >> 16) & 0xFFFF,
+         addb[2] = (srcd >> 32) & 0xFFFF,
+         addb[3] = (srcd >> 48) & 0xFFFF;
+   else if (dbsel2 && !iincsel)
+      addb[0] = addb[1] = addb[2] = addb[3] = word;
+   else if (!dbsel2 && iincsel)
+      addb[0] = initinc & 0xFFFF,
+         addb[1] = (initinc >> 16) & 0xFFFF,
+         addb[2] = (initinc >> 32) & 0xFFFF,
+         addb[3] = (initinc >> 48) & 0xFFFF;
+   else
+      addb[0] = addb[1] = addb[2] = addb[3] = 0;
 
-	uint8_t cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
+   uint8_t cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
 
-static uint8_t co[4];//These are preserved between calls...
-	uint8_t cin[4];
+   static uint8_t co[4];//These are preserved between calls...
+   uint8_t cin[4];
 
-	for(int i=0; i<4; i++)
-		cin[i] = initcin[i] | (co[i] & cinsel);
+   for(i = 0; i < 4; i++)
+      cin[i] = initcin[i] | (co[i] & cinsel);
 
-	bool eightbit = daddmode & 0x02;
-	bool sat = daddmode & 0x03;
-	bool hicinh = ((daddmode & 0x03) == 0x03);
+   bool eightbit = daddmode & 0x02;
+   bool sat = daddmode & 0x03;
+   bool hicinh = ((daddmode & 0x03) == 0x03);
 
-//Note that the carry out is saved between calls to this function...
-	for(int i=0; i<4; i++)
-		ADD16SAT(addq[i], co[i], adda[i], addb[i], cin[i], sat, eightbit, hicinh);
+   //Note that the carry out is saved between calls to this function...
+   for( i=0; i<4; i++)
+      ADD16SAT(addq[i], co[i], adda[i], addb[i], cin[i], sat, eightbit, hicinh);
 }
 
 
@@ -5522,12 +4494,6 @@ with srcshift bits 4 & 5 selecting the start position
 //	dbinh = 0x00;
 #endif
 
-#if 1
-#ifdef VERBOSE_BLITTER_LOGGING
-if (logBlit)
-	WriteLog("\n[dcomp=%02X zcomp=%02X dbinh=%02X]\n", dcomp, zcomp, dbinh);
-#endif
-#endif
 //////////////////////////////////////////////////////////////////////////////////////
 
 // 22 Mar 94
@@ -5832,24 +4798,6 @@ performed.  The is taken care of within the zed comparator by
 pipe-lining the comparator inputs where appropriate.
 */
 
-//#define LOG_COMP_CTRL
-/*DEF COMP_CTRL (
-	dbinh\[0..7]	// destination byte inhibit lines
-	nowrite		// suppress inner loop write operation
-	:OUT;
-	bcompen		// bit selector inhibit enable
-	big_pix		// pixels are big-endian
-	bkgwren		// enable dest data write in pix inhibit
-	clk		// co-processor clock
-	dcomp[0..7]	// output of data byte comparators
-	dcompen		// data comparator inhibit enable
-	icount[0..2]	// low bits of inner count
-	pixsize[0..2]	// destination pixel size
-	phrase_mode	// phrase write mode
-	srcd[0..7]	// bits to use for bit to byte expansion
-	step_inner	// inner loop advance
-	zcomp[0..3]	// output of word zed comparators
-	:IN);*/
 void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
 	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp)
@@ -5877,14 +4825,6 @@ Bcompbit	:= MX8 (bcompbit, srcd[7], srcd[6], srcd[5],
 srcd[4], srcd[3], srcd[2], srcd[1], srcd[0], bcompselt[0..2]);
 Bcompbit\	:= INV1 (bcompbit\, bcompbit);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-#ifdef LOG_COMP_CTRL
-   if (logBlit)
-   {
-      WriteLog("\n     [bcompen=%s dcompen=%s phrase_mode=%s bkgwren=%s dcomp=%02X zcomp=%02X]", (bcompen ? "T" : "F"), (dcompen ? "T" : "F"), (phrase_mode ? "T" : "F"), (bkgwren ? "T" : "F"), dcomp, zcomp);
-      WriteLog("\n     ");
-      //	fflush(stdout);
-   }
-#endif
    uint8_t bcompselt = (big_pix ? ~icount : icount) & 0x07;
    uint8_t bitmask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
    bool bcompbit = srcd & bitmask[bcompselt];
@@ -5931,13 +4871,6 @@ Winhibit	:= NAN4 (winhibit, winht, nowt[1..3]);*/
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
       || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
-#ifdef LOG_COMP_CTRL
-   if (logBlit)
-   {
-      WriteLog("[nw=%s wi=%s]", (nowrite ? "T" : "F"), (winhibit ? "T" : "F"));
-      //	fflush(stdout);
-   }
-#endif
    //////////////////////////////////////////////////////////////////////////////////////
 
    /* For phrase mode, generate the byte inhibit signals for eight bit
@@ -5967,13 +4900,6 @@ Dbinh[0]	:= ANR1P (dbinh\[0], di0t[4], phrase_mode, winhibit);*/
       || (!(srcd & 0x01) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x01) && dcompen);
    *dbinh |= (!((di0t4 && phrase_mode) || winhibit) ? 0x01 : 0x00);
-#ifdef LOG_COMP_CTRL
-   if (logBlit)
-   {
-      WriteLog("[di0t0_1=%s di0t4=%s]", (di0t0_1 ? "T" : "F"), (di0t4 ? "T" : "F"));
-      //	fflush(stdout);
-   }
-#endif
    //////////////////////////////////////////////////////////////////////////////////////
 
    /*Di1t0		:= NAN3 (di1t[0], pixsize\[2], dcomp[1], dcompen);

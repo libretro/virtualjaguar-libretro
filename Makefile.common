@@ -1,8 +1,9 @@
 INCFLAGS := -I$(LIBRETRO_DIR) -I$(CORE_DIR) -I$(CORE_DIR)/m68000
 
-SOURCES_CXX := 	$(LIBRETRO_DIR)/libretro.cpp
+SOURCES_CXX :=
 
 SOURCES_C :=  \
+	$(LIBRETRO_DIR)/libretro.c \
 	$(CORE_DIR)/blitter.c \
 	$(CORE_DIR)/dac.c \
 	$(CORE_DIR)/dsp.c \

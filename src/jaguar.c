@@ -129,9 +129,11 @@ bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
 
 void M68K_show_context(void)
 {
+   unsigned i;
+
    WriteLog("68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
 
-   for(int i=M68K_REG_D0; i<=M68K_REG_D7; i++)
+   for(i=M68K_REG_D0; i<=M68K_REG_D7; i++)
    {
       WriteLog("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
 
@@ -139,7 +141,7 @@ void M68K_show_context(void)
          WriteLog("\n");
    }
 
-   for(int i=M68K_REG_A0; i<=M68K_REG_A7; i++)
+   for(i=M68K_REG_A0; i<=M68K_REG_A7; i++)
    {
       WriteLog("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
 
@@ -160,7 +162,7 @@ void M68K_show_context(void)
 
    WriteLog("..................\n");
 
-   for(int i=0; i<256; i++)
+   for(i=0; i<256; i++)
    {
       WriteLog("handler %03i at ", i);
       uint32_t address = (uint32_t)JaguarGetHandler(i);
@@ -233,6 +235,7 @@ static bool start = false;
 
 void M68KInstructionHook(void)
 {
+   unsigned i;
    uint32_t m68kPC = m68k_get_reg(NULL, M68K_REG_PC);
 
    /* For code tracing... */
@@ -273,7 +276,7 @@ void M68KInstructionHook(void)
       WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
 
       static char buffer[2048];
-      for(int i=0; i<0x400; i++)
+      for(i=0; i<0x400; i++)
       {
          //			WriteLog("[A2=%08X, D0=%08X]\n", a2Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF]);
          WriteLog("[A0=%08X, A1=%08X, A2=%08X, A3=%08X, A4=%08X, A5=%08X, A6=%08X, A7=%08X, D0=%08X, D1=%08X, D2=%08X, D3=%08X, D4=%08X, D5=%08X, D6=%08X, D7=%08X]\n", a0Queue[(pcQPtr + i) & 0x3FF], a1Queue[(pcQPtr + i) & 0x3FF], a2Queue[(pcQPtr + i) & 0x3FF], a3Queue[(pcQPtr + i) & 0x3FF], a4Queue[(pcQPtr + i) & 0x3FF], a5Queue[(pcQPtr + i) & 0x3FF], a6Queue[(pcQPtr + i) & 0x3FF], a7Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF], d1Queue[(pcQPtr + i) & 0x3FF], d2Queue[(pcQPtr + i) & 0x3FF], d3Queue[(pcQPtr + i) & 0x3FF], d4Queue[(pcQPtr + i) & 0x3FF], d5Queue[(pcQPtr + i) & 0x3FF], d6Queue[(pcQPtr + i) & 0x3FF], d7Queue[(pcQPtr + i) & 0x3FF]);
@@ -660,9 +663,11 @@ uint32_t ReadDWord(uint32_t adddress)
 
 void ShowM68KContext(void)
 {
+   unsigned i;
+
    printf("\t68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
 
-   for(int i=M68K_REG_D0; i<=M68K_REG_D7; i++)
+   for(i=M68K_REG_D0; i<=M68K_REG_D7; i++)
    {
       printf("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
 
@@ -670,7 +675,7 @@ void ShowM68KContext(void)
          printf("\n");
    }
 
-   for(int i=M68K_REG_A0; i<=M68K_REG_A7; i++)
+   for(i=M68K_REG_A0; i<=M68K_REG_A7; i++)
    {
       printf("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
 
@@ -964,10 +969,11 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 void JaguarDasm(uint32_t offset, uint32_t qt)
 {
 #ifdef CPU_DEBUG
+   unsigned i;
    static char buffer[2048];//, mem[64];
    int pc = offset, oldpc;
 
-   for(uint32_t i=0; i<qt; i++)
+   for(i=0; i<qt; i++)
    {
       oldpc = pc;
       pc += m68k_disassemble(buffer, pc, 0);//M68K_CPU_TYPE_68000);
@@ -1120,11 +1126,12 @@ void JaguarSetScreenPitch(uint32_t pitch)
 /* Jaguar console initialization */
 void JaguarInit(void)
 {
+   unsigned i;
    // For randomizing RAM
    srand(time(NULL));
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
-   for(uint32_t i=0; i<0x200000; i+=4)
+   for(i=0; i<0x200000; i+=4)
       *((uint32_t *)(&jaguarMainRAM[i])) = rand();
 
 #ifdef CPU_DEBUG_MEMORY
@@ -1212,9 +1219,11 @@ void HalflineCallback(void)
 
 void JaguarReset(void)
 {
+   unsigned i;
+
    // Only problem with this approach: It wipes out RAM loaded files...!
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
-   for(uint32_t i=8; i<0x200000; i+=4)
+   for(i=8; i<0x200000; i+=4)
       *((uint32_t *)(&jaguarMainRAM[i])) = rand();
 
    // New timer base code stuffola...
