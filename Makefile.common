@@ -35,9 +35,9 @@ SOURCES_C :=  \
 	$(CORE_DIR)/jagstub2bios.c \
 	$(CORE_DIR)/joystick.c \
 	$(CORE_DIR)/log.c \
-	$(CORE_DIR)/mmu.c \
 	$(CORE_DIR)/settings.c \
 	$(CORE_DIR)/state.c \
+	$(CORE_DIR)/mmu.c \
 	$(CORE_DIR)/vjag_memory.c \
 	$(CORE_DIR)/universalhdr.c \
 	$(CORE_DIR)/wavetable.c

@@ -51,8 +51,6 @@ extern uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 #define CLEAR_LINE		0
 
 //Temp debug stuff (will go away soon, so don't depend on these)
-
-void DumpMainMemory(void);
 uint8_t * GetRamPtr(void);
 
 #endif	// __JAGUAR_H__

@@ -1896,21 +1896,6 @@ void JaguarDone(void)
 //	JaguarDasm(0x800800, 0x1000);
 }
 
-
-// Temp debugging stuff
-
-void DumpMainMemory(void)
-{
-	FILE * fp = fopen("./memdump.bin", "wb");
-
-	if (fp == NULL)
-		return;
-
-	fwrite(jaguarMainRAM, 1, 0x200000, fp);
-	fclose(fp);
-}
-
-
 uint8_t * GetRamPtr(void)
 {
 	return jaguarMainRAM;
@@ -1937,9 +1922,7 @@ void JaguarExecuteNew(void)
 			GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
 
 		HandleNextEvent(EVENT_MAIN);
- 	}
-	while (!frameDone);
-    
+ 	}while(!frameDone);
 }
 
 
