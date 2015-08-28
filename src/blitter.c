@@ -52,7 +52,6 @@ extern int jaguar_active_memory_dumps;
 int start_logging = 0;
 uint8_t blitter_working = 0;
 bool startConciseBlitLogging = false;
-bool logBlit = false;
 
 // Blitter register RAM (most of it is hidden from the user)
 
@@ -2457,10 +2456,6 @@ void BlitterMidsummer2(void)
 
    uint32_t cmd = GET32(blitter_ram, COMMAND);
 
-   logBlit = false;
-   if (blit_start_log == 0)	// Wait for the signal...
-      logBlit = false;//*/
-
    // Line states passed in via the command register
 
    bool srcen = (SRCEN), srcenx = (SRCENX), srcenz = (SRCENZ),
@@ -3956,11 +3951,6 @@ INT16/  b
 */
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
-/*if (logBlit)
-{
-	printf("--> [sat=%s 8b=%s hicinh=%s] %04X + %04X (+ %u) = ", (sat ? "T" : "F"), (eightbit ? "T" : "F"), (hicinh ? "T" : "F"), a, b, cin);
-	fflush(stdout);
-}*/
 	uint8_t carry[4];
 	uint32_t qt = (a & 0xFF) + (b & 0xFF) + cin;
 	carry[0] = (qt & 0x0100 ? 1 : 0);
@@ -3979,19 +3969,9 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, boo
 
 	bool saturate = sat && (btop ^ ctop);
 	bool hisaturate = saturate && !eightbit;
-/*if (logBlit)
-{
-	printf("bt=%u ct=%u s=%u hs=%u] ", btop, ctop, saturate, hisaturate);
-	fflush(stdout);
-}*/
 
 	*r = (saturate ? (ctop ? 0x00FF : 0x0000) : q & 0x00FF);
 	*r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
-/*if (logBlit)
-{
-	printf("%04X (co=%u)\n", r, co);
-	fflush(stdout);
-}*/
 }
 
 
@@ -4747,14 +4727,6 @@ Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srcz
 	zwdata |= (mask & 0x1000 ? *srcz : dstz) & 0x0000FF0000000000LL;
 	zwdata |= (mask & 0x2000 ? *srcz : dstz) & 0x00FF000000000000LL;
 	zwdata |= (mask & 0x4000 ? *srcz : dstz) & 0xFF00000000000000LL;
-if (logBlit)
-{
-	WriteLog("\n[srcz=%08X%08X dstz=%08X%08X zwdata=%08X%08X mask=%04X]\n",
-		(uint32_t)(*srcz >> 32), (uint32_t)(*srcz & 0xFFFFFFFF),
-		(uint32_t)(dstz >> 32), (uint32_t)(dstz & 0xFFFFFFFF),
-		(uint32_t)(zwdata >> 32), (uint32_t)(zwdata & 0xFFFFFFFF), mask);
-//	fflush(stdout);
-}//*/
 	srcz = zwdata;
 //////////////////////////////////////////////////////////////////////////////////////
 
