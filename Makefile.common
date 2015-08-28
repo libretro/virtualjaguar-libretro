@@ -21,7 +21,6 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/jaguar.cpp \
 	$(CORE_DIR)/jerry.cpp \
 	$(CORE_DIR)/joystick.cpp \
-	$(CORE_DIR)/log.cpp \
 	$(CORE_DIR)/vjag_memory.cpp \
 	$(CORE_DIR)/mmu.cpp \
 	$(CORE_DIR)/op.cpp \
@@ -40,4 +39,5 @@ SOURCES_C := $(CORE_DIR)/m68000/cpustbl.c \
 	$(CORE_DIR)/m68000/m68kdasm.c \
 	$(CORE_DIR)/m68000/m68kinterface.c \
 	$(CORE_DIR)/m68000/readcpu.c \
+	$(CORE_DIR)/log.c \
 	$(CORE_DIR)/wavetable.c

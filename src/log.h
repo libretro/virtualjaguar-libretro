@@ -20,8 +20,4 @@ void WriteLog(const char * text, ...);
 }
 #endif
 
-// Some useful defines... :-)
-//#define GPU_DEBUG
-//#define LOG_BLITS
-
 #endif	// __LOG_H__
