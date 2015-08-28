@@ -15,8 +15,6 @@
 
 #include "joystick.h"
 #include <string.h>			// For memset()
-#include "gpu.h"
-#include "jaguar.h"
 #include "log.h"
 #include "settings.h"
 
@@ -28,8 +26,6 @@ uint8_t joypad1Buttons[21];
 bool audioEnabled = false;
 bool joysticksEnabled = false;
 
-
-bool GUIKeyHeld = false;
 extern int start_logging;
 int gpu_start_log = 0;
 int op_start_log = 0;
@@ -87,7 +83,6 @@ uint16_t JoystickReadWord(uint32_t offset)
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0x04, 0xFF, 0x08, 0x0C, 0xFF
 	};
 
-#warning "No bounds checking done in JoystickReadByte!"
 	offset &= 0x03;
 
 	if (offset == 0)
@@ -161,7 +156,6 @@ uint16_t JoystickReadWord(uint32_t offset)
 
 void JoystickWriteWord(uint32_t offset, uint16_t data)
 {
-#warning "No bounds checking done for JoystickWriteWord!"
 	offset &= 0x03;
 	joystick_ram[offset + 0] = (data >> 8) & 0xFF;
 	joystick_ram[offset + 1] = data & 0xFF;
