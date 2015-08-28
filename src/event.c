@@ -16,10 +16,11 @@
 //
 // - Handling for an event that occurs NOW
 //
+//
+#include <stdint.h>
+#include <boolean.h>
 
 #include "event.h"
-
-#include <stdint.h>
 #include "log.h"
 
 
@@ -48,8 +49,8 @@ struct Event
 };
 
 
-static Event eventList[EVENT_LIST_SIZE];
-static Event eventListJERRY[EVENT_LIST_SIZE];
+static struct Event eventList[EVENT_LIST_SIZE];
+static struct Event eventListJERRY[EVENT_LIST_SIZE];
 static uint32_t nextEvent;
 static uint32_t nextEventJERRY;
 static uint32_t numberOfEvents;

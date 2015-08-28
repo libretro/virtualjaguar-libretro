@@ -1708,7 +1708,7 @@ void TOMResetPIT(void)
 	if (tomTimerPrescaler)
 	{
 		double usecs = (float)(tomTimerPrescaler + 1) * (float)(tomTimerDivider + 1) * RISC_CYCLE_IN_USEC;
-		SetCallbackTime(TOMPITCallback, usecs);
+		SetCallbackTime(TOMPITCallback, usecs, EVENT_MAIN);
 	}
 #endif
 }

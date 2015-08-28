@@ -470,7 +470,7 @@ Note that we only have to be concerned with 3 entities read/writing anything:
 The main CPU, the GPU, and the DSP. Everything else is unnecessary. So we can keep our main memory
 checking in jaguar.cpp, gpu.cpp and dsp.cpp. There should be NO checking in TOM, JERRY, etc. other than
 things that are entirely internal to those modules. This way we should be able to get a handle on all
-this crap which is currently scattered over Hell's Half Acre(tm).
+this crap which is currently scattered over Hells Half Acre(tm).
 
 Also: We need to distinguish whether or not we need .b, .w, and .dw versions of everything, or if there
 is a good way to collapse that shit (look below for inspiration). Current method works, but is error prone.
@@ -1938,7 +1938,7 @@ void JaguarReset(void)
 	lowerField = false;								// Reset the lower field flag
 //	SetCallbackTime(ScanlineCallback, 63.5555);
 //	SetCallbackTime(ScanlineCallback, 31.77775);
-	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
+	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }
 
 
@@ -2120,7 +2120,7 @@ void JaguarExecuteNew(void)
 
 	do
 	{
-		double timeToNextEvent = GetTimeToNextEvent();
+		double timeToNextEvent = GetTimeToNextEvent(EVENT_MAIN);
 //WriteLog("JEN: Time to next event (%u) is %f usec (%u RISC cycles)...\n", nextEvent, timeToNextEvent, USEC_TO_RISC_CYCLES(timeToNextEvent));
 
 		m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
@@ -2128,7 +2128,7 @@ void JaguarExecuteNew(void)
 		if (vjs.GPUEnabled)
 			GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
 
-		HandleNextEvent();
+		HandleNextEvent(EVENT_MAIN);
  	}
 	while (!frameDone);
     
@@ -2199,5 +2199,5 @@ void HalflineCallback(void)
 		frameDone = true;
 	}//*/
 
-	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
+	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }
