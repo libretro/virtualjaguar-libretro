@@ -129,7 +129,7 @@ uint32_t * unknown   = ((uint32_t *)&jagMemSpace[0xDFFF2C]);	// Seems to be some
 uint32_t butch, dscntrl, ds_data, i2cntrl, sbcntrl, subdata, subdatb, sb_time, fifo_data, i2sdat2, unknown;
 #endif
 
-#warning "Need to separate out this stuff (or do we???)"
+//#warning "Need to separate out this stuff (or do we???)"
 //if we use a contiguous memory space, we don't need this shit...
 //err, maybe we do, let's not be so hasty now... :-)
 

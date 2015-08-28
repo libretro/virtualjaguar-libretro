@@ -9,6 +9,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern uint8_t jagMemSpace[];
 
 extern uint8_t * jaguarMainRAM;
@@ -193,6 +197,10 @@ static inline uae_u8 do_get_mem_byte(uae_u8 *a)
 static inline void do_put_mem_byte(uae_u8 *a, uae_u8 v)
 {
 	*a = v;
+}
+#endif
+
+#ifdef __cplusplus
 }
 #endif
 

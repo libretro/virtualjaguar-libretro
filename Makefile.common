@@ -10,7 +10,6 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/jaguar.cpp \
 	$(CORE_DIR)/jerry.cpp \
 	$(CORE_DIR)/joystick.cpp \
-	$(CORE_DIR)/vjag_memory.cpp \
 	$(CORE_DIR)/mmu.cpp \
 	$(CORE_DIR)/op.cpp \
 	$(CORE_DIR)/tom.cpp  \
@@ -39,5 +38,6 @@ SOURCES_C :=  \
 	$(CORE_DIR)/log.c \
 	$(CORE_DIR)/settings.c \
 	$(CORE_DIR)/state.c \
+	$(CORE_DIR)/vjag_memory.c \
 	$(CORE_DIR)/universalhdr.c \
 	$(CORE_DIR)/wavetable.c
