@@ -70,6 +70,10 @@
 #define SMODE			0xF1A154
 
 // Global variables
+uint16_t * sampleBuffer;
+static int bufferIndex = 0;
+static int numberOfSamples = 0;
+static bool bufferDone = false;
 
 // These are defined in memory.h/cpp
 //uint16_t lrxd, rrxd;							// I2S ports (into Jaguar)
@@ -80,9 +84,6 @@
 // /*static*/ uint16_t serialMode = 0;
 
 // Private function prototypes
-
-void DSPSampleCallback(void);
-
 
 void DACInit(void)
 {
@@ -111,7 +112,7 @@ void DACReset(void)
    lrxd = SILENCE;
 }
 
-void DACPauseAudioThread(bool state/*= true*/)
+void DACPauseAudioThread(bool state)
 {
 }
 
@@ -120,6 +121,20 @@ void DACDone(void)
 {
 }
 
+void DSPSampleCallback(void)
+{
+	sampleBuffer[bufferIndex + 0] = *ltxd;
+	sampleBuffer[bufferIndex + 1] = *rtxd;
+	bufferIndex += 2;
+
+	if (bufferIndex == numberOfSamples)
+	{
+		bufferDone = true;
+		return;
+	}
+
+	SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+}
 
 // Approach: Run the DSP for however many cycles needed to correspond to whatever sample rate
 // we've set the audio to run at. So, e.g., if we run it at 48 KHz, then we would run the DSP
@@ -136,10 +151,6 @@ void DACDone(void)
 // Note: The samples are packed in the buffer in 16 bit left/16 bit right pairs.
 //       Also, length is the length of the buffer in BYTES
 //
-uint16_t * sampleBuffer;
-static int bufferIndex = 0;
-static int numberOfSamples = 0;
-static bool bufferDone = false;
 
 void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 {
@@ -193,20 +204,6 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
     
 }
 
-void DSPSampleCallback(void)
-{
-	sampleBuffer[bufferIndex + 0] = *ltxd;
-	sampleBuffer[bufferIndex + 1] = *rtxd;
-	bufferIndex += 2;
-
-	if (bufferIndex == numberOfSamples)
-	{
-		bufferDone = true;
-		return;
-	}
-
-	SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
-}
 
 
 #if 0
