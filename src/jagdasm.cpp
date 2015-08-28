@@ -14,10 +14,10 @@
 // JLH  01/23/2013  Beautifying of disassembly, including hex digits of opcodes
 //                  and operands
 //
+#include <stdio.h>
+#include <stdint.h>
 
 #include "jagdasm.h"
-
-#include <stdio.h>
 #include "jaguar.h"
 
 #define ROPCODE(a) JaguarReadWord(a)
