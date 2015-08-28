@@ -35,15 +35,15 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define CPU_DEBUG
 //Do this in makefile??? Yes! Could, but it's easier to define here...
+//#define CPU_DEBUG
 //#define LOG_UNMAPPED_MEMORY_ACCESSES
 //#define ABORT_ON_UNMAPPED_MEMORY_ACCESS
 //#define ABORT_ON_ILLEGAL_INSTRUCTIONS
 //#define ABORT_ON_OFFICIAL_ILLEGAL_INSTRUCTION
-#define CPU_DEBUG_MEMORY
+//#define CPU_DEBUG_MEMORY
 //#define LOG_CD_BIOS_CALLS
-#define CPU_DEBUG_TRACING
+//#define CPU_DEBUG_TRACING
 #define ALPINE_FUNCTIONS
 
 // Private function prototypes
