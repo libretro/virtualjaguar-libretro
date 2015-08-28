@@ -152,8 +152,8 @@ endif
 
 FLAGS += -D__LIBRETRO__ $(WARNINGS)
 
-CXXFLAGS += $(FLAGS) -D__GCCUNIX__
-CFLAGS += $(FLAGS)
+CXXFLAGS += $(FLAGS)
+CFLAGS   += $(FLAGS)
 
 %.o: %.cpp
 	$(CXX) -c -o $@ $< $(CXXFLAGS)
