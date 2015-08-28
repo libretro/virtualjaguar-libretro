@@ -21,7 +21,6 @@
 //#include "vjag_memory.h"
 #include "cdintf.h"									// System agnostic CD interface functions
 #include "log.h"
-#include "dac.h"
 
 //#define CDROM_LOG									// For CDROM logging, obviously
 
@@ -352,8 +351,8 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 				break;
 			case 5:
 				data = 0x0400;
-			}//*/
-			WriteLog("CDROM: Reading DS_DATA (???), cdCmd=$%04X\n", cdCmd);
+            break;
+			}
 		}
 		else if ((cdCmd & 0xFF00) == 0x0200)			// Stop CD
 		{
