@@ -35,67 +35,16 @@ static bool CheckExtension(const char * filename, const char * ext);
 
 
 //
-// Generic ROM loading
-//
-uint32_t JaguarLoadROM(uint8_t * &rom, char * path)
-{
-// We really should have some kind of sanity checking for the ROM size here to prevent
-// a buffer overflow... !!! FIX !!!
-#warning "!!! FIX !!! Should have sanity checking for ROM size to prevent buffer overflow!"
-	uint32_t romSize = 0;
-
-	WriteLog("JaguarLoadROM: Attempting to load file '%s'...", path);
-	char * ext = strrchr(path, '.');
-
-	// No filename extension == YUO FAIL IT (it is loading the file).
-	// This is naive, but it works. But should probably come up with something a little
-	// more robust, to prevent problems with dopes trying to exploit this.
-	if (ext == NULL)
-	{
-		WriteLog("FAILED!\n");
-		return 0;
-	}
-
-	WriteLog("Succeeded in finding extension (%s)!\n", ext);
-	WriteLog("VJ: Loading \"%s\"...", path);
-		FILE *fp = fopen(path, "rb");
-
-		if (fp == NULL)
-		{
-			WriteLog("Failed!\n");
-			return 0;
-		}
-
-		fseek(fp, 0, SEEK_END);
-        romSize = (uint32_t)ftell(fp);
-        rom = new uint8_t[romSize];
-		fseek(fp, 0, SEEK_SET);
-		fread(rom, 1, romSize, fp);
-		fclose(fp);
-	//}
-
-	WriteLog("OK (%i bytes)\n", romSize);
-
-	return romSize;
-}
-
-
-//
 // Jaguar file loading
 // We do a more intelligent file analysis here instead of relying on (possible false)
 // file extensions which people don't seem to give two shits about anyway. :-(
 //
-bool JaguarLoadFile(char * path)
+bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
 {
-	uint8_t * buffer = NULL;
-	jaguarROMSize = JaguarLoadROM(buffer, path);
+	jaguarROMSize = bufsize;
 
 	if (jaguarROMSize == 0)
-	{
-		// It's up to the GUI to report errors, not us. :-)
-		WriteLog("FILE: Could not load ROM from file \"%s\"...\nAborting load!\n", path);
 		return false;
-	}
 
 	jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
 	WriteLog("CRC: %08X\n", (unsigned int)jaguarMainROMCRC32);
@@ -113,7 +62,6 @@ bool JaguarLoadFile(char * path)
 // Checking something...
 jaguarRunAddress = GET32(jagMemSpace, 0x800404);
 WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress);
-		delete[] buffer;
 		return true;
 	}
 	else if (fileType == JST_ALPINE)
@@ -122,7 +70,6 @@ WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress
 		WriteLog("FILE: Setting up Alpine ROM... Run address: 00802000, length: %08X\n", jaguarROMSize);
 		memset(jagMemSpace + 0x800000, 0xFF, 0x2000);
 		memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
-		delete[] buffer;
 
 // Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
 		// Try setting the vector to say, $1000 and putting an instruction there that loops forever:
@@ -138,7 +85,6 @@ WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress
 			codeSize = GET32(buffer, 0x02) + GET32(buffer, 0x06);
 		WriteLog("FILE: Setting up homebrew (ABS-1)... Run address: %08X, length: %08X\n", loadAddress, codeSize);
 		memcpy(jagMemSpace + loadAddress, buffer + 0x24, codeSize);
-		delete[] buffer;
 		jaguarRunAddress = loadAddress;
 		return true;
 	}
@@ -148,7 +94,6 @@ WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress
 			codeSize = GET32(buffer, 0x18) + GET32(buffer, 0x1C);
 		WriteLog("FILE: Setting up homebrew (ABS-2)... Run address: %08X, length: %08X\n", runAddress, codeSize);
 		memcpy(jagMemSpace + loadAddress, buffer + 0xA8, codeSize);
-		delete[] buffer;
 		jaguarRunAddress = runAddress;
 		return true;
 	}
@@ -196,7 +141,6 @@ WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress
 			uint32_t loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
 			WriteLog("FILE: Setting up homebrew (Jag Server)... Run address: $%X, length: $%X\n", runAddress, jaguarROMSize - 0x2E);
 			memcpy(jagMemSpace + loadAddress, buffer + 0x2E, jaguarROMSize - 0x2E);
-			delete[] buffer;
 			jaguarRunAddress = runAddress;
 
 // Hmm. Is this kludge necessary?
@@ -210,7 +154,6 @@ SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
 //			uint32_t loadAddress = (buffer[0x1F] << 24) | (buffer[0x1E] << 16) | (buffer[0x1D] << 8) | buffer[0x1C];
 //			WriteLog("FILE: Setting up homebrew (GEMDOS WTFOMGBBQ type)... Run address: $%X, length: $%X\n", loadAddress, jaguarROMSize - 0x20);
 //			memcpy(jagMemSpace + loadAddress, buffer + 0x20, jaguarROMSize - 0x20);
-//			delete[] buffer;
 //			jaguarRunAddress = loadAddress;
 //			return true;
 //		}
@@ -220,7 +163,6 @@ SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
 		uint32_t loadAddress = (buffer[0x1F] << 24) | (buffer[0x1E] << 16) | (buffer[0x1D] << 8) | buffer[0x1C];
 		WriteLog("FILE: Setting up homebrew (GEMDOS WTFOMGBBQ type)... Run address: $%X, length: $%X\n", loadAddress, jaguarROMSize - 0x20);
 		memcpy(jagMemSpace + loadAddress, buffer + 0x20, jaguarROMSize - 0x20);
-		delete[] buffer;
 		jaguarRunAddress = loadAddress;
 		return true;
 	}
@@ -237,17 +179,12 @@ SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
 // decided to allow this kind of thing. ;-) But ONLY FOR THE DEVS, DAMMIT! >:-U
 // O_O
 //
-bool AlpineLoadFile(char * path)
+bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
 {
-	uint8_t * buffer = NULL;
-	jaguarROMSize = JaguarLoadROM(buffer, path);
+	jaguarROMSize = bufsize;
 
 	if (jaguarROMSize == 0)
-	{
-		// It's up to the GUI to deal with failure, not us. ;-)
-		WriteLog("FILE: Could not load Alpine from file \"%s\"...\nAborting load!\n", path);
 		return false;
-	}
 
 	jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
 	WriteLog("CRC: %08X\n", (unsigned int)jaguarMainROMCRC32);
@@ -259,7 +196,6 @@ bool AlpineLoadFile(char * path)
 
 	memset(jagMemSpace + 0x800000, 0xFF, 0x2000);
 	memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
-	delete[] buffer;
 
 // Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
 	// Try setting the vector to say, $1000 and putting an instruction there that loops forever:

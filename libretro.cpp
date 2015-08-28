@@ -120,9 +120,9 @@ static struct retro_system_av_info g_av_info;
 void retro_get_system_info(struct retro_system_info *info)
 {
    memset(info, 0, sizeof(*info));
-   info->library_name = "Virtual Jaguar";
-   info->library_version = "v2.1.0";
-   info->need_fullpath = true;
+   info->library_name     = "Virtual Jaguar";
+   info->library_version  = "v2.1.0";
+   info->need_fullpath    = false;
    info->valid_extensions = "j64|jag";
 }
 
@@ -178,8 +178,6 @@ bool retro_load_game(const struct retro_game_info *info)
       return false;
    }
 
-   const char *full_path;
-
    if(failed_init)
       return false;
 
@@ -206,8 +204,6 @@ bool retro_load_game(const struct retro_game_info *info)
 
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
 
-   full_path = info->path;
-
    // Emulate BIOS
    vjs.GPUEnabled = true;
    vjs.audioEnabled = true;
@@ -228,8 +224,8 @@ bool retro_load_game(const struct retro_game_info *info)
    for (int i = 0; i < videoWidth * videoHeight; ++i)
       videoBuffer[i] = 0xFF00FFFF;
 
-   SET32(jaguarMainRAM, 0, 0x00200000);                      // set up stack
-   JaguarLoadFile((char *)full_path);                // load rom
+   SET32(jaguarMainRAM, 0, 0x00200000);
+   JaguarLoadFile((uint8_t*)info->data, info->size);
    JaguarReset();
 
    return true;
