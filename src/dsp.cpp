@@ -16,7 +16,6 @@
 
 #include "dsp.h"
 
-#include "SDL.h"								// Used only for SDL_GetTicks...
 #include <stdlib.h>
 #include "dac.h"
 #include "gpu.h"

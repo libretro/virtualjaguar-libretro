@@ -42,7 +42,6 @@
 
 #include "dac.h"
 
-#include "SDL.h"
 #include "cdrom.h"
 #include "dsp.h"
 #include "event.h"
@@ -85,9 +84,6 @@
 void DSPSampleCallback(void);
 
 
-//
-// Initialize the SDL sound system
-//
 void DACInit(void)
 {
    if (!vjs.DSPEnabled)
@@ -116,19 +112,11 @@ void DACReset(void)
 	ltxd = lrxd = SILENCE;
 }
 
-
-//
-// Pause/unpause the SDL audio thread
-//
 void DACPauseAudioThread(bool state/*= true*/)
 {
-		//SDL_PauseAudio(state);
 }
 
 
-//
-// Close down the SDL sound subsystem
-//
 void DACDone(void)
 {
 }
@@ -144,7 +132,7 @@ void DACDone(void)
 // If the DSP isn't running, then fill the buffer with L/RTXD and exit.
 
 //
-// SDL callback routine to fill audio buffer
+// Callback routine to fill audio buffer
 //
 // Note: The samples are packed in the buffer in 16 bit left/16 bit right pairs.
 //       Also, length is the length of the buffer in BYTES

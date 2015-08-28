@@ -17,8 +17,6 @@
 #include "jaguar.h"
 
 #include <time.h>
-#include "SDL.h"
-//#include "SDL_opengl.h"
 #include "blitter.h"
 #include "cdrom.h"
 #include "dac.h"
