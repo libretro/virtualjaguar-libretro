@@ -23,7 +23,6 @@ SOURCES_C :=  \
 	$(CORE_DIR)/m68000/cpudefs.c \
 	$(CORE_DIR)/m68000/cpuemu.c \
 	$(CORE_DIR)/m68000/cpuextra.c \
-	$(CORE_DIR)/m68000/gencpu.c \
 	$(CORE_DIR)/m68000/m68kdasm.c \
 	$(CORE_DIR)/m68000/m68kinterface.c \
 	$(CORE_DIR)/m68000/readcpu.c \
