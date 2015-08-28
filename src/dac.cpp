@@ -59,6 +59,8 @@
 #define BUFFER_SIZE			0x10000				// Make the DAC buffers 64K x 16 bits
 #define DAC_AUDIO_RATE		48000				// Set the audio rate to 48 KHz
 
+#define SILENCE 0
+
 // Jaguar memory locations
 
 #define LTXD			0xF1A148
@@ -75,8 +77,6 @@
 
 // Local variables
 
-static SDL_AudioSpec desired;
-static bool SDLSoundInitialized;
 //static uint8_t SCLKFrequencyDivider = 19;			// Default is roughly 22 KHz (20774 Hz in NTSC mode)
 // /*static*/ uint16_t serialMode = 0;
 
@@ -90,39 +90,20 @@ void DSPSampleCallback(void);
 //
 void DACInit(void)
 {
-	SDLSoundInitialized = false;
+   if (!vjs.DSPEnabled)
+   {
+      WriteLog("DAC: DSP/host audio playback disabled.\n");
+      return;
+   }
 
-//	if (!vjs.audioEnabled)
-	if (!vjs.DSPEnabled)
-	{
-		WriteLog("DAC: DSP/host audio playback disabled.\n");
-		return;
-	}
+   DACReset();
 
-	desired.freq = DAC_AUDIO_RATE;
-	//desired.format = AUDIO_S16SYS;
-	desired.channels = 2;
-	desired.samples = 2048;						// 2K buffer = audio delay of 42.67 ms (@ 48 KHz)
-	//desired.callback = SDLSoundCallback;
+   ltxd = lrxd = SILENCE;
+   sclk = 19;									// Default is roughly 22 KHz
 
-	/*if (SDL_OpenAudio(&desired, NULL) < 0)		// NULL means SDL guarantees what we want
-		WriteLog("DAC: Failed to initialize SDL sound...\n");
-	else
-	{
-		SDLSoundInitialized = true;
-		DACReset();
-		SDL_PauseAudio(false);					// Start playback!
-		WriteLog("DAC: Successfully initialized. Sample rate: %u\n", desired.freq);
-	}*/
-    
-    DACReset();
-
-	ltxd = lrxd = desired.silence;
-	sclk = 19;									// Default is roughly 22 KHz
-
-	uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-	uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
-	WriteLog("DAC: RISC clock = %u, cyclesPerSample = %u\n", riscClockRate, cyclesPerSample);
+   uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+   uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
+   WriteLog("DAC: RISC clock = %u, cyclesPerSample = %u\n", riscClockRate, cyclesPerSample);
 }
 
 
@@ -132,7 +113,7 @@ void DACInit(void)
 void DACReset(void)
 {
 //	LeftFIFOHeadPtr = LeftFIFOTailPtr = 0, RightFIFOHeadPtr = RightFIFOTailPtr = 1;
-	ltxd = lrxd = desired.silence;
+	ltxd = lrxd = SILENCE;
 }
 
 
@@ -150,13 +131,6 @@ void DACPauseAudioThread(bool state/*= true*/)
 //
 void DACDone(void)
 {
-	if (SDLSoundInitialized)
-	{
-		//SDL_PauseAudio(true);
-		//SDL_CloseAudio();
-	}
-
-	WriteLog("DAC: Done.\n");
 }
 
 
@@ -179,6 +153,7 @@ uint16_t * sampleBuffer;
 static int bufferIndex = 0;
 static int numberOfSamples = 0;
 static bool bufferDone = false;
+
 void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 {
 	// 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit.
