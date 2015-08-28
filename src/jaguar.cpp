@@ -33,6 +33,10 @@
 #include "settings.h"
 #include "tom.h"
 
+bool frameDone;
+
+uint32_t starCount;
+
 //Do this in makefile??? Yes! Could, but it's easier to define here...
 //#define CPU_DEBUG
 //#define LOG_UNMAPPED_MEMORY_ACCESSES
@@ -46,11 +50,145 @@
 
 // Private function prototypes
 
-unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who);
-unsigned jaguar_unknown_readword(unsigned address, uint32_t who);
-void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who);
-void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who);
-void M68K_show_context(void);
+unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who)
+{
+#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
+	WriteLog("Jaguar: Unknown byte read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
+#endif
+#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
+//	extern bool finished;
+	finished = true;
+//	extern bool doDSPDis;
+	if (who == DSP)
+		doDSPDis = true;
+#endif
+    return 0xFF;
+}
+
+unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
+{
+#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
+	WriteLog("Jaguar: Unknown word read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
+#endif
+#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
+//	extern bool finished;
+	finished = true;
+//	extern bool doDSPDis;
+	if (who == DSP)
+		doDSPDis = true;
+#endif
+    return 0xFFFF;
+}
+
+// Unknown read/write byte/word routines
+
+// It's hard to believe that developers would be sloppy with their memory writes, yet in
+// some cases the developers screwed up royal. E.g., Club Drive has the following code:
+//
+// 807EC4: movea.l #$f1b000, A1
+// 807ECA: movea.l #$8129e0, A0
+// 807ED0: move.l  A0, D0
+// 807ED2: move.l  #$f1bb94, D1
+// 807ED8: sub.l   D0, D1
+// 807EDA: lsr.l   #2, D1
+// 807EDC: move.l  (A0)+, (A1)+
+// 807EDE: dbra    D1, 807edc
+//
+// The problem is at $807ED0--instead of putting A0 into D0, they really meant to put A1
+// in. This mistake causes it to try and overwrite approximately $700000 worth of address
+// space! (That is, unless the 68K causes a bus error...)
+
+void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who)
+{
+#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
+	WriteLog("Jaguar: Unknown byte %02X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
+#endif
+#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
+//	extern bool finished;
+	finished = true;
+//	extern bool doDSPDis;
+	if (who == DSP)
+		doDSPDis = true;
+#endif
+}
+
+void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who)
+{
+#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
+	WriteLog("Jaguar: Unknown word %04X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
+#endif
+#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
+//	extern bool finished;
+	finished = true;
+//	extern bool doDSPDis;
+	if (who == DSP)
+		doDSPDis = true;
+#endif
+}
+
+uint32_t JaguarGetHandler(uint32_t i)
+{
+	return JaguarReadLong(i * 4, UNKNOWN);
+}
+
+
+bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
+{
+	uint32_t handler = JaguarGetHandler(i);
+	return (handler && (handler != 0xFFFFFFFF) ? true : false);
+}
+
+void M68K_show_context(void)
+{
+	WriteLog("68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
+
+	for(int i=M68K_REG_D0; i<=M68K_REG_D7; i++)
+	{
+		WriteLog("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
+
+		if (i == M68K_REG_D3 || i == M68K_REG_D7)
+			WriteLog("\n");
+	}
+
+	for(int i=M68K_REG_A0; i<=M68K_REG_A7; i++)
+	{
+		WriteLog("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
+
+		if (i == M68K_REG_A3 || i == M68K_REG_A7)
+			WriteLog("\n");
+	}
+
+	WriteLog("68K disasm\n");
+//	jaguar_dasm(s68000readPC()-0x1000,0x20000);
+	JaguarDasm(m68k_get_reg(NULL, M68K_REG_PC) - 0x80, 0x200);
+//	jaguar_dasm(0x5000, 0x14414);
+
+//	WriteLog("\n.......[Cart start]...........\n\n");
+//	jaguar_dasm(0x192000, 0x1000);//0x200);
+
+	WriteLog("..................\n");
+
+	if (TOMIRQEnabled(IRQ_VIDEO))
+	{
+		WriteLog("video int: enabled\n");
+		JaguarDasm(JaguarGetHandler(64), 0x200);
+	}
+	else
+		WriteLog("video int: disabled\n");
+
+	WriteLog("..................\n");
+
+	for(int i=0; i<256; i++)
+	{
+		WriteLog("handler %03i at ", i);//$%08X\n", i, (unsigned int)JaguarGetHandler(i));
+		uint32_t address = (uint32_t)JaguarGetHandler(i);
+
+		if (address == 0)
+			WriteLog(".........\n");
+		else
+			WriteLog("$%08X\n", address);
+	}
+}
 
 // External variables
 
@@ -1382,158 +1520,7 @@ if (address == 0xF03214 && value == 0x88E30047)
 #endif
 }
 
-
-uint32_t JaguarGetHandler(uint32_t i)
-{
-	return JaguarReadLong(i * 4, UNKNOWN);
-}
-
-
-bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
-{
-	uint32_t handler = JaguarGetHandler(i);
-	return (handler && (handler != 0xFFFFFFFF) ? true : false);
-}
-
-
-void M68K_show_context(void)
-{
-	WriteLog("68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
-
-	for(int i=M68K_REG_D0; i<=M68K_REG_D7; i++)
-	{
-		WriteLog("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-		if (i == M68K_REG_D3 || i == M68K_REG_D7)
-			WriteLog("\n");
-	}
-
-	for(int i=M68K_REG_A0; i<=M68K_REG_A7; i++)
-	{
-		WriteLog("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-		if (i == M68K_REG_A3 || i == M68K_REG_A7)
-			WriteLog("\n");
-	}
-
-	WriteLog("68K disasm\n");
-//	jaguar_dasm(s68000readPC()-0x1000,0x20000);
-	JaguarDasm(m68k_get_reg(NULL, M68K_REG_PC) - 0x80, 0x200);
-//	jaguar_dasm(0x5000, 0x14414);
-
-//	WriteLog("\n.......[Cart start]...........\n\n");
-//	jaguar_dasm(0x192000, 0x1000);//0x200);
-
-	WriteLog("..................\n");
-
-	if (TOMIRQEnabled(IRQ_VIDEO))
-	{
-		WriteLog("video int: enabled\n");
-		JaguarDasm(JaguarGetHandler(64), 0x200);
-	}
-	else
-		WriteLog("video int: disabled\n");
-
-	WriteLog("..................\n");
-
-	for(int i=0; i<256; i++)
-	{
-		WriteLog("handler %03i at ", i);//$%08X\n", i, (unsigned int)JaguarGetHandler(i));
-		uint32_t address = (uint32_t)JaguarGetHandler(i);
-
-		if (address == 0)
-			WriteLog(".........\n");
-		else
-			WriteLog("$%08X\n", address);
-	}
-}
-
-
-//
-// Unknown read/write byte/word routines
-//
-
-// It's hard to believe that developers would be sloppy with their memory writes, yet in
-// some cases the developers screwed up royal. E.g., Club Drive has the following code:
-//
-// 807EC4: movea.l #$f1b000, A1
-// 807ECA: movea.l #$8129e0, A0
-// 807ED0: move.l  A0, D0
-// 807ED2: move.l  #$f1bb94, D1
-// 807ED8: sub.l   D0, D1
-// 807EDA: lsr.l   #2, D1
-// 807EDC: move.l  (A0)+, (A1)+
-// 807EDE: dbra    D1, 807edc
-//
-// The problem is at $807ED0--instead of putting A0 into D0, they really meant to put A1
-// in. This mistake causes it to try and overwrite approximately $700000 worth of address
-// space! (That is, unless the 68K causes a bus error...)
-
-void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who)
-{
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-	WriteLog("Jaguar: Unknown byte %02X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-//	extern bool finished;
-	finished = true;
-//	extern bool doDSPDis;
-	if (who == DSP)
-		doDSPDis = true;
-#endif
-}
-
-
-void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who)
-{
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-	WriteLog("Jaguar: Unknown word %04X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-//	extern bool finished;
-	finished = true;
-//	extern bool doDSPDis;
-	if (who == DSP)
-		doDSPDis = true;
-#endif
-}
-
-
-unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who)
-{
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-	WriteLog("Jaguar: Unknown byte read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-//	extern bool finished;
-	finished = true;
-//	extern bool doDSPDis;
-	if (who == DSP)
-		doDSPDis = true;
-#endif
-    return 0xFF;
-}
-
-
-unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
-{
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-	WriteLog("Jaguar: Unknown word read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-//	extern bool finished;
-	finished = true;
-//	extern bool doDSPDis;
-	if (who == DSP)
-		doDSPDis = true;
-#endif
-    return 0xFFFF;
-}
-
-
-//
-// Disassemble M68K instructions at the given offset
-//
+/* Disassemble M68K instructions at the given offset */
 
 unsigned int m68k_read_disassembler_8(unsigned int address)
 {
@@ -1551,7 +1538,6 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 {
 	return m68k_read_memory_32(address);
 }
-
 
 void JaguarDasm(uint32_t offset, uint32_t qt)
 {
@@ -1574,33 +1560,28 @@ void JaguarDasm(uint32_t offset, uint32_t qt)
 #endif
 }
 
-
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
-	uint8_t data = 0x00;
 	offset &= 0xFFFFFF;
 
 	// First 2M is mirrored in the $0 - $7FFFFF range
 	if (offset < 0x800000)
-		data = jaguarMainRAM[offset & 0x1FFFFF];
+		return jaguarMainRAM[offset & 0x1FFFFF];
 	else if ((offset >= 0x800000) && (offset < 0xDFFF00))
-		data = jaguarMainROM[offset - 0x800000];
+		return jaguarMainROM[offset - 0x800000];
 	else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
-		data = CDROMReadByte(offset, who);
+		return CDROMReadByte(offset, who);
 	else if ((offset >= 0xE00000) && (offset < 0xE40000))
-//		data = jaguarBootROM[offset & 0x3FFFF];
-//		data = jaguarDevBootROM1[offset & 0x3FFFF];
-		data = jagMemSpace[offset];
+		return jagMemSpace[offset];
 	else if ((offset >= 0xF00000) && (offset < 0xF10000))
-		data = TOMReadByte(offset, who);
+		return TOMReadByte(offset, who);
 	else if ((offset >= 0xF10000) && (offset < 0xF20000))
-		data = JERRYReadByte(offset, who);
+		return JERRYReadByte(offset, who);
 	else
-		data = jaguar_unknown_readbyte(offset, who);
+		return jaguar_unknown_readbyte(offset, who);
 
-	return data;
+	return 0x00;
 }
-
 
 uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 {
@@ -1608,9 +1589,7 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 
 	// First 2M is mirrored in the $0 - $7FFFFF range
 	if (offset < 0x800000)
-	{
 		return (jaguarMainRAM[(offset+0) & 0x1FFFFF] << 8) | jaguarMainRAM[(offset+1) & 0x1FFFFF];
-	}
 	else if ((offset >= 0x800000) && (offset < 0xDFFF00))
 	{
 		offset -= 0x800000;
@@ -1620,8 +1599,6 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 	else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFE))
 		return CDROMReadWord(offset, who);
 	else if ((offset >= 0xE00000) && (offset <= 0xE3FFFE))
-//		return (jaguarBootROM[(offset+0) & 0x3FFFF] << 8) | jaguarBootROM[(offset+1) & 0x3FFFF];
-//		return (jaguarDevBootROM1[(offset+0) & 0x3FFFF] << 8) | jaguarDevBootROM1[(offset+1) & 0x3FFFF];
 		return (jagMemSpace[offset + 0] << 8) | jagMemSpace[offset + 1];
 	else if ((offset >= 0xF00000) && (offset <= 0xF0FFFE))
 		return TOMReadWord(offset, who);
@@ -1661,7 +1638,6 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 	jaguar_unknown_writebyte(offset, data, who);
 }
 
-uint32_t starCount;
 
 void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
@@ -1766,8 +1742,73 @@ memset(jaguarMainRAM + 0x804, 0xFF, 4);
 
 
 //New timer based code stuffola...
-void HalflineCallback(void);
-void RenderCallback(void);
+
+// The thing to keep in mind is that the VC is advanced every HALF line, regardless
+// of whether the display is interlaced or not. The only difference with an
+// interlaced display is that the high bit of VC will be set when the lower
+// field is being rendered. (NB: The high bit of VC is ALWAYS set on the lower field,
+// regardless of whether it's in interlace mode or not.
+// NB2: Seems it doens't always, not sure what the constraint is...)
+//
+// Normally, TVs will render a full frame in 1/30s (NTSC) or 1/25s (PAL) by
+// rendering two fields that are slighty vertically offset from each other.
+// Each field is created in 1/60s (NTSC) or 1/50s (PAL), and every other line
+// is rendered in this mode so that each field, when overlaid on each other,
+// will yield the final picture at the full resolution for the full frame.
+//
+// We execute a half frame in each timeslice (1/60s NTSC, 1/50s PAL).
+// Since the number of lines in a FULL frame is 525 for NTSC, 625 for PAL,
+// it will be half this number for a half frame. BUT, since we're counting
+// HALF lines, we double this number and we're back at 525 for NTSC, 625 for PAL.
+//
+// Scanline times are 63.5555... μs in NTSC and 64 μs in PAL
+// Half line times are, naturally, half of this. :-P
+void HalflineCallback(void)
+{
+	uint16_t vc = TOMReadWord(0xF00006, JAGUAR);
+	uint16_t vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
+	uint16_t vi = TOMReadWord(0xF0004E, JAGUAR);
+//	uint16_t vbb = TOMReadWord(0xF00040, JAGUAR);
+	vc++;
+
+	// Each # of lines is for a full frame == 1/30s (NTSC), 1/25s (PAL).
+	// So we cut the number of half-lines in a frame in half. :-P
+	uint16_t numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+
+	if ((vc & 0x7FF) >= numHalfLines)
+	{
+      lowerField = !lowerField;
+		// If we're rendering the lower field, set the high bit (#11, counting
+		// from 0) of VC
+		vc = (lowerField ? 0x0800 : 0x0000);
+	}
+
+//WriteLog("HLC: Currently on line %u (VP=%u)...\n", vc, vp);
+	TOMWriteWord(0xF00006, vc, JAGUAR);
+
+   // Time for Vertical Interrupt?
+	if ((vc & 0x7FF) == vi && (vc & 0x7FF) > 0 && TOMIRQEnabled(IRQ_VIDEO))
+	{
+		// We don't have to worry about autovectors & whatnot because the Jaguar
+		// tells you through its HW registers who sent the interrupt...
+		TOMSetPendingVideoInt();
+		m68k_set_irq(2);
+	}
+
+	TOMExecHalfline(vc, true);
+
+//Change this to VBB???
+//Doesn't seem to matter (at least for Flip Out & I-War)
+	if ((vc & 0x7FF) == 0)
+//	if (vc == vbb)
+	{
+		JoystickExec();
+		frameDone = true;
+	}//*/
+
+	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
+}
+
 void JaguarReset(void)
 {
 	// Only problem with this approach: It wipes out RAM loaded files...!
@@ -1902,11 +1943,8 @@ uint8_t * GetRamPtr(void)
 }
 
 
-//
 // New Jaguar execution stack
 // This executes 1 frame's worth of code.
-//
-bool frameDone;
 void JaguarExecuteNew(void)
 {
 	frameDone = false;
@@ -1926,69 +1964,3 @@ void JaguarExecuteNew(void)
 }
 
 
-//
-// The thing to keep in mind is that the VC is advanced every HALF line, regardless
-// of whether the display is interlaced or not. The only difference with an
-// interlaced display is that the high bit of VC will be set when the lower
-// field is being rendered. (NB: The high bit of VC is ALWAYS set on the lower field,
-// regardless of whether it's in interlace mode or not.
-// NB2: Seems it doens't always, not sure what the constraint is...)
-//
-// Normally, TVs will render a full frame in 1/30s (NTSC) or 1/25s (PAL) by
-// rendering two fields that are slighty vertically offset from each other.
-// Each field is created in 1/60s (NTSC) or 1/50s (PAL), and every other line
-// is rendered in this mode so that each field, when overlaid on each other,
-// will yield the final picture at the full resolution for the full frame.
-//
-// We execute a half frame in each timeslice (1/60s NTSC, 1/50s PAL).
-// Since the number of lines in a FULL frame is 525 for NTSC, 625 for PAL,
-// it will be half this number for a half frame. BUT, since we're counting
-// HALF lines, we double this number and we're back at 525 for NTSC, 625 for PAL.
-//
-// Scanline times are 63.5555... μs in NTSC and 64 μs in PAL
-// Half line times are, naturally, half of this. :-P
-void HalflineCallback(void)
-{
-	uint16_t vc = TOMReadWord(0xF00006, JAGUAR);
-	uint16_t vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
-	uint16_t vi = TOMReadWord(0xF0004E, JAGUAR);
-//	uint16_t vbb = TOMReadWord(0xF00040, JAGUAR);
-	vc++;
-
-	// Each # of lines is for a full frame == 1/30s (NTSC), 1/25s (PAL).
-	// So we cut the number of half-lines in a frame in half. :-P
-	uint16_t numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
-
-	if ((vc & 0x7FF) >= numHalfLines)
-	{
-      lowerField = !lowerField;
-		// If we're rendering the lower field, set the high bit (#11, counting
-		// from 0) of VC
-		vc = (lowerField ? 0x0800 : 0x0000);
-	}
-
-//WriteLog("HLC: Currently on line %u (VP=%u)...\n", vc, vp);
-	TOMWriteWord(0xF00006, vc, JAGUAR);
-
-   // Time for Vertical Interrupt?
-	if ((vc & 0x7FF) == vi && (vc & 0x7FF) > 0 && TOMIRQEnabled(IRQ_VIDEO))
-	{
-		// We don't have to worry about autovectors & whatnot because the Jaguar
-		// tells you through its HW registers who sent the interrupt...
-		TOMSetPendingVideoInt();
-		m68k_set_irq(2);
-	}
-
-	TOMExecHalfline(vc, true);
-
-//Change this to VBB???
-//Doesn't seem to matter (at least for Flip Out & I-War)
-	if ((vc & 0x7FF) == 0)
-//	if (vc == vbb)
-	{
-		JoystickExec();
-		frameDone = true;
-	}//*/
-
-	SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
-}
