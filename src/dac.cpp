@@ -103,12 +103,9 @@ void DACInit(void)
 }
 
 
-//
 // Reset the sound buffer FIFOs
-//
 void DACReset(void)
 {
-//	LeftFIFOHeadPtr = LeftFIFOTailPtr = 0, RightFIFOHeadPtr = RightFIFOTailPtr = 1;
 	ltxd = lrxd = SILENCE;
 }
 
@@ -194,7 +191,6 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
     
 }
 
-
 void DSPSampleCallback(void)
 {
 	sampleBuffer[bufferIndex + 0] = ltxd;
@@ -225,28 +221,21 @@ int GetCalculatedFrequency(void)
 }
 #endif
 
-
-//
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)
-//
 void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who/*= UNKNOWN*/)
 {
 	WriteLog("DAC: %s writing BYTE %02X at %08X\n", whoName[who], data, offset);
 	if (offset == SCLK + 3)
-		DACWriteWord(offset - 3, (uint16_t)data);
+		DACWriteWord(offset - 3, (uint16_t)data, UNKNOWN);
 }
 
 
 void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
 {
 	if (offset == LTXD + 2)
-	{
 		ltxd = data;
-	}
 	else if (offset == RTXD + 2)
-	{
 		rtxd = data;
-	}
 	else if (offset == SCLK + 2)					// Sample rate
 	{
 		WriteLog("DAC: Writing %u to SCLK (by %s)...\n", data, whoName[who]);
@@ -268,28 +257,13 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
 	}
 }
 
-
-//
-// LRXD/RRXD/SSTAT ($F1A148/4C/50)
-//
-uint8_t DACReadByte(uint32_t offset, uint32_t who/*= UNKNOWN*/)
+uint8_t DACReadByte(uint32_t offset, uint32_t who)
 {
-//	WriteLog("DAC: %s reading byte from %08X\n", whoName[who], offset);
 	return 0xFF;
 }
 
-
-//static uint16_t fakeWord = 0;
-uint16_t DACReadWord(uint32_t offset, uint32_t who/*= UNKNOWN*/)
+uint16_t DACReadWord(uint32_t offset, uint32_t who)
 {
-//	WriteLog("DAC: %s reading word from %08X\n", whoName[who], offset);
-//	return 0xFFFF;
-//	WriteLog("DAC: %s reading WORD %04X from %08X\n", whoName[who], fakeWord, offset);
-//	return fakeWord++;
-//NOTE: This only works if a bunch of things are set in BUTCH which we currently don't
-//      check for. !!! FIX !!!
-// Partially fixed: We check for I2SCNTRL in the JERRY I2S routine...
-//	return GetWordFromButchSSI(offset, who);
 	if (offset == LRXD || offset == RRXD)
 		return 0x0000;
 	else if (offset == LRXD + 2)
