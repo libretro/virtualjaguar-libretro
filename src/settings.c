@@ -16,5 +16,4 @@
 
 // Global variables
 
-VJSettings vjs;
-
+struct VJSettings vjs;

@@ -5,14 +5,19 @@
 #ifndef __SETTINGS_H__
 #define __SETTINGS_H__
 
+#include <stdint.h>
 #include <stdlib.h>								// for MAX_PATH on MinGW/Darwin
 #include <limits.h>
+
+#include <boolean.h>
 
 #ifndef MAX_PATH
 #define MAX_PATH		4096
 #endif
 
-#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // Settings struct
 
@@ -59,6 +64,10 @@ enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2 };
 
 // Exported variables
 
-extern VJSettings vjs;
+extern struct VJSettings vjs;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	// __SETTINGS_H__
