@@ -36,7 +36,7 @@ enum FileFlags { FF_ROM=1, FF_ALPINE=2, FF_BIOS=4, FF_REQ_DSP=8, FF_REQ_BIOS=16,
 // This is to ensure that we can detect something properly (like an Alpine ROM)
 // that somebody slapped a universal header on.
 
-RomIdentifier romList[] = {
+struct RomIdentifier romList[] = {
 	{ 0x0509C85E, "Raiden (World) (alt)", FF_ROM | FF_REQ_BIOS },
 	{ 0x08849D0F, "Hyper Force (World)", FF_ALPINE | FF_VERIFIED },
 	{ 0x08F15576, "Iron Soldier (World) (v1.04)", FF_ROM | FF_VERIFIED },

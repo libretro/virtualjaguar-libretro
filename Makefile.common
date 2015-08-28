@@ -6,7 +6,6 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/dsp.cpp \
 	$(CORE_DIR)/eeprom.cpp \
 	$(CORE_DIR)/file.cpp \
-	$(CORE_DIR)/filedb.cpp \
 	$(CORE_DIR)/gpu.cpp \
 	$(CORE_DIR)/jagdasm.cpp \
 	$(CORE_DIR)/jaguar.cpp \
@@ -22,6 +21,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/cdintf.c \
 	$(CORE_DIR)/crc32.c \
 	$(CORE_DIR)/event.c \
+	$(CORE_DIR)/filedb.c \
 	$(CORE_DIR)/m68000/cpustbl.c \
 	$(CORE_DIR)/m68000/cpudefs.c \
 	$(CORE_DIR)/m68000/cpuemu.c \
