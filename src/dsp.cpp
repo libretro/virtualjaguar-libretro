@@ -880,11 +880,6 @@ WriteLog("DSP: Modulo data %08X written by %s.\n", data, whoName[who]);
 		return;
 	}
 
-//We don't have to break this up like this! We CAN do 32 bit writes!
-//	JaguarWriteWord(offset, (data>>16) & 0xFFFF, DSP);
-//	JaguarWriteWord(offset+2, data & 0xFFFF, DSP);
-//if (offset > 0xF1FFFF)
-//	badWrite = true;
 	JaguarWriteLong(offset, data, who);
 }
 
@@ -978,11 +973,11 @@ WriteLog("\tW -> %02u, %02u, %02u; r1=%08X, r2= %08X, res=%08X, wb=%u (%s)\n", p
 			else
 			{
 				if (pipeline[plPtrWrite].type == TYPE_BYTE)
-					JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+					JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 				else if (pipeline[plPtrWrite].type == TYPE_WORD)
-					JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+					JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 				else
-					JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+					JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 			}
 		}
 
@@ -3372,11 +3367,11 @@ WriteLog("\n");
 				else
 				{
 					if (pipeline[plPtrWrite].type == TYPE_BYTE)
-						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 					else if (pipeline[plPtrWrite].type == TYPE_WORD)
-						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 					else
-						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 				}
 			}
 
@@ -3850,11 +3845,11 @@ const char * condition[32] =
 				else
 				{
 					if (pipeline[plPtrWrite].type == TYPE_BYTE)
-						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 					else if (pipeline[plPtrWrite].type == TYPE_WORD)
-						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 					else
-						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 				}
 			}
 
@@ -3955,11 +3950,11 @@ const char * condition[32] =
 				else
 				{
 					if (pipeline[plPtrWrite].type == TYPE_BYTE)
-						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 					else if (pipeline[plPtrWrite].type == TYPE_WORD)
-						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 					else
-						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value);
+						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
 				}
 			}
 

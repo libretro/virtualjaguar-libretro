@@ -46,10 +46,10 @@
 
 // Private function prototypes
 
-unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who = UNKNOWN);
-unsigned jaguar_unknown_readword(unsigned address, uint32_t who = UNKNOWN);
-void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who = UNKNOWN);
-void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who = UNKNOWN);
+unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who);
+unsigned jaguar_unknown_readword(unsigned address, uint32_t who);
+void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who);
+void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who);
 void M68K_show_context(void);
 
 // External variables
@@ -197,11 +197,6 @@ if (inRoutine)
 		}
 		WriteLog("\n");
 
-		uint32_t topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
-		WriteLog("M68K: Top of stack: %08X. Stack trace:\n", JaguarReadLong(topOfStack));
-		for(int i=0; i<10; i++)
-			WriteLog("%06X: %08X\n", topOfStack - (i * 4), JaguarReadLong(topOfStack - (i * 4)));
-		WriteLog("Jaguar: VBL interrupt is %s\n", ((TOMIRQEnabled(IRQ_VIDEO)) && (JaguarInterruptHandlerIsValid(64))) ? "enabled" : "disabled");
 		M68K_show_context();
 		LogDone();
 		exit(0);
@@ -432,25 +427,6 @@ CD_switch::	-> $306C
 		}
 #endif
 
-		WriteLog("\nM68K encountered an illegal instruction at %08X!!!\n\nAborting!\n", m68kPC);
-		uint32_t topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
-		WriteLog("M68K: Top of stack: %08X. Stack trace:\n", JaguarReadLong(topOfStack));
-		uint32_t address = topOfStack - (4 * 4 * 3);
-
-		for(int i=0; i<10; i++)
-		{
-			WriteLog("%06X:", address);
-
-			for(int j=0; j<4; j++)
-			{
-				WriteLog(" %08X", JaguarReadLong(address));
-				address += 4;
-			}
-
-			WriteLog("\n");
-		}
-
-		WriteLog("Jaguar: VBL interrupt is %s\n", ((TOMIRQEnabled(IRQ_VIDEO)) && (JaguarInterruptHandlerIsValid(64))) ? "enabled" : "disabled");
 		M68K_show_context();
 
 //temp
@@ -664,7 +640,7 @@ C3 = C2 = 1 means std. Jag. cntrlr. or nothing attached.
 */
 };
 
-void WriteByte(uint32_t address, uint8_t byte, uint32_t who/*=UNKNOWN*/)
+void WriteByte(uint32_t address, uint8_t byte, uint32_t who)
 {
 	// Not sure, but I think the system only has 24 address bits...
 	address &= 0x00FFFFFF;
@@ -1409,7 +1385,7 @@ if (address == 0xF03214 && value == 0x88E30047)
 
 uint32_t JaguarGetHandler(uint32_t i)
 {
-	return JaguarReadLong(i * 4);
+	return JaguarReadLong(i * 4, UNKNOWN);
 }
 
 
@@ -1493,7 +1469,7 @@ void M68K_show_context(void)
 // in. This mistake causes it to try and overwrite approximately $700000 worth of address
 // space! (That is, unless the 68K causes a bus error...)
 
-void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who/*=UNKNOWN*/)
+void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown byte %02X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1508,7 +1484,7 @@ void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who/*=UN
 }
 
 
-void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who/*=UNKNOWN*/)
+void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown word %04X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1523,7 +1499,7 @@ void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who/*=UN
 }
 
 
-unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who/*=UNKNOWN*/)
+unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown byte read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1539,7 +1515,7 @@ unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who/*=UNKNOWN*/)
 }
 
 
-unsigned jaguar_unknown_readword(unsigned address, uint32_t who/*=UNKNOWN*/)
+unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
 {
 #ifdef LOG_UNMAPPED_MEMORY_ACCESSES
 	WriteLog("Jaguar: Unknown word read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
@@ -1599,7 +1575,7 @@ void JaguarDasm(uint32_t offset, uint32_t qt)
 }
 
 
-uint8_t JaguarReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
 	uint8_t data = 0x00;
 	offset &= 0xFFFFFF;
@@ -1626,7 +1602,7 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 
-uint16_t JaguarReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 {
 	offset &= 0xFFFFFF;
 
@@ -1656,15 +1632,8 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 
-void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
+void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
-/*	if (offset >= 0x4E00 && offset < 0x4E04)
-		WriteLog("JWB: Byte %02X written at %08X by %s\n", data, offset, whoName[who]);//*/
-//Need to check for writes in the range of $18FA70 + 8000...
-/*if (effect_start)
-	if (offset >= 0x18FA70 && offset < (0x18FA70 + 8000))
-		WriteLog("JWB: Byte %02X written at %08X by %s\n", data, offset, whoName[who]);//*/
-
 	offset &= 0xFFFFFF;
 
 	// First 2M is mirrored in the $0 - $7FFFFF range
@@ -1692,116 +1661,15 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 	jaguar_unknown_writebyte(offset, data, who);
 }
 
-
 uint32_t starCount;
-void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
-{
-/*	if (offset >= 0x4E00 && offset < 0x4E04)
-		WriteLog("JWW: Word %04X written at %08X by %s\n", data, offset, whoName[who]);//*/
-/*if (offset == 0x0100)//64*4)
-	WriteLog("M68K: %s wrote word to VI vector value %04X...\n", whoName[who], data);
-if (offset == 0x0102)//64*4)
-	WriteLog("M68K: %s wrote word to VI vector+2 value %04X...\n", whoName[who], data);//*/
-//TEMP--Mirror of F03000? Yes, but only 32-bit CPUs can do it (i.e., NOT the 68K!)
-// PLUS, you would handle this in the GPU/DSP WriteLong code! Not here!
-//Need to check for writes in the range of $18FA70 + 8000...
-/*if (effect_start)
-	if (offset >= 0x18FA70 && offset < (0x18FA70 + 8000))
-		WriteLog("JWW: Word %04X written at %08X by %s\n", data, offset, whoName[who]);//*/
-/*if (offset >= 0x2C00 && offset <= 0x2CFF)
-	WriteLog("Jaguar: Word %04X written to TOC+%02X by %s\n", data, offset-0x2C00, whoName[who]);//*/
 
+void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
+{
 	offset &= 0xFFFFFF;
 
 	// First 2M is mirrored in the $0 - $7FFFFF range
 	if (offset <= 0x7FFFFE)
 	{
-/*
-GPU Table (CD BIOS)
-
-1A 69 F0 ($0000) -> Starfield
-1A 73 C8 ($0001) -> Final clearing blit & bitmap blit?
-1A 79 F0 ($0002)
-1A 88 C0 ($0003)
-1A 8F E8 ($0004) -> "Jaguar" small color logo?
-1A 95 20 ($0005)
-1A 9F 08 ($0006)
-1A A1 38 ($0007)
-1A AB 38 ($0008)
-1A B3 C8 ($0009)
-1A B9 C0 ($000A)
-*/
-
-//This MUST be done by the 68K!
-/*if (offset == 0x670C)
-	WriteLog("Jaguar: %s writing to location $670C...\n", whoName[who]);*/
-
-/*extern bool doGPUDis;
-//if ((offset == 0x100000 + 75522) && who == GPU)	// 76,226 -> 75522
-if ((offset == 0x100000 + 128470) && who == GPU)	// 107,167 -> 128470 (384 x 250 screen size 16BPP)
-//if ((offset >= 0x100000 && offset <= 0x12C087) && who == GPU)
-	doGPUDis = true;//*/
-/*if (offset == 0x100000 + 128470) // 107,167 -> 128470 (384 x 250 screen size 16BPP)
-	WriteLog("JWW: Writing value %04X at %08X by %s...\n", data, offset, whoName[who]);
-if ((data & 0xFF00) != 0x7700)
-	WriteLog("JWW: Writing value %04X at %08X by %s...\n", data, offset, whoName[who]);//*/
-/*if ((offset >= 0x100000 && offset <= 0x147FFF) && who == GPU)
-	return;//*/
-/*if ((data & 0xFF00) != 0x7700 && who == GPU)
-	WriteLog("JWW: Writing value %04X at %08X by %s...\n", data, offset, whoName[who]);//*/
-/*if ((offset >= 0x100000 + 0x48000 && offset <= 0x12C087 + 0x48000) && who == GPU)
-	return;//*/
-/*extern bool doGPUDis;
-if (offset == 0x120216 && who == GPU)
-	doGPUDis = true;//*/
-/*extern uint32_t gpu_pc;
-if (who == GPU && (gpu_pc == 0xF03604 || gpu_pc == 0xF03638))
-{
-	uint32_t base = offset - (offset > 0x148000 ? 0x148000 : 0x100000);
-	uint32_t y = base / 0x300;
-	uint32_t x = (base - (y * 0x300)) / 2;
-	WriteLog("JWW: Writing starfield star %04X at %08X (%u/%u) [%s]\n", data, offset, x, y, (gpu_pc == 0xF03604 ? "s" : "L"));
-}//*/
-/*
-JWW: Writing starfield star 775E at 0011F650 (555984/1447)
-*/
-//if (offset == (0x001E17F8 + 0x34))
-/*if (who == GPU && offset == (0x001E17F8 + 0x34))
-	data = 0xFE3C;//*/
-//	WriteLog("JWW: Write at %08X written to by %s.\n", 0x001E17F8 + 0x34, whoName[who]);//*/
-/*extern uint32_t gpu_pc;
-if (who == GPU && (gpu_pc == 0xF03604 || gpu_pc == 0xF03638))
-{
-	extern int objectPtr;
-//	if (offset > 0x148000)
-//		return;
-	starCount++;
-	if (starCount > objectPtr)
-		return;
-
-//	if (starCount == 1)
-//		WriteLog("--> Drawing 1st star...\n");
-//
-//	uint32_t base = offset - (offset > 0x148000 ? 0x148000 : 0x100000);
-//	uint32_t y = base / 0x300;
-//	uint32_t x = (base - (y * 0x300)) / 2;
-//	WriteLog("JWW: Writing starfield star %04X at %08X (%u/%u) [%s]\n", data, offset, x, y, (gpu_pc == 0xF03604 ? "s" : "L"));
-
-//A star of interest...
-//-->JWW: Writing starfield star 77C9 at 0011D31A (269/155) [s]
-//1st trail +3(x), -1(y) -> 272, 154 -> 0011D020
-//JWW: Blitter writing echo 77B3 at 0011D022...
-}//*/
-//extern bool doGPUDis;
-/*if (offset == 0x11D022 + 0x48000 || offset == 0x11D022)// && who == GPU)
-{
-//	doGPUDis = true;
-	WriteLog("JWW: %s writing echo %04X at %08X...\n", whoName[who], data, offset);
-//	LogBlit();
-}
-if (offset == 0x11D31A + 0x48000 || offset == 0x11D31A)
-	WriteLog("JWW: %s writing star %04X at %08X...\n", whoName[who], data, offset);//*/
-
 		jaguarMainRAM[(offset+0) & 0x1FFFFF] = data >> 8;
 		jaguarMainRAM[(offset+1) & 0x1FFFFF] = data & 0xFF;
 		return;
@@ -1830,24 +1698,15 @@ if (offset == 0x11D31A + 0x48000 || offset == 0x11D31A)
 
 
 // We really should re-do this so that it does *real* 32-bit access... !!! FIX !!!
-uint32_t JaguarReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 {
 	return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
 }
 
 
 // We really should re-do this so that it does *real* 32-bit access... !!! FIX !!!
-void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
+void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
-/*	extern bool doDSPDis;
-	if (offset < 0x400 && !doDSPDis)
-	{
-		WriteLog("JLW: Write to %08X by %s... Starting DSP log!\n\n", offset, whoName[who]);
-		doDSPDis = true;
-	}//*/
-/*if (offset == 0x0100)//64*4)
-	WriteLog("M68K: %s wrote dword to VI vector value %08X...\n", whoName[who], data);//*/
-
 	JaguarWriteWord(offset, data >> 16, who);
 	JaguarWriteWord(offset+2, data & 0xFFFF, who);
 }
@@ -1980,59 +1839,6 @@ void JaguarDone(void)
 	}
 	WriteLog("\n");//*/
 #endif
-//#ifdef CPU_DEBUG
-//	for(int i=M68K_REG_A0; i<=M68K_REG_A7; i++)
-//		WriteLog("\tA%i = 0x%.8x\n", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-	int32_t topOfStack = m68k_get_reg(NULL, M68K_REG_A7);
-	WriteLog("M68K: Top of stack: %08X -> (%08X). Stack trace:\n", topOfStack, JaguarReadLong(topOfStack));
-#if 0
-	for(int i=-2; i<9; i++)
-		WriteLog("%06X: %08X\n", topOfStack + (i * 4), JaguarReadLong(topOfStack + (i * 4)));
-#else
-	uint32_t address = topOfStack - (4 * 4 * 3);
-
-	for(int i=0; i<10; i++)
-	{
-		WriteLog("%06X:", address);
-
-		for(int j=0; j<4; j++)
-		{
-			WriteLog(" %08X", JaguarReadLong(address));
-			address += 4;
-		}
-
-		WriteLog("\n");
-	}
-#endif
-
-/*	WriteLog("\nM68000 disassembly at $802288...\n");
-	jaguar_dasm(0x802288, 3);
-	WriteLog("\nM68000 disassembly at $802200...\n");
-	jaguar_dasm(0x802200, 500);
-	WriteLog("\nM68000 disassembly at $802518...\n");
-	jaguar_dasm(0x802518, 100);//*/
-
-/*	WriteLog("\n\nM68000 disassembly at $803F00 (look @ $803F2A)...\n");
-	jaguar_dasm(0x803F00, 500);
-	WriteLog("\n");//*/
-
-/*	WriteLog("\n\nM68000 disassembly at $802B00 (look @ $802B5E)...\n");
-	jaguar_dasm(0x802B00, 500);
-	WriteLog("\n");//*/
-
-/*	WriteLog("\n\nM68000 disassembly at $809900 (look @ $8099F8)...\n");
-	jaguar_dasm(0x809900, 500);
-	WriteLog("\n");//*/
-//8099F8
-/*	WriteLog("\n\nDump of $8093C8:\n\n");
-	for(int i=0x8093C8; i<0x809900; i+=4)
-		WriteLog("%06X: %08X\n", i, JaguarReadLong(i));//*/
-/*	WriteLog("\n\nM68000 disassembly at $90006C...\n");
-	jaguar_dasm(0x90006C, 500);
-	WriteLog("\n");//*/
-/*	WriteLog("\n\nM68000 disassembly at $1AC000...\n");
-	jaguar_dasm(0x1AC000, 6000);
-	WriteLog("\n");//*/
 
 //	WriteLog("Jaguar: CD BIOS version %04X\n", JaguarReadWord(0x3004));
 	WriteLog("Jaguar: Interrupt enable = $%02X\n", TOMReadByte(0xF000E1, JAGUAR) & 0x1F);

@@ -160,31 +160,6 @@ void OPDone(void)
 	WriteLog("\nOP: OLP = $%08X\n", olp);
 	WriteLog("OP: Phrase dump\n    ----------\n");
 
-#if 0
-	for(uint32_t i=0; i<0x100; i+=8)
-	{
-		uint32_t hi = JaguarReadLong(olp + i, OP), lo = JaguarReadLong(olp + i + 4, OP);
-		WriteLog("\t%08X: %08X %08X %s", olp + i, hi, lo, opType[lo & 0x07]);
-
-		if ((lo & 0x07) == 3)
-		{
-			uint16_t ypos = (lo >> 3) & 0x7FF;
-			uint8_t  cc   = (lo >> 14) & 0x03;
-			uint32_t link = ((hi << 11) | (lo >> 21)) & 0x3FFFF8;
-			WriteLog(" YPOS=%u, CC=%s, link=%08X", ypos, ccType[cc], link);
-		}
-
-		WriteLog("\n");
-
-		if ((lo & 0x07) == 0)
-			DumpFixedObject(OPLoadPhrase(olp+i), OPLoadPhrase(olp+i+8));
-
-		if ((lo & 0x07) == 1)
-			DumpScaledObject(OPLoadPhrase(olp+i), OPLoadPhrase(olp+i+8), OPLoadPhrase(olp+i+16));
-	}
-
-	WriteLog("\n");
-#else
 //#warning "!!! Fix lockup in OPDiscoverObjects() !!!"
 //temp, to keep the following function from locking up on bad/weird OLs
 //return;
@@ -192,7 +167,6 @@ void OPDone(void)
 	numberOfObjects = 0;
 	OPDiscoverObjects(olp);
 	OPDumpObjectList();
-#endif
 }
 
 
@@ -1501,13 +1475,6 @@ if (op_start_log && startPos == 13)
 {
 	WriteLog("OP: Scaled line. SP=%i, EP=%i, clip=%u, iwidth=%u, hscale=%02X, depth=%u, firstPix=%u\n", startPos, endPos, clippedWidth, iwidth, hscale, depth, firstPix);
 	DumpScaledObject(p0, p1, p2);
-	if (iwidth == 7)
-	{
-		WriteLog("    %08X: ", data);
-		for(int i=0; i<7*8; i++)
-			WriteLog("%02X ", JaguarReadByte(data+i));
-		WriteLog("\n");
-	}
 }
 	// If the image is sitting on the line buffer left or right edge, we need to compensate
 	// by decreasing the image phrase width accordingly.
