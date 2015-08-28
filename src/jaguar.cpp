@@ -13,13 +13,14 @@
 // ---  ----------  -----------------------------------------------------------
 // JLH  11/25/2009  Major rewrite of memory subsystem and handlers
 //
+#include <string.h>
+#include <stdlib.h>
+
+#include <time.h>
 
 #include "jaguar.h"
 
-#include <time.h>
-#include "blitter.h"
 #include "cdrom.h"
-#include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
 #include "event.h"
@@ -29,11 +30,8 @@
 #include "log.h"
 #include "m68000/m68kinterface.h"
 //#include "vjag_memory.h"
-#include "mmu.h"
 #include "settings.h"
 #include "tom.h"
-#include <string.h>
-#include <stdlib.h>
 
 //Do this in makefile??? Yes! Could, but it's easier to define here...
 //#define CPU_DEBUG
