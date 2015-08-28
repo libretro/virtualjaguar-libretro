@@ -20,10 +20,6 @@ enum { JST_NONE = 0, JST_ROM, JST_ALPINE, JST_ABS_TYPE1, JST_ABS_TYPE2, JST_JAGS
 
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize);
 bool AlpineLoadFile(uint8_t *buffer, size_t bufsize);
-uint32_t GetFileDBIdentityFromZIP(const char * zipFile);
-bool FindFileInZIPWithCRC32(const char * zipFile, uint32_t crc);
-uint32_t ParseFileType(uint8_t * buffer, uint32_t size);
-bool HasUniversalHeader(uint8_t * rom, uint32_t romSize);
 
 #ifdef __cplusplus
 }

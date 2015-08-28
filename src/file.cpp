@@ -26,19 +26,45 @@
 #include "vjag_memory.h"
 #include "universalhdr.h"
 
-// Private function prototypes
+/* Parse the file type based upon file size and/or headers. */
+static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
+{
+	// Check headers first...
 
-static bool CheckExtension(const char * filename, const char * ext);
-//static int ParseFileType(uint8_t header1, uint8_t header2, uint32_t size);
+	// ABS/COFF type 1
+	if (buffer[0] == 0x60 && buffer[1] == 0x1B)
+		return JST_ABS_TYPE1;
 
-// Private variables/enums
+	// ABS/COFF type 2
+	if (buffer[0] == 0x01 && buffer[1] == 0x50)
+		return JST_ABS_TYPE2;
 
+	// Jag Server & other old shite
+	if (buffer[0] == 0x60 && buffer[1] == 0x1A)
+	{
+		if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
+			return JST_JAGSERVER;
+		else
+			return JST_WTFOMGBBQ;
+	}
 
-//
-// Jaguar file loading
-// We do a more intelligent file analysis here instead of relying on (possible false)
-// file extensions which people don't seem to give two shits about anyway. :-(
-//
+	// And if that fails, try file sizes...
+
+	// If the file size is divisible by 1M, we probably have an regular ROM.
+	// We can also check our CRC32 against the internal ROM database to be sure.
+	// (We also check for the Memory Track cartridge size here as well...)
+	if ((size % 1048576) == 0 || size == 131072)
+		return JST_ROM;
+
+	// If the file size + 8192 bytes is divisible by 1M, we probably have an
+	// Alpine format ROM.
+	if (((size + 8192) % 1048576) == 0)
+		return JST_ALPINE;
+
+	// Headerless crap
+	return JST_NONE;
+}
+
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
 {
 	jaguarROMSize = bufsize;
@@ -172,13 +198,7 @@ SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
 	return false;
 }
 
-
-//
-// "Alpine" file loading
-// Since the developers were coming after us with torches and pitchforks, we
-// decided to allow this kind of thing. ;-) But ONLY FOR THE DEVS, DAMMIT! >:-U
-// O_O
-//
+/* "Alpine" file loading */
 bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
 {
 	jaguarROMSize = bufsize;
@@ -206,79 +226,6 @@ bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
 	return true;
 }
 
-//
-// Compare extension to passed in filename. If equal, return true; otherwise false.
-//
-static bool CheckExtension(const uint8_t * filename, const char * ext)
-{
-	// Sanity checking...
-	if ((filename == NULL) || (ext == NULL))
-		return false;
-
-	const char * filenameExt = strrchr((const char *)filename, '.');	// Get the file's extension (if any)
-
-	if (filenameExt == NULL)
-		return false;
-
-	return (strcasecmp(filenameExt, ext) == 0 ? true : false);
-}
-
-//
-// Parse the file type based upon file size and/or headers.
-//
-uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
-{
-	// Check headers first...
-
-	// ABS/COFF type 1
-	if (buffer[0] == 0x60 && buffer[1] == 0x1B)
-		return JST_ABS_TYPE1;
-
-	// ABS/COFF type 2
-	if (buffer[0] == 0x01 && buffer[1] == 0x50)
-		return JST_ABS_TYPE2;
-
-	// Jag Server & other old shite
-	if (buffer[0] == 0x60 && buffer[1] == 0x1A)
-	{
-		if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
-			return JST_JAGSERVER;
-		else
-			return JST_WTFOMGBBQ;
-	}
-
-	// And if that fails, try file sizes...
-
-	// If the file size is divisible by 1M, we probably have an regular ROM.
-	// We can also check our CRC32 against the internal ROM database to be sure.
-	// (We also check for the Memory Track cartridge size here as well...)
-	if ((size % 1048576) == 0 || size == 131072)
-		return JST_ROM;
-
-	// If the file size + 8192 bytes is divisible by 1M, we probably have an
-	// Alpine format ROM.
-	if (((size + 8192) % 1048576) == 0)
-		return JST_ALPINE;
-
-	// Headerless crap
-	return JST_NONE;
-}
-
-//
-// Check for universal header
-//
-bool HasUniversalHeader(uint8_t * rom, uint32_t romSize)
-{
-	// Sanity check
-	if (romSize < 8192)
-		return false;
-
-	for(int i=0; i<8192; i++)
-		if (rom[i] != universalCartHeader[i])
-			return false;
-
-	return true;
-}
 
 #if 0
 // Misc. doco
