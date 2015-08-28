@@ -11,9 +11,6 @@ SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/file.cpp \
 	$(CORE_DIR)/filedb.cpp \
 	$(CORE_DIR)/gpu.cpp \
-	$(CORE_DIR)/jagbios.cpp \
-	$(CORE_DIR)/jagbios2.cpp \
-	$(CORE_DIR)/jagcdbios.cpp \
 	$(CORE_DIR)/jagdasm.cpp \
 	$(CORE_DIR)/jagdevcdbios.cpp \
 	$(CORE_DIR)/jagstub1bios.cpp \
@@ -38,6 +35,9 @@ SOURCES_C := $(CORE_DIR)/m68000/cpustbl.c \
 	$(CORE_DIR)/m68000/m68kdasm.c \
 	$(CORE_DIR)/m68000/m68kinterface.c \
 	$(CORE_DIR)/m68000/readcpu.c \
+	$(CORE_DIR)/jagbios.c \
+	$(CORE_DIR)/jagbios2.c \
+	$(CORE_DIR)/jagcdbios.c \
 	$(CORE_DIR)/log.c \
 	$(CORE_DIR)/settings.c \
 	$(CORE_DIR)/wavetable.c
