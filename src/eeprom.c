@@ -147,19 +147,22 @@ static void EEPROMSave(void)
 //
 void ReadEEPROMFromFile(FILE * file, uint16_t * ram)
 {
+   unsigned i;
 	uint8_t buffer[128];
+
 	fread(buffer, 1, 128, file);
 
-	for(int i=0; i<64; i++)
+	for(i = 0; i < 64; i++)
 		ram[i] = (buffer[(i * 2) + 0] << 8) | buffer[(i * 2) + 1];
 }
 
 
 void WriteEEPROMToFile(FILE * file, uint16_t * ram)
 {
+   unsigned i;
 	uint8_t buffer[128];
 
-	for(int i=0; i<64; i++)
+	for(i = 0; i < 64; i++)
 	{
 		buffer[(i * 2) + 0] = ram[i] >> 8;
 		buffer[(i * 2) + 1] = ram[i] & 0xFF;
@@ -236,8 +239,12 @@ eERASE	equ	%111000000		;Erase selected register
 
 static void eeprom_set_di(uint32_t data)
 {
-//	WriteLog("eeprom: di=%i\n",data);
-//	WriteLog("eeprom: state %i\n",jerry_ee_state);
+   unsigned i;
+
+#if 0
+   WriteLog("eeprom: di=%i\n",data);
+   WriteLog("eeprom: state %i\n",jerry_ee_state);
+#endif
 	switch (jerry_ee_state)
 	{
 	case EE_STATE_START:
@@ -306,7 +313,7 @@ static void eeprom_set_di(uint32_t data)
 		// WriteLog("eeprom: filling eeprom with 0x%.4x\n",data);
 		if (jerry_writes_enabled)
 		{
-			for(int i=0; i<64; i++)
+			for(i = 0; i < 64; i++)
 				eeprom_ram[i] = jerry_ee_data;
 
 			EEPROMSave();						// Save it NOW!
@@ -320,7 +327,7 @@ static void eeprom_set_di(uint32_t data)
 		// erase all
 		//WriteLog("eeprom: erasing eeprom\n");
 		if (jerry_writes_enabled)
-			for(int i=0; i<64; i++)
+			for(i = 0; i < 64; i++)
 				eeprom_ram[i] = 0xFFFF;
 
 		jerry_ee_state = EE_STATE_BUSY;

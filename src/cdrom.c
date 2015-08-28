@@ -809,6 +809,7 @@ static uint16_t CDROMBusRead(void)
 static uint8_t cdBuf2[2532 + 96], cdBuf3[2532 + 96];
 uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 {
+   unsigned i;
 	bool go = ((offset & 0x0F) == 0x0A || (offset & 0x0F) == 0x0E ? true : false);
 
 	if (!go)
@@ -831,7 +832,7 @@ WriteLog("CDROM: %s reading block #%u...\n", whoName[who], block);
 //Crappy kludge for shitty shit. Lesse if it works!
 		CDIntfReadBlock(block - 150, cdBuf2);
 		CDIntfReadBlock(block - 149, cdBuf3);
-		for(int i=0; i<2352-4; i+=4)
+		for(i = 0; i < 2352-4; i+=4)
 		{
 			cdBuf[i+0] = cdBuf2[i+4];
 			cdBuf[i+1] = cdBuf2[i+5];

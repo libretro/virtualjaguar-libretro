@@ -58,7 +58,8 @@ static uint32_t numberOfEvents;
 
 void InitializeEventList(void)
 {
-	for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
+   unsigned i;
+	for(i = 0; i < EVENT_LIST_SIZE; i++)
 	{
 		eventList[i].valid = false;
 		eventListJERRY[i].valid = false;
@@ -73,9 +74,10 @@ void InitializeEventList(void)
 //We just slap the next event into the list in the first available slot, no checking, no nada...
 void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAIN*/)
 {
+   unsigned i;
 	if (type == EVENT_MAIN)
 	{
-		for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
+		for(i = 0; i < EVENT_LIST_SIZE; i++)
 		{
 			if (!eventList[i].valid)
 			{
@@ -94,7 +96,7 @@ void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAI
 	}
 	else
 	{
-		for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
+		for(i = 0; i < EVENT_LIST_SIZE; i++)
 		{
 			if (!eventListJERRY[i].valid)
 			{
@@ -116,7 +118,9 @@ void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAI
 
 void RemoveCallback(void (* callback)(void))
 {
-	for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
+   unsigned i;
+
+	for (i = 0; i < EVENT_LIST_SIZE; i++)
 	{
 		if (eventList[i].valid && eventList[i].timerCallback == callback)
 		{
@@ -138,21 +142,20 @@ void RemoveCallback(void (* callback)(void))
 
 void AdjustCallbackTime(void (* callback)(void), double time)
 {
-	for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
-	{
-		if (eventList[i].valid && eventList[i].timerCallback == callback)
-		{
-			eventList[i].eventTime = time;
-
-			return;
-		}
-		else if (eventListJERRY[i].valid && eventListJERRY[i].timerCallback == callback)
-		{
-			eventListJERRY[i].eventTime = time;
-
-			return;
-		}
-	}
+   unsigned i;
+   for(i = 0; i < EVENT_LIST_SIZE; i++)
+   {
+      if (eventList[i].valid && eventList[i].timerCallback == callback)
+      {
+         eventList[i].eventTime = time;
+         return;
+      }
+      else if (eventListJERRY[i].valid && eventListJERRY[i].timerCallback == callback)
+      {
+         eventListJERRY[i].eventTime = time;
+         return;
+      }
+   }
 }
 
 
@@ -162,6 +165,7 @@ void AdjustCallbackTime(void (* callback)(void), double time)
 //
 double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 {
+   unsigned i;
 #if 0
 	double time = 0;
 	bool firstTime = true;
@@ -185,7 +189,7 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 		double time = eventList[0].eventTime;
 		nextEvent = 0;
 
-		for(uint32_t i=1; i<EVENT_LIST_SIZE; i++)
+		for(i = 1; i < EVENT_LIST_SIZE; i++)
 		{
 			if (eventList[i].valid && (eventList[i].eventTime < time))
 			{
@@ -201,7 +205,7 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 		double time = eventListJERRY[0].eventTime;
 		nextEventJERRY = 0;
 
-		for(uint32_t i=1; i<EVENT_LIST_SIZE; i++)
+		for(i = 1; i < EVENT_LIST_SIZE; i++)
 		{
 			if (eventListJERRY[i].valid && (eventListJERRY[i].eventTime < time))
 			{
@@ -218,42 +222,44 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 
 void HandleNextEvent(int type/*= EVENT_MAIN*/)
 {
-	if (type == EVENT_MAIN)
-	{
-		double elapsedTime = eventList[nextEvent].eventTime;
-		void (* event)(void) = eventList[nextEvent].timerCallback;
+   unsigned i;
 
-		for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
-		{
-	//We can skip the check & just subtract from everything, since the check is probably
-	//just as heavy as the code after and we won't use the elapsed time from an invalid event anyway.
-	//		if (eventList[i].valid)
-				eventList[i].eventTime -= elapsedTime;
-		}
+   if (type == EVENT_MAIN)
+   {
+      double elapsedTime = eventList[nextEvent].eventTime;
+      void (* event)(void) = eventList[nextEvent].timerCallback;
 
-		eventList[nextEvent].valid = false;			// Remove event from list...
-		numberOfEvents--;
+      for (i = 0; i < EVENT_LIST_SIZE; i++)
+      {
+         //We can skip the check & just subtract from everything, since the check is probably
+         //just as heavy as the code after and we won't use the elapsed time from an invalid event anyway.
+         //		if (eventList[i].valid)
+         eventList[i].eventTime -= elapsedTime;
+      }
 
-		(*event)();
-	}
-	else
-	{
-		double elapsedTime = eventListJERRY[nextEventJERRY].eventTime;
-		void (* event)(void) = eventListJERRY[nextEventJERRY].timerCallback;
+      eventList[nextEvent].valid = false;			// Remove event from list...
+      numberOfEvents--;
 
-		for(uint32_t i=0; i<EVENT_LIST_SIZE; i++)
-		{
-	//We can skip the check & just subtract from everything, since the check is probably
-	//just as heavy as the code after and we won't use the elapsed time from an invalid event anyway.
-	//		if (eventList[i].valid)
-				eventListJERRY[i].eventTime -= elapsedTime;
-		}
+      (*event)();
+   }
+   else
+   {
+      double elapsedTime = eventListJERRY[nextEventJERRY].eventTime;
+      void (* event)(void) = eventListJERRY[nextEventJERRY].timerCallback;
 
-		eventListJERRY[nextEventJERRY].valid = false;	// Remove event from list...
-		numberOfEvents--;
+      for (i = 0; i < EVENT_LIST_SIZE; i++)
+      {
+         //We can skip the check & just subtract from everything, since the check is probably
+         //just as heavy as the code after and we won't use the elapsed time from an invalid event anyway.
+         //		if (eventList[i].valid)
+         eventListJERRY[i].eventTime -= elapsedTime;
+      }
 
-		(*event)();
-	}
+      eventListJERRY[nextEventJERRY].valid = false;	// Remove event from list...
+      numberOfEvents--;
+
+      (*event)();
+   }
 }
 
 

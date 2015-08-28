@@ -75,7 +75,8 @@ void JoystickDone(void)
 
 uint16_t JoystickReadWord(uint32_t offset)
 {
-	// E, D, B, 7
+   unsigned i;
+	/* E, D, B, 7 */
 	uint8_t joypad0Offset[16] = {
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0C, 0xFF, 0xFF, 0xFF, 0x08, 0xFF, 0x04, 0x00, 0xFF
 	};
@@ -101,7 +102,7 @@ uint16_t JoystickReadWord(uint32_t offset)
 			uint16_t mask[4] = { 0xFEFF, 0xFDFF, 0xFBFF, 0xF7FF };
 //No!			uint16_t mask[4] = { 0xFFFE, 0xFFFD, 0xFFFB, 0xFFF7 };
 
-			for(uint8_t i=0; i<4; i++)
+			for(i = 0; i < 4; i++)
 				data &= (joypad0Buttons[offset0 + i] ? mask[i] : 0xFFFF);
 		}
 
@@ -110,7 +111,7 @@ uint16_t JoystickReadWord(uint32_t offset)
 			uint16_t mask[4] = { 0xEFFF, 0xDFFF, 0xBFFF, 0x7FFF };
 //No!			uint16_t mask[4] = { 0xFFEF, 0xFFDF, 0xFFBF, 0xFF7F };
 
-			for(uint8_t i=0; i<4; i++)
+			for(i = 0; i < 4; i++)
 				data &= (joypad1Buttons[offset1 + i] ? mask[i] : 0xFFFF);
 		}
 
