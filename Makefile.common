@@ -3,7 +3,6 @@ INCFLAGS := -I$(LIBRETRO_DIR) -I$(CORE_DIR) -I$(CORE_DIR)/m68000
 SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
 	$(CORE_DIR)/dac.cpp \
 	$(CORE_DIR)/dsp.cpp \
-	$(CORE_DIR)/eeprom.cpp \
 	$(CORE_DIR)/file.cpp \
 	$(CORE_DIR)/gpu.cpp \
 	$(CORE_DIR)/jagdasm.cpp \
@@ -19,6 +18,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/cdrom.c \
 	$(CORE_DIR)/crc32.c \
 	$(CORE_DIR)/event.c \
+	$(CORE_DIR)/eeprom.c \
 	$(CORE_DIR)/filedb.c \
 	$(CORE_DIR)/m68000/cpustbl.c \
 	$(CORE_DIR)/m68000/cpudefs.c \

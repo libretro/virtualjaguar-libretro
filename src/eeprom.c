@@ -17,9 +17,16 @@
 
 #include <stdlib.h>
 #include <string.h>								// For memset
-#include "jaguar.h"
 #include "log.h"
 #include "settings.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern uint32_t jaguarMainROMCRC32;
+#ifdef __cplusplus
+}
+#endif
 
 //#define eeprom_LOG
 
@@ -407,7 +414,7 @@ static void eeprom_set_di(uint32_t data)
 }
 
 
-static void eeprom_set_cs(uint32_t /*state*/)
+static void eeprom_set_cs(uint32_t state)
 {
 //	WriteLog("eeprom: cs=%i\n",state);
 	jerry_ee_state = EE_STATE_START;

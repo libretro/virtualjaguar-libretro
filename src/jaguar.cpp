@@ -69,7 +69,13 @@ extern uint8_t jagMemSpace[];
 
 uint32_t jaguar_active_memory_dumps = 0;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
+#ifdef __cplusplus
+}
+#endif
 bool jaguarCartInserted = false;
 bool lowerField = false;
 
