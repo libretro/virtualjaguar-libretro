@@ -154,7 +154,6 @@
 #include "jerry.h"
 
 #include <string.h>								// For memcpy
-//#include <math.h>
 #include "cdrom.h"
 #include "dac.h"
 #include "dsp.h"
@@ -166,7 +165,6 @@
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 #include "tom.h"
-//#include "vjag_memory.h"
 #include "wavetable.h"
 
 //Note that 44100 Hz requires samples every 22.675737 usec.

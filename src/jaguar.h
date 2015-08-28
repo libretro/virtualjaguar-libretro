@@ -2,7 +2,14 @@
 #define __JAGUAR_H__
 
 #include <stdint.h>
+
+#include <boolean.h>
+
 #include "vjag_memory.h"							// For "UNKNOWN" enum
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 void JaguarSetScreenBuffer(uint32_t * buffer);
 void JaguarSetScreenPitch(uint32_t pitch);
@@ -52,5 +59,9 @@ extern uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 
 //Temp debug stuff (will go away soon, so don't depend on these)
 uint8_t * GetRamPtr(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	// __JAGUAR_H__

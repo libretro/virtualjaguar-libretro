@@ -5,17 +5,22 @@
 #ifndef __JERRY_H__
 #define __JERRY_H__
 
-//#include "types.h"
+#include <boolean.h>
+
 #include "vjag_memory.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 void JERRYInit(void);
 void JERRYReset(void);
 void JERRYDone(void);
 
-uint8_t JERRYReadByte(uint32_t offset, uint32_t who = UNKNOWN);
-uint16_t JERRYReadWord(uint32_t offset, uint32_t who = UNKNOWN);
-void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who = UNKNOWN);
-void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who = UNKNOWN);
+uint8_t JERRYReadByte(uint32_t offset, uint32_t who);
+uint16_t JERRYReadWord(uint32_t offset, uint32_t who);
+void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who);
+void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 
 void JERRYExecPIT(uint32_t cycles);
 void JERRYI2SExec(uint32_t cycles);
@@ -39,5 +44,9 @@ void JERRYI2SCallback(void);
 
 //extern uint32_t JERRYI2SInterruptDivide;
 extern int32_t JERRYI2SInterruptTimer;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

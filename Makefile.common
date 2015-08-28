@@ -1,18 +1,18 @@
 INCFLAGS := -I$(LIBRETRO_DIR) -I$(CORE_DIR) -I$(CORE_DIR)/m68000
 
-SOURCES_CXX := $(CORE_DIR)/blitter.cpp \
-	$(CORE_DIR)/dac.cpp \
-	$(CORE_DIR)/dsp.cpp \
-	$(CORE_DIR)/file.cpp \
-	$(CORE_DIR)/gpu.cpp \
-	$(CORE_DIR)/jagdasm.cpp \
-	$(CORE_DIR)/jaguar.cpp \
-	$(CORE_DIR)/jerry.cpp \
-	$(CORE_DIR)/op.cpp \
-	$(CORE_DIR)/tom.cpp  \
-	$(LIBRETRO_DIR)/libretro.cpp
+SOURCES_CXX := 	$(LIBRETRO_DIR)/libretro.cpp
 
 SOURCES_C :=  \
+	$(CORE_DIR)/blitter.c \
+	$(CORE_DIR)/dac.c \
+	$(CORE_DIR)/dsp.c \
+	$(CORE_DIR)/file.c \
+	$(CORE_DIR)/gpu.c \
+	$(CORE_DIR)/jagdasm.c \
+	$(CORE_DIR)/jaguar.c \
+	$(CORE_DIR)/jerry.c \
+	$(CORE_DIR)/op.c \
+	$(CORE_DIR)/tom.c  \
 	$(CORE_DIR)/cdintf.c \
 	$(CORE_DIR)/cdrom.c \
 	$(CORE_DIR)/crc32.c \

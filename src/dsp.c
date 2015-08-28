@@ -88,7 +88,7 @@ bool scoreboard[32];
 uint8_t scoreboard[32];
 #endif
 uint8_t plPtrFetch, plPtrRead, plPtrExec, plPtrWrite;
-PipelineStage pipeline[4];
+struct PipelineStage pipeline[4];
 bool IMASKCleared = false;
 
 // DSP flags (old--have to get rid of this crap)

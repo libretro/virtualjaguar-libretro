@@ -5,7 +5,13 @@
 #ifndef __TOM_H__
 #define __TOM_H__
 
+#include <boolean.h>
+
 #include "vjag_memory.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define VIDEO_MODE_16BPP_CRY	0
 #define VIDEO_MODE_24BPP_RGB	1
@@ -29,10 +35,10 @@ void TOMInit(void);
 void TOMReset(void);
 void TOMDone(void);
 
-uint8_t TOMReadByte(uint32_t offset, uint32_t who = UNKNOWN);
-uint16_t TOMReadWord(uint32_t offset, uint32_t who = UNKNOWN);
-void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who = UNKNOWN);
-void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who = UNKNOWN);
+uint8_t TOMReadByte(uint32_t offset, uint32_t who);
+uint16_t TOMReadWord(uint32_t offset, uint32_t who);
+void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who);
+void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 
 void TOMExecHalfline(uint16_t halfline, bool render);
 uint32_t TOMGetVideoModeWidth(void);
@@ -66,5 +72,9 @@ extern int32_t tomTimerCounter;
 
 extern uint32_t screenPitch;
 extern uint32_t * screenBuffer;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	// __TOM_H__

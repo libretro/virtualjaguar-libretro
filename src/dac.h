@@ -5,13 +5,18 @@
 #ifndef __DAC_H__
 #define __DAC_H__
 
+#include <boolean.h>
+
 #include "vjag_memory.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 void DACInit(void);
 void DACReset(void);
 void DACPauseAudioThread(bool state);
 void DACDone(void);
-//int GetCalculatedFrequency(void);
 
 // DAC memory access
 
@@ -31,5 +36,9 @@ extern uint16_t *sampleBuffer;
 #define SMODE_RISING		0x08
 #define SMODE_FALLING		0x10
 #define SMODE_EVERYWORD		0x20
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	// __DAC_H__

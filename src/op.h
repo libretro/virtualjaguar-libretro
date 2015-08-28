@@ -7,6 +7,12 @@
 
 #include <stdint.h>
 
+#include <boolean.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void OPInit(void);
 void OPReset(void);
 void OPDone(void);
@@ -27,5 +33,9 @@ void OPSetCurrentObject(uint64_t object);
 // Exported variables
 
 extern uint8_t objectp_running;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif	// __OBJECTP_H__
