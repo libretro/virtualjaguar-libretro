@@ -49,9 +49,6 @@ extern int jaguar_active_memory_dumps;
 
 // Local global variables
 
-uint8_t blitter_working = 0;
-bool startConciseBlitLogging = false;
-
 // Blitter register RAM (most of it is hidden from the user)
 
 static uint8_t blitter_ram[0x100];
@@ -415,14 +412,6 @@ void blitter_generic(uint32_t cmd)
                   dstzdata = READ_RDATA(DSTZ, a1, REG(A1_FLAGS), a1_phrase_mode);
             }
 
-            /*This wasn't working...				// a1 clipping
-              if (cmd & 0x00000040)
-              {
-              if (a1_x < 0 || a1_y < 0 || (a1_x >> 16) >= (REG(A1_CLIP) & 0x7FFF)
-              || (a1_y >> 16) >= ((REG(A1_CLIP) >> 16) & 0x7FFF))
-              inhibit = 1;
-              }//*/
-
             if (GOURZ)
                srczdata = z_i[colour_index] >> 16;
 
@@ -453,91 +442,10 @@ void blitter_generic(uint32_t cmd)
                   srcdata = (srcdata >> pixShift) & 0x01;
 
                   bitPos++;
-                  //		if (bitPos % bppSrc == 0)
-                  //			a2_x += 0x00010000;
                }
-               /*
-                  Interesting (Hover Strike--large letter):
-
-                  Blit! (0018FA70 <- 008DDC40) count: 2 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
-                  CMD -> src: SRCENX dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl: BCOMPEN BKGWREN
-                  A1 step values: -2 (X), 1 (Y)
-                  A2 step values: -1 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-                  A1 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 320 (21), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A2 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 192 (1E), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A1 x/y: 100/12, A2 x/y: 106/0 Pattern: 000000F300000000
-
-                  Blit! (0018FA70 <- 008DDC40) count: 8 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
-                  CMD -> src: SRCENX dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl: BCOMPEN BKGWREN
-                  A1 step values: -8 (X), 1 (Y)
-                  A2 step values: -1 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-                  A1 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 320 (21), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A2 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 192 (1E), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A1 x/y: 102/12, A2 x/y: 107/0 Pattern: 000000F300000000
-
-                  Blit! (0018FA70 <- 008DDC40) count: 1 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
-                  CMD -> src: SRCENX dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl: BCOMPEN BKGWREN
-                  A1 step values: -1 (X), 1 (Y)
-                  A2 step values: -1 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-                  A1 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 320 (21), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A2 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 192 (1E), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A1 x/y: 118/12, A2 x/y: 70/0 Pattern: 000000F300000000
-
-                  Blit! (0018FA70 <- 008DDC40) count: 8 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
-                  CMD -> src: SRCENX dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl: BCOMPEN BKGWREN
-                  A1 step values: -8 (X), 1 (Y)
-                  A2 step values: -1 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-                  A1 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 320 (21), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A2 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 192 (1E), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A1 x/y: 119/12, A2 x/y: 71/0 Pattern: 000000F300000000
-
-                  Blit! (0018FA70 <- 008DDC40) count: 1 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
-                  CMD -> src: SRCENX dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl: BCOMPEN BKGWREN
-                  A1 step values: -1 (X), 1 (Y)
-                  A2 step values: -1 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-                  A1 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 320 (21), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A2 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 192 (1E), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A1 x/y: 127/12, A2 x/y: 66/0 Pattern: 000000F300000000
-
-                  Blit! (0018FA70 <- 008DDC40) count: 8 x 13, A1/2_FLAGS: 00014218/00013C18 [cmd: 1401060C]
-                  CMD -> src: SRCENX dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity: PATDSEL z-op:  op: LFU_CLEAR ctrl: BCOMPEN BKGWREN
-                  A1 step values: -8 (X), 1 (Y)
-                  A2 step values: -1 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-                  A1 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 320 (21), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A2 -> pitch: 1 phrases, depth: 8bpp, z-off: 0, width: 192 (1E), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                  A1 x/y: 128/12, A2 x/y: 67/0 Pattern: 000000F300000000
-                  */
-
 
                if (!CMPDST)
                {
-                  //WriteLog("Blitter: BCOMPEN set on command %08X inhibit prev:%u, now:", cmd, inhibit);
-                  // compare source pixel with pattern pixel
-                  /*
-                     Blit! (000B8250 <- 0012C3A0) count: 16 x 1, A1/2_FLAGS: 00014420/00012000 [cmd: 05810001]
-                     CMD -> src: SRCEN  dst:  misc:  a1ctl:  mode:  ity: PATDSEL z-op:  op: LFU_REPLACE ctrl: BCOMPEN
-                     A1 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 384 (22), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                     A2 -> pitch: 1 phrases, depth: 1bpp, z-off: 0, width: 16 (10), addctl: XADDPIX YADD0 XSIGNADD YSIGNADD
-                     x/y: 0/20
-                     ...
-                     */
-                  // AvP is still wrong, could be cuz it's doing A1 -> A2...
-
-                  // Src is the 1bpp bitmap... DST is the PATTERN!!!
-                  // This seems to solve at least ONE of the problems with MC3D...
-                  // Why should this be inverted???
-                  // Bcuz it is. This is supposed to be used only for a bit -> pixel expansion...
-                  /*						if (srcdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
-                  //						if (srcdata != READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
-                  inhibit = 1;//*/
-                  /*						uint32_t A2bpp = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
-                                    if (A2bpp == 1 || A2bpp == 16 || A2bpp == 8)
-                                    inhibit = (srcdata == 0 ? 1: 0);
-                  //							inhibit = !srcdata;
-                  else
-                  WriteLog("Blitter: Bad BPP (%u) selected for BCOMPEN mode!\n", A2bpp);//*/
-                  // What it boils down to is this:
-
                   if (srcdata == 0)
                      inhibit = 1;//*/
                }
@@ -548,10 +456,6 @@ void blitter_generic(uint32_t cmd)
                      //						if (dstdata != READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
                      inhibit = 1;
                }
-
-               // This is DEFINITELY WRONG
-               //					if (a1_phrase_mode || a2_phrase_mode)
-               //						inhibit = !inhibit;
             }
 
             if (CLIPA1)
@@ -643,13 +547,6 @@ void blitter_generic(uint32_t cmd)
             if (/*a1_phrase_mode || */BKGWREN || !inhibit)
                //				if (/*a1_phrase_mode || BKGWREN ||*/ !inhibit)
             {
-               /*if (((REG(A1_FLAGS) >> 3) & 0x07) == 5)
-                 {
-                 uint32_t offset = a1_addr+(PIXEL_OFFSET_32(a1)<<2);
-               // (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
-               if ((offset >= 0x1FF020 && offset <= 0x1FF03F) || (offset >= 0x1FF820 && offset <= 0x1FF83F))
-               WriteLog("32bpp pixel write: A1 Phrase mode --> ");
-               }//*/
                // write to the destination
                WRITE_PIXEL(a1, REG(A1_FLAGS), writedata);
                if (DSTWRZ)
@@ -704,23 +601,6 @@ void blitter_generic(uint32_t cmd)
             {
                if (!CMPDST)
                {
-                  // compare source pixel with pattern pixel
-                  // AvP: Numbers are correct, but sprites are not!
-                  //This doesn't seem to be a problem... But could still be wrong...
-                  /*						if (srcdata == READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
-                  //						if (srcdata != READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
-                  inhibit = 1;//*/
-                  // This is probably not 100% correct... It works in the 1bpp case
-                  // (in A1 <- A2 mode, that is...)
-                  // AvP: This is causing blocks to be written instead of bit patterns...
-                  // Works now...
-                  // NOTE: We really should separate out the BCOMPEN & DCOMPEN stuff!
-                  /*						uint32_t A1bpp = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
-                                    if (A1bpp == 1 || A1bpp == 16 || A1bpp == 8)
-                                    inhibit = (srcdata == 0 ? 1: 0);
-                                    else
-                                    WriteLog("Blitter: Bad BPP (%u) selected for BCOMPEN mode!\n", A1bpp);//*/
-                  // What it boils down to is this:
                   if (srcdata == 0)
                      inhibit = 1;//*/
                }
@@ -731,10 +611,6 @@ void blitter_generic(uint32_t cmd)
                      //						if (dstdata != READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
                      inhibit = 1;
                }
-
-               // This is DEFINITELY WRONG
-               //					if (a1_phrase_mode || a2_phrase_mode)
-               //						inhibit = !inhibit;
             }
 
             if (CLIPA1)
@@ -799,12 +675,6 @@ void blitter_generic(uint32_t cmd)
 
             if (/*a2_phrase_mode || */BKGWREN || !inhibit)
             {
-               /*if (logGo)
-                 {
-                 uint32_t offset = a2_addr+(PIXEL_OFFSET_16(a2)<<1);
-               // (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
-               WriteLog("[%08X:%04X] ", offset, writedata);
-               }//*/
                // write to the destination
                WRITE_PIXEL(a2, REG(A2_FLAGS), writedata);
 
@@ -908,24 +778,6 @@ void blitter_generic(uint32_t cmd)
 #endif
 
       //New: Phrase mode taken into account! :-p
-      /*		if (a1_phrase_mode)			// v1
-            {
-      // Bump the pointer to the next phrase boundary
-      // Even though it works, this is crappy... Clean it up!
-      uint32_t size = 64 / a1_psize;
-
-      // Crappy kludge... ('aligning' source to destination)
-      if (a2_phrase_mode && DSTA2)
-      {
-      uint32_t extra = (a2_start >> 16) % size;
-      a1_x += extra << 16;
-      }
-
-      uint32_t newx = (a1_x >> 16) / size;
-      uint32_t newxrem = (a1_x >> 16) % size;
-      a1_x &= 0x0000FFFF;
-      a1_x |= (((newx + (newxrem == 0 ? 0 : 1)) * size) & 0xFFFF) << 16;
-      }//*/
       if (a1_phrase_mode)			// v2
       {
          // Bump the pointer to the next phrase boundary
@@ -943,25 +795,6 @@ void blitter_generic(uint32_t cmd)
          a1_x = (a1_x + pixelSize) & ~pixelSize;
       }
 
-      /*		if (a2_phrase_mode)			// v1
-            {
-      // Bump the pointer to the next phrase boundary
-      // Even though it works, this is crappy... Clean it up!
-      uint32_t size = 64 / a2_psize;
-
-      // Crappy kludge... ('aligning' source to destination)
-      // Prolly should do this for A1 channel as well... [DONE]
-      if (a1_phrase_mode && !DSTA2)
-      {
-      uint32_t extra = (a1_start >> 16) % size;
-      a2_x += extra << 16;
-      }
-
-      uint32_t newx = (a2_x >> 16) / size;
-      uint32_t newxrem = (a2_x >> 16) % size;
-      a2_x &= 0x0000FFFF;
-      a2_x |= (((newx + (newxrem == 0 ? 0 : 1)) * size) & 0xFFFF) << 16;
-      }//*/
       if (a2_phrase_mode)			// v1
       {
          // Bump the pointer to the next phrase boundary
@@ -1138,7 +971,6 @@ void blitter_blit(uint32_t cmd)
 		break;
 //This really isn't a valid bit combo for A2... Shouldn't this cause the blitter to just say no?
 	case XADDINC:
-WriteLog("BLIT: Asked to use invalid bit combo (XADDINC) for A2...\n");
 		// add the contents of the increment register
 		// since there is no register for a2 we just add 1
 //Let's do nothing, since it's not listed as a valid bit combo...
@@ -1224,10 +1056,7 @@ WriteLog("BLIT: Asked to use invalid bit combo (XADDINC) for A2...\n");
 
 //NOTE: Pitch is ignored!
 
-	blitter_working = 1;
 	blitter_generic(cmd);
-
-	blitter_working = 0;
 }
 #endif
 /*******************************************************************************
@@ -1583,11 +1412,6 @@ uint8_t a1_phrase_mode, a2_phrase_mode;
 	// keep things somewhat clear. Optimization/cleanups later.
 
 //idle:							// Blitter is idle, and will not perform any bus activity
-/*
-idle         Blitter is off the bus, and no activity takes place.
-if GO    if DATINIT goto init_if
-         else       goto inner
-*/
 	if (DATINIT)
 		goto init_if;
 	else
@@ -1697,31 +1521,6 @@ sread:							// Source data read
 //transfers an entire phrase even in pixel mode.
 //Odd thought: Does it expand, e.g., 1 BPP pixels into 32 BPP internally? Hmm...
 //No.
-/*
-	a1_addr = REG(A1_BASE) & 0xFFFFFFF8;
-	a2_addr = REG(A2_BASE) & 0xFFFFFFF8;
-	a1_zoffs = (REG(A1_FLAGS) >> 6) & 7;
-	a2_zoffs = (REG(A2_FLAGS) >> 6) & 7;
-	xadd_a1_control = (REG(A1_FLAGS) >> 16) & 0x03;
-	xadd_a2_control = (REG(A2_FLAGS) >> 16) & 0x03;
-	a1_pitch = pitchValue[(REG(A1_FLAGS) & 0x03)];
-	a2_pitch = pitchValue[(REG(A2_FLAGS) & 0x03)];
-	n_pixels = REG(PIXLINECOUNTER) & 0xFFFF;
-	n_lines = (REG(PIXLINECOUNTER) >> 16) & 0xFFFF;
-	a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
-	a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
-	a2_psize = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
-	a1_psize = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
-	a1_phrase_mode = 0;
-	a2_phrase_mode = 0;
-	a1_width = ((0x04 | m) << e) >> 2;
-	a2_width = ((0x04 | m) << e) >> 2;
-
-	// write values back to registers
-	WREG(A1_PIXEL,  (a1_y & 0xFFFF0000) | ((a1_x >> 16) & 0xFFFF));
-	WREG(A1_FPIXEL, (a1_y << 16) | (a1_x & 0xFFFF));
-	WREG(A2_PIXEL,  (a2_y & 0xFFFF0000) | ((a2_x >> 16) & 0xFFFF));
-*/
 	// Calculate the address to be read...
 
 //Need to fix phrase mode calcs here, since they should *step* by eight, not mulitply.
@@ -1804,8 +1603,6 @@ if STEP
 	dstAddr = (DSTA2 ? a2_addr : a1_addr);
 
 	{
-//	uint32_t pixAddr = ((DSTA2 ? a2_x : a1_x) >> 16)
-//		+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 	int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
 		+ ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 
@@ -1952,19 +1749,7 @@ Blit!
 
 	dstAddr = (DSTA2 ? a2_addr : a1_addr);
 
-/*	if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
 	{
-//both of these calculate the wrong address because they don't take into account
-//pixel sizes...
-		dstAddr += ((DSTA2 ? a2_x : a1_x) >> 16)
-			+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
-	}
-	else*/
-	{
-/*		dstAddr += ((DSTA2 ? a2_x : a1_x) >> 16)
-			+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));*/
-//		uint32_t pixAddr = ((DSTA2 ? a2_x : a1_x) >> 16)
-//			+ (((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 		int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
 			+ ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 
@@ -2283,9 +2068,7 @@ blitter_done:
 #endif
 
 
-//
 // Here's attempt #2--taken from the Oberon chip specs!
-//
 
 #ifdef USE_MIDSUMMER_BLITTER_MKII
 
@@ -2318,9 +2101,6 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 
 void BlitterMidsummer2(void)
 {
-   if (startConciseBlitLogging)
-      LogBlit();
-
    // Here's what the specs say the state machine does. Note that this can probably be
    // greatly simplified (also, it's different from what John has in his Oberon docs):
    //Will remove stuff that isn't in Jaguar I once fully described (stuff like texture won't
