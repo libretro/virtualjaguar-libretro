@@ -164,8 +164,8 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.sample_rate    = 48000;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
-   info->geometry.max_width    = 320;
-   info->geometry.max_height   = 240;
+   info->geometry.max_width    = TOMGetVideoModeWidth();
+   info->geometry.max_height   = TOMGetVideoModeHeight();
    info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 
@@ -302,8 +302,6 @@ void retro_init(void)
    sampleBuffer = (uint16_t *)malloc(1600 * sizeof(uint16_t)); //found in dac.h
    memset(sampleBuffer, 0, 1600 * sizeof(uint16_t));
 
-   //game_width = TOMGetVideoModeWidth();
-   //game_height = TOMGetVideoModeHeight();
    game_width = 320;
    game_height = 240;
 
