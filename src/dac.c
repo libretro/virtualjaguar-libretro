@@ -51,8 +51,6 @@
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
-//#define DEBUG_DAC
-
 #define BUFFER_SIZE			0x10000				// Make the DAC buffers 64K x 16 bits
 #define DAC_AUDIO_RATE		48000				// Set the audio rate to 48 KHz
 
@@ -121,17 +119,17 @@ void DACDone(void)
 
 void DSPSampleCallback(void)
 {
-	sampleBuffer[bufferIndex + 0] = *ltxd;
-	sampleBuffer[bufferIndex + 1] = *rtxd;
-	bufferIndex += 2;
+   sampleBuffer[bufferIndex + 0] = *ltxd;
+   sampleBuffer[bufferIndex + 1] = *rtxd;
+   bufferIndex += 2;
 
-	if (bufferIndex == numberOfSamples)
-	{
-		bufferDone = true;
-		return;
-	}
+   if (bufferIndex == numberOfSamples)
+   {
+      bufferDone = true;
+      return;
+   }
 
-	SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 }
 
 // Approach: Run the DSP for however many cycles needed to correspond to whatever sample rate
@@ -154,122 +152,97 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 {
    unsigned i;
 
-	/* 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit. */
+   /* 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit. */
 
-	if (!DSPIsRunning())
-	{
-		for(i = 0; i < length; i += 2)
-		{
-			buffer[i + 0] = *ltxd;
-			buffer[i + 1] = *rtxd;
-		}
+   if (!DSPIsRunning())
+   {
+      for(i = 0; i < length; i += 2)
+      {
+         buffer[i + 0] = *ltxd;
+         buffer[i + 1] = *rtxd;
+      }
 
-		return;
-	}
+      return;
+   }
 
-	// The length of time we're dealing with here is 1/48000 s, so we multiply this
-	// by the number of cycles per second to get the number of cycles for one sample.
-	//uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-	//uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
-	// This is the length of time
-//	timePerSample = (1000000.0 / (double)riscClockRate) * ();
+   // The length of time we're dealing with here is 1/48000 s, so we multiply this
+   // by the number of cycles per second to get the number of cycles for one sample.
+   //uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+   //uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
+   // This is the length of time
+   //	timePerSample = (1000000.0 / (double)riscClockRate) * ();
 
-	// Now, run the DSP for that length of time for each sample we need to make
+   // Now, run the DSP for that length of time for each sample we need to make
 
-	bufferIndex = 0;
-	sampleBuffer = buffer;
-// If length is the length of the sample buffer in BYTES, then shouldn't the # of
-// samples be / 4? No, because we bump the sample count by 2, so this is OK.
-	numberOfSamples = length;
-	bufferDone = false;
+   bufferIndex = 0;
+   sampleBuffer = buffer;
+   // If length is the length of the sample buffer in BYTES, then shouldn't the # of
+   // samples be / 4? No, because we bump the sample count by 2, so this is OK.
+   numberOfSamples = length;
+   bufferDone = false;
 
-	SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 
-	// These timings are tied to NTSC, need to fix that in event.cpp/h! [FIXED]
-	do
-	{
-		double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
+   // These timings are tied to NTSC, need to fix that in event.cpp/h! [FIXED]
+   do
+   {
+      double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
 
-		if (vjs.DSPEnabled)
-		{
-			if (vjs.usePipelinedDSP)
-				DSPExecP2(USEC_TO_RISC_CYCLES(timeToNextEvent));
-			else
-				DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-		}
+      if (vjs.DSPEnabled)
+      {
+         if (vjs.usePipelinedDSP)
+            DSPExecP2(USEC_TO_RISC_CYCLES(timeToNextEvent));
+         else
+            DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      }
 
-		HandleNextEvent(EVENT_JERRY);
-	}
-	while (!bufferDone);
-    
+      HandleNextEvent(EVENT_JERRY);
+   }
+   while (!bufferDone);
+
 }
-
-
-
-#if 0
-//
-// Calculate the frequency of SCLK * 32 using the divider
-//
-int GetCalculatedFrequency(void)
-{
-	int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-
-	// We divide by 32 here in order to find the frequency of 32 SCLKs in a row (transferring
-	// 16 bits of left data + 16 bits of right data = 32 bits, 1 SCLK = 1 bit transferred).
-	return systemClockFrequency / (32 * (2 * (SCLKFrequencyDivider + 1)));
-}
-#endif
 
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)
 void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who/*= UNKNOWN*/)
 {
-	WriteLog("DAC: %s writing BYTE %02X at %08X\n", whoName[who], data, offset);
-	if (offset == SCLK + 3)
-		DACWriteWord(offset - 3, (uint16_t)data, UNKNOWN);
+   if (offset == SCLK + 3)
+      DACWriteWord(offset - 3, (uint16_t)data, UNKNOWN);
 }
 
 
 void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
 {
-	if (offset == LTXD + 2)
-		*ltxd = data;
-	else if (offset == RTXD + 2)
-		*rtxd = data;
-	else if (offset == SCLK + 2)					// Sample rate
-	{
-		WriteLog("DAC: Writing %u to SCLK (by %s)...\n", data, whoName[who]);
-
-		*sclk = data & 0xFF;
-		JERRYI2SInterruptTimer = -1;
-		RemoveCallback(JERRYI2SCallback);
-		JERRYI2SCallback();
-	}
-	else if (offset == SMODE + 2)
-	{
-//		serialMode = data;
-		*smode = data;
-		WriteLog("DAC: %s writing to SMODE. Bits: %s%s%s%s%s%s [68K PC=%08X]\n", whoName[who],
-			(data & 0x01 ? "INTERNAL " : ""), (data & 0x02 ? "MODE " : ""),
-			(data & 0x04 ? "WSEN " : ""), (data & 0x08 ? "RISING " : ""),
-			(data & 0x10 ? "FALLING " : ""), (data & 0x20 ? "EVERYWORD" : ""),
-			m68k_get_reg(NULL, M68K_REG_PC));
-	}
+   if (offset == LTXD + 2)
+      *ltxd = data;
+   else if (offset == RTXD + 2)
+      *rtxd = data;
+   else if (offset == SCLK + 2)					// Sample rate
+   {
+      *sclk = data & 0xFF;
+      JERRYI2SInterruptTimer = -1;
+      RemoveCallback(JERRYI2SCallback);
+      JERRYI2SCallback();
+   }
+   else if (offset == SMODE + 2)
+   {
+      //		serialMode = data;
+      *smode = data;
+   }
 }
 
 uint8_t DACReadByte(uint32_t offset, uint32_t who)
 {
-	return 0xFF;
+   return 0xFF;
 }
 
 uint16_t DACReadWord(uint32_t offset, uint32_t who)
 {
-	if (offset == LRXD || offset == RRXD)
-		return 0x0000;
-	else if (offset == LRXD + 2)
-		return lrxd;
-	else if (offset == RRXD + 2)
-		return rrxd;
+   if (offset == LRXD || offset == RRXD)
+      return 0x0000;
+   else if (offset == LRXD + 2)
+      return lrxd;
+   else if (offset == RRXD + 2)
+      return rrxd;
 
-	return 0xFFFF;	// May need SSTAT as well... (but may be a Jaguar II only feature)
+   return 0xFFFF;	// May need SSTAT as well... (but may be a Jaguar II only feature)
 }
-

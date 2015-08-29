@@ -24,9 +24,7 @@
 #include "log.h"
 
 
-//#define EVENT_LIST_SIZE       512
 #define EVENT_LIST_SIZE       32
-
 
 // Now, a bit of weirdness: It seems that the number of lines displayed on the screen
 // makes the effective refresh rate either 30 or 25 Hz!
@@ -48,7 +46,6 @@ struct Event
 	void (* timerCallback)(void);
 };
 
-
 static struct Event eventList[EVENT_LIST_SIZE];
 static struct Event eventListJERRY[EVENT_LIST_SIZE];
 static uint32_t nextEvent;
@@ -59,14 +56,14 @@ static uint32_t numberOfEvents;
 void InitializeEventList(void)
 {
    unsigned i;
-	for(i = 0; i < EVENT_LIST_SIZE; i++)
-	{
-		eventList[i].valid = false;
-		eventListJERRY[i].valid = false;
-	}
+   for(i = 0; i < EVENT_LIST_SIZE; i++)
+   {
+      eventList[i].valid = false;
+      eventListJERRY[i].valid = false;
+   }
 
-	numberOfEvents = 0;
-	WriteLog("EVENT: Cleared event list.\n");
+   numberOfEvents = 0;
+   WriteLog("EVENT: Cleared event list.\n");
 }
 
 
@@ -75,44 +72,44 @@ void InitializeEventList(void)
 void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAIN*/)
 {
    unsigned i;
-	if (type == EVENT_MAIN)
-	{
-		for(i = 0; i < EVENT_LIST_SIZE; i++)
-		{
-			if (!eventList[i].valid)
-			{
-//WriteLog("EVENT: Found callback slot #%u...\n", i);
-				eventList[i].timerCallback = callback;
-				eventList[i].eventTime = time;
-				eventList[i].eventType = type;
-				eventList[i].valid = true;
-				numberOfEvents++;
+   if (type == EVENT_MAIN)
+   {
+      for(i = 0; i < EVENT_LIST_SIZE; i++)
+      {
+         if (!eventList[i].valid)
+         {
+            //WriteLog("EVENT: Found callback slot #%u...\n", i);
+            eventList[i].timerCallback = callback;
+            eventList[i].eventTime = time;
+            eventList[i].eventType = type;
+            eventList[i].valid = true;
+            numberOfEvents++;
 
-				return;
-			}
-		}
+            return;
+         }
+      }
 
-		WriteLog("EVENT: SetCallbackTime() failed to find an empty slot in the main list (%u events)!\n", numberOfEvents);
-	}
-	else
-	{
-		for(i = 0; i < EVENT_LIST_SIZE; i++)
-		{
-			if (!eventListJERRY[i].valid)
-			{
-//WriteLog("EVENT: Found callback slot #%u...\n", i);
-				eventListJERRY[i].timerCallback = callback;
-				eventListJERRY[i].eventTime = time;
-				eventListJERRY[i].eventType = type;
-				eventListJERRY[i].valid = true;
-				numberOfEvents++;
+      WriteLog("EVENT: SetCallbackTime() failed to find an empty slot in the main list (%u events)!\n", numberOfEvents);
+   }
+   else
+   {
+      for(i = 0; i < EVENT_LIST_SIZE; i++)
+      {
+         if (!eventListJERRY[i].valid)
+         {
+            //WriteLog("EVENT: Found callback slot #%u...\n", i);
+            eventListJERRY[i].timerCallback = callback;
+            eventListJERRY[i].eventTime = time;
+            eventListJERRY[i].eventType = type;
+            eventListJERRY[i].valid = true;
+            numberOfEvents++;
 
-				return;
-			}
-		}
+            return;
+         }
+      }
 
-		WriteLog("EVENT: SetCallbackTime() failed to find an empty slot in the main list (%u events)!\n", numberOfEvents);
-	}
+      WriteLog("EVENT: SetCallbackTime() failed to find an empty slot in the main list (%u events)!\n", numberOfEvents);
+   }
 }
 
 
@@ -120,23 +117,23 @@ void RemoveCallback(void (* callback)(void))
 {
    unsigned i;
 
-	for (i = 0; i < EVENT_LIST_SIZE; i++)
-	{
-		if (eventList[i].valid && eventList[i].timerCallback == callback)
-		{
-			eventList[i].valid = false;
-			numberOfEvents--;
+   for (i = 0; i < EVENT_LIST_SIZE; i++)
+   {
+      if (eventList[i].valid && eventList[i].timerCallback == callback)
+      {
+         eventList[i].valid = false;
+         numberOfEvents--;
 
-			return;
-		}
-		else if (eventListJERRY[i].valid && eventListJERRY[i].timerCallback == callback)
-		{
-			eventListJERRY[i].valid = false;
-			numberOfEvents--;
+         return;
+      }
+      else if (eventListJERRY[i].valid && eventListJERRY[i].timerCallback == callback)
+      {
+         eventListJERRY[i].valid = false;
+         numberOfEvents--;
 
-			return;
-		}
-	}
+         return;
+      }
+   }
 }
 
 
@@ -167,34 +164,34 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 {
    double time;
    unsigned i;
-	if (type == EVENT_MAIN)
-	{
-		time      = eventList[0].eventTime;
-		nextEvent = 0;
+   if (type == EVENT_MAIN)
+   {
+      time      = eventList[0].eventTime;
+      nextEvent = 0;
 
-		for(i = 1; i < EVENT_LIST_SIZE; i++)
-		{
-			if (eventList[i].valid && (eventList[i].eventTime < time))
-			{
-				time = eventList[i].eventTime;
-				nextEvent = i;
-			}
-		}
-	}
-	else
-	{
-		time           = eventListJERRY[0].eventTime;
-		nextEventJERRY = 0;
+      for(i = 1; i < EVENT_LIST_SIZE; i++)
+      {
+         if (eventList[i].valid && (eventList[i].eventTime < time))
+         {
+            time = eventList[i].eventTime;
+            nextEvent = i;
+         }
+      }
+   }
+   else
+   {
+      time           = eventListJERRY[0].eventTime;
+      nextEventJERRY = 0;
 
-		for(i = 1; i < EVENT_LIST_SIZE; i++)
-		{
-			if (eventListJERRY[i].valid && (eventListJERRY[i].eventTime < time))
-			{
-				time = eventListJERRY[i].eventTime;
-				nextEventJERRY = i;
-			}
-		}
-	}
+      for(i = 1; i < EVENT_LIST_SIZE; i++)
+      {
+         if (eventListJERRY[i].valid && (eventListJERRY[i].eventTime < time))
+         {
+            time = eventListJERRY[i].eventTime;
+            nextEventJERRY = i;
+         }
+      }
+   }
 
    return time;
 }
