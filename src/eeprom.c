@@ -142,9 +142,7 @@ static void EEPROMSave(void)
 }
 
 
-//
 // Read/write EEPROM files to disk in an endian safe manner
-//
 void ReadEEPROMFromFile(FILE * file, uint16_t * ram)
 {
    unsigned i;
@@ -183,7 +181,6 @@ uint8_t EepromReadByte(uint32_t offset)
 	case 0xF15001:
 		eeprom_set_cs(1);
 		break;
-//	default: WriteLog("EEPROM: unmapped 0x%.8x\n", offset); break;
 	}
 
 	return 0x00;
@@ -208,7 +205,6 @@ void EepromWriteByte(uint32_t offset, uint8_t data)
 	case 0xF15001:
 		eeprom_set_cs(1);
 		break;
-//	default: WriteLog("eeprom: unmapped 0x%.8x\n",offset); break;
 	}
 }
 
@@ -241,10 +237,6 @@ static void eeprom_set_di(uint32_t data)
 {
    unsigned i;
 
-#if 0
-   WriteLog("eeprom: di=%i\n",data);
-   WriteLog("eeprom: state %i\n",jerry_ee_state);
-#endif
 	switch (jerry_ee_state)
 	{
 	case EE_STATE_START:
@@ -257,7 +249,6 @@ static void eeprom_set_di(uint32_t data)
 	case EE_STATE_OP_B:
 		jerry_ee_op |= data;
 		jerry_ee_direct_jump = 0;
-//		WriteLog("eeprom: opcode %i\n",jerry_ee_op);
 
 		switch (jerry_ee_op)
 		{
@@ -296,8 +287,7 @@ static void eeprom_set_di(uint32_t data)
 		eeprom_set_di(data);
 		break;
 	case EE_STATE_0_0_0:
-		// writes disable
-		// WriteLog("eeprom: read only\n");
+		// writes disable (read only)
 		jerry_writes_enabled = 0;
 		jerry_ee_state = EE_STATE_START;
 		break;
@@ -316,16 +306,12 @@ static void eeprom_set_di(uint32_t data)
 			for(i = 0; i < 64; i++)
 				eeprom_ram[i] = jerry_ee_data;
 
-			EEPROMSave();						// Save it NOW!
+			EEPROMSave();
 		}
-
-		//else
-		//	WriteLog("eeprom: not writing because read only\n");
 		jerry_ee_state = EE_STATE_BUSY;
 		break;
 	case EE_STATE_0_0_2:
 		// erase all
-		//WriteLog("eeprom: erasing eeprom\n");
 		if (jerry_writes_enabled)
 			for(i = 0; i < 64; i++)
 				eeprom_ram[i] = 0xFFFF;
@@ -334,7 +320,6 @@ static void eeprom_set_di(uint32_t data)
 		break;
 	case EE_STATE_0_0_3:
 		// writes enable
-		//WriteLog("eeprom: read/write\n");
 		jerry_writes_enabled = 1;
 		jerry_ee_state = EE_STATE_START;
 		break;
@@ -357,7 +342,7 @@ static void eeprom_set_di(uint32_t data)
 		if (jerry_writes_enabled)
 		{
 			eeprom_ram[jerry_ee_address_data] = jerry_ee_data;
-			EEPROMSave();						// Save it NOW!
+			EEPROMSave();
 		}
 
 		jerry_ee_state = EE_STATE_BUSY;
@@ -385,7 +370,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_state = EE_STATE_BUSY;
 		break;
 	case EE_READ_DATA:
-		//WriteLog("eeprom:\t\t\t%i bit %i\n",data,jerry_ee_data_cnt-1);
 		jerry_ee_data <<= 1;
 		jerry_ee_data |= data;
 		jerry_ee_data_cnt--;
@@ -403,12 +387,10 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_address_data <<= 1;
 		jerry_ee_address_data |= data;
 		jerry_ee_address_cnt--;
-//		WriteLog("eeprom:\t%i bits remaining\n",jerry_ee_address_cnt);
 
 		if (!jerry_ee_address_cnt)
 		{
 			jerry_ee_state = jerry_ee_rstate;
-			//WriteLog("eeprom:\t\tread address 0x%.2x\n",jerry_ee_address_data);
 
 			if (jerry_ee_direct_jump)
 				eeprom_set_di(data);
@@ -423,7 +405,6 @@ static void eeprom_set_di(uint32_t data)
 
 static void eeprom_set_cs(uint32_t state)
 {
-//	WriteLog("eeprom: cs=%i\n",state);
 	jerry_ee_state = EE_STATE_START;
 	jerry_ee_op = 0;
 	jerry_ee_rstate = 0;
@@ -453,14 +434,10 @@ static uint32_t eeprom_get_do(void)
 		data = (eeprom_ram[jerry_ee_address_data] >> jerry_ee_data_cnt) & 0x01;
 
 		if (!jerry_ee_data_cnt)
-		{
-			//WriteLog("eeprom: read 0x%.4x at 0x%.2x cpu %i pc=0x%.8x\n",eeprom_ram[jerry_ee_address_data],jerry_ee_address_data,jaguar_cpu_in_exec,s68000readPC());
 			jerry_ee_state = EE_STATE_START;
-		}
 		break;
 	}
 
-//	WriteLog("eeprom: do=%i\n",data);
 	return data;
 }
 
