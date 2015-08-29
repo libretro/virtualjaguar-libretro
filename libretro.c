@@ -160,7 +160,7 @@ void retro_get_system_info(struct retro_system_info *info)
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
    memset(info, 0, sizeof(*info));
-   info->timing.fps            = 60;
+   info->timing.fps            = vjs.hardwareTypeNTSC ? 60 : 50;
    info->timing.sample_rate    = 48000;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
@@ -274,7 +274,7 @@ void retro_unload_game(void)
 
 unsigned retro_get_region(void)
 {
-   return RETRO_REGION_NTSC;
+   return vjs.hardwareTypeNTSC ? RETRO_REGION_NTSC : RETRO_REGION_PAL;
 }
 
 unsigned retro_api_version(void)
