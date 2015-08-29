@@ -26,7 +26,6 @@ struct VJSettings
 	int32_t joyport;								// Joystick port
 	bool hardwareTypeNTSC;						// Set to false for PAL
 	bool useJaguarBIOS;
-	bool usePipelinedDSP;
 	bool hardwareTypeAlpine;
 	uint32_t frameSkip;
 	uint32_t biosType;
