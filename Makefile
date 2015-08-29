@@ -152,7 +152,20 @@ LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic)
 FLAGS += $(INCFLAGS)
 
+ifeq ($(OLD_GCC), 1)
+WARNINGS := -Wall
+else ifeq ($(NO_GCC), 1)
 WARNINGS :=
+else
+WARNINGS := -Wall \
+	-Wno-sign-compare \
+	-Wno-unused-variable \
+	-Wno-unused-function \
+	-Wno-uninitialized \
+	-Wno-strict-aliasing \
+	-Wno-overflow \
+	-fno-strict-overflow
+endif
 
 FLAGS += -D__LIBRETRO__ $(WARNINGS)
 
