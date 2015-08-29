@@ -22,7 +22,7 @@ static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
 static retro_environment_t environ_cb;
-static retro_audio_sample_batch_t audio_batch_cb;
+retro_audio_sample_batch_t audio_batch_cb;
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -336,5 +336,4 @@ void retro_run(void)
    SDLSoundCallback(NULL, sampleBuffer, 1600);
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
-   audio_batch_cb((int16_t *)sampleBuffer, 1600/2);
 }
