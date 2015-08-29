@@ -329,10 +329,6 @@ static uint32_t inner_loop;
 static uint32_t a2_psize;
 static uint32_t a1_psize;
 static uint32_t gouraud_add;
-//static uint32_t gouraud_data;
-//static uint16_t gint[4];
-//static uint16_t gfrac[4];
-//static uint8_t  gcolour[4];
 static int gd_i[4];
 static int gd_c[4];
 static int gd_ia, gd_ca;
@@ -346,9 +342,7 @@ static int32_t a1_clip_x, a1_clip_y;
 // of removing all the unnecessary code caching. If it turns out to be a good way
 // to optimize the blitter, then we may revisit it in the future...
 
-//
 // Generic blit handler
-//
 void blitter_generic(uint32_t cmd)
 {
    uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
@@ -4394,14 +4388,6 @@ Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
    //kludge
    *dbinh = ~*dbinh;
 }
-
-
-////////////////////////////////////// C++ CODE //////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////
-
-// !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!!
-// !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!!
-// !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!! TESTING !!!
 
 #endif
 
