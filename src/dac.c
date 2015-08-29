@@ -71,13 +71,9 @@ static int bufferIndex = 0;
 static int numberOfSamples = 0;
 static bool bufferDone = false;
 
-// These are defined in memory.h/cpp
-//uint16_t lrxd, rrxd;							// I2S ports (into Jaguar)
-
 // Local variables
 
 //static uint8_t SCLKFrequencyDivider = 19;			// Default is roughly 22 KHz (20774 Hz in NTSC mode)
-// /*static*/ uint16_t serialMode = 0;
 
 // Private function prototypes
 
@@ -203,14 +199,14 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 }
 
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)
-void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who/*= UNKNOWN*/)
+void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    if (offset == SCLK + 3)
       DACWriteWord(offset - 3, (uint16_t)data, UNKNOWN);
 }
 
 
-void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
+void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    if (offset == LTXD + 2)
       *ltxd = data;
@@ -224,10 +220,7 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who/*= UNKNOWN*/)
       JERRYI2SCallback();
    }
    else if (offset == SMODE + 2)
-   {
-      //		serialMode = data;
       *smode = data;
-   }
 }
 
 uint8_t DACReadByte(uint32_t offset, uint32_t who)

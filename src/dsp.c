@@ -202,17 +202,6 @@ static void dsp_opcode_subqmod(void);
 static void dsp_opcode_subqt(void);
 static void dsp_opcode_illegal(void);
 
-/*uint8_t dsp_opcode_cycles[64] =
-{
-	3,  3,  3,  3,  3,  3,  3,  3,
-	3,  3,  3,  3,  3,  3,  3,  3,
-	3,  3,  1,  3,  1, 18,  3,  3,
-	3,  3,  3,  3,  3,  3,  3,  3,
-	3,  3,  2,  2,  2,  2,  3,  4,
-	5,  4,  5,  6,  6,  1,  1,  1,
-	1,  2,  2,  2,  1,  1,  9,  3,
-	3,  1,  6,  6,  2,  2,  3,  3
-};//*/
 //Here's a QnD kludge...
 //This is wrong, wrong, WRONG, but it seems to work for the time being...
 //(That is, it fixes Flip Out which relies on GPU timing rather than semaphores. Bad developers! Bad!)
@@ -344,7 +333,6 @@ void dsp_reset_stats(void)
 
 void DSPReleaseTimeslice(void)
 {
-//This does absolutely nothing!!! !!! FIX !!!
 	dsp_releaseTimeSlice_flag = 1;
 }
 
@@ -392,17 +380,6 @@ void dsp_build_branch_condition_table(void)
 
 uint8_t DSPReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-	if (offset >= 0xF1A000 && offset <= 0xF1A0FF)
-		WriteLog("DSP: ReadByte--Attempt to read from DSP register file by %s!\n", whoName[who]);
-// battlemorph
-//	if ((offset==0xF1CFE0)||(offset==0xF1CFE2))
-//		return(0xffff);
-	// mutant penguin
-/*	if ((jaguar_mainRom_crc32==0xbfd751a4)||(jaguar_mainRom_crc32==0x053efaf9))
-	{
-		if (offset==0xF1CFE0)
-			return(0xff);
-	}*/
 	if (offset >= DSP_WORK_RAM_BASE && offset <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		return dsp_ram_8[offset - DSP_WORK_RAM_BASE];
 
@@ -428,16 +405,11 @@ uint8_t DSPReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-	if (offset >= 0xF1A000 && offset <= 0xF1A0FF)
-		WriteLog("DSP: ReadWord--Attempt to read from DSP register file by %s!\n", whoName[who]);
-	//???
 	offset &= 0xFFFFFFFE;
 
 	if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE+0x1FFF)
 	{
 		offset -= DSP_WORK_RAM_BASE;
-/*		uint16_t data = (((uint16_t)dsp_ram_8[offset])<<8)|((uint16_t)dsp_ram_8[offset+1]);
-		return data;*/
 		return GET16(dsp_ram_8, offset);
 	}
 	else if ((offset>=DSP_CONTROL_RAM_BASE)&&(offset<DSP_CONTROL_RAM_BASE+0x20))
@@ -446,8 +418,7 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 		if (offset & 0x03)
 			return data & 0xFFFF;
-		else
-			return data >> 16;
+      return data >> 16;
 	}
 
 	return JaguarReadWord(offset, who);
@@ -470,15 +441,22 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x00:
             dsp_flags = (dsp_flags & 0xFFFFFFF8) | (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
             return dsp_flags & 0xFFFFC1FF;
-         case 0x04: return dsp_matrix_control;
-         case 0x08: return dsp_pointer_to_matrix;
-         case 0x0C: return dsp_data_organization;
-         case 0x10: return dsp_pc;
-         case 0x14: return dsp_control;
-         case 0x18: return dsp_modulo;
-         case 0x1C: return dsp_remain;
+         case 0x04:
+            return dsp_matrix_control;
+         case 0x08:
+            return dsp_pointer_to_matrix;
+         case 0x0C:
+            return dsp_data_organization;
+         case 0x10:
+            return dsp_pc;
+         case 0x14:
+            return dsp_control;
+         case 0x18:
+            return dsp_modulo;
+         case 0x1C:
+            return dsp_remain;
          case 0x20:
-                    return (int32_t)((int8_t)(dsp_acc >> 32));	// Top 8 bits of 40-bit accumulator, sign extended
+            return (int32_t)((int8_t)(dsp_acc >> 32));	// Top 8 bits of 40-bit accumulator, sign extended
       }
       // unaligned long read-- !!! FIX !!!
       return 0xFFFFFFFF;
@@ -604,7 +582,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
          case 0x14:
             {
                bool wasRunning = DSP_RUNNING;
-               //			uint32_t dsp_was_running = DSP_RUNNING;
                // Check for DSP -> CPU interrupt
                if (data & CPUINT)
                {
@@ -626,12 +603,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   DSPSetIRQLine(DSPIRQ_CPU, ASSERT_LINE);
                   data &= ~DSPINT0;
                }
-               // single stepping
-               if (data & SINGLE_STEP)
-               {
-                  //				WriteLog("DSP: Asked to perform a single step (single step is %senabled)\n", (data & 0x8 ? "" : "not "));
-               }
-
                // Protect writes to VERSION and the interrupt latches...
                uint32_t mask = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
                dsp_control = (dsp_control & mask) | (data & ~mask);
@@ -666,7 +637,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                break;
             }
          case 0x18:
-            WriteLog("DSP: Modulo data %08X written by %s.\n", data, whoName[who]);
             dsp_modulo = data;
             break;
          case 0x1C:
@@ -752,13 +722,8 @@ void DSPHandleIRQs(void)
    }
 
    dsp_flags |= IMASK;
-   //CC only!
-   //!!!!!!!!
    DSPUpdateRegisterBanks();
 
-   // subqt  #4,r31		; pre-decrement stack pointer
-   // move   pc,r30		; address of interrupted code
-   // store  r30,(r31)     ; store return address
    dsp_reg[31] -= 4;
    //CC only!
    //!!!!!!!!
@@ -777,17 +742,9 @@ void DSPHandleIRQs(void)
    // instruction 'baz' instead of 'bar' which is the next instruction to execute in the
    // instruction stream...
 
-   //	DSPWriteLong(dsp_reg[31], dsp_pc - 2, DSP);
    DSPWriteLong(dsp_reg[31], dsp_pc - 2 - (pipeline[plPtrExec].opcode == 38 ? 6 : (pipeline[plPtrExec].opcode == PIPELINE_STALL ? 0 : 2)), DSP);
-   //CC only!
-   //!!!!!!!!
 
-   // movei  #service_address,r30  ; pointer to ISR entry
-   // jump  (r30)					; jump to ISR
-   // nop
    dsp_pc = dsp_reg[30] = DSP_WORK_RAM_BASE + (which * 0x10);
-   //CC only!
-   //!!!!!!!!
    FlushDSPPipeline();
 }
 
@@ -824,17 +781,11 @@ void DSPHandleIRQsNP(void)
 	DSPUpdateRegisterBanks();
 
 
-	// subqt  #4,r31		; pre-decrement stack pointer
-	// move   pc,r30		; address of interrupted code
-	// store  r30,(r31)     ; store return address
 	dsp_reg[31] -= 4;
 	dsp_reg[30] = dsp_pc - 2; // -2 because we've executed the instruction already
 
 	DSPWriteLong(dsp_reg[31], dsp_reg[30], DSP);
 
-	// movei  #service_address,r30  ; pointer to ISR entry
-	// jump  (r30)					; jump to ISR
-	// nop
 	dsp_pc = dsp_reg[30] = DSP_WORK_RAM_BASE + (which * 0x10);
 }
 
@@ -1037,10 +988,7 @@ void DSPExec(int32_t cycles)
 	dsp_in_exec--;
 }
 
-
-//
 // DSP opcode handlers
-//
 
 // There is a problem here with interrupt handlers the JUMP and JR instructions that
 // can cause trouble because an interrupt can occur *before* the instruction following the
@@ -1932,18 +1880,6 @@ void DSPExecP2(int32_t cycles)
          cycles -= dsp_opcode_cycles[pipeline[plPtrExec].opcode];
          dsp_opcode_use[pipeline[plPtrExec].opcode]++;
          DSPOpcode[pipeline[plPtrExec].opcode]();
-         //WriteLog("    --> Returned from execute. DSP_PC: %08X\n", dsp_pc);
-      }
-      else
-      {
-         //Let's not, until we do the stalling correctly...
-         //But, we gotta while we're doing the comparison core...!
-         //Or do we?			cycles--;
-         //Really, the whole thing is wrong. When the pipeline is correctly stuffed, most instructions
-         //will execute in one clock cycle (others, like DIV, will likely not). So, the challenge is
-         //to model this clock cycle behavior correctly...
-         //Also, the pipeline stalls too much--mostly because the transparent writebacks at stage 3
-         //don't affect the reads at stage 1...
       }
 
       // Stage 3: Write back register/memory address
@@ -1994,7 +1930,6 @@ void DSPExecP2(int32_t cycles)
 #define PRES			pipeline[plPtrExec].result
 #define PWBR			pipeline[plPtrExec].writebackRegister
 #define NO_WRITEBACK	pipeline[plPtrExec].writebackRegister = 0xFF
-//#define DSP_PPC			dsp_pc - (pipeline[plPtrRead].opcode == 38 ? 6 : 2) - (pipeline[plPtrExec].opcode == 38 ? 6 : 2)
 #define DSP_PPC			dsp_pc - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2)) - (pipeline[plPtrExec].opcode == 38 ? 6 : (pipeline[plPtrExec].opcode == PIPELINE_STALL ? 0 : 2))
 #define WRITEBACK_ADDR	pipeline[plPtrExec].writebackRegister = 0xFE
 
@@ -2289,7 +2224,7 @@ static void DSP_jump(void)
 			pipeline[plPtrExec].reg1 = dsp_reg[pipeline[plPtrExec].operand1];
 			pipeline[plPtrExec].reg2 = dsp_reg[pipeline[plPtrExec].operand2];
 			pipeline[plPtrExec].writebackRegister = pipeline[plPtrExec].operand2;	// Set it to RN
-		}//*/
+		}
 	dsp_pc += 2;	// For DSP_DIS_* accuracy
 		DSPOpcode[pipeline[plPtrExec].opcode]();
 		dsp_opcode_use[pipeline[plPtrExec].opcode]++;
