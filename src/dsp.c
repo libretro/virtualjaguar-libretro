@@ -130,8 +130,6 @@ bool IMASKCleared = false;
 #define VERSION			0x0F000
 #define INT_LAT5		0x10000
 
-extern uint32_t jaguar_mainRom_crc32;
-
 // Is opcode 62 *really* a NOP? Seems like it...
 static void dsp_opcode_abs(void);
 static void dsp_opcode_add(void);
@@ -310,8 +308,6 @@ static uint8_t dsp_ram_8[0x2000];
 
 static uint32_t dsp_in_exec = 0;
 static uint32_t dsp_releaseTimeSlice_flag = 0;
-
-FILE * dsp_fp;
 
 // Private function prototypes
 
@@ -784,7 +780,6 @@ void DSPSetIRQLine(int irqline, int state)
 	if (state)
 	{
 		dsp_control |= mask;						// Set the latch bit
-#warning !!! No checking done to see if we're using pipelined DSP or not !!!
 		DSPHandleIRQsNP();
 	}
 }
@@ -1960,80 +1955,80 @@ static void DSP_illegal(void)
 // And should be fixed now...
 static void DSP_jr(void)
 {
-	// KLUDGE: Used by BRANCH_CONDITION macro
-	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
+   // KLUDGE: Used by BRANCH_CONDITION macro
+   uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
 
-	if (BRANCH_CONDITION(PIMM2))
-	{
-		int32_t offset = (PIMM1 & 0x10 ? 0xFFFFFFF0 | PIMM1 : PIMM1);		// Sign extend PIMM1
-//Account for pipeline effects...
-		uint32_t newPC = dsp_pc + (offset * 2) - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2));
+   if (BRANCH_CONDITION(PIMM2))
+   {
+      int32_t offset = (PIMM1 & 0x10 ? 0xFFFFFFF0 | PIMM1 : PIMM1);		// Sign extend PIMM1
+      //Account for pipeline effects...
+      uint32_t newPC = dsp_pc + (offset * 2) - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2));
 
-		// Now that we've branched, we have to make sure that the following instruction
-		// is executed atomically with this one and then flush the pipeline before setting
-		// the new PC.
+      // Now that we've branched, we have to make sure that the following instruction
+      // is executed atomically with this one and then flush the pipeline before setting
+      // the new PC.
 
-		// Step 1: Handle writebacks at stage 3 of pipeline
-		if (pipeline[plPtrWrite].opcode != PIPELINE_STALL)
-		{
-			if (pipeline[plPtrWrite].writebackRegister != 0xFF)
-			{
-				if (pipeline[plPtrWrite].writebackRegister != 0xFE)
-					dsp_reg[pipeline[plPtrWrite].writebackRegister] = pipeline[plPtrWrite].result;
-				else
-				{
-					if (pipeline[plPtrWrite].type == TYPE_BYTE)
-						JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
-					else if (pipeline[plPtrWrite].type == TYPE_WORD)
-						JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
-					else
-						JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
-				}
-			}
+      // Step 1: Handle writebacks at stage 3 of pipeline
+      if (pipeline[plPtrWrite].opcode != PIPELINE_STALL)
+      {
+         if (pipeline[plPtrWrite].writebackRegister != 0xFF)
+         {
+            if (pipeline[plPtrWrite].writebackRegister != 0xFE)
+               dsp_reg[pipeline[plPtrWrite].writebackRegister] = pipeline[plPtrWrite].result;
+            else
+            {
+               if (pipeline[plPtrWrite].type == TYPE_BYTE)
+                  JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
+               else if (pipeline[plPtrWrite].type == TYPE_WORD)
+                  JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
+               else
+                  JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
+            }
+         }
 
 #ifndef NEW_SCOREBOARD
-			if (affectsScoreboard[pipeline[plPtrWrite].opcode])
-				scoreboard[pipeline[plPtrWrite].operand2] = false;
+         if (affectsScoreboard[pipeline[plPtrWrite].opcode])
+            scoreboard[pipeline[plPtrWrite].operand2] = false;
 #else
-//Yup, sequential MOVEQ # problem fixing (I hope!)...
-			if (affectsScoreboard[pipeline[plPtrWrite].opcode])
-				if (scoreboard[pipeline[plPtrWrite].operand2])
-					scoreboard[pipeline[plPtrWrite].operand2]--;
+         //Yup, sequential MOVEQ # problem fixing (I hope!)...
+         if (affectsScoreboard[pipeline[plPtrWrite].opcode])
+            if (scoreboard[pipeline[plPtrWrite].operand2])
+               scoreboard[pipeline[plPtrWrite].operand2]--;
 #endif
-		}
+      }
 
-		// Step 2: Push instruction through pipeline & execute following instruction
-		// NOTE: By putting our following instruction at stage 3 of the pipeline,
-		//       we effectively handle the final push of the instruction through the
-		//       pipeline when the new PC takes effect (since when we return, the
-		//       pipeline code will be executing the writeback stage. If we reverse
-		//       the execution order of the pipeline stages, this will no longer be
-		//       the case!)...
-		pipeline[plPtrExec] = pipeline[plPtrRead];
-//This is BAD. We need to get that next opcode and execute it!
-//NOTE: The problem is here because of a bad stall. Once those are fixed, we can probably
-//      remove this crap.
-		if (pipeline[plPtrExec].opcode == PIPELINE_STALL)
-		{
-		uint16_t instruction = DSPReadWord(dsp_pc, DSP);
-		pipeline[plPtrExec].opcode = instruction >> 10;
-		pipeline[plPtrExec].operand1 = (instruction >> 5) & 0x1F;
-		pipeline[plPtrExec].operand2 = instruction & 0x1F;
-			pipeline[plPtrExec].reg1 = dsp_reg[pipeline[plPtrExec].operand1];
-			pipeline[plPtrExec].reg2 = dsp_reg[pipeline[plPtrExec].operand2];
-			pipeline[plPtrExec].writebackRegister = pipeline[plPtrExec].operand2;	// Set it to RN
-		}//*/
-	dsp_pc += 2;	// For DSP_DIS_* accuracy
-		DSPOpcode[pipeline[plPtrExec].opcode]();
-		dsp_opcode_use[pipeline[plPtrExec].opcode]++;
-		pipeline[plPtrWrite] = pipeline[plPtrExec];
+      // Step 2: Push instruction through pipeline & execute following instruction
+      // NOTE: By putting our following instruction at stage 3 of the pipeline,
+      //       we effectively handle the final push of the instruction through the
+      //       pipeline when the new PC takes effect (since when we return, the
+      //       pipeline code will be executing the writeback stage. If we reverse
+      //       the execution order of the pipeline stages, this will no longer be
+      //       the case!)...
+      pipeline[plPtrExec] = pipeline[plPtrRead];
+      //This is BAD. We need to get that next opcode and execute it!
+      //NOTE: The problem is here because of a bad stall. Once those are fixed, we can probably
+      //      remove this crap.
+      if (pipeline[plPtrExec].opcode == PIPELINE_STALL)
+      {
+         uint16_t instruction = DSPReadWord(dsp_pc, DSP);
+         pipeline[plPtrExec].opcode = instruction >> 10;
+         pipeline[plPtrExec].operand1 = (instruction >> 5) & 0x1F;
+         pipeline[plPtrExec].operand2 = instruction & 0x1F;
+         pipeline[plPtrExec].reg1 = dsp_reg[pipeline[plPtrExec].operand1];
+         pipeline[plPtrExec].reg2 = dsp_reg[pipeline[plPtrExec].operand2];
+         pipeline[plPtrExec].writebackRegister = pipeline[plPtrExec].operand2;	// Set it to RN
+      }//*/
+      dsp_pc += 2;	// For DSP_DIS_* accuracy
+      DSPOpcode[pipeline[plPtrExec].opcode]();
+      dsp_opcode_use[pipeline[plPtrExec].opcode]++;
+      pipeline[plPtrWrite] = pipeline[plPtrExec];
 
-		// Step 3: Flush pipeline & set new PC
-		pipeline[plPtrRead].opcode = pipeline[plPtrExec].opcode = PIPELINE_STALL;
-		dsp_pc = newPC;
-	}
-	else
-		NO_WRITEBACK;
+      // Step 3: Flush pipeline & set new PC
+      pipeline[plPtrRead].opcode = pipeline[plPtrExec].opcode = PIPELINE_STALL;
+      dsp_pc = newPC;
+   }
+   else
+      NO_WRITEBACK;
 }
 
 static void DSP_jump(void)
