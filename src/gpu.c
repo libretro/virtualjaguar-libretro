@@ -139,33 +139,6 @@ static void gpu_opcode_store_r15_ri(void);
 static void gpu_opcode_sat24(void);
 static void gpu_opcode_pack(void);
 
-// This is wrong, since it doesn't take pipeline effects into account. !!! FIX !!!
-/*uint8_t gpu_opcode_cycles[64] =
-{
-	3,  3,  3,  3,  3,  3,  3,  3,
-	3,  3,  3,  3,  3,  3,  3,  3,
-	3,  3,  1,  3,  1, 18,  3,  3,
-	3,  3,  3,  3,  3,  3,  3,  3,
-	3,  3,  2,  2,  2,  2,  3,  4,
-	5,  4,  5,  6,  6,  1,  1,  1,
-	1,  2,  2,  2,  1,  1,  9,  3,
-	3,  1,  6,  6,  2,  2,  3,  3
-};//*/
-//Here's a QnD kludge...
-//This is wrong, wrong, WRONG, but it seems to work for the time being...
-//(That is, it fixes Flip Out which relies on GPU timing rather than semaphores. Bad developers! Bad!)
-//What's needed here is a way to take pipeline effects into account (including pipeline stalls!)...
-/*uint8_t gpu_opcode_cycles[64] =
-{
-	1,  1,  1,  1,  1,  1,  1,  1,
-	1,  1,  1,  1,  1,  1,  1,  1,
-	1,  1,  1,  1,  1,  9,  1,  1,
-	1,  1,  1,  1,  1,  1,  1,  1,
-	1,  1,  1,  1,  1,  1,  1,  2,
-	2,  2,  2,  3,  3,  1,  1,  1,
-	1,  1,  1,  1,  1,  1,  4,  1,
-	1,  1,  3,  3,  1,  1,  1,  1
-};//*/
 uint8_t gpu_opcode_cycles[64] =
 {
 	1,  1,  1,  1,  1,  1,  1,  1,
@@ -176,7 +149,7 @@ uint8_t gpu_opcode_cycles[64] =
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1
-};//*/
+};
 
 void (*gpu_opcode[64])()=
 {
@@ -324,9 +297,7 @@ void build_branch_condition_table(void)
 	}
 }
 
-//
 // GPU byte access (read)
-//
 uint8_t GPUReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
@@ -348,9 +319,7 @@ uint8_t GPUReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 	return JaguarReadByte(offset, who);
 }
 
-//
 // GPU word access (read)
-//
 uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
@@ -503,9 +472,7 @@ void GPUWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    JaguarWriteWord(offset, data, who);
 }
 
-//
 // GPU dword access (write)
-//
 void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 {
    if ((offset >= GPU_WORK_RAM_BASE) && (offset <= GPU_WORK_RAM_BASE + 0x0FFC))
@@ -614,9 +581,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
    JaguarWriteLong(offset, data, who);
 }
 
-//
 // Change register banks if necessary
-//
 void GPUUpdateRegisterBanks(void)
 {
    int bank = (gpu_flags & REGPAGE);		// REGPAGE bit
@@ -864,9 +829,7 @@ void GPUExec(int32_t cycles)
    gpu_in_exec--;
 }
 
-//
 // GPU opcodes
-//
 
 /*
    GPU opcodes use (offset punch--vertically below bad guy):
@@ -948,9 +911,7 @@ static void gpu_opcode_addc(void)
 {
    uint32_t res = RN + RM + gpu_flag_c;
    uint32_t carry = gpu_flag_c;
-   //	SET_ZNC_ADD(RN, RM, res); //???BUG??? Yes!
    SET_ZNC_ADD(RN + carry, RM, res);
-   //	SET_ZNC_ADD(RN, RM + carry, res);
    RN = res;
 }
 
@@ -1393,7 +1354,6 @@ static void gpu_opcode_imult(void)
 static void gpu_opcode_mult(void)
 {
    RN = (uint16_t)RM * (uint16_t)RN;
-   //	RN = (RM & 0xFFFF) * (RN & 0xFFFF);
    SET_ZN(RN);
 }
 
