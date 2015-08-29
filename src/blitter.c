@@ -1269,7 +1269,6 @@ void LogBlit(void)
 	WriteLog("  SRCSHADE = %s\n", (SRCSHADE ? "1" : "0"));
 }
 
-
 #ifdef USE_MIDSUMMER_BLITTER
 // Here's an attempt to write a blitter that conforms to the Midsummer specs--since
 // it's supposedly backwards compatible, it should work well...
@@ -4252,4 +4251,3 @@ Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
 }
 
 #endif
-
