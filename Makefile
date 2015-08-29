@@ -41,6 +41,7 @@ ifeq ($(platform), unix)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	CC = gcc
 
 # OSX
 else ifeq ($(platform), osx)
@@ -49,6 +50,7 @@ else ifeq ($(platform), osx)
 	SHARED := -dynamiclib
 	ifeq ($(arch),ppc)
 		FLAGS += -DMSB_FIRST
+		OLD_GCC = 1
 	endif
 	OSXVER = `sw_vers -productVersion | cut -d. -f 2`
 	OSX_LT_MAVERICKS = `(( $(OSXVER) <= 9)) && echo "YES"`
@@ -98,6 +100,7 @@ else ifeq ($(platform), ps3)
 	AR = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-ar.exe
 	STATIC_LINKING = 1
 	FLAGS += -DMSB_FIRST
+	OLD_GCC = 1
 
 # sncps3
 else ifeq ($(platform), sncps3)
@@ -142,12 +145,27 @@ OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
 ifeq ($(DEBUG),1)
 FLAGS += -O0 -g
 else
-FLAGS += -O3 -ffast-math -DNDEBUG
+FLAGS += -O3 -ffast-math -fomit-frame-pointer -DNDEBUG
 endif
 
 LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic)
 FLAGS += $(INCFLAGS)
+
+ifeq ($(OLD_GCC), 1)
+WARNINGS := -Wall
+else ifeq ($(NO_GCC), 1)
+WARNINGS :=
+else
+WARNINGS := -Wall \
+	-Wno-sign-compare \
+	-Wno-unused-variable \
+	-Wno-unused-function \
+	-Wno-uninitialized \
+	-Wno-strict-aliasing \
+	-Wno-overflow \
+	-fno-strict-overflow
+endif
 
 FLAGS += -D__LIBRETRO__ $(WARNINGS)
 

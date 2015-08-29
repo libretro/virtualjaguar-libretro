@@ -490,11 +490,21 @@ void WriteByte(uint32_t address, uint8_t byte, uint32_t who)
 #endif
          return;
       }
+      /*	else if ((offset >= 0xF10010) && (offset <= 0xF10015))
+         {
+         clock_byte_write(offset, byte);
+         return;
+         }//*/
       // JERRY -> 68K interrupt enables/latches (need to be handled!)
       else if (address >= 0xF10020 && address <= 0xF10023)
       {
          WriteLog("JERRY: (68K int en/lat - Unhandled!) Tried to write $%02X to $%08X!\n", byte, address);
       }
+      /*	else if ((offset >= 0xF17C00) && (offset <= 0xF17C01))
+         {
+         anajoy_byte_write(offset, byte);
+         return;
+         }*/
       else if ((address >= 0xF14000) && (address <= 0xF14003))
       {
          JoystickWriteByte(address, byte);

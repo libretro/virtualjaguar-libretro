@@ -1,0 +1,37 @@
+----------------------------------------
+Virtual Jaguar v2.1.0 Qt release INSTALL
+----------------------------------------
+
+
+REQUIREMENTS:
+-------------
+
+The minimum requirements for compiling Virtual Jaguar from source are:
+
+ o  GCC v4.4.x or higher
+ o  SDL v1.2.14 or higher
+ o  zlib v1.2.5
+ o  libcdio v0.90 or higher (optional, for Jaguar CD support)
+ o  OpenGL libraries
+ o  Qt 4.7.3 or higher
+ o  supported OS (BeOS, Linux, FreeBSD and WIN32 through mingw, MacOS); other
+    OSs may work to but you may need to change some items in the Makefile.
+
+
+COMPILING:
+----------
+
+Assuming that you meet the minimum software requirements, you can compile
+Virtual Jaguar by issuing the following command in the directory where you
+decompressed the source:
+
+make
+
+Optionally you can manually strip virtualjaguar[.exe] to downsize the binary.
+You can also run upx on the binary as well and you'll end up with a somewhat
+smaller binary.
+
+That's it! You can now start the emulator with ./virtualjaguar. See the built
+in help (Help|Contents) for more info.
+
+For even more info, go to http://icculus.org/virtualjaguar.
