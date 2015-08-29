@@ -39,13 +39,6 @@
 #define CONDITION_OP_FLAG_SET		3
 #define CONDITION_SECOND_HALF_LINE	4
 
-#if 0
-#define OPFLAG_RELEASE		8					// Bus release bit
-#define OPFLAG_TRANS		4					// Transparency bit
-#define OPFLAG_RMW			2					// Read-Modify-Write bit
-#define OPFLAG_REFLECT		1					// Horizontal mirror bit
-#endif
-
 // Private function prototypes
 
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render);
@@ -416,12 +409,6 @@ void OPProcessList(int halfline, bool render)
 
                //No, the reason this was needed is that the OP code before was wrong. Any value
                //less than VDB will get written to the top line of the display!
-#if 0
-               // Not so sure... Let's see what happens here...
-               // No change...
-               if (ypos == 0)
-                  ypos = TOMReadWord(0xF00046, OP) / 2;			// Get the VDB value
-#endif
                // Actually, no. Any item less than VDB will get only the lines that hang over
                // VDB displayed. Actually, this is incorrect. It seems that VDB value is wrong
                // somewhere and that's what's causing things to fuck up. Still no idea why.

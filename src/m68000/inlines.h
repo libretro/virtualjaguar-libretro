@@ -57,25 +57,10 @@ STATIC_INLINE uint32_t m68k_getpc(void)
 	return regs.pc;
 }
 
-#if 0
-STATIC_INLINE uint32_t m68k_getpc_p(uint8_t * p)
-{
-	return regs.pc + ((char *)p - (char *)regs.pc_oldp);
-}
-#endif
-
 STATIC_INLINE void m68k_setstopped(int stop)
 {
 	regs.stopped = stop;
 	regs.remainingCycles = 0;
-
-//But trace instructions are only on >68000 cpus, so this is bogus.
-#if 0
-	/* A traced STOP instruction drops through immediately without
-	actually stopping.  */
-	if (stop && (regs.spcflags & SPCFLAG_DOTRACE) == 0)
-	regs.spcflags |= SPCFLAG_STOP;
-#endif
 }
 
 STATIC_INLINE void m68k_do_rts(void)
@@ -98,103 +83,30 @@ STATIC_INLINE void m68k_do_jsr(uint32_t oldpc, uint32_t dest)
 	m68k_setpc(dest);
 }
 
-#if 0
-//These do_get_mem_* functions are only used in newcpu...
-//What it does is use a pointer to make instruction fetching quicker,
-//though it probably leads to more problems than it solves. Something to
-//decide using a profiler...
-#define get_ibyte(o) do_get_mem_byte(regs.pc_p + (o) + 1)
-#define get_iword(o) do_get_mem_word(regs.pc_p + (o))
-#define get_ilong(o) do_get_mem_long(regs.pc_p + (o))
-#else
 // For now, we'll punt this crap...
 // (Also, notice that the byte read is at address + 1...)
 #define get_ibyte(o)	m68k_read_memory_8(regs.pc + (o) + 1)
 #define get_iword(o)	m68k_read_memory_16(regs.pc + (o))
 #define get_ilong(o)	m68k_read_memory_32(regs.pc + (o))
-#endif
 
 // We don't use this crap, so let's comment out for now...
 STATIC_INLINE void refill_prefetch(uint32_t currpc, uint32_t offs)
 {
-#if 0
-	uint32_t t = (currpc + offs) & ~1;
-	int32_t pc_p_offs = t - currpc;
-	uint8_t * ptr = regs.pc_p + pc_p_offs;
-	uint32_t r;
-
-#ifdef UNALIGNED_PROFITABLE
-	r = *(uint32_t *)ptr;
-	regs.prefetch = r;
-#else
-	r = do_get_mem_long(ptr);
-	do_put_mem_long(&regs.prefetch, r);
-#endif
-	/* printf ("PC %lx T %lx PCPOFFS %d R %lx\n", currpc, t, pc_p_offs, r); */
-	regs.prefetch_pc = t;
-#endif
 }
 
 STATIC_INLINE uint32_t get_ibyte_prefetch(int32_t o)
 {
-#if 0
-	uint32_t currpc = m68k_getpc();
-	uint32_t addr = currpc + o + 1;
-	uint32_t offs = addr - regs.prefetch_pc;
-
-	if (offs > 3)
-	{
-		refill_prefetch(currpc, o + 1);
-		offs = addr - regs.prefetch_pc;
-	}
-
-	uint32_t v = do_get_mem_byte(((uint8_t *)&regs.prefetch) + offs);
-
-	if (offs >= 2)
-		refill_prefetch(currpc, 2);
-
-	/* printf ("get_ibyte PC %lx ADDR %lx OFFS %lx V %lx\n", currpc, addr, offs, v); */
-	return v;
-#else
 	return get_ibyte(o);
-#endif
 }
 
 STATIC_INLINE uint32_t get_iword_prefetch(int32_t o)
 {
-#if 0
-	uint32_t currpc = m68k_getpc();
-	uint32_t addr = currpc + o;
-	uint32_t offs = addr - regs.prefetch_pc;
-
-	if (offs > 3)
-	{
-		refill_prefetch(currpc, o);
-		offs = addr - regs.prefetch_pc;
-	}
-
-	uint32_t v = do_get_mem_word(((uint8_t *)&regs.prefetch) + offs);
-
-	if (offs >= 2)
-		refill_prefetch(currpc, 2);
-
-/*	printf ("get_iword PC %lx ADDR %lx OFFS %lx V %lx\n", currpc, addr, offs, v); */
-	return v;
-#else
 	return get_iword(o);
-#endif
 }
 
 STATIC_INLINE uint32_t get_ilong_prefetch(int32_t o)
 {
-#if 0
-	uint32_t v = get_iword_prefetch(o);
-	v <<= 16;
-	v |= get_iword_prefetch(o + 2);
-	return v;
-#else
 	return get_ilong(o);
-#endif
 }
 
 STATIC_INLINE void fill_prefetch_0(void)

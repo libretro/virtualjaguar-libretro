@@ -27,16 +27,9 @@ void HandleMovem(char * output, uint16_t data, int direction);
 // Local "global" variables
 static long int m68kpc_offset;
 
-#if 0
-#define get_ibyte_1(o) get_byte(regs.pc + (regs.pc_p - regs.pc_oldp) + (o) + 1)
-#define get_iword_1(o) get_word(regs.pc + (regs.pc_p - regs.pc_oldp) + (o))
-#define get_ilong_1(o) get_long(regs.pc + (regs.pc_p - regs.pc_oldp) + (o))
-#else
 #define get_ibyte_1(o) m68k_read_memory_8(regs.pc + (o) + 1)
 #define get_iword_1(o) m68k_read_memory_16(regs.pc + (o))
 #define get_ilong_1(o) m68k_read_memory_32(regs.pc + (o))
-#endif
-
 
 //int32_t ShowEA(FILE * f, int reg, amodes mode, wordsizes size, char * buf)
 int32_t ShowEA(int mnemonic, int reg, amodes mode, wordsizes size, char * buf)

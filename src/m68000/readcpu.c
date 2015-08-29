@@ -870,11 +870,6 @@ out1:
 
 		if (destmode == Areg && sz == sz_byte)
 			goto nomatch;
-#if 0
-		if (sz == sz_byte && (destmode == Aipi || destmode == Apdi)) {
-			dstgather = 0;
-		}
-#endif
 endofline:
 		/* now, we have a match */
 		if (table68k[opc].mnemo != i_ILLG)
@@ -921,12 +916,6 @@ endofline:
 		table68k[opc].stype = srctype;
 		table68k[opc].plev = id.plevel;
 		table68k[opc].clev = id.cpulevel;
-#if 0
-		for (i = 0; i < 5; i++) {
-			table68k[opc].flaginfo[i].flagset = id.flaginfo[i].flagset;
-			table68k[opc].flaginfo[i].flaguse = id.flaginfo[i].flaguse;
-		}
-#endif
 		table68k[opc].flagdead = flagdead;
 		table68k[opc].flaglive = flaglive;
 		table68k[opc].isjmp = isjmp;
@@ -1049,46 +1038,7 @@ static void handle_merges (long int opcode)
 			}
 
 			if (code != opcode)
-			{
 				table68k[code].handler = opcode;
-
-#if 0
-if (opcode == 0x31C3 || code == 0x31C3)
-{
-	printf("Relocate... ($%04X->$%04X)\n", (uint16_t)opcode, code);
-	printf(" handler: %08X\n", table68k[code].handler);
-	printf("    dreg: %i\n", table68k[code].dreg);
-	printf("    sreg: %i\n", table68k[code].sreg);
-	printf("    dpos: %i\n", table68k[code].dpos);
-	printf("    spos: %i\n", table68k[code].spos);
-	printf("   sduse: %i\n", table68k[code].sduse);
-	printf("flagdead: %i\n", table68k[code].flagdead);
-	printf("flaglive: %i\n", table68k[code].flaglive);
-}
-#endif
-/*
-    long int handler;
-    unsigned char dreg;
-    unsigned char sreg;
-    signed char dpos;
-    signed char spos;
-    unsigned char sduse;
-    int flagdead:8, flaglive:8;
-    unsigned int mnemo:8;
-    unsigned int cc:4;
-    unsigned int plev:2;
-    unsigned int size:2;
-    unsigned int smode:5;
-    unsigned int stype:3;
-    unsigned int dmode:5;
-    unsigned int suse:1;
-    unsigned int duse:1;
-    unsigned int unused1:1;
-    unsigned int clev:3;
-    unsigned int isjmp:1;
-    unsigned int unused2:4;
-*/
-			}
 		}
 	}
 }

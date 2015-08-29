@@ -71,15 +71,7 @@ int main(int argc, char ** argv)
 	printf("#include \"sysdeps.h\"\n");
 	printf("#include \"readcpu.h\"\n");
 	printf("const struct instr_def defs68k[] = {\n");
-#if 0
-	tablef = fopen("table68k","r");
-	if (tablef == NULL) {
-	fprintf(stderr, "table68k not found\n");
-	exit(1);
-	}
-#else
 	tablef = stdin;
-#endif
 	getnextch();
 
 	while (nextch != EOF)

@@ -927,11 +927,6 @@ static int source_is_imm1_8 (struct instr *i)
 
 static void gen_opcode (unsigned long int opcode)
 {
-#if 0
-    char *amodenames[] = { "Dreg", "Areg", "Aind", "Aipi", "Apdi", "Ad16", "Ad8r",
-         "absw", "absl", "PC16", "PC8r", "imm", "imm0", "imm1", "imm2", "immi", "am_unknown", "am_illg"};
-#endif
-
     struct instr *curi = table68k + opcode;
     insn_n_cycles = 4;
 
@@ -983,13 +978,6 @@ static void gen_opcode (unsigned long int opcode)
           if(curi->smode==Dreg || curi->smode==Areg || (curi->smode>=imm && curi->smode<=immi))
             insn_n_cycles += 2;
          }
-#if 0
-        /* Output the CPU cycles: */
-        fprintf(stderr,"MOVE, size %i: ",curi->size);
-        fprintf(stderr," %s ->",amodenames[curi->smode]);
-        fprintf(stderr," %s ",amodenames[curi->dmode]);
-        fprintf(stderr," Cycles: %i\n",insn_n_cycles);
-#endif
         break;
     case i_ORSR:
     case i_EORSR:
@@ -2677,11 +2665,6 @@ static void generate_one_opcode (int rp)
 		printf ("\tuint32_t dstreg = %d;\n", (int) table68k[opcode].dreg);
 	} else {
 	    int pos = table68k[opcode].dpos;
-#if 0
-	    /* Check that we can do the little endian optimization safely.  */
-	    if (pos < 8 && (dmsk >> (8 - pos)) != 0)
-		abort ();
-#endif	    
 	    if (pos)
 		printf ("\tuint32_t dstreg = (opcode >> %d) & %d;\n",
 			pos, dmsk);
