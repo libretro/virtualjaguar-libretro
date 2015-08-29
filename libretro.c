@@ -299,8 +299,8 @@ void retro_init(void)
    videoWidth = 320;
    videoHeight = 240;
    videoBuffer = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
-   sampleBuffer = (uint16_t *)malloc(2048 * sizeof(uint16_t)); //found in dac.h
-   memset(sampleBuffer, 0, 2048 * sizeof(uint16_t));
+   sampleBuffer = (uint16_t *)malloc(1600 * sizeof(uint16_t)); //found in dac.h
+   memset(sampleBuffer, 0, 1600 * sizeof(uint16_t));
 
    //game_width = TOMGetVideoModeWidth();
    //game_height = TOMGetVideoModeHeight();
