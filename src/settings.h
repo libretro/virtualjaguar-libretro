@@ -23,35 +23,25 @@ extern "C" {
 
 struct VJSettings
 {
-	bool useJoystick;
 	int32_t joyport;								// Joystick port
 	bool hardwareTypeNTSC;						// Set to false for PAL
 	bool useJaguarBIOS;
 	bool GPUEnabled;
 	bool DSPEnabled;
 	bool usePipelinedDSP;
-	bool fullscreen;
 	bool hardwareTypeAlpine;
 	bool audioEnabled;
 	uint32_t frameSkip;
 	uint32_t renderType;
-	bool allowWritesToROM;
 	uint32_t biosType;
 	bool useFastBlitter;
 
-	// Keybindings in order of U, D, L, R, C, B, A, Op, Pa, 0-9, #, *
-
-	uint32_t p1KeyBindings[21];
-	uint32_t p2KeyBindings[21];
-
 	// Paths
 
-	char ROMPath[MAX_PATH];
 	char jagBootPath[MAX_PATH];
 	char CDBootPath[MAX_PATH];
 	char EEPROMPath[MAX_PATH];
 	char alpineROMPath[MAX_PATH];
-	char absROMPath[MAX_PATH];
 };
 
 // Render types
