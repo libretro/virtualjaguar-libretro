@@ -262,31 +262,6 @@ void BlitterMidsummer2(void);
 	case 5: WRITE_PIXEL_32(a,d); break;  \
 	}}
 
-// Width in Pixels of a Scanline
-// This is a pretranslation of the value found in the A1 & A2 flags: It's really a floating point value
-// of the form EEEEMM where MM is the mantissa with an implied "1." in front of it and the EEEE value is
-// the exponent. Valid values for the exponent range from 0 to 11 (decimal). It's easiest to think of it
-// as a floating point bit pattern being followed by a number of zeroes. So, e.g., 001101 translates to
-// 1.01 (the "1." being implied) x (2 ^ 3) or 1010 -> 10 in base 10 (i.e., 1.01 with the decimal place
-// being shifted to the right 3 places).
-/*static uint32_t blitter_scanline_width[48] =
-{
-     0,    0,    0,    0,					// Note: This would really translate to 1, 1, 1, 1
-     2,    0,    0,    0,
-     4,    0,    6,    0,
-     8,   10,   12,   14,
-    16,   20,   24,   28,
-    32,   40,   48,   56,
-    64,   80,   96,  112,
-   128,  160,  192,  224,
-   256,  320,  384,  448,
-   512,  640,  768,  896,
-  1024, 1280, 1536, 1792,
-  2048, 2560, 3072, 3584
-};//*/
-
-//static uint8_t * tom_ram_8;
-//static uint8_t * paletteRam;
 static uint8_t src;
 static uint8_t dst;
 static uint8_t misc;
@@ -730,36 +705,6 @@ void blitter_generic(uint32_t cmd)
          }
       }
 
-      /*
-         Here's the problem... The phrase mode code!
-         Blit! (00100000 -> 00148000) count: 327 x 267, A1/2_FLAGS: 00004420/00004420 [cmd: 41802E01]
-         CMD -> src: SRCEN  dst:  misc:  a1ctl: UPDA1 UPDA2 mode: DSTA2 GOURZ ity:  z-op:  op: LFU_REPLACE ctrl: SRCSHADE
-         A1 step values: -327 (X), 1 (Y)
-         A2 step values: -327 (X), 1 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-         A1 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 384 (22), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-         A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 384 (22), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-         A1 x/y: 28/58, A2 x/y: 28/58 Pattern: 00EA7BEA77EA77EA SRCDATA: 7BFF7BFF7BFF7BFF
-
-         Below fixes it, but then borks:
-         ; O
-
-         Blit! (00110000 <- 0010B2A8) count: 12 x 12, A1/2_FLAGS: 000042E2/00000020 [cmd: 09800609]
-         CMD -> src: SRCEN  dst: DSTEN  misc:  a1ctl: UPDA1 UPDA2 mode:  ity:  z-op:  op: LFU_REPLACE ctrl: DCOMPEN
-         A1 step values: -15 (X), 1 (Y)
-         A2 step values: -4 (X), 0 (Y) [mask (unused): 00000000 - FFFFFFFF/FFFFFFFF]
-         A1 -> pitch: 4 phrases, depth: 16bpp, z-off: 3, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-         A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 1 (00), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-         A1 x/y: 173/144, A2 x/y: 4052/0
-
-         Lesse, with pre-add we'd have:
-
-         oooooooooooo
-         00001111222233334444555566667777
-         ^  ^starts here...
-         |             ^ends here.
-         |rolls back to here. Hmm.
-
-*/
       //NOTE: The way to fix the CD BIOS is to uncomment below and comment the stuff after
       //      the phrase mode mucking around. But it fucks up everything else...
       //#define SCREWY_CD_DEPENDENT
@@ -826,230 +771,213 @@ void blitter_blit(uint32_t cmd)
 {
    unsigned v;
 
-	uint32_t pitchValue[4] = { 0, 1, 3, 2 };
-	colour_index = 0;
-	src = cmd & 0x07;
-	dst = (cmd >> 3) & 0x07;
-	misc = (cmd >> 6) & 0x03;
-	a1ctl = (cmd >> 8) & 0x7;
-	mode = (cmd >> 11) & 0x07;
-	ity = (cmd >> 14) & 0x0F;
-	zop = (cmd >> 18) & 0x07;
-	op = (cmd >> 21) & 0x0F;
-	ctrl = (cmd >> 25) & 0x3F;
+   uint32_t pitchValue[4] = { 0, 1, 3, 2 };
+   colour_index = 0;
+   src = cmd & 0x07;
+   dst = (cmd >> 3) & 0x07;
+   misc = (cmd >> 6) & 0x03;
+   a1ctl = (cmd >> 8) & 0x7;
+   mode = (cmd >> 11) & 0x07;
+   ity = (cmd >> 14) & 0x0F;
+   zop = (cmd >> 18) & 0x07;
+   op = (cmd >> 21) & 0x0F;
+   ctrl = (cmd >> 25) & 0x3F;
 
-	// Addresses in A1/2_BASE are *phrase* aligned, i.e., bottom three bits are ignored!
-	// NOTE: This fixes Rayman's bad collision detection AND keeps T2K working!
-	a1_addr = REG(A1_BASE) & 0xFFFFFFF8;
-	a2_addr = REG(A2_BASE) & 0xFFFFFFF8;
+   // Addresses in A1/2_BASE are *phrase* aligned, i.e., bottom three bits are ignored!
+   // NOTE: This fixes Rayman's bad collision detection AND keeps T2K working!
+   a1_addr = REG(A1_BASE) & 0xFFFFFFF8;
+   a2_addr = REG(A2_BASE) & 0xFFFFFFF8;
 
-	a1_zoffs = (REG(A1_FLAGS) >> 6) & 7;
-	a2_zoffs = (REG(A2_FLAGS) >> 6) & 7;
+   a1_zoffs = (REG(A1_FLAGS) >> 6) & 7;
+   a2_zoffs = (REG(A2_FLAGS) >> 6) & 7;
 
-	xadd_a1_control = (REG(A1_FLAGS) >> 16) & 0x03;
-	xadd_a2_control = (REG(A2_FLAGS) >> 16) & 0x03;
+   xadd_a1_control = (REG(A1_FLAGS) >> 16) & 0x03;
+   xadd_a2_control = (REG(A2_FLAGS) >> 16) & 0x03;
 
-	a1_pitch = pitchValue[(REG(A1_FLAGS) & 0x03)];
-	a2_pitch = pitchValue[(REG(A2_FLAGS) & 0x03)];
+   a1_pitch = pitchValue[(REG(A1_FLAGS) & 0x03)];
+   a2_pitch = pitchValue[(REG(A2_FLAGS) & 0x03)];
 
-	n_pixels = REG(PIXLINECOUNTER) & 0xFFFF;
-	n_lines = (REG(PIXLINECOUNTER) >> 16) & 0xFFFF;
+   n_pixels = REG(PIXLINECOUNTER) & 0xFFFF;
+   n_lines = (REG(PIXLINECOUNTER) >> 16) & 0xFFFF;
 
-	a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
-	a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
-//According to the JTRM, X is restricted to 15 bits and Y is restricted to 12.
-//But it seems to fuck up T2K! !!! FIX !!!
-//Could it be sign extended??? Doesn't seem to be so according to JTRM
-//	a1_x &= 0x7FFFFFFF, a1_y &= 0x0FFFFFFF;
-//Actually, it says that the X is 16 bits. But it still seems to mess with the Y when restricted to 12...
-//	a1_y &= 0x0FFFFFFF;
+   a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
+   a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
+   //According to the JTRM, X is restricted to 15 bits and Y is restricted to 12.
+   //But it seems to fuck up T2K! !!! FIX !!!
+   //Could it be sign extended??? Doesn't seem to be so according to JTRM
+   //	a1_x &= 0x7FFFFFFF, a1_y &= 0x0FFFFFFF;
+   //Actually, it says that the X is 16 bits. But it still seems to mess with the Y when restricted to 12...
+   //	a1_y &= 0x0FFFFFFF;
 
-//	a1_width = blitter_scanline_width[((REG(A1_FLAGS) & 0x00007E00) >> 9)];
-// According to JTRM, this must give a *whole number* of phrases in the current
-// pixel size (this means the lookup above is WRONG)... !!! FIX !!!
-	uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
-	a1_width = ((0x04 | m) << e) >> 2;//*/
+   //	a1_width = blitter_scanline_width[((REG(A1_FLAGS) & 0x00007E00) >> 9)];
+   // According to JTRM, this must give a *whole number* of phrases in the current
+   // pixel size (this means the lookup above is WRONG)... !!! FIX !!!
+   uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
+   a1_width = ((0x04 | m) << e) >> 2;//*/
 
-	a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
-	a2_y = (REG(A2_PIXEL) & 0xFFFF0000);
-//According to the JTRM, X is restricted to 15 bits and Y is restricted to 12.
-//But it seems to fuck up T2K! !!! FIX !!!
-//	a2_x &= 0x7FFFFFFF, a2_y &= 0x0FFFFFFF;
-//Actually, it says that the X is 16 bits. But it still seems to mess with the Y when restricted to 12...
-//	a2_y &= 0x0FFFFFFF;
+   a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
+   a2_y = (REG(A2_PIXEL) & 0xFFFF0000);
+   //According to the JTRM, X is restricted to 15 bits and Y is restricted to 12.
+   //But it seems to fuck up T2K! !!! FIX !!!
+   //	a2_x &= 0x7FFFFFFF, a2_y &= 0x0FFFFFFF;
+   //Actually, it says that the X is 16 bits. But it still seems to mess with the Y when restricted to 12...
+   //	a2_y &= 0x0FFFFFFF;
 
-//	a2_width = blitter_scanline_width[((REG(A2_FLAGS) & 0x00007E00) >> 9)];
-// According to JTRM, this must give a *whole number* of phrases in the current
-// pixel size (this means the lookup above is WRONG)... !!! FIX !!!
-	m = (REG(A2_FLAGS) >> 9) & 0x03, e = (REG(A2_FLAGS) >> 11) & 0x0F;
-	a2_width = ((0x04 | m) << e) >> 2;//*/
-	a2_mask_x = ((REG(A2_MASK) & 0x0000FFFF) << 16) | 0xFFFF;
-	a2_mask_y = (REG(A2_MASK) & 0xFFFF0000) | 0xFFFF;
+   //	a2_width = blitter_scanline_width[((REG(A2_FLAGS) & 0x00007E00) >> 9)];
+   // According to JTRM, this must give a *whole number* of phrases in the current
+   // pixel size (this means the lookup above is WRONG)... !!! FIX !!!
+   m = (REG(A2_FLAGS) >> 9) & 0x03, e = (REG(A2_FLAGS) >> 11) & 0x0F;
+   a2_width = ((0x04 | m) << e) >> 2;//*/
+   a2_mask_x = ((REG(A2_MASK) & 0x0000FFFF) << 16) | 0xFFFF;
+   a2_mask_y = (REG(A2_MASK) & 0xFFFF0000) | 0xFFFF;
 
-	// Check for "use mask" flag
-	if (!(REG(A2_FLAGS) & 0x8000))
-	{
-		a2_mask_x = 0xFFFFFFFF; // must be 16.16
-		a2_mask_y = 0xFFFFFFFF; // must be 16.16
-	}
+   // Check for "use mask" flag
+   if (!(REG(A2_FLAGS) & 0x8000))
+   {
+      a2_mask_x = 0xFFFFFFFF; // must be 16.16
+      a2_mask_y = 0xFFFFFFFF; // must be 16.16
+   }
 
-	a1_phrase_mode = 0;
+   a1_phrase_mode = 0;
 
-	// According to the official documentation, a hardware bug ties A2's yadd bit to A1's...
-	a2_yadd = a1_yadd = (YADD1_A1 ? 1 << 16 : 0);
+   // According to the official documentation, a hardware bug ties A2's yadd bit to A1's...
+   a2_yadd = a1_yadd = (YADD1_A1 ? 1 << 16 : 0);
 
-	if (YSIGNSUB_A1)
-		a1_yadd = -a1_yadd;
+   if (YSIGNSUB_A1)
+      a1_yadd = -a1_yadd;
 
-	// determine a1_xadd
-	switch (xadd_a1_control)
-	{
-	case XADDPHR:
-// This is a documented Jaguar bug relating to phrase mode and truncation... Look into it!
-		// add phrase offset to X and truncate
-		a1_xadd = 1 << 16;
-		a1_phrase_mode = 1;
-		break;
-	case XADDPIX:
-		// add pixelsize (1) to X
-		a1_xadd = 1 << 16;
-		break;
-	case XADD0:
-		// add zero (for those nice vertical lines)
-		a1_xadd = 0;
-		break;
-	case XADDINC:
-		// add the contents of the increment register
-		a1_xadd = (REG(A1_INC) << 16)		 | (REG(A1_FINC) & 0x0000FFFF);
-		a1_yadd = (REG(A1_INC) & 0xFFFF0000) | (REG(A1_FINC) >> 16);
-		break;
-	}
+   // determine a1_xadd
+   switch (xadd_a1_control)
+   {
+      case XADDPHR:
+         // This is a documented Jaguar bug relating to phrase mode and truncation... Look into it!
+         // add phrase offset to X and truncate
+         a1_xadd = 1 << 16;
+         a1_phrase_mode = 1;
+         break;
+      case XADDPIX:
+         // add pixelsize (1) to X
+         a1_xadd = 1 << 16;
+         break;
+      case XADD0:
+         // add zero (for those nice vertical lines)
+         a1_xadd = 0;
+         break;
+      case XADDINC:
+         // add the contents of the increment register
+         a1_xadd = (REG(A1_INC) << 16)		 | (REG(A1_FINC) & 0x0000FFFF);
+         a1_yadd = (REG(A1_INC) & 0xFFFF0000) | (REG(A1_FINC) >> 16);
+         break;
+   }
 
+   if (XSIGNSUB_A1)
+      a1_xadd = -a1_xadd;
 
-//Blit! (0011D000 -> 000B9600) count: 228 x 1, A1/2_FLAGS: 00073820/00064220 [cmd: 41802801]
-//  A1 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 128 (1C), addctl: XADDINC YADD1 XSIGNADD YSIGNADD
-//  A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 320 (21), addctl: XADD0 YADD1 XSIGNADD YSIGNADD
-//if (YADD1_A1 && YADD1_A2 && xadd_a2_control == XADD0 && xadd_a1_control == XADDINC)// &&
-//	uint32_t a1f = REG(A1_FLAGS), a2f = REG(A2_FLAGS);
-//Ok, so this ISN'T it... Prolly the XADDPHR code above that's doing it...
-//if (REG(A1_FLAGS) == 0x00073820 && REG(A2_FLAGS) == 0x00064220 && cmd == 0x41802801)
-//        A1 x/y: 14368/7, A2 x/y: 150/36
-//This is it... The problem...
-//if ((a1_x >> 16) == 14368) // 14368 = $3820
-//	return; //Lesse what we got...
+   if (YSIGNSUB_A2)
+      a2_yadd = -a2_yadd;
 
-	if (XSIGNSUB_A1)
-		a1_xadd = -a1_xadd;
+   a2_phrase_mode = 0;
 
-	if (YSIGNSUB_A2)
-		a2_yadd = -a2_yadd;
+   // determine a2_xadd
+   switch (xadd_a2_control)
+   {
+      case XADDPHR:
+         // add phrase offset to X and truncate
+         a2_xadd = 1 << 16;
+         a2_phrase_mode = 1;
+         break;
+      case XADDPIX:
+         // add pixelsize (1) to X
+         a2_xadd = 1 << 16;
+         break;
+      case XADD0:
+         // add zero (for those nice vertical lines)
+         a2_xadd = 0;
+         break;
+         //This really isn't a valid bit combo for A2... Shouldn't this cause the blitter to just say no?
+      case XADDINC:
+         // add the contents of the increment register
+         // since there is no register for a2 we just add 1
+         //Let's do nothing, since it's not listed as a valid bit combo...
+         //		a2_xadd = 1 << 16;
+         break;
+   }
 
-	a2_phrase_mode = 0;
+   if (XSIGNSUB_A2)
+      a2_xadd = -a2_xadd;
 
-	// determine a2_xadd
-	switch (xadd_a2_control)
-	{
-	case XADDPHR:
-		// add phrase offset to X and truncate
-		a2_xadd = 1 << 16;
-		a2_phrase_mode = 1;
-		break;
-	case XADDPIX:
-		// add pixelsize (1) to X
-		a2_xadd = 1 << 16;
-		break;
-	case XADD0:
-		// add zero (for those nice vertical lines)
-		a2_xadd = 0;
-		break;
-//This really isn't a valid bit combo for A2... Shouldn't this cause the blitter to just say no?
-	case XADDINC:
-		// add the contents of the increment register
-		// since there is no register for a2 we just add 1
-//Let's do nothing, since it's not listed as a valid bit combo...
-//		a2_xadd = 1 << 16;
-		break;
-	}
+   // Modify outer loop steps based on blitter command
 
-	if (XSIGNSUB_A2)
-		a2_xadd = -a2_xadd;
+   a1_step_x = 0;
+   a1_step_y = 0;
+   a2_step_x = 0;
+   a2_step_y = 0;
 
-	// Modify outer loop steps based on blitter command
+   if (UPDA1F)
+      a1_step_x = (REG(A1_FSTEP) & 0xFFFF),
+                a1_step_y = (REG(A1_FSTEP) >> 16);
 
-	a1_step_x = 0;
-	a1_step_y = 0;
-	a2_step_x = 0;
-	a2_step_y = 0;
+   if (UPDA1)
+      a1_step_x |= ((REG(A1_STEP) & 0x0000FFFF) << 16),
+                a1_step_y |= ((REG(A1_STEP) & 0xFFFF0000));
 
-	if (UPDA1F)
-		a1_step_x = (REG(A1_FSTEP) & 0xFFFF),
-		a1_step_y = (REG(A1_FSTEP) >> 16);
+   if (UPDA2)
+      a2_step_x = (REG(A2_STEP) & 0x0000FFFF) << 16,
+                a2_step_y = (REG(A2_STEP) & 0xFFFF0000);
 
-	if (UPDA1)
-		a1_step_x |= ((REG(A1_STEP) & 0x0000FFFF) << 16),
-		a1_step_y |= ((REG(A1_STEP) & 0xFFFF0000));
+   outer_loop = n_lines;
 
-	if (UPDA2)
-		a2_step_x = (REG(A2_STEP) & 0x0000FFFF) << 16,
-		a2_step_y = (REG(A2_STEP) & 0xFFFF0000);
+   // Clipping...
 
-	outer_loop = n_lines;
+   if (CLIPA1)
+      a1_clip_x = REG(A1_CLIP) & 0x7FFF,
+                a1_clip_y = (REG(A1_CLIP) >> 16) & 0x7FFF;
 
-	// Clipping...
+   // This phrase sizing is incorrect as well... !!! FIX !!! [NOTHING TO FIX]
+   // Err, this is pixel size... (and it's OK)
+   a2_psize = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
+   a1_psize = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
 
-	if (CLIPA1)
-		a1_clip_x = REG(A1_CLIP) & 0x7FFF,
-		a1_clip_y = (REG(A1_CLIP) >> 16) & 0x7FFF;
+   // Z-buffering
+   if (GOURZ)
+   {
+      zadd = REG(ZINC);
 
-// This phrase sizing is incorrect as well... !!! FIX !!! [NOTHING TO FIX]
-// Err, this is pixel size... (and it's OK)
-	a2_psize = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
-	a1_psize = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
+      for(v = 0; v < 4; v++)
+         z_i[v] = REG(PHRASEZ0 + v*4);
+   }
 
-	// Z-buffering
-	if (GOURZ)
-	{
-		zadd = REG(ZINC);
+   // Gouraud shading
+   if (GOURD || GOURZ || SRCSHADE)
+   {
+      gd_c[0] = blitter_ram[PATTERNDATA + 6];
+      gd_i[0]	= ((uint32_t)blitter_ram[PATTERNDATA + 7] << 16)
+         | ((uint32_t)blitter_ram[SRCDATA + 6] << 8) | blitter_ram[SRCDATA + 7];
 
-		for(v = 0; v < 4; v++)
-			z_i[v] = REG(PHRASEZ0 + v*4);
-	}
+      gd_c[1] = blitter_ram[PATTERNDATA + 4];
+      gd_i[1]	= ((uint32_t)blitter_ram[PATTERNDATA + 5] << 16)
+         | ((uint32_t)blitter_ram[SRCDATA + 4] << 8) | blitter_ram[SRCDATA + 5];
 
-	// Gouraud shading
-	if (GOURD || GOURZ || SRCSHADE)
-	{
-		gd_c[0] = blitter_ram[PATTERNDATA + 6];
-		gd_i[0]	= ((uint32_t)blitter_ram[PATTERNDATA + 7] << 16)
-			| ((uint32_t)blitter_ram[SRCDATA + 6] << 8) | blitter_ram[SRCDATA + 7];
+      gd_c[2] = blitter_ram[PATTERNDATA + 2];
+      gd_i[2]	= ((uint32_t)blitter_ram[PATTERNDATA + 3] << 16)
+         | ((uint32_t)blitter_ram[SRCDATA + 2] << 8) | blitter_ram[SRCDATA + 3];
 
-		gd_c[1] = blitter_ram[PATTERNDATA + 4];
-		gd_i[1]	= ((uint32_t)blitter_ram[PATTERNDATA + 5] << 16)
-			| ((uint32_t)blitter_ram[SRCDATA + 4] << 8) | blitter_ram[SRCDATA + 5];
+      gd_c[3] = blitter_ram[PATTERNDATA + 0];
+      gd_i[3]	= ((uint32_t)blitter_ram[PATTERNDATA + 1] << 16)
+         | ((uint32_t)blitter_ram[SRCDATA + 0] << 8) | blitter_ram[SRCDATA + 1];
 
-		gd_c[2] = blitter_ram[PATTERNDATA + 2];
-		gd_i[2]	= ((uint32_t)blitter_ram[PATTERNDATA + 3] << 16)
-			| ((uint32_t)blitter_ram[SRCDATA + 2] << 8) | blitter_ram[SRCDATA + 3];
+      gouraud_add = REG(INTENSITYINC);
 
-		gd_c[3] = blitter_ram[PATTERNDATA + 0];
-		gd_i[3]	= ((uint32_t)blitter_ram[PATTERNDATA + 1] << 16)
-			| ((uint32_t)blitter_ram[SRCDATA + 0] << 8) | blitter_ram[SRCDATA + 1];
+      gd_ia = gouraud_add & 0x00FFFFFF;
+      if (gd_ia & 0x00800000)
+         gd_ia = 0xFF000000 | gd_ia;
 
-		gouraud_add = REG(INTENSITYINC);
+      gd_ca = (gouraud_add >> 24) & 0xFF;
+      if (gd_ca & 0x00000080)
+         gd_ca = 0xFFFFFF00 | gd_ca;
+   }
 
-		gd_ia = gouraud_add & 0x00FFFFFF;
-		if (gd_ia & 0x00800000)
-			gd_ia = 0xFF000000 | gd_ia;
-
-		gd_ca = (gouraud_add >> 24) & 0xFF;
-		if (gd_ca & 0x00000080)
-			gd_ca = 0xFFFFFF00 | gd_ca;
-	}
-
-	// Bit comparitor fixing...
-
-//NOTE: Pitch is ignored!
-
-	blitter_generic(cmd);
+   blitter_generic(cmd);
 }
 #endif
 /*******************************************************************************
@@ -1343,10 +1271,8 @@ void LogBlit(void)
 
 
 #ifdef USE_MIDSUMMER_BLITTER
-//
 // Here's an attempt to write a blitter that conforms to the Midsummer specs--since
 // it's supposedly backwards compatible, it should work well...
-//
 
 #define DATINIT (false)
 #define TXTEXT  (false)
@@ -1354,709 +1280,709 @@ void LogBlit(void)
 
 void BlitterMidsummer(uint32_t cmd)
 {
-uint32_t outer_loop, inner_loop, a1_addr, a2_addr;
-int32_t a1_x, a1_y, a2_x, a2_y, a1_width, a2_width;
-uint8_t a1_phrase_mode, a2_phrase_mode;
+   uint32_t outer_loop, inner_loop, a1_addr, a2_addr;
+   int32_t a1_x, a1_y, a2_x, a2_y, a1_width, a2_width;
+   uint8_t a1_phrase_mode, a2_phrase_mode;
 
-	a1_addr = REG(A1_BASE) & 0xFFFFFFF8;
-	a2_addr = REG(A2_BASE) & 0xFFFFFFF8;
-	a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
-	a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
-	uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
-	a1_width = ((0x04 | m) << e) >> 2;//*/
-	a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
-	a2_y = (REG(A2_PIXEL) & 0xFFFF0000);
-	m = (REG(A2_FLAGS) >> 9) & 0x03, e = (REG(A2_FLAGS) >> 11) & 0x0F;
-	a2_width = ((0x04 | m) << e) >> 2;//*/
+   a1_addr = REG(A1_BASE) & 0xFFFFFFF8;
+   a2_addr = REG(A2_BASE) & 0xFFFFFFF8;
+   a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
+   a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
+   uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
+   a1_width = ((0x04 | m) << e) >> 2;//*/
+   a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
+   a2_y = (REG(A2_PIXEL) & 0xFFFF0000);
+   m = (REG(A2_FLAGS) >> 9) & 0x03, e = (REG(A2_FLAGS) >> 11) & 0x0F;
+   a2_width = ((0x04 | m) << e) >> 2;//*/
 
-	a1_phrase_mode = a2_phrase_mode = 0;
+   a1_phrase_mode = a2_phrase_mode = 0;
 
-	if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 0)
-		a1_phrase_mode = 1;
+   if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 0)
+      a1_phrase_mode = 1;
 
-	if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 0)
-		a2_phrase_mode = 1;
+   if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 0)
+      a2_phrase_mode = 1;
 
 #define INNER0  (inner_loop == 0)
 #define OUTER0  (outer_loop == 0)
 
-// $01800005 has SRCENX, may have to investigate further...
-// $00011008 has GOURD & DSTEN.
-// $41802F41 has SRCSHADE, CLIPA1
+   // $01800005 has SRCENX, may have to investigate further...
+   // $00011008 has GOURD & DSTEN.
+   // $41802F41 has SRCSHADE, CLIPA1
 
-	uint64_t srcData = GET64(blitter_ram, SRCDATA), srcXtraData,
-		dstData = GET64(blitter_ram, DSTDATA), writeData;
-	uint32_t srcAddr, dstAddr;
-	uint8_t bitCount, a1PixelSize, a2PixelSize;
+   uint64_t srcData = GET64(blitter_ram, SRCDATA), srcXtraData,
+            dstData = GET64(blitter_ram, DSTDATA), writeData;
+   uint32_t srcAddr, dstAddr;
+   uint8_t bitCount, a1PixelSize, a2PixelSize;
 
-	// JTRM says phrase mode only works for 8BPP or higher, so let's try this...
-	uint32_t phraseOffset[8] = { 8, 8, 8, 8, 4, 2, 0, 0 };
-	uint8_t pixelShift[8] = { 3, 2, 1, 0, 1, 2, 0, 0 };
+   // JTRM says phrase mode only works for 8BPP or higher, so let's try this...
+   uint32_t phraseOffset[8] = { 8, 8, 8, 8, 4, 2, 0, 0 };
+   uint8_t pixelShift[8] = { 3, 2, 1, 0, 1, 2, 0, 0 };
 
-	a1PixelSize = (blitter_ram[A1_FLAGS + 3] >> 3) & 0x07;
-	a2PixelSize = (blitter_ram[A2_FLAGS + 3] >> 3) & 0x07;
+   a1PixelSize = (blitter_ram[A1_FLAGS + 3] >> 3) & 0x07;
+   a2PixelSize = (blitter_ram[A2_FLAGS + 3] >> 3) & 0x07;
 
-	outer_loop = GET16(blitter_ram, PIXLINECOUNTER + 0);
+   outer_loop = GET16(blitter_ram, PIXLINECOUNTER + 0);
 
-	if (outer_loop == 0)
-		outer_loop = 0x10000;
+   if (outer_loop == 0)
+      outer_loop = 0x10000;
 
-	// We just list the states here and jump from state to state in order to
-	// keep things somewhat clear. Optimization/cleanups later.
+   // We just list the states here and jump from state to state in order to
+   // keep things somewhat clear. Optimization/cleanups later.
 
-//idle:							// Blitter is idle, and will not perform any bus activity
-	if (DATINIT)
-		goto init_if;
-	else
-		goto inner;
+   //idle:							// Blitter is idle, and will not perform any bus activity
+   if (DATINIT)
+      goto init_if;
+   else
+      goto inner;
 
-/*
-inner        Inner loop is active, read and write cycles are performed
-*/
+   /*
+      inner        Inner loop is active, read and write cycles are performed
+      */
 inner:							// Run inner loop state machine (asserts step from its idle state)
-	inner_loop = GET16(blitter_ram, PIXLINECOUNTER + 2);
+   inner_loop = GET16(blitter_ram, PIXLINECOUNTER + 2);
 
-	if (inner_loop == 0)
-		inner_loop = 0x10000;
+   if (inner_loop == 0)
+      inner_loop = 0x10000;
 
-/*
-------------------------------
+   /*
+      ------------------------------
 idle:                        Inactive, blitter is idle or passing round outer loop
 idle       Another state in the outer loop is active. No bus transfers are performed.
 if STEP
-    if SRCENX goto sreadx
-    else if TXTEXT goto txtread
-    else if SRCEN goto sread
-    else if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
+if SRCENX goto sreadx
+else if TXTEXT goto txtread
+else if SRCEN goto sread
+else if DSTEN goto dread
+else if DSTENZ goto dzread
+else goto dwrite
 */
-    if (SRCENX)
-		goto sreadx;
-    else if (TXTEXT)
-		goto txtread;
-    else if (SRCEN)
-		goto sread;
-    else if (DSTEN)
-		goto dread;
-    else if (DSTENZ)
-		goto dzread;
-    else
-		goto dwrite;
+   if (SRCENX)
+      goto sreadx;
+   else if (TXTEXT)
+      goto txtread;
+   else if (SRCEN)
+      goto sread;
+   else if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
-/*
-sreadx     Extra source data read at the start of an inner loop pass.
-if STEP
-    if SRCENZ goto szreadx
-    else if TXTEXT goto txtread
-    else if SRCEN goto sread
-    else if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
-*/
+   /*
+      sreadx     Extra source data read at the start of an inner loop pass.
+      if STEP
+      if SRCENZ goto szreadx
+      else if TXTEXT goto txtread
+      else if SRCEN goto sread
+      else if DSTEN goto dread
+      else if DSTENZ goto dzread
+      else goto dwrite
+      */
 sreadx:							// Extra source data read
-	if (SRCENZ)
-		goto szreadx;
-	else if (TXTEXT)
-		goto txtread;
-	else if (SRCEN)
-		goto sread;
-	else if (DSTEN)
-		goto dread;
-	else if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   if (SRCENZ)
+      goto szreadx;
+   else if (TXTEXT)
+      goto txtread;
+   else if (SRCEN)
+      goto sread;
+   else if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
-/*
-szreadx    Extra source Z read as the start of an inner loop pass.
-if STEP
-    if TXTEXT goto txtread
-    else goto sread
-*/
+   /*
+      szreadx    Extra source Z read as the start of an inner loop pass.
+      if STEP
+      if TXTEXT goto txtread
+      else goto sread
+      */
 szreadx:						// Extra source Z read
-	if (TXTEXT)
-		goto txtread;
-	else
-		goto sread;
+   if (TXTEXT)
+      goto txtread;
+   else
+      goto sread;
 
-/*
-txtread    Read texture data from external memory. This state is only used for external texture.
-           TEXTEXT is the condition TEXTMODE=1.
-if STEP
-    if SRCEN goto sread
-    else if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
-*/
+   /*
+      txtread    Read texture data from external memory. This state is only used for external texture.
+      TEXTEXT is the condition TEXTMODE=1.
+      if STEP
+      if SRCEN goto sread
+      else if DSTEN goto dread
+      else if DSTENZ goto dzread
+      else goto dwrite
+      */
 txtread:						// Read external texture data
-	if (SRCEN)
-		goto sread;
-	else if (DSTEN)
-		goto dread;
-	else if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   if (SRCEN)
+      goto sread;
+   else if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
-/*
-sread      Source data read.
-if STEP
-    if SRCENZ goto szread
-    else if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
-*/
+   /*
+      sread      Source data read.
+      if STEP
+      if SRCENZ goto szread
+      else if DSTEN goto dread
+      else if DSTENZ goto dzread
+      else goto dwrite
+      */
 sread:							// Source data read
-//The JTRM doesn't really specify the internal structure of the source data read, but I would
-//imagine that if it's in phrase mode that it starts by reading the phrase that the window is
-//pointing at. Likewise, the pixel (if in BPP 1, 2 & 4, chopped) otherwise. It probably still
-//transfers an entire phrase even in pixel mode.
-//Odd thought: Does it expand, e.g., 1 BPP pixels into 32 BPP internally? Hmm...
-//No.
-	// Calculate the address to be read...
+   //The JTRM doesn't really specify the internal structure of the source data read, but I would
+   //imagine that if it's in phrase mode that it starts by reading the phrase that the window is
+   //pointing at. Likewise, the pixel (if in BPP 1, 2 & 4, chopped) otherwise. It probably still
+   //transfers an entire phrase even in pixel mode.
+   //Odd thought: Does it expand, e.g., 1 BPP pixels into 32 BPP internally? Hmm...
+   //No.
+   // Calculate the address to be read...
 
-//Need to fix phrase mode calcs here, since they should *step* by eight, not mulitply.
-//Also, need to fix various differing BPP modes here, since offset won't be correct except
-//for 8BPP. !!! FIX !!!
-	srcAddr = (DSTA2 ? a1_addr : a2_addr);
+   //Need to fix phrase mode calcs here, since they should *step* by eight, not mulitply.
+   //Also, need to fix various differing BPP modes here, since offset won't be correct except
+   //for 8BPP. !!! FIX !!!
+   srcAddr = (DSTA2 ? a1_addr : a2_addr);
 
-	{
-		int32_t pixAddr = (int16_t)((DSTA2 ? a1_x : a2_x) >> 16)
-			+ ((int16_t)((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
+   {
+      int32_t pixAddr = (int16_t)((DSTA2 ? a1_x : a2_x) >> 16)
+         + ((int16_t)((DSTA2 ? a1_y : a2_y) >> 16) * (DSTA2 ? a1_width : a2_width));
 
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) < 3)
-			pixAddr >>= pixelShift[(DSTA2 ? a1PixelSize : a2PixelSize)];
-		else if ((DSTA2 ? a1PixelSize : a2PixelSize) > 3)
-			pixAddr <<= pixelShift[(DSTA2 ? a1PixelSize : a2PixelSize)];
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) < 3)
+         pixAddr >>= pixelShift[(DSTA2 ? a1PixelSize : a2PixelSize)];
+      else if ((DSTA2 ? a1PixelSize : a2PixelSize) > 3)
+         pixAddr <<= pixelShift[(DSTA2 ? a1PixelSize : a2PixelSize)];
 
-		srcAddr += pixAddr;
-	}
+      srcAddr += pixAddr;
+   }
 
-	// And read it!
+   // And read it!
 
-	if ((DSTA2 ? a1_phrase_mode : a2_phrase_mode) == 1)
-	{
-		srcData = ((uint64_t)JaguarReadLong(srcAddr, BLITTER) << 32)
-			| (uint64_t)JaguarReadLong(srcAddr + 4, BLITTER);
-	}
-	else
-	{
-//1,2,&4BPP are wrong here... !!! FIX !!!
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 0)		// 1 BPP
-			srcData = JaguarReadByte(srcAddr, BLITTER);
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 1)		// 2 BPP
-			srcData = JaguarReadByte(srcAddr, BLITTER);
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 2)		// 4 BPP
-			srcData = JaguarReadByte(srcAddr, BLITTER);
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 3)		// 8 BPP
-			srcData = JaguarReadByte(srcAddr, BLITTER);
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 4)		// 16 BPP
-			srcData = JaguarReadWord(srcAddr, BLITTER);
-		if ((DSTA2 ? a1PixelSize : a2PixelSize) == 5)		// 32 BPP
-			srcData = JaguarReadLong(srcAddr, BLITTER);
-	}
+   if ((DSTA2 ? a1_phrase_mode : a2_phrase_mode) == 1)
+   {
+      srcData = ((uint64_t)JaguarReadLong(srcAddr, BLITTER) << 32)
+         | (uint64_t)JaguarReadLong(srcAddr + 4, BLITTER);
+   }
+   else
+   {
+      //1,2,&4BPP are wrong here... !!! FIX !!!
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) == 0)		// 1 BPP
+         srcData = JaguarReadByte(srcAddr, BLITTER);
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) == 1)		// 2 BPP
+         srcData = JaguarReadByte(srcAddr, BLITTER);
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) == 2)		// 4 BPP
+         srcData = JaguarReadByte(srcAddr, BLITTER);
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) == 3)		// 8 BPP
+         srcData = JaguarReadByte(srcAddr, BLITTER);
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) == 4)		// 16 BPP
+         srcData = JaguarReadWord(srcAddr, BLITTER);
+      if ((DSTA2 ? a1PixelSize : a2PixelSize) == 5)		// 32 BPP
+         srcData = JaguarReadLong(srcAddr, BLITTER);
+   }
 
-	if (SRCENZ)
-		goto szread;
-	else if (DSTEN)
-		goto dread;
-	else if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   if (SRCENZ)
+      goto szread;
+   else if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
 szread:							// Source Z read
-/*
-szread     Source Z read.
-if STEP
-    if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
-*/
-	if (DSTEN)
-		goto dread;
-	else if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   /*
+      szread     Source Z read.
+      if STEP
+      if DSTEN goto dread
+      else if DSTENZ goto dzread
+      else goto dwrite
+      */
+   if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
 dread:							// Destination data read
-/*
-dread      Destination data read.
-if STEP
-    if DSTENZ goto dzread
-    else goto dwrite
-*/
-	// Calculate the destination address to be read...
+   /*
+      dread      Destination data read.
+      if STEP
+      if DSTENZ goto dzread
+      else goto dwrite
+      */
+   // Calculate the destination address to be read...
 
-//Need to fix phrase mode calcs here, since they should *step* by eight, not mulitply.
-//Also, need to fix various differing BPP modes here, since offset won't be correct except
-//for 8BPP. !!! FIX !!!
-	dstAddr = (DSTA2 ? a2_addr : a1_addr);
+   //Need to fix phrase mode calcs here, since they should *step* by eight, not mulitply.
+   //Also, need to fix various differing BPP modes here, since offset won't be correct except
+   //for 8BPP. !!! FIX !!!
+   dstAddr = (DSTA2 ? a2_addr : a1_addr);
 
-	{
-	int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
-		+ ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
+   {
+      int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
+         + ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 
-	if ((DSTA2 ? a2PixelSize : a1PixelSize) < 3)
-		pixAddr >>= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
-	else if ((DSTA2 ? a2PixelSize : a1PixelSize) > 3)
-		pixAddr <<= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) < 3)
+         pixAddr >>= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
+      else if ((DSTA2 ? a2PixelSize : a1PixelSize) > 3)
+         pixAddr <<= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
 
-	dstAddr += pixAddr;
-	}
+      dstAddr += pixAddr;
+   }
 
-	// And read it!
+   // And read it!
 
-	if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
-	{
-		dstData = ((uint64_t)JaguarReadLong(srcAddr, BLITTER) << 32)
-			| (uint64_t)JaguarReadLong(srcAddr + 4, BLITTER);
-	}
-	else
-	{
-//1,2,&4BPP are wrong here... !!! FIX !!!
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 0)		// 1 BPP
-			dstData = JaguarReadByte(dstAddr, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 1)		// 2 BPP
-			dstData = JaguarReadByte(dstAddr, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 2)		// 4 BPP
-			dstData = JaguarReadByte(dstAddr, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 3)		// 8 BPP
-			dstData = JaguarReadByte(dstAddr, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 4)		// 16 BPP
-			dstData = JaguarReadWord(dstAddr, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 5)		// 32 BPP
-			dstData = JaguarReadLong(dstAddr, BLITTER);
-	}
+   if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
+   {
+      dstData = ((uint64_t)JaguarReadLong(srcAddr, BLITTER) << 32)
+         | (uint64_t)JaguarReadLong(srcAddr + 4, BLITTER);
+   }
+   else
+   {
+      //1,2,&4BPP are wrong here... !!! FIX !!!
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 0)		// 1 BPP
+         dstData = JaguarReadByte(dstAddr, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 1)		// 2 BPP
+         dstData = JaguarReadByte(dstAddr, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 2)		// 4 BPP
+         dstData = JaguarReadByte(dstAddr, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 3)		// 8 BPP
+         dstData = JaguarReadByte(dstAddr, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 4)		// 16 BPP
+         dstData = JaguarReadWord(dstAddr, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 5)		// 32 BPP
+         dstData = JaguarReadLong(dstAddr, BLITTER);
+   }
 
-	if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
 dzread:							// Destination Z read
-/*
-dzread     Destination Z read.
-if STEP goto dwrite
-*/
-	goto dwrite;
+   /*
+      dzread     Destination Z read.
+      if STEP goto dwrite
+      */
+   goto dwrite;
 
 dwrite:							// Destination data write
-/*
-dwrite     Destination write. Every pass round the inner loop must go through this state..
-if STEP
-    if DSTWRZ goto dzwrite
-    else if INNER0 goto idle
-    else if TXTEXT goto txtread
-    else if SRCEN goto sread
-    else if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
-*/
-/*
-Blit!
-  a1_base  = 00100000
-  a1_pitch = 0
-  a1_psize = 16
-  a1_width = 320
-  a1_xadd  = 1.000000 (phrase=0)
-  a1_yadd  = 0.000000
-  a1_x     = 159.000000
-  a1_y     = 1.000000
-  a1_zoffs = 0
-  a2_base  = 000095D0
-  a2_pitch = 0
-  a2_psize = 16
-  a2_width = 256
-  a2_xadd  = 1.000000 (phrase=1)
-  a2_yadd  = 0.000000
-  a2_x     = 2.000000
-  a2_y     = 0.000000
-  a2_mask_x= 0xFFFFFFFF
-  a2_mask_y= 0xFFFFFFFF
-  a2_zoffs = 0
-  count    = 2 x 1
-  COMMAND  = 00011008
-  SRCEN    = 0
-  DSTEN    = 1
-  UPDA1F   = 0
-  UPDA1    = 0
-  UPDA2    = 0
-  DSTA2    = 0
---LFUFUNC  = LFU_CLEAR
-| PATDSEL  = 1 (PD=77C7 7700 7700 7700)
---ADDDSEL  = 0
-  GOURD    = 1 (II=00FC 1A00, SD=FF00 0000 0000 0000)
-*/
+   /*
+      dwrite     Destination write. Every pass round the inner loop must go through this state..
+      if STEP
+      if DSTWRZ goto dzwrite
+      else if INNER0 goto idle
+      else if TXTEXT goto txtread
+      else if SRCEN goto sread
+      else if DSTEN goto dread
+      else if DSTENZ goto dzread
+      else goto dwrite
+      */
+   /*
+      Blit!
+      a1_base  = 00100000
+      a1_pitch = 0
+      a1_psize = 16
+      a1_width = 320
+      a1_xadd  = 1.000000 (phrase=0)
+      a1_yadd  = 0.000000
+      a1_x     = 159.000000
+      a1_y     = 1.000000
+      a1_zoffs = 0
+      a2_base  = 000095D0
+      a2_pitch = 0
+      a2_psize = 16
+      a2_width = 256
+      a2_xadd  = 1.000000 (phrase=1)
+      a2_yadd  = 0.000000
+      a2_x     = 2.000000
+      a2_y     = 0.000000
+      a2_mask_x= 0xFFFFFFFF
+      a2_mask_y= 0xFFFFFFFF
+      a2_zoffs = 0
+      count    = 2 x 1
+      COMMAND  = 00011008
+      SRCEN    = 0
+      DSTEN    = 1
+      UPDA1F   = 0
+      UPDA1    = 0
+      UPDA2    = 0
+      DSTA2    = 0
+      --LFUFUNC  = LFU_CLEAR
+      | PATDSEL  = 1 (PD=77C7 7700 7700 7700)
+      --ADDDSEL  = 0
+      GOURD    = 1 (II=00FC 1A00, SD=FF00 0000 0000 0000)
+      */
 
-//Still need to do CLIPA1 and SRCSHADE and GOURD and GOURZ...
+   //Still need to do CLIPA1 and SRCSHADE and GOURD and GOURZ...
 
-	// Check clipping...
+   // Check clipping...
 
-	if (CLIPA1)
-	{
-		uint16_t x = a1_x >> 16, y = a1_y >> 16;
+   if (CLIPA1)
+   {
+      uint16_t x = a1_x >> 16, y = a1_y >> 16;
 
-		if (x >= GET16(blitter_ram, A1_CLIP + 2) || y >= GET16(blitter_ram, A1_CLIP))
-			goto inhibitWrite;
-	}
+      if (x >= GET16(blitter_ram, A1_CLIP + 2) || y >= GET16(blitter_ram, A1_CLIP))
+         goto inhibitWrite;
+   }
 
-	// Figure out what gets written...
+   // Figure out what gets written...
 
-	if (PATDSEL)
-	{
-		writeData = GET64(blitter_ram, PATTERNDATA);
-//GOURD works properly only in 16BPP mode...
-//SRCDATA holds the intensity fractions...
-//Does GOURD get calc'ed here or somewhere else???
-//Temporary testing kludge...
-//if (GOURD)
-//   writeData >>= 48;
-//	writeData = 0xFF88;
-//OK, it's not writing an entire strip of pixels... Why?
-//bad incrementing, that's why!
-	}
-	else if (ADDDSEL)
-	{
-		// Apparently this only works with 16-bit pixels. Not sure if it works in phrase mode either.
-//Also, take TOPBEN & TOPNEN into account here as well...
-		writeData = srcData + dstData;
-	}
-	else	// LFUFUNC is the default...
-	{
-		writeData = 0;
+   if (PATDSEL)
+   {
+      writeData = GET64(blitter_ram, PATTERNDATA);
+      //GOURD works properly only in 16BPP mode...
+      //SRCDATA holds the intensity fractions...
+      //Does GOURD get calc'ed here or somewhere else???
+      //Temporary testing kludge...
+      //if (GOURD)
+      //   writeData >>= 48;
+      //	writeData = 0xFF88;
+      //OK, it's not writing an entire strip of pixels... Why?
+      //bad incrementing, that's why!
+   }
+   else if (ADDDSEL)
+   {
+      // Apparently this only works with 16-bit pixels. Not sure if it works in phrase mode either.
+      //Also, take TOPBEN & TOPNEN into account here as well...
+      writeData = srcData + dstData;
+   }
+   else	// LFUFUNC is the default...
+   {
+      writeData = 0;
 
-		if (LFU_NAN)
-			writeData |= ~srcData & ~dstData;
-		if (LFU_NA)
-			writeData |= ~srcData & dstData;
-		if (LFU_AN)
-			writeData |= srcData & ~dstData;
-		if (LFU_A)
-			writeData |= srcData & dstData;
-	}
+      if (LFU_NAN)
+         writeData |= ~srcData & ~dstData;
+      if (LFU_NA)
+         writeData |= ~srcData & dstData;
+      if (LFU_AN)
+         writeData |= srcData & ~dstData;
+      if (LFU_A)
+         writeData |= srcData & dstData;
+   }
 
-	// Calculate the address to be written...
+   // Calculate the address to be written...
 
-	dstAddr = (DSTA2 ? a2_addr : a1_addr);
+   dstAddr = (DSTA2 ? a2_addr : a1_addr);
 
-	{
-		int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
-			+ ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
+   {
+      int32_t pixAddr = (int16_t)((DSTA2 ? a2_x : a1_x) >> 16)
+         + ((int16_t)((DSTA2 ? a2_y : a1_y) >> 16) * (DSTA2 ? a2_width : a1_width));
 
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) < 3)
-			pixAddr >>= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
-		else if ((DSTA2 ? a2PixelSize : a1PixelSize) > 3)
-			pixAddr <<= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) < 3)
+         pixAddr >>= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
+      else if ((DSTA2 ? a2PixelSize : a1PixelSize) > 3)
+         pixAddr <<= pixelShift[(DSTA2 ? a2PixelSize : a1PixelSize)];
 
-		dstAddr += pixAddr;
-	}
+      dstAddr += pixAddr;
+   }
 
-	// And write it!
+   // And write it!
 
-	if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
-	{
-		JaguarWriteLong(dstAddr, writeData >> 32, BLITTER);
-		JaguarWriteLong(dstAddr + 4, writeData & 0xFFFFFFFF, BLITTER);
-	}
-	else
-	{
-//1,2,&4BPP are wrong here... !!! FIX !!!
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 0)		// 1 BPP
-			JaguarWriteByte(dstAddr, writeData, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 1)		// 2 BPP
-			JaguarWriteByte(dstAddr, writeData, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 2)		// 4 BPP
-			JaguarWriteByte(dstAddr, writeData, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 3)		// 8 BPP
-			JaguarWriteByte(dstAddr, writeData, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 4)		// 16 BPP
-			JaguarWriteWord(dstAddr, writeData, BLITTER);
-		if ((DSTA2 ? a2PixelSize : a1PixelSize) == 5)		// 32 BPP
-			JaguarWriteLong(dstAddr, writeData, BLITTER);
-	}
+   if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
+   {
+      JaguarWriteLong(dstAddr, writeData >> 32, BLITTER);
+      JaguarWriteLong(dstAddr + 4, writeData & 0xFFFFFFFF, BLITTER);
+   }
+   else
+   {
+      //1,2,&4BPP are wrong here... !!! FIX !!!
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 0)		// 1 BPP
+         JaguarWriteByte(dstAddr, writeData, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 1)		// 2 BPP
+         JaguarWriteByte(dstAddr, writeData, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 2)		// 4 BPP
+         JaguarWriteByte(dstAddr, writeData, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 3)		// 8 BPP
+         JaguarWriteByte(dstAddr, writeData, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 4)		// 16 BPP
+         JaguarWriteWord(dstAddr, writeData, BLITTER);
+      if ((DSTA2 ? a2PixelSize : a1PixelSize) == 5)		// 32 BPP
+         JaguarWriteLong(dstAddr, writeData, BLITTER);
+   }
 
 inhibitWrite://Should this go here? or on the other side of the X/Y incrementing?
-//Seems OK here... for now.
+   //Seems OK here... for now.
 
-// Do funky X/Y incrementation here as well... !!! FIX !!!
+   // Do funky X/Y incrementation here as well... !!! FIX !!!
 
-	// Handle A1 channel stepping
+   // Handle A1 channel stepping
 
-	if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 0)
-		a1_x += phraseOffset[a1PixelSize] << 16;
-	else if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 1)
-		a1_x += (blitter_ram[A1_FLAGS + 1] & 0x08 ? -1 << 16 : 1 << 16);
-/*	else if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 2)
-		a1_x += 0 << 16;                              */
-	else if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 3)
-	{
-//Always add the FINC here??? That was the problem with the BIOS screen... So perhaps.
-		a1_x += GET16(blitter_ram, A1_FINC + 2);
-		a1_y += GET16(blitter_ram, A1_FINC + 0);
+   if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 0)
+      a1_x += phraseOffset[a1PixelSize] << 16;
+   else if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 1)
+      a1_x += (blitter_ram[A1_FLAGS + 1] & 0x08 ? -1 << 16 : 1 << 16);
+   /*	else if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 2)
+      a1_x += 0 << 16;                              */
+   else if ((blitter_ram[A1_FLAGS + 1] & 0x03) == 3)
+   {
+      //Always add the FINC here??? That was the problem with the BIOS screen... So perhaps.
+      a1_x += GET16(blitter_ram, A1_FINC + 2);
+      a1_y += GET16(blitter_ram, A1_FINC + 0);
 
-		a1_x += GET16(blitter_ram, A1_INC + 2) << 16;
-		a1_y += GET16(blitter_ram, A1_INC + 0) << 16;
-	}
+      a1_x += GET16(blitter_ram, A1_INC + 2) << 16;
+      a1_y += GET16(blitter_ram, A1_INC + 0) << 16;
+   }
 
-	if ((blitter_ram[A1_FLAGS + 1] & 0x04) && (blitter_ram[A1_FLAGS + 1] & 0x03 != 3))
-		a1_y += (blitter_ram[A1_FLAGS + 1] & 0x10 ? -1 << 16 : 1 << 16);
+   if ((blitter_ram[A1_FLAGS + 1] & 0x04) && (blitter_ram[A1_FLAGS + 1] & 0x03 != 3))
+      a1_y += (blitter_ram[A1_FLAGS + 1] & 0x10 ? -1 << 16 : 1 << 16);
 
-	// Handle A2 channel stepping
+   // Handle A2 channel stepping
 
-	if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 0)
-		a2_x += phraseOffset[a2PixelSize] << 16;
-	else if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 1)
-		a2_x += (blitter_ram[A2_FLAGS + 1] & 0x08 ? -1 << 16 : 1 << 16);
-/*	else if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 2)
-		a2_x += 0 << 16;                              */
+   if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 0)
+      a2_x += phraseOffset[a2PixelSize] << 16;
+   else if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 1)
+      a2_x += (blitter_ram[A2_FLAGS + 1] & 0x08 ? -1 << 16 : 1 << 16);
+   /*	else if ((blitter_ram[A2_FLAGS + 1] & 0x03) == 2)
+      a2_x += 0 << 16;                              */
 
-	if (blitter_ram[A2_FLAGS + 1] & 0x04)
-		a2_y += (blitter_ram[A2_FLAGS + 1] & 0x10 ? -1 << 16 : 1 << 16);
+   if (blitter_ram[A2_FLAGS + 1] & 0x04)
+      a2_y += (blitter_ram[A2_FLAGS + 1] & 0x10 ? -1 << 16 : 1 << 16);
 
-//Need to fix this so that it subtracts (saturating, of course) the correct number of pixels
-//in phrase mode... !!! FIX !!! [DONE]
-//Need to fix this so that it counts down the correct item. Does it count the
-//source or the destination phrase mode???
-//It shouldn't matter, because we *should* end up processing the same amount
-//the same number of pixels... Not sure though.
-	if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
-	{
-		if (inner_loop < phraseOffset[DSTA2 ? a2PixelSize : a1PixelSize])
-			inner_loop = 0;
-		else
-			inner_loop -= phraseOffset[DSTA2 ? a2PixelSize : a1PixelSize];
-	}
-	else
-		inner_loop--;
+   //Need to fix this so that it subtracts (saturating, of course) the correct number of pixels
+   //in phrase mode... !!! FIX !!! [DONE]
+   //Need to fix this so that it counts down the correct item. Does it count the
+   //source or the destination phrase mode???
+   //It shouldn't matter, because we *should* end up processing the same amount
+   //the same number of pixels... Not sure though.
+   if ((DSTA2 ? a2_phrase_mode : a1_phrase_mode) == 1)
+   {
+      if (inner_loop < phraseOffset[DSTA2 ? a2PixelSize : a1PixelSize])
+         inner_loop = 0;
+      else
+         inner_loop -= phraseOffset[DSTA2 ? a2PixelSize : a1PixelSize];
+   }
+   else
+      inner_loop--;
 
 
-	if (DSTWRZ)
-		goto dzwrite;
-	else if (INNER0)
-		goto indone;
-	else if (TXTEXT)
-		goto txtread;
-	else if (SRCEN)
-		goto sread;
-	else if (DSTEN)
-		goto dread;
-	else if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   if (DSTWRZ)
+      goto dzwrite;
+   else if (INNER0)
+      goto indone;
+   else if (TXTEXT)
+      goto txtread;
+   else if (SRCEN)
+      goto sread;
+   else if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
 dzwrite:						// Destination Z write
-/*
-dzwrite    Destination Z write.
-if STEP
-    if INNER0 goto idle
-    else if TXTEXT goto txtread
-    else if SRCEN goto sread
-    else if DSTEN goto dread
-    else if DSTENZ goto dzread
-    else goto dwrite
-*/
-	if (INNER0)
-		goto indone;
-	else if (TXTEXT)
-		goto txtread;
-	else if (SRCEN)
-		goto sread;
-	else if (DSTEN)
-		goto dread;
-	else if (DSTENZ)
-		goto dzread;
-	else
-		goto dwrite;
+   /*
+      dzwrite    Destination Z write.
+      if STEP
+      if INNER0 goto idle
+      else if TXTEXT goto txtread
+      else if SRCEN goto sread
+      else if DSTEN goto dread
+      else if DSTENZ goto dzread
+      else goto dwrite
+      */
+   if (INNER0)
+      goto indone;
+   else if (TXTEXT)
+      goto txtread;
+   else if (SRCEN)
+      goto sread;
+   else if (DSTEN)
+      goto dread;
+   else if (DSTENZ)
+      goto dzread;
+   else
+      goto dwrite;
 
-/*
-------------------------------
-if INDONE if OUTER0 goto idle
-else if UPDA1F        goto a1fupdate
-else if UPDA1         goto a1update
-else if GOURZ.POLYGON goto zfupdate
-else if UPDA2         goto a2update
-else if DATINIT       goto init_if
-else restart inner
-*/
+   /*
+      ------------------------------
+      if INDONE if OUTER0 goto idle
+      else if UPDA1F        goto a1fupdate
+      else if UPDA1         goto a1update
+      else if GOURZ.POLYGON goto zfupdate
+      else if UPDA2         goto a2update
+      else if DATINIT       goto init_if
+      else restart inner
+      */
 indone:
-	outer_loop--;
+   outer_loop--;
 
 
-	if (OUTER0)
-		goto blitter_done;
-	else if (UPDA1F)
-		goto a1fupdate;
-	else if (UPDA1)
-		goto a1update;
-//kill this, for now...
-//	else if (GOURZ.POLYGON)
-//		goto zfupdate;
-	else if (UPDA2)
-		goto a2update;
-	else if (DATINIT)
-		goto init_if;
-	else
-		goto inner;
+   if (OUTER0)
+      goto blitter_done;
+   else if (UPDA1F)
+      goto a1fupdate;
+   else if (UPDA1)
+      goto a1update;
+   //kill this, for now...
+   //	else if (GOURZ.POLYGON)
+   //		goto zfupdate;
+   else if (UPDA2)
+      goto a2update;
+   else if (DATINIT)
+      goto init_if;
+   else
+      goto inner;
 
 a1fupdate:						// Update A1 pointer fractions and more (see below)
-/*
-a1fupdate    A1 step fraction is added to A1 pointer fraction
-             POLYGON true: A1 step delta X and Y fraction parts are added to the A1
-			 step X and Y fraction parts (the value prior to this add is used for
-			 the step to pointer add).
-             POLYGON true: inner count step fraction is added to the inner count
-			 fraction part
-             POLYGON.GOURD true: the I fraction step is added to the computed
-			 intensity fraction parts +
-             POLYGON.GOURD true: the I fraction step delta is added to the I
-			 fraction step
-goto a1update
-*/
-/*
+   /*
+      a1fupdate    A1 step fraction is added to A1 pointer fraction
+      POLYGON true: A1 step delta X and Y fraction parts are added to the A1
+      step X and Y fraction parts (the value prior to this add is used for
+      the step to pointer add).
+      POLYGON true: inner count step fraction is added to the inner count
+      fraction part
+      POLYGON.GOURD true: the I fraction step is added to the computed
+      intensity fraction parts +
+      POLYGON.GOURD true: the I fraction step delta is added to the I
+      fraction step
+      goto a1update
+      */
+   /*
 #define A1_PIXEL		((uint32_t)0x0C)	// Integer part of the pixel (Y.i and X.i)
 #define A1_STEP			((uint32_t)0x10)	// Integer part of the step
 #define A1_FSTEP		((uint32_t)0x14)	// Fractional part of the step
 #define A1_FPIXEL		((uint32_t)0x18)	// Fractional part of the pixel (Y.f and X.f)
 */
 
-// This is all kinda murky. All we have are the Midsummer docs to give us any guidance,
-// and it's incomplete or filled with errors (like above). Aarrrgggghhhhh!
+   // This is all kinda murky. All we have are the Midsummer docs to give us any guidance,
+   // and it's incomplete or filled with errors (like above). Aarrrgggghhhhh!
 
-//This isn't right. Is it? I don't think the fractional parts are signed...
-//	a1_x += (int32_t)((int16_t)GET16(blitter_ram, A1_FSTEP + 2));
-//	a1_y += (int32_t)((int16_t)GET16(blitter_ram, A1_FSTEP + 0));
-	a1_x += GET16(blitter_ram, A1_FSTEP + 2);
-	a1_y += GET16(blitter_ram, A1_FSTEP + 0);
+   //This isn't right. Is it? I don't think the fractional parts are signed...
+   //	a1_x += (int32_t)((int16_t)GET16(blitter_ram, A1_FSTEP + 2));
+   //	a1_y += (int32_t)((int16_t)GET16(blitter_ram, A1_FSTEP + 0));
+   a1_x += GET16(blitter_ram, A1_FSTEP + 2);
+   a1_y += GET16(blitter_ram, A1_FSTEP + 0);
 
-	goto a1update;
+   goto a1update;
 
 a1update:						// Update A1 pointer integers
-/*
-a1update     A1 step is added to A1 pointer, with carry from the fractional add
-             POLYGON true: A1 step delta X and Y integer parts are added to the A1
-			 step X and Y integer parts, with carry from the corresponding
-			 fractional part add (again, the value prior to this add is used for
-			 the step to pointer add).
-             POLYGON true: inner count step is added to the inner count, with carry
-             POLYGON.GOURD true: the I step is added to the computed intensities,
-			 with carry +
-             POLYGON.GOURD true: the I step delta is added to the I step, with
-			 carry the texture X and Y step delta values are added to the X and Y
-			 step values.
-if GOURZ.POLYGON goto zfupdate
-else if UPDA2 goto a2update
-else if DATINIT goto init_if
-else restart inner
-*/
-	a1_x += (int32_t)(GET16(blitter_ram, A1_STEP + 2) << 16);
-	a1_y += (int32_t)(GET16(blitter_ram, A1_STEP + 0) << 16);
+   /*
+      a1update     A1 step is added to A1 pointer, with carry from the fractional add
+      POLYGON true: A1 step delta X and Y integer parts are added to the A1
+      step X and Y integer parts, with carry from the corresponding
+      fractional part add (again, the value prior to this add is used for
+      the step to pointer add).
+      POLYGON true: inner count step is added to the inner count, with carry
+      POLYGON.GOURD true: the I step is added to the computed intensities,
+      with carry +
+      POLYGON.GOURD true: the I step delta is added to the I step, with
+      carry the texture X and Y step delta values are added to the X and Y
+      step values.
+      if GOURZ.POLYGON goto zfupdate
+      else if UPDA2 goto a2update
+      else if DATINIT goto init_if
+      else restart inner
+      */
+   a1_x += (int32_t)(GET16(blitter_ram, A1_STEP + 2) << 16);
+   a1_y += (int32_t)(GET16(blitter_ram, A1_STEP + 0) << 16);
 
 
-//kill this, for now...
-//	if (GOURZ.POLYGON)
-	if (false)
-		goto zfupdate;
-	else if (UPDA2)
-		goto a2update;
-	else if (DATINIT)
-		goto init_if;
-	else
-		goto inner;
+   //kill this, for now...
+   //	if (GOURZ.POLYGON)
+   if (false)
+      goto zfupdate;
+   else if (UPDA2)
+      goto a2update;
+   else if (DATINIT)
+      goto init_if;
+   else
+      goto inner;
 
 zfupdate:						// Update computed Z step fractions
-/*
-zfupdate     the Z fraction step is added to the computed Z fraction parts +
-             the Z fraction step delta is added to the Z fraction step
-goto zupdate
-*/
-	goto zupdate;
+   /*
+      zfupdate     the Z fraction step is added to the computed Z fraction parts +
+      the Z fraction step delta is added to the Z fraction step
+      goto zupdate
+      */
+   goto zupdate;
 
 zupdate:						// Update computed Z step integers
-/*
-zupdate      the Z step is added to the computed Zs, with carry +
-             the Z step delta is added to the Z step, with carry
-if UPDA2 goto a2update
-else if DATINIT goto init_if
-else restart inner
-*/
-	if (UPDA2)
-		goto a2update;
-	else if (DATINIT)
-		goto init_if;
-	else
-		goto inner;
+   /*
+      zupdate      the Z step is added to the computed Zs, with carry +
+      the Z step delta is added to the Z step, with carry
+      if UPDA2 goto a2update
+      else if DATINIT goto init_if
+      else restart inner
+      */
+   if (UPDA2)
+      goto a2update;
+   else if (DATINIT)
+      goto init_if;
+   else
+      goto inner;
 
 a2update:						// Update A2 pointer
-/*
-a2update     A2 step is added to the A2 pointer
-if DATINIT goto init_if
-else restart inner
-*/
-	a2_x += (int32_t)(GET16(blitter_ram, A2_STEP + 2) << 16);
-	a2_y += (int32_t)(GET16(blitter_ram, A2_STEP + 0) << 16);
+   /*
+      a2update     A2 step is added to the A2 pointer
+      if DATINIT goto init_if
+      else restart inner
+      */
+   a2_x += (int32_t)(GET16(blitter_ram, A2_STEP + 2) << 16);
+   a2_y += (int32_t)(GET16(blitter_ram, A2_STEP + 0) << 16);
 
 
-	if (DATINIT)
-		goto init_if;
-	else
-		goto inner;
+   if (DATINIT)
+      goto init_if;
+   else
+      goto inner;
 
 init_if:						// Initialise intensity fractions and texture X
-/*
-init_if      Initialise the fractional part of the computed intensity fields, from
-             the increment and step registers. The texture X integer and fractional
-			 parts can also be initialised.
-goto     init_ii
-*/
-	goto init_ii;
+   /*
+      init_if      Initialise the fractional part of the computed intensity fields, from
+      the increment and step registers. The texture X integer and fractional
+      parts can also be initialised.
+      goto     init_ii
+      */
+   goto init_ii;
 
 init_ii:						// Initialise intensity integers and texture Y
-/*
-init_ii      Initialise the integer part of the computed intensity, and texture Y
-             integer and fractional parts
-if GOURZ goto init_zf
-else     goto inner
-*/
-	if (GOURZ)
-		goto init_zf;
-	else
-	    goto inner;
+   /*
+      init_ii      Initialise the integer part of the computed intensity, and texture Y
+      integer and fractional parts
+      if GOURZ goto init_zf
+      else     goto inner
+      */
+   if (GOURZ)
+      goto init_zf;
+   else
+      goto inner;
 
 init_zf:						// Initialise Z fractions
-/*
-init_zf      Initialise the fractional part of the computed Z fields.
-goto init_zi
-*/
-	goto init_zi;
+   /*
+      init_zf      Initialise the fractional part of the computed Z fields.
+      goto init_zi
+      */
+   goto init_zi;
 
 init_zi:						// Initialise Z integers
-/*
-init_zi      Initialise the integer part of the computed Z fields.
-goto inner
-*/
-	goto inner;
+   /*
+      init_zi      Initialise the integer part of the computed Z fields.
+      goto inner
+      */
+   goto inner;
 
 
-/*
-The outer loop state machine fires off the inner loop, and controls the updating
-process between passes through the inner loop.
+   /*
+      The outer loop state machine fires off the inner loop, and controls the updating
+      process between passes through the inner loop.
 
-+ -- these functions are irrelevant if the DATINIT function is enabled, which it
-     will normally be.
+      + -- these functions are irrelevant if the DATINIT function is enabled, which it
+      will normally be.
 
-All these states will complete in one clock cycle, with the exception of the idle
-state, which means the blitter is quiescent; and the inner state, which takes as
-long as is required to complete one strip of pixels. It is therefore possible for
-the blitter to spend a maximum of nine clock cycles of inactivity between passes
-through the inner loop.
-*/
+      All these states will complete in one clock cycle, with the exception of the idle
+      state, which means the blitter is quiescent; and the inner state, which takes as
+      long as is required to complete one strip of pixels. It is therefore possible for
+      the blitter to spend a maximum of nine clock cycles of inactivity between passes
+      through the inner loop.
+      */
 
 blitter_done:
-	{}
+   {}
 }
 #endif
 
@@ -2219,21 +2145,11 @@ void BlitterMidsummer2(void)
 
          //Instead of a return, let's try breaking out of the loop...
          break;
-         //			return;
       }
       else
          idlei = false;
 
       // INNER LOOP ACTIVE
-      /*
-         Entering DWRITE state... (icount=0000, inc=4)
-         Entering IDLE_INNER state...
-         Leaving INNER state... (ocount=00EF)
-         [in=T a1f=F a1=T zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-         Entering INNER state...
-Now:
-[in=F a1f=F a1=F zf=F z=F a2=F iif=F iii=F izf=F izi=F]
-*/
 
       if ((idle && go && !datinit)
             || (inner && !indone)
@@ -2243,18 +2159,14 @@ Now:
             || (a2update && !datinit)
             || (init_ii && !gourz)
             || (init_zi))
-      {
          inneri = true;
-      }
       else
          inneri = false;
 
       // A1 FRACTION UPDATE
 
       if (inner && indone && !outer0 && upda1f)
-      {
          a1fupdatei = true;
-      }
       else
          a1fupdatei = false;
 
@@ -2262,9 +2174,7 @@ Now:
 
       if ((a1fupdate)
             || (inner && indone && !outer0 && !upda1f && upda1))
-      {
          a1updatei = true;
-      }
       else
          a1updatei = false;
 
@@ -2272,18 +2182,14 @@ Now:
 
       if ((a1update && gourz && polygon)
             || (inner && indone && !outer0 && !upda1f && !upda1 && gourz && polygon))
-      {
          zfupdatei = true;
-      }
       else
          zfupdatei = false;
 
       // Z INTEGER UPDATE
 
       if (zfupdate)
-      {
          zupdatei = true;
-      }
       else
          zupdatei = false;
 
@@ -2292,9 +2198,7 @@ Now:
       if ((a1update && upda2 && notgzandp)
             || (zupdate && upda2)
             || (inner && indone && !outer0 && !upda1f && notgzandp && !upda1 && upda2))
-      {
          a2updatei = true;
-      }
       else
          a2updatei = false;
 
@@ -2305,36 +2209,28 @@ Now:
             || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && datinit)
             || (a2update && datinit)
             || (idle && go && datinit))
-      {
          init_ifi = true;
-      }
       else
          init_ifi = false;
 
       // INITIALIZE INTENSITY INTEGER
 
       if (init_if)
-      {
          init_iii = true;
-      }
       else
          init_iii = false;
 
       // INITIALIZE Z FRACTION
 
       if (init_ii && gourz)
-      {
          init_zfi = true;
-      }
       else
          init_zfi = false;
 
       // INITIALIZE Z INTEGER
 
       if (init_zf)
-      {
          init_zii = true;
-      }
       else
          init_zii = false;
 
@@ -2396,9 +2292,7 @@ Now:
 
             if ((idle_inner && step && srcenx)
                   || (sreadx && !step))
-            {
                sreadxi = true;
-            }
             else
                sreadxi = false;
 
@@ -2406,9 +2300,7 @@ Now:
 
             if ((sreadx && step && srcenz)
                   || (szreadx && !step))
-            {
                szreadxi = true;
-            }
             else
                szreadxi = false;
 
@@ -2423,9 +2315,7 @@ Now:
                   || (dwrite && step && !dstwrz && !inner0 && !textext && srcen)
                   || (txtread && step && srcen)
                   || (sread && !step))
-            {
                sreadi = true;
-            }
             else
                sreadi = false;
 
@@ -2433,9 +2323,7 @@ Now:
 
             if ((sread && step && srcenz)
                   || (szread && !step))
-            {
                szreadi = true;
-            }
             else
                szreadi = false;
 
@@ -2449,9 +2337,7 @@ Now:
                   || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && dsten)
                   || (txtread && step && !srcen && dsten)
                   || (dread && !step))
-            {
                dreadi = true;
-            }
             else
                dreadi = false;
 
@@ -2466,9 +2352,7 @@ Now:
                   || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && dstenz)
                   || (txtread && step && !srcen && !dsten && dstenz)
                   || (dzread && !step))
-            {
                dzreadi = true;
-            }
             else
                dzreadi = false;
 
@@ -2484,9 +2368,7 @@ Now:
                   || (dzwrite && step && !inner0 && !textext && !srcen && !dsten && !dstenz)
                   || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && !dstenz)
                   || (dwrite && !step))
-            {
                dwritei = true;
-            }
             else
                dwritei = false;
 
@@ -2494,9 +2376,7 @@ Now:
 
             if ((dzwrite && !step)
                   || (dwrite && step && dstwrz))
-            {
                dzwritei = true;
-            }
             else
                dzwritei = false;
 
@@ -3142,14 +3022,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                      bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
                      srcz, dstz, zinc);
 
-               //Why isn't this taken care of in DATA? Because, DATA is modifying its local copy instead of the one used here.
-               //!!! FIX !!! [DONE]
-               //if (patdadd)
-               //	patd = wdata;
-
-               //if (patfadd)
-               //	srcd1 = wdata;
-
                /*
                   DEF ADDRCOMP (
                   a1_outside	// A1 pointer is outside window bounds
@@ -3258,15 +3130,6 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 
             if (a2_add)
             {
-               //void ADDAMUX(int16_t &adda_x, int16_t &adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
-               //	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
-               //	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
-               //	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
-               //void ADDBMUX(int16_t &addb_x, int16_t &addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
-               //	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
-               //void ADDRADD(int16_t &addq_x, int16_t &addq_y, bool a1fracldi,
-               //	int16_t adda_x, int16_t adda_y, int16_t addb_x, int16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
-               //void DATAMUX(int16_t &data_x, int16_t &data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
                int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
                ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
                      a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
@@ -3341,7 +3204,6 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint16_t a1_x, uint16_t a1_y, uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width, uint8_t a1_zoffset,
 	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset)
 {
-//	uint16_t x = (gena2 ? a2_x : a1_x) & 0x7FFF;
 	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	// Actually uses all 16 bits to generate address...!
 	uint16_t y = (gena2 ? a2_y : a1_y) & 0x0FFF;
 	uint8_t width = (gena2 ? a2_width : a1_width);

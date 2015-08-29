@@ -57,11 +57,6 @@ uint32_t * unknown   = ((uint32_t *)&jagMemSpace[0xDFFF2C]);	// Seems to be some
 #define BSWAP32(x) (htonl(x))
 //this isn't endian safe...
 #define BSWAP64(x) ((htonl(x & 0xFFFFFFFF) << 32) | htonl(x >> 32))
-// Actually, we use ESAFExx() macros instead of this, and we use GCC to check the endianness...
-// Actually, considering that "byteswap.h" doesn't exist elsewhere, the above
-// is probably our best bet here. Just need to rename them to ESAFExx().
-
-// Look at <endian.h> and see if that header is portable or not.
 
 uint16_t * memcon1   = ((uint16_t *)&jagMemSpace[0xF00000]);
 uint16_t * memcon2   = ((uint16_t *)&jagMemSpace[0xF00002]);
