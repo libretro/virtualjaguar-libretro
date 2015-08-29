@@ -20,13 +20,7 @@
 #include "log.h"
 #include "settings.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 extern uint32_t jaguarMainROMCRC32;
-#ifdef __cplusplus
-}
-#endif
 
 static uint16_t eeprom_ram[64];
 static uint16_t cdromEEPROM[64];
