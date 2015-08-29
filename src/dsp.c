@@ -605,19 +605,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                //CC only!
                //!!!!!!!!
 
-               // if dsp wasn't running but is now running
-               // execute a few cycles
-               //This is just plain wrong, wrong, WRONG!
-#ifndef DSP_SINGLE_STEPPING
-               /*			if (!dsp_was_running && DSP_RUNNING)
-                        {
-                        DSPExec(200);
-                        }*/
-#else
-               //This is WRONG! !!! FIX !!!
-               if (dsp_control & 0x18)
-                  DSPExec(1);
-#endif
                //This isn't exactly right either--we don't know if it was the M68K or the DSP writing here...
                // !!! FIX !!! [DONE]
                if (DSP_RUNNING)
@@ -1807,115 +1794,6 @@ void FlushDSPPipeline(void)
 uint32_t pcQueue1[0x400];
 uint32_t pcQPtr1 = 0;
 static uint32_t prevR1;
-
-//Let's try a 3 stage pipeline....
-//Looks like 3 stage is correct, otherwise bad things happen...
-void DSPExecP2(int32_t cycles)
-{
-   dsp_releaseTimeSlice_flag = 0;
-   dsp_in_exec++;
-
-   while (cycles > 0 && DSP_RUNNING)
-   {
-
-      pcQueue1[pcQPtr1++] = dsp_pc;
-      pcQPtr1 &= 0x3FF;
-
-      if (IMASKCleared)						// If IMASK was cleared,
-         {
-            DSPHandleIRQs();					// See if any other interrupts are pending!
-            IMASKCleared = false;
-         }
-
-      // Stage 1a: Instruction fetch
-      pipeline[plPtrRead].instruction = DSPReadWord(dsp_pc, DSP);
-      pipeline[plPtrRead].opcode = pipeline[plPtrRead].instruction >> 10;
-      pipeline[plPtrRead].operand1 = (pipeline[plPtrRead].instruction >> 5) & 0x1F;
-      pipeline[plPtrRead].operand2 = pipeline[plPtrRead].instruction & 0x1F;
-      if (pipeline[plPtrRead].opcode == 38)
-         pipeline[plPtrRead].result = (uint32_t)DSPReadWord(dsp_pc + 2, DSP)
-            | ((uint32_t)DSPReadWord(dsp_pc + 4, DSP) << 16);
-      // Stage 1b: Read registers
-      //Small problem--when say LOAD or STORE (R14/5+$nn) is executed AFTER an instruction that
-      //modifies R14/5, we don't check the scoreboard for R14/5 (and we need to!)... !!! FIX !!!
-      //Ugly, but [DONE]
-      //Another problem: Any sequential combination of LOAD and STORE operations will cause the
-      //pipeline to stall, and we don't take care of that here. !!! FIX !!!
-      if ((scoreboard[pipeline[plPtrRead].operand1] && readAffected[pipeline[plPtrRead].opcode][0])
-            || (scoreboard[pipeline[plPtrRead].operand2] && readAffected[pipeline[plPtrRead].opcode][1])
-            || ((pipeline[plPtrRead].opcode == 43 || pipeline[plPtrRead].opcode == 58) && scoreboard[14])
-            || ((pipeline[plPtrRead].opcode == 44 || pipeline[plPtrRead].opcode == 59) && scoreboard[15])
-            //Not sure that this is the best way to fix the LOAD/STORE problem... But it seems to
-            //work--somewhat...
-            || (isLoadStore[pipeline[plPtrRead].opcode] && isLoadStore[pipeline[plPtrExec].opcode]))
-         // We have a hit in the scoreboard, so we have to stall the pipeline...
-         pipeline[plPtrRead].opcode = PIPELINE_STALL;
-      else
-      {
-         pipeline[plPtrRead].reg1 = dsp_reg[pipeline[plPtrRead].operand1];
-         pipeline[plPtrRead].reg2 = dsp_reg[pipeline[plPtrRead].operand2];
-         pipeline[plPtrRead].writebackRegister = pipeline[plPtrRead].operand2;	// Set it to RN
-
-         // Shouldn't we be more selective with the register scoreboarding?
-         // Yes, we should. !!! FIX !!! Kinda [DONE]
-#ifndef NEW_SCOREBOARD
-         scoreboard[pipeline[plPtrRead].operand2] = affectsScoreboard[pipeline[plPtrRead].opcode];
-#else
-         //Hopefully this will fix the dual MOVEQ # problem...
-         scoreboard[pipeline[plPtrRead].operand2] += (affectsScoreboard[pipeline[plPtrRead].opcode] ? 1 : 0);
-#endif
-
-         //Advance PC here??? Yes.
-         dsp_pc += (pipeline[plPtrRead].opcode == 38 ? 6 : 2);
-      }
-
-      // Stage 2: Execute
-      if (pipeline[plPtrExec].opcode != PIPELINE_STALL)
-      {
-         //CC only!
-         cycles -= dsp_opcode_cycles[pipeline[plPtrExec].opcode];
-         dsp_opcode_use[pipeline[plPtrExec].opcode]++;
-         DSPOpcode[pipeline[plPtrExec].opcode]();
-      }
-
-      // Stage 3: Write back register/memory address
-      if (pipeline[plPtrWrite].opcode != PIPELINE_STALL)
-      {
-         if (pipeline[plPtrWrite].writebackRegister != 0xFF)
-         {
-            if (pipeline[plPtrWrite].writebackRegister != 0xFE)
-               dsp_reg[pipeline[plPtrWrite].writebackRegister] = pipeline[plPtrWrite].result;
-            else
-            {
-               if (pipeline[plPtrWrite].type == TYPE_BYTE)
-                  JaguarWriteByte(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
-               else if (pipeline[plPtrWrite].type == TYPE_WORD)
-                  JaguarWriteWord(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
-               else
-                  JaguarWriteLong(pipeline[plPtrWrite].address, pipeline[plPtrWrite].value, UNKNOWN);
-            }
-         }
-
-#ifndef NEW_SCOREBOARD
-         if (affectsScoreboard[pipeline[plPtrWrite].opcode])
-            scoreboard[pipeline[plPtrWrite].operand2] = false;
-#else
-         //Yup, sequential MOVEQ # problem fixing (I hope!)...
-         if (affectsScoreboard[pipeline[plPtrWrite].opcode])
-            if (scoreboard[pipeline[plPtrWrite].operand2])
-               scoreboard[pipeline[plPtrWrite].operand2]--;
-#endif
-      }
-
-      // Push instructions through the pipeline...
-      plPtrRead = (++plPtrRead) & 0x03;
-      plPtrExec = (++plPtrExec) & 0x03;
-      plPtrWrite = (++plPtrWrite) & 0x03;
-   }
-
-   dsp_in_exec--;
-}
-
 
 /* DSP pipelined opcode handlers */
 

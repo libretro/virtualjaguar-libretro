@@ -178,10 +178,7 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
    {
       double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
 
-      if (vjs.usePipelinedDSP)
-         DSPExecP2(USEC_TO_RISC_CYCLES(timeToNextEvent));
-      else
-         DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
 
       HandleNextEvent(EVENT_JERRY);
    }
