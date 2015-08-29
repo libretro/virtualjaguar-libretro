@@ -884,79 +884,12 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    if ((halfline >= topVisible) && (halfline < bottomVisible))
    {
       if (inActiveDisplayArea)
-      {
-#warning "The following doesn't put BORDER color on the sides... !!! FIX !!!"
-         if (vjs.renderType == RT_NORMAL)
-         {
-            scanline_render[TOMGetVideoMode()](TOMCurrentLine);
-         }
-         else
-         {
-            /* TV type render */
-            /*
-               tom_render_16bpp_cry_scanline,
-               tom_render_24bpp_scanline,
-               tom_render_16bpp_direct_scanline,
-               tom_render_16bpp_rgb_scanline,
-               tom_render_16bpp_cry_rgb_mix_scanline,
-               tom_render_24bpp_scanline,
-               tom_render_16bpp_direct_scanline,
-               tom_render_16bpp_rgb_scanline
-#define VMODE		0x28
-#define   MODE		0x0006		// Line buffer to video generator mode
-#define   VARMOD	0x0100		// Mixed CRY/RGB16 mode (only works in MODE 0!)
-*/
-            uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-            uint8_t mode = ((GET16(tomRam8, VMODE) & MODE) >> 1);
-            bool varmod = GET16(tomRam8, VMODE) & VARMOD;
-            //The video texture line buffer ranges from 0 to 1279, with its left edge starting at
-            //LEFT_VISIBLE_HC. So, we need to start writing into the backbuffer at HDB1, using pwidth
-            //as our scaling factor. The way it generates its image on a real TV!
-
-            //So, for example, if HDB1 is less than LEFT_VISIBLE_HC, then we have to figure out where
-            //in the VTLB that we start writing pixels from the Jaguar line buffer (VTLB start=0,
-            //JLB=something).
-#if 0
-            //
-            // 24 BPP mode rendering
-            //
-            void tom_render_24bpp_scanline(uint32_t * backbuffer)
-            {
-               //CHANGED TO 32BPP RENDERING
-               uint16_t width = tomWidth;
-               uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
-
-               //New stuff--restrict our drawing...
-               uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-               //NOTE: May have to check HDB2 as well!
-               int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);	// Get start position in HC ticks
-               startPos /= pwidth;
-               if (startPos < 0)
-                  current_line_buffer += 4 * -startPos;
-               else
-                  //This should likely be 4 instead of 2 (?--not sure)
-                  backbuffer += 2 * startPos, width -= startPos;
-
-               while (width)
-               {
-                  uint32_t g = *current_line_buffer++;
-                  uint32_t r = *current_line_buffer++;
-                  current_line_buffer++;
-                  uint32_t b = *current_line_buffer++;
-                  *backbuffer++ = 0xFF000000 | (b << 16) | (g << 8) | r;
-                  width--;
-               }
-            }
-#endif
-
-         }
-      }
+         scanline_render[TOMGetVideoMode()](TOMCurrentLine);
       else
       {
          // If outside of VDB & VDE, then display the border color
          uint32_t * currentLineBuffer = TOMCurrentLine;
-         uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-         //Hm.			uint32_t pixel = 0xFF000000 | (b << 16) | (g << 8) | r;
+         uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
          uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
 
          for(i=0; i<tomWidth; i++)
@@ -1278,11 +1211,6 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       if ((width != tomWidth) || (height != tomHeight))
       {
          tomWidth = width, tomHeight = height;
-
-#warning "!!! TOM: ResizeScreen commented out !!!"
-         // No need to resize anything, since we're prepared for this...
-         //			if (vjs.renderType == RT_NORMAL)
-         //				ResizeScreen(tomWidth, tomHeight);
       }
    }
 #endif

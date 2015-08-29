@@ -32,7 +32,6 @@ struct VJSettings
 	bool hardwareTypeAlpine;
 	bool audioEnabled;
 	uint32_t frameSkip;
-	uint32_t renderType;
 	uint32_t biosType;
 	bool useFastBlitter;
 
