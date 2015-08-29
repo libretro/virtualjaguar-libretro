@@ -34,13 +34,6 @@
 #define USE_ORIGINAL_BLITTER
 #define USE_MIDSUMMER_BLITTER_MKII
 
-#ifdef USE_ORIGINAL_BLITTER
-#ifdef USE_MIDSUMMER_BLITTER_MKII
-#define USE_BOTH_BLITTERS
-#endif
-#endif
-
-
 // External global variables
 
 extern int jaguar_active_memory_dumps;
@@ -64,38 +57,38 @@ void BlitterMidsummer2(void);
 // Blitter registers (offsets from F02200)
 
 #define A1_BASE			((uint32_t)0x00)
-#define A1_FLAGS		((uint32_t)0x04)
+#define A1_FLAGS		   ((uint32_t)0x04)
 #define A1_CLIP			((uint32_t)0x08)	// Height and width values for clipping
-#define A1_PIXEL		((uint32_t)0x0C)	// Integer part of the pixel (Y.i and X.i)
+#define A1_PIXEL		   ((uint32_t)0x0C)	// Integer part of the pixel (Y.i and X.i)
 #define A1_STEP			((uint32_t)0x10)	// Integer part of the step
-#define A1_FSTEP		((uint32_t)0x14)	// Fractional part of the step
-#define A1_FPIXEL		((uint32_t)0x18)	// Fractional part of the pixel (Y.f and X.f)
-#define A1_INC			((uint32_t)0x1C)	// Integer part of the increment
+#define A1_FSTEP		   ((uint32_t)0x14)	// Fractional part of the step
+#define A1_FPIXEL		   ((uint32_t)0x18)	// Fractional part of the pixel (Y.f and X.f)
+#define A1_INC			   ((uint32_t)0x1C)	// Integer part of the increment
 #define A1_FINC			((uint32_t)0x20)	// Fractional part of the increment
 #define A2_BASE			((uint32_t)0x24)
-#define A2_FLAGS		((uint32_t)0x28)
+#define A2_FLAGS		   ((uint32_t)0x28)
 #define A2_MASK			((uint32_t)0x2C)	// Modulo values for x and y (M.y  and M.x)
-#define A2_PIXEL		((uint32_t)0x30)	// Integer part of the pixel (no fractional part for A2)
+#define A2_PIXEL		   ((uint32_t)0x30)	// Integer part of the pixel (no fractional part for A2)
 #define A2_STEP			((uint32_t)0x34)	// Integer part of the step (no fractional part for A2)
 #define COMMAND			((uint32_t)0x38)
 #define PIXLINECOUNTER	((uint32_t)0x3C)	// Inner & outer loop values
 #define SRCDATA			((uint32_t)0x40)
 #define DSTDATA			((uint32_t)0x48)
-#define DSTZ			((uint32_t)0x50)
+#define DSTZ			   ((uint32_t)0x50)
 #define SRCZINT			((uint32_t)0x58)
-#define SRCZFRAC		((uint32_t)0x60)
+#define SRCZFRAC		   ((uint32_t)0x60)
 #define PATTERNDATA		((uint32_t)0x68)
-#define INTENSITYINC	((uint32_t)0x70)
-#define ZINC			((uint32_t)0x74)
+#define INTENSITYINC	   ((uint32_t)0x70)
+#define ZINC			   ((uint32_t)0x74)
 #define COLLISIONCTRL	((uint32_t)0x78)
 #define PHRASEINT0		((uint32_t)0x7C)
-#define PHRASEINT1		((uint32_t)0x80)
-#define PHRASEINT2		((uint32_t)0x84)
-#define PHRASEINT3		((uint32_t)0x88)
-#define PHRASEZ0		((uint32_t)0x8C)
-#define PHRASEZ1		((uint32_t)0x90)
-#define PHRASEZ2		((uint32_t)0x94)
-#define PHRASEZ3		((uint32_t)0x98)
+#define PHRASEINT1	   ((uint32_t)0x80)
+#define PHRASEINT2	   ((uint32_t)0x84)
+#define PHRASEINT3	   ((uint32_t)0x88)
+#define PHRASEZ0		   ((uint32_t)0x8C)
+#define PHRASEZ1		   ((uint32_t)0x90)
+#define PHRASEZ2		   ((uint32_t)0x94)
+#define PHRASEZ3		   ((uint32_t)0x98)
 
 // Blitter command bits
 
@@ -117,29 +110,29 @@ void BlitterMidsummer2(void);
 #define Z_OP_EQU		(cmd & 0x00080000)
 #define Z_OP_SUP		(cmd & 0x00100000)
 
-#define LFU_NAN			(cmd & 0x00200000)
+#define LFU_NAN		(cmd & 0x00200000)
 #define LFU_NA			(cmd & 0x00400000)
 #define LFU_AN			(cmd & 0x00800000)
 #define LFU_A			(cmd & 0x01000000)
 
 #define CMPDST			(cmd & 0x02000000)
-#define BCOMPEN			(cmd & 0x04000000)
-#define DCOMPEN			(cmd & 0x08000000)
+#define BCOMPEN		(cmd & 0x04000000)
+#define DCOMPEN		(cmd & 0x08000000)
 
-#define PATDSEL			(cmd & 0x00010000)
-#define ADDDSEL			(cmd & 0x00020000)
+#define PATDSEL		(cmd & 0x00010000)
+#define ADDDSEL		(cmd & 0x00020000)
 #define TOPBEN			(cmd & 0x00004000)
 #define TOPNEN			(cmd & 0x00008000)
-#define BKGWREN			(cmd & 0x10000000)
+#define BKGWREN		(cmd & 0x10000000)
 #define GOURD			(cmd & 0x00001000)
 #define GOURZ			(cmd & 0x00002000)
 #define SRCSHADE		(cmd & 0x40000000)
 
 
-#define XADDPHR	 0
-#define XADDPIX	 1
-#define XADD0	 2
-#define XADDINC	 3
+#define XADDPHR      0
+#define XADDPIX      1
+#define XADD0        2
+#define XADDINC      3
 
 #define XSIGNSUB_A1		(REG(A1_FLAGS)&0x080000)
 #define XSIGNSUB_A2		(REG(A2_FLAGS)&0x080000)
@@ -801,14 +794,7 @@ void blitter_blit(uint32_t cmd)
 
    a1_x = (REG(A1_PIXEL) << 16) | (REG(A1_FPIXEL) & 0xFFFF);
    a1_y = (REG(A1_PIXEL) & 0xFFFF0000) | (REG(A1_FPIXEL) >> 16);
-   //According to the JTRM, X is restricted to 15 bits and Y is restricted to 12.
-   //But it seems to fuck up T2K! !!! FIX !!!
-   //Could it be sign extended??? Doesn't seem to be so according to JTRM
-   //	a1_x &= 0x7FFFFFFF, a1_y &= 0x0FFFFFFF;
-   //Actually, it says that the X is 16 bits. But it still seems to mess with the Y when restricted to 12...
-   //	a1_y &= 0x0FFFFFFF;
 
-   //	a1_width = blitter_scanline_width[((REG(A1_FLAGS) & 0x00007E00) >> 9)];
    // According to JTRM, this must give a *whole number* of phrases in the current
    // pixel size (this means the lookup above is WRONG)... !!! FIX !!!
    uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
@@ -816,13 +802,7 @@ void blitter_blit(uint32_t cmd)
 
    a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
    a2_y = (REG(A2_PIXEL) & 0xFFFF0000);
-   //According to the JTRM, X is restricted to 15 bits and Y is restricted to 12.
-   //But it seems to fuck up T2K! !!! FIX !!!
-   //	a2_x &= 0x7FFFFFFF, a2_y &= 0x0FFFFFFF;
-   //Actually, it says that the X is 16 bits. But it still seems to mess with the Y when restricted to 12...
-   //	a2_y &= 0x0FFFFFFF;
 
-   //	a2_width = blitter_scanline_width[((REG(A2_FLAGS) & 0x00007E00) >> 9)];
    // According to JTRM, this must give a *whole number* of phrases in the current
    // pixel size (this means the lookup above is WRONG)... !!! FIX !!!
    m = (REG(A2_FLAGS) >> 9) & 0x03, e = (REG(A2_FLAGS) >> 11) & 0x0F;
@@ -898,7 +878,6 @@ void blitter_blit(uint32_t cmd)
          // add the contents of the increment register
          // since there is no register for a2 we just add 1
          //Let's do nothing, since it's not listed as a valid bit combo...
-         //		a2_xadd = 1 << 16;
          break;
    }
 
@@ -1137,26 +1116,17 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 	if ((offset & 0xFF) == 0x3A)
 	// I.e., the second write of 32-bit value--not convinced this is the best way to do this!
 	// But then again, according to the Jaguar docs, this is correct...!
-#ifndef USE_BOTH_BLITTERS
-#ifdef USE_ORIGINAL_BLITTER
-		blitter_blit(GET32(blitter_ram, 0x38));
-#endif
-#ifdef USE_MIDSUMMER_BLITTER_MKII
-		BlitterMidsummer2();
-#endif
-#else
 	{
 		if (vjs.useFastBlitter)
 			blitter_blit(GET32(blitter_ram, 0x38));
 		else
 			BlitterMidsummer2();
 	}
-#endif
 }
 //F02278,9,A,B
 
 
-void BlitterWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
+void BlitterWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
 	BlitterWriteWord(offset + 0, data >> 16, who);
 	BlitterWriteWord(offset + 2, data & 0xFFFF, who);
@@ -1938,10 +1908,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (sread)
             {
-               //uint32_t srcAddr, pixAddr;
-               //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
-               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
                srcd2 = srcd1;
                srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
                //Kludge to take pixel size into account...
@@ -1973,10 +1939,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (dread)
             {
-               //uint32_t dstAddr, pixAddr;
-               //ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
-               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
                dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
                //Kludge to take pixel size into account...
                if (!phrase_mode)
@@ -2091,11 +2053,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   */
                uint8_t pwidth = (((dend | dstart) & 0x07) == 0 ? 0x08 : (dend - dstart) & 0x07);
 
-               //uint32_t dstAddr, pixAddr;
-               //ADDRGEN(dstAddr, pixAddr, gena2i, zaddr,
-               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-
                //More testing... This is almost certainly wrong, but how else does this work???
                //Seems to kinda work... But still, this doesn't seem to make any sense!
                if (phrase_mode && !dsten)
@@ -2131,12 +2088,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   */
                if (gourz)
                {
-                  /*
-                     void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
-                     uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
-                     uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
-                     uint32_t zinc, uint32_t zstep)
-                     */
                   uint16_t addq[4];
                   uint8_t initcin[4] = { 0, 0, 0, 0 };
                   ADDARRAY(addq, 7/*daddasel*/, 6/*daddbsel*/, 0/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
