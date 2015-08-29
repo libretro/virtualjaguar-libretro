@@ -31,10 +31,6 @@
 
 #define NEW_SCOREBOARD
 
-// Disassembly definitions
-
-bool doDSPDis = false;
-
 // Pipeline structures
 
 const bool affectsScoreboard[64] =

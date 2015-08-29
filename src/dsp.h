@@ -38,7 +38,6 @@ void DSPExecComp(int32_t cycles);
 
 // Exported vars
 
-extern bool doDSPDis;
 extern uint32_t dsp_reg_bank_0[], dsp_reg_bank_1[];
 
 // DSP interrupt numbers (in $F1A100, bits 4-8 & 16)

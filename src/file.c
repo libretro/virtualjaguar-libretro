@@ -72,9 +72,6 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       return false;
 
    jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
-   WriteLog("CRC: %08X\n", (unsigned int)jaguarMainROMCRC32);
-   // TODO: Check for EEPROM file in ZIP file. If there is no EEPROM in the user's EEPROM
-   //       directory, copy the one from the ZIP file, if it exists.
    EepromInit();
    jaguarRunAddress = 0x802000;					// For non-BIOS runs, this is true
    int fileType = ParseFileType(buffer, jaguarROMSize);
@@ -165,7 +162,6 @@ bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
       return false;
 
    jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
-   WriteLog("CRC: %08X\n", (unsigned int)jaguarMainROMCRC32);
    EepromInit();
 
    jaguarRunAddress = 0x802000;
