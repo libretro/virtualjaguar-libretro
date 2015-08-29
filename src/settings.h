@@ -28,7 +28,6 @@ struct VJSettings
 	bool useJaguarBIOS;
 	bool usePipelinedDSP;
 	bool hardwareTypeAlpine;
-	bool audioEnabled;
 	uint32_t frameSkip;
 	uint32_t biosType;
 	bool useFastBlitter;
@@ -40,10 +39,6 @@ struct VJSettings
 	char EEPROMPath[MAX_PATH];
 	char alpineROMPath[MAX_PATH];
 };
-
-// Render types
-
-enum { RT_NORMAL = 0, RT_TV = 1 };
 
 // BIOS types
 
