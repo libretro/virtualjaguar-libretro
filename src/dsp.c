@@ -794,8 +794,6 @@ void DSPHandleIRQs(void)
 /* Non-pipelined version... */
 void DSPHandleIRQsNP(void)
 {
-//CC only!
-//!!!!!!!!
 	if (dsp_flags & IMASK) 							// Bail if we're already inside an interrupt
 		return;
 
@@ -803,7 +801,6 @@ void DSPHandleIRQsNP(void)
 	uint32_t bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F),
 		mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
-//	WriteLog("dsp: bits=%.2x mask=%.2x\n",bits,mask);
 	bits &= mask;
 
 	if (!bits)										// Bail if nothing is enabled
@@ -824,8 +821,6 @@ void DSPHandleIRQsNP(void)
 		which = 5;
 
 	dsp_flags |= IMASK;		// Force Bank #0
-//CC only!
-//!!!!!!!!
 	DSPUpdateRegisterBanks();
 
 
@@ -841,8 +836,6 @@ void DSPHandleIRQsNP(void)
 	// jump  (r30)					; jump to ISR
 	// nop
 	dsp_pc = dsp_reg[30] = DSP_WORK_RAM_BASE + (which * 0x10);
-//CC only!
-//!!!!!!!!
 }
 
 //
@@ -853,23 +846,13 @@ void DSPSetIRQLine(int irqline, int state)
 //NOTE: This doesn't take INT_LAT5 into account. !!! FIX !!!
 	uint32_t mask = INT_LAT0 << irqline;
 	dsp_control &= ~mask;							// Clear the latch bit
-//CC only!
-//!!!!!!!!
 
 	if (state)
 	{
 		dsp_control |= mask;						// Set the latch bit
 #warning !!! No checking done to see if we're using pipelined DSP or not !!!
-//		DSPHandleIRQs();
 		DSPHandleIRQsNP();
-//CC only!
-//!!!!!!!!
 	}
-
-	// Not sure if this is correct behavior, but according to JTRM,
-	// the IRQ output of JERRY is fed to this IRQ in the GPU...
-// Not sure this is right--DSP interrupts seem to be different from the JERRY interrupts!
-//	GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
 }
 
 bool DSPIsRunning(void)
@@ -1014,7 +997,7 @@ void DSPDone(void)
 	{
 		if (dsp_opcode_use[i])
 			WriteLog("\t%s %i\n", dsp_opcode_str[i], dsp_opcode_use[i]);
-	}//*/
+	}
 }
 
 
@@ -1049,32 +1032,6 @@ void DSPExec(int32_t cycles)
 		dsp_opcode[index]();
 		dsp_opcode_use[index]++;
 		cycles -= dsp_opcode_cycles[index];
-/*if (dsp_reg_bank_0[20] == 0xF1A100 & !R20Set)
-{
-	WriteLog("DSP: R20 set to $F1A100 at %u ms%s...\n", SDL_GetTicks(), (dsp_flags & IMASK ? " (inside interrupt)" : ""));
-	R20Set = true;
-}
-if (dsp_reg_bank_0[20] != 0xF1A100 && R20Set)
-{
-	WriteLog("DSP: R20 corrupted at %u ms from starting%s!\nAborting!\n", SDL_GetTicks(), (dsp_flags & IMASK ? " (inside interrupt)" : ""));
-	DSPDumpRegisters();
-	DSPDumpDisassembly();
-	exit(1);
-}
-if ((dsp_pc < 0xF1B000 || dsp_pc > 0xF1CFFE) && !tripwire)
-{
-	char buffer[512];
-	WriteLog("DSP: Jumping outside of DSP RAM at %u ms. Register dump:\n", SDL_GetTicks());
-	DSPDumpRegisters();
-	tripwire = true;
-	WriteLog("\nBacktrace:\n");
-	for(int i=0; i<32; i++)
-	{
-		dasmjag(JAGUAR_DSP, buffer, pcQueue[(ptrPCQ + i) % 32]);
-		WriteLog("\t%08X: %s\n", pcQueue[(ptrPCQ + i) % 32], buffer);
-	}
-	WriteLog("\n");
-}*/
 	}
 
 	dsp_in_exec--;
@@ -1563,30 +1520,6 @@ static void dsp_opcode_abs(void)
 static void dsp_opcode_div(void)
 {
    unsigned i;
-#if 0
-	if (RM)
-	{
-		if (dsp_div_control & 0x01)		// 16.16 division
-		{
-			dsp_remain = ((uint64_t)RN << 16) % RM;
-			RN = ((uint64_t)RN << 16) / RM;
-		}
-		else
-		{
-			// We calculate the remainder first because we destroy RN after
-			// this by assigning it to itself.
-			dsp_remain = RN % RM;
-			RN = RN / RM;
-		}
-
-	}
-	else
-	{
-		// This is what happens according to SCPCD. NYAN!
-		RN = 0xFFFFFFFF;
-		dsp_remain = 0;
-	}
-#else
 	// Real algorithm, courtesy of SCPCD: NYAN!
 	uint32_t q = RN;
 	uint32_t r = 0;
@@ -1598,7 +1531,6 @@ static void dsp_opcode_div(void)
 
 	for(i=0; i<32; i++)
 	{
-//		uint32_t sign = (r >> 31) & 0x01;
 		uint32_t sign = r & 0x80000000;
 		r = (r << 1) | ((q >> 31) & 0x01);
 		r += (sign ? RM : -RM);
@@ -1607,7 +1539,6 @@ static void dsp_opcode_div(void)
 
 	RN = q;
 	dsp_remain = r;
-#endif
 }
 
 
@@ -2228,7 +2159,6 @@ static void DSP_jr(void)
 		int32_t offset = (PIMM1 & 0x10 ? 0xFFFFFFF0 | PIMM1 : PIMM1);		// Sign extend PIMM1
 //Account for pipeline effects...
 		uint32_t newPC = dsp_pc + (offset * 2) - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2));
-//WriteLog("  --> Old PC: %08X, new PC: %08X\n", dsp_pc, newPC);
 
 		// Now that we've branched, we have to make sure that the following instruction
 		// is executed atomically with this one and then flush the pipeline before setting
@@ -2295,7 +2225,6 @@ static void DSP_jr(void)
 	}
 	else
 		NO_WRITEBACK;
-//	WriteLog("  --> DSP_PC: %08X\n", dsp_pc);
 }
 
 static void DSP_jump(void)
