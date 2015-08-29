@@ -35,85 +35,8 @@ uint8_t * cdRAM         = &jagMemSpace[0xDFFF00];
 uint8_t * gpuRAM        = &jagMemSpace[0xF03000];
 uint8_t * dspRAM        = &jagMemSpace[0xF1B000];
 
-#if 0
-union Word
-{
-	uint16_t word;
-	struct {
-		// This changes depending on endianness...
-#ifdef __BIG_ENDIAN__
-		uint8_t hi, lo;							// Big endian
-#else
-		uint8_t lo, hi;							// Little endian
-#endif
-	};
-};
-#endif
-
-#if 0
-union DWord
-{
-	uint32_t dword;
-	struct
-	{
-#ifdef __BIG_ENDIAN__
-		uint16_t hiw, low;
-#else
-		uint16_t low, hiw;
-#endif
-	};
-};
-#endif
-
-#if 0
-static void test(void)
-{
-	Word reg;
-	reg.word = 0x1234;
-	reg.lo = 0xFF;
-	reg.hi = 0xEE;
-
-	DWord reg2;
-	reg2.hiw = 0xFFFE;
-	reg2.low = 0x3322;
-	reg2.low.lo = 0x11;
-}
-#endif
-
-// OR, we could do like so:
-#if 0
-#ifdef __BIG_ENDIAN__
-#define DWORD_BYTE_HWORD_H 1
-#define DWORD_BYTE_HWORD_L 2
-#define DWORD_BYTE_LWORD_H 3
-#define DWORD_BYTE_LWORD_L 4
-#else
-#define DWORD_BYTE_HWORD_H 4
-#define DWORD_BYTE_HWORD_L 3
-#define DWORD_BYTE_LWORD_H 2
-#define DWORD_BYTE_LWORD_L 1
-#endif
-// But this starts to get cumbersome after a while... Is union really better?
-
-//More union stuff...
-unsigned long ByteSwap1 (unsigned long nLongNumber)
-{
-   union u {unsigned long vi; unsigned char c[sizeof(unsigned long)];};
-   union v {unsigned long ni; unsigned char d[sizeof(unsigned long)];};
-   union u un;
-   union v vn;
-   un.vi = nLongNumber;
-   vn.d[0]=un.c[3];
-   vn.d[1]=un.c[2];
-   vn.d[2]=un.c[1];
-   vn.d[3]=un.c[0];
-   return (vn.ni);
-}
-#endif
-
 //Not sure if this is a good approach yet...
 //should be if we use proper aliasing, and htonl and friends...
-#if 1
 uint32_t * butch     = ((uint32_t *)&jagMemSpace[0xDFFF00]);	// base of Butch == interrupt control register, R/W
 uint32_t * dscntrl   = ((uint32_t *)&jagMemSpace[0xDFFF04]);	// DSA control register, R/W
 uint16_t * ds_data   = ((uint16_t *)&jagMemSpace[0xDFFF0A]);	// DSA TX/RX data, R/W
@@ -125,15 +48,6 @@ uint32_t * sb_time   = ((uint32_t *)&jagMemSpace[0xDFFF20]);	// Subcode time and
 uint32_t * fifo_data = ((uint32_t *)&jagMemSpace[0xDFFF24]);	// i2s FIFO data
 uint32_t * i2sdat2   = ((uint32_t *)&jagMemSpace[0xDFFF28]);	// i2s FIFO data (old)
 uint32_t * unknown   = ((uint32_t *)&jagMemSpace[0xDFFF2C]);	// Seems to be some sort of I2S interface
-#else
-uint32_t butch, dscntrl, ds_data, i2cntrl, sbcntrl, subdata, subdatb, sb_time, fifo_data, i2sdat2, unknown;
-#endif
-
-//#warning "Need to separate out this stuff (or do we???)"
-//if we use a contiguous memory space, we don't need this shit...
-//err, maybe we do, let's not be so hasty now... :-)
-
-//#define ENDIANSAFE(x) htonl(x)
 
 // The nice thing about doing it this way is that on big endian machines, htons/l
 // compile to nothing and on Intel machines, it compiles down to a single bswap instruction.
