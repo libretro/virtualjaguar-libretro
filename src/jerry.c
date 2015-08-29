@@ -360,7 +360,6 @@ void JERRYDone(void)
 bool JERRYIRQEnabled(int irq)
 {
    // Read the word @ $F10020
-   //	return jerry_ram_8[0x21] & (1 << irq);
    return jerryInterruptMask & irq;
 }
 
@@ -368,7 +367,6 @@ bool JERRYIRQEnabled(int irq)
 void JERRYSetPendingIRQ(int irq)
 {
    // This is the shadow of INT (it's a split RO/WO register)
-   //	jerryIntPending |= (1 << irq);
    jerryPendingInterrupt |= irq;
 }
 
@@ -389,13 +387,6 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    //	F10038          R     xxxxxxxx xxxxxxxx   JPIT2 - timer 1 divider
    //	F1003A          R     xxxxxxxx xxxxxxxx   JPIT3 - timer 2 pre-scaler
    //	F1003C          R     xxxxxxxx xxxxxxxx   JPIT4 - timer 2 divider
-   //This is WRONG!
-   //	else if (offset >= 0xF10000 && offset <= 0xF10007)
-   //This is still wrong. What needs to be returned here are the values being counted down
-   //in the jerry_timer_n_counter variables... !!! FIX !!! [DONE]
-
-   //This is probably the problem with the new timer code... This is invalid
-   //under the new system... !!! FIX !!!
    else if ((offset >= 0xF10036) && (offset <= 0xF1003D))
    {
       /* Unhandled timer read (BYTE) */
@@ -436,10 +427,6 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    //	F10038          R     xxxxxxxx xxxxxxxx   JPIT2 - timer 1 divider
    //	F1003A          R     xxxxxxxx xxxxxxxx   JPIT3 - timer 2 pre-scaler
    //	F1003C          R     xxxxxxxx xxxxxxxx   JPIT4 - timer 2 divider
-   //This is WRONG!
-   //	else if ((offset >= 0xF10000) && (offset <= 0xF10007))
-   //This is still wrong. What needs to be returned here are the values being counted down
-   //in the jerry_timer_n_counter variables... !!! FIX !!! [DONE]
    else if ((offset >= 0xF10036) && (offset <= 0xF1003D))
    {
       /* Unhandled timer read (WORD) */

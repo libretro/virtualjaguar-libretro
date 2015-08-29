@@ -797,9 +797,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 
 //Seems to me that this is NOT a valid mode--the JTRM seems to imply that you would need
 //extra hardware outside of the Jaguar console to support this!
-//
 // 16 BPP direct mode rendering
-//
 void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
 {
    uint16_t width = tomWidth;
@@ -815,9 +813,7 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
 }
 
 
-//
 // 16 BPP RGB mode rendering
-//
 void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 {
    unsigned i;
@@ -1055,10 +1051,7 @@ TOM: Vertical Interrupt written by M68K: 491
    }
 }
 
-
-//
 // TOM initialization
-//
 void TOMInit(void)
 {
    TOMFillLookupTables();
@@ -1079,103 +1072,18 @@ void TOMDone(void)
 
 uint32_t TOMGetVideoModeWidth(void)
 {
-   //These widths are pretty bogus. Should use HDB1/2 & HDE/HBB & PWIDTH to calc the width...
-   //	uint32_t width[8] = { 1330, 665, 443, 332, 266, 222, 190, 166 };
-   //Temporary, for testing Doom...
-   //	uint32_t width[8] = { 1330, 665, 443, 332, 266, 222, 190, 332 };
-
-   // Note that the following PWIDTH values have the following pixel aspect ratios:
-   // PWIDTH = 1 -> 0.25:1 (1:4) pixels (X:Y ratio)
-   // PWIDTH = 2 -> 0.50:1 (1:2) pixels
-   // PWIDTH = 3 -> 0.75:1 (3:4) pixels
-   // PWIDTH = 4 -> 1.00:1 (1:1) pixels
-   // PWIDTH = 5 -> 1.25:1 (5:4) pixels
-   // PWIDTH = 6 -> 1.50:1 (3:2) pixels
-   // PWIDTH = 7 -> 1.75:1 (7:4) pixels
-   // PWIDTH = 8 -> 2.00:1 (2:1) pixels
-
-   // Also note that the JTRM says that PWIDTH of 4 gives pixels that are "about" square--
-   // this implies that the other modes have pixels that are *not* square!
-   // Also, I seriously doubt that you will see any games that use PWIDTH = 1!
-
-   // NOTE: Even though the PWIDTH value is + 1, here we're using a zero-based index and
-   //       so we don't bother to add one...
-   //	return width[(GET16(tomRam8, VMODE) & PWIDTH) >> 9];
-
-   // Now, we just calculate it...
-   /*	uint16_t hdb1 = GET16(tomRam8, HDB1), hde = GET16(tomRam8, HDE),
-      hbb = GET16(tomRam8, HBB), pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-   //	return ((hbb < hde ? hbb : hde) - hdb1) / pwidth;
-   //Temporary, for testing Doom...
-   return ((hbb < hde ? hbb : hde) - hdb1) / (pwidth == 8 ? 4 : pwidth);*/
-
-   // To make it easier to make a quasi-fixed display size, we restrict the viewing
-   // area to an arbitrary range of the Horizontal Count.
    uint16_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    return (vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC - LEFT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL - LEFT_VISIBLE_HC_PAL) / pwidth;
-   //Temporary, for testing Doom...
-   //	return (RIGHT_VISIBLE_HC - LEFT_VISIBLE_HC) / (pwidth == 8 ? 4 : pwidth);
-   ////	return (RIGHT_VISIBLE_HC - LEFT_VISIBLE_HC) / (pwidth == 4 ? 8 : pwidth);
-
-   // More speculating...
-   // According to the JTRM, the number of potential pixels across is given by the
-   // Horizontal Period (HP - in NTSC this is 845). The Horizontal Count counts from
-   // zero to this value twice per scanline (the high bit is set on the second count).
-   // HBE and HBB define the absolute "black" limits of the screen, while HDB1/2 and
-   // HDE determine the extent of the OP "on" time. I.e., when the OP is turned on by
-   // HDB1, it starts fetching the line from position 0 in LBUF.
-
-   // The trick, it would seem, is to figure out how long the typical visible scanline
-   // of a TV is in HP ticks and limit the visible area to that (divided by PWIDTH, of
-   // course). Using that length, we can establish an "absolute left display limit" with
-   // which to measure HBB & HDB1/2 against when rendering LBUF (i.e., if HDB1 is 20 ticks
-   // to the right of the ALDL and PWIDTH is 4, then start writing the LBUF starting at
-   // backbuffer + 5 pixels).
-
-   // That's basically what we're doing now...!
 }
 
-
-// *** SPECULATION ***
-// It might work better to virtualize the height settings, i.e., set the vertical
-// height at 240 lines and clip using the VDB and VDE/VP registers...
-// Same with the width... [Width is pretty much virtualized now.]
-
-// Now that that the width is virtualized, let's virtualize the height. :-)
 uint32_t TOMGetVideoModeHeight(void)
 {
-   //	uint16_t vmode = GET16(tomRam8, VMODE);
-   //	uint16_t vbe = GET16(tomRam8, VBE);
-   //	uint16_t vbb = GET16(tomRam8, VBB);
-   //	uint16_t vdb = GET16(tomRam8, VDB);
-   //	uint16_t vde = GET16(tomRam8, VDE);
-   //	uint16_t vp = GET16(tomRam8, VP);
-
-   /*	if (vde == 0xFFFF)
-      vde = vbb;//*/
-
-   //	return 227;//WAS:(vde/*-vdb*/) >> 1;
-   // The video mode height probably works this way:
-   // VC counts from 0 to VP. VDB starts the OP. Either when
-   // VDE is reached or VP, the OP is stopped. Let's try it...
-   // Also note that we're conveniently ignoring interlaced display modes...!
-   //	return ((vde > vp ? vp : vde) - vdb) >> 1;
-   //	return ((vde > vbb ? vbb : vde) - vdb) >> 1;
-   //Let's try from the Vertical Blank interval...
-   //Seems to work OK!
-   //	return (vbb - vbe) >> 1;	// Again, doesn't take interlacing into account...
-   // This of course doesn't take interlacing into account. But I haven't seen any
-   // Jaguar software that takes advantage of it either...
-   //Also, doesn't reflect PAL Jaguar either... !!! FIX !!! [DONE]
-   //	return 240;										// Set virtual screen height to 240 lines...
    return (vjs.hardwareTypeNTSC ? 240 : 256);
 }
 
 
-//
 // TOM reset code
 // Now PAL friendly!
-//
 /*
    The values in TOMReset come from the Jaguar BIOS.
    These values are from BJL:
@@ -1275,10 +1183,7 @@ void TOMReset(void)
    tomTimerCounter = 0;
 }
 
-
-//
 // TOM byte access (read)
-//
 uint8_t TOMReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
    //???Is this needed???
@@ -1308,9 +1213,7 @@ uint8_t TOMReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 
-//
 // TOM word access (read)
-//
 uint16_t TOMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
    if (offset == 0xF000E0)
@@ -1340,9 +1243,7 @@ uint16_t TOMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 
 #define TOM_STRICT_MEMORY_ACCESS
-//
 // TOM byte access (write)
-//
 void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
    //???Is this needed???
@@ -1372,11 +1273,6 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
       GPUWriteByte(offset, data, who);
       return;
    }
-   /*	else if ((offset >= 0xF00010) && (offset < 0xF00028))
-      {
-      OPWriteByte(offset, data, who);
-      return;
-      }*/
    else if ((offset >= 0xF02200) && (offset < 0xF022A0))
    {
       BlitterWriteByte(offset, data, who);
