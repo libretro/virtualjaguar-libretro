@@ -123,38 +123,6 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       return true;
    }
    // NB: This is *wrong*
-   /*
-      Basically, if there is no "JAG" at position $1C, then the long there is the load/start
-      address in LITTLE ENDIAN.
-      If "JAG" is present, the the next character ("R" or "L") determines the size of the
-      JagServer command (2 bytes vs. 4). Following that are the commands themselves;
-      typically it will either be 2 (load) or 3 (load & run). Command headers go like so:
-2:
-Load address (long)
-Length (long)
-payload
-3:
-Load address (long)
-Length (long)
-Run address (long)
-payload
-5: (Reset)
-[command only]
-7: (Run at address)
-Run address (long)
-[no payload]
-9: (Clear memory)
-Start address (long)
-End address (long)
-[no payload]
-10: (Poll for commands)
-[command only]
-12: (Load & run user program)
-filname, terminated with NULL
-[no payload]
-$FFFF: (Halt)
-[no payload]
-*/
    else if (fileType == JST_JAGSERVER)
    {
       // This kind of shiaut should be in the detection code below...
@@ -173,15 +141,6 @@ $FFFF: (Halt)
       SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
 
       return true;
-      //		}
-      //		else // Special WTFOMGBBQ type here...
-      //		{
-      //			uint32_t loadAddress = (buffer[0x1F] << 24) | (buffer[0x1E] << 16) | (buffer[0x1D] << 8) | buffer[0x1C];
-      //			WriteLog("FILE: Setting up homebrew (GEMDOS WTFOMGBBQ type)... Run address: $%X, length: $%X\n", loadAddress, jaguarROMSize - 0x20);
-      //			memcpy(jagMemSpace + loadAddress, buffer + 0x20, jaguarROMSize - 0x20);
-      //			jaguarRunAddress = loadAddress;
-      //			return true;
-      //		}
    }
    else if (fileType == JST_WTFOMGBBQ)
    {
@@ -224,97 +183,3 @@ bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
 
    return true;
 }
-
-
-#if 0
-// Misc. doco
-
-/*
-   Stubulator ROM vectors...
-   handler 001 at $00E00008
-   handler 002 at $00E008DE
-   handler 003 at $00E008E2
-   handler 004 at $00E008E6
-   handler 005 at $00E008EA
-   handler 006 at $00E008EE
-   handler 007 at $00E008F2
-   handler 008 at $00E0054A
-   handler 009 at $00E008FA
-   handler 010 at $00000000
-   handler 011 at $00000000
-   handler 012 at $00E008FE
-   handler 013 at $00E00902
-   handler 014 at $00E00906
-   handler 015 at $00E0090A
-   handler 016 at $00E0090E
-   handler 017 at $00E00912
-   handler 018 at $00E00916
-   handler 019 at $00E0091A
-   handler 020 at $00E0091E
-   handler 021 at $00E00922
-   handler 022 at $00E00926
-   handler 023 at $00E0092A
-   handler 024 at $00E0092E
-   handler 025 at $00E0107A
-   handler 026 at $00E0107A
-   handler 027 at $00E0107A
-   handler 028 at $00E008DA
-   handler 029 at $00E0107A
-   handler 030 at $00E0107A
-   handler 031 at $00E0107A
-   handler 032 at $00000000
-
-   Let's try setting up the illegal instruction vector for a stubulated jaguar...
-
-   SET32(jaguar_mainRam, 0x08, 0x00E008DE);
-   SET32(jaguar_mainRam, 0x0C, 0x00E008E2);
-   SET32(jaguar_mainRam, 0x10, 0x00E008E6);	// <-- Should be here (it is)...
-   SET32(jaguar_mainRam, 0x14, 0x00E008EA);//*/
-
-/*
-   ABS Format sleuthing (LBUGDEMO.ABS):
-
-   000000  60 1B 00 00 05 0C 00 04 62 C0 00 00 04 28 00 00
-   000010  12 A6 00 00 00 00 00 80 20 00 FF FF 00 80 25 0C
-   000020  00 00 40 00
-
-   DRI-format file detected...
-   Text segment size = 0x0000050c bytes
-   Data segment size = 0x000462c0 bytes
-   BSS Segment size = 0x00000428 bytes
-   Symbol Table size = 0x000012a6 bytes
-   Absolute Address for text segment = 0x00802000
-   Absolute Address for data segment = 0x0080250c
-   Absolute Address for BSS segment = 0x00004000
-
-   (CRZDEMO.ABS):
-   000000  01 50 00 03 00 00 00 00 00 03 83 10 00 00 05 3b
-   000010  00 1c 00 03 00 00 01 07 00 00 1d d0 00 03 64 98
-   000020  00 06 8b 80 00 80 20 00 00 80 20 00 00 80 3d d0
-
-   000030  2e 74 78 74 00 00 00 00 00 80 20 00 00 80 20 00 .txt (+36 bytes)
-   000040  00 00 1d d0 00 00 00 a8 00 00 00 00 00 00 00 00
-   000050  00 00 00 00 00 00 00 20
-   000058  2e 64 74 61 00 00 00 00 00 80 3d d0 00 80 3d d0 .dta (+36 bytes)
-   000068  00 03 64 98 00 00 1e 78 00 00 00 00 00 00 00 00
-   000078  00 00 00 00 00 00 00 40
-   000080  2e 62 73 73 00 00 00 00 00 00 50 00 00 00 50 00 .bss (+36 bytes)
-   000090  00 06 8b 80 00 03 83 10 00 00 00 00 00 00 00 00
-   0000a0  00 00 00 00 00 00 00 80
-
-   Header size is $A8 bytes...
-
-   BSD/COFF format file detected...
-   3 sections specified
-   Symbol Table offset = 230160				($00038310)
-   Symbol Table contains 1339 symbol entries	($0000053B)
-   The additional header size is 28 bytes		($001C)
-   Magic Number for RUN_HDR = 0x00000107
-   Text Segment Size = 7632					($00001DD0)
-   Data Segment Size = 222360					($00036498)
-   BSS Segment Size = 428928					($00068B80)
-   Starting Address for executable = 0x00802000
-   Start of Text Segment = 0x00802000
-   Start of Data Segment = 0x00803dd0
-   */
-#endif

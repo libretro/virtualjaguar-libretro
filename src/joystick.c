@@ -26,7 +26,6 @@ uint8_t joypad1Buttons[21];
 bool audioEnabled = false;
 bool joysticksEnabled = false;
 
-extern int start_logging;
 int gpu_start_log = 0;
 int op_start_log = 0;
 int blit_start_log = 0;
@@ -100,7 +99,6 @@ uint16_t JoystickReadWord(uint32_t offset)
 		if (offset0 != 0xFF)
 		{
 			uint16_t mask[4] = { 0xFEFF, 0xFDFF, 0xFBFF, 0xF7FF };
-//No!			uint16_t mask[4] = { 0xFFFE, 0xFFFD, 0xFFFB, 0xFFF7 };
 
 			for(i = 0; i < 4; i++)
 				data &= (joypad0Buttons[offset0 + i] ? mask[i] : 0xFFFF);
@@ -109,7 +107,6 @@ uint16_t JoystickReadWord(uint32_t offset)
 		if (offset1 != 0xFF)
 		{
 			uint16_t mask[4] = { 0xEFFF, 0xDFFF, 0xBFFF, 0x7FFF };
-//No!			uint16_t mask[4] = { 0xFFEF, 0xFFDF, 0xFFBF, 0xFF7F };
 
 			for(i = 0; i < 4; i++)
 				data &= (joypad1Buttons[offset1 + i] ? mask[i] : 0xFFFF);

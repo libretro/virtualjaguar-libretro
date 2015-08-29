@@ -329,9 +329,6 @@ void build_branch_condition_table(void)
 //
 uint8_t GPUReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-	if (offset >= 0xF02000 && offset <= 0xF020FF)
-		WriteLog("GPU: ReadByte--Attempt to read from GPU register file by %s!\n", whoName[who]);
-
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 		return gpu_ram_8[offset & 0xFFF];
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
@@ -356,9 +353,6 @@ uint8_t GPUReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 //
 uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-	if (offset >= 0xF02000 && offset <= 0xF020FF)
-		WriteLog("GPU: ReadWord--Attempt to read from GPU register file by %s!\n", whoName[who]);
-
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
 		offset &= 0xFFF;
@@ -379,10 +373,6 @@ uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 		else
 			return data >> 16;
 	}
-
-//TEMP--Mirror of F03000? No. Writes only...
-//if (offset >= 0xF0B000 && offset <= 0xF0BFFF)
-//WriteLog("[GPUR16] --> Possible GPU RAM mirror access by %s!", whoName[who]);
 
 	return JaguarReadWord(offset, who);
 }
@@ -440,9 +430,6 @@ uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 // GPU byte access (write)
 void GPUWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
-   if (offset >= 0xF02000 && offset <= 0xF020FF)
-      WriteLog("GPU: WriteByte--Attempt to write to GPU register file by %s!\n", whoName[who]);
-
    if ((offset >= GPU_WORK_RAM_BASE) && (offset <= GPU_WORK_RAM_BASE + 0x0FFF))
    {
       gpu_ram_8[offset & 0xFFF] = data;
@@ -570,7 +557,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // check for GPU -> CPU interrupt
                if (data & 0x02)
                {
-                  //WriteLog("GPU->CPU interrupt\n");
                   if (TOMIRQEnabled(IRQ_GPU))
                   {
                      //This is the programmer's responsibility, to make sure the handler is valid, not ours!
@@ -587,7 +573,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // check for CPU -> GPU interrupt #0
                if (data & 0x04)
                {
-                  //WriteLog("CPU->GPU interrupt\n");
                   GPUSetIRQLine(0, ASSERT_LINE);
                   m68k_end_timeslice();
                   DSPReleaseTimeslice();
@@ -891,10 +876,7 @@ void GPUExec(int32_t cycles)
       cycles -= gpu_opcode_cycles[index];
       gpu_opcode_use[index]++;
       if ((gpu_pc < 0xF03000 || gpu_pc > 0xF03FFF) && !tripwire)
-      {
-         WriteLog("GPU: Executing outside local RAM! GPU_PC: %08X\n", gpu_pc);
          tripwire = true;
-      }
    }
 
    gpu_in_exec--;

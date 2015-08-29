@@ -58,8 +58,6 @@ static uint8_t blitter_ram[0x100];
 
 // Other crapola
 
-extern int effect_start;
-extern int blit_start_log;
 void BlitterMidsummer(uint32_t cmd);
 void BlitterMidsummer2(void);
 
@@ -167,34 +165,28 @@ void BlitterMidsummer2(void);
 #define PIXEL_SHIFT_1(a)      (((~a##_x) >> 16) & 7)
 #define PIXEL_OFFSET_1(a)     (((((uint32_t)a##_y >> 16) * a##_width / 8) + (((uint32_t)a##_x >> 19) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 19) & 7))
 #define READ_PIXEL_1(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a), BLITTER) >> PIXEL_SHIFT_1(a)) & 0x01)
-//#define READ_PIXEL_1(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a)) >> PIXEL_SHIFT_1(a)) & 0x01)
 
 // 2 bpp pixel read
 #define PIXEL_SHIFT_2(a)      (((~a##_x) >> 15) & 6)
 #define PIXEL_OFFSET_2(a)     (((((uint32_t)a##_y >> 16) * a##_width / 4) + (((uint32_t)a##_x >> 18) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 18) & 7))
 #define READ_PIXEL_2(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a), BLITTER) >> PIXEL_SHIFT_2(a)) & 0x03)
-//#define READ_PIXEL_2(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a)) >> PIXEL_SHIFT_2(a)) & 0x03)
 
 // 4 bpp pixel read
 #define PIXEL_SHIFT_4(a)      (((~a##_x) >> 14) & 4)
 #define PIXEL_OFFSET_4(a)     (((((uint32_t)a##_y >> 16) * (a##_width/2)) + (((uint32_t)a##_x >> 17) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 17) & 7))
 #define READ_PIXEL_4(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a), BLITTER) >> PIXEL_SHIFT_4(a)) & 0x0f)
-//#define READ_PIXEL_4(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a)) >> PIXEL_SHIFT_4(a)) & 0x0f)
 
 // 8 bpp pixel read
 #define PIXEL_OFFSET_8(a)     (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 7))
 #define READ_PIXEL_8(a)       (JaguarReadByte(a##_addr+PIXEL_OFFSET_8(a), BLITTER))
-//#define READ_PIXEL_8(a)       (JaguarReadByte(a##_addr+PIXEL_OFFSET_8(a)))
 
 // 16 bpp pixel read
 #define PIXEL_OFFSET_16(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~3)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 3))
 #define READ_PIXEL_16(a)       (JaguarReadWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), BLITTER))
-//#define READ_PIXEL_16(a)       (JaguarReadWord(a##_addr+(PIXEL_OFFSET_16(a)<<1)))
 
 // 32 bpp pixel read
 #define PIXEL_OFFSET_32(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
 #define READ_PIXEL_32(a)      (JaguarReadLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), BLITTER))
-//#define READ_PIXEL_32(a)      (JaguarReadLong(a##_addr+(PIXEL_OFFSET_32(a)<<2)))
 
 // pixel read
 #define READ_PIXEL(a,f) (\
@@ -208,14 +200,12 @@ void BlitterMidsummer2(void);
 // 16 bpp z data read
 #define ZDATA_OFFSET_16(a)     (PIXEL_OFFSET_16(a) + a##_zoffs * 4)
 #define READ_ZDATA_16(a)       (JaguarReadWord(a##_addr+(ZDATA_OFFSET_16(a)<<1), BLITTER))
-//#define READ_ZDATA_16(a)       (JaguarReadWord(a##_addr+(ZDATA_OFFSET_16(a)<<1)))
 
 // z data read
 #define READ_ZDATA(a,f) (READ_ZDATA_16(a))
 
 // 16 bpp z data write
 #define WRITE_ZDATA_16(a,d)     {  JaguarWriteWord(a##_addr+(ZDATA_OFFSET_16(a)<<1), d, BLITTER); }
-//#define WRITE_ZDATA_16(a,d)     {  JaguarWriteWord(a##_addr+(ZDATA_OFFSET_16(a)<<1), d); }
 
 // z data write
 #define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
@@ -249,26 +239,21 @@ void BlitterMidsummer2(void);
 
 // 1 bpp pixel write
 #define WRITE_PIXEL_1(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_1(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a), BLITTER)&(~(0x01 << PIXEL_SHIFT_1(a))))|(d<<PIXEL_SHIFT_1(a)), BLITTER); }
-//#define WRITE_PIXEL_1(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_1(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a))&(~(0x01 << PIXEL_SHIFT_1(a))))|(d<<PIXEL_SHIFT_1(a))); }
 
 // 2 bpp pixel write
 #define WRITE_PIXEL_2(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_2(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a), BLITTER)&(~(0x03 << PIXEL_SHIFT_2(a))))|(d<<PIXEL_SHIFT_2(a)), BLITTER); }
-//#define WRITE_PIXEL_2(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_2(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a))&(~(0x03 << PIXEL_SHIFT_2(a))))|(d<<PIXEL_SHIFT_2(a))); }
 
 // 4 bpp pixel write
 #define WRITE_PIXEL_4(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_4(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a), BLITTER)&(~(0x0f << PIXEL_SHIFT_4(a))))|(d<<PIXEL_SHIFT_4(a)), BLITTER); }
-//#define WRITE_PIXEL_4(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_4(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a))&(~(0x0f << PIXEL_SHIFT_4(a))))|(d<<PIXEL_SHIFT_4(a))); }
 
 // 8 bpp pixel write
 #define WRITE_PIXEL_8(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_8(a), d, BLITTER); }
-//#define WRITE_PIXEL_8(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_8(a), d); }
 
 // 16 bpp pixel write
 #define WRITE_PIXEL_16(a,d)     {  JaguarWriteWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), d, BLITTER); }
 
 // 32 bpp pixel write
 #define WRITE_PIXEL_32(a,d)		{ JaguarWriteLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), d, BLITTER); }
-//#define WRITE_PIXEL_32(a,d)		{ JaguarWriteLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), d); }
 
 // pixel write
 #define WRITE_PIXEL(a,f,d) {\
@@ -594,33 +579,6 @@ void blitter_generic(uint32_t cmd)
                }
                else if (ADDDSEL)
                {
-                  /*if (blit_start_log)
-                    WriteLog("BLIT: ADDDSEL srcdata: %08X\, dstdata: %08X, ", srcdata, dstdata);//*/
-
-                  // intensity addition
-                  //Ok, this is wrong... Or is it? Yes, it's wrong! !!! FIX !!!
-                  /*						writedata = (srcdata & 0xFF) + (dstdata & 0xFF);
-                                    if (!(TOPBEN) && writedata > 0xFF)
-                  //							writedata = 0xFF;
-                  writedata &= 0xFF;
-                  writedata |= (srcdata & 0xF00) + (dstdata & 0xF00);
-                  if (!(TOPNEN) && writedata > 0xFFF)
-                  //							writedata = 0xFFF;
-                  writedata &= 0xFFF;
-                  writedata |= (srcdata & 0xF000) + (dstdata & 0xF000);//*/
-                  //notneeded--writedata &= 0xFFFF;
-                  /*if (blit_start_log)
-                    WriteLog("writedata: %08X\n", writedata);//*/
-                  /*
-                     Hover Strike ADDDSEL blit:
-
-                     Blit! (00098D90 <- 0081DDC0) count: 320 x 287, A1/2_FLAGS: 00004220/00004020 [cmd: 00020208]
-                     CMD -> src:  dst: DSTEN  misc:  a1ctl: UPDA1  mode:  ity: ADDDSEL z-op:  op: LFU_CLEAR ctrl:
-                     A1 step values: -320 (X), 1 (Y)
-                     A1 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 320 (21), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-                     A2 -> pitch: 1 phrases, depth: 16bpp, z-off: 0, width: 256 (20), addctl: XADDPHR YADD0 XSIGNADD YSIGNADD
-                     A1 x/y: 0/0, A2 x/y: 3288/0 Pattern: 0000000000000000 SRCDATA: 00FD00FD00FD00FD
-                     */
                   writedata = (srcdata & 0xFF) + (dstdata & 0xFF);
 
                   if (!TOPBEN)
@@ -1265,49 +1223,6 @@ WriteLog("BLIT: Asked to use invalid bit combo (XADDINC) for A2...\n");
 	// Bit comparitor fixing...
 
 //NOTE: Pitch is ignored!
-
-//This *might* be the altimeter blits (they are)...
-//On captured screen, x-pos for black (inner) is 259, for pink is 257
-//Black is short by 3, pink is short by 1...
-if (blit_start_log)
-{
-	const char * ctrlStr[4] = { "XADDPHR\0", "XADDPIX\0", "XADD0\0", "XADDINC\0" };
-	const char * bppStr[8] = { "1bpp\0", "2bpp\0", "4bpp\0", "8bpp\0", "16bpp\0", "32bpp\0", "???\0", "!!!\0" };
-	const char * opStr[16] = { "LFU_CLEAR", "LFU_NSAND", "LFU_NSAD", "LFU_NOTS", "LFU_SAND", "LFU_NOTD", "LFU_N_SXORD", "LFU_NSORND",
-		"LFU_SAD", "LFU_XOR", "LFU_D", "LFU_NSORD", "LFU_REPLACE", "LFU_SORND", "LFU_SORD", "LFU_ONE" };
-	uint32_t /*src = cmd & 0x07, dst = (cmd >> 3) & 0x07, misc = (cmd >> 6) & 0x03,
-		a1ctl = (cmd >> 8) & 0x07,*/ mode = (cmd >> 11) & 0x07/*, ity = (cmd >> 14) & 0x0F,
-		zop = (cmd >> 18) & 0x07, op = (cmd >> 21) & 0x0F, ctrl = (cmd >> 25) & 0x3F*/;
-	uint32_t a1f = REG(A1_FLAGS), a2f = REG(A2_FLAGS);
-	uint32_t p1 = a1f & 0x07, p2 = a2f & 0x07,
-		d1 = (a1f >> 3) & 0x07, d2 = (a2f >> 3) & 0x07,
-		zo1 = (a1f >> 6) & 0x07, zo2 = (a2f >> 6) & 0x07,
-		w1 = (a1f >> 9) & 0x3F, w2 = (a2f >> 9) & 0x3F,
-		ac1 = (a1f >> 16) & 0x1F, ac2 = (a2f >> 16) & 0x1F;
-	uint32_t iw1 = ((0x04 | (w1 & 0x03)) << ((w1 & 0x3C) >> 2)) >> 2;
-	uint32_t iw2 = ((0x04 | (w2 & 0x03)) << ((w2 & 0x3C) >> 2)) >> 2;
-	WriteLog("Blit! (%08X %s %08X) count: %d x %d, A1/2_FLAGS: %08X/%08X [cmd: %08X]\n", a1_addr, (mode&0x01 ? "->" : "<-"), a2_addr, n_pixels, n_lines, a1f, a2f, cmd);
-
-	WriteLog(" CMD -> src: %s%s%s ", (cmd & 0x0001 ? "SRCEN " : ""), (cmd & 0x0002 ? "SRCENZ " : ""), (cmd & 0x0004 ? "SRCENX" : ""));
-	WriteLog("dst: %s%s%s ", (cmd & 0x0008 ? "DSTEN " : ""), (cmd & 0x0010 ? "DSTENZ " : ""), (cmd & 0x0020 ? "DSTWRZ" : ""));
-	WriteLog("misc: %s%s ", (cmd & 0x0040 ? "CLIP_A1 " : ""), (cmd & 0x0080 ? "???" : ""));
-	WriteLog("a1ctl: %s%s%s ", (cmd & 0x0100 ? "UPDA1F " : ""), (cmd & 0x0200 ? "UPDA1 " : ""), (cmd & 0x0400 ? "UPDA2" : ""));
-	WriteLog("mode: %s%s%s ", (cmd & 0x0800 ? "DSTA2 " : ""), (cmd & 0x1000 ? "GOURD " : ""), (cmd & 0x2000 ? "GOURZ" : ""));
-	WriteLog("ity: %s%s%s%s ", (cmd & 0x4000 ? "TOPBEN " : ""), (cmd & 0x8000 ? "TOPNEN " : ""), (cmd & 0x00010000 ? "PATDSEL" : ""), (cmd & 0x00020000 ? "ADDDSEL" : ""));
-	WriteLog("z-op: %s%s%s ", (cmd & 0x00040000 ? "ZMODELT " : ""), (cmd & 0x00080000 ? "ZMODEEQ " : ""), (cmd & 0x00100000 ? "ZMODEGT" : ""));
-	WriteLog("op: %s ", opStr[(cmd >> 21) & 0x0F]);
-	WriteLog("ctrl: %s%s%s%s%s%s\n", (cmd & 0x02000000 ? "CMPDST " : ""), (cmd & 0x04000000 ? "BCOMPEN " : ""), (cmd & 0x08000000 ? "DCOMPEN " : ""), (cmd & 0x10000000 ? "BKGWREN " : ""), (cmd & 0x20000000 ? "BUSHI " : ""), (cmd & 0x40000000 ? "SRCSHADE" : ""));
-
-	if (UPDA1)
-		WriteLog("  A1 step values: %d (X), %d (Y)\n", a1_step_x >> 16, a1_step_y >> 16);
-
-	if (UPDA2)
-		WriteLog("  A2 step values: %d (X), %d (Y) [mask (%sused): %08X - %08X/%08X]\n", a2_step_x >> 16, a2_step_y >> 16, (a2f & 0x8000 ? "" : "un"), REG(A2_MASK), a2_mask_x, a2_mask_y);
-
-	WriteLog("  A1 -> pitch: %d phrases, depth: %s, z-off: %d, width: %d (%02X), addctl: %s %s %s %s\n", 1 << p1, bppStr[d1], zo1, iw1, w1, ctrlStr[ac1&0x03], (ac1&0x04 ? "YADD1" : "YADD0"), (ac1&0x08 ? "XSIGNSUB" : "XSIGNADD"), (ac1&0x10 ? "YSIGNSUB" : "YSIGNADD"));
-	WriteLog("  A2 -> pitch: %d phrases, depth: %s, z-off: %d, width: %d (%02X), addctl: %s %s %s %s\n", 1 << p2, bppStr[d2], zo2, iw2, w2, ctrlStr[ac2&0x03], (ac2&0x04 ? "YADD1" : "YADD0"), (ac2&0x08 ? "XSIGNSUB" : "XSIGNADD"), (ac2&0x10 ? "YSIGNSUB" : "YSIGNADD"));
-	WriteLog("        A1 x/y: %d/%d, A2 x/y: %d/%d Pattern: %08X%08X SRCDATA: %08X%08X\n", a1_x >> 16, a1_y >> 16, a2_x >> 16, a2_y >> 16, REG(PATTERNDATA), REG(PATTERNDATA + 4), REG(SRCDATA), REG(SRCDATA + 4));
-}
 
 	blitter_working = 1;
 	blitter_generic(cmd);
@@ -3676,115 +3591,10 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint32_t shup = (pitch == 0x03 ? (*pixa >> 6) : 0);
 
 	uint8_t za = (zaddr ? zoffset : 0) & 0x03;
-//	uint32_t addr = za + (phradr & 0x07) + (shup << 1) + base;
 	uint32_t addr = za + phradr + (shup << 1) + base;
-	/*uint32*/ address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
+	address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
 	*pixa &= 0x07;
 }
-
-/*
-// source and destination address update conditions
-
-Sraat0		:= AN2 (sraat[0], sreadxi, srcenz\);
-Sraat1		:= AN2 (sraat[1], sreadi, srcenz\);
-Srca_addi	:= OR4 (srca_addi, szreadxi, szreadi, sraat[0..1]);
-Srca_add	:= FD1Q (srca_add, srca_addi, clk);
-
-Dstaat		:= AN2 (dstaat, dwritei, dstwrz\);
-Dsta_addi	:= OR2 (dsta_addi, dzwritei, dstaat);
-// Dsta_add	:= FD1Q (dsta_add, dsta_addi, clk);
-
-// source and destination address generate conditions
-
-Gensrc		:= OR4 (gensrc, sreadxi, szreadxi, sreadi, szreadi);
-Gendst		:= OR4 (gendst, dreadi, dzreadi, dwritei, dzwritei);
-Dsta2\		:= INV1 (dsta2\, dsta2);
-Gena2t0		:= NAN2 (gena2t[0], gensrc, dsta2\);
-Gena2t1		:= NAN2 (gena2t[1], gendst, dsta2);
-Gena2i		:= NAN2 (gena2i, gena2t[0..1]);
-Gena2		:= FD1QU (gena2, gena2i, clk);
-
-Zaddr		:= OR4 (zaddr, szreadx, szread, dzread, dzwrite);
-*/
-
-/*void foo(void)
-{
-	// Basically, the above translates to:
-	bool srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
-
-	bool dsta_addi = (dwritei && !dstwrz) || dzwritei;
-
-	bool gensrc = sreadxi || szreadxi || sreadi || szreadi;
-	bool gendst = dreadi || szreadi || dwritei || dzwritei;
-	bool gena2i = (gensrc && !dsta2) || (gendst && dsta2);
-
-	bool zaddr = szreadx || szread || dzread || dzwrite;
-}*/
-
-/*
-// source data reads
-
-Srcdpset\	:= NAN2 (srcdpset\, readreq, sread);
-Srcdpt1 	:= NAN2 (srcdpt[1], srcdpend, srcdack\);
-Srcdpt2		:= NAN2 (srcdpt[2], srcdpset\, srcdpt[1]);
-Srcdpend	:= FD2Q (srcdpend, srcdpt[2], clk, reset\);
-
-Srcdxpset\	:= NAN2 (srcdxpset\, readreq, sreadx);
-Srcdxpt1 	:= NAN2 (srcdxpt[1], srcdxpend, srcdxack\);
-Srcdxpt2	:= NAN2 (srcdxpt[2], srcdxpset\, srcdxpt[1]);
-Srcdxpend	:= FD2Q (srcdxpend, srcdxpt[2], clk, reset\);
-
-Sdpend		:= OR2 (sdpend, srcdxpend, srcdpend);
-Srcdreadt	:= AN2 (srcdreadt, sdpend, read_ack);
-
-//2/9/92 - enhancement?
-//Load srcdread on the next tick as well to modify it in srcshade
-
-Srcdreadd	:= FD1Q (srcdreadd, srcdreadt, clk);
-Srcdread	:= AOR1 (srcdread, srcshade, srcdreadd, srcdreadt);
-
-// source zed reads
-
-Srczpset\	:= NAN2 (srczpset\, readreq, szread);
-Srczpt1 	:= NAN2 (srczpt[1], srczpend, srczack\);
-Srczpt2		:= NAN2 (srczpt[2], srczpset\, srczpt[1]);
-Srczpend	:= FD2Q (srczpend, srczpt[2], clk, reset\);
-
-Srczxpset\	:= NAN2 (srczxpset\, readreq, szreadx);
-Srczxpt1 	:= NAN2 (srczxpt[1], srczxpend, srczxack\);
-Srczxpt2	:= NAN2 (srczxpt[2], srczxpset\, srczxpt[1]);
-Srczxpend	:= FD2Q (srczxpend, srczxpt[2], clk, reset\);
-
-Szpend		:= OR2 (szpend, srczpend, srczxpend);
-Srczread	:= AN2 (srczread, szpend, read_ack);
-
-// destination data reads
-
-Dstdpset\	:= NAN2 (dstdpset\, readreq, dread);
-Dstdpt0 	:= NAN2 (dstdpt[0], dstdpend, dstdack\);
-Dstdpt1		:= NAN2 (dstdpt[1], dstdpset\, dstdpt[0]);
-Dstdpend	:= FD2Q (dstdpend, dstdpt[1], clk, reset\);
-Dstdread	:= AN2 (dstdread, dstdpend, read_ack);
-
-// destination zed reads
-
-Dstzpset\	:= NAN2 (dstzpset\, readreq, dzread);
-Dstzpt0 	:= NAN2 (dstzpt[0], dstzpend, dstzack\);
-Dstzpt1		:= NAN2 (dstzpt[1], dstzpset\, dstzpt[0]);
-Dstzpend	:= FD2Q (dstzpend, dstzpt[1], clk, reset\);
-Dstzread	:= AN2 (dstzread, dstzpend, read_ack);
-*/
-
-/*void foo2(void)
-{
-	// Basically, the above translates to:
-	bool srcdpend = (readreq && sread) || (srcdpend && !srcdack);
-	bool srcdxpend = (readreq && sreadx) || (srcdxpend && !srcdxack);
-	bool sdpend = srcxpend || srcdpend;
-	bool srcdread = ((sdpend && read_ack) && srcshade) || (sdpend && read_ack);//the latter term is lookahead
-
-}*/
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -3792,30 +3602,6 @@ Dstzread	:= AN2 (dstzread, dstzpend, read_ack);
 ////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-/*
-DEF ADDARRAY (
-INT16/  addq[0..3]
-        :OUT;
-        clk
-        daddasel[0..2]  // data adder input A selection
-        daddbsel[0..3]
-        daddmode[0..2]
-INT32/  dstd[0..1]
-INT32/  iinc
-        initcin[0..3]   // carry into the adders from the initializers
-        initinc[0..63]  // the initialisation increment
-        initpix[0..15]  // Data initialiser pixel value
-INT32/  istep
-INT32/  patd[0..1]
-INT32/  srcdlo
-INT32/  srcdhi
-INT32/  srcz1[0..1]
-INT32/  srcz2[0..1]
-        reset\
-INT32/  zinc
-INT32/  zstep
-        :IN);
-*/
 void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
 	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
 	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
@@ -3893,19 +3679,6 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 }
 
 
-/*
-DEF ADD16SAT (
-INT16/  r               // result
-        co              // carry out
-        :IO;
-INT16/  a
-INT16/  b
-        cin
-        sat
-        eightbit
-        hicinh
-        :IN);
-*/
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
 	uint8_t carry[4];
@@ -3931,77 +3704,12 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, boo
 	*r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
 }
 
-
-/**  ADDAMUX - Address adder input A selection  *******************
-
-This module generates the data loaded into the address adder input A.  This is
-the update value, and can be one of four registers :  A1 step, A2 step, A1
-increment and A1 fraction.  It can complement these values to perform
-subtraction, and it can generate constants to increment / decrement the window
-pointers.
-
-addasel[0..2] select the register to add
-
-000	A1 step integer part
-001	A1 step fraction part
-010	A1 increment integer part
-011	A1 increment fraction part
-100	A2 step
-
-adda_xconst[0..2] generate a power of 2 in the range 1-64 or all zeroes when
-they are all 1.
-
-addareg selects register value to be added as opposed to constant
-value.
-
-suba_x, suba_y complement the X and Y values
-
-*/
-
-/*
-DEF ADDAMUX (
-INT16/	adda_x
-INT16/	adda_y
-	:OUT;
-	addasel[0..2]
-INT16/	a1_step_x
-INT16/	a1_step_y
-INT16/	a1_stepf_x
-INT16/	a1_stepf_y
-INT16/	a2_step_x
-INT16/	a2_step_y
-INT16/	a1_inc_x
-INT16/	a1_inc_y
-INT16/	a1_incf_x
-INT16/	a1_incf_y
-	adda_xconst[0..2]
-	adda_yconst
-	addareg
-	suba_x
-	suba_y :IN);
-*/
 void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
 	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
 	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
 {
 
-/*INT16/	addac_x, addac_y, addar_x, addar_y, addart_x, addart_y,
-INT16/	addas_x, addas_y, suba_x16, suba_y16
-:LOCAL;
-BEGIN
-
-Zero		:= TIE0 (zero);*/
-
-/* Multiplex the register terms */
-
-/*Addaselb[0-2]	:= BUF8 (addaselb[0-2], addasel[0-2]);
-Addart_x	:= MX4 (addart_x, a1_step_x, a1_stepf_x, a1_inc_x, a1_incf_x, addaselb[0..1]);
-Addar_x		:= MX2 (addar_x, addart_x, a2_step_x, addaselb[2]);
-Addart_y	:= MX4 (addart_y, a1_step_y, a1_stepf_y, a1_inc_y, a1_incf_y, addaselb[0..1]);
-Addar_y		:= MX2 (addar_y, addart_y, a2_step_y, addaselb[2]);*/
-
-////////////////////////////////////// C++ CODE //////////////////////////////////////
 	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
 	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
@@ -4150,26 +3858,6 @@ modx[0..2] take values
 
 ******************************************************************/
 
-/*IMPORT duplo, tosh;
-
-DEF ADDRADD (
-INT16/	addq_x
-INT16/	addq_y
-		:OUT;
-		a1fracldi		// propagate address adder carry
-INT16/	adda_x
-INT16/	adda_y
-INT16/	addb_x
-INT16/	addb_y
-		clk[0]			// co-processor clock
-		modx[0..2]
-		suba_x
-		suba_y
-		:IN);
-
-BEGIN
-
-Zero		:= TIE0 (zero);*/
 void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
 	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
 {

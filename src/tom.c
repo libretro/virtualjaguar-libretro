@@ -323,23 +323,15 @@
 
 // (-10 +10)*4 is for opening up the display by 16 pixels (may go to 20). Need to change VIRTUAL_SCREEN_WIDTH to match this as well (went from 320 to 340; this is 4 HCs per one of those pixels).
 //NB: Went back to 330. May shrink more. :-)
-//#define LEFT_VISIBLE_HC			(208 - 16 - (8 * 4))
-//#define LEFT_VISIBLE_HC			(208 - 16 - (3 * 4))
 #define LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
-//#define RIGHT_VISIBLE_HC		(1488 - 16 + (10 * 4))
 #define RIGHT_VISIBLE_HC		(LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
-//#define TOP_VISIBLE_VC		25
-//#define BOTTOM_VISIBLE_VC		503
 #define TOP_VISIBLE_VC			31
 #define BOTTOM_VISIBLE_VC		511
 
 //Are these PAL horizontals correct?
 //They seem to be for the most part, but there are some games that seem to be
 //shifted over to the right from this "window".
-//#define LEFT_VISIBLE_HC_PAL		(208 - 16 - (4 * 4))
-//#define LEFT_VISIBLE_HC_PAL		(208 - 16 - (-1 * 4))
 #define LEFT_VISIBLE_HC_PAL		(208 - 16 - (-3 * 4))
-//#define RIGHT_VISIBLE_HC_PAL	(1488 - 16 + (10 * 4))
 #define RIGHT_VISIBLE_HC_PAL	(LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
 #define TOP_VISIBLE_VC_PAL		67
 #define BOTTOM_VISIBLE_VC_PAL	579
@@ -375,7 +367,6 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer);
 void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer);
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer);
 
-//render_xxx_scanline_fn * scanline_render_normal[] =
 render_xxx_scanline_fn * scanline_render[] =
 {
    tom_render_16bpp_cry_scanline,
@@ -949,12 +940,6 @@ TOM: Vertical Interrupt written by M68K: 491
       startingHalfline = 0;
 
    if ((halfline >= startingHalfline) && (halfline < endingHalfline))
-      //	if (halfline >= 0 && halfline < (uint16_t)GET16(tomRam8, VDE))
-      // 16 isn't enough, and neither is 32 for raptgun. 32 fucks up Rayman
-      //	if (halfline >= ((uint16_t)GET16(tomRam8, VDB) / 2) && halfline < ((uint16_t)GET16(tomRam8, VDE) / 2))
-      //	if (halfline >= ((uint16_t)GET16(tomRam8, VDB) - 16) && halfline < (uint16_t)GET16(tomRam8, VDE))
-      //	if (halfline >= 20 && halfline < (uint16_t)GET16(tomRam8, VDE))
-      //	if (halfline >= (uint16_t)GET16(tomRam8, VDB) && halfline < (uint16_t)GET16(tomRam8, VDE))
    {
       if (render)
       {
@@ -1342,8 +1327,6 @@ uint16_t TOMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       return GPUReadWord(offset, who);
    else if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE + 0x1000))
       return GPUReadWord(offset, who);
-   /*	else if ((offset >= 0xF00010) && (offset < 0xF00028))
-      return OPReadWord(offset, who);*/
    else if ((offset >= 0xF02200) && (offset < 0xF022A0))
       return BlitterReadWord(offset, who);
    else if (offset == 0xF00050)

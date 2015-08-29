@@ -35,23 +35,15 @@
 bool frameDone;
 uint32_t starCount;
 
-//#define CPU_DEBUG
-//#define LOG_UNMAPPED_MEMORY_ACCESSES
 //#define ABORT_ON_UNMAPPED_MEMORY_ACCESS
 //#define ABORT_ON_ILLEGAL_INSTRUCTIONS
 //#define ABORT_ON_OFFICIAL_ILLEGAL_INSTRUCTION
-//#define CPU_DEBUG_MEMORY
-//#define LOG_CD_BIOS_CALLS
-//#define CPU_DEBUG_TRACING
 #define ALPINE_FUNCTIONS
 
 // Private function prototypes
 
 unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who)
 {
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-   WriteLog("Jaguar: Unknown byte read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
 #ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
    finished = true;
    if (who == DSP)
@@ -62,9 +54,6 @@ unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who)
 
 unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
 {
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-   WriteLog("Jaguar: Unknown word read at %08X by %s (M68K PC=%06X)\n", address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
 #ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
    finished = true;
    if (who == DSP)
@@ -93,9 +82,6 @@ unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
 
 void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who)
 {
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-   WriteLog("Jaguar: Unknown byte %02X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
 #ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
    finished = true;
    if (who == DSP)
@@ -105,9 +91,6 @@ void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who)
 
 void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who)
 {
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-   WriteLog("Jaguar: Unknown word %04X written at %08X by %s (M68K PC=%06X)\n", data, address, whoName[who], m68k_get_reg(NULL, M68K_REG_PC));
-#endif
 #ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
    finished = true;
    if (who == DSP)
@@ -176,12 +159,6 @@ void M68K_show_context(void)
 
 // External variables
 
-#ifdef CPU_DEBUG_MEMORY
-extern bool startMemLog;							// Set by "e" key
-extern int effect_start;
-extern int effect_start2, effect_start3, effect_start4, effect_start5, effect_start6;
-#endif
-
 // Really, need to include memory.h for this, but it might interfere with some stuff...
 extern uint8_t jagMemSpace[];
 
@@ -199,11 +176,6 @@ extern "C" {
 bool jaguarCartInserted = false;
 bool lowerField = false;
 
-#ifdef CPU_DEBUG_MEMORY
-uint8_t writeMemMax[0x400000], writeMemMin[0x400000];
-uint8_t readMem[0x400000];
-uint32_t returnAddr[4000], raPtr = 0xFFFFFFFF;
-#endif
 
 uint32_t pcQueue[0x400];
 uint32_t a0Queue[0x400];
@@ -237,17 +209,6 @@ void M68KInstructionHook(void)
 {
    unsigned i;
    uint32_t m68kPC = m68k_get_reg(NULL, M68K_REG_PC);
-
-   /* For code tracing... */
-#ifdef CPU_DEBUG_TRACING
-   if (startM68KTracing)
-   {
-      static char buffer[2048];
-
-      m68k_disassemble(buffer, m68kPC, 0);
-      WriteLog("%06X: %s\n", m68kPC, buffer);
-   }
-#endif
 
    // For tracebacks...
    // Ideally, we'd save all the registers as well...
@@ -289,74 +250,6 @@ void M68KInstructionHook(void)
       LogDone();
       exit(0);
    }
-
-#ifdef LOG_CD_BIOS_CALLS
-   /*
-      CD_init::	-> $3000
-      BIOS_VER::	-> $3004
-      CD_mode::	-> $3006
-      CD_ack::	-> $300C
-      CD_jeri::	-> $3012
-      CD_spin::	-> $3018
-      CD_stop::	-> $301E
-      CD_mute::	-> $3024
-      CD_umute::	-> $302A
-      CD_paus::	-> $3030
-      CD_upaus::	-> $3036
-      CD_read::	-> $303C
-      CD_uread::	-> $3042
-      CD_setup::	-> $3048
-      CD_ptr::	-> $304E
-      CD_osamp::	-> $3054
-      CD_getoc::	-> $305A
-      CD_initm::	-> $3060
-      CD_initf::	-> $3066
-      CD_switch::	-> $306C
-      */
-   if (m68kPC == 0x3000)
-      WriteLog("M68K: CD_init\n");
-   else if (m68kPC == 0x3006 + (6 * 0))
-      WriteLog("M68K: CD_mode\n");
-   else if (m68kPC == 0x3006 + (6 * 1))
-      WriteLog("M68K: CD_ack\n");
-   else if (m68kPC == 0x3006 + (6 * 2))
-      WriteLog("M68K: CD_jeri\n");
-   else if (m68kPC == 0x3006 + (6 * 3))
-      WriteLog("M68K: CD_spin\n");
-   else if (m68kPC == 0x3006 + (6 * 4))
-      WriteLog("M68K: CD_stop\n");
-   else if (m68kPC == 0x3006 + (6 * 5))
-      WriteLog("M68K: CD_mute\n");
-   else if (m68kPC == 0x3006 + (6 * 6))
-      WriteLog("M68K: CD_umute\n");
-   else if (m68kPC == 0x3006 + (6 * 7))
-      WriteLog("M68K: CD_paus\n");
-   else if (m68kPC == 0x3006 + (6 * 8))
-      WriteLog("M68K: CD_upaus\n");
-   else if (m68kPC == 0x3006 + (6 * 9))
-      WriteLog("M68K: CD_read\n");
-   else if (m68kPC == 0x3006 + (6 * 10))
-      WriteLog("M68K: CD_uread\n");
-   else if (m68kPC == 0x3006 + (6 * 11))
-      WriteLog("M68K: CD_setup\n");
-   else if (m68kPC == 0x3006 + (6 * 12))
-      WriteLog("M68K: CD_ptr\n");
-   else if (m68kPC == 0x3006 + (6 * 13))
-      WriteLog("M68K: CD_osamp\n");
-   else if (m68kPC == 0x3006 + (6 * 14))
-      WriteLog("M68K: CD_getoc\n");
-   else if (m68kPC == 0x3006 + (6 * 15))
-      WriteLog("M68K: CD_initm\n");
-   else if (m68kPC == 0x3006 + (6 * 16))
-      WriteLog("M68K: CD_initf\n");
-   else if (m68kPC == 0x3006 + (6 * 17))
-      WriteLog("M68K: CD_switch\n");
-
-   if (m68kPC >= 0x3000 && m68kPC <= 0x306C)
-      WriteLog("\t\tA0=%08X, A1=%08X, D0=%08X, D1=%08X, D2=%08X\n",
-            m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
-            m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1), m68k_get_reg(NULL, M68K_REG_D2));
-#endif
 
 #ifdef ABORT_ON_ILLEGAL_INSTRUCTIONS
    if (!m68k_is_valid_instruction(m68k_read_memory_16(m68kPC), 0))//M68K_CPU_TYPE_68000))
@@ -701,13 +594,6 @@ void ShowM68KContext(void)
 
 int irq_ack_handler(int level)
 {
-#ifdef CPU_DEBUG_TRACING
-   if (startM68KTracing)
-   {
-      WriteLog("irq_ack_handler: M68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
-   }
-#endif
-
    // Tracing the IPL lines on the Jaguar schematic yields the following:
    // IPL1 is connected to INTL on TOM (OUT to 68K)
    // IPL0-2 are also tied to Vcc via 4.7K resistors!
@@ -740,14 +626,6 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
-#ifdef CPU_DEBUG_MEMORY
-   // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address >= 0x000000) && (address <= 0x1FFFFF))
-   {
-      if (startMemLog)
-         readMem[address] = 1;
-   }
-#endif
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
@@ -838,19 +716,6 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
-#ifdef CPU_DEBUG_MEMORY
-   // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address >= 0x000000) && (address <= 0x1FFFFF))
-   {
-      if (startMemLog)
-      {
-         if (value > writeMemMax[address])
-            writeMemMax[address] = value;
-         if (value < writeMemMin[address])
-            writeMemMin[address] = value;
-      }
-   }
-#endif
 
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -880,26 +745,6 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
-#ifdef CPU_DEBUG_MEMORY
-   // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address >= 0x000000) && (address <= 0x1FFFFE))
-   {
-      if (startMemLog)
-      {
-         uint8_t hi = value >> 8, lo = value & 0xFF;
-
-         if (hi > writeMemMax[address])
-            writeMemMax[address] = hi;
-         if (hi < writeMemMin[address])
-            writeMemMin[address] = hi;
-
-         if (lo > writeMemMax[address+1])
-            writeMemMax[address+1] = lo;
-         if (lo < writeMemMin[address+1])
-            writeMemMin[address+1] = lo;
-      }
-   }
-#endif
 
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -916,11 +761,6 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    else
    {
       jaguar_unknown_writeword(address, value, M68K);
-#ifdef LOG_UNMAPPED_MEMORY_ACCESSES
-      WriteLog("\tA0=%08X, A1=%08X, D0=%08X, D1=%08X\n",
-            m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
-            m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1));
-#endif
    }
 #else
    MMUWrite16(address, value, M68K);
@@ -968,18 +808,6 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 
 void JaguarDasm(uint32_t offset, uint32_t qt)
 {
-#ifdef CPU_DEBUG
-   unsigned i;
-   static char buffer[2048];//, mem[64];
-   int pc = offset, oldpc;
-
-   for(i=0; i<qt; i++)
-   {
-      oldpc = pc;
-      pc += m68k_disassemble(buffer, pc, 0);//M68K_CPU_TYPE_68000);
-      WriteLog("%08X: %s\n", oldpc, buffer);//*/
-   }
-#endif
 }
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
@@ -1134,11 +962,6 @@ void JaguarInit(void)
    for(i=0; i<0x200000; i+=4)
       *((uint32_t *)(&jaguarMainRAM[i])) = rand();
 
-#ifdef CPU_DEBUG_MEMORY
-   memset(readMem, 0x00, 0x400000);
-   memset(writeMemMin, 0xFF, 0x400000);
-   memset(writeMemMax, 0x00, 0x400000);
-#endif
    lowerField = false;							// Reset the lower field flag
    memset(jaguarMainRAM + 0x804, 0xFF, 4);
 
