@@ -231,10 +231,8 @@ void JERRYResetPIT2(void)
 
 // This is the cause of the regressions in Cybermorph and Missile Command 3D...
 // Solution: Probably have to check the DSP enable bit before sending these thru.
-//#define JERRY_NO_IRQS
 void JERRYPIT1Callback(void)
 {
-#ifndef JERRY_NO_IRQS
    if (TOMIRQEnabled(IRQ_DSP))
    {
       if (jerryInterruptMask & IRQ2_TIMER1)		// CPU Timer 1 IRQ
@@ -245,7 +243,6 @@ void JERRYPIT1Callback(void)
          m68k_set_irq(2);						// Generate 68K IPL 2
       }
    }
-#endif
 
    DSPSetIRQLine(DSPIRQ_TIMER0, ASSERT_LINE);	// This does the 'IRQ enabled' checking...
    JERRYResetPIT1();
@@ -254,7 +251,6 @@ void JERRYPIT1Callback(void)
 
 void JERRYPIT2Callback(void)
 {
-#ifndef JERRY_NO_IRQS
    if (TOMIRQEnabled(IRQ_DSP))
    {
       if (jerryInterruptMask & IRQ2_TIMER2)		// CPU Timer 2 IRQ
@@ -263,7 +259,6 @@ void JERRYPIT2Callback(void)
          m68k_set_irq(2);						// Generate 68K IPL 2
       }
    }
-#endif
 
    DSPSetIRQLine(DSPIRQ_TIMER1, ASSERT_LINE);	// This does the 'IRQ enabled' checking...
    JERRYResetPIT2();
