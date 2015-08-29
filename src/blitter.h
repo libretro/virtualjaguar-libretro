@@ -25,9 +25,6 @@ void BlitterWriteLong(uint32_t, uint32_t, uint32_t who);
 uint32_t blitter_reg_read(uint32_t offset);
 void blitter_reg_write(uint32_t offset, uint32_t data);
 
-//For testing only...
-void LogBlit(void);
-
 #ifdef __cplusplus
 }
 #endif
