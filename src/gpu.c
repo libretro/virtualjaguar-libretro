@@ -685,23 +685,11 @@ void GPUSetIRQLine(int irqline, int state)
    }
 }
 
-//TEMPORARY: Testing only!
-//#include "gpu2.h"
-//#include "gpu3.h"
-
 void GPUInit(void)
 {
-   //	memory_malloc_secure((void **)&gpu_ram_8, 0x1000, "GPU work RAM");
-   //	memory_malloc_secure((void **)&gpu_reg_bank_0, 32 * sizeof(int32_t), "GPU bank 0 regs");
-   //	memory_malloc_secure((void **)&gpu_reg_bank_1, 32 * sizeof(int32_t), "GPU bank 1 regs");
-
    build_branch_condition_table();
 
    GPUReset();
-
-   //TEMPORARY: Testing only!
-   //	gpu2_init();
-   //	gpu3_init();
 }
 
 void GPUReset(void)
@@ -862,12 +850,6 @@ void GPUExec(int32_t cycles)
       //GPU #1
       gpu_pc += 2;
       gpu_opcode[index]();
-      //GPU #2
-      //		gpu2_opcode[index]();
-      //		gpu_pc += 2;
-      //GPU #3				(Doesn't show ATARI logo! #1 & #2 do...)
-      //		gpu_pc += 2;
-      //		gpu3_opcode[index]();
 
       // BIOS hacking
       //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
@@ -936,12 +918,6 @@ static void gpu_opcode_jump(void)
       uint32_t delayed_pc = RM;
       GPUExec(1);
       gpu_pc = delayed_pc;
-      /*		uint16_t opcode = GPUReadWord(gpu_pc, GPU);
-            gpu_opcode_first_parameter = (opcode >> 5) & 0x1F;
-            gpu_opcode_second_parameter = opcode & 0x1F;
-
-            gpu_pc = delayed_pc;
-            gpu_opcode[opcode>>10]();//*/
    }
 }
 
@@ -1200,7 +1176,6 @@ static void gpu_opcode_pack(void)
 {
    uint32_t val = RN;
 
-   //BUG!	if (RM == 0)				// Pack
    if (IMM_1 == 0)				// Pack
       RN = ((val >> 10) & 0x0000F000) | ((val >> 5) & 0x00000F00) | (val & 0x000000FF);
    else						// Unpack
@@ -1313,15 +1288,7 @@ static void gpu_opcode_load(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t mask[4] = { 0x00000000, 0xFF000000, 0xFFFF0000, 0xFFFFFF00 };
-   //	if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
    RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
-   //		RN = GPUReadLong(RM & 0x00FFFFFC, GPU);
-   //	else
-   //		RN = GPUReadLong(RM, GPU);
-   // Simulate garbage in unaligned reads...
-   //seems that this behavior is different in GPU mem vs. main mem...
-   //	if ((RM < 0xF03000) || (RM > 0xF0BFFF))
-   //		RN |= mask[RM & 0x03];
 #else
    RN = GPUReadLong(RM, GPU);
 #endif
@@ -1594,8 +1561,6 @@ static void gpu_opcode_neg(void)
 
 static void gpu_opcode_shlq(void)
 {
-   // Was a bug here...
-   // (Look at Aaron's code: If r1 = 32, then 32 - 32 = 0 which is wrong!)
    int32_t r1 = 32 - IMM_1;
    uint32_t res = RN << r1;
    SET_ZN(res); gpu_flag_c = (RN >> 31) & 1;

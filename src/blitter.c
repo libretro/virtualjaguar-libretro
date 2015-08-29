@@ -27,7 +27,6 @@
 #include <string.h>
 #include "jaguar.h"
 #include "log.h"
-//#include "vjag_memory.h"
 #include "settings.h"
 
 // Various conditional compilation goodies...
