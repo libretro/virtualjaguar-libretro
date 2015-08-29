@@ -79,12 +79,6 @@ static bool bufferDone = false;
 
 void DACInit(void)
 {
-   if (!vjs.DSPEnabled)
-   {
-      WriteLog("DAC: DSP/host audio playback disabled.\n");
-      return;
-   }
-
    DACReset();
 
    *ltxd = SILENCE;
@@ -184,13 +178,10 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
    {
       double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
 
-      if (vjs.DSPEnabled)
-      {
-         if (vjs.usePipelinedDSP)
-            DSPExecP2(USEC_TO_RISC_CYCLES(timeToNextEvent));
-         else
-            DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-      }
+      if (vjs.usePipelinedDSP)
+         DSPExecP2(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      else
+         DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
 
       HandleNextEvent(EVENT_JERRY);
    }

@@ -237,9 +237,6 @@ bool retro_load_game(const struct retro_game_info *info)
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
 
    // Emulate BIOS
-   vjs.GPUEnabled       = true;
-   vjs.audioEnabled     = true;
-   vjs.DSPEnabled       = true;
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
 

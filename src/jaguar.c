@@ -1104,12 +1104,8 @@ void JaguarExecuteNew(void)
    do
    {
       double timeToNextEvent = GetTimeToNextEvent(EVENT_MAIN);
-
       m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
-
-      if (vjs.GPUEnabled)
-         GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-
+      GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
       HandleNextEvent(EVENT_MAIN);
    } while(!frameDone);
 }
