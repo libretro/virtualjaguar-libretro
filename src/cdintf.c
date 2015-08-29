@@ -27,30 +27,7 @@
 
 #include "log.h"
 
-
-/*
-static void TestCDIO(void)
-{
-	// See what (if anything) is installed.
-	CdIo_t * p_cdio = cdio_open(0, DRIVER_DEVICE);
-	driver_id_t driver_id;
-
-	if (p_cdio != NULL)
-	{
-		WriteLog("CDIO: The driver selected is %s.\n", cdio_get_driver_name(p_cdio));
-		WriteLog("CDIO: The default device for this driver is %s.\n\n", cdio_get_default_device(p_cdio));
-		cdio_destroy(p_cdio);
-	}
-	else
-	{
-		WriteLog("CDIO: A suitable CD-ROM driver was not found.\n\n");
-	}
-}
-*/
-
-//
 // *** OK, here's where we're going to attempt to put the platform agnostic CD interface ***
-//
 
 bool CDIntfInit(void)
 {
@@ -74,7 +51,6 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer)
 uint32_t CDIntfGetNumSessions(void)
 {
 #warning "!!! FIX !!! CDIntfGetNumSessions not implemented!"
-	// !!! FIX !!!
 	// Still need relevant code here... !!! FIX !!!
 	return 2;
 }
@@ -89,7 +65,6 @@ void CDIntfSelectDrive(uint32_t driveNum)
 uint32_t CDIntfGetCurrentDrive(void)
 {
 #warning "!!! FIX !!! CDIntfGetCurrentDrive not implemented!"
-	// !!! FIX !!!
 	WriteLog("CDINTF: GetCurrentDrive unimplemented!\n");
 	return 0;
 }
@@ -105,7 +80,6 @@ const uint8_t * CDIntfGetDriveName(uint32_t driveNum)
 uint8_t CDIntfGetSessionInfo(uint32_t session, uint32_t offset)
 {
 #warning "!!! FIX !!! CDIntfGetSessionInfo not implemented!"
-	// !!! FIX !!!
 	WriteLog("CDINTF: GetSessionInfo unimplemented!\n");
 	return 0xFF;
 }
@@ -113,7 +87,6 @@ uint8_t CDIntfGetSessionInfo(uint32_t session, uint32_t offset)
 uint8_t CDIntfGetTrackInfo(uint32_t track, uint32_t offset)
 {
 #warning "!!! FIX !!! CDIntfTrackInfo not implemented!"
-	// !!! FIX !!!
 	WriteLog("CDINTF: GetTrackInfo unimplemented!\n");
 	return 0xFF;
 }
