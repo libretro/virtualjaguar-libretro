@@ -35,30 +35,17 @@
 bool frameDone;
 uint32_t starCount;
 
-//#define ABORT_ON_UNMAPPED_MEMORY_ACCESS
-//#define ABORT_ON_ILLEGAL_INSTRUCTIONS
-//#define ABORT_ON_OFFICIAL_ILLEGAL_INSTRUCTION
 #define ALPINE_FUNCTIONS
 
 // Private function prototypes
 
 unsigned jaguar_unknown_readbyte(unsigned address, uint32_t who)
 {
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-   finished = true;
-   if (who == DSP)
-      doDSPDis = true;
-#endif
    return 0xFF;
 }
 
 unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
 {
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-   finished = true;
-   if (who == DSP)
-      doDSPDis = true;
-#endif
    return 0xFFFF;
 }
 
@@ -82,20 +69,10 @@ unsigned jaguar_unknown_readword(unsigned address, uint32_t who)
 
 void jaguar_unknown_writebyte(unsigned address, unsigned data, uint32_t who)
 {
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-   finished = true;
-   if (who == DSP)
-      doDSPDis = true;
-#endif
 }
 
 void jaguar_unknown_writeword(unsigned address, unsigned data, uint32_t who)
 {
-#ifdef ABORT_ON_UNMAPPED_MEMORY_ACCESS
-   finished = true;
-   if (who == DSP)
-      doDSPDis = true;
-#endif
 }
 
 uint32_t JaguarGetHandler(uint32_t i)
@@ -166,13 +143,8 @@ extern uint8_t jagMemSpace[];
 
 uint32_t jaguar_active_memory_dumps = 0;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-   uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
-#ifdef __cplusplus
-}
-#endif
+uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
+
 bool jaguarCartInserted = false;
 bool lowerField = false;
 
@@ -250,31 +222,6 @@ void M68KInstructionHook(void)
       LogDone();
       exit(0);
    }
-
-#ifdef ABORT_ON_ILLEGAL_INSTRUCTIONS
-   if (!m68k_is_valid_instruction(m68k_read_memory_16(m68kPC), 0))//M68K_CPU_TYPE_68000))
-   {
-#ifndef ABORT_ON_OFFICIAL_ILLEGAL_INSTRUCTION
-      if (m68k_read_memory_16(m68kPC) == 0x4AFC)
-      {
-         // This is a kludge to let homebrew programs work properly (i.e., let the other processors
-         // keep going even when the 68K dumped back to the debugger or what have you).
-         //dis no wok right!
-         //			m68k_set_reg(M68K_REG_PC, m68kPC - 2);
-         // Try setting the vector to the illegal instruction...
-         //This doesn't work right either! Do something else! Quick!
-         //			SET32(jaguar_mainRam, 0x10, m68kPC);
-
-         return;
-      }
-#endif
-
-      M68K_show_context();
-
-      LogDone();
-      exit(0);
-   }
-#endif
 }
 
 void ShowM68KContext(void)
