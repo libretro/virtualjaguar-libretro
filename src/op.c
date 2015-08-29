@@ -64,15 +64,9 @@ static uint8_t op_blend_y[0x10000];
 static uint8_t op_blend_cr[0x10000];
 // There may be a problem with this "RAM" overlapping (and thus being independent of)
 // some of the regular TOM RAM...
-//#warning objectp_ram is separated from TOM RAM--need to fix that!
-//static uint8_t objectp_ram[0x40];			// This is based at $F00000
 uint8_t objectp_running = 0;
-//bool objectp_stop_reading_list;
 
 static uint8_t op_bitmap_bit_depth[8] = { 1, 2, 4, 8, 16, 24, 32, 0 };
-//static uint32_t op_bitmap_bit_size[8] =
-//	{ (uint32_t)(0.125*65536), (uint32_t)(0.25*65536), (uint32_t)(0.5*65536), (uint32_t)(1*65536),
-//	  (uint32_t)(2*65536),     (uint32_t)(1*65536),    (uint32_t)(1*65536),   (uint32_t)(1*65536) };
 static uint32_t op_pointer;
 
 int32_t phraseWidthToPixels[8] = { 64, 32, 16, 8, 4, 2, 0, 0 };
@@ -132,7 +126,6 @@ void OPInit(void)
 //
 void OPReset(void)
 {
-   //	memset(objectp_ram, 0x00, 0x40);
    objectp_running = 0;
 }
 
@@ -143,25 +136,12 @@ static const char * ccType[8] =
 { "==", "<", ">", "(opflag set)", "(second half line)", "?", "?", "?" };
 static uint32_t object[8192];
 static uint32_t numberOfObjects;
-//static uint32_t objectLink[8192];
-//static uint32_t numberOfLinks;
-
 
 void OPDone(void)
 {
-   //#warning "!!! Fix OL dump so that it follows links !!!"
-   //	const char * opType[8] =
-   //	{ "(BITMAP)", "(SCALED BITMAP)", "(GPU INT)", "(BRANCH)", "(STOP)", "???", "???", "???" };
-   //	const char * ccType[8] =
-   //		{ "\"==\"", "\"<\"", "\">\"", "(opflag set)", "(second half line)", "?", "?", "?" };
-
    uint32_t olp = OPGetListPointer();
    WriteLog("\nOP: OLP = $%08X\n", olp);
    WriteLog("OP: Phrase dump\n    ----------\n");
-
-   //#warning "!!! Fix lockup in OPDiscoverObjects() !!!"
-   //temp, to keep the following function from locking up on bad/weird OLs
-   //return;
 
    numberOfObjects = 0;
    OPDiscoverObjects(olp);
@@ -338,9 +318,7 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 }
 
 
-//
 // Debugging routines
-//
 void DumpScaledObject(uint64_t p0, uint64_t p1, uint64_t p2)
 {
    WriteLog("          %08X %08X\n", (uint32_t)(p1>>32), (uint32_t)(p1&0xFFFFFFFF));
@@ -364,7 +342,6 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
 {
    uint32_t bdMultiplier[8] = { 64, 32, 16, 8, 4, 2, 1, 1 };
    uint8_t bitdepth = (p1 >> 12) & 0x07;
-   //WAS:	int16_t ypos = ((p0 >> 3) & 0x3FF);			// ??? What if not interlaced (/2)?
    int16_t ypos = ((p0 >> 3) & 0x7FF);			// ??? What if not interlaced (/2)?
    int32_t xpos = p1 & 0xFFF;
    xpos = (xpos & 0x800 ? xpos | 0xFFFFF000 : xpos);	// Sign extend that mutha!
@@ -645,9 +622,7 @@ void OPProcessList(int halfline, bool render)
 }
 
 
-//
 // Store fixed size bitmap in line buffer
-//
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 {
    // Need to make sure that when writing that it stays within the line buffer...
@@ -673,7 +648,6 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    uint32_t pitch = (p1 >> 15) & 0x07;				// Phrase pitch
    pitch <<= 3;									// Optimization: Multiply pitch by 8
 
-   //	int16_t scanlineWidth = tom_getVideoModeWidth();
    uint8_t * tomRam8 = TOMGetRamPointer();
    uint8_t * paletteRAM = &tomRam8[0x400];
    // This is OK as long as it's used correctly: For 16-bit RAM to RAM direct copies--NOT
@@ -1108,7 +1082,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    // From the docs, it is... If we want to limit here we should think of something else.
    //	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
    int32_t limit = 720;
-   //	int32_t lbufWidth = (!in24BPPMode ? limit - 1 : (limit / 2) - 1);	// Zero based limit...
    int32_t lbufWidth = 719;	// Zero based limit...
 
    // If the image is completely to the left or right of the line buffer, then bail.
@@ -1221,8 +1194,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
    // NOTE: When the bitmap is in REFLECT mode, the XPOS marks the *right* side of the
    //       bitmap! This makes clipping & etc. MUCH, much easier...!
-   //	uint32_t lbufAddress = 0x1800 + (!in24BPPMode ? leftMargin * 2 : leftMargin * 4);
-   //	uint32_t lbufAddress = 0x1800 + (!in24BPPMode ? startPos * 2 : startPos * 4);
    uint32_t lbufAddress = 0x1800 + startPos * 2;
    uint8_t * currentLineBuffer = &tomRam8[lbufAddress];
 
@@ -1272,14 +1243,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             bytes for horizontalRemainder to properly recognize a negative number. But now it's 16 bits
             wide, so we could probably go back to that (as long as we make it an int16_t and not a uint16!)
             */
-         /*			horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
-                  while (horizontalRemainder & 0x80)
-                  {
-                  horizontalRemainder += hscale;
-                  pixCount++;
-                  pixels <<= 1;
-                  }//*/
-         //			while (horizontalRemainder <= 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
          while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
          {
             horizontalRemainder += hscale;
@@ -1334,14 +1297,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         /*			horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
-                  while (horizontalRemainder & 0x80)
-                  {
-                  horizontalRemainder += hscale;
-                  pixCount++;
-                  pixels <<= 2;
-                  }//*/
-         //			while (horizontalRemainder <= 0x20)		// I.e., it's <= 0 (*before* subtraction)
          while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
          {
             horizontalRemainder += hscale;
@@ -1396,14 +1351,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         /*			horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
-                  while (horizontalRemainder & 0x80)
-                  {
-                  horizontalRemainder += hscale;
-                  pixCount++;
-                  pixels <<= 4;
-                  }//*/
-         //			while (horizontalRemainder <= 0x20)		// I.e., it's <= 0 (*before* subtraction)
          while (horizontalRemainder < 0x20)		// I.e., it's <= 0 (*before* subtraction)
          {
             horizontalRemainder += hscale;
