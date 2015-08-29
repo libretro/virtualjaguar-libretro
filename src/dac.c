@@ -161,13 +161,30 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
 
    // The length of time we're dealing with here is 1/48000 s, so we multiply this
    // by the number of cycles per second to get the number of cycles for one sample.
-   //uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   //uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
+   uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+   uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
    // This is the length of time
    //	timePerSample = (1000000.0 / (double)riscClockRate) * ();
 
    // Now, run the DSP for that length of time for each sample we need to make
 
+#ifdef OLD_DSP
+   for(i=0; i<(length/2); i+=2)
+   {
+      //This stuff is from the old Jaguar execute loop. New stuff is timer based...
+      //which means we need to figure that crap out, and how to make it work here.
+      //Seems like we need two separate timing queues. Tho not sure how to make that work here...
+      //Maybe like the "frameDone" in JaguarExecuteNew() in jaguar.cpp?
+      JERRYExecPIT(cyclesPerSample);
+      JERRYI2SExec(cyclesPerSample);
+      BUTCHExec(cyclesPerSample);
+
+      DSPExec(cyclesPerSample);
+
+      ((uint16_t *)buffer)[i + 0] = ltxd;
+      ((uint16_t *)buffer)[i + 1] = rtxd;
+   }
+#else
    bufferIndex = 0;
    sampleBuffer = buffer;
    // If length is the length of the sample buffer in BYTES, then shouldn't the # of
@@ -187,6 +204,7 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
       HandleNextEvent(EVENT_JERRY);
    }
    while (!bufferDone);
+#endif
    audio_batch_cb((int16_t*)sampleBuffer, length / 2);
 }
 
