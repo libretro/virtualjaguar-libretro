@@ -309,20 +309,6 @@
 
 //NOTE: These arbitrary cutoffs are NOT taken into account for PAL jaguar screens. !!! FIX !!! [DONE]
 
-// Arbitrary video cutoff values (i.e., first/last visible spots on a TV, in HC ticks)
-// Also note that VC is in *half* lines, i.e. divide by 2 to get the scanline
-/*#define LEFT_VISIBLE_HC			208
-#define RIGHT_VISIBLE_HC		1528//*/
-// These were right for Rayman, but that one is offset on a real TV too.
-//#define LEFT_VISIBLE_HC			208
-//#define RIGHT_VISIBLE_HC		1488
-// This is more like a real TV display...
-//#define LEFT_VISIBLE_HC			(208 - 32)
-//#define RIGHT_VISIBLE_HC		(1488 - 32)
-// Split the difference? (Seems to be OK for the most part...)
-
-// (-10 +10)*4 is for opening up the display by 16 pixels (may go to 20). Need to change VIRTUAL_SCREEN_WIDTH to match this as well (went from 320 to 340; this is 4 HCs per one of those pixels).
-//NB: Went back to 330. May shrink more. :-)
 #define LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
 #define RIGHT_VISIBLE_HC		(LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
 #define TOP_VISIBLE_VC			31
@@ -557,14 +543,11 @@ TOM: Video Mode written by M68K: 08C7. PWIDTH = 5, MODE = 16 BPP RGB, flags: BGE
 #warning "This is not endian-safe. !!! FIX !!!"
 void TOMFillLookupTables(void)
 {
-   unsigned i;
    // NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
    //       RRRR RBBB BBGG GGGG
+  
+   unsigned i;
    for(i=0; i<0x10000; i++)
-      //hm.		RGB16ToRGB32[i] = 0xFF000000
-      //			| ((i & 0xF100) >> 8)  | ((i & 0xE000) >> 13)
-      //			| ((i & 0x07C0) << 13) | ((i & 0x0700) << 8)
-      //			| ((i & 0x003F) << 10) | ((i & 0x0030) << 4);
       RGB16ToRGB32[i] = 0xFF000000
          | ((i & 0xF800) << 8)					// Red
          | ((i & 0x003F) << 10)					// Green
@@ -580,7 +563,6 @@ void TOMFillLookupTables(void)
                g = (((uint32_t)greencv[cyan][red]) * intensity) >> 8,
                b = (((uint32_t)bluecv[cyan][red]) * intensity) >> 8;
 
-      //hm.		CRY16ToRGB32[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
       CRY16ToRGB32[i] = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       MIX16ToRGB32[i] = (i & 0x01 ? RGB16ToRGB32[i] : CRY16ToRGB32[i]);
    }
@@ -629,9 +611,6 @@ uint8_t TOMGetVideoMode(void)
    return ((vmode & VARMOD) >> 6) | ((vmode & MODE) >> 1);
 }
 
-
-//Used in only one place (and for debug purposes): OBJECTP.CPP
-#warning "Used in only one place (and for debug purposes): OBJECTP.CPP !!! FIX !!!"
 uint16_t TOMGetVDB(void)
 {
    return GET16(tomRam8, VDB);
@@ -649,9 +628,7 @@ uint16_t TOMGetVP(void)
 }
 
 #define LEFT_BG_FIX
-//
 // 16 BPP CRY/RGB mixed mode rendering
-//
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 {
    //CHANGED TO 32BPP RENDERING
@@ -700,10 +677,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
    }
 }
 
-
-//
 // 16 BPP CRY mode rendering
-//
 void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 {
    unsigned i;
@@ -748,10 +722,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
    }
 }
 
-
-//
 // 24 BPP mode rendering
-//
 void tom_render_24bpp_scanline(uint32_t * backbuffer)
 {
    unsigned i;
@@ -793,7 +764,6 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
       width--;
    }
 }
-
 
 //Seems to me that this is NOT a valid mode--the JTRM seems to imply that you would need
 //extra hardware outside of the Jaguar console to support this!
@@ -856,10 +826,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
    }
 }
 
-
-//
 // Process a single scanline
-//
 void TOMExecHalfline(uint16_t halfline, bool render)
 {
    unsigned i;
@@ -871,59 +838,6 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    if (halfline & 0x01)							// Execute OP only on even halflines (non-interlaced only!)
       // Execute OP only on even halflines (skip higher resolutions for now...)
       return;
-
-   //Hm, it seems that the OP needs to execute from zero, so let's try it:
-   // And it works! But need to do some optimizations in the OP to keep it from
-   // attempting to do a scanline render in the non-display area... [DONE]
-   //this seems to cause a regression in certain games, like rayman
-   //which means I have to dig thru the asic nets to see what's wrong...
-   /*
-      No, the OP doesn't start until VDB, that much is certain. The thing is, VDB is
-      the HALF line that the OP starts on--which means that it needs to start at
-      VDB / 2!!!
-
-      Hrm, doesn't seem to be enough, though it should be... still sticks for 20 frames.
-
-      What triggers this is writing $FFFF to VDE. This causes the OP start signal in VID to latch on, which in effect sets VDB to zero. So that much is correct. But
-      the thing with Rayman is that it shouldn't cause the graphical glitches seen
-      there, so still have to investigate what's going on there. By all rights, it
-      shouldn't glitch because:
-
-00006C00: 0000000D 82008F73 (BRANCH) YPOS=494, CC=">", link=$00006C10
-00006C08: 000003FF 00008173 (BRANCH) YPOS=46, CC=">", link=$001FF800
-00006C10: 00000000 0000000C (STOP)
-001FF800: 12FC2BFF 02380000 (BITMAP)
-00008004 8180CFF1
-
-Even if the OP is running all the time, the link should tell it to stop at the right
-place (which it seems to do). But we still get glitchy screen.
-
-Seems the glitchy screen went away... Maybe the GPU alignment fixes fixed it???
-Just need to add the proper checking here then.
-
-Some numbers, courtesy of the Jaguar BIOS:
-   // NTSC:
-   VP, 523			// Vertical Period (1-based; in this case VP = 524)
-   VBE, 24			// Vertical Blank End
-   VDB, 38			// Vertical Display Begin
-   VDE, 518		// Vertical Display End
-   VBB, 500		// Vertical Blank Begin
-   VS, 517			// Vertical Sync
-
-   // PAL Jaguar
-   VP, 623			// Vertical Period (1-based; in this case VP = 624)
-   VBE, 34			// Vertical Blank End
-   VDB, 38			// Vertical Display Begin
-   VDE, 518		// Vertical Display End
-   VBB, 600		// Vertical Blank Begin
-   VS, 618			// Vertical Sync
-
-   Numbers for KM, NTSC:
-KM: (Note that with VDE <= 507, the OP starts at VDB as expected)
-TOM: Vertical Display Begin written by M68K: 41
-TOM: Vertical Display End written by M68K: 2047
-TOM: Vertical Interrupt written by M68K: 491
-*/
 
    // Initial values that "well behaved" programs use
    uint16_t startingHalfline = GET16(tomRam8, VDB);
@@ -1081,53 +995,6 @@ uint32_t TOMGetVideoModeHeight(void)
    return (vjs.hardwareTypeNTSC ? 240 : 256);
 }
 
-
-// TOM reset code
-// Now PAL friendly!
-/*
-   The values in TOMReset come from the Jaguar BIOS.
-   These values are from BJL:
-
-NSTC:
-CLK2	 181
-HP		 844
-HBB		 1713
-HBE		 125
-HS		 1741
-HVS		 651
-HEQ		 784
-HDE		 1696
-HDB1	 166
-HDB2	 166
-VP		 523
-VEE		 6
-VBE		 24
-VDB		 46
-VDE		 496
-VBB		 500
-VEB		 511
-VS		 517
-
-PAL:
-CLK2	 226
-HP		 850
-HBB		 1711
-HBE		 158
-HS		 1749
-HVS		 601
-HEQ		 787
-HDE		 1696
-HDB1	 166
-HDB2	 166
-VP		 625
-VEE		 6
-VBE		 34
-VDB		 46
-VDE		 429
-VBB		 600
-VEB		 613
-VS		 618
-*/
 void TOMReset(void)
 {
    OPReset();
@@ -1183,8 +1050,7 @@ void TOMReset(void)
    tomTimerCounter = 0;
 }
 
-// TOM byte access (read)
-uint8_t TOMReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+uint8_t TOMReadByte(uint32_t offset, uint32_t who)
 {
    //???Is this needed???
    // It seems so. Perhaps it's the +$8000 offset being written to (32-bit interface)?
@@ -1214,7 +1080,7 @@ uint8_t TOMReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 
 // TOM word access (read)
-uint16_t TOMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+uint16_t TOMReadWord(uint32_t offset, uint32_t who)
 {
    if (offset == 0xF000E0)
    {
@@ -1244,7 +1110,7 @@ uint16_t TOMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 #define TOM_STRICT_MEMORY_ACCESS
 // TOM byte access (write)
-void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
+void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    //???Is this needed???
    // Perhaps on the writes--32-bit writes that is! And masked with FF7FFF...
@@ -1312,11 +1178,8 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
    tomRam8[offset & 0x3FFF] = data;
 }
 
-
-//
 // TOM word access (write)
-//
-void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
+void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    //???Is this needed??? Yes, but we need to be more vigilant than this.
 #ifndef TOM_STRICT_MEMORY_ACCESS
@@ -1369,8 +1232,6 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          tom_timer_int_pending = 0;
       if (data & 0x1000)
          tom_jerry_int_pending = 0;
-
-      //		return;
    }
    else if ((offset >= 0xF02200) && (offset <= 0xF0229F))
    {
@@ -1432,7 +1293,7 @@ int TOMIRQEnabled(int irq)
 {
    // This is the correct byte in big endian... D'oh!
    //	return jaguar_byte_read(0xF000E1) & (1 << irq);
-   return tomRam8[INT1 + 1/*0xE1*/] & (1 << irq);
+   return tomRam8[INT1 + 1] & (1 << irq);
 }
 
 
@@ -1492,11 +1353,9 @@ void TOMExecPIT(uint32_t cycles)
 
 void TOMPITCallback(void)
 {
-   //	INT1_RREG |= 0x08;							// Set TOM PIT interrupt pending
-   TOMSetPendingTimerInt();
+   TOMSetPendingTimerInt();                  // Set TOM PIT interrupt pending
    GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE);	// It does the 'IRQ enabled' checking
 
-   //	if (INT1_WREG & 0x08)
    if (TOMIRQEnabled(IRQ_TIMER))
       m68k_set_irq(2);						// Generate a 68K IPL 2...
 
