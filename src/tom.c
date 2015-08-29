@@ -382,7 +382,7 @@ uint8_t bluecv[16][16] = {
 //Are these PAL horizontals correct?
 //They seem to be for the most part, but there are some games that seem to be
 //shifted over to the right from this "window".
-#define LEFT_VISIBLE_HC_PAL		(208 - 16 - (-3 * 4))
+#define LEFT_VISIBLE_HC_PAL	(208 - 16 - (-3 * 4))
 #define RIGHT_VISIBLE_HC_PAL	(LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
 #define TOP_VISIBLE_VC_PAL		67
 #define BOTTOM_VISIBLE_VC_PAL	579
@@ -430,180 +430,9 @@ render_xxx_scanline_fn * scanline_render[] =
    tom_render_16bpp_rgb_scanline
 };
 
-// Screen info for various games [PAL]...
-/*
-   BIOS
-TOM: Horizontal Period written by M68K: 850 (+1*2 = 1702)
-TOM: Horizontal Blank Begin written by M68K: 1711
-TOM: Horizontal Blank End written by M68K: 158
-TOM: Horizontal Display End written by M68K: 1696
-TOM: Horizontal Display Begin 1 written by M68K: 166
-TOM: Vertical Period written by M68K: 623 (non-interlaced)
-TOM: Vertical Blank End written by M68K: 34
-TOM: Vertical Display Begin written by M68K: 46
-TOM: Vertical Display End written by M68K: 526
-TOM: Vertical Blank Begin written by M68K: 600
-TOM: Vertical Sync written by M68K: 618
-TOM: Horizontal Display End written by M68K: 1665
-TOM: Horizontal Display Begin 1 written by M68K: 203
-TOM: Vertical Display Begin written by M68K: 38
-TOM: Vertical Display End written by M68K: 518
-TOM: Video Mode written by M68K: 06C1. PWIDTH = 4, MODE = 16 BPP CRY, flags: BGEN (VC = 151)
-TOM: Horizontal Display End written by M68K: 1713
-TOM: Horizontal Display Begin 1 written by M68K: 157
-TOM: Vertical Display Begin written by M68K: 35
-TOM: Vertical Display End written by M68K: 2047
-Horizontal range: 157 - 1713 (width: 1557 / 4 = 389.25, / 5 = 315.4)
-
-Asteroid
-TOM: Horizontal Period written by M68K: 845 (+1*2 = 1692)
-TOM: Horizontal Blank Begin written by M68K: 1700
-TOM: Horizontal Blank End written by M68K: 122
-TOM: Horizontal Display End written by M68K: 1600
-TOM: Horizontal Display Begin 1 written by M68K: 268
-TOM: Vertical Period written by M68K: 523 (non-interlaced)
-TOM: Vertical Blank End written by M68K: 40
-TOM: Vertical Display Begin written by M68K: 44
-TOM: Vertical Display End written by M68K: 492
-TOM: Vertical Blank Begin written by M68K: 532
-TOM: Vertical Sync written by M68K: 513
-TOM: Video Mode written by M68K: 04C7. PWIDTH = 3, MODE = 16 BPP RGB, flags: BGEN (VC = 461)
-
-Rayman
-TOM: Horizontal Display End written by M68K: 1713
-TOM: Horizontal Display Begin 1 written by M68K: 157
-TOM: Vertical Display Begin written by M68K: 35
-TOM: Vertical Display End written by M68K: 2047
-TOM: Video Mode written by M68K: 06C7. PWIDTH = 4, MODE = 16 BPP RGB, flags: BGEN (VC = 89)
-TOM: Horizontal Display Begin 1 written by M68K: 208
-TOM: Horizontal Display End written by M68K: 1662
-TOM: Vertical Display Begin written by M68K: 100
-TOM: Vertical Display End written by M68K: 2047
-TOM: Video Mode written by M68K: 07C7. PWIDTH = 4, MODE = 16 BPP RGB, flags: BGEN VARMOD (VC = 205)
-Horizontal range: 208 - 1662 (width: 1455 / 4 = 363.5)
-
-Alien vs Predator
-TOM: Vertical Display Begin written by M68K: 96
-TOM: Vertical Display End written by M68K: 2047
-TOM: Horizontal Display Begin 1 written by M68K: 239
-TOM: Horizontal Display End written by M68K: 1692
-TOM: Video Mode written by M68K: 06C1. PWIDTH = 4, MODE = 16 BPP CRY, flags: BGEN (VC = 378)
-TOM: Vertical Display Begin written by M68K: 44
-TOM: Vertical Display End written by M68K: 2047
-TOM: Horizontal Display Begin 1 written by M68K: 239
-TOM: Horizontal Display End written by M68K: 1692
-TOM: Video Mode written by M68K: 06C7. PWIDTH = 4, MODE = 16 BPP RGB, flags: BGEN (VC = 559)
-TOM: Vertical Display Begin written by M68K: 84
-TOM: Vertical Display End written by M68K: 2047
-TOM: Horizontal Display Begin 1 written by M68K: 239
-TOM: Horizontal Display End written by M68K: 1692
-TOM: Vertical Display Begin written by M68K: 44
-TOM: Vertical Display End written by M68K: 2047
-TOM: Horizontal Display Begin 1 written by M68K: 239
-TOM: Horizontal Display End written by M68K: 1692
-Horizontal range: 239 - 1692 (width: 1454 / 4 = 363.5)
-
-*/
-
-// Screen info for various games [NTSC]...
-/*
-   Doom
-   TOM: Horizontal Display End written by M68K: 1727
-   TOM: Horizontal Display Begin 1 written by M68K: 123
-   TOM: Vertical Display Begin written by M68K: 25
-   TOM: Vertical Display End written by M68K: 2047
-   TOM: Video Mode written by M68K: 0EC1. PWIDTH = 8, MODE = 16 BPP CRY, flags: BGEN (VC = 5)
-   Also does PWIDTH = 4...
-   Vertical resolution: 238 lines
-
-   Rayman
-   TOM: Horizontal Display End written by M68K: 1727
-   TOM: Horizontal Display Begin 1 written by M68K: 123
-   TOM: Vertical Display Begin written by M68K: 25
-   TOM: Vertical Display End written by M68K: 2047
-   TOM: Vertical Interrupt written by M68K: 507
-   TOM: Video Mode written by M68K: 06C7. PWIDTH = 4, MODE = 16 BPP RGB, flags: BGEN (VC = 92)
-   TOM: Horizontal Display Begin 1 written by M68K: 208
-   TOM: Horizontal Display End written by M68K: 1670
-   Display starts at 31, then 52!
-   Vertical resolution: 238 lines
-
-   Atari Karts
-   TOM: Horizontal Display End written by M68K: 1727
-   TOM: Horizontal Display Begin 1 written by M68K: 123
-   TOM: Vertical Display Begin written by M68K: 25
-   TOM: Vertical Display End written by M68K: 2047
-   TOM: Video Mode written by GPU: 08C7. PWIDTH = 5, MODE = 16 BPP RGB, flags: BGEN (VC = 4)
-   TOM: Video Mode written by GPU: 06C7. PWIDTH = 4, MODE = 16 BPP RGB, flags: BGEN (VC = 508)
-   Display starts at 31 (PWIDTH = 4), 24 (PWIDTH = 5)
-
-   Iron Soldier
-   TOM: Vertical Interrupt written by M68K: 2047
-   TOM: Video Mode written by M68K: 06C1. PWIDTH = 4, MODE = 16 BPP CRY, flags: BGEN (VC = 0)
-   TOM: Horizontal Display End written by M68K: 1727
-   TOM: Horizontal Display Begin 1 written by M68K: 123
-   TOM: Vertical Display Begin written by M68K: 25
-   TOM: Vertical Display End written by M68K: 2047
-   TOM: Vertical Interrupt written by M68K: 507
-   TOM: Video Mode written by M68K: 06C1. PWIDTH = 4, MODE = 16 BPP CRY, flags: BGEN (VC = 369)
-   TOM: Video Mode written by M68K: 06C1. PWIDTH = 4, MODE = 16 BPP CRY, flags: BGEN (VC = 510)
-   TOM: Video Mode written by M68K: 06C3. PWIDTH = 4, MODE = 24 BPP RGB, flags: BGEN (VC = 510)
-   Display starts at 31
-   Vertical resolution: 238 lines
-   [Seems to be a problem between the horizontal positioning of the 16-bit CRY & 24-bit RGB]
-
-   JagMania
-   TOM: Horizontal Period written by M68K: 844 (+1*2 = 1690)
-   TOM: Horizontal Blank Begin written by M68K: 1713
-   TOM: Horizontal Blank End written by M68K: 125
-   TOM: Horizontal Display End written by M68K: 1696
-   TOM: Horizontal Display Begin 1 written by M68K: 166
-   TOM: Vertical Period written by M68K: 523 (non-interlaced)
-   TOM: Vertical Blank End written by M68K: 24
-   TOM: Vertical Display Begin written by M68K: 46
-   TOM: Vertical Display End written by M68K: 496
-   TOM: Vertical Blank Begin written by M68K: 500
-   TOM: Vertical Sync written by M68K: 517
-   TOM: Vertical Interrupt written by M68K: 497
-   TOM: Video Mode written by M68K: 04C1. PWIDTH = 3, MODE = 16 BPP CRY, flags: BGEN (VC = 270)
-   Display starts at 55
-
-   Double Dragon V
-   TOM: Horizontal Display End written by M68K: 1727
-   TOM: Horizontal Display Begin 1 written by M68K: 123
-   TOM: Vertical Display Begin written by M68K: 25
-   TOM: Vertical Display End written by M68K: 2047
-   TOM: Vertical Interrupt written by M68K: 507
-   TOM: Video Mode written by M68K: 06C7. PWIDTH = 4, MODE = 16 BPP RGB, flags: BGEN (VC = 9)
-
-   Dino Dudes
-TOM: Horizontal Display End written by M68K: 1823
-TOM: Horizontal Display Begin 1 written by M68K: 45
-TOM: Vertical Display Begin written by M68K: 40
-TOM: Vertical Display End written by M68K: 2047
-   TOM: Vertical Interrupt written by M68K: 491
-   TOM: Video Mode written by M68K: 06C1. PWIDTH = 4, MODE = 16 BPP CRY, flags: BGEN (VC = 398)
-   Display starts at 11 (123 - 45 = 78, 78 / 4 = 19 pixels to skip)
-Width is 417, so maybe width of 379 would be good (starting at 123, ending at 1639)
-   Vertical resolution: 238 lines
-
-   Flashback
-   TOM: Horizontal Display End written by M68K: 1727
-   TOM: Horizontal Display Begin 1 written by M68K: 188
-   TOM: Vertical Display Begin written by M68K: 1
-   TOM: Vertical Display End written by M68K: 2047
-   TOM: Vertical Interrupt written by M68K: 483
-TOM: Video Mode written by M68K: 08C7. PWIDTH = 5, MODE = 16 BPP RGB, flags: BGEN (VC = 99)
-   Width would be 303 with above scheme, but border width would be 13 pixels
-
-   Trevor McFur
-   Vertical resolution: 238 lines
-   */
-
-   uint32_t RGB16ToRGB32[0x10000];
-   uint32_t CRY16ToRGB32[0x10000];
-   uint32_t MIX16ToRGB32[0x10000];
-
+uint32_t RGB16ToRGB32[0x10000];
+uint32_t CRY16ToRGB32[0x10000];
+uint32_t MIX16ToRGB32[0x10000];
 
 #warning "This is not endian-safe. !!! FIX !!!"
 void TOMFillLookupTables(void)
@@ -1060,8 +889,6 @@ uint8_t TOMReadByte(uint32_t offset, uint32_t who)
       return GPUReadByte(offset, who);
    else if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
       return GPUReadByte(offset, who);
-   /*	else if ((offset >= 0xF00010) && (offset < 0xF00028))
-      return OPReadByte(offset, who);*/
    else if ((offset >= 0xF02200) && (offset < 0xF022A0))
       return BlitterReadByte(offset, who);
    else if (offset == 0xF00050)
