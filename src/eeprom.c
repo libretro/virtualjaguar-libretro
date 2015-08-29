@@ -28,14 +28,10 @@ extern uint32_t jaguarMainROMCRC32;
 }
 #endif
 
-//#define eeprom_LOG
-
 static uint16_t eeprom_ram[64];
 static uint16_t cdromEEPROM[64];
 
-//
 // Private function prototypes
-//
 
 static void EEPROMSave(void);
 static void eeprom_set_di(uint32_t state);
