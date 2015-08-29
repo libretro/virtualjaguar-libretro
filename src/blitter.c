@@ -3641,14 +3641,10 @@ with srcshift bits 4 & 5 selecting the start position
 //zcomp=0;
 // We'll do the comparison/bit/byte inhibits here, since that's they way it happens
 // in the real thing (dcomp goes out to COMP_CTRL and back into DATA through dbinh)...
-#if 1
 	uint8_t dbinht;
-//	bool nowrite;
 	COMP_CTRL(dbinht, nowrite,
 		bcompen, true/*big_pix*/, bkgwren, dcomp, dcompen, icount, pixsize, phrase_mode, srcd & 0xFF, zcomp);
 	dbinh = dbinht;
-//	dbinh = 0x00;
-#endif
 
 //////////////////////////////////////////////////////////////////////////////////////
 

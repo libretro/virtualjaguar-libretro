@@ -430,9 +430,6 @@ void BuildCPUFunctionTable(void)
    //let's try "compatible" and see what happens here...
 	const struct cputbl * tbl = op_smalltbl_5_ff;
 
-//	Log_Printf(LOG_DEBUG, "Building CPU function table (%d %d %d).\n",
-//		currprefs.cpu_level, currprefs.cpu_compatible, currprefs.address_space_24);
-
 	// Set all instructions to Illegal...
 	for(opcode=0; opcode<65536; opcode++)
 		cpuFunctionTable[opcode] = IllegalOpcode;
@@ -444,16 +441,13 @@ void BuildCPUFunctionTable(void)
 //JLH: According to readcpu.c, handler is set to -1 and never changes.
 // Actually, it does read this crap in readcpu.c, do_merges() does it... :-P
 // Again, seems like a build time thing could be done here...
-#if 1
 	for(opcode=0; opcode<65536; opcode++)
 	{
-//		if (table68k[opcode].mnemo == i_ILLG || table68k[opcode].clev > currprefs.cpu_level)
 		if (table68k[opcode].mnemo == i_ILLG || table68k[opcode].clev > 0)
 			continue;
 
 		if (table68k[opcode].handler != -1)
 		{
-//printf("Relocate: $%04X->$%04X\n", table68k[opcode].handler, opcode);
 			cpuop_func * f = cpuFunctionTable[table68k[opcode].handler];
 
 			if (f == IllegalOpcode)
@@ -462,5 +456,4 @@ void BuildCPUFunctionTable(void)
 			cpuFunctionTable[opcode] = f;
 		}
 	}
-#endif
 }

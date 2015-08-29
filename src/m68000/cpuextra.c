@@ -30,26 +30,10 @@ uint32_t get_disp_ea_000(uint32_t base, uint32_t dp)
 	int reg = (dp >> 12) & 0x0F;
 	int32_t regd = regs.regs[reg];
 
-#if 1
 	if ((dp & 0x800) == 0)
 		regd = (int32_t)(int16_t)regd;
 
 	return base + (int8_t)dp + regd;
-#else
-	/* Branch-free code... benchmark this again now that
-	 * things are no longer inline.
-	 */
-	int32_t regd16;
-	uint32_t mask;
-	mask = ((dp & 0x800) >> 11) - 1;
-	regd16 = (int32_t)(int16_t)regd;
-	regd16 &= mask;
-	mask = ~mask;
-	base += (int8_t)dp;
-	regd &= mask;
-	regd |= regd16;
-	return base + regd;
-#endif
 }
 
 

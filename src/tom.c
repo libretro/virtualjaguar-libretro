@@ -1095,7 +1095,6 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    // handle this kind of crap.
    // NOTE: This is needed somehow, need to get rid of the dependency on this crap.
 #warning "!!! Need to get rid of this dependency !!!"
-#if 1
    if ((offset >= 0x28) && (offset <= 0x4F))
    {
       uint32_t width = TOMGetVideoModeWidth(), height = TOMGetVideoModeHeight();
@@ -1105,7 +1104,6 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
          tomWidth = width, tomHeight = height;
       }
    }
-#endif
 }
 
 
