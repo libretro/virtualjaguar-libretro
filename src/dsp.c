@@ -1641,8 +1641,6 @@ void dsp_opcode_sat16s(void)
 
 void dsp_opcode_illegal(void)
 {
-	// Don't know what it does, but it does *something*...
-	WriteLog("%06X: illegal %u, %u [NCZ:%u%u%u]\n", dsp_pc-2, IMM_1, IMM_2, dsp_flag_n, dsp_flag_c, dsp_flag_z);
 }
 
 /* New pipelined DSP core */
