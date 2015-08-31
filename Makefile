@@ -117,6 +117,15 @@ else ifeq ($(platform), psp1)
 	STATIC_LINKING = 1
 	FLAGS += -G0
 
+# Vita
+else ifeq ($(platform), vita)
+	TARGET := $(TARGET_NAME)_libretro_vita.a
+	CC = arm-vita-eabi-gcc$(EXE_EXT)
+	CXX = arm-vita-eabi-g++$(EXE_EXT)
+	AR = arm-vita-eabi-ar$(EXE_EXT)
+	STATIC_LINKING = 1
+	FLAGS += -DVITA
+
 # emscripten
 else ifeq ($(platform), emscripten)
 	TARGET := $(TARGET_NAME)_libretro.bc
