@@ -733,7 +733,6 @@ static uint16_t CDROMBusRead(void)
 static uint8_t cdBuf2[2532 + 96], cdBuf3[2532 + 96];
 uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 {
-   unsigned i;
    bool go = ((offset & 0x0F) == 0x0A || (offset & 0x0F) == 0x0E ? true : false);
 
    if (!go)
@@ -748,6 +747,8 @@ uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 
    if (cdBufPtr >= 2352)
    {
+      unsigned i;
+
       WriteLog("CDROM: %s reading block #%u...\n", whoName[who], block);
       //No error checking. !!! FIX !!!
       //NOTE: We have to subtract out the 1st track start as well (in cdintf_foo.cpp)!
@@ -789,9 +790,9 @@ uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 bool ButchIsReadyToSend(void)
 {
 #ifdef LOG_CDROM_VERBOSE
-   WriteLog("Butch is%s ready to send...\n", cdRam[I2CNTRL + 3] & 0x02 ? "" : " not");
+   WriteLog("Butch is%s ready to send...\n", (cdRam[I2CNTRL + 3] & 0x02) ? "" : " not");
 #endif
-   return (cdRam[I2CNTRL + 3] & 0x02 ? true : false);
+   return ((cdRam[I2CNTRL + 3] & 0x02) ? true : false);
 }
 
 //

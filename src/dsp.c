@@ -875,7 +875,7 @@ void DSPDone(void)
 {
 	int i, j;
 	WriteLog("DSP: Stopped at PC=%08X dsp_modulo=%08X (dsp was%s running)\n", dsp_pc, dsp_modulo, (DSP_RUNNING ? "" : "n't"));
-	WriteLog("DSP: %sin interrupt handler\n", (dsp_flags & IMASK ? "" : "not "));
+	WriteLog("DSP: %sin interrupt handler\n", ((dsp_flags & IMASK) ? "" : "not "));
 
 	// get the active interrupt bits
 	int bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
@@ -883,9 +883,9 @@ void DSPDone(void)
 	int mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	WriteLog("DSP: pending=$%X enabled=$%X (%s%s%s%s%s%s)\n", bits, mask,
-		(mask & 0x01 ? "CPU " : ""), (mask & 0x02 ? "I2S " : ""),
-		(mask & 0x04 ? "Timer0 " : ""), (mask & 0x08 ? "Timer1 " : ""),
-		(mask & 0x10 ? "Ext0 " : ""), (mask & 0x20 ? "Ext1" : ""));
+		((mask & 0x01) ? "CPU " : ""), ((mask & 0x02) ? "I2S " : ""),
+		((mask & 0x04) ? "Timer0 " : ""), ((mask & 0x08) ? "Timer1 " : ""),
+		((mask & 0x10) ? "Ext0 " : ""), ((mask & 0x20) ? "Ext1" : ""));
 	WriteLog("\nRegisters bank 0\n");
 
 	for(j=0; j<8; j++)
@@ -1000,7 +1000,7 @@ static void dsp_opcode_jr(void)
 
 	if (BRANCH_CONDITION(IMM_2))
 	{
-		int32_t offset = (IMM_1 & 0x10 ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
+		int32_t offset = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
 		int32_t delayed_pc = dsp_pc + (offset * 2);
 		DSPExec(1);
 		dsp_pc = delayed_pc;
@@ -1437,8 +1437,9 @@ static void dsp_opcode_abs(void)
 	else
 	{
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
-		res = RN = (_Rn & 0x80000000 ? -_Rn : _Rn);
-		CLR_ZN; SET_Z(res);
+		res = RN   = ((_Rn & 0x80000000) ? -_Rn : _Rn);
+		CLR_ZN;
+      SET_Z(res);
 	}
 }
 
@@ -1809,7 +1810,7 @@ static void DSP_abs(void)
 	else
 	{
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
-		PRES = (_Rn & 0x80000000 ? -_Rn : _Rn);
+		PRES = ((_Rn & 0x80000000) ? -_Rn : _Rn);
 		CLR_ZN; SET_Z(PRES);
 	}
 }
@@ -1958,7 +1959,7 @@ static void DSP_jr(void)
 
    if (BRANCH_CONDITION(PIMM2))
    {
-      int32_t offset = (PIMM1 & 0x10 ? 0xFFFFFFF0 | PIMM1 : PIMM1);		// Sign extend PIMM1
+      int32_t offset = ((PIMM1 & 0x10) ? 0xFFFFFFF0 | PIMM1 : PIMM1);		// Sign extend PIMM1
       //Account for pipeline effects...
       uint32_t newPC = dsp_pc + (offset * 2) - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2));
 

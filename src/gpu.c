@@ -267,34 +267,34 @@ void build_branch_condition_table(void)
 {
    unsigned i, j;
 
-	if (!branch_condition_table)
-	{
-		branch_condition_table = (uint8_t *)malloc(32 * 8 * sizeof(branch_condition_table[0]));
+   if (branch_condition_table)
+      return;
 
-		if (branch_condition_table)
-		{
-			for(i=0; i<8; i++)
-			{
-				for(j=0; j<32; j++)
-				{
-					int result = 1;
-					if (j & 1)
-						if (i & ZERO_FLAG)
-							result = 0;
-					if (j & 2)
-						if (!(i & ZERO_FLAG))
-							result = 0;
-					if (j & 4)
-						if (i & (CARRY_FLAG << (j >> 4)))
-							result = 0;
-					if (j & 8)
-						if (!(i & (CARRY_FLAG << (j >> 4))))
-							result = 0;
-					branch_condition_table[i * 32 + j] = result;
-				}
-			}
-		}
-	}
+   branch_condition_table = (uint8_t *)malloc(32 * 8 * sizeof(branch_condition_table[0]));
+
+   if (!branch_condition_table)
+      return;
+
+   for(i=0; i<8; i++)
+   {
+      for(j=0; j<32; j++)
+      {
+         int result = 1;
+         if (j & 1)
+            if (i & ZERO_FLAG)
+               result = 0;
+         if (j & 2)
+            if (!(i & ZERO_FLAG))
+               result = 0;
+         if (j & 4)
+            if (i & (CARRY_FLAG << (j >> 4)))
+               result = 0;
+         if (j & 8)
+            if (!(i & (CARRY_FLAG << (j >> 4))))
+               result = 0;
+         branch_condition_table[i * 32 + j] = result;
+      }
+   }
 }
 
 // GPU byte access (read)
@@ -554,7 +554,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   GPUExec(1);
 #endif
                extern int effect_start5;
-               static bool finished = false;
                // (?) If we're set running by the M68K (or DSP?) then end its timeslice to
                // allow the GPU a chance to run...
                // Yes! This partially fixed Trevor McFur...
@@ -891,7 +890,7 @@ static void gpu_opcode_jr(void)
 
    if (BRANCH_CONDITION(IMM_2))
    {
-      int32_t offset = (IMM_1 & 0x10 ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
+      int32_t offset     = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
       int32_t delayed_pc = gpu_pc + (offset * 2);
       GPUExec(1);
       gpu_pc = delayed_pc;
@@ -1248,7 +1247,6 @@ static void gpu_opcode_loadw(void)
 static void gpu_opcode_load(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
-   uint32_t mask[4] = { 0x00000000, 0xFF000000, 0xFFFF0000, 0xFFFFFF00 };
    RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
 #else
    RN = GPUReadLong(RM, GPU);

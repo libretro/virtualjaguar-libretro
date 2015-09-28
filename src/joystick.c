@@ -156,12 +156,12 @@ void JoystickWriteWord(uint32_t offset, uint16_t data)
 {
 	offset &= 0x03;
 	joystick_ram[offset + 0] = (data >> 8) & 0xFF;
-	joystick_ram[offset + 1] = data & 0xFF;
+	joystick_ram[offset + 1] = (data & 0xFF);
 
 	if (offset == 0)
 	{
-		audioEnabled = (data & 0x0100 ? true : false);
-		joysticksEnabled = (data & 0x8000 ? true : false);
+		audioEnabled     = ((data & 0x0100) ? true : false);
+		joysticksEnabled = ((data & 0x8000) ? true : false);
 	}
 }
 

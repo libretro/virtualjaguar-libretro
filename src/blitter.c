@@ -448,7 +448,7 @@ void blitter_generic(uint32_t cmd)
                   if (!TOPBEN)
                   {
                      //This is correct now, but slow...
-                     int16_t s = (srcdata & 0xFF) | (srcdata & 0x80 ? 0xFF00 : 0x0000),
+                     int16_t s = (srcdata & 0xFF) | ((srcdata & 0x80) ? 0xFF00 : 0x0000),
                              d = dstdata & 0xFF;
                      int16_t sum = s + d;
 
@@ -761,8 +761,6 @@ void blitter_generic(uint32_t cmd)
 
 void blitter_blit(uint32_t cmd)
 {
-   unsigned v;
-
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
    colour_index = 0;
    src = cmd & 0x07;
@@ -919,6 +917,7 @@ void blitter_blit(uint32_t cmd)
    // Z-buffering
    if (GOURZ)
    {
+      unsigned v;
       zadd = REG(ZINC);
 
       for(v = 0; v < 4; v++)
@@ -1198,7 +1197,7 @@ void BlitterMidsummer2(void)
    // Lines that don't exist in Jaguar I (and will never be asserted)
 
    bool polygon = false, datinit = false, a1_stepld = false, a2_stepld = false, ext_int = false;
-   bool istepadd = false, istepfadd = false, finneradd = false, inneradd = false;
+   bool istepadd = false, istepfadd = false;
    bool zstepfadd = false, zstepadd = false;
 
    // Various state lines (initial state--basically the reset state of the FDSYNCs)
@@ -1225,7 +1224,6 @@ void BlitterMidsummer2(void)
    uint8_t a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
    uint8_t a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
    uint8_t a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
-   bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
    uint8_t a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
    bool a1addy = blitter_ram[A1_FLAGS + 1] & 0x04, a2addy = blitter_ram[A2_FLAGS + 1] & 0x04;
    bool a1xsign = blitter_ram[A1_FLAGS + 1] & 0x08, a2xsign = blitter_ram[A2_FLAGS + 1] & 0x08;
@@ -1250,8 +1248,12 @@ void BlitterMidsummer2(void)
 
    int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
    int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
+#if 0
+   bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
    uint16_t a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
    uint16_t a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
+   uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
+#endif
    int16_t a2_step_x = (int16_t)GET16(blitter_ram, A2_STEP + 2);
    int16_t a2_step_y = (int16_t)GET16(blitter_ram, A2_STEP + 0);
 
@@ -1264,7 +1266,6 @@ void BlitterMidsummer2(void)
    uint64_t srcz2 = GET64(blitter_ram, SRCZFRAC);
    uint64_t dstz = GET64(blitter_ram, DSTZ);
    uint32_t zinc = GET32(blitter_ram, ZINC);
-   uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
 
    uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
 
@@ -1415,12 +1416,12 @@ void BlitterMidsummer2(void)
 
          //other stuff
          uint8_t srcshift = 0;
-         bool sshftld = true; // D flipflop (D -> Q): instart -> sshftld
-         //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
 
          //			while (!idle_inner)
          while (true)
          {
+            bool sshftld; // D flipflop (D -> Q): instart -> sshftld
+            //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
             // IDLE
 
             if ((idle_inner && !step)
@@ -2051,7 +2052,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   This is only used for writes in phrase mode.
                   Start and end from the address level of the pipeline are used.
                   */
-               uint8_t pwidth = (((dend | dstart) & 0x07) == 0 ? 0x08 : (dend - dstart) & 0x07);
 
                //More testing... This is almost certainly wrong, but how else does this work???
                //Seems to kinda work... But still, this doesn't seem to make any sense!
@@ -2224,7 +2224,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 
             if (a1_add)
             {
-               int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
+               int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
                ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
                      a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
                ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
@@ -2256,7 +2256,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 
             if (a2_add)
             {
-               int16_t adda_x, adda_y, addb_x, addb_y, data_x, data_y, addq_x, addq_y;
+               int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
                ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
                      a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
                ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
@@ -2338,7 +2338,7 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;//Only upper 21 bits are passed around the bus? Seems like it...
 	uint8_t zoffset = (gena2 ? a2_zoffset : a1_zoffset);
 
-	uint32_t ytm = ((uint32_t)y << 2) + (width & 0x02 ? (uint32_t)y << 1 : 0) + (width & 0x01 ? (uint32_t)y : 0);
+	uint32_t ytm = ((uint32_t)y << 2) + ((width & 0x02) ? (uint32_t)y << 1 : 0) + ((width & 0x01) ? (uint32_t)y : 0);
 
 	uint32_t ya = (ytm << (width >> 2)) >> 2;
 
@@ -2443,20 +2443,20 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
 	uint8_t carry[4];
-	uint32_t qt = (a & 0xFF) + (b & 0xFF) + cin;
-	carry[0] = (qt & 0x0100 ? 1 : 0);
-	uint16_t q = qt & 0x00FF;
-	carry[1] = (carry[0] && !eightbit ? carry[0] : 0);
-	qt = (a & 0x0F00) + (b & 0x0F00) + (carry[1] << 8);
-	carry[2] = (qt & 0x1000 ? 1 : 0);
-	q |= qt & 0x0F00;
-	carry[3] = (carry[2] && !hicinh ? carry[2] : 0);
-	qt = (a & 0xF000) + (b & 0xF000) + (carry[3] << 12);
-	co = (qt & 0x10000 ? 1 : 0);
-	q |= qt & 0xF000;
+	uint32_t qt   = (a & 0xFF) + (b & 0xFF) + cin;
+	carry[0]      = ((qt & 0x0100) ? 1 : 0);
+	uint16_t q    = qt & 0x00FF;
+	carry[1]      = (carry[0] && !eightbit ? carry[0] : 0);
+	qt            = (a & 0x0F00) + (b & 0x0F00) + (carry[1] << 8);
+	carry[2]      = ((qt & 0x1000) ? 1 : 0);
+	q            |= qt & 0x0F00;
+	carry[3]      = (carry[2] && !hicinh ? carry[2] : 0);
+	qt            = (a & 0xF000) + (b & 0xF000) + (carry[3] << 12);
+	co            = ((qt & 0x10000) ? 1 : 0);
+	q            |= qt & 0xF000;
 
-	uint8_t btop = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
-	uint8_t ctop = (eightbit ? carry[0] : co);
+	uint8_t btop  = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
+	uint8_t ctop  = (eightbit ? carry[0] : co);
 
 	bool saturate = sat && (btop ^ ctop);
 	bool hisaturate = saturate && !eightbit;
@@ -2474,8 +2474,8 @@ void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_
 	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
 	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
-	int16_t addar_x = (addasel & 0x04 ? a2_step_x : xterm[addasel & 0x03]);
-	int16_t addar_y = (addasel & 0x04 ? a2_step_y : yterm[addasel & 0x03]);
+	int16_t addar_x = ((addasel & 0x04) ? a2_step_x : xterm[addasel & 0x03]);
+	int16_t addar_y = ((addasel & 0x04) ? a2_step_y : yterm[addasel & 0x03]);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Generate a constant value - this is a power of 2 in the range
@@ -2967,7 +2967,7 @@ Efine		:= DECL38E (unused[0], e_fine\[1..7], dend[0..2], e_coarse[0]);*/
 	uint8_t dech38el[2][8] = { { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
 
-			int en = (dend & 0x3F ? 1 : 0);
+	int en = ((dend & 0x3F) ? 1 : 0);
 	uint8_t e_coarse = decl38e[en][(dend & 0x38) >> 3];		// Actually, this is e_coarse inverted...
 	uint8_t e_fine = decl38e[(e_coarse & 0x01) ^ 0x01][dend & 0x07];
 	e_fine &= 0xFE;
@@ -3111,24 +3111,24 @@ Dat[48-55]	:= MX4 (dat[48-55], dstdhi{16-23}, ddathi{16-23}, dstzhi{16-23}, srcz
 Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srczhi{24-31}, mask[14],  zed_selb[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*wdata = ((ddat & mask) | (dstd & ~mask)) & 0x00000000000000FFLL;
-	*wdata |= (mask & 0x0100 ? ddat : dstd) & 0x000000000000FF00LL;
-	*wdata |= (mask & 0x0200 ? ddat : dstd) & 0x0000000000FF0000LL;
-	*wdata |= (mask & 0x0400 ? ddat : dstd) & 0x00000000FF000000LL;
-	*wdata |= (mask & 0x0800 ? ddat : dstd) & 0x000000FF00000000LL;
-	*wdata |= (mask & 0x1000 ? ddat : dstd) & 0x0000FF0000000000LL;
-	*wdata |= (mask & 0x2000 ? ddat : dstd) & 0x00FF000000000000LL;
-	*wdata |= (mask & 0x4000 ? ddat : dstd) & 0xFF00000000000000LL;
+	*wdata |= ((mask & 0x0100) ? ddat : dstd) & 0x000000000000FF00LL;
+	*wdata |= ((mask & 0x0200) ? ddat : dstd) & 0x0000000000FF0000LL;
+	*wdata |= ((mask & 0x0400) ? ddat : dstd) & 0x00000000FF000000LL;
+	*wdata |= ((mask & 0x0800) ? ddat : dstd) & 0x000000FF00000000LL;
+	*wdata |= ((mask & 0x1000) ? ddat : dstd) & 0x0000FF0000000000LL;
+	*wdata |= ((mask & 0x2000) ? ddat : dstd) & 0x00FF000000000000LL;
+	*wdata |= ((mask & 0x4000) ? ddat : dstd) & 0xFF00000000000000LL;
 
 //This is a crappy way of handling this, but it should work for now...
 	uint64_t zwdata;
 	zwdata = ((*srcz & mask) | (dstz & ~mask)) & 0x00000000000000FFLL;
-	zwdata |= (mask & 0x0100 ? *srcz : dstz) & 0x000000000000FF00LL;
-	zwdata |= (mask & 0x0200 ? *srcz : dstz) & 0x0000000000FF0000LL;
-	zwdata |= (mask & 0x0400 ? *srcz : dstz) & 0x00000000FF000000LL;
-	zwdata |= (mask & 0x0800 ? *srcz : dstz) & 0x000000FF00000000LL;
-	zwdata |= (mask & 0x1000 ? *srcz : dstz) & 0x0000FF0000000000LL;
-	zwdata |= (mask & 0x2000 ? *srcz : dstz) & 0x00FF000000000000LL;
-	zwdata |= (mask & 0x4000 ? *srcz : dstz) & 0xFF00000000000000LL;
+	zwdata |= ((mask & 0x0100) ? *srcz : dstz) & 0x000000000000FF00LL;
+	zwdata |= ((mask & 0x0200) ? *srcz : dstz) & 0x0000000000FF0000LL;
+	zwdata |= ((mask & 0x0400) ? *srcz : dstz) & 0x00000000FF000000LL;
+	zwdata |= ((mask & 0x0800) ? *srcz : dstz) & 0x000000FF00000000LL;
+	zwdata |= ((mask & 0x1000) ? *srcz : dstz) & 0x0000FF0000000000LL;
+	zwdata |= ((mask & 0x2000) ? *srcz : dstz) & 0x00FF000000000000LL;
+	zwdata |= ((mask & 0x4000) ? *srcz : dstz) & 0xFF00000000000000LL;
 	srcz = zwdata;
 //////////////////////////////////////////////////////////////////////////////////////
 
