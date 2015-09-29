@@ -458,7 +458,7 @@ void TOMFillLookupTables(void)
                b = (((uint32_t)bluecv[cyan][red]) * intensity) >> 8;
 
       CRY16ToRGB32[i] = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
-      MIX16ToRGB32[i] = (i & 0x01 ? RGB16ToRGB32[i] : CRY16ToRGB32[i]);
+      MIX16ToRGB32[i] = ((i & 0x01) ? RGB16ToRGB32[i] : CRY16ToRGB32[i]);
    }
 }
 

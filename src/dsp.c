@@ -1430,12 +1430,13 @@ static void dsp_opcode_mmult(void)
 static void dsp_opcode_abs(void)
 {
 	uint32_t _Rn = RN;
-	uint32_t res;
 
 	if (_Rn == 0x80000000)
 		dsp_flag_n = 1;
 	else
 	{
+      uint32_t res;
+
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
 		res = RN   = ((_Rn & 0x80000000) ? -_Rn : _Rn);
 		CLR_ZN;

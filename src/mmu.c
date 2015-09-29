@@ -362,15 +362,19 @@ void MMUWrite64(uint32_t address, uint64_t data, uint32_t who/*= UNKNOWN*/)
 {
 }
 
+#define FUNC_CAST(retVal, function, params) (*(retVal(*)(params))function)
+
 uint8_t MMURead8(uint32_t address, uint32_t who/*= UNKNOWN*/)
 {
    // Search for address in the memory map
    // NOTE: This assumes that all entries are linear and sorted in ascending order!
 
    struct MemDesc memory;
+   uint32_t offset;
    uint8_t byte = 0xFE;
-
+   uint8_t byteShift[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
    uint32_t i = 0;
+
    while (true)
    {
       if (address <= memoryMap[i].endAddr)
@@ -389,15 +393,12 @@ uint8_t MMURead8(uint32_t address, uint32_t who/*= UNKNOWN*/)
          return 0xFF;		// Exhausted the list, so bail!
    }
 
-   uint32_t offset = address - memory.startAddr;
-   uint32_t size = memory.endAddr - memory.startAddr + 1;
-   uint8_t byteShift[8] = { 0, 8, 16, 24, 32, 40, 48, 56 };
+   offset = address - memory.startAddr;
 
    if (memory.type == MM_RAM || memory.type == MM_ROM)
       byte = ((uint8_t *)memory.readFunc)[offset];
    else if (memory.type == MM_IO_R || memory.type == MM_IO)
    {
-#define FUNC_CAST(retVal, function, params) (*(retVal(*)(params))function)
       uint64_t retVal = FUNC_CAST(uint64_t, memory.readFunc, uint32_t)(offset);
       byte = (retVal >> byteShift[offset]) & 0xFF;
    }

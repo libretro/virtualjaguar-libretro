@@ -74,7 +74,6 @@ void JoystickDone(void)
 
 uint16_t JoystickReadWord(uint32_t offset)
 {
-   unsigned i;
 	/* E, D, B, 7 */
 	uint8_t joypad0Offset[16] = {
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0C, 0xFF, 0xFF, 0xFF, 0x08, 0xFF, 0x04, 0x00, 0xFF
@@ -87,14 +86,17 @@ uint16_t JoystickReadWord(uint32_t offset)
 
 	if (offset == 0)
 	{
+      unsigned i;
+      uint8_t offset0, offset1;
+		uint16_t data = 0xFFFF;
+
 		if (!joysticksEnabled)
 			return 0xFFFF;
 
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
-		uint16_t data = 0xFFFF;
-		uint8_t offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
-		uint8_t offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
+		offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
+		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
 
 		if (offset0 != 0xFF)
 		{
@@ -116,6 +118,7 @@ uint16_t JoystickReadWord(uint32_t offset)
 	}
 	else if (offset == 2)
 	{
+      uint8_t offset0, offset1;
 		// Hardware ID returns NTSC/PAL identification bit here
 		uint16_t data = 0xFFEF | (vjs.hardwareTypeNTSC ? 0x10 : 0x00);
 
@@ -124,8 +127,8 @@ uint16_t JoystickReadWord(uint32_t offset)
 
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
-		uint8_t offset0 = joypad0Offset[joystick_ram[1] & 0x0F] / 4;
-		uint8_t offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F] / 4;
+		offset0 = joypad0Offset[joystick_ram[1] & 0x0F] / 4;
+		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F] / 4;
 
 		if (offset0 != 0xFF)
 		{

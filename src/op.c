@@ -350,9 +350,9 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
    WriteLog("    [%u x %u @ (%i, %u) (iw:%u, dw:%u) (%u bpp), p:%08X fp:%02X, fl:%s%s%s%s, idx:%02X, pt:%02X]\n",
          iwidth * bdMultiplier[bitdepth],
          height, xpos, ypos, iwidth, dwidth, op_bitmap_bit_depth[bitdepth],
-         ptr, firstPix, (flags&OPFLAG_REFLECT ? "REFLECT " : ""),
-         (flags&OPFLAG_RMW ? "RMW " : ""), (flags&OPFLAG_TRANS ? "TRANS " : ""),
-         (flags&OPFLAG_RELEASE ? "RELEASE" : ""), idx, pitch);
+         ptr, firstPix, ((flags & OPFLAG_REFLECT) ? "REFLECT " : ""),
+         ((flags & OPFLAG_RMW) ? "RMW " : ""), ((flags & OPFLAG_TRANS) ? "TRANS " : ""),
+         ((flags & OPFLAG_RELEASE) ? "RELEASE" : ""), idx, pitch);
 }
 
 
@@ -626,9 +626,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    //	uint8_t flags = (p1 >> 45) & 0x0F;	// REFLECT, RMW, TRANS, RELEASE
    //Optimize: break these out to their own BOOL values
    uint8_t flags = (p1 >> 45) & 0x07;				// REFLECT (0), RMW (1), TRANS (2)
-   bool flagREFLECT = (flags & OPFLAG_REFLECT ? true : false),
-        flagRMW = (flags & OPFLAG_RMW ? true : false),
-        flagTRANS = (flags & OPFLAG_TRANS ? true : false);
+   bool flagREFLECT = ((flags & OPFLAG_REFLECT) ? true : false),
+        flagRMW = ((flags & OPFLAG_RMW) ? true : false),
+        flagTRANS = ((flags & OPFLAG_TRANS) ? true : false);
    // "For images with 1 to 4 bits/pixel the top 7 to 4 bits of the index
    //  provide the most significant bits of the palette address."
    uint8_t index = (p1 >> 37) & 0xFE;				// CLUT index offset (upper pix, 1-4 bpp)
@@ -660,7 +660,6 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       (!flagREFLECT ? (phraseWidthToPixels[depth] * iwidth) - 1
        : -((phraseWidthToPixels[depth] * iwidth) + 1));
    uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;//, phrasePixel = 0;
-   bool in24BPPMode = (((GET16(tomRam8, 0x0028) >> 1) & 0x03) == 1 ? true : false);	// VMODE
    // This is correct, the OP line buffer is a constant size... 
    int32_t limit = 720;
    int32_t lbufWidth = 719;
@@ -1037,9 +1036,9 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    //	uint8_t flags = (p1 >> 45) & 0x0F;	// REFLECT, RMW, TRANS, RELEASE
    //Optimize: break these out to their own BOOL values [DONE]
    uint8_t flags = (p1 >> 45) & 0x07;				// REFLECT (0), RMW (1), TRANS (2)
-   bool flagREFLECT = (flags & OPFLAG_REFLECT ? true : false),
-        flagRMW = (flags & OPFLAG_RMW ? true : false),
-        flagTRANS = (flags & OPFLAG_TRANS ? true : false);
+   bool flagREFLECT = ((flags & OPFLAG_REFLECT) ? true : false),
+        flagRMW = ((flags & OPFLAG_RMW) ? true : false),
+        flagTRANS = ((flags & OPFLAG_TRANS) ? true : false);
    uint8_t index = (p1 >> 37) & 0xFE;				// CLUT index offset (upper pix, 1-4 bpp)
    uint32_t pitch = (p1 >> 15) & 0x07;				// Phrase pitch
 
@@ -1064,7 +1063,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    int32_t startPos = xpos, endPos = xpos +
       (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels + 1));
    uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;
-   bool in24BPPMode = (((GET16(tomRam8, 0x0028) >> 1) & 0x03) == 1 ? true : false);	// VMODE
    // Not sure if this is Jaguar Two only location or what...
    // From the docs, it is... If we want to limit here we should think of something else.
    //	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
