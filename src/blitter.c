@@ -1826,7 +1826,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                | (adddsel || dzwrite ? 0x02 : 0x00);
 
             uint32_t address, pixAddr;
-            ADDRGEN(address, pixAddr, gena2i, zaddr,
+            ADDRGEN(&address, &pixAddr, gena2i, zaddr,
                   a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
                   a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
 
@@ -2141,12 +2141,12 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
                uint64_t wdata;
                uint8_t dcomp, zcomp;
-               DATA(wdata, dcomp, zcomp, &winhibit,
+               DATA(&wdata, &dcomp, &zcomp, &winhibit,
                      true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
-                     dend, dstart, dstd, iinc, lfufunc, patd, patdadd,
+                     dend, dstart, dstd, iinc, lfufunc, &patd, patdadd,
                      phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
                      bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
-                     srcz, dstz, zinc);
+                     &srcz, dstz, zinc);
 
                /*
                   DEF ADDRCOMP (
@@ -2225,10 +2225,10 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
             if (a1_add)
             {
                int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
-               ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+               ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
                      a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-               ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-               ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+               ADDBMUX(&addb_x, &addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
 
                //Now, write to what???
                //a2ptrld comes from a2ptrldi...
@@ -2243,10 +2243,10 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                   a1_frac_x = addq_x, a1_frac_y = addq_y;
 
                   addasel = 2, addbsel = 0, a1fracldi = false;
-                  ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                  ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
                         a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-                  ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-                  ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+                  ADDBMUX(&addb_x,&addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
 
                   a1_x = addq_x, a1_y = addq_y;
                }
@@ -2257,10 +2257,10 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
             if (a2_add)
             {
                int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
-               ADDAMUX(adda_x, adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+               ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
                      a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-               ADDBMUX(addb_x, addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-               ADDRADD(addq_x, addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+               ADDBMUX(&addb_x, &addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
 
                //Now, write to what???
                //a2ptrld comes from a2ptrldi...
@@ -2353,7 +2353,7 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 
 	uint8_t za = (zaddr ? zoffset : 0) & 0x03;
 	uint32_t addr = za + phradr + (shup << 1) + base;
-	address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
+	*address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
 	*pixa &= 0x07;
 }
 
@@ -2436,7 +2436,7 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 
    //Note that the carry out is saved between calls to this function...
    for( i=0; i<4; i++)
-      ADD16SAT(addq[i], co[i], adda[i], addb[i], cin[i], sat, eightbit, hicinh);
+      ADD16SAT(&addq[i], &co[i], adda[i], addb[i], cin[i], sat, eightbit, hicinh);
 }
 
 
@@ -2452,11 +2452,11 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, boo
 	q            |= qt & 0x0F00;
 	carry[3]      = (carry[2] && !hicinh ? carry[2] : 0);
 	qt            = (a & 0xF000) + (b & 0xF000) + (carry[3] << 12);
-	co            = ((qt & 0x10000) ? 1 : 0);
+	*co            = ((qt & 0x10000) ? 1 : 0);
 	q            |= qt & 0xF000;
 
 	uint8_t btop  = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
-	uint8_t ctop  = (eightbit ? carry[0] : co);
+	uint8_t ctop  = (eightbit ? carry[0] : *co);
 
 	bool saturate = sat && (btop ^ ctop);
 	bool hisaturate = saturate && !eightbit;
@@ -2512,8 +2512,8 @@ Suba_y16	:= JOIN (suba_y16, suba_y, suba_y, suba_y, suba_y, suba_y, suba_y, suba
 Adda_x		:= EO (adda_x, suba_x16, addas_x);
 Adda_y		:= EO (adda_y, suba_y16, addas_y);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	adda_x = addas_x ^ (suba_x ? 0xFFFF : 0x0000);
-	adda_y = addas_y ^ (suba_y ? 0xFFFF : 0x0000);
+	*adda_x = addas_x ^ (suba_x ? 0xFFFF : 0x0000);
+	*adda_y = addas_y ^ (suba_y ? 0xFFFF : 0x0000);
 //////////////////////////////////////////////////////////////////////////////////////
 
 //END;
@@ -2556,8 +2556,8 @@ Addb_y		:= MX4 (addb_y, a1_y, a2_y, a1_frac_y, zero16, addbselb[0..1]);*/
 	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_x, xterm[1] = a2_x, xterm[2] = a1_frac_x, xterm[3] = 0;
 	yterm[0] = a1_y, yterm[1] = a2_y, yterm[2] = a1_frac_y, yterm[3] = 0;
-	addb_x = xterm[addbsel & 0x03];
-	addb_y = yterm[addbsel & 0x03];
+	*addb_x = xterm[addbsel & 0x03];
+	*addb_y = yterm[addbsel & 0x03];
 //////////////////////////////////////////////////////////////////////////////////////
 
 //END;
@@ -2591,8 +2591,8 @@ Addqselb	:= BUF8 (addqselb, addqsel);
 Data_x		:= MX2 (data_x, gpu_lo, addq_x, addqselb);
 Data_y		:= MX2 (data_y, gpu_hi, addq_y, addqselb);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	data_x = (addqsel ? addq_x : (int16_t)(gpu_din & 0xFFFF));
-	data_y = (addqsel ? addq_y : (int16_t)(gpu_din >> 16));
+	*data_x = (addqsel ? addq_x : (int16_t)(gpu_din & 0xFFFF));
+	*data_y = (addqsel ? addq_y : (int16_t)(gpu_din >> 16));
 //////////////////////////////////////////////////////////////////////////////////////
 
 //END;
@@ -2662,8 +2662,8 @@ Addq_y		:= JOIN (addq_y, addq_y[0..15]);*/
 
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	uint16_t mask[8] = { 0xFFFF, 0xFFFE, 0xFFFC, 0xFFF8, 0xFFF0, 0xFFE0, 0xFFC0, 0x0000 };
-	addq_x = addqt_x & mask[modx];
-	addq_y = addqt_y & 0xFFFF;
+	*addq_x = addqt_x & mask[modx];
+	*addq_y = addqt_y & 0xFFFF;
 //////////////////////////////////////////////////////////////////////////////////////
 
 //Unused[0-1]	:= DUMMY (unused[0-1]);
@@ -2810,7 +2810,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	dcomp = 0;
+	*dcomp = 0;
 	uint64_t cmpd = *patd ^ (cmpdst ? dstd : srcd);
 
 	if ((cmpd & 0x00000000000000FFLL) == 0)
@@ -2872,8 +2872,8 @@ with srcshift bits 4 & 5 selecting the start position
 // We'll do the comparison/bit/byte inhibits here, since that's they way it happens
 // in the real thing (dcomp goes out to COMP_CTRL and back into DATA through dbinh)...
 	uint8_t dbinht;
-	COMP_CTRL(dbinht, nowrite,
-		bcompen, true/*big_pix*/, bkgwren, dcomp, dcompen, icount, pixsize, phrase_mode, srcd & 0xFF, zcomp);
+	COMP_CTRL(&dbinht, nowrite,
+		bcompen, true/*big_pix*/, bkgwren, *dcomp, dcompen, icount, pixsize, phrase_mode, srcd & 0xFF, *zcomp);
 	dbinh = dbinht;
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -2896,14 +2896,14 @@ with srcshift bits 4 & 5 selecting the start position
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	uint16_t addq[4];
 	uint8_t initcin[4] = { 0, 0, 0, 0 };
-	ADDARRAY(addq, daddasel, daddbsel, daddmode, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
+	ADDARRAY(addq, daddasel, daddbsel, daddmode, dstd, iinc, initcin, 0, 0, 0, *patd, srcd, 0, 0, 0, 0);
 
 	//This is normally done asynchronously above (thru local_data) when in patdadd mode...
 //And now it's passed back to the caller to be persistent between calls...!
 //But it's causing some serious fuck-ups in T2K now... !!! FIX !!! [DONE--???]
 //Weird! It doesn't anymore...!
 	if (patdadd)
-		patd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+		*patd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Local data bus multiplexer
@@ -3091,7 +3091,7 @@ Ddatlo		:= MX4 (ddatlo, patd[0], lfu[0], addql[0], zero32, dsel0b[0], dsel1b[0])
 Ddathi		:= MX4 (ddathi, patd[1], lfu[1], addql[1], zero32, dsel0b[1], dsel1b[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	uint64_t dmux[4];
-	dmux[0] = patd;
+	dmux[0] = *patd;
 	dmux[1] = lfu;
 	dmux[2] = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 	dmux[3] = 0;
@@ -3129,7 +3129,7 @@ Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srcz
 	zwdata |= ((mask & 0x1000) ? *srcz : dstz) & 0x0000FF0000000000LL;
 	zwdata |= ((mask & 0x2000) ? *srcz : dstz) & 0x00FF000000000000LL;
 	zwdata |= ((mask & 0x4000) ? *srcz : dstz) & 0xFF00000000000000LL;
-	srcz = zwdata;
+	*srcz = zwdata;
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Data_enab[0-1]	:= BUF8 (data_enab[0-1], data_ena);
@@ -3228,7 +3228,7 @@ Nowt3		:= NAN5 (nowt[3], zcomp[0], phrase_mode\, pixsize[2], pixsize\[0..1]);
 Nowt4		:= NAN4 (nowt[4], nowt[0..3]);
 Nowrite		:= AN2  (nowrite, nowt[4], bkgwren\);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   nowrite = ((bcompen && !bcompbit && !phrase_mode)
+   *nowrite = ((bcompen && !bcompbit && !phrase_mode)
          || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
          || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
          || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4)))
