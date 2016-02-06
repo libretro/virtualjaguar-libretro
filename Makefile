@@ -37,7 +37,6 @@ ifeq ($(platform), unix)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
-	CC = gcc
 
 # OSX
 else ifeq ($(platform), osx)
