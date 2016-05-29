@@ -109,6 +109,16 @@ else ifeq ($(platform), sncps3)
 	STATIC_LINKING = 1
 	FLAGS += -DMSB_FIRST
 	NO_GCC = 1
+	
+# Lightweight PS3 Homebrew SDK
+else ifeq ($(platform), psl1ght)
+   TARGET := $(TARGET_NAME)_libretro_psl1ght.a
+	CC = $(PS3DEV)/ppu/bin/ppu-gcc$
+	CXX = $(PS3DEV)/ppu/bin/ppu-g++$
+	AR = $(PS3DEV)/ppu/bin/ppu-ar$
+	STATIC_LINKING = 1
+	FLAGS += -DMSB_FIRST
+	OLD_GCC = 1
 
 # PSP
 else ifeq ($(platform), psp1)
