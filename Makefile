@@ -149,7 +149,7 @@ else ifeq ($(platform), ctr)
 
 # emscripten
 else ifeq ($(platform), emscripten)
-	TARGET := $(TARGET_NAME)_libretro.bc
+	TARGET := $(TARGET_NAME)_libretro_$(platform).bc
 
 # Windows
 else
