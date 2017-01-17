@@ -298,7 +298,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
    address &= 0x00FFFFFF;
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address > 0x000000) && (address <= 0x1FFFFF))
+   if ((address >= 0x000000) && (address <= 0x1FFFFF))
       return jaguarMainRAM[address];
    else if ((address >= 0x800000) && (address <= 0xDFFEFF))
       return jaguarMainROM[address - 0x800000];
@@ -335,7 +335,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
    address &= 0x00FFFFFF;
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address > 0x000000) && (address <= 0x1FFFFE))
+   if ((address >= 0x000000) && (address <= 0x1FFFFE))
       return GET16(jaguarMainRAM, address);
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
       return (jaguarMainROM[address - 0x800000] << 8) | jaguarMainROM[address - 0x800000 + 1];
@@ -389,7 +389,7 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address > 0x000000) && (address <= 0x1FFFFF))
+   if ((address >= 0x000000) && (address <= 0x1FFFFF))
       jaguarMainRAM[address] = value;
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFF))
       CDROMWriteByte(address, value, M68K);
@@ -418,7 +418,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
-   if ((address > 0x000000) && (address <= 0x1FFFFE))
+   if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
       SET16(jaguarMainRAM, address, value);
    }
