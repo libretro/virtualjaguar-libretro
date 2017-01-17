@@ -47,6 +47,10 @@ void retro_set_environment(retro_environment_t cb)
          "Doom Res Hack; disabled|enabled",
 
       },
+      {
+         "virtualjaguar_bios",
+         "Bios; disabled|enabled",
+      },
       { NULL, NULL },
    };
 
@@ -81,6 +85,20 @@ static void check_variables(void)
    }
    else
       doom_res_hack=0;
+
+   var.key = "virtualjaguar_bios";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         vjs.useJaguarBIOS = true;
+      if (strcmp(var.value, "disabled") == 0)
+         vjs.useJaguarBIOS = false;
+   }
+   else
+      vjs.useJaguarBIOS = false;
+
 } 
 
 static void update_input(void)
