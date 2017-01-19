@@ -12,6 +12,11 @@
 #include "settings.h"
 #include "tom.h"
 
+#define SAMPLERATE 48000
+#define BUFPAL  1920
+#define BUFNTSC 1600
+#define BUFMAX 2048
+
 static bool failed_init;
 int videoWidth, videoHeight;
 uint32_t *videoBuffer = NULL;
@@ -50,6 +55,10 @@ void retro_set_environment(retro_environment_t cb)
       {
          "virtualjaguar_bios",
          "Bios; disabled|enabled",
+      },
+      {
+         "virtualjaguar_pal",
+         "Pal (Restart); disabled|enabled",
       },
       { NULL, NULL },
    };
@@ -98,6 +107,19 @@ static void check_variables(void)
    }
    else
       vjs.useJaguarBIOS = false;
+
+   var.key = "virtualjaguar_pal";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         vjs.hardwareTypeNTSC=0;
+      if (strcmp(var.value, "disabled") == 0)
+         vjs.hardwareTypeNTSC=1;
+   }
+   else
+      vjs.hardwareTypeNTSC=1;
 
 } 
 
@@ -232,7 +254,7 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 {
    memset(info, 0, sizeof(*info));
    info->timing.fps            = vjs.hardwareTypeNTSC ? 60 : 50;
-   info->timing.sample_rate    = 48000;
+   info->timing.sample_rate    = SAMPLERATE;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
    info->geometry.max_width    = TOMGetVideoModeWidth();
@@ -387,8 +409,8 @@ void retro_init(void)
    videoWidth = 320;
    videoHeight = 240;
    videoBuffer = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
-   sampleBuffer = (uint16_t *)malloc(1600 * sizeof(uint16_t)); //found in dac.h
-   memset(sampleBuffer, 0, 1600 * sizeof(uint16_t));
+   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t)); //found in dac.h
+   memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
 
    game_width = 320;
    game_height = 240;
@@ -419,7 +441,7 @@ void retro_run(void)
 
    JaguarExecuteNew();
    
-   SDLSoundCallback(NULL, sampleBuffer, 1600);
+   SDLSoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 }
