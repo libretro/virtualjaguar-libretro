@@ -17,11 +17,11 @@
 #define BUFNTSC 1600
 #define BUFMAX 2048
 
-static bool failed_init;
-int videoWidth, videoHeight;
-uint32_t *videoBuffer = NULL;
-int game_width;
-int game_height;
+int videoWidth               = 0;
+int videoHeight              = 0;
+uint32_t *videoBuffer        = NULL;
+int game_width               = 0;
+int game_height              = 0;
 
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
@@ -297,14 +297,6 @@ bool retro_load_game(const struct retro_game_info *info)
 {
    unsigned i;
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
-   if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
-   {
-      fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
-      return false;
-   }
-
-   if(failed_init)
-      return false;
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -344,7 +336,25 @@ bool retro_load_game(const struct retro_game_info *info)
       { 0 },
    };
 
+   if (!info)
+      return false;
+
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
+
+   if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
+   {
+      fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
+      return false;
+   }
+
+   videoWidth           = 320;
+   videoHeight          = 240;
+   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
+   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t)); //found in dac.h
+   memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
+
+   game_width           = 320;
+   game_height          = 240;
 
    // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
@@ -354,7 +364,9 @@ bool retro_load_game(const struct retro_game_info *info)
 
    //strcpy(vjs.EEPROMPath, "/path/to/eeproms/");   // battery saves
    JaguarInit();                                             // set up hardware
-   memcpy(jagMemSpace + 0xE00000, (vjs.biosType == BT_K_SERIES ? jaguarBootROM : jaguarBootROM2), 0x20000); // Use the stock BIOS
+   memcpy(jagMemSpace + 0xE00000,
+         (vjs.biosType == BT_K_SERIES ? jaguarBootROM : jaguarBootROM2),
+         0x20000); // Use the stock BIOS
 
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
@@ -380,6 +392,13 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *i
 
 void retro_unload_game(void)
 {
+   JaguarDone();
+   if (videoBuffer)
+      free(videoBuffer);
+   videoBuffer = NULL;
+   if (sampleBuffer)
+      free(sampleBuffer); //found in dac.h
+   sampleBuffer = NULL;
 }
 
 unsigned retro_get_region(void)
@@ -406,23 +425,11 @@ void retro_init(void)
 {
    unsigned level = 18;
 
-   videoWidth = 320;
-   videoHeight = 240;
-   videoBuffer = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
-   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t)); //found in dac.h
-   memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
-
-   game_width = 320;
-   game_height = 240;
-
    environ_cb(RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL, &level);
 }
 
 void retro_deinit(void)
 {
-   JaguarDone();
-   free(videoBuffer);
-   free(sampleBuffer); //found in dac.h
 }
 
 void retro_reset(void)
