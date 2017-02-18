@@ -5,7 +5,9 @@
 extern "C" {
 #endif
 
-extern char jaguarDevCDBootROM[];
+#include <stdint.h>
+
+extern uint8_t jaguarDevCDBootROM[];
 
 #ifdef __cplusplus
 }

@@ -132,7 +132,7 @@ uint16_t JoystickReadWord(uint32_t offset)
 
 		if (offset0 != 0xFF)
 		{
-			int8_t mask[4][2] = { { BUTTON_A, BUTTON_PAUSE }, { BUTTON_B, -1 }, { BUTTON_C, -1 }, { BUTTON_OPTION, -1 } };
+			int8_t mask[4][2] = { { BUTTON_A, BUTTON_PAUSE }, { BUTTON_B, 0xFF }, { BUTTON_C, 0xFF }, { BUTTON_OPTION, 0xFF } };
 			data &= (joypad0Buttons[mask[offset0][0]] ? 0xFFFD : 0xFFFF);
 
 			if (mask[offset0][1] != -1)
@@ -141,7 +141,7 @@ uint16_t JoystickReadWord(uint32_t offset)
 
 		if (offset1 != 0xFF)
 		{
-			int8_t mask[4][2] = { { BUTTON_A, BUTTON_PAUSE }, { BUTTON_B, -1 }, { BUTTON_C, -1 }, { BUTTON_OPTION, -1 } };
+			int8_t mask[4][2] = { { BUTTON_A, BUTTON_PAUSE }, { BUTTON_B, 0xFF }, { BUTTON_C, 0xFF }, { BUTTON_OPTION, 0xFF } };
 			data &= (joypad1Buttons[mask[offset1][0]] ? 0xFFF7 : 0xFFFF);
 
 			if (mask[offset1][1] != -1)
