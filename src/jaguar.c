@@ -29,6 +29,8 @@
 #include "joystick.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
+#include "memtrack.h"
+#include "mmu.h"
 #include "settings.h"
 #include "tom.h"
 
@@ -333,12 +335,20 @@ unsigned int m68k_read_memory_16(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+
 #ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
       return GET16(jaguarMainRAM, address);
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
-      return (jaguarMainROM[address - 0x800000] << 8) | jaguarMainROM[address - 0x800000 + 1];
+   {
+      /* Memory Track reading... */
+      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+         return MTReadWord(address);
+      else
+         return (jaguarMainROM[address - 0x800000] << 8)
+            | jaguarMainROM[address - 0x800000 + 1];
+   }
    else if ((address >= 0xE00000) && (address <= 0xE3FFFE))
       return (jagMemSpace[address] << 8) | jagMemSpace[address + 1];
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFE))
@@ -347,10 +357,8 @@ unsigned int m68k_read_memory_16(unsigned int address)
       return TOMReadWord(address, M68K);
    else if ((address >= 0xF10000) && (address <= 0xF1FFFE))
       return JERRYReadWord(address, M68K);
-   else
-      return jaguar_unknown_readword(address, M68K);
 
-   return 0;
+   return jaguar_unknown_readword(address, M68K);
 #else
    return MMURead16(address, M68K);
 #endif
@@ -369,6 +377,15 @@ unsigned int m68k_read_memory_32(unsigned int address)
    address &= 0x00FFFFFF;
 
 #ifndef USE_NEW_MMU
+   if ((address >= 0x800000) && (address <= 0xDFFEFE))
+   {
+      // Memory Track reading...
+      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+         return MTReadLong(address);
+
+      return GET32(jaguarMainROM, address - 0x800000);
+   }
+
    return (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
 #else
    return MMURead32(address, M68K);
@@ -421,6 +438,12 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
       SET16(jaguarMainRAM, address, value);
+   }
+   /* Memory Track device writes.... */
+   else if ((address >= 0x800000) && (address <= 0x87FFFE))
+   {
+      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+         MTWriteWord(address, value);
    }
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFE))
       CDROMWriteWord(address, value, M68K);

@@ -49,6 +49,7 @@ uint16_t TOMGetHDB(void);
 uint16_t TOMGetVDB(void);
 uint16_t TOMGetHC(void);
 uint16_t TOMGetVP(void);
+uint16_t TOMGetMEMCON1(void);
 
 int TOMIRQEnabled(int irq);
 uint16_t TOMIRQControlReg(void);

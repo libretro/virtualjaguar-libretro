@@ -521,6 +521,11 @@ uint16_t TOMGetVP(void)
    return GET16(tomRam8, VP);
 }
 
+uint16_t TOMGetMEMCON1(void)
+{
+   return GET16(tomRam8, MEMCON1);
+}
+
 #define LEFT_BG_FIX
 // 16 BPP CRY/RGB mixed mode rendering
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
