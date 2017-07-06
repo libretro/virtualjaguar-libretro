@@ -179,6 +179,9 @@ int m68k_execute(int num_cycles)
 	/* Main loop.  Keep going until we run out of clock cycles */
 	do
 	{
+      uint32_t opcode;
+      int32_t cycles;
+
 		// This is so our debugging code can break in on a dime.
 		// Otherwise, this is just extra slow down :-P
 		if (regs.spcflags & SPCFLAG_DEBUGGER)
@@ -199,8 +202,8 @@ int m68k_execute(int num_cycles)
 #ifdef M68K_HOOK_FUNCTION
 		M68KInstructionHook();
 #endif
-		uint32_t opcode = get_iword(0);
-		int32_t cycles = (int32_t)(*cpuFunctionTable[opcode])(opcode);
+		opcode = get_iword(0);
+		cycles = (int32_t)(*cpuFunctionTable[opcode])(opcode);
 		regs.remainingCycles -= cycles;
 
       //printf("Executed opcode $%04X (%i cycles)...\n", opcode, cycles);
@@ -262,6 +265,8 @@ static INLINE void m68ki_check_interrupts(void)
 // Service an interrupt request and start exception processing
 void m68ki_exception_interrupt(uint32_t intLevel)
 {
+   uint32_t vector, sr, newPC;
+
 	// Turn off the stopped state (N.B.: normal 68K behavior!)
 	regs.stopped = 0;
 
@@ -273,7 +278,7 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 //		return;
 
 	// Acknowledge the interrupt (NOTE: This is a user supplied function!)
-	uint32_t vector = irq_ack_handler(intLevel);
+	vector = irq_ack_handler(intLevel);
 
 	// Get the interrupt vector
 	if (vector == M68K_INT_ACK_AUTOVECTOR)
@@ -290,13 +295,13 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 	}
 
 	// Start exception processing
-	uint32_t sr = m68ki_init_exception();
+	sr = m68ki_init_exception();
 
 	// Set the interrupt mask to the level of the one being serviced
 	regs.intmask = intLevel;
 
 	// Get the new PC
-	uint32_t newPC = m68k_read_memory_32(vector << 2);
+	newPC = m68k_read_memory_32(vector << 2);
 
 	// If vector is uninitialized, call the uninitialized interrupt vector
 	if (newPC == 0)
@@ -316,8 +321,10 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 // Initiate exception processing
 static INLINE uint32_t m68ki_init_exception(void)
 {
+   uint32_t sr;
+
 	MakeSR();
-	uint32_t sr = regs.sr;					// Save old status register
+	sr = regs.sr;					// Save old status register
 	regs.s = 1;								// Set supervisor mode
 
 	return sr;
