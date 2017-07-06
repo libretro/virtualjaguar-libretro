@@ -126,8 +126,10 @@ void M68K_show_context(void)
 
    for(i=0; i<256; i++)
    {
+      uint32_t address;
+
       WriteLog("handler %03i at ", i);
-      uint32_t address = (uint32_t)JaguarGetHandler(i);
+      address = (uint32_t)JaguarGetHandler(i);
 
       if (address == 0)
          WriteLog(".........\n");
@@ -208,9 +210,9 @@ void M68KInstructionHook(void)
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
    {
+      static char buffer[2048];
       WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
 
-      static char buffer[2048];
       for(i=0; i<0x400; i++)
       {
          //			WriteLog("[A2=%08X, D0=%08X]\n", a2Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF]);
@@ -229,6 +231,9 @@ void M68KInstructionHook(void)
 void ShowM68KContext(void)
 {
    unsigned i;
+   uint32_t currpc;
+   uint32_t disPC;
+   char buffer[128];
 
    printf("\t68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
 
@@ -248,9 +253,8 @@ void ShowM68KContext(void)
          printf("\n");
    }
 
-   uint32_t currpc = m68k_get_reg(NULL, M68K_REG_PC);
-   uint32_t disPC = currpc - 30;
-   char buffer[128];
+   currpc = m68k_get_reg(NULL, M68K_REG_PC);
+   disPC  = currpc - 30;
 
    do
    {
@@ -691,6 +695,7 @@ void JaguarInit(void)
 // Half line times are, naturally, half of this. :-P
 void HalflineCallback(void)
 {
+   uint16_t numHalfLines;
    uint16_t vc = TOMReadWord(0xF00006, JAGUAR);
    uint16_t vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
    uint16_t vi = TOMReadWord(0xF0004E, JAGUAR);
@@ -698,7 +703,7 @@ void HalflineCallback(void)
 
    // Each # of lines is for a full frame == 1/30s (NTSC), 1/25s (PAL).
    // So we cut the number of half-lines in a frame in half. :-P
-   uint16_t numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+   numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
 
    if ((vc & 0x7FF) >= numHalfLines)
    {
