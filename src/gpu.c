@@ -324,24 +324,27 @@ uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
+      uint16_t data;
 		offset &= 0xFFF;
-		uint16_t data = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
+		data    = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
 		return data;
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
-	{
-// This looks and smells wrong...
-// But it *might* be OK...
-		if (offset & 0x01)			// Catch cases 1 & 3... (unaligned read)
-			return (GPUReadByte(offset, who) << 8) | GPUReadByte(offset+1, who);
+   {
+      uint32_t data;
 
-		uint32_t data = GPUReadLong(offset & 0xFFFFFFFC, who);
+      // This looks and smells wrong...
+      // But it *might* be OK...
+      if (offset & 0x01)			// Catch cases 1 & 3... (unaligned read)
+         return (GPUReadByte(offset, who) << 8) | GPUReadByte(offset+1, who);
 
-		if (offset & 0x02)			// Cases 0 & 2...
-			return data & 0xFFFF;
-		else
-			return data >> 16;
-	}
+      data = GPUReadLong(offset & 0xFFFFFFFC, who);
+
+      if (offset & 0x02)			// Cases 0 & 2...
+         return data & 0xFFFF;
+      else
+         return data >> 16;
+   }
 
 	return JaguarReadWord(offset, who);
 }
@@ -519,6 +522,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x14:
             {
+               extern int effect_start5;
                data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
 
                // check for GPU -> CPU interrupt
@@ -553,7 +557,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                if (gpu_control & 0x18)
                   GPUExec(1);
 #endif
-               extern int effect_start5;
                // (?) If we're set running by the M68K (or DSP?) then end its timeslice to
                // allow the GPU a chance to run...
                // Yes! This partially fixed Trevor McFur...
@@ -596,12 +599,15 @@ void GPUUpdateRegisterBanks(void)
 
 void GPUHandleIRQs(void)
 {
+   uint32_t bits, mask;
+   uint32_t which = 0; //Isn't there a #pragma to disable this warning???
    // Bail out if we're already in an interrupt!
    if (gpu_flags & IMASK)
       return;
 
    // Get the interrupt latch & enable bits
-   uint32_t bits = (gpu_control >> 6) & 0x1F, mask = (gpu_flags >> 4) & 0x1F;
+   bits = (gpu_control >> 6) & 0x1F;
+   mask = (gpu_flags >> 4) & 0x1F;
 
    // Bail out if latched interrupts aren't enabled
    bits &= mask;
@@ -609,7 +615,6 @@ void GPUHandleIRQs(void)
       return;
 
    // Determine which interrupt to service
-   uint32_t which = 0; //Isn't there a #pragma to disable this warning???
    if (bits & 0x01)
       which = 0;
    if (bits & 0x02)
@@ -707,9 +712,9 @@ void GPUResetStats(void)
 void GPUDumpDisassembly(void)
 {
    char buffer[512];
+   uint32_t j = 0xF03000;
 
    WriteLog("\n---[GPU code at 00F03000]---------------------------\n");
-   uint32_t j = 0xF03000;
    while (j <= 0xF03FFF)
    {
       uint32_t oldj = j;
@@ -795,6 +800,9 @@ void GPUExec(int32_t cycles)
 
    while (cycles > 0 && GPU_RUNNING)
    {
+      uint16_t opcode;
+      uint32_t index;
+
       if (gpu_ram_8[0x054] == 0x98 && gpu_ram_8[0x055] == 0x0A && gpu_ram_8[0x056] == 0x03
             && gpu_ram_8[0x057] == 0x00 && gpu_ram_8[0x058] == 0x00 && gpu_ram_8[0x059] == 0x00)
       {
@@ -804,8 +812,8 @@ void GPUExec(int32_t cycles)
             starCount = 0;
          }
       }
-      uint16_t opcode = GPUReadWord(gpu_pc, GPU);
-      uint32_t index = opcode >> 10;
+      opcode = GPUReadWord(gpu_pc, GPU);
+      index = opcode >> 10;
       gpu_instruction = opcode;				// Added for GPU #3...
       gpu_opcode_first_parameter = (opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = opcode & 0x1F;
@@ -1232,7 +1240,7 @@ static void gpu_opcode_loadw(void)
 // And it works!!! Need to fix all instances...
 // Also, Power Drive Rally seems to contradict the idea that only LOADs in
 // the $F03000-$F03FFF range are aligned...
-#warning "!!! Alignment issues, need to find definitive final word on this !!!"
+// #warning "!!! Alignment issues, need to find definitive final word on this !!!"
 /*
    Preliminary testing on real hardware seems to confirm that something strange goes on
    with unaligned reads in main memory. When the address is off by 1, the result is the
