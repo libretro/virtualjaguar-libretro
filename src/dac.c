@@ -83,14 +83,17 @@ static bool bufferDone = false;
 
 void DACInit(void)
 {
+   uint32_t riscClockRate;
+   uint32_t cyclesPerSample;
+
    DACReset();
 
    *ltxd = SILENCE;
    lrxd = SILENCE;
    *sclk = 19;									// Default is roughly 22 KHz
 
-   uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
+   riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+   cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
    WriteLog("DAC: RISC clock = %u, cyclesPerSample = %u\n", riscClockRate, cyclesPerSample);
 }
 
