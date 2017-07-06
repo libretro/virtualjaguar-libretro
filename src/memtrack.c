@@ -51,8 +51,10 @@ void MTStateMachine(uint8_t reg, uint16_t data);
 
 void MTInit(void)
 {
+   FILE *fp;
+
 	sprintf(mtFilename, "%s%s", vjs.EEPROMPath, MEMTRACK_FILENAME);
-	FILE * fp = fopen(mtFilename, "rb");
+	fp = fopen(mtFilename, "rb");
 
 	if (fp)
 	{
@@ -82,10 +84,11 @@ void MTDone(void)
 
 void MTWriteFile(void)
 {
+   FILE *fp;
 	if (!haveMT)
 		return;
 
-	FILE * fp = fopen(mtFilename, "wb");
+	fp = fopen(mtFilename, "wb");
 
 	if (fp)
 	{
