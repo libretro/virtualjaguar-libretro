@@ -654,10 +654,11 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 
    while (width)
    {
+      uint32_t b;
       uint32_t g = *current_line_buffer++;
       uint32_t r = *current_line_buffer++;
       current_line_buffer++;
-      uint32_t b = *current_line_buffer++;
+      b = *current_line_buffer++;
       //hm.		*backbuffer++ = 0xFF000000 | (b << 16) | (g << 8) | r;
       *backbuffer++ = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
       width--;
@@ -730,17 +731,22 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 {
    unsigned i;
    uint16_t field2 = halfline & 0x0800;
-   halfline &= 0x07FF;
-
    bool inActiveDisplayArea = true;
+   uint16_t startingHalfline;
+   uint16_t endingHalfline;
+   uint32_t * TOMCurrentLine = 0;
+   uint16_t topVisible;
+   uint16_t bottomVisible;
+
+   halfline &= 0x07FF;
 
    if (halfline & 0x01)							// Execute OP only on even halflines (non-interlaced only!)
       // Execute OP only on even halflines (skip higher resolutions for now...)
       return;
 
    // Initial values that "well behaved" programs use
-   uint16_t startingHalfline = GET16(tomRam8, VDB);
-   uint16_t endingHalfline = GET16(tomRam8, VDE);
+   startingHalfline = GET16(tomRam8, VDB);
+   endingHalfline = GET16(tomRam8, VDE);
 
    // Simulate the OP start bug here!
    // Really, this value is somewhere around 507 for an NTSC Jaguar. But this
@@ -768,9 +774,8 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 
    // Take PAL into account...
 
-   uint16_t topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL),
-            bottomVisible = (vjs.hardwareTypeNTSC ? BOTTOM_VISIBLE_VC : BOTTOM_VISIBLE_VC_PAL);
-   uint32_t * TOMCurrentLine = 0;
+   topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL);
+   bottomVisible = (vjs.hardwareTypeNTSC ? BOTTOM_VISIBLE_VC : BOTTOM_VISIBLE_VC_PAL);
 
    // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
    if (tomRam8[VP + 1] & 0x01)
