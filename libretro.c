@@ -39,8 +39,6 @@ int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
 
 void retro_set_environment(retro_environment_t cb)
 {
-   environ_cb = cb;
-
    struct retro_variable variables[] = {
       {
          "virtualjaguar_usefastblitter",
@@ -63,6 +61,7 @@ void retro_set_environment(retro_environment_t cb)
       { NULL, NULL },
    };
 
+   environ_cb = cb;
    cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
 }
 

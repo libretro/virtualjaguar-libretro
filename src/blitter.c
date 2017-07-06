@@ -710,6 +710,7 @@ void blitter_generic(uint32_t cmd)
       //New: Phrase mode taken into account! :-p
       if (a1_phrase_mode)			// v2
       {
+         uint32_t pixelSize;
          // Bump the pointer to the next phrase boundary
          // Even though it works, this is crappy... Clean it up!
          uint32_t size = 64 / a1_psize;
@@ -721,12 +722,13 @@ void blitter_generic(uint32_t cmd)
             a1_x += extra << 16;
          }
 
-         uint32_t pixelSize = (size - 1) << 16;
+         pixelSize = (size - 1) << 16;
          a1_x = (a1_x + pixelSize) & ~pixelSize;
       }
 
       if (a2_phrase_mode)			// v1
       {
+         uint32_t pixelSize;
          // Bump the pointer to the next phrase boundary
          // Even though it works, this is crappy... Clean it up!
          uint32_t size = 64 / a2_psize;
@@ -739,7 +741,7 @@ void blitter_generic(uint32_t cmd)
             a2_x += extra << 16;
          }
 
-         uint32_t pixelSize = (size - 1) << 16;
+         pixelSize = (size - 1) << 16;
          a2_x = (a2_x + pixelSize) & ~pixelSize;
       }
 
