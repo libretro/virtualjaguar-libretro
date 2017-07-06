@@ -163,6 +163,8 @@ void OPDiscoverObjects(uint32_t address)
 
    do
    {
+      uint32_t hi, lo, link;
+
       // If we've seen this object already, bail out!
       // Otherwise, add it to the list
       if (OPObjectExists(address))
@@ -171,10 +173,10 @@ void OPDiscoverObjects(uint32_t address)
       object[numberOfObjects++] = address;
 
       // Get the object & decode its type, link address
-      uint32_t hi = JaguarReadLong(address + 0, OP);
-      uint32_t lo = JaguarReadLong(address + 4, OP);
+      hi = JaguarReadLong(address + 0, OP);
+      lo = JaguarReadLong(address + 4, OP);
       objectType = lo & 0x07;
-      uint32_t link = ((hi << 11) | (lo >> 21)) & 0x3FFFF8;
+      link = ((hi << 11) | (lo >> 21)) & 0x3FFFF8;
 
       if (objectType == 3)
       {
@@ -314,12 +316,14 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 // Debugging routines
 void DumpScaledObject(uint64_t p0, uint64_t p1, uint64_t p2)
 {
+   uint32_t hscale, vscale;
+   uint32_t remainder;
    WriteLog("          %08X %08X\n", (uint32_t)(p1>>32), (uint32_t)(p1&0xFFFFFFFF));
    WriteLog("          %08X %08X\n", (uint32_t)(p2>>32), (uint32_t)(p2&0xFFFFFFFF));
    DumpBitmapCore(p0, p1);
-   uint32_t hscale = p2 & 0xFF;
-   uint32_t vscale = (p2 >> 8) & 0xFF;
-   uint32_t remainder = (p2 >> 16) & 0xFF;
+   hscale = p2 & 0xFF;
+   vscale = (p2 >> 8) & 0xFF;
+   remainder = (p2 >> 16) & 0xFF;
    WriteLog("    [hsc: %02X, vsc: %02X, rem: %02X]\n", hscale, vscale, remainder);
 }
 
@@ -337,7 +341,6 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
    uint8_t bitdepth = (p1 >> 12) & 0x07;
    int16_t ypos = ((p0 >> 3) & 0x7FF);			// ??? What if not interlaced (/2)?
    int32_t xpos = p1 & 0xFFF;
-   xpos = (xpos & 0x800 ? xpos | 0xFFFFF000 : xpos);	// Sign extend that mutha!
    uint32_t iwidth = ((p1 >> 28) & 0x3FF);
    uint32_t dwidth = ((p1 >> 18) & 0x3FF);		// Unsigned!
    uint16_t height = ((p0 >> 14) & 0x3FF);
@@ -347,6 +350,7 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
    uint8_t flags = (p1 >> 45) & 0x0F;
    uint8_t idx = (p1 >> 38) & 0x7F;
    uint32_t pitch = (p1 >> 15) & 0x07;
+   xpos = (xpos & 0x800 ? xpos | 0xFFFFF000 : xpos);	// Sign extend that mutha!
    WriteLog("    [%u x %u @ (%i, %u) (iw:%u, dw:%u) (%u bpp), p:%08X fp:%02X, fl:%s%s%s%s, idx:%02X, pt:%02X]\n",
          iwidth * bdMultiplier[bitdepth],
          height, xpos, ypos, iwidth, dwidth, op_bitmap_bit_depth[bitdepth],
@@ -359,10 +363,10 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
 //
 // Object Processor main routine
 //
-#warning "Need to fix this so that when an GPU object IRQ happens, we can pick up OP processing where we left off. !!! FIX !!!"
+//#warning "Need to fix this so that when an GPU object IRQ happens, we can pick up OP processing where we left off. !!! FIX !!!"
 void OPProcessList(int halfline, bool render)
 {
-#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
+//#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
    // We ignore them, for now; not good D-:
    // N.B.: Half-lines are exactly that, half-lines. When in interlaced mode, it
    //       draws the screen exactly the same way as it does in non, one line at a
@@ -532,7 +536,7 @@ void OPProcessList(int halfline, bool render)
          case OBJECT_TYPE_GPU:
             {
                //WriteLog("OP: Asserting GPU IRQ #3...\n");
-#warning "Need to fix OP GPU IRQ handling! !!! FIX !!!"
+//#warning "Need to fix OP GPU IRQ handling! !!! FIX !!!"
                OPSetCurrentObject(p0);
                GPUSetIRQLine(3, ASSERT_LINE);
                //Also, OP processing is suspended from this point until OBF (F00026) is written to...
@@ -600,7 +604,7 @@ void OPProcessList(int halfline, bool render)
       // Here is a little sanity check to keep the OP from locking up the machine
       // when fed bad data. Better would be to count how many actual cycles it used
       // and bail out/reenter to properly simulate an overloaded OP... !!! FIX !!!
-#warning "Better would be to count how many actual cycles it used and bail out/reenter to properly simulate an overloaded OP... !!! FIX !!!"
+//#warning "Better would be to count how many actual cycles it used and bail out/reenter to properly simulate an overloaded OP... !!! FIX !!!"
       opCyclesToRun--;
 
       if (!opCyclesToRun)
@@ -647,7 +651,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 
    //kludge: Seems that the OP treats iwidth == 0 as iwidth == 1... Need to investigate
    //        on real hardware...
-#warning "!!! Need to investigate iwidth == 0 behavior on real hardware !!!"
+//#warning "!!! Need to investigate iwidth == 0 behavior on real hardware !!!"
    if (iwidth == 0)
       iwidth = 1;
 
