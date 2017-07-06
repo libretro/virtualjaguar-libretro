@@ -157,7 +157,7 @@ const struct mnemolookup lookuptab[] = {
 struct instr * table68k;
 
 
-STATIC_INLINE amodes mode_from_str(const char * str)
+static INLINE amodes mode_from_str(const char * str)
 {
 	if (strncmp (str, "Dreg", 4) == 0) return Dreg;
 	if (strncmp (str, "Areg", 4) == 0) return Areg;
@@ -177,7 +177,7 @@ STATIC_INLINE amodes mode_from_str(const char * str)
 }
 
 
-STATIC_INLINE amodes mode_from_mr(int mode, int reg)
+static INLINE amodes mode_from_mr(int mode, int reg)
 {
 	switch (mode)
 	{

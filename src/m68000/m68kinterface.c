@@ -48,10 +48,10 @@ extern const struct cputbl op_smalltbl_5_ff[];	/* 68000 slow but compatible.  */
 //extern int irq_ack_handler(int);
 
 // Function prototypes...
-STATIC_INLINE void m68ki_check_interrupts(void);
+static INLINE void m68ki_check_interrupts(void);
 void m68ki_exception_interrupt(uint32_t intLevel);
-STATIC_INLINE uint32_t m68ki_init_exception(void);
-STATIC_INLINE void m68ki_stack_frame_3word(uint32_t pc, uint32_t sr);
+static INLINE uint32_t m68ki_init_exception(void);
+static INLINE void m68ki_stack_frame_3word(uint32_t pc, uint32_t sr);
 unsigned long IllegalOpcode(uint32_t opcode);
 void BuildCPUFunctionTable(void);
 void m68k_set_irq2(unsigned int intLevel);
@@ -252,7 +252,7 @@ void m68k_set_irq2(unsigned int intLevel)
 
 
 // Check for interrupts
-STATIC_INLINE void m68ki_check_interrupts(void)
+static INLINE void m68ki_check_interrupts(void)
 {
 	if (regs.intLevel > regs.intmask)
 		m68ki_exception_interrupt(regs.intLevel);
@@ -314,7 +314,7 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 
 
 // Initiate exception processing
-STATIC_INLINE uint32_t m68ki_init_exception(void)
+static INLINE uint32_t m68ki_init_exception(void)
 {
 	MakeSR();
 	uint32_t sr = regs.sr;					// Save old status register
@@ -325,7 +325,7 @@ STATIC_INLINE uint32_t m68ki_init_exception(void)
 
 
 // 3 word stack frame (68000 only)
-STATIC_INLINE void m68ki_stack_frame_3word(uint32_t pc, uint32_t sr)
+static INLINE void m68ki_stack_frame_3word(uint32_t pc, uint32_t sr)
 {
 	// Push PC on stack:
 	m68k_areg(regs, 7) -= 4;

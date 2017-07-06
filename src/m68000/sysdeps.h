@@ -99,10 +99,6 @@ extern void * q_memcpy(void *, const void *, size_t);
 #define O_BINARY 0
 #endif
 
-#ifndef STATIC_INLINE
-#define STATIC_INLINE static __inline__
-#endif
-
 /*
  * You can specify numbers from 0 to 5 here. It is possible that higher
  * numbers will make the CPU emulation slightly faster, but if the setting

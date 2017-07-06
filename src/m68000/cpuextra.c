@@ -159,7 +159,7 @@ void Exception(int nr, uint32_t oldpc, int ExceptionSource)
 // DIVU
 // Unsigned division
 //
-STATIC_INLINE int getDivu68kCycles_2 (uint32_t dividend, uint16_t divisor)
+static INLINE int getDivu68kCycles_2 (uint32_t dividend, uint16_t divisor)
 {
 	int mcycles;
 	uint32_t hdivisor;
@@ -214,7 +214,7 @@ int getDivu68kCycles(uint32_t dividend, uint16_t divisor)
 // DIVS
 // Signed division
 //
-STATIC_INLINE int getDivs68kCycles_2(int32_t dividend, int16_t divisor)
+static INLINE int getDivs68kCycles_2(int32_t dividend, int16_t divisor)
 {
 	int mcycles;
 	uint32_t aquot;

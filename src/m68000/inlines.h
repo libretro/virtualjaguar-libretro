@@ -13,7 +13,7 @@
 #include "cpudefs.h"
 #include "m68kinterface.h"
 
-STATIC_INLINE int cctrue(const int cc)
+static INLINE int cctrue(const int cc)
 {
 	switch (cc)
 	{
@@ -42,7 +42,7 @@ STATIC_INLINE int cctrue(const int cc)
 //no #define m68k_incpc(o) (regs.pc_p += (o))
 #define m68k_incpc(o) (regs.pc += (o))
 
-STATIC_INLINE void m68k_setpc(uint32_t newpc)
+static INLINE void m68k_setpc(uint32_t newpc)
 {
 	//This is only done here... (get_real_address())
 //	regs.pc_p = regs.pc_oldp = get_real_address(newpc);
@@ -51,32 +51,32 @@ STATIC_INLINE void m68k_setpc(uint32_t newpc)
 
 #define m68k_setpc_rte  m68k_setpc
 
-STATIC_INLINE uint32_t m68k_getpc(void)
+static INLINE uint32_t m68k_getpc(void)
 {
 //	return regs.pc + ((char *)regs.pc_p - (char *)regs.pc_oldp);
 	return regs.pc;
 }
 
-STATIC_INLINE void m68k_setstopped(int stop)
+static INLINE void m68k_setstopped(int stop)
 {
 	regs.stopped = stop;
 	regs.remainingCycles = 0;
 }
 
-STATIC_INLINE void m68k_do_rts(void)
+static INLINE void m68k_do_rts(void)
 {
 	m68k_setpc(m68k_read_memory_32(m68k_areg(regs, 7)));
 	m68k_areg(regs, 7) += 4;
 }
 
-STATIC_INLINE void m68k_do_bsr(uint32_t oldpc, int32_t offset)
+static INLINE void m68k_do_bsr(uint32_t oldpc, int32_t offset)
 {
 	m68k_areg(regs, 7) -= 4;
 	m68k_write_memory_32(m68k_areg(regs, 7), oldpc);
 	m68k_incpc(offset);
 }
 
-STATIC_INLINE void m68k_do_jsr(uint32_t oldpc, uint32_t dest)
+static INLINE void m68k_do_jsr(uint32_t oldpc, uint32_t dest)
 {
 	m68k_areg(regs, 7) -= 4;
 	m68k_write_memory_32(m68k_areg(regs, 7), oldpc);
@@ -90,26 +90,26 @@ STATIC_INLINE void m68k_do_jsr(uint32_t oldpc, uint32_t dest)
 #define get_ilong(o)	m68k_read_memory_32(regs.pc + (o))
 
 // We don't use this crap, so let's comment out for now...
-STATIC_INLINE void refill_prefetch(uint32_t currpc, uint32_t offs)
+static INLINE void refill_prefetch(uint32_t currpc, uint32_t offs)
 {
 }
 
-STATIC_INLINE uint32_t get_ibyte_prefetch(int32_t o)
+static INLINE uint32_t get_ibyte_prefetch(int32_t o)
 {
 	return get_ibyte(o);
 }
 
-STATIC_INLINE uint32_t get_iword_prefetch(int32_t o)
+static INLINE uint32_t get_iword_prefetch(int32_t o)
 {
 	return get_iword(o);
 }
 
-STATIC_INLINE uint32_t get_ilong_prefetch(int32_t o)
+static INLINE uint32_t get_ilong_prefetch(int32_t o)
 {
 	return get_ilong(o);
 }
 
-STATIC_INLINE void fill_prefetch_0(void)
+static INLINE void fill_prefetch_0(void)
 {
 }
 

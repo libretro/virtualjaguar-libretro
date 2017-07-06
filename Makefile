@@ -257,6 +257,12 @@ endif
 
 FLAGS += -D__LIBRETRO__ $(WARNINGS)
 
+ifneq (,$(findstring msvc,$(platform)))
+FLAGS += -DINLINE="_inline"
+else
+FLAGS += -DINLINE="inline"
+endif
+
 CXXFLAGS += $(FLAGS)
 CFLAGS   += $(FLAGS)
 
