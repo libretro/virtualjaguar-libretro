@@ -573,6 +573,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x14:
             {
+               uint32_t mask;
                bool wasRunning = DSP_RUNNING;
                // Check for DSP -> CPU interrupt
                if (data & CPUINT)
@@ -594,7 +595,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   data &= ~DSPINT0;
                }
                // Protect writes to VERSION and the interrupt latches...
-               uint32_t mask = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
+               mask        = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
                dsp_control = (dsp_control & mask) | (data & ~mask);
                //CC only!
                //!!!!!!!!
@@ -643,19 +644,20 @@ void DSPUpdateRegisterBanks(void)
 /* Check for and handle any asserted DSP IRQs */
 void DSPHandleIRQs(void)
 {
+   uint32_t bits, mask;
+   int which = 0;									// Determine which interrupt
    if (dsp_flags & IMASK) 							// Bail if we're already inside an interrupt
       return;
 
    // Get the active interrupt bits (latches) & interrupt mask (enables)
-   uint32_t bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F),
-            mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
+   bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+   mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
    bits &= mask;
 
    if (!bits)										// Bail if nothing is enabled
       return;
 
-   int which = 0;									// Determine which interrupt
 
    if (bits & 0x01)
       which = 0;
@@ -728,19 +730,21 @@ void DSPHandleIRQs(void)
 /* Non-pipelined version... */
 void DSPHandleIRQsNP(void)
 {
+   uint32_t bits;
+   uint32_t mask;
+   int which = 0;									// Determine which interrupt
 	if (dsp_flags & IMASK) 							// Bail if we're already inside an interrupt
 		return;
 
 	// Get the active interrupt bits (latches) & interrupt mask (enables)
-	uint32_t bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F),
-		mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
+	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+   mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	bits &= mask;
 
 	if (!bits)										// Bail if nothing is enabled
 		return;
 
-	int which = 0;									// Determine which interrupt
 	if (bits & 0x01)
 		which = 0;
 	if (bits & 0x02)
@@ -871,6 +875,7 @@ void DSPDumpRegisters(void)
 
 void DSPDone(void)
 {
+	static char buffer[512];
 	int i, j;
 	WriteLog("DSP: Stopped at PC=%08X dsp_modulo=%08X (dsp was%s running)\n", dsp_pc, dsp_modulo, (DSP_RUNNING ? "" : "n't"));
 	WriteLog("DSP: %sin interrupt handler\n", ((dsp_flags & IMASK) ? "" : "not "));
@@ -908,7 +913,6 @@ void DSPDone(void)
 
 	WriteLog("\n");
 
-	static char buffer[512];
 	j = DSP_WORK_RAM_BASE;
 
 	while (j <= 0xF1CFFF)
