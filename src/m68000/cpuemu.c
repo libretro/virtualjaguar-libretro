@@ -39183,8 +39183,8 @@ unsigned long CPUFUNC(op_4258_5)(uint32_t opcode) /* CLR */
 		Exception(3, 0, M68000_EXC_SRC_CPU);
 		goto endlabel2195;
 	}
-{	m68k_areg(regs, srcreg) += 2;
-	int16_t src = m68k_read_memory_16(srca);
+{	int16_t src; m68k_areg(regs, srcreg) += 2;
+	src = m68k_read_memory_16(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int16_t)(0)) == 0);
 	SET_NFLG (((int16_t)(0)) < 0);
@@ -39206,8 +39206,8 @@ unsigned long CPUFUNC(op_4260_5)(uint32_t opcode) /* CLR */
 		Exception(3, 0, M68000_EXC_SRC_CPU);
 		goto endlabel2196;
 	}
-{	m68k_areg (regs, srcreg) = srca;
-	int16_t src = m68k_read_memory_16(srca);
+{	int16_t src; m68k_areg (regs, srcreg) = srca;
+	src = m68k_read_memory_16(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int16_t)(0)) == 0);
 	SET_NFLG (((int16_t)(0)) < 0);
@@ -39353,8 +39353,8 @@ unsigned long CPUFUNC(op_4298_5)(uint32_t opcode) /* CLR */
 		Exception(3, 0, M68000_EXC_SRC_CPU);
 		goto endlabel2203;
 	}
-{	m68k_areg(regs, srcreg) += 4;
-	int32_t src = m68k_read_memory_32(srca);
+{	int32_t src; m68k_areg(regs, srcreg) += 4;
+	src = m68k_read_memory_32(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int32_t)(0)) == 0);
 	SET_NFLG (((int32_t)(0)) < 0);
@@ -39376,8 +39376,8 @@ unsigned long CPUFUNC(op_42a0_5)(uint32_t opcode) /* CLR */
 		Exception(3, 0, M68000_EXC_SRC_CPU);
 		goto endlabel2204;
 	}
-{	m68k_areg (regs, srcreg) = srca;
-	int32_t src = m68k_read_memory_32(srca);
+{	int32_t src; m68k_areg (regs, srcreg) = srca;
+	src = m68k_read_memory_32(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int32_t)(0)) == 0);
 	SET_NFLG (((int32_t)(0)) < 0);
