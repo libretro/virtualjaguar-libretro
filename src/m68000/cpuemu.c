@@ -12064,9 +12064,9 @@ unsigned long CPUFUNC(op_4eb0_4)(uint32_t opcode) /* JSR */
 {
 	uint32_t srcreg = (opcode & 7);
 	OpcodeFamily = 52; CurrentInstrCycles = 22; 
-{{	uint32_t srca = get_disp_ea_000(m68k_areg(regs, srcreg), get_iword(2));
+{{	uint32_t oldpc; uint32_t srca = get_disp_ea_000(m68k_areg(regs, srcreg), get_iword(2));
 	BusCyclePenalty += 2;
-	uint32_t oldpc = m68k_getpc () + 4;
+	oldpc = m68k_getpc () + 4;
 	m68k_do_jsr(m68k_getpc() + 4, srca);
 }}return 22;
 }
@@ -12099,9 +12099,9 @@ unsigned long CPUFUNC(op_4ebb_4)(uint32_t opcode) /* JSR */
 {
 	OpcodeFamily = 52; CurrentInstrCycles = 22; 
 {{	uint32_t tmppc = m68k_getpc() + 2;
-	uint32_t srca = get_disp_ea_000(tmppc, get_iword(2));
+	uint32_t oldpc; uint32_t srca = get_disp_ea_000(tmppc, get_iword(2));
 	BusCyclePenalty += 2;
-	uint32_t oldpc = m68k_getpc () + 4;
+	oldpc = m68k_getpc () + 4;
 	m68k_do_jsr(m68k_getpc() + 4, srca);
 }}return 22;
 }
@@ -42943,9 +42943,9 @@ unsigned long CPUFUNC(op_4eb0_5)(uint32_t opcode) /* JSR */
 {
 	uint32_t srcreg = (opcode & 7);
 	OpcodeFamily = 52; CurrentInstrCycles = 22; 
-{{	uint32_t srca = get_disp_ea_000(m68k_areg(regs, srcreg), get_iword_prefetch(2));
+{{	uint32_t oldpc; uint32_t srca = get_disp_ea_000(m68k_areg(regs, srcreg), get_iword_prefetch(2));
 	BusCyclePenalty += 2;
-	uint32_t oldpc = m68k_getpc () + 4;
+	oldpc = m68k_getpc () + 4;
 	if (srca & 1) {
 		last_addr_for_exception_3 = oldpc;
 		last_fault_for_exception_3 = srca;
@@ -42989,9 +42989,9 @@ return 20;
 unsigned long CPUFUNC(op_4eba_5)(uint32_t opcode) /* JSR */
 {
 	OpcodeFamily = 52; CurrentInstrCycles = 18; 
-{{	uint32_t srca = m68k_getpc () + 2;
+{{	uint32_t oldpc; uint32_t srca = m68k_getpc () + 2;
 	srca += (int32_t)(int16_t)get_iword_prefetch(2);
-	uint32_t oldpc = m68k_getpc () + 4;
+	oldpc = m68k_getpc () + 4;
 	if (srca & 1) {
 		last_addr_for_exception_3 = oldpc;
 		last_fault_for_exception_3 = srca;
@@ -43006,9 +43006,9 @@ unsigned long CPUFUNC(op_4ebb_5)(uint32_t opcode) /* JSR */
 {
 	OpcodeFamily = 52; CurrentInstrCycles = 22; 
 {{	uint32_t tmppc = m68k_getpc() + 2;
-	uint32_t srca = get_disp_ea_000(tmppc, get_iword_prefetch(2));
+	uint32_t oldpc; uint32_t srca = get_disp_ea_000(tmppc, get_iword_prefetch(2));
 	BusCyclePenalty += 2;
-	uint32_t oldpc = m68k_getpc () + 4;
+	oldpc = m68k_getpc () + 4;
 	if (srca & 1) {
 		last_addr_for_exception_3 = oldpc;
 		last_fault_for_exception_3 = srca;
