@@ -621,6 +621,7 @@ void OPProcessList(int halfline, bool render)
 // Store fixed size bitmap in line buffer
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 {
+   int32_t startPos,endPos;
    // This is correct, the OP line buffer is a constant size... 
    int32_t limit = 720;
    int32_t lbufWidth = 719;
@@ -671,8 +672,8 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    if (!render || iwidth == 0)
       return;
 
-   int32_t startPos = xpos;
-   int32_t endPos = xpos +
+   startPos = xpos;
+   endPos = xpos +
       (!flagREFLECT ? (phraseWidthToPixels[depth] * iwidth) - 1
        : -((phraseWidthToPixels[depth] * iwidth) + 1));
 
