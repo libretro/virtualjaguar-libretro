@@ -9438,9 +9438,9 @@ unsigned long CPUFUNC(op_4258_4)(uint32_t opcode) /* CLR */
 {
 	uint32_t srcreg = (opcode & 7);
 	OpcodeFamily = 18; CurrentInstrCycles = 12; 
-{{	uint32_t srca = m68k_areg(regs, srcreg);
+{{	int16_t src; uint32_t srca = m68k_areg(regs, srcreg);
 	m68k_areg(regs, srcreg) += 2;
-	int16_t src = m68k_read_memory_16(srca);
+	src = m68k_read_memory_16(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int16_t)(0)) == 0);
 	SET_NFLG (((int16_t)(0)) < 0);
@@ -9452,9 +9452,9 @@ unsigned long CPUFUNC(op_4260_4)(uint32_t opcode) /* CLR */
 {
 	uint32_t srcreg = (opcode & 7);
 	OpcodeFamily = 18; CurrentInstrCycles = 14; 
-{{	uint32_t srca = m68k_areg(regs, srcreg) - 2;
+{{	int16_t src; uint32_t srca = m68k_areg(regs, srcreg) - 2;
 	m68k_areg (regs, srcreg) = srca;
-	int16_t src = m68k_read_memory_16(srca);
+	src = m68k_read_memory_16(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int16_t)(0)) == 0);
 	SET_NFLG (((int16_t)(0)) < 0);
@@ -9482,9 +9482,9 @@ unsigned long CPUFUNC(op_4270_4)(uint32_t opcode) /* CLR */
 {
 	uint32_t srcreg = (opcode & 7);
 	OpcodeFamily = 18; CurrentInstrCycles = 18; 
-{{	uint32_t srca = get_disp_ea_000(m68k_areg(regs, srcreg), get_iword(2));
+{{	int16_t src; uint32_t srca = get_disp_ea_000(m68k_areg(regs, srcreg), get_iword(2));
 	BusCyclePenalty += 2;
-	int16_t src = m68k_read_memory_16(srca);
+	src = m68k_read_memory_16(srca);
 	CLEAR_CZNV;
 	SET_ZFLG (((int16_t)(0)) == 0);
 	SET_NFLG (((int16_t)(0)) < 0);
