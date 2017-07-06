@@ -366,6 +366,13 @@ void DumpBitmapCore(uint64_t p0, uint64_t p1)
 //#warning "Need to fix this so that when an GPU object IRQ happens, we can pick up OP processing where we left off. !!! FIX !!!"
 void OPProcessList(int halfline, bool render)
 {
+   extern bool interactiveMode;
+   extern bool iToggle;
+   extern int objectPtr;
+   bool inhibit;
+   int bitmapCounter = 0;
+   uint32_t opCyclesToRun = 30000;					// This is a pulled-out-of-the-air value (will need to be fixed, obviously!)
+
 //#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
    // We ignore them, for now; not good D-:
    // N.B.: Half-lines are exactly that, half-lines. When in interlaced mode, it
@@ -379,17 +386,11 @@ void OPProcessList(int halfline, bool render)
    op_pointer = OPGetListPointer();
 
    // *** BEGIN OP PROCESSOR TESTING ONLY ***
-   extern bool interactiveMode;
-   extern bool iToggle;
-   extern int objectPtr;
-   bool inhibit;
-   int bitmapCounter = 0;
    // *** END OP PROCESSOR TESTING ONLY ***
-
-   uint32_t opCyclesToRun = 30000;					// This is a pulled-out-of-the-air value (will need to be fixed, obviously!)
 
    while (op_pointer)
    {
+      uint64_t p0;
       // *** BEGIN OP PROCESSOR TESTING ONLY ***
       if (interactiveMode && bitmapCounter == objectPtr)
          inhibit = iToggle;
@@ -397,7 +398,7 @@ void OPProcessList(int halfline, bool render)
          inhibit = false;
       // *** END OP PROCESSOR TESTING ONLY ***
 
-      uint64_t p0 = OPLoadPhrase(op_pointer);
+      p0          = OPLoadPhrase(op_pointer);
       op_pointer += 8;
 
       switch ((uint8_t)p0 & 0x07)
@@ -425,6 +426,7 @@ void OPProcessList(int halfline, bool render)
                   // *** END OP PROCESSOR TESTING ONLY ***
                   if (halfline >= ypos && height > 0)
                   {
+                     uint64_t data, dwidth;
                      // Believe it or not, this is what the OP actually does...
                      // which is why they're required to be on a dphrase boundary!
                      uint64_t p1 = OPLoadPhrase(oldOPP | 0x08);
@@ -436,8 +438,8 @@ void OPProcessList(int halfline, bool render)
 
                      height--;
 
-                     uint64_t data = (p0 & 0xFFFFF80000000000LL) >> 40;
-                     uint64_t dwidth = (p1 & 0xFFC0000) >> 15;
+                     data = (p0 & 0xFFFFF80000000000LL) >> 40;
+                     dwidth = (p1 & 0xFFC0000) >> 15;
                      data += dwidth;
 
                      p0 &= ~0xFFFFF80000FFC000LL;		// Mask out old data...
@@ -471,16 +473,19 @@ void OPProcessList(int halfline, bool render)
                   // *** END OP PROCESSOR TESTING ONLY ***
                   if (halfline >= ypos && height > 0)
                   {
+                     uint16_t remainder;
+                     uint8_t vscale;
+                     uint64_t p2;
                      uint64_t p1 = OPLoadPhrase(op_pointer);
                      op_pointer += 8;
-                     uint64_t p2 = OPLoadPhrase(op_pointer);
+                     p2 = OPLoadPhrase(op_pointer);
                      op_pointer += 8;
                      OPProcessScaledBitmap(p0, p1, p2, render);
 
                      // OP write-backs
 
-                     uint16_t remainder = (p2 >> 16) & 0xFF;//, vscale = p2 >> 8;
-                     uint8_t vscale = p2 >> 8;
+                     remainder = (p2 >> 16) & 0xFF;//, vscale = p2 >> 8;
+                     vscale = p2 >> 8;
                      //Actually, we should skip this object if it has a vscale of zero.
                      //Or do we? Not sure... Atari Karts has a few lines that look like:
                      // (SCALED BITMAP)
@@ -616,6 +621,10 @@ void OPProcessList(int halfline, bool render)
 // Store fixed size bitmap in line buffer
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 {
+   // This is correct, the OP line buffer is a constant size... 
+   int32_t limit = 720;
+   int32_t lbufWidth = 719;
+   uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;//, phrasePixel = 0;
    // Need to make sure that when writing that it stays within the line buffer...
    // LBUF ($F01800 - $F01D9E) 360 x 32-bit RAM
    uint8_t depth = (p1 >> 12) & 0x07;				// Color depth of image
@@ -623,9 +632,6 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    uint32_t iwidth = (p1 >> 28) & 0x3FF;				// Image width in *phrases*
    uint32_t data = (p0 >> 40) & 0xFFFFF8;			// Pixel data address
    uint32_t firstPix = (p1 >> 49) & 0x3F;
-   // "The LSB is significant only for scaled objects..." -JTRM
-   // "In 1 BPP mode, all five bits are significant. In 2 BPP mode, the top four are significant..."
-   firstPix &= 0x3E;
    // We can ignore the RELEASE (high order) bit for now--probably forever...!
    //	uint8_t flags = (p1 >> 45) & 0x0F;	// REFLECT, RMW, TRANS, RELEASE
    //Optimize: break these out to their own BOOL values
@@ -637,13 +643,18 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    //  provide the most significant bits of the palette address."
    uint8_t index = (p1 >> 37) & 0xFE;				// CLUT index offset (upper pix, 1-4 bpp)
    uint32_t pitch = (p1 >> 15) & 0x07;				// Phrase pitch
-   pitch <<= 3;									// Optimization: Multiply pitch by 8
 
    uint8_t * tomRam8 = TOMGetRamPointer();
    uint8_t * paletteRAM = &tomRam8[0x400];
    // This is OK as long as it's used correctly: For 16-bit RAM to RAM direct copies--NOT
    // for use when using endian-corrected data (i.e., any of the *_word_read functions!)
    uint16_t * paletteRAM16 = (uint16_t *)paletteRAM;
+
+   // "The LSB is significant only for scaled objects..." -JTRM
+   // "In 1 BPP mode, all five bits are significant. In 2 BPP mode, the top four are significant..."
+   firstPix &= 0x3E;
+
+   pitch <<= 3;									// Optimization: Multiply pitch by 8
 
    // Is it OK to have a 0 for the data width??? (i.e., undocumented?)
    // Seems to be... Seems that dwidth *can* be zero (i.e., reuse same line) as well.
@@ -660,13 +671,10 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    if (!render || iwidth == 0)
       return;
 
-   int32_t startPos = xpos, endPos = xpos +
+   int32_t startPos = xpos;
+   int32_t endPos = xpos +
       (!flagREFLECT ? (phraseWidthToPixels[depth] * iwidth) - 1
        : -((phraseWidthToPixels[depth] * iwidth) + 1));
-   uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;//, phrasePixel = 0;
-   // This is correct, the OP line buffer is a constant size... 
-   int32_t limit = 720;
-   int32_t lbufWidth = 719;
 
    // If the image is completely to the left or right of the line buffer, then bail.
    //If in REFLECT mode, then these values are swapped! !!! FIX !!! [DONE]
@@ -765,6 +773,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 
    if (depth == 0)									// 1 BPP
    {
+      int i;
       // The LSB of flags is OPFLAG_REFLECT, so sign extend it and or 2 into it.
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
@@ -773,7 +782,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       //Note that firstPix should only be honored *if* we start with the 1st phrase of the bitmap
       //i.e., we didn't clip on the margin... !!! FIX !!!
       pixels <<= firstPix;						// Skip first N pixels (N=firstPix)...
-      int i = firstPix;							// Start counter at right spot...
+      i        = firstPix;							// Start counter at right spot...
 
       while (iwidth--)
       {
@@ -855,9 +864,10 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    }
    else if (depth == 2)							// 4 BPP
    {
+      int32_t lbufDelta;
       index &= 0xF0;								// Top four bits form CLUT index
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
-      int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
+      lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
       while (iwidth--)
       {
@@ -898,6 +908,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    }
    else if (depth == 3)							// 8 BPP
    {
+      int i;
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
@@ -907,7 +918,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       //i.e., we didn't clip on the margin... !!! FIX !!!
       firstPix &= 0x30;							// Only top two bits are valid for 8 BPP
       pixels <<= firstPix;						// Skip first N pixels (N=firstPix)...
-      int i = firstPix >> 3;						// Start counter at right spot...
+      i = firstPix >> 3;						// Start counter at right spot...
 
       while (iwidth--)
       {
@@ -1029,6 +1040,12 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 // Store scaled bitmap in line buffer
 void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 {
+   uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;
+   // Not sure if this is Jaguar Two only location or what...
+   // From the docs, it is... If we want to limit here we should think of something else.
+   //	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
+   int32_t limit = 720;
+   int32_t lbufWidth = 719;	// Zero based limit...
    // Need to make sure that when writing that it stays within the line buffer...
    // LBUF ($F01800 - $F01D9E) 360 x 32-bit RAM
    uint8_t depth = (p1 >> 12) & 0x07;				// Color depth of image
@@ -1064,14 +1081,9 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    if (!render || iwidth == 0 || hscale == 0)
       return;
 
-   int32_t startPos = xpos, endPos = xpos +
+   int32_t startPos = xpos;
+   int32_t endPos = xpos +
       (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels + 1));
-   uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;
-   // Not sure if this is Jaguar Two only location or what...
-   // From the docs, it is... If we want to limit here we should think of something else.
-   //	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
-   int32_t limit = 720;
-   int32_t lbufWidth = 719;	// Zero based limit...
 
    // If the image is completely to the left or right of the line buffer, then bail.
    //If in REFLECT mode, then these values are swapped! !!! FIX !!! [DONE]
@@ -1308,12 +1320,15 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    }
    else if (depth == 2)							// 4 BPP
    {
+      int pixCount = 0;
+      int32_t lbufDelta;
+      uint64_t pixels;
+
       index &= 0xF0;								// Top four bits form CLUT index
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
-      int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
+      lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
-      int pixCount = 0;
-      uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+      pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 
       while ((int32_t)iwidth > 0)
       {
