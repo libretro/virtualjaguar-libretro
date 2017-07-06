@@ -318,29 +318,32 @@ unsigned int M68KDisassemble(char * output, uint32_t addr)
 	static const char * const ccnames[] =
 		{ "RA","RN","HI","LS","CC","CS","NE","EQ",
 		  "VC","VS","PL","MI","GE","LT","GT","LE" };
-
-	str[0] = 0;
-	output[0] = 0;
-	uint32_t newpc = 0;
-	m68kpc_offset = addr - m68k_getpc();
-	long int pcOffsetSave = m68kpc_offset;
 	int opwords;
 	char instrname[20];
 	const struct mnemolookup * lookup;
-
-	uint32_t opcode = get_iword_1(m68kpc_offset);
+	uint32_t newpc = 0;
+   long int pcOffsetSave;
+   uint32_t opcode;
+   struct instr * dp;
+   char * ccpt;
+   long int numberOfBytes;
+	str[0] = 0;
+	output[0] = 0;
+	m68kpc_offset = addr - m68k_getpc();
+	pcOffsetSave = m68kpc_offset;
+	opcode = get_iword_1(m68kpc_offset);
 	m68kpc_offset += 2;
 
 	if (cpuFunctionTable[opcode] == IllegalOpcode)
 		opcode = 0x4AFC;
 
-	struct instr * dp = table68k + opcode;
+	dp = table68k + opcode;
 
 	for(lookup=lookuptab; lookup->mnemo!=dp->mnemo; lookup++)
 		;
 
 	strcpy(instrname, lookup->name);
-	char * ccpt = strstr(instrname, "cc");
+	ccpt = strstr(instrname, "cc");
 
 	if (ccpt)
 		strncpy(ccpt, ccnames[dp->cc], 2);
@@ -386,7 +389,7 @@ unsigned int M68KDisassemble(char * output, uint32_t addr)
 	}
 
 	// Add byte(s) display to front of disassembly
-	long int numberOfBytes = m68kpc_offset - pcOffsetSave;
+	numberOfBytes = m68kpc_offset - pcOffsetSave;
 
 	for(opwords=0; opwords<5; opwords++)
 	{
