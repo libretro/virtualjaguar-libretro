@@ -60,6 +60,8 @@ static bool haveCDROMEEPROM = false;
 
 void EepromInit(void)
 {
+   FILE * fp;
+
    /* No need for EEPROM for the Memory Track device :-P */
    if (jaguarMainROMCRC32 == 0xFDF37F47)
    {
@@ -70,7 +72,7 @@ void EepromInit(void)
 	/* Handle regular cartridge EEPROM */
 	sprintf(eeprom_filename, "%s%08X.eeprom", vjs.EEPROMPath, (unsigned int)jaguarMainROMCRC32);
 	sprintf(cdromEEPROMFilename, "%scdrom.eeprom", vjs.EEPROMPath);
-	FILE * fp = fopen(eeprom_filename, "rb");
+	fp = fopen(eeprom_filename, "rb");
 
 	if (fp)
 	{
