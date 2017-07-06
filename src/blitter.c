@@ -2684,6 +2684,7 @@ Ci_y		:= EO (ci_y, cyt[1], suba_y);*/
 	uint16_t ci_y = co_y ^ (suba_y ? 1 : 0);
 	uint32_t addqt_x = adda_x + addb_x + ci_x;
 	uint32_t addqt_y = adda_y + addb_y + ci_y;
+	uint16_t mask[8] = { 0xFFFF, 0xFFFE, 0xFFFC, 0xFFF8, 0xFFF0, 0xFFE0, 0xFFC0, 0x0000 };
 	co_x = ((addqt_x & 0x10000) && a1fracldi ? 1 : 0);
 	co_y = ((addqt_y & 0x10000) && a1fracldi ? 1 : 0);
 //////////////////////////////////////////////////////////////////////////////////////
@@ -2700,7 +2701,6 @@ Addq_x		:= JOIN (addq_x, addq_x[0..5], addqt_x[6..15]);
 Addq_y		:= JOIN (addq_y, addq_y[0..15]);*/
 
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16_t mask[8] = { 0xFFFF, 0xFFFE, 0xFFFC, 0xFFF8, 0xFFF0, 0xFFE0, 0xFFC0, 0x0000 };
 	*addq_x = addqt_x & mask[modx];
 	*addq_y = addqt_y & 0xFFFF;
 //////////////////////////////////////////////////////////////////////////////////////
@@ -2852,6 +2852,7 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
    uint16_t mask;
    uint64_t dmux[4];
    uint64_t ddat;
+	uint64_t zwdata;
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Increment and Step Registers
@@ -3169,7 +3170,6 @@ Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srcz
 	*wdata |= ((mask & 0x4000) ? ddat : dstd) & 0xFF00000000000000LL;
 
 //This is a crappy way of handling this, but it should work for now...
-	uint64_t zwdata;
 	zwdata = ((*srcz & mask) | (dstz & ~mask)) & 0x00000000000000FFLL;
 	zwdata |= ((mask & 0x0100) ? *srcz : dstz) & 0x000000000000FF00LL;
 	zwdata |= ((mask & 0x0200) ? *srcz : dstz) & 0x0000000000FF0000LL;
