@@ -1073,7 +1073,7 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       // Writing to one CLUT writes to the other
       offset &= 0x5FF;		// Mask out $F00600 (restrict to $F00400-5FF)
       // Watch out for unaligned writes here! (Not fixed yet)
-#warning "!!! Watch out for unaligned writes here !!! FIX !!!"
+//#warning "!!! Watch out for unaligned writes here !!! FIX !!!"
       SET16(tomRam8, offset, data);
       SET16(tomRam8, offset + 0x200, data);
    }
@@ -1081,7 +1081,7 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    offset &= 0x3FFF;
    if (offset == 0x28)			// VMODE (Why? Why not OBF?)
       //Actually, we should check to see if the Enable bit of VMODE is set before doing this... !!! FIX !!!
-#warning "Actually, we should check to see if the Enable bit of VMODE is set before doing this... !!! FIX !!!"
+//#warning "Actually, we should check to see if the Enable bit of VMODE is set before doing this... !!! FIX !!!"
       objectp_running = 1;
 
    if (offset >= 0x30 && offset <= 0x4E)
@@ -1099,7 +1099,7 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    // TOM Shouldn't be mucking around with this, it's up to the host system to properly
    // handle this kind of crap.
    // NOTE: This is needed somehow, need to get rid of the dependency on this crap.
-#warning "!!! Need to get rid of this dependency !!!"
+//#warning "!!! Need to get rid of this dependency !!!"
    if ((offset >= 0x28) && (offset <= 0x4F))
    {
       uint32_t width = TOMGetVideoModeWidth(), height = TOMGetVideoModeHeight();

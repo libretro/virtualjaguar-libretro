@@ -1045,6 +1045,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 // Store scaled bitmap in line buffer
 void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 {
+   uint32_t scaledPhrasePixelsUS;
    uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;
    // Not sure if this is Jaguar Two only location or what...
    // From the docs, it is... If we want to limit here we should think of something else.
@@ -1081,14 +1082,13 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    //	uint8_t horizontalRemainder = 0;					// Let's try zero! Seems to work! Yay! [No, it doesn't!]
    int32_t scaledWidthInPixels = (iwidth * phraseWidthToPixels[depth] * hscale) >> 5;
    uint32_t scaledPhrasePixels = (phraseWidthToPixels[depth] * hscale) >> 5;
+   int32_t startPos = xpos;
+   int32_t endPos = xpos +
+      (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels + 1));
 
    // Looks like an hscale of zero means don't draw!
    if (!render || iwidth == 0 || hscale == 0)
       return;
-
-   int32_t startPos = xpos;
-   int32_t endPos = xpos +
-      (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels + 1));
 
    // If the image is completely to the left or right of the line buffer, then bail.
    //If in REFLECT mode, then these values are swapped! !!! FIX !!! [DONE]
@@ -1165,7 +1165,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    // start position (14 * 27.75), we get -6.5... NOT -17!
 
    //Now it seems we're working OK, at least for the first case...
-   uint32_t scaledPhrasePixelsUS = phraseWidthToPixels[depth] * hscale;
+   scaledPhrasePixelsUS = phraseWidthToPixels[depth] * hscale;
 
    if (startPos < 0)			// Case #1: Begin out, end in, L to R
    {
@@ -1271,12 +1271,15 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    }
    else if (depth == 1)							// 2 BPP
    {
+      int32_t lbufDelta;
+      int pixCount = 0;
+      uint64_t pixels;
+
       index &= 0xFC;								// Top six bits form CLUT index
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
-      int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
+      lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
-      int pixCount = 0;
-      uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+      pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 
       while ((int32_t)iwidth > 0)
       {
