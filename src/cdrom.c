@@ -292,9 +292,9 @@ static uint8_t trackNum = 1, minTrack, maxTrack;
 
 uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-   offset &= 0xFF;
-
    uint16_t data = 0x0000;
+
+   offset &= 0xFF;
 
    if (offset == BUTCH)
       data = 0x0000;
