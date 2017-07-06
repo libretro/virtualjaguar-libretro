@@ -1408,24 +1408,33 @@ void BlitterMidsummer2(void)
 
       if (inner)
       {
-         indone = false;
-         uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
          bool idle_inner = true, step = true, sreadx = false, szreadx = false, sread = false,
               szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
          bool inner0 = false;
          bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
-
          // State lines that will never assert in Jaguar I
-
          bool textext = false, txtread = false;
-
          //other stuff
          uint8_t srcshift = 0;
+         uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
+         bool srca_addi, dsta_addi, gensrc, gendst, gena2i, zaddr, fontread, justify, a1_add, a2_add;
+         bool adda_yconst, addareg, suba_x, suba_y, a1fracldi, srcdreadd, shadeadd;
+         uint8_t addasel, a1_xconst, a2_xconst, adda_xconst, addbsel, maska1, maska2, modx, daddasel;
+         uint8_t daddbsel, daddmode;
+         bool patfadd, patdadd, srcz1add, srcz2add, srcshadd, daddq_sel;
+         uint8_t data_sel;
+         uint32_t address, pixAddr;
+         uint8_t dstxp, srcxp, shftv, pobb;
+         bool pobbsel;
+         uint8_t loshd, shfti;
+
+         indone = false;
 
          //			while (!idle_inner)
          while (true)
          {
             bool sshftld; // D flipflop (D -> Q): instart -> sshftld
+
             //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
             // IDLE
 
@@ -1550,23 +1559,24 @@ void BlitterMidsummer2(void)
 
             // Here's a few more decodes--not sure if they're supposed to go here or not...
 
-            bool srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
 
-            bool dsta_addi = (dwritei && !dstwrz) || dzwritei;
+            srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
 
-            bool gensrc = sreadxi || szreadxi || sreadi || szreadi;
-            bool gendst = dreadi || dzreadi || dwritei || dzwritei;
-            bool gena2i = (gensrc && !dsta2) || (gendst && dsta2);
+            dsta_addi = (dwritei && !dstwrz) || dzwritei;
 
-            bool zaddr = szreadx || szread || dzread || dzwrite;
+            gensrc = sreadxi || szreadxi || sreadi || szreadi;
+            gendst = dreadi || dzreadi || dwritei || dzwritei;
+            gena2i = (gensrc && !dsta2) || (gendst && dsta2);
+
+            zaddr = szreadx || szread || dzread || dzwrite;
 
             // Some stuff from MCONTROL.NET--not sure if this is the correct use of this decode or not...
             /*Fontread\	:= OND1 (fontread\, sread[1], sreadx[1], bcompen);
 Fontread	:= INV1 (fontread, fontread\);
 Justt		:= NAN3 (justt, fontread\, phrase_mode, tactive\);
 Justify		:= TS (justify, justt, busen);*/
-            bool fontread = (sread || sreadx) && bcompen;
-            bool justify = !(!fontread && phrase_mode /*&& tactive*/);
+            fontread = (sread || sreadx) && bcompen;
+            justify = !(!fontread && phrase_mode /*&& tactive*/);
 
             /* Generate inner loop update enables */
             /*
@@ -1576,8 +1586,8 @@ A1_add		:= FD1 (a1_add, a1_add\, a1_addi, clk);
 A2_add		:= FD1 (a2_add, a2_add\, a2_addi, clk);
 A2_addb		:= BUF1 (a2_addb, a2_add);
 */
-            bool a1_add = (dsta2 ? srca_addi : dsta_addi);
-            bool a2_add = (dsta2 ? dsta_addi : srca_addi);
+            a1_add = (dsta2 ? srca_addi : dsta_addi);
+            a2_add = (dsta2 ? dsta_addi : srca_addi);
 
             /* Address adder input A register selection
                000	A1 step integer part
@@ -1593,7 +1603,8 @@ A2_addb		:= BUF1 (a2_addb, a2_add);
                The /a2update term on bits 0 and 1 is redundant.
                Now look-ahead based
                */
-            uint8_t addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
+
+            addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
             addasel |= (a1_add && a1addx == 3 ? 0x02 : 0x00);
             addasel |= (a2update ? 0x04 : 0x00);
             /* Address adder input A X constant selection
@@ -1608,7 +1619,8 @@ A2_addb		:= BUF1 (a2_addb, a2_add);
                similarly for A2
 JLH: Also, 11 will likewise set the value to 111
 */
-            uint8_t a1_xconst = 6 - a1_pixsize, a2_xconst = 6 - a2_pixsize;
+            a1_xconst = 6 - a1_pixsize;
+            a2_xconst = 6 - a2_pixsize;
 
             if (a1addx == 1)
                a1_xconst = 0;
@@ -1620,13 +1632,13 @@ JLH: Also, 11 will likewise set the value to 111
             else if (a2addx & 0x02)
                a2_xconst = 7;
 
-            uint8_t adda_xconst = (a2_add ? a2_xconst : a1_xconst);
+            adda_xconst = (a2_add ? a2_xconst : a1_xconst);
             /* Address adder input A Y constant selection
                22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
                Therefore, the selection has to be controlled by a bug fix bit.
 JLH: Bug fix bit in Jaguar II--not in Jaguar I!
 */
-            bool adda_yconst = a1addy;
+            adda_yconst = a1addy;
             /* Address adder input A register versus constant selection
                given by	  a1_add . a1addx[0..1]
                + a1update
@@ -1634,12 +1646,12 @@ JLH: Bug fix bit in Jaguar II--not in Jaguar I!
                + a2_add . a2addx[0..1]
                + a2update
                */
-            bool addareg = ((a1_add && a1addx == 3) || a1update || a1fupdate
+            addareg = ((a1_add && a1addx == 3) || a1update || a1fupdate
                   || (a2_add && a2addx == 3) || a2update ? true : false);
             /* The adders can be put into subtract mode in add pixel size
                mode when the corresponding flags are set */
-            bool suba_x = ((a1_add && a1xsign && a1addx == 1) || (a2_add && a2xsign && a2addx == 1) ? true : false);
-            bool suba_y = ((a1_add && a1addy && a1ysign) || (a2_add && a2addy && a2ysign) ? true : false);
+            suba_x = ((a1_add && a1xsign && a1addx == 1) || (a2_add && a2xsign && a2addx == 1) ? true : false);
+            suba_y = ((a1_add && a1addy && a1ysign) || (a2_add && a2addy && a2ysign) ? true : false);
             /* Address adder input B selection
                00	A1 pointer
                01	A2 pointer
@@ -1656,7 +1668,7 @@ JLH: Bug fix bit in Jaguar II--not in Jaguar I!
                + a1update . a1_stepld
                + a2update . a2_stepld
                */
-            uint8_t addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
+            addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
                   || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x01 : 0x00);
             addbsel |= (a1fupdate || (a1_add && a1addx == 3) || (a1fupdate && a1_stepld)
                   || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x02 : 0x00);
@@ -1672,9 +1684,9 @@ JLH: Bug fix bit in Jaguar II--not in Jaguar I!
                Masking is enabled for a1 when a1addx[0..1] is 00, and the value
                is 6 - the pixel size (again!)
                */
-            uint8_t maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
-            uint8_t maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
-            uint8_t modx = (a2_add ? maska2 : maska1);
+            maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
+            maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
+            modx = (a2_add ? maska2 : maska1);
             /* Generate load strobes for the increment updates */
 
             /*A1pldt		:= NAN2 (a1pldt, atick[1], a1_add);
@@ -1685,16 +1697,17 @@ A1fracldi	:= NAN2 (a1fracldi, a1fupdate\, a1fldt);
 
 A2pldt		:= NAN2 (a2pldt, atick[1], a2_add);
 A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
-            bool a1fracldi = a1fupdate || (a1_add && a1addx == 3);
+
+            a1fracldi = a1fupdate || (a1_add && a1addx == 3);
 
             // Some more from DCONTROL...
             // atick[] just MAY be important here! We're assuming it's true and dropping the term...
             // That will probably screw up some of the lower terms that seem to rely on the timing of it...
-#warning srcdreadd is not properly initialized!
-            bool srcdreadd = false;						// Set in INNER.NET
+//#warning srcdreadd is not properly initialized!
+            srcdreadd = false;						// Set in INNER.NET
             //Shadeadd\	:= NAN2H (shadeadd\, dwrite, srcshade);
             //Shadeadd	:= INV2 (shadeadd, shadeadd\);
-            bool shadeadd = dwrite && srcshade;
+            shadeadd = dwrite && srcshade;
             /* Data adder control, input A selection
                000   Destination data
                001   Initialiser pixel value
@@ -1714,7 +1727,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                Bit 2 =   (gourd + gourz) . /(init_if + init_ii + init_zf + init_zi)
                + dwrite  . srcshade
                */
-            uint8_t daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
+            daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
                   || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
             daddasel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
             daddasel |= (((gourd || gourz) && !(init_if || init_ii || init_zf || init_zi))
@@ -1746,7 +1759,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                + istepadd + istepfadd + zstepadd + zstepfadd
                Bit 3 =   istepadd + istepfadd + zstepadd + zstepfadd
                */
-            uint8_t daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
+            daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
                   || istepadd || zstepadd || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
             daddbsel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
             daddbsel |= ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
@@ -1794,7 +1807,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                + istepadd . ext_int
                + init_ii . ext_int
                */
-            uint8_t daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
+            daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
                   || (dwrite && gourd && topnen && topben && !ext_int) || zstepadd
                   || (istepadd && !topnen && !topben && !ext_int)
                   || (istepadd && topnen && topben && !ext_int) || (!gourd && !gourz && !topnen && !topben)
@@ -1807,12 +1820,12 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             daddmode |= ((!gourd && !gourz) || shadeadd || (dwrite && gourd && ext_int)
                   || (istepadd && ext_int) || (init_ii && ext_int) ? 0x04 : 0x00);
 
-            bool patfadd = (dwrite && gourd) || (istepfadd && !datinit) || init_if;
-            bool patdadd = (dwrite && gourd) || (istepadd && !datinit) || init_ii;
-            bool srcz1add = (dzwrite && gourz) || (zstepadd && !datinit) || init_zi;
-            bool srcz2add = (dzwrite && gourz) || zstepfadd || init_zf;
-            bool srcshadd = srcdreadd && srcshade;
-            bool daddq_sel = patfadd || patdadd || srcz1add || srcz2add || srcshadd;
+            patfadd = (dwrite && gourd) || (istepfadd && !datinit) || init_if;
+            patdadd = (dwrite && gourd) || (istepadd && !datinit) || init_ii;
+            srcz1add = (dzwrite && gourz) || (zstepadd && !datinit) || init_zi;
+            srcz2add = (dzwrite && gourz) || zstepfadd || init_zf;
+            srcshadd = srcdreadd && srcshade;
+            daddq_sel = patfadd || patdadd || srcz1add || srcz2add || srcshadd;
             /* Select write data
                This has to be controlled from stage 1 of the pipe-line, delayed
                by one tick, as the write occurs in the cycle after the ack.
@@ -1827,10 +1840,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                Bit 1 =   adddsel
                + dzwrite1d
                */
-            uint8_t data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
+
+            data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
                | (adddsel || dzwrite ? 0x02 : 0x00);
 
-            uint32_t address, pixAddr;
             ADDRGEN(&address, &pixAddr, gena2i, zaddr,
                   a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
                   a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
@@ -1857,12 +1870,13 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
                Source shifting is disabled when srcen is not set.
                */
-            uint8_t dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
-            uint8_t srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
-            uint8_t shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
+
+            dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+            srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
+            shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
             /* The phrase mode alignment count is given by the phrase offset
                of the first pixel, for bit to byte expansion */
-            uint8_t pobb = 0;
+            pobb = 0;
 
             if (pixsize == 3)
                pobb = dstxp & 0x07;
@@ -1871,9 +1885,9 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (pixsize == 5)
                pobb = dstxp & 0x01;
 
-            bool pobbsel = phrase_mode && bcompen;
-            uint8_t loshd = (pobbsel ? pobb : shftv) & 0x07;
-            uint8_t shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
+            pobbsel = phrase_mode && bcompen;
+            loshd = (pobbsel ? pobb : shftv) & 0x07;
+            shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
             /* Enable for high bits is srcen . phrase_mode */
             shfti |= (srcen && phrase_mode ? (sshftld ? shftv & 0x38 : srcshift & 0x38) : 0);
             srcshift = shfti;
