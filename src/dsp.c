@@ -832,9 +832,9 @@ void DSPReset(void)
 void DSPDumpDisassembly(void)
 {
 	char buffer[512];
+	uint32_t j = 0xF1B000;
 
 	WriteLog("\n---[DSP code at 00F1B000]---------------------------\n");
-	uint32_t j = 0xF1B000;
 
 	while (j <= 0xF1CFFF)
 	{
