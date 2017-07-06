@@ -230,7 +230,7 @@ else
 FLAGS += -O2 -DNDEBUG
 endif
 
-ifneq (,$(findstring msvc,$(platform)))
+ifeq (,$(findstring msvc,$(platform)))
 FLAGS += -ffast-math -fomit-frame-pointer
 endif
 
