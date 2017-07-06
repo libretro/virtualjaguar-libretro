@@ -1427,6 +1427,8 @@ void BlitterMidsummer2(void)
          uint8_t dstxp, srcxp, shftv, pobb;
          bool pobbsel;
          uint8_t loshd, shfti;
+         uint64_t srcz;
+         bool winhibit;
 
          indone = false;
 
@@ -1434,6 +1436,15 @@ void BlitterMidsummer2(void)
          while (true)
          {
             bool sshftld; // D flipflop (D -> Q): instart -> sshftld
+            uint16_t dstxwr, pseq;
+            bool penden;
+            uint8_t window_mask;
+            uint8_t inner_mask = 0;
+            uint8_t emask, pma, dend;
+            uint64_t srcd;
+            uint8_t zSrcShift;
+            uint64_t wdata;
+            uint8_t dcomp, zcomp;
 
             //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
             // IDLE
@@ -1984,8 +1995,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             // These vars should probably go further up in the code... !!! FIX !!!
             // We can't preassign these unless they're static...
-            uint64_t srcz;
-            bool winhibit;
             //NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
             if (dwrite)
             {
@@ -1993,12 +2002,14 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
                int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
                uint8_t inc = 0;
+               uint16_t oldicount;
+
                inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
                inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
                inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
                inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
 
-               uint16_t oldicount = icount;	// Save icount to detect underflow...
+               oldicount = icount;	// Save icount to detect underflow...
                icount -= inc;
 
                if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
@@ -2021,12 +2032,12 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                dstart = (phrase_mode ? dstart : pixAddr & 0x07);
 
                //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
-               uint16_t dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
-               uint16_t pseq = dstxwr ^ (a1_win_x & 0x7FFE);
+               dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               pseq = dstxwr ^ (a1_win_x & 0x7FFE);
                pseq = (pixsize == 5 ? pseq : pseq & 0x7FFC);
                pseq = ((pixsize & 0x06) == 4 ? pseq : pseq & 0x7FF8);
-               bool penden = clip_a1 && (pseq == 0);
-               uint8_t window_mask = 0;
+               penden = clip_a1 && (pseq == 0);
+               window_mask = 0;
 
                if (pixsize == 3)
                   window_mask = (a1_win_x & 0x07) << 3;
@@ -2037,10 +2048,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
                window_mask = (penden ? window_mask : 0);
 
-
                /* The mask to be used if within one phrase of the end of the inner
                   loop, similarly */
-               uint8_t inner_mask = 0;
 
                if (pixsize == 3)
                   inner_mask = (icount & 0x07) << 3;
@@ -2054,12 +2063,13 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   the inner mask, where is all cases 000 means 1000. */
                window_mask = (window_mask == 0 ? 0x40 : window_mask);
                inner_mask = (inner_mask == 0 ? 0x40 : inner_mask);
-               uint8_t emask = (window_mask > inner_mask ? inner_mask : window_mask);
+
+               emask = (window_mask > inner_mask ? inner_mask : window_mask);
                /* The mask to be used for the pixel size, to which must be added
                   the bit offset */
-               uint8_t pma = pixAddr + (1 << pixsize);
+               pma = pixAddr + (1 << pixsize);
                /* Select the mask */
-               uint8_t dend = (phrase_mode ? emask : pma);
+               dend = (phrase_mode ? emask : pma);
 
                /* The cycle width in phrase mode is normally one phrase.  However,
                   at the start and end it may be narrower.  The start and end masks
@@ -2085,7 +2095,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //Now it does!
 
                // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
-               uint64_t srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
+               srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
                //bleh, ugly ugly ugly
                if (srcshift == 0)
                   srcd = srcd1;
@@ -2116,7 +2126,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
                }
 
-               uint8_t zSrcShift = srcshift & 0x30;
+               zSrcShift = srcshift & 0x30;
                srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
                //bleh, ugly ugly ugly
                if (zSrcShift == 0)
@@ -2158,8 +2168,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //Also, should do srcshift on the z value in phrase mode... !!! FIX !!! [DONE]
                //As well as add a srcz variable we can set external to this state... !!! FIX !!! [DONE]
 
-               uint64_t wdata;
-               uint8_t dcomp, zcomp;
                DATA(&wdata, &dcomp, &zcomp, &winhibit,
                      true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
                      dend, dstart, dstd, iinc, lfufunc, &patd, patdadd,
