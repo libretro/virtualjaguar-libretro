@@ -279,11 +279,13 @@ void JERRYI2SCallback(void)
    // If INTERNAL flag is set, then JERRY's SCLK is master
    if (*smode & SMODE_INTERNAL)
    {
+      double usecs;
+
       // This does the 'IRQ enabled' checking...
       DSPSetIRQLine(DSPIRQ_SSI, ASSERT_LINE);
       //		double usecs = (float)jerryI2SCycles * RISC_CYCLE_IN_USEC;
       //this fix is almost enough to fix timings in tripper, but not quite enough...
-      double usecs = (float)jerryI2SCycles * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+      usecs = (float)jerryI2SCycles * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYI2SCallback, usecs, EVENT_JERRY);
    }
    else
