@@ -824,9 +824,11 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    }
    else if (depth == 1)							// 2 BPP
    {
+      int32_t lbufDelta;
+
       index &= 0xFC;								// Top six bits form CLUT index
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
-      int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
+      lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
       while (iwidth--)
       {
