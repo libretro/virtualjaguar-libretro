@@ -42,7 +42,7 @@ void CDIntfDone(void)
 
 bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer)
 {
-#warning "!!! FIX !!! CDIntfReadBlock not implemented!"
+//#warning "!!! FIX !!! CDIntfReadBlock not implemented!"
    // !!! FIX !!!
    WriteLog("CDINTF: ReadBlock unimplemented!\n");
    return false;
@@ -50,28 +50,28 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer)
 
 uint32_t CDIntfGetNumSessions(void)
 {
-#warning "!!! FIX !!! CDIntfGetNumSessions not implemented!"
+//#warning "!!! FIX !!! CDIntfGetNumSessions not implemented!"
 	// Still need relevant code here... !!! FIX !!!
 	return 2;
 }
 
 void CDIntfSelectDrive(uint32_t driveNum)
 {
-#warning "!!! FIX !!! CDIntfSelectDrive not implemented!"
+//#warning "!!! FIX !!! CDIntfSelectDrive not implemented!"
 	// !!! FIX !!!
 	WriteLog("CDINTF: SelectDrive unimplemented!\n");
 }
 
 uint32_t CDIntfGetCurrentDrive(void)
 {
-#warning "!!! FIX !!! CDIntfGetCurrentDrive not implemented!"
+//#warning "!!! FIX !!! CDIntfGetCurrentDrive not implemented!"
 	WriteLog("CDINTF: GetCurrentDrive unimplemented!\n");
 	return 0;
 }
 
 const uint8_t * CDIntfGetDriveName(uint32_t driveNum)
 {
-#warning "!!! FIX !!! CDIntfGetDriveName driveNum is currently ignored!"
+//#warning "!!! FIX !!! CDIntfGetDriveName driveNum is currently ignored!"
 	// driveNum is currently ignored... !!! FIX !!!
 
 	return (uint8_t *)"NONE";
@@ -79,14 +79,14 @@ const uint8_t * CDIntfGetDriveName(uint32_t driveNum)
 
 uint8_t CDIntfGetSessionInfo(uint32_t session, uint32_t offset)
 {
-#warning "!!! FIX !!! CDIntfGetSessionInfo not implemented!"
+//#warning "!!! FIX !!! CDIntfGetSessionInfo not implemented!"
 	WriteLog("CDINTF: GetSessionInfo unimplemented!\n");
 	return 0xFF;
 }
 
 uint8_t CDIntfGetTrackInfo(uint32_t track, uint32_t offset)
 {
-#warning "!!! FIX !!! CDIntfTrackInfo not implemented!"
+//#warning "!!! FIX !!! CDIntfTrackInfo not implemented!"
 	WriteLog("CDINTF: GetTrackInfo unimplemented!\n");
 	return 0xFF;
 }
