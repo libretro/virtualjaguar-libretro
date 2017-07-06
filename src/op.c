@@ -1045,6 +1045,8 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 // Store scaled bitmap in line buffer
 void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 {
+   uint32_t lbufAddress;
+   uint8_t * currentLineBuffer;
    uint32_t scaledPhrasePixelsUS;
    uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;
    // Not sure if this is Jaguar Two only location or what...
@@ -1200,8 +1202,8 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
    // NOTE: When the bitmap is in REFLECT mode, the XPOS marks the *right* side of the
    //       bitmap! This makes clipping & etc. MUCH, much easier...!
-   uint32_t lbufAddress = 0x1800 + startPos * 2;
-   uint8_t * currentLineBuffer = &tomRam8[lbufAddress];
+   lbufAddress = 0x1800 + startPos * 2;
+   currentLineBuffer = &tomRam8[lbufAddress];
 
    // Render.
 
