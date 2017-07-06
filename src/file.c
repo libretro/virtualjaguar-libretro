@@ -66,6 +66,7 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
 {
+   int fileType;
    jaguarROMSize = bufsize;
 
    if (jaguarROMSize == 0)
@@ -74,7 +75,7 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
    EepromInit();
    jaguarRunAddress = 0x802000;					// For non-BIOS runs, this is true
-   int fileType = ParseFileType(buffer, jaguarROMSize);
+   fileType = ParseFileType(buffer, jaguarROMSize);
    jaguarCartInserted = false;
 
    if (fileType == JST_ROM)
