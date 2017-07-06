@@ -434,7 +434,7 @@ uint32_t RGB16ToRGB32[0x10000];
 uint32_t CRY16ToRGB32[0x10000];
 uint32_t MIX16ToRGB32[0x10000];
 
-#warning "This is not endian-safe. !!! FIX !!!"
+//#warning "This is not endian-safe. !!! FIX !!!"
 void TOMFillLookupTables(void)
 {
    // NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
