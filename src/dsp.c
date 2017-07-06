@@ -877,13 +877,15 @@ void DSPDone(void)
 {
 	static char buffer[512];
 	int i, j;
+   int bits, mask;
+
 	WriteLog("DSP: Stopped at PC=%08X dsp_modulo=%08X (dsp was%s running)\n", dsp_pc, dsp_modulo, (DSP_RUNNING ? "" : "n't"));
 	WriteLog("DSP: %sin interrupt handler\n", ((dsp_flags & IMASK) ? "" : "not "));
 
 	// get the active interrupt bits
-	int bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
 	// get the interrupt mask
-	int mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
+	mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	WriteLog("DSP: pending=$%X enabled=$%X (%s%s%s%s%s%s)\n", bits, mask,
 		((mask & 0x01) ? "CPU " : ""), ((mask & 0x02) ? "I2S " : ""),
@@ -949,14 +951,17 @@ void DSPExec(int32_t cycles)
 
 	while (cycles > 0 && DSP_RUNNING)
 	{
+      uint16_t opcode;
+      uint32_t index;
+
 		if (IMASKCleared)						// If IMASK was cleared,
 		{
 			DSPHandleIRQsNP();					// See if any other interrupts are pending!
 			IMASKCleared = false;
 		}
 
-		uint16_t opcode = DSPReadWord(dsp_pc, DSP);
-		uint32_t index = opcode >> 10;
+		opcode = DSPReadWord(dsp_pc, DSP);
+		index = opcode >> 10;
 		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
@@ -1399,11 +1404,13 @@ static void dsp_opcode_mmult(void)
       for (i = 0; i < count; i++)
       {
          int16_t a;
+         int16_t b;
+
          if (i&0x01)
             a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
             a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
-         int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
+         b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4;
       }
@@ -1413,11 +1420,13 @@ static void dsp_opcode_mmult(void)
       for (i = 0; i < count; i++)
       {
          int16_t a;
+         int16_t b;
+
          if (i&0x01)
             a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
             a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
-         int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
+         b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4 * count;
       }
@@ -2197,11 +2206,13 @@ static void DSP_mmult(void)
 		for (i = 0; i < count; i++)
 		{
 			int16_t a;
+         int16_t b;
+
 			if (i&0x01)
 				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
 				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
-			int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
+			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4;
 		}
@@ -2211,11 +2222,13 @@ static void DSP_mmult(void)
 		for (i = 0; i < count; i++)
 		{
 			int16_t a;
+         int16_t b;
+
 			if (i&0x01)
 				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
 				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
-			int16_t b=((int16_t)DSPReadWord(addr + 2, DSP));
+			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4 * count;
 		}
