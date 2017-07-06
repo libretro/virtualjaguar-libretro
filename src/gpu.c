@@ -759,10 +759,13 @@ void GPUDumpMemory(void)
 void GPUDone(void)
 {
    unsigned i;
+   uint8_t bits;
+   uint8_t mask;
    WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
 
    // Get the interrupt latch & enable bits
-   uint8_t bits = (gpu_control >> 6) & 0x1F, mask = (gpu_flags >> 4) & 0x1F;
+   bits = (gpu_control >> 6) & 0x1F;
+   mask = (gpu_flags >> 4) & 0x1F;
    WriteLog("GPU: Latch bits = %02X, enable bits = %02X\n", bits, mask);
 
    GPUDumpRegisters();
@@ -1436,12 +1439,13 @@ static void gpu_opcode_mmult(void)
       for(i=0; i<count; i++)
       {
          int16_t a;
+         int16_t b;
          if (i & 0x01)
             a = (int16_t)((gpu_alternate_reg[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
          else
             a = (int16_t)(gpu_alternate_reg[IMM_1 + (i >> 1)] & 0xFFFF);
 
-         int16_t b = ((int16_t)GPUReadWord(addr + 2, GPU));
+         b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;
          addr += 4 * count;
       }
@@ -1451,12 +1455,13 @@ static void gpu_opcode_mmult(void)
       for(i=0; i<count; i++)
       {
          int16_t a;
+         int16_t b;
          if (i & 0x01)
             a = (int16_t)((gpu_alternate_reg[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
          else
             a = (int16_t)(gpu_alternate_reg[IMM_1 + (i >> 1)] & 0xFFFF);
 
-         int16_t b = ((int16_t)GPUReadWord(addr + 2, GPU));
+         b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;
          addr += 4;
       }
