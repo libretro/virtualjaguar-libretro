@@ -577,8 +577,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // Check for DSP -> CPU interrupt
                if (data & CPUINT)
                {
-
-#warning "!!! DSP IRQs that go to the 68K have to be routed thru TOM !!! FIX !!!"
                   if (JERRYIRQEnabled(IRQ2_DSP))
                   {
                      JERRYSetPendingIRQ(IRQ2_DSP);
