@@ -2003,6 +2003,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
                uint8_t inc = 0;
                uint16_t oldicount;
+               uint8_t dstart = 0;
 
                inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
                inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
@@ -2020,7 +2021,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //Start & end write mask computations...
                //*********************************************************************************
 
-               uint8_t dstart = 0;
 
                if (pixsize == 3)
                   dstart = (dstxp & 0x07) << 3;
@@ -2370,16 +2370,18 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint32_t ya = (ytm << (width >> 2)) >> 2;
 
 	uint32_t pa = ya + x;
+   uint8_t pt, za;
+   uint32_t phradr, shup, addr;
 
 	*pixa = pa << pixsize;
 
-	uint8_t pt = ((pitch & 0x01) && !(pitch & 0x02) ? 0x01 : 0x00)
+	pt = ((pitch & 0x01) && !(pitch & 0x02) ? 0x01 : 0x00)
 		| (!(pitch & 0x01) && (pitch & 0x02) ? 0x02 : 0x00);
-	uint32_t phradr = (*pixa >> 6) << pt;
-	uint32_t shup = (pitch == 0x03 ? (*pixa >> 6) : 0);
+	phradr = (*pixa >> 6) << pt;
+	shup = (pitch == 0x03 ? (*pixa >> 6) : 0);
 
-	uint8_t za = (zaddr ? zoffset : 0) & 0x03;
-	uint32_t addr = za + phradr + (shup << 1) + base;
+	za = (zaddr ? zoffset : 0) & 0x03;
+	addr = za + phradr + (shup << 1) + base;
 	*address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
 	*pixa &= 0x07;
 }
@@ -2396,8 +2398,19 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 	uint32_t zinc, uint32_t zstep)
 {
    unsigned i;
+   uint16_t adda[4];
+   uint16_t wordmux[8];
+   uint16_t addb[4];
+   uint16_t word;
+   bool dbsel2, iincsel;
    uint32_t initpix2 = ((uint32_t)initpix << 16) | initpix;
    uint32_t addalo[8], addahi[8];
+   uint8_t cinsel;
+   static uint8_t co[4];//These are preserved between calls...
+   uint8_t cin[4];
+   bool eightbit;
+   bool sat, hicinh;
+
    addalo[0] = dstd & 0xFFFFFFFF;
    addalo[1] = initpix2;
    addalo[2] = 0;
@@ -2414,13 +2427,11 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
    addahi[5] = patd >> 32;
    addahi[6] = srcz1 >> 32;
    addahi[7] = srcz2 >> 32;
-   uint16_t adda[4];
    adda[0] = addalo[daddasel] & 0xFFFF;
    adda[1] = addalo[daddasel] >> 16;
    adda[2] = addahi[daddasel] & 0xFFFF;
    adda[3] = addahi[daddasel] >> 16;
 
-   uint16_t wordmux[8];
    wordmux[0] = iinc & 0xFFFF;
    wordmux[1] = iinc >> 16;
    wordmux[2] = zinc & 0xFFFF;
@@ -2429,10 +2440,9 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
    wordmux[5] = istep >> 16;;
    wordmux[6] = zstep & 0xFFFF;
    wordmux[7] = zstep >> 16;;
-   uint16_t word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
-   uint16_t addb[4];
-   bool dbsel2 = daddbsel & 0x04;
-   bool iincsel = (daddbsel & 0x01) && !(daddbsel & 0x04);
+   word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
+   dbsel2 = daddbsel & 0x04;
+   iincsel = (daddbsel & 0x01) && !(daddbsel & 0x04);
 
    if (!dbsel2 && !iincsel)
       addb[0] = srcd & 0xFFFF,
@@ -2449,17 +2459,15 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
    else
       addb[0] = addb[1] = addb[2] = addb[3] = 0;
 
-   uint8_t cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
 
-   static uint8_t co[4];//These are preserved between calls...
-   uint8_t cin[4];
+   cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
 
    for(i = 0; i < 4; i++)
       cin[i] = initcin[i] | (co[i] & cinsel);
 
-   bool eightbit = daddmode & 0x02;
-   bool sat = daddmode & 0x03;
-   bool hicinh = ((daddmode & 0x03) == 0x03);
+   eightbit = daddmode & 0x02;
+   sat = daddmode & 0x03;
+   hicinh = ((daddmode & 0x03) == 0x03);
 
    //Note that the carry out is saved between calls to this function...
    for( i=0; i<4; i++)
@@ -2470,9 +2478,12 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
 	uint8_t carry[4];
+   uint8_t btop, ctop;
+   bool saturate, hisaturate;
 	uint32_t qt   = (a & 0xFF) + (b & 0xFF) + cin;
-	carry[0]      = ((qt & 0x0100) ? 1 : 0);
 	uint16_t q    = qt & 0x00FF;
+
+	carry[0]      = ((qt & 0x0100) ? 1 : 0);
 	carry[1]      = (carry[0] && !eightbit ? carry[0] : 0);
 	qt            = (a & 0x0F00) + (b & 0x0F00) + (carry[1] << 8);
 	carry[2]      = ((qt & 0x1000) ? 1 : 0);
@@ -2482,11 +2493,11 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, boo
 	*co            = ((qt & 0x10000) ? 1 : 0);
 	q            |= qt & 0xF000;
 
-	uint8_t btop  = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
-	uint8_t ctop  = (eightbit ? carry[0] : *co);
+	btop  = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
+	ctop  = (eightbit ? carry[0] : *co);
 
-	bool saturate = sat && (btop ^ ctop);
-	bool hisaturate = saturate && !eightbit;
+	saturate = sat && (btop ^ ctop);
+	hisaturate = saturate && !eightbit;
 
 	*r = (saturate ? (ctop ? 0x00FF : 0x0000) : q & 0x00FF);
 	*r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
@@ -2498,11 +2509,12 @@ void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
 {
 
+   int16_t addar_x, addar_y, addac_x, addac_y, addas_x, addas_y;
 	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
 	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
-	int16_t addar_x = ((addasel & 0x04) ? a2_step_x : xterm[addasel & 0x03]);
-	int16_t addar_y = ((addasel & 0x04) ? a2_step_y : yterm[addasel & 0x03]);
+	addar_x = ((addasel & 0x04) ? a2_step_x : xterm[addasel & 0x03]);
+	addar_y = ((addasel & 0x04) ? a2_step_y : yterm[addasel & 0x03]);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Generate a constant value - this is a power of 2 in the range
@@ -2517,8 +2529,8 @@ Addac_x		:= JOIN (addac_x, addac_x[0..6], zero, zero, zero, zero, zero, zero, ze
 Addac_y		:= JOIN (addac_y, adda_yconst, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
 			zero, zero, zero, zero, zero);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16_t addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
-	int16_t addac_y = (adda_yconst ? 0x01 : 0);
+	addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
+	addac_y = (adda_yconst ? 0x01 : 0);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Select between constant value and register value */
@@ -2526,8 +2538,8 @@ Addac_y		:= JOIN (addac_y, adda_yconst, zero, zero, zero, zero, zero, zero, zero
 /*Addas_x		:= MX2 (addas_x, addac_x, addar_x, addareg);
 Addas_y		:= MX2 (addas_y, addac_y, addar_y, addareg);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16_t addas_x = (addareg ? addar_x : addac_x);
-	int16_t addas_y = (addareg ? addar_y : addac_y);
+	addas_x = (addareg ? addar_x : addac_x);
+	addas_y = (addareg ? addar_y : addac_y);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Complement these values (complement flag gives adder carry in)*/
@@ -2822,6 +2834,24 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
 	uint64_t func2 = funcmask[(lfu_func >> 2) & 0x01];
 	uint64_t func3 = funcmask[(lfu_func >> 3) & 0x01];
 	uint64_t lfu = (~srcd & ~dstd & func0) | (~srcd & dstd & func1) | (srcd & ~dstd & func2) | (srcd & dstd & func3);
+   bool mir_bit, mir_byte;
+   uint16_t masku;
+   uint8_t e_coarse, e_fine;
+   uint8_t s_coarse, s_fine;
+   uint16_t maskt;
+	uint8_t decl38e[2][8] = { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },
+		{ 0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F } };
+	uint8_t dech38[8] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
+	uint8_t dech38el[2][8] = { { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },
+		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
+   int en;
+   uint64_t cmpd;
+	uint8_t dbinht;
+   uint16_t addq[4];
+   uint8_t initcin[4] = { 0, 0, 0, 0 };
+   uint16_t mask;
+   uint64_t dmux[4];
+   uint64_t ddat;
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Increment and Step Registers
@@ -2838,7 +2868,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*dcomp = 0;
-	uint64_t cmpd = *patd ^ (cmpdst ? dstd : srcd);
+	cmpd = *patd ^ (cmpdst ? dstd : srcd);
 
 	if ((cmpd & 0x00000000000000FFLL) == 0)
 		*dcomp |= 0x01;
@@ -2898,7 +2928,6 @@ with srcshift bits 4 & 5 selecting the start position
 //zcomp=0;
 // We'll do the comparison/bit/byte inhibits here, since that's they way it happens
 // in the real thing (dcomp goes out to COMP_CTRL and back into DATA through dbinh)...
-	uint8_t dbinht;
 	COMP_CTRL(&dbinht, nowrite,
 		bcompen, true/*big_pix*/, bkgwren, *dcomp, dcompen, icount, pixsize, phrase_mode, srcd & 0xFF, *zcomp);
 	dbinh = dbinht;
@@ -2921,8 +2950,6 @@ with srcshift bits 4 & 5 selecting the start position
 	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
 	uint32_t zinc, uint32_t zstep)*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16_t addq[4];
-	uint8_t initcin[4] = { 0, 0, 0, 0 };
 	ADDARRAY(addq, daddasel, daddbsel, daddmode, dstd, iinc, initcin, 0, 0, 0, *patd, srcd, 0, 0, 0, 0);
 
 	//This is normally done asynchronously above (thru local_data) when in patdadd mode...
@@ -2988,15 +3015,10 @@ Ecoarse		:= DECL38E (e_coarse\[0..7], dend[3..5], edis\);
 E_coarse[0]	:= INV1 (e_coarse[0], e_coarse\[0]);
 Efine		:= DECL38E (unused[0], e_fine\[1..7], dend[0..2], e_coarse[0]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint8_t decl38e[2][8] = { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },
-		{ 0xFE, 0xFD, 0xFB, 0xF7, 0xEF, 0xDF, 0xBF, 0x7F } };
-	uint8_t dech38[8] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
-	uint8_t dech38el[2][8] = { { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },
-		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
 
-	int en = ((dend & 0x3F) ? 1 : 0);
-	uint8_t e_coarse = decl38e[en][(dend & 0x38) >> 3];		// Actually, this is e_coarse inverted...
-	uint8_t e_fine = decl38e[(e_coarse & 0x01) ^ 0x01][dend & 0x07];
+	en = ((dend & 0x3F) ? 1 : 0);
+	e_coarse = decl38e[en][(dend & 0x38) >> 3];		// Actually, this is e_coarse inverted...
+	e_fine = decl38e[(e_coarse & 0x01) ^ 0x01][dend & 0x07];
 	e_fine &= 0xFE;
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -3004,14 +3026,14 @@ Efine		:= DECL38E (unused[0], e_fine\[1..7], dend[0..2], e_coarse[0]);*/
 Sfen\		:= INV1 (sfen\, s_coarse[0]);
 Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint8_t s_coarse = dech38[(dstart & 0x38) >> 3];
-	uint8_t s_fine = dech38el[(s_coarse & 0x01) ^ 0x01][dstart & 0x07];
+	s_coarse = dech38[(dstart & 0x38) >> 3];
+	s_fine = dech38el[(s_coarse & 0x01) ^ 0x01][dstart & 0x07];
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16_t maskt = s_fine & 0x0001;
+	maskt = s_fine & 0x0001;
 	maskt |= (((maskt & 0x0001) || (s_fine & 0x02)) && (e_fine & 0x02) ? 0x0002 : 0x0000);
 	maskt |= (((maskt & 0x0002) || (s_fine & 0x04)) && (e_fine & 0x04) ? 0x0004 : 0x0000);
 	maskt |= (((maskt & 0x0004) || (s_fine & 0x08)) && (e_fine & 0x08) ? 0x0008 : 0x0000);
@@ -3060,9 +3082,10 @@ Masku[12]	:= MX2 (masku[12], maskt[12], maskt[9],  mir_byte);
 Masku[13]	:= MX2 (masku[13], maskt[13], maskt[8],  mir_byte);
 Masku[14]	:= MX2 (masku[14], maskt[14], maskt[0],  mir_byte);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	bool mir_bit = true/*big_pix*/ && !phrase_mode;
-	bool mir_byte = true/*big_pix*/ && phrase_mode;
-	uint16_t masku = maskt;
+
+	mir_bit = true/*big_pix*/ && !phrase_mode;
+	mir_byte = true/*big_pix*/ && phrase_mode;
+	masku = maskt;
 
 	if (mir_bit)
 	{
@@ -3105,7 +3128,7 @@ inhibit terms can override these */
 /*Mask[0-7]	:= AN2 (mask[0-7], masku[0-7], dbinh\[0]);
 Mask[8-14]	:= AN2H (mask[8-14], masku[8-14], dbinh\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint16_t mask = masku & (!(dbinh & 0x01) ? 0xFFFF : 0xFF00);
+	mask = masku & (!(dbinh & 0x01) ? 0xFFFF : 0xFF00);
 	mask &= ~(((uint16_t)dbinh & 0x00FE) << 7);
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -3117,12 +3140,11 @@ Dsel1b[0-1]	:= BUF8 (dsel1b[0-1], data_sel[1]);
 Ddatlo		:= MX4 (ddatlo, patd[0], lfu[0], addql[0], zero32, dsel0b[0], dsel1b[0]);
 Ddathi		:= MX4 (ddathi, patd[1], lfu[1], addql[1], zero32, dsel0b[1], dsel1b[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint64_t dmux[4];
 	dmux[0] = *patd;
 	dmux[1] = lfu;
 	dmux[2] = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
 	dmux[3] = 0;
-	uint64_t ddat = dmux[data_sel];
+	ddat = dmux[data_sel];
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Zed_sel		:= AN2 (zed_sel, data_sel[0..1]);
@@ -3229,6 +3251,11 @@ Bcompbit\	:= INV1 (bcompbit\, bcompbit);*/
    uint8_t bcompselt = (big_pix ? ~icount : icount) & 0x07;
    uint8_t bitmask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
    bool bcompbit = srcd & bitmask[bcompselt];
+   bool winhibit, di0t0_1, di0t4, di1t2, di2t0_1, di2t4, di3t2;
+   bool di4t0_1, di4t4, di5t2;
+   bool di6t0_1, di6t4;
+   bool di7t2;
+
    //////////////////////////////////////////////////////////////////////////////////////
 
    /* pipe-line the count */
@@ -3268,7 +3295,7 @@ Winhibit	:= NAN4 (winhibit, winht, nowt[1..3]);*/
    //This is the same as above, but with bcompbit delayed one tick and called 'winhibit'
    //Small difference: Besides the pipeline effect, it's also not using !bkgwren...
    //	bool winhibit = (bcompen && !
-   bool winhibit = (bcompen && !bcompbit && !phrase_mode)
+   winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
       || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
@@ -3295,9 +3322,9 @@ Di0t4		:= NAN4 (di0t[4], di0t[0..3]);
 Dbinh[0]	:= ANR1P (dbinh\[0], di0t[4], phrase_mode, winhibit);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
    *dbinh = 0;
-   bool di0t0_1 = ((pixsize & 0x04) && (zcomp & 0x01))
+   di0t0_1 = ((pixsize & 0x04) && (zcomp & 0x01))
       || ((pixsize & 0x04) && (dcomp & 0x01) && (dcomp & 0x02) && dcompen);
-   bool di0t4 = di0t0_1
+   di0t4 = di0t0_1
       || (!(srcd & 0x01) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x01) && dcompen);
    *dbinh |= (!((di0t4 && phrase_mode) || winhibit) ? 0x01 : 0x00);
@@ -3308,7 +3335,7 @@ Di1t1		:= NAN2 (di1t[1], srcd\[1], bcompen);
 Di1t2		:= NAN4 (di1t[2], di0t[0..1], di1t[0..1]);
 Dbinh[1]	:= ANR1 (dbinh\[1], di1t[2], phrase_mode, winhibit);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   bool di1t2 = di0t0_1
+   di1t2 = di0t0_1
       || (!(srcd & 0x02) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x02) && dcompen);
    *dbinh |= (!((di1t2 && phrase_mode) || winhibit) ? 0x02 : 0x00);
@@ -3324,9 +3351,9 @@ Dbinh[2]	:= ANR1 (dbinh\[2], di2t[4], phrase_mode, winhibit);*/
    //[bcompen=F dcompen=T phrase_mode=T bkgwren=F][nw=F wi=F]
    //[di0t0_1=F di0t4=F][di1t2=F][di2t0_1=T di2t4=T][di3t2=T][di4t0_1=F di2t4=F][di5t2=F][di6t0_1=F di6t4=F][di7t2=F]
    //[dcomp=$00 dbinh=$0C][7804780400007804] (icount=0005, inc=4)
-   bool di2t0_1 = ((pixsize & 0x04) && (zcomp & 0x02))
+   di2t0_1 = ((pixsize & 0x04) && (zcomp & 0x02))
       || ((pixsize & 0x04) && (dcomp & 0x04) && (dcomp & 0x08) && dcompen);
-   bool di2t4 = di2t0_1
+   di2t4 = di2t0_1
       || (!(srcd & 0x04) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x04) && dcompen);
    *dbinh |= (!((di2t4 && phrase_mode) || winhibit) ? 0x04 : 0x00);
@@ -3337,7 +3364,7 @@ Di3t1		:= NAN2 (di3t[1], srcd\[3], bcompen);
 Di3t2		:= NAN4 (di3t[2], di2t[0..1], di3t[0..1]);
 Dbinh[3]	:= ANR1 (dbinh\[3], di3t[2], phrase_mode, winhibit);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   bool di3t2 = di2t0_1
+   di3t2 = di2t0_1
       || (!(srcd & 0x08) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x08) && dcompen);
    *dbinh |= (!((di3t2 && phrase_mode) || winhibit) ? 0x08 : 0x00);
@@ -3350,9 +3377,9 @@ Di4t3		:= NAN3 (di4t[3], pixsize\[2], dcomp[4], dcompen);
 Di4t4		:= NAN4 (di4t[4], di4t[0..3]);
 Dbinh[4]	:= NAN2 (dbinh\[4], di4t[4], phrase_mode);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   bool di4t0_1 = ((pixsize & 0x04) && (zcomp & 0x04))
+   di4t0_1 = ((pixsize & 0x04) && (zcomp & 0x04))
       || ((pixsize & 0x04) && (dcomp & 0x10) && (dcomp & 0x20) && dcompen);
-   bool di4t4 = di4t0_1
+   di4t4 = di4t0_1
       || (!(srcd & 0x10) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x10) && dcompen);
    *dbinh |= (!(di4t4 && phrase_mode) ? 0x10 : 0x00);
@@ -3363,7 +3390,7 @@ Di5t1		:= NAN2 (di5t[1], srcd\[5], bcompen);
 Di5t2		:= NAN4 (di5t[2], di4t[0..1], di5t[0..1]);
 Dbinh[5]	:= NAN2 (dbinh\[5], di5t[2], phrase_mode);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   bool di5t2 = di4t0_1
+   di5t2 = di4t0_1
       || (!(srcd & 0x20) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x20) && dcompen);
    *dbinh |= (!(di5t2 && phrase_mode) ? 0x20 : 0x00);
@@ -3376,9 +3403,9 @@ Di6t3		:= NAN3 (di6t[3], pixsize\[2], dcomp[6], dcompen);
 Di6t4		:= NAN4 (di6t[4], di6t[0..3]);
 Dbinh[6]	:= NAN2 (dbinh\[6], di6t[4], phrase_mode);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   bool di6t0_1 = ((pixsize & 0x04) && (zcomp & 0x08))
+   di6t0_1 = ((pixsize & 0x04) && (zcomp & 0x08))
       || ((pixsize & 0x04) && (dcomp & 0x40) && (dcomp & 0x80) && dcompen);
-   bool di6t4 = di6t0_1
+   di6t4 = di6t0_1
       || (!(srcd & 0x40) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x40) && dcompen);
    *dbinh |= (!(di6t4 && phrase_mode) ? 0x40 : 0x00);
@@ -3389,7 +3416,7 @@ Di7t1		:= NAN2 (di7t[1], srcd\[7], bcompen);
 Di7t2		:= NAN4 (di7t[2], di6t[0..1], di7t[0..1]);
 Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   bool di7t2 = di6t0_1
+   di7t2 = di6t0_1
       || (!(srcd & 0x80) && bcompen)
       || (!(pixsize & 0x04) && (dcomp & 0x80) && dcompen);
    *dbinh |= (!(di7t2 && phrase_mode) ? 0x80 : 0x00);
