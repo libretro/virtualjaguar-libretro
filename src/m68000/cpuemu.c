@@ -12089,9 +12089,9 @@ unsigned long CPUFUNC(op_4eb9_4)(uint32_t opcode) /* JSR */
 unsigned long CPUFUNC(op_4eba_4)(uint32_t opcode) /* JSR */
 {
 	OpcodeFamily = 52; CurrentInstrCycles = 18; 
-{{	uint32_t srca = m68k_getpc () + 2;
+{{	uint32_t oldpc; uint32_t srca = m68k_getpc () + 2;
 	srca += (int32_t)(int16_t)get_iword(2);
-	uint32_t oldpc = m68k_getpc () + 4;
+	oldpc = m68k_getpc () + 4;
 	m68k_do_jsr(m68k_getpc() + 4, srca);
 }}return 18;
 }
