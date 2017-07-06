@@ -763,6 +763,7 @@ void blitter_generic(uint32_t cmd)
 
 void blitter_blit(uint32_t cmd)
 {
+   uint32_t m, e;
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
    colour_index = 0;
    src = cmd & 0x07;
@@ -797,7 +798,7 @@ void blitter_blit(uint32_t cmd)
 
    // According to JTRM, this must give a *whole number* of phrases in the current
    // pixel size (this means the lookup above is WRONG)... !!! FIX !!!
-   uint32_t m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
+   m = (REG(A1_FLAGS) >> 9) & 0x03, e = (REG(A1_FLAGS) >> 11) & 0x0F;
    a1_width = ((0x04 | m) << e) >> 2;//*/
 
    a2_x = (REG(A2_PIXEL) & 0x0000FFFF) << 16;
@@ -1271,17 +1272,19 @@ void BlitterMidsummer2(void)
 
    uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
 
+   bool phrase_mode;
+   uint16_t a1FracCInX = 0, a1FracCInY = 0;
+
    // Bugs in Jaguar I
 
    a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
 
    // Various state lines set up by user
 
-   bool phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
+   phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
 
    // Stopgap vars to simulate various lines
 
-   uint16_t a1FracCInX = 0, a1FracCInY = 0;
 
    while (true)
    {
