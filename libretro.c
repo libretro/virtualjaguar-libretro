@@ -410,14 +410,18 @@ unsigned retro_api_version(void)
    return RETRO_API_VERSION;
 }
 
-void *retro_get_memory_data(unsigned id)
+void *retro_get_memory_data(unsigned type)
 {
-   return NULL;
+   if(type == RETRO_MEMORY_SYSTEM_RAM)
+      return jaguarMainRAM;
+   else return NULL;
 }
 
-size_t retro_get_memory_size(unsigned id)
+size_t retro_get_memory_size(unsigned type)
 {
-   return 0;
+   if(type == RETRO_MEMORY_SYSTEM_RAM)
+      return 0x200000;
+   else return 0;
 }
 
 void retro_init(void)
