@@ -5,3 +5,13 @@
 *.exe
 *.js
 *.bc
+Win-VS2015/.vs
+Win-VS2015/x64/*
+Win-VS2015/Win-VS2015.VC.db
+Win-VS2015/Win-VS2015.VC.VC.opendb
+Win-VS2015/Win-VS2015.vcxproj.user
+Win-VS2017/.vs
+Win-VS2017/x64/*
+Win-VS2017/Win-VS2017.VC.db
+Win-VS2017/Win-VS2017.VC.VC.opendb
+Win-VS2017/Win-VS2017.vcxproj.user
