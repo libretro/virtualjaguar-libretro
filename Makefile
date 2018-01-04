@@ -165,6 +165,13 @@ else ifeq ($(platform), ctr)
    STATIC_LINKING = 1
    FLAGS += -D_3DS
 
+# Switch (libtransistor)
+else ifeq ($(platform), switch)
+	TARGET := $(TARGET_NAME)_libretro_switch.a
+	include $(LIBTRANSISTOR_HOME)/libtransistor.mk
+	STATIC_LINKING=1
+	fpic := -fPIC -nostdlib
+
 # emscripten
 else ifeq ($(platform), emscripten)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).bc
