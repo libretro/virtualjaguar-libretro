@@ -170,7 +170,7 @@ else ifeq ($(platform), switch)
 	TARGET := $(TARGET_NAME)_libretro_switch.a
 	include $(LIBTRANSISTOR_HOME)/libtransistor.mk
 	STATIC_LINKING=1
-	fpic := -fPIC -nostdlib
+	fpic := -nostdlib
 
 # emscripten
 else ifeq ($(platform), emscripten)
