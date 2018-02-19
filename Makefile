@@ -395,6 +395,22 @@ PSS_STYLE :=2
 LDFLAGS += -DLL
 CFLAGS += -D_CRT_SECURE_NO_DEPRECATE
 
+# Windows MSVC 2003 Xbox 1
+else ifeq ($(platform), xbox1_msvc2003)
+TARGET := $(TARGET_NAME)_libretro_xdk1.lib
+CC  = CL.exe
+CXX  = CL.exe
+LD   = lib.exe
+
+export INCLUDE := $(XDK)/xbox/include
+export LIB := $(XDK)/xbox/lib
+PATH := $(call unixcygpath,$(XDK)/xbox/bin/vc71):$(PATH)
+PSS_STYLE :=2
+CFLAGS   += -D_XBOX -D_XBOX1
+CXXFLAGS += -D_XBOX -D_XBOX1
+STATIC_LINKING=1
+HAS_GCC := 0
+
 # Windows MSVC 2003 x86
 else ifeq ($(platform), windows_msvc2003_x86)
 	CC  = cl.exe
@@ -425,8 +441,7 @@ else
 
 endif
 
-CORE_DIR     := src
-LIBRETRO_DIR := .
+CORE_DIR     := .
 
 include Makefile.common
 

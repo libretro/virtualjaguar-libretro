@@ -1,44 +1,52 @@
-INCFLAGS := -I$(LIBRETRO_DIR) -I$(CORE_DIR) -I$(CORE_DIR)/m68000
+LIBRETRO_COMM_DIR  = $(CORE_DIR)/libretro-common
+
+INCFLAGS := -I$(CORE_DIR) \
+				-I$(CORE_DIR)/src \
+				-I$(CORE_DIR)/src/m68000
+
+ifneq (,$(findstring msvc2003,$(platform)))
+INCFLAGS += -I$(LIBRETRO_COMM_DIR)/include/compat/msvc
+endif
 
 SOURCES_CXX :=
 
 SOURCES_C :=  \
-	$(LIBRETRO_DIR)/libretro.c \
-	$(CORE_DIR)/blitter.c \
-	$(CORE_DIR)/dac.c \
-	$(CORE_DIR)/dsp.c \
-	$(CORE_DIR)/file.c \
-	$(CORE_DIR)/gpu.c \
-	$(CORE_DIR)/jagdasm.c \
-	$(CORE_DIR)/jaguar.c \
-	$(CORE_DIR)/jerry.c \
-	$(CORE_DIR)/op.c \
-	$(CORE_DIR)/tom.c  \
-	$(CORE_DIR)/cdintf.c \
-	$(CORE_DIR)/cdrom.c \
-	$(CORE_DIR)/crc32.c \
-	$(CORE_DIR)/event.c \
-	$(CORE_DIR)/eeprom.c \
-	$(CORE_DIR)/filedb.c \
-	$(CORE_DIR)/m68000/cpustbl.c \
-	$(CORE_DIR)/m68000/cpudefs.c \
-	$(CORE_DIR)/m68000/cpuemu.c \
-	$(CORE_DIR)/m68000/cpuextra.c \
-	$(CORE_DIR)/m68000/m68kdasm.c \
-	$(CORE_DIR)/m68000/m68kinterface.c \
-	$(CORE_DIR)/m68000/readcpu.c \
-	$(CORE_DIR)/jagbios.c \
-	$(CORE_DIR)/jagbios2.c \
-	$(CORE_DIR)/jagcdbios.c \
-	$(CORE_DIR)/jagdevcdbios.c \
-	$(CORE_DIR)/jagstub1bios.c \
-	$(CORE_DIR)/jagstub2bios.c \
-	$(CORE_DIR)/joystick.c \
-	$(CORE_DIR)/log.c \
-	$(CORE_DIR)/settings.c \
-	$(CORE_DIR)/state.c \
-	$(CORE_DIR)/memtrack.c \
-	$(CORE_DIR)/mmu.c \
-	$(CORE_DIR)/vjag_memory.c \
-	$(CORE_DIR)/universalhdr.c \
-	$(CORE_DIR)/wavetable.c
+	$(CORE_DIR)/libretro.c \
+	$(CORE_DIR)/src/blitter.c \
+	$(CORE_DIR)/src/dac.c \
+	$(CORE_DIR)/src/dsp.c \
+	$(CORE_DIR)/src/file.c \
+	$(CORE_DIR)/src/gpu.c \
+	$(CORE_DIR)/src/jagdasm.c \
+	$(CORE_DIR)/src/jaguar.c \
+	$(CORE_DIR)/src/jerry.c \
+	$(CORE_DIR)/src/op.c \
+	$(CORE_DIR)/src/tom.c  \
+	$(CORE_DIR)/src/cdintf.c \
+	$(CORE_DIR)/src/cdrom.c \
+	$(CORE_DIR)/src/crc32.c \
+	$(CORE_DIR)/src/event.c \
+	$(CORE_DIR)/src/eeprom.c \
+	$(CORE_DIR)/src/filedb.c \
+	$(CORE_DIR)/src/m68000/cpustbl.c \
+	$(CORE_DIR)/src/m68000/cpudefs.c \
+	$(CORE_DIR)/src/m68000/cpuemu.c \
+	$(CORE_DIR)/src/m68000/cpuextra.c \
+	$(CORE_DIR)/src/m68000/m68kdasm.c \
+	$(CORE_DIR)/src/m68000/m68kinterface.c \
+	$(CORE_DIR)/src/m68000/readcpu.c \
+	$(CORE_DIR)/src/jagbios.c \
+	$(CORE_DIR)/src/jagbios2.c \
+	$(CORE_DIR)/src/jagcdbios.c \
+	$(CORE_DIR)/src/jagdevcdbios.c \
+	$(CORE_DIR)/src/jagstub1bios.c \
+	$(CORE_DIR)/src/jagstub2bios.c \
+	$(CORE_DIR)/src/joystick.c \
+	$(CORE_DIR)/src/log.c \
+	$(CORE_DIR)/src/settings.c \
+	$(CORE_DIR)/src/state.c \
+	$(CORE_DIR)/src/memtrack.c \
+	$(CORE_DIR)/src/mmu.c \
+	$(CORE_DIR)/src/vjag_memory.c \
+	$(CORE_DIR)/src/universalhdr.c \
+	$(CORE_DIR)/src/wavetable.c
