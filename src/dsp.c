@@ -775,7 +775,7 @@ void DSPHandleIRQs(void)
       return;
 
    // Get the active interrupt bits (latches) & interrupt mask (enables)
-   bits = ((dsp_control.WORD >> 10) & 0x20) | ((dsp_control.WORD >> 6) & 0x1F),
+   bits = ((dsp_control.WORD >> 10) & 0x20) | ((dsp_control.WORD >> 6) & 0x1F);
    mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
    bits &= mask;
@@ -1051,11 +1051,11 @@ void DSPDone(void)
 
 	WriteLog("DSP opcodes use:\n");
 
-	for (i=0;i<64;i++)
-	{
-		if (dsp_opcode_use[i])
-			WriteLog("\t%s %i\n", dsp_opcode_str[i], dsp_opcode_use[i]);
-	}
+//    for (i=0;i<64;i++)
+//    {
+//        if (dsp_opcode_use[i])
+//            WriteLog("\t%s %i\n", dsp_opcode_str[i], dsp_opcode_use[i]);
+//    }
 }
 
 
@@ -2157,7 +2157,7 @@ static void DSP_jr(void)
       }//*/
       dsp_pc += 2;	// For DSP_DIS_* accuracy
       DSPOpcode[pipeline[plPtrExec].opcode]();
-      dsp_opcode_use[pipeline[plPtrExec].opcode]++;
+//      dsp_opcode_use[pipeline[plPtrExec].opcode]++;
       pipeline[plPtrWrite] = pipeline[plPtrExec];
 
       // Step 3: Flush pipeline & set new PC
@@ -2233,7 +2233,7 @@ static void DSP_jump(void)
 		}
 	dsp_pc += 2;	// For DSP_DIS_* accuracy
 		DSPOpcode[pipeline[plPtrExec].opcode]();
-		dsp_opcode_use[pipeline[plPtrExec].opcode]++;
+//        dsp_opcode_use[pipeline[plPtrExec].opcode]++;
 		pipeline[plPtrWrite] = pipeline[plPtrExec];
 
 		// Step 3: Flush pipeline & set new PC
