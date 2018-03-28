@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-enum
+typedef enum BUTTON
 {
    BUTTON_FIRST = 0,
    BUTTON_U = 0,
@@ -40,7 +40,7 @@ enum
    BUTTON_OPTION = 19,
    BUTTON_PAUSE = 20,
    BUTTON_LAST = 20
-};
+} BUTTON;
 
 void JoystickInit(void);
 void JoystickReset(void);

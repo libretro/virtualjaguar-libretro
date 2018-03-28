@@ -398,10 +398,13 @@ uint8_t DSPReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
+#ifdef USE_STRUCTS
     Offset offsett;
     offsett.LONG = offset;
     offset = offsett.Members.offset;
-    
+#else
+    offset &= 0xFFFFFFFE;
+#endif
 	if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE+0x1FFF)
 	{
 		offset -= DSP_WORK_RAM_BASE;
@@ -409,6 +412,7 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
     }
 	else if ((offset>=DSP_CONTROL_RAM_BASE)&&(offset<DSP_CONTROL_RAM_BASE+0x20))
 	{
+#ifdef USE_STRUCTS
         DSPLong data;
         data.LONG = DSPReadLong(offset & 0xFFFFFFFC, who);
         
@@ -417,6 +421,13 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
         } else {
             return data.Data.UWORD;
         }
+#else
+        uint32_t data = DSPReadLong(offset & 0xFFFFFFFC, who);
+        
+        if (offset & 0x03)
+            return data & 0xFFFF;
+        return data >> 16;
+#endif
 	}
 
 	return JaguarReadWord(offset, who);
