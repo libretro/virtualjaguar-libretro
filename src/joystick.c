@@ -140,8 +140,8 @@ uint16_t JoystickReadWord(uint32_t offset)
         uint8_t jp0offset = joypad0Offset[jrmLow];
         uint8_t jp1offset = joypad1Offset[jrmHigh];
 
-		offset0 = jp0offset % 4;
-		offset1 = jp1offset % 4;
+        offset0 = jp0offset; // % 4;
+        offset1 = jp1offset; // % 4;
 
         const int8_t mask[4][2] = {
             { BUTTON_A, BUTTON_PAUSE },
@@ -149,8 +149,10 @@ uint16_t JoystickReadWord(uint32_t offset)
             { BUTTON_C, 0xFF },
             { BUTTON_OPTION, 0xFF } };
 
-		if (offset0 != 0xFF && offset0 < 4)
+		if (offset0 != 0xFF)
 		{
+            offset0 /= 4;
+            
             uint8_t i0 = mask[offset0][0];
             uint8_t i1 = mask[offset0][1];
 
@@ -166,8 +168,10 @@ uint16_t JoystickReadWord(uint32_t offset)
             }
 		}
 
-        if (offset1 != 0xFF && offset1 < 4)
+        if (offset1 != 0xFF)
 		{
+            offset1 /= 4;
+
             uint8_t i0 = mask[offset1][0];
             uint8_t i1 = mask[offset1][1];
             
