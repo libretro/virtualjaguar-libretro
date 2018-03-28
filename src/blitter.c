@@ -2470,12 +2470,14 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
    hicinh = ((daddmode & 0x03) == 0x03);
 
    //Note that the carry out is saved between calls to this function...
-   for( i=0; i<4; i++)
-      ADD16SAT(&addq[i], &co[i], adda[i], addb[i], cin[i], sat, eightbit, hicinh);
+    ADD16SAT(&addq[0], &co[0], adda[0], addb[0], cin[0], sat, eightbit, hicinh);
+    ADD16SAT(&addq[1], &co[1], adda[1], addb[1], cin[1], sat, eightbit, hicinh);
+    ADD16SAT(&addq[2], &co[2], adda[2], addb[2], cin[2], sat, eightbit, hicinh);
+    ADD16SAT(&addq[3], &co[3], adda[3], addb[3], cin[3], sat, eightbit, hicinh);
 }
 
 
-void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
+void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, const uint16_t b, const uint8_t cin, const bool sat, const bool eightbit, const bool hicinh)
 {
 	uint8_t carry[4];
    uint8_t btop, ctop;
