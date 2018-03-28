@@ -161,7 +161,8 @@ uint16_t JoystickReadWord(uint32_t offset)
             
             data &= (maskOffset00 ? 0xFFFD : 0xFFFF);
             
-            if (maskOffset01 != 0xFF) {
+            // Something about this is making pause active when pressing up
+            if (i1 != 0xFF) {
                 uint8_t button = joypad0Buttons[maskOffset01];
                 uint16_t dataMask = (button ? 0xFFFE : 0xFFFF);
                 data &= dataMask;
@@ -176,12 +177,12 @@ uint16_t JoystickReadWord(uint32_t offset)
             uint8_t i1 = mask[offset1][1];
             
             uint8_t maskOffset10 = joypad1Buttons[i0];
-            uint8_t maskOffset11 = joypad1Buttons[i1];
             
             data &= (maskOffset10 ? 0xFFF7 : 0xFFFF);
             
-            if (maskOffset11 != 0xFF) {
-                uint8_t button = joypad1Buttons[maskOffset11];
+            if (i1 != 0xFF) {
+                uint8_t maskOffset11 = joypad1Buttons[i1];
+                uint8_t button = maskOffset11;
                 uint16_t dataMask = (button ? 0xFFFB : 0xFFFF);
                 data &= dataMask;
             }
