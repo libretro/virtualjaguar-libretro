@@ -161,11 +161,8 @@ uint16_t JoystickReadWord(uint32_t offset)
             
             data &= (maskOffset00 ? 0xFFFD : 0xFFFF);
             
-            // Something about this is making pause active when pressing up
             if (i1 != 0xFF) {
-                uint8_t button = joypad0Buttons[maskOffset01];
-                uint16_t dataMask = (button ? 0xFFFE : 0xFFFF);
-                data &= dataMask;
+                data &= (joypad0Buttons[i1] ? 0xFFFE : 0xFFFF);
             }
         }
         
