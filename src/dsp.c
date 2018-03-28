@@ -963,6 +963,7 @@ void DSPExec(int32_t cycles)
 			IMASKCleared = false;
 		}
 
+#ifdef USE_STRUCTS
         OpCode opcode;
         opcode.WORD = DSPReadWord(dsp_pc, DSP);
         uint8_t index = opcode.Codes.index;
@@ -972,6 +973,17 @@ void DSPExec(int32_t cycles)
         dsp_opcode_second_parameter = sp;
         dsp_pc += 2;
         dsp_opcode[index]();
+#else
+        uint16_t opcode;
+        uint32_t index;
+        opcode = DSPReadWord(dsp_pc, DSP);
+        index = opcode >> 10;
+        dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
+        dsp_opcode_second_parameter = opcode & 0x1F;
+        dsp_pc += 2;
+        dsp_opcode[index]();
+        dsp_opcode_use[index]++;
+#endif
 //     Counter is not necessary and expensive -jm prov
 //        dsp_opcode_use[index]++;
 		cycles -= dsp_opcode_cycles[index];
