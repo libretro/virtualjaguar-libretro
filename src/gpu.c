@@ -180,7 +180,8 @@ static uint32_t gpu_flags;
 static uint32_t gpu_matrix_control;
 static uint32_t gpu_pointer_to_matrix;
 static uint32_t gpu_data_organization;
-static uint32_t gpu_control;
+static GPUControl gpu_control;
+
 static uint32_t gpu_div_control;
 // There is a distinct advantage to having these separated out--there's no need to clear
 // a bit before writing a result. I.e., if the result of an operation leaves a zero in
@@ -195,7 +196,7 @@ static uint32_t gpu_instruction;
 static uint32_t gpu_opcode_first_parameter;
 static uint32_t gpu_opcode_second_parameter;
 
-#define GPU_RUNNING		(gpu_control & 0x01)
+#define GPU_RUNNING     (gpu_control.bits.b0)
 
 #define RM				gpu_reg[gpu_opcode_first_parameter]
 #define RN				gpu_reg[gpu_opcode_second_parameter]
@@ -386,7 +387,7 @@ uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x10:
             return gpu_pc;
          case 0x14:
-            return gpu_control;
+            return gpu_control.WORD;
          case 0x18:
             return gpu_hidata;
          case 0x1C:
@@ -499,7 +500,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                gpu_flag_c = (gpu_flags & CARRY_FLAG) >> 1;
                gpu_flag_n = (gpu_flags & NEGA_FLAG) >> 2;
                GPUUpdateRegisterBanks();
-               gpu_control &= ~((gpu_flags & CINT04FLAGS) >> 3);	// Interrupt latch clear bits
+               gpu_control.WORD &= ~((gpu_flags & CINT04FLAGS) >> 3);	// Interrupt latch clear bits
                //Writing here is only an interrupt enable--this approach is just plain wrong!
                //			GPUHandleIRQs();
                //This, however, is A-OK! ;-)
@@ -550,7 +551,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   data &= ~0x04;
                }
 
-               gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
+               gpu_control.WORD = (gpu_control.WORD & 0xF7C0) | (data & (~0xF7C0));
 
                // if gpu wasn't running but is now running, execute a few cycles
 #ifdef GPU_SINGLE_STEPPING
@@ -606,7 +607,7 @@ void GPUHandleIRQs(void)
       return;
 
    // Get the interrupt latch & enable bits
-   bits = (gpu_control >> 6) & 0x1F;
+    bits = gpu_control.gpuIRQ.irqMask; //(gpu_control >> 6) & 0x1F;
    mask = (gpu_flags >> 4) & 0x1F;
 
    // Bail out if latched interrupts aren't enabled
@@ -645,11 +646,11 @@ void GPUHandleIRQs(void)
 void GPUSetIRQLine(int irqline, int state)
 {
    uint32_t mask = 0x0040 << irqline;
-   gpu_control &= ~mask;				// Clear the interrupt latch
+   gpu_control.WORD &= ~mask;				// Clear the interrupt latch
 
    if (state)
    {
-      gpu_control |= mask;			// Assert the interrupt latch
+      gpu_control.WORD |= mask;			// Assert the interrupt latch
       GPUHandleIRQs();				// And handle the interrupt...
    }
 }
@@ -671,7 +672,7 @@ void GPUReset(void)
    gpu_pointer_to_matrix = 0x00000000;
    gpu_data_organization = 0xFFFFFFFF;
    gpu_pc				  = 0x00F03000;
-   gpu_control			  = 0x00002800;			// Correctly sets this as TOM Rev. 2
+   gpu_control.WORD			  = 0x00002800;			// Correctly sets this as TOM Rev. 2
    gpu_hidata			  = 0x00000000;
    gpu_remain			  = 0x00000000;			// These two registers are RO/WO
    gpu_div_control		  = 0x00000000;
@@ -764,7 +765,7 @@ void GPUDone(void)
    WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
 
    // Get the interrupt latch & enable bits
-   bits = (gpu_control >> 6) & 0x1F;
+    bits = gpu_control.gpuIRQ.irqMask; //(gpu_control >> 6) & 0x1F;
    mask = (gpu_flags >> 4) & 0x1F;
    WriteLog("GPU: Latch bits = %02X, enable bits = %02X\n", bits, mask);
 
