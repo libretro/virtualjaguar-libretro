@@ -8,6 +8,7 @@
 #define __MEMORY_H__
 
 #include <stdint.h>
+#include <assert.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,7 +40,8 @@ extern "C" {
         } bytes;
     } Bits64;
 #pragma pack(pop)
-    
+	_Static_assert( sizeof(Bits64) == sizeof(uint64_t), "Pack error");
+
 #pragma pack(push, 1)
 typedef union Bits32 {
     uint32_t WORD;
@@ -146,6 +148,7 @@ typedef union Bits32 {
     } bits;
 } Bits32;
 #pragma pack(pop)
+	_Static_assert( sizeof(Bits32) == sizeof(uint32_t), "Pack error");
 
 #pragma pack(push, 1)
 typedef union GPUControl {
