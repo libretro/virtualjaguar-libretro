@@ -231,6 +231,25 @@ static void update_input(void)
 
 }
 
+static void extract_basename(char *buf, const char *path, size_t size)
+{
+   const char *base = strrchr(path, '/');
+   if (!base)
+      base = strrchr(path, '\\');
+   if (!base)
+      base = path;
+   
+   if (*base == '\\' || *base == '/')
+      base++;
+   
+   strncpy(buf, base, size - 1);
+   buf[size - 1] = '\0';
+   
+   char *ext = strrchr(buf, '.');
+   if (ext)
+      *ext = '\0';
+}
+
 /************************************
  * libretro implementation
  ************************************/
@@ -361,7 +380,34 @@ bool retro_load_game(const struct retro_game_info *info)
 
    check_variables();
 
-   //strcpy(vjs.EEPROMPath, "/path/to/eeproms/");   // battery saves
+   // Get eeprom path info
+   // > Handle Windows nonsense...
+   char slash;
+#if defined(_WIN32)
+   slash = '\\';
+#else
+   slash = '/';
+#endif
+   // > Get save path
+   vjs.EEPROMPath[0] = '\0';
+   const char *save_dir = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir) && save_dir)
+   {
+		if (strlen(save_dir) > 0)
+		{
+			sprintf(vjs.EEPROMPath, "%s%c", save_dir, slash);
+		}
+   }
+   // > Get ROM name
+   if (info->path != NULL)
+   {
+      extract_basename(vjs.romName, info->path, sizeof(vjs.romName));
+   }
+   else
+   {
+      vjs.romName[0] = '\0';
+   }
+   
    JaguarInit();                                             // set up hardware
    memcpy(jagMemSpace + 0xE00000,
          (vjs.biosType == BT_K_SERIES ? jaguarBootROM : jaguarBootROM2),
