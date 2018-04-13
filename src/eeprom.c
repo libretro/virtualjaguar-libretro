@@ -68,10 +68,21 @@ void EepromInit(void)
       WriteLog("EEPROM: Memory Track device detected...\n");
       return;
    }
+   
+   /* Get EEPROM file names */
+	if (strlen(vjs.romName) > 0)
+	{
+		sprintf(eeprom_filename, "%s%s.srm", vjs.EEPROMPath, vjs.romName);
+		sprintf(cdromEEPROMFilename, "%s%s.cdrom.srm", vjs.EEPROMPath, vjs.romName);
+	}
+	else
+	{
+		// Use old CRC fallback...
+		sprintf(eeprom_filename, "%s%08X.srm", vjs.EEPROMPath, (unsigned int)jaguarMainROMCRC32);
+		sprintf(cdromEEPROMFilename, "%s%08X.cdrom.srm", vjs.EEPROMPath, (unsigned int)jaguarMainROMCRC32);
+	}
 
 	/* Handle regular cartridge EEPROM */
-	sprintf(eeprom_filename, "%s%08X.eeprom", vjs.EEPROMPath, (unsigned int)jaguarMainROMCRC32);
-	sprintf(cdromEEPROMFilename, "%scdrom.eeprom", vjs.EEPROMPath);
 	fp = fopen(eeprom_filename, "rb");
 
 	if (fp)
