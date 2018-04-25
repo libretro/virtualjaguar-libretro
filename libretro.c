@@ -233,6 +233,7 @@ static void update_input(void)
 
 static void extract_basename(char *buf, const char *path, size_t size)
 {
+   char       *ext  = NULL;
    const char *base = strrchr(path, '/');
    if (!base)
       base = strrchr(path, '\\');
@@ -245,7 +246,7 @@ static void extract_basename(char *buf, const char *path, size_t size)
    strncpy(buf, base, size - 1);
    buf[size - 1] = '\0';
    
-   char *ext = strrchr(buf, '.');
+   ext = strrchr(buf, '.');
    if (ext)
       *ext = '\0';
 }
@@ -313,7 +314,9 @@ void retro_cheat_set(unsigned index, bool enabled, const char *code)
 
 bool retro_load_game(const struct retro_game_info *info)
 {
+   char slash;
    unsigned i;
+   const char *save_dir = NULL;
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
 
    struct retro_input_descriptor desc[] = {
@@ -382,7 +385,6 @@ bool retro_load_game(const struct retro_game_info *info)
 
    // Get eeprom path info
    // > Handle Windows nonsense...
-   char slash;
 #if defined(_WIN32)
    slash = '\\';
 #else
@@ -390,7 +392,6 @@ bool retro_load_game(const struct retro_game_info *info)
 #endif
    // > Get save path
    vjs.EEPROMPath[0] = '\0';
-   const char *save_dir = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir) && save_dir)
    {
 		if (strlen(save_dir) > 0)
