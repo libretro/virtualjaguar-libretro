@@ -524,7 +524,7 @@ ifneq (,$(findstring msvc,$(platform)))
 	LINKOUT = -out:
 	LD = link.exe
 else
-	LD = $(CXX)
+	LD = $(CC)
 endif
 
 %.o: %.cpp
