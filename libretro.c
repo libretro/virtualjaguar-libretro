@@ -23,6 +23,8 @@ uint32_t *videoBuffer        = NULL;
 int game_width               = 0;
 int game_height              = 0;
 
+extern uint16_t eeprom_ram[];
+
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
@@ -461,6 +463,8 @@ void *retro_get_memory_data(unsigned type)
 {
    if(type == RETRO_MEMORY_SYSTEM_RAM)
       return jaguarMainRAM;
+   else if (type == RETRO_MEMORY_SAVE_RAM)
+      return eeprom_ram;
    else return NULL;
 }
 
@@ -468,6 +472,8 @@ size_t retro_get_memory_size(unsigned type)
 {
    if(type == RETRO_MEMORY_SYSTEM_RAM)
       return 0x200000;
+   else if (type == RETRO_MEMORY_SAVE_RAM)
+      return 128;
    else return 0;
 }
 
