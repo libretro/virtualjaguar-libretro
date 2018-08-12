@@ -22,7 +22,7 @@
 
 extern uint32_t jaguarMainROMCRC32;
 
-static uint16_t eeprom_ram[64];
+uint16_t eeprom_ram[64];
 static uint16_t cdromEEPROM[64];
 
 // Private function prototypes
