@@ -520,9 +520,9 @@ else
 		endif
 
 		CFLAGS += -O2 -DNDEBUG
-		CXXFLAGS += -O3 -ftree-vectorize -DNDEBUG
+		CXXFLAGS += -O2 -DNDEBUG
 	else
-		FLAGS += -O3 -ftree-vectorize -DNDEBUG
+		FLAGS += -O2 -DNDEBUG
 	endif
 endif
 
