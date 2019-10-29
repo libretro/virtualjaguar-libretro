@@ -135,9 +135,12 @@ static void update_input(void)
       return;
 
    ret[0] = ret[1] = 0;
-
    input_poll_cb();
-
+   int counter;
+   for(counter=BUTTON_FIRST;counter<=BUTTON_LAST;counter++){
+       joypad0Buttons[counter] = 0x00;
+       joypad1Buttons[counter] = 0x00;
+   }
    joypad0Buttons[BUTTON_U]      = 0x00;
    joypad0Buttons[BUTTON_D]      = 0x00;
    joypad0Buttons[BUTTON_L]      = 0x00;
@@ -154,7 +157,7 @@ static void update_input(void)
    joypad0Buttons[BUTTON_4]      = 0x00;
    joypad0Buttons[BUTTON_5]      = 0x00;
    joypad0Buttons[BUTTON_6]      = 0x00;
-
+   
    joypad1Buttons[BUTTON_U]      = 0x00;
    joypad1Buttons[BUTTON_D]      = 0x00;
    joypad1Buttons[BUTTON_L]      = 0x00;
