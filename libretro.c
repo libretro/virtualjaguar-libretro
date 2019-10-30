@@ -136,10 +136,10 @@ static void update_input(void)
 
    ret[0] = ret[1] = 0;
    input_poll_cb();
-   int counter;
-   for(counter=BUTTON_FIRST;counter<=BUTTON_LAST;counter++){
-       joypad0Buttons[counter] = 0x00;
-       joypad1Buttons[counter] = 0x00;
+   
+   for(i=BUTTON_FIRST;i<=BUTTON_LAST;i++){
+       joypad0Buttons[i] = 0x00;
+       joypad1Buttons[i] = 0x00;
    }
    joypad0Buttons[BUTTON_U]      = 0x00;
    joypad0Buttons[BUTTON_D]      = 0x00;
@@ -208,19 +208,19 @@ static void update_input(void)
       joypad0Buttons[BUTTON_PAUSE] = 0xff;
    if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
       joypad0Buttons[BUTTON_OPTION] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0)))
       joypad0Buttons[BUTTON_0] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1)))
       joypad0Buttons[BUTTON_1] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2)))
       joypad0Buttons[BUTTON_2] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3)))
       joypad0Buttons[BUTTON_3] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4)))
       joypad0Buttons[BUTTON_4] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)))
       joypad0Buttons[BUTTON_5] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)))
       joypad0Buttons[BUTTON_6] = 0xff;
 
    if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
