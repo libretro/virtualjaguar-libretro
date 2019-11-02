@@ -4,8 +4,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-extern char jaguarBootROM2[];
+#include <stdint.h>
+extern uint8_t jaguarBootROM2[];
 
 #ifdef __cplusplus
 }
