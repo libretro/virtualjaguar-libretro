@@ -228,7 +228,10 @@ static void update_input(void)
       joypad0Buttons[BUTTON_8] = 0xff;
    if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
       joypad0Buttons[BUTTON_9] = 0xff;
-
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
+	  joypad0Buttons[BUTTON_s] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
+	  joypad0Buttons[BUTTON_d] = 0xff
 
    if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
       joypad1Buttons[BUTTON_U] = 0xff;
