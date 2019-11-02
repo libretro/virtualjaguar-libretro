@@ -447,7 +447,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    JaguarInit();                                             // set up hardware
    memcpy(jagMemSpace + 0xE00000,
-         (vjs.biosType == BT_K_SERIES ? jaguarBootROM : jaguarBootROM2),
+         ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
          0x20000); // Use the stock BIOS
 
    JaguarSetScreenPitch(videoWidth);
