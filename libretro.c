@@ -124,7 +124,7 @@ static void check_variables(void)
    else
       vjs.hardwareTypeNTSC=1;
 
-} 
+}
 
 static void update_input(void)
 {
@@ -135,9 +135,12 @@ static void update_input(void)
       return;
 
    ret[0] = ret[1] = 0;
-
    input_poll_cb();
 
+   for(i=BUTTON_FIRST;i<=BUTTON_LAST;i++){
+       joypad0Buttons[i] = 0x00;
+       joypad1Buttons[i] = 0x00;
+   }
    joypad0Buttons[BUTTON_U]      = 0x00;
    joypad0Buttons[BUTTON_D]      = 0x00;
    joypad0Buttons[BUTTON_L]      = 0x00;
@@ -205,20 +208,30 @@ static void update_input(void)
       joypad0Buttons[BUTTON_PAUSE] = 0xff;
    if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
       joypad0Buttons[BUTTON_OPTION] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0)? 1 : 0))
       joypad0Buttons[BUTTON_0] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1)? 1 : 0))
       joypad0Buttons[BUTTON_1] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2)? 1 : 0))
       joypad0Buttons[BUTTON_2] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3)? 1 : 0))
       joypad0Buttons[BUTTON_3] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4)? 1 : 0))
       joypad0Buttons[BUTTON_4] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
       joypad0Buttons[BUTTON_5] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
       joypad0Buttons[BUTTON_6] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
+      joypad0Buttons[BUTTON_7] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
+      joypad0Buttons[BUTTON_8] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
+      joypad0Buttons[BUTTON_9] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
+	  joypad0Buttons[BUTTON_s] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
+	  joypad0Buttons[BUTTON_d] = 0xff;
 
    if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
       joypad1Buttons[BUTTON_U] = 0xff;
@@ -262,13 +275,13 @@ static void extract_basename(char *buf, const char *path, size_t size)
       base = strrchr(path, '\\');
    if (!base)
       base = path;
-   
+
    if (*base == '\\' || *base == '/')
       base++;
-   
+
    strncpy(buf, base, size - 1);
    buf[size - 1] = '\0';
-   
+
    ext = strrchr(buf, '.');
    if (ext)
       *ext = '\0';
@@ -431,10 +444,10 @@ bool retro_load_game(const struct retro_game_info *info)
    {
       vjs.romName[0] = '\0';
    }
-   
+
    JaguarInit();                                             // set up hardware
    memcpy(jagMemSpace + 0xE00000,
-         (vjs.biosType == BT_K_SERIES ? jaguarBootROM : jaguarBootROM2),
+         ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
          0x20000); // Use the stock BIOS
 
    JaguarSetScreenPitch(videoWidth);
@@ -528,7 +541,7 @@ void retro_run(void)
    update_input();
 
    JaguarExecuteNew();
-   
+
    SDLSoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
