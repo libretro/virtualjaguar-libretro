@@ -2,7 +2,8 @@ LIBRETRO_COMM_DIR  = $(CORE_DIR)/libretro-common
 
 INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src \
-				-I$(CORE_DIR)/src/m68000
+				-I$(CORE_DIR)/src/m68000 \
+				-I$(LIBRETRO_COMM_DIR)/include
 
 ifneq (,$(findstring msvc2003,$(platform)))
 INCFLAGS += -I$(LIBRETRO_COMM_DIR)/include/compat/msvc
