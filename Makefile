@@ -153,6 +153,13 @@ else ifeq ($(platform), qnx)
 	CC = qcc -Vgcc_ntoarmv7le
 	CXX = QCC -Vgcc_ntoarmv7le_cpp
 
+# ARM
+else ifneq (,$(findstring armv,$(platform)))
+	TARGET := $(TARGET_NAME)_libretro.so
+	fpic := -fPIC
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	ARCH = arm
+
 # PS3
 else ifeq ($(platform), ps3)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).a
