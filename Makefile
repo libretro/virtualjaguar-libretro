@@ -611,3 +611,4 @@ endif
 
 print-%:
 	@echo '$*=$($*)'
+
