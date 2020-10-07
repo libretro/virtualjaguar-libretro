@@ -42,7 +42,7 @@ uint8_t mtMem[0x20000];
 uint8_t mtCommand = MT_NONE;
 uint8_t mtState = MT_IDLE;
 bool haveMT = false;
-char mtFilename[MAX_PATH];
+char mtFilename[8192];
 
 // Private function prototypes
 void MTWriteFile(void);
