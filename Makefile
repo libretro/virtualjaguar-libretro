@@ -160,16 +160,6 @@ else ifneq (,$(findstring armv,$(platform)))
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
 	ARCH = arm
 
-# PS3
-else ifeq ($(platform), ps3)
-	TARGET := $(TARGET_NAME)_libretro_$(platform).a
-	CC = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-gcc.exe
-	CXX = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-g++.exe
-	AR = $(CELL_SDK)/host-win32/ppu/bin/ppu-lv2-ar.exe
-	STATIC_LINKING = 1
-	FLAGS += -DMSB_FIRST
-	OLD_GCC = 1
-
 # Nintendo Switch (libnx)
 else ifeq ($(platform), libnx)
 	include $(DEVKITPRO)/libnx/switch_rules
@@ -180,16 +170,6 @@ else ifeq ($(platform), libnx)
 	CXXFLAGS := $(ASFLAGS) $(CFLAGS)
 	STATIC_LINKING = 1
 
-# sncps3
-else ifeq ($(platform), sncps3)
-	TARGET := $(TARGET_NAME)_libretro_ps3.a
-	CC = $(CELL_SDK)/host-win32/sn/bin/ps3ppusnc.exe
-	CXX = $(CELL_SDK)/host-win32/sn/bin/ps3ppusnc.exe
-	AR = $(CELL_SDK)/host-win32/sn/bin/ps3snarl.exe
-	STATIC_LINKING = 1
-	FLAGS += -DMSB_FIRST
-	NO_GCC = 1
-	
 # Lightweight PS3 Homebrew SDK
 else ifeq ($(platform), psl1ght)
    TARGET := $(TARGET_NAME)_libretro_$(platform).a
