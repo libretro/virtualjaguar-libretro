@@ -147,3 +147,5 @@ libretro-build-emscripten:
   extends:
     - .libretro-emscripten-static-retroarch-master
     - .core-defs
+  variables:
+    EM_MEMORY: 268435456
