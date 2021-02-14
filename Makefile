@@ -497,36 +497,24 @@ include Makefile.common
 OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
 
 ifeq ($(DEBUG),1)
-	ifneq (,$(findstring msvc,$(platform)))
-		ifeq ($(STATIC_LINKING),1)
-			CFLAGS += -MTd
-			CXXFLAGS += -MTd
-		else
-			CFLAGS += -MDd
-			CXXFLAGS += -MDd
-		endif
-
-		CFLAGS += -Od -Zi -D_DEBUG
-		CXXFLAGS += -Od -Zi -D_DEBUG
-		LDFLAGS += -DEBUG
-	else
-		FLAGS += -O0 -g
-	endif
+   ifneq (,$(findstring msvc,$(platform)))
+      CFLAGS += -MTd
+      CXXFLAGS += -MTd
+      CFLAGS += -Od -Zi -D_DEBUG
+      CXXFLAGS += -Od -Zi -D_DEBUG
+      LDFLAGS += -DEBUG
+   else
+      FLAGS += -O0 -g
+   endif
 else
-	ifneq (,$(findstring msvc,$(platform)))
-		ifeq ($(STATIC_LINKING),1)
-			CFLAGS += -MT
-			CXXFLAGS += -MT
-		else
-			CFLAGS += -MD
-			CXXFLAGS += -MD
-		endif
-
-		CFLAGS += -O2 -DNDEBUG
-		CXXFLAGS += -O2 -DNDEBUG
-	else
-		FLAGS += -O2 -DNDEBUG
-	endif
+   ifneq (,$(findstring msvc,$(platform)))
+      CFLAGS   += -MT
+      CXXFLAGS += -MT
+      CFLAGS   += -O2 -DNDEBUG
+      CXXFLAGS += -O2 -DNDEBUG
+   else
+      FLAGS    += -O2 -DNDEBUG
+   endif
 endif
 
 ifeq (,$(findstring msvc,$(platform)))
