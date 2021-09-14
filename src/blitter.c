@@ -2882,21 +2882,21 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 	cmpd.DATA = *patd ^ (cmpdst ? dstd : srcd);
 
 	if (cmpd.bytes.b0 == 0)
-		*dcomp |= 0x01;
+		*dcomp |= 0x01u;
 	if (cmpd.bytes.b1 == 0)
-		*dcomp |= 0x02;
+		*dcomp |= 0x02u;
 	if (cmpd.bytes.b2 == 0)
-		*dcomp |= 0x04;
+		*dcomp |= 0x04u;
 	if (cmpd.bytes.b3 == 0)
-		*dcomp |= 0x08;
+		*dcomp |= 0x08u;
 	if (cmpd.bytes.b4 == 0)
-		*dcomp |= 0x10;
+		*dcomp |= 0x10u;
 	if (cmpd.bytes.b5 == 0)
-		*dcomp |= 0x20;
+		*dcomp |= 0x20u;
 	if (cmpd.bytes.b6 == 0)
-		*dcomp |= 0x40;
+		*dcomp |= 0x40u;
 	if (cmpd.bytes.b7 == 0)
-		*dcomp |= 0x80;
+		*dcomp |= 0x80u;
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Zed comparator for Z-buffer operations
@@ -2914,25 +2914,25 @@ with srcshift bits 4 & 5 selecting the start position
 //So... basically what we have here is:
 	*zcomp = 0;
     // TODO: Byte and bit this -jm provenance
-	if ((((*srcz & 0x000000000000FFFFLL) < (dstz & 0x000000000000FFFFLL)) && (zmode & 0x01))
-		|| (((*srcz & 0x000000000000FFFFLL) == (dstz & 0x000000000000FFFFLL)) && (zmode & 0x02))
-		|| (((*srcz & 0x000000000000FFFFLL) > (dstz & 0x000000000000FFFFLL)) && (zmode & 0x04)))
-		*zcomp |= 0x01;
+	if ((((*srcz & 0x000000000000FFFFLL) < (dstz & 0x000000000000FFFFLL)) && (zmode & 0x01u))
+		|| (((*srcz & 0x000000000000FFFFLL) == (dstz & 0x000000000000FFFFLL)) && (zmode & 0x02u))
+		|| (((*srcz & 0x000000000000FFFFLL) > (dstz & 0x000000000000FFFFLL)) && (zmode & 0x04u)))
+		*zcomp |= 0x01u;
 
-	if ((((*srcz & 0x00000000FFFF0000LL) < (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x01))
-		|| (((*srcz & 0x00000000FFFF0000LL) == (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x02))
-		|| (((*srcz & 0x00000000FFFF0000LL) > (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x04)))
-		*zcomp |= 0x02;
+	if ((((*srcz & 0x00000000FFFF0000LL) < (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x01u))
+		|| (((*srcz & 0x00000000FFFF0000LL) == (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x02u))
+		|| (((*srcz & 0x00000000FFFF0000LL) > (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x04u)))
+		*zcomp |= 0x02u;
 
-	if ((((*srcz & 0x0000FFFF00000000LL) < (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x01))
-		|| (((*srcz & 0x0000FFFF00000000LL) == (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x02))
-		|| (((*srcz & 0x0000FFFF00000000LL) > (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x04)))
-		*zcomp |= 0x04;
+	if ((((*srcz & 0x0000FFFF00000000LL) < (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x01u))
+		|| (((*srcz & 0x0000FFFF00000000LL) == (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x02u))
+		|| (((*srcz & 0x0000FFFF00000000LL) > (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x04u)))
+		*zcomp |= 0x04u;
 
-	if ((((*srcz & 0xFFFF000000000000LL) < (dstz & 0xFFFF000000000000LL)) && (zmode & 0x01))
-		|| (((*srcz & 0xFFFF000000000000LL) == (dstz & 0xFFFF000000000000LL)) && (zmode & 0x02))
-		|| (((*srcz & 0xFFFF000000000000LL) > (dstz & 0xFFFF000000000000LL)) && (zmode & 0x04)))
-		*zcomp |= 0x08;
+	if ((((*srcz & 0xFFFF000000000000LL) < (dstz & 0xFFFF000000000000LL)) && (zmode & 0x01u))
+		|| (((*srcz & 0xFFFF000000000000LL) == (dstz & 0xFFFF000000000000LL)) && (zmode & 0x02u))
+		|| (((*srcz & 0xFFFF000000000000LL) > (dstz & 0xFFFF000000000000LL)) && (zmode & 0x04u)))
+		*zcomp |= 0x08u;
 
 //TEMP, TO TEST IF ZCOMP IS THE CULPRIT...
 //Nope, this is NOT the problem...
