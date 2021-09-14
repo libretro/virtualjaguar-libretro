@@ -2399,7 +2399,7 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 // Here's an important bit: The source data adder logic. Need to track down the inputs!!! //
 ////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////
-#include <simd/simd.h>
+
 void ADDARRAY(const uint16_t * addq, const uint8_t daddasel, const uint8_t daddbsel, const uint8_t daddmode,
 	const uint64_t dstd, const uint32_t iinc, const uint8_t initcin[], const uint64_t initinc, const uint16_t initpix,
 	const uint32_t istep, const uint64_t patd, const uint64_t srcd, const uint64_t srcz1, const uint64_t srcz2,
