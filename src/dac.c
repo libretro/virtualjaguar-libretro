@@ -53,7 +53,7 @@
 
 #include "../libretro.h"
 
-//extern retro_audio_sample_batch_t audio_batch_cb;
+extern retro_audio_sample_batch_t audio_batch_cb;
 
 #define BUFFER_SIZE			0x10000				// Make the DAC buffers 64K x 16 bits
 #define DAC_AUDIO_RATE		48000				// Set the audio rate to 48 KHz
@@ -183,12 +183,12 @@ void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
    {
       double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
 
-      DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+		 DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
 
-      HandleNextEvent(EVENT_JERRY);
-   }
-   while (!bufferDone);
-//   audio_batch_cb((int16_t*)sampleBuffer, length / 2);
+		 HandleNextEvent(EVENT_JERRY);
+	 }
+	while (!bufferDone);
+	audio_batch_cb((int16_t*)sampleBuffer, length / 2);
 }
 
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)
