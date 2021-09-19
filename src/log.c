@@ -22,32 +22,13 @@
 #include <stdarg.h>
 #include <stdint.h>
 
-
-//#define MAX_LOG_SIZE		10000000				// Maximum size of log file (10 MB)
-#define MAX_LOG_SIZE		100000000				// Maximum size of log file (100 MB)
-
-static FILE * log_stream = NULL;
-static uint32_t logSize = 0;
-
 int LogInit(const char * path)
 {
-	log_stream = fopen(path, "w");
-
-	if (log_stream == NULL)
-		return 0;
-
 	return 1;
-}
-
-FILE * LogGet(void)
-{
-	return log_stream;
 }
 
 void LogDone(void)
 {
-	if (log_stream != NULL)
-		fclose(log_stream);
 }
 
 //
@@ -56,25 +37,4 @@ void LogDone(void)
 //
 void WriteLog(const char * text, ...)
 {
-	va_list arg;
-	va_start(arg, text);
-
-	if (log_stream == NULL)
-	{
-		va_end(arg);
-		return;
-	}
-
-	logSize += vfprintf(log_stream, text, arg);
-
-	if (logSize > MAX_LOG_SIZE)
-	{
-		// Instead of dumping out, we just close the file and ignore any more output.
-		fflush(log_stream);
-		fclose(log_stream);
-		log_stream = NULL;
-	}
-
-	va_end(arg);
-	fflush(log_stream);					// Make sure that text is written!
 }
