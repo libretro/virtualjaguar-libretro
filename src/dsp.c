@@ -19,7 +19,6 @@
 #include <stdlib.h>
 #include "dac.h"
 #include "gpu.h"
-#include "jagdasm.h"
 #include "jaguar.h"
 #include "jerry.h"
 #include "log.h"
@@ -311,8 +310,6 @@ static uint32_t dsp_releaseTimeSlice_flag = 0;
 
 // Private function prototypes
 
-void DSPDumpRegisters(void);
-void DSPDumpDisassembly(void);
 void FlushDSPPipeline(void);
 
 
@@ -829,108 +826,10 @@ void DSPReset(void)
 		*((uint32_t *)(&dsp_ram_8[i])) = rand();
 }
 
-void DSPDumpDisassembly(void)
-{
-	char buffer[512];
-	uint32_t j = 0xF1B000;
-
-	WriteLog("\n---[DSP code at 00F1B000]---------------------------\n");
-
-	while (j <= 0xF1CFFF)
-	{
-		uint32_t oldj = j;
-		j += dasmjag(JAGUAR_DSP, buffer, j);
-		WriteLog("\t%08X: %s\n", oldj, buffer);
-	}
-}
-
-void DSPDumpRegisters(void)
-{
-   unsigned j;
-
-   /*Should add modulus, etc to dump here... */
-   WriteLog("\n---[DSP flags: NCZ %d%d%d, DSP PC: %08X]------------\n", dsp_flag_n, dsp_flag_c, dsp_flag_z, dsp_pc);
-   WriteLog("\nRegisters bank 0\n");
-
-   for(j=0; j<8; j++)
-   {
-      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-            (j << 2) + 0, dsp_reg_bank_0[(j << 2) + 0],
-            (j << 2) + 1, dsp_reg_bank_0[(j << 2) + 1],
-            (j << 2) + 2, dsp_reg_bank_0[(j << 2) + 2],
-            (j << 2) + 3, dsp_reg_bank_0[(j << 2) + 3]);
-   }
-
-   WriteLog("Registers bank 1\n");
-
-   for(j=0; j<8; j++)
-   {
-      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-            (j << 2) + 0, dsp_reg_bank_1[(j << 2) + 0],
-            (j << 2) + 1, dsp_reg_bank_1[(j << 2) + 1],
-            (j << 2) + 2, dsp_reg_bank_1[(j << 2) + 2],
-            (j << 2) + 3, dsp_reg_bank_1[(j << 2) + 3]);
-   }
-}
-
 void DSPDone(void)
 {
-	static char buffer[512];
-	int i, j;
-   int bits, mask;
-
 	WriteLog("DSP: Stopped at PC=%08X dsp_modulo=%08X (dsp was%s running)\n", dsp_pc, dsp_modulo, (DSP_RUNNING ? "" : "n't"));
 	WriteLog("DSP: %sin interrupt handler\n", ((dsp_flags & IMASK) ? "" : "not "));
-
-	// get the active interrupt bits
-	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
-	// get the interrupt mask
-	mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
-
-	WriteLog("DSP: pending=$%X enabled=$%X (%s%s%s%s%s%s)\n", bits, mask,
-		((mask & 0x01) ? "CPU " : ""), ((mask & 0x02) ? "I2S " : ""),
-		((mask & 0x04) ? "Timer0 " : ""), ((mask & 0x08) ? "Timer1 " : ""),
-		((mask & 0x10) ? "Ext0 " : ""), ((mask & 0x20) ? "Ext1" : ""));
-	WriteLog("\nRegisters bank 0\n");
-
-	for(j=0; j<8; j++)
-	{
-		WriteLog("\tR%02i=%08X R%02i=%08X R%02i=%08X R%02i=%08X\n",
-						  (j << 2) + 0, dsp_reg_bank_0[(j << 2) + 0],
-						  (j << 2) + 1, dsp_reg_bank_0[(j << 2) + 1],
-						  (j << 2) + 2, dsp_reg_bank_0[(j << 2) + 2],
-						  (j << 2) + 3, dsp_reg_bank_0[(j << 2) + 3]);
-	}
-
-	WriteLog("\nRegisters bank 1\n");
-
-	for (j=0; j<8; j++)
-	{
-		WriteLog("\tR%02i=%08X R%02i=%08X R%02i=%08X R%02i=%08X\n",
-						  (j << 2) + 0, dsp_reg_bank_1[(j << 2) + 0],
-						  (j << 2) + 1, dsp_reg_bank_1[(j << 2) + 1],
-						  (j << 2) + 2, dsp_reg_bank_1[(j << 2) + 2],
-						  (j << 2) + 3, dsp_reg_bank_1[(j << 2) + 3]);
-	}
-
-	WriteLog("\n");
-
-	j = DSP_WORK_RAM_BASE;
-
-	while (j <= 0xF1CFFF)
-	{
-		uint32_t oldj = j;
-		j += dasmjag(JAGUAR_DSP, buffer, j);
-		WriteLog("\t%08X: %s\n", oldj, buffer);
-	}//*/
-
-	WriteLog("DSP opcodes use:\n");
-
-	for (i=0;i<64;i++)
-	{
-		if (dsp_opcode_use[i])
-			WriteLog("\t%s %i\n", dsp_opcode_str[i], dsp_opcode_use[i]);
-	}
 }
 
 

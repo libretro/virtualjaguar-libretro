@@ -27,7 +27,6 @@
 #include <stdlib.h>
 #include <string.h>								// For memset
 #include "dsp.h"
-#include "jagdasm.h"
 #include "jaguar.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
@@ -70,9 +69,6 @@
 // Private function prototypes
 
 void GPUUpdateRegisterBanks(void);
-void GPUDumpDisassembly(void);
-void GPUDumpRegisters(void);
-void GPUDumpMemory(void);
 
 static void gpu_opcode_add(void);
 static void gpu_opcode_addc(void);
@@ -709,75 +705,9 @@ void GPUResetStats(void)
    WriteLog("--> GPU stats were reset!\n");
 }
 
-void GPUDumpDisassembly(void)
-{
-   char buffer[512];
-   uint32_t j = 0xF03000;
-
-   WriteLog("\n---[GPU code at 00F03000]---------------------------\n");
-   while (j <= 0xF03FFF)
-   {
-      uint32_t oldj = j;
-      j += dasmjag(JAGUAR_GPU, buffer, j);
-      WriteLog("\t%08X: %s\n", oldj, buffer);
-   }
-}
-
-void GPUDumpRegisters(void)
-{
-   unsigned j;
-   WriteLog("\n---[GPU flags: NCZ %d%d%d]-----------------------\n", gpu_flag_n, gpu_flag_c, gpu_flag_z);
-   WriteLog("\nRegisters bank 0\n");
-   for(j=0; j<8; j++)
-   {
-      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-            (j << 2) + 0, gpu_reg_bank_0[(j << 2) + 0],
-            (j << 2) + 1, gpu_reg_bank_0[(j << 2) + 1],
-            (j << 2) + 2, gpu_reg_bank_0[(j << 2) + 2],
-            (j << 2) + 3, gpu_reg_bank_0[(j << 2) + 3]);
-   }
-   WriteLog("Registers bank 1\n");
-   for(j=0; j<8; j++)
-   {
-      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-            (j << 2) + 0, gpu_reg_bank_1[(j << 2) + 0],
-            (j << 2) + 1, gpu_reg_bank_1[(j << 2) + 1],
-            (j << 2) + 2, gpu_reg_bank_1[(j << 2) + 2],
-            (j << 2) + 3, gpu_reg_bank_1[(j << 2) + 3]);
-   }
-}
-
-void GPUDumpMemory(void)
-{
-   unsigned i;
-   WriteLog("\n---[GPU data at 00F03000]---------------------------\n");
-   for(i=0; i<0xFFF; i+=4)
-      WriteLog("\t%08X: %02X %02X %02X %02X\n", 0xF03000+i, gpu_ram_8[i],
-            gpu_ram_8[i+1], gpu_ram_8[i+2], gpu_ram_8[i+3]);
-}
-
 void GPUDone(void)
 {
-   unsigned i;
-   uint8_t bits;
-   uint8_t mask;
    WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
-
-   // Get the interrupt latch & enable bits
-   bits = (gpu_control >> 6) & 0x1F;
-   mask = (gpu_flags >> 4) & 0x1F;
-   WriteLog("GPU: Latch bits = %02X, enable bits = %02X\n", bits, mask);
-
-   GPUDumpRegisters();
-   GPUDumpDisassembly();
-
-   WriteLog("\nGPU opcodes use:\n");
-   for(i=0; i<64; i++)
-   {
-      if (gpu_opcode_use[i])
-         WriteLog("\t%17s %lu\n", gpu_opcode_str[i], gpu_opcode_use[i]);
-   }
-   WriteLog("\n");
 }
 
 // Main GPU execution core
