@@ -43,7 +43,6 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/joystick.c \
 	$(CORE_DIR)/src/log.c \
 	$(CORE_DIR)/src/settings.c \
-	$(CORE_DIR)/src/state.c \
 	$(CORE_DIR)/src/memtrack.c \
 	$(CORE_DIR)/src/mmu.c \
 	$(CORE_DIR)/src/vjag_memory.c \
