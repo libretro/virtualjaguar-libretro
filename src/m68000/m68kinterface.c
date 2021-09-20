@@ -66,49 +66,9 @@ static int checkForIRQToHandle = 0;
 //static pthread_mutex_t executionLock = PTHREAD_MUTEX_INITIALIZER;
 static int IRQLevelToHandle = 0;
 
-#define CPU_DEBUG
-
-
 void Dasm(uint32_t offset, uint32_t qt)
 {
-#ifdef CPU_DEBUG
-// back up a few instructions...
-//offset -= 100;
-	static char buffer[2048];//, mem[64];
-	int pc = offset, oldpc;
-	uint32_t i;
-
-	for(i=0; i<qt; i++)
-	{
-/*		oldpc = pc;
-		for(int j=0; j<64; j++)
-			mem[j^0x01] = jaguar_byte_read(pc + j);
-
-		pc += Dasm68000((char *)mem, buffer, 0);
-		WriteLog("%08X: %s\n", oldpc, buffer);//*/
-		oldpc = pc;
-		pc += m68k_disassemble(buffer, pc, 0);//M68K_CPU_TYPE_68000);
-//		WriteLog("%08X: %s\n", oldpc, buffer);//*/
-		printf("%08X: %s\n", oldpc, buffer);//*/
-	}
-#endif
 }
-
-
-#ifdef CPU_DEBUG
-void DumpRegisters(void)
-{
-	uint32_t i;
-
-	for(i=0; i<16; i++)
-	{
-		printf("%s%i: %08X ", (i < 8 ? "D" : "A"), i & 0x7, regs.regs[i]);
-
-		if ((i & 0x03) == 3)
-			printf("\n");
-	}
-}
-#endif
 
 
 void M68KDebugHalt(void)

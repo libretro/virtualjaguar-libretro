@@ -228,44 +228,6 @@ void M68KInstructionHook(void)
    }
 }
 
-void ShowM68KContext(void)
-{
-   unsigned i;
-   uint32_t currpc;
-   uint32_t disPC;
-   char buffer[128];
-
-   printf("\t68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
-
-   for(i=M68K_REG_D0; i<=M68K_REG_D7; i++)
-   {
-      printf("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_D3 || i == M68K_REG_D7)
-         printf("\n");
-   }
-
-   for(i=M68K_REG_A0; i<=M68K_REG_A7; i++)
-   {
-      printf("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_A3 || i == M68K_REG_A7)
-         printf("\n");
-   }
-
-   currpc = m68k_get_reg(NULL, M68K_REG_PC);
-   disPC  = currpc - 30;
-
-   do
-   {
-      uint32_t oldpc = disPC;
-      disPC += m68k_disassemble(buffer, disPC, 0);
-      printf("%s%08X: %s\n", (oldpc == currpc ? ">" : " "), oldpc, buffer);
-   }
-   while (disPC < (currpc + 10));
-}
-
-
 /* Custom UAE 68000 read/write/IRQ functions */
 
 int irq_ack_handler(int level)

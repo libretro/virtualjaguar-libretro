@@ -871,10 +871,6 @@ out1:
 		if (destmode == Areg && sz == sz_byte)
 			goto nomatch;
 endofline:
-		/* now, we have a match */
-		if (table68k[opc].mnemo != i_ILLG)
-			fprintf(stderr, "Double match: %x: %s\n", opc, opcstr);
-
 		if (find == -1)
 		{
 			for(find=0; ; find++)
