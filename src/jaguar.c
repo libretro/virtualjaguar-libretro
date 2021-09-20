@@ -415,10 +415,6 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
    return m68k_read_memory_32(address);
 }
 
-void JaguarDasm(uint32_t offset, uint32_t qt)
-{
-}
-
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
    offset &= 0xFFFFFF;

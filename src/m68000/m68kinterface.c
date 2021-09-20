@@ -66,11 +66,6 @@ static int checkForIRQToHandle = 0;
 //static pthread_mutex_t executionLock = PTHREAD_MUTEX_INITIALIZER;
 static int IRQLevelToHandle = 0;
 
-void Dasm(uint32_t offset, uint32_t qt)
-{
-}
-
-
 void M68KDebugHalt(void)
 {
 	regs.spcflags |= SPCFLAG_DEBUGGER;
@@ -80,11 +75,6 @@ void M68KDebugHalt(void)
 void M68KDebugResume(void)
 {
 	regs.spcflags &= ~SPCFLAG_DEBUGGER;
-}
-
-
-void m68k_set_cpu_type(unsigned int type)
-{
 }
 
 
@@ -102,9 +92,6 @@ void m68k_pulse_reset(void)
 		BuildCPUFunctionTable();
 		emulation_initialized = 1;
 	}
-
-//	if (CPU_TYPE == 0)	/* KW 990319 */
-//		m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 
 	regs.spcflags = 0;
 	regs.stopped = 0;

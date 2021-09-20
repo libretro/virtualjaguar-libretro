@@ -69,7 +69,6 @@ typedef enum
  */
 #define M68K_INT_ACK_SPURIOUS      0xFFFFFFFE
 
-void m68k_set_cpu_type(unsigned int);
 void m68k_pulse_reset(void);
 int m68k_execute(int num_cycles);
 void m68k_set_irq(unsigned int int_level);
