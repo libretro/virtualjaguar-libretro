@@ -43,8 +43,7 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    {
       if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
          return JST_JAGSERVER;
-      else
-         return JST_WTFOMGBBQ;
+      return JST_WTFOMGBBQ;
    }
 
    // And if that fails, try file sizes...
@@ -75,7 +74,7 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
    EepromInit();
    jaguarRunAddress = 0x802000;					// For non-BIOS runs, this is true
-   fileType = ParseFileType(buffer, jaguarROMSize);
+   fileType           = ParseFileType(buffer, jaguarROMSize);
    jaguarCartInserted = false;
 
    if (fileType == JST_ROM)
@@ -152,31 +151,4 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    // We can assume we have JST_NONE at this point. :-P
    WriteLog("FILE: Failed to load headerless file.\n");
    return false;
-}
-
-/* "Alpine" file loading */
-bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
-{
-   jaguarROMSize = bufsize;
-
-   if (jaguarROMSize == 0)
-      return false;
-
-   jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
-   EepromInit();
-
-   jaguarRunAddress = 0x802000;
-
-   WriteLog("FILE: Setting up Alpine ROM with non-standard length... Run address: 00802000, length: %08X\n", jaguarROMSize);
-
-   memset(jagMemSpace + 0x800000, 0xFF, 0x2000);
-   memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
-
-   // Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
-   // Try setting the vector to say, $1000 and putting an instruction there that loops forever:
-   // This kludge works! Yeah!
-   SET32(jaguarMainRAM, 0x10, 0x00001000);		// Set Exception #4 (Illegal Instruction)
-   SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
-
-   return true;
 }
