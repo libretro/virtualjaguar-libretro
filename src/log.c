@@ -19,17 +19,6 @@
 #include "log.h"
 
 #include <stdlib.h>
-#include <stdarg.h>
-#include <stdint.h>
-
-int LogInit(const char * path)
-{
-	return 1;
-}
-
-void LogDone(void)
-{
-}
 
 //
 // This logger is used mainly to ensure that text gets written to the log file

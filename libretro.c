@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "libretro.h"
@@ -400,7 +401,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
    {
-      fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
+      //fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
       return false;
    }
 

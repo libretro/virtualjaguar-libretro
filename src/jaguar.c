@@ -161,9 +161,7 @@ void M68KInstructionHook(void)
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
    {
-      static char buffer[2048];
       WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
-      LogDone();
       exit(0);
    }
 }

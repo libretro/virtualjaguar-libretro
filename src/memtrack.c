@@ -23,6 +23,7 @@
 
 #include "memtrack.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <log.h>
@@ -30,10 +31,6 @@
 
 
 #define MEMTRACK_FILENAME	"memtrack.eeprom"
-
-#if 0
-#define DEBUG_MEMTRACK
-#endif
 
 enum { MT_NONE, MT_PROD_ID, MT_RESET, MT_WRITE_ENABLE };
 enum { MT_IDLE, MT_PHASE1, MT_PHASE2 };
@@ -113,10 +110,6 @@ uint16_t MTReadWord(uint32_t addr)
 	else if ((addr & 0x03) == 2)
 		value &= 0xFFFF;
 
-#ifdef DEBUG_MEMTRACK
-WriteLog("MT: Reading word @ $%06X: $%04X\n", addr, value);
-#endif
-
 	return (uint16_t)value;
 }
 
@@ -143,9 +136,6 @@ uint32_t MTReadLong(uint32_t addr)
 	if (mtCommand == MT_WRITE_ENABLE)
 		mtCommand = MT_NONE;
 
-#ifdef DEBUG_MEMTRACK
-WriteLog("MT: Reading long @ $%06X: $%08X\n", addr, value << 16);
-#endif
 	return value << 16;
 }
 
@@ -155,10 +145,6 @@ void MTWriteWord(uint32_t addr, uint16_t data)
 	// We don't care about writes to long offsets + 2
 	if ((addr & 0x3) == 2)
 		return;
-
-#ifdef DEBUG_MEMTRACK
-WriteLog("MT: Writing word @ $%06X: $%04X (Writing is %sabled)\n", addr, data, (mtCommand == MT_WRITE_ENABLE ? "en" : "dis"));
-#endif
 
 	// Write to the NVRAM if it's enabled...
 	if (mtCommand == MT_WRITE_ENABLE)
@@ -191,9 +177,6 @@ void MTWriteLong(uint32_t addr, uint32_t data)
 
 void MTStateMachine(uint8_t reg, uint16_t data)
 {
-#ifdef DEBUG_MEMTRACK
-WriteLog("MTStateMachine: reg = %u, data = $%02X, current state = %u\n", reg, data, mtState);
-#endif
 	switch (mtState)
 	{
 	case MT_IDLE:
@@ -224,7 +207,4 @@ WriteLog("MTStateMachine: reg = %u, data = $%02X, current state = %u\n", reg, da
 		mtState = MT_IDLE;
 		break;
 	}
-#ifdef DEBUG_MEMTRACK
-WriteLog("                state = %u, cmd = %u\n", mtState, mtCommand);
-#endif
 }
