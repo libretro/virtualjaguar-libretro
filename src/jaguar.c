@@ -89,55 +89,6 @@ bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
    return (handler && (handler != 0xFFFFFFFF) ? true : false);
 }
 
-void M68K_show_context(void)
-{
-   unsigned i;
-
-   WriteLog("68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
-
-   for(i=M68K_REG_D0; i<=M68K_REG_D7; i++)
-   {
-      WriteLog("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_D3 || i == M68K_REG_D7)
-         WriteLog("\n");
-   }
-
-   for(i=M68K_REG_A0; i<=M68K_REG_A7; i++)
-   {
-      WriteLog("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_A3 || i == M68K_REG_A7)
-         WriteLog("\n");
-   }
-
-   WriteLog("68K disasm\n");
-   JaguarDasm(m68k_get_reg(NULL, M68K_REG_PC) - 0x80, 0x200);
-
-   if (TOMIRQEnabled(IRQ_VIDEO))
-   {
-      WriteLog("video int: enabled\n");
-      JaguarDasm(JaguarGetHandler(64), 0x200);
-   }
-   else
-      WriteLog("video int: disabled\n");
-
-   WriteLog("..................\n");
-
-   for(i=0; i<256; i++)
-   {
-      uint32_t address;
-
-      WriteLog("handler %03i at ", i);
-      address = (uint32_t)JaguarGetHandler(i);
-
-      if (address == 0)
-         WriteLog(".........\n");
-      else
-         WriteLog("$%08X\n", address);
-   }
-}
-
 // External variables
 
 // Really, need to include memory.h for this, but it might interfere with some stuff...
@@ -222,7 +173,6 @@ void M68KInstructionHook(void)
       }
       WriteLog("\n");
 
-      M68K_show_context();
       LogDone();
       exit(0);
    }
@@ -740,7 +690,6 @@ void JaguarDone(void)
    WriteLog("Jaguar: Interrupt enable = $%02X\n", TOMReadByte(0xF000E1, JAGUAR) & 0x1F);
    WriteLog("Jaguar: Video interrupt is %s (line=%u)\n", ((TOMIRQEnabled(IRQ_VIDEO))
             && (JaguarInterruptHandlerIsValid(64))) ? "enabled" : "disabled", TOMReadWord(0xF0004E, JAGUAR));
-   M68K_show_context();
 
    CDROMDone();
    GPUDone();
