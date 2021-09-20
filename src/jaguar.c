@@ -163,16 +163,6 @@ void M68KInstructionHook(void)
    {
       static char buffer[2048];
       WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
-
-      for(i=0; i<0x400; i++)
-      {
-         //			WriteLog("[A2=%08X, D0=%08X]\n", a2Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF]);
-         WriteLog("[A0=%08X, A1=%08X, A2=%08X, A3=%08X, A4=%08X, A5=%08X, A6=%08X, A7=%08X, D0=%08X, D1=%08X, D2=%08X, D3=%08X, D4=%08X, D5=%08X, D6=%08X, D7=%08X]\n", a0Queue[(pcQPtr + i) & 0x3FF], a1Queue[(pcQPtr + i) & 0x3FF], a2Queue[(pcQPtr + i) & 0x3FF], a3Queue[(pcQPtr + i) & 0x3FF], a4Queue[(pcQPtr + i) & 0x3FF], a5Queue[(pcQPtr + i) & 0x3FF], a6Queue[(pcQPtr + i) & 0x3FF], a7Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF], d1Queue[(pcQPtr + i) & 0x3FF], d2Queue[(pcQPtr + i) & 0x3FF], d3Queue[(pcQPtr + i) & 0x3FF], d4Queue[(pcQPtr + i) & 0x3FF], d5Queue[(pcQPtr + i) & 0x3FF], d6Queue[(pcQPtr + i) & 0x3FF], d7Queue[(pcQPtr + i) & 0x3FF]);
-         m68k_disassemble(buffer, pcQueue[(pcQPtr + i) & 0x3FF], 0);//M68K_CPU_TYPE_68000);
-         WriteLog("\t%08X: %s\n", pcQueue[(pcQPtr + i) & 0x3FF], buffer);
-      }
-      WriteLog("\n");
-
       LogDone();
       exit(0);
    }
