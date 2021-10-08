@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <libretro.h>
+#include <streams/file_stream.h>
 #include "file.h"
 #include "jagbios.h"
 #include "jagbios2.h"
