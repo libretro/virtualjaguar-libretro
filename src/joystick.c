@@ -120,14 +120,14 @@ uint16_t JoystickReadWord(uint32_t offset)
 		if (offset0 != 0xFF)
 		{
 			data &= (joypad0Buttons[mask[offset0][0]] ? 0xFFFD : 0xFFFF);
-			if (mask[offset0][1] != 0xFF)
+			if (mask[offset0][1] != 0xF)
 				data &= (joypad0Buttons[mask[offset0][1]] ? 0xFFFE : 0xFFFF);
 		}
 
 		if (offset1 != 0xFF)
 		{
 			data &= (joypad1Buttons[mask[offset1][0]] ? 0xFFF7 : 0xFFFF);
-			if (mask[offset1][1] != 0xFF)
+			if (mask[offset1][1] != 0xF)
 				data &= (joypad1Buttons[mask[offset1][1]] ? 0xFFFB : 0xFFFF);
 		}
 
