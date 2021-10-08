@@ -170,7 +170,6 @@ typedef union GPUControl {
 
 } GPUControl;
     
-#ifdef USE_STRUCTS
 #pragma pack(push, 1)
     typedef union OpCode {
         uint16_t WORD;
@@ -198,9 +197,7 @@ typedef union GPUControl {
 #pragma pack(pop)
     
     typedef OpCode U16Union;
-#endif //USE_STRUCTS
 
-#ifdef USE_STRUCTS
 typedef union Offset {
     uint32_t LONG;
 #pragma pack(push, 1)
@@ -215,7 +212,6 @@ typedef union Offset {
     } Members;
 #pragma pack(pop)
 } Offset;
-#endif //USE_STRUCTS
     
 typedef union DSPLong {
     uint32_t LONG;

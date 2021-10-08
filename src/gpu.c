@@ -301,16 +301,11 @@ INLINE uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
         offset &= 0xFFF;
-#ifdef USE_STRUCTS
+
         OpCode data;
         data.Bytes.UBYTE = (uint16_t)gpu_ram_8[offset];
         data.Bytes.LBYTE = (uint16_t)gpu_ram_8[offset+1];
         return data.WORD;
-#else
-        uint16_t data;
-		data    = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
-		return data;
-#endif
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
 	{
@@ -1572,7 +1567,6 @@ INLINE static void gpu_opcode_abs(void)
 }
 
 
-#ifdef USE_STRUCTS
 INLINE static void gpu_opcode_div(void)	// RN / RM
 {
     
@@ -1603,33 +1597,6 @@ INLINE static void gpu_opcode_div(void)	// RN / RM
    RN = q.WORD;
    gpu_remain = r.WORD;
 }
-#else
-INLINE static void gpu_opcode_div(void)    // RN / RM
-{
-    unsigned i;
-    // Real algorithm, courtesy of SCPCD: NYAN!
-    uint32_t q = RN;
-    uint32_t r = 0;
-    
-    // If 16.16 division, stuff top 16 bits of RN into remainder and put the
-    // bottom 16 of RN in top 16 of quotient
-    if (gpu_div_control & 0x01)
-        q <<= 16, r = RN >> 16;
-    
-    for(i=0; i<32; i++)
-    {
-        uint32_t sign = r & 0x80000000;
-        r = (r << 1) | ((q >> 31) & 0x01);
-        r += (sign ? RM : -RM);
-        q = (q << 1) | (((~r) >> 31) & 0x01);
-    }
-    
-    RN = q;
-    gpu_remain = r;
-    
-}
-#endif
-
 
 INLINE static void gpu_opcode_imultn(void)
 {

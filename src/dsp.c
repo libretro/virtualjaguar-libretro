@@ -394,13 +394,9 @@ uint8_t DSPReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-#ifdef USE_STRUCTS
     Offset offsett;
     offsett.LONG = offset;
     offset = offsett.Members.offset;
-#else
-    offset &= 0xFFFFFFFE;
-#endif
 	if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE+0x1FFF)
 	{
 		offset -= DSP_WORK_RAM_BASE;
@@ -408,7 +404,6 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
     }
 	else if ((offset>=DSP_CONTROL_RAM_BASE)&&(offset<DSP_CONTROL_RAM_BASE+0x20))
 	{
-#ifdef USE_STRUCTS
         DSPLong data;
         data.LONG = DSPReadLong(offset & 0xFFFFFFFC, who);
         
@@ -417,13 +412,6 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
         } else {
             return data.Data.UWORD;
         }
-#else
-        uint32_t data = DSPReadLong(offset & 0xFFFFFFFC, who);
-        
-        if (offset & 0x03)
-            return data & 0xFFFF;
-        return data >> 16;
-#endif
 	}
 
 	return JaguarReadWord(offset, who);
@@ -868,7 +856,6 @@ INLINE void DSPExec(int32_t cycles)
 			IMASKCleared = false;
 		}
 
-#ifdef USE_STRUCTS
         OpCode opcode;
         opcode.WORD = DSPReadWord(dsp_pc, DSP);
         uint8_t index = opcode.Codes.index;
@@ -878,18 +865,8 @@ INLINE void DSPExec(int32_t cycles)
         dsp_opcode_second_parameter = sp;
         dsp_pc += 2;
         dsp_opcode[index]();
-#else
-        uint16_t opcode;
-        uint32_t index;
-        opcode = DSPReadWord(dsp_pc, DSP);
-        index = opcode >> 10;
-        dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
-        dsp_opcode_second_parameter = opcode & 0x1F;
-        dsp_pc += 2;
-        dsp_opcode[index]();
-        dsp_opcode_use[index]++;
-#endif
-		cycles -= dsp_opcode_cycles[index];
+
+        cycles -= dsp_opcode_cycles[index];
 	}
 
 	dsp_in_exec--;
