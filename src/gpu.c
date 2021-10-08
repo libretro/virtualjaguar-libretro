@@ -714,16 +714,11 @@ void GPUExec(int32_t cycles)
       //$E400 -> 1110 01 -> $39 -> 57
       //GPU #1
       gpu_pc += 2;
-#if 0
-      gpu_opcode[index]();
-#else
        executeOpcode(index);
-#endif
+
       // BIOS hacking
       //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
       //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
-#if 0
-      cycles -= gpu_opcode_cycles[index];
    }
 
    gpu_in_exec--;

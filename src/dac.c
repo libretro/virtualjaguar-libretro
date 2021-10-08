@@ -164,12 +164,12 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
    {
       double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
 
-		 DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
 
-		 HandleNextEvent(EVENT_JERRY);
-	 }
-	while (!bufferDone);
-	audio_batch_cb((int16_t*)sampleBuffer, length / 2);
+      HandleNextEvent(EVENT_JERRY);
+   }
+   while (!bufferDone);
+   audio_batch_cb((int16_t*)sampleBuffer, length / 2);
 }
 
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)

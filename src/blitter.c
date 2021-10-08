@@ -305,10 +305,10 @@ static int32_t a1_clip_x, a1_clip_y;
 // to optimize the blitter, then we may revisit it in the future...
 
 // Generic blit handler
-void blitter_generic(uint32_t icmd)
+void blitter_generic(uint32_t cmdi)
 {
     Bits32 cmd;
-    cmd.WORD = icmd;
+    cmd.WORD = cmdi;
     
    uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
    uint32_t bppSrc = (DSTA2 ? 1 << ((REG(A1_FLAGS) >> 3) & 0x07) : 1 << ((REG(A2_FLAGS) >> 3) & 0x07));
@@ -3048,7 +3048,7 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-    // TODO: Byte and bit this -jm provenance
+    // TODO: Byte and bit this - @joematt provenance
 
 	maskt = s_fine & 0x0001;
 	maskt |= (((maskt & 0x0001) || (s_fine & 0x02u)) && (e_fine & 0x02u) ? 0x0002 : 0x0000);
