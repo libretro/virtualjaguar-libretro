@@ -2482,21 +2482,21 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
-	uint8_t carry[4];
+   uint8_t carry[4];
    uint8_t btop, ctop;
    bool saturate, hisaturate;
-	uint32_t qt   = (a & 0xFF) + (b & 0xFF) + cin;
-	uint16_t q    = qt & 0x00FF;
+   uint32_t qt   = (a & 0xFF) + (b & 0xFF) + cin;
+   uint16_t q    = qt & 0x00FF;
 
-	carry[0]      = ((qt & 0x0100) ? 1 : 0);
-	carry[1]      = (carry[0] && !eightbit ? carry[0] : 0);
-	qt            = (a & 0x0F00) + (b & 0x0F00) + (carry[1] << 8);
-	carry[2]      = ((qt & 0x1000) ? 1 : 0);
-	q            |= qt & 0x0F00;
-	carry[3]      = (carry[2] && !hicinh ? carry[2] : 0);
-	qt            = (a & 0xF000) + (b & 0xF000) + (carry[3] << 12);
-	*co            = ((qt & 0x10000) ? 1 : 0);
-	q            |= qt & 0xF000;
+   carry[0]      = ((qt & 0x0100) ? 1 : 0);
+   carry[1]      = (carry[0] && !eightbit ? carry[0] : 0);
+   qt            = (a & 0x0F00) + (b & 0x0F00) + (carry[1] << 8);
+   carry[2]      = ((qt & 0x1000) ? 1 : 0);
+   q            |= qt & 0x0F00;
+   carry[3]      = (carry[2] && !hicinh ? carry[2] : 0);
+   qt            = (a & 0xF000) + (b & 0xF000) + (carry[3] << 12);
+   *co            = ((qt & 0x10000) ? 1 : 0);
+   q            |= qt & 0xF000;
 
    if (eightbit)
    {
@@ -2509,11 +2509,11 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, boo
       ctop  = *co;
    }
 
-	saturate = sat && (btop ^ ctop);
-	hisaturate = saturate && !eightbit;
+   saturate = sat && (btop ^ ctop);
+   hisaturate = saturate && !eightbit;
 
-	*r = (saturate ? (ctop ? 0x00FF : 0x0000) : q & 0x00FF);
-	*r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
+   *r = (saturate ? (ctop ? 0x00FF : 0x0000) : q & 0x00FF);
+   *r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
 }
 
 void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,

@@ -49,7 +49,7 @@ typedef enum
 
 	/* Convenience registers */
 	M68K_REG_PPC,		/* Previous value in the program counter */
-	M68K_REG_IR,		/* Instruction register */
+	M68K_REG_IR		/* Instruction register */
 } m68k_register_t;
 
 /* Special interrupt acknowledge values.
