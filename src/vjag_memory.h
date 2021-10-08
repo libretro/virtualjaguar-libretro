@@ -13,6 +13,32 @@
 extern "C" {
 #endif
 
+#pragma pack(push, 1)
+    typedef union Bits64 {
+        uint64_t DATA;
+        struct Bytes8 {
+#ifdef LITTLE_ENDIAN
+            uint8_t b0;
+            uint8_t b1;
+            uint8_t b2;
+            uint8_t b3;
+            uint8_t b4;
+            uint8_t b5;
+            uint8_t b6;
+            uint8_t b7;
+#else
+            uint8_t b7;
+            uint8_t b6;
+            uint8_t b5;
+            uint8_t b4;
+            uint8_t b3;
+            uint8_t b2;
+            uint8_t b1;
+            uint8_t b0;
+#endif
+        } bytes;
+    } Bits64;
+#pragma pack(pop)
 typedef union Bits32 {
     uint32_t WORD;
     struct Words {

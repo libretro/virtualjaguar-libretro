@@ -87,41 +87,41 @@ void BlitterMidsummer2(void);
 
 // Blitter command bits
 
-#define SRCEN			(cmd & 0x00000001)
-#define SRCENZ			(cmd & 0x00000002)
-#define SRCENX			(cmd & 0x00000004)
-#define DSTEN			(cmd & 0x00000008)
-#define DSTENZ			(cmd & 0x00000010)
-#define DSTWRZ			(cmd & 0x00000020)
-#define CLIPA1			(cmd & 0x00000040)
+#define SRCEN			(cmd.bits.b0)
+#define SRCENZ			(cmd.bits.b1)
+#define SRCENX			(cmd.bits.b2)
+#define DSTEN			(cmd.bits.b3)
+#define DSTENZ			(cmd.bits.b4)
+#define DSTWRZ			(cmd.bits.b5)
+#define CLIPA1			(cmd.bits.b6)
 
-#define UPDA1F			(cmd & 0x00000100)
-#define UPDA1			(cmd & 0x00000200)
-#define UPDA2			(cmd & 0x00000400)
+#define UPDA1F			(cmd.bits.b8)
+#define UPDA1			(cmd.bits.b9)
+#define UPDA2			(cmd.bits.b10)
 
-#define DSTA2			(cmd & 0x00000800)
+#define DSTA2			(cmd.bits.b11)
 
-#define Z_OP_INF		(cmd & 0x00040000)
-#define Z_OP_EQU		(cmd & 0x00080000)
-#define Z_OP_SUP		(cmd & 0x00100000)
+#define Z_OP_INF		(cmd.bits.b18)
+#define Z_OP_EQU		(cmd.bits.b19)
+#define Z_OP_SUP		(cmd.bits.b20)
 
-#define LFU_NAN		(cmd & 0x00200000)
-#define LFU_NA			(cmd & 0x00400000)
-#define LFU_AN			(cmd & 0x00800000)
-#define LFU_A			(cmd & 0x01000000)
+#define LFU_NAN		    (cmd.bits.b21)
+#define LFU_NA			(cmd.bits.b22)
+#define LFU_AN			(cmd.bits.b23)
+#define LFU_A			(cmd.bits.b24)
 
-#define CMPDST			(cmd & 0x02000000)
-#define BCOMPEN		(cmd & 0x04000000)
-#define DCOMPEN		(cmd & 0x08000000)
+#define CMPDST			(cmd.bits.b25)
+#define BCOMPEN		    (cmd.bits.b26)
+#define DCOMPEN		    (cmd.bits.b27)
 
-#define PATDSEL		(cmd & 0x00010000)
-#define ADDDSEL		(cmd & 0x00020000)
-#define TOPBEN			(cmd & 0x00004000)
-#define TOPNEN			(cmd & 0x00008000)
-#define BKGWREN		(cmd & 0x10000000)
-#define GOURD			(cmd & 0x00001000)
-#define GOURZ			(cmd & 0x00002000)
-#define SRCSHADE		(cmd & 0x40000000)
+#define PATDSEL		    (cmd.bits.b16)
+#define ADDDSEL		    (cmd.bits.b17)
+#define TOPBEN			(cmd.bits.b14)
+#define TOPNEN			(cmd.bits.b15)
+#define BKGWREN		    (cmd.bits.b28)
+#define GOURD			(cmd.bits.b12)
+#define GOURZ			(cmd.bits.b13)
+#define SRCSHADE		(cmd.bits.b30)
 
 
 #define XADDPHR      0
@@ -305,8 +305,11 @@ static int32_t a1_clip_x, a1_clip_y;
 // to optimize the blitter, then we may revisit it in the future...
 
 // Generic blit handler
-void blitter_generic(uint32_t cmd)
+void blitter_generic(uint32_t icmd)
 {
+    Bits32 cmd;
+    cmd.WORD = icmd;
+    
    uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
    uint32_t bppSrc = (DSTA2 ? 1 << ((REG(A1_FLAGS) >> 3) & 0x07) : 1 << ((REG(A2_FLAGS) >> 3) & 0x07));
 
@@ -338,14 +341,14 @@ void blitter_generic(uint32_t cmd)
 
                if (SRCENZ)
                   srczdata = READ_ZDATA(a2, REG(A2_FLAGS));
-               else if (cmd & 0x0001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
+               else if (cmd.WORD & 0x0001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
                   srczdata = READ_RDATA(SRCZINT, a2, REG(A2_FLAGS), a2_phrase_mode);
             }
             else	// Use SRCDATA register...
             {
                srcdata = READ_RDATA(SRCDATA, a2, REG(A2_FLAGS), a2_phrase_mode);
 
-               if (cmd & 0x0001C020)		// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
+               if (cmd.WORD & 0x0001C020)		// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
                   srczdata = READ_RDATA(SRCZINT, a2, REG(A2_FLAGS), a2_phrase_mode);
             }
 
@@ -516,13 +519,13 @@ void blitter_generic(uint32_t cmd)
                srcdata = READ_PIXEL(a1, REG(A1_FLAGS));
                if (SRCENZ)
                   srczdata = READ_ZDATA(a1, REG(A1_FLAGS));
-               else if (cmd & 0x0001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
+               else if (cmd.WORD & 0x0001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
                   srczdata = READ_RDATA(SRCZINT, a1, REG(A1_FLAGS), a1_phrase_mode);
             }
             else
             {
                srcdata = READ_RDATA(SRCDATA, a1, REG(A1_FLAGS), a1_phrase_mode);
-               if (cmd & 0x001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
+               if (cmd.WORD & 0x001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
                   srczdata = READ_RDATA(SRCZINT, a1, REG(A1_FLAGS), a1_phrase_mode);
             }
 
@@ -756,20 +759,23 @@ void blitter_generic(uint32_t cmd)
    WREG(A2_PIXEL,  (a2_y & 0xFFFF0000) | ((a2_x >> 16) & 0xFFFF));
 }
 
-void blitter_blit(uint32_t cmd)
+void blitter_blit(uint32_t cmdi)
 {
+    Bits32 cmd;
+    cmd.WORD = cmdi;
+    
    uint32_t m, e;
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
    colour_index = 0;
-   src = cmd & 0x07;
-   dst = (cmd >> 3) & 0x07;
-   misc = (cmd >> 6) & 0x03;
-   a1ctl = (cmd >> 8) & 0x7;
-   mode = (cmd >> 11) & 0x07;
-   ity = (cmd >> 14) & 0x0F;
-   zop = (cmd >> 18) & 0x07;
-   op = (cmd >> 21) & 0x0F;
-   ctrl = (cmd >> 25) & 0x3F;
+   src = cmd.WORD & 0x07;
+   dst = (cmd.WORD >> 3) & 0x07;
+   misc = (cmd.WORD >> 6) & 0x03;
+   a1ctl = (cmd.WORD >> 8) & 0x7;
+   mode = (cmd.WORD >> 11) & 0x07;
+   ity = (cmd.WORD >> 14) & 0x0F;
+   zop = (cmd.WORD >> 18) & 0x07;
+   op = (cmd.WORD >> 21) & 0x0F;
+   ctrl = (cmd.WORD >> 25) & 0x3F;
 
    // Addresses in A1/2_BASE are *phrase* aligned, i.e., bottom three bits are ignored!
    // NOTE: This fixes Rayman's bad collision detection AND keeps T2K working!
@@ -952,7 +958,7 @@ void blitter_blit(uint32_t cmd)
          gd_ca = 0xFFFFFF00 | gd_ca;
    }
 
-   blitter_generic(cmd);
+   blitter_generic(cmd.WORD);
 }
 #endif
 /*******************************************************************************
@@ -1113,10 +1119,11 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 	// I.e., the second write of 32-bit value--not convinced this is the best way to do this!
 	// But then again, according to the Jaguar docs, this is correct...!
 	{
-		if (vjs.useFastBlitter)
-			blitter_blit(GET32(blitter_ram, 0x38));
-		else
-			BlitterMidsummer2();
+        if (vjs.useFastBlitter) {
+            blitter_blit(GET32(blitter_ram, 0x38));
+        } else {
+            BlitterMidsummer2();
+        }
 	}
 }
 //F02278,9,A,B
@@ -1135,10 +1142,10 @@ void BlitterWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 void ADDRGEN(uint32_t *, uint32_t *, bool, bool,
 	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
 	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t);
-void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
-	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
-	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
-	uint32_t zinc, uint32_t zstep);
+void ADDARRAY(const uint16_t * addq, const uint8_t daddasel, const uint8_t daddbsel, const uint8_t daddmode,
+              const uint64_t dstd, const uint32_t iinc, const uint8_t initcin[], const uint64_t initinc, const uint16_t initpix,
+              const uint32_t istep, const uint64_t patd, const uint64_t srcd, const uint64_t srcz1, const uint64_t srcz2,
+              const uint32_t zinc, const uint32_t zstep);
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh);
 void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
 	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
@@ -1166,7 +1173,8 @@ void BlitterMidsummer2(void)
    //Will remove stuff that isn't in Jaguar I once fully described (stuff like texture won't
    //be described here at all)...
 
-   uint32_t cmd = GET32(blitter_ram, COMMAND);
+    Bits32 cmd;
+    cmd.WORD = GET32(blitter_ram, COMMAND);
 
    // Line states passed in via the command register
 
@@ -1177,7 +1185,7 @@ void BlitterMidsummer2(void)
         patdsel = (PATDSEL), adddsel = (ADDDSEL), cmpdst = (CMPDST), bcompen = (BCOMPEN),
         dcompen = (DCOMPEN), bkgwren = (BKGWREN), srcshade = (SRCSHADE);
 
-   uint8_t zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
+   uint8_t zmode = (cmd.WORD & 0x01C0000) >> 18, lfufunc = (cmd.WORD & 0x1E00000) >> 21;
    //Missing: BUSHI
    //Where to find various lines:
    // clip_a1  -> inner
@@ -2396,11 +2404,11 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 // Here's an important bit: The source data adder logic. Need to track down the inputs!!! //
 ////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////
-
-void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
-	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
-	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
-	uint32_t zinc, uint32_t zstep)
+#include <simd/simd.h>
+void ADDARRAY(const uint16_t * addq, const uint8_t daddasel, const uint8_t daddbsel, const uint8_t daddmode,
+	const uint64_t dstd, const uint32_t iinc, const uint8_t initcin[], const uint64_t initinc, const uint16_t initpix,
+	const uint32_t istep, const uint64_t patd, const uint64_t srcd, const uint64_t srcz1, const uint64_t srcz2,
+	const uint32_t zinc, const uint32_t zstep)
 {
    unsigned i;
    uint16_t adda[4];
@@ -2851,7 +2859,7 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
 	uint8_t dech38el[2][8] = { { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
    int en;
-   uint64_t cmpd;
+   Bits64 cmpd;
 	uint8_t dbinht;
    uint16_t addq[4];
    uint8_t initcin[4] = { 0, 0, 0, 0 };
@@ -2875,23 +2883,23 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*dcomp = 0;
-	cmpd = *patd ^ (cmpdst ? dstd : srcd);
+	cmpd.DATA = *patd ^ (cmpdst ? dstd : srcd);
 
-	if ((cmpd & 0x00000000000000FFLL) == 0)
+	if (cmpd.bytes.b0 == 0)
 		*dcomp |= 0x01u;
-	if ((cmpd & 0x000000000000FF00LL) == 0)
+	if (cmpd.bytes.b1 == 0)
 		*dcomp |= 0x02u;
-	if ((cmpd & 0x0000000000FF0000LL) == 0)
+	if (cmpd.bytes.b2 == 0)
 		*dcomp |= 0x04u;
-	if ((cmpd & 0x00000000FF000000LL) == 0)
+	if (cmpd.bytes.b3 == 0)
 		*dcomp |= 0x08u;
-	if ((cmpd & 0x000000FF00000000LL) == 0)
+	if (cmpd.bytes.b4 == 0)
 		*dcomp |= 0x10u;
-	if ((cmpd & 0x0000FF0000000000LL) == 0)
+	if (cmpd.bytes.b5 == 0)
 		*dcomp |= 0x20u;
-	if ((cmpd & 0x00FF000000000000LL) == 0)
+	if (cmpd.bytes.b6 == 0)
 		*dcomp |= 0x40u;
-	if ((cmpd & 0xFF00000000000000LL) == 0)
+	if (cmpd.bytes.b7 == 0)
 		*dcomp |= 0x80u;
 //////////////////////////////////////////////////////////////////////////////////////
 
@@ -2909,7 +2917,7 @@ with srcshift bits 4 & 5 selecting the start position
 */
 //So... basically what we have here is:
 	*zcomp = 0;
-
+    // TODO: Byte and bit this -jm provenance
 	if ((((*srcz & 0x000000000000FFFFLL) < (dstz & 0x000000000000FFFFLL)) && (zmode & 0x01))
 		|| (((*srcz & 0x000000000000FFFFLL) == (dstz & 0x000000000000FFFFLL)) && (zmode & 0x02))
 		|| (((*srcz & 0x000000000000FFFFLL) > (dstz & 0x000000000000FFFFLL)) && (zmode & 0x04)))
@@ -3040,6 +3048,8 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
+    // TODO: Byte and bit this -jm provenance
+
 	maskt = s_fine & 0x0001;
 	maskt |= (((maskt & 0x0001) || (s_fine & 0x02u)) && (e_fine & 0x02u) ? 0x0002 : 0x0000);
 	maskt |= (((maskt & 0x0002) || (s_fine & 0x04u)) && (e_fine & 0x04u) ? 0x0004 : 0x0000);
@@ -3051,6 +3061,7 @@ Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 //////////////////////////////////////////////////////////////////////////////////////
 
    /* Produce a look-ahead on the ripple carry */
+    // TODO: Byte and bit this - @joematt provenance
 	maskt |= (((s_coarse & e_coarse & 0x01u) || (s_coarse & 0x02u)) && (e_coarse & 0x02u) ? 0x0100 : 0x0000);
 	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04u)) && (e_coarse & 0x04u) ? 0x0200 : 0x0000);
 	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08u)) && (e_coarse & 0x08u) ? 0x0400 : 0x0000);
@@ -3087,6 +3098,7 @@ Masku[14]	:= MX2 (masku[14], maskt[14], maskt[0],  mir_byte);*/
 	mir_bit  = true/*big_pix*/ && !phrase_mode;
 	mir_byte = true/*big_pix*/ && phrase_mode;
 	masku    = maskt;
+    // TODO: Byte and bit this - @joematt provenance
 
 	if (mir_bit)
 	{
