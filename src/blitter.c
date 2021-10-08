@@ -1885,14 +1885,14 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (pixsize == 3)
                pobb = dstxp & 0x07;
-            if (pixsize == 4)
+            else if (pixsize == 4)
                pobb = dstxp & 0x03;
-            if (pixsize == 5)
+            else if (pixsize == 5)
                pobb = dstxp & 0x01;
 
             pobbsel = phrase_mode && bcompen;
-            loshd = (pobbsel ? pobb : shftv) & 0x07;
-            shfti = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
+            loshd   = (pobbsel ? pobb : shftv) & 0x07;
+            shfti   = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
             /* Enable for high bits is srcen . phrase_mode */
             shfti |= (srcen && phrase_mode ? (sshftld ? shftv & 0x38 : srcshift & 0x38) : 0);
             srcshift = shfti;
@@ -2016,14 +2016,17 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //*********************************************************************************
 
 
-               if (pixsize == 3)
-                  dstart = (dstxp & 0x07) << 3;
-               if (pixsize == 4)
-                  dstart = (dstxp & 0x03) << 4;
-               if (pixsize == 5)
-                  dstart = (dstxp & 0x01) << 5;
-
-               dstart = (phrase_mode ? dstart : pixAddr & 0x07);
+               if (phrase_mode)
+               {
+                  if (pixsize == 3)
+                     dstart = (dstxp & 0x07) << 3;
+                  else if (pixsize == 4)
+                     dstart = (dstxp & 0x03) << 4;
+                  else if (pixsize == 5)
+                     dstart = (dstxp & 0x01) << 5;
+               }
+               else
+                  dstart    = pixAddr & 0x07;
 
                //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
                dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
@@ -2033,32 +2036,40 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                penden = clip_a1 && (pseq == 0);
                window_mask = 0;
 
-               if (pixsize == 3)
-                  window_mask = (a1_win_x & 0x07) << 3;
-               if (pixsize == 4)
-                  window_mask = (a1_win_x & 0x03) << 4;
-               if (pixsize == 5)
-                  window_mask = (a1_win_x & 0x01) << 5;
-
-               window_mask = (penden ? window_mask : 0);
+               if (penden)
+               {
+                  if (pixsize == 3)
+                     window_mask = (a1_win_x & 0x07) << 3;
+                  else if (pixsize == 4)
+                     window_mask = (a1_win_x & 0x03) << 4;
+                  else if (pixsize == 5)
+                     window_mask = (a1_win_x & 0x01) << 5;
+               }
+               else
+                  window_mask    = 0;
 
                /* The mask to be used if within one phrase of the end of the inner
                   loop, similarly */
 
-               if (pixsize == 3)
-                  inner_mask = (icount & 0x07) << 3;
-               if (pixsize == 4)
-                  inner_mask = (icount & 0x03) << 4;
-               if (pixsize == 5)
-                  inner_mask = (icount & 0x01) << 5;
-               if (!inner0)
-                  inner_mask = 0;
-               /* The actual mask used should be the lesser of the window masks and
+               if (inner0)
+               {
+                  if (pixsize == 3)
+                     inner_mask = (icount & 0x07) << 3;
+                  else if (pixsize == 4)
+                     inner_mask = (icount & 0x03) << 4;
+                  else if (pixsize == 5)
+                     inner_mask = (icount & 0x01) << 5;
+               }
+               else
+                  inner_mask    = 0;
+
+               /* The actual mask used should be the 
+                  lesser of the window masks and
                   the inner mask, where is all cases 000 means 1000. */
                window_mask = (window_mask == 0 ? 0x40 : window_mask);
-               inner_mask = (inner_mask == 0 ? 0x40 : inner_mask);
+               inner_mask  = (inner_mask == 0 ? 0x40 : inner_mask);
 
-               emask = (window_mask > inner_mask ? inner_mask : window_mask);
+               emask       = (window_mask > inner_mask ? inner_mask : window_mask);
                /* The mask to be used for the pixel size, to which must be added
                   the bit offset */
                pma = pixAddr + (1 << pixsize);
@@ -2487,8 +2498,16 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, boo
 	*co            = ((qt & 0x10000) ? 1 : 0);
 	q            |= qt & 0xF000;
 
-	btop  = (eightbit ? (b & 0x0080) >> 7 : (b & 0x8000) >> 15);
-	ctop  = (eightbit ? carry[0] : *co);
+   if (eightbit)
+   {
+      btop  = (b & 0x0080) >> 7;
+      ctop  = carry[0];
+   }
+   else
+   {
+      btop  = (b & 0x8000) >> 15;
+      ctop  = *co;
+   }
 
 	saturate = sat && (btop ^ ctop);
 	hisaturate = saturate && !eightbit;
@@ -2507,49 +2526,42 @@ void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_
 	int16_t xterm[4], yterm[4];
 	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
 	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
-	addar_x = ((addasel & 0x04) ? a2_step_x : xterm[addasel & 0x03]);
-	addar_y = ((addasel & 0x04) ? a2_step_y : yterm[addasel & 0x03]);
-//////////////////////////////////////////////////////////////////////////////////////
+   if (addasel & 0x04)
+   {
+      addar_x = a2_step_x;
+      addar_y = a2_step_y;
+   }
+   else
+   {
+      addar_x = xterm[addasel & 0x03];
+      addar_y = yterm[addasel & 0x03];
+   }
 
-/* Generate a constant value - this is a power of 2 in the range
-0-64, or zero.  The control bits are adda_xconst[0..2], when they
-are all 1  the result is 0.
-Constants for Y can only be 0 or 1 */
+   /* Generate a constant value - this is a power of 2 in the range
+      0-64, or zero.  The control bits are adda_xconst[0..2], when they
+      are all 1  the result is 0.
+      Constants for Y can only be 0 or 1 */
 
-/*Addac_xlo	:= D38H (addac_x[0..6], unused[0], adda_xconst[0..2]);
-Unused[0]	:= DUMMY (unused[0]);
-
-Addac_x		:= JOIN (addac_x, addac_x[0..6], zero, zero, zero, zero, zero, zero, zero, zero, zero);
-Addac_y		:= JOIN (addac_y, adda_yconst, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
-			zero, zero, zero, zero, zero);*/
-////////////////////////////////////// C++ CODE //////////////////////////////////////
 	addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
 	addac_y = (adda_yconst ? 0x01 : 0);
-//////////////////////////////////////////////////////////////////////////////////////
 
-/* Select between constant value and register value */
+   /* Select between constant value and register value */
 
-/*Addas_x		:= MX2 (addas_x, addac_x, addar_x, addareg);
-Addas_y		:= MX2 (addas_y, addac_y, addar_y, addareg);*/
-////////////////////////////////////// C++ CODE //////////////////////////////////////
-	addas_x = (addareg ? addar_x : addac_x);
-	addas_y = (addareg ? addar_y : addac_y);
-//////////////////////////////////////////////////////////////////////////////////////
+   if (addareg)
+   {
+      addas_x = (addareg ? addar_x : addac_x);
+      addas_y = (addareg ? addar_y : addac_y);
+   }
+   else
+   {
+      addas_x = (addareg ? addar_x : addac_x);
+      addas_y = (addareg ? addar_y : addac_y);
+   }
 
-/* Complement these values (complement flag gives adder carry in)*/
+   /* Complement these values (complement flag gives adder carry in)*/
 
-/*Suba_x16	:= JOIN (suba_x16, suba_x, suba_x, suba_x, suba_x, suba_x, suba_x, suba_x, suba_x, suba_x,
-			suba_x, suba_x, suba_x, suba_x, suba_x, suba_x, suba_x);
-Suba_y16	:= JOIN (suba_y16, suba_y, suba_y, suba_y, suba_y, suba_y, suba_y, suba_y, suba_y, suba_y,
-			suba_y, suba_y, suba_y, suba_y, suba_y, suba_y, suba_y);
-Adda_x		:= EO (adda_x, suba_x16, addas_x);
-Adda_y		:= EO (adda_y, suba_y16, addas_y);*/
-////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*adda_x = addas_x ^ (suba_x ? 0xFFFF : 0x0000);
 	*adda_y = addas_y ^ (suba_y ? 0xFFFF : 0x0000);
-//////////////////////////////////////////////////////////////////////////////////////
-
-//END;
 }
 
 
@@ -2617,18 +2629,16 @@ INT16/	gpu_lo, gpu_hi
 BEGIN*/
 void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
 {
-/*Gpu_lo		:= JOIN (gpu_lo, gpu_din{0..15});
-Gpu_hi		:= JOIN (gpu_hi, gpu_din{16..31});
-
-Addqselb	:= BUF8 (addqselb, addqsel);
-Data_x		:= MX2 (data_x, gpu_lo, addq_x, addqselb);
-Data_y		:= MX2 (data_y, gpu_hi, addq_y, addqselb);*/
-////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*data_x = (addqsel ? addq_x : (int16_t)(gpu_din & 0xFFFF));
-	*data_y = (addqsel ? addq_y : (int16_t)(gpu_din >> 16));
-//////////////////////////////////////////////////////////////////////////////////////
-
-//END;
+   if (addqsel)
+   {
+      *data_x = addq_x;
+      *data_y = addq_y;
+   }
+   else
+   {
+      *data_x = (int16_t)(gpu_din & 0xFFFF);
+      *data_y = (int16_t)(gpu_din >> 16);
+   }
 }
 
 
@@ -3038,12 +3048,7 @@ Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 	maskt |= (((maskt & 0x0040) || (s_fine & 0x80u)) && (e_fine & 0x80u) ? 0x0080 : 0x0000);
 //////////////////////////////////////////////////////////////////////////////////////
 
-/* Produce a look-ahead on the ripple carry:
-masktla = s_coarse[0] . /e_coarse[0] */
-/*Masktla		:= AN2 (masktla, s_coarse[0], e_coarse\[0]);
-Maskt[8]	:= OAN1P (maskt[8], masktla, s_coarse[1], e_coarse\[1]);
-Maskt[9-14]	:= OAN1P (maskt[9-14], maskt[8-13], s_coarse[2-7], e_coarse\[2-7]);*/
-////////////////////////////////////// C++ CODE //////////////////////////////////////
+   /* Produce a look-ahead on the ripple carry */
 	maskt |= (((s_coarse & e_coarse & 0x01u) || (s_coarse & 0x02u)) && (e_coarse & 0x02u) ? 0x0100 : 0x0000);
 	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04u)) && (e_coarse & 0x04u) ? 0x0200 : 0x0000);
 	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08u)) && (e_coarse & 0x08u) ? 0x0400 : 0x0000);
@@ -3051,7 +3056,6 @@ Maskt[9-14]	:= OAN1P (maskt[9-14], maskt[8-13], s_coarse[2-7], e_coarse\[2-7]);*
 	maskt |= (((maskt & 0x0800) || (s_coarse & 0x20u)) && (e_coarse & 0x20u) ? 0x1000 : 0x0000);
 	maskt |= (((maskt & 0x1000) || (s_coarse & 0x40u)) && (e_coarse & 0x40u) ? 0x2000 : 0x0000);
 	maskt |= (((maskt & 0x2000) || (s_coarse & 0x80u)) && (e_coarse & 0x80u) ? 0x4000 : 0x0000);
-//////////////////////////////////////////////////////////////////////////////////////
 
 /* The bit terms are mirrored for big-endian pixels outside phrase
 mode.  The byte terms are mirrored for big-endian pixels in phrase
@@ -3078,9 +3082,9 @@ Masku[13]	:= MX2 (masku[13], maskt[13], maskt[8],  mir_byte);
 Masku[14]	:= MX2 (masku[14], maskt[14], maskt[0],  mir_byte);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 
-	mir_bit = true/*big_pix*/ && !phrase_mode;
+	mir_bit  = true/*big_pix*/ && !phrase_mode;
 	mir_byte = true/*big_pix*/ && phrase_mode;
-	masku = maskt;
+	masku    = maskt;
 
 	if (mir_bit)
 	{
