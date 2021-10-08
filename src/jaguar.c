@@ -95,8 +95,6 @@ extern uint8_t jagMemSpace[];
 
 // Internal variables
 
-uint32_t jaguar_active_memory_dumps = 0;
-
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 
 bool jaguarCartInserted = false;

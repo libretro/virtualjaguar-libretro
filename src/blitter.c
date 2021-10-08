@@ -33,10 +33,6 @@
 #define USE_ORIGINAL_BLITTER
 #define USE_MIDSUMMER_BLITTER_MKII
 
-// External global variables
-
-extern int jaguar_active_memory_dumps;
-
 // Local global variables
 
 // Blitter register RAM (most of it is hidden from the user)
