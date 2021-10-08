@@ -23,8 +23,8 @@ typedef union Bits32 {
         uint16_t UWORD;
         uint16_t LWORD;
 #endif
-    } Words;
-    struct bits {
+    } words;
+    struct Bits {
 #ifdef LITTLE_ENDIAN
         unsigned int b0: 1;
         unsigned int b1: 1;
@@ -95,6 +95,24 @@ typedef union Bits32 {
 #endif
     } bits;
 } Bits32;
+    
+typedef union GPUControl {
+    uint32_t WORD;
+    struct Words words;
+    struct Bits bits;
+    struct  __attribute__ ((__packed__)) {
+#ifdef LITTLE_ENDIAN
+        unsigned int : 6;
+        unsigned int irqMask: 5;
+        unsigned int : 21;
+#else
+        unsigned int : 21;
+        unsigned int irqMask: 5;
+        unsigned int : 6;
+#endif
+    } gpuIRQ;
+    
+} GPUControl;
     
 #ifdef USE_STRUCTS
 #pragma pack(push, 1)
@@ -221,16 +239,16 @@ extern const char * whoName[10];
 #define SET16(r, a, v)	r[(a)] = ((v) & 0xFF00) >> 8, r[(a)+1] = (v) & 0xFF
 
 
-#ifdef USE_STRUCTS
-    INLINE static uint16_t GET16(uint8_t* r,uint32_t a) {
-        U16Union u16;
-        u16.Bytes.UBYTE = r[a];
-        u16.Bytes.LBYTE = r[a+1];
-        return u16.WORD;
-    }
-#else
+//#ifdef USE_STRUCTS
+//    INLINE static uint16_t GET16(uint8_t* r,uint32_t a) {
+//        U16Union u16;
+//        u16.Bytes.UBYTE = r[a];
+//        u16.Bytes.LBYTE = r[a+1];
+//        return u16.WORD;
+//    }
+//#else
     #define GET16(r, a)        ((r[(a)] << 8) | r[(a)+1])
-#endif
+//#endif
 
 #ifdef __cplusplus
 }
