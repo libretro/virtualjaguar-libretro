@@ -9,7 +9,6 @@
 #include "dac.h"
 #include "dsp.h"
 #include "joystick.h"
-#include "log.h"
 #include "settings.h"
 #include "tom.h"
 

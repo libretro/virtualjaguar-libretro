@@ -21,7 +21,6 @@
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 
 // Seems alignment in loads & stores was off...
@@ -828,11 +827,7 @@ void DSPReset(void)
 
 void DSPDone(void)
 {
-	WriteLog("DSP: Stopped at PC=%08X dsp_modulo=%08X (dsp was%s running)\n", dsp_pc, dsp_modulo, (DSP_RUNNING ? "" : "n't"));
-	WriteLog("DSP: %sin interrupt handler\n", ((dsp_flags & IMASK) ? "" : "not "));
 }
-
-
 
 /* DSP execution core */
 

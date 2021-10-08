@@ -161,7 +161,6 @@
 #include "event.h"
 #include "jaguar.h"
 #include "joystick.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
 #include "settings.h"
@@ -348,7 +347,6 @@ void JERRYReset(void)
 
 void JERRYDone(void)
 {
-   WriteLog("JERRY: M68K Interrupt control ($F10020) = %04X\n", GET16(jerry_ram_8, 0x20));
    JoystickDone();
    DACDone();
    EepromDone();

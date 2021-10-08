@@ -15,7 +15,6 @@
 
 #include "joystick.h"
 #include <string.h>			// For memset()
-#include "log.h"
 #include "settings.h"
 
 // Global vars
@@ -26,9 +25,6 @@ uint8_t joypad1Buttons[21];
 bool audioEnabled = false;
 bool joysticksEnabled = false;
 
-int gpu_start_log = 0;
-int op_start_log = 0;
-int blit_start_log = 0;
 int effect_start = 0;
 int effect_start2 = 0, effect_start3 = 0, effect_start4 = 0, effect_start5 = 0, effect_start6 = 0;
 bool interactiveMode = false;
@@ -51,10 +47,8 @@ void JoystickInit(void)
 
 void JoystickExec(void)
 {
-	gpu_start_log = 0;							// Only log while key down!
 	effect_start = 0;
 	effect_start2 = effect_start3 = effect_start4 = effect_start5 = effect_start6 = 0;
-	blit_start_log = 0;
 	iLeft = iRight = false;
 }
 

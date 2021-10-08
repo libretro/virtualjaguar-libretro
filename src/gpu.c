@@ -28,7 +28,6 @@
 #include <string.h>								// For memset
 #include "dsp.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
 
@@ -702,12 +701,10 @@ void GPUResetStats(void)
    unsigned i;
    for(i=0; i<64; i++)
       gpu_opcode_use[i] = 0;
-   WriteLog("--> GPU stats were reset!\n");
 }
 
 void GPUDone(void)
 {
-   WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
 }
 
 // Main GPU execution core

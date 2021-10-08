@@ -47,7 +47,6 @@
 #include "event.h"
 #include "jerry.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
@@ -94,7 +93,6 @@ void DACInit(void)
 
    riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
    cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
-   WriteLog("DAC: RISC clock = %u, cyclesPerSample = %u\n", riscClockRate, cyclesPerSample);
 }
 
 

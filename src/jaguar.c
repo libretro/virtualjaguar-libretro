@@ -27,7 +27,6 @@
 #include "gpu.h"
 #include "jerry.h"
 #include "joystick.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
 #include "mmu.h"
@@ -160,10 +159,7 @@ void M68KInstructionHook(void)
    pcQPtr &= 0x3FF;
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
-   {
-      WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
       exit(0);
-   }
 }
 
 /* Custom UAE 68000 read/write/IRQ functions */
@@ -609,7 +605,6 @@ void HalflineCallback(void)
       vc = (lowerField ? 0x0800 : 0x0000);
    }
 
-   //WriteLog("HLC: Currently on line %u (VP=%u)...\n", vc, vp);
    TOMWriteWord(0xF00006, vc, JAGUAR);
 
    // Time for Vertical Interrupt?
@@ -655,14 +650,12 @@ void JaguarReset(void)
    else
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
 
-   //	WriteLog("jaguar_reset():\n");
    TOMReset();
    JERRYReset();
    GPUReset();
    DSPReset();
    CDROMReset();
    m68k_pulse_reset();								// Reset the 68000
-   WriteLog("Jaguar: 68K reset. PC=%06X SP=%08X\n", m68k_get_reg(NULL, M68K_REG_PC), m68k_get_reg(NULL, M68K_REG_A7));
 
    lowerField = false;								// Reset the lower field flag
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
@@ -671,10 +664,6 @@ void JaguarReset(void)
 
 void JaguarDone(void)
 {
-   WriteLog("Jaguar: Interrupt enable = $%02X\n", TOMReadByte(0xF000E1, JAGUAR) & 0x1F);
-   WriteLog("Jaguar: Video interrupt is %s (line=%u)\n", ((TOMIRQEnabled(IRQ_VIDEO))
-            && (JaguarInterruptHandlerIsValid(64))) ? "enabled" : "disabled", TOMReadWord(0xF0004E, JAGUAR));
-
    CDROMDone();
    GPUDone();
    DSPDone();

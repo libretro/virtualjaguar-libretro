@@ -25,26 +25,23 @@
 #include <boolean.h>
 #include "cdintf.h"								// Every OS has to implement these
 
-#include "log.h"
-
 // *** OK, here's where we're going to attempt to put the platform agnostic CD interface ***
 
 bool CDIntfInit(void)
 {
-   WriteLog("CDINTF: No suitable CD-ROM driver found.\n");
+   /* No suitable CDROM driver found */
    return false;
 }
 
 void CDIntfDone(void)
 {
-   WriteLog("CDINTF: Shutting down CD-ROM subsystem.\n");
+   /* Shutting down CDROM subsystem */
 }
 
 bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer)
 {
 //#warning "!!! FIX !!! CDIntfReadBlock not implemented!"
    // !!! FIX !!!
-   WriteLog("CDINTF: ReadBlock unimplemented!\n");
    return false;
 }
 
@@ -59,13 +56,11 @@ void CDIntfSelectDrive(uint32_t driveNum)
 {
 //#warning "!!! FIX !!! CDIntfSelectDrive not implemented!"
 	// !!! FIX !!!
-	WriteLog("CDINTF: SelectDrive unimplemented!\n");
 }
 
 uint32_t CDIntfGetCurrentDrive(void)
 {
 //#warning "!!! FIX !!! CDIntfGetCurrentDrive not implemented!"
-	WriteLog("CDINTF: GetCurrentDrive unimplemented!\n");
 	return 0;
 }
 
@@ -80,13 +75,11 @@ const uint8_t * CDIntfGetDriveName(uint32_t driveNum)
 uint8_t CDIntfGetSessionInfo(uint32_t session, uint32_t offset)
 {
 //#warning "!!! FIX !!! CDIntfGetSessionInfo not implemented!"
-	WriteLog("CDINTF: GetSessionInfo unimplemented!\n");
 	return 0xFF;
 }
 
 uint8_t CDIntfGetTrackInfo(uint32_t track, uint32_t offset)
 {
 //#warning "!!! FIX !!! CDIntfTrackInfo not implemented!"
-	WriteLog("CDINTF: GetTrackInfo unimplemented!\n");
 	return 0xFF;
 }

@@ -21,7 +21,6 @@
 #include <boolean.h>
 
 #include "event.h"
-#include "log.h"
 
 
 #define EVENT_LIST_SIZE       32
@@ -63,7 +62,6 @@ void InitializeEventList(void)
    }
 
    numberOfEvents = 0;
-   WriteLog("EVENT: Cleared event list.\n");
 }
 
 
@@ -78,7 +76,6 @@ void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAI
       {
          if (!eventList[i].valid)
          {
-            //WriteLog("EVENT: Found callback slot #%u...\n", i);
             eventList[i].timerCallback = callback;
             eventList[i].eventTime = time;
             eventList[i].eventType = type;
@@ -88,8 +85,6 @@ void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAI
             return;
          }
       }
-
-      WriteLog("EVENT: SetCallbackTime() failed to find an empty slot in the main list (%u events)!\n", numberOfEvents);
    }
    else
    {
@@ -97,7 +92,7 @@ void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAI
       {
          if (!eventListJERRY[i].valid)
          {
-            //WriteLog("EVENT: Found callback slot #%u...\n", i);
+            /* Found callback slot */
             eventListJERRY[i].timerCallback = callback;
             eventListJERRY[i].eventTime = time;
             eventListJERRY[i].eventType = type;
@@ -107,8 +102,6 @@ void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAI
             return;
          }
       }
-
-      WriteLog("EVENT: SetCallbackTime() failed to find an empty slot in the main list (%u events)!\n", numberOfEvents);
    }
 }
 

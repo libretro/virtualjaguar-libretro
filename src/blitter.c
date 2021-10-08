@@ -26,7 +26,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "jaguar.h"
-#include "log.h"
 #include "settings.h"
 
 // Various conditional compilation goodies...
@@ -979,7 +978,6 @@ void BlitterReset(void)
 
 void BlitterDone(void)
 {
-	WriteLog("BLIT: Done.\n");
 }
 
 

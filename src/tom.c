@@ -261,7 +261,6 @@
 #include "event.h"
 #include "gpu.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
 #include "settings.h"
@@ -816,8 +815,6 @@ void TOMDone(void)
 {
    OPDone();
    BlitterDone();
-   WriteLog("TOM: Resolution %i x %i %s\n", TOMGetVideoModeWidth(), TOMGetVideoModeHeight(),
-         videoMode_to_str[TOMGetVideoMode()]);
 }
 
 

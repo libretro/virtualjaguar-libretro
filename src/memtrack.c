@@ -26,9 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <log.h>
-#include <settings.h>
-
+#include "settings.h"
 
 #define MEMTRACK_FILENAME	"memtrack.eeprom"
 
@@ -48,20 +46,17 @@ void MTStateMachine(uint8_t reg, uint16_t data);
 
 void MTInit(void)
 {
-   FILE *fp;
+	FILE *fp;
 
 	sprintf(mtFilename, "%s%s", vjs.EEPROMPath, MEMTRACK_FILENAME);
 	fp = fopen(mtFilename, "rb");
 
 	if (fp)
 	{
-		size_t ignored = fread(mtMem, 1, 0x20000, fp);
+		fread(mtMem, 1, 0x20000, fp);
 		fclose(fp);
-		WriteLog("MT: Loaded NVRAM from %s\n", mtFilename);
 		haveMT = true;
 	}
-	else
-		WriteLog("MT: Could not open file \"%s\"!\n", mtFilename);
 }
 
 
@@ -75,13 +70,12 @@ void MTReset(void)
 void MTDone(void)
 {
 	MTWriteFile();
-	WriteLog("MT: Done.\n");
 }
 
 
 void MTWriteFile(void)
 {
-   FILE *fp;
+	FILE *fp;
 	if (!haveMT)
 		return;
 
@@ -92,8 +86,6 @@ void MTWriteFile(void)
 		fwrite(mtMem, 1, 0x20000, fp);
 		fclose(fp);
 	}
-	else
-		WriteLog("MT: Could not create file \"%s\"!", mtFilename);
 }
 
 

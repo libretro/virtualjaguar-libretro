@@ -41,7 +41,6 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jagstub1bios.c \
 	$(CORE_DIR)/src/jagstub2bios.c \
 	$(CORE_DIR)/src/joystick.c \
-	$(CORE_DIR)/src/log.c \
 	$(CORE_DIR)/src/settings.c \
 	$(CORE_DIR)/src/memtrack.c \
 	$(CORE_DIR)/src/mmu.c \

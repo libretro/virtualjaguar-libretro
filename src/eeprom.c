@@ -18,7 +18,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>								// For memset
-#include "log.h"
 #include "settings.h"
 
 extern uint32_t jaguarMainROMCRC32;
@@ -63,12 +62,9 @@ void EepromInit(void)
 {
    FILE * fp;
 
-   /* No need for EEPROM for the Memory Track device :-P */
+   /* No need for EEPROM for the Memory Track device */
    if (jaguarMainROMCRC32 == 0xFDF37F47)
-   {
-      WriteLog("EEPROM: Memory Track device detected...\n");
       return;
-   }
    
    /* Get EEPROM file names */
 	if (strlen(vjs.romName) > 0)
@@ -90,11 +86,8 @@ void EepromInit(void)
 	{
 		ReadEEPROMFromFile(fp, eeprom_ram);
 		fclose(fp);
-		WriteLog("EEPROM: Loaded from %s\n", eeprom_filename);
 		haveEEPROM = true;
 	}
-	else
-		WriteLog("EEPROM: Could not open file \"%s\"!\n", eeprom_filename);
 
 	// Handle JagCD EEPROM
 	fp = fopen(cdromEEPROMFilename, "rb");
@@ -103,11 +96,8 @@ void EepromInit(void)
 	{
 		ReadEEPROMFromFile(fp, cdromEEPROM);
 		fclose(fp);
-		WriteLog("EEPROM: Loaded from cdrom.eeprom\n");
 		haveCDROMEEPROM = true;
 	}
-	else
-		WriteLog("EEPROM: Could not open file \"%s\"!\n", cdromEEPROMFilename);
 }
 
 
@@ -123,7 +113,6 @@ void EepromReset(void)
 
 void EepromDone(void)
 {
-	WriteLog("EEPROM: Done.\n");
 }
 
 
@@ -137,8 +126,6 @@ static void EEPROMSave(void)
 		WriteEEPROMToFile(fp, eeprom_ram);
 		fclose(fp);
 	}
-	else
-		WriteLog("EEPROM: Could not create file \"%s!\"\n", eeprom_filename);
 
 	// Write out JagCD EEPROM data
 	fp = fopen(cdromEEPROMFilename, "wb");
@@ -148,8 +135,6 @@ static void EEPROMSave(void)
 		WriteEEPROMToFile(fp, cdromEEPROM);
 		fclose(fp);
 	}
-	else
-		WriteLog("EEPROM: Could not create file \"%s!\"\n", cdromEEPROMFilename);
 }
 
 
@@ -310,7 +295,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_direct_jump = 1;
 		break;
 	case EE_STATE_0_0_1_0:
-		// WriteLog("eeprom: filling eeprom with 0x%.4x\n",data);
 		if (jerry_writes_enabled)
 		{
 			for(i = 0; i < 64; i++)
@@ -348,7 +332,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_direct_jump = 1;
 		break;
 	case EE_STATE_1_1:
-		//WriteLog("eeprom: writing 0x%.4x at 0x%.2x\n",jerry_ee_data,jerry_ee_address_data);
 		if (jerry_writes_enabled)
 		{
 			eeprom_ram[jerry_ee_address_data] = jerry_ee_data;
@@ -373,7 +356,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_direct_jump = 1;
 		break;
 	case EE_STATE_3_0:
-		//WriteLog("eeprom: erasing 0x%.2x\n",jerry_ee_address_data);
 		if (jerry_writes_enabled)
 			eeprom_ram[jerry_ee_address_data] = 0xFFFF;
 
