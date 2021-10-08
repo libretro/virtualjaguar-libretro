@@ -190,14 +190,14 @@ static uint32_t gpu_instruction;
 static uint32_t gpu_opcode_first_parameter;
 static uint32_t gpu_opcode_second_parameter;
 
-#define GPU_RUNNING		(gpu_control & 0x01)
+#define GPU_RUNNING	(gpu_control & 0x01)
 
-#define RM				gpu_reg[gpu_opcode_first_parameter]
-#define RN				gpu_reg[gpu_opcode_second_parameter]
+#define RM		gpu_reg[gpu_opcode_first_parameter]
+#define RN		gpu_reg[gpu_opcode_second_parameter]
 #define ALTERNATE_RM	gpu_alternate_reg[gpu_opcode_first_parameter]
 #define ALTERNATE_RN	gpu_alternate_reg[gpu_opcode_second_parameter]
-#define IMM_1			gpu_opcode_first_parameter
-#define IMM_2			gpu_opcode_second_parameter
+#define IMM_1		gpu_opcode_first_parameter
+#define IMM_2		gpu_opcode_second_parameter
 
 #define SET_FLAG_Z(r)	(gpu_flag_z = ((r) == 0));
 #define SET_FLAG_N(r)	(gpu_flag_n = (((uint32_t)(r) >> 31) & 0x01));
@@ -206,14 +206,14 @@ static uint32_t gpu_opcode_second_parameter;
 #define RESET_FLAG_N()	gpu_flag_n = 0;
 #define RESET_FLAG_C()	gpu_flag_c = 0;
 
-#define CLR_Z				(gpu_flag_z = 0)
-#define CLR_ZN				(gpu_flag_z = gpu_flag_n = 0)
-#define CLR_ZNC				(gpu_flag_z = gpu_flag_n = gpu_flag_c = 0)
-#define SET_Z(r)			(gpu_flag_z = ((r) == 0))
-#define SET_N(r)			(gpu_flag_n = (((uint32_t)(r) >> 31) & 0x01))
+#define CLR_Z			(gpu_flag_z = 0)
+#define CLR_ZN			(gpu_flag_z = gpu_flag_n = 0)
+#define CLR_ZNC			(gpu_flag_z = gpu_flag_n = gpu_flag_c = 0)
+#define SET_Z(r)		(gpu_flag_z = ((r) == 0))
+#define SET_N(r)		(gpu_flag_n = (((uint32_t)(r) >> 31) & 0x01))
 #define SET_C_ADD(a,b)		(gpu_flag_c = ((uint32_t)(b) > (uint32_t)(~(a))))
 #define SET_C_SUB(a,b)		(gpu_flag_c = ((uint32_t)(b) > (uint32_t)(a)))
-#define SET_ZN(r)			SET_N(r); SET_Z(r)
+#define SET_ZN(r)		SET_N(r); SET_Z(r)
 #define SET_ZNC_ADD(a,b,r)	SET_N(r); SET_Z(r); SET_C_ADD(a,b)
 #define SET_ZNC_SUB(a,b,r)	SET_N(r); SET_Z(r); SET_C_SUB(a,b)
 
@@ -224,26 +224,6 @@ uint8_t * branch_condition_table = 0;
 #define BRANCH_CONDITION(x)	branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
 
 uint32_t gpu_opcode_use[64];
-
-const char * gpu_opcode_str[64]=
-{
-	"add",				"addc",				"addq",				"addqt",
-	"sub",				"subc",				"subq",				"subqt",
-	"neg",				"and",				"or",				"xor",
-	"not",				"btst",				"bset",				"bclr",
-	"mult",				"imult",			"imultn",			"resmac",
-	"imacn",			"div",				"abs",				"sh",
-	"shlq",				"shrq",				"sha",				"sharq",
-	"ror",				"rorq",				"cmp",				"cmpq",
-	"sat8",				"sat16",			"move",				"moveq",
-	"moveta",			"movefa",			"movei",			"loadb",
-	"loadw",			"load",				"loadp",			"load_r14_indexed",
-	"load_r15_indexed",	"storeb",			"storew",			"store",
-	"storep",			"store_r14_indexed","store_r15_indexed","move_pc",
-	"jump",				"jr",				"mmult",			"mtoi",
-	"normi",			"nop",				"load_r14_ri",		"load_r15_ri",
-	"store_r14_ri",		"store_r15_ri",		"sat24",			"pack",
-};
 
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
@@ -319,27 +299,26 @@ uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
-      uint16_t data;
+		uint16_t data;
 		offset &= 0xFFF;
 		data    = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
 		return data;
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
-   {
-      uint32_t data;
+	{
+		uint32_t data;
 
-      // This looks and smells wrong...
-      // But it *might* be OK...
-      if (offset & 0x01)			// Catch cases 1 & 3... (unaligned read)
-         return (GPUReadByte(offset, who) << 8) | GPUReadByte(offset+1, who);
+		// This looks and smells wrong...
+		// But it *might* be OK...
+		if (offset & 0x01)			// Catch cases 1 & 3... (unaligned read)
+			return (GPUReadByte(offset, who) << 8) | GPUReadByte(offset+1, who);
 
-      data = GPUReadLong(offset & 0xFFFFFFFC, who);
+		data = GPUReadLong(offset & 0xFFFFFFFC, who);
 
-      if (offset & 0x02)			// Cases 0 & 2...
-         return data & 0xFFFF;
-      else
-         return data >> 16;
-   }
+		if (offset & 0x02)			// Cases 0 & 2...
+			return data & 0xFFFF;
+		return data >> 16;
+	}
 
 	return JaguarReadWord(offset, who);
 }
@@ -363,32 +342,34 @@ uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 	{
 		offset &= 0x1F;
 		switch (offset)
-      {
-         case 0x00:
-            gpu_flag_c = (gpu_flag_c ? 1 : 0);
-            gpu_flag_z = (gpu_flag_z ? 1 : 0);
-            gpu_flag_n = (gpu_flag_n ? 1 : 0);
+		{
+			case 0x00:
+				gpu_flag_c = (gpu_flag_c ? 1 : 0);
+				gpu_flag_z = (gpu_flag_z ? 1 : 0);
+				gpu_flag_n = (gpu_flag_n ? 1 : 0);
 
-            gpu_flags = (gpu_flags & 0xFFFFFFF8) | (gpu_flag_n << 2) | (gpu_flag_c << 1) | gpu_flag_z;
+				gpu_flags = (gpu_flags & 0xFFFFFFF8) | (gpu_flag_n << 2) | (gpu_flag_c << 1) | gpu_flag_z;
 
-            return gpu_flags & 0xFFFFC1FF;
-         case 0x04:
-            return gpu_matrix_control;
-         case 0x08:
-            return gpu_pointer_to_matrix;
-         case 0x0C:
-            return gpu_data_organization;
-         case 0x10:
-            return gpu_pc;
-         case 0x14:
-            return gpu_control;
-         case 0x18:
-            return gpu_hidata;
-         case 0x1C:
-            return gpu_remain;
-         default:								// unaligned long read
-            return 0;
-      }
+				return gpu_flags & 0xFFFFC1FF;
+			case 0x04:
+				return gpu_matrix_control;
+			case 0x08:
+				return gpu_pointer_to_matrix;
+			case 0x0C:
+				return gpu_data_organization;
+			case 0x10:
+				return gpu_pc;
+			case 0x14:
+				return gpu_control;
+			case 0x18:
+				return gpu_hidata;
+			case 0x1C:
+				return gpu_remain;
+			default:								// unaligned long read
+				break;
+		}
+
+		return 0;
 	}
 
 	return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset + 2, who);
@@ -436,9 +417,7 @@ void GPUWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset <= GPU_CONTROL_RAM_BASE + 0x1E))
    {
       if (offset & 0x01)		// This is supposed to weed out unaligned writes, but does nothing...
-      {
          return;
-      }
       //Dual locations in this range: $1C Divide unit remainder/Divide unit control (R/W)
       //This just literally sucks.
       if ((offset & 0x1C) == 0x1C)
@@ -702,10 +681,6 @@ void GPUResetStats(void)
       gpu_opcode_use[i] = 0;
 }
 
-void GPUDone(void)
-{
-}
-
 // Main GPU execution core
 static int testCount = 1;
 static int len = 0;
@@ -729,22 +704,10 @@ void GPUExec(int32_t cycles)
 
    while (cycles > 0 && GPU_RUNNING)
    {
-      uint16_t opcode;
-      uint32_t index;
-
-      if (gpu_ram_8[0x054] == 0x98 && gpu_ram_8[0x055] == 0x0A && gpu_ram_8[0x056] == 0x03
-            && gpu_ram_8[0x057] == 0x00 && gpu_ram_8[0x058] == 0x00 && gpu_ram_8[0x059] == 0x00)
-      {
-         if (gpu_pc == 0xF03000)
-         {
-            extern uint32_t starCount;
-            starCount = 0;
-         }
-      }
-      opcode = GPUReadWord(gpu_pc, GPU);
-      index = opcode >> 10;
-      gpu_instruction = opcode;				// Added for GPU #3...
-      gpu_opcode_first_parameter = (opcode >> 5) & 0x1F;
+      uint16_t opcode = GPUReadWord(gpu_pc, GPU);
+      uint32_t index  = opcode >> 10;
+      gpu_instruction = opcode;	// Added for GPU #3...
+      gpu_opcode_first_parameter  = (opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = opcode & 0x1F;
 
       //$E400 -> 1110 01 -> $39 -> 57

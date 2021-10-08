@@ -33,8 +33,7 @@
 #include "settings.h"
 #include "tom.h"
 
-bool frameDone;
-uint32_t starCount;
+static bool frameDone;
 
 #define ALPINE_FUNCTIONS
 
@@ -662,7 +661,6 @@ void JaguarReset(void)
 void JaguarDone(void)
 {
    CDROMDone();
-   GPUDone();
    DSPDone();
    TOMDone();
    JERRYDone();
