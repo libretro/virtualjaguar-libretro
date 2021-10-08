@@ -91,11 +91,6 @@ void DACReset(void)
    lrxd  = 0;
 }
 
-void DACPauseAudioThread(bool state)
-{
-}
-
-
 void DACDone(void)
 {
 }
@@ -131,7 +126,7 @@ void DSPSampleCallback(void)
 //       Also, length is the length of the buffer in BYTES
 //
 
-void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
+void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
    /* 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit. */
    if (!DSPIsRunning())

@@ -541,8 +541,6 @@ void retro_run(void)
    update_input();
 
    JaguarExecuteNew();
-
-   SDLSoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
-
+   SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 }
