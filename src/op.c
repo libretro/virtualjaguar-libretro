@@ -637,7 +637,6 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       clippedWidth = startPos - lbufWidth,
                    dataClippedWidth = phraseClippedWidth = clippedWidth / phraseWidthToPixels[depth],
                    startPos = lbufWidth + (clippedWidth % phraseWidthToPixels[depth]);
-   //printf("<OP:spos=%i,epos=%i]", startPos, endPos);
 
    // If the image is sitting on the line buffer left or right edge, we need to compensate
    // by decreasing the image phrase width accordingly.

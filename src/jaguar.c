@@ -587,22 +587,21 @@ void JaguarInit(void)
 // Half line times are, naturally, half of this. :-P
 void HalflineCallback(void)
 {
-   uint16_t numHalfLines;
-   uint16_t vc = TOMReadWord(0xF00006, JAGUAR);
-   uint16_t vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
-   uint16_t vi = TOMReadWord(0xF0004E, JAGUAR);
-   vc++;
-
+   uint16_t vc           = TOMReadWord(0xF00006, JAGUAR);
+   uint16_t vp           = TOMReadWord(0xF0003E, JAGUAR) + 1;
+   uint16_t vi           = TOMReadWord(0xF0004E, JAGUAR);
    // Each # of lines is for a full frame == 1/30s (NTSC), 1/25s (PAL).
    // So we cut the number of half-lines in a frame in half. :-P
-   numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+   uint16_t numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+
+   vc++;
 
    if ((vc & 0x7FF) >= numHalfLines)
    {
       lowerField = !lowerField;
       // If we're rendering the lower field, set the high bit (#11, counting
       // from 0) of VC
-      vc = (lowerField ? 0x0800 : 0x0000);
+      vc         = (lowerField ? 0x0800 : 0x0000);
    }
 
    TOMWriteWord(0xF00006, vc, JAGUAR);
