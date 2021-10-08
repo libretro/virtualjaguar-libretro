@@ -223,8 +223,6 @@ uint32_t gpu_convert_zero[32] =
 uint8_t * branch_condition_table = 0;
 #define BRANCH_CONDITION(x)	branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
 
-uint32_t gpu_opcode_use[64];
-
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
 
@@ -676,15 +674,9 @@ uint32_t GPUReadPC(void)
 
 void GPUResetStats(void)
 {
-   unsigned i;
-   for(i=0; i<64; i++)
-      gpu_opcode_use[i] = 0;
 }
 
 // Main GPU execution core
-static int testCount = 1;
-static int len = 0;
-static bool tripwire = false;
 
 void GPUExec(int32_t cycles)
 {
@@ -720,9 +712,6 @@ void GPUExec(int32_t cycles)
       //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
 
       cycles -= gpu_opcode_cycles[index];
-      gpu_opcode_use[index]++;
-      if ((gpu_pc < 0xF03000 || gpu_pc > 0xF03FFF) && !tripwire)
-         tripwire = true;
    }
 
    gpu_in_exec--;
