@@ -517,7 +517,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x14:
             {
-               extern int effect_start5;
                data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
 
                // check for GPU -> CPU interrupt

@@ -403,10 +403,6 @@ uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
 uint32_t * screenBuffer;
 uint32_t screenPitch;
 
-static const char * videoMode_to_str[8] =
-{ "16 BPP CRY", "24 BPP RGB", "16 BPP DIRECT", "16 BPP RGB",
-   "Mixed mode", "24 BPP RGB", "16 BPP DIRECT", "16 BPP RGB" };
-
 typedef void (render_xxx_scanline_fn)(uint32_t *);
 
 // Private function prototypes
@@ -1175,14 +1171,13 @@ void TOMExecPIT(uint32_t cycles)
    }
 }
 
-
 void TOMPITCallback(void)
 {
    TOMSetPendingTimerInt();                  // Set TOM PIT interrupt pending
-   GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE);	// It does the 'IRQ enabled' checking
+   GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE); // It does the 'IRQ enabled' checking
 
    if (TOMIRQEnabled(IRQ_TIMER))
-      m68k_set_irq(2);						// Generate a 68K IPL 2...
+      m68k_set_irq(2); // Generate a 68K IPL 2...
 
    TOMResetPIT();
 }

@@ -13,8 +13,8 @@
 // JLH  01/16/2010  Created this log ;-)
 //
 
-#include "joystick.h"
 #include <string.h>			// For memset()
+#include "joystick.h"
 #include "settings.h"
 
 // Global vars
@@ -25,20 +25,6 @@ uint8_t joypad1Buttons[21];
 bool audioEnabled = false;
 bool joysticksEnabled = false;
 
-int effect_start = 0;
-int effect_start2 = 0, effect_start3 = 0, effect_start4 = 0, effect_start5 = 0, effect_start6 = 0;
-bool interactiveMode = false;
-bool iLeft, iRight, iToggle = false;
-bool keyHeld1 = false, keyHeld2 = false, keyHeld3 = false;
-int objectPtr = 0;
-bool startMemLog = false;
-extern bool doDSPDis, doGPUDis;
-
-bool blitterSingleStep = false;
-bool bssGo = false;
-bool bssHeld = false;
-
-
 void JoystickInit(void)
 {
 	JoystickReset();
@@ -47,9 +33,6 @@ void JoystickInit(void)
 
 void JoystickExec(void)
 {
-	effect_start = 0;
-	effect_start2 = effect_start3 = effect_start4 = effect_start5 = effect_start6 = 0;
-	iLeft = iRight = false;
 }
 
 
@@ -80,8 +63,8 @@ uint16_t JoystickReadWord(uint32_t offset)
 
 	if (offset == 0)
 	{
-      unsigned i;
-      uint8_t offset0, offset1;
+		unsigned i;
+		uint8_t offset0, offset1;
 		uint16_t data = 0xFFFF;
 
 		if (!joysticksEnabled)
@@ -95,33 +78,33 @@ uint16_t JoystickReadWord(uint32_t offset)
 		if (offset0 != 0xFF)
 		{
 			uint16_t mask[4] = { 0xFEFF, 0xFDFF, 0xFBFF, 0xF7FF };
-         uint16_t msk2[4] = { 0xFFFF, 0xFFFD, 0xFFFB, 0xFFF7 };
+			uint16_t msk2[4] = { 0xFFFF, 0xFFFD, 0xFFFB, 0xFFF7 };
 
 			for(i = 0; i < 4; i++)
 				data &= (joypad0Buttons[offset0 + i] ? mask[i] : 0xFFFF);
 
-         data &= msk2[offset0 / 4];
+			data &= msk2[offset0 / 4];
 		}
 
 		if (offset1 != 0xFF)
 		{
 			uint16_t mask[4] = { 0xEFFF, 0xDFFF, 0xBFFF, 0x7FFF };
-         uint16_t msk2[4] = { 0xFF7F, 0xFFBF, 0xFFDF, 0xFFEF };
+			uint16_t msk2[4] = { 0xFF7F, 0xFFBF, 0xFFDF, 0xFFEF };
 
 			for(i = 0; i < 4; i++)
 				data &= (joypad1Buttons[offset1 + i] ? mask[i] : 0xFFFF);
 
-         data &= msk2[offset1 / 4];
+			data &= msk2[offset1 / 4];
 		}
 
 		return data;
 	}
 	else if (offset == 2)
 	{
-      uint8_t offset0, offset1;
+		uint8_t offset0, offset1;
 		// Hardware ID returns NTSC/PAL identification bit here
-      // N.B.: On real H/W, bit 7 is *always* zero...!
-      uint16_t data = 0xFF6F | (vjs.hardwareTypeNTSC ? 0x10 : 0x00);
+		// N.B.: On real H/W, bit 7 is *always* zero...!
+		uint16_t data = 0xFF6F | (vjs.hardwareTypeNTSC ? 0x10 : 0x00);
 
 		if (!joysticksEnabled)
 			return data;
@@ -168,4 +151,3 @@ void JoystickWriteWord(uint32_t offset, uint16_t data)
 		joysticksEnabled = ((data & 0x8000) ? true : false);
 	}
 }
-

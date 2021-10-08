@@ -265,9 +265,6 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 //#warning "Need to fix this so that when an GPU object IRQ happens, we can pick up OP processing where we left off. !!! FIX !!!"
 void OPProcessList(int halfline, bool render)
 {
-   extern bool interactiveMode;
-   extern bool iToggle;
-   extern int objectPtr;
    bool inhibit;
    int bitmapCounter = 0;
    uint32_t opCyclesToRun = 30000;					// This is a pulled-out-of-the-air value (will need to be fixed, obviously!)
@@ -291,10 +288,7 @@ void OPProcessList(int halfline, bool render)
    {
       uint64_t p0;
       // *** BEGIN OP PROCESSOR TESTING ONLY ***
-      if (interactiveMode && bitmapCounter == objectPtr)
-         inhibit = iToggle;
-      else
-         inhibit = false;
+      inhibit     = false;
       // *** END OP PROCESSOR TESTING ONLY ***
 
       p0          = OPLoadPhrase(op_pointer);
