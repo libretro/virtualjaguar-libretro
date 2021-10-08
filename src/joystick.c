@@ -66,8 +66,9 @@ uint16_t JoystickReadWord(uint32_t offset)
 		uint8_t offset0, offset1;
 		uint16_t data = 0xFFFF;
 
-		if (!joysticksEnabled)
+        if (!joysticksEnabled) {
 			return 0xFFFF;
+        }
 
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
