@@ -2870,21 +2870,21 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 	cmpd = *patd ^ (cmpdst ? dstd : srcd);
 
 	if ((cmpd & 0x00000000000000FFLL) == 0)
-		*dcomp |= 0x01;
+		*dcomp |= 0x01u;
 	if ((cmpd & 0x000000000000FF00LL) == 0)
-		*dcomp |= 0x02;
+		*dcomp |= 0x02u;
 	if ((cmpd & 0x0000000000FF0000LL) == 0)
-		*dcomp |= 0x04;
+		*dcomp |= 0x04u;
 	if ((cmpd & 0x00000000FF000000LL) == 0)
-		*dcomp |= 0x08;
+		*dcomp |= 0x08u;
 	if ((cmpd & 0x000000FF00000000LL) == 0)
-		*dcomp |= 0x10;
+		*dcomp |= 0x10u;
 	if ((cmpd & 0x0000FF0000000000LL) == 0)
-		*dcomp |= 0x20;
+		*dcomp |= 0x20u;
 	if ((cmpd & 0x00FF000000000000LL) == 0)
-		*dcomp |= 0x40;
+		*dcomp |= 0x40u;
 	if ((cmpd & 0xFF00000000000000LL) == 0)
-		*dcomp |= 0x80;
+		*dcomp |= 0x80u;
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Zed comparator for Z-buffer operations
@@ -2905,22 +2905,22 @@ with srcshift bits 4 & 5 selecting the start position
 	if ((((*srcz & 0x000000000000FFFFLL) < (dstz & 0x000000000000FFFFLL)) && (zmode & 0x01))
 		|| (((*srcz & 0x000000000000FFFFLL) == (dstz & 0x000000000000FFFFLL)) && (zmode & 0x02))
 		|| (((*srcz & 0x000000000000FFFFLL) > (dstz & 0x000000000000FFFFLL)) && (zmode & 0x04)))
-		*zcomp |= 0x01;
+		*zcomp |= 0x01u;
 
 	if ((((*srcz & 0x00000000FFFF0000LL) < (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x01))
 		|| (((*srcz & 0x00000000FFFF0000LL) == (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x02))
 		|| (((*srcz & 0x00000000FFFF0000LL) > (dstz & 0x00000000FFFF0000LL)) && (zmode & 0x04)))
-		*zcomp |= 0x02;
+		*zcomp |= 0x02u;
 
 	if ((((*srcz & 0x0000FFFF00000000LL) < (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x01))
 		|| (((*srcz & 0x0000FFFF00000000LL) == (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x02))
 		|| (((*srcz & 0x0000FFFF00000000LL) > (dstz & 0x0000FFFF00000000LL)) && (zmode & 0x04)))
-		*zcomp |= 0x04;
+		*zcomp |= 0x04u;
 
 	if ((((*srcz & 0xFFFF000000000000LL) < (dstz & 0xFFFF000000000000LL)) && (zmode & 0x01))
 		|| (((*srcz & 0xFFFF000000000000LL) == (dstz & 0xFFFF000000000000LL)) && (zmode & 0x02))
 		|| (((*srcz & 0xFFFF000000000000LL) > (dstz & 0xFFFF000000000000LL)) && (zmode & 0x04)))
-		*zcomp |= 0x08;
+		*zcomp |= 0x08u;
 
 //TEMP, TO TEST IF ZCOMP IS THE CULPRIT...
 //Nope, this is NOT the problem...
@@ -3033,13 +3033,13 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	maskt = s_fine & 0x0001;
-	maskt |= (((maskt & 0x0001) || (s_fine & 0x02)) && (e_fine & 0x02) ? 0x0002 : 0x0000);
-	maskt |= (((maskt & 0x0002) || (s_fine & 0x04)) && (e_fine & 0x04) ? 0x0004 : 0x0000);
-	maskt |= (((maskt & 0x0004) || (s_fine & 0x08)) && (e_fine & 0x08) ? 0x0008 : 0x0000);
-	maskt |= (((maskt & 0x0008) || (s_fine & 0x10)) && (e_fine & 0x10) ? 0x0010 : 0x0000);
-	maskt |= (((maskt & 0x0010) || (s_fine & 0x20)) && (e_fine & 0x20) ? 0x0020 : 0x0000);
-	maskt |= (((maskt & 0x0020) || (s_fine & 0x40)) && (e_fine & 0x40) ? 0x0040 : 0x0000);
-	maskt |= (((maskt & 0x0040) || (s_fine & 0x80)) && (e_fine & 0x80) ? 0x0080 : 0x0000);
+	maskt |= (((maskt & 0x0001) || (s_fine & 0x02u)) && (e_fine & 0x02u) ? 0x0002 : 0x0000);
+	maskt |= (((maskt & 0x0002) || (s_fine & 0x04u)) && (e_fine & 0x04u) ? 0x0004 : 0x0000);
+	maskt |= (((maskt & 0x0004) || (s_fine & 0x08u)) && (e_fine & 0x08u) ? 0x0008 : 0x0000);
+	maskt |= (((maskt & 0x0008) || (s_fine & 0x10u)) && (e_fine & 0x10u) ? 0x0010 : 0x0000);
+	maskt |= (((maskt & 0x0010) || (s_fine & 0x20u)) && (e_fine & 0x20u) ? 0x0020 : 0x0000);
+	maskt |= (((maskt & 0x0020) || (s_fine & 0x40u)) && (e_fine & 0x40u) ? 0x0040 : 0x0000);
+	maskt |= (((maskt & 0x0040) || (s_fine & 0x80u)) && (e_fine & 0x80u) ? 0x0080 : 0x0000);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* Produce a look-ahead on the ripple carry:
@@ -3048,13 +3048,13 @@ masktla = s_coarse[0] . /e_coarse[0] */
 Maskt[8]	:= OAN1P (maskt[8], masktla, s_coarse[1], e_coarse\[1]);
 Maskt[9-14]	:= OAN1P (maskt[9-14], maskt[8-13], s_coarse[2-7], e_coarse\[2-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	maskt |= (((s_coarse & e_coarse & 0x01) || (s_coarse & 0x02)) && (e_coarse & 0x02) ? 0x0100 : 0x0000);
-	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04)) && (e_coarse & 0x04) ? 0x0200 : 0x0000);
-	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08)) && (e_coarse & 0x08) ? 0x0400 : 0x0000);
-	maskt |= (((maskt & 0x0400) || (s_coarse & 0x10)) && (e_coarse & 0x10) ? 0x0800 : 0x0000);
-	maskt |= (((maskt & 0x0800) || (s_coarse & 0x20)) && (e_coarse & 0x20) ? 0x1000 : 0x0000);
-	maskt |= (((maskt & 0x1000) || (s_coarse & 0x40)) && (e_coarse & 0x40) ? 0x2000 : 0x0000);
-	maskt |= (((maskt & 0x2000) || (s_coarse & 0x80)) && (e_coarse & 0x80) ? 0x4000 : 0x0000);
+	maskt |= (((s_coarse & e_coarse & 0x01u) || (s_coarse & 0x02u)) && (e_coarse & 0x02u) ? 0x0100 : 0x0000);
+	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04u)) && (e_coarse & 0x04u) ? 0x0200 : 0x0000);
+	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08u)) && (e_coarse & 0x08u) ? 0x0400 : 0x0000);
+	maskt |= (((maskt & 0x0400) || (s_coarse & 0x10u)) && (e_coarse & 0x10u) ? 0x0800 : 0x0000);
+	maskt |= (((maskt & 0x0800) || (s_coarse & 0x20u)) && (e_coarse & 0x20u) ? 0x1000 : 0x0000);
+	maskt |= (((maskt & 0x1000) || (s_coarse & 0x40u)) && (e_coarse & 0x40u) ? 0x2000 : 0x0000);
+	maskt |= (((maskt & 0x2000) || (s_coarse & 0x80u)) && (e_coarse & 0x80u) ? 0x4000 : 0x0000);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /* The bit terms are mirrored for big-endian pixels outside phrase
@@ -3375,12 +3375,12 @@ Di4t3		:= NAN3 (di4t[3], pixsize\[2], dcomp[4], dcompen);
 Di4t4		:= NAN4 (di4t[4], di4t[0..3]);
 Dbinh[4]	:= NAN2 (dbinh\[4], di4t[4], phrase_mode);*/
    ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di4t0_1 = ((pixsize & 0x04) && (zcomp & 0x04))
-      || ((pixsize & 0x04) && (dcomp & 0x10) && (dcomp & 0x20) && dcompen);
+   di4t0_1 = ((pixsize & 0x04u) && (zcomp & 0x04u))
+      || ((pixsize & 0x04u) && (dcomp & 0x10u) && (dcomp & 0x20u) && dcompen);
    di4t4 = di4t0_1
-      || (!(srcd & 0x10) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x10) && dcompen);
-   *dbinh |= (!(di4t4 && phrase_mode) ? 0x10 : 0x00);
+      || (!(srcd & 0x10u) && bcompen)
+      || (!(pixsize & 0x04u) && (dcomp & 0x10u) && dcompen);
+   *dbinh |= (!(di4t4 && phrase_mode) ? 0x10u : 0x00u);
    //////////////////////////////////////////////////////////////////////////////////////
 
    /*Di5t0		:= NAN3 (di5t[0], pixsize\[2], dcomp[5], dcompen);
