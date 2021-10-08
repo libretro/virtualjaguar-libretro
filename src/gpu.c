@@ -374,7 +374,7 @@ INLINE uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x1C:
             return gpu_remain;
          default:								// unaligned long read
-            return break;
+            break;
       }
         return 0;
 	}
@@ -907,7 +907,6 @@ INLINE static void executeOpcode(uint32_t index) {
             gpu_opcode_load_r15_ri();
             break;
         case 60:
-            
             gpu_opcode_store_r14_ri();
             break;
         case 61:
@@ -920,7 +919,7 @@ INLINE static void executeOpcode(uint32_t index) {
             gpu_opcode_pack();
             break;
         default:
-            WriteLog("\nUnknown opcode %i\n", index);
+            // WriteLog("\nUnknown opcode %i\n", index);
             break;
     }
 }
