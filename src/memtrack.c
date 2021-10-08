@@ -23,10 +23,19 @@
 
 #include "memtrack.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "settings.h"
+
+#include <libretro.h>
+#include <streams/file_stream.h>
+
+RFILE* rfopen(const char *path, const char *mode);
+int64_t rfread(void* buffer,
+   size_t elem_size, size_t elem_count, RFILE* stream);
+int rfclose(RFILE* stream);
+int64_t rfwrite(void const* buffer,
+   size_t elem_size, size_t elem_count, RFILE* stream);
 
 #define MEMTRACK_FILENAME	"memtrack.eeprom"
 
@@ -46,15 +55,15 @@ void MTStateMachine(uint8_t reg, uint16_t data);
 
 void MTInit(void)
 {
-	FILE *fp;
+	RFILE *fp;
 
 	sprintf(mtFilename, "%s%s", vjs.EEPROMPath, MEMTRACK_FILENAME);
-	fp = fopen(mtFilename, "rb");
+	fp = rfopen(mtFilename, "rb");
 
 	if (fp)
 	{
-		fread(mtMem, 1, 0x20000, fp);
-		fclose(fp);
+		rfread(mtMem, 1, 0x20000, fp);
+		rfclose(fp);
 		haveMT = true;
 	}
 }
@@ -75,16 +84,16 @@ void MTDone(void)
 
 void MTWriteFile(void)
 {
-	FILE *fp;
+	RFILE *fp;
 	if (!haveMT)
 		return;
 
-	fp = fopen(mtFilename, "wb");
+	fp = rfopen(mtFilename, "wb");
 
 	if (fp)
 	{
-		fwrite(mtMem, 1, 0x20000, fp);
-		fclose(fp);
+		rfwrite(mtMem, 1, 0x20000, fp);
+		rfclose(fp);
 	}
 }
 

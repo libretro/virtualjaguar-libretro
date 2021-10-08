@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "libretro.h"
+#include <libretro.h>
 #include "file.h"
 #include "jagbios.h"
 #include "jagbios2.h"
@@ -43,6 +43,7 @@ int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
 
 void retro_set_environment(retro_environment_t cb)
 {
+   struct retro_vfs_interface_info vfs_iface_info;
    struct retro_variable variables[] = {
       {
          "virtualjaguar_usefastblitter",
@@ -67,6 +68,11 @@ void retro_set_environment(retro_environment_t cb)
 
    environ_cb = cb;
    cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
+
+   vfs_iface_info.required_interface_version = 1;
+   vfs_iface_info.iface                      = NULL;
+   if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
+      filestream_vfs_init(&vfs_iface_info);
 }
 
 static void check_variables(void)
