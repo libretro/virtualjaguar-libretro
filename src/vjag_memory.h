@@ -39,6 +39,8 @@ extern "C" {
         } bytes;
     } Bits64;
 #pragma pack(pop)
+    
+#pragma pack(push, 1)
 typedef union Bits32 {
     uint32_t WORD;
     struct Words {
@@ -50,6 +52,28 @@ typedef union Bits32 {
         uint16_t LWORD;
 #endif
     } words;
+    struct Bytes4 {
+#ifdef LITTLE_ENDIAN
+        uint8_t LL;
+        uint8_t LU;
+        uint8_t UL;
+        uint8_t UU; // Upper upper [UU, UL, LU, LL]
+#else
+        uint8_t UU; // Upper upper [UU, UL, LU, LL]
+        uint8_t UL;
+        uint8_t LU;
+        uint8_t LL;
+#endif
+    } bytes;
+    struct TopThreeOne {
+#ifdef LITTLE_ENDIAN
+        unsigned int : 1;
+        uint32_t value : 31;
+#else
+        uint32_t value : 31;
+        unsigned int : 1;
+#endif
+    } topThreeOne;
     struct Bits {
 #ifdef LITTLE_ENDIAN
         unsigned int b0: 1;
@@ -121,7 +145,9 @@ typedef union Bits32 {
 #endif
     } bits;
 } Bits32;
-    
+#pragma pack(pop)
+
+#pragma pack(push, 1)
 typedef union GPUControl {
     uint32_t WORD;
     struct Words words;
@@ -136,15 +162,16 @@ typedef union GPUControl {
         unsigned int irqMask: 5;
         unsigned int : 6;
 #endif
-    } gpuIRQ;
-    
+} gpuIRQ;
+#pragma pack(pop)
+
 } GPUControl;
     
 #ifdef USE_STRUCTS
 #pragma pack(push, 1)
     typedef union OpCode {
         uint16_t WORD;
-        struct Bytes {
+        struct Bytes2 {
 #ifdef LITTLE_ENDIAN
             uint8_t LBYTE;
             uint8_t UBYTE;

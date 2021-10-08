@@ -296,14 +296,21 @@ uint8_t GPUReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 // GPU word access (read)
-uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+INLINE uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
-		uint16_t data;
-		offset &= 0xFFF;
+        offset &= 0xFFF;
+#ifdef USE_STRUCTS
+        OpCode data;
+        data.Bytes.UBYTE = (uint16_t)gpu_ram_8[offset];
+        data.Bytes.LBYTE = (uint16_t)gpu_ram_8[offset+1];
+        return data.WORD;
+#else
+        uint16_t data;
 		data    = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
 		return data;
+#endif
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
 	{
@@ -325,7 +332,7 @@ uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 // GPU dword access (read)
-uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+INLINE uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if (offset >= 0xF02000 && offset <= 0xF020FF)
 	{
@@ -715,7 +722,7 @@ void GPUExec(int32_t cycles)
       // BIOS hacking
       //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
       //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
-
+#if 0
       cycles -= gpu_opcode_cycles[index];
    }
 
@@ -1571,30 +1578,63 @@ INLINE static void gpu_opcode_abs(void)
 }
 
 
+#ifdef USE_STRUCTS
 INLINE static void gpu_opcode_div(void)	// RN / RM
 {
+    
    unsigned i;
    // Real algorithm, courtesy of SCPCD: NYAN!
-   uint32_t q = RN;
-   uint32_t r = 0;
+    Bits32 q;
+    q.WORD =  RN;
+    
+    Bits32 r;
+    r.WORD = 0;
 
    // If 16.16 division, stuff top 16 bits of RN into remainder and put the
    // bottom 16 of RN in top 16 of quotient
-   if (gpu_div_control & 0x01)
-      q <<= 16, r = RN >> 16;
+    if (gpu_div_control & 0x01) {
+        r.WORD = q.words.UWORD;
+        q.words.UWORD = q.words.LWORD;
+        q.words.LWORD = 0;
+    }
 
    for(i=0; i<32; i++)
    {
-      uint32_t sign = r & 0x80000000;
-      r = (r << 1) | ((q >> 31) & 0x01);
-      r += (sign ? RM : -RM);
-      q = (q << 1) | (((~r) >> 31) & 0x01);
+      uint32_t sign = r.bits.b31;
+      r.WORD = (r.WORD << 1) | q.bits.b31;
+      r.WORD += (sign ? RM : -RM);
+      q.WORD = (q.WORD << 1) | !r.bits.b31; // (((~r) >> 31) & 0x01);
    }
 
-   RN = q;
-   gpu_remain = r;
-
+   RN = q.WORD;
+   gpu_remain = r.WORD;
 }
+#else
+INLINE static void gpu_opcode_div(void)    // RN / RM
+{
+    unsigned i;
+    // Real algorithm, courtesy of SCPCD: NYAN!
+    uint32_t q = RN;
+    uint32_t r = 0;
+    
+    // If 16.16 division, stuff top 16 bits of RN into remainder and put the
+    // bottom 16 of RN in top 16 of quotient
+    if (gpu_div_control & 0x01)
+        q <<= 16, r = RN >> 16;
+    
+    for(i=0; i<32; i++)
+    {
+        uint32_t sign = r & 0x80000000;
+        r = (r << 1) | ((q >> 31) & 0x01);
+        r += (sign ? RM : -RM);
+        q = (q << 1) | (((~r) >> 31) & 0x01);
+    }
+    
+    RN = q;
+    gpu_remain = r;
+    
+}
+#endif
 
 
 INLINE static void gpu_opcode_imultn(void)
