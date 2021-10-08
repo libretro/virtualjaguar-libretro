@@ -264,16 +264,136 @@ static uint32_t dsp_flags;
 static uint32_t dsp_matrix_control;
 static uint32_t dsp_pointer_to_matrix;
 static uint32_t dsp_data_organization;
-uint32_t dsp_control;
+
+typedef union Bits32 {
+    uint32_t WORD;
+    struct bits {
+#ifdef LITTLE_ENDIAN
+        unsigned int b0: 1;
+        unsigned int b1: 1;
+        unsigned int b2: 1;
+        unsigned int b3: 1;
+        unsigned int b4: 1;
+        unsigned int b5: 1;
+        unsigned int b6: 1;
+        unsigned int b7: 1;
+        unsigned int b8: 1;
+        unsigned int b9: 1;
+        unsigned int b10: 1;
+        unsigned int b11: 1;
+        unsigned int b12: 1;
+        unsigned int b13: 1;
+        unsigned int b14: 1;
+        unsigned int b15: 1;
+        unsigned int b16: 1;
+        unsigned int b17: 1;
+        unsigned int b18: 1;
+        unsigned int b19: 1;
+        unsigned int b20: 1;
+        unsigned int b21: 1;
+        unsigned int b22: 1;
+        unsigned int b23: 1;
+        unsigned int b24: 1;
+        unsigned int b25: 1;
+        unsigned int b26: 1;
+        unsigned int b27: 1;
+        unsigned int b28: 1;
+        unsigned int b29: 1;
+        unsigned int b30: 1;
+        unsigned int b31: 1;
+#else
+        // reverse the order of the bit fields.
+        unsigned int b31: 1;
+        unsigned int b30: 1;
+        unsigned int b29: 1;
+        unsigned int b28: 1;
+        unsigned int b27: 1;
+        unsigned int b26: 1;
+        unsigned int b25: 1;
+        unsigned int b24: 1;
+        unsigned int b23: 1;
+        unsigned int b22: 1;
+        unsigned int b21: 1;
+        unsigned int b20: 1;
+        unsigned int b19: 1;
+        unsigned int b18: 1;
+        unsigned int b17: 1;
+        unsigned int b16: 1;
+        unsigned int b15: 1;
+        unsigned int b14: 1;
+        unsigned int b13: 1;
+        unsigned int b12: 1;
+        unsigned int b11: 1;
+        unsigned int b10: 1;
+        unsigned int b9: 1;
+        unsigned int b8: 1;
+        unsigned int b7: 1;
+        unsigned int b6: 1;
+        unsigned int b5: 1;
+        unsigned int b4: 1;
+        unsigned int b3: 1;
+        unsigned int b2: 1;
+        unsigned int b1: 1;
+        unsigned int b0: 1;
+#endif
+    } bits;
+} Bits32;
+
+typedef union OpCode {
+    uint16_t WORD;
+#pragma pack(push, 1)
+    struct Codes {
+#ifdef LITTLE_ENDIAN
+        unsigned int second : 5;
+        unsigned int first : 5;
+        unsigned int index : 6;
+#else
+        unsigned int index : 6;
+        unsigned int first : 5;
+        unsigned int second : 5;
+#endif
+    } Codes;
+#pragma pack(pop)
+} OpCode;
+
+typedef union Offset {
+    uint32_t LONG;
+#pragma pack(push, 1)
+    struct Members {
+#ifdef LITTLE_ENDIAN
+        unsigned int offset : 31;
+        unsigned int bit : 1;
+#else
+        unsigned int bit : 1;
+        unsigned int offset : 31;
+#endif
+    } Members;
+#pragma pack(pop)
+} Offset;
+
+typedef union DSPLong {
+    uint32_t LONG;
+    struct Data {
+#ifdef LITTLE_ENDIAN
+        uint16_t LWORD;
+        uint16_t UWORD;
+#else
+        uint16_t UWORD;
+        uint16_t LWORD;
+#endif
+    } Data;
+} DSPLong;
+
+Bits32 dsp_control;
 static uint32_t dsp_div_control;
 static uint8_t dsp_flag_z, dsp_flag_n, dsp_flag_c;
 static uint32_t * dsp_reg = NULL, * dsp_alternate_reg = NULL;
 uint32_t dsp_reg_bank_0[32], dsp_reg_bank_1[32];
 
-static uint32_t dsp_opcode_first_parameter;
-static uint32_t dsp_opcode_second_parameter;
+static uint8_t dsp_opcode_first_parameter;
+static uint8_t dsp_opcode_second_parameter;
 
-#define DSP_RUNNING			(dsp_control & 0x01)
+#define DSP_RUNNING            (dsp_control.bits.b0)
 
 #define RM					dsp_reg[dsp_opcode_first_parameter]
 #define RN					dsp_reg[dsp_opcode_second_parameter]
@@ -393,8 +513,10 @@ uint8_t DSPReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
-	offset &= 0xFFFFFFFE;
-
+    Offset offsett;
+    offsett.LONG = offset;
+    offset = offsett.Members.offset;
+    
 	if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE+0x1FFF)
 	{
 		offset -= DSP_WORK_RAM_BASE;
@@ -402,11 +524,14 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 	}
 	else if ((offset>=DSP_CONTROL_RAM_BASE)&&(offset<DSP_CONTROL_RAM_BASE+0x20))
 	{
-		uint32_t data = DSPReadLong(offset & 0xFFFFFFFC, who);
-
-		if (offset & 0x03)
-			return data & 0xFFFF;
-      return data >> 16;
+        DSPLong data;
+        data.LONG = DSPReadLong(offset & 0xFFFFFFFC, who);
+        
+        if (offset & 0x03) {
+            return data.Data.LWORD;
+        } else {
+            return data.Data.UWORD;
+        }
 	}
 
 	return JaguarReadWord(offset, who);
@@ -438,7 +563,7 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x10:
             return dsp_pc;
          case 0x14:
-            return dsp_control;
+            return dsp_control.WORD;
          case 0x18:
             return dsp_modulo;
          case 0x1C:
@@ -547,8 +672,8 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
                dsp_flag_n = (dsp_flags >> 2) & 0x01;
                DSPUpdateRegisterBanks();
-               dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
-               dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
+               dsp_control.WORD &= ~((dsp_flags & CINT04FLAGS) >> 3);
+               dsp_control.WORD &= ~((dsp_flags & CINT5FLAG) >> 1);
                break;
             }
          case 0x04:
@@ -592,7 +717,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                }
                // Protect writes to VERSION and the interrupt latches...
                mask        = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
-               dsp_control = (dsp_control & mask) | (data & ~mask);
+               dsp_control.WORD = (dsp_control.WORD & mask) | (data & ~mask);
                //CC only!
                //!!!!!!!!
 
@@ -646,7 +771,7 @@ void DSPHandleIRQs(void)
       return;
 
    // Get the active interrupt bits (latches) & interrupt mask (enables)
-   bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+   bits = ((dsp_control.WORD >> 10) & 0x20) | ((dsp_control.WORD >> 6) & 0x1F),
    mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
    bits &= mask;
@@ -733,7 +858,7 @@ void DSPHandleIRQsNP(void)
 		return;
 
 	// Get the active interrupt bits (latches) & interrupt mask (enables)
-	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+	bits = ((dsp_control.WORD >> 10) & 0x20) | ((dsp_control.WORD >> 6) & 0x1F);
    mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	bits &= mask;
@@ -773,11 +898,11 @@ void DSPSetIRQLine(int irqline, int state)
 {
 //NOTE: This doesn't take INT_LAT5 into account. !!! FIX !!!
 	uint32_t mask = INT_LAT0 << irqline;
-	dsp_control &= ~mask;							// Clear the latch bit
+	dsp_control.WORD &= ~mask;							// Clear the latch bit
 
 	if (state)
 	{
-		dsp_control |= mask;						// Set the latch bit
+		dsp_control.WORD |= mask;						// Set the latch bit
 		DSPHandleIRQsNP();
 	}
 }
@@ -805,7 +930,7 @@ void DSPReset(void)
 	dsp_matrix_control    = 0x00000000;
 	dsp_pointer_to_matrix = 0x00000000;
 	dsp_data_organization = 0xFFFFFFFF;
-	dsp_control			  = 0x00002000;				// Report DSP version 2
+	dsp_control.WORD      = 0x00002000;				// Report DSP version 2
 	dsp_div_control		  = 0x00000000;
 	dsp_in_exec			  = 0;
 
@@ -845,22 +970,23 @@ void DSPExec(int32_t cycles)
 
 	while (cycles > 0 && DSP_RUNNING)
 	{
-      uint16_t opcode;
-      uint32_t index;
-
 		if (IMASKCleared)						// If IMASK was cleared,
 		{
 			DSPHandleIRQsNP();					// See if any other interrupts are pending!
 			IMASKCleared = false;
 		}
 
-		opcode = DSPReadWord(dsp_pc, DSP);
-		index = opcode >> 10;
-		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
-		dsp_opcode_second_parameter = opcode & 0x1F;
-		dsp_pc += 2;
-		dsp_opcode[index]();
-		dsp_opcode_use[index]++;
+        OpCode opcode;
+        opcode.WORD = DSPReadWord(dsp_pc, DSP);
+        uint8_t index = opcode.Codes.index;
+        uint8_t fp = opcode.Codes.first;
+        uint8_t sp = opcode.Codes.second;
+        dsp_opcode_first_parameter = fp;
+        dsp_opcode_second_parameter = sp;
+        dsp_pc += 2;
+        dsp_opcode[index]();
+//     Counter is not necessary and expensive -jm prov
+//        dsp_opcode_use[index]++;
 		cycles -= dsp_opcode_cycles[index];
 	}
 
