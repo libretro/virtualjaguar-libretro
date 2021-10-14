@@ -296,7 +296,7 @@ uint8_t GPUReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 // GPU word access (read)
-uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+INLINE uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
@@ -325,7 +325,7 @@ uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 }
 
 // GPU dword access (read)
-uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
+INLINE uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if (offset >= 0xF02000 && offset <= 0xF020FF)
 	{
