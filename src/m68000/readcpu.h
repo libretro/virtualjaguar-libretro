@@ -88,6 +88,7 @@ struct instr_def {
 extern const struct instr_def defs68k[];
 extern int n_defs68k;
 
+#pragma pack(push, 1)
 extern struct instr {
     long int handler;
     unsigned char dreg;
@@ -110,6 +111,7 @@ extern struct instr {
     unsigned int isjmp:1;
     unsigned int unused2:4;
 } *table68k;
+#pragma pack(pop)
 
 extern void read_table68k(void);
 extern void do_merges(void);
