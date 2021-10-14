@@ -1573,29 +1573,34 @@ INLINE static void gpu_opcode_abs(void)
 
 INLINE static void gpu_opcode_div(void)	// RN / RM
 {
+    
    unsigned i;
    // Real algorithm, courtesy of SCPCD: NYAN!
-   uint32_t q = RN;
-   uint32_t r = 0;
+    Bits32 q;
+    q.WORD =  RN;
+    
+    Bits32 r;
+    r.WORD = 0;
 
    // If 16.16 division, stuff top 16 bits of RN into remainder and put the
    // bottom 16 of RN in top 16 of quotient
-   if (gpu_div_control & 0x01)
-      q <<= 16, r = RN >> 16;
+    if (gpu_div_control & 0x01) {
+        r.WORD = q.words.UWORD;
+        q.words.UWORD = q.words.LWORD;
+        q.words.LWORD = 0;
+    }
 
    for(i=0; i<32; i++)
    {
-      uint32_t sign = r & 0x80000000;
-      r = (r << 1) | ((q >> 31) & 0x01);
-      r += (sign ? RM : -RM);
-      q = (q << 1) | (((~r) >> 31) & 0x01);
+      uint32_t sign = r.bits.b31;
+      r.WORD = (r.WORD << 1) | q.bits.b31;
+      r.WORD += (sign ? RM : -RM);
+      q.WORD = (q.WORD << 1) | !r.bits.b31; // (((~r) >> 31) & 0x01);
    }
 
-   RN = q;
-   gpu_remain = r;
-
+   RN = q.WORD;
+   gpu_remain = r.WORD;
 }
-
 
 INLINE static void gpu_opcode_imultn(void)
 {
