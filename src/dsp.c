@@ -1930,7 +1930,6 @@ INLINE static void DSP_jr(void)
       }//*/
       dsp_pc += 2;	// For DSP_DIS_* accuracy
       DSPOpcode[pipeline[plPtrExec].opcode]();
-      dsp_opcode_use[pipeline[plPtrExec].opcode]++;
       pipeline[plPtrWrite] = pipeline[plPtrExec];
 
       // Step 3: Flush pipeline & set new PC
