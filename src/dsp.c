@@ -129,70 +129,70 @@ bool IMASKCleared = false;
 #define INT_LAT5		0x10000
 
 // Is opcode 62 *really* a NOP? Seems like it...
-static void dsp_opcode_abs(void);
-static void dsp_opcode_add(void);
-static void dsp_opcode_addc(void);
-static void dsp_opcode_addq(void);
-static void dsp_opcode_addqmod(void);
-static void dsp_opcode_addqt(void);
-static void dsp_opcode_and(void);
-static void dsp_opcode_bclr(void);
-static void dsp_opcode_bset(void);
-static void dsp_opcode_btst(void);
-static void dsp_opcode_cmp(void);
-static void dsp_opcode_cmpq(void);
-static void dsp_opcode_div(void);
-static void dsp_opcode_imacn(void);
-static void dsp_opcode_imult(void);
-static void dsp_opcode_imultn(void);
-static void dsp_opcode_jr(void);
-static void dsp_opcode_jump(void);
-static void dsp_opcode_load(void);
-static void dsp_opcode_loadb(void);
-static void dsp_opcode_loadw(void);
-static void dsp_opcode_load_r14_indexed(void);
-static void dsp_opcode_load_r14_ri(void);
-static void dsp_opcode_load_r15_indexed(void);
-static void dsp_opcode_load_r15_ri(void);
-static void dsp_opcode_mirror(void);
-static void dsp_opcode_mmult(void);
-static void dsp_opcode_move(void);
-static void dsp_opcode_movei(void);
-static void dsp_opcode_movefa(void);
-static void dsp_opcode_move_pc(void);
-static void dsp_opcode_moveq(void);
-static void dsp_opcode_moveta(void);
-static void dsp_opcode_mtoi(void);
-static void dsp_opcode_mult(void);
-static void dsp_opcode_neg(void);
-static void dsp_opcode_nop(void);
-static void dsp_opcode_normi(void);
-static void dsp_opcode_not(void);
-static void dsp_opcode_or(void);
-static void dsp_opcode_resmac(void);
-static void dsp_opcode_ror(void);
-static void dsp_opcode_rorq(void);
-static void dsp_opcode_xor(void);
-static void dsp_opcode_sat16s(void);
-static void dsp_opcode_sat32s(void);
-static void dsp_opcode_sh(void);
-static void dsp_opcode_sha(void);
-static void dsp_opcode_sharq(void);
-static void dsp_opcode_shlq(void);
-static void dsp_opcode_shrq(void);
-static void dsp_opcode_store(void);
-static void dsp_opcode_storeb(void);
-static void dsp_opcode_storew(void);
-static void dsp_opcode_store_r14_indexed(void);
-static void dsp_opcode_store_r14_ri(void);
-static void dsp_opcode_store_r15_indexed(void);
-static void dsp_opcode_store_r15_ri(void);
-static void dsp_opcode_sub(void);
-static void dsp_opcode_subc(void);
-static void dsp_opcode_subq(void);
-static void dsp_opcode_subqmod(void);
-static void dsp_opcode_subqt(void);
-static void dsp_opcode_illegal(void);
+INLINE static void dsp_opcode_abs(void);
+INLINE static void dsp_opcode_add(void);
+INLINE static void dsp_opcode_addc(void);
+INLINE static void dsp_opcode_addq(void);
+INLINE static void dsp_opcode_addqmod(void);
+INLINE static void dsp_opcode_addqt(void);
+INLINE static void dsp_opcode_and(void);
+INLINE static void dsp_opcode_bclr(void);
+INLINE static void dsp_opcode_bset(void);
+INLINE static void dsp_opcode_btst(void);
+INLINE static void dsp_opcode_cmp(void);
+INLINE static void dsp_opcode_cmpq(void);
+INLINE static void dsp_opcode_div(void);
+INLINE static void dsp_opcode_imacn(void);
+INLINE static void dsp_opcode_imult(void);
+INLINE static void dsp_opcode_imultn(void);
+INLINE static void dsp_opcode_jr(void);
+INLINE static void dsp_opcode_jump(void);
+INLINE static void dsp_opcode_load(void);
+INLINE static void dsp_opcode_loadb(void);
+INLINE static void dsp_opcode_loadw(void);
+INLINE static void dsp_opcode_load_r14_indexed(void);
+INLINE static void dsp_opcode_load_r14_ri(void);
+INLINE static void dsp_opcode_load_r15_indexed(void);
+INLINE static void dsp_opcode_load_r15_ri(void);
+INLINE static void dsp_opcode_mirror(void);
+INLINE static void dsp_opcode_mmult(void);
+INLINE static void dsp_opcode_move(void);
+INLINE static void dsp_opcode_movei(void);
+INLINE static void dsp_opcode_movefa(void);
+INLINE static void dsp_opcode_move_pc(void);
+INLINE static void dsp_opcode_moveq(void);
+INLINE static void dsp_opcode_moveta(void);
+INLINE static void dsp_opcode_mtoi(void);
+INLINE static void dsp_opcode_mult(void);
+INLINE static void dsp_opcode_neg(void);
+INLINE static void dsp_opcode_nop(void);
+INLINE static void dsp_opcode_normi(void);
+INLINE static void dsp_opcode_not(void);
+INLINE static void dsp_opcode_or(void);
+INLINE static void dsp_opcode_resmac(void);
+INLINE static void dsp_opcode_ror(void);
+INLINE static void dsp_opcode_rorq(void);
+INLINE static void dsp_opcode_xor(void);
+INLINE static void dsp_opcode_sat16s(void);
+INLINE static void dsp_opcode_sat32s(void);
+INLINE static void dsp_opcode_sh(void);
+INLINE static void dsp_opcode_sha(void);
+INLINE static void dsp_opcode_sharq(void);
+INLINE static void dsp_opcode_shlq(void);
+INLINE static void dsp_opcode_shrq(void);
+INLINE static void dsp_opcode_store(void);
+INLINE static void dsp_opcode_storeb(void);
+INLINE static void dsp_opcode_storew(void);
+INLINE static void dsp_opcode_store_r14_indexed(void);
+INLINE static void dsp_opcode_store_r14_ri(void);
+INLINE static void dsp_opcode_store_r15_indexed(void);
+INLINE static void dsp_opcode_store_r15_ri(void);
+INLINE static void dsp_opcode_sub(void);
+INLINE static void dsp_opcode_subc(void);
+INLINE static void dsp_opcode_subq(void);
+INLINE static void dsp_opcode_subqmod(void);
+INLINE static void dsp_opcode_subqt(void);
+INLINE static void dsp_opcode_illegal(void);
 
 //Here's a QnD kludge...
 //This is wrong, wrong, WRONG, but it seems to work for the time being...
@@ -831,7 +831,7 @@ void DSPDone(void)
 
 /* DSP execution core */
 
-void DSPExec(int32_t cycles)
+INLINE void DSPExec(int32_t cycles)
 {
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
@@ -872,7 +872,7 @@ void DSPExec(int32_t cycles)
 // There is a problem here with interrupt handlers the JUMP and JR instructions that
 // can cause trouble because an interrupt can occur *before* the instruction following the
 // jump can execute... !!! FIX !!!
-static void dsp_opcode_jump(void)
+INLINE static void dsp_opcode_jump(void)
 {
 	// normalize flags
 /*	dsp_flag_c=dsp_flag_c?1:0;
@@ -890,7 +890,7 @@ static void dsp_opcode_jump(void)
 }
 
 
-static void dsp_opcode_jr(void)
+INLINE static void dsp_opcode_jr(void)
 {
 	// normalize flags
 /*	dsp_flag_c=dsp_flag_c?1:0;
@@ -909,7 +909,7 @@ static void dsp_opcode_jr(void)
 }
 
 
-static void dsp_opcode_add(void)
+INLINE static void dsp_opcode_add(void)
 {
 	uint32_t res = RN + RM;
 	SET_ZNC_ADD(RN, RM, res);
@@ -917,7 +917,7 @@ static void dsp_opcode_add(void)
 }
 
 
-static void dsp_opcode_addc(void)
+INLINE static void dsp_opcode_addc(void)
 {
 	uint32_t res = RN + RM + dsp_flag_c;
 	uint32_t carry = dsp_flag_c;
@@ -926,7 +926,7 @@ static void dsp_opcode_addc(void)
 }
 
 
-static void dsp_opcode_addq(void)
+INLINE static void dsp_opcode_addq(void)
 {
 	uint32_t r1 = dsp_convert_zero[IMM_1];
 	uint32_t res = RN + r1;
@@ -935,7 +935,7 @@ static void dsp_opcode_addq(void)
 }
 
 
-static void dsp_opcode_sub(void)
+INLINE static void dsp_opcode_sub(void)
 {
 	uint32_t res = RN - RM;
 	SET_ZNC_SUB(RN, RM, res);
@@ -943,7 +943,7 @@ static void dsp_opcode_sub(void)
 }
 
 
-static void dsp_opcode_subc(void)
+INLINE static void dsp_opcode_subc(void)
 {
 	// This is how the DSP ALU does it--Two's complement with inverted carry
 	uint64_t res = (uint64_t)RN + (uint64_t)(RM ^ 0xFFFFFFFF) + (dsp_flag_c ^ 1);
@@ -954,7 +954,7 @@ static void dsp_opcode_subc(void)
 }
 
 
-static void dsp_opcode_subq(void)
+INLINE static void dsp_opcode_subq(void)
 {
 	uint32_t r1 = dsp_convert_zero[IMM_1];
 	uint32_t res = RN - r1;
@@ -963,14 +963,14 @@ static void dsp_opcode_subq(void)
 }
 
 
-static void dsp_opcode_cmp(void)
+INLINE static void dsp_opcode_cmp(void)
 {
 	uint32_t res = RN - RM;
 	SET_ZNC_SUB(RN, RM, res);
 }
 
 
-static void dsp_opcode_cmpq(void)
+INLINE static void dsp_opcode_cmpq(void)
 {
 	static int32_t sqtable[32] =
 		{ 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1 };
@@ -980,41 +980,41 @@ static void dsp_opcode_cmpq(void)
 }
 
 
-static void dsp_opcode_and(void)
+INLINE static void dsp_opcode_and(void)
 {
 	RN = RN & RM;
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_or(void)
+INLINE static void dsp_opcode_or(void)
 {
 	RN = RN | RM;
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_xor(void)
+INLINE static void dsp_opcode_xor(void)
 {
 	RN = RN ^ RM;
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_not(void)
+INLINE static void dsp_opcode_not(void)
 {
 	RN = ~RN;
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_move_pc(void)
+INLINE static void dsp_opcode_move_pc(void)
 {
 	RN = dsp_pc - 2;
 }
 
 
-static void dsp_opcode_store_r14_indexed(void)
+INLINE static void dsp_opcode_store_r14_indexed(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
@@ -1024,7 +1024,7 @@ static void dsp_opcode_store_r14_indexed(void)
 }
 
 
-static void dsp_opcode_store_r15_indexed(void)
+INLINE static void dsp_opcode_store_r15_indexed(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong((dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), RN, DSP);
@@ -1034,7 +1034,7 @@ static void dsp_opcode_store_r15_indexed(void)
 }
 
 
-static void dsp_opcode_load_r14_ri(void)
+INLINE static void dsp_opcode_load_r14_ri(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[14] + RM) & 0xFFFFFFFC, DSP);
@@ -1044,7 +1044,7 @@ static void dsp_opcode_load_r14_ri(void)
 }
 
 
-static void dsp_opcode_load_r15_ri(void)
+INLINE static void dsp_opcode_load_r15_ri(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[15] + RM) & 0xFFFFFFFC, DSP);
@@ -1054,24 +1054,24 @@ static void dsp_opcode_load_r15_ri(void)
 }
 
 
-static void dsp_opcode_store_r14_ri(void)
+INLINE static void dsp_opcode_store_r14_ri(void)
 {
 	DSPWriteLong(dsp_reg[14] + RM, RN, DSP);
 }
 
 
-static void dsp_opcode_store_r15_ri(void)
+INLINE static void dsp_opcode_store_r15_ri(void)
 {
 	DSPWriteLong(dsp_reg[15] + RM, RN, DSP);
 }
 
 
-static void dsp_opcode_nop(void)
+INLINE static void dsp_opcode_nop(void)
 {
 }
 
 
-static void dsp_opcode_storeb(void)
+INLINE static void dsp_opcode_storeb(void)
 {
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		DSPWriteLong(RM, RN & 0xFF, DSP);
@@ -1080,7 +1080,7 @@ static void dsp_opcode_storeb(void)
 }
 
 
-static void dsp_opcode_storew(void)
+INLINE static void dsp_opcode_storew(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
@@ -1096,7 +1096,7 @@ static void dsp_opcode_storew(void)
 }
 
 
-static void dsp_opcode_store(void)
+INLINE static void dsp_opcode_store(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	DSPWriteLong(RM & 0xFFFFFFFC, RN, DSP);
@@ -1106,7 +1106,7 @@ static void dsp_opcode_store(void)
 }
 
 
-static void dsp_opcode_loadb(void)
+INLINE static void dsp_opcode_loadb(void)
 {
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		RN = DSPReadLong(RM, DSP) & 0xFF;
@@ -1115,7 +1115,7 @@ static void dsp_opcode_loadb(void)
 }
 
 
-static void dsp_opcode_loadw(void)
+INLINE static void dsp_opcode_loadw(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
@@ -1131,7 +1131,7 @@ static void dsp_opcode_loadw(void)
 }
 
 
-static void dsp_opcode_load(void)
+INLINE static void dsp_opcode_load(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
@@ -1141,7 +1141,7 @@ static void dsp_opcode_load(void)
 }
 
 
-static void dsp_opcode_load_r14_indexed(void)
+INLINE static void dsp_opcode_load_r14_indexed(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), DSP);
@@ -1151,7 +1151,7 @@ static void dsp_opcode_load_r14_indexed(void)
 }
 
 
-static void dsp_opcode_load_r15_indexed(void)
+INLINE static void dsp_opcode_load_r15_indexed(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	RN = DSPReadLong((dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[IMM_1] << 2), DSP);
@@ -1161,7 +1161,7 @@ static void dsp_opcode_load_r15_indexed(void)
 }
 
 
-static void dsp_opcode_movei(void)
+INLINE static void dsp_opcode_movei(void)
 {
 	// This instruction is followed by 32-bit value in LSW / MSW format...
 	RN = (uint32_t)DSPReadWord(dsp_pc, DSP) | ((uint32_t)DSPReadWord(dsp_pc + 2, DSP) << 16);
@@ -1169,51 +1169,51 @@ static void dsp_opcode_movei(void)
 }
 
 
-static void dsp_opcode_moveta(void)
+INLINE static void dsp_opcode_moveta(void)
 {
 	ALTERNATE_RN = RM;
 }
 
 
-static void dsp_opcode_movefa(void)
+INLINE static void dsp_opcode_movefa(void)
 {
 	RN = ALTERNATE_RM;
 }
 
 
-static void dsp_opcode_move(void)
+INLINE static void dsp_opcode_move(void)
 {
 	RN = RM;
 }
 
 
-static void dsp_opcode_moveq(void)
+INLINE static void dsp_opcode_moveq(void)
 {
 	RN = IMM_1;
 }
 
 
-static void dsp_opcode_resmac(void)
+INLINE static void dsp_opcode_resmac(void)
 {
 	RN = (uint32_t)dsp_acc;
 }
 
 
-static void dsp_opcode_imult(void)
+INLINE static void dsp_opcode_imult(void)
 {
 	RN = (int16_t)RN * (int16_t)RM;
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_mult(void)
+INLINE static void dsp_opcode_mult(void)
 {
 	RN = (uint16_t)RM * (uint16_t)RN;
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_bclr(void)
+INLINE static void dsp_opcode_bclr(void)
 {
 	uint32_t res = RN & ~(1 << IMM_1);
 	RN = res;
@@ -1221,13 +1221,13 @@ static void dsp_opcode_bclr(void)
 }
 
 
-static void dsp_opcode_btst(void)
+INLINE static void dsp_opcode_btst(void)
 {
 	dsp_flag_z = (~RN >> IMM_1) & 1;
 }
 
 
-static void dsp_opcode_bset(void)
+INLINE static void dsp_opcode_bset(void)
 {
 	uint32_t res = RN | (1 << IMM_1);
 	RN = res;
@@ -1235,19 +1235,19 @@ static void dsp_opcode_bset(void)
 }
 
 
-static void dsp_opcode_subqt(void)
+INLINE static void dsp_opcode_subqt(void)
 {
 	RN -= dsp_convert_zero[IMM_1];
 }
 
 
-static void dsp_opcode_addqt(void)
+INLINE static void dsp_opcode_addqt(void)
 {
 	RN += dsp_convert_zero[IMM_1];
 }
 
 
-static void dsp_opcode_imacn(void)
+INLINE static void dsp_opcode_imacn(void)
 {
 	int32_t res = (int16_t)RM * (int16_t)RN;
 	dsp_acc += (int64_t)res;
@@ -1255,14 +1255,14 @@ static void dsp_opcode_imacn(void)
 }
 
 
-static void dsp_opcode_mtoi(void)
+INLINE static void dsp_opcode_mtoi(void)
 {
 	RN = (((int32_t)RM >> 8) & 0xFF800000) | (RM & 0x007FFFFF);
 	SET_ZN(RN);
 }
 
 
-static void dsp_opcode_normi(void)
+INLINE static void dsp_opcode_normi(void)
 {
 	uint32_t _Rm = RM;
 	uint32_t res = 0;
@@ -1285,7 +1285,7 @@ static void dsp_opcode_normi(void)
 }
 
 
-static void dsp_opcode_mmult(void)
+INLINE static void dsp_opcode_mmult(void)
 {
    uint32_t res;
    unsigned i;
@@ -1332,7 +1332,7 @@ static void dsp_opcode_mmult(void)
 }
 
 
-static void dsp_opcode_abs(void)
+INLINE static void dsp_opcode_abs(void)
 {
 	uint32_t _Rn = RN;
 
@@ -1350,7 +1350,7 @@ static void dsp_opcode_abs(void)
 }
 
 
-static void dsp_opcode_div(void)
+INLINE static void dsp_opcode_div(void)
 {
    unsigned i;
 	// Real algorithm, courtesy of SCPCD: NYAN!
@@ -1375,7 +1375,7 @@ static void dsp_opcode_div(void)
 }
 
 
-static void dsp_opcode_imultn(void)
+INLINE static void dsp_opcode_imultn(void)
 {
 	// This is OK, since this multiply won't overflow 32 bits...
 	int32_t res = (int32_t)((int16_t)RN * (int16_t)RM);
@@ -1384,7 +1384,7 @@ static void dsp_opcode_imultn(void)
 }
 
 
-static void dsp_opcode_neg(void)
+INLINE static void dsp_opcode_neg(void)
 {
 	uint32_t res = -RN;
 	SET_ZNC_SUB(0, RN, res);
@@ -1392,7 +1392,7 @@ static void dsp_opcode_neg(void)
 }
 
 
-static void dsp_opcode_shlq(void)
+INLINE static void dsp_opcode_shlq(void)
 {
 	// NB: This instruction is the *only* one that does (32 - immediate data).
 	int32_t r1 = 32 - IMM_1;
@@ -1402,7 +1402,7 @@ static void dsp_opcode_shlq(void)
 }
 
 
-static void dsp_opcode_shrq(void)
+INLINE static void dsp_opcode_shrq(void)
 {
 	int32_t r1 = dsp_convert_zero[IMM_1];
 	uint32_t res = RN >> r1;
@@ -1411,7 +1411,7 @@ static void dsp_opcode_shrq(void)
 }
 
 
-static void dsp_opcode_ror(void)
+INLINE static void dsp_opcode_ror(void)
 {
 	uint32_t r1 = RM & 0x1F;
 	uint32_t res = (RN >> r1) | (RN << (32 - r1));
@@ -1420,7 +1420,7 @@ static void dsp_opcode_ror(void)
 }
 
 
-static void dsp_opcode_rorq(void)
+INLINE static void dsp_opcode_rorq(void)
 {
 	uint32_t r1 = dsp_convert_zero[IMM_1 & 0x1F];
 	uint32_t r2 = RN;
@@ -1430,7 +1430,7 @@ static void dsp_opcode_rorq(void)
 }
 
 
-static void dsp_opcode_sha(void)
+INLINE static void dsp_opcode_sha(void)
 {
 	int32_t sRm=(int32_t)RM;
 	uint32_t _Rn=RN;
@@ -1462,7 +1462,7 @@ static void dsp_opcode_sha(void)
 }
 
 
-static void dsp_opcode_sharq(void)
+INLINE static void dsp_opcode_sharq(void)
 {
 	uint32_t res = (int32_t)RN >> dsp_convert_zero[IMM_1];
 	SET_ZN(res); dsp_flag_c = RN & 0x01;
@@ -1470,7 +1470,7 @@ static void dsp_opcode_sharq(void)
 }
 
 
-static void dsp_opcode_sh(void)
+INLINE static void dsp_opcode_sh(void)
 {
 	int32_t sRm=(int32_t)RM;
 	uint32_t _Rn=RN;
@@ -1552,70 +1552,70 @@ void dsp_opcode_illegal(void)
 
 /* New pipelined DSP core */
 
-static void DSP_abs(void);
-static void DSP_add(void);
-static void DSP_addc(void);
-static void DSP_addq(void);
-static void DSP_addqmod(void);
-static void DSP_addqt(void);
-static void DSP_and(void);
-static void DSP_bclr(void);
-static void DSP_bset(void);
-static void DSP_btst(void);
-static void DSP_cmp(void);
-static void DSP_cmpq(void);
-static void DSP_div(void);
-static void DSP_imacn(void);
-static void DSP_imult(void);
-static void DSP_imultn(void);
-static void DSP_illegal(void);
-static void DSP_jr(void);
-static void DSP_jump(void);
-static void DSP_load(void);
-static void DSP_loadb(void);
-static void DSP_loadw(void);
-static void DSP_load_r14_i(void);
-static void DSP_load_r14_r(void);
-static void DSP_load_r15_i(void);
-static void DSP_load_r15_r(void);
-static void DSP_mirror(void);
-static void DSP_mmult(void);
-static void DSP_move(void);
-static void DSP_movefa(void);
-static void DSP_movei(void);
-static void DSP_movepc(void);
-static void DSP_moveq(void);
-static void DSP_moveta(void);
-static void DSP_mtoi(void);
-static void DSP_mult(void);
-static void DSP_neg(void);
-static void DSP_nop(void);
-static void DSP_normi(void);
-static void DSP_not(void);
-static void DSP_or(void);
-static void DSP_resmac(void);
-static void DSP_ror(void);
-static void DSP_rorq(void);
-static void DSP_sat16s(void);
-static void DSP_sat32s(void);
-static void DSP_sh(void);
-static void DSP_sha(void);
-static void DSP_sharq(void);
-static void DSP_shlq(void);
-static void DSP_shrq(void);
-static void DSP_store(void);
-static void DSP_storeb(void);
-static void DSP_storew(void);
-static void DSP_store_r14_i(void);
-static void DSP_store_r14_r(void);
-static void DSP_store_r15_i(void);
-static void DSP_store_r15_r(void);
-static void DSP_sub(void);
-static void DSP_subc(void);
-static void DSP_subq(void);
-static void DSP_subqmod(void);
-static void DSP_subqt(void);
-static void DSP_xor(void);
+INLINE static void DSP_abs(void);
+INLINE static void DSP_add(void);
+INLINE static void DSP_addc(void);
+INLINE static void DSP_addq(void);
+INLINE static void DSP_addqmod(void);
+INLINE static void DSP_addqt(void);
+INLINE static void DSP_and(void);
+INLINE static void DSP_bclr(void);
+INLINE static void DSP_bset(void);
+INLINE static void DSP_btst(void);
+INLINE static void DSP_cmp(void);
+INLINE static void DSP_cmpq(void);
+INLINE static void DSP_div(void);
+INLINE static void DSP_imacn(void);
+INLINE static void DSP_imult(void);
+INLINE static void DSP_imultn(void);
+INLINE static void DSP_illegal(void);
+INLINE static void DSP_jr(void);
+INLINE static void DSP_jump(void);
+INLINE static void DSP_load(void);
+INLINE static void DSP_loadb(void);
+INLINE static void DSP_loadw(void);
+INLINE static void DSP_load_r14_i(void);
+INLINE static void DSP_load_r14_r(void);
+INLINE static void DSP_load_r15_i(void);
+INLINE static void DSP_load_r15_r(void);
+INLINE static void DSP_mirror(void);
+INLINE static void DSP_mmult(void);
+INLINE static void DSP_move(void);
+INLINE static void DSP_movefa(void);
+INLINE static void DSP_movei(void);
+INLINE static void DSP_movepc(void);
+INLINE static void DSP_moveq(void);
+INLINE static void DSP_moveta(void);
+INLINE static void DSP_mtoi(void);
+INLINE static void DSP_mult(void);
+INLINE static void DSP_neg(void);
+INLINE static void DSP_nop(void);
+INLINE static void DSP_normi(void);
+INLINE static void DSP_not(void);
+INLINE static void DSP_or(void);
+INLINE static void DSP_resmac(void);
+INLINE static void DSP_ror(void);
+INLINE static void DSP_rorq(void);
+INLINE static void DSP_sat16s(void);
+INLINE static void DSP_sat32s(void);
+INLINE static void DSP_sh(void);
+INLINE static void DSP_sha(void);
+INLINE static void DSP_sharq(void);
+INLINE static void DSP_shlq(void);
+INLINE static void DSP_shrq(void);
+INLINE static void DSP_store(void);
+INLINE static void DSP_storeb(void);
+INLINE static void DSP_storew(void);
+INLINE static void DSP_store_r14_i(void);
+INLINE static void DSP_store_r14_r(void);
+INLINE static void DSP_store_r15_i(void);
+INLINE static void DSP_store_r15_r(void);
+INLINE static void DSP_sub(void);
+INLINE static void DSP_subc(void);
+INLINE static void DSP_subq(void);
+INLINE static void DSP_subqmod(void);
+INLINE static void DSP_subqt(void);
+INLINE static void DSP_xor(void);
 
 void (* DSPOpcode[64])() =
 {
@@ -1707,7 +1707,7 @@ static uint32_t prevR1;
 #define DSP_PPC			dsp_pc - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2)) - (pipeline[plPtrExec].opcode == 38 ? 6 : (pipeline[plPtrExec].opcode == PIPELINE_STALL ? 0 : 2))
 #define WRITEBACK_ADDR	pipeline[plPtrExec].writebackRegister = 0xFE
 
-static void DSP_abs(void)
+INLINE static void DSP_abs(void)
 {
 	uint32_t _Rn = PRN;
 
@@ -1721,14 +1721,14 @@ static void DSP_abs(void)
 	}
 }
 
-static void DSP_add(void)
+INLINE static void DSP_add(void)
 {
 	uint32_t res = PRN + PRM;
 	SET_ZNC_ADD(PRN, PRM, res);
 	PRES = res;
 }
 
-static void DSP_addc(void)
+INLINE static void DSP_addc(void)
 {
 	uint32_t res = PRN + PRM + dsp_flag_c;
 	uint32_t carry = dsp_flag_c;
@@ -1736,7 +1736,7 @@ static void DSP_addc(void)
 	PRES = res;
 }
 
-static void DSP_addq(void)
+INLINE static void DSP_addq(void)
 {
 	uint32_t r1 = dsp_convert_zero[PIMM1];
 	uint32_t res = PRN + r1;
@@ -1744,7 +1744,7 @@ static void DSP_addq(void)
 	PRES = res;
 }
 
-static void DSP_addqmod(void)
+INLINE static void DSP_addqmod(void)
 {
 	uint32_t r1 = dsp_convert_zero[PIMM1];
 	uint32_t r2 = PRN;
@@ -1754,43 +1754,43 @@ static void DSP_addqmod(void)
 	SET_ZNC_ADD(r2, r1, res);
 }
 
-static void DSP_addqt(void)
+INLINE static void DSP_addqt(void)
 {
 	PRES = PRN + dsp_convert_zero[PIMM1];
 }
 
-static void DSP_and(void)
+INLINE static void DSP_and(void)
 {
 	PRES = PRN & PRM;
 	SET_ZN(PRES);
 }
 
-static void DSP_bclr(void)
+INLINE static void DSP_bclr(void)
 {
 	PRES = PRN & ~(1 << PIMM1);
 	SET_ZN(PRES);
 }
 
-static void DSP_bset(void)
+INLINE static void DSP_bset(void)
 {
 	PRES = PRN | (1 << PIMM1);
 	SET_ZN(PRES);
 }
 
-static void DSP_btst(void)
+INLINE static void DSP_btst(void)
 {
 	dsp_flag_z = (~PRN >> PIMM1) & 1;
 	NO_WRITEBACK;
 }
 
-static void DSP_cmp(void)
+INLINE static void DSP_cmp(void)
 {
 	uint32_t res = PRN - PRM;
 	SET_ZNC_SUB(PRN, PRM, res);
 	NO_WRITEBACK;
 }
 
-static void DSP_cmpq(void)
+INLINE static void DSP_cmpq(void)
 {
 	static int32_t sqtable[32] =
 		{ 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1 };
@@ -1800,7 +1800,7 @@ static void DSP_cmpq(void)
 	NO_WRITEBACK;
 }
 
-static void DSP_div(void)
+INLINE static void DSP_div(void)
 {
 	uint32_t _Rm = PRM, _Rn = PRN;
 
@@ -1825,7 +1825,7 @@ static void DSP_div(void)
 		PRES = 0xFFFFFFFF;
 }
 
-static void DSP_imacn(void)
+INLINE static void DSP_imacn(void)
 {
 	int32_t res = (int16_t)PRM * (int16_t)PRN;
 	dsp_acc += (int64_t)res;
@@ -1833,13 +1833,13 @@ static void DSP_imacn(void)
 	NO_WRITEBACK;
 }
 
-static void DSP_imult(void)
+INLINE static void DSP_imult(void)
 {
 	PRES = (int16_t)PRN * (int16_t)PRM;
 	SET_ZN(PRES);
 }
 
-static void DSP_imultn(void)
+INLINE static void DSP_imultn(void)
 {
 	// This is OK, since this multiply won't overflow 32 bits...
 	int32_t res = (int32_t)((int16_t)PRN * (int16_t)PRM);
@@ -1848,7 +1848,7 @@ static void DSP_imultn(void)
 	NO_WRITEBACK;
 }
 
-static void DSP_illegal(void)
+INLINE static void DSP_illegal(void)
 {
 	NO_WRITEBACK;
 }
@@ -1858,7 +1858,7 @@ static void DSP_illegal(void)
 // jump can execute... !!! FIX !!!
 // This can probably be solved by judicious coding in the pipeline execution core...
 // And should be fixed now...
-static void DSP_jr(void)
+INLINE static void DSP_jr(void)
 {
    // KLUDGE: Used by BRANCH_CONDITION macro
    uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
@@ -1936,7 +1936,7 @@ static void DSP_jr(void)
       NO_WRITEBACK;
 }
 
-static void DSP_jump(void)
+INLINE static void DSP_jump(void)
 {
 	// KLUDGE: Used by BRANCH_CONDITION macro
 	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
@@ -2012,7 +2012,7 @@ static void DSP_jump(void)
 		NO_WRITEBACK;
 }
 
-static void DSP_load(void)
+INLINE static void DSP_load(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
@@ -2021,7 +2021,7 @@ static void DSP_load(void)
 #endif
 }
 
-static void DSP_loadb(void)
+INLINE static void DSP_loadb(void)
 {
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
 		PRES = DSPReadLong(PRM, DSP) & 0xFF;
@@ -2029,7 +2029,7 @@ static void DSP_loadb(void)
 		PRES = JaguarReadByte(PRM, DSP);
 }
 
-static void DSP_loadw(void)
+INLINE static void DSP_loadw(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
@@ -2044,7 +2044,7 @@ static void DSP_loadw(void)
 #endif
 }
 
-static void DSP_load_r14_i(void)
+INLINE static void DSP_load_r14_i(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	PRES = DSPReadLong((dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[PIMM1] << 2), DSP);
@@ -2053,7 +2053,7 @@ static void DSP_load_r14_i(void)
 #endif
 }
 
-static void DSP_load_r14_r(void)
+INLINE static void DSP_load_r14_r(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	PRES = DSPReadLong((dsp_reg[14] + PRM) & 0xFFFFFFFC, DSP);
@@ -2062,7 +2062,7 @@ static void DSP_load_r14_r(void)
 #endif
 }
 
-static void DSP_load_r15_i(void)
+INLINE static void DSP_load_r15_i(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	PRES = DSPReadLong((dsp_reg[15] &0xFFFFFFFC) + (dsp_convert_zero[PIMM1] << 2), DSP);
@@ -2071,7 +2071,7 @@ static void DSP_load_r15_i(void)
 #endif
 }
 
-static void DSP_load_r15_r(void)
+INLINE static void DSP_load_r15_r(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT
 	PRES = DSPReadLong((dsp_reg[15] + PRM) & 0xFFFFFFFC, DSP);
@@ -2080,14 +2080,14 @@ static void DSP_load_r15_r(void)
 #endif
 }
 
-static void DSP_mirror(void)
+INLINE static void DSP_mirror(void)
 {
 	uint32_t r1 = PRN;
 	PRES = (mirror_table[r1 & 0xFFFF] << 16) | mirror_table[r1 >> 16];
 	SET_ZN(PRES);
 }
 
-static void DSP_mmult(void)
+INLINE static void DSP_mmult(void)
 {
 	uint32_t res;
    unsigned i;
@@ -2134,64 +2134,64 @@ static void DSP_mmult(void)
 	SET_ZN(PRES);
 }
 
-static void DSP_move(void)
+INLINE static void DSP_move(void)
 {
 	PRES = PRM;
 }
 
-static void DSP_movefa(void)
+INLINE static void DSP_movefa(void)
 {
 	PRES = dsp_alternate_reg[PIMM1];
 }
 
-static void DSP_movei(void)
+INLINE static void DSP_movei(void)
 {
 //	// This instruction is followed by 32-bit value in LSW / MSW format...
 }
 
-static void DSP_movepc(void)
+INLINE static void DSP_movepc(void)
 {
 //Need to fix this to take into account pipelining effects... !!! FIX !!! [DONE]
 //Account for pipeline effects...
 	PRES = dsp_pc - 2 - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2));
 }
 
-static void DSP_moveq(void)
+INLINE static void DSP_moveq(void)
 {
 	PRES = PIMM1;
 }
 
-static void DSP_moveta(void)
+INLINE static void DSP_moveta(void)
 {
 	dsp_alternate_reg[PIMM2] = PRM;
 	NO_WRITEBACK;
 }
 
-static void DSP_mtoi(void)
+INLINE static void DSP_mtoi(void)
 {
 	PRES = (((int32_t)PRM >> 8) & 0xFF800000) | (PRM & 0x007FFFFF);
 	SET_ZN(PRES);
 }
 
-static void DSP_mult(void)
+INLINE static void DSP_mult(void)
 {
 	PRES = (uint16_t)PRM * (uint16_t)PRN;
 	SET_ZN(PRES);
 }
 
-static void DSP_neg(void)
+INLINE static void DSP_neg(void)
 {
 	uint32_t res = -PRN;
 	SET_ZNC_SUB(0, PRN, res);
 	PRES = res;
 }
 
-static void DSP_nop(void)
+INLINE static void DSP_nop(void)
 {
 	NO_WRITEBACK;
 }
 
-static void DSP_normi(void)
+INLINE static void DSP_normi(void)
 {
 	uint32_t _Rm = PRM;
 	uint32_t res = 0;
@@ -2213,24 +2213,24 @@ static void DSP_normi(void)
 	SET_ZN(PRES);
 }
 
-static void DSP_not(void)
+INLINE static void DSP_not(void)
 {
 	PRES = ~PRN;
 	SET_ZN(PRES);
 }
 
-static void DSP_or(void)
+INLINE static void DSP_or(void)
 {
 	PRES = PRN | PRM;
 	SET_ZN(PRES);
 }
 
-static void DSP_resmac(void)
+INLINE static void DSP_resmac(void)
 {
 	PRES = (uint32_t)dsp_acc;
 }
 
-static void DSP_ror(void)
+INLINE static void DSP_ror(void)
 {
 	uint32_t r1 = PRM & 0x1F;
 	uint32_t res = (PRN >> r1) | (PRN << (32 - r1));
@@ -2238,7 +2238,7 @@ static void DSP_ror(void)
 	PRES = res;
 }
 
-static void DSP_rorq(void)
+INLINE static void DSP_rorq(void)
 {
 	uint32_t r1 = dsp_convert_zero[PIMM1 & 0x1F];
 	uint32_t r2 = PRN;
@@ -2247,7 +2247,7 @@ static void DSP_rorq(void)
 	SET_ZN(res); dsp_flag_c = (r2 >> 31) & 0x01;
 }
 
-static void DSP_sat16s(void)
+INLINE static void DSP_sat16s(void)
 {
 	int32_t r2 = PRN;
 	uint32_t res = (r2 < -32768) ? -32768 : (r2 > 32767) ? 32767 : r2;
@@ -2255,7 +2255,7 @@ static void DSP_sat16s(void)
 	SET_ZN(res);
 }
 
-static void DSP_sat32s(void)
+INLINE static void DSP_sat32s(void)
 {
 	int32_t r2 = (uint32_t)PRN;
 	int32_t temp = dsp_acc >> 32;
@@ -2264,7 +2264,7 @@ static void DSP_sat32s(void)
 	SET_ZN(res);
 }
 
-static void DSP_sh(void)
+INLINE static void DSP_sh(void)
 {
 	int32_t sRm = (int32_t)PRM;
 	uint32_t _Rn = PRN;
@@ -2304,7 +2304,7 @@ static void DSP_sh(void)
 	SET_ZN(PRES);
 }
 
-static void DSP_sha(void)
+INLINE static void DSP_sha(void)
 {
 	int32_t sRm = (int32_t)PRM;
 	uint32_t _Rn = PRN;
@@ -2344,14 +2344,14 @@ static void DSP_sha(void)
 	SET_ZN(PRES);
 }
 
-static void DSP_sharq(void)
+INLINE static void DSP_sharq(void)
 {
 	uint32_t res = (int32_t)PRN >> dsp_convert_zero[PIMM1];
 	SET_ZN(res); dsp_flag_c = PRN & 0x01;
 	PRES = res;
 }
 
-static void DSP_shlq(void)
+INLINE static void DSP_shlq(void)
 {
 	int32_t r1 = 32 - PIMM1;
 	uint32_t res = PRN << r1;
@@ -2359,7 +2359,7 @@ static void DSP_shlq(void)
 	PRES = res;
 }
 
-static void DSP_shrq(void)
+INLINE static void DSP_shrq(void)
 {
 	int32_t r1 = dsp_convert_zero[PIMM1];
 	uint32_t res = PRN >> r1;
@@ -2367,7 +2367,7 @@ static void DSP_shrq(void)
 	PRES = res;
 }
 
-static void DSP_store(void)
+INLINE static void DSP_store(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	pipeline[plPtrExec].address = PRM & 0xFFFFFFFC;
@@ -2379,7 +2379,7 @@ static void DSP_store(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_storeb(void)
+INLINE static void DSP_storeb(void)
 {
 	pipeline[plPtrExec].address = PRM;
 
@@ -2397,7 +2397,7 @@ static void DSP_storeb(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_storew(void)
+INLINE static void DSP_storew(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	pipeline[plPtrExec].address = PRM & 0xFFFFFFFE;
@@ -2418,7 +2418,7 @@ static void DSP_storew(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_store_r14_i(void)
+INLINE static void DSP_store_r14_i(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	pipeline[plPtrExec].address = (dsp_reg[14] & 0xFFFFFFFC) + (dsp_convert_zero[PIMM1] << 2);
@@ -2430,7 +2430,7 @@ static void DSP_store_r14_i(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_store_r14_r(void)
+INLINE static void DSP_store_r14_r(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	pipeline[plPtrExec].address = (dsp_reg[14] + PRM) & 0xFFFFFFFC;
@@ -2442,7 +2442,7 @@ static void DSP_store_r14_r(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_store_r15_i(void)
+INLINE static void DSP_store_r15_i(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	pipeline[plPtrExec].address = (dsp_reg[15] & 0xFFFFFFFC) + (dsp_convert_zero[PIMM1] << 2);
@@ -2454,7 +2454,7 @@ static void DSP_store_r15_i(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_store_r15_r(void)
+INLINE static void DSP_store_r15_r(void)
 {
 #ifdef DSP_CORRECT_ALIGNMENT_STORE
 	pipeline[plPtrExec].address = (dsp_reg[15] + PRM) & 0xFFFFFFFC;
@@ -2466,14 +2466,14 @@ static void DSP_store_r15_r(void)
 	WRITEBACK_ADDR;
 }
 
-static void DSP_sub(void)
+INLINE static void DSP_sub(void)
 {
 	uint32_t res = PRN - PRM;
 	SET_ZNC_SUB(PRN, PRM, res);
 	PRES = res;
 }
 
-static void DSP_subc(void)
+INLINE static void DSP_subc(void)
 {
 	uint32_t res = PRN - PRM - dsp_flag_c;
 	uint32_t borrow = dsp_flag_c;
@@ -2481,7 +2481,7 @@ static void DSP_subc(void)
 	PRES = res;
 }
 
-static void DSP_subq(void)
+INLINE static void DSP_subq(void)
 {
 	uint32_t r1 = dsp_convert_zero[PIMM1];
 	uint32_t res = PRN - r1;
@@ -2489,7 +2489,7 @@ static void DSP_subq(void)
 	PRES = res;
 }
 
-static void DSP_subqmod(void)
+INLINE static void DSP_subqmod(void)
 {
 	uint32_t r1 = dsp_convert_zero[PIMM1];
 	uint32_t r2 = PRN;
@@ -2499,12 +2499,12 @@ static void DSP_subqmod(void)
 	SET_ZNC_SUB(r2, r1, res);
 }
 
-static void DSP_subqt(void)
+INLINE static void DSP_subqt(void)
 {
 	PRES = PRN - dsp_convert_zero[PIMM1];
 }
 
-static void DSP_xor(void)
+INLINE static void DSP_xor(void)
 {
 	PRES = PRN ^ PRM;
 	SET_ZN(PRES);
