@@ -300,10 +300,11 @@ INLINE uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 {
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
-		uint16_t data;
-		offset &= 0xFFF;
-		data    = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
-		return data;
+        offset &= 0xFFF;
+        OpCode data;
+        data.Bytes.UBYTE = (uint16_t)gpu_ram_8[offset];
+        data.Bytes.LBYTE = (uint16_t)gpu_ram_8[offset+1];
+        return data.WORD;
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
 	{
