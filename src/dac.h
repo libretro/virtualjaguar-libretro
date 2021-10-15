@@ -15,7 +15,6 @@ extern "C" {
 
 void DACInit(void);
 void DACReset(void);
-void DACPauseAudioThread(bool state);
 void DACDone(void);
 
 // DAC memory access
@@ -25,7 +24,7 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 uint8_t DACReadByte(uint32_t offset, uint32_t who);
 uint16_t DACReadWord(uint32_t offset, uint32_t who);
 
-void SDLSoundCallback(void * userdata, uint16_t * buffer, int length);
+void SoundCallback(void * userdata, uint16_t * buffer, int length);
 extern uint16_t *sampleBuffer;
 
 // DAC defines

@@ -27,9 +27,7 @@
 #include <stdlib.h>
 #include <string.h>								// For memset
 #include "dsp.h"
-#include "jagdasm.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
 
@@ -70,9 +68,6 @@
 // Private function prototypes
 
 void GPUUpdateRegisterBanks(void);
-void GPUDumpDisassembly(void);
-void GPUDumpRegisters(void);
-void GPUDumpMemory(void);
 
 INLINE static void gpu_opcode_add(void);
 INLINE static void gpu_opcode_addc(void);
@@ -200,12 +195,12 @@ static uint32_t gpu_opcode_second_parameter;
 
 #define GPU_RUNNING     (gpu_control.bits.b0)
 
-#define RM				gpu_reg[gpu_opcode_first_parameter]
-#define RN				gpu_reg[gpu_opcode_second_parameter]
+#define RM		gpu_reg[gpu_opcode_first_parameter]
+#define RN		gpu_reg[gpu_opcode_second_parameter]
 #define ALTERNATE_RM	gpu_alternate_reg[gpu_opcode_first_parameter]
 #define ALTERNATE_RN	gpu_alternate_reg[gpu_opcode_second_parameter]
-#define IMM_1			gpu_opcode_first_parameter
-#define IMM_2			gpu_opcode_second_parameter
+#define IMM_1		gpu_opcode_first_parameter
+#define IMM_2		gpu_opcode_second_parameter
 
 #define SET_FLAG_Z(r)	(gpu_flag_z = ((r) == 0));
 #define SET_FLAG_N(r)	(gpu_flag_n = (((uint32_t)(r) >> 31) & 0x01));
@@ -214,14 +209,14 @@ static uint32_t gpu_opcode_second_parameter;
 #define RESET_FLAG_N()	gpu_flag_n = 0;
 #define RESET_FLAG_C()	gpu_flag_c = 0;
 
-#define CLR_Z				(gpu_flag_z = 0)
-#define CLR_ZN				(gpu_flag_z = gpu_flag_n = 0)
-#define CLR_ZNC				(gpu_flag_z = gpu_flag_n = gpu_flag_c = 0)
-#define SET_Z(r)			(gpu_flag_z = ((r) == 0))
-#define SET_N(r)			(gpu_flag_n = (((uint32_t)(r) >> 31) & 0x01))
+#define CLR_Z			(gpu_flag_z = 0)
+#define CLR_ZN			(gpu_flag_z = gpu_flag_n = 0)
+#define CLR_ZNC			(gpu_flag_z = gpu_flag_n = gpu_flag_c = 0)
+#define SET_Z(r)		(gpu_flag_z = ((r) == 0))
+#define SET_N(r)		(gpu_flag_n = (((uint32_t)(r) >> 31) & 0x01))
 #define SET_C_ADD(a,b)		(gpu_flag_c = ((uint32_t)(b) > (uint32_t)(~(a))))
 #define SET_C_SUB(a,b)		(gpu_flag_c = ((uint32_t)(b) > (uint32_t)(a)))
-#define SET_ZN(r)			SET_N(r); SET_Z(r)
+#define SET_ZN(r)		SET_N(r); SET_Z(r)
 #define SET_ZNC_ADD(a,b,r)	SET_N(r); SET_Z(r); SET_C_ADD(a,b)
 #define SET_ZNC_SUB(a,b,r)	SET_N(r); SET_Z(r); SET_C_SUB(a,b)
 
@@ -342,21 +337,20 @@ INLINE uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 #endif
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
-   {
-      uint32_t data;
+	{
+		uint32_t data;
 
-      // This looks and smells wrong...
-      // But it *might* be OK...
-      if (offset & 0x01)			// Catch cases 1 & 3... (unaligned read)
-         return (GPUReadByte(offset, who) << 8) | GPUReadByte(offset+1, who);
+		// This looks and smells wrong...
+		// But it *might* be OK...
+		if (offset & 0x01)			// Catch cases 1 & 3... (unaligned read)
+			return (GPUReadByte(offset, who) << 8) | GPUReadByte(offset+1, who);
 
-      data = GPUReadLong(offset & 0xFFFFFFFC, who);
+		data = GPUReadLong(offset & 0xFFFFFFFC, who);
 
-      if (offset & 0x02)			// Cases 0 & 2...
-         return data & 0xFFFF;
-      else
-         return data >> 16;
-   }
+		if (offset & 0x02)			// Cases 0 & 2...
+			return data & 0xFFFF;
+		return data >> 16;
+	}
 
 	return JaguarReadWord(offset, who);
 }
@@ -453,9 +447,7 @@ void GPUWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset <= GPU_CONTROL_RAM_BASE + 0x1E))
    {
       if (offset & 0x01)		// This is supposed to weed out unaligned writes, but does nothing...
-      {
          return;
-      }
       //Dual locations in this range: $1C Divide unit remainder/Divide unit control (R/W)
       //This just literally sucks.
       if ((offset & 0x1C) == 0x1C)
@@ -534,7 +526,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x14:
             {
-               extern int effect_start5;
                data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
 
                // check for GPU -> CPU interrupt
@@ -715,91 +706,9 @@ uint32_t GPUReadPC(void)
 
 void GPUResetStats(void)
 {
-   unsigned i;
-#ifdef DEBUG
-   for(i=0; i<64; i++)
-      gpu_opcode_use[i] = 0;
-#endif
-   WriteLog("--> GPU stats were reset!\n");
-}
-
-void GPUDumpDisassembly(void)
-{
-   char buffer[512];
-   uint32_t j = 0xF03000;
-
-   WriteLog("\n---[GPU code at 00F03000]---------------------------\n");
-   while (j <= 0xF03FFF)
-   {
-      uint32_t oldj = j;
-      j += dasmjag(JAGUAR_GPU, buffer, j);
-      WriteLog("\t%08X: %s\n", oldj, buffer);
-   }
-}
-
-void GPUDumpRegisters(void)
-{
-   unsigned j;
-   WriteLog("\n---[GPU flags: NCZ %d%d%d]-----------------------\n", gpu_flag_n, gpu_flag_c, gpu_flag_z);
-   WriteLog("\nRegisters bank 0\n");
-   for(j=0; j<8; j++)
-   {
-      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-            (j << 2) + 0, gpu_reg_bank_0[(j << 2) + 0],
-            (j << 2) + 1, gpu_reg_bank_0[(j << 2) + 1],
-            (j << 2) + 2, gpu_reg_bank_0[(j << 2) + 2],
-            (j << 2) + 3, gpu_reg_bank_0[(j << 2) + 3]);
-   }
-   WriteLog("Registers bank 1\n");
-   for(j=0; j<8; j++)
-   {
-      WriteLog("\tR%02i = %08X R%02i = %08X R%02i = %08X R%02i = %08X\n",
-            (j << 2) + 0, gpu_reg_bank_1[(j << 2) + 0],
-            (j << 2) + 1, gpu_reg_bank_1[(j << 2) + 1],
-            (j << 2) + 2, gpu_reg_bank_1[(j << 2) + 2],
-            (j << 2) + 3, gpu_reg_bank_1[(j << 2) + 3]);
-   }
-}
-
-void GPUDumpMemory(void)
-{
-   unsigned i;
-   WriteLog("\n---[GPU data at 00F03000]---------------------------\n");
-   for(i=0; i<0xFFF; i+=4)
-      WriteLog("\t%08X: %02X %02X %02X %02X\n", 0xF03000+i, gpu_ram_8[i],
-            gpu_ram_8[i+1], gpu_ram_8[i+2], gpu_ram_8[i+3]);
-}
-
-void GPUDone(void)
-{
-   unsigned i;
-   uint8_t bits;
-   uint8_t mask;
-   WriteLog("GPU: Stopped at PC=%08X (GPU %s running)\n", (unsigned int)gpu_pc, GPU_RUNNING ? "was" : "wasn't");
-
-   // Get the interrupt latch & enable bits
-    bits = gpu_control.gpuIRQ.irqMask; //(gpu_control >> 6) & 0x1F;
-   mask = (gpu_flags >> 4) & 0x1F;
-   WriteLog("GPU: Latch bits = %02X, enable bits = %02X\n", bits, mask);
-
-   GPUDumpRegisters();
-   GPUDumpDisassembly();
-
-#ifdef DEBUG
-   WriteLog("\nGPU opcodes use:\n");
-   for(i=0; i<64; i++)
-   {
-      if (gpu_opcode_use[i])
-         WriteLog("\t%17s %lu\n", gpu_opcode_str[i], gpu_opcode_use[i]);
-   }
-   WriteLog("\n");
-#endif
 }
 
 // Main GPU execution core
-static int testCount = 1;
-static int len = 0;
-static bool tripwire = false;
 
 void GPUExec(int32_t cycles)
 {
@@ -819,22 +728,10 @@ void GPUExec(int32_t cycles)
 
    while (cycles > 0 && GPU_RUNNING)
    {
-      uint16_t opcode;
-      uint8_t index;
-
-      if (gpu_ram_8[0x054] == 0x98 && gpu_ram_8[0x055] == 0x0A && gpu_ram_8[0x056] == 0x03
-            && gpu_ram_8[0x057] == 0x00 && gpu_ram_8[0x058] == 0x00 && gpu_ram_8[0x059] == 0x00)
-      {
-         if (gpu_pc == 0xF03000)
-         {
-            extern uint32_t starCount;
-            starCount = 0;
-         }
-      }
-      opcode = GPUReadWord(gpu_pc, GPU);
-      index = opcode >> 10;
-      gpu_instruction = opcode;				// Added for GPU #3...
-      gpu_opcode_first_parameter = (opcode >> 5) & 0x1F;
+      uint16_t opcode = GPUReadWord(gpu_pc, GPU);
+      uint32_t index  = opcode >> 10;
+      gpu_instruction = opcode;	// Added for GPU #3...
+      gpu_opcode_first_parameter  = (opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = opcode & 0x1F;
 
       //$E400 -> 1110 01 -> $39 -> 57
@@ -848,16 +745,7 @@ void GPUExec(int32_t cycles)
       // BIOS hacking
       //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
       //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
-#if 0
       cycles -= gpu_opcode_cycles[index];
-#else
-       cycles -= 1;
-#endif
-#ifdef DEBUG
-      gpu_opcode_use[index]++;
-#endif
-      if ((gpu_pc < 0xF03000 || gpu_pc > 0xF03FFF) && !tripwire)
-         tripwire = true;
    }
 
    gpu_in_exec--;
@@ -1046,7 +934,6 @@ INLINE static void executeOpcode(uint32_t index) {
             gpu_opcode_load_r15_ri();
             break;
         case 60:
-            
             gpu_opcode_store_r14_ri();
             break;
         case 61:
@@ -1059,7 +946,7 @@ INLINE static void executeOpcode(uint32_t index) {
             gpu_opcode_pack();
             break;
         default:
-            WriteLog("\nUnknown opcode %i\n", index);
+            // WriteLog("\nUnknown opcode %i\n", index);
             break;
     }
 }
@@ -1712,7 +1599,6 @@ INLINE static void gpu_opcode_abs(void)
 }
 
 
-#ifdef USE_STRUCTS
 INLINE static void gpu_opcode_div(void)	// RN / RM
 {
     
@@ -1743,33 +1629,6 @@ INLINE static void gpu_opcode_div(void)	// RN / RM
    RN = q.WORD;
    gpu_remain = r.WORD;
 }
-#else
-INLINE static void gpu_opcode_div(void)    // RN / RM
-{
-    unsigned i;
-    // Real algorithm, courtesy of SCPCD: NYAN!
-    uint32_t q = RN;
-    uint32_t r = 0;
-    
-    // If 16.16 division, stuff top 16 bits of RN into remainder and put the
-    // bottom 16 of RN in top 16 of quotient
-    if (gpu_div_control & 0x01)
-        q <<= 16, r = RN >> 16;
-    
-    for(i=0; i<32; i++)
-    {
-        uint32_t sign = r & 0x80000000;
-        r = (r << 1) | ((q >> 31) & 0x01);
-        r += (sign ? RM : -RM);
-        q = (q << 1) | (((~r) >> 31) & 0x01);
-    }
-    
-    RN = q;
-    gpu_remain = r;
-    
-}
-#endif
-
 
 INLINE static void gpu_opcode_imultn(void)
 {

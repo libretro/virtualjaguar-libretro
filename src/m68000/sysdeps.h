@@ -89,7 +89,6 @@ extern void * q_memcpy(void *, const void *, size_t);
 #ifdef __GNUC__
 #define abort() \
   do { \
-    fprintf(stderr, "Internal error; file %s, line %d\n", __FILE__, __LINE__); \
     (abort) (); \
 } while (0)
 #endif

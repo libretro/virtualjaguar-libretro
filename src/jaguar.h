@@ -25,7 +25,6 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 
 bool JaguarInterruptHandlerIsValid(uint32_t i);
-void JaguarDasm(uint32_t offset, uint32_t qt);
 
 void JaguarExecuteNew(void);
 

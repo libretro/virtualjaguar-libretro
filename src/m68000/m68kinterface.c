@@ -12,7 +12,6 @@
 //
 
 #include "m68kinterface.h"
-//#include <pthread.h>
 #include "cpudefs.h"
 #include "inlines.h"
 #include "cpuextra.h"
@@ -63,53 +62,7 @@ cpuop_func * cpuFunctionTable[65536];
 // By virtue of the fact that m68k_set_irq() can be called asychronously by
 // another thread, we need something along the lines of this:
 static int checkForIRQToHandle = 0;
-//static pthread_mutex_t executionLock = PTHREAD_MUTEX_INITIALIZER;
 static int IRQLevelToHandle = 0;
-
-#define CPU_DEBUG
-
-
-void Dasm(uint32_t offset, uint32_t qt)
-{
-#ifdef CPU_DEBUG
-// back up a few instructions...
-//offset -= 100;
-	static char buffer[2048];//, mem[64];
-	int pc = offset, oldpc;
-	uint32_t i;
-
-	for(i=0; i<qt; i++)
-	{
-/*		oldpc = pc;
-		for(int j=0; j<64; j++)
-			mem[j^0x01] = jaguar_byte_read(pc + j);
-
-		pc += Dasm68000((char *)mem, buffer, 0);
-		WriteLog("%08X: %s\n", oldpc, buffer);//*/
-		oldpc = pc;
-		pc += m68k_disassemble(buffer, pc, 0);//M68K_CPU_TYPE_68000);
-//		WriteLog("%08X: %s\n", oldpc, buffer);//*/
-		printf("%08X: %s\n", oldpc, buffer);//*/
-	}
-#endif
-}
-
-
-#ifdef CPU_DEBUG
-void DumpRegisters(void)
-{
-	uint32_t i;
-
-	for(i=0; i<16; i++)
-	{
-		printf("%s%i: %08X ", (i < 8 ? "D" : "A"), i & 0x7, regs.regs[i]);
-
-		if ((i & 0x03) == 3)
-			printf("\n");
-	}
-}
-#endif
-
 
 void M68KDebugHalt(void)
 {
@@ -120,11 +73,6 @@ void M68KDebugHalt(void)
 void M68KDebugResume(void)
 {
 	regs.spcflags &= ~SPCFLAG_DEBUGGER;
-}
-
-
-void m68k_set_cpu_type(unsigned int type)
-{
 }
 
 
@@ -142,9 +90,6 @@ void m68k_pulse_reset(void)
 		BuildCPUFunctionTable();
 		emulation_initialized = 1;
 	}
-
-//	if (CPU_TYPE == 0)	/* KW 990319 */
-//		m68k_set_cpu_type(M68K_CPU_TYPE_68000);
 
 	regs.spcflags = 0;
 	regs.stopped = 0;
@@ -172,15 +117,15 @@ int m68k_execute(int num_cycles)
 
 	regs.remainingCycles = num_cycles;
 	/*int32_t*/ initialCycles = num_cycles;
-	
+
 	regs.remainingCycles -= regs.interruptCycles;
 	regs.interruptCycles = 0;
 
 	/* Main loop.  Keep going until we run out of clock cycles */
 	do
 	{
-      uint32_t opcode;
-      int32_t cycles;
+		uint32_t opcode;
+		int32_t cycles;
 
 		// This is so our debugging code can break in on a dime.
 		// Otherwise, this is just extra slow down :-P
@@ -205,8 +150,6 @@ int m68k_execute(int num_cycles)
 		opcode = get_iword(0);
 		cycles = (int32_t)(*cpuFunctionTable[opcode])(opcode);
 		regs.remainingCycles -= cycles;
-
-      //printf("Executed opcode $%04X (%i cycles)...\n", opcode, cycles);
 	}
 	while (regs.remainingCycles > 0);
 
@@ -237,9 +180,6 @@ void m68k_set_irq(unsigned int intLevel)
 /* ASG: rewrote so that the int_level is a mask of the IPL0/IPL1/IPL2 bits */
 void m68k_set_irq2(unsigned int intLevel)
 {
-//	pthread_mutex_lock(&executionLock);
-//		printf("m68k_set_irq: Could not get the lock!!!\n");
-
 	int oldLevel = regs.intLevel;
 	regs.intLevel = intLevel;
 
@@ -249,8 +189,6 @@ void m68k_set_irq2(unsigned int intLevel)
 		m68ki_exception_interrupt(7);		// Edge triggered level 7 (NMI)
 	else
 		m68ki_check_interrupts();			// Level triggered (IRQ)
-
-//	pthread_mutex_unlock(&executionLock);
 }
 
 
@@ -265,17 +203,17 @@ static INLINE void m68ki_check_interrupts(void)
 // Service an interrupt request and start exception processing
 void m68ki_exception_interrupt(uint32_t intLevel)
 {
-   uint32_t vector, sr, newPC;
+	uint32_t vector, sr, newPC;
 
 	// Turn off the stopped state (N.B.: normal 68K behavior!)
 	regs.stopped = 0;
 
-//JLH: need to add halt state?
-// prolly, for debugging/alpine mode... :-/
-// but then again, this should be handled already by the main execution loop :-P
+	//JLH: need to add halt state?
+	// prolly, for debugging/alpine mode... :-/
+	// but then again, this should be handled already by the main execution loop :-P
 	// If we are halted, don't do anything
-//	if (regs.stopped)
-//		return;
+	//	if (regs.stopped)
+	//		return;
 
 	// Acknowledge the interrupt (NOTE: This is a user supplied function!)
 	vector = irq_ack_handler(intLevel);
@@ -289,8 +227,8 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 		vector = EXCEPTION_SPURIOUS_INTERRUPT;
 	else if (vector > 255)
 	{
-//		M68K_DO_LOG_EMU((M68K_LOG_FILEHANDLE "%s at %08x: Interrupt acknowledge returned invalid vector $%x\n",
-//			 m68ki_cpu_names[CPU_TYPE], ADDRESS_68K(REG_PC), vector));
+		//		M68K_DO_LOG_EMU((M68K_LOG_FILEHANDLE "%s at %08x: Interrupt acknowledge returned invalid vector $%x\n",
+		//			 m68ki_cpu_names[CPU_TYPE], ADDRESS_68K(REG_PC), vector));
 		return;
 	}
 
@@ -314,7 +252,7 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 
 	// Defer cycle counting until later
 	regs.interruptCycles += 56;	// NOT ACCURATE-- !!! FIX !!!
-//	CPU_INT_CYCLES += CYC_EXCEPTION[vector];
+	//	CPU_INT_CYCLES += CYC_EXCEPTION[vector];
 }
 
 
@@ -434,7 +372,7 @@ void BuildCPUFunctionTable(void)
 
 	// We're only using the "fast" 68000 emulation here, not the "compatible"
 	// ("fast" doesn't throw exceptions, so we're using "compatible" now :-P)
-   //let's try "compatible" and see what happens here...
+	//let's try "compatible" and see what happens here...
 	const struct cputbl * tbl = op_smalltbl_5_ff;
 
 	// Set all instructions to Illegal...
@@ -445,9 +383,9 @@ void BuildCPUFunctionTable(void)
 	for(i=0; tbl[i].handler!=NULL; i++)
 		cpuFunctionTable[tbl[i].opcode] = tbl[i].handler;
 
-//JLH: According to readcpu.c, handler is set to -1 and never changes.
-// Actually, it does read this crap in readcpu.c, do_merges() does it... :-P
-// Again, seems like a build time thing could be done here...
+	//JLH: According to readcpu.c, handler is set to -1 and never changes.
+	// Actually, it does read this crap in readcpu.c, do_merges() does it... :-P
+	// Again, seems like a build time thing could be done here...
 	for(opcode=0; opcode<65536; opcode++)
 	{
 		if (table68k[opcode].mnemo == i_ILLG || table68k[opcode].clev > 0)

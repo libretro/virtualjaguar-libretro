@@ -13,9 +13,8 @@
 // JLH  01/16/2010  Created this log ;-)
 //
 
-#include "joystick.h"
 #include <string.h>			// For memset()
-#include "log.h"
+#include "joystick.h"
 #include "settings.h"
 
 // Global vars
@@ -23,25 +22,8 @@
 static uint8_t joystick_ram[4];
 uint8_t joypad0Buttons[21];
 uint8_t joypad1Buttons[21];
-bool audioEnabled = false;
+bool audioEnabled     = false;
 bool joysticksEnabled = false;
-
-int gpu_start_log = 0;
-int op_start_log = 0;
-int blit_start_log = 0;
-int effect_start = 0;
-int effect_start2 = 0, effect_start3 = 0, effect_start4 = 0, effect_start5 = 0, effect_start6 = 0;
-bool interactiveMode = false;
-bool iLeft, iRight, iToggle = false;
-bool keyHeld1 = false, keyHeld2 = false, keyHeld3 = false;
-int objectPtr = 0;
-bool startMemLog = false;
-extern bool doDSPDis, doGPUDis;
-
-bool blitterSingleStep = false;
-bool bssGo = false;
-bool bssHeld = false;
-
 
 void JoystickInit(void)
 {
@@ -51,11 +33,6 @@ void JoystickInit(void)
 
 void JoystickExec(void)
 {
-	gpu_start_log = 0;							// Only log while key down!
-	effect_start = 0;
-	effect_start2 = effect_start3 = effect_start4 = effect_start5 = effect_start6 = 0;
-	blit_start_log = 0;
-	iLeft = iRight = false;
 }
 
 
@@ -204,4 +181,3 @@ void JoystickWriteWord(uint32_t offset, uint16_t data)
 		joysticksEnabled = ((data & 0x8000) ? true : false);
 	}
 }
-

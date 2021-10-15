@@ -47,18 +47,15 @@
 #include "event.h"
 #include "jerry.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
-#include "../libretro.h"
+#include <libretro.h>
 
 extern retro_audio_sample_batch_t audio_batch_cb;
 
-#define BUFFER_SIZE			0x10000				// Make the DAC buffers 64K x 16 bits
-#define DAC_AUDIO_RATE		48000				// Set the audio rate to 48 KHz
-
-#define SILENCE 0
+#define BUFFER_SIZE		0x10000	// Make the DAC buffers 64K x 16 bits
+#define DAC_AUDIO_RATE		48000	// Set the audio rate to 48 KHz
 
 // Jaguar memory locations
 
@@ -75,40 +72,24 @@ static int bufferIndex = 0;
 static int numberOfSamples = 0;
 static bool bufferDone = false;
 
-// Local variables
-
-//static uint8_t SCLKFrequencyDivider = 19;			// Default is roughly 22 KHz (20774 Hz in NTSC mode)
-
 // Private function prototypes
 
 void DACInit(void)
 {
-   uint32_t riscClockRate;
-   uint32_t cyclesPerSample;
-
    DACReset();
 
-   *ltxd = SILENCE;
-   lrxd = SILENCE;
+   *ltxd = 0;
+   lrxd  = 0;
    *sclk = 19;									// Default is roughly 22 KHz
-
-   riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
-   WriteLog("DAC: RISC clock = %u, cyclesPerSample = %u\n", riscClockRate, cyclesPerSample);
 }
 
 
 // Reset the sound buffer FIFOs
 void DACReset(void)
 {
-   *ltxd = SILENCE;
-   lrxd = SILENCE;
+   *ltxd = 0;
+   lrxd  = 0;
 }
-
-void DACPauseAudioThread(bool state)
-{
-}
-
 
 void DACDone(void)
 {
@@ -145,7 +126,7 @@ void DSPSampleCallback(void)
 //       Also, length is the length of the buffer in BYTES
 //
 
-void SDLSoundCallback(void * userdata, uint16_t * buffer, int length)
+void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
    /* 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit. */
    if (!DSPIsRunning())

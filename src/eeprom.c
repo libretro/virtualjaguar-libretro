@@ -17,7 +17,8 @@
 
 #include <stdlib.h>
 #include <string.h>								// For memset
-#include "log.h"
+
+#include <streams/file_stream.h>
 #include "settings.h"
 
 extern uint32_t jaguarMainROMCRC32;
@@ -26,14 +27,42 @@ uint16_t eeprom_ram[64];
 static uint16_t cdromEEPROM[64];
 
 // Private function prototypes
+RFILE* rfopen(const char *path, const char *mode);
+int rfclose(RFILE* stream);
+int64_t rfwrite(void const* buffer,
+   size_t elem_size, size_t elem_count, RFILE* stream);
+int64_t rfread(void* buffer,
+   size_t elem_size, size_t elem_count, RFILE* stream);
 
 static void EEPROMSave(void);
 static void eeprom_set_di(uint32_t state);
 static void eeprom_set_cs(uint32_t state);
 static uint32_t eeprom_get_do(void);
-void ReadEEPROMFromFile(FILE * file, uint16_t * ram);
-void WriteEEPROMToFile(FILE * file, uint16_t * ram);
 
+static void WriteEEPROMToFile(RFILE * file, uint16_t * ram)
+{
+   unsigned i;
+   uint8_t buffer[128];
+
+   for(i = 0; i < 64; i++)
+   {
+      buffer[(i * 2) + 0] = ram[i] >> 8;
+      buffer[(i * 2) + 1] = ram[i] & 0xFF;
+   }
+
+   rfwrite(buffer, 1, 128, file);
+}
+
+// Read/write EEPROM files to disk in an endian safe manner
+static void ReadEEPROMFromFile(RFILE *file, uint16_t * ram)
+{
+   unsigned i;
+   uint8_t buffer[128];
+   size_t ignored = rfread(buffer, 1, 128, file);
+
+   for(i = 0; i < 64; i++)
+      ram[i] = (buffer[(i * 2) + 0] << 8) | buffer[(i * 2) + 1];
+}
 
 enum { EE_STATE_START = 1, EE_STATE_OP_A, EE_STATE_OP_B, EE_STATE_0, EE_STATE_1,
 	EE_STATE_2, EE_STATE_3, EE_STATE_0_0, EE_READ_ADDRESS, EE_STATE_0_0_0,
@@ -60,14 +89,11 @@ static bool haveCDROMEEPROM = false;
 
 void EepromInit(void)
 {
-   FILE * fp;
+   RFILE * fp;
 
-   /* No need for EEPROM for the Memory Track device :-P */
+   /* No need for EEPROM for the Memory Track device */
    if (jaguarMainROMCRC32 == 0xFDF37F47)
-   {
-      WriteLog("EEPROM: Memory Track device detected...\n");
       return;
-   }
    
    /* Get EEPROM file names */
 	if (strlen(vjs.romName) > 0)
@@ -83,30 +109,24 @@ void EepromInit(void)
 	}
 
 	/* Handle regular cartridge EEPROM */
-	fp = fopen(eeprom_filename, "rb");
+	fp = rfopen(eeprom_filename, "rb");
 
 	if (fp)
 	{
 		ReadEEPROMFromFile(fp, eeprom_ram);
-		fclose(fp);
-		WriteLog("EEPROM: Loaded from %s\n", eeprom_filename);
+		rfclose(fp);
 		haveEEPROM = true;
 	}
-	else
-		WriteLog("EEPROM: Could not open file \"%s\"!\n", eeprom_filename);
 
 	// Handle JagCD EEPROM
-	fp = fopen(cdromEEPROMFilename, "rb");
+	fp = rfopen(cdromEEPROMFilename, "rb");
 
 	if (fp)
 	{
 		ReadEEPROMFromFile(fp, cdromEEPROM);
-		fclose(fp);
-		WriteLog("EEPROM: Loaded from cdrom.eeprom\n");
+		rfclose(fp);
 		haveCDROMEEPROM = true;
 	}
-	else
-		WriteLog("EEPROM: Could not open file \"%s\"!\n", cdromEEPROMFilename);
 }
 
 
@@ -122,60 +142,28 @@ void EepromReset(void)
 
 void EepromDone(void)
 {
-	WriteLog("EEPROM: Done.\n");
 }
 
 
 static void EEPROMSave(void)
 {
 	// Write out regular cartridge EEPROM data
-	FILE * fp = fopen(eeprom_filename, "wb");
+	RFILE * fp = rfopen(eeprom_filename, "wb");
 
 	if (fp)
 	{
 		WriteEEPROMToFile(fp, eeprom_ram);
-		fclose(fp);
+		rfclose(fp);
 	}
-	else
-		WriteLog("EEPROM: Could not create file \"%s!\"\n", eeprom_filename);
 
 	// Write out JagCD EEPROM data
-	fp = fopen(cdromEEPROMFilename, "wb");
+	fp = rfopen(cdromEEPROMFilename, "wb");
 
 	if (fp)
 	{
 		WriteEEPROMToFile(fp, cdromEEPROM);
-		fclose(fp);
+		rfclose(fp);
 	}
-	else
-		WriteLog("EEPROM: Could not create file \"%s!\"\n", cdromEEPROMFilename);
-}
-
-
-// Read/write EEPROM files to disk in an endian safe manner
-void ReadEEPROMFromFile(FILE * file, uint16_t * ram)
-{
-   unsigned i;
-	uint8_t buffer[128];
-   size_t ignored = fread(buffer, 1, 128, file);
-
-	for(i = 0; i < 64; i++)
-		ram[i] = (buffer[(i * 2) + 0] << 8) | buffer[(i * 2) + 1];
-}
-
-
-void WriteEEPROMToFile(FILE * file, uint16_t * ram)
-{
-   unsigned i;
-	uint8_t buffer[128];
-
-	for(i = 0; i < 64; i++)
-	{
-		buffer[(i * 2) + 0] = ram[i] >> 8;
-		buffer[(i * 2) + 1] = ram[i] & 0xFF;
-	}
-
-	fwrite(buffer, 1, 128, file);
 }
 
 
@@ -309,7 +297,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_direct_jump = 1;
 		break;
 	case EE_STATE_0_0_1_0:
-		// WriteLog("eeprom: filling eeprom with 0x%.4x\n",data);
 		if (jerry_writes_enabled)
 		{
 			for(i = 0; i < 64; i++)
@@ -347,7 +334,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_direct_jump = 1;
 		break;
 	case EE_STATE_1_1:
-		//WriteLog("eeprom: writing 0x%.4x at 0x%.2x\n",jerry_ee_data,jerry_ee_address_data);
 		if (jerry_writes_enabled)
 		{
 			eeprom_ram[jerry_ee_address_data] = jerry_ee_data;
@@ -372,7 +358,6 @@ static void eeprom_set_di(uint32_t data)
 		jerry_ee_direct_jump = 1;
 		break;
 	case EE_STATE_3_0:
-		//WriteLog("eeprom: erasing 0x%.2x\n",jerry_ee_address_data);
 		if (jerry_writes_enabled)
 			eeprom_ram[jerry_ee_address_data] = 0xFFFF;
 

@@ -25,15 +25,19 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <log.h>
-#include <settings.h>
+#include "settings.h"
 
+#include <libretro.h>
+#include <streams/file_stream.h>
+
+RFILE* rfopen(const char *path, const char *mode);
+int64_t rfread(void* buffer,
+   size_t elem_size, size_t elem_count, RFILE* stream);
+int rfclose(RFILE* stream);
+int64_t rfwrite(void const* buffer,
+   size_t elem_size, size_t elem_count, RFILE* stream);
 
 #define MEMTRACK_FILENAME	"memtrack.eeprom"
-
-#if 0
-#define DEBUG_MEMTRACK
-#endif
 
 enum { MT_NONE, MT_PROD_ID, MT_RESET, MT_WRITE_ENABLE };
 enum { MT_IDLE, MT_PHASE1, MT_PHASE2 };
@@ -51,20 +55,17 @@ void MTStateMachine(uint8_t reg, uint16_t data);
 
 void MTInit(void)
 {
-   FILE *fp;
+	RFILE *fp;
 
 	sprintf(mtFilename, "%s%s", vjs.EEPROMPath, MEMTRACK_FILENAME);
-	fp = fopen(mtFilename, "rb");
+	fp = rfopen(mtFilename, "rb");
 
 	if (fp)
 	{
-		size_t ignored = fread(mtMem, 1, 0x20000, fp);
-		fclose(fp);
-		WriteLog("MT: Loaded NVRAM from %s\n", mtFilename);
+		rfread(mtMem, 1, 0x20000, fp);
+		rfclose(fp);
 		haveMT = true;
 	}
-	else
-		WriteLog("MT: Could not open file \"%s\"!\n", mtFilename);
 }
 
 
@@ -78,25 +79,22 @@ void MTReset(void)
 void MTDone(void)
 {
 	MTWriteFile();
-	WriteLog("MT: Done.\n");
 }
 
 
 void MTWriteFile(void)
 {
-   FILE *fp;
+	RFILE *fp;
 	if (!haveMT)
 		return;
 
-	fp = fopen(mtFilename, "wb");
+	fp = rfopen(mtFilename, "wb");
 
 	if (fp)
 	{
-		fwrite(mtMem, 1, 0x20000, fp);
-		fclose(fp);
+		rfwrite(mtMem, 1, 0x20000, fp);
+		rfclose(fp);
 	}
-	else
-		WriteLog("MT: Could not create file \"%s\"!", mtFilename);
 }
 
 
@@ -112,10 +110,6 @@ uint16_t MTReadWord(uint32_t addr)
 		value >>= 16;
 	else if ((addr & 0x03) == 2)
 		value &= 0xFFFF;
-
-#ifdef DEBUG_MEMTRACK
-WriteLog("MT: Reading word @ $%06X: $%04X\n", addr, value);
-#endif
 
 	return (uint16_t)value;
 }
@@ -143,9 +137,6 @@ uint32_t MTReadLong(uint32_t addr)
 	if (mtCommand == MT_WRITE_ENABLE)
 		mtCommand = MT_NONE;
 
-#ifdef DEBUG_MEMTRACK
-WriteLog("MT: Reading long @ $%06X: $%08X\n", addr, value << 16);
-#endif
 	return value << 16;
 }
 
@@ -155,10 +146,6 @@ void MTWriteWord(uint32_t addr, uint16_t data)
 	// We don't care about writes to long offsets + 2
 	if ((addr & 0x3) == 2)
 		return;
-
-#ifdef DEBUG_MEMTRACK
-WriteLog("MT: Writing word @ $%06X: $%04X (Writing is %sabled)\n", addr, data, (mtCommand == MT_WRITE_ENABLE ? "en" : "dis"));
-#endif
 
 	// Write to the NVRAM if it's enabled...
 	if (mtCommand == MT_WRITE_ENABLE)
@@ -191,9 +178,6 @@ void MTWriteLong(uint32_t addr, uint32_t data)
 
 void MTStateMachine(uint8_t reg, uint16_t data)
 {
-#ifdef DEBUG_MEMTRACK
-WriteLog("MTStateMachine: reg = %u, data = $%02X, current state = %u\n", reg, data, mtState);
-#endif
 	switch (mtState)
 	{
 	case MT_IDLE:
@@ -224,7 +208,4 @@ WriteLog("MTStateMachine: reg = %u, data = $%02X, current state = %u\n", reg, da
 		mtState = MT_IDLE;
 		break;
 	}
-#ifdef DEBUG_MEMTRACK
-WriteLog("                state = %u, cmd = %u\n", mtState, mtCommand);
-#endif
 }

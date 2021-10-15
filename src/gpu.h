@@ -17,7 +17,6 @@ extern "C" {
 void GPUInit(void);
 void GPUReset(void);
 void GPUExec(int32_t);
-void GPUDone(void);
 void GPUUpdateRegisterBanks(void);
 void GPUHandleIRQs(void);
 void GPUSetIRQLine(int irqline, int state);

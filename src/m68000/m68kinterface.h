@@ -49,7 +49,7 @@ typedef enum
 
 	/* Convenience registers */
 	M68K_REG_PPC,		/* Previous value in the program counter */
-	M68K_REG_IR,		/* Instruction register */
+	M68K_REG_IR		/* Instruction register */
 } m68k_register_t;
 
 /* Special interrupt acknowledge values.
@@ -69,7 +69,6 @@ typedef enum
  */
 #define M68K_INT_ACK_SPURIOUS      0xFFFFFFFE
 
-void m68k_set_cpu_type(unsigned int);
 void m68k_pulse_reset(void);
 int m68k_execute(int num_cycles);
 void m68k_set_irq(unsigned int int_level);
@@ -114,11 +113,6 @@ void m68k_set_reg(m68k_register_t reg, unsigned int value);
 
 /* Check if an instruction is valid for the specified CPU type */
 unsigned int m68k_is_valid_instruction(unsigned int instruction, unsigned int cpu_type);
-
-/* Disassemble 1 instruction using the epecified CPU type at pc.  Stores
- * disassembly in str_buff and returns the size of the instruction in bytes.
- */
-unsigned int m68k_disassemble(char * str_buff, unsigned int pc, unsigned int cpu_type);
 
 /* These functions let you read/write/modify the number of cycles left to run
  * while m68k_execute() is running.

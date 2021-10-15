@@ -27,15 +27,13 @@
 #include "gpu.h"
 #include "jerry.h"
 #include "joystick.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
 #include "mmu.h"
 #include "settings.h"
 #include "tom.h"
 
-bool frameDone;
-uint32_t starCount;
+static bool frameDone;
 
 #define ALPINE_FUNCTIONS
 
@@ -89,63 +87,12 @@ bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
    return (handler && (handler != 0xFFFFFFFF) ? true : false);
 }
 
-void M68K_show_context(void)
-{
-   unsigned i;
-
-   WriteLog("68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
-
-   for(i=M68K_REG_D0; i<=M68K_REG_D7; i++)
-   {
-      WriteLog("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_D3 || i == M68K_REG_D7)
-         WriteLog("\n");
-   }
-
-   for(i=M68K_REG_A0; i<=M68K_REG_A7; i++)
-   {
-      WriteLog("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_A3 || i == M68K_REG_A7)
-         WriteLog("\n");
-   }
-
-   WriteLog("68K disasm\n");
-   JaguarDasm(m68k_get_reg(NULL, M68K_REG_PC) - 0x80, 0x200);
-
-   if (TOMIRQEnabled(IRQ_VIDEO))
-   {
-      WriteLog("video int: enabled\n");
-      JaguarDasm(JaguarGetHandler(64), 0x200);
-   }
-   else
-      WriteLog("video int: disabled\n");
-
-   WriteLog("..................\n");
-
-   for(i=0; i<256; i++)
-   {
-      uint32_t address;
-
-      WriteLog("handler %03i at ", i);
-      address = (uint32_t)JaguarGetHandler(i);
-
-      if (address == 0)
-         WriteLog(".........\n");
-      else
-         WriteLog("$%08X\n", address);
-   }
-}
-
 // External variables
 
 // Really, need to include memory.h for this, but it might interfere with some stuff...
 extern uint8_t jagMemSpace[];
 
 // Internal variables
-
-uint32_t jaguar_active_memory_dumps = 0;
 
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 
@@ -209,62 +156,8 @@ void M68KInstructionHook(void)
    pcQPtr &= 0x3FF;
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
-   {
-      static char buffer[2048];
-      WriteLog("M68K: Attempted to execute from an odd address!\n\nBacktrace:\n\n");
-
-      for(i=0; i<0x400; i++)
-      {
-         //			WriteLog("[A2=%08X, D0=%08X]\n", a2Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF]);
-         WriteLog("[A0=%08X, A1=%08X, A2=%08X, A3=%08X, A4=%08X, A5=%08X, A6=%08X, A7=%08X, D0=%08X, D1=%08X, D2=%08X, D3=%08X, D4=%08X, D5=%08X, D6=%08X, D7=%08X]\n", a0Queue[(pcQPtr + i) & 0x3FF], a1Queue[(pcQPtr + i) & 0x3FF], a2Queue[(pcQPtr + i) & 0x3FF], a3Queue[(pcQPtr + i) & 0x3FF], a4Queue[(pcQPtr + i) & 0x3FF], a5Queue[(pcQPtr + i) & 0x3FF], a6Queue[(pcQPtr + i) & 0x3FF], a7Queue[(pcQPtr + i) & 0x3FF], d0Queue[(pcQPtr + i) & 0x3FF], d1Queue[(pcQPtr + i) & 0x3FF], d2Queue[(pcQPtr + i) & 0x3FF], d3Queue[(pcQPtr + i) & 0x3FF], d4Queue[(pcQPtr + i) & 0x3FF], d5Queue[(pcQPtr + i) & 0x3FF], d6Queue[(pcQPtr + i) & 0x3FF], d7Queue[(pcQPtr + i) & 0x3FF]);
-         m68k_disassemble(buffer, pcQueue[(pcQPtr + i) & 0x3FF], 0);//M68K_CPU_TYPE_68000);
-         WriteLog("\t%08X: %s\n", pcQueue[(pcQPtr + i) & 0x3FF], buffer);
-      }
-      WriteLog("\n");
-
-      M68K_show_context();
-      LogDone();
       exit(0);
-   }
 }
-
-void ShowM68KContext(void)
-{
-   unsigned i;
-   uint32_t currpc;
-   uint32_t disPC;
-   char buffer[128];
-
-   printf("\t68K PC=%06X\n", m68k_get_reg(NULL, M68K_REG_PC));
-
-   for(i=M68K_REG_D0; i<=M68K_REG_D7; i++)
-   {
-      printf("D%i = %08X ", i-M68K_REG_D0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_D3 || i == M68K_REG_D7)
-         printf("\n");
-   }
-
-   for(i=M68K_REG_A0; i<=M68K_REG_A7; i++)
-   {
-      printf("A%i = %08X ", i-M68K_REG_A0, m68k_get_reg(NULL, (m68k_register_t)i));
-
-      if (i == M68K_REG_A3 || i == M68K_REG_A7)
-         printf("\n");
-   }
-
-   currpc = m68k_get_reg(NULL, M68K_REG_PC);
-   disPC  = currpc - 30;
-
-   do
-   {
-      uint32_t oldpc = disPC;
-      disPC += m68k_disassemble(buffer, disPC, 0);
-      printf("%s%08X: %s\n", (oldpc == currpc ? ">" : " "), oldpc, buffer);
-   }
-   while (disPC < (currpc + 10));
-}
-
 
 /* Custom UAE 68000 read/write/IRQ functions */
 
@@ -503,10 +396,6 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
    return m68k_read_memory_32(address);
 }
 
-void JaguarDasm(uint32_t offset, uint32_t qt)
-{
-}
-
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
    offset &= 0xFFFFFF;
@@ -695,25 +584,23 @@ void JaguarInit(void)
 // Half line times are, naturally, half of this. :-P
 void HalflineCallback(void)
 {
-   uint16_t numHalfLines;
-   uint16_t vc = TOMReadWord(0xF00006, JAGUAR);
-   uint16_t vp = TOMReadWord(0xF0003E, JAGUAR) + 1;
-   uint16_t vi = TOMReadWord(0xF0004E, JAGUAR);
-   vc++;
-
+   uint16_t vc           = TOMReadWord(0xF00006, JAGUAR);
+   uint16_t vp           = TOMReadWord(0xF0003E, JAGUAR) + 1;
+   uint16_t vi           = TOMReadWord(0xF0004E, JAGUAR);
    // Each # of lines is for a full frame == 1/30s (NTSC), 1/25s (PAL).
    // So we cut the number of half-lines in a frame in half. :-P
-   numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+   uint16_t numHalfLines = ((vjs.hardwareTypeNTSC ? 525 : 625) * 2) / 2;
+
+   vc++;
 
    if ((vc & 0x7FF) >= numHalfLines)
    {
       lowerField = !lowerField;
       // If we're rendering the lower field, set the high bit (#11, counting
       // from 0) of VC
-      vc = (lowerField ? 0x0800 : 0x0000);
+      vc         = (lowerField ? 0x0800 : 0x0000);
    }
 
-   //WriteLog("HLC: Currently on line %u (VP=%u)...\n", vc, vp);
    TOMWriteWord(0xF00006, vc, JAGUAR);
 
    // Time for Vertical Interrupt?
@@ -759,14 +646,12 @@ void JaguarReset(void)
    else
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
 
-   //	WriteLog("jaguar_reset():\n");
    TOMReset();
    JERRYReset();
    GPUReset();
    DSPReset();
    CDROMReset();
    m68k_pulse_reset();								// Reset the 68000
-   WriteLog("Jaguar: 68K reset. PC=%06X SP=%08X\n", m68k_get_reg(NULL, M68K_REG_PC), m68k_get_reg(NULL, M68K_REG_A7));
 
    lowerField = false;								// Reset the lower field flag
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
@@ -775,13 +660,7 @@ void JaguarReset(void)
 
 void JaguarDone(void)
 {
-   WriteLog("Jaguar: Interrupt enable = $%02X\n", TOMReadByte(0xF000E1, JAGUAR) & 0x1F);
-   WriteLog("Jaguar: Video interrupt is %s (line=%u)\n", ((TOMIRQEnabled(IRQ_VIDEO))
-            && (JaguarInterruptHandlerIsValid(64))) ? "enabled" : "disabled", TOMReadWord(0xF0004E, JAGUAR));
-   M68K_show_context();
-
    CDROMDone();
-   GPUDone();
    DSPDone();
    TOMDone();
    JERRYDone();

@@ -1,6 +1,8 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "libretro.h"
+#include <libretro.h>
+#include <streams/file_stream.h>
 #include "file.h"
 #include "jagbios.h"
 #include "jagbios2.h"
@@ -8,7 +10,6 @@
 #include "dac.h"
 #include "dsp.h"
 #include "joystick.h"
-#include "log.h"
 #include "settings.h"
 #include "tom.h"
 
@@ -43,6 +44,7 @@ int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
 
 void retro_set_environment(retro_environment_t cb)
 {
+   struct retro_vfs_interface_info vfs_iface_info;
    struct retro_variable variables[] = {
       {
          "virtualjaguar_usefastblitter",
@@ -67,6 +69,11 @@ void retro_set_environment(retro_environment_t cb)
 
    environ_cb = cb;
    cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
+
+   vfs_iface_info.required_interface_version = 1;
+   vfs_iface_info.iface                      = NULL;
+   if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
+      filestream_vfs_init(&vfs_iface_info);
 }
 
 static void check_variables(void)
@@ -400,7 +407,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
    {
-      fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
+      //fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
       return false;
    }
 
@@ -541,8 +548,6 @@ void retro_run(void)
    update_input();
 
    JaguarExecuteNew();
-
-   SDLSoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
-
+   SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 }

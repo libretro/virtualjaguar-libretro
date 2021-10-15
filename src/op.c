@@ -19,7 +19,6 @@
 #include <string.h>
 #include "gpu.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "vjag_memory.h"
 #include "tom.h"
@@ -44,10 +43,6 @@
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render);
 void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render);
 void OPDiscoverObjects(uint32_t address);
-void OPDumpObjectList(void);
-void DumpScaledObject(uint64_t p0, uint64_t p1, uint64_t p2);
-void DumpFixedObject(uint64_t p0, uint64_t p1);
-void DumpBitmapCore(uint64_t p0, uint64_t p1);
 uint64_t OPLoadPhrase(uint32_t offset);
 
 // Local global variables
@@ -133,12 +128,9 @@ static uint32_t numberOfObjects;
 void OPDone(void)
 {
    uint32_t olp = OPGetListPointer();
-   WriteLog("\nOP: OLP = $%08X\n", olp);
-   WriteLog("OP: Phrase dump\n    ----------\n");
 
    numberOfObjects = 0;
    OPDiscoverObjects(olp);
-   OPDumpObjectList();
 }
 
 
@@ -193,51 +185,6 @@ void OPDiscoverObjects(uint32_t address)
    }
    while (objectType != 4);
 }
-
-
-void OPDumpObjectList(void)
-{
-   unsigned i;
-
-   for(i=0; i<numberOfObjects; i++)
-   {
-      uint32_t address = object[i];
-
-      uint32_t hi = JaguarReadLong(address + 0, OP);
-      uint32_t lo = JaguarReadLong(address + 4, OP);
-      uint8_t objectType = lo & 0x07;
-      uint32_t link = ((hi << 11) | (lo >> 21)) & 0x3FFFF8;
-      WriteLog("%08X: %08X %08X %s -> $%08X", address, hi, lo, opType[objectType], link);
-
-      if (objectType == 3)
-      {
-         uint16_t ypos = (lo >> 3) & 0x7FF;
-         uint8_t  cc   = (lo >> 14) & 0x07;	// Proper # of bits == 3
-         WriteLog(" YPOS %s %u", ccType[cc], ypos);
-      }
-
-      WriteLog("\n");
-
-      // Yes, this is how the OP finds follow-on phrases for bitmap/scaled
-      // bitmap objects...!
-      if (objectType == 0)
-         DumpFixedObject(OPLoadPhrase(address + 0),
-               OPLoadPhrase(address | 0x08));
-
-      if (objectType == 1)
-         DumpScaledObject(OPLoadPhrase(address + 0),
-               OPLoadPhrase(address | 0x08), OPLoadPhrase(address | 0x10));
-
-      if (address == link)	// Ruh roh...
-      {
-         // Runaway recursive link is bad!
-         WriteLog("***** SELF REFERENTIAL LINK *****\n\n");
-      }
-   }
-
-   WriteLog("\n");
-}
-
 
 //
 // Object Processor memory access
@@ -312,63 +259,12 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
    JaguarWriteLong(offset + 4, p & 0xFFFFFFFF, OP);
 }
 
-
-// Debugging routines
-void DumpScaledObject(uint64_t p0, uint64_t p1, uint64_t p2)
-{
-   uint32_t hscale, vscale;
-   uint32_t remainder;
-   WriteLog("          %08X %08X\n", (uint32_t)(p1>>32), (uint32_t)(p1&0xFFFFFFFF));
-   WriteLog("          %08X %08X\n", (uint32_t)(p2>>32), (uint32_t)(p2&0xFFFFFFFF));
-   DumpBitmapCore(p0, p1);
-   hscale = p2 & 0xFF;
-   vscale = (p2 >> 8) & 0xFF;
-   remainder = (p2 >> 16) & 0xFF;
-   WriteLog("    [hsc: %02X, vsc: %02X, rem: %02X]\n", hscale, vscale, remainder);
-}
-
-
-void DumpFixedObject(uint64_t p0, uint64_t p1)
-{
-   WriteLog("          %08X %08X\n", (uint32_t)(p1>>32), (uint32_t)(p1&0xFFFFFFFF));
-   DumpBitmapCore(p0, p1);
-}
-
-
-void DumpBitmapCore(uint64_t p0, uint64_t p1)
-{
-   uint32_t bdMultiplier[8] = { 64, 32, 16, 8, 4, 2, 1, 1 };
-   uint8_t bitdepth = (p1 >> 12) & 0x07;
-   int16_t ypos = ((p0 >> 3) & 0x7FF);			// ??? What if not interlaced (/2)?
-   int32_t xpos = p1 & 0xFFF;
-   uint32_t iwidth = ((p1 >> 28) & 0x3FF);
-   uint32_t dwidth = ((p1 >> 18) & 0x3FF);		// Unsigned!
-   uint16_t height = ((p0 >> 14) & 0x3FF);
-   uint32_t link = ((p0 >> 24) & 0x7FFFF) << 3;
-   uint32_t ptr = ((p0 >> 43) & 0x1FFFFF) << 3;
-   uint32_t firstPix = (p1 >> 49) & 0x3F;
-   uint8_t flags = (p1 >> 45) & 0x0F;
-   uint8_t idx = (p1 >> 38) & 0x7F;
-   uint32_t pitch = (p1 >> 15) & 0x07;
-   xpos = (xpos & 0x800 ? xpos | 0xFFFFF000 : xpos);	// Sign extend that mutha!
-   WriteLog("    [%u x %u @ (%i, %u) (iw:%u, dw:%u) (%u bpp), p:%08X fp:%02X, fl:%s%s%s%s, idx:%02X, pt:%02X]\n",
-         iwidth * bdMultiplier[bitdepth],
-         height, xpos, ypos, iwidth, dwidth, op_bitmap_bit_depth[bitdepth],
-         ptr, firstPix, ((flags & OPFLAG_REFLECT) ? "REFLECT " : ""),
-         ((flags & OPFLAG_RMW) ? "RMW " : ""), ((flags & OPFLAG_TRANS) ? "TRANS " : ""),
-         ((flags & OPFLAG_RELEASE) ? "RELEASE" : ""), idx, pitch);
-}
-
-
 //
 // Object Processor main routine
 //
 //#warning "Need to fix this so that when an GPU object IRQ happens, we can pick up OP processing where we left off. !!! FIX !!!"
 void OPProcessList(int halfline, bool render)
 {
-   extern bool interactiveMode;
-   extern bool iToggle;
-   extern int objectPtr;
    bool inhibit;
    int bitmapCounter = 0;
    uint32_t opCyclesToRun = 30000;					// This is a pulled-out-of-the-air value (will need to be fixed, obviously!)
@@ -392,10 +288,7 @@ void OPProcessList(int halfline, bool render)
    {
       uint64_t p0;
       // *** BEGIN OP PROCESSOR TESTING ONLY ***
-      if (interactiveMode && bitmapCounter == objectPtr)
-         inhibit = iToggle;
-      else
-         inhibit = false;
+      inhibit     = false;
       // *** END OP PROCESSOR TESTING ONLY ***
 
       p0          = OPLoadPhrase(op_pointer);
@@ -540,7 +433,6 @@ void OPProcessList(int halfline, bool render)
             }
          case OBJECT_TYPE_GPU:
             {
-               //WriteLog("OP: Asserting GPU IRQ #3...\n");
 //#warning "Need to fix OP GPU IRQ handling! !!! FIX !!!"
                OPSetCurrentObject(p0);
                GPUSetIRQLine(3, ASSERT_LINE);
@@ -585,7 +477,7 @@ void OPProcessList(int halfline, bool render)
                      break;
                   default:
                      // Basically, if you do this, the OP does nothing. :-)
-                     WriteLog("OP: Unimplemented branch condition %i\n", cc);
+		     break;
                }
                break;
             }
@@ -603,7 +495,7 @@ void OPProcessList(int halfline, bool render)
                return;
             }
          default:
-            WriteLog("OP: Unknown object type %i\n", (uint8_t)p0 & 0x07);
+	    break;
       }
 
       // Here is a little sanity check to keep the OP from locking up the machine
@@ -739,7 +631,6 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       clippedWidth = startPos - lbufWidth,
                    dataClippedWidth = phraseClippedWidth = clippedWidth / phraseWidthToPixels[depth],
                    startPos = lbufWidth + (clippedWidth % phraseWidthToPixels[depth]);
-   //printf("<OP:spos=%i,epos=%i]", startPos, endPos);
 
    // If the image is sitting on the line buffer left or right edge, we need to compensate
    // by decreasing the image phrase width accordingly.

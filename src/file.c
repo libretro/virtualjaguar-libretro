@@ -22,7 +22,6 @@
 #include "filedb.h"
 #include "eeprom.h"
 #include "jaguar.h"
-#include "log.h"
 #include "vjag_memory.h"
 
 /* Parse the file type based upon file size and/or headers. */
@@ -43,8 +42,7 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    {
       if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
          return JST_JAGSERVER;
-      else
-         return JST_WTFOMGBBQ;
+      return JST_WTFOMGBBQ;
    }
 
    // And if that fails, try file sizes...
@@ -75,7 +73,7 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
    EepromInit();
    jaguarRunAddress = 0x802000;					// For non-BIOS runs, this is true
-   fileType = ParseFileType(buffer, jaguarROMSize);
+   fileType           = ParseFileType(buffer, jaguarROMSize);
    jaguarCartInserted = false;
 
    if (fileType == JST_ROM)
@@ -84,13 +82,11 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       memcpy(jagMemSpace + 0x800000, buffer, jaguarROMSize);
       // Checking something...
       jaguarRunAddress = GET32(jagMemSpace, 0x800404);
-      WriteLog("FILE: Cartridge run address is reported as $%X...\n", jaguarRunAddress);
       return true;
    }
    else if (fileType == JST_ALPINE)
    {
       // File extension ".ROM": Alpine image that loads/runs at $802000
-      WriteLog("FILE: Setting up Alpine ROM... Run address: 00802000, length: %08X\n", jaguarROMSize);
       memset(jagMemSpace + 0x800000, 0xFF, 0x2000);
       memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
 
@@ -106,7 +102,6 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       // For ABS type 1, run address == load address
       uint32_t loadAddress = GET32(buffer, 0x16),
                codeSize = GET32(buffer, 0x02) + GET32(buffer, 0x06);
-      WriteLog("FILE: Setting up homebrew (ABS-1)... Run address: %08X, length: %08X\n", loadAddress, codeSize);
       memcpy(jagMemSpace + loadAddress, buffer + 0x24, codeSize);
       jaguarRunAddress = loadAddress;
       return true;
@@ -115,7 +110,6 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    {
       uint32_t loadAddress = GET32(buffer, 0x28), runAddress = GET32(buffer, 0x24),
                codeSize = GET32(buffer, 0x18) + GET32(buffer, 0x1C);
-      WriteLog("FILE: Setting up homebrew (ABS-2)... Run address: %08X, length: %08X\n", runAddress, codeSize);
       memcpy(jagMemSpace + loadAddress, buffer + 0xA8, codeSize);
       jaguarRunAddress = runAddress;
       return true;
@@ -130,7 +124,6 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       // Still need to do some checking here for type 2 vs. type 3. This assumes 3
       // Also, JAGR vs. JAGL (word command size vs. long command size)
       uint32_t loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
-      WriteLog("FILE: Setting up homebrew (Jag Server)... Run address: $%X, length: $%X\n", runAddress, jaguarROMSize - 0x2E);
       memcpy(jagMemSpace + loadAddress, buffer + 0x2E, jaguarROMSize - 0x2E);
       jaguarRunAddress = runAddress;
 
@@ -143,40 +136,11 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    else if (fileType == JST_WTFOMGBBQ)
    {
       uint32_t loadAddress = (buffer[0x1F] << 24) | (buffer[0x1E] << 16) | (buffer[0x1D] << 8) | buffer[0x1C];
-      WriteLog("FILE: Setting up homebrew (GEMDOS WTFOMGBBQ type)... Run address: $%X, length: $%X\n", loadAddress, jaguarROMSize - 0x20);
       memcpy(jagMemSpace + loadAddress, buffer + 0x20, jaguarROMSize - 0x20);
       jaguarRunAddress = loadAddress;
       return true;
    }
 
    // We can assume we have JST_NONE at this point. :-P
-   WriteLog("FILE: Failed to load headerless file.\n");
    return false;
-}
-
-/* "Alpine" file loading */
-bool AlpineLoadFile(uint8_t *buffer, size_t bufsize)
-{
-   jaguarROMSize = bufsize;
-
-   if (jaguarROMSize == 0)
-      return false;
-
-   jaguarMainROMCRC32 = crc32_calcCheckSum(buffer, jaguarROMSize);
-   EepromInit();
-
-   jaguarRunAddress = 0x802000;
-
-   WriteLog("FILE: Setting up Alpine ROM with non-standard length... Run address: 00802000, length: %08X\n", jaguarROMSize);
-
-   memset(jagMemSpace + 0x800000, 0xFF, 0x2000);
-   memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
-
-   // Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
-   // Try setting the vector to say, $1000 and putting an instruction there that loops forever:
-   // This kludge works! Yeah!
-   SET32(jaguarMainRAM, 0x10, 0x00001000);		// Set Exception #4 (Illegal Instruction)
-   SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
-
-   return true;
 }
