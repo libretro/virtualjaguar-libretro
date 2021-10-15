@@ -325,16 +325,10 @@ INLINE uint16_t GPUReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE+0x1000))
 	{
         offset &= 0xFFF;
-#ifdef USE_STRUCTS
         OpCode data;
         data.Bytes.UBYTE = (uint16_t)gpu_ram_8[offset];
         data.Bytes.LBYTE = (uint16_t)gpu_ram_8[offset+1];
         return data.WORD;
-#else
-        uint16_t data;
-		data    = ((uint16_t)gpu_ram_8[offset] << 8) | (uint16_t)gpu_ram_8[offset+1];
-		return data;
-#endif
 	}
 	else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE+0x20))
 	{
@@ -398,8 +392,9 @@ INLINE uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x1C:
             return gpu_remain;
          default:								// unaligned long read
-            return 0;
+            break;
       }
+        return 0;
 	}
 
 	return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset + 2, who);
@@ -609,7 +604,7 @@ void GPUHandleIRQs(void)
       return;
 
    // Get the interrupt latch & enable bits
-    bits = gpu_control.gpuIRQ.irqMask; //(gpu_control >> 6) & 0x1F;
+   bits = gpu_control.gpuIRQ.irqMask; //(gpu_control >> 6) & 0x1F;
    mask = (gpu_flags >> 4) & 0x1F;
 
    // Bail out if latched interrupts aren't enabled

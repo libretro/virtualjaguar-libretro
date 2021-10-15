@@ -40,8 +40,7 @@ extern "C" {
         } bytes;
     } Bits64;
 #pragma pack(pop)
-	_Static_assert( sizeof(Bits64) == sizeof(uint64_t), "Pack error");
-
+    
 #pragma pack(push, 1)
 typedef union Bits32 {
     uint32_t WORD;
@@ -148,7 +147,6 @@ typedef union Bits32 {
     } bits;
 } Bits32;
 #pragma pack(pop)
-	_Static_assert( sizeof(Bits32) == sizeof(uint32_t), "Pack error");
 
 #pragma pack(push, 1)
 typedef union GPUControl {
@@ -170,7 +168,6 @@ typedef union GPUControl {
 
 } GPUControl;
     
-#ifdef USE_STRUCTS
 #pragma pack(push, 1)
     typedef union OpCode {
         uint16_t WORD;
@@ -198,9 +195,7 @@ typedef union GPUControl {
 #pragma pack(pop)
     
     typedef OpCode U16Union;
-#endif //USE_STRUCTS
 
-#ifdef USE_STRUCTS
 typedef union Offset {
     uint32_t LONG;
 #pragma pack(push, 1)
@@ -215,7 +210,6 @@ typedef union Offset {
     } Members;
 #pragma pack(pop)
 } Offset;
-#endif //USE_STRUCTS
     
 typedef union DSPLong {
     uint32_t LONG;

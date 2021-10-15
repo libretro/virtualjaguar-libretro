@@ -305,10 +305,10 @@ static int32_t a1_clip_x, a1_clip_y;
 // to optimize the blitter, then we may revisit it in the future...
 
 // Generic blit handler
-void blitter_generic(uint32_t icmd)
+void blitter_generic(uint32_t cmdi)
 {
     Bits32 cmd;
-    cmd.WORD = icmd;
+    cmd.WORD = cmdi;
     
    uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
    uint32_t bppSrc = (DSTA2 ? 1 << ((REG(A1_FLAGS) >> 3) & 0x07) : 1 << ((REG(A2_FLAGS) >> 3) & 0x07));
@@ -2917,7 +2917,7 @@ with srcshift bits 4 & 5 selecting the start position
 */
 //So... basically what we have here is:
 	*zcomp = 0;
-    // TODO: Byte and bit this -jm provenance
+    // TODO: Byte and bit this - @joematt provenance
 	if ((((*srcz & 0x000000000000FFFFLL) < (dstz & 0x000000000000FFFFLL)) && (zmode & 0x01u))
 		|| (((*srcz & 0x000000000000FFFFLL) == (dstz & 0x000000000000FFFFLL)) && (zmode & 0x02u))
 		|| (((*srcz & 0x000000000000FFFFLL) > (dstz & 0x000000000000FFFFLL)) && (zmode & 0x04u)))
@@ -3048,7 +3048,7 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-    // TODO: Byte and bit this -jm provenance
+    // TODO: Byte and bit this - @joematt provenance
 
 	maskt = s_fine & 0x0001;
 	maskt |= (((maskt & 0x0001) || (s_fine & 0x02u)) && (e_fine & 0x02u) ? 0x0002 : 0x0000);
@@ -3061,6 +3061,7 @@ Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 //////////////////////////////////////////////////////////////////////////////////////
 
    /* Produce a look-ahead on the ripple carry */
+    // TODO: Byte and bit this - @joematt provenance
 	maskt |= (((s_coarse & e_coarse & 0x01u) || (s_coarse & 0x02u)) && (e_coarse & 0x02u) ? 0x0100 : 0x0000);
 	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04u)) && (e_coarse & 0x04u) ? 0x0200 : 0x0000);
 	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08u)) && (e_coarse & 0x08u) ? 0x0400 : 0x0000);
@@ -3097,6 +3098,7 @@ Masku[14]	:= MX2 (masku[14], maskt[14], maskt[0],  mir_byte);*/
 	mir_bit  = true/*big_pix*/ && !phrase_mode;
 	mir_byte = true/*big_pix*/ && phrase_mode;
 	masku    = maskt;
+    // TODO: Byte and bit this - @joematt provenance
 
 	if (mir_bit)
 	{
