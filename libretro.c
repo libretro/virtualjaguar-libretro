@@ -163,6 +163,11 @@ static void update_input(void)
    joypad0Buttons[BUTTON_4]      = 0x00;
    joypad0Buttons[BUTTON_5]      = 0x00;
    joypad0Buttons[BUTTON_6]      = 0x00;
+   joypad0Buttons[BUTTON_7]      = 0x00;
+   joypad0Buttons[BUTTON_8]      = 0x00;
+   joypad0Buttons[BUTTON_9]      = 0x00;
+   joypad0Buttons[BUTTON_s]      = 0x00;
+   joypad0Buttons[BUTTON_d]      = 0x00;
 
    joypad1Buttons[BUTTON_U]      = 0x00;
    joypad1Buttons[BUTTON_D]      = 0x00;
@@ -180,6 +185,11 @@ static void update_input(void)
    joypad1Buttons[BUTTON_4]      = 0x00;
    joypad1Buttons[BUTTON_5]      = 0x00;
    joypad1Buttons[BUTTON_6]      = 0x00;
+   joypad1Buttons[BUTTON_7]      = 0x00;
+   joypad1Buttons[BUTTON_8]      = 0x00;
+   joypad1Buttons[BUTTON_9]      = 0x00;
+   joypad1Buttons[BUTTON_s]      = 0x00;
+   joypad1Buttons[BUTTON_d]      = 0x00;
 
    if (libretro_supports_bitmasks)
    {
@@ -257,20 +267,30 @@ static void update_input(void)
       joypad1Buttons[BUTTON_PAUSE] = 0xff;
    if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
       joypad1Buttons[BUTTON_OPTION] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p)? 1 : 0))
       joypad1Buttons[BUTTON_0] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q)? 1 : 0))
       joypad1Buttons[BUTTON_1] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w)? 1 : 0))
       joypad1Buttons[BUTTON_2] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e)? 1 : 0))
       joypad1Buttons[BUTTON_3] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r)? 1 : 0))
       joypad1Buttons[BUTTON_4] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
       joypad1Buttons[BUTTON_5] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3))
+   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
       joypad1Buttons[BUTTON_6] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
+      joypad1Buttons[BUTTON_7] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
+      joypad1Buttons[BUTTON_8] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
+      joypad1Buttons[BUTTON_9] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
+	  joypad1Buttons[BUTTON_s] = 0xff;
+   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
+	  joypad1Buttons[BUTTON_d] = 0xff;
 }
 
 static void extract_basename(char *buf, const char *path, size_t size)
