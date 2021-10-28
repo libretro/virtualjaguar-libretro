@@ -1,10 +1,8 @@
 name: Build
 
 on:
-  push:
-    branches: [master]
   pull_request:
-    branches: [master]
+    types: [opened, edited, ready_for_review, reopened]
 
 jobs:
   build:
@@ -16,5 +14,25 @@ jobs:
     steps:
       - name: checkout repo
         uses: actions/checkout@v2
+
       - name: build application
         run: make
+
+      - name: upload artifacts
+      - uses: actions/upload-artifact@v2
+        with:
+          name: results
+          path: virtualjaguar_libretro.*
+          if-no-files-found: error
+
+      - name: download artifacts
+      - uses: actions/download-artifact@v2
+        with:
+          name: results
+
+      # - name: comment PR
+      #   uses: machine-learning-apps/pr-comment@master
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     path: results/results.txt
