@@ -22,7 +22,6 @@
 #ifndef UAE_SYSDEPS_H
 #define UAE_SYSDEPS_H
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <limits.h>
