@@ -12,12 +12,6 @@ jobs:
       fail-fast: false
       matrix:
         config:
-              - displayTargetName: 'Windows Latest MinGW'
-                artifact: 'virtualjaguar_libretro.so'
-                os: windows-latest
-                build_type: 'Release'
-                cc: 'gcc'
-                cxx: 'g++'
               - displayTargetName: 'Ubuntu Latest GCC'
                 artifact: 'virtualjaguar_libretro.so'
                 os: ubuntu-latest
@@ -30,6 +24,12 @@ jobs:
                 build_type: 'Release'
                 cc: 'clang'
                 cxx: 'clang++'
+#               - displayTargetName: 'Windows Latest MinGW'
+#                 artifact: 'virtualjaguar_libretro.so'
+#                 os: windows-latest
+#                 build_type: 'Release'
+#                 cc: 'gcc'
+#                 cxx: 'g++'
 
     name: build-${{matrix.config.os}}
     runs-on: ${{ matrix.config.os }}
