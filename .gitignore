@@ -5,3 +5,5 @@
 *.exe
 *.js
 *.bc
+.DS_Store
+.build
