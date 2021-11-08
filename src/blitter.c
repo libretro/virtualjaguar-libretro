@@ -23,7 +23,6 @@
 #include "blitter.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include "jaguar.h"
 #include "settings.h"

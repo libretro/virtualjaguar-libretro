@@ -1,0 +1,65 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+              - displayTargetName: 'Ubuntu Latest GCC'
+                artifact: 'virtualjaguar_libretro.so'
+                os: ubuntu-latest
+                build_type: 'Release'
+                cc: 'gcc'
+                cxx: 'g++'
+              - displayTargetName: 'macOS Latest Clang'
+                artifact: 'virtualjaguar_libretro.dylib'
+                os: macos-latest
+                build_type: 'Release'
+                cc: 'clang'
+                cxx: 'clang++'
+#               - displayTargetName: 'Windows Latest MinGW'
+#                 artifact: 'virtualjaguar_libretro.so'
+#                 os: windows-latest
+#                 build_type: 'Release'
+#                 cc: 'gcc'
+#                 cxx: 'g++'
+
+    name: build-${{matrix.config.os}}
+    runs-on: ${{ matrix.config.os }}
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Add Msys64 to PATH
+      if: matrix.config.os == 'windows-latest'
+      run: |
+        echo "/c/msys64/mingw64/bin" >> $GITHUB_PATH 
+        echo "/c/msys64/usr/bin" >> $GITHUB_PATH 
+      shell: bash
+    - name: make
+      run: make -j4
+
+#     - name: Upload the artifacts
+#       uses: skx/github-action-publish-binaries@master
+#       env:
+#         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#       with:
+#         args: ${{ matrix.config.artifact }}
+
+    - name: upload artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: core-${{ matrix.config.os }}
+        path: ${{ matrix.config.artifact }}
+        if-no-files-found: error
+
+    - name: download artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: core-${{ matrix.config.os }}
