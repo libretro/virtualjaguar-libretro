@@ -443,7 +443,7 @@ void GPUWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
       return;
    }
-   else if ((offset == GPU_WORK_RAM_BASE + 0x0FFF) || (GPU_CONTROL_RAM_BASE + 0x1F))
+   else if ((offset == GPU_WORK_RAM_BASE + 0x0FFF) || (offset == GPU_CONTROL_RAM_BASE + 0x1F))
       return;
 
    // Have to be careful here--this can cause an infinite loop!
