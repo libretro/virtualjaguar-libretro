@@ -146,6 +146,26 @@ typedef union Bits32 {
     } bits;
 } Bits32;
 #pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef union GPUControl {
+    uint32_t WORD;
+    struct Words words;
+    struct Bits bits;
+    struct  __attribute__ ((__packed__)) {
+#ifdef LITTLE_ENDIAN
+        unsigned int : 6;
+        unsigned int irqMask: 5;
+        unsigned int : 21;
+#else
+        unsigned int : 21;
+        unsigned int irqMask: 5;
+        unsigned int : 6;
+#endif
+} gpuIRQ;
+#pragma pack(pop)
+
+} GPUControl;
     
 #pragma pack(push, 1)
     typedef union OpCode {
