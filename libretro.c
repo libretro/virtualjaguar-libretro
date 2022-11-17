@@ -338,8 +338,8 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.sample_rate    = SAMPLERATE;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
-   info->geometry.max_width    = TOMGetVideoModeWidth();
-   info->geometry.max_height   = TOMGetVideoModeHeight();
+   info->geometry.max_width    = 652; // Highest value encountered during testing
+   info->geometry.max_height   = vjs.hardwareTypeNTSC ? 240 : 256;
    info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 
@@ -568,5 +568,18 @@ void retro_run(void)
 
    JaguarExecuteNew();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
+
+   // Resolution changed
+   if ((tomWidth != videoWidth || tomHeight != videoHeight) && tomWidth > 0 && tomHeight > 0)
+   {
+      videoWidth = tomWidth, videoHeight = tomHeight;
+      game_width = tomWidth, game_height = tomHeight;
+      
+      JaguarSetScreenPitch(game_width);
+
+      retro_get_system_av_info(&g_av_info);
+      environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);      
+   }
+
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 }
