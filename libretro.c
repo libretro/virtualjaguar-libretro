@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <libretro.h>
+#include <libretro_core_options.h>
 #include <streams/file_stream.h>
 #include "file.h"
 #include "jagbios.h"
@@ -41,33 +42,185 @@ void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 
 int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
 
+#define ANALOG_THRESHOLD 20000
+#define BUTTON_NONE 21
+#define RETRO_DEVICE_ID_JOYPAD_LU 16
+#define RETRO_DEVICE_ID_JOYPAD_LD 17
+#define RETRO_DEVICE_ID_JOYPAD_LL 18
+#define RETRO_DEVICE_ID_JOYPAD_LR 19
+#define RETRO_DEVICE_ID_JOYPAD_RU 20
+#define RETRO_DEVICE_ID_JOYPAD_RD 21
+#define RETRO_DEVICE_ID_JOYPAD_RL 22
+#define RETRO_DEVICE_ID_JOYPAD_RR 23
+
+static int jag_retropad[2][24];
+static int jag_numpad[2][12];
+static int numpad_to_kb[2];
+static bool show_input_options = true;
+static bool enable_alt_inputs = false;
+static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
+
+static int number_keys[12] = {
+   RETROK_MINUS,
+   RETROK_7,
+   RETROK_4,
+   RETROK_1,
+   RETROK_0,
+   RETROK_8,
+   RETROK_5,
+   RETROK_2,
+   RETROK_EQUALS,
+   RETROK_9,
+   RETROK_6,
+   RETROK_3
+};
+
+static int keypad_keys[12] = {
+   RETROK_KP_DIVIDE,
+   RETROK_KP7,
+   RETROK_KP4,
+   RETROK_KP1,
+   RETROK_KP0,
+   RETROK_KP8,
+   RETROK_KP5,
+   RETROK_KP2,
+   RETROK_KP_MULTIPLY,
+   RETROK_KP9,
+   RETROK_KP6,
+   RETROK_KP3
+};
+
+typedef struct {
+   int id;
+   char value[10];
+} JagMapping;
+
+static JagMapping jag_map[22] = {
+   { BUTTON_U,      "up" },
+   { BUTTON_D,      "down" },
+   { BUTTON_L,      "left" },
+   { BUTTON_R,      "right" },
+   { BUTTON_A,      "btn_a" },
+   { BUTTON_B,      "btn_b" },
+   { BUTTON_C,      "btn_c" },
+   { BUTTON_PAUSE,  "pause" },
+   { BUTTON_OPTION, "option" },
+   { BUTTON_0,      "num_0" },
+   { BUTTON_1,      "num_1" },
+   { BUTTON_2,      "num_2" },
+   { BUTTON_3,      "num_3" },
+   { BUTTON_4,      "num_4" },
+   { BUTTON_5,      "num_5" },
+   { BUTTON_6,      "num_6" },
+   { BUTTON_7,      "num_7" },
+   { BUTTON_8,      "num_8" },
+   { BUTTON_9,      "num_9" },
+   { BUTTON_s,      "star" },
+   { BUTTON_d,      "hash" },
+   { BUTTON_NONE,   "---" }
+};
+
+static int get_button_id(const char *val)
+{
+   for (int i = 0; i <= BUTTON_NONE; i++)
+   {
+      if (!strcmp(jag_map[i].value, val))
+         return jag_map[i].id;
+   }
+   return BUTTON_NONE;
+}
+
+static bool update_option_visibility(void)
+{
+   struct retro_core_option_display option_display;
+   struct retro_variable var;
+   bool updated = false;
+
+   // Show/hide input options
+   bool show_input_options_prev = show_input_options;
+   show_input_options = true;
+
+   var.key = "virtualjaguar_alt_inputs";
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "disabled"))
+      show_input_options = false;
+
+   if (show_input_options != show_input_options_prev)
+   {
+      option_display.visible = show_input_options;
+
+      for (int i = 0; i < 2; i++)
+      {
+         char key[64];
+         option_display.key = key;
+
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_numpad_to_kb");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_up");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_down");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_left");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_right");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_a");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_b");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_x");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_y");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_select");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_start");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_l1");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_r1");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_l2");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_r2");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_l3");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_r3");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_lu");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_ld");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_ll");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_lr");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_ru");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_rd");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_rl");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_rr");
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+      }
+
+      updated = true;
+   }
+
+   return updated;
+}
+
 void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
-   struct retro_variable variables[] = {
-      {
-         "virtualjaguar_usefastblitter",
-         "Fast Blitter; disabled|enabled",
-
-      },
-      {
-         "virtualjaguar_doom_res_hack",
-         "Doom Res Hack; disabled|enabled",
-
-      },
-      {
-         "virtualjaguar_bios",
-         "Bios; disabled|enabled",
-      },
-      {
-         "virtualjaguar_pal",
-         "Pal (Restart); disabled|enabled",
-      },
-      { NULL, NULL },
-   };
-
+   bool option_categories = false;
    environ_cb = cb;
-   cb(RETRO_ENVIRONMENT_SET_VARIABLES, variables);
+
+   libretro_set_core_options(environ_cb, &option_categories);
+   struct retro_core_options_update_display_callback update_display_cb;
+   update_display_cb.callback = update_option_visibility;
+   environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update_display_cb);
 
    vfs_iface_info.required_interface_version = 1;
    vfs_iface_info.iface                      = NULL;
@@ -84,12 +237,10 @@ static void check_variables(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
-         vjs.useFastBlitter=1;
-      if (strcmp(var.value, "disabled") == 0)
-         vjs.useFastBlitter=0;
+         vjs.useFastBlitter = true;
+      else
+         vjs.useFastBlitter = false;
    }
-   else
-      vjs.useFastBlitter=0;
 
    var.key = "virtualjaguar_doom_res_hack";
    var.value = NULL;
@@ -97,12 +248,10 @@ static void check_variables(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
-         doom_res_hack=1;
-      if (strcmp(var.value, "disabled") == 0)
-         doom_res_hack=0;
+         doom_res_hack = 1;
+      else
+         doom_res_hack = 0;
    }
-   else
-      doom_res_hack=0;
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -111,11 +260,9 @@ static void check_variables(void)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.useJaguarBIOS = true;
-      if (strcmp(var.value, "disabled") == 0)
+      else
          vjs.useJaguarBIOS = false;
    }
-   else
-      vjs.useJaguarBIOS = false;
 
    var.key = "virtualjaguar_pal";
    var.value = NULL;
@@ -123,13 +270,208 @@ static void check_variables(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
-         vjs.hardwareTypeNTSC=0;
-      if (strcmp(var.value, "disabled") == 0)
-         vjs.hardwareTypeNTSC=1;
+         vjs.hardwareTypeNTSC = false;
+      else
+         vjs.hardwareTypeNTSC = true;
    }
-   else
-      vjs.hardwareTypeNTSC=1;
 
+   var.key = "virtualjaguar_alt_inputs";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (!strcmp(var.value, "enabled"))
+         enable_alt_inputs = true;
+      else
+         enable_alt_inputs = false;
+   }
+
+   for (int i = 0; i < 2; i++)
+   {
+      char key[64];
+      var.key = key;
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_numpad_to_kb");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         if (!strcmp(var.value, "disabled"))
+            numpad_to_kb[i] = 0;
+         else if (!strcmp(var.value, "numbers"))
+            numpad_to_kb[i] = 1;
+         else if (!strcmp(var.value, "keypad"))
+            numpad_to_kb[i] = 2;
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_up");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_UP] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_down");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_DOWN] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_left");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LEFT] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_right");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RIGHT] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_a");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_A] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_b");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_B] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_y");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_Y] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_select");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_SELECT] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_start");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_START] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_x");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_X] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_l1");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_L] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_r1");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_R] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_l2");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_L2] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_r2");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_R2] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_l3");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_L3] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_r3");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_R3] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_lu");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LU] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_ld");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LD] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_ll");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LL] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_lr");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LR] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_ru");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RU] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_rd");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RD] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_rl");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RL] = get_button_id(var.value);
+      }
+
+      snprintf(key, sizeof(key), "%s%d%s", "virtualjaguar_p", i + 1, "_retropad_analog_rr");
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RR] = get_button_id(var.value);
+      }
+   }
+
+   update_option_visibility();
 }
 
 static void update_input(void)
@@ -147,49 +489,6 @@ static void update_input(void)
        joypad0Buttons[i] = 0x00;
        joypad1Buttons[i] = 0x00;
    }
-   joypad0Buttons[BUTTON_U]      = 0x00;
-   joypad0Buttons[BUTTON_D]      = 0x00;
-   joypad0Buttons[BUTTON_L]      = 0x00;
-   joypad0Buttons[BUTTON_R]      = 0x00;
-   joypad0Buttons[BUTTON_A]      = 0x00;
-   joypad0Buttons[BUTTON_B]      = 0x00;
-   joypad0Buttons[BUTTON_C]      = 0x00;
-   joypad0Buttons[BUTTON_PAUSE]  = 0x00;
-   joypad0Buttons[BUTTON_OPTION] = 0x00;
-   joypad0Buttons[BUTTON_0]      = 0x00;
-   joypad0Buttons[BUTTON_1]      = 0x00;
-   joypad0Buttons[BUTTON_2]      = 0x00;
-   joypad0Buttons[BUTTON_3]      = 0x00;
-   joypad0Buttons[BUTTON_4]      = 0x00;
-   joypad0Buttons[BUTTON_5]      = 0x00;
-   joypad0Buttons[BUTTON_6]      = 0x00;
-   joypad0Buttons[BUTTON_7]      = 0x00;
-   joypad0Buttons[BUTTON_8]      = 0x00;
-   joypad0Buttons[BUTTON_9]      = 0x00;
-   joypad0Buttons[BUTTON_s]      = 0x00;
-   joypad0Buttons[BUTTON_d]      = 0x00;
-
-   joypad1Buttons[BUTTON_U]      = 0x00;
-   joypad1Buttons[BUTTON_D]      = 0x00;
-   joypad1Buttons[BUTTON_L]      = 0x00;
-   joypad1Buttons[BUTTON_R]      = 0x00;
-   joypad1Buttons[BUTTON_A]      = 0x00;
-   joypad1Buttons[BUTTON_B]      = 0x00;
-   joypad1Buttons[BUTTON_C]      = 0x00;
-   joypad1Buttons[BUTTON_PAUSE]  = 0x00;
-   joypad1Buttons[BUTTON_OPTION] = 0x00;
-   joypad1Buttons[BUTTON_0]      = 0x00;
-   joypad1Buttons[BUTTON_1]      = 0x00;
-   joypad1Buttons[BUTTON_2]      = 0x00;
-   joypad1Buttons[BUTTON_3]      = 0x00;
-   joypad1Buttons[BUTTON_4]      = 0x00;
-   joypad1Buttons[BUTTON_5]      = 0x00;
-   joypad1Buttons[BUTTON_6]      = 0x00;
-   joypad1Buttons[BUTTON_7]      = 0x00;
-   joypad1Buttons[BUTTON_8]      = 0x00;
-   joypad1Buttons[BUTTON_9]      = 0x00;
-   joypad1Buttons[BUTTON_s]      = 0x00;
-   joypad1Buttons[BUTTON_d]      = 0x00;
 
    if (libretro_supports_bitmasks)
    {
@@ -206,91 +505,171 @@ static void update_input(void)
       }
    }
 
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
-      joypad0Buttons[BUTTON_U] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN))
-      joypad0Buttons[BUTTON_D] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT))
-      joypad0Buttons[BUTTON_L] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT))
-      joypad0Buttons[BUTTON_R] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
-      joypad0Buttons[BUTTON_A] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
-      joypad0Buttons[BUTTON_B] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
-      joypad0Buttons[BUTTON_C] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
-      joypad0Buttons[BUTTON_PAUSE] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
-      joypad0Buttons[BUTTON_OPTION] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0)? 1 : 0))
-      joypad0Buttons[BUTTON_0] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1)? 1 : 0))
-      joypad0Buttons[BUTTON_1] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2)? 1 : 0))
-      joypad0Buttons[BUTTON_2] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3)? 1 : 0))
-      joypad0Buttons[BUTTON_3] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4)? 1 : 0))
-      joypad0Buttons[BUTTON_4] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
-      joypad0Buttons[BUTTON_5] = 0xff;
-   if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
-      joypad0Buttons[BUTTON_6] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
-      joypad0Buttons[BUTTON_7] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
-      joypad0Buttons[BUTTON_8] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
-      joypad0Buttons[BUTTON_9] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
-	  joypad0Buttons[BUTTON_s] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
-	  joypad0Buttons[BUTTON_d] = 0xff;
+   if (enable_alt_inputs)
+   {
+      int16_t analog_val[2][4];
 
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
-      joypad1Buttons[BUTTON_U] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN))
-      joypad1Buttons[BUTTON_D] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT))
-      joypad1Buttons[BUTTON_L] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT))
-      joypad1Buttons[BUTTON_R] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
-      joypad1Buttons[BUTTON_A] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
-      joypad1Buttons[BUTTON_B] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
-      joypad1Buttons[BUTTON_C] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
-      joypad1Buttons[BUTTON_PAUSE] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
-      joypad1Buttons[BUTTON_OPTION] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p)? 1 : 0))
-      joypad1Buttons[BUTTON_0] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q)? 1 : 0))
-      joypad1Buttons[BUTTON_1] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w)? 1 : 0))
-      joypad1Buttons[BUTTON_2] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e)? 1 : 0))
-      joypad1Buttons[BUTTON_3] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r)? 1 : 0))
-      joypad1Buttons[BUTTON_4] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
-      joypad1Buttons[BUTTON_5] = 0xff;
-   if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
-      joypad1Buttons[BUTTON_6] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
-      joypad1Buttons[BUTTON_7] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
-      joypad1Buttons[BUTTON_8] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
-      joypad1Buttons[BUTTON_9] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
-	  joypad1Buttons[BUTTON_s] = 0xff;
-   if((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
-	  joypad1Buttons[BUTTON_d] = 0xff;
+      for (player = 0; player < 2; player++)
+      {
+         // for buttons remapped to analogs
+         analog_val[player][0] = input_state_cb(player, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+         analog_val[player][1] = input_state_cb(player, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+         analog_val[player][2] = input_state_cb(player, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
+         analog_val[player][3] = input_state_cb(player, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+
+         for (i = RETRO_DEVICE_ID_JOYPAD_B; i <= RETRO_DEVICE_ID_JOYPAD_RR; i++)
+         {
+            if (jag_retropad[player][i] == BUTTON_NONE)
+               continue;
+
+            if (i < RETRO_DEVICE_ID_JOYPAD_LU) // dpad, buttons and triggers
+            {
+               if (ret[player] & (1 << i))
+                  joypad_buttons[player][jag_retropad[player][i]] = 0xff;
+            }
+            else if (i > RETRO_DEVICE_ID_JOYPAD_R3) // analogs
+            {
+               switch (i)
+               {
+                  case RETRO_DEVICE_ID_JOYPAD_LU:
+                     if (analog_val[player][0] < -ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_LU]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_LD:
+                     if (analog_val[player][0] > ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_LD]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_LL:
+                     if (analog_val[player][1] < -ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_LL]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_LR:
+                     if (analog_val[player][1] > ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_LR]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_RU:
+                     if (analog_val[player][2] < -ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_RU]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_RD:
+                     if (analog_val[player][2] > ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_RD]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_RL:
+                     if (analog_val[player][3] < -ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_RL]] = 0xff;
+                     break;
+                  case RETRO_DEVICE_ID_JOYPAD_RR:
+                     if (analog_val[player][3] > ANALOG_THRESHOLD)
+                        joypad_buttons[player][jag_retropad[player][RETRO_DEVICE_ID_JOYPAD_RR]] = 0xff;
+                     break;
+               }
+            }
+         }
+
+         // numpad buttons to keyboard
+         if (numpad_to_kb[player] == 1)
+         {
+            for (i = 0; i < 12; i++)
+               if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, number_keys[i]))
+                  joypad_buttons[player][i + 4] = 0xff; // i + 4 because numpad enums start at 4
+         }
+         else if (numpad_to_kb[player] == 2)
+         {
+            for (i = 0; i < 12; i++)
+               if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, keypad_keys[i]))
+                  joypad_buttons[player][i + 4] = 0xff;
+         }
+      }
+   }
+   else
+   {
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
+         joypad0Buttons[BUTTON_U] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN))
+         joypad0Buttons[BUTTON_D] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT))
+         joypad0Buttons[BUTTON_L] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT))
+         joypad0Buttons[BUTTON_R] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
+         joypad0Buttons[BUTTON_A] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
+         joypad0Buttons[BUTTON_B] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
+         joypad0Buttons[BUTTON_C] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
+         joypad0Buttons[BUTTON_PAUSE] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
+         joypad0Buttons[BUTTON_OPTION] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0)? 1 : 0))
+         joypad0Buttons[BUTTON_0] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1)? 1 : 0))
+         joypad0Buttons[BUTTON_1] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2)? 1 : 0))
+         joypad0Buttons[BUTTON_2] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3)? 1 : 0))
+         joypad0Buttons[BUTTON_3] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4)? 1 : 0))
+         joypad0Buttons[BUTTON_4] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
+         joypad0Buttons[BUTTON_5] = 0xff;
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
+         joypad0Buttons[BUTTON_6] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
+         joypad0Buttons[BUTTON_7] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
+         joypad0Buttons[BUTTON_8] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
+         joypad0Buttons[BUTTON_9] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
+         joypad0Buttons[BUTTON_s] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
+         joypad0Buttons[BUTTON_d] = 0xff;
+
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
+         joypad1Buttons[BUTTON_U] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN))
+         joypad1Buttons[BUTTON_D] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT))
+         joypad1Buttons[BUTTON_L] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT))
+         joypad1Buttons[BUTTON_R] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
+         joypad1Buttons[BUTTON_A] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
+         joypad1Buttons[BUTTON_B] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
+         joypad1Buttons[BUTTON_C] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
+         joypad1Buttons[BUTTON_PAUSE] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
+         joypad1Buttons[BUTTON_OPTION] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p)? 1 : 0))
+         joypad1Buttons[BUTTON_0] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q)? 1 : 0))
+         joypad1Buttons[BUTTON_1] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w)? 1 : 0))
+         joypad1Buttons[BUTTON_2] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e)? 1 : 0))
+         joypad1Buttons[BUTTON_3] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r)? 1 : 0))
+         joypad1Buttons[BUTTON_4] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
+         joypad1Buttons[BUTTON_5] = 0xff;
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
+         joypad1Buttons[BUTTON_6] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
+         joypad1Buttons[BUTTON_7] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
+         joypad1Buttons[BUTTON_8] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
+         joypad1Buttons[BUTTON_9] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
+         joypad1Buttons[BUTTON_s] = 0xff;
+      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
+         joypad1Buttons[BUTTON_d] = 0xff;
+   }
 }
 
 static void extract_basename(char *buf, const char *path, size_t size)
@@ -398,6 +777,10 @@ bool retro_load_game(const struct retro_game_info *info)
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,    "Numpad 6" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Pause" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Option" },
+      { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X,  "Left Analog X" },
+      { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y,  "Left Analog Y" },
+      { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Right Analog X" },
+      { 0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Right Analog Y" },
 
       { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
       { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
@@ -415,6 +798,10 @@ bool retro_load_game(const struct retro_game_info *info)
       { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,    "Numpad 6" },
       { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Pause" },
       { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Option" },
+      { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X,  "Left Analog X" },
+      { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y,  "Left Analog Y" },
+      { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Right Analog X" },
+      { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Right Analog Y" },
 
       { 0 },
    };
@@ -456,10 +843,10 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.EEPROMPath[0] = '\0';
    if (environ_cb(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir) && save_dir)
    {
-		if (strlen(save_dir) > 0)
-		{
-			sprintf(vjs.EEPROMPath, "%s%c", save_dir, slash);
-		}
+      if (strlen(save_dir) > 0)
+      {
+         sprintf(vjs.EEPROMPath, "%s%c", save_dir, slash);
+      }
    }
    // > Get ROM name
    if (info->path != NULL)
@@ -574,11 +961,11 @@ void retro_run(void)
    {
       videoWidth = tomWidth, videoHeight = tomHeight;
       game_width = tomWidth, game_height = tomHeight;
-      
+
       JaguarSetScreenPitch(game_width);
 
       retro_get_system_av_info(&g_av_info);
-      environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);      
+      environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);

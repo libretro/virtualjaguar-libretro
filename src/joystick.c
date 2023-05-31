@@ -66,9 +66,8 @@ uint16_t JoystickReadWord(uint32_t offset)
 		uint8_t offset0, offset1;
 		uint16_t data = 0xFFFF;
 
-        if (!joysticksEnabled) {
+		if (!joysticksEnabled)
 			return 0xFFFF;
-        }
 
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
@@ -107,27 +106,29 @@ uint16_t JoystickReadWord(uint32_t offset)
 		// Hardware ID returns NTSC/PAL identification bit here
 		// N.B.: On real H/W, bit 7 is *always* zero...!
 		uint16_t data = 0xFF6F | (vjs.hardwareTypeNTSC ? 0x10 : 0x00);
-		const int8_t mask[4][2] = { { BUTTON_A, BUTTON_PAUSE }, { BUTTON_B, 0xFF }, { BUTTON_C, 0xFF }, { BUTTON_OPTION, 0xFF } };
+		const uint8_t mask[4][2] = { { BUTTON_A, BUTTON_PAUSE }, { BUTTON_B, 0xFF }, { BUTTON_C, 0xFF }, { BUTTON_OPTION, 0xFF } };
 
 		if (!joysticksEnabled)
 			return data;
 
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
-		offset0 = joypad0Offset[joystick_ram[1] & 0x0F] / 4;
-		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F] / 4;
+		offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
+		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
 
 		if (offset0 != 0xFF)
 		{
+			offset0 /= 4;
 			data &= (joypad0Buttons[mask[offset0][0]] ? 0xFFFD : 0xFFFF);
-			if (mask[offset0][1] != 0xF)
+			if (mask[offset0][1] != 0xFF)
 				data &= (joypad0Buttons[mask[offset0][1]] ? 0xFFFE : 0xFFFF);
 		}
 
 		if (offset1 != 0xFF)
 		{
+			offset1 /= 4;
 			data &= (joypad1Buttons[mask[offset1][0]] ? 0xFFF7 : 0xFFFF);
-			if (mask[offset1][1] != 0xF)
+			if (mask[offset1][1] != 0xFF)
 				data &= (joypad1Buttons[mask[offset1][1]] ? 0xFFFB : 0xFFFF);
 		}
 
