@@ -122,7 +122,8 @@ static JagMapping jag_map[22] = {
 
 static int get_button_id(const char *val)
 {
-   for (int i = 0; i <= BUTTON_NONE; i++)
+   unsigned i;
+   for (i = 0; i <= BUTTON_NONE; i++)
    {
       if (!strcmp(jag_map[i].value, val))
          return jag_map[i].id;
@@ -135,6 +136,7 @@ static bool update_option_visibility(void)
    struct retro_core_option_display option_display;
    struct retro_variable var;
    bool updated = false;
+   unsigned i;
 
    // Show/hide input options
    bool show_input_options_prev = show_input_options;
@@ -148,7 +150,7 @@ static bool update_option_visibility(void)
    {
       option_display.visible = show_input_options;
 
-      for (int i = 0; i < 2; i++)
+      for (i = 0; i < 2; i++)
       {
          char key[64];
          option_display.key = key;
@@ -214,11 +216,11 @@ static bool update_option_visibility(void)
 void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
+   struct retro_core_options_update_display_callback update_display_cb;
    bool option_categories = false;
    environ_cb = cb;
 
    libretro_set_core_options(environ_cb, &option_categories);
-   struct retro_core_options_update_display_callback update_display_cb;
    update_display_cb.callback = update_option_visibility;
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update_display_cb);
 
@@ -230,6 +232,7 @@ void retro_set_environment(retro_environment_t cb)
 
 static void check_variables(void)
 {
+   unsigned i;
    struct retro_variable var;
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
@@ -285,7 +288,7 @@ static void check_variables(void)
          enable_alt_inputs = false;
    }
 
-   for (int i = 0; i < 2; i++)
+   for (i = 0; i < 2; i++)
    {
       char key[64];
       var.key = key;
