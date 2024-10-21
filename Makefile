@@ -151,6 +151,9 @@ else ifeq ($(platform), tvos-arm64)
 	endif
         CC = cc -arch arm64 -isysroot $(IOSSDK)
         CXX = clang++ -arch arm64 -isysroot $(IOSSDK)
+        MINVERSION = -mappletvos-version-min=11.0
+        SHARED += $(MINVERSION)
+        CFLAGS += $(MINVERSION)
 
 # Theos
 else ifeq ($(platform), theos_ios)
