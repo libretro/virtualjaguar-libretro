@@ -60,7 +60,6 @@ int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
 #define RETRO_DEVICE_ID_JOYPAD_RR 23
 
 static int jag_retropad[2][24];
-static int jag_numpad[2][12];
 static int numpad_to_kb[2];
 static bool show_input_options = true;
 static bool enable_alt_inputs = false;
@@ -148,7 +147,8 @@ static bool update_option_visibility(void)
    bool show_input_options_prev = show_input_options;
    show_input_options = true;
 
-   var.key = "virtualjaguar_alt_inputs";
+   var.key   = "virtualjaguar_alt_inputs";
+   var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "disabled"))
       show_input_options = false;
 
@@ -274,7 +274,7 @@ static bool update_option_visibility(void)
 void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
-   struct retro_core_options_update_display_callback update_display_cb;
+   struct retro_core_options_update_display_callback update_display_cb = {0};
    bool option_categories = false;
    environ_cb = cb;
 
@@ -357,10 +357,16 @@ static void check_variables(void)
 
    for (i = 0; i < 2; i++)
    {
+      int j;
       char base[20];
       char key[64];
       size_t _len        = strlcpy(base, "virtualjaguar_p", sizeof(base));
       snprintf(base + _len, sizeof(base) - _len, "%d", i + 1);
+
+      /* Initialize all retropad mappings to BUTTON_NONE so unmapped
+       * entries don't accidentally trigger BUTTON_U (index 0). */
+      for (j = 0; j < 24; j++)
+         jag_retropad[i][j] = BUTTON_NONE;
 
       strlcpy(key, base, sizeof(key));
       strlcat(key, "_numpad_to_kb", sizeof(key));
