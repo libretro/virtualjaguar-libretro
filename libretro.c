@@ -339,7 +339,10 @@ static void check_variables(void)
    var.key = "virtualjaguar_frameskip";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-      vjs.frameSkip = atoi(var.value);
+   {
+      int val = atoi(var.value);
+      vjs.frameSkip = (val >= 0 && val <= 5) ? (uint32_t)val : 0;
+   }
 
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
