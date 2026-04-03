@@ -148,6 +148,24 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_frameskip",
+      "Frameskip",
+      NULL,
+      "Skip rendering every N frames. Improves performance at the cost of visual smoothness. Audio is unaffected.",
+      NULL,
+      NULL,
+      {
+         { "0",  "disabled" },
+         { "1",  "1" },
+         { "2",  "2" },
+         { "3",  "3" },
+         { "4",  "4" },
+         { "5",  "5" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,

@@ -38,6 +38,7 @@ static retro_environment_t environ_cb;
 retro_audio_sample_batch_t audio_batch_cb;
 
 static bool libretro_supports_bitmasks = false;
+static uint32_t frameskip_counter = 0;
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -334,6 +335,11 @@ static void check_variables(void)
       else
          vjs.hardwareTypeNTSC = true;
    }
+
+   var.key = "virtualjaguar_frameskip";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      vjs.frameSkip = atoi(var.value);
 
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
@@ -1008,5 +1014,11 @@ void retro_run(void)
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
 
-   video_cb(videoBuffer, game_width, game_height, game_width << 2);
+   if (vjs.frameSkip > 0 && ++frameskip_counter <= vjs.frameSkip)
+      video_cb(NULL, game_width, game_height, game_width << 2);
+   else
+   {
+      frameskip_counter = 0;
+      video_cb(videoBuffer, game_width, game_height, game_width << 2);
+   }
 }
