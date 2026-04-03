@@ -151,7 +151,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_frameskip",
       "Frameskip",
       NULL,
-      "Skip rendering every N frames. Improves performance at the cost of visual smoothness. Audio is unaffected.",
+      "Skip sending every Nth frame to the frontend (duplicate previous frame). Reduces frontend rendering load at the cost of visual smoothness. Audio is unaffected.",
       NULL,
       NULL,
       {

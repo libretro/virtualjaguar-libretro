@@ -342,6 +342,7 @@ static void check_variables(void)
    {
       int val = atoi(var.value);
       vjs.frameSkip = (val >= 0 && val <= 5) ? (uint32_t)val : 0;
+      frameskip_counter = 0;
    }
 
    var.key = "virtualjaguar_alt_inputs";
@@ -1017,11 +1018,14 @@ void retro_run(void)
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
 
-   if (vjs.frameSkip > 0 && ++frameskip_counter <= vjs.frameSkip)
+   if (vjs.frameSkip > 0 && frameskip_counter > 0)
+   {
+      frameskip_counter--;
       video_cb(NULL, game_width, game_height, game_width << 2);
+   }
    else
    {
-      frameskip_counter = 0;
+      frameskip_counter = vjs.frameSkip;
       video_cb(videoBuffer, game_width, game_height, game_width << 2);
    }
 }
