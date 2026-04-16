@@ -1142,8 +1142,6 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, txData);
 	STATE_SAVE_VAR(buf, rxDataBit);
 	STATE_SAVE_VAR(buf, firstTime);
-	STATE_SAVE_BUF(buf, cdBuf2, sizeof(cdBuf2));
-	STATE_SAVE_BUF(buf, cdBuf3, sizeof(cdBuf3));
 
 	return (size_t)(buf - start);
 }
@@ -1173,8 +1171,6 @@ size_t CDROMStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, txData);
 	STATE_LOAD_VAR(buf, rxDataBit);
 	STATE_LOAD_VAR(buf, firstTime);
-	STATE_LOAD_BUF(buf, cdBuf2, sizeof(cdBuf2));
-	STATE_LOAD_BUF(buf, cdBuf3, sizeof(cdBuf3));
 
 	return (size_t)(buf - start);
 }
