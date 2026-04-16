@@ -28,6 +28,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "settings.h"
 #include "tom.h"
 #include "state.h"
+#include "m68000/m68kinterface.h"
 
 #define SAMPLERATE 48000
 #define BUFPAL  1920
@@ -69,6 +70,8 @@ static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
 static bool jaguar_cd_mode = false;
 static char cd_image_path[4096] = {0};
+static bool cd_bios_loaded_externally = false;
+static uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -944,6 +947,66 @@ void retro_cheat_set(unsigned index, bool enabled, const char *code)
    (void)code;
 }
 
+/* Try to load a CD BIOS from the system directory.
+ * Looks for several common filenames. Returns true if loaded. */
+static bool load_external_cd_bios(void)
+{
+   const char *system_dir = NULL;
+   /* Common filenames for the Jaguar CD BIOS (256 KB) */
+   static const char *bios_names[] = {
+      "jaguarcd_bios.bin",
+      "jagcd_bios.bin",
+      "jaguarcd.bin",
+      "jagcd.bin",
+      NULL
+   };
+
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) || !system_dir)
+      return false;
+
+   for (int i = 0; bios_names[i]; i++)
+   {
+      char path[4096];
+      RFILE *f;
+
+      snprintf(path, sizeof(path), "%s/%s", system_dir, bios_names[i]);
+      f = rfopen(path, "rb");
+      if (!f)
+         continue;
+
+      rfseek(f, 0, SEEK_END);
+      int64_t size = rftell(f);
+      rfseek(f, 0, SEEK_SET);
+
+      if (size != 0x40000)  /* Must be exactly 256 KB */
+      {
+         rfclose(f);
+         continue;
+      }
+
+      if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
+      {
+         rfclose(f);
+         continue;
+      }
+      rfclose(f);
+
+      /* Validate: first 8 bytes should be valid 68K vectors.
+       * Initial PC should be in the BIOS ROM range $E00000-$E3FFFF. */
+      {
+         uint32_t pc = (external_cd_bios[4] << 24) | (external_cd_bios[5] << 16)
+                     | (external_cd_bios[6] << 8)  | external_cd_bios[7];
+         if (pc >= 0xE00000 && pc <= 0xE3FFFF)
+         {
+            cd_bios_loaded_externally = true;
+            return true;
+         }
+      }
+   }
+
+   return false;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    unsigned i;
@@ -1043,6 +1106,16 @@ bool retro_load_game(const struct retro_game_info *info)
       /* For CD mode, force BIOS on -- CD games require the BIOS */
       vjs.useJaguarBIOS = true;
       vjs.useCDBIOS     = true;
+
+      /* Try to load an external CD BIOS from the system directory.
+       * The embedded CD BIOS data is scrambled and non-functional;
+       * a real BIOS dump is required for CD games to boot. */
+      cd_bios_loaded_externally = false;
+      if (!load_external_cd_bios())
+      {
+         /* No external BIOS found -- CD games won't boot.
+          * We still allow loading so users see a diagnostic screen. */
+      }
    }
 
    /* For CD mode, open the disc image BEFORE JaguarInit() so that
@@ -1070,10 +1143,17 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (jaguar_cd_mode)
    {
-      /* Load CD BIOS at $E00000 (256 KB = 0x40000 bytes) */
-      uint8_t *cdBios = (vjs.cdBiosType == CDBIOS_DEV)
-         ? jaguarDevCDBootROM : jaguarCDBootROM;
-      memcpy(jagMemSpace + 0xE00000, cdBios, 0x40000);
+      /* Load CD BIOS at $E00000 (256 KB = 0x40000 bytes).
+       * Prefer the external BIOS file (real dump); fall back to
+       * embedded data (which is scrambled and won't boot). */
+      if (cd_bios_loaded_externally)
+         memcpy(jagMemSpace + 0xE00000, external_cd_bios, 0x40000);
+      else
+      {
+         uint8_t *cdBios = (vjs.cdBiosType == CDBIOS_DEV)
+            ? jaguarDevCDBootROM : jaguarCDBootROM;
+         memcpy(jagMemSpace + 0xE00000, cdBios, 0x40000);
+      }
    }
    else
    {
@@ -1092,21 +1172,6 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (jaguar_cd_mode)
    {
-      // For CD mode, the BIOS handles boot
-      // Set the stack pointer and boot from BIOS
-      SET32(jaguarMainRAM, 0, 0x00200000);
-
-      // The BIOS entry vectors are in the CD BIOS ROM itself
-      // Read the reset vector from the BIOS: first long = initial SP, second long = initial PC
-      {
-         uint8_t *biosBase = jagMemSpace + 0xE00000;
-         uint32_t initialSP = GET32(biosBase, 0);
-         uint32_t initialPC = GET32(biosBase, 4);
-
-         SET32(jaguarMainRAM, 0, initialSP);
-         SET32(jaguarMainRAM, 4, initialPC);
-      }
-
       jaguarCartInserted = false;
    }
    else
@@ -1146,6 +1211,17 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    JaguarReset();
+
+   if (jaguar_cd_mode)
+   {
+      /* Set up CD BIOS boot vectors AFTER JaguarReset(), because
+       * JaguarReset() overwrites RAM[0..7] with jaguarRunAddress
+       * when jaguarCartInserted is false. */
+      uint8_t *biosBase = jagMemSpace + 0xE00000;
+      SET32(jaguarMainRAM, 0, GET32(biosBase, 0));  /* Initial SP */
+      SET32(jaguarMainRAM, 4, GET32(biosBase, 4));  /* Initial PC */
+      m68k_pulse_reset();  /* Re-reset 68K to pick up new vectors */
+   }
 
    /* The frontend will load .srm data into our save buffer (returned by
     * retro_get_memory_data) after this function returns but before the
