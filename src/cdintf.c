@@ -18,6 +18,18 @@
 #include <streams/file_stream_transforms.h>
 #include "cdintf.h"
 
+#ifdef HAVE_CHD
+#include <libchdr/chd.h>
+#include <libchdr/cdrom.h>
+
+static chd_file *chd_handle = NULL;
+static uint8_t *chd_hunk_buffer = NULL;
+static uint32_t chd_hunk_size = 0;
+static int32_t chd_current_hunk = -1;
+
+static bool ParseCHD(const char *chdPath);
+#endif
+
 #ifndef strncasecmp
 static int cdintf_strncasecmp(const char *a, const char *b, size_t n)
 {
@@ -374,11 +386,235 @@ static bool ParseCueSheet(const char *cuePath)
    return true;
 }
 
-bool CDIntfOpenImage(const char *cuePath)
+#ifdef HAVE_CHD
+// Parse a CHD file and populate the disc structure
+static bool ParseCHD(const char *chdPath)
 {
+   chd_error err;
+   const chd_header *header;
+   int i;
+   char metadata[256];
+   uint32_t metaLen;
+   uint32_t trackCount = 0;
+   uint32_t frameOffset = 0;
+
+   memset(&disc, 0, sizeof(disc));
+
+   err = chd_open(chdPath, CHD_OPEN_READ, NULL, &chd_handle);
+   if (err != CHDERR_NONE)
+      return false;
+
+   header = chd_get_header(chd_handle);
+   chd_hunk_size = header->hunkbytes;
+
+   chd_hunk_buffer = (uint8_t *)malloc(chd_hunk_size);
+   if (!chd_hunk_buffer)
+   {
+      chd_close(chd_handle);
+      chd_handle = NULL;
+      return false;
+   }
+   chd_current_hunk = -1;
+
+   // Read track metadata from the CHD file
+   for (i = 0; i < CDINTF_MAX_TRACKS; i++)
+   {
+      int trackNum, frames, pregap, postgap;
+      char type[64], subtype[64], pgtype[64], pgsub[64];
+
+      // Try CHTR2 metadata first (has pregap/postgap info)
+      err = chd_get_metadata(chd_handle, CDROM_TRACK_METADATA2_TAG, i,
+                             metadata, sizeof(metadata), &metaLen, NULL, NULL);
+      if (err == CHDERR_NONE)
+      {
+         pregap = postgap = 0;
+         pgtype[0] = pgsub[0] = '\0';
+         if (sscanf(metadata, CDROM_TRACK_METADATA2_FORMAT,
+                    &trackNum, type, subtype, &frames,
+                    &pregap, pgtype, pgsub, &postgap) >= 4)
+         {
+            disc.tracks[trackCount].number = trackNum;
+            disc.tracks[trackCount].sectorSize = CD_MAX_SECTOR_DATA;
+            disc.tracks[trackCount].startLBA = frameOffset + pregap;
+            disc.tracks[trackCount].lengthLBA = frames;
+            disc.tracks[trackCount].fileOffset = (frameOffset + pregap) * CD_FRAME_SIZE;
+
+            if (strcmp(type, "AUDIO") == 0)
+               disc.tracks[trackCount].type = CDINTF_TRACK_AUDIO;
+            else
+               disc.tracks[trackCount].type = CDINTF_TRACK_MODE1;
+
+            // Jaguar CD: track 1 = session 1, rest = session 2
+            disc.tracks[trackCount].session = (trackCount == 0) ? 1 : 2;
+
+            MSFFromLBA(disc.tracks[trackCount].startLBA,
+                       &disc.tracks[trackCount].startM,
+                       &disc.tracks[trackCount].startS,
+                       &disc.tracks[trackCount].startF);
+
+            frameOffset += pregap + frames + postgap;
+            trackCount++;
+            continue;
+         }
+      }
+
+      // Fall back to CHTR metadata
+      err = chd_get_metadata(chd_handle, CDROM_TRACK_METADATA_TAG, i,
+                             metadata, sizeof(metadata), &metaLen, NULL, NULL);
+      if (err != CHDERR_NONE)
+         break;  // No more tracks
+
+      if (sscanf(metadata, CDROM_TRACK_METADATA_FORMAT,
+                 &trackNum, type, subtype, &frames) == 4)
+      {
+         disc.tracks[trackCount].number = trackNum;
+         disc.tracks[trackCount].sectorSize = CD_MAX_SECTOR_DATA;
+         disc.tracks[trackCount].startLBA = frameOffset;
+         disc.tracks[trackCount].lengthLBA = frames;
+         disc.tracks[trackCount].fileOffset = frameOffset * CD_FRAME_SIZE;
+
+         if (strcmp(type, "AUDIO") == 0)
+            disc.tracks[trackCount].type = CDINTF_TRACK_AUDIO;
+         else
+            disc.tracks[trackCount].type = CDINTF_TRACK_MODE1;
+
+         disc.tracks[trackCount].session = (trackCount == 0) ? 1 : 2;
+
+         MSFFromLBA(disc.tracks[trackCount].startLBA,
+                    &disc.tracks[trackCount].startM,
+                    &disc.tracks[trackCount].startS,
+                    &disc.tracks[trackCount].startF);
+
+         frameOffset += frames;
+         trackCount++;
+      }
+   }
+
+   if (trackCount == 0)
+   {
+      free(chd_hunk_buffer);
+      chd_hunk_buffer = NULL;
+      chd_close(chd_handle);
+      chd_handle = NULL;
+      return false;
+   }
+
+   disc.numTracks = trackCount;
+
+   // Build session info (same logic as CUE parser)
+   {
+      uint32_t sess1Min = 99, sess1Max = 0;
+      uint32_t sess2Min = 99, sess2Max = 0;
+
+      disc.numSessions = 1;
+
+      for (i = 0; i < (int)disc.numTracks; i++)
+      {
+         uint32_t tn = disc.tracks[i].number;
+         uint32_t sess = disc.tracks[i].session;
+
+         if (sess == 1)
+         {
+            if (tn < sess1Min) sess1Min = tn;
+            if (tn > sess1Max) sess1Max = tn;
+         }
+         else if (sess == 2)
+         {
+            disc.numSessions = 2;
+            if (tn < sess2Min) sess2Min = tn;
+            if (tn > sess2Max) sess2Max = tn;
+         }
+      }
+
+      disc.sessions[0].number = 1;
+      disc.sessions[0].firstTrack = (sess1Min <= CDINTF_MAX_TRACKS) ? sess1Min : 1;
+      disc.sessions[0].lastTrack = (sess1Max > 0) ? sess1Max : 1;
+
+      if (disc.numSessions >= 2 && sess2Min <= CDINTF_MAX_TRACKS)
+      {
+         uint32_t lastIdx, leadOut;
+         disc.sessions[0].leadOutLBA = disc.tracks[sess2Min - 1].startLBA;
+         MSFFromLBA(disc.sessions[0].leadOutLBA, &disc.sessions[0].leadOutM,
+                    &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
+
+         disc.sessions[1].number = 2;
+         disc.sessions[1].firstTrack = sess2Min;
+         disc.sessions[1].lastTrack = sess2Max;
+
+         lastIdx = sess2Max - 1;
+         leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
+         disc.sessions[1].leadOutLBA = leadOut;
+         MSFFromLBA(leadOut, &disc.sessions[1].leadOutM,
+                    &disc.sessions[1].leadOutS, &disc.sessions[1].leadOutF);
+      }
+      else
+      {
+         uint32_t lastIdx = disc.sessions[0].lastTrack - 1;
+         uint32_t leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
+         disc.sessions[0].leadOutLBA = leadOut;
+         MSFFromLBA(leadOut, &disc.sessions[0].leadOutM,
+                    &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
+      }
+   }
+
+   disc.loaded = true;
+   return true;
+}
+
+// Read a sector from a CHD file
+static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
+{
+   uint32_t hunkNum, frameInHunk, byteOffset;
+   chd_error err;
+   uint32_t framesPerHunk;
+
+   if (!chd_handle || !chd_hunk_buffer)
+      return false;
+
+   // Each frame in CHD is CD_FRAME_SIZE (2352 + 96 = 2448 bytes)
+   // Each hunk contains multiple frames
+   framesPerHunk = chd_hunk_size / CD_FRAME_SIZE;
+   if (framesPerHunk == 0)
+      return false;
+
+   hunkNum = sector / framesPerHunk;
+   frameInHunk = sector % framesPerHunk;
+   byteOffset = frameInHunk * CD_FRAME_SIZE;
+
+   // Read the hunk if not already cached
+   if ((int32_t)hunkNum != chd_current_hunk)
+   {
+      err = chd_read(chd_handle, hunkNum, chd_hunk_buffer);
+      if (err != CHDERR_NONE)
+         return false;
+      chd_current_hunk = hunkNum;
+   }
+
+   // Copy just the 2352-byte sector data (skip subcode)
+   memcpy(buffer, chd_hunk_buffer + byteOffset, CD_MAX_SECTOR_DATA);
+   return true;
+}
+#endif /* HAVE_CHD */
+
+bool CDIntfOpenImage(const char *path)
+{
+   const char *ext;
    CDIntfCloseImage();
 
-   if (!ParseCueSheet(cuePath))
+   ext = strrchr(path, '.');
+
+#ifdef HAVE_CHD
+   if (ext && strcasecmp(ext + 1, "chd") == 0)
+   {
+      if (!ParseCHD(path))
+         return false;
+      // CHD reads go through chd_handle, no BIN file needed
+      return true;
+   }
+#endif
+
+   // CUE/BIN path
+   if (!ParseCueSheet(path))
       return false;
 
    // Open the BIN file for reading
@@ -394,6 +630,20 @@ bool CDIntfOpenImage(const char *cuePath)
 
 void CDIntfCloseImage(void)
 {
+#ifdef HAVE_CHD
+   if (chd_handle)
+   {
+      chd_close(chd_handle);
+      chd_handle = NULL;
+   }
+   if (chd_hunk_buffer)
+   {
+      free(chd_hunk_buffer);
+      chd_hunk_buffer = NULL;
+   }
+   chd_current_hunk = -1;
+#endif
+
    if (disc.binFile)
    {
       rfclose((RFILE *)disc.binFile);
@@ -404,12 +654,18 @@ void CDIntfCloseImage(void)
 
 bool CDIntfIsImageLoaded(void)
 {
-   return disc.loaded && disc.binFile != NULL;
+   if (!disc.loaded)
+      return false;
+#ifdef HAVE_CHD
+   if (chd_handle)
+      return true;
+#endif
+   return disc.binFile != NULL;
 }
 
 bool CDIntfInit(void)
 {
-   return disc.loaded && disc.binFile != NULL;
+   return CDIntfIsImageLoaded();
 }
 
 void CDIntfDone(void)
@@ -427,7 +683,15 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
    struct CDIntfTrack *track = NULL;
    uint32_t sectorSize;
 
-   if (!disc.loaded || !disc.binFile || !buffer)
+   if (!disc.loaded || !buffer)
+      return false;
+
+#ifdef HAVE_CHD
+   if (chd_handle)
+      return CDIntfReadBlockCHD(sector, buffer);
+#endif
+
+   if (!disc.binFile)
       return false;
 
    // Find which track contains this sector

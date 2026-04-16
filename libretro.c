@@ -801,7 +801,7 @@ void retro_get_system_info(struct retro_system_info *info)
 #endif
    info->library_version  = "v2.1.0" GIT_VERSION;
    info->need_fullpath    = true;
-   info->valid_extensions = "j64|jag|cue";
+   info->valid_extensions = "j64|jag|cue|chd";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
@@ -1032,7 +1032,7 @@ bool retro_load_game(const struct retro_game_info *info)
    jaguar_cd_mode = false;
    cd_image_path[0] = '\0';
 
-   if (info->path && has_extension(info->path, "cue"))
+   if (info->path && (has_extension(info->path, "cue") || has_extension(info->path, "chd")))
    {
       jaguar_cd_mode = true;
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
