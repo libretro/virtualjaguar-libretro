@@ -20,6 +20,7 @@
 #include <string.h>								// For memset
 
 uint16_t eeprom_ram[64];
+uint16_t cdrom_eeprom_ram[64];
 
 /* Callback to sync the save buffer when EEPROM is modified.
  * Set by libretro.c to keep RETRO_MEMORY_SAVE_RAM up to date. */
@@ -59,6 +60,7 @@ void EepromInit(void)
    if (!eeprom_initialized)
    {
       memset(eeprom_ram, 0xFF, 64 * sizeof(uint16_t));
+      memset(cdrom_eeprom_ram, 0xFF, 64 * sizeof(uint16_t));
       eeprom_initialized = true;
    }
 }
@@ -381,6 +383,7 @@ size_t EepromStateSave(uint8_t *buf)
 
 	/* EEPROM data arrays */
 	STATE_SAVE_BUF(buf, eeprom_ram, sizeof(eeprom_ram));
+	STATE_SAVE_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
 
 	return (size_t)(buf - start);
 }
@@ -401,6 +404,7 @@ size_t EepromStateLoad(const uint8_t *buf)
 
 	/* EEPROM data arrays */
 	STATE_LOAD_BUF(buf, eeprom_ram, sizeof(eeprom_ram));
+	STATE_LOAD_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
 
 	return (size_t)(buf - start);
 }

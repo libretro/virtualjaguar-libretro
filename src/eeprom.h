@@ -15,6 +15,8 @@ void EepromInit(void);
 void EepromReset(void);
 void EepromDone(void);
 
+extern uint16_t cdrom_eeprom_ram[64];
+
 uint8_t EepromReadByte(uint32_t offset);
 uint16_t EepromReadWord(uint32_t offset);
 void EepromWriteByte(uint32_t offset, uint8_t data);

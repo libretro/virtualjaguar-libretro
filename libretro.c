@@ -41,6 +41,7 @@ int game_width               = 0;
 int game_height              = 0;
 
 extern uint16_t eeprom_ram[64];
+extern uint16_t cdrom_eeprom_ram[64];
 extern uint8_t mtMem[0x20000];
 extern uint32_t jaguarMainROMCRC32;
 extern void (*eeprom_dirty_cb)(void);
@@ -51,9 +52,10 @@ extern void (*eeprom_dirty_cb)(void);
  *
  * The save buffer is kept in sync on every EEPROM write via eeprom_dirty_cb,
  * so frontends that cache the pointer always see current data. */
-#define EEPROM_SAVE_SIZE 128  /* 64 x 16-bit words, big-endian */
-#define MT_SAVE_SIZE     0x20000  /* 128K Memory Track */
-static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE];
+#define EEPROM_SAVE_SIZE    128  /* 64 x 16-bit words, big-endian */
+#define CD_EEPROM_SAVE_SIZE 128  /* CD EEPROM: 64 x 16-bit words */
+#define MT_SAVE_SIZE        0x20000  /* 128K Memory Track */
+static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE];
 static void eeprom_pack_save_buf(void);
 static void eeprom_unpack_save_buf(void);
 
@@ -1195,9 +1197,15 @@ static void eeprom_pack_save_buf(void)
       eeprom_save_buf[(i * 2) + 0] = eeprom_ram[i] >> 8;
       eeprom_save_buf[(i * 2) + 1] = eeprom_ram[i] & 0xFF;
    }
+   /* CD EEPROM follows cart EEPROM in the save buffer */
+   for (i = 0; i < 64; i++)
+   {
+      eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] = cdrom_eeprom_ram[i] >> 8;
+      eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1] = cdrom_eeprom_ram[i] & 0xFF;
+   }
 }
 
-/* Unpack the save buffer back into eeprom_ram[].
+/* Unpack the save buffer back into eeprom_ram[] and cdrom_eeprom_ram[].
  * Called once after the frontend loads .srm data. */
 static void eeprom_unpack_save_buf(void)
 {
@@ -1205,6 +1213,9 @@ static void eeprom_unpack_save_buf(void)
    for (i = 0; i < 64; i++)
       eeprom_ram[i] = ((uint16_t)eeprom_save_buf[(i * 2) + 0] << 8)
                     | eeprom_save_buf[(i * 2) + 1];
+   for (i = 0; i < 64; i++)
+      cdrom_eeprom_ram[i] = ((uint16_t)eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] << 8)
+                           | eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1];
 }
 
 void *retro_get_memory_data(unsigned type)
@@ -1230,7 +1241,7 @@ size_t retro_get_memory_size(unsigned type)
    {
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
-      return EEPROM_SAVE_SIZE;
+      return EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE;
    }
    return 0;
 }
