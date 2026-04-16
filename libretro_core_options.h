@@ -148,6 +148,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_cd_bios_type",
+      "CD BIOS Type (Restart)",
+      NULL,
+      "Select which Jaguar CD BIOS to use when loading CD images. Retail is the standard BIOS. Dev is the developer BIOS with less strict checks.",
+      NULL,
+      NULL,
+      {
+         { "retail", "Retail" },
+         { "dev",    "Developer" },
+         { NULL, NULL },
+      },
+      "retail"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,

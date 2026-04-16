@@ -17,6 +17,10 @@
 
 #include <string.h>									// For memset, etc.
 #include "cdintf.h"									// System agnostic CD interface functions
+#include "gpu.h"
+#include "dsp.h"
+#include "jaguar.h"
+#include "jerry.h"
 
 /*
    BUTCH     equ  $DFFF00		; base of Butch=interrupt control register, R/W
@@ -148,22 +152,25 @@
 
 */
 
+// External variables
+extern uint8_t jerry_ram_8[];
+
 // Private function prototypes
 
 static void CDROMBusWrite(uint16_t);
 static uint16_t CDROMBusRead(void);
 
 #define BUTCH		0x00				// base of Butch == interrupt control register, R/W
-#define DSCNTRL 	BUTCH + 0x04		// DSA control register, R/W
-#define DS_DATA		BUTCH + 0x0A		// DSA TX/RX data, R/W
-#define I2CNTRL		BUTCH + 0x10		// i2s bus control register, R/W
-#define SBCNTRL		BUTCH + 0x14		// CD subcode control register, R/W
-#define SUBDATA		BUTCH + 0x18		// Subcode data register A
-#define SUBDATB		BUTCH + 0x1C		// Subcode data register B
-#define SB_TIME		BUTCH + 0x20		// Subcode time and compare enable (D24)
-#define FIFO_DATA	BUTCH + 0x24		// i2s FIFO data
-#define I2SDAT2		BUTCH + 0x28		// i2s FIFO data (old)
-#define UNKNOWN		BUTCH + 0x2C		// Seems to be some sort of I2S interface
+#define DSCNTRL 	(BUTCH + 0x04)		// DSA control register, R/W
+#define DS_DATA		(BUTCH + 0x0A)		// DSA TX/RX data, R/W
+#define I2CNTRL		(BUTCH + 0x10)		// i2s bus control register, R/W
+#define SBCNTRL		(BUTCH + 0x14)		// CD subcode control register, R/W
+#define SUBDATA		(BUTCH + 0x18)		// Subcode data register A
+#define SUBDATB		(BUTCH + 0x1C)		// Subcode data register B
+#define SB_TIME		(BUTCH + 0x20)		// Subcode time and compare enable (D24)
+#define FIFO_DATA	(BUTCH + 0x24)		// i2s FIFO data
+#define I2SDAT2		(BUTCH + 0x28)		// i2s FIFO data (old)
+#define UNKNOWN		(BUTCH + 0x2C)		// Seems to be some sort of I2S interface
 
 const char * BReg[12] = { "BUTCH", "DSCNTRL", "DS_DATA", "???", "I2CNTRL",
    "SBCNTRL", "SUBDATA", "SUBDATB", "SB_TIME", "FIFO_DATA", "I2SDAT2",
@@ -177,6 +184,14 @@ static uint8_t cdBuf[2352 + 96];
 static uint32_t cdBufPtr = 2352;
 //Also need to set up (save/restore) the CD's NVRAM
 
+// FIFO state for Butch data delivery
+#define FIFO_SIZE 32
+static uint8_t fifoData[FIFO_SIZE];
+static uint32_t fifoReadPtr = 0;
+static uint32_t fifoWritePtr = 0;
+static uint32_t fifoCount = 0;
+static bool fifoDataReady = false;
+
 
 void CDROMInit(void)
 {
@@ -187,6 +202,11 @@ void CDROMReset(void)
 {
    memset(cdRam, 0x00, 0x100);
    cdCmd = 0;
+   cdPtr = 0;
+   min = sec = frm = block = 0;
+   cdBufPtr = 2352;
+   fifoReadPtr = fifoWritePtr = fifoCount = 0;
+   fifoDataReady = false;
 }
 
 void CDROMDone(void)
@@ -203,28 +223,54 @@ void CDROMDone(void)
 //
 void BUTCHExec(uint32_t cycles)
 {
-#if 1
-   // We're chickening out for now...
-   return;
-#else
-   //	extern uint8_t * jerry_ram_8;					// Hmm.
+   uint32_t butchWrite, butchRead;
 
-   // For now, we just do the FIFO interrupt. Timing is also likely to be WRONG as well.
-   uint32_t cdState = GET32(cdRam, BUTCH);
-
-   if (!(cdState & 0x01))						// No BUTCH interrupts enabled
+   if (!haveCDGoodness)
       return;
 
-   if (!(cdState & 0x22))
-      return;									// For now, we only handle FIFO/buffer full interrupts...
+   butchWrite = GET32(cdRam, BUTCH);
 
-   // From what I can make out, it seems that each FIFO is 32 bytes long
+   if (!(butchWrite & 0x01))       // Global interrupt enable not set
+      return;
 
-   //	DSPSetIRQLine(DSPIRQ_EXT, ASSERT_LINE);
-   //I'm *sure* this is wrong--prolly need to generate DSP IRQs as well!
-   if (jerry_ram_8[0x23] & 0x3F)				// Only generate an IRQ if enabled!
-      GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
-#endif
+   // Build the read-side status bits based on current state
+   butchRead = GET32(cdRam, BUTCH) & 0xFFFF0000;
+
+   // bit 9: CD data FIFO half-full flag pending
+   if ((butchWrite & 0x02) && fifoDataReady)
+      butchRead |= (1 << 9);
+
+   // bit 12: Command to CD drive pending (trans buffer empty if 1)
+   // Always set when we're ready for commands
+   butchRead |= (1 << 12);
+
+   // bit 13: Response from CD drive pending (rec buffer full if 1)
+   // Set when we have a response ready (always ready in our emulation)
+   butchRead |= (1 << 13);
+
+   // Store the read-side status
+   cdRam[BUTCH + 2] = (butchRead >> 8) & 0xFF;
+   cdRam[BUTCH + 3] = butchRead & 0xFF;
+
+   // Generate interrupts through JERRY -> GPU path
+   // Butch interrupts route through JERRY EXT1 to the GPU
+   if (butchRead & 0x3E00)  // Any interrupt flag pending
+   {
+      // Check if any enabled interrupt has a pending flag
+      bool shouldIRQ = false;
+
+      if ((butchWrite & 0x02) && (butchRead & (1 << 9)))   // FIFO half-full
+         shouldIRQ = true;
+      if ((butchWrite & 0x20) && (butchRead & (1 << 13)))  // DSARX (response ready)
+         shouldIRQ = true;
+
+      if (shouldIRQ)
+      {
+         // Route through JERRY to GPU via EXT1 interrupt
+         // The GPU ISR at JERRY_ISR handles Butch interrupts
+         DSPSetIRQLine(DSPIRQ_EXT1, ASSERT_LINE);
+      }
+   }
 }
 
 
@@ -247,16 +293,17 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       data = 0x0000;
    else if (offset == BUTCH + 2)
    {
-      // We need to fix this so it's not as brain-dead as it is now--i.e., make it so that when
-      // a command is sent to the CDROM, we control here whether or not it succeeded or whether
-      // the command is still being carried out, etc.
-
-      // bit12 - Command to CD drive pending (trans buffer empty if 1)
-      // bit13 - Response from CD drive pending (rec buffer full if 1)
-      //		data = (haveCDGoodness ? 0x3000 : 0x0000);	// DSA RX Interrupt pending bit (0 = pending)
-      //This only returns ACKs for interrupts that are set:
-      //This doesn't work for the initial code that writes $180000 to BUTCH. !!! FIX !!!
-      data = (haveCDGoodness ? cdRam[BUTCH + 3] << 8 : 0x0000);
+      // Read-side BUTCH status register
+      // bit 9: CD data FIFO half-full flag pending
+      // bit12: Command to CD drive pending (trans buffer empty if 1)
+      // bit13: Response from CD drive pending (rec buffer full if 1)
+      // bit14: CD uncorrectable data error pending
+      if (haveCDGoodness)
+      {
+         data = (1 << 12) | (1 << 13);  // TX empty + RX full (always ready)
+         if (fifoDataReady)
+            data |= (1 << 9);           // FIFO half-full
+      }
    }
    else if (offset == DS_DATA && haveCDGoodness)
    {
@@ -408,7 +455,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
       else if ((cdCmd & 0xFF00) == 0x1800)		// Spin up session #
          data = cdCmd;
       else if ((cdCmd & 0xFF00) == 0x5400)		// Read # of sessions
-         data = cdCmd | 0x00;	// !!! Hardcoded !!! FIX !!!
+         data = cdCmd | (CDIntfGetNumSessions() & 0xFF);
       else if ((cdCmd & 0xFF00) == 0x7000)		// Read oversampling
          //NOTE: This setting will probably affect the # of DSP interrupts that need to happen. !!! FIX !!!
          data = cdCmd;
@@ -419,9 +466,22 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
       data = 0x0400;								// No CD interface present, so return error
    else if (offset >= FIFO_DATA && offset <= FIFO_DATA + 3)
    {
+      // FIFO_DATA read -- delivers CD sector data to the GPU
+      // The GPU ISR reads 8 longwords alternating between FIFO_DATA and I2SDAT2
+      if (haveCDGoodness && cdBufPtr < 2352)
+      {
+         data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
+         cdBufPtr += 2;
+      }
    }
    else if (offset >= FIFO_DATA + 4 && offset <= FIFO_DATA + 7)
    {
+      // I2SDAT2 read -- alternate FIFO port, also delivers sector data
+      if (haveCDGoodness && cdBufPtr < 2352)
+      {
+         data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
+         cdBufPtr += 2;
+      }
    }
    else
       data = GET16(cdRam, offset);
@@ -465,7 +525,10 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       {
          frm = data & 0x00FF;
          block = (((min * 60) + sec) * 75) + frm;
-         cdBufPtr = 2352;						// Ensure that SSI read will do so immediately
+         // Pre-read the first sector into the buffer for FIFO delivery
+         CDIntfReadBlock(block, cdBuf);
+         cdBufPtr = 0;
+         fifoDataReady = true;
       }
       else if ((data & 0xFF00) == 0x1400)			// Read "full" TOC for session
       {
@@ -589,10 +652,9 @@ static uint16_t CDROMBusRead(void)
 }
 
 //
-// This simulates a read from BUTCH over the SSI to JERRY. Uses real reading!
+// This simulates a read from BUTCH over the SSI to JERRY.
+// Reads CD audio data from the disc image.
 //
-//temp, until I can fix my CD image... Argh!
-static uint8_t cdBuf2[2532 + 96], cdBuf3[2532 + 96];
 uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
 {
    bool go = ((offset & 0x0F) == 0x0A || (offset & 0x0F) == 0x0E ? true : false);
@@ -600,47 +662,17 @@ uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
    if (!go)
       return 0x000;
 
-   // The problem comes in here. Really, we should generate the IRQ once we've stuffed
-   // our values into the DAC L/RRXD ports...
-   // But then again, the whole IRQ system needs an overhaul in order to make it more
-   // cycle accurate WRT to the various CPUs. Right now, it's catch-as-catch-can, which
-   // means that IRQs get serviced on scanline boundaries instead of when they occur.
    cdBufPtr += 2;
 
    if (cdBufPtr >= 2352)
    {
-      unsigned i;
-
-      //No error checking. !!! FIX !!!
-      //NOTE: We have to subtract out the 1st track start as well (in cdintf_foo.cpp)!
-      //		CDIntfReadBlock(block - 150, cdBuf);
-
-      //Crappy kludge for shitty shit. Lesse if it works!
-      CDIntfReadBlock(block - 150, cdBuf2);
-      CDIntfReadBlock(block - 149, cdBuf3);
-      for(i = 0; i < 2352-4; i+=4)
-      {
-         cdBuf[i+0] = cdBuf2[i+4];
-         cdBuf[i+1] = cdBuf2[i+5];
-         cdBuf[i+2] = cdBuf2[i+2];
-         cdBuf[i+3] = cdBuf2[i+3];
-      }
-      cdBuf[2348] = cdBuf3[0];
-      cdBuf[2349] = cdBuf3[1];
-      cdBuf[2350] = cdBuf2[2350];
-      cdBuf[2351] = cdBuf2[2351];//*/
-
-      block++, cdBufPtr = 0;
+      CDIntfReadBlock(block, cdBuf);
+      block++;
+      cdBufPtr = 0;
    }
 
-   //	return GET16(cdBuf, cdBufPtr);
-   //This probably isn't endian safe...
-   // But then again... It seems that even though the data on the CD is organized as
-   // LL LH RL RH the way it expects to see the data is RH RL LH LL.
-   // D'oh! It doesn't matter *how* the data comes in, since it puts each sample into
-   // its own left or right side queue, i.e. it reads them 32 bits at a time and puts
-   // them into their L/R channel queues. It does seem, though, that it expects the
-   // right channel to be the upper 16 bits and the left to be the lower 16.
+   // CD audio is 16-bit stereo, little-endian on disc (Red Book format)
+   // The Jaguar expects right channel in upper 16 bits, left in lower 16
    return (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr + 0];
 }
 
@@ -650,64 +682,26 @@ bool ButchIsReadyToSend(void)
 }
 
 //
-// This simulates a read from BUTCH over the SSI to JERRY. Uses real reading!
+// This simulates a read from BUTCH over the SSI to JERRY.
+// Delivers CD audio samples to the DAC left/right receive registers.
 //
 void SetSSIWordsXmittedFromButch(void)
 {
-
-   // The problem comes in here. Really, we should generate the IRQ once we've stuffed
-   // our values into the DAC L/RRXD ports...
-   // But then again, the whole IRQ system needs an overhaul in order to make it more
-   // cycle accurate WRT to the various CPUs. Right now, it's catch-as-catch-can, which
-   // means that IRQs get serviced on scanline boundaries instead of when they occur.
-
-   // NOTE: The CD BIOS uses the following SMODE:
-   //       DAC: M68K writing to SMODE. Bits: WSEN FALLING  [68K PC=00050D8C]
+   // Advance by 4 bytes (one stereo sample: 2 bytes L + 2 bytes R)
    cdBufPtr += 4;
 
    if (cdBufPtr >= 2352)
    {
-      //No error checking. !!! FIX !!!
-      //NOTE: We have to subtract out the 1st track start as well (in cdintf_foo.cpp)!
-      //		CDIntfReadBlock(block - 150, cdBuf);
-
-      //Crappy kludge for shitty shit. Lesse if it works!
-      //It does! That means my CD is WRONG! FUCK!
-
-      // But, then again, according to Belboz at AA the two zeroes in front *ARE* necessary...
-      // So that means my CD is OK, just this method is wrong!
-      // It all depends on whether or not the interrupt occurs on the RISING or FALLING edge
-      // of the word strobe... !!! FIX !!!
-
-      // When WS rises, left channel was done transmitting. When WS falls, right channel is done.
-      //		CDIntfReadBlock(block - 150, cdBuf2);
-      //		CDIntfReadBlock(block - 149, cdBuf3);
-      CDIntfReadBlock(block, cdBuf2);
-      CDIntfReadBlock(block + 1, cdBuf3);
-      memcpy(cdBuf, cdBuf2 + 2, 2350);
-      cdBuf[2350] = cdBuf3[0];
-      cdBuf[2351] = cdBuf3[1];//*/
-
-      block++, cdBufPtr = 0;
+      CDIntfReadBlock(block, cdBuf);
+      block++;
+      cdBufPtr = 0;
    }
 
-   //This probably isn't endian safe...
-   // But then again... It seems that even though the data on the CD is organized as
-   // LL LH RL RH the way it expects to see the data is RH RL LH LL.
-   // D'oh! It doesn't matter *how* the data comes in, since it puts each sample into
-   // its own left or right side queue, i.e. it reads them 32 bits at a time and puts
-   // them into their L/R channel queues. It does seem, though, that it expects the
-   // right channel to be the upper 16 bits and the left to be the lower 16.
-
-   // This behavior is strictly a function of *where* the WS creates an IRQ. If the data
-   // is shifted by two zeroes (00 00 in front of the data file) then this *is* the
-   // correct behavior, since the left channel will be xmitted followed by the right
-
-   // Now we have definitive proof: The MYST CD shows a word offset. So that means we have
-   // to figure out how to make that work here *without* having to load 2 sectors, offset, etc.
-   // !!! FIX !!!
-   lrxd = (cdBuf[cdBufPtr + 3] << 8) | cdBuf[cdBufPtr + 2],
-        rrxd = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr + 0];
+   // CD audio is interleaved 16-bit stereo samples in little-endian
+   // Left channel = bytes [ptr+2..ptr+3], Right channel = bytes [ptr+0..ptr+1]
+   // (CD audio byte order: LL LH RL RH per sample pair)
+   lrxd = (cdBuf[cdBufPtr + 3] << 8) | cdBuf[cdBufPtr + 2];
+   rrxd = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr + 0];
 }
 
 /*

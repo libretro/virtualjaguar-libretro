@@ -8,10 +8,20 @@
 #include <compat/posix_string.h>
 #include <compat/strl.h>
 
+// Forward declarations for file stream functions used in CD loading
+RFILE* rfopen(const char *path, const char *mode);
+int rfclose(RFILE* stream);
+int64_t rfseek(RFILE* stream, int64_t offset, int origin);
+int64_t rftell(RFILE* stream);
+int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream);
+
 #include "file.h"
 #include "jagbios.h"
 #include "jagbios2.h"
+#include "jagcdbios.h"
+#include "jagdevcdbios.h"
 #include "jaguar.h"
+#include "cdintf.h"
 #include "dac.h"
 #include "dsp.h"
 #include "joystick.h"
@@ -55,6 +65,8 @@ retro_audio_sample_batch_t audio_batch_cb;
 
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
+static bool jaguar_cd_mode = false;
+static char cd_image_path[4096] = {0};
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -350,6 +362,17 @@ static void check_variables(void)
          vjs.hardwareTypeNTSC = false;
       else
          vjs.hardwareTypeNTSC = true;
+   }
+
+   var.key = "virtualjaguar_cd_bios_type";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "dev") == 0)
+         vjs.cdBiosType = CDBIOS_DEV;
+      else
+         vjs.cdBiosType = CDBIOS_RETAIL;
    }
 
    var.key = "virtualjaguar_alt_inputs";
@@ -735,6 +758,34 @@ static void update_input(void)
    }
 }
 
+static bool has_extension(const char *path, const char *ext)
+{
+   const char *dot = strrchr(path, '.');
+   if (!dot)
+      return false;
+   return strcasecmp(dot + 1, ext) == 0;
+}
+
+static void extract_basename(char *buf, const char *path, size_t size)
+{
+   char       *ext  = NULL;
+   const char *base = strrchr(path, '/');
+   if (!base)
+      base = strrchr(path, '\\');
+   if (!base)
+      base = path;
+
+   if (*base == '\\' || *base == '/')
+      base++;
+
+   strncpy(buf, base, size - 1);
+   buf[size - 1] = '\0';
+
+   ext = strrchr(buf, '.');
+   if (ext)
+      *ext = '\0';
+}
+
 /************************************
  * libretro implementation
  ************************************/
@@ -749,8 +800,8 @@ void retro_get_system_info(struct retro_system_info *info)
 #define GIT_VERSION ""
 #endif
    info->library_version  = "v2.1.0" GIT_VERSION;
-   info->need_fullpath    = false;
-   info->valid_extensions = "j64|jag";
+   info->need_fullpath    = true;
+   info->valid_extensions = "j64|jag|cue";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
@@ -955,10 +1006,7 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
-   {
-      //fprintf(stderr, "Pixel format XRGB8888 not supported by platform, cannot use.\n");
       return false;
-   }
 
    videoWidth           = 320;
    videoHeight          = 240;
@@ -972,16 +1020,64 @@ bool retro_load_game(const struct retro_game_info *info)
    // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
+   vjs.useCDBIOS        = false;
+   vjs.cdBiosType       = CDBIOS_RETAIL;
 
    check_variables();
 
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;
 
+   /* Detect CD content */
+   jaguar_cd_mode = false;
+   cd_image_path[0] = '\0';
+
+   if (info->path && has_extension(info->path, "cue"))
+   {
+      jaguar_cd_mode = true;
+      strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
+      cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+
+      /* For CD mode, force BIOS on -- CD games require the BIOS */
+      vjs.useJaguarBIOS = true;
+      vjs.useCDBIOS     = true;
+   }
+
    JaguarInit();                                             // set up hardware
-   memcpy(jagMemSpace + 0xE00000,
-         ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
-         0x20000); // Use the stock BIOS
+
+   if (jaguar_cd_mode)
+   {
+      // Load CD BIOS at $E00000 (256 KB = 0x40000 bytes)
+      // The CD BIOS is larger than the standard 128 KB boot ROM
+      uint8_t *cdBios = (vjs.cdBiosType == CDBIOS_DEV)
+         ? jaguarDevCDBootROM : jaguarCDBootROM;
+      memcpy(jagMemSpace + 0xE00000, cdBios, 0x40000);
+
+      // Open the disc image
+      if (!CDIntfOpenImage(cd_image_path))
+      {
+         // Failed to open disc image
+         JaguarDone();
+         if (videoBuffer)
+         {
+            free(videoBuffer);
+            videoBuffer = NULL;
+         }
+         if (sampleBuffer)
+         {
+            free(sampleBuffer);
+            sampleBuffer = NULL;
+         }
+         return false;
+      }
+   }
+   else
+   {
+      // Standard cartridge mode
+      memcpy(jagMemSpace + 0xE00000,
+            ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
+            0x20000); // Use the stock BIOS (128 KB)
+   }
 
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
@@ -990,8 +1086,61 @@ bool retro_load_game(const struct retro_game_info *info)
    for (i = 0; i < videoWidth * videoHeight; ++i)
       videoBuffer[i] = 0xFF00FFFF;
 
-   SET32(jaguarMainRAM, 0, 0x00200000);
-   JaguarLoadFile((uint8_t*)info->data, info->size);
+   if (jaguar_cd_mode)
+   {
+      // For CD mode, the BIOS handles boot
+      // Set the stack pointer and boot from BIOS
+      SET32(jaguarMainRAM, 0, 0x00200000);
+
+      // The BIOS entry vectors are in the CD BIOS ROM itself
+      // Read the reset vector from the BIOS: first long = initial SP, second long = initial PC
+      {
+         uint8_t *biosBase = jagMemSpace + 0xE00000;
+         uint32_t initialSP = GET32(biosBase, 0);
+         uint32_t initialPC = GET32(biosBase, 4);
+
+         SET32(jaguarMainRAM, 0, initialSP);
+         SET32(jaguarMainRAM, 4, initialPC);
+      }
+
+      jaguarCartInserted = false;
+   }
+   else
+   {
+      // Standard cartridge loading (need_fullpath=true, so load from file)
+      SET32(jaguarMainRAM, 0, 0x00200000);
+
+      if (info->data && info->size > 0)
+      {
+         // Data provided directly
+         JaguarLoadFile((uint8_t*)info->data, info->size);
+      }
+      else if (info->path)
+      {
+         // Load ROM from file path
+         RFILE *romFile;
+         romFile = rfopen(info->path, "rb");
+         if (romFile)
+         {
+            uint8_t *romData;
+            int64_t fileSize;
+
+            rfseek(romFile, 0, SEEK_END);
+            fileSize = rftell(romFile);
+            rfseek(romFile, 0, SEEK_SET);
+
+            romData = (uint8_t *)malloc(fileSize);
+            if (romData)
+            {
+               rfread(romData, 1, fileSize, romFile);
+               JaguarLoadFile(romData, fileSize);
+               free(romData);
+            }
+            rfclose(romFile);
+         }
+      }
+   }
+
    JaguarReset();
 
    /* The frontend will load .srm data into our save buffer (returned by
@@ -1012,6 +1161,10 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *i
 
 void retro_unload_game(void)
 {
+   CDIntfCloseImage();
+   jaguar_cd_mode = false;
+   cd_image_path[0] = '\0';
+
    JaguarDone();
    if (videoBuffer)
       free(videoBuffer);
