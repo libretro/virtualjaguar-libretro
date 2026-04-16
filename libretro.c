@@ -1045,21 +1045,13 @@ bool retro_load_game(const struct retro_game_info *info)
       vjs.useCDBIOS     = true;
    }
 
-   JaguarInit();                                             // set up hardware
-
+   /* For CD mode, open the disc image BEFORE JaguarInit() so that
+    * CDROMInit() -> CDIntfInit() -> CDIntfIsImageLoaded() returns true
+    * and haveCDGoodness is set correctly. */
    if (jaguar_cd_mode)
    {
-      // Load CD BIOS at $E00000 (256 KB = 0x40000 bytes)
-      // The CD BIOS is larger than the standard 128 KB boot ROM
-      uint8_t *cdBios = (vjs.cdBiosType == CDBIOS_DEV)
-         ? jaguarDevCDBootROM : jaguarCDBootROM;
-      memcpy(jagMemSpace + 0xE00000, cdBios, 0x40000);
-
-      // Open the disc image
       if (!CDIntfOpenImage(cd_image_path))
       {
-         // Failed to open disc image
-         JaguarDone();
          if (videoBuffer)
          {
             free(videoBuffer);
@@ -1073,12 +1065,22 @@ bool retro_load_game(const struct retro_game_info *info)
          return false;
       }
    }
+
+   JaguarInit();                                             // set up hardware
+
+   if (jaguar_cd_mode)
+   {
+      /* Load CD BIOS at $E00000 (256 KB = 0x40000 bytes) */
+      uint8_t *cdBios = (vjs.cdBiosType == CDBIOS_DEV)
+         ? jaguarDevCDBootROM : jaguarCDBootROM;
+      memcpy(jagMemSpace + 0xE00000, cdBios, 0x40000);
+   }
    else
    {
-      // Standard cartridge mode
+      /* Standard cartridge mode */
       memcpy(jagMemSpace + 0xE00000,
             ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
-            0x20000); // Use the stock BIOS (128 KB)
+            0x20000);
    }
 
    JaguarSetScreenPitch(videoWidth);
