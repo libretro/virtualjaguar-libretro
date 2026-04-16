@@ -958,6 +958,7 @@ static bool load_external_cd_bios(void)
       "jagcd_bios.bin",
       "jaguarcd.bin",
       "jagcd.bin",
+      "[BIOS] Atari Jaguar CD (World).j64",
       NULL
    };
 
@@ -991,12 +992,13 @@ static bool load_external_cd_bios(void)
       }
       rfclose(f);
 
-      /* Validate: first 8 bytes should be valid 68K vectors.
-       * Initial PC should be in the BIOS ROM range $E00000-$E3FFFF. */
+      /* Validate: the CD BIOS is loaded as a "cartridge" at $800000.
+       * The Jaguar universal header at offset $404 contains the run address.
+       * For the retail CD BIOS this is $802000. */
       {
-         uint32_t pc = (external_cd_bios[4] << 24) | (external_cd_bios[5] << 16)
-                     | (external_cd_bios[6] << 8)  | external_cd_bios[7];
-         if (pc >= 0xE00000 && pc <= 0xE3FFFF)
+         uint32_t run_addr = (external_cd_bios[0x404] << 24) | (external_cd_bios[0x405] << 16)
+                           | (external_cd_bios[0x406] << 8)  | external_cd_bios[0x407];
+         if (run_addr >= 0x800000 && run_addr <= 0x840000)
          {
             cd_bios_loaded_externally = true;
             return true;
@@ -1141,27 +1143,11 @@ bool retro_load_game(const struct retro_game_info *info)
 
    JaguarInit();                                             // set up hardware
 
-   if (jaguar_cd_mode)
-   {
-      /* Load CD BIOS at $E00000 (256 KB = 0x40000 bytes).
-       * Prefer the external BIOS file (real dump); fall back to
-       * embedded data (which is scrambled and won't boot). */
-      if (cd_bios_loaded_externally)
-         memcpy(jagMemSpace + 0xE00000, external_cd_bios, 0x40000);
-      else
-      {
-         uint8_t *cdBios = (vjs.cdBiosType == CDBIOS_DEV)
-            ? jaguarDevCDBootROM : jaguarCDBootROM;
-         memcpy(jagMemSpace + 0xE00000, cdBios, 0x40000);
-      }
-   }
-   else
-   {
-      /* Standard cartridge mode */
-      memcpy(jagMemSpace + 0xE00000,
-            ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
-            0x20000);
-   }
+   /* The standard boot ROM always goes at $E00000 — it handles initial
+    * 68K boot for both cart and CD modes. */
+   memcpy(jagMemSpace + 0xE00000,
+         ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
+         0x20000);
 
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
@@ -1172,7 +1158,25 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (jaguar_cd_mode)
    {
-      jaguarCartInserted = false;
+      /* The CD BIOS is a "cartridge" loaded at $800000.  The standard
+       * boot ROM at $E00000 detects it, reads the header at $800404
+       * (entry point $802000), and jumps there.
+       *
+       * We load directly into jagMemSpace rather than using JaguarLoadFile()
+       * because ParseFileType() doesn't recognize the 256KB CD BIOS format. */
+      const uint8_t *cdBiosData;
+      size_t cdBiosSize = 0x40000;
+
+      if (cd_bios_loaded_externally)
+         cdBiosData = external_cd_bios;
+      else
+         cdBiosData = (vjs.cdBiosType == CDBIOS_DEV)
+            ? jaguarDevCDBootROM : jaguarCDBootROM;
+
+      memcpy(jagMemSpace + 0x800000, cdBiosData, cdBiosSize);
+      jaguarRunAddress = GET32(jagMemSpace, 0x800404);
+      jaguarCartInserted = true;
+      jaguarROMSize = cdBiosSize;
    }
    else
    {
@@ -1211,17 +1215,6 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    JaguarReset();
-
-   if (jaguar_cd_mode)
-   {
-      /* Set up CD BIOS boot vectors AFTER JaguarReset(), because
-       * JaguarReset() overwrites RAM[0..7] with jaguarRunAddress
-       * when jaguarCartInserted is false. */
-      uint8_t *biosBase = jagMemSpace + 0xE00000;
-      SET32(jaguarMainRAM, 0, GET32(biosBase, 0));  /* Initial SP */
-      SET32(jaguarMainRAM, 4, GET32(biosBase, 4));  /* Initial PC */
-      m68k_pulse_reset();  /* Re-reset 68K to pick up new vectors */
-   }
 
    /* The frontend will load .srm data into our save buffer (returned by
     * retro_get_memory_data) after this function returns but before the

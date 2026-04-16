@@ -189,7 +189,6 @@ int main(int argc, char *argv[])
    printf("Game loaded successfully. Running %u frames...\n", num_frames);
 
    /* Check initial RAM state */
-   /* Access jaguarMainRAM to read vectors */
    uint8_t *(*get_ram)(void) = dlsym(handle, "GetRamPtr");
    if (get_ram)
    {
@@ -197,6 +196,24 @@ int main(int argc, char *argv[])
       uint32_t sp = (ram[0]<<24) | (ram[1]<<16) | (ram[2]<<8) | ram[3];
       uint32_t pc = (ram[4]<<24) | (ram[5]<<16) | (ram[6]<<8) | ram[7];
       printf("Initial vectors: SP=0x%08X, PC=0x%08X\n", sp, pc);
+
+      /* Check what's at $E00000 (BIOS ROM area) */
+      /* jagMemSpace isn't exported, but jaguarMainRAM is at offset 0 in jagMemSpace */
+      /* The BIOS is at 0xE00000 in the memory space */
+
+      /* Check cart ROM area ($800000) */
+      /* Can't access directly, but we can check some BIOS-related globals */
+      bool *cart_inserted = dlsym(handle, "jaguarCartInserted");
+      if (cart_inserted)
+         printf("jaguarCartInserted: %s\n", *cart_inserted ? "true" : "false");
+
+      uint32_t *run_addr = dlsym(handle, "jaguarRunAddress");
+      if (run_addr)
+         printf("jaguarRunAddress: 0x%08X\n", *run_addr);
+
+      bool *cd_bios_ext = dlsym(handle, "cd_bios_loaded_externally");
+      if (cd_bios_ext)
+         printf("cd_bios_loaded_externally: %s\n", *cd_bios_ext ? "true" : "false");
    }
 
    for (frame_count = 0; frame_count < num_frames; frame_count++)
