@@ -994,6 +994,25 @@ bool retro_load_game(const struct retro_game_info *info)
    JaguarLoadFile((uint8_t*)info->data, info->size);
    JaguarReset();
 
+   /* Advertise the Jaguar memory map to the frontend so features like
+    * RetroAchievements (rcheevos) can resolve emulated addresses to
+    * the host buffers backing them. */
+   {
+      struct retro_memory_descriptor descs[1];
+      struct retro_memory_map memmap;
+
+      memset(descs, 0, sizeof(descs));
+      descs[0].flags     = RETRO_MEMDESC_SYSTEM_RAM | RETRO_MEMDESC_BIGENDIAN;
+      descs[0].ptr       = jaguarMainRAM;
+      descs[0].start     = 0x000000;
+      descs[0].len       = 0x200000;
+      descs[0].addrspace = "RAM";
+
+      memmap.descriptors     = descs;
+      memmap.num_descriptors = sizeof(descs) / sizeof(descs[0]);
+      environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &memmap);
+   }
+
    /* The frontend will load .srm data into our save buffer (returned by
     * retro_get_memory_data) after this function returns but before the
     * first retro_run(). We unpack it on the first frame. */
