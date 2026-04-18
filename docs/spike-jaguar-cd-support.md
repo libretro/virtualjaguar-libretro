@@ -457,3 +457,29 @@ Phase 1 only: disc image loading and CDIntf implementation, with no behavioral c
 - `libretro.c` -- Content detection, BIOS loading, disc control interface
 - `src/jaguar.c` -- BIOS loading path in JaguarReset()
 - `src/settings.h` -- CD-related settings
+
+---
+
+## Disc Image Format Support (2026-04-17)
+
+| Format     | Status        | Notes |
+|------------|---------------|-------|
+| BIN/CUE    | **Supported** | Multi-file (redump-style) and single-file. Multi-session CUEs get an 11400-frame inter-session gap (MAME/CHD convention). Verified booting Primal Rage past BIOS handoff. |
+| CDI        | **Supported** | DiscJuggler V2/V3/V3.5. Per-track absolute `start_lba` from CDI metadata is authoritative (preserves Jaguar-specific session 2 placement). |
+| CHD        | Best-effort   | Reads, but virtual pregaps in CHD strip the audio data the BIOS authenticates against. Not recommended for Jaguar CD. Use BIN/CUE or CDI. |
+| ISO        | Not supported | No multi-session, no audio tracks, no pregap — incompatible with Jaguar CD layout. |
+
+### Why CHD is unreliable for Jaguar CD
+
+The Jaguar CD BIOS authenticates session 2 by reading the 149-frame pregap that
+precedes the first data track and DSP-decoding the audio data found there.
+CHD encodes audio pregaps as `VAUDIO` (virtual) and does not store the actual
+samples — so the BIOS reads silence and authentication fails. CDI and BIN/CUE
+preserve the original sectors inline.
+
+### Auth-bypass hooks
+
+Earlier development pre-stuffed BIOS auth-result memory locations to force
+authentication to "pass" so we could test downstream code paths. With the
+BIN/CUE inter-session-gap fix and the addition of CDI support, those hooks
+are no longer required and have been removed (`src/jaguar.c`).

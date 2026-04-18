@@ -13,6 +13,7 @@
 // ---  ----------  -----------------------------------------------------------
 // JLH  11/25/2009  Major rewrite of memory subsystem and handlers
 //
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -136,6 +137,87 @@ uint32_t d7Queue[0x400];
 uint32_t pcQPtr = 0;
 bool startM68KTracing = false;
 
+void JaguarDumpPCHistoryStderr(int count)
+{
+   int n = (count > 0x400) ? 0x400 : count;
+   int i;
+   fprintf(stderr, "[CD-AUTH] 68K PC history (newest first, %d entries):\n", n);
+   for (i = 0; i < n; i++)
+   {
+      /* pcQPtr has already been incremented past the last write, so
+       * entry (pcQPtr - 1) is newest. */
+      uint32_t idx = (pcQPtr - 1 - i) & 0x3FF;
+      fprintf(stderr, "  [-%d] PC=$%06X\n", i, pcQueue[idx]);
+   }
+}
+
+/* CD BIOS audio-pregap authentication bypass.
+ *
+ * The Jaguar CD BIOS authenticates session 2 by reading 149 frames of
+ * pregap audio (just before track 30 INDEX 01) and DSP-decoding them into
+ * a checksum.  Redump-style BIN/CUE dumps and CHD virtual pregaps both
+ * STRIP this audio, so the BIOS reads silence, the checksum mismatches,
+ * and execution falls into the BNE.W $0504EC fail path -> STOP $0200 ->
+ * "?" icon.  CDI dumps preserve the pregap and would not need this.
+ *
+ * The bypass:
+ *   1. Patch BNE.W at $050AA0 -> 2x NOP, so the byte-compare mismatch
+ *      falls through to the post-compare path.
+ *   2. At PC=$050AB2 (DSP-result MOVE.L), pre-stuff F1B4C8 with
+ *      $80010000 (done|pass response).
+ *   3. At PC=$050B0C (post-BSR MOVE.L), pre-stuff $FB000 with $0A so the
+ *      following BHI takes the success branch.
+ *
+ * Installed lazily on the first virtual-pregap read served by cdintf.c so
+ * the BIOS has finished decrypting and copying its code into RAM. */
+void JaguarInstallCDAuthBypass(void)
+{
+   static bool installed = false;
+   const uint32_t bneAddr = 0x050AA0;
+   if (installed)
+      return;
+
+   if (jaguarMainRAM[bneAddr]     != 0x66 || jaguarMainRAM[bneAddr + 1] != 0x00
+    || jaguarMainRAM[bneAddr + 2] != 0xFA || jaguarMainRAM[bneAddr + 3] != 0x4A)
+   {
+      fprintf(stderr,
+              "[CD-AUTH] Skip BNE patch: unexpected bytes at $%06X (%02X%02X %02X%02X)\n",
+              bneAddr,
+              jaguarMainRAM[bneAddr], jaguarMainRAM[bneAddr + 1],
+              jaguarMainRAM[bneAddr + 2], jaguarMainRAM[bneAddr + 3]);
+      installed = true;
+      return;
+   }
+   jaguarMainRAM[bneAddr]     = 0x4E; jaguarMainRAM[bneAddr + 1] = 0x71;
+   jaguarMainRAM[bneAddr + 2] = 0x4E; jaguarMainRAM[bneAddr + 3] = 0x71;
+   fprintf(stderr, "[CD-AUTH] Installed BNE.W $0504EC -> 2x NOP at $%06X\n", bneAddr);
+   installed = true;
+}
+
+void JaguarDumpMemWindow(uint32_t centerPC, uint32_t before, uint32_t after)
+{
+   uint32_t start = (centerPC > before) ? (centerPC - before) : 0;
+   uint32_t end = centerPC + after;
+   uint32_t addr;
+   fprintf(stderr, "[CD-AUTH] 68K memory @ $%06X (-%u..+%u):\n",
+           centerPC, before, after);
+   for (addr = start & ~0xF; addr < end; addr += 16)
+   {
+      int i;
+      fprintf(stderr, "  $%06X:", addr);
+      for (i = 0; i < 16; i += 2)
+      {
+         uint32_t a = addr + i;
+         if (a < 0x200000)
+            fprintf(stderr, " %02X%02X",
+                    jaguarMainRAM[a], jaguarMainRAM[a + 1]);
+         else
+            fprintf(stderr, " ----");
+      }
+      fprintf(stderr, "\n");
+   }
+}
+
 // Breakpoint on memory access vars (exported)
 bool bpmActive = false;
 uint32_t bpmAddress1;
@@ -148,6 +230,9 @@ void M68KInstructionHook(void)
 {
    unsigned i;
    uint32_t m68kPC = m68k_get_reg(NULL, M68K_REG_PC);
+   static bool savedAuthVector = false;
+   static bool restoredAuthVector = false;
+   static uint32_t savedAuthLong = 0;
 
    // For tracebacks...
    // Ideally, we'd save all the registers as well...
@@ -173,6 +258,175 @@ void M68KInstructionHook(void)
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
       return;
+
+   /* CD BIOS GPU auth bypass: The CD BIOS checks GPU RAM $F03000 for the
+    * boot ROM authentication magic ($03D0DEAD) after the intro animation.
+    * The real GPU auth code would have left this value, but in emulation
+    * the GPU security code never converges and the BIOS animation uses
+    * GPU RAM (overwriting any pre-loaded value).  Re-write the magic
+    * right before the BIOS reads it. */
+   if (vjs.useCDBIOS && m68kPC == 0x005E40)
+   {
+      if (!savedAuthVector)
+      {
+         savedAuthLong = GPUReadLong(0xF03000, UNKNOWN);
+         savedAuthVector = true;
+      }
+      fprintf(stderr, "[CD-TRACE] Re-applying auth magic at $F03000 before boot ROM check\n");
+      GPUWriteLong(0xF03000, 0x03D0DEAD, 0);
+   }
+
+   /* Auth bypass hooks. Belt-and-suspenders with the pregap redirect:
+    *   - Redirect feeds real TAIRTAIR audio for the first auth sector
+    *   - Bypass forces the post-auth checks to take the success path even
+    *     when the DSP doesn't compute the expected checksum (which it
+    *     can't, since redumped BIN/CUE only has the TAIRTAIR header in
+    *     sector 0; the rest of the auth window is silence in the file). */
+   if (vjs.useCDBIOS)
+   {
+      /* Hook at PC=$050A9C: install BNE NOP before the BIOS gets there. */
+      if (m68kPC == 0x050A9C)
+         JaguarInstallCDAuthBypass();
+
+      /* Hook at PC=$050AB2 (DSP-result MOVE.L): pre-stuff F1B4C8 with
+       * $80010000 = "DSP done, pass". */
+      if (m68kPC == 0x050AB2)
+         DSPWriteLong(0x00F1B4C8, 0x80010000, UNKNOWN);
+
+      /* Hook at PC=$050B0C (post-BSR MOVE.L / SUBQ): pre-stuff $FB000 with
+       * $0A so the following BHI takes the success branch. */
+      if (m68kPC == 0x050B0C)
+         JaguarWriteLong(0x000FB000, 0x0000000A, UNKNOWN);
+
+      /* Hook at PC=$0505FA (CMP.L $1AE00C, D1 — wait for CD response magic).
+       * On real hardware, $1AE00C is updated by an interrupt handler when
+       * the CD response is ready. Locally that handler isn't writing the
+       * expected value, so we stuff it directly. */
+      if (m68kPC == 0x0505FA)
+      {
+         static uint32_t stuffed = 0;
+         JaguarWriteLong(0x001AE00C, 0x20010001, UNKNOWN);
+         if (stuffed++ < 3)
+            fprintf(stderr, "[CD-AUTH] Stuffed $1AE00C = $20010001 at PC=$0505FA (#%u)\n", stuffed);
+      }
+   }
+
+   /* CD BIOS: $3727C is the "CD ready" flag tested in the BIOS main loop at $5010.
+    * On real hardware, the GPU CD code sets this after drive communication.
+    * Keep this path observable, but do not force the value here. */
+   if (vjs.useCDBIOS)
+   {
+      static bool authDone = false;
+      static uint32_t pc5010Count = 0;
+      static uint32_t instrCount = 0;
+      static bool logged50BA = false;
+
+      if (m68kPC == 0x005E64)
+      {
+         authDone = true;
+         if (savedAuthVector && !restoredAuthVector)
+         {
+            GPUWriteLong(0xF03000, savedAuthLong, UNKNOWN);
+            restoredAuthVector = true;
+            fprintf(stderr, "[CD-TRACE] Restored GPU IRQ entry at $F03000 to $%08X after auth\n",
+                    savedAuthLong);
+         }
+         fprintf(stderr, "[CD-TRACE] Auth PASSED\n");
+      }
+      /* Observe BIOS polling of the CD-ready flag without modifying it. */
+      if (authDone && m68kPC == 0x005010)
+      {
+         uint16_t ready = (jaguarMainRAM[0x3727C] << 8) | jaguarMainRAM[0x3727D];
+         pc5010Count++;
+         if (pc5010Count <= 5 || (pc5010Count % 100000) == 0)
+            fprintf(stderr, "[CD-TRACE] 68K at $5010 (hit #%u, $3727C=%04X)\n",
+                    pc5010Count, ready);
+      }
+      /* Log when 68K enters CD code path */
+      if (authDone && m68kPC == 0x0050BA && !logged50BA)
+      {
+         logged50BA = true;
+         fprintf(stderr, "[CD-TRACE] 68K entered CD code at $50BA ($3727C=%04X)\n",
+                 (jaguarMainRAM[0x3727C] << 8) | jaguarMainRAM[0x3727D]);
+      }
+
+      /* Trace key BIOS CD function entries (addresses in BIOS ROM at $800000+) */
+      {
+         static bool loggedCDRead = false, loggedCDCallback = false;
+         static bool logged1FD418Write = false;
+         static uint32_t cdReadCount = 0, cdCallbackCount = 0;
+
+         /* CD callback at $817E3C — checks $1AE02A, sets $1FD418 */
+         if (m68kPC == 0x817E3C)
+         {
+            cdCallbackCount++;
+            if (!loggedCDCallback || cdCallbackCount <= 10 || (cdCallbackCount % 10000) == 0)
+            {
+               loggedCDCallback = true;
+               uint16_t ae02a = (jaguarMainRAM[0x1AE02A] << 8) | jaguarMainRAM[0x1AE02B];
+               uint16_t af06c = (jaguarMainRAM[0x1AF06C] << 8) | jaguarMainRAM[0x1AF06D];
+               uint16_t fd418 = (jaguarMainRAM[0x1FD418] << 8) | jaguarMainRAM[0x1FD419];
+               fprintf(stderr, "[CD-TRACE] CD callback $817E3C hit #%u ($1AE02A=%04X $1AF06C=%04X $1FD418=%04X)\n",
+                       cdCallbackCount, ae02a, af06c, fd418);
+            }
+         }
+         /* CD_read single-speed entry at $818056 */
+         if (m68kPC == 0x818056)
+         {
+            cdReadCount++;
+            if (!loggedCDRead || cdReadCount <= 10 || (cdReadCount % 1000) == 0)
+            {
+               loggedCDRead = true;
+               uint16_t fd418 = (jaguarMainRAM[0x1FD418] << 8) | jaguarMainRAM[0x1FD419];
+               fprintf(stderr, "[CD-TRACE] CD_read $818056 hit #%u ($1FD418=%04X)\n",
+                       cdReadCount, fd418);
+            }
+         }
+         /* Detect when $1FD418 is first written to 1 */
+         if (!logged1FD418Write &&
+             jaguarMainRAM[0x1FD418] == 0x00 && jaguarMainRAM[0x1FD419] == 0x01)
+         {
+            logged1FD418Write = true;
+            fprintf(stderr, "[CD-TRACE] $1FD418 = 1 detected! (68K PC=$%06X)\n", m68kPC);
+         }
+         /* Formatter at $195E3A (in RAM) — where TST.W $1FD418 is.
+          * If the formatter loops with $1FD418=0 but we have CD data,
+          * force-set it. This is a safety net for when the full BUTCH
+          * interrupt → GPU ISR → CD callback chain doesn't fire. */
+         static uint32_t formatterCount = 0;
+         if (m68kPC == 0x195E3A)
+         {
+            uint16_t fd418 = (jaguarMainRAM[0x1FD418] << 8) | jaguarMainRAM[0x1FD419];
+            formatterCount++;
+            if (formatterCount <= 5 || (formatterCount % 100000) == 0)
+               fprintf(stderr, "[CD-TRACE] Formatter $195E3A hit #%u ($1FD418=%04X)\n",
+                       formatterCount, fd418);
+
+            /* Formatter bypass disabled — data injection removed.
+             * The BIOS must set $1FD418 through its normal code path
+             * (GPU ISR / CD callback). */
+         }
+      }
+
+      /* Periodic PC sampling to see where 68K spends time */
+      if (authDone && (++instrCount % 5000000) == 0)
+         fprintf(stderr, "[CD-TRACE] 68K PC=$%06X (sample #%u)\n", m68kPC, instrCount / 5000000);
+
+
+      /* $192E46 = `TST.W $001A6800` polled in a wait loop together with
+       * $00198CAC. These are BIOS-internal completion mailboxes set by GPU
+       * code that we don't fully emulate. Stuff $1A6800 = 1 every time the
+       * loop is entered so the BIOS proceeds to the next phase. */
+      if (m68kPC == 0x192E46)
+      {
+         static uint32_t stuffed192E46 = 0;
+         if (++stuffed192E46 <= 3)
+            fprintf(stderr, "[CD-AUTH] Stuffed $1A6800=$0001 at PC=$192E46 (#%u)\n",
+                    stuffed192E46);
+         JaguarWriteWord(0x001A6800, 0x0001, UNKNOWN);
+      }
+
+   }
 }
 
 /* Custom UAE 68000 read/write/IRQ functions */
@@ -498,6 +752,36 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset <= 0x7FFFFE)
    {
+      uint32_t ramOff = (offset + 0) & 0x1FFFFF;
+      /* GPU-scoped trace: log writes to main RAM while the GPU is running,
+       * restricted to the CD BIOS workspace range ($30000-$200000).  Rate-limit
+       * per unique address so the first few writes to each slot are logged. */
+      /* Exclude blitter-sourced writes — the blitter is used for bulk memory
+       * clears and would drown the log.  Keep 68K / GPU / DSP writes. */
+      if (vjs.useCDBIOS && GPUIsRunning() && who != BLITTER
+          && ramOff >= 0x30000 && ramOff < 0x200000)
+      {
+         static uint32_t seen_addrs[64] = {0};
+         static uint32_t seen_hits[64] = {0};
+         static unsigned seen_n = 0;
+         unsigned i;
+         int idx = -1;
+         for (i = 0; i < seen_n; i++)
+            if (seen_addrs[i] == ramOff) { idx = (int)i; break; }
+         if (idx < 0 && seen_n < 64)
+         {
+            seen_addrs[seen_n] = ramOff;
+            seen_hits[seen_n] = 0;
+            idx = (int)seen_n++;
+         }
+         if (idx >= 0 && seen_hits[idx] < 3)
+         {
+            seen_hits[idx]++;
+            fprintf(stderr,
+                    "[GPU-WRITE] $%06X = $%04X (GPU_PC=$%06X who=%u)\n",
+                    ramOff, data, GPUGetPC(), who);
+         }
+      }
       jaguarMainRAM[(offset+0) & 0x1FFFFF] = data >> 8;
       jaguarMainRAM[(offset+1) & 0x1FFFFF] = data & 0xFF;
       return;
@@ -691,6 +975,7 @@ uint8_t * GetRamPtr(void)
 
 /* New Jaguar execution stack
  * This executes 1 frame's worth of code. */
+
 void JaguarExecuteNew(void)
 {
    frameDone = false;
@@ -700,6 +985,7 @@ void JaguarExecuteNew(void)
       double timeToNextEvent = GetTimeToNextEvent(EVENT_MAIN);
       m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
       GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      BUTCHExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
       HandleNextEvent(EVENT_MAIN);
    } while(!frameDone);
 }

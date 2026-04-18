@@ -26,6 +26,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "dsp.h"
 #include "joystick.h"
 #include "settings.h"
+#include "gpu.h"
 #include "tom.h"
 #include "state.h"
 #include "m68000/m68kinterface.h"
@@ -240,7 +241,7 @@ static bool update_option_visibility(void)
          strlcpy(key, base, sizeof(key));
          strlcat(key, "_retropad_start", sizeof(key));
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-         
+
          strlcpy(key, base, sizeof(key));
          strlcat(key, "_retropad_l1", sizeof(key));
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
@@ -806,7 +807,7 @@ void retro_get_system_info(struct retro_system_info *info)
 #endif
    info->library_version  = "v2.1.0" GIT_VERSION;
    info->need_fullpath    = true;
-   info->valid_extensions = "j64|jag|cue|chd";
+   info->valid_extensions = "j64|jag|cue|cdi|chd";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
@@ -959,6 +960,7 @@ static bool load_external_cd_bios(void)
       "jaguarcd.bin",
       "jagcd.bin",
       "[BIOS] Atari Jaguar CD (World).j64",
+      "[BIOS] Atari Jaguar Developer CD (World).j64",
       NULL
    };
 
@@ -1177,6 +1179,18 @@ bool retro_load_game(const struct retro_game_info *info)
       jaguarRunAddress = GET32(jagMemSpace, 0x800404);
       jaguarCartInserted = true;
       jaguarROMSize = cdBiosSize;
+
+      /* The boot ROM runs a GPU-based cart authentication check that loops
+       * forever in emulation (the GPU security code at $F032EC never
+       * converges). The boot ROM checks:
+       *   1. bit 0 of $800408 → if set, wait for GPU to finish
+       *   2. GPU RAM $F03000 → if == $03D0DEAD, jump to cart entry
+       * We skip the GPU wait by clearing bit 0 here (survives JaguarReset
+       * since jagMemSpace is not randomized). The GPU magic is written
+       * after JaguarReset() below since GPUReset() randomizes GPU RAM. */
+      jagMemSpace[0x80040B] &= 0xFE;
+      fprintf(stderr, "[CD-TRACE] Boot ROM wait bypass applied at $80040B (value now $%02X)\n",
+              jagMemSpace[0x80040B]);
    }
    else
    {

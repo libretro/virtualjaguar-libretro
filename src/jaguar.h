@@ -61,6 +61,21 @@ extern uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 //Temp debug stuff (will go away soon, so don't depend on these)
 uint8_t * GetRamPtr(void);
 
+// Debug: dump the last `count` 68K PCs (newest first) to stderr.  Used to
+// correlate asynchronous events (e.g. BIOS pregap-auth STOP) with the BIOS
+// code path that produced them.
+void JaguarDumpPCHistoryStderr(int count);
+
+// Debug: hex-dump `before` bytes before and `after` bytes after `centerPC`
+// from 68K RAM to stderr.  Used to disassemble decrypted BIOS code that lives
+// in RAM at runtime (no static file to read).
+void JaguarDumpMemWindow(uint32_t centerPC, uint32_t before, uint32_t after);
+
+// Patch the BIOS audio-pregap auth path so dumps that strip the pregap (CHD,
+// redump BIN/CUE) can boot.  See implementation comment for details.  Lazy
+// install — call repeatedly, runs once.
+void JaguarInstallCDAuthBypass(void);
+
 #ifdef __cplusplus
 }
 #endif

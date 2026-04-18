@@ -15,12 +15,38 @@
 
 #include "cdrom.h"
 
+#include <stdio.h>
 #include <string.h>									// For memset, etc.
 #include "cdintf.h"									// System agnostic CD interface functions
 #include "gpu.h"
 #include "dsp.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "m68000/m68kinterface.h"
+
+/* Temporary CD debug tracing -- set to 1 to enable */
+#define CD_DEBUG 1
+#if CD_DEBUG
+#define CD_LOG(...) fprintf(stderr, "[CD] " __VA_ARGS__)
+#else
+#define CD_LOG(...) ((void)0)
+#endif
+
+// Timing constants for seek and FIFO simulation (in half-line ticks, ~31.8μs each)
+// Per MiSTer FPGA: seek has a multi-tier delay (30-315ms), FIFO fills at I2S rate.
+// These values are shortened for software emulation but preserve the required ordering:
+// seek response MUST arrive via interrupt AFTER DSA_tx returns, and FIFO MUST NOT
+// be ready during the DSARX phase (or the 68K handler sends STOP).
+// The BIOS polls BUTCH+2 once after $12xx (no response expected yet), then sends
+// STOP. On real hardware the seek continues internally despite STOP — the drive
+// completes the seek and queues the $0100 response 30-300ms later. The BIOS's
+// main loop (or DSP) detects the seek completion and initiates data transfer.
+// STOP must NOT cancel the seek delay. Value chosen to be short enough to complete
+// within a few frames but long enough to occur AFTER the BIOS's single poll.
+#define SEEK_DELAY_TICKS     100  // ~3.2ms — completes after BIOS poll + STOP
+#define FIFO_FILL_TICKS      8    // ~254μs before FIFO half-full after play starts
+#define FIFO_REFILL_TICKS    5    // ~159μs to refill FIFO after GPU ISR drains it
+#define FIFO_DRAIN_READS     16   // 16 word-reads = 8 GPU longword loads = 32 bytes
 
 /*
    BUTCH     equ  $DFFF00		; base of Butch=interrupt control register, R/W
@@ -182,20 +208,106 @@ static bool haveCDGoodness;
 static uint32_t min, sec, frm, block;
 static uint8_t cdBuf[2352 + 96];
 static uint32_t cdBufPtr = 2352;
-//Also need to set up (save/restore) the CD's NVRAM
+
+// NM93C14 EEPROM: 64 x 16-bit words (128 bytes)
+static uint16_t cdrom_eeprom_ram[64];
+
+// DSA response tracking: bit 13 (RX full) should only be set
+// when we actually have a response ready after a DS_DATA write.
+static bool dsaResponseReady = false;
+
+// Tracks whether the current response is multi-word (TOC) or single-word.
+// Used by DSCNTRL read to clear bit 13 for single-word responses (MiSTer behavior).
+static bool isMultiWordResponse = false;
+
+// BUTCH status bit tracking (per MiSTer FPGA reference):
+// bit 12 (TX buffer empty): set when DS_DATA is written, cleared when DSCNTRL is read
+// This transition is critical — the GPU CD code checks for bit 12 cleared after
+// reading DSCNTRL before proceeding to read DS_DATA.
+static bool txBufferEmpty = true;
+
+// CD playback state — controls bits 10/11 in BUTCH status and FIFO filling
+static bool cdPlaying = false;
+
+// Seek delay: in MiSTer FPGA, seek is NOT instantaneous. The response ($0100)
+// and FIFO data are only available after a delay. The GPU ISR polls BUTCH and
+// expects bit 13 to be 0 while the seek is in progress. If we set it immediately,
+// the ISR sees an unexpected state and sends STOP ($0200).
+static int32_t seekDelay = 0;
 
 // FIFO state for Butch data delivery
-#define FIFO_SIZE 32
-static uint8_t fifoData[FIFO_SIZE];
-static uint32_t fifoReadPtr = 0;
-static uint32_t fifoWritePtr = 0;
-static uint32_t fifoCount = 0;
+// On real hardware, the FIFO fills asynchronously via I2S after seeking.
+// It is NOT instantly available at seek completion — the BIOS processes
+// the seek response ($0100) first, then data arrives.
 static bool fifoDataReady = false;
+
+// FIFO drain/refill tracking: simulates the 16-deep hardware FIFO.
+// The GPU ISR reads 8 longwords (16 word-reads) per invocation, draining
+// the FIFO. After drain, it refills at I2S rate before the next interrupt.
+static uint32_t fifoReadCount = 0;
+static int32_t fifoFillDelay = 0;
+
+// DSA response queue: on real hardware, the DSA serial bus has separate
+// TX and RX buffers. Sending a new command via TX does NOT discard an
+// unread response in RX. This is critical for the seek+stop sequence:
+// the BIOS sends $12xx (seek), then $0200 (STOP) before reading the seek
+// response. Without a queue, STOP overwrites cdCmd and the seek response
+// ($0100) is lost, causing the formatter to never start data streaming.
+#define DSA_QUEUE_SIZE 4
+static uint16_t dsaQueue[DSA_QUEUE_SIZE];
+static uint32_t dsaQueueHead = 0;
+static uint32_t dsaQueueTail = 0;
+static uint32_t dsaQueueCount = 0;
+static bool butchIRQAsserted = false;
+
+static void DSAQueuePush(uint16_t response)
+{
+   if (dsaQueueCount < DSA_QUEUE_SIZE)
+   {
+      dsaQueue[dsaQueueTail] = response;
+      dsaQueueTail = (dsaQueueTail + 1) % DSA_QUEUE_SIZE;
+      dsaQueueCount++;
+      dsaResponseReady = true;
+      CD_LOG("DSA queue push: $%04X (count=%u)\n", response, dsaQueueCount);
+   }
+}
+
+static uint16_t DSAQueuePop(void)
+{
+   if (dsaQueueCount > 0)
+   {
+      uint16_t response = dsaQueue[dsaQueueHead];
+      dsaQueueHead = (dsaQueueHead + 1) % DSA_QUEUE_SIZE;
+      dsaQueueCount--;
+      if (dsaQueueCount == 0)
+      {
+         dsaResponseReady = false;
+         butchIRQAsserted = false;
+      }
+      CD_LOG("DSA queue pop: $%04X (remaining=%u)\n", response, dsaQueueCount);
+      return response;
+   }
+   return 0x0400;  // Error — empty queue
+}
 
 
 void CDROMInit(void)
 {
    haveCDGoodness = CDIntfInit();
+   CD_LOG("CDROMInit: haveCDGoodness=%d\n", haveCDGoodness);
+
+   if (haveCDGoodness)
+   {
+      uint32_t i, numSess = CDIntfGetNumSessions();
+      CD_LOG("Disc: %u sessions\n", numSess);
+      for (i = 0; i < numSess; i++)
+      {
+         CD_LOG("  Session %u: firstTrack=%u lastTrack=%u leadout=%02u:%02u:%02u\n", i,
+                CDIntfGetSessionInfo(i, 0), CDIntfGetSessionInfo(i, 1),
+                CDIntfGetSessionInfo(i, 2), CDIntfGetSessionInfo(i, 3),
+                CDIntfGetSessionInfo(i, 4));
+      }
+   }
 }
 
 void CDROMReset(void)
@@ -205,8 +317,30 @@ void CDROMReset(void)
    cdPtr = 0;
    min = sec = frm = block = 0;
    cdBufPtr = 2352;
-   fifoReadPtr = fifoWritePtr = fifoCount = 0;
    fifoDataReady = false;
+   dsaResponseReady = false;
+   isMultiWordResponse = false;
+   txBufferEmpty = true;
+   cdPlaying = false;
+   seekDelay = 0;
+   fifoReadCount = 0;
+   fifoFillDelay = 0;
+   dsaQueueHead = 0;
+   dsaQueueTail = 0;
+   dsaQueueCount = 0;
+   butchIRQAsserted = false;
+
+   // Initialize EEPROM to 0xFFFF (blank/erased state), then set
+   // factory default values.  The Jaguar CD BIOS reads specific EEPROM
+   // addresses during boot and loops if they don't contain expected
+   // values (a real CD unit's NM93C14 is factory-programmed).
+   memset(cdrom_eeprom_ram, 0xFF, sizeof(cdrom_eeprom_ram));
+   cdrom_eeprom_ram[0] = 0x0024;
+   cdrom_eeprom_ram[1] = 0x0004;
+   cdrom_eeprom_ram[2] = 0x0071;
+   cdrom_eeprom_ram[3] = 0xFF67;
+   cdrom_eeprom_ram[4] = 0x892F;
+   cdrom_eeprom_ram[5] = 0x8000;
 }
 
 void CDROMDone(void)
@@ -223,52 +357,91 @@ void CDROMDone(void)
 //
 void BUTCHExec(uint32_t cycles)
 {
-   uint32_t butchWrite, butchRead;
-
    if (!haveCDGoodness)
       return;
 
-   butchWrite = GET32(cdRam, BUTCH);
+   // Seek delay countdown — runs independently of interrupt enable and STOP state.
+   // On real hardware, STOP halts playback but does NOT cancel an in-progress seek.
+   // The drive continues seeking and delivers $0100 when it reaches the target.
+   // This is critical for the boot sequence: BIOS sends seek+STOP, then waits for
+   // the seek response to arrive in the main loop.
+   if (seekDelay > 0)
+   {
+      seekDelay--;
+      if (seekDelay == 0)
+      {
+         // Seek complete: queue the response and start data output.
+         // On real hardware, the drive starts outputting I2S data immediately
+         // upon reaching the target position. Even if STOP was sent during the
+         // seek, the drive completes the seek and begins data output briefly —
+         // the FIFO fills with the first sector data. The BIOS relies on this
+         // data being available for the DSP to read via the I2S/SSI path.
+         DSAQueuePush(0x0100);
+         cdPlaying = true;
+         fifoDataReady = true;
+         fifoReadCount = 0;
+
+         CD_LOG("BUTCHExec: seek complete block=%u (MSF %02u:%02u:%02u) — queued $0100, FIFO+playback active\n",
+                block, min, sec, frm);
+      }
+   }
+
+   // FIFO refill countdown — simulates I2S filling the 16-deep FIFO.
+   // After the GPU ISR drains it (16 word-reads), we wait before setting
+   // half-full again. Also handles initial fill after play starts.
+   if (fifoFillDelay > 0)
+   {
+      fifoFillDelay--;
+      if (fifoFillDelay == 0 && cdPlaying)
+      {
+         fifoDataReady = true;
+         fifoReadCount = 0;
+         CD_LOG("BUTCHExec: FIFO half-full — ready for GPU ISR\n");
+      }
+   }
+
+   uint32_t butchWrite = GET32(cdRam, BUTCH);
 
    if (!(butchWrite & 0x01))       // Global interrupt enable not set
-      return;
-
-   // Build the read-side status bits based on current state
-   butchRead = GET32(cdRam, BUTCH) & 0xFFFF0000;
-
-   // bit 9: CD data FIFO half-full flag pending
-   if ((butchWrite & 0x02) && fifoDataReady)
-      butchRead |= (1 << 9);
-
-   // bit 12: Command to CD drive pending (trans buffer empty if 1)
-   // Always set when we're ready for commands
-   butchRead |= (1 << 12);
-
-   // bit 13: Response from CD drive pending (rec buffer full if 1)
-   // Set when we have a response ready (always ready in our emulation)
-   butchRead |= (1 << 13);
-
-   // Store the read-side status
-   cdRam[BUTCH + 2] = (butchRead >> 8) & 0xFF;
-   cdRam[BUTCH + 3] = butchRead & 0xFF;
-
-   // Generate interrupts through JERRY -> GPU path
-   // Butch interrupts route through JERRY EXT1 to the GPU
-   if (butchRead & 0x3E00)  // Any interrupt flag pending
    {
-      // Check if any enabled interrupt has a pending flag
+      butchIRQAsserted = false;
+      return;
+   }
+
+   // Generate interrupts through JERRY external interrupt -> 68K INT2.
+   // Per MiSTer FPGA: eint = global_en && (fifo_int || rbuf_int || ...)
+   // where fifo_int = bit1 && bit9, rbuf_int = bit5 && bit13.
+   {
       bool shouldIRQ = false;
 
-      if ((butchWrite & 0x02) && (butchRead & (1 << 9)))   // FIFO half-full
+      if ((butchWrite & 0x02) && fifoDataReady)              // FIFO half-full
          shouldIRQ = true;
-      if ((butchWrite & 0x20) && (butchRead & (1 << 13)))  // DSARX (response ready)
+      if ((butchWrite & 0x20) && dsaResponseReady)           // DSARX (response ready)
          shouldIRQ = true;
 
-      if (shouldIRQ)
+      if (!shouldIRQ)
       {
-         // Route through JERRY to GPU via EXT1 interrupt
-         // The GPU ISR at JERRY_ISR handles Butch interrupts
-         DSPSetIRQLine(DSPIRQ_EXT1, ASSERT_LINE);
+         butchIRQAsserted = false;
+      }
+      else if (!butchIRQAsserted)
+      {
+         butchIRQAsserted = true;
+         // Hardware-correct interrupt path: BUTCH asserts an external
+         // interrupt line that feeds into JERRY. JERRY latches it and,
+         // if the external-interrupt mask bit is enabled, asserts 68K
+         // IPL2. The BIOS 68K IRQ2 handler reads J_INT, identifies the
+         // external source, and writes G_CTRL bit 2 to trigger GPU IRQ0.
+         // The GPU ISR at $F03000 then reads BUTCH FIFO data.
+         JERRYSetPendingIRQ(IRQ2_EXTERNAL);
+         if (JERRYIRQEnabled(IRQ2_EXTERNAL))
+            m68k_set_irq(2);
+
+         static uint32_t butchIRQCount = 0;
+         butchIRQCount++;
+         if (butchIRQCount <= 5 || (butchIRQCount % 10000) == 0)
+            CD_LOG("BUTCHExec: IRQ #%u (enables=0x%02X fifo=%d dsarx=%d jerryExtEna=%d)\n",
+                   butchIRQCount, butchWrite & 0x7F, fifoDataReady, dsaResponseReady,
+                   JERRYIRQEnabled(IRQ2_EXTERNAL));
       }
    }
 }
@@ -290,72 +463,91 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    offset &= 0xFF;
 
    if (offset == BUTCH)
-      data = 0x0000;
+      data = GET16(cdRam, BUTCH);    // Top word: control bits (cdbios, cdreset, etc.)
    else if (offset == BUTCH + 2)
    {
-      // Read-side BUTCH status register
-      // bit 9: CD data FIFO half-full flag pending
-      // bit12: Command to CD drive pending (trans buffer empty if 1)
-      // bit13: Response from CD drive pending (rec buffer full if 1)
-      // bit14: CD uncorrectable data error pending
+      // Read-side BUTCH status register (bits 9-14) merged with
+      // write-side enable bits (bits 0-6). Per MiSTer FPGA, the full
+      // register is returned on reads — enables are visible alongside status.
       if (haveCDGoodness)
       {
-         data = (1 << 12) | (1 << 13);  // TX empty + RX full (always ready)
+         // Start with write-side enable bits stored in cdRam
+         data = GET16(cdRam, BUTCH + 2) & 0x007F;  // bits 0-6 only
+
+         // Merge status bits (bit 12 is tracked explicitly)
+         if (txBufferEmpty)
+            data |= (1 << 12);          // TX buffer empty
+         if (cdPlaying)
+         {
+            data |= (1 << 10);          // Frame pending (only when CD is spinning)
+            data |= (1 << 11);          // Subcode data pending
+         }
+         if (dsaResponseReady)
+            data |= (1 << 13);          // RX full only when we have a real response
          if (fifoDataReady)
             data |= (1 << 9);           // FIFO half-full
       }
    }
+   else if (offset == DSCNTRL || offset == DSCNTRL + 2)
+   {
+      // DSCNTRL read: returns stored value, clears bit 12 (TX buffer empty).
+      // Per MiSTer FPGA (butch.v line 1522-1525), it also clears bit 13 for
+      // single-word responses. However, in our software emulation, the GPU ISR
+      // reads DSCNTRL before checking BUTCH — clearing bit 13 here would destroy
+      // the response before the ISR sees it. Instead, we clear bit 13 when
+      // DS_DATA is actually read (see DS_DATA handler below).
+      data = GET16(cdRam, offset);
+      txBufferEmpty = false;  // Clear bit 12 — GPU sees this transition
+   }
+   else if (offset == I2CNTRL || offset == I2CNTRL + 2)
+   {
+      // I2S bus control register readback — return stored value with dynamic bit 4.
+      // Per MiSTer FPGA: bit 4 (FIFO not empty) is hardware-driven, not software-set.
+      data = GET16(cdRam, offset);
+      if (haveCDGoodness && fifoDataReady)
+         data |= (1 << 4);              // FIFO not empty (dynamic)
+   }
    else if (offset == DS_DATA && haveCDGoodness)
    {
-      if ((cdCmd & 0xFF00) == 0x0100)				// ???
+      // DSA response queue takes priority — this ensures the seek response
+      // ($0100) is delivered before a later STOP response ($0200) even when
+      // the BIOS sends seek+stop without reading between them.
+      if (dsaQueueCount > 0)
       {
-         //Not sure how to acknowledge the ???...
-         //			data = 0x0400;//?? 0x0200;
-         cdPtr++;
-         switch (cdPtr)
+         data = DSAQueuePop();
+         // Apply side effects based on the queued response
+         if (data == 0x0100)
          {
-            case 1:
-               data = 0x0000;
-               break;
-            case 2:
-               data = 0x0100;
-               break;
-            case 3:
-               data = 0x0200;
-               break;
-            case 4:
-               data = 0x0300;
-               break;
-            case 5:
-               data = 0x0400;
-               break;
+            // Seek complete — playback and FIFO were already activated
+            // at seek completion in BUTCHExec. Re-assert in case STOP
+            // cleared them between seek completion and this read.
+            cdPlaying = true;
+            if (!fifoDataReady)
+            {
+               fifoDataReady = true;
+               fifoReadCount = 0;
+            }
+            CD_LOG("Queued seek response $0100 consumed\n");
          }
+         else if (data == 0x0200)
+         {
+            // STOP response consumed — stop was already processed on write
+            CD_LOG("Queued STOP response $0200 consumed\n");
+         }
+         // dsaResponseReady is managed by DSAQueuePop
+      }
+      else if ((cdCmd & 0xFF00) == 0x0100)				// Play Title
+      {
+         data = 0x0100 | (cdCmd & 0xFF);			// Echo: $01nn -> $01nn (Found)
+         cdPlaying = true;
+         fifoDataReady = true;
+         CD_LOG("Play Title response consumed — playback and FIFO now active\n");
       }
       else if ((cdCmd & 0xFF00) == 0x0200)			// Stop CD
       {
-         //Not sure how to acknowledge the stop...
-         data = 0x0400;//?? 0x0200;
-         /*			cdPtr++;
-                  switch (cdPtr)
-                  {
-                  case 1:
-                  data = 0x00FF;
-                  break;
-                  case 2:
-                  data = 0x01FF;
-                  break;
-                  case 3:
-                  data = 0x02FF;
-                  break;
-                  case 4:
-                  data = 0x03FF;
-                  break;
-                  case 5:
-                  data = 0x0400;
-                  }//*/
-         // CDROM: Reading DS_DATA (stop)
+         data = 0x0200;								// Stopped
       }
-      else if ((cdCmd & 0xFF00) == 0x0300)		// Read session TOC (overview?)
+      else if ((cdCmd & 0xFF00) == 0x0300)		// Read session TOC (5 words)
       {
 
          /*
@@ -389,11 +581,19 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          else
             data |= (0x20 | cdPtr++) << 8;
       }
-      // Seek to m, s, or f position
-      else if ((cdCmd & 0xFF00) == 0x1000 || (cdCmd & 0xFF00) == 0x1100 || (cdCmd & 0xFF00) == 0x1200)
-         data = 0x0100;	// Success, though this doesn't take error handling into account.
-      // Ideally, we would also set the bits in BUTCH to let the processor know that
-      // this is ready to be read... !!! FIX !!!
+      // Seek: only $12xx (Goto Frame) generates a response ($0100 = Found).
+      // $10xx/$11xx (Goto Min/Sec) do NOT generate responses on their own.
+      // This path is the fallback for seek responses NOT delivered via the queue
+      // (e.g. if the BIOS reads DS_DATA while cdCmd is still $12xx and no STOP
+      // was interleaved). Normally the queue path above handles seek responses.
+      else if ((cdCmd & 0xFF00) == 0x1200)
+      {
+         data = 0x0100;	// Found (seek complete)
+         cdPlaying = true;
+         fifoDataReady = true;
+         fifoReadCount = 0;
+         CD_LOG("Seek response $0100 consumed (direct) — cdPlaying=true\n");
+      }
       else if ((cdCmd & 0xFF00) == 0x1400)		// Read "full" session TOC
       {
          //Need to be a bit more tricky here, since it's reading the "session" TOC instead of the
@@ -403,6 +603,12 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             data = 0x400;
          else
          {
+            // Wire format for $14xx response (5 words per track):
+            //   $60nn = track number
+            //   $61nn = track number (repeated, per original VJ code)
+            //   $62nn = absolute minutes (MSF)
+            //   $63nn = absolute seconds (MSF)
+            //   $64nn = absolute frames (MSF)
             if (cdPtr < 0x62)
                data = (cdPtr << 8) | trackNum;
             else if (cdPtr < 0x65)
@@ -450,37 +656,110 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
                   cdPtr = 0;
                   }//*/
       }
-      else if ((cdCmd & 0xFF00) == 0x1500)		// Read CD mode
-         data = cdCmd | 0x0200;	// ?? not sure ?? [Seems OK]
+      else if ((cdCmd & 0xFF00) == 0x1500)		// Set Mode
+         data = 0x1700 | (cdCmd & 0xFF);			// Mode Status: $17nn
       else if ((cdCmd & 0xFF00) == 0x1800)		// Spin up session #
-         data = cdCmd;
+         data = 0x0143;								// Spun Up
       else if ((cdCmd & 0xFF00) == 0x5400)		// Read # of sessions
-         data = cdCmd | (CDIntfGetNumSessions() & 0xFF);
-      else if ((cdCmd & 0xFF00) == 0x7000)		// Read oversampling
-         //NOTE: This setting will probably affect the # of DSP interrupts that need to happen. !!! FIX !!!
-         data = cdCmd;
+         data = 0x5400 | (CDIntfGetNumSessions() & 0xFF);
+      else if ((cdCmd & 0xFF00) == 0x7000)		// Set DAC Mode
+         data = cdCmd;								// Echo: $70nn
       else
          data = 0x0400;
+
+      // Multi-word commands: keep dsaResponseReady true while there are
+      // more data words to deliver; clear it after the last data word so
+      // the BIOS sees bit 13 go low and knows the response is complete.
+      // $0400 (error/done) always clears.
+      // NOTE: Queue-based responses (seek, stop) manage dsaResponseReady
+      // through DSAQueuePop() and skip this block entirely.
+      if (dsaQueueCount > 0)
+      {
+         // Queue still has entries — dsaResponseReady stays true
+      }
+      else if (data == 0x0400)
+      {
+         dsaResponseReady = false;
+         isMultiWordResponse = false;
+         butchIRQAsserted = false;
+      }
+      else if ((cdCmd & 0xFF00) == 0x0300 && cdPtr >= 5)
+      {
+         dsaResponseReady = false;  // Session TOC: 5 data words delivered
+         isMultiWordResponse = false;
+         butchIRQAsserted = false;
+      }
+      else if ((cdCmd & 0xFF00) == 0x1400 && trackNum > maxTrack)
+      {
+         dsaResponseReady = false;  // Full TOC: all tracks delivered
+         isMultiWordResponse = false;
+         butchIRQAsserted = false;
+      }
+      // Single-word responses: clear dsaResponseReady after data is consumed.
+      // This must happen HERE (not in DSCNTRL read) because the GPU ISR reads
+      // DSCNTRL before checking BUTCH for bit 13 — clearing in DSCNTRL would
+      // destroy the response before the ISR ever sees it.
+      else if (!isMultiWordResponse)
+      {
+         dsaResponseReady = false;
+         isMultiWordResponse = false;
+         butchIRQAsserted = false;
+      }
    }
    else if (offset == DS_DATA && !haveCDGoodness)
       data = 0x0400;								// No CD interface present, so return error
    else if (offset >= FIFO_DATA && offset <= FIFO_DATA + 3)
    {
-      // FIFO_DATA read -- delivers CD sector data to the GPU
-      // The GPU ISR reads 8 longwords alternating between FIFO_DATA and I2SDAT2
-      if (haveCDGoodness && cdBufPtr < 2352)
+      // FIFO_DATA read -- delivers CD sector data to the GPU.
+      // The GPU ISR (JERRY_ISR) reads 8 longwords alternating between
+      // FIFO_DATA and I2SDAT2, storing 32 bytes to RAM per invocation.
+      // Auto-advance to the next sector when the current one is exhausted.
+      if (haveCDGoodness)
       {
-         data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
-         cdBufPtr += 2;
+         if (cdBufPtr >= 2352 && cdPlaying)
+         {
+            block++;
+            CDIntfReadBlock(block, cdBuf);
+            cdBufPtr = 0;
+         }
+         if (cdBufPtr < 2352)
+         {
+            data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
+            cdBufPtr += 2;
+         }
+         // Track FIFO drain: after 16 word-reads (= 8 GPU longword loads),
+         // the FIFO is empty. Clear half-full flag and start refill delay.
+         fifoReadCount++;
+         if (fifoReadCount >= FIFO_DRAIN_READS && fifoDataReady)
+         {
+            fifoDataReady = false;
+            fifoFillDelay = FIFO_REFILL_TICKS;
+         }
       }
    }
    else if (offset >= FIFO_DATA + 4 && offset <= FIFO_DATA + 7)
    {
-      // I2SDAT2 read -- alternate FIFO port, also delivers sector data
-      if (haveCDGoodness && cdBufPtr < 2352)
+      // I2SDAT2 read -- alternate FIFO port, also delivers sector data.
+      // Same auto-advance logic and drain tracking as FIFO_DATA.
+      if (haveCDGoodness)
       {
-         data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
-         cdBufPtr += 2;
+         if (cdBufPtr >= 2352 && cdPlaying)
+         {
+            block++;
+            CDIntfReadBlock(block, cdBuf);
+            cdBufPtr = 0;
+         }
+         if (cdBufPtr < 2352)
+         {
+            data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
+            cdBufPtr += 2;
+         }
+         fifoReadCount++;
+         if (fifoReadCount >= FIFO_DRAIN_READS && fifoDataReady)
+         {
+            fifoDataReady = false;
+            fifoFillDelay = FIFO_REFILL_TICKS;
+         }
       }
    }
    else
@@ -490,6 +769,18 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
    // It looks like it's getting the CD_mode this way...
    if (offset == UNKNOWN + 2)
       data = CDROMBusRead();
+
+   // Log non-EEPROM-bus reads. Suppress GPU RAM dumps to reduce trace noise.
+   if (offset != UNKNOWN + 2 && offset != UNKNOWN)
+   {
+      uint32_t gpuPC = GPUGetPC();
+      int gpuRun = GPUIsRunning();
+      static const char *whoNames[] = {"UNK","JAG","DSP","GPU","TOM","JER","68K","BLT","OP","DBG"};
+      CD_LOG("ReadWord offset=0x%02X data=0x%04X (cmd=0x%04X, dsaRdy=%d) who=%s gpuRun=%d [68K_PC=$%06X GPU_PC=$%06X]\n",
+             offset, data, cdCmd, dsaResponseReady,
+             (who < 10) ? whoNames[who] : "???", gpuRun,
+             m68k_get_reg(NULL, M68K_REG_PC), gpuPC);
+   }
 
    return data;
 }
@@ -503,56 +794,172 @@ void CDROMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
    offset &= 0xFF;
+
+   // BUTCH+2 (low word of ICR): W1C for status bits, direct write for enables.
+   // Per MiSTer FPGA butch.v: bits 0-7 are written directly (enable bits),
+   // bits 8-15 are write-1-to-clear (status acknowledgment). When the GPU ISR
+   // reads BUTCH (getting status bits), modifies enables, and writes back, any
+   // status bits that were 1 in the read are automatically cleared. This is the
+   // hardware handshake that prevents stale status from retriggering interrupts.
+   if (offset == BUTCH + 2)
+   {
+      SET16(cdRam, offset, data & 0x007F);  // Store only enable bits (0-6)
+      // W1C: clear status flags where written bits are 1
+      if (data & (1 << 9))  { fifoDataReady = false; /* Don't reset fifoFillDelay — FIFO keeps filling */ }
+      if (data & (1 << 12))   txBufferEmpty = false;
+      if (data & (1 << 13))   { dsaResponseReady = false; butchIRQAsserted = false; }
+      CD_LOG("WriteWord BUTCH+2 W1C: data=0x%04X enables=0x%02X cleared=[%s%s%s] [PC=$%06X]\n",
+             data, data & 0x7F,
+             (data & (1 << 13)) ? "b13(dsaRdy) " : "",
+             (data & (1 << 12)) ? "b12(txEmpty) " : "",
+             (data & (1 << 9))  ? "b9(fifoRdy) " : "",
+             m68k_get_reg(NULL, M68K_REG_PC));
+      return;
+   }
+
    SET16(cdRam, offset, data);
 
+   if (offset < UNKNOWN)  // Don't log EEPROM bus writes ($2C/$2E) — too noisy
+      CD_LOG("WriteWord offset=0x%02X data=0x%04X [PC=$%06X]\n", offset, data, m68k_get_reg(NULL, M68K_REG_PC));
+
    // Command register
-   //Lesse what this does... Seems to work OK...!
    if (offset == DS_DATA)
    {
+      CD_LOG("DS_DATA write: cmd=0x%04X\n", data);
       cdCmd = data;
-      if ((data & 0xFF00) == 0x0200)				// Stop CD
-         cdPtr = 0;
-      else if ((data & 0xFF00) == 0x0300)			// Read session TOC (short? overview?)
-         cdPtr = 0;
-      //Not sure how these three acknowledge...
-      else if ((data & 0xFF00) == 0x1000)			// Seek to minute position
+      txBufferEmpty = true;  // Per MiSTer: set bit 12 on command write
+
+      // $10xx/$11xx (Goto Min/Sec): no actual response data, but the BIOS's
+      // DSA_tx routine polls BUTCH bit 13 after every command. We must keep
+      // dsaResponseReady=true so DSA_tx exits. The original emulator code
+      // always returned bit 13=1 on BUTCH+2 reads.
+      // $12xx (Goto Frame): response delivered after seek delay.
+      if ((data & 0xFF00) == 0x1200)
       {
-         min = data & 0x00FF;
+         // Per MiSTer FPGA: $12xx starts the seek state machine. The BIOS
+         // polls BUTCH+2 once (no response expected yet), then sends STOP.
+         // On real hardware the seek continues internally — STOP doesn't
+         // cancel it. The $0100 response arrives when seekDelay expires.
+         dsaResponseReady = false;
+         isMultiWordResponse = false;
+         seekDelay = SEEK_DELAY_TICKS;
       }
+      else if ((data & 0xFF00) == 0x1000 || (data & 0xFF00) == 0x1100)
+      {
+         // $10xx/$11xx (Goto Min/Sec) do NOT generate serial bus responses
+         // on real hardware (confirmed by MiSTer FPGA). The BIOS's DSA_tx
+         // polls bit 12 (TX buffer empty), not bit 13 (RX full).
+         // Setting dsaResponseReady=true here caused BUTCHExec to fire
+         // spurious GPU IRQs — the ISR read DS_DATA, got $0400 (error),
+         // and corrupted the CD boot state.
+         dsaResponseReady = false;
+         isMultiWordResponse = false;
+      }
+      else if ((data & 0xFF00) == 0x0300 || (data & 0xFF00) == 0x1400)
+      {
+         dsaResponseReady = true;
+         isMultiWordResponse = true;  // TOC responses are multi-word
+      }
+      else if ((data & 0xFF00) == 0x0200)
+      {
+         // STOP response is queued below, don't set dsaResponseReady here
+         isMultiWordResponse = false;
+      }
+      else
+      {
+         dsaResponseReady = true;
+         isMultiWordResponse = false;
+      }
+
+      if ((data & 0xFF00) == 0x0200)				// Stop CD
+      {
+         /* Auth-fail trap: if the last CD read landed in a virtual-pregap gap
+          * (silence), the BIOS is now issuing STOP because audio-signature
+          * authentication failed.  Log the 68K PC and recent PC history so
+          * we can identify the BIOS auth branch and patch/trap it. */
+         if (CDIntfLastReadWasVirtualPregap())
+         {
+            static bool dumped = false;
+            fprintf(stderr,
+                    "[CD-AUTH] STOP after virtual-pregap read LBA=%u  68K_PC=$%06X  GPU_PC=$%06X\n",
+                    CDIntfLastVirtualPregapLBA(),
+                    m68k_get_reg(NULL, M68K_REG_PC),
+                    GPUGetPC());
+            JaguarDumpPCHistoryStderr(32);
+            if (!dumped)
+            {
+               dumped = true;
+               /* STOP-write site: disassembling a small window here tells us
+                * the shape of the tiny subroutine that issues STOP. */
+               JaguarDumpMemWindow(0x00353C, 0x10, 0x30);
+               /* Return site from the compare loop — the branch that decides
+                * pass/fail after the pregap audio compare lives in this window. */
+               JaguarDumpMemWindow(0x0504F4, 0x40, 0x20);
+               /* Tight compare loop itself — confirms what register/state holds
+                * the compare result. */
+               JaguarDumpMemWindow(0x050A9C, 0x20, 0x20);
+               /* Outer decision logic (RAM-loaded BIOS formatter path). */
+               JaguarDumpMemWindow(0x194FCA, 0x40, 0x20);
+            }
+            CDIntfClearLastReadVirtualPregap();
+         }
+         cdPtr = 0;
+         cdPlaying = false;
+         // seekDelay is NOT zeroed — on real hardware, STOP halts playback
+         // but does not cancel an in-progress seek. The drive continues
+         // seeking and delivers $0100 when it reaches the target position.
+         // This is critical for the BIOS boot: seek+STOP, then wait for
+         // seek completion in the main loop.
+         fifoFillDelay = 0;
+         // On real hardware, STOP halts the drive motor but data already in
+         // the FIFO and sector buffer remains readable. Don't clear the buffer
+         // — the DSP needs to read the boot sector data that was loaded during
+         // the seek. cdBufPtr stays where it is so ButchIsReadyToSend can
+         // still return true for remaining data.
+         if (cdBufPtr >= 2352)
+         {
+            fifoDataReady = false;
+            fifoReadCount = 0;
+         }
+         // Queue the STOP response in the DSA RX buffer
+         DSAQueuePush(0x0200);
+      }
+      else if ((data & 0xFF00) == 0x0300)			// Read session TOC (5 words)
+         cdPtr = 0;
+      else if ((data & 0xFF00) == 0x0400)			// Pause CD
+         cdPlaying = false;
+      else if ((data & 0xFF00) == 0x0500)			// Unpause CD
+         cdPlaying = true;
+      else if ((data & 0xFF00) == 0x1000)			// Seek to minute position
+         min = data & 0x00FF;
       else if ((data & 0xFF00) == 0x1100)			// Seek to second position
          sec = data & 0x00FF;
       else if ((data & 0xFF00) == 0x1200)			// Seek to frame position
       {
          frm = data & 0x00FF;
-         block = (((min * 60) + sec) * 75) + frm;
-         // Pre-read the first sector into the buffer for FIFO delivery
+         // BIOS sends absolute MSF (CD standard: LBA 0 = MSF 00:02:00).
+         // Subtract the 150-frame lead-in offset to get disc-image LBA.
+         {
+            int32_t absBlock = (((min * 60) + sec) * 75) + frm;
+            block = (absBlock >= 150) ? (uint32_t)(absBlock - 150) : 0;
+         }
+         fprintf(stderr, "[CDROM] About to call CDIntfReadBlock(%u)\n", block); fflush(stderr);
          CDIntfReadBlock(block, cdBuf);
+         fprintf(stderr, "[CDROM] CDIntfReadBlock returned\n"); fflush(stderr);
          cdBufPtr = 0;
-         fifoDataReady = true;
+         // Response delivered by BUTCHExec when seekDelay expires.
+         // STOP does not cancel the seek — the drive continues seeking
+         // internally and delivers $0100 when it arrives at the position.
+         CD_LOG("Seek started: block=%u (MSF %02u:%02u:%02u), delay=%d ticks\n",
+                block, min, sec, frm, SEEK_DELAY_TICKS);
       }
       else if ((data & 0xFF00) == 0x1400)			// Read "full" TOC for session
       {
-         cdPtr = 0x60,
-               minTrack = CDIntfGetSessionInfo(data & 0xFF, 0),
-               maxTrack = CDIntfGetSessionInfo(data & 0xFF, 1);
+         cdPtr = 0x60;
+         minTrack = CDIntfGetSessionInfo(data & 0xFF, 0);
+         maxTrack = CDIntfGetSessionInfo(data & 0xFF, 1);
          trackNum = minTrack;
       }
-#if 0
-      else if ((data & 0xFF00) == 0x1500)			// Set CDROM mode
-      {
-         // Mode setting is as follows: bit 0 set -> single speed, bit 1 set -> double,
-         // bit 3 set -> multisession CD, bit 3 unset -> audio CD
-      }
-      else if ((data & 0xFF00) == 0x1800)			// Spin up session #
-      {
-      }
-      else if ((data & 0xFF00) == 0x5400)			// Read # of sessions
-      {
-      }
-      else if ((data & 0xFF00) == 0x7000)			// Set oversampling rate
-      {
-      }
-#endif
    }//*/
 
    if (offset == UNKNOWN + 2)
@@ -572,8 +979,15 @@ static bool firstTime = false;
 
 static void CDROMBusWrite(uint16_t data)
 {
-   //This is kinda lame. What we should do is check for a 0->1 transition on either bits 0 or 1...
-   //!!! FIX !!!
+   // NM93C14 EEPROM serial interface emulation
+   // Register bits: 0=CS, 1=CLK, 2=DI (data to EEPROM), 3=DO (data from EEPROM)
+   //
+   // The BIOS protocol uses a 3-write cycle per clock:
+   //   1. Write with bit0=1 to start command phase
+   //   2. Write with bit0=0 + bit2=data for each command/data bit
+   //   3. Transition writes (state machine ticks)
+   //
+   // The state machine processes data only in the RISING state.
 
    switch (currentState)
    {
@@ -581,7 +995,7 @@ static void CDROMBusWrite(uint16_t data)
          currentState = ST_RISING;
          break;
       case ST_RISING:
-         if (data & 0x0001)							// Command coming
+         if (data & 0x0001)							// Command coming (CS asserted)
          {
             cmdTx = true;
             counter = 0;
@@ -600,24 +1014,37 @@ static void CDROMBusWrite(uint16_t data)
                   busCmd >>= 2;					// Because we ORed bit 2, we need to shift right by 2
                   cmdTx = false;
 
-                  //What it looks like:
-                  //It seems that the $18x series reads from NVRAM while the
-                  //$130, $14x, $100 series writes values to NVRAM...
-                  if (busCmd == 0x180)
-                     rxData = 0x0024;//1234;
-                  else if (busCmd == 0x181)
-                     rxData = 0x0004;//5678;
-                  else if (busCmd == 0x182)
-                     rxData = 0x0071;//9ABC;
-                  else if (busCmd == 0x183)
-                     rxData = 0xFF67;//DEF0;
-                  else if (busCmd == 0x184)
-                     rxData = 0xFFFF;//892F;
-                  else if (busCmd == 0x185)
-                     rxData = 0xFFFF;//8000;
-                  else
-                     rxData = 0x0001;
-                  //						rxData = 0x8349;//8000;//0F67;
+                  CD_LOG("BusCmd: 0x%03X [PC=$%06X]\n", busCmd, m68k_get_reg(NULL, M68K_REG_PC));
+
+                  // NM93C14 command decoding:
+                  // 9-bit command = start(1) + opcode(2) + address(6)
+                  // Opcodes: 10=READ, 01=WRITE, 11=ERASE, 00=special
+                  uint16_t opcode = (busCmd >> 6) & 0x03;
+                  uint16_t addr = busCmd & 0x3F;
+
+                  if (opcode == 2)  // READ (10 binary)
+                  {
+                     rxData = cdrom_eeprom_ram[addr];
+                     CD_LOG("EEPROM READ addr=%u -> 0x%04X\n", addr, rxData);
+                  }
+                  else if (opcode == 1)  // WRITE (01 binary)
+                  {
+                     // txData will be collected in data phase, then written
+                     CD_LOG("EEPROM WRITE addr=%u (data follows)\n", addr);
+                     rxData = 0;
+                  }
+                  else if (opcode == 3)  // ERASE (11 binary)
+                  {
+                     cdrom_eeprom_ram[addr] = 0xFFFF;
+                     CD_LOG("EEPROM ERASE addr=%u\n", addr);
+                     rxData = 0;
+                  }
+                  else  // Special commands (00 binary)
+                  {
+                     // EWDS (100000000), EWEN (100110000), ERAL, WRAL
+                     CD_LOG("EEPROM special cmd=0x%03X\n", busCmd);
+                     rxData = 0;
+                  }
 
                   counter = 0;
                   firstTime = true;
@@ -626,10 +1053,19 @@ static void CDROMBusWrite(uint16_t data)
             }
             else
             {
-               txData = (txData << 1) | ((data & 0x04) >> 2);
-
-               rxDataBit = (rxData & 0x8000) >> 12;
-               rxData <<= 1;
+               // Data phase: output response bits (READ) or collect input bits (WRITE)
+               if (firstTime)
+               {
+                  // NM93C14 outputs a dummy 0 bit before data (ready indicator)
+                  rxDataBit = 0;
+                  firstTime = false;
+               }
+               else
+               {
+                  txData = (txData << 1) | ((data & 0x04) >> 2);
+                  rxDataBit = (rxData & 0x8000) >> 12;
+                  rxData <<= 1;
+               }
                counter++;
             }
          }
@@ -676,8 +1112,21 @@ uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
    return (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr + 0];
 }
 
+bool CDROMHasData(void)
+{
+   return haveCDGoodness && cdBufPtr < 2352;
+}
+
 bool ButchIsReadyToSend(void)
 {
+   // On real hardware, BUTCH sends I2S data when the FIFO has data from the
+   // CD drive, independent of software register writes. The emulation runs
+   // the DSP (audio callback) AFTER the 68K finishes the frame, so the DSP
+   // never sees intermediate I2CNTRL values. Check actual data availability
+   // instead of the software register bit. The sector buffer (cdBuf) is
+   // loaded during seek and contains valid data until fully consumed.
+   if (haveCDGoodness && cdBufPtr < 2352)
+      return true;
    return ((cdRam[I2CNTRL + 3] & 0x02) ? true : false);
 }
 
@@ -685,8 +1134,14 @@ bool ButchIsReadyToSend(void)
 // This simulates a read from BUTCH over the SSI to JERRY.
 // Delivers CD audio samples to the DAC left/right receive registers.
 //
+static uint32_t ssiXmitCount = 0;
+
 void SetSSIWordsXmittedFromButch(void)
 {
+   ssiXmitCount++;
+   if (ssiXmitCount <= 5 || (ssiXmitCount % 10000) == 0)
+      CD_LOG("SSI xmit #%u: cdBufPtr=%u block=%u cdPlaying=%d\n",
+             ssiXmitCount, cdBufPtr, block, cdPlaying);
    // Advance by 4 bytes (one stereo sample: 2 bytes L + 2 bytes R)
    cdBufPtr += 4;
 
@@ -1142,6 +1597,15 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, txData);
 	STATE_SAVE_VAR(buf, rxDataBit);
 	STATE_SAVE_VAR(buf, firstTime);
+	STATE_SAVE_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
+	STATE_SAVE_VAR(buf, dsaResponseReady);
+	STATE_SAVE_VAR(buf, isMultiWordResponse);
+	STATE_SAVE_VAR(buf, txBufferEmpty);
+	STATE_SAVE_VAR(buf, cdPlaying);
+	STATE_SAVE_VAR(buf, seekDelay);
+	STATE_SAVE_VAR(buf, fifoDataReady);
+	STATE_SAVE_VAR(buf, fifoReadCount);
+	STATE_SAVE_VAR(buf, fifoFillDelay);
 
 	return (size_t)(buf - start);
 }
@@ -1171,6 +1635,15 @@ size_t CDROMStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, txData);
 	STATE_LOAD_VAR(buf, rxDataBit);
 	STATE_LOAD_VAR(buf, firstTime);
+	STATE_LOAD_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
+	STATE_LOAD_VAR(buf, dsaResponseReady);
+	STATE_LOAD_VAR(buf, isMultiWordResponse);
+	STATE_LOAD_VAR(buf, txBufferEmpty);
+	STATE_LOAD_VAR(buf, cdPlaying);
+	STATE_LOAD_VAR(buf, seekDelay);
+	STATE_LOAD_VAR(buf, fifoDataReady);
+	STATE_LOAD_VAR(buf, fifoReadCount);
+	STATE_LOAD_VAR(buf, fifoFillDelay);
 
 	return (size_t)(buf - start);
 }

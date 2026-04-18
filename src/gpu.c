@@ -24,6 +24,7 @@
 
 #include "gpu.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>								// For memset
 #include "dsp.h"
@@ -34,6 +35,13 @@
 
 // Seems alignment in loads & stores was off...
 #define GPU_CORRECT_ALIGNMENT
+
+#define GPU_TRACE_DEBUG 1
+#if GPU_TRACE_DEBUG
+#define GPU_TRACE(...) fprintf(stderr, "[GPU-TRACE] " __VA_ARGS__)
+#else
+#define GPU_TRACE(...) ((void)0)
+#endif
 
 // For GPU dissasembly...
 
@@ -228,6 +236,18 @@ uint8_t * branch_condition_table = 0;
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
 
+static void GPUTraceIRQState(const char *tag)
+{
+   static uint32_t traceCount = 0;
+   traceCount++;
+   if (traceCount <= 40 || (traceCount % 10000) == 0)
+   {
+      GPU_TRACE("%s pc=$%06X flags=$%08X mask=$%02X control=$%08X latch=$%02X\n",
+                tag, gpu_pc, gpu_flags, (gpu_flags >> 4) & 0x1F,
+                gpu_control, (gpu_control >> 6) & 0x1F);
+   }
+}
+
 void GPUReleaseTimeslice(void)
 {
 	gpu_releaseTimeSlice_flag = 1;
@@ -236,6 +256,11 @@ void GPUReleaseTimeslice(void)
 uint32_t GPUGetPC(void)
 {
 	return gpu_pc;
+}
+
+int GPUIsRunning(void)
+{
+	return (gpu_control & 0x01) ? 1 : 0;
 }
 
 void build_branch_condition_table(void)
@@ -454,6 +479,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 {
    if ((offset >= GPU_WORK_RAM_BASE) && (offset <= GPU_WORK_RAM_BASE + 0x0FFC))
    {
+      if (offset == GPU_WORK_RAM_BASE)
+      {
+         static uint32_t f03000WriteCount = 0;
+         f03000WriteCount++;
+         if (f03000WriteCount <= 20)
+            GPU_TRACE("Write $F03000 = $%08X (write #%u, who=%u, 68K_PC=$%06X)\n",
+                      data, f03000WriteCount, who, m68k_get_reg(NULL, M68K_REG_PC));
+      }
       offset &= 0xFFF;
       SET32(gpu_ram_8, offset, data);
       return;
@@ -466,6 +499,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
          case 0x00:
             {
                bool IMASKCleared = (gpu_flags & IMASK) && !(data & IMASK);
+               uint32_t oldFlags = gpu_flags;
                // NOTE: According to the JTRM, writing a 1 to IMASK has no effect; only the
                //       IRQ logic can set it. So we mask it out here to prevent problems...
                gpu_flags = data & (~IMASK);
@@ -479,6 +513,8 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                //This, however, is A-OK! ;-)
                if (IMASKCleared)						// If IMASK was cleared,
                   GPUHandleIRQs();					// see if any other interrupts need servicing!
+               if (((oldFlags ^ gpu_flags) & 0x01F0) || IMASKCleared)
+                  GPUTraceIRQState("G_FLAGS write");
                break;
             }
          case 0x04:
@@ -492,6 +528,8 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             gpu_data_organization = data;
             break;
          case 0x10:
+            GPU_TRACE("G_PC set to $%08X (who=%u, 68K_PC=$%06X)\n",
+                      data, who, m68k_get_reg(NULL, M68K_REG_PC));
             gpu_pc = data;
             break;
          case 0x14:
@@ -517,13 +555,59 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // check for CPU -> GPU interrupt #0
                if (data & 0x04)
                {
+                  GPUTraceIRQState("G_CTRL cpu->gpu request");
                   GPUSetIRQLine(0, ASSERT_LINE);
                   m68k_end_timeslice();
                   DSPReleaseTimeslice();
                   data &= ~0x04;
                }
 
-               gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
+               {
+                  uint32_t old_ctrl = gpu_control;
+                  gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
+                  if (!(old_ctrl & 0x01) && (gpu_control & 0x01))
+                     GPU_TRACE("GPU STARTED (G_CTRL $%08X -> $%08X, PC=$%08X, who=%u)\n",
+                               old_ctrl, gpu_control, gpu_pc, who);
+                  else if ((old_ctrl & 0x01) && !(gpu_control & 0x01))
+                  {
+                     GPU_TRACE("GPU STOPPED (G_CTRL $%08X -> $%08X, PC=$%08X, who=%u)\n",
+                               old_ctrl, gpu_control, gpu_pc, who);
+                     /* One-shot dump of GPU RAM around the halt PC per unique
+                      * address.  Lets us disassemble the instruction that
+                      * stopped the GPU and its immediate context. */
+                     {
+                        static uint32_t seen_halts[16] = {0};
+                        static unsigned seen_count = 0;
+                        uint32_t halt_pc = gpu_pc;
+                        bool already_seen = false;
+                        for (unsigned i = 0; i < seen_count; i++)
+                           if (seen_halts[i] == halt_pc) { already_seen = true; break; }
+                        if (!already_seen && seen_count < 16
+                            && halt_pc >= 0xF03000 && halt_pc < 0xF04000)
+                        {
+                           seen_halts[seen_count++] = halt_pc;
+                           uint32_t base = halt_pc & ~0x1F;          /* 32-byte align */
+                           if (base >= 0xF03010) base -= 0x10;       /* back up one row */
+                           fprintf(stderr, "[GPU-HALT] PC=$%06X context (gpu_ram_8):\n", halt_pc);
+                           for (unsigned row = 0; row < 3; row++)
+                           {
+                              uint32_t addr = base + row * 16;
+                              if (addr < 0xF03000 || addr >= 0xF04000) continue;
+                              fprintf(stderr, "  %06X:", addr);
+                              for (unsigned b = 0; b < 16; b += 2)
+                              {
+                                 uint32_t off = (addr + b) & 0xFFF;
+                                 uint16_t w = ((uint16_t)gpu_ram_8[off] << 8)
+                                              | (uint16_t)gpu_ram_8[off + 1];
+                                 fprintf(stderr, " %04X%s",
+                                         w, (addr + b) == halt_pc ? "*" : "");
+                              }
+                              fprintf(stderr, "\n");
+                           }
+                        }
+                     }
+                  }
+               }
 
                // if gpu wasn't running but is now running, execute a few cycles
 #ifdef GPU_SINGLE_STEPPING
@@ -600,6 +684,7 @@ void GPUHandleIRQs(void)
       which = 4;
 
    // set the interrupt flag
+   GPUTraceIRQState("HandleIRQs before service");
    gpu_flags |= IMASK;
    GPUUpdateRegisterBanks();
 
@@ -613,6 +698,7 @@ void GPUHandleIRQs(void)
    // jump  (r30)					; jump to ISR
    // nop
    gpu_pc = gpu_reg[30] = GPU_WORK_RAM_BASE + (which * 0x10);
+   GPUTraceIRQState("HandleIRQs entered ISR");
 }
 
 void GPUSetIRQLine(int irqline, int state)
@@ -623,6 +709,8 @@ void GPUSetIRQLine(int irqline, int state)
    if (state)
    {
       gpu_control |= mask;			// Assert the interrupt latch
+      if (irqline == GPUIRQ_CPU)
+         GPUTraceIRQState("SetIRQLine CPU assert");
       GPUHandleIRQs();				// And handle the interrupt...
    }
 }
