@@ -807,7 +807,7 @@ void retro_get_system_info(struct retro_system_info *info)
 #endif
    info->library_version  = "v2.1.0" GIT_VERSION;
    info->need_fullpath    = true;
-   info->valid_extensions = "j64|jag|cue|cdi|chd";
+   info->valid_extensions = "j64|jag|cue|cdi|chd|iso";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)

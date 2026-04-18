@@ -15,7 +15,7 @@ Setup (one-time):
 
 Usage:
     source .venv-libretropy/bin/activate
-    python test/headless.py <content.cue|.j64|.cdi> [--frames N] [--cd-bios retail|dev]
+    python test/headless.py <content.cue|.j64|.cdi|.iso> [--frames N] [--cd-bios retail|dev]
 
 The core is auto-detected from the repo root. The system_dir defaults to
 test/roms/private/ (where BIOSes are kept). Adjust via --system-dir.
@@ -46,7 +46,7 @@ def detect_core() -> Path:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("content", help="Path to game content (.cue, .j64, .cdi, etc.)")
+    p.add_argument("content", help="Path to game content (.cue, .j64, .cdi, .iso, etc.)")
     p.add_argument("--frames", type=int, default=600, help="Frames to run (default: 600)")
     p.add_argument("--cd-bios", choices=["retail", "dev"], default="retail",
                    help="CD BIOS variant (default: retail)")

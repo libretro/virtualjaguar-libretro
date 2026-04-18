@@ -426,6 +426,43 @@ void M68KInstructionHook(void)
          JaguarWriteWord(0x001A6800, 0x0001, UNKNOWN);
       }
 
+      /* One-shot dump of the game's main poll function context once we
+       * see the game executing at $081220. Helps decode the outer caller. */
+      if (m68kPC == 0x081220)
+      {
+         static bool dumpedGamePoll = false;
+         if (!dumpedGamePoll)
+         {
+            dumpedGamePoll = true;
+            fprintf(stderr, "[CD-DUMP] Game poll function context @ $081220:\n");
+            JaguarDumpMemWindow(0x081200, 0x20, 0x80);
+            fprintf(stderr, "[CD-DUMP] Game CD-event flag area @ $0008B380:\n");
+            JaguarDumpMemWindow(0x0008B380, 0x00, 0x40);
+         }
+      }
+
+      /* One-shot dump of the BIOS service routines the game calls into. */
+      if (m68kPC == 0x196446)
+      {
+         static bool dumped196446 = false;
+         if (!dumped196446)
+         {
+            dumped196446 = true;
+            fprintf(stderr, "[CD-DUMP] BIOS service @ $00196446:\n");
+            JaguarDumpMemWindow(0x196446, 0x10, 0x100);
+         }
+      }
+      if (m68kPC == 0x194D18)
+      {
+         static bool dumped194D18 = false;
+         if (!dumped194D18)
+         {
+            dumped194D18 = true;
+            fprintf(stderr, "[CD-DUMP] BIOS service @ $00194D18:\n");
+            JaguarDumpMemWindow(0x194D18, 0x40, 0x100);
+         }
+      }
+
    }
 }
 
@@ -781,6 +818,19 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
                     "[GPU-WRITE] $%06X = $%04X (GPU_PC=$%06X who=%u)\n",
                     ramOff, data, GPUGetPC(), who);
          }
+      }
+      /* Track writes to the game's CD-event flag at $0008B398.
+       * Game's poll function at $081220 returns RTS unless either
+       * BUTCH bit13 (DSARX) or this longword is non-zero. We never
+       * deliver BUTCH IRQs (game uses polling), so this flag is the
+       * only path that wakes the game's main loop. */
+      if (vjs.useCDBIOS && (ramOff == 0x08B398 || ramOff == 0x08B39A))
+      {
+         static uint32_t b398Count = 0;
+         if (++b398Count <= 20)
+            fprintf(stderr, "[CD-FLAG] $%06X = $%04X who=%u 68K_PC=$%06X GPU_PC=$%06X\n",
+                    ramOff, data, who,
+                    m68k_get_reg(NULL, M68K_REG_PC), GPUGetPC());
       }
       jaguarMainRAM[(offset+0) & 0x1FFFFF] = data >> 8;
       jaguarMainRAM[(offset+1) & 0x1FFFFF] = data & 0xFF;
