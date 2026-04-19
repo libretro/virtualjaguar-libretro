@@ -1,5 +1,4 @@
 LIBRETRO_COMM_DIR  = $(CORE_DIR)/libretro-common
-LIBCHDR_DIR        = $(CORE_DIR)/deps/libchdr
 
 INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src \
@@ -9,13 +8,6 @@ INCFLAGS := -I$(CORE_DIR) \
 ifneq (,$(findstring msvc2003,$(platform)))
 INCFLAGS += -I$(LIBRETRO_COMM_DIR)/include/compat/msvc
 endif
-
-# libchdr (CHD disc image support)
-INCFLAGS += -I$(LIBCHDR_DIR)/include \
-				-I$(LIBCHDR_DIR)/deps/lzma-25.01/include \
-				-I$(LIBCHDR_DIR)/deps/miniz-3.1.1 \
-				-I$(LIBCHDR_DIR)/deps/zstd-1.5.7
-FLAGS += -DHAVE_CHD -DMINIZ_NO_STDIO -DWANT_SUBCODE=1 -DWANT_RAW_DATA_SECTOR=0
 
 SOURCES_CXX :=
 
@@ -54,7 +46,8 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/mmu.c \
 	$(CORE_DIR)/src/vjag_memory.c \
 	$(CORE_DIR)/src/universalhdr.c \
-	$(CORE_DIR)/src/wavetable.c
+	$(CORE_DIR)/src/wavetable.c \
+	$(CORE_DIR)/src/jagcd_hle.c
 
 # SIMD-accelerated blitter operations: select arch-specific implementation.
 # BLITTER_SIMD may be set explicitly to one of: scalar, sse2, neon.
@@ -134,26 +127,6 @@ ifeq (,$(findstring msvc,$(platform)))
    CFLAGS += -msse2
 endif
 endif
-
-# libchdr sources
-SOURCES_C += \
-	$(LIBCHDR_DIR)/src/libchdr_bitstream.c \
-	$(LIBCHDR_DIR)/src/libchdr_cdrom.c \
-	$(LIBCHDR_DIR)/src/libchdr_chd.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_cdfl.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_cdlz.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_cdzl.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_cdzs.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_flac.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_huff.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_lzma.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_zlib.c \
-	$(LIBCHDR_DIR)/src/libchdr_codec_zstd.c \
-	$(LIBCHDR_DIR)/src/libchdr_flac.c \
-	$(LIBCHDR_DIR)/src/libchdr_huffman.c \
-	$(LIBCHDR_DIR)/deps/lzma-25.01/src/LzmaDec.c \
-	$(LIBCHDR_DIR)/deps/miniz-3.1.1/miniz.c \
-	$(LIBCHDR_DIR)/deps/zstd-1.5.7/zstddeclib.c
 
 ifneq ($(STATIC_LINKING), 1)
 SOURCES_C += \
