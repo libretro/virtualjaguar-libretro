@@ -22,6 +22,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jagdevcdbios.h"
 #include "jaguar.h"
 #include "cdintf.h"
+#include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
 #include "joystick.h"
@@ -807,7 +808,7 @@ void retro_get_system_info(struct retro_system_info *info)
 #endif
    info->library_version  = "v2.1.0" GIT_VERSION;
    info->need_fullpath    = true;
-   info->valid_extensions = "j64|jag|cue|cdi|chd|iso";
+   info->valid_extensions = "j64|jag|cue|cdi|iso";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
@@ -1101,7 +1102,7 @@ bool retro_load_game(const struct retro_game_info *info)
    jaguar_cd_mode = false;
    cd_image_path[0] = '\0';
 
-   if (info->path && (has_extension(info->path, "cue") || has_extension(info->path, "chd")))
+   if (info->path && (has_extension(info->path, "cue") || has_extension(info->path, "cdi")))
    {
       jaguar_cd_mode = true;
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
@@ -1112,13 +1113,12 @@ bool retro_load_game(const struct retro_game_info *info)
       vjs.useCDBIOS     = true;
 
       /* Try to load an external CD BIOS from the system directory.
-       * The embedded CD BIOS data is scrambled and non-functional;
-       * a real BIOS dump is required for CD games to boot. */
+       * If no external BIOS is found, we'll use HLE (High-Level
+       * Emulation) to boot the CD game directly. */
       cd_bios_loaded_externally = false;
       if (!load_external_cd_bios())
       {
-         /* No external BIOS found -- CD games won't boot.
-          * We still allow loading so users see a diagnostic screen. */
+         fprintf(stderr, "[CD] No external BIOS found — will use HLE boot path\n");
       }
    }
 
@@ -1158,22 +1158,13 @@ bool retro_load_game(const struct retro_game_info *info)
    for (i = 0; i < videoWidth * videoHeight; ++i)
       videoBuffer[i] = 0xFF00FFFF;
 
-   if (jaguar_cd_mode)
+   if (jaguar_cd_mode && cd_bios_loaded_externally)
    {
-      /* The CD BIOS is a "cartridge" loaded at $800000.  The standard
-       * boot ROM at $E00000 detects it, reads the header at $800404
-       * (entry point $802000), and jumps there.
-       *
-       * We load directly into jagMemSpace rather than using JaguarLoadFile()
-       * because ParseFileType() doesn't recognize the 256KB CD BIOS format. */
-      const uint8_t *cdBiosData;
+      /* Real BIOS path: The CD BIOS is a "cartridge" loaded at $800000.
+       * The standard boot ROM at $E00000 detects it, reads the header at
+       * $800404 (entry point $802000), and jumps there. */
+      const uint8_t *cdBiosData = external_cd_bios;
       size_t cdBiosSize = 0x40000;
-
-      if (cd_bios_loaded_externally)
-         cdBiosData = external_cd_bios;
-      else
-         cdBiosData = (vjs.cdBiosType == CDBIOS_DEV)
-            ? jaguarDevCDBootROM : jaguarCDBootROM;
 
       memcpy(jagMemSpace + 0x800000, cdBiosData, cdBiosSize);
       jaguarRunAddress = GET32(jagMemSpace, 0x800404);
@@ -1182,15 +1173,16 @@ bool retro_load_game(const struct retro_game_info *info)
 
       /* The boot ROM runs a GPU-based cart authentication check that loops
        * forever in emulation (the GPU security code at $F032EC never
-       * converges). The boot ROM checks:
-       *   1. bit 0 of $800408 → if set, wait for GPU to finish
-       *   2. GPU RAM $F03000 → if == $03D0DEAD, jump to cart entry
-       * We skip the GPU wait by clearing bit 0 here (survives JaguarReset
-       * since jagMemSpace is not randomized). The GPU magic is written
-       * after JaguarReset() below since GPUReset() randomizes GPU RAM. */
+       * converges). Skip the GPU wait by clearing bit 0. */
       jagMemSpace[0x80040B] &= 0xFE;
       fprintf(stderr, "[CD-TRACE] Boot ROM wait bypass applied at $80040B (value now $%02X)\n",
               jagMemSpace[0x80040B]);
+   }
+   else if (jaguar_cd_mode)
+   {
+      /* HLE path: no external BIOS — JaguarCDHLEBoot() will be called
+       * after JaguarReset() to set up the boot stub directly. */
+      jaguarCartInserted = false;
    }
    else
    {
@@ -1229,6 +1221,16 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    JaguarReset();
+
+   /* HLE CD boot: if CD mode and no external BIOS, boot via HLE.
+    * Must happen after JaguarReset() since reset clears RAM/GPU state. */
+   if (jaguar_cd_mode && !cd_bios_loaded_externally)
+   {
+      if (!JaguarCDHLEBoot())
+      {
+         fprintf(stderr, "[CD-HLE] HLE boot failed — falling back to diagnostic screen\n");
+      }
+   }
 
    /* The frontend will load .srm data into our save buffer (returned by
     * retro_get_memory_data) after this function returns but before the

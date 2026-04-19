@@ -64,6 +64,7 @@ bool CDIntfInit(void);
 void CDIntfDone(void);
 bool CDIntfReadBlock(uint32_t sector, uint8_t * buffer);
 uint32_t CDIntfGetNumSessions(void);
+uint32_t CDIntfGetNumTracks(void);
 void CDIntfSelectDrive(uint32_t driveNum);
 uint32_t CDIntfGetCurrentDrive(void);
 const uint8_t * CDIntfGetDriveName(uint32_t driveNum);
@@ -75,19 +76,33 @@ uint8_t CDIntfGetTrackSession(uint32_t track);
 // (Jaguar CD game data is in session 2; session 1 is audio)
 bool CDIntfIsSession2Sector(uint32_t sector);
 
-// True if the most recent CDIntfReadBlock() landed in a virtual-pregap gap
-// (a sector the CHD does not actually store — typically the BIOS's pregap
-// authentication read).  Consumed by cdrom.c to instrument the auth-fail
-// STOP path and identify the BIOS's auth branch.
+// True if the most recent CDIntfReadBlock() landed in an inter-session gap
+// (typically the BIOS's pregap authentication read).  Consumed by cdrom.c
+// to instrument the auth-fail STOP path and identify the BIOS's auth branch.
 bool CDIntfLastReadWasVirtualPregap(void);
 void CDIntfClearLastReadVirtualPregap(void);
 // LBA targeted by the last virtual-pregap read (valid when the getter returns true).
 uint32_t CDIntfLastVirtualPregapLBA(void);
 
+uint32_t CDIntfGetDiscTotalSectors(void);
+uint32_t CDIntfGetSession2GameDataLBA(void);
+
 // New functions for disc image loading
 bool CDIntfOpenImage(const char *cuePath);
 void CDIntfCloseImage(void);
 bool CDIntfIsImageLoaded(void);
+
+/* Extract the game boot stub from the start of session 2.
+ * Reads the first ~12 sectors of the first session-2 track, undoes the
+ * I2S word-swap, validates the universal-header magic, and returns the
+ * boot loader code bytes that should be written into main RAM at
+ * *outLoadAddr (typically $00080000) — overwriting the CD Player UI
+ * fallback before the BIOS issues `JSR $080000`.
+ *
+ * outBuf must be at least *outLength bytes; pass outBufSize as a guard.
+ * Returns true on success. */
+bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
+                           uint32_t *outLoadAddr, uint32_t *outLength);
 
 #ifdef __cplusplus
 }

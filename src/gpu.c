@@ -31,6 +31,7 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
+#include "jagcd_hle.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -178,6 +179,7 @@ void (*gpu_opcode[64])()=
 
 static uint8_t gpu_ram_8[0x1000];
 uint32_t gpu_pc;
+uint32_t gpu_isr_phase = 0;
 static uint32_t gpu_acc;
 static uint32_t gpu_remain;
 static uint32_t gpu_hidata;
@@ -487,6 +489,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             GPU_TRACE("Write $F03000 = $%08X (write #%u, who=%u, 68K_PC=$%06X)\n",
                       data, f03000WriteCount, who, m68k_get_reg(NULL, M68K_REG_PC));
       }
+      if (offset == 0xF03118 || offset == 0xF0311C || offset == 0xF03120)
+      {
+         static uint32_t bufStructWriteCount = 0;
+         bufStructWriteCount++;
+         if (bufStructWriteCount <= 50 || (bufStructWriteCount % 10000) == 0)
+            GPU_TRACE("Write $%06X = $%08X (write #%u, who=%u, gpu_pc=$%06X)\n",
+                      offset, data, bufStructWriteCount, who, gpu_pc);
+      }
       offset &= 0xFFF;
       SET32(gpu_ram_8, offset, data);
       return;
@@ -566,12 +576,60 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   uint32_t old_ctrl = gpu_control;
                   gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
                   if (!(old_ctrl & 0x01) && (gpu_control & 0x01))
-                     GPU_TRACE("GPU STARTED (G_CTRL $%08X -> $%08X, PC=$%08X, who=%u)\n",
-                               old_ctrl, gpu_control, gpu_pc, who);
+                  {
+                     static uint32_t gpuStartCount = 0;
+                     gpuStartCount++;
+                     if (gpuStartCount <= 5 || (gpuStartCount % 500) == 0 || gpu_pc < 0xF00000)
+                        GPU_TRACE("GPU STARTED #%u (G_CTRL $%08X -> $%08X, PC=$%08X, who=%u)\n",
+                                  gpuStartCount, old_ctrl, gpu_control, gpu_pc, who);
+                     if (gpu_pc >= 0xF03000 && gpu_pc < 0xF04000
+                         && gpu_isr_phase == 2)
+                     {
+                        gpu_isr_phase = 1;
+                        GPU_TRACE("=== DATA PHASE ENTERED (start #%u, PC=$%08X) ===\n", gpuStartCount, gpu_pc);
+
+                        /* HLE intercept: read CD data directly instead of
+                         * letting the GPU talk to BUTCH (which is broken). */
+                        if (JaguarCDHLEGPUDataPhase())
+                        {
+                           gpu_control &= ~0x01;
+                           GPU_TRACE("HLE intercepted GPU data phase — GPU stopped\n");
+                        }
+                        fprintf(stderr, "[GPU-DATA] GPU RAM dump ($F03000-$F03200, $F03FE0-$F03FFF):\n");
+                        for (unsigned r = 0; r < 0x200; r += 16)
+                        {
+                           fprintf(stderr, "  %06X:", 0xF03000 + r);
+                           for (unsigned b = 0; b < 16; b += 2)
+                           {
+                              uint16_t w = ((uint16_t)gpu_ram_8[r + b] << 8)
+                                           | (uint16_t)gpu_ram_8[r + b + 1];
+                              fprintf(stderr, " %04X", w);
+                           }
+                           fprintf(stderr, "\n");
+                        }
+                        fprintf(stderr, "  --- saved regs ---\n");
+                        for (unsigned r = 0xFE0; r < 0x1000; r += 16)
+                        {
+                           fprintf(stderr, "  %06X:", 0xF03000 + r);
+                           for (unsigned b = 0; b < 16; b += 2)
+                           {
+                              uint16_t w = ((uint16_t)gpu_ram_8[r + b] << 8)
+                                           | (uint16_t)gpu_ram_8[r + b + 1];
+                              fprintf(stderr, " %04X", w);
+                           }
+                           fprintf(stderr, "\n");
+                        }
+                     }
+                  }
                   else if ((old_ctrl & 0x01) && !(gpu_control & 0x01))
                   {
                      GPU_TRACE("GPU STOPPED (G_CTRL $%08X -> $%08X, PC=$%08X, who=%u)\n",
                                old_ctrl, gpu_control, gpu_pc, who);
+                     if (gpu_pc >= 0x080000 && gpu_pc < 0x090000 && gpu_isr_phase == 0)
+                     {
+                        gpu_isr_phase = 2;
+                        GPU_TRACE("Boot stub GPU program halted at PC=$%06X — next start is data phase\n", gpu_pc);
+                     }
                      /* One-shot dump of GPU RAM around the halt PC per unique
                       * address.  Lets us disassemble the instruction that
                       * stopped the GPU and its immediate context. */
@@ -660,7 +718,14 @@ void GPUHandleIRQs(void)
    uint32_t which = 0; //Isn't there a #pragma to disable this warning???
    // Bail out if we're already in an interrupt!
    if (gpu_flags & IMASK)
+   {
+      static uint32_t imaskRejectCount = 0;
+      imaskRejectCount++;
+      if (imaskRejectCount <= 10 || (imaskRejectCount % 100000) == 0)
+         GPU_TRACE("HandleIRQs REJECTED by IMASK (count=%u flags=$%08X control=$%08X latch=$%02X)\n",
+                   imaskRejectCount, gpu_flags, gpu_control, (gpu_control >> 6) & 0x1F);
       return;
+   }
 
    // Get the interrupt latch & enable bits
    bits = (gpu_control >> 6) & 0x1F;
@@ -711,6 +776,15 @@ void GPUSetIRQLine(int irqline, int state)
       gpu_control |= mask;			// Assert the interrupt latch
       if (irqline == GPUIRQ_CPU)
          GPUTraceIRQState("SetIRQLine CPU assert");
+      else if (irqline == GPUIRQ_DSP)
+      {
+         static uint32_t dspIrqCount = 0;
+         dspIrqCount++;
+         if (dspIrqCount <= 20 || (dspIrqCount % 10000) == 0)
+            GPU_TRACE("SetIRQLine DSP assert #%u pc=$%06X flags=$%08X imask=%d control=$%08X latch=$%02X\n",
+                      dspIrqCount, gpu_pc, gpu_flags, (gpu_flags & IMASK) ? 1 : 0,
+                      gpu_control, (gpu_control >> 6) & 0x1F);
+      }
       GPUHandleIRQs();				// And handle the interrupt...
    }
 }
@@ -791,6 +865,37 @@ void GPUExec(int32_t cycles)
       gpu_instruction = opcode;	// Added for GPU #3...
       gpu_opcode_first_parameter  = (opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = opcode & 0x1F;
+
+      {
+         extern uint32_t gpu_isr_phase;
+         static uint32_t isrTraceCount = 0;
+         static uint32_t dataPhaseTraceCount = 0;
+         if (gpu_pc >= 0xF0312C && gpu_pc < 0xF03600)
+         {
+            if (gpu_isr_phase == 0 && isrTraceCount < 2000)
+            {
+               isrTraceCount++;
+               GPU_TRACE("ISR-EXEC pc=$%06X op=$%04X idx=%u r1=%u r2=%u R[r1]=$%08X R[r2]=$%08X flags=$%08X R14=$%08X\n",
+                         gpu_pc, opcode, index,
+                         gpu_opcode_first_parameter, gpu_opcode_second_parameter,
+                         gpu_reg[gpu_opcode_first_parameter],
+                         gpu_reg[gpu_opcode_second_parameter],
+                         gpu_flags,
+                         gpu_reg[14]);
+            }
+            else if (gpu_isr_phase == 1 && dataPhaseTraceCount < 500)
+            {
+               dataPhaseTraceCount++;
+               GPU_TRACE("DATA-ISR pc=$%06X op=$%04X idx=%u r1=%u r2=%u R[r1]=$%08X R[r2]=$%08X flags=$%08X R14=$%08X R24=$%08X\n",
+                         gpu_pc, opcode, index,
+                         gpu_opcode_first_parameter, gpu_opcode_second_parameter,
+                         gpu_reg[gpu_opcode_first_parameter],
+                         gpu_reg[gpu_opcode_second_parameter],
+                         gpu_flags,
+                         gpu_reg[14], gpu_reg[24]);
+            }
+         }
+      }
 
       //$E400 -> 1110 01 -> $39 -> 57
       //GPU #1

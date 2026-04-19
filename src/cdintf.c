@@ -23,18 +23,6 @@
  * eats fprintf(stderr, ...) calls. Restore real stdio fprintf for debug logs. */
 #undef fprintf
 
-#ifdef HAVE_CHD
-#include <libchdr/chd.h>
-#include <libchdr/cdrom.h>
-
-static chd_file *chd_handle = NULL;
-static uint8_t *chd_hunk_buffer = NULL;
-static uint32_t chd_hunk_size = 0;
-static int32_t chd_current_hunk = -1;
-
-static bool ParseCHD(const char *chdPath);
-#endif
-
 // CDI (DiscJuggler) format support
 static RFILE *cdi_file = NULL;
 static bool ParseCDI(const char *cdiPath);
@@ -546,263 +534,6 @@ static bool ParseCueSheet(const char *cuePath)
    return true;
 }
 
-#ifdef HAVE_CHD
-// Parse a CHD file and populate the disc structure
-static bool ParseCHD(const char *chdPath)
-{
-   chd_error err;
-   const chd_header *header;
-   int i;
-   char metadata[256];
-   uint32_t metaLen;
-   uint32_t trackCount = 0;
-   uint32_t frameOffset = 0;    /* cumulative disc LBA (incl. virtual pregaps) */
-   uint32_t chdFileFrames = 0;  /* cumulative frames stored in CHD data stream */
-
-   memset(&disc, 0, sizeof(disc));
-
-   err = chd_open(chdPath, CHD_OPEN_READ, NULL, &chd_handle);
-   if (err != CHDERR_NONE)
-      return false;
-
-   header = chd_get_header(chd_handle);
-   chd_hunk_size = header->hunkbytes;
-
-   chd_hunk_buffer = (uint8_t *)malloc(chd_hunk_size);
-   if (!chd_hunk_buffer)
-   {
-      chd_close(chd_handle);
-      chd_handle = NULL;
-      return false;
-   }
-   chd_current_hunk = -1;
-
-   // Read track metadata from the CHD file
-   for (i = 0; i < CDINTF_MAX_TRACKS; i++)
-   {
-      int trackNum, frames, pregap, postgap;
-      char type[64], subtype[64], pgtype[64], pgsub[64];
-
-      // Try CHTR2 metadata first (has pregap/postgap info)
-      err = chd_get_metadata(chd_handle, CDROM_TRACK_METADATA2_TAG, i,
-                             metadata, sizeof(metadata), &metaLen, NULL, NULL);
-      if (err == CHDERR_NONE)
-      {
-         pregap = postgap = 0;
-         pgtype[0] = pgsub[0] = '\0';
-         if (sscanf(metadata, CDROM_TRACK_METADATA2_FORMAT,
-                    &trackNum, type, subtype, &frames,
-                    &pregap, pgtype, pgsub, &postgap) >= 4)
-         {
-            /* PGTYPE starting with 'V' (VAUDIO/VMODE1/VMODE2) means the pregap
-             * is virtual — NOT stored in the CHD data stream. In that case the
-             * disc LBA advances but the file offset does not. */
-            bool virtualPregap = (pgtype[0] == 'V');
-            uint32_t trackStartLBA = frameOffset + pregap;  /* disc LBA of data start */
-
-            disc.tracks[trackCount].number = trackNum;
-            disc.tracks[trackCount].sectorSize = CD_MAX_SECTOR_DATA;
-            disc.tracks[trackCount].startLBA = trackStartLBA;
-            disc.tracks[trackCount].dataLBA = trackStartLBA;
-            disc.tracks[trackCount].lengthLBA = frames;
-            /* fileOffset is the position in the CHD data stream, in bytes.
-             * Use chdFileFrames (which excludes virtual pregaps). */
-            disc.tracks[trackCount].fileOffset =
-               (virtualPregap ? chdFileFrames : (chdFileFrames + pregap)) * CD_FRAME_SIZE;
-
-            if (strcmp(type, "AUDIO") == 0)
-               disc.tracks[trackCount].type = CDINTF_TRACK_AUDIO;
-            else
-               disc.tracks[trackCount].type = CDINTF_TRACK_MODE1;
-
-            // Jaguar CD: track 1 = session 1, rest = session 2
-            disc.tracks[trackCount].session = (trackCount == 0) ? 1 : 2;
-
-            MSFFromLBA(disc.tracks[trackCount].startLBA,
-                       &disc.tracks[trackCount].startM,
-                       &disc.tracks[trackCount].startS,
-                       &disc.tracks[trackCount].startF);
-
-            /* Advance disc-LBA counter by full track width (pregap + frames + postgap).
-             * Advance file-frame counter only by what is stored (exclude virtual pregap). */
-            frameOffset += pregap + frames + postgap;
-            chdFileFrames += (virtualPregap ? 0 : pregap) + frames + postgap;
-            trackCount++;
-            continue;
-         }
-      }
-
-      // Fall back to CHTR metadata
-      err = chd_get_metadata(chd_handle, CDROM_TRACK_METADATA_TAG, i,
-                             metadata, sizeof(metadata), &metaLen, NULL, NULL);
-      if (err != CHDERR_NONE)
-         break;  // No more tracks
-
-      if (sscanf(metadata, CDROM_TRACK_METADATA_FORMAT,
-                 &trackNum, type, subtype, &frames) == 4)
-      {
-         disc.tracks[trackCount].number = trackNum;
-         disc.tracks[trackCount].sectorSize = CD_MAX_SECTOR_DATA;
-         disc.tracks[trackCount].startLBA = frameOffset;
-         disc.tracks[trackCount].dataLBA = frameOffset;
-         disc.tracks[trackCount].lengthLBA = frames;
-         disc.tracks[trackCount].fileOffset = chdFileFrames * CD_FRAME_SIZE;
-
-         if (strcmp(type, "AUDIO") == 0)
-            disc.tracks[trackCount].type = CDINTF_TRACK_AUDIO;
-         else
-            disc.tracks[trackCount].type = CDINTF_TRACK_MODE1;
-
-         disc.tracks[trackCount].session = (trackCount == 0) ? 1 : 2;
-
-         MSFFromLBA(disc.tracks[trackCount].startLBA,
-                    &disc.tracks[trackCount].startM,
-                    &disc.tracks[trackCount].startS,
-                    &disc.tracks[trackCount].startF);
-
-         frameOffset += frames;
-         chdFileFrames += frames;
-         trackCount++;
-      }
-   }
-
-   if (trackCount == 0)
-   {
-      free(chd_hunk_buffer);
-      chd_hunk_buffer = NULL;
-      chd_close(chd_handle);
-      chd_handle = NULL;
-      return false;
-   }
-
-   disc.numTracks = trackCount;
-
-   // Build session info (same logic as CUE parser)
-   {
-      uint32_t sess1Min = 99, sess1Max = 0;
-      uint32_t sess2Min = 99, sess2Max = 0;
-
-      disc.numSessions = 1;
-
-      for (i = 0; i < (int)disc.numTracks; i++)
-      {
-         uint32_t tn = disc.tracks[i].number;
-         uint32_t sess = disc.tracks[i].session;
-
-         if (sess == 1)
-         {
-            if (tn < sess1Min) sess1Min = tn;
-            if (tn > sess1Max) sess1Max = tn;
-         }
-         else if (sess == 2)
-         {
-            disc.numSessions = 2;
-            if (tn < sess2Min) sess2Min = tn;
-            if (tn > sess2Max) sess2Max = tn;
-         }
-      }
-
-      disc.sessions[0].number = 1;
-      disc.sessions[0].firstTrack = (sess1Min <= CDINTF_MAX_TRACKS) ? sess1Min : 1;
-      disc.sessions[0].lastTrack = (sess1Max > 0) ? sess1Max : 1;
-
-      if (disc.numSessions >= 2 && sess2Min <= CDINTF_MAX_TRACKS)
-      {
-         uint32_t lastIdx, leadOut;
-         disc.sessions[0].leadOutLBA = disc.tracks[sess2Min - 1].startLBA;
-         MSFFromLBA(disc.sessions[0].leadOutLBA, &disc.sessions[0].leadOutM,
-                    &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
-
-         disc.sessions[1].number = 2;
-         disc.sessions[1].firstTrack = sess2Min;
-         disc.sessions[1].lastTrack = sess2Max;
-
-         lastIdx = sess2Max - 1;
-         leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
-         disc.sessions[1].leadOutLBA = leadOut;
-         MSFFromLBA(leadOut, &disc.sessions[1].leadOutM,
-                    &disc.sessions[1].leadOutS, &disc.sessions[1].leadOutF);
-      }
-      else
-      {
-         uint32_t lastIdx = disc.sessions[0].lastTrack - 1;
-         uint32_t leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
-         disc.sessions[0].leadOutLBA = leadOut;
-         MSFFromLBA(leadOut, &disc.sessions[0].leadOutM,
-                    &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
-      }
-   }
-
-   disc.loaded = true;
-   return true;
-}
-
-// Read a sector from a CHD file
-static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
-{
-   uint32_t hunkNum, frameInHunk, byteOffset;
-   uint32_t fileLBA;
-   uint32_t framesPerHunk;
-   int i, trackIdx = -1;
-   chd_error err;
-
-   if (!chd_handle || !chd_hunk_buffer)
-      return false;
-
-   framesPerHunk = chd_hunk_size / CD_FRAME_SIZE;
-   if (framesPerHunk == 0)
-      return false;
-
-   /* Find which track this disc-LBA falls into.  The caller passes an absolute
-    * disc LBA (including any virtual pregap regions); the CHD data stream does
-    * not contain virtual pregap frames, so we must translate the disc LBA to a
-    * file LBA by way of the owning track's fileOffset. */
-   for (i = 0; i < (int)disc.numTracks; i++)
-   {
-      uint32_t tStart = disc.tracks[i].startLBA;
-      uint32_t tEnd = tStart + disc.tracks[i].lengthLBA;
-      if (sector >= tStart && sector < tEnd)
-      {
-         trackIdx = i;
-         break;
-      }
-   }
-
-   if (trackIdx < 0)
-   {
-      /* Virtual pregap gap (CHD VAUDIO).  Return silence and install the BIOS
-       * auth bypass — without it the BIOS rejects the silence and shows "?". */
-      memset(buffer, 0, CD_MAX_SECTOR_DATA);
-      lastReadVirtualPregap = true;
-      lastVirtualPregapLBA = sector;
-      JaguarInstallCDAuthBypass();
-      return true;
-   }
-
-   lastReadVirtualPregap = false;
-
-   {
-      uint32_t trackFileLBA = disc.tracks[trackIdx].fileOffset / CD_FRAME_SIZE;
-      fileLBA = trackFileLBA + (sector - disc.tracks[trackIdx].startLBA);
-   }
-
-   hunkNum = fileLBA / framesPerHunk;
-   frameInHunk = fileLBA % framesPerHunk;
-   byteOffset = frameInHunk * CD_FRAME_SIZE;
-
-   if ((int32_t)hunkNum != chd_current_hunk)
-   {
-      err = chd_read(chd_handle, hunkNum, chd_hunk_buffer);
-      if (err != CHDERR_NONE)
-         return false;
-      chd_current_hunk = hunkNum;
-   }
-
-   memcpy(buffer, chd_hunk_buffer + byteOffset, CD_MAX_SECTOR_DATA);
-   return true;
-}
-#endif /* HAVE_CHD */
-
 // ---------------------------------------------------------------------------
 // CDI (DiscJuggler) parser
 //
@@ -1126,16 +857,6 @@ bool CDIntfOpenImage(const char *path)
 
    ext = strrchr(path, '.');
 
-#ifdef HAVE_CHD
-   if (ext && strcasecmp(ext + 1, "chd") == 0)
-   {
-      if (!ParseCHD(path))
-         return false;
-      // CHD reads go through chd_handle, no BIN file needed
-      return true;
-   }
-#endif
-
    if (ext && strcasecmp(ext + 1, "cdi") == 0)
       return ParseCDI(path);
 
@@ -1165,20 +886,6 @@ bool CDIntfOpenImage(const char *path)
 
 void CDIntfCloseImage(void)
 {
-#ifdef HAVE_CHD
-   if (chd_handle)
-   {
-      chd_close(chd_handle);
-      chd_handle = NULL;
-   }
-   if (chd_hunk_buffer)
-   {
-      free(chd_hunk_buffer);
-      chd_hunk_buffer = NULL;
-   }
-   chd_current_hunk = -1;
-#endif
-
    if (cdi_file)
    {
       rfclose(cdi_file);
@@ -1197,10 +904,6 @@ bool CDIntfIsImageLoaded(void)
 {
    if (!disc.loaded)
       return false;
-#ifdef HAVE_CHD
-   if (chd_handle)
-      return true;
-#endif
    if (cdi_file)
       return true;
    // Multi-file CUE: binFile is NULL, but tracks have their own file paths
@@ -1240,11 +943,6 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
 
    if (!disc.loaded || !buffer)
       return false;
-
-#ifdef HAVE_CHD
-   if (chd_handle)
-      return CDIntfReadBlockCHD(sector, buffer);
-#endif
 
    if (cdi_file)
       return CDIntfReadBlockCDI(sector, buffer);
@@ -1353,6 +1051,13 @@ uint32_t CDIntfGetNumSessions(void)
    if (!disc.loaded)
       return 0;
    return disc.numSessions;
+}
+
+uint32_t CDIntfGetNumTracks(void)
+{
+   if (!disc.loaded)
+      return 0;
+   return disc.numTracks;
 }
 
 void CDIntfSelectDrive(uint32_t driveNum)
@@ -1469,4 +1174,176 @@ uint8_t CDIntfGetTrackSession(uint32_t track)
       return 0;
 
    return (uint8_t)disc.tracks[track - 1].session;
+}
+
+/* Extract the game boot stub from the start of session 2.
+ *
+ * Jaguar CD bootable discs encode the universal-header + boot-loader at the
+ * very start of the first session-2 track.  The 32-byte ATARI APPROVED magic
+ * lives at byte +0x42 of the (word-swapped) data, immediately followed by:
+ *   +0x62: 4-byte load address (typically $00080000)
+ *   +0x66: 4-byte length
+ *   +0x6A: code bytes (length bytes)
+ *
+ * The on-disc data is word-swapped because the Jaguar's I2S audio path swaps
+ * each 16-bit word during read.  We undo that swap, validate the magic, then
+ * the caller injects the resulting stub directly into main RAM at the load
+ * address — bypassing the BIOS streaming path entirely.
+ *
+ * On success: writes load address to *outLoadAddr, length to *outLength, and
+ * fills outBuf (size outBufSize) with the code bytes.  Returns true. */
+bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
+                           uint32_t *outLoadAddr, uint32_t *outLength)
+{
+   static const uint8_t MAGIC[32] =
+      "ATARI APPROVED DATA HEADER ATRI ";
+   uint32_t i;
+   uint32_t firstS2Idx = 0;
+   bool foundS2 = false;
+   RFILE *trackFile;
+   uint8_t raw[2352 * 12];
+   uint8_t swapped[sizeof(raw)];
+   int64_t bytesRead;
+   uint32_t loadAddr, length;
+
+   if (!disc.loaded || disc.numSessions < 2)
+   {
+      fprintf(stderr, "[CD-BOOTSTUB] Early exit: loaded=%d numSessions=%u\n",
+              disc.loaded, disc.numSessions);
+      return false;
+   }
+
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if (disc.tracks[i].session >= 2)
+      {
+         firstS2Idx = i;
+         foundS2 = true;
+         break;
+      }
+   }
+   if (!foundS2 || !disc.tracks[firstS2Idx].binFilePath[0])
+   {
+      fprintf(stderr, "[CD-BOOTSTUB] No session-2 track found (foundS2=%d, pathEmpty=%d)\n",
+              foundS2, foundS2 ? !disc.tracks[firstS2Idx].binFilePath[0] : -1);
+      return false;
+   }
+
+   fprintf(stderr, "[CD-BOOTSTUB] Opening track %u BIN: %s\n",
+           disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
+   trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
+   if (!trackFile)
+   {
+      fprintf(stderr, "[CD-BOOTSTUB] rfopen failed for %s\n",
+              disc.tracks[firstS2Idx].binFilePath);
+      return false;
+   }
+
+   rfseek(trackFile, 0, SEEK_SET);
+   bytesRead = rfread(raw, 1, sizeof(raw), trackFile);
+   rfclose(trackFile);
+   fprintf(stderr, "[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
+   if (bytesRead < 0x6A + 4)
+   {
+      fprintf(stderr, "[CD-BOOTSTUB] Too few bytes read (%lld < %d)\n",
+              (long long)bytesRead, 0x6A + 4);
+      return false;
+   }
+
+   /* Word-swap each 16-bit pair (Jaguar I2S byte order). */
+   for (i = 0; i + 1 < (uint32_t)bytesRead; i += 2)
+   {
+      swapped[i]     = raw[i + 1];
+      swapped[i + 1] = raw[i];
+   }
+
+   fprintf(stderr, "[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): ");
+   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
+      fprintf(stderr, "%02X ", raw[i]);
+   fprintf(stderr, "\n");
+   fprintf(stderr, "[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: ");
+   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
+      fprintf(stderr, "%02X ", swapped[i]);
+   fprintf(stderr, "\n");
+   fprintf(stderr, "[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
+
+   if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
+   {
+      fprintf(stderr,
+              "[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN\n");
+      return false;
+   }
+
+   loadAddr = ((uint32_t)swapped[0x62] << 24) | ((uint32_t)swapped[0x63] << 16)
+            | ((uint32_t)swapped[0x64] <<  8) |  (uint32_t)swapped[0x65];
+   length   = ((uint32_t)swapped[0x66] << 24) | ((uint32_t)swapped[0x67] << 16)
+            | ((uint32_t)swapped[0x68] <<  8) |  (uint32_t)swapped[0x69];
+
+   if (length == 0 || length > outBufSize
+       || (uint64_t)0x6A + length > (uint64_t)bytesRead)
+   {
+      fprintf(stderr,
+              "[CD-BOOTSTUB] Bad length $%X (loadAddr=$%06X, bufSize=%u, available=%lld)\n",
+              length, loadAddr, outBufSize, (long long)bytesRead - 0x6A);
+      return false;
+   }
+
+   memcpy(outBuf, swapped + 0x6A, length);
+   *outLoadAddr = loadAddr;
+   *outLength   = length;
+
+   fprintf(stderr,
+           "[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
+           length, loadAddr,
+           disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
+   return true;
+}
+
+uint32_t CDIntfGetDiscTotalSectors(void)
+{
+   if (!disc.loaded)
+      return 0;
+
+   if (disc.numSessions >= 2)
+      return disc.sessions[1].leadOutLBA;
+
+   return disc.sessions[0].leadOutLBA;
+}
+
+uint32_t CDIntfGetSession2GameDataLBA(void)
+{
+   uint32_t i;
+   uint32_t bestIdx = UINT32_MAX;
+   uint32_t bestLen = 0;
+
+   if (!disc.loaded || disc.numSessions < 2)
+      return 0;
+
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if (disc.tracks[i].session >= 2)
+      {
+         fprintf(stderr, "[CD-S2TRACK] track %u: startLBA=%u dataLBA=%u len=%u sess=%u\n",
+                 disc.tracks[i].number, disc.tracks[i].startLBA,
+                 disc.tracks[i].dataLBA, disc.tracks[i].lengthLBA,
+                 disc.tracks[i].session);
+         if (disc.tracks[i].lengthLBA > bestLen)
+         {
+            bestLen = disc.tracks[i].lengthLBA;
+            bestIdx = i;
+         }
+      }
+   }
+
+   if (bestIdx != UINT32_MAX)
+   {
+      uint32_t lba = disc.tracks[bestIdx].dataLBA
+                       ? disc.tracks[bestIdx].dataLBA
+                       : disc.tracks[bestIdx].startLBA;
+      fprintf(stderr, "[CD-S2TRACK] Selected largest track %u (len=%u) dataLBA=%u\n",
+              disc.tracks[bestIdx].number, bestLen, lba);
+      return lba;
+   }
+
+   return 0;
 }

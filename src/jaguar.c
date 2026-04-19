@@ -19,7 +19,9 @@
 
 #include "jaguar.h"
 
+#include "cdintf.h"
 #include "cdrom.h"
+#include "jagcd_hle.h"
 #include "dsp.h"
 #include "eeprom.h"
 #include "event.h"
@@ -151,12 +153,57 @@ void JaguarDumpPCHistoryStderr(int count)
    }
 }
 
+/* Populate the BIOS TOC table at $2C00 in main RAM.
+ *
+ * The CD BIOS normally reads the disc TOC during its auth/init sequence
+ * and stores track info at $2C00 as 8-byte entries:
+ *   +0: track number
+ *   +1: absolute minutes (MSF)
+ *   +2: absolute seconds (MSF)
+ *   +3: absolute frames (MSF)
+ *   +4: session number (1 or 2)
+ *   +5-7: padding/duration
+ *
+ * When auth is bypassed, the TOC table is never populated.  The boot stub
+ * at $0803E2 searches this table for the first session-2 track's MSF to
+ * compute the CD_read seek target.  Without valid data, it reads garbage
+ * and seeks to a nonsensical position. */
+static void JaguarPopulateBIOSTocTable(void)
+{
+   uint32_t numTracks = CDIntfGetNumTracks();
+   uint32_t addr = 0x2C00;
+   uint32_t t;
+
+   memset(&jaguarMainRAM[0x2C00], 0, 0x100);
+
+   for (t = 1; t <= numTracks && addr < 0x2CF8; t++)
+   {
+      uint8_t min = CDIntfGetTrackInfo(t, 0);
+      uint8_t sec = CDIntfGetTrackInfo(t, 1);
+      uint8_t frm = CDIntfGetTrackInfo(t, 2);
+      uint8_t sess = CDIntfGetTrackSession(t);
+
+      jaguarMainRAM[addr + 0] = (uint8_t)t;
+      jaguarMainRAM[addr + 1] = min;
+      jaguarMainRAM[addr + 2] = sec;
+      jaguarMainRAM[addr + 3] = frm;
+      jaguarMainRAM[addr + 4] = sess;
+      jaguarMainRAM[addr + 5] = 0;
+      jaguarMainRAM[addr + 6] = 0;
+      jaguarMainRAM[addr + 7] = 0;
+      addr += 8;
+   }
+
+   fprintf(stderr, "[CD-TOC] Populated $2C00 table: %u tracks, %u bytes\n",
+           numTracks, addr - 0x2C00);
+}
+
 /* CD BIOS audio-pregap authentication bypass.
  *
  * The Jaguar CD BIOS authenticates session 2 by reading 149 frames of
  * pregap audio (just before track 30 INDEX 01) and DSP-decoding them into
- * a checksum.  Redump-style BIN/CUE dumps and CHD virtual pregaps both
- * STRIP this audio, so the BIOS reads silence, the checksum mismatches,
+ * a checksum.  Redump-style BIN/CUE dumps strip this audio, so the BIOS
+ * reads silence, the checksum mismatches,
  * and execution falls into the BNE.W $0504EC fail path -> STOP $0200 ->
  * "?" icon.  CDI dumps preserve the pregap and would not need this.
  *
@@ -259,6 +306,11 @@ void M68KInstructionHook(void)
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
       return;
 
+   /* HLE CD BIOS: intercept BIOS jump table calls (CD_read, etc.)
+    * and handle them entirely in C.  Skip real-BIOS hooks when active. */
+   if (JaguarCDHLEHook(m68kPC))
+      return;
+
    /* CD BIOS GPU auth bypass: The CD BIOS checks GPU RAM $F03000 for the
     * boot ROM authentication magic ($03D0DEAD) after the intro animation.
     * The real GPU auth code would have left this value, but in emulation
@@ -309,6 +361,85 @@ void M68KInstructionHook(void)
          if (stuffed++ < 3)
             fprintf(stderr, "[CD-AUTH] Stuffed $1AE00C = $20010001 at PC=$0505FA (#%u)\n", stuffed);
       }
+
+      /* Hook at PC=$050176 (the BIOS's `JSR $00080000` to enter the boot
+       * stub).  By this point the cart populator has already filled $080000
+       * with the CD Player UI fallback (the BIOS never streams game data
+       * from disc to RAM in our emulation).  Extract the universal-header +
+       * boot loader from the start of session 2 ourselves and overwrite
+       * $080000 with the *game's* code so the JSR enters the title instead
+       * of the CD Player. */
+      if (m68kPC == 0x050176)
+      {
+         static bool bootStubInjected = false;
+         if (!bootStubInjected)
+         {
+            static uint8_t stub[256 * 1024];
+            uint32_t loadAddr = 0, length = 0;
+            bootStubInjected = true;
+            if (CDIntfExtractBootStub(stub, sizeof(stub), &loadAddr, &length))
+            {
+               uint32_t i;
+
+               /* Dump the BIOS-populated $2C00 table BEFORE we touch anything.
+                * The DSP TOC reader should have filled this already. */
+               fprintf(stderr, "[CD-TOC-DUMP] $2C00 table before boot stub injection:\n");
+               for (i = 0; i < 0x80; i += 8)
+               {
+                  uint32_t a = 0x2C00 + i;
+                  if (jaguarMainRAM[a] == 0 && jaguarMainRAM[a+1] == 0
+                   && jaguarMainRAM[a+2] == 0 && jaguarMainRAM[a+3] == 0
+                   && jaguarMainRAM[a+4] == 0 && jaguarMainRAM[a+5] == 0
+                   && jaguarMainRAM[a+6] == 0 && jaguarMainRAM[a+7] == 0)
+                     continue;
+                  fprintf(stderr, "  $%04X: %02X %02X %02X %02X  %02X %02X %02X %02X\n",
+                          a,
+                          jaguarMainRAM[a+0], jaguarMainRAM[a+1],
+                          jaguarMainRAM[a+2], jaguarMainRAM[a+3],
+                          jaguarMainRAM[a+4], jaguarMainRAM[a+5],
+                          jaguarMainRAM[a+6], jaguarMainRAM[a+7]);
+               }
+
+               for (i = 0; i < length && (loadAddr + i) < 0x200000; i++)
+                  jaguarMainRAM[loadAddr + i] = stub[i];
+               fprintf(stderr,
+                       "[CD-BOOTSTUB] Injected $%X bytes at $%06X "
+                       "(replacing CD Player UI fallback)\n",
+                       length, loadAddr);
+
+               /* Do NOT call JaguarPopulateBIOSTocTable() — the BIOS DSP
+                * should have already populated $2C00 with the correct format.
+                * Our previous format was wrong and destroyed the real data. */
+            }
+            else
+            {
+               fprintf(stderr,
+                       "[CD-BOOTSTUB] Extraction failed — falling through to CD Player UI\n");
+            }
+         }
+      }
+   }
+
+   /* Boot stub TOC diagnostic: log what $0803E2 found in the $2C00 table.
+    * If the BIOS DSP populated $2C00 correctly, the boot stub's search
+    * should have set valid MSF values at $085D80-$085D85. */
+   if (vjs.useCDBIOS && m68kPC == 0x0802A0)
+   {
+      static bool tocLogged = false;
+      if (!tocLogged)
+      {
+         uint16_t frm = (jaguarMainRAM[0x085D80] << 8) | jaguarMainRAM[0x085D81];
+         uint16_t sec = (jaguarMainRAM[0x085D82] << 8) | jaguarMainRAM[0x085D83];
+         uint16_t min = (jaguarMainRAM[0x085D84] << 8) | jaguarMainRAM[0x085D85];
+         fprintf(stderr,
+                 "[CD-TOC-DIAG] Boot stub $0803E2 result: $085D80=%02X%02X "
+                 "$085D82=%02X%02X $085D84=%02X%02X → MSF %u:%u:%u\n",
+                 jaguarMainRAM[0x085D80], jaguarMainRAM[0x085D81],
+                 jaguarMainRAM[0x085D82], jaguarMainRAM[0x085D83],
+                 jaguarMainRAM[0x085D84], jaguarMainRAM[0x085D85],
+                 min, sec, frm);
+         tocLogged = true;
+      }
    }
 
    /* CD BIOS: $3727C is the "CD ready" flag tested in the BIOS main loop at $5010.
@@ -324,14 +455,15 @@ void M68KInstructionHook(void)
       if (m68kPC == 0x005E64)
       {
          authDone = true;
-         if (savedAuthVector && !restoredAuthVector)
-         {
-            GPUWriteLong(0xF03000, savedAuthLong, UNKNOWN);
-            restoredAuthVector = true;
-            fprintf(stderr, "[CD-TRACE] Restored GPU IRQ entry at $F03000 to $%08X after auth\n",
-                    savedAuthLong);
-         }
-         fprintf(stderr, "[CD-TRACE] Auth PASSED\n");
+         /* Do NOT restore the saved GPU RAM value — leave $03D0DEAD in
+          * place.  On real hardware the auth code writes $03D0DEAD to
+          * $F03000 and the BIOS's post-auth GPU program expects to find
+          * it there.  Restoring the pre-auth value ($12345678 or whatever
+          * the GPU security calc left) corrupts the post-auth flow, which
+          * causes cascading failures in CD setup (wrong seek targets,
+          * missing GPU ISR reload, etc.). */
+         restoredAuthVector = true;
+         fprintf(stderr, "[CD-TRACE] Auth PASSED (leaving $03D0DEAD at $F03000 for post-auth GPU)\n");
       }
       /* Observe BIOS polling of the CD-ready flag without modifying it. */
       if (authDone && m68kPC == 0x005010)
@@ -426,11 +558,48 @@ void M68KInstructionHook(void)
          JaguarWriteWord(0x001A6800, 0x0001, UNKNOWN);
       }
 
+      /* Trace first entry into CD Player UI region ($080000-$08FFFF)
+       * from BIOS/elsewhere. CD Player UI is copied from CD-BIOS cart
+       * into main RAM. We want the first BIOS-area → CD-Player branch. */
+      {
+         static uint32_t prevPC = 0;
+         static bool loggedFirstEntry = false;
+         static bool loggedFirstWrite = false;
+         /* Detect when $080000 first becomes non-zero — the BIOS copies
+          * either game code (if loadable) or the CD Player UI there. */
+         if (!loggedFirstWrite && jaguarMainRAM[0x080000] == 0x60
+             && jaguarMainRAM[0x080001] == 0x00)
+         {
+            loggedFirstWrite = true;
+            fprintf(stderr, "[CD-LOAD-DETECT] $080000 now has BRA.W — populated by PC=$%06X\n",
+                    prevPC);
+         }
+         bool prevInPlayer = (prevPC >= 0x080000 && prevPC < 0x090000);
+         bool curInPlayer  = (m68kPC >= 0x080000 && m68kPC < 0x090000);
+         if (!loggedFirstEntry && curInPlayer && !prevInPlayer)
+         {
+            loggedFirstEntry = true;
+            fprintf(stderr, "[CD-PLAYER-ENTRY] First entry into $080000 region at $%06X from PC=$%06X\n",
+                    m68kPC, prevPC);
+            fprintf(stderr, "[CD-PLAYER-ENTRY] 68K regs: A0=$%08X A1=$%08X D0=$%08X D1=$%08X SR=$%04X\n",
+                    m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
+                    m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1),
+                    m68k_get_reg(NULL, M68K_REG_SR));
+         }
+         prevPC = m68kPC;
+      }
+
       /* One-shot dump of the game's main poll function context once we
-       * see the game executing at $081220. Helps decode the outer caller. */
+       * see the game executing at $081220. Helps decode the outer caller.
+       * Periodic state sample of the BIOS CD registers so we can see
+       * whether the BIOS service chain (at $00194D18) is ever making
+       * progress while the game polls. Empirically, it is not — the
+       * service is never called, and $1AE02A (BIOS-tracked mode) stays
+       * zero even after the game issues Set Mode 1 ($1501). */
       if (m68kPC == 0x081220)
       {
          static bool dumpedGamePoll = false;
+         static uint32_t pollCount = 0;
          if (!dumpedGamePoll)
          {
             dumpedGamePoll = true;
@@ -438,6 +607,21 @@ void M68KInstructionHook(void)
             JaguarDumpMemWindow(0x081200, 0x20, 0x80);
             fprintf(stderr, "[CD-DUMP] Game CD-event flag area @ $0008B380:\n");
             JaguarDumpMemWindow(0x0008B380, 0x00, 0x40);
+         }
+         if (++pollCount <= 5 || (pollCount % 1000) == 0)
+         {
+            uint32_t cur = ((uint32_t)jaguarMainRAM[0x1AE00C] << 24)
+                         | ((uint32_t)jaguarMainRAM[0x1AE00D] << 16)
+                         | ((uint32_t)jaguarMainRAM[0x1AE00E] <<  8)
+                         |  (uint32_t)jaguarMainRAM[0x1AE00F];
+            uint32_t e032 = ((uint32_t)jaguarMainRAM[0x1AE032] << 24)
+                          | ((uint32_t)jaguarMainRAM[0x1AE033] << 16)
+                          | ((uint32_t)jaguarMainRAM[0x1AE034] <<  8)
+                          |  (uint32_t)jaguarMainRAM[0x1AE035];
+            uint16_t e02a = ((uint16_t)jaguarMainRAM[0x1AE02A] << 8)
+                          |  (uint16_t)jaguarMainRAM[0x1AE02B];
+            fprintf(stderr, "[CD-POLL] #%u $1AE00C=$%08X $1AE02A=$%04X $1AE032(+E034)=$%08X\n",
+                    pollCount, cur, e02a, e032);
          }
       }
 
@@ -452,6 +636,268 @@ void M68KInstructionHook(void)
             JaguarDumpMemWindow(0x196446, 0x10, 0x100);
          }
       }
+      /* $194DBC is CMPI.W #1, $001AE02A — the mode check that gates the
+       * kick path at $194DEE. Sample what the BIOS sees here. */
+      if (m68kPC == 0x194DBC)
+      {
+         static uint32_t dbcCount = 0;
+         if (++dbcCount <= 5 || (dbcCount % 1000) == 0)
+         {
+            uint32_t c00c = ((uint32_t)jaguarMainRAM[0x1AE00C] << 24)
+                          | ((uint32_t)jaguarMainRAM[0x1AE00D] << 16)
+                          | ((uint32_t)jaguarMainRAM[0x1AE00E] <<  8)
+                          |  (uint32_t)jaguarMainRAM[0x1AE00F];
+            uint16_t e02a = ((uint16_t)jaguarMainRAM[0x1AE02A] << 8)
+                          |  (uint16_t)jaguarMainRAM[0x1AE02B];
+            fprintf(stderr, "[CD-194DBC] #%u $1AE00C=$%08X $1AE02A=$%04X\n",
+                    dbcCount, c00c, e02a);
+         }
+      }
+      if (m68kPC == 0x194DEE)
+      {
+         static uint32_t kickReachCount = 0;
+         kickReachCount++;
+         if (kickReachCount <= 3 || (kickReachCount % 100) == 0)
+            fprintf(stderr, "[CD-194DEE] Reached kick path #%u — filling $1AE032=$0100\n",
+                    kickReachCount);
+      }
+      /* One-shot dump of the hot BIOS wait loop identified by histogram
+       * at $050BE0. Dump 64 bytes at first entry so we can decode the
+       * branch condition. */
+      if (m68kPC >= 0x050BE0 && m68kPC < 0x050C00)
+      {
+         static bool dumped050BE0 = false;
+         if (!dumped050BE0)
+         {
+            dumped050BE0 = true;
+            fprintf(stderr, "[CD-DUMP] Hot BIOS wait loop @ $050BE0 (first entry PC=$%06X):\n", m68kPC);
+            JaguarDumpMemWindow(0x050BC0, 0x00, 0x80);
+            fprintf(stderr, "[CD-DUMP] BIOS jump table @ $003000:\n");
+            JaguarDumpMemWindow(0x003000, 0x00, 0x80);
+            fprintf(stderr, "[CD-DUMP] 68K regs: D0=$%08X D1=$%08X D2=$%08X A0=$%08X A1=$%08X A7=$%08X\n",
+                    m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1),
+                    m68k_get_reg(NULL, M68K_REG_D2),
+                    m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
+                    m68k_get_reg(NULL, M68K_REG_A7));
+         }
+      }
+      /* One-shot dump at first execution of CD_read at $303C (if installed)
+       * or its originating JSR site. Track entries into the jump-table region. */
+      if (m68kPC >= 0x003000 && m68kPC < 0x003070)
+      {
+         static bool firstJTHit = false;
+         static uint32_t jtPrevPC = 0;
+         if (!firstJTHit)
+         {
+            firstJTHit = true;
+            fprintf(stderr, "[CD-DUMP] First jump-table entry at $%06X from PC=$%06X\n",
+                    m68kPC, jtPrevPC);
+            JaguarDumpMemWindow(0x003000, 0x00, 0x80);
+         }
+         jtPrevPC = m68kPC;
+      }
+      if (m68kPC == 0x00303C)
+      {
+         static uint32_t fn303CCalls = 0;
+         fn303CCalls++;
+         if (fn303CCalls <= 3)
+         {
+            fprintf(stderr, "[CD-BIOS10] $303C call #%u D0=$%08X D1=$%08X D2=$%08X A0=$%08X A1=$%08X [$3072]=$%02X\n",
+                    fn303CCalls,
+                    m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1),
+                    m68k_get_reg(NULL, M68K_REG_D2),
+                    m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
+                    JaguarReadByte(0x003072, UNKNOWN));
+            if (fn303CCalls == 1)
+               JaguarDumpMemWindow(0x003590, 0x00, 0xC0);
+         }
+      }
+      /* Trace BIOS function at $3610 (JSR $304E → BRA.W $3610). */
+      if (m68kPC == 0x003610)
+      {
+         static uint32_t fn3610Calls = 0;
+         fn3610Calls++;
+         if (fn3610Calls == 1)
+         {
+            fprintf(stderr, "[CD-DUMP] BIOS $3610 first entry — code:\n");
+            JaguarDumpMemWindow(0x003610, 0x00, 0x20);
+            fprintf(stderr, "[CD-DUMP] Boot stub setup code ($080360-$0803F0):\n");
+            JaguarDumpMemWindow(0x080360, 0x00, 0xA0);
+            fprintf(stderr, "[CD-DUMP] Boot stub data ($085D90-$085E00):\n");
+            JaguarDumpMemWindow(0x085D90, 0x00, 0x70);
+            uint32_t structAddr = JaguarReadLong(0x003074, UNKNOWN);
+            fprintf(stderr, "[CD-DUMP] GPU buf struct ($F03118+): $%08X $%08X $%08X\n",
+                    GPUReadLong(0xF03118, UNKNOWN),
+                    GPUReadLong(0xF0311C, UNKNOWN),
+                    GPUReadLong(0xF03120, UNKNOWN));
+         }
+         if (fn3610Calls <= 10 || (fn3610Calls % 200000) == 0)
+            fprintf(stderr, "[CD-POLL] $3610 call #%u: A0=$%08X A1=$%08X D0=$%08X gpu[$118/$11C/$120]=$%08X/$%08X/$%08X\n",
+                    fn3610Calls,
+                    m68k_get_reg(NULL, M68K_REG_A0),
+                    m68k_get_reg(NULL, M68K_REG_A1),
+                    m68k_get_reg(NULL, M68K_REG_D0),
+                    GPUReadLong(0xF03118, UNKNOWN),
+                    GPUReadLong(0xF0311C, UNKNOWN),
+                    GPUReadLong(0xF03120, UNKNOWN));
+      }
+      /* Dump CD_read implementation at $003624 on first entry. */
+      if (m68kPC == 0x003624)
+      {
+         static uint32_t cdReadCalls = 0;
+         cdReadCalls++;
+         if (cdReadCalls == 1)
+         {
+            fprintf(stderr, "[CD-DUMP] CD_read first call — code @ $003624:\n");
+            JaguarDumpMemWindow(0x003624, 0x00, 0x200);
+            fprintf(stderr, "[CD-DUMP] CD_read regs: D0=$%08X D1=$%08X D2=$%08X A0=$%08X A1=$%08X A2=$%08X\n",
+                    m68k_get_reg(NULL, M68K_REG_D0), m68k_get_reg(NULL, M68K_REG_D1),
+                    m68k_get_reg(NULL, M68K_REG_D2),
+                    m68k_get_reg(NULL, M68K_REG_A0), m68k_get_reg(NULL, M68K_REG_A1),
+                    m68k_get_reg(NULL, M68K_REG_A2));
+            uint8_t flag3072 = JaguarReadByte(0x003072, UNKNOWN);
+            uint32_t structAddr = JaguarReadLong(0x003074, UNKNOWN);
+            fprintf(stderr, "[CD-DUMP] [$3072]=$%02X (bit7=%d) [$3074]=$%08X\n",
+                    flag3072, (flag3072 >> 7) & 1, structAddr);
+            fprintf(stderr, "[CD-DUMP] GPU saved regs $F03FE0-$F03FFF:\n");
+            for (uint32_t i = 0xF03FE0; i < 0xF04000; i += 4)
+               fprintf(stderr, "  $%06X: $%08X\n", i, GPUReadLong(i, UNKNOWN));
+         }
+         if (cdReadCalls <= 10 || (cdReadCalls % 1000) == 0)
+            fprintf(stderr, "[CD-DUMP] CD_read call #%u D0=$%08X A0=$%08X A1=$%08X\n",
+                    cdReadCalls, m68k_get_reg(NULL, M68K_REG_D0),
+                    m68k_get_reg(NULL, M68K_REG_A0),
+                    m68k_get_reg(NULL, M68K_REG_A1));
+      }
+      /* Trace 68K ISR at $080250 (boot stub BUTCH handler). */
+      if (m68kPC == 0x080250)
+      {
+         static uint32_t isrCount = 0;
+         isrCount++;
+         if (isrCount <= 10 || (isrCount % 50000) == 0)
+         {
+            uint32_t df8 = JaguarReadLong(0x085DF8, UNKNOWN);
+            uint32_t df0 = JaguarReadLong(0x085DF0, UNKNOWN);
+            uint32_t df4 = JaguarReadLong(0x085DF4, UNKNOWN);
+            uint32_t dfc = JaguarReadLong(0x085DFC, UNKNOWN);
+            fprintf(stderr, "[CD-ISR] $080250 hit #%u: $085DF8=$%08X $085DF0=$%08X $085DF4=$%08X $085DFC=$%08X\n",
+                    isrCount, df8, df0, df4, dfc);
+            if (isrCount == 1)
+            {
+               fprintf(stderr, "[CD-ISR] Full ISR code at $080250:\n");
+               JaguarDumpMemWindow(0x080250, 0x00, 0x60);
+            }
+         }
+      }
+      if (m68kPC == 0x0803AA)
+      {
+         static uint32_t hitCount = 0;
+         hitCount++;
+         if (hitCount <= 5 || (hitCount % 50000) == 0)
+         {
+            uint32_t structAddr = JaguarReadLong(0x003074, UNKNOWN);
+            uint32_t bufPtr = structAddr ? JaguarReadLong(structAddr, UNKNOWN) : 0;
+            fprintf(stderr, "[BOOTSTUB] $0803AA hit #%u: A0=$%08X A1=$%08X A6=$%08X bufStruct=$%08X SR=$%04X\n",
+                    hitCount,
+                    m68k_get_reg(NULL, M68K_REG_A0),
+                    m68k_get_reg(NULL, M68K_REG_A1),
+                    m68k_get_reg(NULL, M68K_REG_A6),
+                    bufPtr,
+                    m68k_get_reg(NULL, M68K_REG_SR) & 0xFFFF);
+         }
+      }
+      /* Stub the DSP completion at $F1B4C8 when the BIOS stalls in the
+       * wait loop at $050BE2. We fake the DSP finishing by writing a
+       * negative value after ~1000 polls. Lets the BIOS proceed so we
+       * can see the next stall point. */
+      if (m68kPC == 0x050BE2)
+      {
+         static uint32_t waitCount = 0;
+         static uint32_t lastKickAt = 0;
+         waitCount++;
+         if (waitCount <= 5 || (waitCount % 100000) == 0)
+         {
+            uint32_t b4c8 = JaguarReadLong(0x00F1B4C8, UNKNOWN);
+            uint32_t fb080 = JaguarReadWord(0x000FB080, UNKNOWN);
+            fprintf(stderr, "[CD-WAIT] $050BE2 hit #%u $F1B4C8=$%08X retryCount=$%04X\n",
+                    waitCount, b4c8, fb080);
+         }
+         /* Kick the flag after 1000 polls (so BIOS exits inner wait). */
+         if (waitCount - lastKickAt >= 1000)
+         {
+            uint32_t b4c8 = JaguarReadLong(0x00F1B4C8, UNKNOWN);
+            if ((b4c8 & 0x80000000) == 0)
+            {
+               JaguarWriteLong(0x00F1B4C8, 0x80000008, UNKNOWN);
+               lastKickAt = waitCount;
+               static uint32_t kickCount = 0;
+               kickCount++;
+               if (kickCount <= 10)
+                  fprintf(stderr, "[CD-KICK] Forced $F1B4C8=$80000008 (kick #%u at waitCount=%u)\n",
+                          kickCount, waitCount);
+            }
+         }
+      }
+      /* Similarly dump $050210 and $050220 hot buckets. */
+      if (m68kPC >= 0x050200 && m68kPC < 0x050240)
+      {
+         static bool dumped050200 = false;
+         if (!dumped050200)
+         {
+            dumped050200 = true;
+            fprintf(stderr, "[CD-DUMP] Hot BIOS loop @ $050200 (first entry PC=$%06X):\n", m68kPC);
+            JaguarDumpMemWindow(0x050200, 0x00, 0x60);
+         }
+      }
+      /* Dump $050860 area (3rd hottest). */
+      if (m68kPC >= 0x050860 && m68kPC < 0x050880)
+      {
+         static bool dumped050860 = false;
+         if (!dumped050860)
+         {
+            dumped050860 = true;
+            fprintf(stderr, "[CD-DUMP] Hot BIOS loop @ $050860 (first entry PC=$%06X):\n", m68kPC);
+            JaguarDumpMemWindow(0x050860, 0x00, 0x40);
+         }
+      }
+      /* Fine-grained PC histogram for $050000-$050FFF and $083000-$083FFF.
+       * 16-byte buckets to pinpoint the tight wait loop. */
+      {
+         static uint32_t bios5k[0x100] = {0};
+         static uint32_t cdp83[0x100] = {0};
+         static uint32_t histSample = 0;
+         if (m68kPC >= 0x050000 && m68kPC < 0x051000)
+            bios5k[(m68kPC >> 4) & 0xFF]++;
+         else if (m68kPC >= 0x083000 && m68kPC < 0x084000)
+            cdp83[(m68kPC >> 4) & 0xFF]++;
+         if (++histSample >= 3000000)
+         {
+            histSample = 0;
+            fprintf(stderr, "[CD-HIST-5K] $05xxx top 6 (16-byte buckets):\n");
+            for (int rank = 0; rank < 6; rank++)
+            {
+               uint32_t best = 0; int bestIdx = -1;
+               for (int i = 0; i < 0x100; i++)
+                  if (bios5k[i] > best) { best = bios5k[i]; bestIdx = i; }
+               if (!best) break;
+               fprintf(stderr, "  $%06X: %u\n", 0x050000 + (bestIdx << 4), best);
+               bios5k[bestIdx] = 0;
+            }
+            fprintf(stderr, "[CD-HIST-83] $083xxx top 6:\n");
+            for (int rank = 0; rank < 6; rank++)
+            {
+               uint32_t best = 0; int bestIdx = -1;
+               for (int i = 0; i < 0x100; i++)
+                  if (cdp83[i] > best) { best = cdp83[i]; bestIdx = i; }
+               if (!best) break;
+               fprintf(stderr, "  $%06X: %u\n", 0x083000 + (bestIdx << 4), best);
+               cdp83[bestIdx] = 0;
+            }
+            memset(bios5k, 0, sizeof(bios5k));
+            memset(cdp83, 0, sizeof(cdp83));
+         }
+      }
+
       if (m68kPC == 0x194D18)
       {
          static bool dumped194D18 = false;
@@ -711,7 +1157,11 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
    if (offset < 0x800000)
       return jaguarMainRAM[offset & 0x1FFFFF];
    else if ((offset >= 0x800000) && (offset < 0xDFFF00))
+   {
+      if (CDROMIsBiosOverride())
+         return CDROMReadFifoByte(who);
       return jaguarMainROM[offset - 0x800000];
+   }
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
       return CDROMReadByte(offset, who);
    else if ((offset >= 0xE00000) && (offset < 0xE40000))
@@ -735,6 +1185,8 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
       return (jaguarMainRAM[(offset+0) & 0x1FFFFF] << 8) | jaguarMainRAM[(offset+1) & 0x1FFFFF];
    else if ((offset >= 0x800000) && (offset < 0xDFFF00))
    {
+      if (CDROMIsBiosOverride())
+         return (CDROMReadFifoByte(who) << 8) | CDROMReadFifoByte(who);
       offset -= 0x800000;
       return (jaguarMainROM[offset+0] << 8) | jaguarMainROM[offset+1];
    }
