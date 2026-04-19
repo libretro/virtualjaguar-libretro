@@ -1010,7 +1010,8 @@ bool retro_load_game(const struct retro_game_info *info)
 
       memmap.descriptors     = descs;
       memmap.num_descriptors = sizeof(descs) / sizeof(descs[0]);
-      environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &memmap);
+      if (!environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &memmap))
+         fprintf(stderr, "[virtualjaguar-libretro] Frontend rejected RETRO_ENVIRONMENT_SET_MEMORY_MAPS.\n");
    }
 
    /* The frontend will load .srm data into our save buffer (returned by
