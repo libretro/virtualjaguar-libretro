@@ -1222,6 +1222,41 @@ bool retro_load_game(const struct retro_game_info *info)
 
    JaguarReset();
 
+   /* JaguarReset() randomizes all of main RAM ($8–$200000), which
+    * destroys RAM-loaded executables (ABS/COFF files loaded at $4000).
+    * Cartridge ROMs are fine since they live in jagMemSpace + $800000.
+    * Fix: re-load the file into RAM after the reset completes. */
+   if (!jaguarCartInserted && !jaguar_cd_mode)
+   {
+      if (info->data && info->size > 0)
+      {
+         JaguarLoadFile((uint8_t*)info->data, info->size);
+      }
+      else if (info->path)
+      {
+         RFILE *romFile = rfopen(info->path, "rb");
+         if (romFile)
+         {
+            int64_t fileSize;
+            uint8_t *romData;
+
+            rfseek(romFile, 0, SEEK_END);
+            fileSize = rftell(romFile);
+            rfseek(romFile, 0, SEEK_SET);
+
+            romData = (uint8_t *)malloc(fileSize);
+            if (romData)
+            {
+               rfread(romData, 1, fileSize, romFile);
+               JaguarLoadFile(romData, fileSize);
+               free(romData);
+            }
+            rfclose(romFile);
+         }
+      }
+      SET32(jaguarMainRAM, 4, jaguarRunAddress);
+   }
+
    /* HLE CD boot: if CD mode and no external BIOS, boot via HLE.
     * Must happen after JaguarReset() since reset clears RAM/GPU state. */
    if (jaguar_cd_mode && !cd_bios_loaded_externally)
