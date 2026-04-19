@@ -8,6 +8,7 @@
 #include <compat/posix_string.h>
 #include <compat/strl.h>
 
+#include "cheat.h"
 #include "file.h"
 #include "jagbios.h"
 #include "jagbios2.h"
@@ -881,14 +882,38 @@ bool retro_unserialize(const void *data, size_t size)
    return true;
 }
 
+/* Cheat codes — the parser and list management live in src/cheat.c so
+ * they can be unit-tested without the rest of the emulator. Here we just
+ * bind them to the Jaguar memory bus and re-apply every frame so games
+ * that continuously overwrite the patched location are held to the
+ * cheat value. */
+static cheat_list_t cheat_list;
+
+static void cheat_write_jaguar(uint32_t addr, uint32_t value,
+                               uint8_t size, void *user)
+{
+   (void)user;
+   switch (size)
+   {
+      case 1: JaguarWriteByte(addr, (uint8_t)value,  UNKNOWN); break;
+      case 2: JaguarWriteWord(addr, (uint16_t)value, UNKNOWN); break;
+      case 4: JaguarWriteLong(addr, value,           UNKNOWN); break;
+   }
+}
+
 void retro_cheat_reset(void)
-{}
+{
+   cheat_list_reset(&cheat_list);
+}
 
 void retro_cheat_set(unsigned index, bool enabled, const char *code)
 {
-   (void)index;
-   (void)enabled;
-   (void)code;
+   cheat_list_set(&cheat_list, index, enabled, code);
+}
+
+static void cheat_apply_all(void)
+{
+   cheat_list_apply(&cheat_list, cheat_write_jaguar, NULL);
 }
 
 bool retro_load_game(const struct retro_game_info *info)
@@ -1012,6 +1037,7 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *i
 
 void retro_unload_game(void)
 {
+   retro_cheat_reset();
    JaguarDone();
    if (videoBuffer)
       free(videoBuffer);
@@ -1122,6 +1148,7 @@ void retro_run(void)
    update_input();
 
    JaguarExecuteNew();
+   cheat_apply_all();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
 
    // Resolution changed

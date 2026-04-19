@@ -169,6 +169,13 @@ jobs:
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
+    - name: Run cheat engine unit tests
+      run: |
+        ${{ matrix.config.cc }} -O2 -Wall -std=c99 \
+          -I src -I libretro-common/include \
+          -o test_cheat test/test_cheat.c src/cheat.c
+        ./test_cheat
+
     - name: Run SIMD blitter tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
       run: |

@@ -24,6 +24,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/tom.c  \
 	$(CORE_DIR)/src/cdintf.c \
 	$(CORE_DIR)/src/cdrom.c \
+	$(CORE_DIR)/src/cheat.c \
 	$(CORE_DIR)/src/crc32.c \
 	$(CORE_DIR)/src/event.c \
 	$(CORE_DIR)/src/eeprom.c \
