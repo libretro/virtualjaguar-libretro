@@ -121,8 +121,11 @@ static bool environment(unsigned cmd, void *data)
    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
       return true;
    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
-      /* Look for BIOS files in test/roms/private or current dir */
-      *(const char **)data = "test/roms/private";
+      /* VJ_HLE_MODE=1 forces HLE by hiding the BIOS directory */
+      if (getenv("VJ_HLE_MODE") && strcmp(getenv("VJ_HLE_MODE"), "1") == 0)
+         *(const char **)data = "/nonexistent";
+      else
+         *(const char **)data = "test/roms/private";
       return true;
    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
       *(const char **)data = ".";
@@ -599,6 +602,113 @@ int main(int argc, char *argv[])
          for (unsigned b = 0; b < 16; b += 2)
             printf(" %02X%02X", ram[a+b], ram[a+b+1]);
          printf("\n");
+      }
+
+      /* Dump boot stub code at $080380-$080400 — 68K stuck at $0803A0 */
+      printf("\nRAM dump $080380-$080400 (boot stub poll loop at $0803A0):\n");
+      for (unsigned a = 0x080380; a < 0x080400; a += 16)
+      {
+         printf("  %06X:", a);
+         for (unsigned b = 0; b < 16; b += 2)
+            printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+         printf("\n");
+      }
+
+      /* Dump boot stub ISR + data at $080240-$0802C0 */
+      printf("\nRAM dump $080240-$0802C0 (boot stub ISR at $080250):\n");
+      for (unsigned a = 0x080240; a < 0x0802C0; a += 16)
+      {
+         printf("  %06X:", a);
+         for (unsigned b = 0; b < 16; b += 2)
+            printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+         printf("\n");
+      }
+
+      /* Dump boot stub data area at $085D00-$085E20 */
+      printf("\nRAM dump $085D00-$085E20 (boot stub data: ptrs, FIFO target):\n");
+      for (unsigned a = 0x085D00; a < 0x085E20; a += 16)
+      {
+         printf("  %06X:", a);
+         for (unsigned b = 0; b < 16; b += 2)
+            printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+         printf("\n");
+      }
+
+      /* Dump BIOS CD_read code at $003600-$003700 */
+      printf("\nRAM dump $003600-$003700 (BIOS CD_read at $003610):\n");
+      for (unsigned a = 0x003600; a < 0x003700; a += 16)
+      {
+         printf("  %06X:", a);
+         for (unsigned b = 0; b < 16; b += 2)
+            printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+         printf("\n");
+      }
+
+      /* Dump BIOS TOC table at $2C00-$2D00 */
+      printf("\nRAM dump $002C00-$002D00 (BIOS TOC table):\n");
+      for (unsigned a = 0x002C00; a < 0x002D00; a += 16)
+      {
+         printf("  %06X:", a);
+         for (unsigned b = 0; b < 16; b += 2)
+            printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+         /* ASCII for readability */
+         printf("  ");
+         for (unsigned b = 0; b < 16; b++) {
+            uint8_t c = ram[a+b];
+            printf("%c", (c >= 0x20 && c < 0x7f) ? c : '.');
+         }
+         printf("\n");
+      }
+
+      /* Dump boot stub data at $085D70-$085DA0 (TOC MSF values) */
+      printf("\nRAM dump $085D70-$085DA0 (boot stub TOC data):\n");
+      for (unsigned a = 0x085D70; a < 0x085DA0; a += 16)
+      {
+         printf("  %06X:", a);
+         for (unsigned b = 0; b < 16; b += 2)
+            printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+         printf("\n");
+      }
+
+      /* Dump $3072-$3078 (BIOS flags) */
+      printf("\nBIOS ptrs: $3072=%02X $3074=%08X\n",
+             ram[0x3072],
+             (ram[0x3074]<<24)|(ram[0x3075]<<16)|(ram[0x3076]<<8)|ram[0x3077]);
+
+      /* Dump GPU RAM via GPUReadLong */
+      {
+         uint32_t (*p_GPUReadLong)(uint32_t, uint32_t) = dlsym(handle, "GPUReadLong");
+         if (p_GPUReadLong)
+         {
+            printf("\nGPU RAM $F03000-$F03100 (ISR code + data pointers):\n");
+            for (unsigned a = 0xF03000; a < 0xF03100; a += 16)
+            {
+               printf("  %06X:", a);
+               for (unsigned b = 0; b < 16; b += 4)
+               {
+                  uint32_t v = p_GPUReadLong(a + b, 0);
+                  printf(" %08X", v);
+               }
+               printf("\n");
+            }
+         }
+      }
+
+      /* Check destination buffer at $004000 for transferred CD data */
+      {
+         uint32_t nonzero = 0;
+         for (unsigned a = 0x004000; a < 0x05FC00; a++)
+            if (ram[a]) nonzero++;
+         printf("\nCD data buffer $004000-$05FC00: %u non-zero bytes (of %u total)\n",
+                nonzero, 0x05FC00 - 0x004000);
+         printf("First 64 bytes at $004000:\n");
+         for (unsigned a = 0x004000; a < 0x004040; a += 16)
+         {
+            printf("  %06X:", a);
+            for (unsigned b = 0; b < 16; b += 2)
+               printf(" %02X%02X", ram[a+b], ram[a+b+1]);
+            printf("\n");
+         }
       }
 
       /* Key BIOS RAM flags for CD data flow */
