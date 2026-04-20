@@ -42,6 +42,7 @@ extern uint32_t bpmAddress1;
 extern "C" {
 #endif
 extern uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
+extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 #ifdef __cplusplus
 }
 #endif

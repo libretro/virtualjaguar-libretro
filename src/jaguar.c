@@ -114,6 +114,7 @@ extern uint8_t jagMemSpace[];
 // Internal variables
 
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
+uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
 bool jaguarCartInserted = false;
 bool lowerField = false;
@@ -1431,11 +1432,17 @@ void JaguarReset(void)
 {
    unsigned i;
 
-   // Only problem with this approach: It wipes out RAM loaded files...!
-   // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
+   // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
+   // Skip the region occupied by a RAM-loaded executable (ABS/COFF) so it survives reset.
    JaguarSeedPRNG(12345);
    for(i=8; i<0x200000; i+=4)
-      *((uint32_t *)(&jaguarMainRAM[i])) = JaguarRand();
+   {
+      uint32_t r = JaguarRand();
+      if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
+          && i >= jaguarLoadedRAMStart && i < jaguarLoadedRAMEnd)
+         continue;
+      *((uint32_t *)(&jaguarMainRAM[i])) = r;
+   }
 
    // New timer base code stuffola...
    InitializeEventList();
@@ -1445,15 +1452,32 @@ void JaguarReset(void)
    // Only use the system BIOS if it's available...! (it's always available now!)
    // AND only if a jaguar cartridge has been inserted.
    if (vjs.useJaguarBIOS && jaguarCartInserted && !vjs.hardwareTypeAlpine)
+   {
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
+   }
    else
+   {
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
+
+      /* For RAM-loaded files (ABS/COFF), the exception vector table
+       * ($8–$3FF) may be outside the loaded region. Install an RTE
+       * trampoline so interrupts that fire before the program sets up
+       * its own handlers return safely instead of crashing. */
+      if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
+          && jaguarLoadedRAMStart > 0x400)
+      {
+         SET16(jaguarMainRAM, 0x400, 0x4E73);  /* RTE */
+         for (i = 2; i < 256; i++)
+            SET32(jaguarMainRAM, i * 4, 0x400);
+      }
+   }
 
    TOMReset();
    JERRYReset();
    GPUReset();
    DSPReset();
    CDROMReset();
+
    m68k_pulse_reset();								// Reset the 68000
 
    lowerField = false;								// Reset the lower field flag
@@ -1487,6 +1511,7 @@ void JaguarExecuteNew(void)
       double timeToNextEvent = GetTimeToNextEvent(EVENT_MAIN);
       m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
       GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
       BUTCHExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
       HandleNextEvent(EVENT_MAIN);
    } while(!frameDone);
