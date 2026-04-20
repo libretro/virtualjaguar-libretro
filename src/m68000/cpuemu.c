@@ -14962,9 +14962,14 @@ unsigned long CPUFUNC(op_6101_4)(uint32_t opcode) /* BSR */
 unsigned long CPUFUNC(op_61ff_4)(uint32_t opcode) /* BSR */
 {
 	OpcodeFamily = 54; CurrentInstrCycles = 18; 
-{{	int32_t src = get_ilong(2);
-	int32_t s = (int32_t)src + 2;
-	m68k_do_bsr(m68k_getpc() + 6, s);
+{{	/* Atari Jaguar quirk: the 'aln' linker emits BSR with an 8-bit
+	 * displacement of $FF (the 68020+ "long-form" escape) but writes the
+	 * ABSOLUTE TARGET ADDRESS into the 32-bit displacement slot instead
+	 * of a PC-relative displacement. Real 68000 hardware doesn't have
+	 * BSR.L at all, so any $61FF we see in a Jaguar binary uses this
+	 * convention. Treat the operand as an absolute jump target. */
+	uint32_t target = (uint32_t)get_ilong(2);
+	m68k_do_jsr(m68k_getpc() + 6, target);
 }}return 18;
 }
 unsigned long CPUFUNC(op_6200_4)(uint32_t opcode) /* Bcc */
@@ -46548,14 +46553,15 @@ return 18;
 unsigned long CPUFUNC(op_61ff_5)(uint32_t opcode) /* BSR */
 {
 	OpcodeFamily = 54; CurrentInstrCycles = 18; 
-{{	int32_t src = get_ilong_prefetch(2);
-	int32_t s = (int32_t)src + 2;
-	if (src & 1) {
+{{	/* See op_61ff_4: aln writes the absolute target address into the
+	 * 32-bit displacement slot of BSR.L. Treat operand as absolute. */
+	uint32_t target = (uint32_t)get_ilong_prefetch(2);
+	if (target & 1) {
 		last_addr_for_exception_3 = m68k_getpc() + 2;
-		last_fault_for_exception_3 = m68k_getpc() + s;
+		last_fault_for_exception_3 = target;
 		last_op_for_exception_3 = opcode; Exception(3,0,M68000_EXC_SRC_CPU); goto endlabel2596;
 	}
-	m68k_do_bsr(m68k_getpc() + 6, s);
+	m68k_do_jsr(m68k_getpc() + 6, target);
 fill_prefetch_0 ();
 }}endlabel2596: ;
 return 18;

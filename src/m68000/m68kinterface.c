@@ -349,8 +349,174 @@ void m68k_end_timeslice(void)
 }
 
 
+/* Read a 32-bit operand from any addressable EA the wrapper code uses.
+ * The Removers/aln-built Jaguar binaries we care about always reach MULL/DIVL
+ * with the EA = data-register-direct (mode 0). Other modes (immediate,
+ * abs.W/L, (An), etc.) are emulated for completeness. */
+static int read_long_ea(uint32_t opcode, uint32_t *out)
+{
+	uint32_t mode = (opcode >> 3) & 0x7;
+	uint32_t reg  = opcode & 0x7;
+	uint32_t ea;
+
+	switch (mode)
+	{
+	case 0: /* Dn */
+		*out = m68k_dreg(regs, reg);
+		return 0;
+	case 1: /* An */
+		*out = m68k_areg(regs, reg);
+		return 0;
+	case 2: /* (An) */
+		*out = m68k_read_memory_32(m68k_areg(regs, reg));
+		return 0;
+	case 5: /* (d16,An) */
+	{
+		int16_t d = (int16_t)get_iword(4);
+		*out = m68k_read_memory_32(m68k_areg(regs, reg) + d);
+		return 2;
+	}
+	case 7:
+		switch (reg)
+		{
+		case 0: /* (xxx).W */
+			ea = (int32_t)(int16_t)get_iword(4);
+			*out = m68k_read_memory_32(ea);
+			return 2;
+		case 1: /* (xxx).L */
+			ea = (uint32_t)get_ilong(4);
+			*out = m68k_read_memory_32(ea);
+			return 4;
+		case 4: /* #imm */
+			*out = (uint32_t)get_ilong(4);
+			return 4;
+		}
+		break;
+	}
+	return -1;
+}
+
+/* Emulate the 68020+ MULL / DIVL instructions on a 68000-only core.
+ * The Removers Library + m68k-atari-mint-gcc toolchain emits these for
+ * 32x32 multiply and divide; without them, our binaries hard-hang inside
+ * libgcc helpers. Returns 1 if handled, 0 to fall through to a true illegal
+ * exception. */
+static int handle_68020_mull_divl(uint32_t opcode)
+{
+	uint32_t base = opcode & 0xFFC0;
+	uint16_t ext;
+	uint32_t src;
+	int extra;
+
+	if (base != 0x4C00 && base != 0x4C40)
+		return 0;
+
+	ext = (uint16_t)get_iword(2);
+	if (ext & 0x83F8)
+		return 0;	/* reserved bits set — not a clean MULL/DIVL */
+
+	extra = read_long_ea(opcode, &src);
+	if (extra < 0)
+		return 0;
+
+	{
+		uint32_t Dl = (ext >> 12) & 0x7;
+		uint32_t Dh = ext & 0x7;
+		int      sz = (ext >> 10) & 0x1;	/* 0=32-bit, 1=64-bit */
+		int      sg = (ext >> 11) & 0x1;	/* 0=unsigned, 1=signed */
+
+		if (base == 0x4C00)	/* MULL */
+		{
+			uint32_t a = m68k_dreg(regs, Dl);
+			uint32_t b = src;
+			if (sz == 0)
+			{
+				uint32_t r = a * b;
+				m68k_dreg(regs, Dl) = r;
+				SET_NFLG(r >> 31);
+				SET_ZFLG(r == 0);
+				SET_VFLG(0); SET_CFLG(0);
+			}
+			else
+			{
+				uint64_t prod;
+				if (sg)
+					prod = (uint64_t)((int64_t)(int32_t)a * (int64_t)(int32_t)b);
+				else
+					prod = (uint64_t)a * (uint64_t)b;
+				m68k_dreg(regs, Dl) = (uint32_t)prod;
+				m68k_dreg(regs, Dh) = (uint32_t)(prod >> 32);
+				SET_NFLG((prod >> 63) & 1);
+				SET_ZFLG(prod == 0);
+				SET_VFLG(0); SET_CFLG(0);
+			}
+		}
+		else			/* DIVL */
+		{
+			uint32_t divisor = src;
+			if (divisor == 0)
+			{
+				m68k_incpc(2 + extra);
+				Exception(0x05, 0, M68000_EXC_SRC_CPU);
+				return 1;
+			}
+			if (sz == 0)
+			{
+				uint32_t a = m68k_dreg(regs, Dl);
+				if (sg)
+				{
+					int32_t  q = (int32_t)a / (int32_t)divisor;
+					int32_t  r = (int32_t)a % (int32_t)divisor;
+					m68k_dreg(regs, Dl) = (uint32_t)q;
+					if (Dh != Dl) m68k_dreg(regs, Dh) = (uint32_t)r;
+					SET_NFLG(q < 0); SET_ZFLG(q == 0);
+				}
+				else
+				{
+					uint32_t q = a / divisor;
+					uint32_t r = a % divisor;
+					m68k_dreg(regs, Dl) = q;
+					if (Dh != Dl) m68k_dreg(regs, Dh) = r;
+					SET_NFLG(q >> 31); SET_ZFLG(q == 0);
+				}
+			}
+			else	/* 64-bit dividend in Dh:Dl */
+			{
+				uint64_t dividend = ((uint64_t)m68k_dreg(regs, Dh) << 32)
+				                  | (uint64_t)m68k_dreg(regs, Dl);
+				if (sg)
+				{
+					int64_t q = (int64_t)dividend / (int32_t)divisor;
+					int64_t r = (int64_t)dividend % (int32_t)divisor;
+					m68k_dreg(regs, Dl) = (uint32_t)q;
+					m68k_dreg(regs, Dh) = (uint32_t)r;
+					SET_NFLG(q < 0); SET_ZFLG(q == 0);
+				}
+				else
+				{
+					uint64_t q = dividend / divisor;
+					uint64_t r = dividend % divisor;
+					m68k_dreg(regs, Dl) = (uint32_t)q;
+					m68k_dreg(regs, Dh) = (uint32_t)r;
+					SET_NFLG((q >> 63) & 1); SET_ZFLG(q == 0);
+				}
+			}
+			SET_VFLG(0); SET_CFLG(0);
+		}
+	}
+
+	m68k_incpc(4 + extra);
+	return 1;
+}
+
 unsigned long IllegalOpcode(uint32_t opcode)
 {
+	if ((opcode & 0xFF80) == 0x4C00)
+	{
+		if (handle_68020_mull_divl(opcode))
+			return 40;
+	}
+
 	if ((opcode & 0xF000) == 0xF000)
 	{
 		Exception(0x0B, 0, M68000_EXC_SRC_CPU);	// LineF exception...
