@@ -1177,26 +1177,26 @@ bool retro_load_game(const struct retro_game_info *info)
       jagMemSpace[0x80040B] &= 0xFE;
       fprintf(stderr, "[CD-TRACE] Boot ROM wait bypass applied at $80040B (value now $%02X)\n",
               jagMemSpace[0x80040B]);
+
+      JaguarReset();
    }
    else if (jaguar_cd_mode)
    {
       /* HLE path: no external BIOS — JaguarCDHLEBoot() will be called
        * after JaguarReset() to set up the boot stub directly. */
       jaguarCartInserted = false;
+      JaguarReset();
    }
    else
    {
-      // Standard cartridge loading (need_fullpath=true, so load from file)
       SET32(jaguarMainRAM, 0, 0x00200000);
 
       if (info->data && info->size > 0)
       {
-         // Data provided directly
          JaguarLoadFile((uint8_t*)info->data, info->size);
       }
       else if (info->path)
       {
-         // Load ROM from file path
          RFILE *romFile;
          romFile = rfopen(info->path, "rb");
          if (romFile)
@@ -1221,41 +1221,6 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    JaguarReset();
-
-   /* JaguarReset() randomizes all of main RAM ($8–$200000), which
-    * destroys RAM-loaded executables (ABS/COFF files loaded at $4000).
-    * Cartridge ROMs are fine since they live in jagMemSpace + $800000.
-    * Fix: re-load the file into RAM after the reset completes. */
-   if (!jaguarCartInserted && !jaguar_cd_mode)
-   {
-      if (info->data && info->size > 0)
-      {
-         JaguarLoadFile((uint8_t*)info->data, info->size);
-      }
-      else if (info->path)
-      {
-         RFILE *romFile = rfopen(info->path, "rb");
-         if (romFile)
-         {
-            int64_t fileSize;
-            uint8_t *romData;
-
-            rfseek(romFile, 0, SEEK_END);
-            fileSize = rftell(romFile);
-            rfseek(romFile, 0, SEEK_SET);
-
-            romData = (uint8_t *)malloc(fileSize);
-            if (romData)
-            {
-               rfread(romData, 1, fileSize, romFile);
-               JaguarLoadFile(romData, fileSize);
-               free(romData);
-            }
-            rfclose(romFile);
-         }
-      }
-      SET32(jaguarMainRAM, 4, jaguarRunAddress);
-   }
 
    /* HLE CD boot: if CD mode and no external BIOS, boot via HLE.
     * Must happen after JaguarReset() since reset clears RAM/GPU state. */
