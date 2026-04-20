@@ -153,6 +153,12 @@ static bool environment(unsigned cmd, void *data)
          var->value = (env && strcmp(env, "dev") == 0) ? "dev" : "retail";
          return true;
       }
+      if (var->key && strcmp(var->key, "virtualjaguar_cd_boot_mode") == 0)
+      {
+         const char *env = getenv("VJ_CD_BOOT_MODE");
+         var->value = (env ? env : "auto");
+         return true;
+      }
       var->value = NULL;
       return false;
    }
