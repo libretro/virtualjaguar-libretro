@@ -90,14 +90,21 @@ None.
 | Register | Meaning |
 |----------|---------|
 | A0       | Current RAM write position (GPU ISR advances this as data arrives) |
-| A1       | Bytes transferred so far (from GPU data area [+8]) |
+| A1       | Error status: 0 = OK (transfer in progress or complete), non-zero = error |
 
-Boot stubs typically save the end address in A6 before calling CD_read, then poll:
+Boot stubs save the end address in A6 before calling CD_read, then poll:
 ```
-.poll:  JSR ($304E).w
-        CMPA.L A6, A0      ; current position >= end?
-        BLT .poll
+.poll:  JSR ($304E).w        ; CD_poll
+        CMPA.L #0, A1        ; error?
+        BNE .error            ; A1 != 0 → error/retry
+        CMPA.L A6, A0         ; current position >= end?
+        BLT .poll             ; not done yet
+        ; success — transfer complete
 ```
+
+**Note:** A1 is NOT "bytes transferred" — it is an error flag. The Primal Rage boot stub
+at $0803A4 explicitly checks `CMPA.L #0,A1; BNE .error`. This was confirmed by
+disassembly of the retail boot stub and verified against BIOS behavior.
 
 ## CDBYPASS Boot Sequence (Reference)
 
