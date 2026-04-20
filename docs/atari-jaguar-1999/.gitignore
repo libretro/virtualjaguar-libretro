@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Source PDFs (~73 MB) are not checked in — they live in cubanismo/jaguar-sdk
+# and hillsoftware.com. Run `./fetch-pdfs.sh` to re-download locally if you
+# need them, then `./.venv/bin/python .convert.py` to regenerate the .md files.
+*.pdf
