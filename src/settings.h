@@ -32,6 +32,7 @@ struct VJSettings
 	bool useFastBlitter;
 	bool useCDBIOS;
 	uint32_t cdBiosType;
+	uint32_t cdBootMode;
 
 	// Paths
 
@@ -47,6 +48,10 @@ enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2 };
 // CD BIOS types
 
 enum { CDBIOS_RETAIL, CDBIOS_DEV };
+
+// CD boot modes
+
+enum { CDBOOT_AUTO, CDBOOT_HLE, CDBOOT_BIOS };
 
 // Exported variables
 

@@ -616,7 +616,52 @@ endif
 clean:
 	rm -f $(TARGET) $(OBJECTS)
 
-.PHONY: clean
+# --- Unit tests ---
+# Build tests against the dylib via dlsym.
+# Run: make test  (builds core + tests, then runs all test suites)
+
+TEST_CC     ?= $(CC)
+TEST_CFLAGS  = -O0 -g -Wno-incompatible-pointer-types
+TEST_LDFLAGS = -ldl
+TEST_BINS    = test/test_gpu_instructions test/test_dsp_instructions test/test_m68k_instructions test/test_irq test/test_hle_bios test/test_blitter_simd
+
+test/test_gpu_instructions: test/test_gpu_instructions.c test/test_framework.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_dsp_instructions: test/test_dsp_instructions.c test/test_framework.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_m68k_instructions: test/test_m68k_instructions.c test/test_framework.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_irq: test/test_irq.c test/test_framework.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_hle_bios: test/test_hle_bios.c test/test_framework.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_blitter_simd: test/test_blitter_simd.c src/blitter_simd.h $(TARGET)
+	$(TEST_CC) -O2 -o $@ test/test_blitter_simd.c src/blitter_simd_neon.c
+
+test-build: $(TEST_BINS)
+
+test: test-build
+	@echo ""; echo "=== Running unit tests ===" ; echo ""
+	@fail=0; \
+	for t in test/test_gpu_instructions test/test_dsp_instructions test/test_m68k_instructions test/test_irq test/test_hle_bios test/test_blitter_simd; do \
+		if [ -x "$$t" ]; then \
+			DYLD_LIBRARY_PATH=. LD_LIBRARY_PATH=. "$$t" > /tmp/vj_test_out.txt 2>&1; \
+			rc=$$?; \
+			grep -E 'PASS|FAIL|SKIP|===|---|Results:' /tmp/vj_test_out.txt; \
+			if [ $$rc -ne 0 ]; then fail=1; fi; \
+		fi; \
+	done; \
+	exit $$fail
+
+clean-test:
+	rm -f $(TEST_BINS) $(addsuffix .dSYM,$(TEST_BINS))
+
+.PHONY: clean test test-build clean-test
 endif
 
 print-%:

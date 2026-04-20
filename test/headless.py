@@ -50,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frames", type=int, default=600, help="Frames to run (default: 600)")
     p.add_argument("--cd-bios", choices=["retail", "dev"], default="retail",
                    help="CD BIOS variant (default: retail)")
+    p.add_argument("--cd-boot-mode", choices=["auto", "hle", "bios"], default="auto",
+                   help="CD boot mode: auto, hle, or bios (default: auto)")
     p.add_argument("--core", type=Path, default=None, help="Override core path")
     p.add_argument("--system-dir", type=Path, default=REPO_ROOT / "test" / "roms" / "private",
                    help="Directory containing BIOS files")
@@ -112,6 +114,7 @@ def main() -> int:
         "virtualjaguar_bios": "enabled",
         "virtualjaguar_usefastblitter": "enabled",
         "virtualjaguar_cd_bios_type": args.cd_bios,
+        "virtualjaguar_cd_boot_mode": args.cd_boot_mode,
     }
 
     paths = FixedPathDriver(args.system_dir, args.save_dir, core)

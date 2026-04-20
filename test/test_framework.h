@@ -208,30 +208,33 @@ struct vj_core {
     /* m68k access */
     unsigned int (*m68k_get_reg)(void *, int);
     void (*m68k_set_reg)(int, unsigned int);
+    int (*m68k_execute)(int);
+    void (*m68k_pulse_reset)(void);
 
     /* Raw memory pointer */
     uint8_t * (*GetRamPtr)(void);
 
     /* GPU register banks (exported arrays) */
     uint32_t *gpu_reg_bank_0;
+    uint32_t *dsp_reg_bank_0;
     uint32_t *gpu_reg_bank_1;
 
     /* Settings */
     void *vjs;
 };
 
-#define LOAD_SYM(core, sym) \
+#define LOAD_SYM(coreptr, sym) \
     do { \
-        core.sym = dlsym(core.handle, #sym); \
-        if (!core.sym) { \
+        (coreptr)->sym = dlsym((coreptr)->handle, #sym); \
+        if (!(coreptr)->sym) { \
             fprintf(stderr, "  WARN: dlsym(%s) failed: %s\n", #sym, dlerror()); \
         } \
     } while(0)
 
-#define LOAD_SYM_REQUIRED(core, sym) \
+#define LOAD_SYM_REQUIRED(coreptr, sym) \
     do { \
-        core.sym = dlsym(core.handle, #sym); \
-        if (!core.sym) { \
+        (coreptr)->sym = dlsym((coreptr)->handle, #sym); \
+        if (!(coreptr)->sym) { \
             fprintf(stderr, "  FATAL: dlsym(%s) failed: %s\n", #sym, dlerror()); \
             return false; \
         } \
@@ -298,89 +301,92 @@ static bool vj_core_load(struct vj_core *core)
     }
 
     /* libretro API */
-    LOAD_SYM_REQUIRED(*core, retro_init);
-    LOAD_SYM_REQUIRED(*core, retro_deinit);
-    LOAD_SYM_REQUIRED(*core, retro_set_environment);
-    LOAD_SYM_REQUIRED(*core, retro_set_video_refresh);
-    LOAD_SYM_REQUIRED(*core, retro_set_audio_sample);
-    LOAD_SYM_REQUIRED(*core, retro_set_audio_sample_batch);
-    LOAD_SYM_REQUIRED(*core, retro_set_input_poll);
-    LOAD_SYM_REQUIRED(*core, retro_set_input_state);
+    LOAD_SYM_REQUIRED(core, retro_init);
+    LOAD_SYM_REQUIRED(core, retro_deinit);
+    LOAD_SYM_REQUIRED(core, retro_set_environment);
+    LOAD_SYM_REQUIRED(core, retro_set_video_refresh);
+    LOAD_SYM_REQUIRED(core, retro_set_audio_sample);
+    LOAD_SYM_REQUIRED(core, retro_set_audio_sample_batch);
+    LOAD_SYM_REQUIRED(core, retro_set_input_poll);
+    LOAD_SYM_REQUIRED(core, retro_set_input_state);
 
     /* GPU */
-    LOAD_SYM(*core, GPUInit);
-    LOAD_SYM(*core, GPUReset);
-    LOAD_SYM(*core, GPUExec);
-    LOAD_SYM(*core, GPUHandleIRQs);
-    LOAD_SYM(*core, GPUSetIRQLine);
-    LOAD_SYM(*core, GPUReadByte);
-    LOAD_SYM(*core, GPUReadWord);
-    LOAD_SYM(*core, GPUReadLong);
-    LOAD_SYM(*core, GPUWriteByte);
-    LOAD_SYM(*core, GPUWriteWord);
-    LOAD_SYM(*core, GPUWriteLong);
-    LOAD_SYM(*core, GPUGetPC);
-    LOAD_SYM(*core, GPUIsRunning);
+    LOAD_SYM(core, GPUInit);
+    LOAD_SYM(core, GPUReset);
+    LOAD_SYM(core, GPUExec);
+    LOAD_SYM(core, GPUHandleIRQs);
+    LOAD_SYM(core, GPUSetIRQLine);
+    LOAD_SYM(core, GPUReadByte);
+    LOAD_SYM(core, GPUReadWord);
+    LOAD_SYM(core, GPUReadLong);
+    LOAD_SYM(core, GPUWriteByte);
+    LOAD_SYM(core, GPUWriteWord);
+    LOAD_SYM(core, GPUWriteLong);
+    LOAD_SYM(core, GPUGetPC);
+    LOAD_SYM(core, GPUIsRunning);
 
     /* DSP */
-    LOAD_SYM(*core, DSPInit);
-    LOAD_SYM(*core, DSPReset);
-    LOAD_SYM(*core, DSPExec);
-    LOAD_SYM(*core, DSPHandleIRQs);
-    LOAD_SYM(*core, DSPSetIRQLine);
-    LOAD_SYM(*core, DSPReadByte);
-    LOAD_SYM(*core, DSPReadWord);
-    LOAD_SYM(*core, DSPReadLong);
-    LOAD_SYM(*core, DSPWriteByte);
-    LOAD_SYM(*core, DSPWriteWord);
-    LOAD_SYM(*core, DSPWriteLong);
+    LOAD_SYM(core, DSPInit);
+    LOAD_SYM(core, DSPReset);
+    LOAD_SYM(core, DSPExec);
+    LOAD_SYM(core, DSPHandleIRQs);
+    LOAD_SYM(core, DSPSetIRQLine);
+    LOAD_SYM(core, DSPReadByte);
+    LOAD_SYM(core, DSPReadWord);
+    LOAD_SYM(core, DSPReadLong);
+    LOAD_SYM(core, DSPWriteByte);
+    LOAD_SYM(core, DSPWriteWord);
+    LOAD_SYM(core, DSPWriteLong);
 
     /* TOM */
-    LOAD_SYM(*core, TOMInit);
-    LOAD_SYM(*core, TOMReset);
-    LOAD_SYM(*core, TOMReadWord);
-    LOAD_SYM(*core, TOMWriteWord);
-    LOAD_SYM(*core, TOMIRQEnabled);
-    LOAD_SYM(*core, TOMIRQControlReg);
-    LOAD_SYM(*core, TOMSetIRQLatch);
-    LOAD_SYM(*core, TOMSetPendingVideoInt);
-    LOAD_SYM(*core, TOMSetPendingGPUInt);
-    LOAD_SYM(*core, TOMSetPendingTimerInt);
-    LOAD_SYM(*core, TOMSetPendingObjectInt);
-    LOAD_SYM(*core, TOMSetPendingJERRYInt);
+    LOAD_SYM(core, TOMInit);
+    LOAD_SYM(core, TOMReset);
+    LOAD_SYM(core, TOMReadWord);
+    LOAD_SYM(core, TOMWriteWord);
+    LOAD_SYM(core, TOMIRQEnabled);
+    LOAD_SYM(core, TOMIRQControlReg);
+    LOAD_SYM(core, TOMSetIRQLatch);
+    LOAD_SYM(core, TOMSetPendingVideoInt);
+    LOAD_SYM(core, TOMSetPendingGPUInt);
+    LOAD_SYM(core, TOMSetPendingTimerInt);
+    LOAD_SYM(core, TOMSetPendingObjectInt);
+    LOAD_SYM(core, TOMSetPendingJERRYInt);
 
     /* JERRY */
-    LOAD_SYM(*core, JERRYInit);
-    LOAD_SYM(*core, JERRYReset);
-    LOAD_SYM(*core, JERRYReadWord);
-    LOAD_SYM(*core, JERRYWriteWord);
-    LOAD_SYM(*core, JERRYIRQEnabled);
-    LOAD_SYM(*core, JERRYSetPendingIRQ);
+    LOAD_SYM(core, JERRYInit);
+    LOAD_SYM(core, JERRYReset);
+    LOAD_SYM(core, JERRYReadWord);
+    LOAD_SYM(core, JERRYWriteWord);
+    LOAD_SYM(core, JERRYIRQEnabled);
+    LOAD_SYM(core, JERRYSetPendingIRQ);
 
     /* CDROM */
-    LOAD_SYM(*core, CDROMInit);
-    LOAD_SYM(*core, CDROMReset);
-    LOAD_SYM(*core, CDROMReadWord);
-    LOAD_SYM(*core, CDROMWriteWord);
+    LOAD_SYM(core, CDROMInit);
+    LOAD_SYM(core, CDROMReset);
+    LOAD_SYM(core, CDROMReadWord);
+    LOAD_SYM(core, CDROMWriteWord);
 
     /* Jaguar core */
-    LOAD_SYM(*core, JaguarReadByte);
-    LOAD_SYM(*core, JaguarReadWord);
-    LOAD_SYM(*core, JaguarWriteByte);
-    LOAD_SYM(*core, JaguarWriteWord);
-    LOAD_SYM(*core, JaguarWriteLong);
-    LOAD_SYM(*core, JaguarInit);
-    LOAD_SYM(*core, JaguarReset);
+    LOAD_SYM(core, JaguarReadByte);
+    LOAD_SYM(core, JaguarReadWord);
+    LOAD_SYM(core, JaguarWriteByte);
+    LOAD_SYM(core, JaguarWriteWord);
+    LOAD_SYM(core, JaguarWriteLong);
+    LOAD_SYM(core, JaguarInit);
+    LOAD_SYM(core, JaguarReset);
 
     /* m68k */
-    LOAD_SYM(*core, m68k_get_reg);
-    LOAD_SYM(*core, m68k_set_reg);
+    LOAD_SYM(core, m68k_get_reg);
+    LOAD_SYM(core, m68k_set_reg);
+    LOAD_SYM(core, m68k_execute);
+    LOAD_SYM(core, m68k_pulse_reset);
 
     /* Memory */
-    LOAD_SYM(*core, GetRamPtr);
+    LOAD_SYM(core, GetRamPtr);
 
     /* Exported data */
     core->gpu_reg_bank_0 = dlsym(core->handle, "gpu_reg_bank_0");
+    core->dsp_reg_bank_0 = dlsym(core->handle, "dsp_reg_bank_0");
     core->gpu_reg_bank_1 = dlsym(core->handle, "gpu_reg_bank_1");
     core->vjs = dlsym(core->handle, "vjs");
 
@@ -516,31 +522,21 @@ static inline void gpu_write_movei(struct vj_core *c, uint32_t addr,
 #define DSP_PC_REG      0xF1A110
 #define DSP_RAM_BASE    0xF1B000
 
-/* Write a GPU program starting at addr, terminate with NOP that
- * clears GPUGO (by storing 0 to G_CTRL). Returns address after last instr. */
-static uint32_t gpu_write_halt(struct vj_core *c, uint32_t addr)
+/* Pad remaining program space with NOPs up to a max address */
+static void gpu_fill_nops(struct vj_core *c, uint32_t from, uint32_t to)
 {
-    /* MOVEI #GPU_CTRL_REG, R30 */
-    gpu_write_movei(c, addr, 30, GPU_CTRL_REG);
-    addr += 6;
-    /* MOVEQ #0, R29 */
-    c->GPUWriteWord(addr, gpu_encode(GPU_OP_MOVEQ, 0, 29), 0);
-    addr += 2;
-    /* STORE R29, (R30)  — clears GPUGO, halting GPU */
-    c->GPUWriteWord(addr, gpu_encode(GPU_OP_STORE, 29, 30), 0);
-    addr += 2;
-    /* NOP (delay slot) */
-    c->GPUWriteWord(addr, GPU_NOP, 0);
-    addr += 2;
-    return addr;
+    for (uint32_t a = from; a < to; a += 2)
+        c->GPUWriteWord(a, GPU_NOP, 0);
 }
 
-/* Execute a GPU program: set PC, start GPU, run until halted */
+/* Execute a GPU program: set PC, start GPU, run N cycles, then stop.
+ * The program should be short enough to complete within cycle_budget. */
 static void gpu_run_program(struct vj_core *c, uint32_t pc_addr)
 {
     c->GPUWriteLong(GPU_PC_REG, pc_addr, 0);
     c->GPUWriteLong(GPU_CTRL_REG, 1, 0);  /* GPUGO */
-    c->GPUExec(1000);
+    c->GPUExec(200);
+    c->GPUWriteLong(GPU_CTRL_REG, 0, 0);  /* stop */
 }
 
 /* Read GPU flags register */

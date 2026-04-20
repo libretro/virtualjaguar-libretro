@@ -382,6 +382,19 @@ static void check_variables(void)
          vjs.cdBiosType = CDBIOS_RETAIL;
    }
 
+   var.key = "virtualjaguar_cd_boot_mode";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "hle") == 0)
+         vjs.cdBootMode = CDBOOT_HLE;
+      else if (strcmp(var.value, "bios") == 0)
+         vjs.cdBootMode = CDBOOT_BIOS;
+      else
+         vjs.cdBootMode = CDBOOT_AUTO;
+   }
+
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -1108,17 +1121,24 @@ bool retro_load_game(const struct retro_game_info *info)
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
       cd_image_path[sizeof(cd_image_path) - 1] = '\0';
 
-      /* For CD mode, force BIOS on -- CD games require the BIOS */
       vjs.useJaguarBIOS = true;
       vjs.useCDBIOS     = true;
 
-      /* Try to load an external CD BIOS from the system directory.
-       * If no external BIOS is found, we'll use HLE (High-Level
-       * Emulation) to boot the CD game directly. */
       cd_bios_loaded_externally = false;
-      if (!load_external_cd_bios())
+
+      if (vjs.cdBootMode == CDBOOT_HLE)
       {
-         fprintf(stderr, "[CD] No external BIOS found — will use HLE boot path\n");
+         fprintf(stderr, "[CD] Boot mode: HLE (skipping BIOS search)\n");
+      }
+      else
+      {
+         if (!load_external_cd_bios())
+         {
+            if (vjs.cdBootMode == CDBOOT_BIOS)
+               fprintf(stderr, "[CD] WARNING: Boot mode is BIOS but no external BIOS found\n");
+            else
+               fprintf(stderr, "[CD] No external BIOS found — will use HLE boot path\n");
+         }
       }
    }
 
