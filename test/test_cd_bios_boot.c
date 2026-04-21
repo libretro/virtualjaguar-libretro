@@ -111,6 +111,20 @@ struct cd_disc_result {
     bool     unique_pc_overflow;
     size_t   ram_nonzero_bytes;
     char     load_error[256];
+
+    /* Frozen snapshot at the moment PC first leaves the valid execute window.
+     * Captured ONCE so the post-mortem reflects the actual transition rather
+     * than the OP/blitter scribble that may keep mutating RAM afterwards. */
+    bool     oob_snapshot_captured;
+    uint32_t oob_pc;
+    uint32_t oob_prev_pc;
+    uint32_t oob_frame;
+    uint32_t oob_regs[16];           /* D0..D7, A0..A7 (SP shadow) */
+    uint8_t  oob_prev_pc_bytes[32];  /* RAM around prev_pc (the JMP/RTS that fired) */
+    uint8_t  oob_sp_bytes[32];       /* RAM at SP (top of stack — likely RTS source) */
+    uint32_t oob_sp_addr;
+    uint8_t  oob_a0_bytes[32];
+    uint8_t  oob_a1_bytes[32];
 };
 
 static bool cd_load_game(const char *path)
@@ -168,6 +182,7 @@ static void cd_run_one_disc(const char *path, unsigned frames,
     uint32_t first_oob_pc = 0;
     unsigned first_oob_frame = 0;
     size_t   oob_count = 0;
+    uint32_t prev_pc = 0;
 
     for (unsigned f = 0; f < frames; f++) {
         p_retro_run();
@@ -181,10 +196,49 @@ static void cd_run_one_disc(const char *path, unsigned frames,
                 if (!first_oob_pc) {
                     first_oob_pc = oob;
                     first_oob_frame = f;
+
+                    /* Freeze diagnostic state immediately — anything we read
+                     * later might be corrupted by OP/Blitter chasing garbage. */
+                    if (!out->oob_snapshot_captured) {
+                        out->oob_snapshot_captured = true;
+                        out->oob_pc      = oob;
+                        out->oob_prev_pc = prev_pc;
+                        out->oob_frame   = f;
+
+                        for (int r = 0; r < 16; r++)
+                            out->oob_regs[r] = C.m68k_get_reg(NULL, r);
+
+                        if (ram) {
+                            uint32_t a0 = out->oob_regs[8];
+                            uint32_t a1 = out->oob_regs[9];
+                            uint32_t sp = C.m68k_get_reg(NULL, M68K_REG_SP);
+                            out->oob_sp_addr = sp;
+
+                            uint32_t pbase = (prev_pc >= 8 && prev_pc < 0x200000)
+                                             ? (prev_pc - 8) : 0;
+                            for (int i = 0; i < 32; i++) {
+                                uint32_t a = pbase + i;
+                                out->oob_prev_pc_bytes[i] = (a < 0x200000) ? ram[a] : 0;
+                            }
+                            for (int i = 0; i < 32; i++) {
+                                uint32_t a = sp + i;
+                                out->oob_sp_bytes[i] = (a < 0x200000) ? ram[a] : 0;
+                            }
+                            for (int i = 0; i < 32; i++) {
+                                uint32_t a = a0 + i;
+                                out->oob_a0_bytes[i] = (a < 0x200000) ? ram[a] : 0;
+                            }
+                            for (int i = 0; i < 32; i++) {
+                                uint32_t a = a1 + i;
+                                out->oob_a1_bytes[i] = (a < 0x200000) ? ram[a] : 0;
+                            }
+                        }
+                    }
                 }
                 oob_count++;
                 out->pc_stayed_in_ram = false;
             }
+            prev_pc = pc;
         }
     }
 
@@ -383,6 +437,33 @@ TEST(boot_all_discovered_discs_real_bios)
                 r->unique_pc_count,
                 r->unique_pc_overflow ? "+" : "",
                 r->final_pc);
+
+        if (r->oob_snapshot_captured) {
+            fprintf(stderr,
+                    "    [OOB-FROZEN] frame=%u prev_pc=$%06X -> oob_pc=$%08X\n",
+                    r->oob_frame, r->oob_prev_pc, r->oob_pc);
+            fprintf(stderr,
+                    "    [OOB-REGS] D0=$%08X D1=$%08X D2=$%08X D3=$%08X "
+                    "A0=$%08X A1=$%08X A6=$%08X SP=$%08X\n",
+                    r->oob_regs[0], r->oob_regs[1], r->oob_regs[2], r->oob_regs[3],
+                    r->oob_regs[8], r->oob_regs[9], r->oob_regs[14], r->oob_sp_addr);
+            fprintf(stderr, "    [OOB-PREVBYTES $%06X]", r->oob_prev_pc & 0xFFFFFF);
+            for (int i = 0; i < 32; i++)
+                fprintf(stderr, " %02X", r->oob_prev_pc_bytes[i]);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "    [OOB-SPBYTES   $%06X]", r->oob_sp_addr & 0xFFFFFF);
+            for (int i = 0; i < 32; i++)
+                fprintf(stderr, " %02X", r->oob_sp_bytes[i]);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "    [OOB-A0BYTES   $%06X]", r->oob_regs[8] & 0xFFFFFF);
+            for (int i = 0; i < 32; i++)
+                fprintf(stderr, " %02X", r->oob_a0_bytes[i]);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "    [OOB-A1BYTES   $%06X]", r->oob_regs[9] & 0xFFFFFF);
+            for (int i = 0; i < 32; i++)
+                fprintf(stderr, " %02X", r->oob_a1_bytes[i]);
+            fprintf(stderr, "\n");
+        }
     }
 
     fprintf(stderr, "    --- discs: %zu pass, %zu fail, %zu focus-skip ---\n",

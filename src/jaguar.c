@@ -168,11 +168,19 @@ void JaguarDumpPCHistoryStderr(int count)
  *
  * Installed lazily on the first virtual-pregap read served by cdintf.c so
  * the BIOS has finished decrypting and copying its code into RAM. */
+static bool cdAuthBypassInstalled = false;
+static bool cdBootStubInjected = false;
+
+void JaguarResetCDHooks(void)
+{
+   cdAuthBypassInstalled = false;
+   cdBootStubInjected = false;
+}
+
 void JaguarInstallCDAuthBypass(void)
 {
-   static bool installed = false;
    const uint32_t bneAddr = 0x050AA0;
-   if (installed)
+   if (cdAuthBypassInstalled)
       return;
 
    if (jaguarMainRAM[bneAddr]     != 0x66 || jaguarMainRAM[bneAddr + 1] != 0x00
@@ -182,13 +190,13 @@ void JaguarInstallCDAuthBypass(void)
               bneAddr,
               jaguarMainRAM[bneAddr], jaguarMainRAM[bneAddr + 1],
               jaguarMainRAM[bneAddr + 2], jaguarMainRAM[bneAddr + 3]);
-      installed = true;
+      cdAuthBypassInstalled = true;
       return;
    }
    jaguarMainRAM[bneAddr]     = 0x4E; jaguarMainRAM[bneAddr + 1] = 0x71;
    jaguarMainRAM[bneAddr + 2] = 0x4E; jaguarMainRAM[bneAddr + 3] = 0x71;
    LOG_INF("[CD-AUTH] Installed BNE.W $0504EC -> 2x NOP at $%06X\n", bneAddr);
-   installed = true;
+   cdAuthBypassInstalled = true;
 }
 
 void JaguarDumpMemWindow(uint32_t centerPC, uint32_t before, uint32_t after)
@@ -542,12 +550,11 @@ void M68KInstructionHook(void)
 
       if (m68kPC == 0x050176)
       {
-         static bool bootStubInjected = false;
-         if (!bootStubInjected)
+         if (!cdBootStubInjected)
          {
-            static uint8_t stub[256 * 1024];
+            static uint8_t stub[600 * 1024];
             uint32_t loadAddr = 0, length = 0;
-            bootStubInjected = true;
+            cdBootStubInjected = true;
             if (CDIntfExtractBootStub(stub, sizeof(stub), &loadAddr, &length))
             {
                uint32_t i;
@@ -555,6 +562,30 @@ void M68KInstructionHook(void)
                   jaguarMainRAM[loadAddr + i] = stub[i];
                LOG_INF("[CD-BOOTSTUB] Injected $%X bytes at $%06X\n",
                        length, loadAddr);
+
+               /* Dump the 68K instruction at the injection hook PC so we can
+                * see whether it's `JSR $080000` or something else. */
+               LOG_INF("[CD-BOOTSTUB] Bytes at PC=$050176: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                       jaguarMainRAM[0x050176], jaguarMainRAM[0x050177],
+                       jaguarMainRAM[0x050178], jaguarMainRAM[0x050179],
+                       jaguarMainRAM[0x05017A], jaguarMainRAM[0x05017B],
+                       jaguarMainRAM[0x05017C], jaguarMainRAM[0x05017D]);
+               LOG_INF("[CD-BOOTSTUB] JSR target at $050178 = $%02X%02X%02X%02X\n",
+                       jaguarMainRAM[0x050178], jaguarMainRAM[0x050179],
+                       jaguarMainRAM[0x05017A], jaguarMainRAM[0x05017B]);
+
+               if (loadAddr != 0x080000)
+               {
+                  LOG_INF("[CD-BOOTSTUB] Boot stub loads at $%06X, not $080000 — "
+                          "installing trampoline at $080000\n", loadAddr);
+                  /* JMP loadAddr (4EF9 xxxx xxxx) */
+                  jaguarMainRAM[0x080000] = 0x4E;
+                  jaguarMainRAM[0x080001] = 0xF9;
+                  jaguarMainRAM[0x080002] = (loadAddr >> 24) & 0xFF;
+                  jaguarMainRAM[0x080003] = (loadAddr >> 16) & 0xFF;
+                  jaguarMainRAM[0x080004] = (loadAddr >>  8) & 0xFF;
+                  jaguarMainRAM[0x080005] = (loadAddr >>  0) & 0xFF;
+               }
             }
          }
       }
@@ -1058,8 +1089,8 @@ void JaguarReset(void)
 {
    unsigned i;
 
-   // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
-   // Skip the region occupied by a RAM-loaded executable (ABS/COFF) so it survives reset.
+   JaguarResetCDHooks();
+
    JaguarSeedPRNG(12345);
    for(i=8; i<0x200000; i+=4)
    {
