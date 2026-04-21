@@ -251,6 +251,34 @@ static void cd_run_one_disc(const char *path, unsigned frames,
                 fprintf(stderr, " %s=$%08X", regs[i].name,
                         C.m68k_get_reg(NULL, regs[i].id));
             fprintf(stderr, "\n");
+
+            /* Dump 64 bytes at the current A0 (and A1) target.  Use the
+             * core's jagMemSpace[] symbol so we can see cart space
+             * ($800000+) and not just main RAM. */
+            uint8_t *space = (uint8_t *)dlsym(C.handle, "jagMemSpace");
+            uint32_t a0 = C.m68k_get_reg(NULL, 8);
+            uint32_t a1 = C.m68k_get_reg(NULL, 9);
+            if (space) {
+                if (a0 < 0xE00000) {
+                    fprintf(stderr, "    [A0-MEM $%06X]", a0);
+                    for (uint32_t k = 0; k < 32 && a0 + k < 0xE00000; k++)
+                        fprintf(stderr, " %02X", space[a0 + k]);
+                    fprintf(stderr, "\n");
+                }
+                if (a1 < 0xE00000) {
+                    fprintf(stderr, "    [A1-MEM $%06X]", a1);
+                    for (uint32_t k = 0; k < 32 && a1 + k < 0xE00000; k++)
+                        fprintf(stderr, " %02X", space[a1 + k]);
+                    fprintf(stderr, "\n");
+                }
+            } else if (ram) {
+                if (a0 < 0x200000) {
+                    fprintf(stderr, "    [A0-RAM $%06X]", a0);
+                    for (uint32_t k = 0; k < 32 && a0 + k < 0x200000; k++)
+                        fprintf(stderr, " %02X", ram[a0 + k]);
+                    fprintf(stderr, "\n");
+                }
+            }
         }
     }
 

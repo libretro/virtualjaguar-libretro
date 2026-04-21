@@ -214,10 +214,29 @@ static void HLEHandleCDRead(void)
    uint8_t pat[4];
    uint32_t scanLBA, scanOff;
    bool foundSentinel;
+   bool reseekOnly = (d0 & 0x80000000u) != 0;
 
    lba = ((uint32_t)min * 60 + sec) * 75 + frm;
    if (lba >= 150)
       lba -= 150;
+
+   /* Per docs/cd-bios-calling-convention.md:
+    *   "Bit 31: if set, skip hardware init, just re-seek (GPU data area
+    *    already configured by prior call)."
+    *
+    * Real BIOS treats bit-31 calls as DSA seek-only — the destination,
+    * end address, and sentinel are already in place from the prior
+    * non-bit-31 CD_read.  We have no continuous streaming, so the prior
+    * call already wrote all data; a re-seek is a no-op for HLE.  The
+    * critical thing is to NOT compute byteCount from A0/A1 (which hold
+    * stale or garbage values in re-seek mode) and stomp memory. */
+   if (reseekOnly)
+   {
+      HLE_LOG("CD_read: re-seek only (D0 bit31 set, D0=$%08X) — "
+              "skipping data transfer\n", d0);
+      hle_read_pending = false;
+      return;
+   }
 
    destAddr  = a0;
    byteCount = (a1 > a0 && a1 < 0x200000) ? (a1 - a0) : 0;
@@ -437,6 +456,19 @@ static void HLEHandleCDRead(void)
       dst = destAddr + bytesWritten;
       for (i = 0; i < copyLen && (dst + i) < 0x200000; i++)
          jaguarMainRAM[dst + i] = sectorBuf[copyStart + i];
+
+      /* Mirror the same data into cart space at the same offset.
+       * Some boot stubs (e.g. BrainDead 13) scan cart-space addresses
+       * like $00851644 looking for the universal "ATRI" header.  On real
+       * Jaguar CD hardware, the CD cart's onboard buffer is mapped into
+       * cart space; in HLE we mirror the loaded data so direct cart-space
+       * scans hit the same payload.  Cart space is otherwise empty in HLE
+       * mode, so this overlay is harmless. */
+      {
+         uint32_t cartDst = dst + 0x800000;
+         for (i = 0; i < copyLen && (cartDst + i) < 0xE00000; i++)
+            jaguarMainROM[cartDst - 0x800000 + i] = sectorBuf[copyStart + i];
+      }
 
       bytesWritten += copyLen;
       s++;
