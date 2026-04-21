@@ -1,3 +1,4 @@
+#define HLE_DIAG 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "tom.h"
 #include "state.h"
 #include "m68000/m68kinterface.h"
+#include "log.h"
 
 #define SAMPLERATE 48000
 #define BUFPAL  1920
@@ -67,6 +69,7 @@ static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
 static retro_environment_t environ_cb;
 retro_audio_sample_batch_t audio_batch_cb;
+retro_log_printf_t vj_log_cb = NULL;
 
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
@@ -312,6 +315,12 @@ void retro_set_environment(retro_environment_t cb)
    struct retro_core_options_update_display_callback update_display_cb;
    bool option_categories = false;
    environ_cb = cb;
+
+   {
+      struct retro_log_callback log_iface;
+      if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log_iface))
+         vj_log_cb = log_iface.log;
+   }
 
    libretro_set_core_options(environ_cb, &option_categories);
    update_display_cb.callback = update_option_visibility;
@@ -819,7 +828,7 @@ void retro_get_system_info(struct retro_system_info *info)
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
 #endif
-   info->library_version  = "v2.1.0" GIT_VERSION;
+   info->library_version  = "v2.2.0" GIT_VERSION;
    info->need_fullpath    = true;
    info->valid_extensions = "j64|jag|cue|cdi|iso";
 }
@@ -1128,16 +1137,16 @@ bool retro_load_game(const struct retro_game_info *info)
 
       if (vjs.cdBootMode == CDBOOT_HLE)
       {
-         fprintf(stderr, "[CD] Boot mode: HLE (skipping BIOS search)\n");
+         LOG_INF("[CD] Boot mode: HLE (skipping BIOS search)\n");
       }
       else
       {
          if (!load_external_cd_bios())
          {
             if (vjs.cdBootMode == CDBOOT_BIOS)
-               fprintf(stderr, "[CD] WARNING: Boot mode is BIOS but no external BIOS found\n");
+               LOG_WRN("[CD] WARNING: Boot mode is BIOS but no external BIOS found\n");
             else
-               fprintf(stderr, "[CD] No external BIOS found — will use HLE boot path\n");
+               LOG_WRN("[CD] No external BIOS found — will use HLE boot path\n");
          }
       }
    }
@@ -1174,9 +1183,9 @@ bool retro_load_game(const struct retro_game_info *info)
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
 
-   /* Init video */
-   for (i = 0; i < videoWidth * videoHeight; ++i)
-      videoBuffer[i] = 0xFF00FFFF;
+   /* Init video to opaque black */
+   for (i = 0; i < 1024 * 512; ++i)
+      videoBuffer[i] = 0xFF000000;
 
    if (jaguar_cd_mode && cd_bios_loaded_externally)
    {
@@ -1195,7 +1204,7 @@ bool retro_load_game(const struct retro_game_info *info)
        * forever in emulation (the GPU security code at $F032EC never
        * converges). Skip the GPU wait by clearing bit 0. */
       jagMemSpace[0x80040B] &= 0xFE;
-      fprintf(stderr, "[CD-TRACE] Boot ROM wait bypass applied at $80040B (value now $%02X)\n",
+      LOG_DBG("[CD-TRACE] Boot ROM wait bypass applied at $80040B (value now $%02X)\n",
               jagMemSpace[0x80040B]);
 
       JaguarReset();
@@ -1248,7 +1257,7 @@ bool retro_load_game(const struct retro_game_info *info)
    {
       if (!JaguarCDHLEBoot())
       {
-         fprintf(stderr, "[CD-HLE] HLE boot failed — falling back to diagnostic screen\n");
+         LOG_ERR("[CD-HLE] HLE boot failed — falling back to diagnostic screen\n");
       }
    }
 
@@ -1394,6 +1403,98 @@ void retro_run(void)
 
    JaguarExecuteNew();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
+
+#ifdef HLE_DIAG
+   {
+      static uint32_t hle_frame = 0;
+      hle_frame++;
+      if (JaguarCDHLEActive() &&
+          (hle_frame == 50 || hle_frame == 100 || hle_frame == 200 ||
+           hle_frame == 300 || hle_frame == 400 || hle_frame == 500 ||
+           hle_frame == 600 || hle_frame == 800 || hle_frame == 1000 ||
+           hle_frame == 2000 || hle_frame == 3000))
+      {
+         uint32_t pc  = m68k_get_reg(NULL, M68K_REG_PC);
+         uint16_t vmode = TOMReadWord(0xF00028, 0);
+         uint16_t vdb   = TOMReadWord(0xF00046, 0);
+         uint16_t vde   = TOMReadWord(0xF00048, 0);
+         uint16_t hdb1  = TOMReadWord(0xF00038, 0);
+         uint16_t hde   = TOMReadWord(0xF0003C, 0);
+         uint16_t bg    = TOMReadWord(0xF00058, 0);
+         uint32_t olp   = ((uint32_t)TOMReadWord(0xF00020, 0) << 16)
+                        |  (uint32_t)TOMReadWord(0xF00022, 0);
+         uint32_t nzpix = 0;
+         if (videoBuffer)
+            for (uint32_t i = 0; i < (uint32_t)(game_width * game_height); i++)
+               if (videoBuffer[i] != 0) nzpix++;
+
+         LOG_DBG("[HLE-DIAG] frame=%u PC=$%06X tomW=%u tomH=%u gameW=%d gameH=%d\n",
+                 hle_frame, pc, tomWidth, tomHeight, game_width, game_height);
+         LOG_DBG("[HLE-DIAG]   VMODE=$%04X VDB=$%04X VDE=$%04X HDB1=$%04X HDE=$%04X BG=$%04X OLP=$%08X\n",
+                 vmode, vdb, vde, hdb1, hde, bg, olp);
+         LOG_DBG("[HLE-DIAG]   non-zero pixels=%u/%u\n",
+                 nzpix, (uint32_t)(game_width * game_height));
+         /* Sample a few pixel values */
+         if (videoBuffer && game_width > 0 && game_height > 0)
+         {
+            int cy = game_height / 2, cx = game_width / 2;
+            LOG_DBG("[HLE-DIAG]   pixel[0,0]=$%08X pixel[%d,%d]=$%08X pixel[last]=$%08X\n",
+                    videoBuffer[0], cx, cy, videoBuffer[cy * game_width + cx],
+                    videoBuffer[game_width * game_height - 1]);
+         }
+         /* Dump PPM directly from videoBuffer at specific frames */
+         if ((hle_frame == 50 || hle_frame == 100 || hle_frame == 200 ||
+              hle_frame == 300 || hle_frame == 400 || hle_frame == 500 ||
+              hle_frame == 600 || hle_frame == 800 || hle_frame == 1000 ||
+              hle_frame == 2000 || hle_frame == 3000) &&
+             videoBuffer && game_width > 0 && game_height > 0)
+         {
+            char ppm_path[64];
+               snprintf(ppm_path, sizeof(ppm_path), "/tmp/hle_f%04u.ppm", hle_frame);
+               FILE *pf = fopen(ppm_path, "wb");
+            if (pf)
+            {
+               int w = game_width, h = game_height;
+               fprintf(pf, "P6\n%d %d\n255\n", w, h);
+               for (int y = 0; y < h; y++)
+                  for (int x = 0; x < w; x++)
+                  {
+                     uint32_t px = videoBuffer[y * w + x]; /* XRGB8888 */
+                     uint8_t rgb[3] = {
+                        (px >> 16) & 0xFF,  /* R */
+                        (px >>  8) & 0xFF,  /* G */
+                         px        & 0xFF   /* B */
+                     };
+                     fwrite(rgb, 1, 3, pf);
+                  }
+               fclose(pf);
+               LOG_DBG("[HLE-DIAG]   Saved direct PPM: %s\n", ppm_path);
+            }
+         }
+         LOG_DBG("[HLE-DIAG]   D0=$%08X D1=$%08X A0=$%08X A7=$%08X SR=$%04X\n",
+                 m68k_get_reg(NULL, M68K_REG_D0),
+                 m68k_get_reg(NULL, M68K_REG_D1),
+                 m68k_get_reg(NULL, M68K_REG_A0),
+                 m68k_get_reg(NULL, M68K_REG_A7),
+                 m68k_get_reg(NULL, M68K_REG_SR));
+         /* OLP target: dump first 16 bytes of the Object Processor list */
+         if (olp >= 0x4000 && olp < 0x200000 - 16)
+         {
+            extern uint8_t * jaguarMainRAM;
+            LOG_DBG("[HLE-DIAG]   OP list @$%06X: %02X%02X%02X%02X %02X%02X%02X%02X "
+                    "%02X%02X%02X%02X %02X%02X%02X%02X\n", olp,
+                    jaguarMainRAM[olp+0],  jaguarMainRAM[olp+1],
+                    jaguarMainRAM[olp+2],  jaguarMainRAM[olp+3],
+                    jaguarMainRAM[olp+4],  jaguarMainRAM[olp+5],
+                    jaguarMainRAM[olp+6],  jaguarMainRAM[olp+7],
+                    jaguarMainRAM[olp+8],  jaguarMainRAM[olp+9],
+                    jaguarMainRAM[olp+10], jaguarMainRAM[olp+11],
+                    jaguarMainRAM[olp+12], jaguarMainRAM[olp+13],
+                    jaguarMainRAM[olp+14], jaguarMainRAM[olp+15]);
+         }
+      }
+   }
+#endif
 
    // Resolution changed
    if ((tomWidth != videoWidth || tomHeight != videoHeight) && tomWidth > 0 && tomHeight > 0)

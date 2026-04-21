@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>								// For memset
+#include "log.h"
 #include "dsp.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
@@ -37,9 +38,9 @@
 // Seems alignment in loads & stores was off...
 #define GPU_CORRECT_ALIGNMENT
 
-#define GPU_TRACE_DEBUG 1
+#define GPU_TRACE_DEBUG 0
 #if GPU_TRACE_DEBUG
-#define GPU_TRACE(...) fprintf(stderr, "[GPU-TRACE] " __VA_ARGS__)
+#define GPU_TRACE(...) LOG_DBG("[GPU-TRACE] " __VA_ARGS__)
 #else
 #define GPU_TRACE(...) ((void)0)
 #endif
@@ -263,6 +264,26 @@ uint32_t GPUGetPC(void)
 int GPUIsRunning(void)
 {
 	return (gpu_control & 0x01) ? 1 : 0;
+}
+
+void GPUDumpState(const char *tag)
+{
+   LOG_DBG("[GPU-STATE] %s: pc=$%06X running=%d flags=$%08X imask=%d "
+           "control=$%08X latch=$%02X mask=$%02X\n",
+           tag, gpu_pc, (gpu_control & 0x01) ? 1 : 0,
+           gpu_flags, (gpu_flags & IMASK) ? 1 : 0,
+           gpu_control, (gpu_control >> 6) & 0x1F, (gpu_flags >> 4) & 0x1F);
+   LOG_DBG("[GPU-STATE]   R0-R7: $%08X $%08X $%08X $%08X $%08X $%08X $%08X $%08X\n",
+           gpu_reg_bank_0[0], gpu_reg_bank_0[1], gpu_reg_bank_0[2], gpu_reg_bank_0[3],
+           gpu_reg_bank_0[4], gpu_reg_bank_0[5], gpu_reg_bank_0[6], gpu_reg_bank_0[7]);
+   LOG_DBG("[GPU-STATE]   R24-R31: $%08X $%08X $%08X $%08X $%08X $%08X $%08X $%08X\n",
+           gpu_reg_bank_0[24], gpu_reg_bank_0[25], gpu_reg_bank_0[26], gpu_reg_bank_0[27],
+           gpu_reg_bank_0[28], gpu_reg_bank_0[29], gpu_reg_bank_0[30], gpu_reg_bank_0[31]);
+   /* Dump GPU RAM around the mailbox ($F03E9C) and the frame counter ptr */
+   LOG_DBG("[GPU-STATE]   GPU RAM $F03E80-$F03EBF:");
+   for (uint32_t a = 0xF03E80; a < 0xF03EC0; a += 4)
+      LOG_DBG(" %08X", GPUReadLong(a, M68K));
+   LOG_DBG("\n");
 }
 
 void build_branch_condition_table(void)
@@ -582,6 +603,11 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                      if (gpuStartCount <= 5 || (gpuStartCount % 500) == 0 || gpu_pc < 0xF00000)
                         GPU_TRACE("GPU STARTED #%u (G_CTRL $%08X -> $%08X, PC=$%08X, who=%u)\n",
                                   gpuStartCount, old_ctrl, gpu_control, gpu_pc, who);
+                     #if GPU_TRACE_DEBUG
+                     if (JaguarCDHLEActive() && (gpuStartCount <= 30 || (gpuStartCount % 1000) == 0))
+                        LOG_DBG("[GPU-START] #%u PC=$%06X phase=%u who=%u\n",
+                                gpuStartCount, gpu_pc, gpu_isr_phase, who);
+                     #endif
                      if (gpu_pc >= 0xF03000 && gpu_pc < 0xF04000
                          && gpu_isr_phase == 2)
                      {
@@ -595,30 +621,32 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                            gpu_control &= ~0x01;
                            GPU_TRACE("HLE intercepted GPU data phase — GPU stopped\n");
                         }
-                        fprintf(stderr, "[GPU-DATA] GPU RAM dump ($F03000-$F03200, $F03FE0-$F03FFF):\n");
+                        #if GPU_TRACE_DEBUG
+                        LOG_DBG("[GPU-DATA] GPU RAM dump ($F03000-$F03200, $F03FE0-$F03FFF):\n");
                         for (unsigned r = 0; r < 0x200; r += 16)
                         {
-                           fprintf(stderr, "  %06X:", 0xF03000 + r);
+                           LOG_DBG("  %06X:", 0xF03000 + r);
                            for (unsigned b = 0; b < 16; b += 2)
                            {
                               uint16_t w = ((uint16_t)gpu_ram_8[r + b] << 8)
                                            | (uint16_t)gpu_ram_8[r + b + 1];
-                              fprintf(stderr, " %04X", w);
+                              LOG_DBG(" %04X", w);
                            }
-                           fprintf(stderr, "\n");
+                           LOG_DBG("\n");
                         }
-                        fprintf(stderr, "  --- saved regs ---\n");
+                        LOG_DBG("  --- saved regs ---\n");
                         for (unsigned r = 0xFE0; r < 0x1000; r += 16)
                         {
-                           fprintf(stderr, "  %06X:", 0xF03000 + r);
+                           LOG_DBG("  %06X:", 0xF03000 + r);
                            for (unsigned b = 0; b < 16; b += 2)
                            {
                               uint16_t w = ((uint16_t)gpu_ram_8[r + b] << 8)
                                            | (uint16_t)gpu_ram_8[r + b + 1];
-                              fprintf(stderr, " %04X", w);
+                              LOG_DBG(" %04X", w);
                            }
-                           fprintf(stderr, "\n");
+                           LOG_DBG("\n");
                         }
+                        #endif
                      }
                   }
                   else if ((old_ctrl & 0x01) && !(gpu_control & 0x01))
@@ -634,6 +662,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                       * address.  Lets us disassemble the instruction that
                       * stopped the GPU and its immediate context. */
                      {
+                        #if GPU_TRACE_DEBUG
                         static uint32_t seen_halts[16] = {0};
                         static unsigned seen_count = 0;
                         uint32_t halt_pc = gpu_pc;
@@ -644,25 +673,26 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                             && halt_pc >= 0xF03000 && halt_pc < 0xF04000)
                         {
                            seen_halts[seen_count++] = halt_pc;
-                           uint32_t base = halt_pc & ~0x1F;          /* 32-byte align */
-                           if (base >= 0xF03010) base -= 0x10;       /* back up one row */
-                           fprintf(stderr, "[GPU-HALT] PC=$%06X context (gpu_ram_8):\n", halt_pc);
+                           uint32_t base = halt_pc & ~0x1F;
+                           if (base >= 0xF03010) base -= 0x10;
+                           LOG_DBG("[GPU-HALT] PC=$%06X context (gpu_ram_8):\n", halt_pc);
                            for (unsigned row = 0; row < 3; row++)
                            {
                               uint32_t addr = base + row * 16;
                               if (addr < 0xF03000 || addr >= 0xF04000) continue;
-                              fprintf(stderr, "  %06X:", addr);
+                              LOG_DBG("  %06X:", addr);
                               for (unsigned b = 0; b < 16; b += 2)
                               {
                                  uint32_t off = (addr + b) & 0xFFF;
                                  uint16_t w = ((uint16_t)gpu_ram_8[off] << 8)
                                               | (uint16_t)gpu_ram_8[off + 1];
-                                 fprintf(stderr, " %04X%s",
+                                 LOG_DBG(" %04X%s",
                                          w, (addr + b) == halt_pc ? "*" : "");
                               }
-                              fprintf(stderr, "\n");
+                              LOG_DBG("\n");
                            }
                         }
+                        #endif
                      }
                   }
                }
@@ -896,6 +926,33 @@ void GPUExec(int32_t cycles)
             }
          }
       }
+
+      #if GPU_TRACE_DEBUG
+      /* Trace GPU code from $F031C6 (game's GPU entry) and the polling loop */
+      {
+         static uint32_t gpuLoopTraceCount = 0;
+         if (gpu_pc >= 0xF031C6 && gpu_pc < 0xF03210 && gpuLoopTraceCount < 500)
+         {
+            gpuLoopTraceCount++;
+            LOG_DBG("[GPU-LOOP] pc=$%06X op=$%04X R[%u]=$%08X R[%u]=$%08X "
+                    "R0=$%08X R1=$%08X R14=$%08X R26=$%08X flags=$%08X\n",
+                    gpu_pc, opcode,
+                    gpu_opcode_first_parameter, gpu_reg[gpu_opcode_first_parameter],
+                    gpu_opcode_second_parameter, gpu_reg[gpu_opcode_second_parameter],
+                    gpu_reg[0], gpu_reg[1], gpu_reg[14], gpu_reg[26], gpu_flags);
+         }
+         /* Also trace the GPU IRQ handler entry at $F03000-$F03040 */
+         static uint32_t gpuIRQTraceCount = 0;
+         if (gpu_pc >= 0xF03000 && gpu_pc < 0xF03050 && gpuIRQTraceCount < 200)
+         {
+            gpuIRQTraceCount++;
+            LOG_DBG("[GPU-IRQ] pc=$%06X op=$%04X flags=$%08X imask=%d R[%u]=$%08X R[%u]=$%08X\n",
+                    gpu_pc, opcode, gpu_flags, (gpu_flags & 0x0008) ? 1 : 0,
+                    gpu_opcode_first_parameter, gpu_reg[gpu_opcode_first_parameter],
+                    gpu_opcode_second_parameter, gpu_reg[gpu_opcode_second_parameter]);
+         }
+      }
+      #endif
 
       //$E400 -> 1110 01 -> $39 -> 57
       //GPU #1

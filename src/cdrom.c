@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>									// For memset, etc.
 #include "cdintf.h"									// System agnostic CD interface functions
+#include "log.h"
 #include "gpu.h"
 #include "dsp.h"
 #include "jaguar.h"
@@ -31,17 +32,17 @@
 // initialized by the BIOS. This HLE path copies data in C and updates the
 // GPU RAM buffer pointer at $F03118 so the boot stub sees progress.
 // Set to 0 to use the original GPU ISR path (for debugging).
-#define CD_DATA_TRANSFER_HLE 1
+#define CD_DATA_TRANSFER_HLE 0
 
 // How many bytes to transfer per BUTCHExec call in HLE mode.
 // One sector of CD-ROM user data = 2048 bytes. Raw sector = 2352 bytes.
 // Transfer multiple sectors per call to avoid needing thousands of calls.
 #define HLE_BYTES_PER_TICK   2352
 
-/* Temporary CD debug tracing -- set to 1 to enable */
-#define CD_DEBUG 1
+/* CD debug tracing -- set to 1 to enable verbose logging */
+#define CD_DEBUG 0
 #if CD_DEBUG
-#define CD_LOG(...) fprintf(stderr, "[CD] " __VA_ARGS__)
+#define CD_LOG(...) LOG_DBG("[CD] " __VA_ARGS__)
 #else
 #define CD_LOG(...) ((void)0)
 #endif
@@ -454,7 +455,7 @@ void BUTCHExec(uint32_t cycles)
 
          if (destPtr >= destEnd)
          {
-            fprintf(stderr, "[CD-HLE] Transfer complete: dest=$%06X, end=$%06X, block=%u\n",
+            LOG_DBG("[CD-HLE] Transfer complete: dest=$%06X, end=$%06X, block=%u\n",
                     destPtr, destEnd, block);
             cdPlaying = false;
             fifoDataReady = false;
@@ -471,10 +472,9 @@ void BUTCHExec(uint32_t cycles)
    // Generate interrupts through JERRY external interrupt -> 68K INT2.
    // Per MiSTer FPGA: eint = global_en && (fifo_int || rbuf_int || ...)
    // where fifo_int = bit1 && bit9, rbuf_int = bit5 && bit13.
-   // BUTCH's eint output is LEVEL-SENSITIVE: it stays asserted as long as
-   // any enabled interrupt source is active. The ISR acknowledges by
-   // draining the FIFO or reading DS_DATA, which clears the source.
+   // Only assert on rising edge to prevent infinite ISR re-entry.
    {
+      static bool prevIRQState = false;
       bool shouldIRQ = false;
 
       if ((butchWrite & 0x02) && fifoDataReady)              // FIFO half-full
@@ -482,44 +482,15 @@ void BUTCHExec(uint32_t cycles)
       if ((butchWrite & 0x20) && dsaResponseReady)           // DSARX (response ready)
          shouldIRQ = true;
 
-      if (shouldIRQ)
+      if (shouldIRQ && !prevIRQState)
       {
          JERRYSetPendingIRQ(IRQ2_EXTERNAL);
          if (JERRYIRQEnabled(IRQ2_EXTERNAL))
             m68k_set_irq(2);
 
-         // Hardware path: BUTCH eint → Jerry EXT0 → DSP → GPU IRQ1.
-         // The BIOS enables INT_ENA1 (DSP→GPU) in G_FLAGS for the CD ISR.
          GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
-
-         static uint32_t butchIRQCount = 0;
-         butchIRQCount++;
-         if (butchIRQCount <= 5 || (butchIRQCount % 100000) == 0)
-         {
-            uint32_t sr = m68k_get_reg(NULL, M68K_REG_SR);
-            uint32_t vec64 = GET32(jaguarMainRAM, 0x100);
-            uint32_t pc = m68k_get_reg(NULL, M68K_REG_PC);
-            CD_LOG("BUTCHExec: IRQ #%u (enables=0x%02X fifo=%d dsarx=%d jerryExtEna=%d 68K_SR=$%04X vec64=$%06X PC=$%06X)\n",
-                   butchIRQCount, butchWrite & 0x7F, fifoDataReady, dsaResponseReady,
-                   JERRYIRQEnabled(IRQ2_EXTERNAL), sr, vec64, pc);
-            if (butchIRQCount == 1)
-            {
-               fprintf(stderr, "[CD-DIAG] Handler code at $%06X:", vec64);
-               uint32_t i;
-               for (i = 0; i < 32; i++)
-                  fprintf(stderr, " %02X", jaguarMainRAM[(vec64 + i) & 0x1FFFFF]);
-               fprintf(stderr, "\n");
-               fprintf(stderr, "[CD-DIAG] GPU RAM ISR vector ($F03010-$F03020) + handler ($F0312C-$F031A0):\n");
-               for (i = 0x10; i < 0x20; i += 4)
-                  fprintf(stderr, "  $%06X: $%08X\n", 0xF03000 + i,
-                          GPUReadLong(0xF03000 + i, UNKNOWN));
-               fprintf(stderr, "  --- handler ---\n");
-               for (i = 0x12C; i < 0x1A0; i += 4)
-                  fprintf(stderr, "  $%06X: $%08X\n", 0xF03000 + i,
-                          GPUReadLong(0xF03000 + i, UNKNOWN));
-            }
-         }
       }
+      prevIRQState = shouldIRQ;
    }
 }
 
@@ -545,24 +516,22 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    {
       // Read-side BUTCH status register (bits 9-14) merged with
       // write-side enable bits (bits 0-6). Per MiSTer FPGA, the full
-      // register is returned on reads — enables are visible alongside status.
+      // register is always returned on reads — enables are visible alongside status.
+      data = GET16(cdRam, BUTCH + 2) & 0x007F;  // bits 0-6 always readable
+
       if (haveCDGoodness)
       {
-         // Start with write-side enable bits stored in cdRam
-         data = GET16(cdRam, BUTCH + 2) & 0x007F;  // bits 0-6 only
-
-         // Merge status bits (bit 12 is tracked explicitly)
          if (txBufferEmpty)
-            data |= (1 << 12);          // TX buffer empty
+            data |= (1 << 12);
          if (cdPlaying)
          {
-            data |= (1 << 10);          // Frame pending (only when CD is spinning)
-            data |= (1 << 11);          // Subcode data pending
+            data |= (1 << 10);
+            data |= (1 << 11);
          }
          if (dsaResponseReady)
-            data |= (1 << 13);          // RX full only when we have a real response
+            data |= (1 << 13);
          if (fifoDataReady)
-            data |= (1 << 9);           // FIFO half-full
+            data |= (1 << 9);
       }
    }
    else if (offset == DSCNTRL || offset == DSCNTRL + 2)
@@ -653,8 +622,8 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          //Should do something like so:
          //			data = GetSessionInfo(cdCmd & 0xFF, cdPtr);
          data = CDIntfGetSessionInfo(cdCmd & 0xFF, cdPtr);
-         fprintf(stderr, "[TOC-03] sess_param=%u cdPtr=%u data=$%04X\n",
-                 cdCmd & 0xFF, cdPtr, data);
+         CD_LOG("TOC-03: sess_param=%u cdPtr=%u data=$%04X\n",
+                cdCmd & 0xFF, cdPtr, data);
          if (data == 0xFF)	// Failed...
             data = 0x0400;
          else
@@ -693,8 +662,8 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             else if (cdPtr < 0x65)
                data = (cdPtr << 8) | CDIntfGetTrackInfo(trackNum, (cdPtr - 2) & 0x0F);
 
-            fprintf(stderr, "[TOC-14] sess=%u trk=%u cdPtr=$%02X data=$%04X\n",
-                    cdCmd & 0xFF, trackNum, cdPtr, data);
+            CD_LOG("TOC-14: sess=%u trk=%u cdPtr=$%02X data=$%04X\n",
+                   cdCmd & 0xFF, trackNum, cdPtr, data);
 
             cdPtr++;
             if (cdPtr == 0x65)
@@ -968,28 +937,10 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
           * we can identify the BIOS auth branch and patch/trap it. */
          if (CDIntfLastReadWasVirtualPregap())
          {
-            static bool dumped = false;
-            fprintf(stderr,
-                    "[CD-AUTH] STOP after virtual-pregap read LBA=%u  68K_PC=$%06X  GPU_PC=$%06X\n",
-                    CDIntfLastVirtualPregapLBA(),
-                    m68k_get_reg(NULL, M68K_REG_PC),
-                    GPUGetPC());
-            JaguarDumpPCHistoryStderr(32);
-            if (!dumped)
-            {
-               dumped = true;
-               /* STOP-write site: disassembling a small window here tells us
-                * the shape of the tiny subroutine that issues STOP. */
-               JaguarDumpMemWindow(0x00353C, 0x10, 0x30);
-               /* Return site from the compare loop — the branch that decides
-                * pass/fail after the pregap audio compare lives in this window. */
-               JaguarDumpMemWindow(0x0504F4, 0x40, 0x20);
-               /* Tight compare loop itself — confirms what register/state holds
-                * the compare result. */
-               JaguarDumpMemWindow(0x050A9C, 0x20, 0x20);
-               /* Outer decision logic (RAM-loaded BIOS formatter path). */
-               JaguarDumpMemWindow(0x194FCA, 0x40, 0x20);
-            }
+            CD_LOG("AUTH: STOP after virtual-pregap read LBA=%u  68K_PC=$%06X  GPU_PC=$%06X\n",
+                   CDIntfLastVirtualPregapLBA(),
+                   m68k_get_reg(NULL, M68K_REG_PC),
+                   GPUGetPC());
             CDIntfClearLastReadVirtualPregap();
          }
          cdPtr = 0;
@@ -1044,9 +995,9 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             if (discTotal > 0 && block >= discTotal)
             {
                uint32_t redirectLBA = CDIntfGetSession2GameDataLBA();
-               fprintf(stderr, "[CDROM] Out-of-range seek: block=%u exceeds disc size %u "
-                       "(MSF %02u:%02u:%02u). Redirecting to session 2 game data at LBA %u\n",
-                       block, discTotal, min, sec, frm, redirectLBA);
+               CD_LOG("Out-of-range seek: block=%u exceeds disc size %u "
+                      "(MSF %02u:%02u:%02u). Redirecting to session 2 game data at LBA %u\n",
+                      block, discTotal, min, sec, frm, redirectLBA);
                block = redirectLBA;
             }
 

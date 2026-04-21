@@ -36,6 +36,9 @@ bool JaguarCDHLEGPUDataPhase(void);
 /* True if HLE mode is active (set by JaguarCDHLEBoot on success). */
 bool JaguarCDHLEActive(void);
 
+/* Force HLE active state (for unit testing without a disc image). */
+void JaguarCDHLESetActive(bool active);
+
 #ifdef __cplusplus
 }
 #endif

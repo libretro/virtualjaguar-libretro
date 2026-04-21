@@ -18,10 +18,7 @@
 #include <streams/file_stream_transforms.h>
 #include "cdintf.h"
 #include "jaguar.h"
-
-/* file_stream_transforms.h does `#define fprintf rfprintf`, which silently
- * eats fprintf(stderr, ...) calls. Restore real stdio fprintf for debug logs. */
-#undef fprintf
+#include "log.h"
 
 // CDI (DiscJuggler) format support
 static RFILE *cdi_file = NULL;
@@ -530,6 +527,21 @@ static bool ParseCueSheet(const char *cuePath)
       }
    }
 
+   {
+      int i;
+      for (i = 0; i < (int)disc.numTracks; i++)
+      {
+         if (disc.tracks[i].session >= 2 || i >= (int)disc.numTracks - 5)
+            LOG_DBG("[CD-LAYOUT] track %2u sess=%u startLBA=%u dataLBA=%u "
+                    "len=%u MSF=%02u:%02u:%02u BIN=%s\n",
+                    disc.tracks[i].number, disc.tracks[i].session,
+                    disc.tracks[i].startLBA, disc.tracks[i].dataLBA,
+                    disc.tracks[i].lengthLBA,
+                    disc.tracks[i].startM, disc.tracks[i].startS, disc.tracks[i].startF,
+                    disc.tracks[i].binFilePath[0] ? "yes" : "no");
+      }
+   }
+
    disc.loaded = true;
    return true;
 }
@@ -932,15 +944,6 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
    struct CDIntfTrack *track = NULL;
    uint32_t sectorSize;
 
-   {
-      static uint32_t entryCount = 0;
-      if (entryCount < 20 || (sector >= 139600 && sector < 140000))
-         fprintf(stderr, "[CD-RB-ENTRY] sector=%u loaded=%d numSessions=%u s2Leadout=%u (call #%u)\n",
-            sector, disc.loaded, disc.numSessions,
-            disc.numSessions >= 2 ? disc.sessions[1].leadOutLBA : 0,
-            ++entryCount);
-   }
-
    if (!disc.loaded || !buffer)
       return false;
 
@@ -955,7 +958,7 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
    {
       static uint32_t authHits = 0;
       if (authHits < 5)
-         fprintf(stderr, "[CD-AUTH-REDIRECT] sector=%u served from track-30 BIN (hit #%u)\n", sector, ++authHits);
+         LOG_INF("[CD-AUTH-REDIRECT] sector=%u served from track-30 BIN (hit #%u)\n", sector, ++authHits);
       else
          authHits++;
       lastReadVirtualPregap = false;
@@ -1201,14 +1204,14 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    uint32_t firstS2Idx = 0;
    bool foundS2 = false;
    RFILE *trackFile;
-   uint8_t raw[2352 * 12];
-   uint8_t swapped[sizeof(raw)];
+   static uint8_t raw[2352 * 32];
+   static uint8_t swapped[sizeof(raw)];
    int64_t bytesRead;
    uint32_t loadAddr, length;
 
    if (!disc.loaded || disc.numSessions < 2)
    {
-      fprintf(stderr, "[CD-BOOTSTUB] Early exit: loaded=%d numSessions=%u\n",
+      LOG_WRN("[CD-BOOTSTUB] Early exit: loaded=%d numSessions=%u\n",
               disc.loaded, disc.numSessions);
       return false;
    }
@@ -1224,17 +1227,17 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    }
    if (!foundS2 || !disc.tracks[firstS2Idx].binFilePath[0])
    {
-      fprintf(stderr, "[CD-BOOTSTUB] No session-2 track found (foundS2=%d, pathEmpty=%d)\n",
+      LOG_WRN("[CD-BOOTSTUB] No session-2 track found (foundS2=%d, pathEmpty=%d)\n",
               foundS2, foundS2 ? !disc.tracks[firstS2Idx].binFilePath[0] : -1);
       return false;
    }
 
-   fprintf(stderr, "[CD-BOOTSTUB] Opening track %u BIN: %s\n",
+   LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s\n",
            disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
    trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
    if (!trackFile)
    {
-      fprintf(stderr, "[CD-BOOTSTUB] rfopen failed for %s\n",
+      LOG_ERR("[CD-BOOTSTUB] rfopen failed for %s\n",
               disc.tracks[firstS2Idx].binFilePath);
       return false;
    }
@@ -1242,10 +1245,10 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    rfseek(trackFile, 0, SEEK_SET);
    bytesRead = rfread(raw, 1, sizeof(raw), trackFile);
    rfclose(trackFile);
-   fprintf(stderr, "[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
+   LOG_INF("[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
    if (bytesRead < 0x6A + 4)
    {
-      fprintf(stderr, "[CD-BOOTSTUB] Too few bytes read (%lld < %d)\n",
+      LOG_ERR("[CD-BOOTSTUB] Too few bytes read (%lld < %d)\n",
               (long long)bytesRead, 0x6A + 4);
       return false;
    }
@@ -1257,20 +1260,19 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       swapped[i + 1] = raw[i];
    }
 
-   fprintf(stderr, "[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): ");
+   LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): ");
    for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      fprintf(stderr, "%02X ", raw[i]);
-   fprintf(stderr, "\n");
-   fprintf(stderr, "[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: ");
+      LOG_DBG("%02X ", raw[i]);
+   LOG_DBG("\n");
+   LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: ");
    for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      fprintf(stderr, "%02X ", swapped[i]);
-   fprintf(stderr, "\n");
-   fprintf(stderr, "[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
+      LOG_DBG("%02X ", swapped[i]);
+   LOG_DBG("\n");
+   LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
 
    if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
    {
-      fprintf(stderr,
-              "[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN\n");
+      LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN\n");
       return false;
    }
 
@@ -1282,8 +1284,7 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    if (length == 0 || length > outBufSize
        || (uint64_t)0x6A + length > (uint64_t)bytesRead)
    {
-      fprintf(stderr,
-              "[CD-BOOTSTUB] Bad length $%X (loadAddr=$%06X, bufSize=%u, available=%lld)\n",
+      LOG_ERR("[CD-BOOTSTUB] Bad length $%X (loadAddr=$%06X, bufSize=%u, available=%lld)\n",
               length, loadAddr, outBufSize, (long long)bytesRead - 0x6A);
       return false;
    }
@@ -1292,8 +1293,7 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    *outLoadAddr = loadAddr;
    *outLength   = length;
 
-   fprintf(stderr,
-           "[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
+   LOG_INF("[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
            length, loadAddr,
            disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
    return true;
@@ -1323,7 +1323,7 @@ uint32_t CDIntfGetSession2GameDataLBA(void)
    {
       if (disc.tracks[i].session >= 2)
       {
-         fprintf(stderr, "[CD-S2TRACK] track %u: startLBA=%u dataLBA=%u len=%u sess=%u\n",
+         LOG_DBG("[CD-S2TRACK] track %u: startLBA=%u dataLBA=%u len=%u sess=%u\n",
                  disc.tracks[i].number, disc.tracks[i].startLBA,
                  disc.tracks[i].dataLBA, disc.tracks[i].lengthLBA,
                  disc.tracks[i].session);
@@ -1340,7 +1340,7 @@ uint32_t CDIntfGetSession2GameDataLBA(void)
       uint32_t lba = disc.tracks[bestIdx].dataLBA
                        ? disc.tracks[bestIdx].dataLBA
                        : disc.tracks[bestIdx].startLBA;
-      fprintf(stderr, "[CD-S2TRACK] Selected largest track %u (len=%u) dataLBA=%u\n",
+      LOG_INF("[CD-S2TRACK] Selected largest track %u (len=%u) dataLBA=%u\n",
               disc.tracks[bestIdx].number, bestLen, lba);
       return lba;
    }

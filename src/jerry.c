@@ -156,6 +156,7 @@
 #include <stdio.h>
 #include <string.h>								// For memcpy
 #include "cdrom.h"
+#include "log.h"
 #include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -170,9 +171,9 @@
 
 //Note that 44100 Hz requires samples every 22.675737 usec.
 
-#define JERRY_TRACE_DEBUG 1
+#define JERRY_TRACE_DEBUG 0
 #if JERRY_TRACE_DEBUG
-#define JERRY_TRACE(...) fprintf(stderr, "[JERRY-TRACE] " __VA_ARGS__)
+#define JERRY_TRACE(...) LOG_DBG("[JERRY-TRACE] " __VA_ARGS__)
 #else
 #define JERRY_TRACE(...) ((void)0)
 #endif
