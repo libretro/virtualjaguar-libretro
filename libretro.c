@@ -1158,8 +1158,10 @@ bool retro_load_game(const struct retro_game_info *info)
     * and haveCDGoodness is set correctly. */
    if (jaguar_cd_mode)
    {
+      LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
       if (!CDIntfOpenImage(cd_image_path))
       {
+         LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
          if (videoBuffer)
          {
             free(videoBuffer);
@@ -1172,6 +1174,7 @@ bool retro_load_game(const struct retro_game_info *info)
          }
          return false;
       }
+      LOG_INF("[CD] Disc image opened OK\n");
    }
 
    JaguarInit();                                             // set up hardware

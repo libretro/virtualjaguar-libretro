@@ -630,7 +630,7 @@ clean:
 TEST_CC     ?= $(CC)
 TEST_CFLAGS  = -O0 -g -Wno-incompatible-pointer-types
 TEST_LDFLAGS = -ldl
-TEST_BINS    = test/test_gpu_instructions test/test_dsp_instructions test/test_m68k_instructions test/test_irq test/test_hle_bios test/test_cd_hle_boot test/test_blitter_simd
+TEST_BINS    = test/test_gpu_instructions test/test_dsp_instructions test/test_m68k_instructions test/test_irq test/test_hle_bios test/test_cd_hle_boot test/test_cd_bios_boot test/test_blitter_simd
 
 test/test_gpu_instructions: test/test_gpu_instructions.c test/test_framework.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
@@ -648,6 +648,9 @@ test/test_hle_bios: test/test_hle_bios.c test/test_framework.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
 
 test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_assertions.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_cd_bios_boot: test/test_cd_bios_boot.c test/test_framework.h test/cd_assertions.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
 
 test/test_blitter_simd: test/test_blitter_simd.c src/blitter_simd.h $(TARGET)
@@ -681,10 +684,21 @@ test-cd-hle-boot: test/test_cd_hle_boot
 	echo ""; echo "(full log: test/cd_hle_boot_baseline.log; rc=$$rc)"; \
 	exit 0
 
+# Same shape as test-cd-hle-boot but exercises the real Atari Jaguar CD BIOS.
+# Requires the BIOS file to live under VJ_TEST_CD_ROOT (default test/roms/private).
+test-cd-bios-boot: test/test_cd_bios_boot
+	@echo ""; echo "=== CD real-BIOS boot smoke (TDD baseline; not part of strict test) ==="
+	@DYLD_LIBRARY_PATH=. LD_LIBRARY_PATH=. test/test_cd_bios_boot \
+		> test/cd_bios_boot_baseline.log 2>&1; \
+	rc=$$?; \
+	grep -aE '\[(RUN|PASS|FAIL|CRASH|FOCUS-SKIP|SKIP|PC-)\]|Discovered|---' test/cd_bios_boot_baseline.log; \
+	echo ""; echo "(full log: test/cd_bios_boot_baseline.log; rc=$$rc)"; \
+	exit 0
+
 clean-test:
 	rm -f $(TEST_BINS) $(addsuffix .dSYM,$(TEST_BINS))
 
-.PHONY: clean test test-build clean-test test-cd-hle-boot
+.PHONY: clean test test-build clean-test test-cd-hle-boot test-cd-bios-boot
 endif
 
 print-%:
