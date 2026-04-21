@@ -237,6 +237,21 @@ static void cd_run_one_disc(const char *path, unsigned frames,
                 fprintf(stderr, "\n");
             }
         }
+
+        /* Dump current 68K data and address registers — the wait loop's
+         * read target is usually in A0/A1 and the magic value in D0/D1. */
+        if (C.m68k_get_reg) {
+            fprintf(stderr, "    [REGS]");
+            static const struct { int id; const char *name; } regs[] = {
+                {0,  "D0"}, {1,  "D1"}, {2,  "D2"}, {3,  "D3"},
+                {8,  "A0"}, {9,  "A1"}, {10, "A2"}, {14, "A6"},
+                {18, "SP"},
+            };
+            for (size_t i = 0; i < sizeof(regs)/sizeof(regs[0]); i++)
+                fprintf(stderr, " %s=$%08X", regs[i].name,
+                        C.m68k_get_reg(NULL, regs[i].id));
+            fprintf(stderr, "\n");
+        }
     }
 
     cd_unload_game();
