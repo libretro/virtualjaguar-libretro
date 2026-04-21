@@ -62,8 +62,8 @@ ifeq ($(platform), unix)
 # Platform affix = classic_<ISA>_<µARCH>
 # Help at https://modmyclassic.com/comp
 
-# (armv7 a7, hard point, neon based) ### 
-# NESC, SNESC, C64 mini 
+# (armv7 a7, hard point, neon based) ###
+# NESC, SNESC, C64 mini
 else ifeq ($(platform), classic_armv7_a7)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
@@ -88,13 +88,16 @@ else ifeq ($(platform), classic_armv7_a7)
 	    LDFLAGS += -static-libgcc -static-libstdc++
 	  endif
 	endif
-#######################################	
-	
+#######################################
+
 # OSX
 else ifeq ($(platform), osx)
 	TARGET := $(TARGET_NAME)_libretro.dylib
 	fpic := -fPIC
 	SHARED := -dynamiclib
+	CFLAGS += -Ofast
+	CXXFLAGS += $(CFLAGS)
+	HAVE_NEON = 1
 	ifeq ($(arch),ppc)
 		FLAGS += -DMSB_FIRST
 		OLD_GCC = 1
@@ -123,6 +126,10 @@ else ifneq (,$(findstring ios,$(platform)))
 	fpic := -fPIC
 	SHARED := -dynamiclib
 	MINVERSION :=
+	CFLAGS += -Ofast
+	CXXFLAGS += $(CFLAGS)
+	HAVE_NEON = 1
+
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk iphoneos Path)
 	endif
@@ -582,7 +589,7 @@ CXXFLAGS += $(FLAGS)
 CFLAGS   += $(FLAGS)
 
 OBJOUT   = -o
-LINKOUT  = -o 
+LINKOUT  = -o
 
 ifneq (,$(findstring msvc,$(platform)))
 	OBJOUT = -Fo
@@ -623,7 +630,7 @@ clean:
 TEST_CC     ?= $(CC)
 TEST_CFLAGS  = -O0 -g -Wno-incompatible-pointer-types
 TEST_LDFLAGS = -ldl
-TEST_BINS    = test/test_gpu_instructions test/test_dsp_instructions test/test_m68k_instructions test/test_irq test/test_hle_bios test/test_blitter_simd
+TEST_BINS    = test/test_gpu_instructions test/test_dsp_instructions test/test_m68k_instructions test/test_irq test/test_hle_bios test/test_cd_hle_boot test/test_blitter_simd
 
 test/test_gpu_instructions: test/test_gpu_instructions.c test/test_framework.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
@@ -638,6 +645,9 @@ test/test_irq: test/test_irq.c test/test_framework.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
 
 test/test_hle_bios: test/test_hle_bios.c test/test_framework.h $(TARGET)
+	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
+
+test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_assertions.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
 
 test/test_blitter_simd: test/test_blitter_simd.c src/blitter_simd.h $(TARGET)
@@ -658,12 +668,24 @@ test: test-build
 	done; \
 	exit $$fail
 
+# CD HLE boot smoke suite — separated from `test` because it intentionally
+# carries a known-failing TDD baseline. CI / pre-commit should call `test`
+# (which stays green); developers iterating on CD HLE call `test-cd-hle-boot`
+# directly and diff against test/cd_hle_boot_baseline.log.
+test-cd-hle-boot: test/test_cd_hle_boot
+	@echo ""; echo "=== CD HLE boot smoke (TDD baseline; not part of strict test) ==="
+	@DYLD_LIBRARY_PATH=. LD_LIBRARY_PATH=. test/test_cd_hle_boot \
+		> test/cd_hle_boot_baseline.log 2>&1; \
+	rc=$$?; \
+	grep -aE '\[(RUN|PASS|FAIL|CRASH|FOCUS-SKIP|SKIP|PC-)\]|Discovered|---' test/cd_hle_boot_baseline.log; \
+	echo ""; echo "(full log: test/cd_hle_boot_baseline.log; rc=$$rc)"; \
+	exit 0
+
 clean-test:
 	rm -f $(TEST_BINS) $(addsuffix .dSYM,$(TEST_BINS))
 
-.PHONY: clean test test-build clean-test
+.PHONY: clean test test-build clean-test test-cd-hle-boot
 endif
 
 print-%:
 	@echo '$*=$($*)'
-

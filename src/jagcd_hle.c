@@ -247,16 +247,65 @@ static void HLEHandleCDRead(void)
    pat[1] = (d1 >> 16) & 0xFF;
    pat[2] = (d1 >>  8) & 0xFF;
    pat[3] =  d1        & 0xFF;
+   /* A single-match fallback is only safe when the sentinel looks like an
+    * intentional ASCII tag (CODE/STUB/SCOR/TITL).  Numeric/byte-counter
+    * values (0x0000003C, 0x12345678) collide with audio noise or zero pages
+    * and would latch onto garbage. */
+   bool sentinelIsAscii = true;
+   {
+      int b;
+      for (b = 0; b < 4; b++)
+         if (pat[b] < 0x20 || pat[b] > 0x7E) { sentinelIsAscii = false; break; }
+   }
 
    #define MIN_SYNC_MATCHES 3
 
    foundSentinel = false;
    scanLBA = lba;
    scanOff = 0;
+   /* Track the first single-occurrence match across all phases.  Used as a
+    * last-resort fallback when no MIN_SYNC_MATCHES sync block is found —
+    * some games (Hover Strike SCOR/TITL) use the sentinel as a one-shot
+    * data-section magic word rather than a proper sync block. */
+   bool     fallbackFound = false;
+   uint32_t fallbackLBA   = 0;
+   uint32_t fallbackOff   = 0;
 
+   /* Multi-phase sentinel scan when the supplied MSF is unreliable.
+    *   phase 0: scan up to 2000 sectors starting at the boot-stub-supplied LBA.
+    *   phase 1..N: if D1 looks like a meaningful sentinel and phase 0 missed,
+    *               retry the scan from the start of every session-2 track
+    *               (boot-stub track + each game-data track). Different
+    *               sentinels (CODE/STUB/SCOR/TITL) live in different tracks
+    *               on multi-track discs (Hover Strike, Highlander), so we
+    *               try each one in track order until the pattern is found. */
+   #define MAX_PHASES 16
+   uint32_t phase_starts[MAX_PHASES];
+   uint32_t phase_count = 1;
+   phase_starts[0] = lba;
+   if (sentinelIsAscii) {
+      uint32_t n = CDIntfGetSession2TrackCount();
+      uint32_t i;
+      for (i = 0; i < n && phase_count < MAX_PHASES; i++) {
+         uint32_t tl = CDIntfGetSession2TrackLBA(i);
+         uint32_t k;
+         bool dup = (tl == 0) || (tl == lba);
+         for (k = 0; !dup && k < phase_count; k++)
+            if (phase_starts[k] == tl) dup = true;
+         if (!dup) phase_starts[phase_count++] = tl;
+      }
+   }
+
+   uint32_t phase;
+   for (phase = 0; phase < phase_count && !foundSentinel; phase++)
+   {
+   uint32_t scan_base = phase_starts[phase];
+   if (phase > 0)
+      HLE_LOG("CD_read: phase-%u retry scan from LBA %u\n",
+              phase, scan_base);
    for (s = 0; s < 2000 && !foundSentinel; s++)
    {
-      if (!CDIntfReadBlock(lba + s, sectorBuf))
+      if (!CDIntfReadBlock(scan_base + s, sectorBuf))
          continue;
 
       /* I2S un-swap: real hardware swaps bytes within 16-bit words */
@@ -285,13 +334,19 @@ static void HLEHandleCDRead(void)
                j += 4;
             }
             HLE_LOG("sentinel match: %u consecutive at LBA %u off %u (sector %u from seek)\n",
-                   matchCount, lba + s, i, s);
-            if (matchCount < MIN_SYNC_MATCHES)
-               continue;  /* stray match — keep searching */
+                   matchCount, scan_base + s, i, s);
+            if (matchCount < MIN_SYNC_MATCHES) {
+               if (sentinelIsAscii && !fallbackFound) {
+                  fallbackFound = true;
+                  fallbackLBA   = scan_base + s;
+                  fallbackOff   = i + 4;  /* data starts after the sentinel */
+               }
+               continue;  /* stray match — keep searching for a real sync block */
+            }
 
             /* Sync block confirmed.  Scan forward across sector boundaries
              * to find where the sentinel pattern ends. */
-            scanLBA = lba + s;
+            scanLBA = scan_base + s;
             scanOff = j;  /* first non-sentinel byte in current sector */
 
             /* If the sync block extends to the end of this sector, keep
@@ -318,18 +373,28 @@ static void HLEHandleCDRead(void)
             }
             foundSentinel = true;
             HLE_LOG("CD_read: sync block (%u+ matches) ends at "
-                   "LBA %u offset %u (scanned %u sectors from seek)\n",
-                   matchCount, scanLBA, scanOff, scanLBA - lba + 1);
+                   "LBA %u offset %u (scanned %u sectors from seek base %u)\n",
+                   matchCount, scanLBA, scanOff, scanLBA - scan_base + 1,
+                   scan_base);
             break;
          }
       }
    }
+   } /* for phase */
 
    if (!foundSentinel)
    {
-      HLE_LOG("CD_read: sentinel NOT found — reading from LBA %u\n", lba);
-      scanLBA = lba;
-      scanOff = 0;
+      if (fallbackFound) {
+         HLE_LOG("CD_read: no sync block — using single-match fallback at LBA %u off %u\n",
+                 fallbackLBA, fallbackOff);
+         scanLBA = fallbackLBA;
+         scanOff = fallbackOff;
+         foundSentinel = true;
+      } else {
+         HLE_LOG("CD_read: sentinel NOT found — reading from LBA %u\n", lba);
+         scanLBA = lba;
+         scanOff = 0;
+      }
    }
 
    /* Transfer data from the sentinel position into Jaguar RAM */
@@ -422,19 +487,34 @@ static void HLEHandleCDPoll(void)
    static uint32_t pollCount = 0;
    pollCount++;
    if (pollCount <= 5 || (pollCount % 100000) == 0)
-      HLE_LOG("CD_poll #%u: pending=%d\n", pollCount, hle_read_pending);
+      HLE_LOG("CD_poll #%u: pending=%d end=$%06X\n",
+              pollCount, hle_read_pending, hle_read_end_addr);
 
+   /* BIOS contract: A0 = current RAM write position (advances as data
+    * arrives, equals end addr once the read completes), A1 = 0 on success
+    * / non-zero on error.
+    *
+    * Boot stubs spin in `jsr CD_poll; cmpa.l a6, a0; blt loop` waiting
+    * for A0 >= end. Because HLE transfers data synchronously, the
+    * position is always end_addr immediately after the read. We must
+    * keep returning end_addr on every subsequent poll (NOT 0) — otherwise
+    * the next poll claims "0 bytes transferred", the stub re-enters its
+    * wait loop, and we hang. Highlander, BrainDead 13, and Battle Morph
+    * all reproduce this if A0 ever drops back to 0. The position only
+    * resets when CD_read sets up a new transfer. */
    if (hle_read_pending)
-   {
-      m68k_set_reg(M68K_REG_A0, hle_read_end_addr);
-      m68k_set_reg(M68K_REG_A1, 0);
       hle_read_pending = false;
-   }
-   else
-   {
-      m68k_set_reg(M68K_REG_A0, 0);
-      m68k_set_reg(M68K_REG_A1, 0);
-   }
+
+   /* Two stub idioms in the wild:
+    *   1. `cmpa.l A6,A0; blt poll`  where A6 = end → needs A0 >= end
+    *   2. `cmp.l  A0,D0; bge poll`  where D0 = end-N → needs A0 > end
+    * The GPU ISR on real hardware leaves the dest pointer one long past
+    * the last write (pre-decrement / write / post-advance), so reporting
+    * end+4 satisfies both idioms. Highlander uses idiom #2 and hangs if
+    * we report exactly end. */
+   m68k_set_reg(M68K_REG_A0,
+                hle_read_end_addr ? hle_read_end_addr + 4 : 0);
+   m68k_set_reg(M68K_REG_A1, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -513,9 +593,30 @@ bool JaguarCDHLEGPUDataPhase(void)
 /* Boot                                                                */
 /* ------------------------------------------------------------------ */
 
+/* Park the 68K on a tight halt loop in main RAM so a failed HLE boot
+ * does not leave PC pointing at randomized memory.
+ *
+ * Layout at $00000400:
+ *   $400: 60 FE      ; BRA.S $400  (branch-to-self halt)
+ *
+ * Sets PC=$400 and SP=$200000. Returns no value. */
+static void HLEParkOnHalt(void)
+{
+   SET32(jaguarMainRAM, 0, 0x00200000);
+   SET32(jaguarMainRAM, 4, 0x00000400);
+   jaguarMainRAM[0x400] = 0x60;
+   jaguarMainRAM[0x401] = 0xFE;
+   m68k_set_reg(M68K_REG_SP, 0x00200000);
+   m68k_set_reg(M68K_REG_PC, 0x00000400);
+   LOG_WRN("[CD-HLE] Parked 68K on halt loop at $00000400\n");
+}
+
 bool JaguarCDHLEBoot(void)
 {
-   static uint8_t stubBuf[256 * 1024];
+   /* Battle Morph (USA) injects a ~414KB stub at $004400. Keep this in
+    * lockstep with the raw-sector buffer in cdintf.c::CDIntfExtractBootStub
+    * (currently 256 sectors ≈ 600KB). */
+   static uint8_t stubBuf[600 * 1024];
    uint32_t loadAddr = 0, length = 0;
    uint32_t i;
 
@@ -528,6 +629,7 @@ bool JaguarCDHLEBoot(void)
    if (!CDIntfIsImageLoaded())
    {
       LOG_ERR("[CD-HLE] No disc image loaded — HLE boot aborted\n");
+      HLEParkOnHalt();
       return false;
    }
 
@@ -535,6 +637,7 @@ bool JaguarCDHLEBoot(void)
    if (!CDIntfExtractBootStub(stubBuf, sizeof(stubBuf), &loadAddr, &length))
    {
       LOG_ERR("[CD-HLE] Boot stub extraction failed\n");
+      HLEParkOnHalt();
       return false;
    }
 

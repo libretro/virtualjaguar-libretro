@@ -88,9 +88,37 @@ post-inc), LEA, ADDA/SUBA, BTST/BSET/BCLR.
 TOM IRQ enable/disable/latch/pending, JERRY IRQ enable, GPU IRQ assert/clear/IMASK,
 TOM video mode register, JERRY timer prescaler, BUTCH interrupt control.
 
-### test_hle_bios.c — HLE CD BIOS (14 tests)
-Jump table, CD_poll A1=0 convention, CD_wait_response, ISR setup handlers,
-TOC format, no-op entry safety, GPU auth magic, RAM byte order.
+### test_hle_bios.c — HLE CD BIOS (15 tests)
+Jump table, CD_poll A1=0 / A0=end conventions, CD_wait_response, ISR setup
+handlers, TOC format, no-op entry safety, GPU auth magic, RAM byte order.
+
+### test_cd_hle_boot.c — HLE CD Boot Smoke (1 dynamic test)
+Recursively scans `test/roms/private/` (or `VJ_TEST_CD_ROOT`) for
+`*.cue` / `*.iso` / `*.cdi` images. For each disc, forks a child that:
+
+1. Loads the core fresh, forces `cd_boot_mode=hle`, calls `retro_load_game`.
+2. Runs N frames (default 300, override with `VJ_TEST_CD_FRAMES`).
+3. Records 68K PC after every frame; computes per-disc metrics:
+   - `pc_in_ram`         — PC stays in valid RAM/BIOS ranges
+   - `not_self_looping`  — PC moved at least once in the last 64 frames
+   - `not_thrashing`     — visited > 8 distinct PCs (catches CD_read retry loops)
+   - `ram_has_payload`   — at least 1KB of non-zero data in main RAM
+
+Per-disc execution is wrapped in `fork()` so a `SIGSEGV` in one disc cannot
+take down the suite. Crashes are reported as `[CRASH]` with the signal name.
+
+Filters:
+- `VJ_TEST_CD_FOCUS=substring`  run only matching discs
+- `VJ_TEST_CD_FRAMES=N`         per-disc frame count
+
+Current baseline (in `test/cd_hle_boot_baseline.log`, gitignored) is 0/14
+discs PASS. The three failure modes the harness distinguishes:
+
+| Mode      | Trigger                                            | Example discs |
+|-----------|----------------------------------------------------|---------------|
+| `[FAIL]`  | PC OOB, tight self-loop, or thrashing on <8 PCs    | All 14 discs |
+| `[CRASH]` | Child died with SIGSEGV during `retro_load_game`   | `baldies.cdi` |
+| `[SKIP]`  | No disc images discovered under the configured root | (empty corpus) |
 
 ### test_blitter_simd.c — Blitter SIMD (40,067 tests)
 Exhaustive bit-exact comparison of LFU, DCOMP, ZCOMP, byte_merge against
@@ -128,7 +156,10 @@ test/
   test_dsp_instructions.c  # DSP RISC ISA tests (28)
   test_m68k_instructions.c # 68K CPU tests (39)
   test_irq.c               # Interrupt handling tests (18)
-  test_hle_bios.c          # HLE CD BIOS tests (14)
+  test_hle_bios.c          # HLE CD BIOS tests (15)
+  test_cd_hle_boot.c       # HLE CD boot smoke tests (dynamic discovery)
+  cd_assertions.h          # Shared discovery + assertion helpers
+  cd_hle_boot_baseline.log # Last captured per-disc baseline (gitignored)
   test_blitter_simd.c      # SIMD blitter tests (40067)
   baselines/               # Reference PNG screenshots
   roms/                    # Test ROMs (private/ is git-ignored)

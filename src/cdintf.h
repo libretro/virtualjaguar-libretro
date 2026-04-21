@@ -86,6 +86,14 @@ uint32_t CDIntfLastVirtualPregapLBA(void);
 
 uint32_t CDIntfGetDiscTotalSectors(void);
 uint32_t CDIntfGetSession2GameDataLBA(void);
+/* startLBA of the FIRST session-2 track (i.e. the boot-stub track).
+ * Used by HLE CD_read as a sentinel-scan fallback: some games embed
+ * their sync block right after the boot stub data in this same track. */
+uint32_t CDIntfGetSession2FirstTrackLBA(void);
+/* Number of session-2 tracks. */
+uint32_t CDIntfGetSession2TrackCount(void);
+/* startLBA (or dataLBA when present) of the i-th session-2 track. */
+uint32_t CDIntfGetSession2TrackLBA(uint32_t i);
 
 // New functions for disc image loading
 bool CDIntfOpenImage(const char *cuePath);

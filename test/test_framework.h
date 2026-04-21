@@ -175,6 +175,8 @@ struct vj_core {
     void (*TOMReset)(void);
     uint16_t (*TOMReadWord)(uint32_t, uint32_t);
     void (*TOMWriteWord)(uint32_t, uint16_t, uint32_t);
+    uint32_t (*TOMGetVideoModeWidth)(void);
+    uint32_t (*TOMGetVideoModeHeight)(void);
     int (*TOMIRQEnabled)(int);
     uint16_t (*TOMIRQControlReg)(void);
     void (*TOMSetIRQLatch)(int, int);
@@ -343,6 +345,8 @@ static bool vj_core_load(struct vj_core *core)
     LOAD_SYM(core, TOMReset);
     LOAD_SYM(core, TOMReadWord);
     LOAD_SYM(core, TOMWriteWord);
+    LOAD_SYM(core, TOMGetVideoModeWidth);
+    LOAD_SYM(core, TOMGetVideoModeHeight);
     LOAD_SYM(core, TOMIRQEnabled);
     LOAD_SYM(core, TOMIRQControlReg);
     LOAD_SYM(core, TOMSetIRQLatch);
@@ -402,6 +406,8 @@ static void vj_core_init(struct vj_core *core)
     core->retro_set_input_poll(tf_input_poll);
     core->retro_set_input_state(tf_input_state);
     core->retro_init();
+    if (core->GPUInit) core->GPUInit();
+    if (core->DSPInit) core->DSPInit();
 }
 
 static void vj_core_unload(struct vj_core *core)
@@ -488,8 +494,8 @@ static inline void gpu_write_movei(struct vj_core *c, uint32_t addr,
 #define GPU_OP_STORE14I 49
 #define GPU_OP_STORE15I 50
 #define GPU_OP_MOVPC  51
-#define GPU_OP_JR     52
-#define GPU_OP_JUMP   53
+#define GPU_OP_JUMP   52
+#define GPU_OP_JR     53
 #define GPU_OP_MMULT  54
 #define GPU_OP_MTOI   55
 #define GPU_OP_NORMI  56

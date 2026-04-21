@@ -132,6 +132,45 @@ TEST(cd_poll_a1_zero_on_success)
     ASSERT_EQ_U32(a1, 0);  /* MUST be 0 — boot stubs check this! */
 }
 
+TEST(cd_poll_a0_advances_past_end_after_read)
+{
+    /* On real hardware the GPU CD ISR pre-decrements the dest pointer
+     * before each long write, so once the transfer completes the
+     * pointer sits one long PAST the end address. Two stub idioms rely
+     * on this:
+     *   (a) `cmpa.l A6,A0; blt poll`  with A6=end -> wants A0 >= end
+     *   (b) `cmp.l  A0,D0; bge poll`  with D0=end -> wants A0 >  end
+     *
+     * Reporting A0 = end+4 satisfies both. Reporting exactly A0 = end
+     * regresses Highlander (idiom b: PC stays in the wait loop forever
+     * because end >= end is true). */
+    if (!HLEHook || !HLEActive || !HLESetActive) return;
+
+    /* Need an actual disc loaded so CD_read can stream sectors. The
+     * jump_table_installed test skips when no disc is mounted; do the
+     * same here. */
+    HLEBoot(); /* ensure HLE state is initialised */
+    HLESetActive(true);
+    if (!HLEActive()) return;
+
+    const uint32_t dest = 0x080000;
+    const uint32_t end  = 0x081000;
+
+    C.m68k_set_reg(M68K_REG_D0, 0x00000010);   /* MSF 00:00:16 (LBA 16) */
+    C.m68k_set_reg(M68K_REG_D1, 0x00000000);   /* match-anything */
+    C.m68k_set_reg(M68K_REG_A0, dest);
+    C.m68k_set_reg(M68K_REG_A1, end);
+    HLEHook(JT_CD_READ);
+
+    HLEHook(JT_CD_POLL);
+
+    uint32_t a0 = C.m68k_get_reg(NULL, M68K_REG_A0);
+    uint32_t a1 = C.m68k_get_reg(NULL, M68K_REG_A1);
+
+    ASSERT_EQ_U32(a1, 0);
+    ASSERT_EQ_U32(a0, end + 4);
+}
+
 /* ------------------------------------------------------------------ */
 /* CD_wait_response tests                                              */
 /* ------------------------------------------------------------------ */
@@ -354,9 +393,11 @@ int main(int argc, char *argv[])
     if (have_hle) {
         RUN_TEST(cd_poll_no_pending_read);
         RUN_TEST(cd_poll_a1_zero_on_success);
+        RUN_TEST(cd_poll_a0_advances_past_end_after_read);
     } else {
         SKIP_TEST(cd_poll_no_pending_read, "HLE not available");
         SKIP_TEST(cd_poll_a1_zero_on_success, "HLE not available");
+        SKIP_TEST(cd_poll_a0_advances_past_end_after_read, "HLE not available");
     }
 
     /* CD_wait_response */

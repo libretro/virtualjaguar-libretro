@@ -84,7 +84,7 @@ Core options defined in `libretro_core_options.h` control blitter mode, BIOS usa
 
 ### Jaguar CD Emulation
 
-CD support is implemented across `src/cdrom.c` (BUTCH chip / FIFO / DSA commands), `src/cdintf.c` (disc image loading: CUE/BIN, CHD, CDI), and hooks in `src/jaguar.c` (BIOS auth bypass, boot stub injection).
+CD support is implemented across `src/cdrom.c` (BUTCH chip / FIFO / DSA commands), `src/cdintf.c` (disc image loading: CUE/BIN, ISO, CDI), and hooks in `src/jaguar.c` (BIOS auth bypass, boot stub injection).
 
 Key docs:
 - `docs/butch-registers.md` — full BUTCH register map ($DFFF00-$DFFF2F) with bit definitions

@@ -44,6 +44,7 @@ static int cdintf_strncasecmp(const char *a, const char *b, size_t n)
 
 // Private function prototypes
 static bool ParseCueSheet(const char *cuePath);
+static bool ParseIso(const char *isoPath);
 static void MSFFromLBA(uint32_t lba, uint8_t *m, uint8_t *s, uint8_t *f);
 static uint32_t LBAFromMSF(uint8_t m, uint8_t s, uint8_t f);
 static char *TrimWhitespace(char *str);
@@ -547,6 +548,90 @@ static bool ParseCueSheet(const char *cuePath)
 }
 
 // ---------------------------------------------------------------------------
+// ISO parser
+//
+// Plain ISO files are single-track Mode1 data dumps with a fixed 2048-byte
+// sector size and no metadata (no audio session, no pregap, no cue sheet).
+//
+// Jaguar CD games shipped with a session 1 audio program and session 2 game
+// data — neither is preserved in a Mode1 ISO. So booting a Jaguar game from
+// .iso is fundamentally degraded:
+//   - CDIntfExtractBootStub() requires numSessions >= 2 and will return
+//     false here, so the HLE boot path will fail cleanly rather than
+//     executing random RAM.
+//   - The real-BIOS path will fail authentication for the same reason.
+//
+// What we *can* do is load the ISO as a single-session, single-track disc
+// so reads succeed for the data area. That at least keeps `retro_load_game`
+// honest (no false-positive PC-OOB) and lets future tooling read ISO data.
+// ---------------------------------------------------------------------------
+static bool ParseIso(const char *isoPath)
+{
+   RFILE *isoFile;
+   int64_t fileSize;
+   uint32_t totalSectors;
+
+   memset(&disc, 0, sizeof(disc));
+
+   isoFile = rfopen(isoPath, "rb");
+   if (!isoFile)
+   {
+      LOG_ERR("[CD-ISO] Cannot open %s\n", isoPath);
+      return false;
+   }
+   rfseek(isoFile, 0, SEEK_END);
+   fileSize = rftell(isoFile);
+   rfclose(isoFile);
+
+   if (fileSize < 2048)
+   {
+      LOG_ERR("[CD-ISO] %s is too small (%lld bytes)\n", isoPath, (long long)fileSize);
+      return false;
+   }
+
+   // Mode1 sector size is 2048 bytes.
+   totalSectors = (uint32_t)(fileSize / 2048);
+
+   snprintf(disc.binPath, sizeof(disc.binPath), "%s", isoPath);
+
+   disc.numTracks   = 1;
+   disc.numSessions = 1;
+
+   disc.tracks[0].number      = 1;
+   disc.tracks[0].session     = 1;
+   disc.tracks[0].type        = CDINTF_TRACK_MODE1;
+   disc.tracks[0].startLBA    = 0;
+   disc.tracks[0].dataLBA     = 0;
+   disc.tracks[0].lengthLBA   = totalSectors;
+   disc.tracks[0].fileOffset  = 0;
+   disc.tracks[0].sectorSize  = 2048;
+   MSFFromLBA(0, &disc.tracks[0].startM,
+                 &disc.tracks[0].startS,
+                 &disc.tracks[0].startF);
+   snprintf(disc.tracks[0].binFilePath,
+            sizeof(disc.tracks[0].binFilePath),
+            "%s", isoPath);
+
+   disc.sessions[0].number     = 1;
+   disc.sessions[0].firstTrack = 1;
+   disc.sessions[0].lastTrack  = 1;
+   disc.sessions[0].leadOutLBA = totalSectors;
+   MSFFromLBA(totalSectors,
+              &disc.sessions[0].leadOutM,
+              &disc.sessions[0].leadOutS,
+              &disc.sessions[0].leadOutF);
+
+   disc.loaded = true;
+
+   LOG_INF("[CD-ISO] Loaded %s as single-track Mode1 disc (%u sectors)\n",
+           isoPath, totalSectors);
+   LOG_WRN("[CD-ISO] Jaguar boot from .iso is not supported — needs session 2 audio "
+           "pregap + game data. Use BIN/CUE or CDI for bootable images.\n");
+
+   return true;
+}
+
+// ---------------------------------------------------------------------------
 // CDI (DiscJuggler) parser
 //
 // Reference: DreamShell modules/isofs/cdi.c. The trailer at end-of-file gives
@@ -871,6 +956,9 @@ bool CDIntfOpenImage(const char *path)
 
    if (ext && strcasecmp(ext + 1, "cdi") == 0)
       return ParseCDI(path);
+
+   if (ext && strcasecmp(ext + 1, "iso") == 0)
+      return ParseIso(path);
 
    // CUE/BIN path
    if (!ParseCueSheet(path))
@@ -1204,7 +1292,10 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    uint32_t firstS2Idx = 0;
    bool foundS2 = false;
    RFILE *trackFile;
-   static uint8_t raw[2352 * 32];
+   /* Battle Morph (USA) ships a ~414KB boot stub. Provide headroom up to
+    * ~600KB of raw sector data (~256 sectors at 2352 B/sector). Anything
+    * smaller was silently truncating large stubs to "bad length" failures. */
+   static uint8_t raw[2352 * 256];
    static uint8_t swapped[sizeof(raw)];
    int64_t bytesRead;
    uint32_t loadAddr, length;
@@ -1308,6 +1399,52 @@ uint32_t CDIntfGetDiscTotalSectors(void)
       return disc.sessions[1].leadOutLBA;
 
    return disc.sessions[0].leadOutLBA;
+}
+
+uint32_t CDIntfGetSession2TrackCount(void)
+{
+   uint32_t i, n = 0;
+   if (!disc.loaded || disc.numSessions < 2)
+      return 0;
+   for (i = 0; i < disc.numTracks; i++)
+      if (disc.tracks[i].session >= 2)
+         n++;
+   return n;
+}
+
+uint32_t CDIntfGetSession2TrackLBA(uint32_t which)
+{
+   uint32_t i, n = 0;
+   if (!disc.loaded || disc.numSessions < 2)
+      return 0;
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if (disc.tracks[i].session < 2)
+         continue;
+      if (n == which)
+         return disc.tracks[i].dataLBA
+                  ? disc.tracks[i].dataLBA
+                  : disc.tracks[i].startLBA;
+      n++;
+   }
+   return 0;
+}
+
+uint32_t CDIntfGetSession2FirstTrackLBA(void)
+{
+   uint32_t i;
+
+   if (!disc.loaded || disc.numSessions < 2)
+      return 0;
+
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if (disc.tracks[i].session >= 2)
+         return disc.tracks[i].dataLBA
+                  ? disc.tracks[i].dataLBA
+                  : disc.tracks[i].startLBA;
+   }
+   return 0;
 }
 
 uint32_t CDIntfGetSession2GameDataLBA(void)

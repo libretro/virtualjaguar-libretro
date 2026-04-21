@@ -1124,7 +1124,9 @@ bool retro_load_game(const struct retro_game_info *info)
    jaguar_cd_mode = false;
    cd_image_path[0] = '\0';
 
-   if (info->path && (has_extension(info->path, "cue") || has_extension(info->path, "cdi")))
+   if (info->path && (has_extension(info->path, "cue")
+                      || has_extension(info->path, "cdi")
+                      || has_extension(info->path, "iso")))
    {
       jaguar_cd_mode = true;
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
