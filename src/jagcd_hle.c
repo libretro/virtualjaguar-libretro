@@ -19,7 +19,15 @@
 #include "log.h"
 #include "vjag_memory.h"
 #include "gpu.h"
+#include "dsp.h"
 #include "m68000/m68kinterface.h"
+
+/* DSP RAM "CD transfer done" flag.  Per docs/cd-bios-calling-convention.md:
+ *   "The BIOS does NOT use CD_poll. It polls DSP RAM flag at [$F1B4C8] —
+ *    the GPU ISR writes $FFFFFFFF there when the transfer completes, and
+ *    the BIOS loops until negative."
+ * Game boot stubs follow the same convention. */
+#define CD_DSP_DONE_FLAG_ADDR  0x00F1B4C8
 
 /* file_stream_transforms.h redefines fprintf; restore real stdio. */
 #undef fprintf
@@ -230,6 +238,11 @@ static void HLEHandleCDRead(void)
       hle_read_pending = false;
       return;
    }
+
+   /* Clear the DSP completion flag so polling code sees a 0 -> $FFFFFFFF
+    * transition once the transfer finishes.  Real hardware: the GPU CD ISR
+    * writes $FFFFFFFF here when its write pointer reaches the end address. */
+   DSPWriteLong(CD_DSP_DONE_FLAG_ADDR, 0x00000000, UNKNOWN);
 
    /* Scan for the D1 sentinel sync block in the byte-swapped disc data.
     *
@@ -467,6 +480,11 @@ static void HLEHandleCDRead(void)
       GPUWriteLong(hle_gpu_data_base + 8,  byteCount, 0);
       GPUWriteLong(hle_gpu_data_base + 16, d1, 0);
    }
+
+   /* Signal completion to BIOS-style polling code via DSP RAM flag.
+    * Real GPU CD ISR writes $FFFFFFFF here when its write pointer reaches
+    * the end address. */
+   DSPWriteLong(CD_DSP_DONE_FLAG_ADDR, 0xFFFFFFFFu, UNKNOWN);
 
    HLE_LOG("CD_read: transferred %u bytes (%u sectors) "
            "to $%06X-$%06X\n",

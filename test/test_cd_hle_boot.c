@@ -221,6 +221,22 @@ static void cd_run_one_disc(const char *path, unsigned frames,
         for (size_t i = 0; i < hist.unique_count; i++)
             fprintf(stderr, " $%06X", hist.unique[i]);
         fprintf(stderr, "\n");
+
+        /* Dump 32 bytes around each visited PC so the developer can decode
+         * the instruction stream of the wait loop without re-running. */
+        if (ram) {
+            for (size_t i = 0; i < hist.unique_count; i++) {
+                uint32_t pc = hist.unique[i];
+                if (pc >= 0x200000) continue;
+                uint32_t base = (pc >= 8) ? (pc - 8) : 0;
+                uint32_t end  = base + 32;
+                if (end > 0x200000) end = 0x200000;
+                fprintf(stderr, "    [PC-BYTES $%06X]", pc);
+                for (uint32_t a = base; a < end; a++)
+                    fprintf(stderr, " %02X", ram[a]);
+                fprintf(stderr, "\n");
+            }
+        }
     }
 
     cd_unload_game();
