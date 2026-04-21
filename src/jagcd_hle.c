@@ -90,6 +90,18 @@ static bool     hle_read_pending   = false;
  * the transfer state structure there. */
 static uint32_t hle_gpu_data_base  = 0;
 
+/* Streaming continuation: when the boot stub re-issues the SAME
+ * CD_read (same MSF + dest + sentinel) repeatedly, real hardware
+ * is continuously serving the next sectors of disc data.  Track
+ * the prior call's signature and post-scan LBA so we can resume
+ * from there instead of re-scanning the same start. */
+static uint32_t hle_last_d0        = 0;
+static uint32_t hle_last_d1        = 0;
+static uint32_t hle_last_dest      = 0;
+static uint32_t hle_last_end       = 0;
+static uint32_t hle_next_lba       = 0;
+static bool     hle_have_last      = false;
+
 
 bool JaguarCDHLEActive(void)
 {
@@ -314,14 +326,31 @@ static void HLEHandleCDRead(void)
    #define MAX_PHASES 16
    uint32_t phase_starts[MAX_PHASES];
    uint32_t phase_count = 1;
-   phase_starts[0] = lba;
+   /* Streaming continuation: if this CD_read repeats the prior call's
+    * (D0/D1/dest/end), advance the source LBA past the previously
+    * transferred sectors so the boot stub sees fresh data each time
+    * (mimics the I2S stream that real hardware would still be feeding).
+    *
+    * Examples: Iron Soldier 2 issues the same CD_read repeatedly to
+    * pull successive chunks; without continuation we hand it the same
+    * 5KB over and over. */
+   uint32_t startLBA = lba;
+   if (hle_have_last && d0 == hle_last_d0 && d1 == hle_last_d1
+       && a0 == hle_last_dest && a1 == hle_last_end
+       && hle_next_lba > lba)
+   {
+      HLE_LOG("CD_read: repeated read — resuming from LBA %u "
+              "(would have been %u)\n", hle_next_lba, lba);
+      startLBA = hle_next_lba;
+   }
+   phase_starts[0] = startLBA;
    if (sentinelIsAscii) {
       uint32_t n = CDIntfGetSession2TrackCount();
       uint32_t i;
       for (i = 0; i < n && phase_count < MAX_PHASES; i++) {
          uint32_t tl = CDIntfGetSession2TrackLBA(i);
          uint32_t k;
-         bool dup = (tl == 0) || (tl == lba);
+         bool dup = (tl == 0) || (tl == startLBA);
          for (k = 0; !dup && k < phase_count; k++)
             if (phase_starts[k] == tl) dup = true;
          if (!dup) phase_starts[phase_count++] = tl;
@@ -478,6 +507,15 @@ static void HLEHandleCDRead(void)
    hle_read_end_addr = destAddr + byteCount;
    hle_read_progress = byteCount;
    hle_read_pending  = true;
+
+   /* Remember this call's signature + the LBA AFTER the data we just
+    * transferred so a repeat call resumes from there. */
+   hle_last_d0  = d0;
+   hle_last_d1  = d1;
+   hle_last_dest = a0;
+   hle_last_end  = a1;
+   hle_next_lba  = scanLBA + s;
+   hle_have_last = true;
 
    /* Write $FFFF sentinel padding after the transferred data.
     *
@@ -675,6 +713,8 @@ bool JaguarCDHLEBoot(void)
    hle_read_end_addr = 0;
    hle_read_dest     = 0;
    hle_read_progress = 0;
+   hle_have_last     = false;
+   hle_next_lba      = 0;
 
    if (!CDIntfIsImageLoaded())
    {
