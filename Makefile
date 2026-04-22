@@ -97,7 +97,11 @@ else ifeq ($(platform), osx)
 	SHARED := -dynamiclib
 	CFLAGS += -Ofast
 	CXXFLAGS += $(CFLAGS)
-	HAVE_NEON = 1
+	ifneq ($(arch),intel)
+	ifneq ($(arch),ppc)
+		HAVE_NEON = 1
+	endif
+	endif
 	ifeq ($(arch),ppc)
 		FLAGS += -DMSB_FIRST
 		OLD_GCC = 1
@@ -653,8 +657,15 @@ test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_ass
 test/test_cd_bios_boot: test/test_cd_bios_boot.c test/test_framework.h test/cd_assertions.h $(TARGET)
 	$(TEST_CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS)
 
-test/test_blitter_simd: test/test_blitter_simd.c src/blitter_simd.h $(TARGET)
-	$(TEST_CC) -O2 -o $@ test/test_blitter_simd.c src/blitter_simd_neon.c
+BLITTER_SIMD_TEST_FLAGS :=
+ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/blitter_simd_sse2.c)
+ifneq (,$(filter i686 i386 x86 win32,$(ARCH) $(platform)))
+   BLITTER_SIMD_TEST_FLAGS += -msse2
+endif
+endif
+
+test/test_blitter_simd: test/test_blitter_simd.c src/blitter_simd.h $(BLITTER_SIMD_SRC) $(TARGET)
+	$(TEST_CC) -O2 $(BLITTER_SIMD_TEST_FLAGS) -I src -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
 
 test-build: $(TEST_BINS)
 

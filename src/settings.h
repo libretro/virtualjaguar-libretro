@@ -19,39 +19,42 @@
 extern "C" {
 #endif
 
-// Settings struct
+struct CDBootStrategy;
 
 struct VJSettings
 {
-	int32_t joyport;								// Joystick port
-	bool hardwareTypeNTSC;						// Set to false for PAL
+	int32_t joyport;
+	bool hardwareTypeNTSC;
 	bool useJaguarBIOS;
 	bool hardwareTypeAlpine;
 	uint32_t frameSkip;
 	uint32_t biosType;
 	bool useFastBlitter;
-	bool useCDBIOS;
 	uint32_t cdBiosType;
 	uint32_t cdBootMode;
-
-	// Paths
 
 	char jagBootPath[MAX_PATH];
 	char CDBootPath[MAX_PATH];
 	char alpineROMPath[MAX_PATH];
 };
 
-// BIOS types
-
 enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2 };
-
-// CD BIOS types
-
 enum { CDBIOS_RETAIL, CDBIOS_DEV };
-
-// CD boot modes
-
 enum { CDBOOT_AUTO, CDBOOT_HLE, CDBOOT_BIOS };
+
+struct BootConfig
+{
+	bool isCDGame;
+	bool showBootROM;
+	bool cdBiosAvailable;
+	const struct CDBootStrategy *strategy;
+};
+
+void ResolveBootConfig(struct BootConfig *cfg,
+                       bool isCDGame, bool cdBiosFileLoaded,
+                       uint32_t cdBootMode, bool userWantsBIOS);
+
+extern struct BootConfig bootConfig;
 
 // Exported variables
 

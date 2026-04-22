@@ -26,6 +26,7 @@
 #include "log.h"
 #include "cdintf.h"
 #include "cdrom.h"
+#include "jagcd_boot.h"
 #include "jagcd_hle.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -149,56 +150,6 @@ void JaguarDumpPCHistoryStderr(int count)
    }
 }
 
-/* CD BIOS audio-pregap authentication bypass.
- *
- * The Jaguar CD BIOS authenticates session 2 by reading 149 frames of
- * pregap audio (just before track 30 INDEX 01) and DSP-decoding them into
- * a checksum.  Redump-style BIN/CUE dumps strip this audio, so the BIOS
- * reads silence, the checksum mismatches,
- * and execution falls into the BNE.W $0504EC fail path -> STOP $0200 ->
- * "?" icon.  CDI dumps preserve the pregap and would not need this.
- *
- * The bypass:
- *   1. Patch BNE.W at $050AA0 -> 2x NOP, so the byte-compare mismatch
- *      falls through to the post-compare path.
- *   2. At PC=$050AB2 (DSP-result MOVE.L), pre-stuff F1B4C8 with
- *      $80010000 (done|pass response).
- *   3. At PC=$050B0C (post-BSR MOVE.L), pre-stuff $FB000 with $0A so the
- *      following BHI takes the success branch.
- *
- * Installed lazily on the first virtual-pregap read served by cdintf.c so
- * the BIOS has finished decrypting and copying its code into RAM. */
-static bool cdAuthBypassInstalled = false;
-static bool cdBootStubInjected = false;
-
-void JaguarResetCDHooks(void)
-{
-   cdAuthBypassInstalled = false;
-   cdBootStubInjected = false;
-}
-
-void JaguarInstallCDAuthBypass(void)
-{
-   const uint32_t bneAddr = 0x050AA0;
-   if (cdAuthBypassInstalled)
-      return;
-
-   if (jaguarMainRAM[bneAddr]     != 0x66 || jaguarMainRAM[bneAddr + 1] != 0x00
-    || jaguarMainRAM[bneAddr + 2] != 0xFA || jaguarMainRAM[bneAddr + 3] != 0x4A)
-   {
-      LOG_DBG("[CD-AUTH] Skip BNE patch: unexpected bytes at $%06X (%02X%02X %02X%02X)\n",
-              bneAddr,
-              jaguarMainRAM[bneAddr], jaguarMainRAM[bneAddr + 1],
-              jaguarMainRAM[bneAddr + 2], jaguarMainRAM[bneAddr + 3]);
-      cdAuthBypassInstalled = true;
-      return;
-   }
-   jaguarMainRAM[bneAddr]     = 0x4E; jaguarMainRAM[bneAddr + 1] = 0x71;
-   jaguarMainRAM[bneAddr + 2] = 0x4E; jaguarMainRAM[bneAddr + 3] = 0x71;
-   LOG_INF("[CD-AUTH] Installed BNE.W $0504EC -> 2x NOP at $%06X\n", bneAddr);
-   cdAuthBypassInstalled = true;
-}
-
 void JaguarDumpMemWindow(uint32_t centerPC, uint32_t before, uint32_t after)
 {
    uint32_t start = (centerPC > before) ? (centerPC - before) : 0;
@@ -287,23 +238,8 @@ void M68KInstructionHook(void)
    if (m68kPC & 0x01)
       return;
 
-   /* HLE CD BIOS: intercept jump table calls and handle in C. */
-   if (JaguarCDHLEHook(m68kPC))
+   if (bootConfig.strategy && bootConfig.strategy->instruction_hook(m68kPC))
       return;
-
-   /* Trap calls to cart ROM space ($800000+) in HLE mode — the boot stub
-    * is trying to call CD BIOS routines that don't exist. */
-   if (JaguarCDHLEActive() && m68kPC >= 0x800000 && m68kPC < 0xE00000)
-   {
-      uint32_t sp = m68k_get_reg(NULL, M68K_REG_A7);
-      if (sp >= 4 && sp < 0x200000)
-      {
-         uint32_t retAddr = GET32(jaguarMainRAM, sp);
-         m68k_set_reg(M68K_REG_PC, retAddr);
-         m68k_set_reg(M68K_REG_A7, sp + 4);
-      }
-      return;
-   }
 
 #if HLE_DIAG
       /* Lightweight PC histogram: bucket by 256-byte range, dump periodically */
@@ -529,86 +465,6 @@ void M68KInstructionHook(void)
       }
 #endif
 
-   /* Real-BIOS hooks — only active when running the real CD BIOS,
-    * never in HLE mode where these addresses are game code. */
-   if (vjs.useCDBIOS && !JaguarCDHLEActive())
-   {
-      if (m68kPC == 0x005E40)
-         GPUWriteLong(0xF03000, 0x03D0DEAD, 0);
-
-      if (m68kPC == 0x050A9C)
-         JaguarInstallCDAuthBypass();
-
-      if (m68kPC == 0x050AB2)
-         DSPWriteLong(0x00F1B4C8, 0x80010000, UNKNOWN);
-
-      if (m68kPC == 0x050B0C)
-         JaguarWriteLong(0x000FB000, 0x0000000A, UNKNOWN);
-
-      if (m68kPC == 0x0505FA)
-         JaguarWriteLong(0x001AE00C, 0x20010001, UNKNOWN);
-
-      if (m68kPC == 0x050176)
-      {
-         if (!cdBootStubInjected)
-         {
-            static uint8_t stub[600 * 1024];
-            uint32_t loadAddr = 0, length = 0;
-            cdBootStubInjected = true;
-            if (CDIntfExtractBootStub(stub, sizeof(stub), &loadAddr, &length))
-            {
-               uint32_t i;
-               for (i = 0; i < length && (loadAddr + i) < 0x200000; i++)
-                  jaguarMainRAM[loadAddr + i] = stub[i];
-               LOG_INF("[CD-BOOTSTUB] Injected $%X bytes at $%06X\n",
-                       length, loadAddr);
-
-               /* Dump the 68K instruction at the injection hook PC so we can
-                * see whether it's `JSR $080000` or something else. */
-               LOG_INF("[CD-BOOTSTUB] Bytes at PC=$050176: %02X %02X %02X %02X %02X %02X %02X %02X\n",
-                       jaguarMainRAM[0x050176], jaguarMainRAM[0x050177],
-                       jaguarMainRAM[0x050178], jaguarMainRAM[0x050179],
-                       jaguarMainRAM[0x05017A], jaguarMainRAM[0x05017B],
-                       jaguarMainRAM[0x05017C], jaguarMainRAM[0x05017D]);
-               LOG_INF("[CD-BOOTSTUB] JSR target at $050178 = $%02X%02X%02X%02X\n",
-                       jaguarMainRAM[0x050178], jaguarMainRAM[0x050179],
-                       jaguarMainRAM[0x05017A], jaguarMainRAM[0x05017B]);
-
-               if (loadAddr != 0x080000)
-               {
-                  LOG_INF("[CD-BOOTSTUB] Boot stub loads at $%06X, not $080000 — "
-                          "installing trampoline at $080000\n", loadAddr);
-                  /* JMP loadAddr (4EF9 xxxx xxxx) */
-                  jaguarMainRAM[0x080000] = 0x4E;
-                  jaguarMainRAM[0x080001] = 0xF9;
-                  jaguarMainRAM[0x080002] = (loadAddr >> 24) & 0xFF;
-                  jaguarMainRAM[0x080003] = (loadAddr >> 16) & 0xFF;
-                  jaguarMainRAM[0x080004] = (loadAddr >>  8) & 0xFF;
-                  jaguarMainRAM[0x080005] = (loadAddr >>  0) & 0xFF;
-               }
-            }
-         }
-      }
-
-      if (m68kPC == 0x192E46)
-         JaguarWriteWord(0x001A6800, 0x0001, UNKNOWN);
-
-      if (m68kPC == 0x050BE2)
-      {
-         static uint32_t waitCount = 0;
-         static uint32_t lastKickAt = 0;
-         waitCount++;
-         if (waitCount - lastKickAt >= 1000)
-         {
-            uint32_t b4c8 = JaguarReadLong(0x00F1B4C8, UNKNOWN);
-            if ((b4c8 & 0x80000000) == 0)
-            {
-               JaguarWriteLong(0x00F1B4C8, 0x80000008, UNKNOWN);
-               lastKickAt = waitCount;
-            }
-         }
-      }
-   }
 }
 
 /* Custom UAE 68000 read/write/IRQ functions */
@@ -1089,7 +945,8 @@ void JaguarReset(void)
 {
    unsigned i;
 
-   JaguarResetCDHooks();
+   if (bootConfig.strategy && bootConfig.strategy->reset)
+      bootConfig.strategy->reset();
 
    JaguarSeedPRNG(12345);
    for(i=8; i<0x200000; i+=4)
@@ -1106,20 +963,23 @@ void JaguarReset(void)
    //Need to change this so it uses the single RAM space and load the BIOS
    //into it somewhere...
    //Also, have to change this here and in JaguarReadXX() currently
-   // Only use the system BIOS if it's available...! (it's always available now!)
-   // AND only if a jaguar cartridge has been inserted.
-   if (vjs.useJaguarBIOS && jaguarCartInserted && !vjs.hardwareTypeAlpine)
+   if (bootConfig.showBootROM && !vjs.hardwareTypeAlpine)
    {
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
+
+      /* The boot ROM sets up its own vector table, but IRQs can fire
+       * before that happens (e.g. TOM video interrupts). Install an
+       * RTE trampoline so early exceptions return safely instead of
+       * dispatching through PRNG garbage. The BIOS will overwrite
+       * these with real handlers during init. */
+      SET16(jaguarMainRAM, 0x400, 0x4E73);  /* RTE */
+      for (i = 2; i < 256; i++)
+         SET32(jaguarMainRAM, i * 4, 0x400);
    }
    else
    {
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
 
-      /* For RAM-loaded files (ABS/COFF), the exception vector table
-       * ($8–$3FF) may be outside the loaded region. Install an RTE
-       * trampoline so interrupts that fire before the program sets up
-       * its own handlers return safely instead of crashing. */
       if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
           && jaguarLoadedRAMStart > 0x400)
       {

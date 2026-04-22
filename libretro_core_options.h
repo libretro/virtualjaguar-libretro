@@ -165,16 +165,16 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_boot_mode",
       "CD Boot Mode (Restart)",
       NULL,
-      "How to boot Jaguar CD games. Auto uses the real BIOS if found, otherwise HLE. HLE always uses high-level emulation (no BIOS ROM needed). BIOS requires an external BIOS ROM file.",
+      "How to boot Jaguar CD games. HLE uses high-level emulation (no BIOS ROM needed, recommended). BIOS requires an external BIOS ROM file (experimental). Auto uses the real BIOS if found, otherwise HLE.",
       NULL,
       NULL,
       {
-         { "auto", "Auto" },
          { "hle",  "HLE (No BIOS Required)" },
-         { "bios", "BIOS (Required)" },
+         { "auto", "Auto" },
+         { "bios", "BIOS (Experimental)" },
          { NULL, NULL },
       },
-      "auto"
+      "hle"
    },
    {
       "virtualjaguar_alt_inputs",

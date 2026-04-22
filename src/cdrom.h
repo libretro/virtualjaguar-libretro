@@ -30,6 +30,7 @@ bool CDROMIsBiosOverride(void);
 uint8_t CDROMReadFifoByte(uint32_t who);
 uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who);
 void SetSSIWordsXmittedFromButch(void);
+void CDROMDiagSummary(void);
 
 #ifdef __cplusplus
 }

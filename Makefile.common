@@ -47,7 +47,9 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/vjag_memory.c \
 	$(CORE_DIR)/src/universalhdr.c \
 	$(CORE_DIR)/src/wavetable.c \
-	$(CORE_DIR)/src/jagcd_hle.c
+	$(CORE_DIR)/src/jagcd_hle.c \
+	$(CORE_DIR)/src/jagcd_bios.c \
+	$(CORE_DIR)/src/jagcd_cart.c
 
 # SIMD-accelerated blitter operations: select arch-specific implementation.
 # BLITTER_SIMD may be set explicitly to one of: scalar, sse2, neon.

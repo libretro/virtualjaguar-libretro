@@ -510,13 +510,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             GPU_TRACE("Write $F03000 = $%08X (write #%u, who=%u, 68K_PC=$%06X)\n",
                       data, f03000WriteCount, who, m68k_get_reg(NULL, M68K_REG_PC));
       }
-      if (offset == 0xF03118 || offset == 0xF0311C || offset == 0xF03120)
       {
-         static uint32_t bufStructWriteCount = 0;
-         bufStructWriteCount++;
-         if (bufStructWriteCount <= 50 || (bufStructWriteCount % 10000) == 0)
-            GPU_TRACE("Write $%06X = $%08X (write #%u, who=%u, gpu_pc=$%06X)\n",
-                      offset, data, bufStructWriteCount, who, gpu_pc);
+         static uint32_t gpuRamWriteCount = 0;
+         gpuRamWriteCount++;
+         if (who == GPU && gpu_pc >= 0xF03B00 && gpu_pc <= 0xF03C00
+             && gpuRamWriteCount <= 700000
+             && (gpuRamWriteCount % 50000) == 0)
+            GPU_TRACE("ISR wr #%u $%06X=$%08X gpu_pc=$%06X\n",
+                      gpuRamWriteCount, offset, data, gpu_pc);
       }
       offset &= 0xFFF;
       SET32(gpu_ram_8, offset, data);
@@ -1516,6 +1517,16 @@ INLINE static void gpu_opcode_storew(void)
 
 INLINE static void gpu_opcode_store(void)
 {
+#if GPU_TRACE_DEBUG
+   if (gpu_pc >= 0xF03B00 && gpu_pc <= 0xF03C00)
+   {
+      static uint32_t isrStoreCount = 0;
+      isrStoreCount++;
+      if (isrStoreCount <= 20)
+         GPU_TRACE("ISR store #%u ($%08X) = $%08X pc=$%06X\n",
+                   isrStoreCount, RM, RN, gpu_pc);
+   }
+#endif
 #ifdef GPU_CORRECT_ALIGNMENT
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM & 0xFFFFFFFC, RN, GPU);

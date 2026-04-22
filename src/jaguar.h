@@ -72,9 +72,8 @@ void JaguarDumpPCHistoryStderr(int count);
 // in RAM at runtime (no static file to read).
 void JaguarDumpMemWindow(uint32_t centerPC, uint32_t before, uint32_t after);
 
-// Patch the BIOS audio-pregap auth path so dumps that strip the pregap
-// (redump BIN/CUE) can boot.  See implementation comment for details.
-// Lazy install — call repeatedly, runs once.
+/* Patch the BIOS audio-pregap auth path so dumps that strip the pregap
+ * (redump BIN/CUE) can boot. Implemented in jagcd_bios.c. */
 void JaguarInstallCDAuthBypass(void);
 
 #ifdef __cplusplus

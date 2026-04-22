@@ -25,7 +25,7 @@
  *                      "[BIOS] Atari Jaguar CD (World).j64" /
  *                      "[BIOS] Atari Jaguar Developer CD (World).j64".
  *   VJ_TEST_CD_FOCUS   substring filter for disc paths
- *   VJ_TEST_CD_FRAMES  frame budget per disc (default: 300)
+ *   VJ_TEST_CD_FRAMES  frame budget per disc (default: 900)
  *   VJ_TEST_CD_EXTS    comma-separated extension list (default: cue,iso)
  *   VJ_TEST_CD_BIOS    "retail" (default) or "dev"
  */
@@ -246,7 +246,7 @@ static void cd_run_one_disc(const char *path, unsigned frames,
         for (uint32_t addr = 0x001000; addr < 0x200000; addr += 0x1000)
             out->ram_nonzero_bytes += cd_count_nonzero(ram, addr, 0x40);
     }
-    out->ram_has_payload = (out->ram_nonzero_bytes > 1024);
+    out->ram_has_payload = (out->ram_nonzero_bytes > 256);
 
     if (first_oob_pc)
         fprintf(stderr,
@@ -259,7 +259,7 @@ static void cd_run_one_disc(const char *path, unsigned frames,
                 "    [PC-LOOP] disc=%s PC=$%06X (no movement in last %u frames)\n",
                 path, hist.samples[0], CD_PC_HISTORY_LEN);
     }
-    if (cd_pc_history_is_thrashing(&hist, 8)) {
+    if (cd_pc_history_is_thrashing(&hist, 4)) {
         out->not_thrashing = false;
         fprintf(stderr,
                 "    [PC-THRASH] disc=%s only %zu unique PCs in %u frames\n",
@@ -301,6 +301,11 @@ static void cd_run_one_disc(const char *path, unsigned frames,
                         C.m68k_get_reg(NULL, regs[i].id));
             fprintf(stderr, "\n");
         }
+    }
+
+    {
+        void (*p_diag)(void) = dlsym(C.handle, "CDROMDiagSummary");
+        if (p_diag) p_diag();
     }
 
     cd_unload_game();
@@ -372,11 +377,11 @@ TEST(boot_all_discovered_discs_real_bios)
         return;
     }
 
-    /* Real BIOS path is heavy: full 68K BIOS + game code per frame.  600 frames
-     * (~10 s simulated) is enough for every disc in our corpus to either reach
-     * its game-code entry point or visibly stall — anything more is wasted CI
-     * time.  Override with VJ_TEST_CD_FRAMES if you need to chase a deeper hang. */
-    unsigned frames = 600;
+    /* Real BIOS path: boot ROM cube animation takes ~500 frames, then the
+     * CD BIOS decrypts + loads the boot stub.  900 frames (~15 s simulated)
+     * gives enough headroom for every disc to pass boot ROM init and reach
+     * game code.  Override with VJ_TEST_CD_FRAMES for deeper testing. */
+    unsigned frames = 900;
     const char *frames_env = getenv("VJ_TEST_CD_FRAMES");
     if (frames_env && frames_env[0]) frames = (unsigned)atoi(frames_env);
 

@@ -16,27 +16,19 @@
 #include "cdrom.h"
 
 #include <stdio.h>
-#include <string.h>									// For memset, etc.
-#include "cdintf.h"									// System agnostic CD interface functions
+#include <string.h>
+#include "cdintf.h"
+#include "jagcd_boot.h"
 #include "log.h"
 #include "gpu.h"
 #include "dsp.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "settings.h"
 #include "m68000/m68kinterface.h"
-
-// HLE (High-Level Emulation) CD data transfer: bypass the GPU ISR FIFO loop
-// and copy sector data directly from cdBuf to main RAM. The GPU ISR's FIFO
-// handler has two problems: (1) the GPU main loop drains the FIFO before the
-// ISR can read it, and (2) the ISR data area at $F03124/$F03128 is never
-// initialized by the BIOS. This HLE path copies data in C and updates the
-// GPU RAM buffer pointer at $F03118 so the boot stub sees progress.
-// Set to 0 to use the original GPU ISR path (for debugging).
-#define CD_DATA_TRANSFER_HLE 0
 
 // How many bytes to transfer per BUTCHExec call in HLE mode.
 // One sector of CD-ROM user data = 2048 bytes. Raw sector = 2352 bytes.
-// Transfer multiple sectors per call to avoid needing thousands of calls.
 #define HLE_BYTES_PER_TICK   2352
 
 /* CD debug tracing -- set to 1 to enable verbose logging */
@@ -263,6 +255,22 @@ static bool fifoDataReady = false;
 static uint32_t fifoReadCount = 0;
 static int32_t fifoFillDelay = 0;
 
+// Diagnostic counters for CD data path debugging
+static uint32_t diag_butchExecCalls = 0;
+static uint32_t diag_fifoIRQsFired = 0;
+static uint32_t diag_dsaIRQsFired = 0;
+static uint32_t diag_fifoReads = 0;
+static uint32_t diag_seekCommands = 0;
+static uint32_t diag_butchGlobalDisabled = 0;
+
+// HLE transfer progress tracking — if HLETransferTick hasn't transferred
+// any data after multiple seek cycles, the game likely uses direct FIFO
+// access (e.g. cart+CD hybrids like Iron Soldier 2). In that case, fall
+// back to native FIFO interrupts so the GPU ISR can handle data transfer.
+static uint32_t hleTransferBytes = 0;
+static uint32_t hleSeeksSinceTransfer = 0;
+#define HLE_FALLBACK_THRESHOLD 5
+
 // DSA response queue: on real hardware, the DSA serial bus has separate
 // TX and RX buffers. Sending a new command via TX does NOT discard an
 // unread response in RX. This is critical for the seek+stop sequence:
@@ -305,6 +313,77 @@ static uint16_t DSAQueuePop(void)
 }
 
 
+/* HLE CD data transfer for real BIOS mode.
+ *
+ * The GPU ISR uses self-relative addressing to find its data area (PTRPOS)
+ * in GPU local RAM. Due to GPU code relocation during authentication, the
+ * ISR's PTRPOS diverges from the address the 68K BIOS writes to (via
+ * main RAM $3074). The ISR writes FIFO data to wrong main RAM addresses,
+ * while CD_poll (reading via $3074) never sees progress.
+ *
+ * Fix: bypass the GPU ISR's fifo_read path entirely. Suppress FIFO
+ * interrupts so the ISR never enters fifo_read (and never corrupts RAM).
+ * Transfer data directly from cdBuf to main RAM at the BIOS-specified
+ * destination. Update the BIOS data area (via $3074) so CD_poll sees
+ * progress, and set the DSP completion flag when done.
+ *
+ * DSARX interrupts are NOT suppressed — the ISR still handles seek
+ * responses ($0100), enables I2S, etc. Only the destructive fifo_read
+ * path is bypassed. */
+
+static void HLETransferTick(void)
+{
+   if (!cdPlaying || bootConfig.strategy != &cd_boot_strategy_bios)
+      return;
+
+   uint32_t gpuDataBase = GET32(jaguarMainRAM, 0x3074);
+   if (gpuDataBase < 0xF03000 || gpuDataBase > 0xF03FF0)
+      return;
+
+   uint32_t destPtr = GPUReadLong(gpuDataBase, UNKNOWN);
+   uint32_t endPtr  = GPUReadLong(gpuDataBase + 4, UNKNOWN);
+
+   if (endPtr == 0 || endPtr >= 0x200000 || destPtr >= endPtr)
+      return;
+
+   /* The BIOS's CD_read stores (a0 - 4) as dest; the GPU ISR does
+    * addq #4 before the first store. RAM writes start at destPtr + 4. */
+   uint32_t writeStart = destPtr + 4;
+   uint32_t remaining  = endPtr - destPtr;
+   uint32_t toTransfer = (remaining > HLE_BYTES_PER_TICK) ? HLE_BYTES_PER_TICK : remaining;
+   toTransfer &= ~1;
+
+   for (uint32_t i = 0; i < toTransfer; i += 2)
+   {
+      if (cdBufPtr >= 2352)
+      {
+         block++;
+         CDIntfReadBlock(block, cdBuf);
+         cdBufPtr = 0;
+      }
+      uint8_t b0 = cdBuf[cdBufPtr++];
+      uint8_t b1 = (cdBufPtr < 2352) ? cdBuf[cdBufPtr++] : 0;
+      jaguarMainRAM[(writeStart + i)     & 0x1FFFFF] = b1;
+      jaguarMainRAM[(writeStart + i + 1) & 0x1FFFFF] = b0;
+   }
+
+   destPtr += toTransfer;
+   hleTransferBytes += toTransfer;
+   hleSeeksSinceTransfer = 0;
+   GPUWriteLong(gpuDataBase, destPtr, UNKNOWN);
+
+   if (destPtr >= endPtr)
+   {
+      DSPWriteLong(0xF1B4C8, 0x80000000 | (destPtr & 0x1FFFFF), UNKNOWN);
+      static uint32_t hleCompleteCount = 0;
+      hleCompleteCount++;
+      if (hleCompleteCount <= 10)
+         LOG_DBG("[CD-HLE] Complete #%u: dest=$%06X end=$%06X (gpuData=$%06X)\n",
+                 hleCompleteCount, destPtr, endPtr, gpuDataBase);
+   }
+}
+
+
 void CDROMInit(void)
 {
    haveCDGoodness = CDIntfInit();
@@ -343,6 +422,15 @@ void CDROMReset(void)
    dsaQueueTail = 0;
    dsaQueueCount = 0;
 
+   diag_butchExecCalls = 0;
+   diag_fifoIRQsFired = 0;
+   diag_dsaIRQsFired = 0;
+   diag_fifoReads = 0;
+   diag_seekCommands = 0;
+   diag_butchGlobalDisabled = 0;
+   hleTransferBytes = 0;
+   hleSeeksSinceTransfer = 0;
+
    // Initialize EEPROM to 0xFFFF (blank/erased state), then set
    // factory default values.  The Jaguar CD BIOS reads specific EEPROM
    // addresses during boot and loops if they don't contain expected
@@ -361,6 +449,17 @@ void CDROMDone(void)
    CDIntfDone();
 }
 
+void CDROMDiagSummary(void)
+{
+   LOG_INF("[CD-DIAG] butchExec=%u globalDisabled=%u seeks=%u "
+           "fifoIRQs=%u dsaIRQs=%u fifoReads=%u "
+           "cdPlaying=%d fifoReady=%d i2sEn=%d\n",
+           diag_butchExecCalls, diag_butchGlobalDisabled,
+           diag_seekCommands, diag_fifoIRQsFired, diag_dsaIRQsFired,
+           diag_fifoReads, cdPlaying, fifoDataReady,
+           (cdRam[I2CNTRL + 3] & 0x04) != 0);
+}
+
 
 //
 // This approach is probably wrong, but let's do it for now.
@@ -372,6 +471,8 @@ void BUTCHExec(uint32_t cycles)
 {
    if (!haveCDGoodness)
       return;
+
+   diag_butchExecCalls++;
 
    // Seek delay countdown — runs independently of interrupt enable and STOP state.
    // On real hardware, STOP halts playback but does NOT cancel an in-progress seek.
@@ -385,15 +486,28 @@ void BUTCHExec(uint32_t cycles)
       {
          // Seek complete: queue the response and start data output.
          // On real hardware, the drive starts outputting I2S data immediately
-         // upon reaching the target position. Even if STOP was sent during the
-         // seek, the drive completes the seek and begins data output briefly —
-         // the FIFO fills with the first sector data. The BIOS relies on this
-         // data being available for the DSP to read via the I2S/SSI path.
+         // upon reaching the target position, but the FIFO only fills when
+         // I2CNTRL bit 2 (I2S data enable) is set. The BIOS clears bit 2
+         // at the start of CD_read, so FIFO data is NOT instantly available
+         // at seek completion — it only becomes available after the GPU ISR
+         // processes the DSARX response and re-enables I2CNTRL bit 2.
          DSAQueuePush(0x0100);
          cdPlaying = true;
-         fifoDataReady = true;
-         fifoReadCount = 0;
+         {
+            bool i2sDataEnabled = (cdRam[I2CNTRL + 3] & 0x04) != 0;
+            if (i2sDataEnabled)
+            {
+               fifoDataReady = true;
+               fifoReadCount = 0;
+            }
+            else
+            {
+               fifoDataReady = false;
+               fifoFillDelay = FIFO_FILL_TICKS;
+            }
+         }
 
+         hleSeeksSinceTransfer++;
          CD_LOG("BUTCHExec: seek complete block=%u (MSF %02u:%02u:%02u) — queued $0100, FIFO+playback active\n",
                 block, min, sec, frm);
       }
@@ -402,96 +516,69 @@ void BUTCHExec(uint32_t cycles)
    // FIFO refill countdown — simulates I2S filling the 16-deep FIFO.
    // After the GPU ISR drains it (16 word-reads), we wait before setting
    // half-full again. Also handles initial fill after play starts.
+   // Only refill when I2CNTRL bit 2 (I2S data enable) is set — the BIOS
+   // clears this at the start of CD_read and the GPU ISR re-enables it
+   // after processing the DSARX seek response.
    if (fifoFillDelay > 0)
    {
+      bool i2sDataEnabled = (cdRam[I2CNTRL + 3] & 0x04) != 0;
       fifoFillDelay--;
-      if (fifoFillDelay == 0 && cdPlaying)
+      if (fifoFillDelay == 0 && cdPlaying && i2sDataEnabled)
       {
          fifoDataReady = true;
          fifoReadCount = 0;
          CD_LOG("BUTCHExec: FIFO half-full — ready for GPU ISR\n");
       }
-   }
-
-#if CD_DATA_TRANSFER_HLE
-   // HLE CD data transfer: when FIFO is ready and CD is playing, copy sector
-   // data directly to main RAM and update the GPU buffer pointer at $F03118.
-   // This bypasses the GPU ISR FIFO handler entirely.
-   if (fifoDataReady && cdPlaying)
-   {
-      uint32_t destPtr = GPUReadLong(0xF03118, UNKNOWN);
-      uint32_t destEnd = GPUReadLong(0xF0311C, UNKNOWN);
-
-      if (destPtr > 0 && destEnd > destPtr && destEnd < 0x200000)
+      else if (fifoFillDelay == 0 && cdPlaying && !i2sDataEnabled)
       {
-         uint32_t remaining = destEnd - destPtr;
-         uint32_t toTransfer = (remaining > HLE_BYTES_PER_TICK) ? HLE_BYTES_PER_TICK : remaining;
-         toTransfer &= ~1;  // Word-align for I2S swap
-
-         for (uint32_t i = 0; i < toTransfer; i += 2)
-         {
-            if (cdBufPtr >= 2352)
-            {
-               block++;
-               CDIntfReadBlock(block, cdBuf);
-               cdBufPtr = 0;
-            }
-            // Word-swap: Jaguar I2S path swaps bytes within each 16-bit word
-            uint8_t b0 = cdBuf[cdBufPtr++];
-            uint8_t b1 = (cdBufPtr < 2352) ? cdBuf[cdBufPtr++] : 0;
-            jaguarMainRAM[(destPtr + i) & 0x1FFFFF] = b1;
-            if (i + 1 < toTransfer)
-               jaguarMainRAM[(destPtr + i + 1) & 0x1FFFFF] = b0;
-         }
-
-         destPtr += toTransfer;
-         GPUWriteLong(0xF03118, destPtr, UNKNOWN);
-
-         static uint32_t hleTransferCount = 0;
-         hleTransferCount++;
-         if (hleTransferCount <= 5 || (hleTransferCount % 1000) == 0)
-            CD_LOG("HLE transfer #%u: %u bytes → $%06X (end=$%06X, block=%u)\n",
-                   hleTransferCount, toTransfer, destPtr, destEnd, block);
-
-         if (destPtr >= destEnd)
-         {
-            LOG_DBG("[CD-HLE] Transfer complete: dest=$%06X, end=$%06X, block=%u\n",
-                    destPtr, destEnd, block);
-            cdPlaying = false;
-            fifoDataReady = false;
-         }
+         fifoFillDelay = 1;  // Retry next tick
       }
    }
-#endif
+
+   bool biosHLE = (bootConfig.strategy == &cd_boot_strategy_bios);
+   bool hleActive = biosHLE && (hleSeeksSinceTransfer < HLE_FALLBACK_THRESHOLD);
+
+   /* HLE data transfer: bypass GPU ISR fifo_read entirely for BIOS mode.
+    * Copy CD data directly from cdBuf to main RAM at the BIOS-specified
+    * destination (read from GPU data area via main RAM $3074).
+    * Runs after seek completion and FIFO fill so the transfer pointers
+    * are current and cdPlaying reflects the latest state.
+    * If HLE hasn't transferred data after several seeks, the game likely
+    * uses direct FIFO access — fall back to native FIFO interrupts. */
+   if (hleActive)
+      HLETransferTick();
 
    uint32_t butchWrite = GET32(cdRam, BUTCH);
 
    if (!(butchWrite & 0x01))       // Global interrupt enable not set
-      return;
-
-   // Generate interrupts through JERRY external interrupt -> 68K INT2.
-   // Per MiSTer FPGA: eint = global_en && (fifo_int || rbuf_int || ...)
-   // where fifo_int = bit1 && bit9, rbuf_int = bit5 && bit13.
-   // Only assert on rising edge to prevent infinite ISR re-entry.
    {
-      static bool prevIRQState = false;
+      diag_butchGlobalDisabled++;
+      return;
+   }
+
+   {
       bool shouldIRQ = false;
 
-      if ((butchWrite & 0x02) && fifoDataReady)              // FIFO half-full
+      if ((butchWrite & 0x02) && fifoDataReady && !hleActive)
          shouldIRQ = true;
-      if ((butchWrite & 0x20) && dsaResponseReady)           // DSARX (response ready)
+      if ((butchWrite & 0x20) && dsaResponseReady)
          shouldIRQ = true;
 
-      if (shouldIRQ && !prevIRQState)
+      if (shouldIRQ)
       {
+         if ((butchWrite & 0x02) && fifoDataReady && !hleActive)
+            diag_fifoIRQsFired++;
+         if ((butchWrite & 0x20) && dsaResponseReady)
+            diag_dsaIRQsFired++;
+
          JERRYSetPendingIRQ(IRQ2_EXTERNAL);
          if (JERRYIRQEnabled(IRQ2_EXTERNAL))
             m68k_set_irq(2);
 
          GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
       }
-      prevIRQState = shouldIRQ;
    }
+
 }
 
 
@@ -536,22 +623,29 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    }
    else if (offset == DSCNTRL || offset == DSCNTRL + 2)
    {
-      // DSCNTRL read: returns stored value, clears bit 12 (TX buffer empty).
-      // Per MiSTer FPGA (butch.v line 1522-1525), it also clears bit 13 for
-      // single-word responses. However, in our software emulation, the GPU ISR
-      // reads DSCNTRL before checking BUTCH — clearing bit 13 here would destroy
-      // the response before the ISR sees it. Instead, we clear bit 13 when
-      // DS_DATA is actually read (see DS_DATA handler below).
+      // DSCNTRL read: returns stored value. On real hardware (MiSTer butch.v),
+      // reading DSCNTRL transitions the serial bus from "pending" to "sending".
+      // In our emulation serial transmission is instantaneous, so bit 12 (TX
+      // buffer empty) stays at its current state. The GPU ISR reads DSCNTRL as
+      // part of its handshake but does NOT use bit 12 — it only cares about
+      // the DS_DATA response value. Clearing txBufferEmpty here would race with
+      // the 68K's DSA_tx polling loop that checks BUTCH+2 bit 12.
       data = GET16(cdRam, offset);
-      txBufferEmpty = false;  // Clear bit 12 — GPU sees this transition
    }
    else if (offset == I2CNTRL || offset == I2CNTRL + 2)
    {
-      // I2S bus control register readback — return stored value with dynamic bit 4.
-      // Per MiSTer FPGA: bit 4 (FIFO not empty) is hardware-driven, not software-set.
       data = GET16(cdRam, offset);
-      if (haveCDGoodness && fifoDataReady)
-         data |= (1 << 4);              // FIFO not empty (dynamic)
+      /* In BIOS HLE mode, HLETransferTick() writes data directly to RAM,
+       * bypassing the FIFO entirely.  The BIOS's drain loop reads FIFO_DATA
+       * then checks I2CNTRL bit 4 — if we report "FIFO not empty" the loop
+       * never terminates because HLETransferTick keeps the refill cycle alive.
+       * Suppress bit 4 only when HLE is actively transferring. */
+      {
+         bool bHLEActive = (bootConfig.strategy == &cd_boot_strategy_bios)
+                           && (hleSeeksSinceTransfer < HLE_FALLBACK_THRESHOLD);
+         if (haveCDGoodness && fifoDataReady && !bHLEActive)
+            data |= (1 << 4);
+      }
    }
    else if (offset == DS_DATA && haveCDGoodness)
    {
@@ -619,15 +713,29 @@ TOC: 2 10 00  a 00:00:00 00 49:50:06   <-- Track #10
 TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
 */
 
-         //Should do something like so:
-         //			data = GetSessionInfo(cdCmd & 0xFF, cdPtr);
-         data = CDIntfGetSessionInfo(cdCmd & 0xFF, cdPtr);
-         CD_LOG("TOC-03: sess_param=%u cdPtr=%u data=$%04X\n",
-                cdCmd & 0xFF, cdPtr, data);
-         if (data == 0xFF)	// Failed...
-            data = 0x0400;
+         /* $0300 short TOC: BIOS polls DS_DATA for $03xx responses
+          * (echoes the command prefix).  Each of the 5 response words has
+          * high byte $03 and low byte = session info value.  The BIOS
+          * checks bit 0 of each word: if set, more data follows; if clear,
+          * TOC transfer is complete.  After all 5 data words, return $0300
+          * as end-of-data marker (bit 0 clear). */
+         if (cdPtr < 5)
+         {
+            data = CDIntfGetSessionInfo(cdCmd & 0xFF, cdPtr);
+            CD_LOG("TOC-03: sess_param=%u cdPtr=%u data=$%04X\n",
+                   cdCmd & 0xFF, cdPtr, data);
+            if (data == 0xFF)
+               data = 0x0400;
+            else
+            {
+               data = 0x0300 | (data & 0xFF);
+               cdPtr++;
+            }
+         }
          else
-            data |= (0x20 | cdPtr++) << 8;
+         {
+            data = 0x0300;  /* end-of-data: high byte $03, bit 0 clear */
+         }
       }
       // Seek: only $12xx (Goto Frame) generates a response ($0100 = Found).
       // $10xx/$11xx (Goto Min/Sec) do NOT generate responses on their own.
@@ -711,6 +819,8 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          data = 0x1700 | (cdCmd & 0xFF);			// Mode Status: $17nn
       else if ((cdCmd & 0xFF00) == 0x1800)		// Spin up session #
          data = 0x0143;								// Spun Up
+      else if ((cdCmd & 0xFF00) == 0x5000)		// Disc status poll
+         data = 0x0300 | (CDIntfGetNumSessions() & 0xFF);
       else if ((cdCmd & 0xFF00) == 0x5400)		// Read # of sessions
          data = 0x5400 | (CDIntfGetNumSessions() & 0xFF);
       else if ((cdCmd & 0xFF00) == 0x7000)		// Set DAC Mode
@@ -757,6 +867,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
       data = 0x0400;								// No CD interface present, so return error
    else if (offset >= FIFO_DATA && offset <= FIFO_DATA + 3)
    {
+      diag_fifoReads++;
       {
          extern uint32_t gpu_pc;
          static uint32_t fifoReadTraceCount = 0;
@@ -777,7 +888,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          }
          if (cdBufPtr < 2352)
          {
-            data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
+            data = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr];
             cdBufPtr += 2;
          }
          fifoReadCount++;
@@ -790,7 +901,6 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
    }
    else if (offset >= FIFO_DATA + 4 && offset <= FIFO_DATA + 7)
    {
-      // I2SDAT2 read -- alternate FIFO port, also delivers sector data.
       if (haveCDGoodness && fifoDataReady)
       {
          if (cdBufPtr >= 2352 && cdPlaying)
@@ -801,7 +911,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          }
          if (cdBufPtr < 2352)
          {
-            data = (cdBuf[cdBufPtr] << 8) | cdBuf[cdBufPtr + 1];
+            data = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr];
             cdBufPtr += 2;
          }
          fifoReadCount++;
@@ -897,6 +1007,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          }
          else
          {
+            diag_seekCommands++;
             dsaResponseReady = false;
             isMultiWordResponse = false;
             seekDelay = SEEK_DELAY_TICKS;

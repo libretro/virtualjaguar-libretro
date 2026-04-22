@@ -23,6 +23,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jagdevcdbios.h"
 #include "jaguar.h"
 #include "cdintf.h"
+#include "jagcd_boot.h"
 #include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
@@ -75,8 +76,8 @@ static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
 static bool jaguar_cd_mode = false;
 static char cd_image_path[4096] = {0};
-static bool cd_bios_loaded_externally = false;
-static uint8_t external_cd_bios[0x40000];  /* 256 KB */
+bool cd_bios_loaded_externally = false;
+uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -973,10 +974,47 @@ void retro_cheat_set(unsigned index, bool enabled, const char *code)
 
 /* Try to load a CD BIOS from the system directory.
  * Looks for several common filenames. Returns true if loaded. */
+static bool try_load_cd_bios_file(const char *path)
+{
+   RFILE *f = rfopen(path, "rb");
+   if (!f)
+      return false;
+
+   rfseek(f, 0, SEEK_END);
+   int64_t size = rftell(f);
+   rfseek(f, 0, SEEK_SET);
+
+   if (size != 0x40000)
+   {
+      LOG_DBG("[CD-BIOS]   wrong size (%lld, need 262144): %s\n",
+              (long long)size, path);
+      rfclose(f);
+      return false;
+   }
+
+   if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
+   {
+      rfclose(f);
+      return false;
+   }
+   rfclose(f);
+
+   uint32_t run_addr = (external_cd_bios[0x404] << 24) | (external_cd_bios[0x405] << 16)
+                     | (external_cd_bios[0x406] << 8)  | external_cd_bios[0x407];
+   if (run_addr < 0x800000 || run_addr > 0x840000)
+   {
+      LOG_DBG("[CD-BIOS]   bad run addr $%08X: %s\n", run_addr, path);
+      return false;
+   }
+
+   LOG_INF("[CD-BIOS] Loaded CD BIOS: %s (run=$%06X)\n", path, run_addr);
+   cd_bios_loaded_externally = true;
+   return true;
+}
+
 static bool load_external_cd_bios(void)
 {
    const char *system_dir = NULL;
-   /* Common filenames for the Jaguar CD BIOS (256 KB) */
    static const char *bios_names[] = {
       "jaguarcd_bios.bin",
       "jagcd_bios.bin",
@@ -986,51 +1024,42 @@ static bool load_external_cd_bios(void)
       "[BIOS] Atari Jaguar Developer CD (World).j64",
       NULL
    };
+   /* Sub-directories commonly used by Provenance, RetroArch, etc. */
+   static const char *sub_dirs[] = {
+      "",
+      "Atari - Jaguar",
+      "Atari - Jaguar CD",
+      "jaguar",
+      "jaguarcd",
+      NULL
+   };
 
    if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) || !system_dir)
-      return false;
-
-   for (int i = 0; bios_names[i]; i++)
    {
-      char path[4096];
-      RFILE *f;
+      LOG_WRN("[CD-BIOS] No system directory available\n");
+      return false;
+   }
 
-      snprintf(path, sizeof(path), "%s/%s", system_dir, bios_names[i]);
-      f = rfopen(path, "rb");
-      if (!f)
-         continue;
+   LOG_INF("[CD-BIOS] Searching for CD BIOS in: %s\n", system_dir);
 
-      rfseek(f, 0, SEEK_END);
-      int64_t size = rftell(f);
-      rfseek(f, 0, SEEK_SET);
-
-      if (size != 0x40000)  /* Must be exactly 256 KB */
+   for (int s = 0; sub_dirs[s]; s++)
+   {
+      for (int i = 0; bios_names[i]; i++)
       {
-         rfclose(f);
-         continue;
-      }
+         char path[4096];
 
-      if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
-      {
-         rfclose(f);
-         continue;
-      }
-      rfclose(f);
+         if (sub_dirs[s][0])
+            snprintf(path, sizeof(path), "%s/%s/%s", system_dir, sub_dirs[s], bios_names[i]);
+         else
+            snprintf(path, sizeof(path), "%s/%s", system_dir, bios_names[i]);
 
-      /* Validate: the CD BIOS is loaded as a "cartridge" at $800000.
-       * The Jaguar universal header at offset $404 contains the run address.
-       * For the retail CD BIOS this is $802000. */
-      {
-         uint32_t run_addr = (external_cd_bios[0x404] << 24) | (external_cd_bios[0x405] << 16)
-                           | (external_cd_bios[0x406] << 8)  | external_cd_bios[0x407];
-         if (run_addr >= 0x800000 && run_addr <= 0x840000)
-         {
-            cd_bios_loaded_externally = true;
+         if (try_load_cd_bios_file(path))
             return true;
-         }
       }
    }
 
+   LOG_WRN("[CD-BIOS] CD BIOS not found in %s (searched %d names x %d directories)\n",
+           system_dir, 6, 5);
    return false;
 }
 
@@ -1109,10 +1138,8 @@ bool retro_load_game(const struct retro_game_info *info)
    game_width           = 320;
    game_height          = 240;
 
-   // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
-   vjs.useCDBIOS        = false;
    vjs.cdBiosType       = CDBIOS_RETAIL;
 
    check_variables();
@@ -1123,6 +1150,7 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Detect CD content */
    jaguar_cd_mode = false;
    cd_image_path[0] = '\0';
+   cd_bios_loaded_externally = false;
 
    if (info->path && (has_extension(info->path, "cue")
                       || has_extension(info->path, "cdi")
@@ -1132,26 +1160,15 @@ bool retro_load_game(const struct retro_game_info *info)
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
       cd_image_path[sizeof(cd_image_path) - 1] = '\0';
 
-      vjs.useJaguarBIOS = true;
-      vjs.useCDBIOS     = true;
-
-      cd_bios_loaded_externally = false;
-
-      if (vjs.cdBootMode == CDBOOT_HLE)
-      {
-         LOG_INF("[CD] Boot mode: HLE (skipping BIOS search)\n");
-      }
-      else
-      {
-         if (!load_external_cd_bios())
-         {
-            if (vjs.cdBootMode == CDBOOT_BIOS)
-               LOG_WRN("[CD] WARNING: Boot mode is BIOS but no external BIOS found\n");
-            else
-               LOG_WRN("[CD] No external BIOS found — will use HLE boot path\n");
-         }
-      }
+      if (vjs.cdBootMode != CDBOOT_HLE)
+         load_external_cd_bios();
    }
+
+   /* Resolve boot configuration — single source of truth */
+   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                     vjs.cdBootMode, vjs.useJaguarBIOS);
+
+   vjs.useJaguarBIOS = bootConfig.showBootROM;
 
    /* For CD mode, open the disc image BEFORE JaguarInit() so that
     * CDROMInit() -> CDIntfInit() -> CDIntfIsImageLoaded() returns true
@@ -1192,79 +1209,7 @@ bool retro_load_game(const struct retro_game_info *info)
    for (i = 0; i < 1024 * 512; ++i)
       videoBuffer[i] = 0xFF000000;
 
-   if (jaguar_cd_mode && cd_bios_loaded_externally)
-   {
-      /* Real BIOS path: The CD BIOS is a "cartridge" loaded at $800000.
-       * The standard boot ROM at $E00000 detects it, reads the header at
-       * $800404 (entry point $802000), and jumps there. */
-      const uint8_t *cdBiosData = external_cd_bios;
-      size_t cdBiosSize = 0x40000;
-
-      memcpy(jagMemSpace + 0x800000, cdBiosData, cdBiosSize);
-      jaguarRunAddress = GET32(jagMemSpace, 0x800404);
-      jaguarCartInserted = true;
-      jaguarROMSize = cdBiosSize;
-
-      /* The boot ROM runs a GPU-based cart authentication check that loops
-       * forever in emulation (the GPU security code at $F032EC never
-       * converges). Skip the GPU wait by clearing bit 0. */
-      jagMemSpace[0x80040B] &= 0xFE;
-      LOG_DBG("[CD-TRACE] Boot ROM wait bypass applied at $80040B (value now $%02X)\n",
-              jagMemSpace[0x80040B]);
-
-      JaguarReset();
-   }
-   else if (jaguar_cd_mode)
-   {
-      /* HLE path: no external BIOS — JaguarCDHLEBoot() will be called
-       * after JaguarReset() to set up the boot stub directly. */
-      jaguarCartInserted = false;
-      JaguarReset();
-   }
-   else
-   {
-      SET32(jaguarMainRAM, 0, 0x00200000);
-
-      if (info->data && info->size > 0)
-      {
-         JaguarLoadFile((uint8_t*)info->data, info->size);
-      }
-      else if (info->path)
-      {
-         RFILE *romFile;
-         romFile = rfopen(info->path, "rb");
-         if (romFile)
-         {
-            uint8_t *romData;
-            int64_t fileSize;
-
-            rfseek(romFile, 0, SEEK_END);
-            fileSize = rftell(romFile);
-            rfseek(romFile, 0, SEEK_SET);
-
-            romData = (uint8_t *)malloc(fileSize);
-            if (romData)
-            {
-               rfread(romData, 1, fileSize, romFile);
-               JaguarLoadFile(romData, fileSize);
-               free(romData);
-            }
-            rfclose(romFile);
-         }
-      }
-   }
-
-   JaguarReset();
-
-   /* HLE CD boot: if CD mode and no external BIOS, boot via HLE.
-    * Must happen after JaguarReset() since reset clears RAM/GPU state. */
-   if (jaguar_cd_mode && !cd_bios_loaded_externally)
-   {
-      if (!JaguarCDHLEBoot())
-      {
-         LOG_ERR("[CD-HLE] HLE boot failed — falling back to diagnostic screen\n");
-      }
-   }
+   bootConfig.strategy->boot(info);
 
    /* The frontend will load .srm data into our save buffer (returned by
     * retro_get_memory_data) after this function returns but before the
