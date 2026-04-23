@@ -59,7 +59,9 @@ void InitializeEventList(void)
    for(i = 0; i < EVENT_LIST_SIZE; i++)
    {
       eventList[i].valid = false;
+      eventList[i].eventTime = 0.0;
       eventListJERRY[i].valid = false;
+      eventListJERRY[i].eventTime = 0.0;
    }
 
    numberOfEvents = 0;
@@ -156,14 +158,13 @@ void AdjustCallbackTime(void (* callback)(void), double time)
 //
 double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 {
-   double time;
+   double time = 1e30;
    unsigned i;
    if (type == EVENT_MAIN)
    {
-      time      = eventList[0].eventTime;
       nextEvent = 0;
 
-      for(i = 1; i < EVENT_LIST_SIZE; i++)
+      for(i = 0; i < EVENT_LIST_SIZE; i++)
       {
          if (eventList[i].valid && (eventList[i].eventTime < time))
          {
@@ -174,10 +175,9 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
    }
    else
    {
-      time           = eventListJERRY[0].eventTime;
       nextEventJERRY = 0;
 
-      for(i = 1; i < EVENT_LIST_SIZE; i++)
+      for(i = 0; i < EVENT_LIST_SIZE; i++)
       {
          if (eventListJERRY[i].valid && (eventListJERRY[i].eventTime < time))
          {
