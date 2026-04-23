@@ -211,6 +211,13 @@ jobs:
         $CC -O2 -Wall -o test/tools/test_memory_map test/tools/test_memory_map.c $LDFLAGS
         ./test/tools/test_memory_map ./${{ matrix.config.artifact }}
 
+    - name: Cache pinned rcheevos E2E build
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      uses: actions/cache@v4
+      with:
+        path: build/rcheevos-static
+        key: rcheevos-e2e-fd57e900-${{ runner.os }}-${{ matrix.config.cc }}-${{ matrix.config.displayTargetName }}
+
     - name: RetroAchievements rc_libretro E2E test
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       env:

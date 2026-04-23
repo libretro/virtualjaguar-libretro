@@ -92,10 +92,10 @@ Key docs:
 
 ### Testing
 
-RetroAchievements-related (no RetroAchievements server/API access; local validation only):
+RetroAchievements-related — **no RetroAchievements account, API, or gameplay server**; local validation only. The E2E harness still **fetches the pinned rcheevos source tarball from GitHub** when `build/rcheevos-static` is missing (CI may cache that directory); that is unrelated to contacting RetroAchievements services.
 
-- `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS` / `SET_SUPPORT_ACHIEVEMENTS` and descriptor layout vs `retro_get_memory_data(SYSTEM_RAM)`.
-- `test/tools/test_rcheevos_e2e.sh` — does not contact RetroAchievements services; it downloads pinned **rcheevos** (`RCHEEVOS_REF`, default `v12.3.0`) when needed in a clean environment, builds `librcheevos.a`, then runs `test_rcheevos_e2e` to verify **rc_libretro** memory resolution (`RC_CONSOLE_ATARI_JAGUAR`) matches host RAM — the same mapping stack RetroArch uses before any RA API call. If the pinned tarball/build output is already cached locally, this external download step is avoided.
+- `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS`, `SET_SUPPORT_ACHIEVEMENTS` with **`true`**, and descriptor layout vs `retro_get_memory_data(SYSTEM_RAM)`.
+- `test/tools/test_rcheevos_e2e.sh` — downloads pinned **rcheevos** (`RCHEEVOS_REF`) when needed, builds `librcheevos.a`, then runs `test_rcheevos_e2e` to verify **rc_libretro** memory resolution (`RC_CONSOLE_ATARI_JAGUAR`) matches host RAM — the same mapping stack RetroArch uses before any RA cloud call.
 
 See `docs/test-infrastructure.md` for all test harnesses:
 - `test/test_dsp_mac40.c` — Jaguar DSP **40-bit MAC** accumulator semantics (`dsp_acc40.h`), run in CI with SIMD tests; relevant for long IIR chains (e.g. pink-noise generators on DSP).

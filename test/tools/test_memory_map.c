@@ -2,8 +2,8 @@
  * test_memory_map.c — Verify RetroAchievements memory map advertisement.
  *
  * Loads the core, feeds a minimal dummy ROM, and checks that
- * RETRO_ENVIRONMENT_SET_MEMORY_MAPS and SET_SUPPORT_ACHIEVEMENTS
- * are called with correct values.
+ * RETRO_ENVIRONMENT_SET_MEMORY_MAPS is advertised and SET_SUPPORT_ACHIEVEMENTS
+ * is called with a non-NULL pointer to bool true (per libretro.h).
  *
  * Build:
  *   cc -o test/tools/test_memory_map test/tools/test_memory_map.c -ldl  (Linux)
@@ -44,6 +44,8 @@ typedef size_t (*retro_get_memory_size_t)(unsigned);
 
 static bool got_memory_maps;
 static bool got_achievements;
+static bool achievements_data_ok;
+static bool achievements_enabled_true;
 static const struct retro_memory_map *captured_memmap;
 
 static bool env_cb(unsigned cmd, void *data)
@@ -56,6 +58,11 @@ static bool env_cb(unsigned cmd, void *data)
         return true;
     case RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS:
         got_achievements = true;
+        if (data)
+        {
+            achievements_data_ok = true;
+            achievements_enabled_true = *(const bool *)data;
+        }
         return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
     case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
@@ -168,6 +175,8 @@ int main(int argc, char **argv)
 
     got_memory_maps = false;
     got_achievements = false;
+    achievements_data_ok = false;
+    achievements_enabled_true = false;
     captured_memmap = NULL;
 
     core_set_env(env_cb);
@@ -178,13 +187,23 @@ int main(int argc, char **argv)
     core_set_input_state(input_state);
     core_init();
 
-    /* Test 1: SET_SUPPORT_ACHIEVEMENTS called during retro_set_environment */
-    printf("Test 1: SET_SUPPORT_ACHIEVEMENTS ... ");
-    if (got_achievements)
+    /* Test 1: SET_SUPPORT_ACHIEVEMENTS during retro_set_environment — non-NULL bool, true */
+    printf("Test 1: SET_SUPPORT_ACHIEVEMENTS (true) ... ");
+    if (got_achievements && achievements_data_ok && achievements_enabled_true)
         printf("PASS\n");
-    else
+    else if (!got_achievements)
     {
         printf("FAIL (not called)\n");
+        failures++;
+    }
+    else if (!achievements_data_ok)
+    {
+        printf("FAIL (NULL data)\n");
+        failures++;
+    }
+    else
+    {
+        printf("FAIL (expected true, got false)\n");
         failures++;
     }
 
