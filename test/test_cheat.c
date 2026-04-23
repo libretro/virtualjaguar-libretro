@@ -14,7 +14,8 @@
  *   1. cheat_parse_one: all accepted format lengths, every separator style,
  *      and a broad set of rejection cases (bad chars, wrong length, NULL).
  *   2. List management: add, toggle off, replacement-on-same-index, and
- *      removing entries when the list is full.
+ *      capacity clamping when the list is full (additional inserts are
+ *      ignored).
  *   3. Multi-code strings (the '+' and newline separators used by
  *      RetroArch's cheat .cht files).
  *   4. Application against a 16 MB simulated address space, exercising
