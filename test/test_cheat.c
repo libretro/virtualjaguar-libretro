@@ -5,9 +5,10 @@
  * (the boolean.h header pulled in by src/cheat.h) and otherwise link only
  * src/cheat.c, so the rest of the emulator does not need to be built.
  *
- * Build & run (from repo root):
+ * Build & run (from repo root): `make test`
+ * or manually:
  *     cc -O2 -Wall -std=c99 -I src -I libretro-common/include \
- *        -o test_cheat test/test_cheat.c src/cheat.c && ./test_cheat
+ *        -o test/test_cheat test/test_cheat.c src/cheat.c && ./test/test_cheat
  *
  * The tests cover:
  *   1. cheat_parse_one: all accepted format lengths, every separator style,
@@ -174,6 +175,9 @@ static void test_parse_invalid(void)
    CHECK(!cheat_parse_one("00003D00 FFFG",             &addr, &val, &size));
    CHECK(!cheat_parse_one("00003D00/FFFF",             &addr, &val, &size));
    CHECK(!cheat_parse_one("00003D00,FFFF",             &addr, &val, &size));
+
+   /* More than 16 hex digits (longest valid single code is 8+8). */
+   CHECK(!cheat_parse_one("00003D00FFFFFFFF1",         &addr, &val, &size));
 }
 
 /* --------------------------------------------------------------------- */
@@ -202,6 +206,10 @@ static void test_list_add_and_remove(void)
    CHECK_EQ_U(list.count, 1u);
    CHECK_EQ_U(list.entries[0].address, 0x100000u);
    CHECK_EQ_U(list.entries[0].tag,     1u);
+
+   /* enabled=false must clear the slot even when code is NULL. */
+   cheat_list_set(&list, 1, false, NULL);
+   CHECK_EQ_U(list.count, 0u);
 
    cheat_list_reset(&list);
    CHECK_EQ_U(list.count, 0u);

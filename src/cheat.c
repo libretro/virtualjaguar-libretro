@@ -10,12 +10,15 @@ static int hex_digit(char c)
    return -1;
 }
 
+/* Longest accepted form is 8 hex (addr) + 8 hex (value) after separator strip. */
+#define CHEAT_PARSE_MAX_HEX 16
+
 bool cheat_parse_one(const char *code,
                      uint32_t *addr_out,
                      uint32_t *val_out,
                      uint8_t *size_out)
 {
-   char buf[32];
+   char buf[CHEAT_PARSE_MAX_HEX + 1];
    size_t n = 0;
    size_t addr_len, val_len, i;
    uint32_t addr = 0, val = 0;
@@ -23,10 +26,14 @@ bool cheat_parse_one(const char *code,
    if (!code || !addr_out || !val_out || !size_out)
       return false;
 
-   for (; *code && n < sizeof(buf) - 1; code++)
+   for (; *code; code++)
    {
       if (hex_digit((char)*code) >= 0)
-         buf[n++] = *code;
+      {
+         if (n >= CHEAT_PARSE_MAX_HEX)
+            return false;
+         buf[n++] = (char)*code;
+      }
       else if (*code != ' ' && *code != '\t' && *code != ':' &&
                *code != '-' && *code != '.')
          return false;
@@ -88,11 +95,14 @@ void cheat_list_set(cheat_list_t *list,
    const char *p;
    const char *start;
 
-   if (!list || !code)
+   if (!list)
       return;
 
    cheat_list_remove_index(list, index);
    if (!enabled)
+      return;
+
+   if (!code)
       return;
 
    p = code;

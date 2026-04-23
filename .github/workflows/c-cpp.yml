@@ -170,11 +170,8 @@ jobs:
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
     - name: Run cheat engine unit tests
-      run: |
-        ${{ matrix.config.cc }} -O2 -Wall -std=c99 \
-          -I src -I libretro-common/include \
-          -o test_cheat test/test_cheat.c src/cheat.c
-        ./test_cheat
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      run: make test CC="${{ matrix.config.cc }}"
 
     - name: Run SIMD blitter tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
@@ -233,7 +230,7 @@ jobs:
           src\gpu.c src\jaguar.c src\jerry.c src\tom.c src\op.c ^
           src\cdintf.c src\cdrom.c src\crc32.c src\event.c ^
           src\eeprom.c src\filedb.c src\joystick.c src\settings.c ^
-          src\memtrack.c src\mmu.c src\vjag_memory.c ^
+          src\memtrack.c src\mmu.c src\vjag_memory.c src\cheat.c ^
           src\universalhdr.c src\wavetable.c ^
           src\jagbios.c src\jagbios2.c ^
           src\jagcdbios.c src\jagdevcdbios.c ^
