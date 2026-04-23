@@ -31,6 +31,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #include "cheat.h"
 
@@ -314,6 +315,9 @@ static void sim_write(uint32_t addr, uint32_t value, uint8_t size, void *user)
 {
    (void)user;
    addr &= 0x00FFFFFF;
+   /* 24-bit bus: last in-range long write starts at 0xFFFFFC; word at 0xFFFFFE. */
+   if ((size_t)addr + (size_t)size > (size_t)SIM_MEM_SIZE)
+      return;
    switch (size)
    {
       case 1:
@@ -334,11 +338,17 @@ static void sim_write(uint32_t addr, uint32_t value, uint8_t size, void *user)
 
 static uint16_t sim_read16(uint32_t addr)
 {
+   addr &= 0x00FFFFFF;
+   if ((size_t)addr + 2u > (size_t)SIM_MEM_SIZE)
+      return 0;
    return (uint16_t)((sim_mem[addr] << 8) | sim_mem[addr + 1]);
 }
 
 static uint32_t sim_read32(uint32_t addr)
 {
+   addr &= 0x00FFFFFF;
+   if ((size_t)addr + 4u > (size_t)SIM_MEM_SIZE)
+      return 0;
    return ((uint32_t)sim_mem[addr]     << 24) |
           ((uint32_t)sim_mem[addr + 1] << 16) |
           ((uint32_t)sim_mem[addr + 2] <<  8) |
