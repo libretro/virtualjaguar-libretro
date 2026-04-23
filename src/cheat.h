@@ -15,9 +15,10 @@
  *    "00003D00FFFF"
  *
  * Contiguous 10 hex digits use 6+4 (short address + word). For an 8-digit
- * address plus a byte value (8+2), put ASCII whitespace between the fields,
- * e.g. "00003D00 FF". You can also write "ABCDEF 1234" to force 6+4 with a
- * visible boundary.
+ * address plus a byte (8+2), separate fields with ASCII whitespace and/or a
+ * single boundary using ':', '-', or '.' before the value (e.g.
+ * "00003D00 FF", "00003D00:FF", "0000:3D00:FF"). You can also write
+ * "ABCDEF 1234" to force 6+4 with a visible boundary.
  *
  * A single `retro_cheat_set` string may contain multiple codes separated
  * by '+' or newlines; each is parsed and stored independently under the

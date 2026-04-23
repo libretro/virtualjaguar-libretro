@@ -1,9 +1,9 @@
 /*
  * Unit tests for the Jaguar cheat engine (src/cheat.c).
  *
- * These tests are self-contained: they stub just enough of libretro-common
- * (the boolean.h header pulled in by src/cheat.h) and otherwise link only
- * src/cheat.c, so the rest of the emulator does not need to be built.
+ * Self-contained: links only src/cheat.c. `make test` uses `-I src` before
+ * libretro-common, so `<boolean.h>` resolves to src/boolean.h (compatible with
+ * libretro-common) via src/cheat.h.
  *
  * Build & run (from repo root): `make test`
  * or manually:
@@ -96,8 +96,18 @@ static void test_parse_valid_formats(void)
    CHECK_EQ_U(val,  0xDEADBEEFu);
    CHECK_EQ_U(size, 4u);
 
-   /* 8+2: PAR-style full address + byte — needs whitespace so it is not read as 6+4 */
+   /* 8+2: full address + byte — boundary via space or last ':', '-', '.' */
    CHECK(cheat_parse_one("00003D00 FF", &addr, &val, &size));
+   CHECK_EQ_U(addr, 0x003D00u);
+   CHECK_EQ_U(val,  0xFFu);
+   CHECK_EQ_U(size, 1u);
+
+   CHECK(cheat_parse_one("00003D00:FF", &addr, &val, &size));
+   CHECK_EQ_U(addr, 0x003D00u);
+   CHECK_EQ_U(val,  0xFFu);
+   CHECK_EQ_U(size, 1u);
+
+   CHECK(cheat_parse_one("0000:3D00:FF", &addr, &val, &size));
    CHECK_EQ_U(addr, 0x003D00u);
    CHECK_EQ_U(val,  0xFFu);
    CHECK_EQ_U(size, 1u);
@@ -292,12 +302,12 @@ static void test_list_capacity(void)
    cheat_list_t list;
    unsigned i;
    cheat_list_reset(&list);
-   /* Fill the list past capacity and verify it clamps. */
+   /* Fill with distinct cheat indices until the list hits CHEAT_MAX_ENTRIES. */
    for (i = 0; i < CHEAT_MAX_ENTRIES + 50; i++)
    {
       char code[32];
       snprintf(code, sizeof(code), "%06X FF", i);
-      cheat_list_set(&list, i & 0xFF, true, code);
+      cheat_list_set(&list, i, true, code);
    }
    CHECK(list.count <= CHEAT_MAX_ENTRIES);
 }

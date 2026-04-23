@@ -44,6 +44,40 @@ static bool has_ascii_ws(const char *s)
    return false;
 }
 
+/* Split on the last ':', '-', or '.' so "0000:3D00:FF" → address 00003D00 + value FF. */
+static bool split_last_cd_sep(const char *code,
+                              char *left, size_t lmax,
+                              char *right, size_t rmax)
+{
+   const char *last = NULL;
+   const char *p;
+   size_t ln;
+   size_t rn;
+
+   for (p = code; *p; p++)
+   {
+      if (*p == ':' || *p == '-' || *p == '.')
+         last = p;
+   }
+   if (!last || last == code || !last[1])
+      return false;
+
+   ln = (size_t)(last - code);
+   if (ln + 1 >= lmax)
+      return false;
+   memcpy(left, code, ln);
+   left[ln] = '\0';
+
+   for (p = last + 1, rn = 0; *p; p++)
+   {
+      if (rn + 1 >= rmax)
+         return false;
+      right[rn++] = *p;
+   }
+   right[rn] = '\0';
+   return ln > 0 && rn > 0;
+}
+
 static bool split_first_ws(const char *code,
                            char *left, size_t lmax,
                            char *right, size_t rmax)
@@ -127,9 +161,10 @@ bool cheat_parse_one(const char *code,
    if (!hex_only_strip(code, buf, sizeof(buf), &n))
       return false;
 
-   /* Two-field form: ASCII whitespace separates address field from value field so
-    * e.g. 8-digit address + byte ("00003D00 FF") is not misparsed as 6+4. */
-   if (n == 10 && has_ascii_ws(code))
+   /* Two-field form (10 hex digits total): disambiguate 6+4 vs 8+2.
+    * Use first whitespace run, else last ':', '-', or '.' between fields
+    * ("00003D00 FF", "00003D00:FF", "0000:3D00:FF") so 8+2 is not read as 6+4. */
+   if (n == 10 && (has_ascii_ws(code) || strpbrk(code, ":-.") != NULL))
    {
       char left[96];
       char right[96];
@@ -137,8 +172,14 @@ bool cheat_parse_one(const char *code,
       char val_digits[CHEAT_PARSE_MAX_HEX + 1];
       size_t la;
       size_t lv;
+      bool split_ok;
 
-      if (!split_first_ws(code, left, sizeof(left), right, sizeof(right)))
+      if (has_ascii_ws(code))
+         split_ok = split_first_ws(code, left, sizeof(left), right, sizeof(right));
+      else
+         split_ok = split_last_cd_sep(code, left, sizeof(left), right, sizeof(right));
+
+      if (!split_ok)
          return false;
       if (!hex_only_strip(left, addr_digits, sizeof(addr_digits), &la))
          return false;
@@ -152,8 +193,7 @@ bool cheat_parse_one(const char *code,
    }
 
    /* Layout:  address_hex + value_hex (concatenated after separator strip).
-    * For 10 digits with no ASCII whitespace, use 6+4 (PAR short-address + word).
-    * Use a space/tab between fields for 8+2 (full 24-bit address + byte); see above. */
+    * For 10 digits with no field boundary, use 6+4 (PAR short-address + word). */
    switch (n)
    {
       case  8: addr_len = 6; val_len = 2; break;  /* 6 + byte  */
