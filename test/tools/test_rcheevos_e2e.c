@@ -103,7 +103,7 @@ static void *load_sym(void *handle, const char *name)
 
 static uint8_t *make_dummy_rom(size_t *size_out)
 {
-    size_t sz = 8192;
+    size_t sz = 12288;
     uint8_t *rom = calloc(1, sz);
     if (!rom) { perror("calloc"); exit(1); }
     rom[0x404] = 0x00; rom[0x405] = 0x80;

@@ -1037,7 +1037,13 @@ bool retro_load_game(const struct retro_game_info *info)
    JaguarReset();
 
    /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
-    * resolve emulated addresses to host buffers. Required for rcheevos. */
+    * resolve emulated addresses to host buffers. Required for rcheevos.
+    *
+    * rcheevos defines one logical system-RAM region for RC_CONSOLE_ATARI_JAGUAR:
+    * $000000-$1FFFFF (see rcheevos consoleinfo). RetroAchievements addresses for
+    * Jaguar are authored in that space. GPU-style paths mirror 2 MiB within
+    * $000000-$7FFFFF in JaguarReadByte, but M68K direct access in this core is
+    * only linear $000000-$1FFFFF without those mirrors (m68k_read_memory_*). */
    {
       static struct retro_memory_descriptor descs[1];
       static struct retro_memory_map memmap;
