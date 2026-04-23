@@ -248,7 +248,7 @@ int main(int argc, char **argv)
 
     printf("Test 6: rc_libretro_memory_find_avail ... ");
     pfind = rc_libretro_memory_find_avail(&regions, 0x1FFFFEU, &avail);
-    if (pfind && avail >= 2 && pfind == sysram + 0x1FFFFE)
+    if (pfind && avail >= 2 && sysram && pfind == sysram + 0x1FFFFE)
         printf("PASS\n");
     else
     {

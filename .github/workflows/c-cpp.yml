@@ -214,7 +214,8 @@ jobs:
     - name: RetroAchievements rc_libretro E2E test
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       env:
-        RCHEEVOS_REF: v12.3.0
+        # Immutable pin (rcheevos v12.3.0); tarball via .../archive/${SHA}.tar.gz
+        RCHEEVOS_REF: fd57e900758a9e3de343e7b0316b8a6059dce228
         CC: ${{ matrix.config.cc }}
       run: bash test/tools/test_rcheevos_e2e.sh ./${{ matrix.config.artifact }}
 
