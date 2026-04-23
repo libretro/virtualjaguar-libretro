@@ -619,12 +619,18 @@ clean:
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
 # the full core.
+ifneq (,$(findstring msvc,$(platform)))
+test:
+	@echo "make test requires GCC/Clang flags; use MSYS2/Unix or compile test/test_cheat.c manually."
+	@false
+else
 test: test/test_cheat
 	./test/test_cheat
 
 test/test_cheat: test/test_cheat.c src/cheat.c src/cheat.h
 	$(CC) -O2 -Wall -std=c99 -I src -I libretro-common/include \
 		-o $@ test/test_cheat.c src/cheat.c
+endif
 
 .PHONY: clean test
 endif

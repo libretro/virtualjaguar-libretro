@@ -94,6 +94,12 @@ static void test_parse_valid_formats(void)
    CHECK_EQ_U(addr, 0x100000u);
    CHECK_EQ_U(val,  0xDEADBEEFu);
    CHECK_EQ_U(size, 4u);
+
+   /* 8+2: PAR-style full address + byte — needs whitespace so it is not read as 6+4 */
+   CHECK(cheat_parse_one("00003D00 FF", &addr, &val, &size));
+   CHECK_EQ_U(addr, 0x003D00u);
+   CHECK_EQ_U(val,  0xFFu);
+   CHECK_EQ_U(size, 1u);
 }
 
 static void test_parse_separators(void)
@@ -210,6 +216,20 @@ static void test_list_add_and_remove(void)
    /* enabled=false must clear the slot even when code is NULL. */
    cheat_list_set(&list, 1, false, NULL);
    CHECK_EQ_U(list.count, 0u);
+
+   cheat_list_reset(&list);
+}
+
+static void test_list_index_not_truncated(void)
+{
+   cheat_list_t list;
+   cheat_list_reset(&list);
+   cheat_list_set(&list, 0, true, "001000 7F");
+   cheat_list_set(&list, 256, true, "002000 AB");
+   CHECK_EQ_U(list.count, 2u);
+   cheat_list_set(&list, 256, false, NULL);
+   CHECK_EQ_U(list.count, 1u);
+   CHECK_EQ_U(list.entries[0].tag, 0u);
 
    cheat_list_reset(&list);
    CHECK_EQ_U(list.count, 0u);
@@ -441,6 +461,7 @@ int main(void)
    test_parse_invalid();
 
    test_list_add_and_remove();
+   test_list_index_not_truncated();
    test_list_replace_same_index();
    test_list_multi_code_string();
    test_list_skips_malformed_entries();

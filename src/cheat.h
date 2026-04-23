@@ -14,6 +14,11 @@
  *    "0000:3D00-FFFF"
  *    "00003D00FFFF"
  *
+ * Contiguous 10 hex digits use 6+4 (short address + word). For an 8-digit
+ * address plus a byte value (8+2), put ASCII whitespace between the fields,
+ * e.g. "00003D00 FF". You can also write "ABCDEF 1234" to force 6+4 with a
+ * visible boundary.
+ *
  * A single `retro_cheat_set` string may contain multiple codes separated
  * by '+' or newlines; each is parsed and stored independently under the
  * same index so the frontend can toggle them as a group.
@@ -37,7 +42,7 @@ typedef struct {
    uint32_t address;   /* 24-bit Jaguar bus address */
    uint32_t value;
    uint8_t  size;      /* 1 byte, 2 word, 4 long */
-   uint8_t  tag;       /* retro cheat index (for removal on toggle) */
+   unsigned tag;       /* retro_cheat_set index (for removal on toggle) */
    bool     enabled;
 } cheat_entry_t;
 
