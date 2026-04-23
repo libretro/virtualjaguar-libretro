@@ -13,7 +13,7 @@
 #define BLITTER_SIMD_H
 
 #include <stdint.h>
-#include <stdbool.h>
+#include <boolean.h>
 
 typedef struct
 {

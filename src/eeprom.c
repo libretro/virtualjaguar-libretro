@@ -16,7 +16,7 @@
 #include "eeprom.h"
 
 #include <stdlib.h>
-#include <stdbool.h>
+#include <boolean.h>
 #include <string.h>								// For memset
 
 uint16_t eeprom_ram[64];
