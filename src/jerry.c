@@ -153,8 +153,10 @@
 
 #include "jerry.h"
 
+#include <stdio.h>
 #include <string.h>								// For memcpy
 #include "cdrom.h"
+#include "log.h"
 #include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -168,6 +170,13 @@
 #include "wavetable.h"
 
 //Note that 44100 Hz requires samples every 22.675737 usec.
+
+#define JERRY_TRACE_DEBUG 0
+#if JERRY_TRACE_DEBUG
+#define JERRY_TRACE(...) LOG_DBG("[JERRY-TRACE] " __VA_ARGS__)
+#else
+#define JERRY_TRACE(...) ((void)0)
+#endif
 
 uint8_t jerry_ram_8[0x10000];
 
@@ -221,7 +230,7 @@ void JERRYResetPIT2(void)
 {
    RemoveCallback(JERRYPIT2Callback);
 
-   if (JERRYPIT1Prescaler | JERRYPIT1Divider)
+   if (JERRYPIT2Prescaler | JERRYPIT2Divider)
    {
       double usecs = (float)(JERRYPIT2Prescaler + 1) * (float)(JERRYPIT2Divider + 1) * RISC_CYCLE_IN_USEC;
       SetCallbackTime(JERRYPIT2Callback, usecs, EVENT_JERRY);
@@ -231,6 +240,7 @@ void JERRYResetPIT2(void)
 
 // This is the cause of the regressions in Cybermorph and Missile Command 3D...
 // Solution: Probably have to check the DSP enable bit before sending these thru.
+
 void JERRYPIT1Callback(void)
 {
    if (TOMIRQEnabled(IRQ_DSP))
@@ -364,7 +374,11 @@ bool JERRYIRQEnabled(int irq)
 void JERRYSetPendingIRQ(int irq)
 {
    // This is the shadow of INT (it's a split RO/WO register)
+   uint16_t oldPending = jerryPendingInterrupt;
    jerryPendingInterrupt |= irq;
+   if (irq == IRQ2_EXTERNAL && !(oldPending & IRQ2_EXTERNAL))
+      JERRY_TRACE("External IRQ pending set (mask=$%02X pending=$%02X)\n",
+                  jerryInterruptMask & 0xFF, jerryPendingInterrupt & 0xFF);
 }
 
 
@@ -447,7 +461,18 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       }
    }
    else if (offset == 0xF10020)
+   {
+      if (jerryPendingInterrupt & IRQ2_EXTERNAL)
+      {
+         static uint32_t extReadCount = 0;
+         extReadCount++;
+         if (extReadCount <= 10 || (extReadCount % 10000) == 0)
+            JERRY_TRACE("J_INT read=$%04X (ext pending) mask=$%04X [68K_PC=$%06X] #%u\n",
+                        jerryPendingInterrupt, jerryInterruptMask,
+                        m68k_get_reg(NULL, M68K_REG_PC), extReadCount);
+      }
       return jerryPendingInterrupt;
+   }
    else if (offset == 0xF14000)
       return (JoystickReadWord(offset) & 0xFFFE) | EepromReadWord(offset);
    else if ((offset >= 0xF14002) && (offset < 0xF14003))
@@ -568,8 +593,18 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    // JERRY -> 68K interrupt enables/latches (need to be handled!)
    else if (offset >= 0xF10020 && offset <= 0xF10022)
    {
+      uint16_t oldMask = jerryInterruptMask;
+      uint16_t oldPending = jerryPendingInterrupt;
       jerryInterruptMask = data & 0xFF;
       jerryPendingInterrupt &= ~(data >> 8);
+      if (oldMask != jerryInterruptMask || oldPending != jerryPendingInterrupt)
+      {
+         JERRY_TRACE("J_INT write word data=$%04X who=%u mask $%02X->$%02X pending $%02X->$%02X%s%s\n",
+                     data, who, oldMask & 0xFF, jerryInterruptMask & 0xFF,
+                     oldPending & 0xFF, jerryPendingInterrupt & 0xFF,
+                     (!(oldMask & IRQ2_EXTERNAL) && (jerryInterruptMask & IRQ2_EXTERNAL)) ? " extena-on" : "",
+                     ((oldPending & IRQ2_EXTERNAL) && !(jerryPendingInterrupt & IRQ2_EXTERNAL)) ? " extclr" : "");
+      }
       return;
    }
    else if (offset >= 0xF14000 && offset < 0xF14003)

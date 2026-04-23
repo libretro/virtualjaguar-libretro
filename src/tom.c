@@ -825,12 +825,38 @@ void TOMDone(void)
 
 uint32_t TOMGetVideoModeWidth(void)
 {
+   uint16_t hdb1 = GET16(tomRam8, HDB1);
+   uint16_t hde = GET16(tomRam8, HDE);
    uint16_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-   return (vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC - LEFT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL - LEFT_VISIBLE_HC_PAL) / pwidth;
+   uint32_t leftHC = vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL;
+   uint32_t rightHC = vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL;
+
+   // Use the game's actual display window (HDE), clamped to visible area.
+   // The renderer positions content starting at HDB1 via startPos; the total
+   // framebuffer width runs from leftHC to min(HDE, rightHC).
+   uint32_t dispEnd = (hde < rightHC) ? hde : rightHC;
+   if (dispEnd > leftHC && hdb1 > 0)
+   {
+      uint32_t width = (dispEnd - leftHC) / pwidth;
+      if (width > 0 && width <= VIRTUAL_SCREEN_WIDTH)
+         return width;
+   }
+
+   return (rightHC - leftHC) / pwidth;
 }
 
 uint32_t TOMGetVideoModeHeight(void)
 {
+   uint16_t vdb = GET16(tomRam8, VDB);
+   uint16_t vde = GET16(tomRam8, VDE);
+
+   if (vde > vdb)
+   {
+      uint32_t height = (vde - vdb) / 2;
+      if (height > 0 && height <= 256)
+         return height;
+   }
+
    return (vjs.hardwareTypeNTSC ? 240 : 256);
 }
 
@@ -1125,6 +1151,31 @@ int TOMIRQEnabled(int irq)
    // This is the correct byte in big endian... D'oh!
    //	return jaguar_byte_read(0xF000E1) & (1 << irq);
    return tomRam8[INT1 + 1] & (1 << irq);
+}
+
+
+uint16_t TOMIRQControlReg(void)
+{
+   uint16_t val = 0;
+   if (tom_video_int_pending)  val |= 0x0001;
+   if (tom_gpu_int_pending)    val |= 0x0002;
+   if (tom_object_int_pending) val |= 0x0004;
+   if (tom_timer_int_pending)  val |= 0x0008;
+   if (tom_jerry_int_pending)  val |= 0x0010;
+   return val;
+}
+
+
+void TOMSetIRQLatch(int irq, int enabled)
+{
+   switch (irq)
+   {
+      case IRQ_VIDEO:  tom_video_int_pending  = (enabled ? 1 : 0); break;
+      case IRQ_GPU:    tom_gpu_int_pending    = (enabled ? 1 : 0); break;
+      case IRQ_OPFLAG: tom_object_int_pending = (enabled ? 1 : 0); break;
+      case IRQ_TIMER:  tom_timer_int_pending  = (enabled ? 1 : 0); break;
+      case IRQ_DSP:    tom_jerry_int_pending  = (enabled ? 1 : 0); break;
+   }
 }
 
 

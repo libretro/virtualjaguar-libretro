@@ -194,7 +194,9 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       JERRYI2SCallback();
    }
    else if (offset == SMODE + 2)
+   {
       *smode = data;
+   }
 }
 
 uint8_t DACReadByte(uint32_t offset, uint32_t who)

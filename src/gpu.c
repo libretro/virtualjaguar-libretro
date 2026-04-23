@@ -24,8 +24,10 @@
 
 #include "gpu.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>								// For memset
+#include "log.h"
 #include "dsp.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
@@ -34,6 +36,13 @@
 
 // Seems alignment in loads & stores was off...
 #define GPU_CORRECT_ALIGNMENT
+
+#define GPU_TRACE_DEBUG 0
+#if GPU_TRACE_DEBUG
+#define GPU_TRACE(...) LOG_DBG("[GPU-TRACE] " __VA_ARGS__)
+#else
+#define GPU_TRACE(...) do {} while(0)
+#endif
 
 // For GPU dissasembly...
 

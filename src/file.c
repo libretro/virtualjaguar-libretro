@@ -66,6 +66,8 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
 {
    int fileType;
    jaguarROMSize = bufsize;
+   jaguarLoadedRAMStart = 0;
+   jaguarLoadedRAMEnd = 0;
 
    if (jaguarROMSize == 0)
       return false;
@@ -104,6 +106,8 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
                codeSize = GET32(buffer, 0x02) + GET32(buffer, 0x06);
       memcpy(jagMemSpace + loadAddress, buffer + 0x24, codeSize);
       jaguarRunAddress = loadAddress;
+      jaguarLoadedRAMStart = loadAddress;
+      jaguarLoadedRAMEnd = loadAddress + codeSize;
       return true;
    }
    else if (fileType == JST_ABS_TYPE2)
@@ -112,6 +116,8 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
                codeSize = GET32(buffer, 0x18) + GET32(buffer, 0x1C);
       memcpy(jagMemSpace + loadAddress, buffer + 0xA8, codeSize);
       jaguarRunAddress = runAddress;
+      jaguarLoadedRAMStart = loadAddress;
+      jaguarLoadedRAMEnd = loadAddress + codeSize;
       return true;
    }
    // NB: This is *wrong*
@@ -124,8 +130,11 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       // Still need to do some checking here for type 2 vs. type 3. This assumes 3
       // Also, JAGR vs. JAGL (word command size vs. long command size)
       uint32_t loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
-      memcpy(jagMemSpace + loadAddress, buffer + 0x2E, jaguarROMSize - 0x2E);
+      uint32_t codeSize = jaguarROMSize - 0x2E;
+      memcpy(jagMemSpace + loadAddress, buffer + 0x2E, codeSize);
       jaguarRunAddress = runAddress;
+      jaguarLoadedRAMStart = loadAddress;
+      jaguarLoadedRAMEnd = loadAddress + codeSize;
 
       // Hmm. Is this kludge necessary?
       SET32(jaguarMainRAM, 0x10, 0x00001000);		// Set Exception #4 (Illegal Instruction)
@@ -136,8 +145,11 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    else if (fileType == JST_WTFOMGBBQ)
    {
       uint32_t loadAddress = (buffer[0x1F] << 24) | (buffer[0x1E] << 16) | (buffer[0x1D] << 8) | buffer[0x1C];
-      memcpy(jagMemSpace + loadAddress, buffer + 0x20, jaguarROMSize - 0x20);
+      uint32_t codeSize = jaguarROMSize - 0x20;
+      memcpy(jagMemSpace + loadAddress, buffer + 0x20, codeSize);
       jaguarRunAddress = loadAddress;
+      jaguarLoadedRAMStart = loadAddress;
+      jaguarLoadedRAMEnd = loadAddress + codeSize;
       return true;
    }
 

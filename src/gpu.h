@@ -32,6 +32,8 @@ uint32_t GPUGetPC(void);
 void GPUReleaseTimeslice(void);
 void GPUResetStats(void);
 uint32_t GPUReadPC(void);
+int GPUIsRunning(void);
+void GPUDumpState(const char *tag);
 
 // GPU interrupt numbers (from $F00100, bits 4-8)
 

@@ -19,6 +19,7 @@
 #include "settings.h"
 #include "tom.h"
 #include "state.h"
+#include "log.h"
 
 #define SAMPLERATE 48000
 #define BUFPAL  1920
@@ -52,8 +53,8 @@ static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
 static retro_environment_t environ_cb;
-static retro_log_printf_t libretro_log_printf;
 retro_audio_sample_batch_t audio_batch_cb;
+retro_log_printf_t vj_log_cb = NULL;
 
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
@@ -293,16 +294,18 @@ void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
    struct retro_core_options_update_display_callback update_display_cb;
-   struct retro_log_callback logging;
    bool option_categories = false;
    bool achievements = true;
    environ_cb = cb;
 
-   logging.log = NULL;
-   if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging))
-      libretro_log_printf = logging.log;
-   else
-      libretro_log_printf = NULL;
+   {
+      struct retro_log_callback log_iface;
+      log_iface.log = NULL;
+      if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log_iface))
+         vj_log_cb = log_iface.log;
+      else
+         vj_log_cb = NULL;
+   }
 
    libretro_set_core_options(environ_cb, &option_categories);
    update_display_cb.callback = update_option_visibility;
@@ -910,9 +913,7 @@ static void cheat_write_jaguar(uint32_t addr, uint32_t value,
       case 2: JaguarWriteWord(addr, (uint16_t)value, UNKNOWN); break;
       case 4: JaguarWriteLong(addr, value,           UNKNOWN); break;
       default:
-         if (libretro_log_printf)
-            libretro_log_printf(RETRO_LOG_WARN,
-               "[Virtual Jaguar] cheat: unsupported write size %u at 0x%06X\n",
+         LOG_WRN("[Virtual Jaguar] cheat: unsupported write size %u at 0x%06X\n",
                (unsigned)size, (unsigned)(addr & 0xFFFFFFU));
          break;
    }
@@ -1035,6 +1036,13 @@ bool retro_load_game(const struct retro_game_info *info)
    SET32(jaguarMainRAM, 0, 0x00200000);
    JaguarLoadFile((uint8_t*)info->data, info->size);
    JaguarReset();
+
+   /* JaguarReset() randomizes RAM contents, which destroys RAM-loaded
+    * executables (ABS, COFF, JAGSERVER formats).  Cart ROMs are safe
+    * because they live at $800000+ which isn't touched by reset.
+    * Re-load the file so the program data is back in place. */
+   if (!jaguarCartInserted)
+      JaguarLoadFile((uint8_t*)info->data, info->size);
 
    /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
     * resolve emulated addresses to host buffers. Required for rcheevos.

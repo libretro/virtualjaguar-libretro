@@ -111,6 +111,7 @@ extern uint8_t jagMemSpace[];
 // Internal variables
 
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
+uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
 bool jaguarCartInserted = false;
 bool lowerField = false;
@@ -645,11 +646,17 @@ void JaguarReset(void)
 {
    unsigned i;
 
-   // Only problem with this approach: It wipes out RAM loaded files...!
-   // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
+   // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
+   // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
    JaguarSeedPRNG(12345);
    for(i=8; i<0x200000; i+=4)
-      *((uint32_t *)(&jaguarMainRAM[i])) = JaguarRand();
+   {
+      uint32_t r = JaguarRand();
+      if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
+          && i >= jaguarLoadedRAMStart && i < jaguarLoadedRAMEnd)
+         continue;
+      *((uint32_t *)(&jaguarMainRAM[i])) = r;
+   }
 
    // New timer base code stuffola...
    InitializeEventList();
