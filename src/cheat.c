@@ -263,9 +263,11 @@ void cheat_list_set(cheat_list_t *list,
       if (*p == '+' || *p == '\n' || *p == '\r' || *p == '\0')
       {
          size_t len = (size_t)(p - start);
-         if (len > 0 && len < 64 && list->count < CHEAT_MAX_ENTRIES)
+         /* Reject oversized segments outright (do not truncate and parse). */
+         if (len > 0 && len <= CHEAT_SEGMENT_INPUT_MAX &&
+             list->count < CHEAT_MAX_ENTRIES)
          {
-            char tmp[64];
+            char tmp[CHEAT_SEGMENT_TMP_SIZE];
             cheat_entry_t c;
 
             memcpy(tmp, start, len);

@@ -1,5 +1,5 @@
-#ifndef __CHEAT_H__
-#define __CHEAT_H__
+#ifndef VJAG_CHEAT_H
+#define VJAG_CHEAT_H
 
 /*
  * Atari Jaguar cheat-code engine.
@@ -38,6 +38,10 @@ extern "C" {
 #endif
 
 #define CHEAT_MAX_ENTRIES 256
+
+/* Max chars in one '+' or newline-separated segment (matches scratch buffer below). */
+#define CHEAT_SEGMENT_INPUT_MAX 63
+#define CHEAT_SEGMENT_TMP_SIZE  (CHEAT_SEGMENT_INPUT_MAX + 1)
 
 typedef struct {
    uint32_t address;   /* 24-bit Jaguar bus address */
@@ -87,4 +91,4 @@ void cheat_list_apply(const cheat_list_t *list,
 }
 #endif
 
-#endif /* __CHEAT_H__ */
+#endif /* VJAG_CHEAT_H */

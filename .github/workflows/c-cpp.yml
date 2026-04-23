@@ -169,6 +169,7 @@ jobs:
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
+    # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
       run: make test CC="${{ matrix.config.cc }}"

@@ -52,6 +52,7 @@ static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
 static retro_input_state_t input_state_cb;
 static retro_environment_t environ_cb;
+static retro_log_printf_t libretro_log_printf;
 retro_audio_sample_batch_t audio_batch_cb;
 
 static bool libretro_supports_bitmasks = false;
@@ -292,8 +293,15 @@ void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
    struct retro_core_options_update_display_callback update_display_cb;
+   struct retro_log_callback logging;
    bool option_categories = false;
    environ_cb = cb;
+
+   logging.log = NULL;
+   if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging))
+      libretro_log_printf = logging.log;
+   else
+      libretro_log_printf = NULL;
 
    libretro_set_core_options(environ_cb, &option_categories);
    update_display_cb.callback = update_option_visibility;
@@ -898,6 +906,12 @@ static void cheat_write_jaguar(uint32_t addr, uint32_t value,
       case 1: JaguarWriteByte(addr, (uint8_t)value,  UNKNOWN); break;
       case 2: JaguarWriteWord(addr, (uint16_t)value, UNKNOWN); break;
       case 4: JaguarWriteLong(addr, value,           UNKNOWN); break;
+      default:
+         if (libretro_log_printf)
+            libretro_log_printf(RETRO_LOG_WARN,
+               "[Virtual Jaguar] cheat: unsupported write size %u at 0x%06X\n",
+               (unsigned)size, (unsigned)(addr & 0xFFFFFFU));
+         break;
    }
 }
 
