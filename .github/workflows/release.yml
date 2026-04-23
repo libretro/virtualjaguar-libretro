@@ -40,6 +40,12 @@ jobs:
             cc: clang
             cxx: clang++
 
+          - platform: macos-x86_64
+            artifact: virtualjaguar_libretro.dylib
+            os: macos-13
+            cc: clang
+            cxx: clang++
+
           # Windows
           - platform: windows-x86_64
             artifact: virtualjaguar_libretro.dll
@@ -78,13 +84,24 @@ jobs:
             android: true
             android_abi: 'armeabi-v7a'
 
-          # iOS
+          - platform: android-x86_64
+            artifact: libs/x86_64/libretro.so
+            os: ubuntu-latest
+            android: true
+            android_abi: 'x86_64'
+
+          - platform: android-x86
+            artifact: libs/x86/libretro.so
+            os: ubuntu-latest
+            android: true
+            android_abi: 'x86'
+
+          # iOS / tvOS
           - platform: ios-arm64
             artifact: virtualjaguar_libretro_ios.dylib
             os: macos-latest
             make_platform: 'ios-arm64'
 
-          # tvOS
           - platform: tvos-arm64
             artifact: virtualjaguar_libretro_tvos.dylib
             os: macos-latest
@@ -156,8 +173,56 @@ jobs:
         path: dist/
         if-no-files-found: error
 
+  vita-build:
+    name: build-vita
+    runs-on: ubuntu-latest
+    container:
+      image: vitasdk/vitasdk:latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build
+      run: make -j4 platform=vita
+
+    - name: Package
+      run: |
+        mkdir -p dist
+        cp virtualjaguar_libretro_vita.a dist/virtualjaguar_libretro-vita.a
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: virtualjaguar_libretro-vita
+        path: dist/
+        if-no-files-found: error
+
+  switch-build:
+    name: build-switch
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build
+      run: make -j4 platform=libnx
+      env:
+        DEVKITPRO: /opt/devkitpro
+
+    - name: Package
+      run: |
+        mkdir -p dist
+        cp virtualjaguar_libretro_libnx.a dist/virtualjaguar_libretro-switch.a
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: virtualjaguar_libretro-switch
+        path: dist/
+        if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, vita-build, switch-build]
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
