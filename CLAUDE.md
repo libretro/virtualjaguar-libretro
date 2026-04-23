@@ -104,6 +104,16 @@ See `docs/test-infrastructure.md` for all test harnesses:
 - `test/test_cd_boot.c` — low-level C harness with dlsym access to 68K registers and RAM
 - `test/sram_test.sh` — SRAM interface round-trip testing
 
+#### Headless framebuffer / 240p suite — how to report issues
+
+Profiling symbols like **`__muldi3`** (64-bit multiply helpers on some 32-bit ABIs) are a **compiler/performance** concern, **not** evidence that the Jaguar 240p test ROM’s DSP pink-noise path or NTSC timing is wrong. Do **not** frame “240p fails” primarily as a **`__muldi3`** bug unless you are optimizing a 32-bit build for speed.
+
+The **useful** regression story for automated screenshot / libretro.py / SessionBuilder runs is:
+
+- **Symptom:** On some cores or builds, a **non-RetroArch headless session** does not expose the **same composited framebuffer** via the libretro API (`video_screenshot`, etc.) as **RetroArch with the same core binary** — e.g. main menu of **jag_240p_test_suite v1.0.0** shows only a **thin band** (~order of **1k** non-black RGB pixels) vs **tens of thousands** on a known-good path.
+- **Interpretation:** Suspect **presentation / pixel source** — Object Processor and blitter output vs **what headless clients actually read** — until disproven with hardware or reference captures. This is **not** “prove 240p timing is wrong first.”
+- **Checks:** Use in-repo gates (e.g. **screenshots-preflight** / main-menu sanity, non-black pixel floor on the **~2000+** scale). Passing preflight ⇒ the **headless read-path** issue is resolved for that artifact; failing preflight ⇒ file a **framebuffer/compositing** bug for **headless libretro** consumption (logs, **two artifacts**: broken vs good), not a long **`__muldi3`** narrative.
+
 ### Known Limitations
 
 - Blitter not fully cycle-accurate (some games need fast blitter mode)
