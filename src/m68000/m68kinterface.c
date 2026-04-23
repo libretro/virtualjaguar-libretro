@@ -411,6 +411,7 @@ void BuildCPUFunctionTable(void)
 size_t M68KStateSave(uint8_t *buf)
 {
 	uint8_t *start = buf;
+	uint32_t pc_p_offset, pc_oldp_offset;
 
 	/* Save register struct fields individually (not the raw struct,
 	 * because pc_p/pc_oldp are pointers that differ per session). */
@@ -435,8 +436,8 @@ size_t M68KStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, regs.interruptCycles);
 
 	/* Save pc_p and pc_oldp as offsets from jagMemSpace */
-	uint32_t pc_p_offset = (uint32_t)(regs.pc_p ? (regs.pc_p - jagMemSpace) : 0xFFFFFFFF);
-	uint32_t pc_oldp_offset = (uint32_t)(regs.pc_oldp ? (regs.pc_oldp - jagMemSpace) : 0xFFFFFFFF);
+	pc_p_offset = (uint32_t)(regs.pc_p ? (regs.pc_p - jagMemSpace) : 0xFFFFFFFF);
+	pc_oldp_offset = (uint32_t)(regs.pc_oldp ? (regs.pc_oldp - jagMemSpace) : 0xFFFFFFFF);
 	STATE_SAVE_VAR(buf, pc_p_offset);
 	STATE_SAVE_VAR(buf, pc_oldp_offset);
 
@@ -452,6 +453,7 @@ size_t M68KStateSave(uint8_t *buf)
 size_t M68KStateLoad(const uint8_t *buf)
 {
 	const uint8_t *start = buf;
+	uint32_t pc_p_offset, pc_oldp_offset;
 
 	STATE_LOAD_BUF(buf, regs.regs, sizeof(regs.regs));
 	STATE_LOAD_VAR(buf, regs.usp);
@@ -474,7 +476,6 @@ size_t M68KStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, regs.interruptCycles);
 
 	/* Reconstruct pc_p and pc_oldp from offsets */
-	uint32_t pc_p_offset, pc_oldp_offset;
 	STATE_LOAD_VAR(buf, pc_p_offset);
 	STATE_LOAD_VAR(buf, pc_oldp_offset);
 	regs.pc_p = (pc_p_offset != 0xFFFFFFFF) ? (jagMemSpace + pc_p_offset) : NULL;

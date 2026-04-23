@@ -227,6 +227,7 @@ jobs:
           src\jagbios.c src\jagbios2.c ^
           src\jagcdbios.c src\jagdevcdbios.c ^
           src\jagstub1bios.c src\jagstub2bios.c ^
+          src\m68000\m68kinterface.c ^
           src\blitter_simd_scalar.c
         echo MSVC compilation check passed
 
@@ -278,9 +279,9 @@ jobs:
       run: |
         echo "==> Checking C89 compliance (catches MSVC C89 errors)..."
         FAILED=0
-        for f in libretro.c src/*.c; do
+        for f in libretro.c src/*.c src/m68000/m68kinterface.c; do
           case "$f" in
-            src/m68000/*|src/jag*bios*.c|src/jagstub*bios.c|src/blitter_simd_neon.c|src/blitter_simd_sse2.c) continue ;;
+            src/m68000/cpu*.c|src/m68000/read*.c|src/jag*bios*.c|src/jagstub*bios.c|src/blitter_simd_neon.c|src/blitter_simd_sse2.c) continue ;;
           esac
           if ! gcc -fsyntax-only -std=gnu89 \
               -Werror=declaration-after-statement \
