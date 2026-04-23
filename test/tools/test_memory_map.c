@@ -180,20 +180,14 @@ int main(int argc, char **argv)
     captured_memmap = NULL;
 
     core_set_env(env_cb);
-    core_set_video(video_cb);
-    core_set_audio(audio_cb);
-    core_set_audio_batch(audio_batch);
-    core_set_input_poll(input_poll);
-    core_set_input_state(input_state);
-    core_init();
 
-    /* Test 1: SET_SUPPORT_ACHIEVEMENTS during retro_set_environment — non-NULL bool, true */
+    /* Test 1: must fire from retro_set_environment before retro_init (not after init) */
     printf("Test 1: SET_SUPPORT_ACHIEVEMENTS (true) ... ");
     if (got_achievements && achievements_data_ok && achievements_enabled_true)
         printf("PASS\n");
     else if (!got_achievements)
     {
-        printf("FAIL (not called)\n");
+        printf("FAIL (not called during retro_set_environment)\n");
         failures++;
     }
     else if (!achievements_data_ok)
@@ -206,6 +200,13 @@ int main(int argc, char **argv)
         printf("FAIL (expected true, got false)\n");
         failures++;
     }
+
+    core_set_video(video_cb);
+    core_set_audio(audio_cb);
+    core_set_audio_batch(audio_batch);
+    core_set_input_poll(input_poll);
+    core_set_input_state(input_state);
+    core_init();
 
     /* Load the dummy ROM to trigger SET_MEMORY_MAPS */
     rom = make_dummy_rom(&rom_size);

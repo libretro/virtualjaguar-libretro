@@ -3,7 +3,7 @@
 # memory initialization (same path RetroArch uses for Jaguar / console 17), then read
 # bytes via rc_libretro_memory_read / rc_libretro_memory_find.
 #
-# Requires: bash, curl, cc, ar, dlopen (libc)
+# Requires: bash, curl, cc, ar, libdl (Linux, for dlopen via -ldl)
 # Usage: ./test/tools/test_rcheevos_e2e.sh path/to/virtualjaguar_libretro.{so,dylib}
 set -euo pipefail
 
