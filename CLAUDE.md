@@ -92,6 +92,11 @@ Key docs:
 
 ### Testing
 
+RetroAchievements-related (no network; offline):
+
+- `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS` / `SET_SUPPORT_ACHIEVEMENTS` and descriptor layout vs `retro_get_memory_data(SYSTEM_RAM)`.
+- `test/tools/test_rcheevos_e2e.sh` — downloads pinned **rcheevos** (`RCHEEVOS_REF`, default `v12.3.0`), builds `librcheevos.a`, runs `test_rcheevos_e2e` to verify **rc_libretro** memory resolution (`RC_CONSOLE_ATARI_JAGUAR`) matches host RAM — same mapping stack RetroArch uses before hitting the RA API.
+
 See `docs/test-infrastructure.md` for all test harnesses:
 - `test/test_dsp_mac40.c` — Jaguar DSP **40-bit MAC** accumulator semantics (`dsp_acc40.h`), run in CI with SIMD tests; relevant for long IIR chains (e.g. pink-noise generators on DSP).
 - `test/headless.py` — Python headless runner via libretro.py (screenshots, frame control)

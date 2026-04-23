@@ -211,6 +211,13 @@ jobs:
         $CC -O2 -Wall -o test/tools/test_memory_map test/tools/test_memory_map.c $LDFLAGS
         ./test/tools/test_memory_map ./${{ matrix.config.artifact }}
 
+    - name: RetroAchievements rc_libretro E2E test
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      env:
+        RCHEEVOS_REF: v12.3.0
+        CC: ${{ matrix.config.cc }}
+      run: bash test/tools/test_rcheevos_e2e.sh ./${{ matrix.config.artifact }}
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

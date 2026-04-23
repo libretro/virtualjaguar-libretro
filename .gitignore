@@ -1,3 +1,6 @@
+# Local E2E test build (downloads rcheevos tarball)
+/build/
+
 # Build artifacts
 *.o
 *.so
