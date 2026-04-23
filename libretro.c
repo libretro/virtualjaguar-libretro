@@ -295,6 +295,7 @@ void retro_set_environment(retro_environment_t cb)
    struct retro_core_options_update_display_callback update_display_cb;
    struct retro_log_callback logging;
    bool option_categories = false;
+   bool achievements = true;
    environ_cb = cb;
 
    logging.log = NULL;
@@ -311,6 +312,8 @@ void retro_set_environment(retro_environment_t cb)
    vfs_iface_info.iface                      = NULL;
    if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
       filestream_vfs_init(&vfs_iface_info);
+
+   environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 }
 
 static void check_variables(void)
@@ -1032,6 +1035,24 @@ bool retro_load_game(const struct retro_game_info *info)
    SET32(jaguarMainRAM, 0, 0x00200000);
    JaguarLoadFile((uint8_t*)info->data, info->size);
    JaguarReset();
+
+   /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
+    * resolve emulated addresses to host buffers. Required for rcheevos. */
+   {
+      static struct retro_memory_descriptor descs[1];
+      static struct retro_memory_map memmap;
+
+      memset(descs, 0, sizeof(descs));
+      descs[0].flags     = RETRO_MEMDESC_SYSTEM_RAM | RETRO_MEMDESC_BIGENDIAN;
+      descs[0].ptr       = jaguarMainRAM;
+      descs[0].start     = 0x000000;
+      descs[0].len       = 0x200000;
+      descs[0].addrspace = "RAM";
+
+      memmap.descriptors     = descs;
+      memmap.num_descriptors = 1;
+      environ_cb(RETRO_ENVIRONMENT_SET_MEMORY_MAPS, &memmap);
+   }
 
    /* The frontend will load .srm data into our save buffer (returned by
     * retro_get_memory_data) after this function returns but before the

@@ -199,6 +199,18 @@ jobs:
         $CC -O2 -Wall -I src -o test_dsp_mac40 test/test_dsp_mac40.c
         ./test_dsp_mac40
 
+    - name: Run memory map test
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then
+          LDFLAGS="-ldl"
+        else
+          LDFLAGS=""
+        fi
+        $CC -O2 -Wall -o test/tools/test_memory_map test/tools/test_memory_map.c $LDFLAGS
+        ./test/tools/test_memory_map ./${{ matrix.config.artifact }}
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
