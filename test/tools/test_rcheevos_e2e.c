@@ -137,6 +137,8 @@ int main(int argc, char **argv)
     uint32_t avail;
     uint8_t *pfind;
     int failures = 0;
+    int mmap_ok;
+    int regions_inited = 0;
 
     if (argc < 2)
     {
@@ -187,8 +189,11 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    mmap_ok = (g_mmap != NULL && g_mmap->descriptors != NULL
+               && g_mmap->num_descriptors >= 1);
+
     printf("Test 1: SET_MEMORY_MAPS captured ... ");
-    if (!g_mmap || !g_mmap->descriptors || g_mmap->num_descriptors < 1)
+    if (!mmap_ok)
     {
         printf("FAIL\n");
         failures++;
@@ -197,66 +202,92 @@ int main(int argc, char **argv)
         printf("PASS\n");
 
     memset(&regions, 0, sizeof(regions));
-    printf("Test 2: rc_libretro_memory_init(Jaguar) ... ");
-    if (!rc_libretro_memory_init(&regions, g_mmap, libretro_get_core_memory_info,
-                                 RC_CONSOLE_ATARI_JAGUAR))
+
+    if (!mmap_ok)
     {
-        printf("FAIL\n");
-        failures++;
+        printf("Test 2: rc_libretro_memory_init(Jaguar) ... SKIPPED (no SET_MEMORY_MAPS)\n");
+        printf("Test 3: rc_libretro_memory_read(0xABCD) ... SKIPPED\n");
+        printf("Test 4: rc_libretro_memory_find(0xABCD) matches host ptr ... SKIPPED\n");
+        printf("Test 5: cross-boundary read at end of RAM ... SKIPPED\n");
+        printf("Test 6: rc_libretro_memory_find_avail ... SKIPPED\n");
     }
     else
-        printf("PASS\n");
-
-    sysram = (uint8_t *)core_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
-    if (sysram)
     {
-        sysram[0xABCD] = 0x42;
-        sysram[0x1FFFFE] = 0x11;
-        sysram[0x1FFFFF] = 0x22;
-    }
+        printf("Test 2: rc_libretro_memory_init(Jaguar) ... ");
+        if (!rc_libretro_memory_init(&regions, g_mmap, libretro_get_core_memory_info,
+                                     RC_CONSOLE_ATARI_JAGUAR))
+        {
+            printf("FAIL\n");
+            failures++;
+        }
+        else
+        {
+            printf("PASS\n");
+            regions_inited = 1;
+        }
 
-    printf("Test 3: rc_libretro_memory_read(0xABCD) ... ");
-    memset(buf, 0, sizeof(buf));
-    if (rc_libretro_memory_read(&regions, 0xABCDU, buf, 1) == 1 && buf[0] == 0x42)
-        printf("PASS\n");
-    else
-    {
-        printf("FAIL\n");
-        failures++;
-    }
+        if (!regions_inited)
+        {
+            printf("Test 3: rc_libretro_memory_read(0xABCD) ... SKIPPED\n");
+            printf("Test 4: rc_libretro_memory_find(0xABCD) matches host ptr ... SKIPPED\n");
+            printf("Test 5: cross-boundary read at end of RAM ... SKIPPED\n");
+            printf("Test 6: rc_libretro_memory_find_avail ... SKIPPED\n");
+        }
+        else
+        {
+            sysram = (uint8_t *)core_get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+            if (sysram)
+            {
+                sysram[0xABCD] = 0x42;
+                sysram[0x1FFFFE] = 0x11;
+                sysram[0x1FFFFF] = 0x22;
+            }
 
-    printf("Test 4: rc_libretro_memory_find(0xABCD) matches host ptr ... ");
-    pfind = rc_libretro_memory_find(&regions, 0xABCDU);
-    if (sysram && pfind == sysram + 0xABCD)
-        printf("PASS\n");
-    else
-    {
-        printf("FAIL\n");
-        failures++;
-    }
+            printf("Test 3: rc_libretro_memory_read(0xABCD) ... ");
+            memset(buf, 0, sizeof(buf));
+            if (rc_libretro_memory_read(&regions, 0xABCDU, buf, 1) == 1 && buf[0] == 0x42)
+                printf("PASS\n");
+            else
+            {
+                printf("FAIL\n");
+                failures++;
+            }
 
-    printf("Test 5: cross-boundary read at end of RAM ... ");
-    memset(buf, 0, sizeof(buf));
-    if (rc_libretro_memory_read(&regions, 0x1FFFFEU, buf, 2) == 2
-        && buf[0] == 0x11 && buf[1] == 0x22)
-        printf("PASS\n");
-    else
-    {
-        printf("FAIL\n");
-        failures++;
-    }
+            printf("Test 4: rc_libretro_memory_find(0xABCD) matches host ptr ... ");
+            pfind = rc_libretro_memory_find(&regions, 0xABCDU);
+            if (sysram && pfind == sysram + 0xABCD)
+                printf("PASS\n");
+            else
+            {
+                printf("FAIL\n");
+                failures++;
+            }
 
-    printf("Test 6: rc_libretro_memory_find_avail ... ");
-    pfind = rc_libretro_memory_find_avail(&regions, 0x1FFFFEU, &avail);
-    if (pfind && avail >= 2 && sysram && pfind == sysram + 0x1FFFFE)
-        printf("PASS\n");
-    else
-    {
-        printf("FAIL\n");
-        failures++;
-    }
+            printf("Test 5: cross-boundary read at end of RAM ... ");
+            memset(buf, 0, sizeof(buf));
+            if (rc_libretro_memory_read(&regions, 0x1FFFFEU, buf, 2) == 2
+                && buf[0] == 0x11 && buf[1] == 0x22)
+                printf("PASS\n");
+            else
+            {
+                printf("FAIL\n");
+                failures++;
+            }
 
-    rc_libretro_memory_destroy(&regions);
+            printf("Test 6: rc_libretro_memory_find_avail ... ");
+            pfind = rc_libretro_memory_find_avail(&regions, 0x1FFFFEU, &avail);
+            if (pfind && avail >= 2 && sysram && pfind == sysram + 0x1FFFFE)
+                printf("PASS\n");
+            else
+            {
+                printf("FAIL\n");
+                failures++;
+            }
+        }
+
+        if (regions_inited)
+            rc_libretro_memory_destroy(&regions);
+    }
 
     core_unload_game();
     core_deinit();
