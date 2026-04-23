@@ -15,6 +15,7 @@
 //
 
 #include "dsp.h"
+#include "dsp_acc40.h"
 
 #include <stdlib.h>
 #include "dac.h"
@@ -1250,8 +1251,8 @@ INLINE static void dsp_opcode_addqt(void)
 INLINE static void dsp_opcode_imacn(void)
 {
 	int32_t res = (int16_t)RM * (int16_t)RN;
-	dsp_acc += (int64_t)res;
-//Should we AND the result to fit into 40 bits here???
+
+	dsp_acc_mac_apply(&dsp_acc, res);
 }
 
 
@@ -1379,7 +1380,8 @@ INLINE static void dsp_opcode_imultn(void)
 {
 	// This is OK, since this multiply won't overflow 32 bits...
 	int32_t res = (int32_t)((int16_t)RN * (int16_t)RM);
-	dsp_acc = (int64_t)res;
+
+	dsp_acc_set_from_i32(&dsp_acc, res);
 	SET_ZN(res);
 }
 
@@ -1828,8 +1830,8 @@ INLINE static void DSP_div(void)
 INLINE static void DSP_imacn(void)
 {
 	int32_t res = (int16_t)PRM * (int16_t)PRN;
-	dsp_acc += (int64_t)res;
-//Should we AND the result to fit into 40 bits here???
+
+	dsp_acc_mac_apply(&dsp_acc, res);
 	NO_WRITEBACK;
 }
 
@@ -1843,7 +1845,8 @@ INLINE static void DSP_imultn(void)
 {
 	// This is OK, since this multiply won't overflow 32 bits...
 	int32_t res = (int32_t)((int16_t)PRN * (int16_t)PRM);
-	dsp_acc = (int64_t)res;
+
+	dsp_acc_set_from_i32(&dsp_acc, res);
 	SET_ZN(res);
 	NO_WRITEBACK;
 }

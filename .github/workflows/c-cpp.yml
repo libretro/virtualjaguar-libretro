@@ -190,6 +190,10 @@ jobs:
           -o test_blitter_scalar test/test_blitter_simd.c src/blitter_simd_scalar.c
         ./test_blitter_scalar
 
+        echo "==> DSP 40-bit MAC accumulator regression (dsp_acc40.h)..."
+        $CC -O2 -Wall -I src -o test_dsp_mac40 test/test_dsp_mac40.c
+        ./test_dsp_mac40
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

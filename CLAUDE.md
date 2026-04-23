@@ -93,6 +93,7 @@ Key docs:
 ### Testing
 
 See `docs/test-infrastructure.md` for all test harnesses:
+- `test/test_dsp_mac40.c` — Jaguar DSP **40-bit MAC** accumulator semantics (`dsp_acc40.h`), run in CI with SIMD tests; relevant for long IIR chains (e.g. pink-noise generators on DSP).
 - `test/headless.py` — Python headless runner via libretro.py (screenshots, frame control)
 - `test/regression_test.sh` — screenshot regression suite with baseline comparison
 - `test/test_cd_boot.c` — low-level C harness with dlsym access to 68K registers and RAM
