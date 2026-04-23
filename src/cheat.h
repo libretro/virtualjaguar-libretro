@@ -46,7 +46,7 @@ extern "C" {
 typedef struct {
    uint32_t address;   /* 24-bit Jaguar bus address */
    uint32_t value;
-   uint8_t  size;      /* 1 byte, 2 word, 4 long */
+   uint8_t  size;      /* 1=byte, 2=word, 4=long */
    unsigned tag;       /* retro_cheat_set index (for removal on toggle) */
    bool     enabled;
 } cheat_entry_t;
