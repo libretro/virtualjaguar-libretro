@@ -237,7 +237,15 @@ int main(int argc, char **argv)
     /* Test 3: Memory map has exactly 1 descriptor */
     printf("Test 3: num_descriptors == 1 ... ");
     if (captured_memmap && captured_memmap->num_descriptors == 1)
-        printf("PASS\n");
+    {
+        if (captured_memmap->descriptors != NULL)
+            printf("PASS\n");
+        else
+        {
+            printf("FAIL (descriptors is NULL)\n");
+            failures++;
+        }
+    }
     else
     {
         printf("FAIL (got %u)\n",
@@ -245,8 +253,18 @@ int main(int argc, char **argv)
         failures++;
     }
 
-    /* Test 4: Descriptor covers 2 MB system RAM at address 0 */
-    if (captured_memmap && captured_memmap->num_descriptors >= 1)
+    /* Tests 4–9: descriptor [0] (requires non-NULL descriptors table) */
+    if (!captured_memmap || captured_memmap->num_descriptors < 1)
+    {
+        printf("Tests 4-9: SKIPPED (no descriptor)\n");
+        failures += 6;
+    }
+    else if (!captured_memmap->descriptors)
+    {
+        printf("Tests 4-9: FAIL (descriptors is NULL)\n");
+        failures += 6;
+    }
+    else
     {
         const struct retro_memory_descriptor *d = &captured_memmap->descriptors[0];
 
@@ -306,11 +324,6 @@ int main(int argc, char **argv)
                 failures++;
             }
         }
-    }
-    else
-    {
-        printf("Tests 4-9: SKIPPED (no descriptor)\n");
-        failures += 6;
     }
 
     /* Test 10: retro_get_memory_size(SYSTEM_RAM) == 0x200000 */
