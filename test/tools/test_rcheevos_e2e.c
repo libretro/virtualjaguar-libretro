@@ -10,11 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef __APPLE__
 #include <dlfcn.h>
-#else
-#include <dlfcn.h>
-#endif
 
 #include "../../libretro-common/include/libretro.h"
 #include "rc_libretro.h"
