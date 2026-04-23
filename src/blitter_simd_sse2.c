@@ -12,9 +12,16 @@
 #include <emmintrin.h>  /* SSE2 */
 #include <string.h>     /* memcpy for type-punning extract */
 
-/* _mm_cvtsi128_si64 only exists on x86_64 (needs 64-bit GP register).
- * memcpy from the __m128i is portable, alignment-safe, and compilers
- * optimize it to a single register move. */
+/* _mm_set_epi64x doesn't exist in MSVC 2010 and earlier.
+ * Build from two 32-bit halves instead (pure SSE2). */
+#if defined(_MSC_VER) && _MSC_VER < 1700
+#define SSE2_SET64(hi, lo) \
+   _mm_set_epi32((int)((uint64_t)(hi) >> 32), (int)(hi), \
+                 (int)((uint64_t)(lo) >> 32), (int)(lo))
+#else
+#define SSE2_SET64(hi, lo) _mm_set_epi64x((int64_t)(hi), (int64_t)(lo))
+#endif
+
 static uint64_t sse2_extract_u64(__m128i v)
 {
    uint64_t r;
@@ -35,15 +42,15 @@ static uint64_t sse2_lfu(uint64_t srcd, uint64_t dstd, uint8_t lfu_func)
    uint64_t func2 = (lfu_func & 0x04) ? 0xFFFFFFFFFFFFFFFFULL : 0;
    uint64_t func3 = (lfu_func & 0x08) ? 0xFFFFFFFFFFFFFFFFULL : 0;
 
-   __m128i vs   = _mm_set_epi64x(0, (int64_t)srcd);
-   __m128i vd   = _mm_set_epi64x(0, (int64_t)dstd);
+   __m128i vs   = SSE2_SET64(0, srcd);
+   __m128i vd   = SSE2_SET64(0, dstd);
    __m128i vns  = _mm_andnot_si128(vs, _mm_set1_epi32(-1)); /* ~srcd */
    __m128i vnd  = _mm_andnot_si128(vd, _mm_set1_epi32(-1)); /* ~dstd */
 
-   __m128i vf0  = _mm_set_epi64x(0, (int64_t)func0);
-   __m128i vf1  = _mm_set_epi64x(0, (int64_t)func1);
-   __m128i vf2  = _mm_set_epi64x(0, (int64_t)func2);
-   __m128i vf3  = _mm_set_epi64x(0, (int64_t)func3);
+   __m128i vf0  = SSE2_SET64(0, func0);
+   __m128i vf1  = SSE2_SET64(0, func1);
+   __m128i vf2  = SSE2_SET64(0, func2);
+   __m128i vf3  = SSE2_SET64(0, func3);
 
    /* (~s & ~d & f0) | (~s & d & f1) | (s & ~d & f2) | (s & d & f3) */
    __m128i t0 = _mm_and_si128(_mm_and_si128(vns, vnd), vf0);
@@ -64,8 +71,8 @@ static uint64_t sse2_lfu(uint64_t srcd, uint64_t dstd, uint8_t lfu_func)
 static uint8_t sse2_dcomp(uint64_t patd, uint64_t srcd, uint64_t dstd, bool cmpdst)
 {
    uint64_t other = cmpdst ? dstd : srcd;
-   __m128i vp = _mm_set_epi64x(0, (int64_t)patd);
-   __m128i vo = _mm_set_epi64x(0, (int64_t)other);
+   __m128i vp = SSE2_SET64(0, patd);
+   __m128i vo = SSE2_SET64(0, other);
    __m128i vxor = _mm_xor_si128(vp, vo);
 
    /* Compare each byte against zero */
@@ -88,8 +95,8 @@ static uint8_t sse2_zcomp(uint64_t srcz, uint64_t dstz, uint8_t zmode)
    uint8_t result = 0;
    uint8_t packed = 0;
 
-   __m128i vs = _mm_set_epi64x(0, (int64_t)srcz);
-   __m128i vd = _mm_set_epi64x(0, (int64_t)dstz);
+   __m128i vs = SSE2_SET64(0, srcz);
+   __m128i vd = SSE2_SET64(0, dstz);
 
    /* Bias for unsigned comparison via signed instructions */
    __m128i bias = _mm_set1_epi16((short)0x8000);
@@ -150,9 +157,9 @@ static uint64_t sse2_byte_merge(uint64_t src, uint64_t dst, uint16_t mask)
    sel64 |= (uint64_t)((uint8_t)(-(int8_t)((mask >> 13) & 1))) << 48;
    sel64 |= (uint64_t)((uint8_t)(-(int8_t)((mask >> 14) & 1))) << 56;
 
-   vmask = _mm_set_epi64x(0, (int64_t)sel64);
-   vsrc  = _mm_set_epi64x(0, (int64_t)src);
-   vdst  = _mm_set_epi64x(0, (int64_t)dst);
+   vmask = SSE2_SET64(0, sel64);
+   vsrc  = SSE2_SET64(0, src);
+   vdst  = SSE2_SET64(0, dst);
 
    /* result = (src & mask) | (dst & ~mask) */
    r = _mm_or_si128(

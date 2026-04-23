@@ -228,7 +228,8 @@ jobs:
           src\jagcdbios.c src\jagdevcdbios.c ^
           src\jagstub1bios.c src\jagstub2bios.c ^
           src\m68000\m68kinterface.c ^
-          src\blitter_simd_scalar.c
+          src\blitter_simd_scalar.c ^
+          src\blitter_simd_sse2.c
         echo MSVC compilation check passed
 
   vita-build:
