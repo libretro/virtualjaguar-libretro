@@ -65,7 +65,7 @@ void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_c
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 
-int doom_res_hack=0; // Doom Hack to double pixel if pwidth==8 (163*2)
+
 
 #define ANALOG_THRESHOLD 20000
 #define BUTTON_NONE 21
@@ -332,17 +332,6 @@ static void check_variables(void)
          vjs.useFastBlitter = true;
       else
          vjs.useFastBlitter = false;
-   }
-
-   var.key = "virtualjaguar_doom_res_hack";
-   var.value = NULL;
-
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      if (strcmp(var.value, "enabled") == 0)
-         doom_res_hack = 1;
-      else
-         doom_res_hack = 0;
    }
 
    var.key = "virtualjaguar_bios";

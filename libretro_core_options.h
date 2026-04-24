@@ -106,20 +106,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
-      "virtualjaguar_doom_res_hack",
-      "Doom Resolution Hack",
-      NULL,
-      "Hack to fix the halved resolution in Doom.",
-      NULL,
-      NULL,
-      {
-         { "disabled", NULL },
-         { "enabled",  NULL },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "virtualjaguar_bios",
       "BIOS",
       NULL,
