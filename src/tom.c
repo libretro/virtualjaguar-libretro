@@ -831,14 +831,15 @@ uint32_t TOMGetVideoModeWidth(void)
    uint32_t leftHC = vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL;
    uint32_t rightHC = vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL;
 
-   // Use the game's actual display window (HDE), clamped to visible area.
-   // The renderer positions content starting at HDB1 via startPos; the total
-   // framebuffer width runs from leftHC to min(HDE, rightHC).
+   uint32_t dispStart = (hdb1 > leftHC) ? hdb1 : leftHC;
    uint32_t dispEnd = (hde < rightHC) ? hde : rightHC;
-   if (dispEnd > leftHC && hdb1 > 0)
+
+   if (dispEnd > dispStart)
    {
       uint32_t width = (dispEnd - leftHC) / pwidth;
-      if (width > 0 && width <= VIRTUAL_SCREEN_WIDTH)
+      uint32_t startPos = (dispStart - leftHC) / pwidth;
+
+      if (width > 0 && width >= startPos && width <= VIRTUAL_SCREEN_WIDTH)
          return width;
    }
 

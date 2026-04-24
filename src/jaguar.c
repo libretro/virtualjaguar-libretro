@@ -655,7 +655,7 @@ void JaguarReset(void)
       if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
           && i >= jaguarLoadedRAMStart && i < jaguarLoadedRAMEnd)
          continue;
-      *((uint32_t *)(&jaguarMainRAM[i])) = r;
+      SET32(jaguarMainRAM, i, r);
    }
 
    // New timer base code stuffola...

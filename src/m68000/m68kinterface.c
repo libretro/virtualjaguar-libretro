@@ -456,7 +456,7 @@ static int handle_68020_mull_divl(uint32_t opcode)
 			uint32_t divisor = src;
 			if (divisor == 0)
 			{
-				m68k_incpc(2 + extra);
+				m68k_incpc(4 + extra);
 				Exception(0x05, 0, M68000_EXC_SRC_CPU);
 				return 1;
 			}

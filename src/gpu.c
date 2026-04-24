@@ -687,6 +687,17 @@ void GPUResetStats(void)
 {
 }
 
+int GPUIsRunning(void)
+{
+   return GPU_RUNNING ? 1 : 0;
+}
+
+void GPUDumpState(const char *tag)
+{
+   LOG_INF("[GPU %s] PC=%08X ctrl=%08X flags=%08X running=%d\n",
+      tag ? tag : "", gpu_pc, gpu_control, gpu_flags, GPU_RUNNING ? 1 : 0);
+}
+
 // Main GPU execution core
 
 void GPUExec(int32_t cycles)
