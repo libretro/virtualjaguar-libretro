@@ -129,6 +129,8 @@ bool IMASKCleared = false;
 #define VERSION			0x0F000
 #define INT_LAT5		0x10000
 
+void DSPHandleIRQsNP(void);
+
 // Is opcode 62 *really* a NOP? Seems like it...
 INLINE static void dsp_opcode_abs(void);
 INLINE static void dsp_opcode_add(void);
@@ -548,6 +550,10 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
                dsp_flag_n = (dsp_flags >> 2) & 0x01;
                DSPUpdateRegisterBanks();
+               // Dispatch pending IRQs now: newly-enabled INT_ENA + pending INT_LAT
+               // must fire before CINT bits below clear the latches.
+               if (DSP_RUNNING && !(dsp_flags & IMASK))
+                  DSPHandleIRQsNP();
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
                break;
@@ -594,11 +600,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // Protect writes to VERSION and the interrupt latches...
                mask        = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
                dsp_control = (dsp_control & mask) | (data & ~mask);
-               //CC only!
-               //!!!!!!!!
 
-               //This isn't exactly right either--we don't know if it was the M68K or the DSP writing here...
-               // !!! FIX !!! [DONE]
                if (DSP_RUNNING)
                {
                   if (who == M68K)
@@ -786,6 +788,11 @@ void DSPSetIRQLine(int irqline, int state)
 bool DSPIsRunning(void)
 {
 	return (DSP_RUNNING ? true : false);
+}
+
+uint8_t * DSPGetRAM(void)
+{
+	return dsp_ram_8;
 }
 
 void DSPInit(void)

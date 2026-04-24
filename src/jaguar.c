@@ -707,6 +707,7 @@ void JaguarExecuteNew(void)
       double timeToNextEvent = GetTimeToNextEvent(EVENT_MAIN);
       m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
       GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
       HandleNextEvent(EVENT_MAIN);
    } while(!frameDone);
 }
