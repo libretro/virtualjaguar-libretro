@@ -774,13 +774,12 @@ void DSPHandleIRQsNP(void)
 //
 void DSPSetIRQLine(int irqline, int state)
 {
-//NOTE: This doesn't take INT_LAT5 into account. !!! FIX !!!
-	uint32_t mask = INT_LAT0 << irqline;
-	dsp_control &= ~mask;							// Clear the latch bit
+	uint32_t mask = (irqline < 5) ? (INT_LAT0 << irqline) : INT_LAT5;
+	dsp_control &= ~mask;
 
 	if (state)
 	{
-		dsp_control |= mask;						// Set the latch bit
+		dsp_control |= mask;
 		DSPHandleIRQsNP();
 	}
 }

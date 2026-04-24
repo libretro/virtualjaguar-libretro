@@ -668,7 +668,10 @@ void JaguarReset(void)
    if (vjs.useJaguarBIOS && jaguarCartInserted && !vjs.hardwareTypeAlpine)
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
    else
+   {
+      SET32(jaguarMainRAM, 0, 0x00004000);
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
+   }
 
    TOMReset();
    JERRYReset();

@@ -211,6 +211,32 @@ jobs:
         $CC -O2 -Wall -o test/tools/test_memory_map test/tools/test_memory_map.c $LDFLAGS
         ./test/tools/test_memory_map ./${{ matrix.config.artifact }}
 
+    - name: Run DSP instruction set tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        $CC -O2 -Wall -o test/test_dsp_ops test/test_dsp_ops.c $LDFLAGS
+        $CC -O2 -Wall -o test/test_dsp_unit test/test_dsp_unit.c $LDFLAGS
+        ./test/test_dsp_ops
+        ./test/test_dsp_unit
+
+    - name: Run GPU instruction set tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        $CC -O2 -Wall -o test/test_gpu_ops test/test_gpu_ops.c $LDFLAGS
+        ./test/test_gpu_ops
+
+    - name: Run 68K instruction set tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        $CC -O2 -Wall -o test/test_m68k_ops test/test_m68k_ops.c $LDFLAGS
+        ./test/test_m68k_ops
+
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       uses: actions/cache@v4
