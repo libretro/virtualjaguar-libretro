@@ -550,12 +550,12 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
                dsp_flag_n = (dsp_flags >> 2) & 0x01;
                DSPUpdateRegisterBanks();
-               // Dispatch pending IRQs now: newly-enabled INT_ENA + pending INT_LAT
-               // must fire before CINT bits below clear the latches.
-               if (DSP_RUNNING && !(dsp_flags & IMASK))
-                  DSPHandleIRQsNP();
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
+               // Dispatch pending IRQs after CINT clears latches.
+               // Newly-enabled INT_ENA fires if INT_LAT is still pending.
+               if (DSP_RUNNING && !(dsp_flags & IMASK))
+                  DSPHandleIRQsNP();
                break;
             }
          case 0x04:
