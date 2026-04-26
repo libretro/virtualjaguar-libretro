@@ -611,10 +611,6 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                DSPUpdateRegisterBanks();
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
-               // Dispatch pending IRQs after CINT clears latches.
-               // Newly-enabled INT_ENA fires if INT_LAT is still pending.
-               if (DSP_RUNNING && !(dsp_flags & IMASK))
-                  DSPHandleIRQsNP();
                break;
             }
          case 0x04:
@@ -2690,4 +2686,10 @@ size_t DSPStateLoad(const uint8_t *buf)
    STATE_LOAD_VAR(buf, prevR1);
 
    return (size_t)(buf - start);
+}
+
+void DSPGetAudioDiagnostics(uint32_t *ctrl, uint32_t *flags)
+{
+   *ctrl = dsp_control;
+   *flags = dsp_flags;
 }
