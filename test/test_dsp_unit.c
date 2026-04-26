@@ -444,8 +444,9 @@ static void test_int_ena_dispatch(void)
    p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
    pc_before = *p_dsp_pc;
 
-   /* Now write INT_ENA0 to flags -- this should trigger dispatch */
-   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 2);
+   /* Now write INT_ENA0 to flags -- this should trigger dispatch.
+    * Use who=M68K (6) to simulate the 68K enabling the interrupt. */
+   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 6);
 
    pc_after = *p_dsp_pc;
 
@@ -519,8 +520,8 @@ static void test_interrupt_priority(void)
    p_DSPWriteLong(DSP_PC_ADDR, 0xF1B800, 6);
    p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
 
-   /* Enable both interrupts */
-   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0 | INT_ENA1, 2);
+   /* Enable both interrupts (who=M68K=6) */
+   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0 | INT_ENA1, 6);
 
    pc_after = *p_dsp_pc;
 

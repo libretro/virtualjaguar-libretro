@@ -777,7 +777,7 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 
    // Here's our virtualized scanline code...
 
-   if ((halfline >= topVisible) && (halfline < bottomVisible))
+   if ((halfline >= topVisible) && (halfline < bottomVisible) && tomWidth > 0 && tomWidth <= 1024)
    {
       if (inActiveDisplayArea)
          scanline_render[TOMGetVideoMode()](TOMCurrentLine);
@@ -861,16 +861,25 @@ void TOMReset(void)
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
       SET16(tomRam8, HP, 844);			// Horizontal Period (1-based; HP=845)
-      SET16(tomRam8, HBB, 1713);			// Horizontal Blank Begin
+      SET16(tomRam8, HBB, 1713);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 125);			// Horizontal Blank End
-      SET16(tomRam8, HDE, 1665);			// Horizontal Display End
-      SET16(tomRam8, HDB1, 203);			// Horizontal Display Begin 1
+      SET16(tomRam8, HS, 1741);			// Horizontal Sync
+      SET16(tomRam8, HVS, 651);			// Horizontal Vertical Sync
+      SET16(tomRam8, HDB1, 203);		// Horizontal Display Begin 1
+      SET16(tomRam8, HDB2, 203);		// Horizontal Display Begin 2
+      SET16(tomRam8, HDE, 1665);		// Horizontal Display End
       SET16(tomRam8, VP, 523);			// Vertical Period (1-based; in this case VP = 524)
+      SET16(tomRam8, VBB, 500);			// Vertical Blank Begin
       SET16(tomRam8, VBE, 24);			// Vertical Blank End
+      SET16(tomRam8, VS, 517);			// Vertical Sync
       SET16(tomRam8, VDB, 38);			// Vertical Display Begin
       SET16(tomRam8, VDE, 518);			// Vertical Display End
-      SET16(tomRam8, VBB, 500);			// Vertical Blank Begin
-      SET16(tomRam8, VS, 517);			// Vertical Sync
+      SET16(tomRam8, VEB, 511);			// Vertical Equalization Begin
+      SET16(tomRam8, VEE, 6);			// Vertical Equalization End
+      // VI left at 0: the (vc > 0) guard in HalflineCallback disables
+      // video interrupts until the BIOS or game writes a real VI value.
+      SET16(tomRam8, HEQ, 784);			// Horizontal Equalization End
+      SET16(tomRam8, BG, 0);			// Background color (black)
       SET16(tomRam8, VMODE, 0x06C1);
    }
    else	// PAL Jaguar
@@ -878,16 +887,23 @@ void TOMReset(void)
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
       SET16(tomRam8, HP, 850);			// Horizontal Period
-      SET16(tomRam8, HBB, 1711);			// Horizontal Blank Begin
+      SET16(tomRam8, HBB, 1711);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 158);			// Horizontal Blank End
-      SET16(tomRam8, HDE, 1665);			// Horizontal Display End
-      SET16(tomRam8, HDB1, 203);			// Horizontal Display Begin 1
+      SET16(tomRam8, HS, 1749);			// Horizontal Sync
+      SET16(tomRam8, HVS, 601);			// Horizontal Vertical Sync
+      SET16(tomRam8, HDB1, 203);		// Horizontal Display Begin 1
+      SET16(tomRam8, HDB2, 203);		// Horizontal Display Begin 2
+      SET16(tomRam8, HDE, 1665);		// Horizontal Display End
       SET16(tomRam8, VP, 623);			// Vertical Period (1-based; in this case VP = 624)
+      SET16(tomRam8, VBB, 600);			// Vertical Blank Begin
       SET16(tomRam8, VBE, 34);			// Vertical Blank End
+      SET16(tomRam8, VS, 618);			// Vertical Sync
       SET16(tomRam8, VDB, 38);			// Vertical Display Begin
       SET16(tomRam8, VDE, 518);			// Vertical Display End
-      SET16(tomRam8, VBB, 600);			// Vertical Blank Begin
-      SET16(tomRam8, VS, 618);			// Vertical Sync
+      SET16(tomRam8, VEB, 613);			// Vertical Equalization Begin
+      SET16(tomRam8, VEE, 6);			// Vertical Equalization End
+      SET16(tomRam8, HEQ, 787);			// Horizontal Equalization End
+      SET16(tomRam8, BG, 0);			// Background color (black)
       SET16(tomRam8, VMODE, 0x06C1);
    }
 
@@ -1127,6 +1143,11 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    if ((offset >= 0x28) && (offset <= 0x4F))
    {
       uint32_t width = TOMGetVideoModeWidth(), height = TOMGetVideoModeHeight();
+
+      if (width > 1024)
+         width = 1024;
+      if (height > 512)
+         height = 512;
 
       if ((width != tomWidth) || (height != tomHeight))
       {

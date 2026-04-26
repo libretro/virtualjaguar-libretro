@@ -792,6 +792,18 @@ static void test_sat32s(void)
    run(10);
    if (REG(1) == 10) PASS("sat32s(10)=10 (acc=0, passthrough)");
    else FAIL("sat32s(10)=%d", (int32_t)REG(1));
+
+   /* Regression: negative accumulator must NOT saturate to 0x7FFFFFFF.
+    * IMULTN(-100, 100) sets acc = -10000 → acc>>32 = -1 → passthrough. */
+   prep();
+   wmovei(0x100, (uint32_t)-100, 0);
+   w16(0x106, OP_MOVEQ(10, 1));
+   w16(0x108, OP_IMULTN(0, 1));
+   w16(0x10A, OP_MOVEQ(7, 2));
+   w16(0x10C, OP_SAT32S(0, 2));
+   run(30);
+   if (REG(2) == 7) PASS("sat32s(7) w/ neg acc=-10000: passthrough");
+   else FAIL("sat32s w/ neg acc=%d (expected 7)", (int32_t)REG(2));
 }
 
 static void test_normi(void)

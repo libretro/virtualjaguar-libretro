@@ -18,11 +18,13 @@
 #include "dsp_acc40.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include "dac.h"
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
 #include "m68000/m68kinterface.h"
+#include "settings.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -128,6 +130,16 @@ bool IMASKCleared = false;
 #define BUS_HOG			0x00800
 #define VERSION			0x0F000
 #define INT_LAT5		0x10000
+
+// HLE auto-ack: BIOS sound engine command area in DSP RAM
+// ($F1B9D0-$F1B9DF absolute; offsets relative to DSP_WORK_RAM_BASE)
+#define DSP_SOUND_CMD_BASE	0x9D0
+#define DSP_SOUND_CMD_END	0x9E0
+// Tight-poll detection: auto-clear DSPGO after this many consecutive
+// 68K reads without an intervening DSP_CTRL write.  A tight boot-time
+// poll loop does ~44000 reads/frame; normal gameplay does ~1-10/frame.
+#define DSPGO_POLL_THRESHOLD	8192
+#define DSP_RAM_SIZE		8192
 
 void DSPHandleIRQsNP(void);
 
@@ -305,6 +317,18 @@ uint8_t dsp_branch_condition_table[32 * 8];
 static uint16_t mirror_table[65536];
 static uint8_t dsp_ram_8[0x2000];
 
+static uint32_t dspgo_poll_count;
+
+/* Debug: trace DSP_CTRL writes */
+struct dsp_ctrl_trace {
+   uint32_t data;
+   uint32_t who;
+   uint32_t old_ctrl;
+   uint32_t new_ctrl;
+};
+struct dsp_ctrl_trace dsp_ctrl_log[64];
+int dsp_ctrl_log_count = 0;
+
 #define BRANCH_CONDITION(x)		dsp_branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
 
 static uint32_t dsp_in_exec = 0;
@@ -400,8 +424,20 @@ uint16_t DSPReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
 	if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE+0x1FFF)
 	{
+		uint16_t val;
 		offset -= DSP_WORK_RAM_BASE;
-		return GET16(dsp_ram_8, offset);
+		val = GET16(dsp_ram_8, offset);
+
+		/* HLE sound-engine auto-ack (see DSPReadLong for details). */
+		if (val != 0 && who == M68K && !DSP_RUNNING
+				&& !vjs.useJaguarBIOS
+				&& offset >= DSP_SOUND_CMD_BASE && offset < DSP_SOUND_CMD_END)
+		{
+			SET16(dsp_ram_8, offset, 0);
+			return 0;
+		}
+
+		return val;
 	}
 	else if ((offset>=DSP_CONTROL_RAM_BASE)&&(offset<DSP_CONTROL_RAM_BASE+0x20))
 	{
@@ -421,8 +457,23 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 
    if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE + 0x1FFF)
    {
+      uint32_t val;
       offset -= DSP_WORK_RAM_BASE;
-      return GET32(dsp_ram_8, offset);
+      val = GET32(dsp_ram_8, offset);
+
+      /* HLE sound-engine auto-ack: the real BIOS loads a DSP sound
+       * engine that acknowledges commands by clearing flag words in
+       * DSP RAM.  In HLE mode the engine is absent and the DSP may
+       * not be running, so games hang polling non-zero flags. */
+      if (val != 0 && who == M68K && !DSP_RUNNING
+            && !vjs.useJaguarBIOS
+            && offset >= DSP_SOUND_CMD_BASE && offset < DSP_SOUND_CMD_END)
+      {
+         SET32(dsp_ram_8, offset, 0);
+         return 0;
+      }
+
+      return val;
    }
    if (offset >= DSP_CONTROL_RAM_BASE && offset <= DSP_CONTROL_RAM_BASE + 0x23)
    {
@@ -441,6 +492,24 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x10:
             return dsp_pc;
          case 0x14:
+            /* HLE: When the 68K tight-polls DSPGO, auto-clear it.
+             * The real BIOS+I2S infrastructure lets DSP programs
+             * finish during SoundCallback; in HLE mode the DSP may
+             * not terminate because it depends on BIOS-initialized
+             * state.  A threshold of 8192 catches tight boot-time
+             * poll loops (tens of thousands of reads/frame) while
+             * ignoring normal gameplay status checks (~1-10/frame). */
+            if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
+            {
+               dspgo_poll_count++;
+               if (dspgo_poll_count > DSPGO_POLL_THRESHOLD)
+               {
+                  dsp_control &= ~0x01;
+                  dspgo_poll_count = 0;
+               }
+            }
+            else
+               dspgo_poll_count = 0;
             return dsp_control;
          case 0x18:
             return dsp_modulo;
@@ -552,9 +621,12 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                DSPUpdateRegisterBanks();
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
-               // Dispatch pending IRQs after CINT clears latches.
-               // Newly-enabled INT_ENA fires if INT_LAT is still pending.
-               if (DSP_RUNNING && !(dsp_flags & IMASK))
+               /* Dispatch pending IRQs when an external caller (M68K/GPU)
+                * enables INT_ENA while INT_LAT is pending.  Do NOT dispatch
+                * when the DSP itself writes flags (ISR return) — the
+                * IMASKCleared path in DSPExec handles that between
+                * instructions, matching real-hardware timing. */
+               if (who != DSP && DSP_RUNNING && !(dsp_flags & IMASK))
                   DSPHandleIRQsNP();
                break;
             }
@@ -578,6 +650,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             {
                uint32_t mask;
                bool wasRunning = DSP_RUNNING;
+               dspgo_poll_count = 0;
                // Check for DSP -> CPU interrupt
                if (data & CPUINT)
                {
@@ -599,7 +672,17 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                }
                // Protect writes to VERSION and the interrupt latches...
                mask        = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
-               dsp_control = (dsp_control & mask) | (data & ~mask);
+               {
+                  uint32_t old_ctrl = dsp_control;
+                  dsp_control = (dsp_control & mask) | (data & ~mask);
+                  if (dsp_ctrl_log_count < 64) {
+                     dsp_ctrl_log[dsp_ctrl_log_count].data = data;
+                     dsp_ctrl_log[dsp_ctrl_log_count].who = who;
+                     dsp_ctrl_log[dsp_ctrl_log_count].old_ctrl = old_ctrl;
+                     dsp_ctrl_log[dsp_ctrl_log_count].new_ctrl = dsp_control;
+                     dsp_ctrl_log_count++;
+                  }
+               }
 
                if (DSP_RUNNING)
                {
@@ -736,7 +819,7 @@ void DSPHandleIRQsNP(void)
 		return;
 
 	// Get the active interrupt bits (latches) & interrupt mask (enables)
-	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+	bits = ((dsp_control >> 11) & 0x20) | ((dsp_control >> 6) & 0x1F);
    mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	bits &= mask;
@@ -805,6 +888,7 @@ void DSPReset(void)
    unsigned i;
 
 	dsp_pc				  = 0x00F1B000;
+	dspgo_poll_count	  = 0;
 	dsp_acc				  = 0x00000000;
 	dsp_remain			  = 0x00000000;
 	dsp_modulo			  = 0xFFFFFFFF;
@@ -827,9 +911,18 @@ void DSPReset(void)
 	FlushDSPPipeline();
 	dsp_reset_stats();
 
-	// Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
-	for(i=0; i<8192; i+=4)
-		*((uint32_t *)(&dsp_ram_8[i])) = JaguarRand();
+	// Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
+	// In HLE mode, zero-fill instead: the real BIOS loads a DSP sound engine that
+	// initializes most of DSP RAM, and games may read locations they didn't write.
+	if (vjs.useJaguarBIOS)
+	{
+		for(i=0; i<DSP_RAM_SIZE; i+=4)
+			*((uint32_t *)(&dsp_ram_8[i])) = JaguarRand();
+	}
+	else
+	{
+		memset(dsp_ram_8, 0, DSP_RAM_SIZE);
+	}
 }
 
 void DSPDone(void)
@@ -1540,7 +1633,7 @@ void dsp_opcode_mirror(void)
 void dsp_opcode_sat32s(void)
 {
 	int32_t r2 = (uint32_t)RN;
-	int32_t temp = dsp_acc >> 32;
+	int32_t temp = (int32_t)(dsp_acc_i40_signed(dsp_acc) >> 32);
 	uint32_t res = (temp < -1) ? (int32_t)0x80000000 : (temp > 0) ? (int32_t)0x7FFFFFFF : r2;
 	RN = res;
 	SET_ZN(res);
@@ -2267,7 +2360,7 @@ INLINE static void DSP_sat16s(void)
 INLINE static void DSP_sat32s(void)
 {
 	int32_t r2 = (uint32_t)PRN;
-	int32_t temp = dsp_acc >> 32;
+	int32_t temp = (int32_t)(dsp_acc_i40_signed(dsp_acc) >> 32);
 	uint32_t res = (temp < -1) ? (int32_t)0x80000000 : (temp > 0) ? (int32_t)0x7FFFFFFF : r2;
 	PRES = res;
 	SET_ZN(res);

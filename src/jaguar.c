@@ -648,14 +648,23 @@ void JaguarReset(void)
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
-   JaguarSeedPRNG(12345);
-   for(i=8; i<0x200000; i+=4)
+   // In HLE (no-BIOS) mode, zero-fill instead: the real BIOS clears most of RAM
+   // during its init, and many games assume zeroed working memory.
+   if (vjs.useJaguarBIOS)
    {
-      uint32_t r = JaguarRand();
-      if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
-          && i >= jaguarLoadedRAMStart && i < jaguarLoadedRAMEnd)
-         continue;
-      SET32(jaguarMainRAM, i, r);
+      JaguarSeedPRNG(12345);
+      for(i=8; i<0x200000; i+=4)
+      {
+         uint32_t r = JaguarRand();
+         if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
+             && i >= jaguarLoadedRAMStart && i < jaguarLoadedRAMEnd)
+            continue;
+         SET32(jaguarMainRAM, i, r);
+      }
+   }
+   else
+   {
+      memset(jaguarMainRAM + 8, 0, 0x200000 - 8);
    }
 
    // New timer base code stuffola...
@@ -678,6 +687,117 @@ void JaguarReset(void)
    GPUReset();
    DSPReset();
    CDROMReset();
+
+   /* HLE BIOS: replicate post-boot hardware state that the real BIOS
+    * leaves behind before jumping to the cartridge.  Without this,
+    * games that rely on BIOS-initialized registers won't boot. */
+#define HLE_EXCEPT_HANDLER      0x0400   /* RAM addr: bus/address error stub */
+#define HLE_EXCEPT_HANDLER_RTE  0x0404   /* RAM addr: generic exception stub */
+#define M68K_OP_ADDQ8_SP        0x508F   /* ADDQ.L #8,SP (skip 68K error frame) */
+#define M68K_OP_RTE             0x4E73   /* Return From Exception */
+#define CART_HEADER_BASE        0x800400 /* Cart ROM type/speed header byte */
+#define MEMCON1_BASE            0x1861   /* Default MEMCON1 (OR'd with cart bits 1-4) */
+#define MEMCON1_CART_MASK       0x1E     /* Bits 1-4: ROM bus width/speed */
+#define JERRY_CLK3              0xF10014 /* Chroma clock divider register */
+#define JERRY_CLK2              0xF10012 /* Video clock divider register */
+#define CLK3_DEFAULT            0x0004
+#define CLK2_NTSC               0x00B5
+#define CLK2_PAL                0x00E2
+#define GPU_G_END               0xF0210C /* GPU endianness register */
+#define DSP_D_END_HI            0xF1A10C /* DSP endianness (32-bit) */
+#define DSP_D_END_LO            0xF1A10E /* DSP endianness (16-bit) */
+#define ENDIAN_BIG              0x0007   /* Big-endian for one width */
+#define ENDIAN_BIG32            0x00070007 /* Big-endian for both widths */
+#define GPU_AUTH_MAGIC          0x03D0DEAD /* BIOS GPU auth success marker */
+#define OP_STOP_LIST_ADDR       0x1000   /* RAM addr: minimal OP STOP list */
+#define OP_STOP_OBJECT          0x00000004 /* Object type 4 = STOP */
+#define TOM_OLP_LO              0x20     /* Object List Pointer low word */
+#define TOM_OLP_HI              0x22     /* Object List Pointer high word */
+#define TOM_BORD1               0x2A     /* Border color 1 (red/green) */
+#define TOM_BORD2               0x2C     /* Border color 2 (blue) */
+#define TOM_INT                 0xF000E0 /* TOM interrupt control register */
+#define TOM_INT_CLR_ALL         0x1F00   /* Clear all pending, disable all */
+#define JERRY_PIT0              0xF10000 /* PIT timer base address */
+#define JERRY_SMODE             0xF1A156 /* I2S serial mode register */
+#define JERRY_SCLK              0xF1A152 /* I2S serial clock register */
+#define SCLK_DEFAULT            0x0008
+
+   if (!vjs.useJaguarBIOS && jaguarCartInserted)
+   {
+      uint8_t cartTypeByte;
+      uint16_t newMemcon1;
+      unsigned v;
+
+      /* --- Exception vector stubs ---
+       * The real BIOS populates the entire vector table with safe
+       * handlers.  Without this, any exception (bus error, illegal
+       * instruction, etc.) jumps to random PRNG garbage and the CPU
+       * double-faults.  Place RTE stubs in low RAM and fill vectors. */
+      SET16(jaguarMainRAM, HLE_EXCEPT_HANDLER, M68K_OP_ADDQ8_SP);
+      SET16(jaguarMainRAM, HLE_EXCEPT_HANDLER + 2, M68K_OP_RTE);
+      SET16(jaguarMainRAM, HLE_EXCEPT_HANDLER_RTE, M68K_OP_RTE);
+
+      /* Vectors 2-3: bus error, address error → long frame handler */
+      SET32(jaguarMainRAM, 0x08, HLE_EXCEPT_HANDLER);
+      SET32(jaguarMainRAM, 0x0C, HLE_EXCEPT_HANDLER);
+
+      /* Vectors 4-255: all other exceptions → simple RTE
+       * CRITICAL: vector 64 ($100) is the Jaguar interrupt vector —
+       * irq_ack_handler() returns 64 for ALL hardware interrupts.
+       * If $100 contains PRNG garbage, the first interrupt crashes. */
+      for (v = 4; v <= 255; v++)
+         SET32(jaguarMainRAM, v * 4, HLE_EXCEPT_HANDLER_RTE);
+
+      /* --- MEMCON1 auto-detect from cart header ---
+       * The BIOS reads bits 1-4 for ROM bus width/speed. */
+      cartTypeByte = jagMemSpace[CART_HEADER_BASE];
+      newMemcon1 = MEMCON1_BASE | (cartTypeByte & MEMCON1_CART_MASK);
+      SET16(tomRam8, 0x00, newMemcon1);
+
+      /* --- JERRY clock dividers --- */
+      JERRYWriteWord(JERRY_CLK3, CLK3_DEFAULT, M68K);
+      JERRYWriteWord(JERRY_CLK2,
+            (vjs.hardwareTypeNTSC ? CLK2_NTSC : CLK2_PAL), M68K);
+
+      /* --- GPU/DSP endianness registers ---
+       * Big-endian for 32-bit and 16-bit accesses */
+      GPUWriteLong(GPU_G_END, ENDIAN_BIG32, M68K);
+      JERRYWriteWord(DSP_D_END_HI, ENDIAN_BIG, M68K);
+      JERRYWriteWord(DSP_D_END_LO, ENDIAN_BIG, M68K);
+
+      /* --- GPU encryption check magic ---
+       * Games check this to verify the cart passed authentication. */
+      GPUWriteLong(0xF03000, GPU_AUTH_MAGIC, M68K);
+
+      /* --- Object Processor STOP list ---
+       * The BIOS sets up a minimal OP list: STOP object (type 4). */
+      SET32(jaguarMainRAM, OP_STOP_LIST_ADDR, 0x00000000);
+      SET32(jaguarMainRAM, OP_STOP_LIST_ADDR + 4, OP_STOP_OBJECT);
+      /* Point OLP to the STOP list (LO/HI word order). */
+      SET16(tomRam8, TOM_OLP_LO, OP_STOP_LIST_ADDR);
+      SET16(tomRam8, TOM_OLP_HI, 0x0000);
+
+      /* --- Clear border color --- */
+      SET16(tomRam8, TOM_BORD1, 0x0000);
+      SET16(tomRam8, TOM_BORD2, 0x0000);
+
+      /* --- Interrupts: clear all pending, disable all enables --- */
+      TOMWriteWord(TOM_INT, TOM_INT_CLR_ALL, M68K);
+
+      /* --- Clear JERRY PIT timers --- */
+      JERRYWriteWord(JERRY_PIT0 + 0, 0x0000, M68K);
+      JERRYWriteWord(JERRY_PIT0 + 2, 0x0000, M68K);
+      JERRYWriteWord(JERRY_PIT0 + 4, 0x0000, M68K);
+      JERRYWriteWord(JERRY_PIT0 + 6, 0x0000, M68K);
+
+      /* --- I2S (SCLK/SMODE) setup ---
+       * The BIOS configures I2S with internal clock so JERRY fires
+       * periodic SSI interrupts on the DSP.  Games that load their own
+       * DSP programs often rely on these interrupts being active. */
+      JERRYWriteWord(JERRY_SMODE, 0x0001, M68K);
+      JERRYWriteWord(JERRY_SCLK, SCLK_DEFAULT, M68K);
+   }
+
    m68k_pulse_reset();								// Reset the 68000
 
    lowerField = false;								// Reset the lower field flag
