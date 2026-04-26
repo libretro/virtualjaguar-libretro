@@ -777,7 +777,7 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 
    // Here's our virtualized scanline code...
 
-   if ((halfline >= topVisible) && (halfline < bottomVisible) && tomWidth > 0 && tomWidth <= 1024)
+   if ((halfline >= topVisible) && (halfline < bottomVisible))
    {
       if (inActiveDisplayArea)
          scanline_render[TOMGetVideoMode()](TOMCurrentLine);

@@ -721,11 +721,11 @@ static void test_lea(void)
 {
    printf("\n--- LEA ---\n");
    prep();
-   /* LEA $12345678, A0 */
+   /* LEA $00012345, A0 */
    w16(CODE_BASE, M68K_LEA_ABS_L(0));
    w32(CODE_BASE + 2, 0x00012345);
    run(20);
-   if (A(0) == 0x00012345) PASS("lea $12345, A0");
+   if (A(0) == 0x00012345) PASS("lea $00012345, A0");
    else FAIL("lea: A0=%08X", A(0));
 }
 

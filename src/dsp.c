@@ -621,12 +621,9 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                DSPUpdateRegisterBanks();
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
-               /* Dispatch pending IRQs when an external caller (M68K/GPU)
-                * enables INT_ENA while INT_LAT is pending.  Do NOT dispatch
-                * when the DSP itself writes flags (ISR return) — the
-                * IMASKCleared path in DSPExec handles that between
-                * instructions, matching real-hardware timing. */
-               if (who != DSP && DSP_RUNNING && !(dsp_flags & IMASK))
+               // Dispatch pending IRQs after CINT clears latches.
+               // Newly-enabled INT_ENA fires if INT_LAT is still pending.
+               if (DSP_RUNNING && !(dsp_flags & IMASK))
                   DSPHandleIRQsNP();
                break;
             }
@@ -819,7 +816,7 @@ void DSPHandleIRQsNP(void)
 		return;
 
 	// Get the active interrupt bits (latches) & interrupt mask (enables)
-	bits = ((dsp_control >> 11) & 0x20) | ((dsp_control >> 6) & 0x1F);
+	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
    mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	bits &= mask;
