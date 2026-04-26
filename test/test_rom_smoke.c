@@ -45,6 +45,11 @@ static bool (*p_retro_load_game)(const struct retro_game_info *);
 static void (*p_retro_unload_game)(void);
 static void (*p_retro_run)(void);
 static void (*p_retro_reset)(void);
+static void *(*p_retro_get_memory_data)(unsigned);
+static size_t (*p_retro_get_memory_size)(unsigned);
+static size_t (*p_retro_serialize_size)(void);
+static bool (*p_retro_serialize)(void *, size_t);
+static bool (*p_retro_unserialize)(const void *, size_t);
 
 static void *core_handle;
 
@@ -92,11 +97,62 @@ static void video_refresh(const void *data, unsigned w, unsigned h, size_t pitch
    }
 }
 
+/* Per-frame video tracking for regression analysis */
+static unsigned current_run_frame;
+static bool verbose_mode = false;
+
 static void audio_sample(int16_t l, int16_t r) { (void)l; (void)r; }
 static size_t audio_batch(const int16_t *d, size_t f) { (void)d; return f; }
 static void input_poll(void) {}
-static int16_t input_state(unsigned p, unsigned d, unsigned i, unsigned id)
-{ (void)p; (void)d; (void)i; (void)id; return 0; }
+
+/* Input injection: press a button during a range of frames */
+#define MAX_INPUT_EVENTS 16
+static struct {
+   unsigned start_frame;
+   unsigned end_frame;
+   unsigned retro_btn;
+} input_events[MAX_INPUT_EVENTS];
+static int input_event_count = 0;
+
+static int16_t input_state(unsigned p, unsigned d, unsigned idx, unsigned id)
+{
+   int i;
+   (void)idx;
+   if (p != 0 || d != RETRO_DEVICE_JOYPAD)
+      return 0;
+   for (i = 0; i < input_event_count; i++) {
+      if (id == input_events[i].retro_btn
+            && current_run_frame >= input_events[i].start_frame
+            && current_run_frame <= input_events[i].end_frame)
+         return 1;
+   }
+   return 0;
+}
+
+static unsigned parse_button(const char *name)
+{
+   if (strcmp(name, "b") == 0 || strcmp(name, "B") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_B;
+   if (strcmp(name, "a") == 0 || strcmp(name, "A") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_A;
+   if (strcmp(name, "start") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_START;
+   if (strcmp(name, "select") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_SELECT;
+   if (strcmp(name, "up") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_UP;
+   if (strcmp(name, "down") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_DOWN;
+   if (strcmp(name, "left") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_LEFT;
+   if (strcmp(name, "right") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_RIGHT;
+   if (strcmp(name, "x") == 0 || strcmp(name, "X") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_X;
+   if (strcmp(name, "y") == 0 || strcmp(name, "Y") == 0)
+      return RETRO_DEVICE_ID_JOYPAD_Y;
+   return RETRO_DEVICE_ID_JOYPAD_B;
+}
 
 static void log_printf(enum retro_log_level level, const char *fmt, ...)
 {
@@ -193,6 +249,11 @@ static int load_core(const char *path)
    LOAD_SYM(retro_unload_game);
    LOAD_SYM(retro_run);
    LOAD_SYM(retro_reset);
+   LOAD_SYM(retro_get_memory_data);
+   LOAD_SYM(retro_get_memory_size);
+   LOAD_SYM(retro_serialize_size);
+   LOAD_SYM(retro_serialize);
+   LOAD_SYM(retro_unserialize);
 #undef LOAD_SYM
 
    /* Optional internal symbols */
@@ -289,6 +350,42 @@ typedef struct {
    int crashed_signal;
 } rom_result_t;
 
+static const char *srm_path = NULL;
+
+static void load_srm(void)
+{
+   void *sram;
+   size_t sram_size;
+   FILE *f;
+   long sz;
+
+   if (!srm_path)
+      return;
+
+   sram = p_retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+   sram_size = p_retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+   if (!sram || sram_size == 0) {
+      fprintf(stderr, "  WARN: Core has no SRAM region\n");
+      return;
+   }
+
+   f = fopen(srm_path, "rb");
+   if (!f) {
+      fprintf(stderr, "  WARN: Cannot open SRM: %s\n", srm_path);
+      return;
+   }
+   fseek(f, 0, SEEK_END);
+   sz = ftell(f);
+   fseek(f, 0, SEEK_SET);
+   if (sz > 0) {
+      size_t to_read = (size_t)sz < sram_size ? (size_t)sz : sram_size;
+      fread(sram, 1, to_read, f);
+      if (verbose_mode)
+         fprintf(stderr, "  Loaded %zu bytes SRM (core SRAM=%zu)\n", to_read, sram_size);
+   }
+   fclose(f);
+}
+
 static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *result)
 {
    uint8_t *rom_data;
@@ -296,6 +393,9 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
    struct retro_game_info game;
    unsigned i;
    int sig;
+   unsigned long prev_nonblack;
+   unsigned blank_streak;
+   unsigned blank_after_video;
 
    memset(result, 0, sizeof(*result));
    result->rom_path = path;
@@ -312,6 +412,7 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
    frame_height = 0;
    total_nonblack_pixels = 0;
    frames_with_video = 0;
+   current_run_frame = 0;
 
    /* Init core */
    p_retro_set_environment(environment);
@@ -335,6 +436,9 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
       return;
    }
 
+   /* Load SRAM if provided */
+   load_srm();
+
    /* Run frames with crash protection */
    in_test = 1;
    sig = sigsetjmp(jump_buf, 1);
@@ -342,15 +446,50 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
       result->status = BOOT_CRASH;
       result->crashed_signal = sig;
       in_test = 0;
-      /* Try to clean up */
       p_retro_unload_game();
       p_retro_deinit();
       free(rom_data);
       return;
    }
 
-   for (i = 0; i < num_frames; i++)
+   prev_nonblack = 0;
+   blank_streak = 0;
+   blank_after_video = 0;
+
+   for (i = 0; i < num_frames; i++) {
+      unsigned long before = total_nonblack_pixels;
+      current_run_frame = i;
       p_retro_run();
+
+      if (verbose_mode) {
+         unsigned long frame_pixels = total_nonblack_pixels - before;
+         uint32_t pc = 0;
+         if (p_m68k_get_reg)
+            pc = p_m68k_get_reg(NULL, M68K_REG_PC);
+         fprintf(stderr, "  frame %4u: %7lu px  PC=0x%06X", i, frame_pixels, pc);
+         if (input_event_count > 0) {
+            int j;
+            for (j = 0; j < input_event_count; j++) {
+               if (i >= input_events[j].start_frame && i <= input_events[j].end_frame)
+                  fprintf(stderr, "  [BTN %u]", input_events[j].retro_btn);
+            }
+         }
+         fprintf(stderr, "\n");
+      }
+
+      /* Track video blackout after video was previously active */
+      {
+         unsigned long frame_pixels = total_nonblack_pixels - before;
+         if (frame_pixels == 0 && frames_with_video > 10) {
+            blank_streak++;
+            if (blank_streak >= 30)
+               blank_after_video = 1;
+         } else {
+            blank_streak = 0;
+         }
+      }
+      prev_nonblack = total_nonblack_pixels;
+   }
 
    in_test = 0;
 
@@ -371,7 +510,10 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
    else
       result->status = BOOT_BLACK_SCREEN;
 
-   /* Check for hung CPU (PC stuck at 0 or in exception vectors) */
+   if (blank_after_video && result->status == BOOT_OK)
+      result->status = BOOT_BLACK_SCREEN;
+
+   /* Check for hung CPU */
    if (result->final_pc < 0x200 && result->status != BOOT_OK)
       result->status = BOOT_HUNG;
 
@@ -434,9 +576,16 @@ int main(int argc, char **argv)
 
    if (argc < 3) {
       fprintf(stderr,
-         "Usage: %s <core.dylib> [--frames N] [--bios] [--sysdir DIR] <rom.jag ...>\n"
-         "       %s <core.dylib> [--frames N] [--bios] [--sysdir DIR] --dir <rom_directory>\n",
-         argv[0], argv[0]);
+         "Usage: %s <core.dylib> [options] <rom.jag ...>\n"
+         "       %s <core.dylib> [options] --dir <rom_directory>\n"
+         "\nOptions:\n"
+         "  --frames N          Run N frames (default %d)\n"
+         "  --bios              Use real BIOS\n"
+         "  --sysdir DIR        System directory for BIOS files\n"
+         "  --srm PATH          Load SRAM data from file\n"
+         "  --input F1-F2:BTN   Press BTN during frames F1-F2 (b,a,start,up,down,...)\n"
+         "  --verbose           Per-frame video stats to stderr\n",
+         argv[0], argv[0], DEFAULT_FRAMES);
       return 1;
    }
 
@@ -450,6 +599,24 @@ int main(int argc, char **argv)
          use_bios = true;
       } else if (strcmp(argv[i], "--sysdir") == 0 && i + 1 < argc) {
          system_dir = argv[++i];
+      } else if (strcmp(argv[i], "--srm") == 0 && i + 1 < argc) {
+         srm_path = argv[++i];
+      } else if (strcmp(argv[i], "--verbose") == 0) {
+         verbose_mode = true;
+      } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
+         unsigned f1, f2;
+         char btn_name[32];
+         i++;
+         if (sscanf(argv[i], "%u-%u:%31s", &f1, &f2, btn_name) == 3) {
+            if (input_event_count < MAX_INPUT_EVENTS) {
+               input_events[input_event_count].start_frame = f1;
+               input_events[input_event_count].end_frame = f2;
+               input_events[input_event_count].retro_btn = parse_button(btn_name);
+               input_event_count++;
+            }
+         } else {
+            fprintf(stderr, "WARN: bad --input format: %s (expected F1-F2:BTN)\n", argv[i]);
+         }
       } else if (strcmp(argv[i], "--dir") == 0 && i + 1 < argc) {
          rom_count = collect_roms_from_dir(argv[++i], rom_paths, MAX_ROMS);
       } else {

@@ -697,13 +697,13 @@ static void test_pack(void)
    run(20);
    /* pack: ((val >> 10) & 0xF000) | ((val >> 5) & 0x0F00) | (val & 0xFF)
     *     val = 0x001F03E0
-    *     (val >> 10) = 0x00007C0F, & 0xF000 = 0x0000
-    *     (val >> 5)  = 0x000F81F0, & 0x0F00 = 0x0100
+    *     (val >> 10) = 0x000007C0, & 0xF000 = 0x0000
+    *     (val >> 5)  = 0x0000F81F, & 0x0F00 = 0x0800
     *     val & 0xFF  = 0xE0
-    *     result = 0x0000 | 0x0100 | 0x00E0 = 0x01E0
+    *     result = 0x0000 | 0x0800 | 0x00E0 = 0x08E0
     */
-   if (REG(0) == 0x000001E0) PASS("pack(0x001F03E0)=0x000001E0");
-   else FAIL("pack(0x001F03E0)=%08X (expected 000001E0)", REG(0));
+   if (REG(0) == 0x000008E0) PASS("pack(0x001F03E0)=0x000008E0");
+   else FAIL("pack(0x001F03E0)=%08X (expected 000008E0)", REG(0));
 
    /* unpack (RM=1): reverse of pack */
    prep();

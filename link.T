@@ -11,8 +11,8 @@
       pcQPtr;
       a6Queue;
       d0Queue;
-      GPUReadLong;
-      GPUWriteLong;
+      GPU*;
+      gpu_*;
       JERRY*;
       TOM*;
       tomRam8;

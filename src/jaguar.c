@@ -718,8 +718,8 @@ void JaguarReset(void)
 #define TOM_INT                 0xF000E0 /* TOM interrupt control register */
 #define TOM_INT_CLR_ALL         0x1F00   /* Clear all pending, disable all */
 #define JERRY_PIT0              0xF10000 /* PIT timer base address */
-#define JERRY_SMODE             0xF1A156 /* I2S serial mode register */
-#define JERRY_SCLK              0xF1A152 /* I2S serial clock register */
+#define JERRY_SMODE             0xF1A156 /* I2S serial mode register (low word of $F1A154) */
+#define JERRY_SCLK              0xF1A152 /* I2S serial clock register (low word of $F1A150) */
 #define SCLK_DEFAULT            0x0008
 
    if (!vjs.useJaguarBIOS && jaguarCartInserted)

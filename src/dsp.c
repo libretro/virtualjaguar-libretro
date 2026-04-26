@@ -319,16 +319,6 @@ static uint8_t dsp_ram_8[0x2000];
 
 static uint32_t dspgo_poll_count;
 
-/* Debug: trace DSP_CTRL writes */
-struct dsp_ctrl_trace {
-   uint32_t data;
-   uint32_t who;
-   uint32_t old_ctrl;
-   uint32_t new_ctrl;
-};
-struct dsp_ctrl_trace dsp_ctrl_log[64];
-int dsp_ctrl_log_count = 0;
-
 #define BRANCH_CONDITION(x)		dsp_branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
 
 static uint32_t dsp_in_exec = 0;
@@ -669,17 +659,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                }
                // Protect writes to VERSION and the interrupt latches...
                mask        = VERSION | INT_LAT0 | INT_LAT1 | INT_LAT2 | INT_LAT3 | INT_LAT4 | INT_LAT5;
-               {
-                  uint32_t old_ctrl = dsp_control;
-                  dsp_control = (dsp_control & mask) | (data & ~mask);
-                  if (dsp_ctrl_log_count < 64) {
-                     dsp_ctrl_log[dsp_ctrl_log_count].data = data;
-                     dsp_ctrl_log[dsp_ctrl_log_count].who = who;
-                     dsp_ctrl_log[dsp_ctrl_log_count].old_ctrl = old_ctrl;
-                     dsp_ctrl_log[dsp_ctrl_log_count].new_ctrl = dsp_control;
-                     dsp_ctrl_log_count++;
-                  }
-               }
+               dsp_control = (dsp_control & mask) | (data & ~mask);
 
                if (DSP_RUNNING)
                {
@@ -729,7 +709,7 @@ void DSPHandleIRQs(void)
       return;
 
    // Get the active interrupt bits (latches) & interrupt mask (enables)
-   bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
+   bits = ((dsp_control >> 11) & 0x20) | ((dsp_control >> 6) & 0x1F);
    mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
    bits &= mask;
@@ -816,8 +796,9 @@ void DSPHandleIRQsNP(void)
 		return;
 
 	// Get the active interrupt bits (latches) & interrupt mask (enables)
-	bits = ((dsp_control >> 10) & 0x20) | ((dsp_control >> 6) & 0x1F);
-   mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
+	// INT_LAT5 is at dsp_control bit 16 (non-contiguous with LAT0-4 at bits 6-10)
+	bits = ((dsp_control >> 11) & 0x20) | ((dsp_control >> 6) & 0x1F);
+	mask = ((dsp_flags >> 11) & 0x20) | ((dsp_flags >> 4) & 0x1F);
 
 	bits &= mask;
 
