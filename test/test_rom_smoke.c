@@ -393,7 +393,6 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
    struct retro_game_info game;
    unsigned i;
    int sig;
-   unsigned long prev_nonblack;
    unsigned blank_streak;
    unsigned blank_after_video;
 
@@ -452,7 +451,6 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
       return;
    }
 
-   prev_nonblack = 0;
    blank_streak = 0;
    blank_after_video = 0;
 
@@ -488,7 +486,6 @@ static void test_one_rom(const char *path, unsigned num_frames, rom_result_t *re
             blank_streak = 0;
          }
       }
-      prev_nonblack = total_nonblack_pixels;
    }
 
    in_test = 0;

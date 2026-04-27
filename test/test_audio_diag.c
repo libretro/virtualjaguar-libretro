@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "libretro.h"
+#include "../libretro-common/include/libretro.h"
 
 /* Function pointers loaded from the core */
 static void (*pretro_set_environment)(retro_environment_t);

@@ -149,8 +149,8 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
       {
          uint32_t ctrl, flags;
          DSPGetAudioDiagnostics(&ctrl, &flags);
-         LOG_WRN("[AUDIO] DSP NOT running  ctrl=%04X flags=%04X sclk=%u smode=%04X ltxd=%04X rtxd=%04X writes=%u\n",
-                  ctrl, flags, (unsigned)*sclk, (unsigned)*smode, (unsigned)*ltxd, (unsigned)*rtxd, dacLtxdWriteCount);
+         LOG_WRN("[AUDIO] DSP NOT running  ctrl=%04X flags=%05X sclk=%u smode=%04X ltxd=%04X rtxd=%04X writes=%u\n",
+                  (unsigned)ctrl, (unsigned)flags, (unsigned)*sclk, (unsigned)*smode, (unsigned)*ltxd, (unsigned)*rtxd, dacLtxdWriteCount);
       }
       return;
    }
@@ -198,8 +198,8 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
          }
       }
       DSPGetAudioDiagnostics(&ctrl, &flags);
-      LOG_INF("[AUDIO] DSP running  ctrl=%04X flags=%04X sclk=%u smode=%04X ltxd=%04X rtxd=%04X writes=%u samples=%s\n",
-               ctrl, flags, (unsigned)*sclk, (unsigned)*smode, (unsigned)*ltxd, (unsigned)*rtxd,
+      LOG_INF("[AUDIO] DSP running  ctrl=%04X flags=%05X sclk=%u smode=%04X ltxd=%04X rtxd=%04X writes=%u samples=%s\n",
+               (unsigned)ctrl, (unsigned)flags, (unsigned)*sclk, (unsigned)*smode, (unsigned)*ltxd, (unsigned)*rtxd,
                dacLtxdWriteCount, nonZero ? "NON-ZERO" : "ALL-ZERO");
    }
 

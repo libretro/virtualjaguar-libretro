@@ -431,11 +431,23 @@ static int handle_68020_mull_divl(uint32_t opcode)
 			uint32_t b = src;
 			if (sz == 0)
 			{
-				uint32_t r = a * b;
+				uint32_t r;
+				if (sg)
+				{
+					int64_t sr = (int64_t)(int32_t)a * (int64_t)(int32_t)b;
+					r = (uint32_t)sr;
+					SET_VFLG(sr != (int64_t)(int32_t)r);
+				}
+				else
+				{
+					uint64_t ur = (uint64_t)a * (uint64_t)b;
+					r = (uint32_t)ur;
+					SET_VFLG((ur >> 32) != 0);
+				}
 				m68k_dreg(regs, Dl) = r;
 				SET_NFLG(r >> 31);
 				SET_ZFLG(r == 0);
-				SET_VFLG(0); SET_CFLG(0);
+				SET_CFLG(0);
 			}
 			else
 			{

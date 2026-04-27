@@ -11,7 +11,7 @@ extern "C" {
 
 extern retro_log_printf_t vj_log_cb;
 
-static void vj_log_stderr(const char *fmt, ...)
+static INLINE void vj_log_stderr(const char *fmt, ...)
 {
    va_list ap;
    va_start(ap, fmt);
