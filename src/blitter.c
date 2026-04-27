@@ -1677,12 +1677,10 @@ void BlitterMidsummer2(void)
 
       if (inner)
       {
-         bool idle_inner = true, step = true, sreadx = false, szreadx = false, sread = false,
+         bool idle_inner = true, sreadx = false, szreadx = false, sread = false,
               szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
          bool inner0 = false;
          bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
-         // State lines that will never assert in Jaguar I
-         bool textext = false, txtread = false;
          //other stuff
          uint8_t srcshift = 0;
          uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
@@ -1716,11 +1714,11 @@ void BlitterMidsummer2(void)
             uint8_t dcomp, zcomp;
 
             //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
-            // IDLE
+            /* State machine: step is always true (no bus contention in
+               Jaguar I), textext/txtread never assert. Both eliminated. */
 
-            if ((idle_inner && !step)
-                  || (dzwrite && step && inner0)
-                  || (dwrite && step && !dstwrz && inner0))
+            if ((dzwrite && inner0)
+                  || (dwrite && !dstwrz && inner0))
             {
                idle_inneri = true;
                break;
@@ -1728,97 +1726,42 @@ void BlitterMidsummer2(void)
             else
                idle_inneri = false;
 
-            // EXTRA SOURCE DATA READ
+            sreadxi = (idle_inner && srcenx);
+            szreadxi = (sreadx && srcenz);
 
-            if ((idle_inner && step && srcenx)
-                  || (sreadx && !step))
-               sreadxi = true;
-            else
-               sreadxi = false;
+            sreadi = (szreadx
+                  || (sreadx && !srcenz && srcen)
+                  || (idle_inner && !srcenx && srcen)
+                  || (dzwrite && !inner0 && srcen)
+                  || (dwrite && !dstwrz && !inner0 && srcen));
 
-            // EXTRA SOURCE ZED READ
+            szreadi = (sread && srcenz);
 
-            if ((sreadx && step && srcenz)
-                  || (szreadx && !step))
-               szreadxi = true;
-            else
-               szreadxi = false;
+            dreadi = ((szread && dsten)
+                  || (sread && !srcenz && dsten)
+                  || (sreadx && !srcenz && !srcen && dsten)
+                  || (idle_inner && !srcenx && !srcen && dsten)
+                  || (dzwrite && !inner0 && !srcen && dsten)
+                  || (dwrite && !dstwrz && !inner0 && !srcen && dsten));
 
-            // TEXTURE DATA READ (not implemented because not in Jaguar I)
+            dzreadi = ((dread && dstenz)
+                  || (szread && !dsten && dstenz)
+                  || (sread && !srcenz && !dsten && dstenz)
+                  || (sreadx && !srcenz && !srcen && !dsten && dstenz)
+                  || (idle_inner && !srcenx && !srcen && !dsten && dstenz)
+                  || (dzwrite && !inner0 && !srcen && !dsten && dstenz)
+                  || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && dstenz));
 
-            // SOURCE DATA READ
+            dwritei = (dzread
+                  || (dread && !dstenz)
+                  || (szread && !dsten && !dstenz)
+                  || (sread && !srcenz && !dsten && !dstenz)
+                  || (sreadx && !srcenz && !srcen && !dsten && !dstenz)
+                  || (idle_inner && !srcenx && !srcen && !dsten && !dstenz)
+                  || (dzwrite && !inner0 && !srcen && !dsten && !dstenz)
+                  || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && !dstenz));
 
-            if ((szreadx && step && !textext)
-                  || (sreadx && step && !srcenz && srcen)
-                  || (idle_inner && step && !srcenx && !textext && srcen)
-                  || (dzwrite && step && !inner0 && !textext && srcen)
-                  || (dwrite && step && !dstwrz && !inner0 && !textext && srcen)
-                  || (txtread && step && srcen)
-                  || (sread && !step))
-               sreadi = true;
-            else
-               sreadi = false;
-
-            // SOURCE ZED READ
-
-            if ((sread && step && srcenz)
-                  || (szread && !step))
-               szreadi = true;
-            else
-               szreadi = false;
-
-            // DESTINATION DATA READ
-
-            if ((szread && step && dsten)
-                  || (sread && step && !srcenz && dsten)
-                  || (sreadx && step && !srcenz && !textext && !srcen && dsten)
-                  || (idle_inner && step && !srcenx && !textext && !srcen && dsten)
-                  || (dzwrite && step && !inner0 && !textext && !srcen && dsten)
-                  || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && dsten)
-                  || (txtread && step && !srcen && dsten)
-                  || (dread && !step))
-               dreadi = true;
-            else
-               dreadi = false;
-
-            // DESTINATION ZED READ
-
-            if ((dread && step && dstenz)
-                  || (szread && step && !dsten && dstenz)
-                  || (sread && step && !srcenz && !dsten && dstenz)
-                  || (sreadx && step && !srcenz && !textext && !srcen && !dsten && dstenz)
-                  || (idle_inner && step && !srcenx && !textext && !srcen && !dsten && dstenz)
-                  || (dzwrite && step && !inner0 && !textext && !srcen && !dsten && dstenz)
-                  || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && dstenz)
-                  || (txtread && step && !srcen && !dsten && dstenz)
-                  || (dzread && !step))
-               dzreadi = true;
-            else
-               dzreadi = false;
-
-            // DESTINATION DATA WRITE
-
-            if ((dzread && step)
-                  || (dread && step && !dstenz)
-                  || (szread && step && !dsten && !dstenz)
-                  || (sread && step && !srcenz && !dsten && !dstenz)
-                  || (txtread && step && !srcen && !dsten && !dstenz)
-                  || (sreadx && step && !srcenz && !textext && !srcen && !dsten && !dstenz)
-                  || (idle_inner && step && !srcenx && !textext && !srcen && !dsten && !dstenz)
-                  || (dzwrite && step && !inner0 && !textext && !srcen && !dsten && !dstenz)
-                  || (dwrite && step && !dstwrz && !inner0 && !textext && !srcen && !dsten && !dstenz)
-                  || (dwrite && !step))
-               dwritei = true;
-            else
-               dwritei = false;
-
-            // DESTINATION ZED WRITE
-
-            if ((dzwrite && !step)
-                  || (dwrite && step && dstwrz))
-               dzwritei = true;
-            else
-               dzwritei = false;
+            dzwritei = (dwrite && dstwrz);
 
             //Kludge: A QnD way to make sure that sshftld is asserted only for the first
             //        cycle of the inner loop...
@@ -1979,152 +1922,6 @@ A2pldt		:= NAN2 (a2pldt, atick[1], a2_add);
 A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             a1fracldi = a1fupdate || (a1_add && a1addx == 3);
-
-            // DCONTROL signal generation.  Hardware uses atick[0]/[1] phasing
-            // but the emulator's state machine mutual-exclusivity (dwrite vs
-            // dzwrite) provides equivalent gating for daddasel/daddbsel.
-//#warning srcdreadd is not properly initialized!
-            srcdreadd = false;						// Set in INNER.NET
-            //Shadeadd\	:= NAN2H (shadeadd\, dwrite, srcshade);
-            //Shadeadd	:= INV2 (shadeadd, shadeadd\);
-            shadeadd = dwrite && srcshade;
-            /* Data adder control, input A selection
-               000   Destination data
-               001   Initialiser pixel value
-               100   Source data      - computed intensity fraction
-               101   Pattern data     - computed intensity
-               110   Source zed 1     - computed zed
-               111   Source zed 2     - computed zed fraction
-
-               Bit 0 =   dwrite  . gourd . atick[1]
-               + dzwrite . gourz . atick[0]
-               + istepadd
-               + zstepfadd
-               + init_if + init_ii + init_zf + init_zi
-               Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
-               + zstepadd
-               + zstepfadd
-               Bit 2 =   (gourd + gourz) . /(init_if + init_ii + init_zf + init_zi)
-               + dwrite  . srcshade
-               */
-            daddasel = ((dwrite && gourd) || (dzwrite && gourz) || istepadd || zstepfadd
-                  || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
-            daddasel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
-            daddasel |= (((gourd || gourz) && !(init_if || init_ii || init_zf || init_zi))
-                  || (dwrite && srcshade) ? 0x04 : 0x00);
-            /* Data adder control, input B selection
-               0000	Source data
-               0001	Data initialiser increment
-               0100	Bottom 16 bits of I increment repeated four times
-               0101	Top 16 bits of I increment repeated four times
-               0110	Bottom 16 bits of Z increment repeated four times
-               0111	Top 16 bits of Z increment repeated four times
-               1100	Bottom 16 bits of I step repeated four times
-               1101	Top 16 bits of I step repeated four times
-               1110	Bottom 16 bits of Z step repeated four times
-               1111	Top 16 bits of Z step repeated four times
-
-               Bit 0 =   dwrite  . gourd . atick[1]
-               + dzwrite . gourz . atick[1]
-               + dwrite  . srcshade
-               + istepadd
-               + zstepadd
-               + init_if + init_ii + init_zf + init_zi
-               Bit 1 =   dzwrite . gourz . (atick[0] + atick[1])
-               + zstepadd
-               + zstepfadd
-               Bit 2 =   dwrite  . gourd . (atick[0] + atick[1])
-               + dzwrite . gourz . (atick[0] + atick[1])
-               + dwrite  . srcshade
-               + istepadd + istepfadd + zstepadd + zstepfadd
-               Bit 3 =   istepadd + istepfadd + zstepadd + zstepfadd
-               */
-            daddbsel = ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
-                  || istepadd || zstepadd || init_if || init_ii || init_zf || init_zi ? 0x01 : 0x00);
-            daddbsel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
-            daddbsel |= ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
-                  || istepadd || istepfadd || zstepadd || zstepfadd ? 0x04 : 0x00);
-            daddbsel |= (istepadd || istepfadd || zstepadd || zstepfadd ? 0x08 : 0x00);
-            /* Data adder mode control
-               000	16-bit normal add
-               001	16-bit saturating add with carry
-               010	8-bit saturating add with carry, carry into top byte is
-               inhibited (YCrCb)
-               011	8-bit saturating add with carry, carry into top byte and
-               between top nybbles is inhibited (CRY)
-               100	16-bit normal add with carry
-               101	16-bit saturating add
-               110	8-bit saturating add, carry into top byte is inhibited
-               111	8-bit saturating add, carry into top byte and between top
-               nybbles is inhibited
-
-               The first five are used for Gouraud calculations, the latter three
-               for adding source and destination data
-
-               Bit 0 =   dzwrite . gourz . atick[1]
-               + dwrite  . gourd . atick[1] . /topnen . /topben . /ext_int
-               + dwrite  . gourd . atick[1] .  topnen .  topben . /ext_int
-               + zstepadd
-               + istepadd . /topnen . /topben . /ext_int
-               + istepadd .  topnen .  topben . /ext_int
-               + /gourd . /gourz . /topnen . /topben
-               + /gourd . /gourz .  topnen .  topben
-               + shadeadd . /topnen . /topben
-               + shadeadd .  topnen .  topben
-               + init_ii . /topnen . /topben . /ext_int
-               + init_ii .  topnen .  topben . /ext_int
-               + init_zi
-
-               Bit 1 =   dwrite . gourd . atick[1] . /topben . /ext_int
-               + istepadd . /topben . /ext_int
-               + /gourd . /gourz .  /topben
-               + shadeadd .  /topben
-               + init_ii .  /topben . /ext_int
-
-               Bit 2 =   /gourd . /gourz
-               + shadeadd
-               + dwrite  . gourd . atick[1] . ext_int
-               + istepadd . ext_int
-               + init_ii . ext_int
-               */
-            /* daddmode bit 0: Hardware NAND tree (dcontrol.v:130-146).
-               The 5-input NAND makes bit 0 always 1 when dwrite&gourd,
-               dzwrite&gourz, !gourd&!gourz, or shadeadd — regardless of
-               topben/topnen.  The dm0t[1]=XNOR(topben,topnen) factor
-               gets cancelled by the complementary dm0t entry going low. */
-            daddmode = ((dwrite && gourd) || (dzwrite && gourz) || zstepadd
-                  || (!gourd && !gourz) || shadeadd
-                  || (istepadd && !(topnen ^ topben) && !ext_int)
-                  || (init_ii && !(topnen ^ topben) && !ext_int) || init_zi ? 0x01 : 0x00);
-            daddmode |= ((dwrite && gourd && !topben && !ext_int) || (istepadd && !topben && !ext_int)
-                  || (!gourd && !gourz && !topben) || (shadeadd && !topben)
-                  || (init_ii && !topben && !ext_int) ? 0x02 : 0x00);
-            daddmode |= ((!gourd && !gourz) || shadeadd || (dwrite && gourd && ext_int)
-                  || (istepadd && ext_int) || (init_ii && ext_int) ? 0x04 : 0x00);
-
-            patfadd = (dwrite && gourd) || (istepfadd && !datinit) || init_if;
-            patdadd = (dwrite && gourd) || (istepadd && !datinit) || init_ii;
-            srcz1add = (dzwrite && gourz) || (zstepadd && !datinit) || init_zi;
-            srcz2add = (dzwrite && gourz) || zstepfadd || init_zf;
-            srcshadd = srcdreadd && srcshade;
-            daddq_sel = patfadd || patdadd || srcz1add || srcz2add || srcshadd;
-            /* Select write data
-               This has to be controlled from stage 1 of the pipe-line, delayed
-               by one tick, as the write occurs in the cycle after the ack.
-
-               00	pattern data
-               01	lfu data
-               10	adder output
-               11	source zed
-
-               Bit 0 =  /patdsel . /adddsel
-               + dzwrite1d
-               Bit 1 =   adddsel
-               + dzwrite1d
-               */
-
-            data_sel = ((!patdsel && !adddsel) || dzwrite ? 0x01 : 0x00)
-               | (adddsel || dzwrite ? 0x02 : 0x00);
 
             ADDRGEN(&address, &pixAddr, gena2i, zaddr,
                   a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
@@ -2428,6 +2225,31 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc_masked, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
                   srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
                }
+
+               /* DCONTROL: compute data adder signals.  Moved here from
+                  the per-iteration scope since they are only consumed
+                  during dwrite (dwrite=true, dzwrite=false here). */
+               srcdreadd = false;
+               shadeadd = srcshade;
+               daddasel = (gourd ? 0x01 : 0x00);
+               daddasel |= ((gourd || gourz || srcshade) ? 0x04 : 0x00);
+               daddbsel = (gourd || srcshade ? 0x01 : 0x00);
+               daddbsel |= (gourd || srcshade ? 0x04 : 0x00);
+               /* daddmode bit 0: NAND tree (dcontrol.v:130-146) makes
+                  bit 0 always 1 when dwrite&&gourd, !gourd&&!gourz,
+                  or shadeadd. */
+               daddmode = (gourd || (!gourd && !gourz) || shadeadd ? 0x01 : 0x00);
+               daddmode |= ((gourd && !topben && !ext_int)
+                     || (!gourd && !gourz && !topben) || (shadeadd && !topben) ? 0x02 : 0x00);
+               daddmode |= ((!gourd && !gourz) || shadeadd || (gourd && ext_int) ? 0x04 : 0x00);
+               patfadd = gourd;
+               patdadd = gourd;
+               srcz1add = false;
+               srcz2add = false;
+               srcshadd = false;
+               daddq_sel = gourd;
+               data_sel = ((!patdsel && !adddsel) ? 0x01 : 0x00)
+                  | (adddsel ? 0x02 : 0x00);
 
                if (patfadd)
                {
