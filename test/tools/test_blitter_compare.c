@@ -113,6 +113,12 @@ static bool environment_cb(unsigned cmd, void *data)
          return true;
       case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
          return false;
+      case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+         *(const char **)data = "test/roms/private";
+         return true;
+      case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+         *(const char **)data = "/tmp";
+         return true;
       default:
          return false;
    }

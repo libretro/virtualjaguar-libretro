@@ -2420,21 +2420,13 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //Let's try this:
                if (srcshade)
                {
-                  //NOTE: This is basically doubling the work done by DATA--since this is what
-                  //      ADDARRAY is loaded with when srschshade is enabled... !!! FIX !!!
-                  //      Also note that it doesn't work properly unless GOURZ is set--there's the clue!
                   uint16_t addq[4];
                   uint8_t initcin[4] = { 0, 0, 0, 0 };
-                  ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
+                  uint32_t iinc_masked = iinc & 0x00FFFFFF;
+                  ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc_masked, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
                   srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
                }
-               //Seems to work... Not 100% sure tho.
-               //end try this
 
-               //Temporary kludge, to see if the fractional pattern does anything...
-               //This works, BTW
-               //But it seems to mess up in Cybermorph... the shading should be smooth but it isn't...
-               //Seems the carry out is lost again... !!! FIX !!! [DONE--see below]
                if (patfadd)
                {
                   uint16_t addq[4];
@@ -2443,10 +2435,11 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
                }
 
-               //Note that we still don't take atick[0] & [1] into account here, so this will skip half of the data needed... !!! FIX !!!
-               //Not yet enumerated: dbinh, srcdread, srczread
-               //Also, should do srcshift on the z value in phrase mode... !!! FIX !!! [DONE]
-               //As well as add a srcz variable we can set external to this state... !!! FIX !!! [DONE]
+               //TODO: Hardware uses atick[0]/[1] two-phase pipeline for GOURD
+               //      (fractional on atick[0], integer on atick[1]) with different
+               //      ADDARRAY selectors per phase.  See MiSTer dcontrol.v:164-167.
+               //TODO: dbinh should be dynamically computed from comp_ctrl, not 0.
+               //      See MiSTer comp_ctrl.v:116-234.
 
                DATA(&wdata, &dcomp, &zcomp, &winhibit,
                      true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,

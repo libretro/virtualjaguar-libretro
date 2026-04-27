@@ -32,6 +32,7 @@ void RemoveCallback(void (* callback)(void));
 void AdjustCallbackTime(void (* callback)(void), double time);
 double GetTimeToNextEvent(int type);
 void HandleNextEvent(int type);
+void SubtractEventTimes(double elapsed, int type);
 
 #ifdef __cplusplus
 }

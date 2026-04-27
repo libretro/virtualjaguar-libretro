@@ -110,25 +110,17 @@ void DSPSampleCallback(void)
    SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 }
 
-// Approach: Run the DSP for however many cycles needed to correspond to whatever sample rate
-// we've set the audio to run at. So, e.g., if we run it at 48 KHz, then we would run the DSP
-// for however much time it takes to fill the buffer. So with a 2K buffer, this would correspond
-// to running the DSP for 0.042666... seconds. At 26590906 Hz, this would correspond to
-// running the DSP for 1134545 cycles. You would then sample the L/RTXD registers every
-// 1134545 / 2048 = 554 cycles to fill the buffer. You would also have to manage interrupt
-// timing as well (generating them at the proper times), but that shouldn't be too difficult...
-// If the DSP isn't running, then fill the buffer with L/RTXD and exit.
-
 //
 // Callback routine to fill audio buffer
 //
 // Note: The samples are packed in the buffer in 16 bit left/16 bit right pairs.
-//       Also, length is the length of the buffer in BYTES
+//       Also, length is the length of the buffer in SAMPLES (not bytes).
 //
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
-   /* 1st, check to see if the DSP is running. If not, fill the buffer with L/RXTD and exit. */
+   RemoveCallback(DSPSampleCallback);
+
    if (!DSPIsRunning())
    {
       unsigned i;
@@ -138,39 +130,40 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
          buffer[i + 1] = *rtxd;
       }
 
+      audio_batch_cb((int16_t *)buffer, length / 2);
       return;
    }
 
-   // The length of time we're dealing with here is 1/48000 s, so we multiply this
-   // by the number of cycles per second to get the number of cycles for one sample.
-   //uint32_t riscClockRate = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   //uint32_t cyclesPerSample = riscClockRate / DAC_AUDIO_RATE;
-   // This is the length of time
-   //	timePerSample = (1000000.0 / (double)riscClockRate) * ();
-
-   // Now, run the DSP for that length of time for each sample we need to make
-
-   bufferIndex     = 0;
-   sampleBuffer    = buffer;
-   // If length is the length of the sample buffer in BYTES, then shouldn't the # of
-   // samples be / 4? No, because we bump the sample count by 2, so this is OK.
-   numberOfSamples = length;
-   bufferDone      = false;
-
-   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
-
-   // These timings are tied to NTSC, need to fix that in event.cpp/h! [FIXED]
-   do
    {
-      double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
+      double sampleInterval = 1000000.0 / (double)DAC_AUDIO_RATE;
+      double timeUntilNextSample = sampleInterval;
+      int idx = 0;
 
-      DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+      while (idx < length)
+      {
+         double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
 
-      HandleNextEvent(EVENT_JERRY);
+         if (timeUntilNextSample <= timeToNextEvent)
+         {
+            DSPExec(USEC_TO_RISC_CYCLES(timeUntilNextSample));
+
+            buffer[idx + 0] = *ltxd;
+            buffer[idx + 1] = *rtxd;
+            idx += 2;
+
+            SubtractEventTimes(timeUntilNextSample, EVENT_JERRY);
+            timeUntilNextSample = sampleInterval;
+         }
+         else
+         {
+            DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
+            timeUntilNextSample -= timeToNextEvent;
+            HandleNextEvent(EVENT_JERRY);
+         }
+      }
    }
-   while (!bufferDone);
 
-   audio_batch_cb((int16_t*)sampleBuffer, length / 2);
+   audio_batch_cb((int16_t *)buffer, length / 2);
 }
 
 // LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54)

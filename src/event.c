@@ -234,6 +234,22 @@ void HandleNextEvent(int type/*= EVENT_MAIN*/)
 }
 
 
+void SubtractEventTimes(double elapsed, int type)
+{
+   unsigned i;
+   if (type == EVENT_MAIN)
+   {
+      for (i = 0; i < EVENT_LIST_SIZE; i++)
+         eventList[i].eventTime -= elapsed;
+   }
+   else
+   {
+      for (i = 0; i < EVENT_LIST_SIZE; i++)
+         eventListJERRY[i].eventTime -= elapsed;
+   }
+}
+
+
 /* Callback registry for save state serialization.
  * Maps function pointers to integer IDs so events can be serialized. */
 
