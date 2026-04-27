@@ -577,9 +577,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
          case 0x00:
             {
                IMASKCleared = (dsp_flags & IMASK) && !(data & IMASK);
-               // NOTE: According to the JTRM, writing a 1 to IMASK has no effect; only the
-               //       IRQ logic can set it. So we mask it out here to prevent problems...
-               dsp_flags = data & (~IMASK);
+               dsp_flags = (data & ~IMASK) | ((data & IMASK) ? (dsp_flags & IMASK) : 0);
                dsp_flag_z = dsp_flags & 0x01;
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
                dsp_flag_n = (dsp_flags >> 2) & 0x01;
@@ -976,10 +974,10 @@ INLINE static void dsp_opcode_add(void)
 
 INLINE static void dsp_opcode_addc(void)
 {
-	uint32_t res = RN + RM + dsp_flag_c;
-	uint32_t carry = dsp_flag_c;
-	SET_ZNC_ADD(RN + carry, RM, res);
-	RN = res;
+	uint64_t res = (uint64_t)RN + (uint64_t)RM + (uint64_t)dsp_flag_c;
+	dsp_flag_c = (uint8_t)((res >> 32) & 0x01);
+	RN = (uint32_t)(res & 0xFFFFFFFF);
+	SET_ZN(RN);
 }
 
 

@@ -474,10 +474,9 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
       {
          case 0x00:
             {
-               bool IMASKCleared = (gpu_flags & IMASK) && !(data & IMASK);
-               // NOTE: According to the JTRM, writing a 1 to IMASK has no effect; only the
-               //       IRQ logic can set it. So we mask it out here to prevent problems...
-               gpu_flags = data & (~IMASK);
+               bool wasIMASK = (gpu_flags & IMASK) ? 1 : 0;
+               bool IMASKCleared = wasIMASK && !(data & IMASK);
+               gpu_flags = (data & ~IMASK) | ((data & IMASK) ? (gpu_flags & IMASK) : 0);
                gpu_flag_z = gpu_flags & ZERO_FLAG;
                gpu_flag_c = (gpu_flags & CARRY_FLAG) >> 1;
                gpu_flag_n = (gpu_flags & NEGA_FLAG) >> 2;
@@ -1030,10 +1029,10 @@ INLINE static void gpu_opcode_add(void)
 
 INLINE static void gpu_opcode_addc(void)
 {
-   uint32_t res = RN + RM + gpu_flag_c;
-   uint32_t carry = gpu_flag_c;
-   SET_ZNC_ADD(RN + carry, RM, res);
-   RN = res;
+   uint64_t res = (uint64_t)RN + (uint64_t)RM + (uint64_t)gpu_flag_c;
+   gpu_flag_c = (uint8_t)((res >> 32) & 0x01);
+   RN = (uint32_t)(res & 0xFFFFFFFF);
+   SET_ZN(RN);
 }
 
 
