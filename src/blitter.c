@@ -1980,9 +1980,9 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             a1fracldi = a1fupdate || (a1_add && a1addx == 3);
 
-            // Some more from DCONTROL...
-            // atick[] just MAY be important here! We're assuming it's true and dropping the term...
-            // That will probably screw up some of the lower terms that seem to rely on the timing of it...
+            // DCONTROL signal generation.  Hardware uses atick[0]/[1] phasing
+            // but the emulator's state machine mutual-exclusivity (dwrite vs
+            // dzwrite) provides equivalent gating for daddasel/daddbsel.
 //#warning srcdreadd is not properly initialized!
             srcdreadd = false;						// Set in INNER.NET
             //Shadeadd\	:= NAN2H (shadeadd\, dwrite, srcshade);
@@ -2044,7 +2044,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             daddbsel |= ((dzwrite && gourz) || zstepadd || zstepfadd ? 0x02 : 0x00);
             daddbsel |= ((dwrite && gourd) || (dzwrite && gourz) || (dwrite && srcshade)
                   || istepadd || istepfadd || zstepadd || zstepfadd ? 0x04 : 0x00);
-            daddbsel |= (istepadd && istepfadd && zstepadd && zstepfadd ? 0x08 : 0x00);
+            daddbsel |= (istepadd || istepfadd || zstepadd || zstepfadd ? 0x08 : 0x00);
             /* Data adder mode control
                000	16-bit normal add
                001	16-bit saturating add with carry
@@ -2087,13 +2087,15 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                + istepadd . ext_int
                + init_ii . ext_int
                */
-            daddmode = ((dzwrite && gourz) || (dwrite && gourd && !topnen && !topben && !ext_int)
-                  || (dwrite && gourd && topnen && topben && !ext_int) || zstepadd
-                  || (istepadd && !topnen && !topben && !ext_int)
-                  || (istepadd && topnen && topben && !ext_int) || (!gourd && !gourz && !topnen && !topben)
-                  || (!gourd && !gourz && topnen && topben) || (shadeadd && !topnen && !topben)
-                  || (shadeadd && topnen && topben) || (init_ii && !topnen && !topben && !ext_int)
-                  || (init_ii && topnen && topben && !ext_int) || init_zi ? 0x01 : 0x00);
+            /* daddmode bit 0: Hardware NAND tree (dcontrol.v:130-146).
+               The 5-input NAND makes bit 0 always 1 when dwrite&gourd,
+               dzwrite&gourz, !gourd&!gourz, or shadeadd — regardless of
+               topben/topnen.  The dm0t[1]=XNOR(topben,topnen) factor
+               gets cancelled by the complementary dm0t entry going low. */
+            daddmode = ((dwrite && gourd) || (dzwrite && gourz) || zstepadd
+                  || (!gourd && !gourz) || shadeadd
+                  || (istepadd && !(topnen ^ topben) && !ext_int)
+                  || (init_ii && !(topnen ^ topben) && !ext_int) || init_zi ? 0x01 : 0x00);
             daddmode |= ((dwrite && gourd && !topben && !ext_int) || (istepadd && !topben && !ext_int)
                   || (!gourd && !gourz && !topben) || (shadeadd && !topben)
                   || (init_ii && !topben && !ext_int) ? 0x02 : 0x00);
@@ -2435,11 +2437,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
                }
 
-               //TODO: Hardware uses atick[0]/[1] two-phase pipeline for GOURD
-               //      (fractional on atick[0], integer on atick[1]) with different
-               //      ADDARRAY selectors per phase.  See MiSTer dcontrol.v:164-167.
-               //TODO: dbinh should be dynamically computed from comp_ctrl, not 0.
-               //      See MiSTer comp_ctrl.v:116-234.
+               /* atick[0]/[1] two-phase pipeline: fractional intensity/Z update
+                  runs in the patfadd/srcz2add block above (Phase 0), integer
+                  update runs via DATA→patdadd below (Phase 1).  The dbinh
+                  param below is overwritten inside DATA by COMP_CTRL. */
 
                DATA(&wdata, &dcomp, &zcomp, &winhibit,
                      true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
