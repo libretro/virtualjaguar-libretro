@@ -25,6 +25,11 @@ void BlitterWriteLong(uint32_t, uint32_t, uint32_t who);
 uint32_t blitter_reg_read(uint32_t offset);
 void blitter_reg_write(uint32_t offset, uint32_t data);
 
+void BlitterCompareEnable(int enable);
+int BlitterCompareIsEnabled(void);
+void BlitterCompareGetStats(uint32_t *total, uint32_t *diffs, uint32_t *skipped);
+void BlitterCompareDumpCmdStats(void);
+
 #ifdef __cplusplus
 }
 #endif

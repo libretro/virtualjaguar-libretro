@@ -718,8 +718,16 @@ void GPUExec(int32_t cycles)
 
    while (cycles > 0 && GPU_RUNNING)
    {
-      uint16_t opcode = GPUReadWord(gpu_pc, GPU);
-      uint32_t index  = opcode >> 10;
+      uint16_t opcode;
+      uint32_t index;
+      if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
+      {
+         uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
+         opcode = ((uint16_t)gpu_ram_8[off] << 8) | (uint16_t)gpu_ram_8[off + 1];
+      }
+      else
+         opcode = GPUReadWord(gpu_pc, GPU);
+      index = opcode >> 10;
       gpu_instruction = opcode;	// Added for GPU #3...
       gpu_opcode_first_parameter  = (opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = opcode & 0x1F;

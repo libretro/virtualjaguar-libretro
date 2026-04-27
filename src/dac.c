@@ -47,7 +47,6 @@
 #include "event.h"
 #include "jerry.h"
 #include "jaguar.h"
-#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
@@ -73,10 +72,6 @@ static int bufferIndex = 0;
 static int numberOfSamples = 0;
 static bool bufferDone = false;
 
-// Audio diagnostics
-static uint32_t dacLtxdWriteCount = 0;
-static uint32_t dacDiagFrameCount = 0;
-
 // Private function prototypes
 
 void DACInit(void)
@@ -94,8 +89,6 @@ void DACReset(void)
 {
    *ltxd = 0;
    lrxd  = 0;
-   dacLtxdWriteCount = 0;
-   dacDiagFrameCount = 0;
 }
 
 void DACDone(void)
@@ -145,13 +138,6 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
          buffer[i + 1] = *rtxd;
       }
 
-      if (dacDiagFrameCount++ % 60 == 0)
-      {
-         uint32_t ctrl, flags;
-         DSPGetAudioDiagnostics(&ctrl, &flags);
-         LOG_WRN("[AUDIO] DSP NOT running  ctrl=%04X flags=%05X sclk=%u smode=%04X ltxd=%04X rtxd=%04X writes=%u\n",
-                  (unsigned)ctrl, (unsigned)flags, (unsigned)*sclk, (unsigned)*smode, (unsigned)*ltxd, (unsigned)*rtxd, dacLtxdWriteCount);
-      }
       return;
    }
 
@@ -184,25 +170,6 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
    }
    while (!bufferDone);
 
-   if (dacDiagFrameCount++ % 60 == 0)
-   {
-      uint32_t ctrl, flags;
-      int nonZero = 0;
-      int i;
-      for (i = 0; i < length; i++)
-      {
-         if (sampleBuffer[i] != 0)
-         {
-            nonZero++;
-            break;
-         }
-      }
-      DSPGetAudioDiagnostics(&ctrl, &flags);
-      LOG_INF("[AUDIO] DSP running  ctrl=%04X flags=%05X sclk=%u smode=%04X ltxd=%04X rtxd=%04X writes=%u samples=%s\n",
-               (unsigned)ctrl, (unsigned)flags, (unsigned)*sclk, (unsigned)*smode, (unsigned)*ltxd, (unsigned)*rtxd,
-               dacLtxdWriteCount, nonZero ? "NON-ZERO" : "ALL-ZERO");
-   }
-
    audio_batch_cb((int16_t*)sampleBuffer, length / 2);
 }
 
@@ -219,7 +186,6 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    if (offset == LTXD + 2)
    {
       *ltxd = data;
-      dacLtxdWriteCount++;
    }
    else if (offset == RTXD + 2)
       *rtxd = data;

@@ -31,7 +31,6 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 void DSPReleaseTimeslice(void);
 bool DSPIsRunning(void);
-void DSPGetAudioDiagnostics(uint32_t *ctrl, uint32_t *flags);
 
 void DSPExecP(int32_t cycles);
 void DSPExecP2(int32_t cycles);

@@ -291,7 +291,9 @@ unsigned int m68k_read_memory_32(unsigned int address)
    address &= 0x00FFFFFF;
 
 #ifndef USE_NEW_MMU
-   if ((address >= 0x800000) && (address <= 0xDFFEFE))
+   if (address <= 0x1FFFFC)
+      return GET32(jaguarMainRAM, address);
+   else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
       if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
@@ -387,6 +389,11 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
    address &= 0x00FFFFFF;
 
 #ifndef USE_NEW_MMU
+   if (address <= 0x1FFFFC)
+   {
+      SET32(jaguarMainRAM, address, value);
+      return;
+   }
    m68k_write_memory_16(address, value >> 16);
    m68k_write_memory_16(address + 2, value & 0xFFFF);
 #else
@@ -526,16 +533,23 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 }
 
 
-// We really should re-do this so that it does *real* 32-bit access... !!! FIX !!!
 uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 {
+   uint32_t addr = offset & 0xFFFFFF;
+   if (addr < 0x800000)
+      return GET32(jaguarMainRAM, addr & 0x1FFFFF);
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
 }
 
 
-// We really should re-do this so that it does *real* 32-bit access... !!! FIX !!!
 void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
+   uint32_t addr = offset & 0xFFFFFF;
+   if (addr < 0x800000)
+   {
+      SET32(jaguarMainRAM, addr & 0x1FFFFF, data);
+      return;
+   }
    JaguarWriteWord(offset, data >> 16, who);
    JaguarWriteWord(offset+2, data & 0xFFFF, who);
 }

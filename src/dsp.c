@@ -248,28 +248,6 @@ void (* dsp_opcode[64])() =
 	dsp_opcode_store_r14_ri,		dsp_opcode_store_r15_ri,		dsp_opcode_illegal,				dsp_opcode_addqmod,
 };
 
-uint32_t dsp_opcode_use[65];
-
-const char * dsp_opcode_str[65]=
-{
-	"add",				"addc",				"addq",				"addqt",
-	"sub",				"subc",				"subq",				"subqt",
-	"neg",				"and",				"or",				"xor",
-	"not",				"btst",				"bset",				"bclr",
-	"mult",				"imult",			"imultn",			"resmac",
-	"imacn",			"div",				"abs",				"sh",
-	"shlq",				"shrq",				"sha",				"sharq",
-	"ror",				"rorq",				"cmp",				"cmpq",
-	"subqmod",			"sat16s",			"move",				"moveq",
-	"moveta",			"movefa",			"movei",			"loadb",
-	"loadw",			"load",				"sat32s",			"load_r14_indexed",
-	"load_r15_indexed",	"storeb",			"storew",			"store",
-	"mirror",			"store_r14_indexed","store_r15_indexed","move_pc",
-	"jump",				"jr",				"mmult",			"mtoi",
-	"normi",			"nop",				"load_r14_ri",		"load_r15_ri",
-	"store_r14_ri",		"store_r15_ri",		"illegal",			"addqmod",
-	"STALL"
-};
 
 uint32_t dsp_pc;
 static uint64_t dsp_acc;								// 40 bit register, NOT 32!
@@ -331,9 +309,6 @@ void FlushDSPPipeline(void);
 
 void dsp_reset_stats(void)
 {
-   unsigned i;
-	for(i=0; i<65; i++)
-		dsp_opcode_use[i] = 0;
 }
 
 void DSPReleaseTimeslice(void)
@@ -931,13 +906,18 @@ INLINE void DSPExec(int32_t cycles)
 			IMASKCleared = false;
 		}
 
-		opcode = DSPReadWord(dsp_pc, DSP);
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			opcode = DSPReadWord(dsp_pc, DSP);
 		index = opcode >> 10;
 		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
 		dsp_opcode[index]();
-		dsp_opcode_use[index]++;
 		cycles -= dsp_opcode_cycles[index];
 	}
 
@@ -2004,7 +1984,6 @@ INLINE static void DSP_jr(void)
       }//*/
       dsp_pc += 2;	// For DSP_DIS_* accuracy
       DSPOpcode[pipeline[plPtrExec].opcode]();
-      dsp_opcode_use[pipeline[plPtrExec].opcode]++;
       pipeline[plPtrWrite] = pipeline[plPtrExec];
 
       // Step 3: Flush pipeline & set new PC
@@ -2080,7 +2059,6 @@ INLINE static void DSP_jump(void)
 		}
 	dsp_pc += 2;	// For DSP_DIS_* accuracy
 		DSPOpcode[pipeline[plPtrExec].opcode]();
-		dsp_opcode_use[pipeline[plPtrExec].opcode]++;
 		pipeline[plPtrWrite] = pipeline[plPtrExec];
 
 		// Step 3: Flush pipeline & set new PC
@@ -2691,8 +2669,3 @@ size_t DSPStateLoad(const uint8_t *buf)
    return (size_t)(buf - start);
 }
 
-void DSPGetAudioDiagnostics(uint32_t *ctrl, uint32_t *flags)
-{
-   *ctrl = dsp_control;
-   *flags = dsp_flags;
-}
