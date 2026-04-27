@@ -2556,7 +2556,9 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
       addb[0] = addb[1] = addb[2] = addb[3] = 0;
 
 
-   cinsel = (daddmode >= 1 && daddmode <= 4 ? 1 : 0);
+   /* Hardware: cinsel = (daddmode[0] | daddmode[1]) & ~daddmode[2]
+      Only modes 1-3 use carry input; mode 4+ do not. */
+   cinsel = ((daddmode & 0x03) && !(daddmode & 0x04) ? 1 : 0);
 
    for(i = 0; i < 4; i++)
       cin[i] = initcin[i] | (co[i] & cinsel);
