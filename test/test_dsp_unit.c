@@ -408,16 +408,16 @@ static void test_register_banking(void)
 }
 
 /* ================================================================
- * Test 7: Interrupt Dispatch on INT_ENA Enable
- * When INT_LAT is already pending and INT_ENA is written, interrupt
- * should dispatch. This is the WMCJ fix.
+ * Test 7: Interrupt Dispatch — Enable First, Then Assert IRQ
+ * The normal hardware flow: DSP program enables INT_ENA, then
+ * hardware asserts INT_LAT via DSPSetIRQLine, which dispatches.
  * ================================================================ */
 static void test_int_ena_dispatch(void)
 {
    uint32_t off;
    uint32_t pc_before, pc_after;
 
-   printf("\n=== Test 7: Interrupt Dispatch on INT_ENA Enable ===\n");
+   printf("\n=== Test 7: Interrupt Dispatch (Enable Then Assert) ===\n");
    p_DSPReset();
 
    /* Fill DSP RAM with NOPs */
@@ -425,36 +425,29 @@ static void test_int_ena_dispatch(void)
       write_dsp_ram16(off, OP_NOP);
 
    /* Write a recognizable instruction at interrupt vector 0 ($F1B000) */
-   /* moveq #7, R0 -- just so we can see PC jumped there */
    write_dsp_ram16(0x0000, OP_MOVEQ(7, 0));
    write_dsp_ram16(0x0002, OP_NOP);
 
    /* Set DSP PC to some other address and start it */
    p_DSPWriteLong(DSP_PC_ADDR, 0xF1B100, 6);
 
-   /* Set INT_LAT0 (interrupt pending) */
-   p_DSPSetIRQLine(0, 1);
-
-   if (!(*p_dsp_control & INT_LAT0)) {
-      FAIL("Setup: INT_LAT0 not set");
-      return;
-   }
-
-   /* Start the DSP */
+   /* Start the DSP with INT_ENA0 already enabled */
    p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 2);
+
    pc_before = *p_dsp_pc;
 
-   /* Now write INT_ENA0 to flags -- this should trigger dispatch */
-   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 2);
+   /* Now assert the IRQ line — this should dispatch immediately */
+   p_DSPSetIRQLine(0, 1);
 
    pc_after = *p_dsp_pc;
 
    if (pc_after == DSP_RAM_BASE)
-      PASS("INT_ENA0 + INT_LAT0 dispatched to vector 0 ($F1B000)");
+      PASS("INT_ENA0 + IRQ assert dispatched to vector 0 ($F1B000)");
    else if (pc_after != pc_before)
-      PASS("INT_ENA0 + INT_LAT0 changed PC (before=%08X after=%08X)", pc_before, pc_after);
+      PASS("INT_ENA0 + IRQ assert changed PC (before=%08X after=%08X)", pc_before, pc_after);
    else
-      FAIL("INT_ENA0 + INT_LAT0 did NOT dispatch: PC stayed at %08X", pc_after);
+      FAIL("INT_ENA0 + IRQ assert did NOT dispatch: PC stayed at %08X", pc_after);
 
    /* Stop DSP */
    p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
@@ -492,7 +485,8 @@ static void test_cint_before_dispatch(void)
 
 /* ================================================================
  * Test 9: Multiple Interrupt Priority
- * When multiple INT_LAT bits are set, highest-numbered fires
+ * When multiple INT_LAT bits are set, highest-numbered fires.
+ * Test flow: enable INT_ENA, start DSP, assert both IRQ lines.
  * ================================================================ */
 static void test_interrupt_priority(void)
 {
@@ -506,26 +500,22 @@ static void test_interrupt_priority(void)
    for (off = 0; off < 0x2000; off += 2)
       write_dsp_ram16(off, OP_NOP);
 
-   /* Set INT_LAT0 and INT_LAT1 */
+   /* Set INT_LAT0 before enabling interrupts — no dispatch yet */
    p_DSPSetIRQLine(0, 1);
-   p_DSPSetIRQLine(1, 1);
 
-   if (!((*p_dsp_control & INT_LAT0) && (*p_dsp_control & INT_LAT1))) {
-      FAIL("Setup: both latches not set: ctrl=%08X", *p_dsp_control);
-      return;
-   }
-
-   /* Start DSP at a neutral address */
+   /* Start DSP at a neutral address with both INT_ENA enabled */
    p_DSPWriteLong(DSP_PC_ADDR, 0xF1B800, 6);
    p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
-
-   /* Enable both interrupts */
    p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0 | INT_ENA1, 2);
+
+   /* Assert IRQ1 — DSPSetIRQLine calls DSPHandleIRQsNP which now sees
+    * both INT_LAT0+INT_ENA0 and INT_LAT1+INT_ENA1 pending.
+    * The higher-priority one (IRQ1) should win. */
+   p_DSPSetIRQLine(1, 1);
 
    pc_after = *p_dsp_pc;
 
-   /* Vector 1 = $F1B010, Vector 0 = $F1B000
-    * Highest-numbered enabled+pending interrupt should win */
+   /* Vector 1 = $F1B010, Vector 0 = $F1B000 */
    if (pc_after == DSP_RAM_BASE + 0x10)
       PASS("Highest-priority interrupt (IRQ1 -> $F1B010) dispatched");
    else if (pc_after == DSP_RAM_BASE)

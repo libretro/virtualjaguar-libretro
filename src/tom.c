@@ -823,10 +823,11 @@ uint32_t TOMGetVideoModeWidth(void)
    uint32_t dispStart = (hdb1 > leftHC) ? hdb1 : leftHC;
    uint32_t dispEnd = (hde < rightHC) ? hde : rightHC;
 
-   if (dispEnd > dispStart)
+   if (dispEnd > dispStart && dispEnd > leftHC)
    {
       uint32_t width = ((dispEnd - leftHC) / pwidth) * pwidth_scale;
-      uint32_t startPos = ((dispStart - leftHC) / pwidth) * pwidth_scale;
+      uint32_t startPos = (dispStart > leftHC)
+         ? ((dispStart - leftHC) / pwidth) * pwidth_scale : 0;
 
       if (width > 0 && width >= startPos && width <= VIRTUAL_SCREEN_WIDTH)
          return width;

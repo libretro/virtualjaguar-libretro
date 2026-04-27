@@ -488,17 +488,19 @@ static int handle_68020_mull_divl(uint32_t opcode)
 				{
 					int64_t q = (int64_t)dividend / (int32_t)divisor;
 					int64_t r = (int64_t)dividend % (int32_t)divisor;
+					int32_t q32 = (int32_t)(uint32_t)q;
 					m68k_dreg(regs, Dl) = (uint32_t)q;
 					m68k_dreg(regs, Dh) = (uint32_t)r;
-					SET_NFLG(q < 0); SET_ZFLG(q == 0);
+					SET_NFLG(q32 < 0); SET_ZFLG(q32 == 0);
 				}
 				else
 				{
 					uint64_t q = dividend / divisor;
 					uint64_t r = dividend % divisor;
-					m68k_dreg(regs, Dl) = (uint32_t)q;
+					uint32_t q32 = (uint32_t)q;
+					m68k_dreg(regs, Dl) = q32;
 					m68k_dreg(regs, Dh) = (uint32_t)r;
-					SET_NFLG((q >> 63) & 1); SET_ZFLG(q == 0);
+					SET_NFLG((q32 >> 31) & 1); SET_ZFLG(q32 == 0);
 				}
 			}
 			SET_VFLG(0); SET_CFLG(0);

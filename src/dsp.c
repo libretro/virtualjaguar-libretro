@@ -891,7 +891,10 @@ void DSPReset(void)
 	if (vjs.useJaguarBIOS)
 	{
 		for(i=0; i<DSP_RAM_SIZE; i+=4)
-			*((uint32_t *)(&dsp_ram_8[i])) = JaguarRand();
+		{
+			uint32_t r = JaguarRand();
+			memcpy(&dsp_ram_8[i], &r, sizeof(r));
+		}
 	}
 	else
 	{

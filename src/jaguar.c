@@ -678,6 +678,10 @@ void JaguarReset(void)
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
    else
    {
+      /* NB: SSP at 0x4000 may overlap RAM-loaded executables that start
+         below 0x4100.  In practice Jaguar game loaders place code above
+         0x4000 so this is safe, but a future improvement could derive
+         the SSP from the executable's BSS/stack segment. */
       SET32(jaguarMainRAM, 0, 0x00004000);
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
    }

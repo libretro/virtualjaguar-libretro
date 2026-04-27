@@ -632,8 +632,11 @@ test/test_cheat: test/test_cheat.c src/cheat.c src/cheat.h
 		-o $@ test/test_cheat.c src/cheat.c
 endif
 
-.PHONY: clean test
+.PHONY: clean test lint
 endif
+
+lint:
+	@scripts/c89-lint.sh
 
 print-%:
 	@echo '$*=$($*)'
