@@ -26,6 +26,7 @@ Output varies by platform: `.so` (Linux), `.dylib` (macOS), `.dll` (Windows).
 ## Documentation
 
 - [File format details](docs/README)
+- [Source layout](docs/source-layout.md)
 - [Changelog](docs/WHATSNEW)
 - [Known issues & TODO](docs/TODO)
 - [libretro documentation](https://docs.libretro.com/)
