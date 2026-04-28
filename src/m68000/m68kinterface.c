@@ -16,8 +16,8 @@
 #include "inlines.h"
 #include "cpuextra.h"
 #include "readcpu.h"
-#include "../state.h"
-#include "../vjag_memory.h"
+#include "../core/state.h"
+#include "../core/vjag_memory.h"
 
 // Exception Vectors handled by emulation
 #define EXCEPTION_BUS_ERROR                2 /* This one is not emulated! */

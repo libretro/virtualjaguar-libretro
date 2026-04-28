@@ -632,9 +632,9 @@ else
 test: test/test_cheat
 	./test/test_cheat
 
-test/test_cheat: test/test_cheat.c src/cheat.c src/cheat.h
-	$(CC) -O2 -Wall -std=c99 -I src -I libretro-common/include \
-		-o $@ test/test_cheat.c src/cheat.c
+test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cheat.c src/core/cheat.c
 endif
 
 .PHONY: clean test lint

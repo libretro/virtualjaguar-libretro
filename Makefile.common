@@ -2,6 +2,11 @@ LIBRETRO_COMM_DIR  = $(CORE_DIR)/libretro-common
 
 INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src \
+				-I$(CORE_DIR)/src/core \
+				-I$(CORE_DIR)/src/tom \
+				-I$(CORE_DIR)/src/jerry \
+				-I$(CORE_DIR)/src/cd \
+				-I$(CORE_DIR)/src/bios \
 				-I$(CORE_DIR)/src/m68000 \
 				-I$(LIBRETRO_COMM_DIR)/include
 
@@ -13,41 +18,41 @@ SOURCES_CXX :=
 
 SOURCES_C :=  \
 	$(CORE_DIR)/libretro.c \
-	$(CORE_DIR)/src/blitter.c \
-	$(CORE_DIR)/src/dac.c \
-	$(CORE_DIR)/src/dsp.c \
-	$(CORE_DIR)/src/file.c \
-	$(CORE_DIR)/src/gpu.c \
-	$(CORE_DIR)/src/jaguar.c \
-	$(CORE_DIR)/src/jerry.c \
-	$(CORE_DIR)/src/op.c \
-	$(CORE_DIR)/src/tom.c  \
-	$(CORE_DIR)/src/cdintf.c \
-	$(CORE_DIR)/src/cdrom.c \
-	$(CORE_DIR)/src/cheat.c \
-	$(CORE_DIR)/src/crc32.c \
-	$(CORE_DIR)/src/event.c \
-	$(CORE_DIR)/src/eeprom.c \
-	$(CORE_DIR)/src/filedb.c \
+	$(CORE_DIR)/src/tom/blitter.c \
+	$(CORE_DIR)/src/jerry/dac.c \
+	$(CORE_DIR)/src/jerry/dsp.c \
+	$(CORE_DIR)/src/core/file.c \
+	$(CORE_DIR)/src/tom/gpu.c \
+	$(CORE_DIR)/src/core/jaguar.c \
+	$(CORE_DIR)/src/jerry/jerry.c \
+	$(CORE_DIR)/src/tom/op.c \
+	$(CORE_DIR)/src/tom/tom.c  \
+	$(CORE_DIR)/src/cd/cdintf.c \
+	$(CORE_DIR)/src/cd/cdrom.c \
+	$(CORE_DIR)/src/core/cheat.c \
+	$(CORE_DIR)/src/core/crc32.c \
+	$(CORE_DIR)/src/core/event.c \
+	$(CORE_DIR)/src/jerry/eeprom.c \
+	$(CORE_DIR)/src/core/filedb.c \
 	$(CORE_DIR)/src/m68000/cpustbl.c \
 	$(CORE_DIR)/src/m68000/cpudefs.c \
 	$(CORE_DIR)/src/m68000/cpuemu.c \
 	$(CORE_DIR)/src/m68000/cpuextra.c \
 	$(CORE_DIR)/src/m68000/m68kinterface.c \
 	$(CORE_DIR)/src/m68000/readcpu.c \
-	$(CORE_DIR)/src/jagbios.c \
-	$(CORE_DIR)/src/jagbios2.c \
-	$(CORE_DIR)/src/jagcdbios.c \
-	$(CORE_DIR)/src/jagdevcdbios.c \
-	$(CORE_DIR)/src/jagstub1bios.c \
-	$(CORE_DIR)/src/jagstub2bios.c \
-	$(CORE_DIR)/src/joystick.c \
-	$(CORE_DIR)/src/settings.c \
-	$(CORE_DIR)/src/memtrack.c \
-	$(CORE_DIR)/src/mmu.c \
-	$(CORE_DIR)/src/vjag_memory.c \
-	$(CORE_DIR)/src/universalhdr.c \
-	$(CORE_DIR)/src/wavetable.c
+	$(CORE_DIR)/src/bios/jagbios.c \
+	$(CORE_DIR)/src/bios/jagbios2.c \
+	$(CORE_DIR)/src/bios/jagcdbios.c \
+	$(CORE_DIR)/src/bios/jagdevcdbios.c \
+	$(CORE_DIR)/src/bios/jagstub1bios.c \
+	$(CORE_DIR)/src/bios/jagstub2bios.c \
+	$(CORE_DIR)/src/jerry/joystick.c \
+	$(CORE_DIR)/src/core/settings.c \
+	$(CORE_DIR)/src/core/memtrack.c \
+	$(CORE_DIR)/src/core/mmu.c \
+	$(CORE_DIR)/src/core/vjag_memory.c \
+	$(CORE_DIR)/src/core/universalhdr.c \
+	$(CORE_DIR)/src/jerry/wavetable.c
 
 # SIMD-accelerated blitter operations: select arch-specific implementation.
 # BLITTER_SIMD may be set explicitly to one of: scalar, sse2, neon.
@@ -60,38 +65,38 @@ endif
 endif
 
 ifeq ($(BLITTER_SIMD),sse2)
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_sse2.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
 else ifeq ($(BLITTER_SIMD),neon)
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_neon.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c
 else ifeq ($(BLITTER_SIMD),scalar)
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_scalar.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_scalar.c
 else
 # ARM targets: prefer NEON when guaranteed or explicitly enabled.
 ifeq ($(HAVE_NEON), 1)
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_neon.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c
 endif
 ifneq (,$(filter ios-arm64 tvos-arm64,$(platform)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_neon.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c
 endif
 # aarch64/arm64 always have NEON; plain 'arm' may lack it.
 ifneq (,$(filter aarch64 arm64,$(ARCH)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_neon.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c
 endif
 # armv8+ implies NEON; armv7/armhf only use NEON if HAVE_NEON was set above.
 ifneq (,$(filter arm64 armv8%,$(platform)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_neon.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c
 endif
 
 # x86/x64 targets: use SSE2.
 ifneq (,$(filter x86_64 x86 i686 i386,$(ARCH)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_sse2.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
 endif
 ifneq (,$(filter x86_64 x86 i686 i386 win-x64 win32,$(platform)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_sse2.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
 endif
 # MSYS2/MinGW
 ifneq (,$(filter MINGW64% MINGW32%,$(MSYSTEM)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_sse2.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
 endif
 
 # Native build fallback: auto-detect from host architecture, but only for
@@ -103,10 +108,10 @@ ifeq ($(BLITTER_SIMD_SRC),)
 ifeq ($(BLITTER_CROSS_CC),)
 ifneq (,$(filter unix osx win,$(platform)))
 ifneq (,$(filter x86_64 i686 i386,$(shell uname -m 2>/dev/null)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_sse2.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
 endif
 ifneq (,$(filter aarch64 arm64,$(shell uname -m 2>/dev/null)))
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_neon.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c
 endif
 endif
 endif
@@ -115,14 +120,14 @@ endif
 
 # Fall back to scalar if no SIMD was selected (e.g., exotic platforms)
 ifeq ($(BLITTER_SIMD_SRC),)
-   BLITTER_SIMD_SRC := $(CORE_DIR)/src/blitter_simd_scalar.c
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_scalar.c
 endif
 
 SOURCES_C += $(BLITTER_SIMD_SRC)
 
 # Add -msse2 flag for all GCC/Clang SSE2 builds. No-op on x86_64 (baseline),
 # required on i686 / gcc -m32. Skip for MSVC (uses /arch:SSE2, not -msse2).
-ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/blitter_simd_sse2.c)
+ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/tom/blitter_simd_sse2.c)
 ifeq (,$(findstring msvc,$(platform)))
    CFLAGS += -msse2
 endif

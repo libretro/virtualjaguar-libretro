@@ -3,16 +3,16 @@
  *
  * Build (from repo root — link exactly one SIMD implementation):
  *   # On macOS ARM64 (NEON):
- *   cc -O2 -o test/test_blitter_simd test/test_blitter_simd.c \
- *      src/blitter_simd_neon.c
+ *   cc -O2 -Isrc/core -o test/test_blitter_simd test/test_blitter_simd.c \
+ *      src/tom/blitter_simd_neon.c
  *
  *   # On x86_64 (SSE2):
- *   cc -O2 -msse2 -o test/test_blitter_simd test/test_blitter_simd.c \
- *      src/blitter_simd_sse2.c
+ *   cc -O2 -msse2 -Isrc/core -o test/test_blitter_simd test/test_blitter_simd.c \
+ *      src/tom/blitter_simd_sse2.c
  *
  *   # Scalar-only (any platform):
- *   cc -O2 -o test/test_blitter_simd test/test_blitter_simd.c \
- *      src/blitter_simd_scalar.c
+ *   cc -O2 -Isrc/core -o test/test_blitter_simd test/test_blitter_simd.c \
+ *      src/tom/blitter_simd_scalar.c
  *
  * Usage:
  *   ./test/test_blitter_simd           # Run bit-exactness tests
@@ -27,7 +27,7 @@
 #include <time.h>
 
 /* The active (possibly SIMD) implementation */
-#include "../src/blitter_simd.h"
+#include "../src/tom/blitter_simd.h"
 
 /* --- Scalar reference (linked from blitter_simd_scalar.c) --- */
 
@@ -166,10 +166,12 @@ static void test_lfu(void)
 static void test_dcomp(void)
 {
    int i;
+   uint64_t val;
+
    printf("Testing DCOMP...\n");
 
    /* Identical values -> all bytes match -> 0xFF */
-   uint64_t val = 0x0102030405060708ULL;
+   val = 0x0102030405060708ULL;
    CHECK(blitter_simd_ops.dcomp(val, val, 0, false) == 0xFF,
          "dcomp identical (cmpdst=false)");
    CHECK(blitter_simd_ops.dcomp(val, 0, val, true) == 0xFF,
@@ -254,14 +256,16 @@ static void test_zcomp(void)
 static void test_byte_merge(void)
 {
    int i;
+   uint64_t got;
+   uint64_t exp;
 
    printf("Testing byte_merge...\n");
 
    /* All-select-src: mask = 0x7FFF -> all bytes from src */
-   uint64_t got = blitter_simd_ops.byte_merge(0xAAAAAAAAAAAAAAAAULL,
-                                               0x5555555555555555ULL, 0x7FFF);
-   uint64_t exp = ref_byte_merge(0xAAAAAAAAAAAAAAAAULL,
-                                  0x5555555555555555ULL, 0x7FFF);
+   got = blitter_simd_ops.byte_merge(0xAAAAAAAAAAAAAAAAULL,
+                                      0x5555555555555555ULL, 0x7FFF);
+   exp = ref_byte_merge(0xAAAAAAAAAAAAAAAAULL,
+                        0x5555555555555555ULL, 0x7FFF);
    CHECK(got == exp, "byte_merge all-src: got 0x%016llx exp 0x%016llx",
          (unsigned long long)got, (unsigned long long)exp);
 

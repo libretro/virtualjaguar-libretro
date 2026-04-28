@@ -891,7 +891,7 @@ bool retro_unserialize(const void *data, size_t size)
    return true;
 }
 
-/* Cheat codes — the parser and list management live in src/cheat.c so
+/* Cheat codes — the parser and list management live in src/core/cheat.c so
  * they can be unit-tested without the rest of the emulator. Here we just
  * bind them to the Jaguar memory bus and re-apply every frame so games
  * that continuously overwrite the patched location are held to the

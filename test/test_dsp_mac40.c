@@ -1,6 +1,6 @@
 /*
- * Unit tests for src/dsp_acc40.h (Jaguar DSP 40-bit MAC semantics).
- * Build: cc -O2 -Wall -I../src -o test_dsp_mac40 test/test_dsp_mac40.c
+ * Unit tests for src/jerry/dsp_acc40.h (Jaguar DSP 40-bit MAC semantics).
+ * Build: cc -O2 -Wall -Isrc/jerry -o test_dsp_mac40 test/test_dsp_mac40.c
  */
 
 #include <stdio.h>

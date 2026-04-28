@@ -1,14 +1,14 @@
 /*
- * Unit tests for the Jaguar cheat engine (src/cheat.c).
+ * Unit tests for the Jaguar cheat engine (src/core/cheat.c).
  *
- * Self-contained: links only src/cheat.c. `make test` uses `-I src` before
- * libretro-common, so `<boolean.h>` resolves to src/boolean.h (compatible with
- * libretro-common) via src/cheat.h.
+ * Self-contained: links only src/core/cheat.c. `make test` uses `-I src/core`
+ * before libretro-common, so `<boolean.h>` resolves to src/core/boolean.h
+ * (compatible with libretro-common) via src/core/cheat.h.
  *
  * Build & run (from repo root): `make test`
  * or manually:
- *     cc -O2 -Wall -std=c99 -I src -I libretro-common/include \
- *        -o test/test_cheat test/test_cheat.c src/cheat.c && ./test/test_cheat
+ *     cc -O2 -Wall -std=c99 -I src/core -I libretro-common/include \
+ *        -o test/test_cheat test/test_cheat.c src/core/cheat.c && ./test/test_cheat
  *
  * The tests cover:
  *   1. cheat_parse_one: all accepted format lengths, every separator style,
