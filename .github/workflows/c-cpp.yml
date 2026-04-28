@@ -283,7 +283,7 @@ jobs:
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
           /D__LIBRETRO__ /DINLINE="_inline" ^
           libretro.c ^
-          src\tom\blitter.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
+          src\tom\blitter.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
           src\cd\cdintf.c src\cd\cdrom.c src\core\crc32.c src\core\event.c ^
           src\jerry\eeprom.c src\core\filedb.c src\jerry\joystick.c src\core\settings.c ^

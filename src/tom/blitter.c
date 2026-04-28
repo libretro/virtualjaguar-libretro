@@ -21,13 +21,13 @@
 //
 
 #include "blitter.h"
+#include "blitter_internal.h"
 #include "blitter_simd.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include "jaguar.h"
 #include "log.h"
-#include "settings.h"
 #include "state.h"
 
 // Various conditional compilation goodies...
@@ -39,7 +39,7 @@
 
 // Blitter register RAM (most of it is hidden from the user)
 
-static uint8_t blitter_ram[0x100];
+uint8_t blitter_ram[0x100];
 
 // Other crapola
 
@@ -966,150 +966,6 @@ void blitter_blit(uint32_t cmd)
 *******************************************************************************/
 
 
-void BlitterInit(void)
-{
-	BlitterReset();
-}
-
-
-void BlitterReset(void)
-{
-	memset(blitter_ram, 0x00, 0xA0);
-}
-
-
-void BlitterDone(void)
-{
-}
-
-
-uint8_t BlitterReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
-{
-	offset &= 0xFF;
-
-	// status register
-//This isn't cycle accurate--how to fix? !!! FIX !!!
-//Probably have to do some multi-threaded implementation or at least a reentrant safe implementation...
-//Real hardware returns $00000805, just like the JTRM says.
-	if (offset == (0x38 + 0))
-		return 0x00;
-	if (offset == (0x38 + 1))
-		return 0x00;
-	if (offset == (0x38 + 2))
-		return 0x08;
-	if (offset == (0x38 + 3))
-		return 0x05;	// always idle/never stopped (collision detection ignored!)
-
-// CHECK HERE ONCE THIS FIX HAS BEEN TESTED: [X]
-//Fix for AvP:
-	if (offset >= 0x04 && offset <= 0x07)
-//This is it. I wonder if it just ignores the lower three bits?
-//No, this is a documented Jaguar I bug. It also bites the read at $F02230 as well...
-		return blitter_ram[offset + 0x08];		// A1_PIXEL ($F0220C) read at $F02204
-
-	if (offset >= 0x2C && offset <= 0x2F)
-		return blitter_ram[offset + 0x04];		// A2_PIXEL ($F02230) read at $F0222C
-
-	return blitter_ram[offset];
-}
-
-
-//Crappy!
-uint16_t BlitterReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
-{
-	return ((uint16_t)BlitterReadByte(offset, who) << 8) | (uint16_t)BlitterReadByte(offset+1, who);
-}
-
-
-//Crappy!
-uint32_t BlitterReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
-{
-	return (BlitterReadWord(offset, who) << 16) | BlitterReadWord(offset+2, who);
-}
-
-
-void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
-{
-	offset &= 0xFF;
-
-	// This handles writes to INTENSITY0-3 by also writing them to their proper places in
-	// PATTERNDATA & SOURCEDATA (should do the same for the Z registers! !!! FIX !!! [DONE])
-	if ((offset >= 0x7C) && (offset <= 0x9B))
-	{
-		switch (offset)
-		{
-		// INTENSITY registers 0-3
-		case 0x7C: break;
-		case 0x7D: blitter_ram[PATTERNDATA + 7] = data; break;
-		case 0x7E: blitter_ram[SRCDATA + 6] = data; break;
-		case 0x7F: blitter_ram[SRCDATA + 7] = data; break;
-
-		case 0x80: break;
-		case 0x81: blitter_ram[PATTERNDATA + 5] = data; break;
-		case 0x82: blitter_ram[SRCDATA + 4] = data; break;
-		case 0x83: blitter_ram[SRCDATA + 5] = data; break;
-
-		case 0x84: break;
-		case 0x85: blitter_ram[PATTERNDATA + 3] = data; break;
-		case 0x86: blitter_ram[SRCDATA + 2] = data; break;
-		case 0x87: blitter_ram[SRCDATA + 3] = data; break;
-
-		case 0x88: break;
-		case 0x89: blitter_ram[PATTERNDATA + 1] = data; break;
-		case 0x8A: blitter_ram[SRCDATA + 0] = data; break;
-		case 0x8B: blitter_ram[SRCDATA + 1] = data; break;
-
-
-		// Z registers 0-3
-		case 0x8C: blitter_ram[SRCZINT + 6] = data; break;
-		case 0x8D: blitter_ram[SRCZINT + 7] = data; break;
-		case 0x8E: blitter_ram[SRCZFRAC + 6] = data; break;
-		case 0x8F: blitter_ram[SRCZFRAC + 7] = data; break;
-
-		case 0x90: blitter_ram[SRCZINT + 4] = data; break;
-		case 0x91: blitter_ram[SRCZINT + 5] = data; break;
-		case 0x92: blitter_ram[SRCZFRAC + 4] = data; break;
-		case 0x93: blitter_ram[SRCZFRAC + 5] = data; break;
-
-		case 0x94: blitter_ram[SRCZINT + 2] = data; break;
-		case 0x95: blitter_ram[SRCZINT + 3] = data; break;
-		case 0x96: blitter_ram[SRCZFRAC + 2] = data; break;
-		case 0x97: blitter_ram[SRCZFRAC + 3] = data; break;
-
-		case 0x98: blitter_ram[SRCZINT + 0] = data; break;
-		case 0x99: blitter_ram[SRCZINT + 1] = data; break;
-		case 0x9A: blitter_ram[SRCZFRAC + 0] = data; break;
-		case 0x9B: blitter_ram[SRCZFRAC + 1] = data; break;
-		}
-	}
-
-	// It looks weird, but this is how the 64 bit registers are actually handled...!
-
-	else if (((offset >= SRCDATA + 0) && (offset <= SRCDATA + 3))
-		|| ((offset >= DSTDATA + 0) && (offset <= DSTDATA + 3))
-		|| ((offset >= DSTZ + 0) && (offset <= DSTZ + 3))
-		|| ((offset >= SRCZINT + 0) && (offset <= SRCZINT + 3))
-		|| ((offset >= SRCZFRAC + 0) && (offset <= SRCZFRAC + 3))
-		|| ((offset >= PATTERNDATA + 0) && (offset <= PATTERNDATA + 3))
-      )
-	{
-		blitter_ram[offset + 4] = data;
-	}
-	else if (((offset >= SRCDATA + 4) && (offset <= SRCDATA + 7))
-		|| ((offset >= DSTDATA + 4) && (offset <= DSTDATA + 7))
-		|| ((offset >= DSTZ + 4) && (offset <= DSTZ + 7))
-		|| ((offset >= SRCZINT + 4) && (offset <= SRCZINT + 7))
-		|| ((offset >= SRCZFRAC + 4) && (offset <= SRCZFRAC + 7))
-		|| ((offset >= PATTERNDATA + 4) && (offset <= PATTERNDATA + 7))
-      )
-	{
-		blitter_ram[offset - 4] = data;
-	}
-	else
-		blitter_ram[offset] = data;
-}
-
-
 /* Blitter comparison mode: run both blitters and report differences */
 
 #define BLIT_CMP_MAX_REGION  (256 * 1024)
@@ -1190,7 +1046,7 @@ void BlitterCompareDumpCmdStats(void)
 	}
 }
 
-static void BlitterRunComparison(void)
+void BlitterRunComparison(void)
 {
 	uint32_t cmd = GET32(blitter_ram, COMMAND);
 	int dsta2 = (cmd & 0x00000800) ? 1 : 0;
@@ -1379,34 +1235,6 @@ static void BlitterRunComparison(void)
 		}
 	}
 }
-
-
-void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
-{
-	BlitterWriteByte(offset + 0, data >> 8, who);
-	BlitterWriteByte(offset + 1, data & 0xFF, who);
-
-	if ((offset & 0xFF) == 0x3A)
-	// I.e., the second write of 32-bit value--not convinced this is the best way to do this!
-	// But then again, according to the Jaguar docs, this is correct...!
-	{
-		if (blit_cmp_enabled)
-			BlitterRunComparison();
-		else if (vjs.useFastBlitter)
-			blitter_blit(GET32(blitter_ram, 0x38));
-		else
-			BlitterMidsummer2();
-	}
-}
-//F02278,9,A,B
-
-
-void BlitterWriteLong(uint32_t offset, uint32_t data, uint32_t who)
-{
-	BlitterWriteWord(offset + 0, data >> 16, who);
-	BlitterWriteWord(offset + 2, data & 0xFFFF, who);
-}
-
 // Here's attempt #2--taken from the Oberon chip specs!
 
 #ifdef USE_MIDSUMMER_BLITTER_MKII
