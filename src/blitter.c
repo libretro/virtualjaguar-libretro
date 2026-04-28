@@ -1687,10 +1687,10 @@ void BlitterMidsummer2(void)
          uint8_t srcshift = 0;
          uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
          bool srca_addi, dsta_addi, gensrc, gendst, gena2i, zaddr, fontread, justify, a1_add, a2_add;
-         bool adda_yconst, addareg, suba_x, suba_y, a1fracldi, srcdreadd, shadeadd;
+         bool adda_yconst, addareg, suba_x, suba_y, a1fracldi, shadeadd;
          uint8_t addasel, a1_xconst, a2_xconst, adda_xconst, addbsel, maska1, maska2, modx, daddasel;
          uint8_t daddbsel, daddmode;
-         bool patfadd, patdadd, srcz1add, srcz2add, srcshadd, daddq_sel;
+         bool patfadd, patdadd, srcz2add, daddq_sel;
          uint8_t data_sel;
          uint32_t address, pixAddr;
          uint8_t dstxp;
@@ -2208,7 +2208,6 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                /* DCONTROL: compute data adder signals.  Moved here from
                   the per-iteration scope since they are only consumed
                   during dwrite (dwrite=true, dzwrite=false here). */
-               srcdreadd = false;
                shadeadd = srcshade;
                daddasel = (gourd ? 0x01 : 0x00);
                daddasel |= ((gourd || gourz || srcshade) ? 0x04 : 0x00);
@@ -2223,9 +2222,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                daddmode |= ((!gourd && !gourz) || shadeadd || (gourd && ext_int) ? 0x04 : 0x00);
                patfadd = gourd;
                patdadd = gourd;
-               srcz1add = false;
                srcz2add = false;
-               srcshadd = false;
                daddq_sel = gourd;
                data_sel = ((!patdsel && !adddsel) ? 0x01 : 0x00)
                   | (adddsel ? 0x02 : 0x00);

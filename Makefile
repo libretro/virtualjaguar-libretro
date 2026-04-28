@@ -546,7 +546,7 @@ else
 endif
 
 ifeq (,$(findstring msvc,$(platform)))
-FLAGS += -ffast-math -fomit-frame-pointer
+FLAGS += -ffast-math -fomit-frame-pointer -fno-common
 endif
 
 LDFLAGS += $(fpic) $(SHARED)
@@ -563,6 +563,7 @@ else
 WARNINGS := -Wall \
 	-Wno-sign-compare \
 	-Wno-unused-variable \
+	-Wno-unused-but-set-variable \
 	-Wno-unused-function \
 	-Wno-uninitialized \
 	-Wno-strict-aliasing \

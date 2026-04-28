@@ -229,6 +229,9 @@ jobs:
         $CC -O2 -Wall -o test/test_gpu_ops test/test_gpu_ops.c $LDFLAGS
         ./test/test_gpu_ops
 
+        $CC -O2 -Wall -o test/test_op_gpu_object test/test_op_gpu_object.c $LDFLAGS
+        ./test/test_op_gpu_object ./${{ matrix.config.artifact }}
+
     - name: Run 68K instruction set tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: |

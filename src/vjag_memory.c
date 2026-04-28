@@ -27,7 +27,7 @@ goes... Still completely doable though. :-)
 
 #include "vjag_memory.h"
 
-uint8_t jagMemSpace[0xF20000];					// The entire memory space of the Jaguar...!
+uint8_t jagMemSpace[0xF20000] = { 0 };			// The entire memory space of the Jaguar...!
 
 uint8_t * jaguarMainRAM = &jagMemSpace[0x000000];
 uint8_t * jaguarMainROM = &jagMemSpace[0x800000];

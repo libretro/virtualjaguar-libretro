@@ -266,7 +266,6 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 void OPProcessList(int halfline, bool render)
 {
    bool inhibit;
-   int bitmapCounter = 0;
    uint32_t opCyclesToRun = 30000;					// This is a pulled-out-of-the-air value (will need to be fixed, obviously!)
 
 //#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
@@ -313,10 +312,7 @@ void OPProcessList(int halfline, bool render)
 
                uint32_t height = (p0 & 0xFFC000) >> 14;
                uint32_t oldOPP = op_pointer - 8;
-               // *** BEGIN OP PROCESSOR TESTING ONLY ***
-               bitmapCounter++;
                if (!inhibit)	// For OP testing only!
-                  // *** END OP PROCESSOR TESTING ONLY ***
                   if (halfline >= ypos && height > 0)
                   {
                      uint64_t data, dwidth;
@@ -360,10 +356,7 @@ void OPProcessList(int halfline, bool render)
                uint16_t ypos = (p0 >> 3) & 0x7FF;
                uint32_t height = (p0 & 0xFFC000) >> 14;
                uint32_t oldOPP = op_pointer - 8;
-               // *** BEGIN OP PROCESSOR TESTING ONLY ***
-               bitmapCounter++;
                if (!inhibit)	// For OP testing only!
-                  // *** END OP PROCESSOR TESTING ONLY ***
                   if (halfline >= ypos && height > 0)
                   {
                      uint16_t remainder;
@@ -433,17 +426,12 @@ void OPProcessList(int halfline, bool render)
             }
          case OBJECT_TYPE_GPU:
             {
-//#warning "Need to fix OP GPU IRQ handling! !!! FIX !!!"
                OPSetCurrentObject(p0);
                GPUSetIRQLine(3, ASSERT_LINE);
-               //Also, OP processing is suspended from this point until OBF (F00026) is written to...
-               // !!! FIX !!!
-               //Do something like:
-               //OPSuspendedByGPU = true;
-               //Dunno if the OP keeps processing from where it was interrupted, or if it just continues
-               //on the next halfline...
-               // --> It continues from where it was interrupted! !!! FIX !!!
-               break;
+               /* The OP must stop here so the GPU sees this object in OB.
+                * Continuing to the next object can overwrite OB before the
+                * GPU services IRQ3. */
+               return;
             }
          case OBJECT_TYPE_BRANCH:
             {
