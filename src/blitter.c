@@ -556,16 +556,21 @@ void blitter_generic(uint32_t cmd)
             //NOTE: The bit comparator (BCOMPEN) is NOT the same at the data comparator!
             if (DCOMPEN | BCOMPEN)
             {
+               if (BCOMPEN)
+               {
+                  uint32_t pixShift = (~bitPos) & (bppSrc - 1);
+                  srcdata = (srcdata >> pixShift) & 0x01;
+                  bitPos++;
+               }
+
                if (!CMPDST)
                {
                   if (srcdata == 0)
-                     inhibit = 1;//*/
+                     inhibit = 1;
                }
                else
                {
-                  // compare destination pixel with pattern pixel
                   if (dstdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
-                     //						if (dstdata != READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
                      inhibit = 1;
                }
             }
@@ -632,7 +637,6 @@ void blitter_generic(uint32_t cmd)
 
             if (/*a2_phrase_mode || */BKGWREN || !inhibit)
             {
-               // write to the destination
                WRITE_PIXEL(a2, REG(A2_FLAGS), writedata);
 
                if (DSTWRZ)
@@ -1434,14 +1438,11 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
 	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp);
 
+
 void BlitterMidsummer2(void)
 {
-   // Here's what the specs say the state machine does. Note that this can probably be
-   // greatly simplified (also, it's different from what John has in his Oberon docs):
-   //Will remove stuff that isn't in Jaguar I once fully described (stuff like texture won't
-   //be described here at all)...
-
    uint32_t cmd = GET32(blitter_ram, COMMAND);
+
 
    // Line states passed in via the command register
 
@@ -1484,6 +1485,7 @@ void BlitterMidsummer2(void)
         init_zfi, init_zii;
 
    bool notgzandp = !(gourz && polygon);
+
 
    // Various registers set up by user
 
@@ -1691,18 +1693,49 @@ void BlitterMidsummer2(void)
          bool patfadd, patdadd, srcz1add, srcz2add, srcshadd, daddq_sel;
          uint8_t data_sel;
          uint32_t address, pixAddr;
-         uint8_t dstxp, srcxp, shftv, pobb;
-         bool pobbsel;
-         uint8_t loshd, shfti;
+         uint8_t dstxp;
          uint64_t srcz;
          bool winhibit;
 
          indone = false;
 
-         //			while (!idle_inner)
+         /* Precompute address constants (invariant during inner loop) */
+         a1_xconst = 6 - a1_pixsize;
+         a2_xconst = 6 - a2_pixsize;
+         if (a1addx == 1)
+            a1_xconst = 0;
+         else if (a1addx & 0x02)
+            a1_xconst = 7;
+         if (a2addx == 1)
+            a2_xconst = 0;
+         else if (a2addx & 0x02)
+            a2_xconst = 7;
+
+         /* Precompute srcshift — loaded on first inner cycle (sshftld),
+            then held constant for all subsequent cycles. */
+         {
+            uint8_t dstxp0, srcxp0, shftv0, pobb0, loshd0;
+            bool pobbsel0;
+
+            dstxp0 = (dsta2 ? a2_x : a1_x) & 0x3F;
+            srcxp0 = (dsta2 ? a1_x : a2_x) & 0x3F;
+            shftv0 = ((dstxp0 - srcxp0) << pixsize) & 0x3F;
+            pobb0 = 0;
+            if (pixsize == 3)
+               pobb0 = dstxp0 & 0x07;
+            else if (pixsize == 4)
+               pobb0 = dstxp0 & 0x03;
+            else if (pixsize == 5)
+               pobb0 = dstxp0 & 0x01;
+
+            pobbsel0 = phrase_mode && bcompen;
+            loshd0 = (pobbsel0 ? pobb0 : shftv0) & 0x07;
+            srcshift = (srcen || pobbsel0 ? loshd0 : 0);
+            srcshift |= (srcen && phrase_mode ? shftv0 & 0x38 : 0);
+         }
+
          while (true)
          {
-            bool sshftld; // D flipflop (D -> Q): instart -> sshftld
             uint16_t dstxwr, pseq;
             bool penden;
             uint8_t window_mask;
@@ -1762,10 +1795,6 @@ void BlitterMidsummer2(void)
                   || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && !dstenz));
 
             dzwritei = (dwrite && dstwrz);
-
-            //Kludge: A QnD way to make sure that sshftld is asserted only for the first
-            //        cycle of the inner loop...
-            sshftld = idle_inner;
 
             // Here we move the fooi into their foo counterparts in order to simulate the moving
             // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
@@ -1842,19 +1871,6 @@ A2_addb		:= BUF1 (a2_addb, a2_add);
                similarly for A2
 JLH: Also, 11 will likewise set the value to 111
 */
-            a1_xconst = 6 - a1_pixsize;
-            a2_xconst = 6 - a2_pixsize;
-
-            if (a1addx == 1)
-               a1_xconst = 0;
-            else if (a1addx & 0x02)
-               a1_xconst = 7;
-
-            if (a2addx == 1)
-               a2_xconst = 0;
-            else if (a2addx & 0x02)
-               a2_xconst = 7;
-
             adda_xconst = (a2_add ? a2_xconst : a1_xconst);
             /* Address adder input A Y constant selection
                22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
@@ -1931,45 +1947,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (!justify)
                address &= 0xFFFFF8;
 
-            /* Generate source alignment shift
-               -------------------------------
-               The source alignment shift for data move is the difference between
-               the source and destination X pointers, multiplied by the pixel
-               size.  Only the low six bits of the pointers are of interest, as
-               pixel sizes are always a power of 2 and window rows are always
-               phrase aligned.
-
-               When not in phrase mode, the top 3 bits of the shift value are
-               set to zero (2/26).
-
-               Source shifting is also used to extract bits for bit-to-byte
-               expansion in phrase mode.  This involves only the bottom three
-               bits of the shift value, and is based on the offset within the
-               phrase of the destination X pointer, in pixels.
-
-               Source shifting is disabled when srcen is not set.
-               */
-
+            /* dstxp needed for dstart computation in dwrite */
             dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
-            srcxp = (dsta2 ? a1_x : a2_x) & 0x3F;
-            shftv = ((dstxp - srcxp) << pixsize) & 0x3F;
-            /* The phrase mode alignment count is given by the phrase offset
-               of the first pixel, for bit to byte expansion */
-            pobb = 0;
-
-            if (pixsize == 3)
-               pobb = dstxp & 0x07;
-            else if (pixsize == 4)
-               pobb = dstxp & 0x03;
-            else if (pixsize == 5)
-               pobb = dstxp & 0x01;
-
-            pobbsel = phrase_mode && bcompen;
-            loshd   = (pobbsel ? pobb : shftv) & 0x07;
-            shfti   = (srcen || pobbsel ? (sshftld ? loshd : srcshift & 0x07) : 0);
-            /* Enable for high bits is srcen . phrase_mode */
-            shfti |= (srcen && phrase_mode ? (sshftld ? shftv & 0x38 : srcshift & 0x38) : 0);
-            srcshift = shfti;
 
             if (sreadx)
             {
@@ -2161,9 +2140,9 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   Start and end from the address level of the pipeline are used.
                   */
 
-               //More testing... This is almost certainly wrong, but how else does this work???
-               //Seems to kinda work... But still, this doesn't seem to make any sense!
-               if (phrase_mode && !dsten)
+               //Phrase mode needs destination data for start/end mask byte merging,
+               //but NOT when bkgwren is set (hardware uses DSTDATA register value).
+               if (phrase_mode && !dsten && !bkgwren)
                   dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 
                //Testing only... for now...
@@ -2295,7 +2274,8 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
                   winhibit = true;
 
-               if (!winhibit)
+
+               if (!winhibit || bkgwren)
                {
                   if (phrase_mode)
                   {
@@ -2434,9 +2414,6 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
       }
    }
 
-   // We never get here! !!! FIX !!!
-
-
    // Write values back to registers (in real blitter, these are continuously updated)
    SET16(blitter_ram, A1_PIXEL + 2, a1_x);
    SET16(blitter_ram, A1_PIXEL + 0, a1_y);
@@ -2495,66 +2472,70 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
 {
    unsigned i;
    uint16_t adda[4];
-   uint16_t wordmux[8];
    uint16_t addb[4];
+   uint64_t adda_val;
+   uint32_t initpix2;
    uint16_t word;
-   bool dbsel2, iincsel;
-   uint32_t initpix2 = ((uint32_t)initpix << 16) | initpix;
-   uint32_t addalo[8], addahi[8];
    uint8_t cinsel;
-   static uint8_t co[4];//These are preserved between calls...
+   static uint8_t co[4]; /* preserved between calls */
    uint8_t cin[4];
    bool eightbit;
    bool sat, hicinh;
+   uint8_t bsel_idx;
 
-   addalo[0] = dstd & 0xFFFFFFFF;
-   addalo[1] = initpix2;
-   addalo[2] = 0;
-   addalo[3] = 0;
-   addalo[4] = srcd & 0xFFFFFFFF;
-   addalo[5] = patd & 0xFFFFFFFF;
-   addalo[6] = srcz1 & 0xFFFFFFFF;
-   addalo[7] = srcz2 & 0xFFFFFFFF;
-   addahi[0] = dstd >> 32;
-   addahi[1] = initpix2;
-   addahi[2] = 0;
-   addahi[3] = 0;
-   addahi[4] = srcd >> 32;
-   addahi[5] = patd >> 32;
-   addahi[6] = srcz1 >> 32;
-   addahi[7] = srcz2 >> 32;
-   adda[0] = addalo[daddasel] & 0xFFFF;
-   adda[1] = addalo[daddasel] >> 16;
-   adda[2] = addahi[daddasel] & 0xFFFF;
-   adda[3] = addahi[daddasel] >> 16;
+   initpix2 = ((uint32_t)initpix << 16) | initpix;
 
-   wordmux[0] = iinc & 0xFFFF;
-   wordmux[1] = iinc >> 16;
-   wordmux[2] = zinc & 0xFFFF;
-   wordmux[3] = zinc >> 16;;
-   wordmux[4] = istep & 0xFFFF;
-   wordmux[5] = istep >> 16;;
-   wordmux[6] = zstep & 0xFFFF;
-   wordmux[7] = zstep >> 16;;
-   word = wordmux[((daddbsel & 0x08) >> 1) | (daddbsel & 0x03)];
-   dbsel2 = daddbsel & 0x04;
-   iincsel = (daddbsel & 0x01) && !(daddbsel & 0x04);
+   /* Select adda source directly (replaces 8-element addalo/addahi arrays) */
+   switch (daddasel)
+   {
+      case 0:  adda_val = dstd; break;
+      case 1:  adda_val = ((uint64_t)initpix2 << 32) | initpix2; break;
+      case 2:  /* fall through */
+      case 3:  adda_val = 0; break;
+      case 4:  adda_val = srcd; break;
+      case 5:  adda_val = patd; break;
+      case 6:  adda_val = srcz1; break;
+      default: adda_val = srcz2; break;
+   }
+   adda[0] = (uint16_t)adda_val;
+   adda[1] = (uint16_t)(adda_val >> 16);
+   adda[2] = (uint16_t)(adda_val >> 32);
+   adda[3] = (uint16_t)(adda_val >> 48);
 
-   if (!dbsel2 && !iincsel)
-      addb[0] = srcd & 0xFFFF,
-         addb[1] = (srcd >> 16) & 0xFFFF,
-         addb[2] = (srcd >> 32) & 0xFFFF,
-         addb[3] = (srcd >> 48) & 0xFFFF;
-   else if (dbsel2 && !iincsel)
-      addb[0] = addb[1] = addb[2] = addb[3] = word;
-   else if (!dbsel2 && iincsel)
-      addb[0] = initinc & 0xFFFF,
-         addb[1] = (initinc >> 16) & 0xFFFF,
-         addb[2] = (initinc >> 32) & 0xFFFF,
-         addb[3] = (initinc >> 48) & 0xFFFF;
+   /* Select addb source (replaces wordmux array + dbsel2/iincsel logic) */
+   if (!(daddbsel & 0x04))
+   {
+      if (daddbsel & 0x01)
+      {
+         addb[0] = (uint16_t)initinc;
+         addb[1] = (uint16_t)(initinc >> 16);
+         addb[2] = (uint16_t)(initinc >> 32);
+         addb[3] = (uint16_t)(initinc >> 48);
+      }
+      else
+      {
+         addb[0] = (uint16_t)srcd;
+         addb[1] = (uint16_t)(srcd >> 16);
+         addb[2] = (uint16_t)(srcd >> 32);
+         addb[3] = (uint16_t)(srcd >> 48);
+      }
+   }
    else
-      addb[0] = addb[1] = addb[2] = addb[3] = 0;
-
+   {
+      bsel_idx = ((daddbsel & 0x08) >> 1) | (daddbsel & 0x03);
+      switch (bsel_idx)
+      {
+         case 0: word = iinc & 0xFFFF; break;
+         case 1: word = iinc >> 16; break;
+         case 2: word = zinc & 0xFFFF; break;
+         case 3: word = zinc >> 16; break;
+         case 4: word = istep & 0xFFFF; break;
+         case 5: word = istep >> 16; break;
+         case 6: word = zstep & 0xFFFF; break;
+         default: word = zstep >> 16; break;
+      }
+      addb[0] = addb[1] = addb[2] = addb[3] = word;
+   }
 
    /* Hardware: cinsel = (daddmode[0] | daddmode[1]) & ~daddmode[2]
       Only modes 1-3 use carry input; mode 4+ do not. */
@@ -2567,11 +2548,10 @@ void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddm
    sat = daddmode & 0x03;
    hicinh = ((daddmode & 0x03) == 0x03);
 
-   //Note that the carry out is saved between calls to this function...
-    ADD16SAT(&addq[0], &co[0], adda[0], addb[0], cin[0], sat, eightbit, hicinh);
-    ADD16SAT(&addq[1], &co[1], adda[1], addb[1], cin[1], sat, eightbit, hicinh);
-    ADD16SAT(&addq[2], &co[2], adda[2], addb[2], cin[2], sat, eightbit, hicinh);
-    ADD16SAT(&addq[3], &co[3], adda[3], addb[3], cin[3], sat, eightbit, hicinh);
+   ADD16SAT(&addq[0], &co[0], adda[0], addb[0], cin[0], sat, eightbit, hicinh);
+   ADD16SAT(&addq[1], &co[1], adda[1], addb[1], cin[1], sat, eightbit, hicinh);
+   ADD16SAT(&addq[2], &co[2], adda[2], addb[2], cin[2], sat, eightbit, hicinh);
+   ADD16SAT(&addq[3], &co[3], adda[3], addb[3], cin[3], sat, eightbit, hicinh);
 }
 
 
@@ -2983,8 +2963,18 @@ with srcshift bits 4 & 5 selecting the start position
 //zcomp=0;
 // We'll do the comparison/bit/byte inhibits here, since that's they way it happens
 // in the real thing (dcomp goes out to COMP_CTRL and back into DATA through dbinh)...
+	{
+	uint8_t bcomp_bits;
+	if (bcompen && phrase_mode)
+	{
+		bcomp_bits = (srcd >> 56) & 0xFF;
+	}
+	else
+		bcomp_bits = srcd & 0xFF;
+
 	COMP_CTRL(&dbinht, nowrite,
-		bcompen, true/*big_pix*/, bkgwren, *dcomp, dcompen, icount, pixsize, phrase_mode, srcd & 0xFF, *zcomp);
+		bcompen, true/*big_pix*/, bkgwren, *dcomp, dcompen, icount, pixsize, phrase_mode, bcomp_bits, *zcomp);
+	}
 	dbinh = dbinht;
 
 //////////////////////////////////////////////////////////////////////////////////////
@@ -3151,23 +3141,16 @@ Masku[14]	:= MX2 (masku[14], maskt[14], maskt[0],  mir_byte);*/
 
 	if (mir_byte)
 	{
-		masku = 0;
-		masku |= (maskt >> 14) & 0x0001;
-		masku |= (maskt >> 13) & 0x0002;
-		masku |= (maskt >> 12) & 0x0004;
-		masku |= (maskt >> 11) & 0x0008;
-		masku |= (maskt >> 10) & 0x0010;
-		masku |= (maskt >> 9)  & 0x0020;
-		masku |= (maskt >> 8)  & 0x0040;
-		masku |= (maskt >> 7)  & 0x0080;
-
+		/* MX4 input 2: masku[7:0] = {8{maskt[14]}} (broadcast bit 14) */
+		masku = (maskt & 0x4000) ? 0x00FF : 0x0000;
+		/* MX2: reverse bits 8-13, maskt[0] at position 14 */
 		masku |= (maskt >> 5) & 0x0100;
 		masku |= (maskt >> 3) & 0x0200;
 		masku |= (maskt >> 1) & 0x0400;
 		masku |= (maskt << 1) & 0x0800;
 		masku |= (maskt << 3) & 0x1000;
 		masku |= (maskt << 5) & 0x2000;
-		masku |= (maskt << 7) & 0x4000;
+		masku |= (maskt & 0x0001) << 14;
 	}
 //////////////////////////////////////////////////////////////////////////////////////
 
