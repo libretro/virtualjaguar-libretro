@@ -19,6 +19,7 @@ SOURCES_CXX :=
 SOURCES_C :=  \
 	$(CORE_DIR)/libretro.c \
 	$(CORE_DIR)/src/tom/blitter.c \
+	$(CORE_DIR)/src/tom/blitter_compare.c \
 	$(CORE_DIR)/src/tom/blitter_mmio.c \
 	$(CORE_DIR)/src/jerry/dac.c \
 	$(CORE_DIR)/src/jerry/dsp.c \
