@@ -390,6 +390,7 @@ uint32_t tomWidth, tomHeight;
 uint32_t tomTimerPrescaler;
 uint32_t tomTimerDivider;
 int32_t tomTimerCounter;
+static uint16_t tomHCReadPhase;
 uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
          tom_gpu_int_pending, tom_video_int_pending;
 
@@ -728,9 +729,15 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    // field bit 11. The OP tests this via CONDITION_SECOND_HALF_LINE.
    // Bits 0-9 approximate the position within the half-line.
    if (halfline & 0x01)
+   {
       SET16(tomRam8, HC, 0x0400 | (hp > 0 ? (hp + 1) / 2 : 0));
+      tomHCReadPhase = hp > 0 ? (hp + 1) / 2 : 0;
+   }
    else
+   {
       SET16(tomRam8, HC, 0);
+      tomHCReadPhase = 0;
+   }
 
    if (halfline & 0x01)							// Execute OP only on even halflines (non-interlaced only!)
       // Execute OP only on even halflines (skip higher resolutions for now...)
@@ -920,6 +927,7 @@ void TOMReset(void)
    tomTimerPrescaler = 0;					// TOM PIT is disabled
    tomTimerDivider = 0;
    tomTimerCounter = 0;
+   tomHCReadPhase = 0;
 }
 
 uint8_t TOMReadByte(uint32_t offset, uint32_t who)
@@ -961,8 +969,21 @@ uint16_t TOMReadWord(uint32_t offset, uint32_t who)
       return data;
    }
    else if (offset == 0xF00004)
-      // Return the current HC value from tomRam8 (updated each halfline)
-      return GET16(tomRam8, HC);
+   {
+      uint16_t hc = GET16(tomRam8, HC);
+      uint16_t hp = GET16(tomRam8, HP);
+      uint16_t limit = hp > 0 ? (hp + 1) / 2 : 0x400;
+      uint16_t phase = tomHCReadPhase;
+
+      if (limit == 0)
+         limit = 1;
+
+      tomHCReadPhase++;
+      if (tomHCReadPhase >= limit)
+         tomHCReadPhase = 0;
+
+      return (hc & 0x0400) | (phase & 0x03FF);
+   }
    else if ((offset >= GPU_CONTROL_RAM_BASE) && (offset < GPU_CONTROL_RAM_BASE + 0x20))
       return GPUReadWord(offset, who);
    else if ((offset >= GPU_WORK_RAM_BASE) && (offset < GPU_WORK_RAM_BASE + 0x1000))
@@ -1289,6 +1310,7 @@ size_t TOMStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, tom_video_int_pending);
 	STATE_LOAD_VAR(buf, tomWidth);
 	STATE_LOAD_VAR(buf, tomHeight);
+	tomHCReadPhase = GET16(tomRam8, HC) & 0x03FF;
 
 	return (size_t)(buf - start);
 }
