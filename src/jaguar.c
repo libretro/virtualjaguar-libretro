@@ -19,6 +19,7 @@
 #include "jaguar.h"
 
 #include "cdrom.h"
+#include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
 #include "event.h"
@@ -838,16 +839,33 @@ uint8_t * GetRamPtr(void)
 
 
 /* New Jaguar execution stack
- * This executes 1 frame's worth of code. */
+ * This executes 1 frame's worth of code.
+ * Interleaves EVENT_MAIN (video/halfline) and EVENT_JERRY (DSP/I2S/timers)
+ * so the DSP runs alongside the 68K and GPU, matching real hardware timing. */
 void JaguarExecuteNew(void)
 {
    frameDone = false;
 
    do
    {
-      double timeToNextEvent = GetTimeToNextEvent(EVENT_MAIN);
-      m68k_execute(USEC_TO_M68K_CYCLES(timeToNextEvent));
-      GPUExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-      HandleNextEvent(EVENT_MAIN);
+      double timeToMainEvent = GetTimeToNextEvent(EVENT_MAIN);
+      double timeToJerryEvent = GetTimeToNextEvent(EVENT_JERRY);
+
+      if (timeToJerryEvent < timeToMainEvent)
+      {
+         m68k_execute(USEC_TO_M68K_CYCLES(timeToJerryEvent));
+         GPUExec(USEC_TO_RISC_CYCLES(timeToJerryEvent));
+         DSPExec(USEC_TO_RISC_CYCLES(timeToJerryEvent));
+         SubtractEventTimes(timeToJerryEvent, EVENT_MAIN);
+         HandleNextEvent(EVENT_JERRY);
+      }
+      else
+      {
+         m68k_execute(USEC_TO_M68K_CYCLES(timeToMainEvent));
+         GPUExec(USEC_TO_RISC_CYCLES(timeToMainEvent));
+         DSPExec(USEC_TO_RISC_CYCLES(timeToMainEvent));
+         SubtractEventTimes(timeToMainEvent, EVENT_JERRY);
+         HandleNextEvent(EVENT_MAIN);
+      }
    } while(!frameDone);
 }

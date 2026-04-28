@@ -16,6 +16,7 @@ extern "C" {
 void DACInit(void);
 void DACReset(void);
 void DACDone(void);
+void DACPrepareFrame(int length);
 
 // DAC memory access
 

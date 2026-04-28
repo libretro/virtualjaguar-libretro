@@ -101,7 +101,7 @@ void DSPSampleCallback(void)
    sampleBuffer[bufferIndex + 1] = *rtxd;
    bufferIndex += 2;
 
-   if (bufferIndex == numberOfSamples)
+   if (bufferIndex >= numberOfSamples)
    {
       bufferDone = true;
       return;
@@ -110,56 +110,27 @@ void DSPSampleCallback(void)
    SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 }
 
-//
-// Callback routine to fill audio buffer
-//
-// Note: The samples are packed in the buffer in 16 bit left/16 bit right pairs.
-//       Also, length is the length of the buffer in SAMPLES (not bytes).
-//
+void DACPrepareFrame(int length)
+{
+   RemoveCallback(DSPSampleCallback);
+   bufferIndex = 0;
+   numberOfSamples = length;
+   bufferDone = false;
+   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+}
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
+   int idx;
+
    RemoveCallback(DSPSampleCallback);
 
-   if (!DSPIsRunning())
+   if (bufferIndex < length)
    {
-      unsigned i;
-      for(i = 0; i < length; i += 2)
+      for (idx = bufferIndex; idx < length; idx += 2)
       {
-         buffer[i + 0] = *ltxd;
-         buffer[i + 1] = *rtxd;
-      }
-
-      audio_batch_cb((int16_t *)buffer, length / 2);
-      return;
-   }
-
-   {
-      double sampleInterval = 1000000.0 / (double)DAC_AUDIO_RATE;
-      double timeUntilNextSample = sampleInterval;
-      int idx = 0;
-
-      while (idx < length)
-      {
-         double timeToNextEvent = GetTimeToNextEvent(EVENT_JERRY);
-
-         if (timeUntilNextSample <= timeToNextEvent)
-         {
-            DSPExec(USEC_TO_RISC_CYCLES(timeUntilNextSample));
-
-            buffer[idx + 0] = *ltxd;
-            buffer[idx + 1] = *rtxd;
-            idx += 2;
-
-            SubtractEventTimes(timeUntilNextSample, EVENT_JERRY);
-            timeUntilNextSample = sampleInterval;
-         }
-         else
-         {
-            DSPExec(USEC_TO_RISC_CYCLES(timeToNextEvent));
-            timeUntilNextSample -= timeToNextEvent;
-            HandleNextEvent(EVENT_JERRY);
-         }
+         buffer[idx + 0] = *ltxd;
+         buffer[idx + 1] = *rtxd;
       }
    }
 

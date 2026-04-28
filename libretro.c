@@ -1185,9 +1185,10 @@ void retro_run(void)
 
    update_input();
 
+   DACPrepareFrame(vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
    JaguarExecuteNew();
    cheat_apply_all();
-   SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC==1?BUFNTSC:BUFPAL);
+   SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
 
    // Resolution changed
    if ((tomWidth != videoWidth || tomHeight != videoHeight) && tomWidth > 0 && tomHeight > 0)
