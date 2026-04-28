@@ -26,6 +26,15 @@
 #define BUFNTSC 1600
 #define BUFMAX 2048
 
+#ifndef GIT_VERSION
+#define GIT_VERSION ""
+#endif
+#ifdef BUILD_TIMESTAMP
+#define CORE_VERSION "v2.1.0" GIT_VERSION BUILD_TIMESTAMP
+#else
+#define CORE_VERSION "v2.1.0" GIT_VERSION
+#endif
+
 int videoWidth               = 0;
 int videoHeight              = 0;
 uint32_t *videoBuffer        = NULL;
@@ -749,10 +758,7 @@ void retro_get_system_info(struct retro_system_info *info)
 {
    memset(info, 0, sizeof(*info));
    info->library_name     = "Virtual Jaguar";
-#ifndef GIT_VERSION
-#define GIT_VERSION ""
-#endif
-   info->library_version  = "v2.1.0" GIT_VERSION;
+   info->library_version  = CORE_VERSION;
    info->need_fullpath    = false;
    info->valid_extensions = "j64|jag";
 }
@@ -1006,6 +1012,10 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.useJaguarBIOS    = false;
 
    check_variables();
+
+#ifdef BUILD_TIMESTAMP
+   LOG_INF("[Virtual Jaguar] build: %s\n", CORE_VERSION);
+#endif
 
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;

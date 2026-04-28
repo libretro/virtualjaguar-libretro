@@ -47,6 +47,10 @@ GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
 ifneq ($(GIT_VERSION)," unknown")
 	CFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 endif
+ifeq ($(DEBUG),1)
+BUILD_TIMESTAMP := " debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
+	CFLAGS += -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
+endif
 
 # Unix
 ifeq ($(platform), unix)

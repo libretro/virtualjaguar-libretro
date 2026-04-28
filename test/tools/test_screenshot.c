@@ -2,7 +2,7 @@
    dumps framebuffer as PPM.
 
    Usage: test_screenshot <core.dylib> <rom_file> <state_file> [num_frames]
-          [--blitter fast|accurate] [--out file.ppm]
+          [--blitter fast|accurate] [--press-a START-END] [--press-b START-END] [--out file.ppm]
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include "../../libretro-common/include/libretro.h"
+#include "../../src/m68000/m68kinterface.h"
 
 static void (*pretro_set_environment)(retro_environment_t);
 static void (*pretro_set_video_refresh)(retro_video_refresh_t);
@@ -29,9 +30,17 @@ static size_t (*pretro_serialize_size)(void);
 static bool (*pretro_unserialize)(const void *, size_t);
 static void *(*pretro_get_memory_data)(unsigned);
 static size_t (*pretro_get_memory_size)(unsigned);
+static uint8_t *pjoypad0Buttons;
+static bool *pjoysticksEnabled;
+static unsigned int (*pm68k_get_reg)(void *, m68k_register_t);
+static uint8_t **pjaguarMainRAM;
 
 static const char *blitter_value = "disabled"; /* default: accurate */
 static int bios_option_set = 0;
+static int current_frame = 0;
+static unsigned press_button_id = RETRO_DEVICE_ID_JOYPAD_B;
+static int press_button_start = -1;
+static int press_button_end = -1;
 
 /* Captured frame */
 static uint32_t *last_frame = NULL;
@@ -155,7 +164,13 @@ static size_t audio_sample_batch(const int16_t *data, size_t frames)
 static void input_poll(void) {}
 static int16_t input_state(unsigned port, unsigned device, unsigned index, unsigned id)
 {
-   (void)port; (void)device; (void)index; (void)id;
+   (void)port;
+   (void)index;
+   if (device == RETRO_DEVICE_JOYPAD
+         && id == press_button_id
+         && current_frame >= press_button_start
+         && current_frame <= press_button_end)
+      return 1;
    return 0;
 }
 
@@ -219,7 +234,7 @@ int main(int argc, char **argv)
    if (argc < 4)
    {
       fprintf(stderr, "Usage: %s <core.dylib> <rom_file> <state_file> [num_frames]\n"
-              "       [--blitter fast|accurate] [--out file.ppm]\n", argv[0]);
+              "       [--blitter fast|accurate] [--press-a START-END] [--press-b START-END] [--out file.ppm]\n", argv[0]);
       return 1;
    }
 
@@ -239,6 +254,26 @@ int main(int argc, char **argv)
       }
       else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
          out_path = argv[++i];
+      else if (strcmp(argv[i], "--press-b") == 0 && i + 1 < argc)
+      {
+         i++;
+         press_button_id = RETRO_DEVICE_ID_JOYPAD_B;
+         if (sscanf(argv[i], "%d-%d", &press_button_start, &press_button_end) != 2)
+         {
+            fprintf(stderr, "Invalid --press-b range: %s\n", argv[i]);
+            return 1;
+         }
+      }
+      else if (strcmp(argv[i], "--press-a") == 0 && i + 1 < argc)
+      {
+         i++;
+         press_button_id = RETRO_DEVICE_ID_JOYPAD_A;
+         if (sscanf(argv[i], "%d-%d", &press_button_start, &press_button_end) != 2)
+         {
+            fprintf(stderr, "Invalid --press-a range: %s\n", argv[i]);
+            return 1;
+         }
+      }
       else
          num_frames = atoi(argv[i]);
    }
@@ -288,6 +323,11 @@ int main(int argc, char **argv)
    LOAD_SYM(retro_get_memory_data);
    LOAD_SYM(retro_get_memory_size);
 
+   pjoypad0Buttons = dlsym(handle, "joypad0Buttons");
+   pjoysticksEnabled = dlsym(handle, "joysticksEnabled");
+   pm68k_get_reg = dlsym(handle, "m68k_get_reg");
+   pjaguarMainRAM = dlsym(handle, "jaguarMainRAM");
+
    pretro_set_environment(environment_cb);
    pretro_set_video_refresh(video_refresh);
    pretro_set_audio_sample(audio_sample);
@@ -323,7 +363,21 @@ int main(int argc, char **argv)
    /* Run frames to render */
    fprintf(stderr, "Running %d frames...\n", num_frames);
    for (i = 0; i < num_frames; i++)
+   {
+      current_frame = i;
       pretro_run();
+      if (press_button_start >= 0 && pjoypad0Buttons && pjoysticksEnabled
+            && (i < 5 || (i % 30) == 0))
+      {
+         uint32_t pc = pm68k_get_reg ? pm68k_get_reg(NULL, M68K_REG_PC) : 0;
+         uint8_t ram4450 = (pjaguarMainRAM && *pjaguarMainRAM) ? (*pjaguarMainRAM)[0x4450] : 0;
+         fprintf(stderr, "[input] frame=%d enabled=%u A=%02X B=%02X\n",
+               i, (unsigned)*pjoysticksEnabled,
+               (unsigned)pjoypad0Buttons[16], (unsigned)pjoypad0Buttons[17]);
+         fprintf(stderr, "[state] frame=%d pc=%06X ram4450=%02X\n",
+               i, pc, (unsigned)ram4450);
+      }
+   }
 
 
    /* Save screenshot */
