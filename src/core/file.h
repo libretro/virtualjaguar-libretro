@@ -18,7 +18,7 @@ extern "C" {
 
 enum FileType { FT_SOFTWARE=0, FT_EEPROM, FT_LABEL, FT_BOXART, FT_OVERLAY };
 // JST = Jaguar Software Type
-enum { JST_NONE = 0, JST_ROM, JST_ALPINE, JST_ABS_TYPE1, JST_ABS_TYPE2, JST_JAGSERVER, JST_WTFOMGBBQ };
+enum { JST_NONE = 0, JST_ROM, JST_ALPINE, JST_ABS_TYPE1, JST_ABS_TYPE2, JST_JAGSERVER, JST_WTFOMGBBQ, JST_RAW_BINARY };
 
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize);
 

@@ -529,19 +529,12 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 
    pitch <<= 3;									// Optimization: Multiply pitch by 8
 
-   // Is it OK to have a 0 for the data width??? (i.e., undocumented?)
-   // Seems to be... Seems that dwidth *can* be zero (i.e., reuse same line) as well.
-   // Pitch == 0 is OK too...
-
-   //kludge: Seems that the OP treats iwidth == 0 as iwidth == 1... Need to investigate
-   //        on real hardware...
-//#warning "!!! Need to investigate iwidth == 0 behavior on real hardware !!!"
+   /* dwidth and pitch can be zero; current behavior treats iwidth == 0 as one
+    * phrase, but that still needs hardware or ROM-specific validation. */
    if (iwidth == 0)
       iwidth = 1;
 
-   //	if (!render || op_pointer == 0 || ptr == 0 || pitch == 0)
-   //I'm not convinced that we need to concern ourselves with data & op_pointer here either!
-   if (!render || iwidth == 0)
+   if (!render)
       return;
 
    startPos = xpos;
@@ -583,15 +576,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    //       which pixel in the phrase is being written, and quit when either end of phrases
    //       is reached or line buffer extents are surpassed.
 
-   //This stuff is probably wrong as well... !!! FIX !!!
-   //The strange thing is that it seems to work, but that's no guarantee that it's bulletproof!
-   //Yup. Seems that JagMania doesn't work correctly with this...
-   //Dunno if this is the problem, but Atari Karts is showing *some* of the road now...
-   //	if (!flagREFLECT)
-
-   // NOTE: We're just using endPos to figure out how much, if any, to clip by.
-   // ALSO: There may be another case where we start out of bounds and end out of bounds...!
-   // !!! FIX !!!
+   /* Fixed-bitmap clipping is phrase-granular. It skips whole source phrases
+    * for start-out/end-in cases and lets the inner loop handle final LBUF
+    * bounds. */
    if (startPos < 0)			// Case #1: Begin out, end in, L to R
       clippedWidth = 0 - startPos,
                    dataClippedWidth = phraseClippedWidth = clippedWidth / phraseWidthToPixels[depth],
@@ -618,6 +605,8 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    // the pixel data.
    //	data += phraseClippedWidth * (pitch << 3);
    data += dataClippedWidth * pitch;
+   if (dataClippedWidth > 0)
+      firstPix = 0;
 
    // NOTE: When the bitmap is in REFLECT mode, the XPOS marks the *right* side of the
    //       bitmap! This makes clipping & etc. MUCH, much easier...!
@@ -651,8 +640,8 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 
       // Fetch 1st phrase...
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
-      //Note that firstPix should only be honored *if* we start with the 1st phrase of the bitmap
-      //i.e., we didn't clip on the margin... !!! FIX !!!
+      /* firstPix is applied to the initial source phrase. If clipping skipped
+       * phrases, this may need hardware-specific adjustment. */
       pixels <<= firstPix;						// Skip first N pixels (N=firstPix)...
       i        = firstPix;							// Start counter at right spot...
 
@@ -693,20 +682,24 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    }
    else if (depth == 1)							// 2 BPP
    {
+      int i;
       int32_t lbufDelta;
 
       index &= 0xFC;								// Top six bits form CLUT index
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
       lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
+      firstPix &= 0x3C;
+      i = firstPix >> 1;
+
       while (iwidth--)
       {
-         unsigned i;
          // Fetch phrase...
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+         pixels <<= firstPix;
          data += pitch;
 
-         for(i=0; i<32; i++)
+         while (i++ < 32)
          {
             uint8_t bits = pixels >> 62;
             // Seems to me that both of these are in the same endian, so we could cast it as
@@ -734,23 +727,30 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             currentLineBuffer += lbufDelta;
             pixels <<= 2;
          }
+
+         firstPix = 0;
+         i = 0;
       }
    }
    else if (depth == 2)							// 4 BPP
    {
+      int i;
       int32_t lbufDelta;
       index &= 0xF0;								// Top four bits form CLUT index
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
       lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
+      firstPix &= 0x38;
+      i = firstPix >> 2;
+
       while (iwidth--)
       {
-         unsigned i;
          // Fetch phrase...
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+         pixels <<= firstPix;
          data += pitch;
 
-         for(i=0; i<16; i++)
+         while (i++ < 16)
          {
             uint8_t bits = pixels >> 60;
             // Seems to me that both of these are in the same endian, so we could cast it as
@@ -778,6 +778,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             currentLineBuffer += lbufDelta;
             pixels <<= 4;
          }
+
+         firstPix = 0;
+         i = 0;
       }
    }
    else if (depth == 3)							// 8 BPP
@@ -788,8 +791,8 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 
       // Fetch 1st phrase...
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
-      //Note that firstPix should only be honored *if* we start with the 1st phrase of the bitmap
-      //i.e., we didn't clip on the margin... !!! FIX !!!
+      /* firstPix is applied to the initial source phrase. If clipping skipped
+       * phrases, this may need hardware-specific adjustment. */
       firstPix &= 0x30;							// Only top two bits are valid for 8 BPP
       pixels <<= firstPix;						// Skip first N pixels (N=firstPix)...
       i = firstPix >> 3;						// Start counter at right spot...
@@ -836,16 +839,20 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    else if (depth == 4)							// 16 BPP
    {
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
+      int i;
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
+
+      firstPix &= 0x30;
+      i = firstPix >> 4;
 
       while (iwidth--)
       {
-         unsigned i;
          // Fetch phrase...
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+         pixels <<= firstPix;
          data += pitch;
 
-         for(i=0; i<4; i++)
+         while (i++ < 4)
          {
             uint8_t bitsHi = pixels >> 56, bitsLo = pixels >> 48;
             // Seems to me that both of these are in the same endian, so we could cast it as
@@ -873,6 +880,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             currentLineBuffer += lbufDelta;
             pixels <<= 16;
          }
+
+         firstPix = 0;
+         i = 0;
       }
    }
    else if (depth == 5)							// 24 BPP
@@ -881,16 +891,20 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       //There *might* be others...
       // Not sure, but I think RMW only works with 16 BPP and below, and only in CRY mode...
       // The LSB of flags is OPFLAG_REFLECT, so sign extend it and OR 4 into it.
+      int i;
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 4) | 0x04;
+
+      firstPix &= 0x20;
+      i = firstPix >> 5;
 
       while (iwidth--)
       {
-         unsigned i;
          // Fetch phrase...
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+         pixels <<= firstPix;
          data += pitch;
 
-         for(i=0; i<2; i++)
+         while (i++ < 2)
          {
             // We don't use a 32-bit var here because of endian issues...!
             uint8_t bits3 = pixels >> 56, bits2 = pixels >> 48,
@@ -907,6 +921,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             currentLineBuffer += lbufDelta;
             pixels <<= 32;
          }
+
+         firstPix = 0;
+         i = 0;
       }
    }
 }
@@ -947,18 +964,51 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    uint16_t * paletteRAM16 = (uint16_t *)paletteRAM;
 
    uint16_t hscale = p2 & 0xFF;
-   /* Horizontal scale uses the same [3.5] fixed-point step as vertical scale.
-    * The initial remainder phase still needs hardware/repro coverage before
-    * changing it. */
-   uint16_t horizontalRemainder = hscale;
-   int32_t scaledWidthInPixels = (iwidth * phraseWidthToPixels[depth] * hscale) >> 5;
-   int32_t startPos = xpos;
-   int32_t endPos = xpos +
-      (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels + 1));
+   uint16_t horizontalRemainder = 0;
+   uint32_t firstPixShift = 0;
+   uint32_t firstPixPixels = 0;
+   int32_t scaledWidthInPixels;
+   int32_t startPos;
+   int32_t endPos;
 
    // Looks like an hscale of zero means don't draw!
-   if (!render || iwidth == 0 || hscale == 0)
+   if (!render || hscale == 0)
       return;
+
+   if (iwidth == 0)
+      iwidth = 1;
+
+   scaledWidthInPixels = (iwidth * phraseWidthToPixels[depth] * hscale) >> 5;
+   startPos = xpos;
+   endPos = xpos + (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels - 1));
+
+   switch (depth)
+   {
+      case 0:
+         firstPixShift = firstPix & 0x3E;
+         firstPixPixels = firstPixShift;
+         break;
+      case 1:
+         firstPixShift = firstPix & 0x3C;
+         firstPixPixels = firstPixShift >> 1;
+         break;
+      case 2:
+         firstPixShift = firstPix & 0x38;
+         firstPixPixels = firstPixShift >> 2;
+         break;
+      case 3:
+         firstPixShift = firstPix & 0x30;
+         firstPixPixels = firstPixShift >> 3;
+         break;
+      case 4:
+         firstPixShift = firstPix & 0x30;
+         firstPixPixels = firstPixShift >> 4;
+         break;
+      default:
+         firstPixShift = 0;
+         firstPixPixels = 0;
+         break;
+   }
 
    // If the image is completely to the left or right of the line buffer, then bail.
    // In REFLECT mode these edge cases are mirrored.
@@ -1032,6 +1082,11 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    // the pixel data.
    //	data += phraseClippedWidth * (pitch << 3);
    data += dataClippedWidth * (pitch << 3);
+   if (dataClippedWidth > 0)
+   {
+      firstPixShift = 0;
+      firstPixPixels = 0;
+   }
 
    // NOTE: When the bitmap is in REFLECT mode, the XPOS marks the *right* side of the
    //       bitmap! This makes clipping & etc. MUCH, much easier...!
@@ -1051,8 +1106,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       // The LSB of flags is OPFLAG_REFLECT, so sign extend it and or 2 into it.
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
-      int pixCount = 0;
+      int pixCount = (int)firstPixPixels;
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+
+      pixels <<= firstPixShift;
 
       while ((int32_t)iwidth > 0)
       {
@@ -1104,7 +1161,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    else if (depth == 1)							// 2 BPP
    {
       int32_t lbufDelta;
-      int pixCount = 0;
+      int pixCount = (int)firstPixPixels;
       uint64_t pixels;
 
       index &= 0xFC;								// Top six bits form CLUT index
@@ -1112,6 +1169,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
       pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+      pixels <<= firstPixShift;
 
       while ((int32_t)iwidth > 0)
       {
@@ -1160,7 +1218,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    }
    else if (depth == 2)							// 4 BPP
    {
-      int pixCount = 0;
+      int pixCount = (int)firstPixPixels;
       int32_t lbufDelta;
       uint64_t pixels;
 
@@ -1169,6 +1227,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
       pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+      pixels <<= firstPixShift;
 
       while ((int32_t)iwidth > 0)
       {
@@ -1220,8 +1279,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       // The LSB is OPFLAG_REFLECT, so sign extend it and or 2 into it.
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
-      int pixCount = 0;
+      int pixCount = (int)firstPixPixels;
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+
+      pixels <<= firstPixShift;
 
       while ((int32_t)iwidth > 0)
       {
@@ -1277,8 +1338,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       // The LSB is OPFLAG_REFLECT, so sign extend it and OR 2 into it.
       int32_t lbufDelta = ((int8_t)((flags << 7) & 0xFF) >> 5) | 0x02;
 
-      int pixCount = 0;
+      int pixCount = (int)firstPixPixels;
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+
+      pixels <<= firstPixShift;
 
       while ((int32_t)iwidth > 0)
       {

@@ -26,8 +26,20 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - OP scaled bitmap clipping now keeps fractional phrase width for all edge
   cases, avoiding divide-by-zero when small `hscale` values truncate an
   integer-scaled phrase width to zero.
+- OP scaled bitmap rendering now starts the horizontal scale phase at zero for
+  1:1 `hscale=$20` output and applies `firstPix` to the first source phrase,
+  treats `iwidth == 0` as one phrase, and keeps the visible edge pixel for
+  reflected left-edge objects, with direct 4 BPP coverage in `test_hle_bios`.
+- OP fixed bitmap rendering now honors `firstPix` for 2/4/16/24 BPP paths,
+  not just 1/8 BPP, and avoids applying it again after clipping skips whole
+  source phrases, with direct 4 BPP coverage in `test_hle_bios`.
+- Headerless raw homebrew loading is now conservative but supported for
+  recognizable startup patterns at inferred `$4000`, `$20000`, or `$802000`
+  bases; unknown raw files still fail instead of booting invalid RAM.
 - JERRY SSI `SSTAT` reads now report the modeled status bits instead of the
   generic unmapped `$FFFF` placeholder.
+- `make test` now includes `test_dsp_unit`, covering DSP interrupt dispatch,
+  priority, return-address stack push, register banking, and execution basics.
 - `test_hle_bios` now covers HLE workspace state, exception vectors, I2S
   defaults and `SSTAT` readback, JERRY JINTCTRL decode, OP scaled clipping,
   deferred geometry updates, PAL timing, and custom `VP` rollover.
@@ -41,10 +53,10 @@ describe guesses, timing gaps, or known emulation shortcuts.
   malformed lists from hanging the emulator, but it does not model OP cycle
   consumption or overloaded-list suspend/reentry timing.
 - `src/tom/op.c`: continue auditing scaled bitmap semantics beyond the
-  small-`hscale` clipping fix. `firstPix`, `iwidth == 0`, initial horizontal
-  remainder phase, and scaled phrase alignment still need repro or hardware
-  coverage because they affect road/ground rendering.
-
+  small-`hscale`, `firstPix`, 1:1 phase, `iwidth == 0`, and reflected
+  left-edge fixes. Fractional scale ratios, clipping plus `firstPix`, and
+  reflected right-edge phrase alignment still need repro or hardware coverage
+  because they affect road/ground rendering.
 ## Medium Priority
 
 - `src/tom/tom.c`: replace hard-coded visible-window constants with values
@@ -55,8 +67,8 @@ describe guesses, timing gaps, or known emulation shortcuts.
   transparent in all relevant modes.
 - `src/jerry/dac.c`: continue SSI/I2S modeling beyond basic `SSTAT` readback,
   including slave-clock timing and CD audio word-strobe behavior.
-- `src/jerry/dsp.c`: add targeted IRQ return-address coverage before changing
-  the live non-pipelined interrupt dispatch semantics.
+- `src/jerry/dsp.c`: use the new IRQ return-address coverage before changing
+  live non-pipelined dispatch semantics.
 
 ## Lower Priority / CD Branch
 

@@ -573,7 +573,7 @@ void retro_get_system_info(struct retro_system_info *info)
    info->library_name     = "Virtual Jaguar";
    info->library_version  = CORE_VERSION;
    info->need_fullpath    = false;
-   info->valid_extensions = "j64|jag";
+   info->valid_extensions = "j64|jag|rom|bin";
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
@@ -846,7 +846,15 @@ bool retro_load_game(const struct retro_game_info *info)
       videoBuffer[i] = 0xFF00FFFF;
 
    SET32(jaguarMainRAM, 0, 0x00200000);
-   JaguarLoadFile((uint8_t*)info->data, info->size);
+   if (!JaguarLoadFile((uint8_t*)info->data, info->size))
+   {
+      LOG_ERR("[Virtual Jaguar] unsupported or invalid content format\n");
+      free(videoBuffer);
+      videoBuffer = NULL;
+      free(sampleBuffer);
+      sampleBuffer = NULL;
+      return false;
+   }
    JaguarReset();
 
    /* JaguarReset() randomizes RAM contents, which destroys RAM-loaded
@@ -854,7 +862,17 @@ bool retro_load_game(const struct retro_game_info *info)
     * because they live at $800000+ which isn't touched by reset.
     * Re-load the file so the program data is back in place. */
    if (!jaguarCartInserted)
-      JaguarLoadFile((uint8_t*)info->data, info->size);
+   {
+      if (!JaguarLoadFile((uint8_t*)info->data, info->size))
+      {
+         LOG_ERR("[Virtual Jaguar] failed to reload RAM-loaded content\n");
+         free(videoBuffer);
+         videoBuffer = NULL;
+         free(sampleBuffer);
+         sampleBuffer = NULL;
+         return false;
+      }
+   }
 
    /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
     * resolve emulated addresses to host buffers. Required for rcheevos.

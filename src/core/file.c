@@ -24,9 +24,60 @@
 #include "jaguar.h"
 #include "vjag_memory.h"
 
+static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *loadAddress)
+{
+   static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000 };
+   unsigned bestCandidate = 0;
+   unsigned bestScore = 0;
+   unsigned i;
+   uint32_t offset;
+
+   if (size < 16 || !loadAddress)
+      return false;
+
+   /* Known raw homebrew startup writes big-endian mode before touching TOM. */
+   if (GET16(buffer, 0) != 0x23FC || GET32(buffer, 2) != 0x00070007
+         || GET32(buffer, 6) != 0x00F0210C)
+      return false;
+
+   for (i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
+   {
+      unsigned score = 0;
+      uint32_t base = candidates[i];
+
+      for (offset = 0; offset + 6 <= size && offset < 2048; offset += 2)
+      {
+         uint16_t op = GET16(buffer, offset);
+         uint32_t target;
+
+         if (op != 0x4EB9 && op != 0x4EF9 && op != 0x41F9
+               && op != 0x2039 && op != 0x2079 && op != 0x2279)
+            continue;
+
+         target = GET32(buffer, offset + 2);
+         if (target >= base && target < base + size)
+            score++;
+      }
+
+      if (score > bestScore)
+      {
+         bestScore = score;
+         bestCandidate = i;
+      }
+   }
+
+   if (bestScore < 2)
+      return false;
+
+   *loadAddress = candidates[bestCandidate];
+   return true;
+}
+
 /* Parse the file type based upon file size and/or headers. */
 static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 {
+   uint32_t rawLoadAddress;
+
    // Check headers first...
 
    // ABS/COFF type 1
@@ -57,6 +108,9 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    // Alpine format ROM.
    if (((size + 8192) % 1048576) == 0)
       return JST_ALPINE;
+
+   if (InferRawBinaryLoadAddress(buffer, size, &rawLoadAddress))
+      return JST_RAW_BINARY;
 
    // Headerless crap
    return JST_NONE;
@@ -146,6 +200,24 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       jaguarRunAddress = loadAddress;
       jaguarLoadedRAMStart = loadAddress;
       jaguarLoadedRAMEnd = loadAddress + codeSize;
+      return true;
+   }
+   else if (fileType == JST_RAW_BINARY)
+   {
+      uint32_t loadAddress;
+
+      if (!InferRawBinaryLoadAddress(buffer, jaguarROMSize, &loadAddress))
+         return false;
+
+      memcpy(jagMemSpace + loadAddress, buffer, jaguarROMSize);
+      jaguarRunAddress = loadAddress;
+
+      if (loadAddress < 0x800000)
+      {
+         jaguarLoadedRAMStart = loadAddress;
+         jaguarLoadedRAMEnd = loadAddress + jaguarROMSize;
+      }
+
       return true;
    }
 

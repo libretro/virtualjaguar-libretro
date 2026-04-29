@@ -90,6 +90,7 @@ static void (*p_retro_set_input_state)(retro_input_state_t);
 static bool (*p_retro_load_game)(const struct retro_game_info *);
 static void (*p_retro_unload_game)(void);
 static void (*p_retro_run)(void);
+static void (*p_JaguarReset)(void);
 static void (*p_JaguarApplyHLEBIOSState)(void);
 static void (*p_HalflineCallback)(void);
 static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
@@ -97,6 +98,7 @@ static void (*p_JERRYWriteWord)(uint32_t, uint16_t, uint32_t);
 static bool (*p_JERRYIRQEnabled)(int);
 static void (*p_JERRYSetPendingIRQ)(int);
 static void (*p_OPProcessScaledBitmap)(uint64_t, uint64_t, uint64_t, bool);
+static void (*p_OPProcessFixedBitmap)(uint64_t, uint64_t, bool);
 
 /* Emulator internals via dlsym */
 static void *core_handle;
@@ -109,6 +111,8 @@ static bool *p_lowerField;
 static uint32_t (*p_GPUReadLong)(uint32_t, uint32_t);
 static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
 static struct VJSettings *p_vjs;
+static uint32_t *p_jaguarLoadedRAMStart;
+static uint32_t *p_jaguarLoadedRAMEnd;
 
 struct VJSettings {
    bool hardwareTypeNTSC;
@@ -321,7 +325,53 @@ static void test_hle_workspace_apply_contract(void)
 }
 
 /* ================================================================
- * Test 1d: HLE exception and interrupt vectors
+ * Test 1d: HLE reset preserves RAM-loaded executable ranges
+ * Homebrew/server formats are copied into main RAM before reset.
+ * HLE RAM clearing must not erase that payload.
+ * ================================================================ */
+static void test_hle_preserves_ram_loaded_range(void)
+{
+   uint32_t old_start;
+   uint32_t old_end;
+   bool old_use_bios;
+
+   printf("\n=== Test 1d: HLE Reset Preserves RAM-Loaded Range ===\n");
+
+   old_start = *p_jaguarLoadedRAMStart;
+   old_end = *p_jaguarLoadedRAMEnd;
+   old_use_bios = p_vjs->useJaguarBIOS;
+
+   p_vjs->useJaguarBIOS = false;
+   *p_jaguarLoadedRAMStart = 0x00012000;
+   *p_jaguarLoadedRAMEnd = 0x00012010;
+
+   ram_set32(0x00011FFC, 0xFEEDFACE);
+   ram_set32(0x00012000, 0xAABBCCDD);
+   ram_set32(0x0001200C, 0x11223344);
+   ram_set32(0x00012010, 0xCAFEBABE);
+
+   p_JaguarReset();
+
+   if (ram_get32(0x00012000) == 0xAABBCCDD
+         && ram_get32(0x0001200C) == 0x11223344)
+      PASS("RAM-loaded payload survived HLE reset");
+   else
+      FAIL("RAM-loaded payload was cleared: $%08X $%08X",
+           ram_get32(0x00012000), ram_get32(0x0001200C));
+
+   if (ram_get32(0x00011FFC) == 0 && ram_get32(0x00012010) == 0)
+      PASS("HLE reset still clears RAM outside the loaded range");
+   else
+      FAIL("RAM outside loaded range not cleared: before=$%08X after=$%08X",
+           ram_get32(0x00011FFC), ram_get32(0x00012010));
+
+   *p_jaguarLoadedRAMStart = old_start;
+   *p_jaguarLoadedRAMEnd = old_end;
+   p_vjs->useJaguarBIOS = old_use_bios;
+}
+
+/* ================================================================
+ * Test 1e: HLE exception and interrupt vectors
  * The HLE path installs safe RTE stubs, including vector 64 used by
  * Jaguar hardware interrupts.
  * ================================================================ */
@@ -335,7 +385,7 @@ static void test_hle_exception_vectors(void)
    uint32_t bus_handler;
    uint16_t rte_handler;
 
-   printf("\n=== Test 1d: HLE Exception Vectors ===\n");
+   printf("\n=== Test 1e: HLE Exception Vectors ===\n");
 
    bus_vector = ram_get32(0x08);
    address_vector = ram_get32(0x0C);
@@ -534,6 +584,148 @@ static void test_op_scaled_small_hscale_clip(void)
 
    p_OPProcessScaledBitmap(p0, p1, p2, true);
    PASS("small hscale right-edge clip completed");
+}
+
+/* ================================================================
+ * Test 6b: OP Scaled Bitmap 1:1 Phase and firstPix
+ * hscale=$20 is 1:1. The source cursor must advance after each
+ * destination pixel and honor firstPix for the first source phrase.
+ * ================================================================ */
+static void test_op_scaled_firstpix_4bpp(void)
+{
+   uint64_t p0;
+   uint64_t p1;
+   uint64_t p2;
+   unsigned i;
+
+   printf("\n=== Test 6b: OP Scaled Bitmap 1:1 Phase and firstPix ===\n");
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+   for (i = 0; i < 16; i++)
+   {
+      p_tomRam8[0x400 + (i * 2)] = (uint8_t)i;
+      p_tomRam8[0x401 + (i * 2)] = (uint8_t)i;
+   }
+
+   ram_set32(0x100000, 0x12345678);
+   ram_set32(0x100004, 0x9ABCDEF0);
+
+   p0 = (uint64_t)0x100000 << 40;
+   p1 = ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12);
+   p2 = 0x20;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x01 && p_tomRam8[0x1801] == 0x01
+         && p_tomRam8[0x1802] == 0x02 && p_tomRam8[0x1803] == 0x02)
+      PASS("4bpp scaled hscale=$20 advances source at 1:1");
+   else
+      FAIL("4bpp scaled 1:1 first two pixels = %02X%02X %02X%02X (expected 0101 0202)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801],
+           p_tomRam8[0x1802], p_tomRam8[0x1803]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+
+   p1 = ((uint64_t)8 << 49)
+      | ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12);
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x03 && p_tomRam8[0x1801] == 0x03
+         && p_tomRam8[0x1802] == 0x04 && p_tomRam8[0x1803] == 0x04)
+      PASS("4bpp scaled firstPix skipped to source index 3");
+   else
+      FAIL("4bpp scaled firstPix first two pixels = %02X%02X %02X%02X (expected 0303 0404)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801],
+           p_tomRam8[0x1802], p_tomRam8[0x1803]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+
+   p1 = ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12);
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x01 && p_tomRam8[0x1801] == 0x01)
+      PASS("4bpp scaled iwidth=0 renders one source phrase");
+   else
+      FAIL("4bpp scaled iwidth=0 first pixel = %02X%02X (expected 0101)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+
+   p1 = ((uint64_t)1 << 45)
+      | ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12);
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x01 && p_tomRam8[0x1801] == 0x01)
+      PASS("4bpp reflected scaled left edge keeps visible edge pixel");
+   else
+      FAIL("4bpp reflected left edge first pixel = %02X%02X (expected 0101)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801]);
+}
+
+/* ================================================================
+ * Test 6c: OP Fixed Bitmap firstPix
+ * The firstPix field skips pixels at the start of the first phrase.
+ * ================================================================ */
+static void test_op_fixed_firstpix_4bpp(void)
+{
+   uint64_t p0;
+   uint64_t p1;
+   unsigned i;
+
+   printf("\n=== Test 6c: OP Fixed Bitmap firstPix ===\n");
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+   for (i = 0; i < 16; i++)
+   {
+      p_tomRam8[0x400 + (i * 2)] = (uint8_t)i;
+      p_tomRam8[0x401 + (i * 2)] = (uint8_t)i;
+   }
+
+   ram_set32(0x100000, 0x12345678);
+   ram_set32(0x100004, 0x9ABCDEF0);
+
+   p0 = (uint64_t)0x100000 << 40;
+   p1 = ((uint64_t)8 << 49)
+      | ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12);
+
+   p_OPProcessFixedBitmap(p0, p1, true);
+
+   if (p_tomRam8[0x1800] == 0x03 && p_tomRam8[0x1801] == 0x03)
+      PASS("4bpp firstPix skipped to palette index 3");
+   else
+      FAIL("4bpp firstPix first pixel = %02X %02X (expected 03 03)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+   ram_set32(0x100008, 0x23456789);
+   ram_set32(0x10000C, 0xABCDEF01);
+
+   p0 = (uint64_t)0x100000 << 40;
+   p1 = ((uint64_t)8 << 49)
+      | ((uint64_t)3 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12)
+      | 0xFF0;
+
+   p_OPProcessFixedBitmap(p0, p1, true);
+
+   if (p_tomRam8[0x1800] == 0x02 && p_tomRam8[0x1801] == 0x02)
+      PASS("4bpp clipped phrase ignores firstPix after source advance");
+   else
+      FAIL("4bpp clipped first pixel = %02X %02X (expected 02 02)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801]);
 }
 
 /* ================================================================
@@ -995,6 +1187,106 @@ static void test_reload_consistency(uint8_t *dummy_rom)
 }
 
 /* ================================================================
+ * Test 18: Recognized Raw Homebrew Load
+ * Some homebrew is headerless but has a recognizable absolute-address
+ * startup pattern. Only those layouts should be accepted.
+ * ================================================================ */
+static void test_recognized_raw_homebrew_load(void)
+{
+   struct retro_game_info game;
+   uint8_t raw_bin[96];
+   uint32_t *p_jaguarRunAddress;
+
+   printf("\n=== Test 18: Recognized Raw Homebrew Load ===\n");
+
+   p_retro_unload_game();
+   memset(raw_bin, 0, sizeof(raw_bin));
+
+   raw_bin[0x00] = 0x23;
+   raw_bin[0x01] = 0xFC;
+   raw_bin[0x02] = 0x00;
+   raw_bin[0x03] = 0x07;
+   raw_bin[0x04] = 0x00;
+   raw_bin[0x05] = 0x07;
+   raw_bin[0x06] = 0x00;
+   raw_bin[0x07] = 0xF0;
+   raw_bin[0x08] = 0x21;
+   raw_bin[0x09] = 0x0C;
+   raw_bin[0x0A] = 0x4E;
+   raw_bin[0x0B] = 0xB9;
+   raw_bin[0x0E] = 0x40;
+   raw_bin[0x0F] = 0x20;
+   raw_bin[0x10] = 0x41;
+   raw_bin[0x11] = 0xF9;
+   raw_bin[0x14] = 0x40;
+   raw_bin[0x15] = 0x30;
+   raw_bin[0x20] = 0x60;
+   raw_bin[0x21] = 0xFE;
+
+   memset(&game, 0, sizeof(game));
+   game.path = "recognized_raw_homebrew.jag";
+   game.data = raw_bin;
+   game.size = sizeof(raw_bin);
+
+   if (!p_retro_load_game(&game)) {
+      FAIL("Recognized raw homebrew was rejected");
+      return;
+   }
+
+   p_jaguarRunAddress = dlsym(core_handle, "jaguarRunAddress");
+   if (p_jaguarRunAddress && *p_jaguarRunAddress == 0x00004000)
+      PASS("Recognized raw run address = $%08X", *p_jaguarRunAddress);
+   else if (p_jaguarRunAddress)
+      FAIL("Recognized raw run address = $%08X (expected $00004000)",
+           *p_jaguarRunAddress);
+   else
+      FAIL("Missing jaguarRunAddress symbol");
+
+   if (memcmp(p_jagMemSpace + 0x4000, raw_bin, sizeof(raw_bin)) == 0)
+      PASS("Recognized raw copied to inferred base $4000");
+   else
+      FAIL("Recognized raw bytes not present at inferred base $4000");
+}
+
+/* ================================================================
+ * Test 19: Unknown Headerless BIN Rejection
+ * Unknown headerless files still have no reliable load/run metadata.
+ * ================================================================ */
+static void test_headerless_bin_rejected(void)
+{
+   struct retro_game_info game;
+   uint8_t raw_bin[64];
+
+   printf("\n=== Test 19: Unknown Headerless BIN Rejection ===\n");
+
+   p_retro_unload_game();
+   memset(raw_bin, 0, sizeof(raw_bin));
+
+   raw_bin[0] = 0x23;
+   raw_bin[1] = 0xFC;
+   raw_bin[2] = 0x00;
+   raw_bin[3] = 0x07;
+   raw_bin[4] = 0x00;
+   raw_bin[5] = 0x07;
+   raw_bin[6] = 0x00;
+   raw_bin[7] = 0xF0;
+   raw_bin[8] = 0x21;
+   raw_bin[9] = 0x0C;
+
+   memset(&game, 0, sizeof(game));
+   game.path = "raw_headerless.bin";
+   game.data = raw_bin;
+   game.size = sizeof(raw_bin);
+
+   if (!p_retro_load_game(&game))
+      PASS("Headerless BIN rejected instead of booting invalid RAM");
+   else {
+      FAIL("Headerless BIN unexpectedly loaded");
+      p_retro_unload_game();
+   }
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 int main(int argc, char *argv[])
@@ -1031,6 +1323,7 @@ int main(int argc, char *argv[])
    LOAD(retro_load_game);
    LOAD(retro_unload_game);
    LOAD(retro_run);
+   LOAD(JaguarReset);
    LOAD(JaguarApplyHLEBIOSState);
    LOAD(HalflineCallback);
    LOAD(TOMWriteWord);
@@ -1040,6 +1333,7 @@ int main(int argc, char *argv[])
    LOAD(JERRYIRQEnabled);
    LOAD(JERRYSetPendingIRQ);
    LOAD(OPProcessScaledBitmap);
+   LOAD(OPProcessFixedBitmap);
 
    LOAD_OPT(tomRam8);
    LOAD_OPT(jaguarMainRAM);
@@ -1048,10 +1342,13 @@ int main(int argc, char *argv[])
    LOAD_OPT(smode);
    LOAD_OPT(lowerField);
    LOAD_OPT(vjs);
+   LOAD_OPT(jaguarLoadedRAMStart);
+   LOAD_OPT(jaguarLoadedRAMEnd);
 
    if (!p_tomRam8 || !p_jaguarMainRAM || !p_jagMemSpace || !p_sclk
-         || !p_smode || !p_lowerField || !p_vjs) {
-      fprintf(stderr, "Missing internal symbols (tomRam8, jaguarMainRAM, jagMemSpace, sclk, smode, lowerField, vjs)\n");
+         || !p_smode || !p_lowerField || !p_vjs
+         || !p_jaguarLoadedRAMStart || !p_jaguarLoadedRAMEnd) {
+      fprintf(stderr, "Missing internal symbols (tomRam8, jaguarMainRAM, jagMemSpace, sclk, smode, lowerField, vjs, jaguarLoadedRAMStart/End)\n");
       return 1;
    }
 
@@ -1097,6 +1394,7 @@ int main(int argc, char *argv[])
    test_gpu_auth_magic();
    test_hle_low_ram_workspace();
    test_hle_workspace_apply_contract();
+   test_hle_preserves_ram_loaded_range();
    test_hle_exception_vectors();
    test_memcon1();
    test_memcon1_nonzero_type();
@@ -1104,6 +1402,8 @@ int main(int argc, char *argv[])
    test_endianness_registers();
    test_op_stop_list();
    test_op_scaled_small_hscale_clip();
+   test_op_scaled_firstpix_4bpp();
+   test_op_fixed_firstpix_4bpp();
    test_border_clear();
    test_interrupts_cleared();
    test_jerry_pit_cleared();
@@ -1144,9 +1444,11 @@ int main(int argc, char *argv[])
    test_memcon2();
    test_bg_color();
 
+   test_recognized_raw_homebrew_load();
+   test_headerless_bin_rejected();
+
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 
-   p_retro_unload_game();
    p_retro_deinit();
    dlclose(handle);
    free(dummy_rom);

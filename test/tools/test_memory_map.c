@@ -108,14 +108,13 @@ static void *load_sym(void *handle, const char *name)
 }
 
 /*
- * Build a minimal 8 KB Jaguar ROM with a valid header.
+ * Build a minimal Jaguar ROM with a valid header.
  * The ROM header at 0x400 sets the entry point at 0x802000.
  * We place an infinite loop (BRA.S $802000) at the entry point.
  */
 static uint8_t *make_dummy_rom(size_t *size_out)
 {
-    /* 0x2000 bytes is not enough: we patch instructions at file offset 0x2000 (8 KiB). */
-    size_t sz = 12288;
+    size_t sz = 131072;
     uint8_t *rom = calloc(1, sz);
     if (!rom) { perror("calloc"); exit(1); }
 

@@ -619,7 +619,13 @@ else
 endif
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) test/test_cheat test/test_event_queue test/test_hle_bios
+	rm -f $(TARGET) $(OBJECTS) \
+		test/test_cheat test/test_event_queue test/test_blitter_simd \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_gpu_ops \
+		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
+		test/test_subsystem_init test/test_subsystem_timeline \
+		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
+		test/tools/test_memory_map
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -629,10 +635,26 @@ test:
 	@echo "make test requires GCC/Clang flags; use MSYS2/Unix or compile test/test_cheat.c manually."
 	@false
 else
-test: test/test_cheat test/test_event_queue $(TARGET) test/test_hle_bios
+test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
+		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
+		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
+		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
+		test/test_audio_pipeline test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
+	./test/test_blitter_simd
+	./test/test_dsp_mac40
+	./test/test_m68k_ops
+	./test/test_gpu_ops
+	./test/test_dsp_ops
+	./test/test_dsp_unit
 	./test/test_hle_bios
+	./test/test_subsystem_init ./$(TARGET)
+	./test/test_subsystem_timeline ./$(TARGET)
+	./test/test_irq_cascade ./$(TARGET)
+	./test/test_boot_patterns
+	./test/test_audio_pipeline ./$(TARGET)
+	./test/tools/test_memory_map ./$(TARGET)
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -642,9 +664,55 @@ test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
 
+test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
+	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
+
+test/test_dsp_mac40: test/test_dsp_mac40.c src/jerry/dsp_acc40.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_dsp_mac40.c
+
+test/test_m68k_ops: test/test_m68k_ops.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_m68k_ops.c -ldl
+
+test/test_gpu_ops: test/test_gpu_ops.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_gpu_ops.c -ldl
+
+test/test_dsp_ops: test/test_dsp_ops.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_dsp_ops.c -ldl
+
 test/test_hle_bios: test/test_hle_bios.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_hle_bios.c -ldl
+
+test/test_dsp_unit: test/test_dsp_unit.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_dsp_unit.c -ldl
+
+test/test_subsystem_init: test/test_subsystem_init.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_subsystem_init.c -ldl
+
+test/test_subsystem_timeline: test/test_subsystem_timeline.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_subsystem_timeline.c -ldl
+
+test/test_irq_cascade: test/test_irq_cascade.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_irq_cascade.c -ldl
+
+test/test_boot_patterns: test/test_boot_patterns.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_boot_patterns.c -ldl
+
+test/test_audio_pipeline: test/test_audio_pipeline.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_pipeline.c -ldl -lm
+
+test/tools/test_memory_map: test/tools/test_memory_map.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_memory_map.c -ldl
 endif
 
 .PHONY: clean test lint

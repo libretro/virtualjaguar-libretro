@@ -527,6 +527,57 @@ static void test_interrupt_priority(void)
 }
 
 /* ================================================================
+ * Test 9a: Interrupt Return Address
+ * IRQ dispatch pushes the interrupted PC to R31 and vectors through R30.
+ * This covers the live non-pipelined handler before changing semantics.
+ * ================================================================ */
+static void test_interrupt_return_address(void)
+{
+   uint32_t off;
+   uint32_t saved_pc;
+
+   printf("\n=== Test 9a: Interrupt Return Address ===\n");
+   p_DSPReset();
+
+   for (off = 0; off < 0x2000; off += 2)
+      write_dsp_ram16(off, OP_NOP);
+
+   p_dsp_reg_bank_0[31] = DSP_RAM_BASE + 0x900;
+   p_DSPWriteLong(DSP_PC_ADDR, DSP_RAM_BASE + 0x100, 6);
+   p_DSPWriteLong(DSP_CTRL_ADDR, DSPGO, 6);
+   p_DSPExec(1);
+
+   p_DSPWriteLong(DSP_FLAGS_ADDR, INT_ENA0, 2);
+   p_DSPSetIRQLine(0, 1);
+
+   saved_pc = read_dsp_ram32(0x8FC);
+
+   if (p_dsp_reg_bank_0[31] == DSP_RAM_BASE + 0x8FC)
+      PASS("IRQ decremented R31 before pushing return PC");
+   else
+      FAIL("IRQ stack pointer = $%08X (expected $%08X)",
+            p_dsp_reg_bank_0[31], DSP_RAM_BASE + 0x8FC);
+
+   if (saved_pc == DSP_RAM_BASE + 0x100)
+      PASS("IRQ saved return PC $%08X", saved_pc);
+   else
+      FAIL("IRQ saved return PC $%08X (expected $%08X)",
+            saved_pc, DSP_RAM_BASE + 0x100);
+
+   if (*p_dsp_pc == DSP_RAM_BASE)
+      PASS("IRQ vectored PC to $%08X", *p_dsp_pc);
+   else
+      FAIL("IRQ PC = $%08X (expected $%08X)", *p_dsp_pc, DSP_RAM_BASE);
+
+   if (*p_dsp_control & INT_LAT0)
+      PASS("IRQ latch remains set for handler acknowledgement");
+   else
+      FAIL("IRQ latch unexpectedly clear: ctrl=$%08X", *p_dsp_control);
+
+   p_DSPWriteLong(DSP_CTRL_ADDR, 0, 6);
+}
+
+/* ================================================================
  * Test 10: DSP Code Execution (NOP Sled)
  * Start DSP, run NOPs, verify PC advances
  * ================================================================ */
@@ -884,6 +935,7 @@ int main(int argc, char *argv[])
    test_int_ena_dispatch();
    test_cint_before_dispatch();
    test_interrupt_priority();
+   test_interrupt_return_address();
    test_dsp_execution();
    test_moveq();
    test_store_load();

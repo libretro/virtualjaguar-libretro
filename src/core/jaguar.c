@@ -633,6 +633,10 @@ void HalflineCallback(void)
 void JaguarReset(void)
 {
    unsigned i;
+   uint32_t clearStart = 8;
+   uint32_t clearEnd = 0x200000;
+   uint32_t preserveStart = jaguarLoadedRAMStart;
+   uint32_t preserveEnd = jaguarLoadedRAMEnd;
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
@@ -652,7 +656,23 @@ void JaguarReset(void)
    }
    else
    {
-      memset(jaguarMainRAM + 8, 0, 0x200000 - 8);
+      if (preserveEnd > preserveStart)
+      {
+         if (preserveStart < clearStart)
+            preserveStart = clearStart;
+         if (preserveEnd > clearEnd)
+            preserveEnd = clearEnd;
+
+         if (preserveStart < preserveEnd)
+         {
+            memset(jaguarMainRAM + clearStart, 0, preserveStart - clearStart);
+            memset(jaguarMainRAM + preserveEnd, 0, clearEnd - preserveEnd);
+         }
+         else
+            memset(jaguarMainRAM + clearStart, 0, clearEnd - clearStart);
+      }
+      else
+         memset(jaguarMainRAM + clearStart, 0, clearEnd - clearStart);
    }
 
    // New timer base code stuffola...
