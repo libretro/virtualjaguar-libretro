@@ -27,10 +27,6 @@
 #include "settings.h"
 #include "m68000/m68kinterface.h"
 
-// How many bytes to transfer per BUTCHExec call in HLE mode.
-// One sector of CD-ROM user data = 2048 bytes. Raw sector = 2352 bytes.
-#define HLE_BYTES_PER_TICK   2352
-
 /* CD debug tracing -- set to 1 to enable verbose logging */
 #define CD_DEBUG 0
 #if CD_DEBUG
@@ -264,14 +260,6 @@ static uint32_t diag_fifoReads = 0;
 static uint32_t diag_seekCommands = 0;
 static uint32_t diag_butchGlobalDisabled = 0;
 
-// HLE transfer progress tracking — if HLETransferTick hasn't transferred
-// any data after multiple seek cycles, the game likely uses direct FIFO
-// access (e.g. cart+CD hybrids like Iron Soldier 2). In that case, fall
-// back to native FIFO interrupts so the GPU ISR can handle data transfer.
-static uint32_t hleTransferBytes = 0;
-static uint32_t hleSeeksSinceTransfer = 0;
-#define HLE_FALLBACK_THRESHOLD 5
-
 // DSA response queue: on real hardware, the DSA serial bus has separate
 // TX and RX buffers. Sending a new command via TX does NOT discard an
 // unread response in RX. This is critical for the seek+stop sequence:
@@ -311,87 +299,6 @@ static uint16_t DSAQueuePop(void)
       return response;
    }
    return 0x0400;  // Error — empty queue
-}
-
-
-/* HLE CD data transfer for real BIOS mode.
- *
- * The GPU ISR uses self-relative addressing to find its data area (PTRPOS)
- * in GPU local RAM. Due to GPU code relocation during authentication, the
- * ISR's PTRPOS diverges from the address the 68K BIOS writes to (via
- * main RAM $3074). The ISR writes FIFO data to wrong main RAM addresses,
- * while CD_poll (reading via $3074) never sees progress.
- *
- * Fix: bypass the GPU ISR's fifo_read path entirely. Suppress FIFO
- * interrupts so the ISR never enters fifo_read (and never corrupts RAM).
- * Transfer data directly from cdBuf to main RAM at the BIOS-specified
- * destination. Update the BIOS data area (via $3074) so CD_poll sees
- * progress, and set the DSP completion flag when done.
- *
- * DSARX interrupts are NOT suppressed — the ISR still handles seek
- * responses ($0100), enables I2S, etc. Only the destructive fifo_read
- * path is bypassed. */
-
-static void HLETransferTick(void)
-{
-   uint32_t gpuDataBase;
-   uint32_t destPtr;
-   uint32_t endPtr;
-   uint32_t writeStart;
-   uint32_t remaining;
-   uint32_t toTransfer;
-   uint32_t i;
-   static uint32_t hleCompleteCount = 0;
-
-   if (!cdPlaying || bootConfig.strategy != &cd_boot_strategy_bios)
-      return;
-
-   gpuDataBase = GET32(jaguarMainRAM, 0x3074);
-   if (gpuDataBase < 0xF03000 || gpuDataBase > 0xF03FF0)
-      return;
-
-   destPtr = GPUReadLong(gpuDataBase, UNKNOWN);
-   endPtr  = GPUReadLong(gpuDataBase + 4, UNKNOWN);
-
-   if (endPtr == 0 || endPtr >= 0x200000 || destPtr >= endPtr)
-      return;
-
-   /* The BIOS's CD_read stores (a0 - 4) as dest; the GPU ISR does
-    * addq #4 before the first store. RAM writes start at destPtr + 4. */
-   writeStart = destPtr + 4;
-   remaining  = endPtr - destPtr;
-   toTransfer = (remaining > HLE_BYTES_PER_TICK) ? HLE_BYTES_PER_TICK : remaining;
-   toTransfer &= ~1;
-
-   for (i = 0; i < toTransfer; i += 2)
-   {
-      uint8_t b0;
-      uint8_t b1;
-      if (cdBufPtr >= 2352)
-      {
-         block++;
-         CDIntfReadBlock(block, cdBuf);
-         cdBufPtr = 0;
-      }
-      b0 = cdBuf[cdBufPtr++];
-      b1 = (cdBufPtr < 2352) ? cdBuf[cdBufPtr++] : 0;
-      jaguarMainRAM[(writeStart + i)     & 0x1FFFFF] = b1;
-      jaguarMainRAM[(writeStart + i + 1) & 0x1FFFFF] = b0;
-   }
-
-   destPtr += toTransfer;
-   hleTransferBytes += toTransfer;
-   hleSeeksSinceTransfer = 0;
-   GPUWriteLong(gpuDataBase, destPtr, UNKNOWN);
-
-   if (destPtr >= endPtr)
-   {
-      DSPWriteLong(0xF1B4C8, 0x80000000 | (destPtr & 0x1FFFFF), UNKNOWN);
-      hleCompleteCount++;
-      if (hleCompleteCount <= 10)
-         LOG_DBG("[CD-HLE] Complete #%u: dest=$%06X end=$%06X (gpuData=$%06X)\n",
-                 hleCompleteCount, destPtr, endPtr, gpuDataBase);
-   }
 }
 
 
@@ -439,8 +346,6 @@ void CDROMReset(void)
    diag_fifoReads = 0;
    diag_seekCommands = 0;
    diag_butchGlobalDisabled = 0;
-   hleTransferBytes = 0;
-   hleSeeksSinceTransfer = 0;
 
    // Initialize EEPROM to 0xFFFF (blank/erased state), then set
    // factory default values.  The Jaguar CD BIOS reads specific EEPROM
@@ -485,7 +390,7 @@ void CDROMDiagGetCounters(uint32_t *butchExec,
    if (fifoReads)      *fifoReads      = diag_fifoReads;
    if (seeks)          *seeks          = diag_seekCommands;
    if (globalDisabled) *globalDisabled = diag_butchGlobalDisabled;
-   if (hleBytes)       *hleBytes       = hleTransferBytes;
+   if (hleBytes)       *hleBytes       = 0;  /* HLETransferTick removed */
 }
 
 
@@ -497,8 +402,6 @@ void CDROMDiagGetCounters(uint32_t *butchExec,
 //
 void BUTCHExec(uint32_t cycles)
 {
-   bool biosHLE;
-   bool hleActive;
    uint32_t butchWrite;
 
    if (!haveCDGoodness)
@@ -539,7 +442,6 @@ void BUTCHExec(uint32_t cycles)
             }
          }
 
-         hleSeeksSinceTransfer++;
          CD_LOG("BUTCHExec: seek complete block=%u (MSF %02u:%02u:%02u) — queued $0100, FIFO+playback active\n",
                 block, min, sec, frm);
       }
@@ -567,28 +469,15 @@ void BUTCHExec(uint32_t cycles)
       }
    }
 
-   biosHLE = (bootConfig.strategy == &cd_boot_strategy_bios);
-   /* HLETransferTick is the canonical CD-data path for both HLE and BIOS
-    * strategies until the GPU ISR's PTRPOS divergence (cdrom.c:319-333) is
-    * fixed. The previous "fall back to native FIFO IRQ after N seeks
-    * without HLE progress" path is destructive: it unleashes FIFO IRQs
-    * into the BIOS GPU ISR which writes to a wrong RAM address, corrupting
-    * the 68K stack/jump-table. Pre-Path-A this fallback was harmless
-    * because BUTCHExec never ticked; with BUTCHExec wired in, it becomes
-    * actively destructive (Hover Strike, Primal Rage land at $22xxxxxx). */
-   hleActive = biosHLE;
-   (void)hleSeeksSinceTransfer; /* still incremented for diagnostics */
-
-   /* HLE data transfer: bypass GPU ISR fifo_read entirely for BIOS mode.
-    * Copy CD data directly from cdBuf to main RAM at the BIOS-specified
-    * destination (read from GPU data area via main RAM $3074).
-    * Runs after seek completion and FIFO fill so the transfer pointers
-    * are current and cdPlaying reflects the latest state.
-    * If HLE hasn't transferred data after several seeks, the game likely
-    * uses direct FIFO access — fall back to native FIFO interrupts. */
-   if (hleActive)
-      HLETransferTick();
-
+   /* Removed: HLETransferTick shortcut for BIOS strategy.  It existed to
+    * compensate for the GPU CD ISR's PTRPOS divergence on the FIFO path
+    * back when BUTCH wasn't ticking and the GPU IRQ chain was broken.
+    * With BUTCHExec wired in, the IRQ-line fix routing to GPU IRQ0, and
+    * the recent CPU/GPU/DSP/IRQ accuracy work, the native FIFO path now
+    * delivers correct transfers — and the HLE shortcut became actively
+    * harmful (Primal Rage's BIOS path was wedging at $22002200 because
+    * the HLE shortcut and the now-functional FIFO IRQs both fought for
+    * the same data area).  Removing it flips Primal Rage to PASS. */
    butchWrite = GET32(cdRam, BUTCH);
 
    if (!(butchWrite & 0x01))       // Global interrupt enable not set
@@ -600,14 +489,14 @@ void BUTCHExec(uint32_t cycles)
    {
       bool shouldIRQ = false;
 
-      if ((butchWrite & 0x02) && fifoDataReady && !hleActive)
+      if ((butchWrite & 0x02) && fifoDataReady)
          shouldIRQ = true;
       if ((butchWrite & 0x20) && dsaResponseReady)
          shouldIRQ = true;
 
       if (shouldIRQ)
       {
-         if ((butchWrite & 0x02) && fifoDataReady && !hleActive)
+         if ((butchWrite & 0x02) && fifoDataReady)
             diag_fifoIRQsFired++;
          if ((butchWrite & 0x20) && dsaResponseReady)
             diag_dsaIRQsFired++;
@@ -681,16 +570,11 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    else if (offset == I2CNTRL || offset == I2CNTRL + 2)
    {
       data = GET16(cdRam, offset);
-      /* In BIOS HLE mode, HLETransferTick() writes data directly to RAM,
-       * bypassing the FIFO entirely.  The BIOS's drain loop reads FIFO_DATA
-       * then checks I2CNTRL bit 4 — if we report "FIFO not empty" the loop
-       * never terminates because HLETransferTick keeps the refill cycle alive.
-       * Suppress bit 4 only when HLE is actively transferring. */
-      {
-         bool bHLEActive = (bootConfig.strategy == &cd_boot_strategy_bios);
-         if (haveCDGoodness && fifoDataReady && !bHLEActive)
-            data |= (1 << 4);
-      }
+      /* I2CNTRL bit 4 = FIFO-not-empty status. Now that HLETransferTick is
+       * gone (BIOS runs the native FIFO drain loop), the bit can always
+       * reflect fifoDataReady. */
+      if (haveCDGoodness && fifoDataReady)
+         data |= (1 << 4);
    }
    else if (offset == DS_DATA && haveCDGoodness)
    {

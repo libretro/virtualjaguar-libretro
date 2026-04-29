@@ -32,67 +32,21 @@ uint8_t external_cd_bios[0x40000];
 bool cd_bios_loaded_externally = false;
 #endif
 
-static bool cdAuthBypassInstalled = false;
 static bool cdBootStubInjected = false;
 
 static void bios_reset(void)
 {
-    cdAuthBypassInstalled = false;
     cdBootStubInjected = false;
-}
-
-void JaguarInstallCDAuthBypass(void)
-{
-    const uint32_t bneAddr = 0x050AA0;
-    if (cdAuthBypassInstalled)
-        return;
-
-    if (jaguarMainRAM[bneAddr]     != 0x66 || jaguarMainRAM[bneAddr + 1] != 0x00
-     || jaguarMainRAM[bneAddr + 2] != 0xFA || jaguarMainRAM[bneAddr + 3] != 0x4A)
-    {
-        LOG_WRN("[CD-AUTH] Skip BNE patch: unexpected bytes at $%06X (%02X%02X %02X%02X)\n",
-                bneAddr,
-                jaguarMainRAM[bneAddr], jaguarMainRAM[bneAddr + 1],
-                jaguarMainRAM[bneAddr + 2], jaguarMainRAM[bneAddr + 3]);
-        cdAuthBypassInstalled = true;
-        return;
-    }
-    jaguarMainRAM[bneAddr]     = 0x4E; jaguarMainRAM[bneAddr + 1] = 0x71;
-    jaguarMainRAM[bneAddr + 2] = 0x4E; jaguarMainRAM[bneAddr + 3] = 0x71;
-    LOG_INF("[CD-AUTH] Installed BNE.W $0504EC -> 2x NOP at $%06X\n", bneAddr);
-    cdAuthBypassInstalled = true;
 }
 
 static bool bios_instruction_hook(uint32_t m68kPC)
 {
-    /* GPU auth magic — boot ROM checks this to verify GPU ran auth code */
+    /* GPU auth magic — boot ROM checks this to verify GPU ran auth code.
+     * Empirically still load-bearing: removing it makes every BIOS disc
+     * loop at $0050B6 because the GPU never naturally writes the magic. */
     if (m68kPC == 0x005E40)
     {
         GPUWriteLong(0xF03000, 0x03D0DEAD, 0);
-        return true;
-    }
-
-    if (m68kPC == 0x050A9C)
-    {
-        JaguarInstallCDAuthBypass();
-        return true;
-    }
-
-    if (m68kPC == 0x050AB2)
-    {
-        DSPWriteLong(0x00F1B4C8, 0x80010000, UNKNOWN);
-        return true;
-    }
-
-    if (m68kPC == 0x050B0C)
-    {
-        JaguarWriteLong(0x000FB000, 0x0000000A, UNKNOWN);
-        return true;
-    }
-
-    if (m68kPC == 0x0505FA)
-    {
-        JaguarWriteLong(0x001AE00C, 0x20010001, UNKNOWN);
         return true;
     }
 
@@ -172,12 +126,6 @@ static bool bios_instruction_hook(uint32_t m68kPC)
                 LOG_INF("[CD-BOOTSTUB] CDIntfExtractBootStub failed\n");
             }
         }
-        return true;
-    }
-
-    if (m68kPC == 0x192E46)
-    {
-        JaguarWriteWord(0x001A6800, 0x0001, UNKNOWN);
         return true;
     }
 

@@ -20,10 +20,6 @@
 #include "jaguar.h"
 #include "log.h"
 
-/* Defined in src/cd/jagcd_bios.c.  Forward declared here so cdintf.c can
- * arm the BNE-NOP patch when the BIOS reads into an inter-session gap. */
-extern void JaguarInstallCDAuthBypass(void);
-
 // CDI (DiscJuggler) format support
 static RFILE *cdi_file = NULL;
 static bool ParseCDI(const char *cdiPath);
@@ -84,79 +80,6 @@ static void MSFFromLBA(uint32_t lba, uint8_t *m, uint8_t *s, uint8_t *f)
    *f = lba % 75;
    *s = (lba / 75) % 60;
    *m = lba / (75 * 60);
-}
-
-/* Auth-data redirect for redump-style multi-session dumps.
- *
- * Jaguar CD BIOS authenticates session 2 by seeking to a hardcoded position
- * (computed from session 2 lead-out: `leadout - 453`) and DSP-checksumming
- * 149 sectors of audio there.  On a real disc those 149 sectors are the
- * pregap-audio "ATARI" signature.  Redump-style dumps strip that pregap and
- * place the signature at the *start of the first session-2 track's BIN file*
- * (verified: track 30 begins with `72 d7 54 41 49 52 54 41 49 52 ...` =
- * `TAIRTAIR` byte-swapped).
- *
- * Our CUE parser places session-2 tracks contiguously after a small inter-
- * session gap, so the BIOS's hardcoded seek target (near lead-out) lands in
- * silence inside whatever track happens to occupy that LBA range.  This
- * function detects that case and reads the auth data straight from track 30's
- * BIN file — auth then runs on real data and passes legitimately.
- *
- * Returns true if it filled `buffer` (caller must skip normal track lookup). */
-static bool TryReadAuthRedirect(uint32_t sector, uint8_t *buffer)
-{
-   uint32_t i;
-   uint32_t firstS2Idx = 0;
-   uint32_t s2Leadout;
-   uint32_t authStart, authEnd;
-   uint32_t fileSector;
-   int64_t bytesRead;
-   bool foundS2 = false;
-   RFILE *trackFile;
-
-   if (disc.numSessions < 2)
-      return false;
-
-   s2Leadout = disc.sessions[1].leadOutLBA;
-   if (s2Leadout < 453)
-      return false;
-
-   /* BIOS seeks 453 frames before session-2 lead-out and reads 149 frames. */
-   authStart = s2Leadout - 453;
-   authEnd   = authStart + 149;
-
-   if (sector < authStart || sector >= authEnd)
-      return false;
-
-   for (i = 0; i < disc.numTracks; i++)
-   {
-      if (disc.tracks[i].session >= 2)
-      {
-         firstS2Idx = i;
-         foundS2 = true;
-         break;
-      }
-   }
-   if (!foundS2 || !disc.tracks[firstS2Idx].binFilePath[0])
-      return false;
-
-   fileSector = sector - authStart;
-   trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
-   if (!trackFile)
-      return false;
-
-   rfseek(trackFile, (int64_t)fileSector * 2352, SEEK_SET);
-   bytesRead = rfread(buffer, 1, 2352, trackFile);
-   rfclose(trackFile);
-
-   if (bytesRead < 2352)
-   {
-      if (bytesRead > 0)
-         memset(buffer + bytesRead, 0, 2352 - bytesRead);
-      else
-         return false;
-   }
-   return true;
 }
 
 // Helper: convert MSF to LBA
@@ -1042,21 +965,6 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
    if (cdi_file)
       return CDIntfReadBlockCDI(sector, buffer);
 
-   // BIOS auth zone redirect: when sector falls in [s2_leadout-453, s2_leadout-304),
-   // return real TAIRTAIR data from the start of the first session-2 track BIN.
-   // Redump-style BIN/CUE strips the 149-frame pregap so the auth signature lives
-   // at the start of the track file rather than at the BIOS's hardcoded seek target.
-   if (TryReadAuthRedirect(sector, buffer))
-   {
-      static uint32_t authHits = 0;
-      if (authHits < 5)
-         LOG_INF("[CD-AUTH-REDIRECT] sector=%u served from track-30 BIN (hit #%u)\n", sector, ++authHits);
-      else
-         authHits++;
-      lastReadVirtualPregap = false;
-      return true;
-   }
-
    // Find which track contains this sector. A sector belongs to a track only
    // if it falls within [startLBA, startLBA + lengthLBA). Sectors in the
    // inter-session gap belong to no track and are returned as silence.
@@ -1073,13 +981,10 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
 
    if (!track)
    {
-      // True inter-session gap (outside the redirected pregap window).  Return
-      // silence; the auth bypass at $050A9C still installs as a safety net for
-      // cases where the redirect window doesn't cover what BIOS actually reads.
+      // True inter-session gap. Return silence; tracks lookup will fall through.
       memset(buffer, 0, 2352);
       lastReadVirtualPregap = true;
       lastVirtualPregapLBA = sector;
-      JaguarInstallCDAuthBypass();
       return true;
    }
 
