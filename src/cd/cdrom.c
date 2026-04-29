@@ -218,7 +218,8 @@ static uint8_t cdBuf[2352 + 96];
 static uint32_t cdBufPtr = 2352;
 
 // NM93C14 EEPROM: 64 x 16-bit words (128 bytes)
-static uint16_t cdrom_eeprom_ram[64];
+// Exposed so libretro.c can pack/unpack it into the .srm save buffer.
+uint16_t cdrom_eeprom_ram[64];
 
 // DSA response tracking: bit 13 (RX full) should only be set
 // when we actually have a response ready after a DS_DATA write.

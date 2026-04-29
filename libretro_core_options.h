@@ -134,6 +134,35 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_cd_bios_type",
+      "CD BIOS Type (Restart)",
+      NULL,
+      "Select which Jaguar CD BIOS to use when loading CD images. Retail is the standard BIOS. Dev is the developer BIOS with less strict checks.",
+      NULL,
+      NULL,
+      {
+         { "retail", "Retail" },
+         { "dev",    "Developer" },
+         { NULL, NULL },
+      },
+      "retail"
+   },
+   {
+      "virtualjaguar_cd_boot_mode",
+      "CD Boot Mode (Restart)",
+      NULL,
+      "How to boot Jaguar CD games. HLE uses high-level emulation (no BIOS ROM needed, recommended). BIOS requires an external BIOS ROM file (experimental). Auto uses the real BIOS if found, otherwise HLE.",
+      NULL,
+      NULL,
+      {
+         { "hle",  "HLE (No BIOS Required)" },
+         { "auto", "Auto" },
+         { "bios", "BIOS (Experimental)" },
+         { NULL, NULL },
+      },
+      "hle"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,

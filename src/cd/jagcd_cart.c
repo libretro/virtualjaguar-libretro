@@ -22,13 +22,15 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 static bool cart_boot(const struct retro_game_info *info)
 {
+    bool loaded = false;
+
     SET32(jaguarMainRAM, 0, 0x00200000);
 
-    if (info->data && info->size > 0)
+    if (info && info->data && info->size > 0)
     {
-        JaguarLoadFile((uint8_t *)info->data, info->size);
+        loaded = JaguarLoadFile((uint8_t *)info->data, info->size);
     }
-    else if (info->path)
+    else if (info && info->path)
     {
         RFILE *romFile = rfopen(info->path, "rb");
         if (romFile)
@@ -44,14 +46,37 @@ static bool cart_boot(const struct retro_game_info *info)
             if (romData)
             {
                 rfread(romData, 1, fileSize, romFile);
-                JaguarLoadFile(romData, fileSize);
+                loaded = JaguarLoadFile(romData, fileSize);
                 free(romData);
             }
             rfclose(romFile);
         }
     }
 
+    if (!loaded)
+    {
+        LOG_ERR("[CART] JaguarLoadFile rejected the content\n");
+        return false;
+    }
+
     JaguarReset();
+
+    /* JaguarReset() randomizes RAM contents, which destroys RAM-loaded
+     * executables (ABS, COFF, JAGSERVER formats).  Cart ROMs are safe
+     * because they live at $800000+ which isn't touched by reset.
+     * Re-load the file so the program data is back in place. */
+    if (!jaguarCartInserted)
+    {
+        if (info && info->data && info->size > 0)
+        {
+            if (!JaguarLoadFile((uint8_t *)info->data, info->size))
+            {
+                LOG_ERR("[CART] Failed to reload RAM-loaded content\n");
+                return false;
+            }
+        }
+    }
+
     LOG_INF("[CART] Boot path: cartridge ROM\n");
     return true;
 }
