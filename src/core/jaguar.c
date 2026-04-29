@@ -665,7 +665,7 @@ void JaguarReset(void)
    //Also, have to change this here and in JaguarReadXX() currently
    // Only use the system BIOS if it's available...! (it's always available now!)
    // AND only if a jaguar cartridge has been inserted.
-   if (vjs.useJaguarBIOS && jaguarCartInserted && !vjs.hardwareTypeAlpine)
+   if (vjs.useJaguarBIOS && jaguarCartInserted)
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
    else
    {

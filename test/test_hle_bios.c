@@ -95,11 +95,8 @@ static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
 static struct VJSettings *p_vjs;
 
 struct VJSettings {
-   int32_t joyport;
    bool hardwareTypeNTSC;
    bool useJaguarBIOS;
-   bool hardwareTypeAlpine;
-   uint32_t biosType;
    bool useFastBlitter;
 };
 
@@ -152,6 +149,10 @@ static bool environment(unsigned cmd, void *data)
       struct retro_variable *var = (struct retro_variable *)data;
       if (var->key && strcmp(var->key, "virtualjaguar_bios") == 0) {
          var->value = use_bios ? "enabled" : "disabled";
+         return true;
+      }
+      if (var->key && strcmp(var->key, "virtualjaguar_pal") == 0) {
+         var->value = "disabled";
          return true;
       }
       if (var->key && strcmp(var->key, "virtualjaguar_usefastblitter") == 0) {

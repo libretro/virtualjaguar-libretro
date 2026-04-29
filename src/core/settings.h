@@ -17,18 +17,10 @@ extern "C" {
 
 struct VJSettings
 {
-	int32_t joyport;								// Joystick port
 	bool hardwareTypeNTSC;						// Set to false for PAL
 	bool useJaguarBIOS;
-	bool hardwareTypeAlpine;
-	/* Legacy BIOS selector; currently always defaults to BT_K_SERIES. */
-	uint32_t biosType;
 	bool useFastBlitter;
 };
-
-// BIOS types
-
-enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2 };
 
 // Exported variables
 

@@ -289,7 +289,7 @@ jobs:
           src\jerry\eeprom.c src\core\filedb.c src\jerry\joystick.c src\core\settings.c ^
           src\core\memtrack.c src\core\vjag_memory.c src\core\cheat.c ^
           src\core\universalhdr.c src\jerry\wavetable.c ^
-          src\bios\jagbios.c src\bios\jagbios2.c ^
+          src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\bios\jagstub1bios.c src\bios\jagstub2bios.c ^
           src\m68000\m68kinterface.c ^

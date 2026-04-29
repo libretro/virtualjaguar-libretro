@@ -11,7 +11,6 @@
 #include "cheat.h"
 #include "file.h"
 #include "jagbios.h"
-#include "jagbios2.h"
 #include "jaguar.h"
 #include "dac.h"
 #include "dsp.h"
@@ -1023,9 +1022,7 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
 
    JaguarInit();                                             // set up hardware
-   memcpy(jagMemSpace + 0xE00000,
-         ((vjs.biosType == BT_K_SERIES) ? jaguarBootROM : jaguarBootROM2),
-         0x20000); // Use the stock BIOS
+   memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000); // Use the stock BIOS
 
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);

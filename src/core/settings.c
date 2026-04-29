@@ -1,5 +1,5 @@
 //
-// SETTINGS.CPP: Virtual Jaguar configuration loading/saving support
+// settings.c: runtime configuration state
 //
 // by James Hammons
 // (C) 2010 Underground Software
