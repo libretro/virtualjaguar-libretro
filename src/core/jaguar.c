@@ -757,6 +757,14 @@ void HalflineCallback(void)
       frameDone = true;
    }
 
+   /* Tick BUTCH once per halfline when CD content is loaded.
+    * BUTCHExec advances the seek/FIFO state machine and (when armed)
+    * asserts GPU IRQ0 to drive the CD-data ISR. Halfline cadence
+    * (~32 us) is much coarser than real BUTCH I2S timing, but matches
+    * our existing event-queue resolution. */
+   if (bootConfig.isCDGame)
+      BUTCHExec(0);
+
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }
 
