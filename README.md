@@ -19,7 +19,7 @@ Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) At
 This fork has diverged substantially from upstream Virtual Jaguar v2.1.0. See [docs/WHATSNEW](docs/WHATSNEW) for the full v2.2.0 changelog. Highlights:
 
 - **HLE BIOS** now produces hardware-equivalent post-boot state — MEMCON1, clocks, GPU auth magic, OLP, exception vectors, TOM/JERRY timing — and the vast majority of commercial titles boot cleanly without any BIOS image. 200+ pin tests in `test_hle_bios` cover the contract.
-- **Game-specific fixes**: Alien vs Predator red noise (M2 blitter `BKGWREN+BCOMPEN`), Doom resolution (proper `PWIDTH` pixel replication, replaces the legacy hack), Highlander CD boot (HLE multi-phase sentinel scan), and audio dropouts at frame edges across many titles (interleaved JERRY events).
+- **Game-specific fixes**: Alien vs Predator red noise (M2 blitter `BKGWREN+BCOMPEN`), Doom resolution (proper `PWIDTH` pixel replication, replaces the legacy hack), and audio dropouts at frame edges across many titles (interleaved JERRY events). Jaguar CD support is in flight on a separate branch (PR forthcoming).
 - **CPU accuracy**: DSP 40-bit MAC accumulator semantics, FLAGS-write dispatch, GPU/DSP IMASK preservation and ADDC carry overflow, DIVL exception PC.
 - **Accurate-blitter** accuracy fixes (`daddmode` NAND tree, `daddbsel` bit 3, `ADDARRAY` cinsel carry, `SRCSHADE` color).
 - **Object Processor**: scaled and fixed-bitmap `firstPix` handling, left/right/reflected edge clipping for scaled bitmaps, `firstPix` for 2/4/16/24 BPP fixed bitmaps.
