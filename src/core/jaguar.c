@@ -20,6 +20,8 @@
 
 #include "cdrom.h"
 #include "perf_counters.h"
+#include "jagcd_boot.h"
+#include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -291,6 +293,20 @@ void M68KInstructionHook(void)
    pcQPtr &= 0x3FF;
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
+      return;
+
+   /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small set
+    * of magic PCs in cart ROM space resolve to BIOS routines emulated in
+    * jagcd_hle.c instead of executing the cart bytes.  Returns true if the
+    * hook handled the call (PC/registers updated). */
+   if (JaguarCDHLEHook(m68kPC))
+      return;
+
+   /* CD boot strategy hook (cart strategy is a no-op for cart games;
+    * HLE/BIOS strategies trap specific PCs to inject boot stubs, patch
+    * auth checks, etc.). */
+   if (bootConfig.strategy && bootConfig.strategy->instruction_hook
+         && bootConfig.strategy->instruction_hook(m68kPC))
       return;
 }
 
@@ -751,6 +767,12 @@ void JaguarReset(void)
    uint32_t clearEnd = JAGUAR_RAM_SIZE;
    uint32_t preserveStart = jaguarLoadedRAMStart;
    uint32_t preserveEnd = jaguarLoadedRAMEnd;
+
+   /* CD boot strategies (HLE/BIOS) hold per-run state (auth-bypass
+    * installed flag, boot-stub-injected flag, HLE active flag, etc.)
+    * that must be cleared on every reset.  Cart strategy reset is a no-op. */
+   if (bootConfig.strategy && bootConfig.strategy->reset)
+      bootConfig.strategy->reset();
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
