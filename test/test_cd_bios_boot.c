@@ -125,6 +125,9 @@ struct cd_disc_result {
     uint32_t oob_sp_addr;
     uint8_t  oob_a0_bytes[32];
     uint8_t  oob_a1_bytes[32];
+
+    /* CD subsystem activity captured at end-of-run. */
+    struct cd_diag_snapshot diag;
 };
 
 static bool cd_load_game(const char *path)
@@ -280,6 +283,9 @@ static void cd_run_one_disc(const char *path, unsigned frames,
 
     out->unique_pc_count    = hist.unique_count;
     out->unique_pc_overflow = hist.unique_overflow;
+
+    /* Capture CD subsystem snapshot before unload (counters reset on next reset). */
+    cd_diag_capture(C.handle, &out->diag);
 
     if (!hist.unique_overflow && hist.unique_count <= 32) {
         size_t i;
@@ -473,6 +479,15 @@ TEST(boot_all_discovered_discs_real_bios)
                 r->unique_pc_count,
                 r->unique_pc_overflow ? "+" : "",
                 r->final_pc);
+        fprintf(stderr,
+                "    [DIAG] %s : gpu_pc=$%06X irq0=%u irq3=%u "
+                "butchExec=%u fifoIRQs=%u dsaIRQs=%u fifoReads=%u "
+                "seeks=%u globalDis=%u hleBytes=%u\n",
+                label, r->diag.gpu_pc,
+                r->diag.gpu_irq0_count, r->diag.gpu_irq3_count,
+                r->diag.butchExec, r->diag.fifoIRQs, r->diag.dsaIRQs,
+                r->diag.fifoReads, r->diag.seeks, r->diag.globalDisabled,
+                r->diag.hleBytes);
 
         if (r->oob_snapshot_captured) {
             int j;

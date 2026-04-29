@@ -44,6 +44,13 @@ enum { GPUIRQ_CPU = 0, GPUIRQ_DSP, GPUIRQ_TIMER, GPUIRQ_OBJECT, GPUIRQ_BLITTER }
 
 extern uint32_t gpu_reg_bank_0[], gpu_reg_bank_1[];
 
+/* Diagnostic IRQ counters (incremented in GPUSetIRQLine on ASSERT_LINE,
+ * reset in GPUReset). Pure diagnostics — no behavioural side effects.
+ * gpu_irq0_count = CD ISR (BUTCH external IRQ via EXT1)
+ * gpu_irq3_count = OP IRQ (sanity counter for object-processor activity) */
+extern uint32_t gpu_irq0_count;
+extern uint32_t gpu_irq3_count;
+
 #ifdef __cplusplus
 }
 #endif

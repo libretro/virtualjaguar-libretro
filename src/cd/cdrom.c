@@ -471,6 +471,23 @@ void CDROMDiagSummary(void)
            (cdRam[I2CNTRL + 3] & 0x04) != 0);
 }
 
+void CDROMDiagGetCounters(uint32_t *butchExec,
+                          uint32_t *fifoIRQs,
+                          uint32_t *dsaIRQs,
+                          uint32_t *fifoReads,
+                          uint32_t *seeks,
+                          uint32_t *globalDisabled,
+                          uint32_t *hleBytes)
+{
+   if (butchExec)      *butchExec      = diag_butchExecCalls;
+   if (fifoIRQs)       *fifoIRQs       = diag_fifoIRQsFired;
+   if (dsaIRQs)        *dsaIRQs        = diag_dsaIRQsFired;
+   if (fifoReads)      *fifoReads      = diag_fifoReads;
+   if (seeks)          *seeks          = diag_seekCommands;
+   if (globalDisabled) *globalDisabled = diag_butchGlobalDisabled;
+   if (hleBytes)       *hleBytes       = hleTransferBytes;
+}
+
 
 //
 // This approach is probably wrong, but let's do it for now.

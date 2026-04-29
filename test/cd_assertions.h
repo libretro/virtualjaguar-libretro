@@ -337,6 +337,62 @@ static inline size_t cd_count_nonzero(const uint8_t *ram, uint32_t addr, uint32_
 }
 
 /* ------------------------------------------------------------------ */
+/* CD subsystem instrumentation                                        */
+/*                                                                     */
+/* Reads diagnostic counters exposed by the core via dlsym so a per-   */
+/* disc report can include real CD activity (BUTCH ticks, FIFO IRQs,   */
+/* GPU IRQ0/IRQ3 firing counts, HLE transfer bytes) — not just 68K PC. */
+/* ------------------------------------------------------------------ */
+struct cd_diag_snapshot {
+    uint32_t butchExec;
+    uint32_t fifoIRQs;
+    uint32_t dsaIRQs;
+    uint32_t fifoReads;
+    uint32_t seeks;
+    uint32_t globalDisabled;
+    uint32_t hleBytes;
+    uint32_t gpu_irq0_count;
+    uint32_t gpu_irq3_count;
+    uint32_t gpu_pc;
+};
+
+typedef void (*cd_diag_get_counters_fn)(uint32_t *, uint32_t *,
+                                        uint32_t *, uint32_t *,
+                                        uint32_t *, uint32_t *,
+                                        uint32_t *);
+
+static inline void cd_diag_capture(void *handle, struct cd_diag_snapshot *out)
+{
+    cd_diag_get_counters_fn p_get;
+    uint32_t *p_irq0, *p_irq3, *p_gpu_pc;
+    uint32_t (*p_get_pc)(void);
+    memset(out, 0, sizeof(*out));
+    if (!handle) return;
+
+    p_get = (cd_diag_get_counters_fn)dlsym(handle, "CDROMDiagGetCounters");
+    if (p_get) {
+        p_get(&out->butchExec, &out->fifoIRQs, &out->dsaIRQs,
+              &out->fifoReads, &out->seeks, &out->globalDisabled,
+              &out->hleBytes);
+    }
+
+    p_irq0 = (uint32_t *)dlsym(handle, "gpu_irq0_count");
+    p_irq3 = (uint32_t *)dlsym(handle, "gpu_irq3_count");
+    if (p_irq0) out->gpu_irq0_count = *p_irq0;
+    if (p_irq3) out->gpu_irq3_count = *p_irq3;
+
+    /* gpu_pc is a non-static global (used elsewhere as `extern uint32_t gpu_pc`).
+     * Prefer GPUGetPC if exported; fall back to the symbol directly. */
+    p_get_pc = (uint32_t (*)(void))dlsym(handle, "GPUGetPC");
+    if (p_get_pc) {
+        out->gpu_pc = p_get_pc();
+    } else {
+        p_gpu_pc = (uint32_t *)dlsym(handle, "gpu_pc");
+        if (p_gpu_pc) out->gpu_pc = *p_gpu_pc;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* SHA1 (small, dependency-free, for baseline sidecar)                 */
 /* ------------------------------------------------------------------ */
 
