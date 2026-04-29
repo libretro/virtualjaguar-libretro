@@ -645,6 +645,27 @@ static void test_op_scaled_firstpix_4bpp(void)
            p_tomRam8[0x1806], p_tomRam8[0x1807]);
 
    memset(p_tomRam8 + 0x1800, 0, 64);
+   p2 = 0x30;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x01 && p_tomRam8[0x1801] == 0x01
+         && p_tomRam8[0x1802] == 0x01 && p_tomRam8[0x1803] == 0x01
+         && p_tomRam8[0x1804] == 0x02 && p_tomRam8[0x1805] == 0x02
+         && p_tomRam8[0x1806] == 0x03 && p_tomRam8[0x1807] == 0x03
+         && p_tomRam8[0x1808] == 0x03 && p_tomRam8[0x1809] == 0x03
+         && p_tomRam8[0x180A] == 0x04 && p_tomRam8[0x180B] == 0x04)
+      PASS("4bpp scaled hscale=$30 uses stable 3:2 source stepping");
+   else
+      FAIL("4bpp scaled 3:2 first six pixels = %02X%02X %02X%02X %02X%02X %02X%02X %02X%02X %02X%02X (expected 0101 0101 0202 0303 0303 0404)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801],
+           p_tomRam8[0x1802], p_tomRam8[0x1803],
+           p_tomRam8[0x1804], p_tomRam8[0x1805],
+           p_tomRam8[0x1806], p_tomRam8[0x1807],
+           p_tomRam8[0x1808], p_tomRam8[0x1809],
+           p_tomRam8[0x180A], p_tomRam8[0x180B]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
    p2 = 0x20;
 
    p1 = ((uint64_t)8 << 49)
