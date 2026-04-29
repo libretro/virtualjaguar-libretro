@@ -69,6 +69,8 @@
 #define JERRY_PIT1       0xF10002
 #define JERRY_PIT2       0xF10004
 #define JERRY_PIT3       0xF10006
+#define JERRY_SCLK       0xF1A152
+#define JERRY_SMODE      0xF1A156
 
 /* who enum values from vjag_memory.h */
 #define WHO_M68K  6
@@ -84,12 +86,15 @@ static void (*p_retro_set_input_poll)(retro_input_poll_t);
 static void (*p_retro_set_input_state)(retro_input_state_t);
 static bool (*p_retro_load_game)(const struct retro_game_info *);
 static void (*p_retro_unload_game)(void);
+static void (*p_JaguarApplyHLEBIOSState)(void);
 
 /* Emulator internals via dlsym */
 static void *core_handle;
 static uint8_t *p_tomRam8;
 static uint8_t **p_jaguarMainRAM;
 static uint8_t *p_jagMemSpace;
+static uint8_t **p_sclk;
+static uint32_t **p_smode;
 static uint32_t (*p_GPUReadLong)(uint32_t, uint32_t);
 static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
 static struct VJSettings *p_vjs;
@@ -110,6 +115,7 @@ static int16_t input_state(unsigned p, unsigned d, unsigned i, unsigned id)
 { (void)p; (void)d; (void)i; (void)id; return 0; }
 
 static int use_bios = 0;
+static int use_pal = 0;
 
 static void log_printf(enum retro_log_level level, const char *fmt, ...)
 {
@@ -152,7 +158,7 @@ static bool environment(unsigned cmd, void *data)
          return true;
       }
       if (var->key && strcmp(var->key, "virtualjaguar_pal") == 0) {
-         var->value = "disabled";
+         var->value = use_pal ? "enabled" : "disabled";
          return true;
       }
       if (var->key && strcmp(var->key, "virtualjaguar_usefastblitter") == 0) {
@@ -186,6 +192,22 @@ static uint32_t ram_get32(uint32_t offset)
         | ((uint32_t)ram[offset + 1] << 16)
         | ((uint32_t)ram[offset + 2] << 8)
         | (uint32_t)ram[offset + 3];
+}
+
+static uint16_t ram_get16(uint32_t offset)
+{
+   uint8_t *ram = *p_jaguarMainRAM;
+   return ((uint16_t)ram[offset] << 8) | (uint16_t)ram[offset + 1];
+}
+
+static void ram_set32(uint32_t offset, uint32_t value)
+{
+   uint8_t *ram = *p_jaguarMainRAM;
+
+   ram[offset] = (uint8_t)(value >> 24);
+   ram[offset + 1] = (uint8_t)(value >> 16);
+   ram[offset + 2] = (uint8_t)(value >> 8);
+   ram[offset + 3] = (uint8_t)value;
 }
 
 /* ================================================================
@@ -223,6 +245,98 @@ static void test_hle_low_ram_workspace(void)
       PASS("RAM[$804] = $%08X has bit 0 set", value);
    else
       FAIL("RAM[$804] = $%08X (expected bit 0 set)", value);
+}
+
+/* ================================================================
+ * Test 1c: HLE BIOS workspace apply contract
+ * The save-state path reapplies this hook. It must populate missing
+ * HLE state, preserve existing game/BIOS data, and stay inert for
+ * real-BIOS mode.
+ * ================================================================ */
+static void test_hle_workspace_apply_contract(void)
+{
+   uint32_t value;
+   bool old_use_bios;
+
+   printf("\n=== Test 1c: HLE BIOS Workspace Apply Contract ===\n");
+
+   ram_set32(0x804, 0x00000000);
+   p_JaguarApplyHLEBIOSState();
+   value = ram_get32(0x804);
+   if (value == 0x00000001)
+      PASS("zero workspace becomes $%08X", value);
+   else
+      FAIL("zero workspace became $%08X (expected $00000001)", value);
+
+   ram_set32(0x804, 0xA5A5A5A5);
+   p_JaguarApplyHLEBIOSState();
+   value = ram_get32(0x804);
+   if (value == 0xA5A5A5A5)
+      PASS("non-zero workspace preserved as $%08X", value);
+   else
+      FAIL("non-zero workspace changed to $%08X", value);
+
+   old_use_bios = p_vjs->useJaguarBIOS;
+   p_vjs->useJaguarBIOS = true;
+   ram_set32(0x804, 0x00000000);
+   p_JaguarApplyHLEBIOSState();
+   value = ram_get32(0x804);
+   p_vjs->useJaguarBIOS = old_use_bios;
+
+   if (value == 0x00000000)
+      PASS("real-BIOS mode leaves workspace unchanged");
+   else
+      FAIL("real-BIOS mode changed workspace to $%08X", value);
+
+   p_JaguarApplyHLEBIOSState();
+}
+
+/* ================================================================
+ * Test 1d: HLE exception and interrupt vectors
+ * The HLE path installs safe RTE stubs, including vector 64 used by
+ * Jaguar hardware interrupts.
+ * ================================================================ */
+static void test_hle_exception_vectors(void)
+{
+   uint32_t bus_vector;
+   uint32_t address_vector;
+   uint32_t generic_vector;
+   uint32_t interrupt_vector;
+   uint32_t last_vector;
+   uint32_t bus_handler;
+   uint16_t rte_handler;
+
+   printf("\n=== Test 1d: HLE Exception Vectors ===\n");
+
+   bus_vector = ram_get32(0x08);
+   address_vector = ram_get32(0x0C);
+   generic_vector = ram_get32(0x10);
+   interrupt_vector = ram_get32(0x100);
+   last_vector = ram_get32(0x3FC);
+   bus_handler = ram_get32(0x400);
+   rte_handler = ram_get16(0x404);
+
+   if (bus_vector == 0x00000400 && address_vector == 0x00000400)
+      PASS("bus/address vectors point to $0400");
+   else
+      FAIL("bus/address vectors are $%08X/$%08X", bus_vector, address_vector);
+
+   if (generic_vector == 0x00000404 && interrupt_vector == 0x00000404
+         && last_vector == 0x00000404)
+      PASS("generic, interrupt, and last vectors point to $0404");
+   else
+      FAIL("generic/interrupt/last vectors are $%08X/$%08X/$%08X",
+           generic_vector, interrupt_vector, last_vector);
+
+   if (bus_handler == 0x508F4E73)
+      PASS("bus/address handler = $%08X", bus_handler);
+   else
+      FAIL("bus/address handler = $%08X (expected $508F4E73)", bus_handler);
+
+   if (rte_handler == 0x4E73)
+      PASS("generic RTE handler = $%04X", rte_handler);
+   else
+      FAIL("generic RTE handler = $%04X (expected $4E73)", rte_handler);
 }
 
 /* ================================================================
@@ -436,17 +550,43 @@ static void test_jerry_pit_cleared(void)
 }
 
 /* ================================================================
+ * Test 9b: JERRY I2S Defaults
+ * HLE configures I2S so DSP SSI interrupts are available before games
+ * install their own DSP programs.
+ * ================================================================ */
+static void test_jerry_i2s_defaults(void)
+{
+   uint8_t sclk;
+   uint32_t smode;
+
+   printf("\n=== Test 9b: JERRY I2S Defaults ===\n");
+
+   sclk = **p_sclk;
+   smode = **p_smode;
+
+   if (sclk == 0x0008)
+      PASS("SCLK = $%02X", sclk);
+   else
+      FAIL("SCLK = $%02X (expected $08)", sclk);
+
+   if (smode == 0x0001)
+      PASS("SMODE = $%08X", smode);
+   else
+      FAIL("SMODE = $%08X (expected $00000001)", smode);
+}
+
+/* ================================================================
  * Test 10: TOM NTSC Video Timing Registers
  * Verify all TOM video registers match expected values.
  * ================================================================ */
 static void test_tom_video_registers(void)
 {
+   bool ntsc;
+
    printf("\n=== Test 10: TOM Video Timing Registers ===\n");
 
-   if (!p_vjs->hardwareTypeNTSC) {
-      printf("  (Skipping NTSC checks — running in PAL mode)\n");
-      return;
-   }
+   ntsc = p_vjs->hardwareTypeNTSC;
+   printf("  Mode: %s\n", ntsc ? "NTSC" : "PAL");
 
 #define CHECK_TOM(name, offset, expected) do { \
    uint16_t val = tom_get16(offset); \
@@ -456,24 +596,24 @@ static void test_tom_video_registers(void)
       FAIL(name " = %u (expected %u)", val, (unsigned)(expected)); \
 } while(0)
 
-   CHECK_TOM("HP",   TOM_HP,   844);
-   CHECK_TOM("HBB",  TOM_HBB,  1713);
-   CHECK_TOM("HBE",  TOM_HBE,  125);
-   CHECK_TOM("HS",   TOM_HS,   1741);
-   CHECK_TOM("HVS",  TOM_HVS,  651);
+   CHECK_TOM("HP",   TOM_HP,   ntsc ? 844 : 850);
+   CHECK_TOM("HBB",  TOM_HBB,  ntsc ? 1713 : 1711);
+   CHECK_TOM("HBE",  TOM_HBE,  ntsc ? 125 : 158);
+   CHECK_TOM("HS",   TOM_HS,   ntsc ? 1741 : 1749);
+   CHECK_TOM("HVS",  TOM_HVS,  ntsc ? 651 : 601);
    CHECK_TOM("HDB1", TOM_HDB1, 203);
    CHECK_TOM("HDB2", TOM_HDB2, 203);
    CHECK_TOM("HDE",  TOM_HDE,  1665);
-   CHECK_TOM("VP",   TOM_VP,   523);
-   CHECK_TOM("VBB",  TOM_VBB,  500);
-   CHECK_TOM("VBE",  TOM_VBE,  24);
-   CHECK_TOM("VS",   TOM_VS,   517);
+   CHECK_TOM("VP",   TOM_VP,   ntsc ? 523 : 623);
+   CHECK_TOM("VBB",  TOM_VBB,  ntsc ? 500 : 600);
+   CHECK_TOM("VBE",  TOM_VBE,  ntsc ? 24 : 34);
+   CHECK_TOM("VS",   TOM_VS,   ntsc ? 517 : 618);
    CHECK_TOM("VDB",  TOM_VDB,  38);
    CHECK_TOM("VDE",  TOM_VDE,  518);
-   CHECK_TOM("VEB",  TOM_VEB,  511);
+   CHECK_TOM("VEB",  TOM_VEB,  ntsc ? 511 : 613);
    CHECK_TOM("VEE",  TOM_VEE,  6);
    CHECK_TOM("VI",   TOM_VI,   0);  /* left at 0; (vc>0) guard disables until game sets it */
-   CHECK_TOM("HEQ",  TOM_HEQ,  784);
+   CHECK_TOM("HEQ",  TOM_HEQ,  ntsc ? 784 : 787);
    CHECK_TOM("BG",   TOM_BG,   0);
    CHECK_TOM("VMODE", TOM_VMODE, 0x06C1);
 
@@ -725,16 +865,19 @@ int main(int argc, char *argv[])
    LOAD(retro_set_input_state);
    LOAD(retro_load_game);
    LOAD(retro_unload_game);
+   LOAD(JaguarApplyHLEBIOSState);
    LOAD(GPUReadLong);
    LOAD(JERRYReadWord);
 
    LOAD_OPT(tomRam8);
    LOAD_OPT(jaguarMainRAM);
    LOAD_OPT(jagMemSpace);
+   LOAD_OPT(sclk);
+   LOAD_OPT(smode);
    LOAD_OPT(vjs);
 
-   if (!p_tomRam8 || !p_jaguarMainRAM || !p_jagMemSpace || !p_vjs) {
-      fprintf(stderr, "Missing internal symbols (tomRam8, jaguarMainRAM, jagMemSpace, vjs)\n");
+   if (!p_tomRam8 || !p_jaguarMainRAM || !p_jagMemSpace || !p_sclk || !p_smode || !p_vjs) {
+      fprintf(stderr, "Missing internal symbols (tomRam8, jaguarMainRAM, jagMemSpace, sclk, smode, vjs)\n");
       return 1;
    }
 
@@ -779,6 +922,8 @@ int main(int argc, char *argv[])
 
    test_gpu_auth_magic();
    test_hle_low_ram_workspace();
+   test_hle_workspace_apply_contract();
+   test_hle_exception_vectors();
    test_memcon1();
    test_memcon1_nonzero_type();
    test_jerry_clocks();
@@ -787,6 +932,7 @@ int main(int argc, char *argv[])
    test_border_clear();
    test_interrupts_cleared();
    test_jerry_pit_cleared();
+   test_jerry_i2s_defaults();
    test_tom_video_registers();
    test_ssp_init();
    test_run_address();
@@ -795,6 +941,30 @@ int main(int argc, char *argv[])
    test_bg_color();
    test_memcon1_width_bits(dummy_rom);
    test_reload_consistency(dummy_rom);
+
+   p_retro_unload_game();
+   use_pal = 1;
+
+   memset(&game, 0, sizeof(game));
+   game.path = "dummy_pal.jag";
+   game.data = dummy_rom;
+   game.size = 131072;
+
+   if (!p_retro_load_game(&game)) {
+      fprintf(stderr, "retro_load_game failed with PAL dummy ROM\n");
+      p_retro_deinit();
+      dlclose(handle);
+      free(dummy_rom);
+      return 1;
+   }
+
+   printf("\n========== HLE Mode PAL Timing ==========\n");
+
+   test_hle_low_ram_workspace();
+   test_jerry_clocks();
+   test_tom_video_registers();
+   test_memcon2();
+   test_bg_color();
 
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 
