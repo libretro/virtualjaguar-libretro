@@ -1686,13 +1686,9 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                   Start and end from the address level of the pipeline are used.
                   */
 
-               /* Phrase writes merge via byte_merge(mask): inhibited bytes come from
-                * dstd. With !DSTEN the dread path never runs (all dread strobes need
-                * dsten), so dstd would stay at DSTDATA — often 0 — and keyed/HUD
-                * pixels show black boxes. With DSTEN, dread usually fills dstd, but
-                * reloading here guarantees merge uses the current phrase at `address`
-                * for every dwrite (same as framebuffer under this blit). */
-               if (phrase_mode)
+               //Phrase mode needs destination data for start/end mask byte merging,
+               //but NOT when bkgwren is set (hardware uses DSTDATA register value).
+               if (phrase_mode && !dsten && !bkgwren)
                   dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 
                // Write data combines srcd and dstd through ADDDSEL, PATDSEL, or LFU.
