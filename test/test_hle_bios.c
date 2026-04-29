@@ -132,6 +132,7 @@ static void (*p_DSPHandleIRQsNP)(void);
 static uint32_t *p_dsp_pc;
 static uint32_t *p_dsp_control;
 static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
+static uint8_t (*p_JERRYReadByte)(uint32_t, uint32_t);
 static struct VJSettings *p_vjs;
 static uint32_t *p_jaguarLoadedRAMStart;
 static uint32_t *p_jaguarLoadedRAMEnd;
@@ -1365,6 +1366,111 @@ static void test_dsp_irq_latch_redispatch(void)
 }
 
 /* ================================================================
+ * Test 9f: JERRY PIT Byte Writes Dropped
+ * The JERRY PIT register block at $F10000-$F10007 is write-WORD-only:
+ *   $F10000 = PIT1 prescaler  (JPIT1)
+ *   $F10002 = PIT1 divider    (JPIT2)
+ *   $F10004 = PIT2 prescaler  (JPIT3)
+ *   $F10006 = PIT2 divider    (JPIT4)
+ * Word writes are decoded by JERRYWriteWord at src/jerry/jerry.c:569-592
+ * (switch on offset & 0x07; updates JERRYPIT{1,2}{Prescaler,Divider}
+ * and triggers JERRYResetPIT{1,2}). Byte writes are silently dropped:
+ * JERRYWriteByte at src/jerry/jerry.c:511-515 has the comment
+ * "Unhandled timer write (BYTE)" and just returns without modifying
+ * any state. This is the OPPOSITE of TOM's PIT at $F00050-$F00053
+ * which accepts both byte and word writes.
+ *
+ * Read-back paths are at separate addresses ($F10036/$F10038/$F1003A/
+ * $F1003C, see JERRYReadWord at src/jerry/jerry.c:452-462).
+ *
+ * We pin the byte-drop quirk by interleaving word writes (which must
+ * stick) with byte writes (which must NOT alter the registers).
+ * ================================================================ */
+static void test_jerry_pit_byte_writes_dropped(void)
+{
+   uint16_t saved_p1pre, saved_p1div, saved_p2pre, saved_p2div;
+   uint16_t v;
+
+   printf("\n=== Test 9f: JERRY PIT Byte Writes Dropped ===\n");
+
+   /* Save originals via the read-back paths. */
+   saved_p1pre = p_JERRYReadWord(0xF10036, WHO_M68K);
+   saved_p1div = p_JERRYReadWord(0xF10038, WHO_M68K);
+   saved_p2pre = p_JERRYReadWord(0xF1003A, WHO_M68K);
+   saved_p2div = p_JERRYReadWord(0xF1003C, WHO_M68K);
+
+   /* Sub-assert 1: word write to $F10000 (PIT1 prescaler) sticks. */
+   p_JERRYWriteWord(0xF10000, 0xAAAA, WHO_M68K);
+   v = p_JERRYReadWord(0xF10036, WHO_M68K);
+   if (v == 0xAAAA)
+      PASS("PIT1 prescaler word write $AAAA -> readback $%04X", v);
+   else
+      FAIL("PIT1 prescaler word write $AAAA but readback $%04X", v);
+
+   /* Sub-assert 2: byte write to $F10000 (high byte) is dropped. */
+   p_JERRYWriteByte(0xF10000, 0x55, WHO_M68K);
+   v = p_JERRYReadWord(0xF10036, WHO_M68K);
+   if (v == 0xAAAA)
+      PASS("byte $55 -> $F10000 dropped, PIT1 prescaler still $AAAA");
+   else
+      FAIL("byte $55 -> $F10000 mutated PIT1 prescaler to $%04X", v);
+
+   /* Sub-assert 3: byte write to $F10001 (low byte) is dropped. */
+   p_JERRYWriteByte(0xF10001, 0x55, WHO_M68K);
+   v = p_JERRYReadWord(0xF10036, WHO_M68K);
+   if (v == 0xAAAA)
+      PASS("byte $55 -> $F10001 dropped, PIT1 prescaler still $AAAA");
+   else
+      FAIL("byte $55 -> $F10001 mutated PIT1 prescaler to $%04X", v);
+
+   /* Sub-assert 4: word write between byte attempts still works. */
+   p_JERRYWriteWord(0xF10000, 0x1234, WHO_M68K);
+   p_JERRYWriteByte(0xF10000, 0xFF, WHO_M68K);
+   p_JERRYWriteByte(0xF10001, 0xFF, WHO_M68K);
+   v = p_JERRYReadWord(0xF10036, WHO_M68K);
+   if (v == 0x1234)
+      PASS("word $1234 stuck through subsequent byte writes (still $%04X)", v);
+   else
+      FAIL("word $1234 corrupted by following byte writes -> $%04X", v);
+
+   /* Sub-assert 5: PIT1 divider ($F10002) drops byte writes. */
+   p_JERRYWriteWord(0xF10002, 0xBEEF, WHO_M68K);
+   p_JERRYWriteByte(0xF10002, 0x11, WHO_M68K);
+   p_JERRYWriteByte(0xF10003, 0x22, WHO_M68K);
+   v = p_JERRYReadWord(0xF10038, WHO_M68K);
+   if (v == 0xBEEF)
+      PASS("PIT1 divider byte writes dropped, still $BEEF");
+   else
+      FAIL("PIT1 divider byte writes leaked: $%04X (want $BEEF)", v);
+
+   /* Sub-assert 6: PIT2 prescaler ($F10004) drops byte writes. */
+   p_JERRYWriteWord(0xF10004, 0xCAFE, WHO_M68K);
+   p_JERRYWriteByte(0xF10004, 0x33, WHO_M68K);
+   p_JERRYWriteByte(0xF10005, 0x44, WHO_M68K);
+   v = p_JERRYReadWord(0xF1003A, WHO_M68K);
+   if (v == 0xCAFE)
+      PASS("PIT2 prescaler byte writes dropped, still $CAFE");
+   else
+      FAIL("PIT2 prescaler byte writes leaked: $%04X (want $CAFE)", v);
+
+   /* Sub-assert 7: PIT2 divider ($F10006) drops byte writes. */
+   p_JERRYWriteWord(0xF10006, 0xF00D, WHO_M68K);
+   p_JERRYWriteByte(0xF10006, 0x77, WHO_M68K);
+   p_JERRYWriteByte(0xF10007, 0x88, WHO_M68K);
+   v = p_JERRYReadWord(0xF1003C, WHO_M68K);
+   if (v == 0xF00D)
+      PASS("PIT2 divider byte writes dropped, still $F00D");
+   else
+      FAIL("PIT2 divider byte writes leaked: $%04X (want $F00D)", v);
+
+   /* Restore originals via word writes. */
+   p_JERRYWriteWord(0xF10000, saved_p1pre, WHO_M68K);
+   p_JERRYWriteWord(0xF10002, saved_p1div, WHO_M68K);
+   p_JERRYWriteWord(0xF10004, saved_p2pre, WHO_M68K);
+   p_JERRYWriteWord(0xF10006, saved_p2div, WHO_M68K);
+}
+
+/* ================================================================
  * Test 9b: JERRY I2S Defaults
  * HLE configures I2S so DSP SSI interrupts are available before games
  * install their own DSP programs.
@@ -1395,6 +1501,82 @@ static void test_jerry_i2s_defaults(void)
       PASS("SMODE = $%08X", smode);
    else
       FAIL("SMODE = $%08X (expected $00000001)", smode);
+}
+
+/* ================================================================
+ * Test 9g: JERRY Wavetable ROM Write Protect
+ * The Jaguar wavetable ROM image lives at $F1D000-$F1DFFF (mirrored
+ * into jerry_ram_8[0xD000..0xDFFF] at JERRYInit). Both JERRYWriteByte
+ * (src/jerry/jerry.c:540) and JERRYWriteWord (src/jerry/jerry.c:623)
+ * silently drop writes in this range so games cannot corrupt the
+ * wavetable. Reads fall through to the same jerry_ram_8 buffer that
+ * the ROM image was memcpy'd into.
+ * ================================================================ */
+static void test_jerry_wavetable_rom_write_protect(void)
+{
+   /* Sample offsets: corners + interior of the ROM range. */
+   static const uint32_t sample_offsets[] = {
+      0xF1D000u,   /* first byte of ROM_TRI */
+      0xF1D080u,   /* mid-table interior */
+      0xF1D200u,   /* start of SINE per wavetable.h comment */
+      0xF1DFFEu,   /* second-to-last byte (word-aligned) */
+      0xF1DFFFu    /* very last byte */
+   };
+   static const uint32_t word_offsets[] = {
+      0xF1D000u,
+      0xF1D200u,
+      0xF1DFFEu
+   };
+   uint8_t saved[5];
+   unsigned i;
+   bool any_nonzero = false;
+
+   printf("\n=== Test 9g: JERRY Wavetable ROM Write Protect ===\n");
+
+   /* 1. Snapshot ROM bytes at the sample offsets. */
+   for (i = 0; i < 5; i++)
+      saved[i] = p_JERRYReadByte(sample_offsets[i], WHO_M68K);
+
+   /* Sanity: the wavetable image should have been loaded -- at least one
+    * sample byte must be non-zero. If everything reads zero we are likely
+    * looking at an uninitialised RAM region instead of the ROM image. */
+   for (i = 0; i < 5; i++) {
+      if (saved[i] != 0x00) {
+         any_nonzero = true;
+         break;
+      }
+   }
+   if (any_nonzero)
+      PASS("Wavetable ROM image present (non-zero byte observed)");
+   else
+      FAIL("All sampled wavetable bytes were $00 (ROM image not loaded?)");
+
+   /* 2. Attempt byte writes of $00 to every sample offset. */
+   for (i = 0; i < 5; i++)
+      p_JERRYWriteByte(sample_offsets[i], 0x00, WHO_M68K);
+
+   /* 3. Attempt word writes of $0000 to a few word-aligned offsets. */
+   for (i = 0; i < (sizeof(word_offsets)/sizeof(word_offsets[0])); i++)
+      p_JERRYWriteWord(word_offsets[i], 0x0000u, WHO_M68K);
+
+   /* Also attempt non-zero pattern writes to confirm the protection is
+    * not just a "$00 == current value" coincidence. */
+   for (i = 0; i < 5; i++)
+      p_JERRYWriteByte(sample_offsets[i], 0xA5, WHO_M68K);
+   for (i = 0; i < (sizeof(word_offsets)/sizeof(word_offsets[0])); i++)
+      p_JERRYWriteWord(word_offsets[i], 0x5A5Au, WHO_M68K);
+
+   /* 4. Re-read each sampled offset; the protected writes must have
+    *    been dropped, so the saved value still stands. */
+   for (i = 0; i < 5; i++) {
+      uint8_t now = p_JERRYReadByte(sample_offsets[i], WHO_M68K);
+      if (now == saved[i])
+         PASS("Wavetable[$%06X] preserved = $%02X",
+              sample_offsets[i], now);
+      else
+         FAIL("Wavetable[$%06X] mutated $%02X -> $%02X",
+              sample_offsets[i], saved[i], now);
+   }
 }
 
 /* ================================================================
@@ -2025,6 +2207,152 @@ static void test_tom_vmode_bitfields(void)
       PASS("VMODE: restored to original $%04X", saved);
    else
       FAIL("VMODE: restore failed, word=$%04X (want $%04X)", v, saved);
+}
+
+/* ================================================================
+ * Test 10m: TOM CLUT-A / CLUT-B Mirror
+ *
+ * Pin documented TOM CLUT mirroring behavior. The Jaguar exposes the
+ * Color Lookup Table at two address windows:
+ *   $F00400-$F005FF   CLUT-A
+ *   $F00600-$F007FF   CLUT-B
+ *
+ * Per src/tom/tom.c TOMWriteByte (lines 1098-1103) and TOMWriteWord
+ * (lines 1164-1172), both ranges write to a single 512-byte storage
+ * region: the offset is masked with `& 0x5FF`, then the data is
+ * written to both `tomRam8[offset]` and `tomRam8[offset + 0x200]`.
+ *
+ * Crucial side effect of the `& 0x5FF` mask: a write addressed to
+ * the high mirror at $F00600+x is ALSO masked down to $F00400+x
+ * (because $600 & $5FF = $400) and the same value is then deposited
+ * at offset+0x200 = $F00600+x. So writes to either half always
+ * populate both halves identically.
+ *
+ * The mask treats $F00400 and $F00600 as the same logical CLUT
+ * entry; the two windows are software-visible aliases. Reads from
+ * either window therefore observe the same data after any write.
+ *
+ * Strategy: snapshot the live CLUT entries at every address we
+ * mutate, exercise the mirror in both directions, then restore the
+ * originals so the running render loop is undisturbed.
+ * ================================================================ */
+static void test_tom_clut_mirror(void)
+{
+   const uint32_t a_word    = 0xF00400;
+   const uint32_t b_word    = 0xF00600;
+   const uint32_t a_byte    = 0xF00410;
+   const uint32_t b_byte    = 0xF00610;
+   const uint32_t a_odd     = 0xF00421;
+   const uint32_t b_odd     = 0xF00621;
+   const uint32_t a_even    = 0xF00420;
+   const uint32_t b_even    = 0xF00620;
+   uint16_t saved_a_word, saved_b_word;
+   uint8_t  saved_a_byte, saved_b_byte;
+   uint8_t  saved_a_odd,  saved_b_odd;
+   uint8_t  saved_a_even, saved_b_even;
+   uint16_t v_a, v_b;
+   uint8_t  ba, bb;
+
+   printf("\n=== Test 10m: TOM CLUT Mirror ===\n");
+
+   /* Snapshot every entry we will perturb so we can restore. */
+   saved_a_word = p_TOMReadWord(a_word, WHO_M68K);
+   saved_b_word = p_TOMReadWord(b_word, WHO_M68K);
+   saved_a_byte = p_TOMReadByte(a_byte, WHO_M68K);
+   saved_b_byte = p_TOMReadByte(b_byte, WHO_M68K);
+   saved_a_odd  = p_TOMReadByte(a_odd,  WHO_M68K);
+   saved_b_odd  = p_TOMReadByte(b_odd,  WHO_M68K);
+   saved_a_even = p_TOMReadByte(a_even, WHO_M68K);
+   saved_b_even = p_TOMReadByte(b_even, WHO_M68K);
+
+   /* (1) Word write to CLUT-A mirrors into CLUT-B at the same offset. */
+   p_TOMWriteWord(a_word, 0xA55A, WHO_M68K);
+   v_a = p_TOMReadWord(a_word, WHO_M68K);
+   v_b = p_TOMReadWord(b_word, WHO_M68K);
+   if (v_a == 0xA55A && v_b == 0xA55A)
+      PASS("CLUT: word write to $F00400 mirrors into $F00600 ($%04X/$%04X)",
+         v_a, v_b);
+   else
+      FAIL("CLUT: A=$%04X B=$%04X (want $A55A both)", v_a, v_b);
+
+   /* (2) Word write addressed to CLUT-B is masked by `& 0x5FF` and
+    *     therefore lands in CLUT-A as well. Pin this aliasing. */
+   p_TOMWriteWord(b_word, 0x1234, WHO_M68K);
+   v_a = p_TOMReadWord(a_word, WHO_M68K);
+   v_b = p_TOMReadWord(b_word, WHO_M68K);
+   if (v_a == 0x1234 && v_b == 0x1234)
+      PASS("CLUT: word write to $F00600 ALSO writes $F00400 (mask $5FF)");
+   else
+      FAIL("CLUT: write-B leaves A=$%04X B=$%04X (want $1234 both)",
+         v_a, v_b);
+
+   /* (3) Byte write to even offset in CLUT-A mirrors into CLUT-B. */
+   p_TOMWriteByte(a_byte, 0x7E, WHO_M68K);
+   ba = p_TOMReadByte(a_byte, WHO_M68K);
+   bb = p_TOMReadByte(b_byte, WHO_M68K);
+   if (ba == 0x7E && bb == 0x7E)
+      PASS("CLUT: byte write to $F00410 mirrors to $F00610 ($%02X/$%02X)",
+         ba, bb);
+   else
+      FAIL("CLUT: byte A=$%02X B=$%02X (want $7E both)", ba, bb);
+
+   /* (4) Byte write addressed to CLUT-B mirror lands in CLUT-A too. */
+   p_TOMWriteByte(b_byte, 0xC3, WHO_M68K);
+   ba = p_TOMReadByte(a_byte, WHO_M68K);
+   bb = p_TOMReadByte(b_byte, WHO_M68K);
+   if (ba == 0xC3 && bb == 0xC3)
+      PASS("CLUT: byte write to $F00610 ALSO writes $F00410 ($%02X/$%02X)",
+         ba, bb);
+   else
+      FAIL("CLUT: byte-B A=$%02X B=$%02X (want $C3 both)", ba, bb);
+
+   /* (5) Byte write at an ODD offset (low byte of a CLUT entry) is
+    *     mirrored at the same odd offset in the other window. The
+    *     adjacent even byte must remain unchanged by this odd write. */
+   p_TOMWriteByte(a_even, 0x11, WHO_M68K);
+   p_TOMWriteByte(a_odd,  0x99, WHO_M68K);
+   ba = p_TOMReadByte(a_odd, WHO_M68K);
+   bb = p_TOMReadByte(b_odd, WHO_M68K);
+   if (ba == 0x99 && bb == 0x99)
+      PASS("CLUT: odd-offset byte write mirrors ($F00421->$F00621)");
+   else
+      FAIL("CLUT: odd byte A=$%02X B=$%02X (want $99 both)", ba, bb);
+   ba = p_TOMReadByte(a_even, WHO_M68K);
+   bb = p_TOMReadByte(b_even, WHO_M68K);
+   if (ba == 0x11 && bb == 0x11)
+      PASS("CLUT: adjacent even byte unaffected by odd write ($%02X/$%02X)",
+         ba, bb);
+   else
+      FAIL("CLUT: even byte A=$%02X B=$%02X (want $11 both)", ba, bb);
+
+   /* (6) Final round-trip: word write to A; reads from BOTH windows
+    *     return the same 16-bit value (verifies symmetric read path
+    *     across the mirror after either-half write). */
+   p_TOMWriteWord(b_word, 0xDEAD, WHO_M68K);
+   v_a = p_TOMReadWord(a_word, WHO_M68K);
+   v_b = p_TOMReadWord(b_word, WHO_M68K);
+   if (v_a == v_b && v_a == 0xDEAD)
+      PASS("CLUT: reads from both windows agree after either-half write");
+   else
+      FAIL("CLUT: A=$%04X B=$%04X disagree (want $DEAD both)", v_a, v_b);
+
+   /* Restore original CLUT entries so the running render is untouched. */
+   p_TOMWriteWord(a_word, saved_a_word, WHO_M68K);
+   /* saved_b_word equals saved_a_word in normal CLUT state, but if it
+    * differed (e.g. uninitialized), force B to its original too via
+    * the masked write path; this also overwrites A, which is fine
+    * because we then re-write A's saved value below if needed. */
+   if (saved_b_word != saved_a_word)
+      p_TOMWriteWord(b_word, saved_b_word, WHO_M68K);
+   p_TOMWriteByte(a_byte, saved_a_byte, WHO_M68K);
+   if (saved_b_byte != saved_a_byte)
+      p_TOMWriteByte(b_byte, saved_b_byte, WHO_M68K);
+   p_TOMWriteByte(a_even, saved_a_even, WHO_M68K);
+   if (saved_b_even != saved_a_even)
+      p_TOMWriteByte(b_even, saved_b_even, WHO_M68K);
+   p_TOMWriteByte(a_odd, saved_a_odd, WHO_M68K);
+   if (saved_b_odd != saved_a_odd)
+      p_TOMWriteByte(b_odd, saved_b_odd, WHO_M68K);
 }
 
 /* ================================================================
@@ -2678,6 +3006,7 @@ int main(int argc, char *argv[])
    LOAD(DSPSetIRQLine);
    LOAD(DSPHandleIRQsNP);
    LOAD(JERRYReadWord);
+   LOAD(JERRYReadByte);
    LOAD(JERRYWriteWord);
    LOAD(JERRYWriteByte);
    LOAD(JERRYIRQEnabled);
@@ -2770,7 +3099,9 @@ int main(int argc, char *argv[])
    test_jerry_jintctrl_multi_pending_selective_clear();
    test_gpu_irq_latch_redispatch();
    test_dsp_irq_latch_redispatch();
+   test_jerry_pit_byte_writes_dropped();
    test_jerry_i2s_defaults();
+   test_jerry_wavetable_rom_write_protect();
    test_tom_video_registers();
    test_tom_vp_rollover();
    test_tom_video_irq_latches_when_disabled();
@@ -2779,6 +3110,7 @@ int main(int argc, char *argv[])
    test_tom_pit_reload_semantics();
    test_tom_video_timing_symmetry();
    test_tom_vmode_bitfields();
+   test_tom_clut_mirror();
    test_video_timing_defaults_pal_ntsc();
    test_tom_ipl2_reassert_after_selective_clear();
    test_libretro_geometry_update_order();
