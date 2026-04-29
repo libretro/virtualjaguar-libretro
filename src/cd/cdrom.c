@@ -566,6 +566,16 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       // the DS_DATA response value. Clearing txBufferEmpty here would race with
       // the 68K's DSA_tx polling loop that checks BUTCH+2 bit 12.
       data = GET16(cdRam, offset);
+      // Real hardware clears the DSA pending interrupt latch when the
+      // CPU/GPU reads DSCNTRL — that's the documented "DSA ack" semantic
+      // (cdrom.c:1643 BIOS listing comment: "Clears DSA pending interrupt").
+      // Without this clear, dsaResponseReady stays true forever after the
+      // first seek, so BUTCHExec re-fires GPU IRQ0 every halfline (2.9 M
+      // spurious IRQs across a 6 K-frame Primal Rage run, which keeps the
+      // GPU thrashing in its DSARX-handler ISR while the 68K spins on a
+      // mailbox the GPU can't write to because the ISR never returns
+      // long enough to do real work).
+      dsaResponseReady = false;
    }
    else if (offset == I2CNTRL || offset == I2CNTRL + 2)
    {
