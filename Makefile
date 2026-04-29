@@ -619,7 +619,7 @@ else
 endif
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) test/test_cheat test/test_hle_bios
+	rm -f $(TARGET) $(OBJECTS) test/test_cheat test/test_event_queue test/test_hle_bios
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -629,13 +629,18 @@ test:
 	@echo "make test requires GCC/Clang flags; use MSYS2/Unix or compile test/test_cheat.c manually."
 	@false
 else
-test: test/test_cheat $(TARGET) test/test_hle_bios
+test: test/test_cheat test/test_event_queue $(TARGET) test/test_hle_bios
 	./test/test_cheat
+	./test/test_event_queue
 	./test/test_hle_bios
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cheat.c src/core/cheat.c
+
+test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_event_queue.c src/core/event.c
 
 test/test_hle_bios: test/test_hle_bios.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

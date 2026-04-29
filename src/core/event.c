@@ -12,11 +12,6 @@
 //
 
 //
-// STILL TO DO:
-//
-// - Handling for an event that occurs NOW
-//
-//
 #include <stdint.h>
 #include <boolean.h>
 
@@ -53,6 +48,12 @@ static uint32_t nextEventJERRY;
 static uint32_t numberOfEvents;
 
 
+static double ClampDueEventTime(double time)
+{
+   return (time < 0.0 ? 0.0 : time);
+}
+
+
 void InitializeEventList(void)
 {
    unsigned i;
@@ -73,6 +74,8 @@ void InitializeEventList(void)
 void SetCallbackTime(void (* callback)(void), double time, int type/*= EVENT_MAIN*/)
 {
    unsigned i;
+   time = ClampDueEventTime(time);
+
    if (type == EVENT_MAIN)
    {
       for(i = 0; i < EVENT_LIST_SIZE; i++)
@@ -136,6 +139,8 @@ void RemoveCallback(void (* callback)(void))
 void AdjustCallbackTime(void (* callback)(void), double time)
 {
    unsigned i;
+   time = ClampDueEventTime(time);
+
    for(i = 0; i < EVENT_LIST_SIZE; i++)
    {
       if (eventList[i].valid && eventList[i].timerCallback == callback)
@@ -187,7 +192,7 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
       }
    }
 
-   return time;
+   return ClampDueEventTime(time);
 }
 
 
@@ -197,7 +202,7 @@ void HandleNextEvent(int type/*= EVENT_MAIN*/)
 
    if (type == EVENT_MAIN)
    {
-      double elapsedTime = eventList[nextEvent].eventTime;
+      double elapsedTime = ClampDueEventTime(eventList[nextEvent].eventTime);
       void (* event)(void) = eventList[nextEvent].timerCallback;
 
       for (i = 0; i < EVENT_LIST_SIZE; i++)
@@ -215,7 +220,7 @@ void HandleNextEvent(int type/*= EVENT_MAIN*/)
    }
    else
    {
-      double elapsedTime = eventListJERRY[nextEventJERRY].eventTime;
+      double elapsedTime = ClampDueEventTime(eventListJERRY[nextEventJERRY].eventTime);
       void (* event)(void) = eventListJERRY[nextEventJERRY].timerCallback;
 
       for (i = 0; i < EVENT_LIST_SIZE; i++)

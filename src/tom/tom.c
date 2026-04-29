@@ -776,16 +776,16 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL);
    bottomVisible = (vjs.hardwareTypeNTSC ? BOTTOM_VISIBLE_VC : BOTTOM_VISIBLE_VC_PAL);
 
-   // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
-   if (tomRam8[VP + 1] & 0x01)
-      TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);//non-interlace
-   else
-      TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);//interlace
-
    // Here's our virtualized scanline code...
 
    if ((halfline >= topVisible) && (halfline < bottomVisible))
    {
+      // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
+      if (tomRam8[VP + 1] & 0x01)
+         TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);//non-interlace
+      else
+         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);//interlace
+
       if (inActiveDisplayArea)
          scanline_render[TOMGetVideoMode()](TOMCurrentLine);
       else

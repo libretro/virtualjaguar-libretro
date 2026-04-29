@@ -87,6 +87,8 @@ static void (*p_retro_set_input_state)(retro_input_state_t);
 static bool (*p_retro_load_game)(const struct retro_game_info *);
 static void (*p_retro_unload_game)(void);
 static void (*p_JaguarApplyHLEBIOSState)(void);
+static void (*p_HalflineCallback)(void);
+static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
 
 /* Emulator internals via dlsym */
 static void *core_handle;
@@ -95,6 +97,7 @@ static uint8_t **p_jaguarMainRAM;
 static uint8_t *p_jagMemSpace;
 static uint8_t **p_sclk;
 static uint32_t **p_smode;
+static bool *p_lowerField;
 static uint32_t (*p_GPUReadLong)(uint32_t, uint32_t);
 static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
 static struct VJSettings *p_vjs;
@@ -621,6 +624,41 @@ static void test_tom_video_registers(void)
 }
 
 /* ================================================================
+ * Test 10b: TOM VP controls frame rollover
+ * Games may program custom vertical periods. The halfline scheduler
+ * must honor TOM VP instead of a hard-coded NTSC/PAL frame length.
+ * ================================================================ */
+static void test_tom_vp_rollover(void)
+{
+   uint16_t old_vp;
+   uint16_t old_vc;
+   uint16_t vc;
+   bool old_lower_field;
+
+   printf("\n=== Test 10b: TOM VP Rollover ===\n");
+
+   old_vp = tom_get16(TOM_VP);
+   old_vc = tom_get16(TOM_VC);
+   old_lower_field = *p_lowerField;
+
+   p_TOMWriteWord(0xF0003E, 7, WHO_M68K);
+   p_TOMWriteWord(0xF00006, 7, WHO_M68K);
+   *p_lowerField = false;
+
+   p_HalflineCallback();
+   vc = tom_get16(TOM_VC);
+
+   if (vc == 0x0800 && *p_lowerField)
+      PASS("VC rolled over at custom VP and toggled lower field");
+   else
+      FAIL("VC after custom VP rollover = $%04X lowerField=%d", vc, *p_lowerField ? 1 : 0);
+
+   p_TOMWriteWord(0xF0003E, old_vp, WHO_M68K);
+   p_TOMWriteWord(0xF00006, old_vc, WHO_M68K);
+   *p_lowerField = old_lower_field;
+}
+
+/* ================================================================
  * Test 11: SSP (Stack Pointer) Initialization
  * RAM[0..3] should contain a valid SSP for HLE boot ($00004000).
  * ================================================================ */
@@ -866,6 +904,8 @@ int main(int argc, char *argv[])
    LOAD(retro_load_game);
    LOAD(retro_unload_game);
    LOAD(JaguarApplyHLEBIOSState);
+   LOAD(HalflineCallback);
+   LOAD(TOMWriteWord);
    LOAD(GPUReadLong);
    LOAD(JERRYReadWord);
 
@@ -874,10 +914,12 @@ int main(int argc, char *argv[])
    LOAD_OPT(jagMemSpace);
    LOAD_OPT(sclk);
    LOAD_OPT(smode);
+   LOAD_OPT(lowerField);
    LOAD_OPT(vjs);
 
-   if (!p_tomRam8 || !p_jaguarMainRAM || !p_jagMemSpace || !p_sclk || !p_smode || !p_vjs) {
-      fprintf(stderr, "Missing internal symbols (tomRam8, jaguarMainRAM, jagMemSpace, sclk, smode, vjs)\n");
+   if (!p_tomRam8 || !p_jaguarMainRAM || !p_jagMemSpace || !p_sclk
+         || !p_smode || !p_lowerField || !p_vjs) {
+      fprintf(stderr, "Missing internal symbols (tomRam8, jaguarMainRAM, jagMemSpace, sclk, smode, lowerField, vjs)\n");
       return 1;
    }
 
@@ -934,6 +976,7 @@ int main(int argc, char *argv[])
    test_jerry_pit_cleared();
    test_jerry_i2s_defaults();
    test_tom_video_registers();
+   test_tom_vp_rollover();
    test_ssp_init();
    test_run_address();
    test_memcon2();
