@@ -84,6 +84,12 @@ durable test surface. Highlights since v2.1.0:
 * Doom: replaced the legacy resolution hack with proper TOM
   `PWIDTH` pixel replication, so the frame is correct at the
   hardware level rather than papered over in the front end.
+* Battle Sphere: the targeting reticle drawn over enemies on
+  the accurate blitter no longer leaves dark dots over the
+  scene — `byte_merge` now reads the real framebuffer for
+  bytes the `DCOMPEN`/`BCOMPEN` comparators inhibit when
+  `BKGWREN` is on, instead of falling back to the DSTDATA
+  register (commonly 0).
 * Audio dropouts at frame edges across many titles: fixed by
   interleaving JERRY events with the main execution loop and
   dropping per-sample event scheduling.
