@@ -377,6 +377,24 @@ static void HLEHandleCDRead(void)
               "(would have been %u)\n", hle_next_lba, lba);
       startLBA = hle_next_lba;
    }
+   /* Streaming-data shortcut: when D1's top 16 bits are zero, the value is
+    * almost certainly a transfer ID / byte counter (e.g. Space Ace passes
+    * D1=$00000001), not a 4-byte sync pattern.  A scan would find millions
+    * of false-positive `\0\0\0\x01` matches across the disc and never accept
+    * a real sync block, then fall back to "read raw" anyway — but with 4 M
+    * log lines of churn first and several seconds of CPU.  Skip the scan and
+    * stream raw from the (continuation-respecting) startLBA. */
+   if ((d1 >> 16) == 0)
+   {
+      HLE_LOG("CD_read: D1=$%08X is a counter/ID — skipping sentinel scan, "
+              "streaming raw from LBA %u\n", d1, startLBA);
+      scanLBA = startLBA;
+      scanOff = 0;
+      foundSentinel = true;  /* short-circuit the scan loop */
+      phase_starts[0] = startLBA;
+      goto hle_cd_read_post_scan;
+   }
+
    phase_starts[0] = startLBA;
    if (sentinelIsAscii) {
       uint32_t n = CDIntfGetSession2TrackCount();
@@ -502,12 +520,16 @@ static void HLEHandleCDRead(void)
          scanOff = fallbackOff;
          foundSentinel = true;
       } else {
-         HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u\n", lba);
-         scanLBA = lba;
+         /* Honour streaming continuation: if a repeated CD_read advanced
+          * startLBA past `lba`, read from the new position so the game
+          * sees fresh sectors each call instead of the same 1 MB on loop. */
+         HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u\n", startLBA);
+         scanLBA = startLBA;
          scanOff = 0;
       }
    }
 
+hle_cd_read_post_scan:
    /* Transfer data from the sentinel position into Jaguar RAM */
    bytesWritten = 0;
    s = 0;
