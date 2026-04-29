@@ -34,8 +34,13 @@ durable test surface. Highlights since v2.1.0:
   DCONTROL hoisted.
 
 == New features ==
-* HLE BIOS — boot games without a real BIOS image; covered by
-  test_hle_bios sanity tests.
+* HLE BIOS — boot games without a real BIOS image. The HLE path
+  produces hardware-equivalent post-boot state across MEMCON1,
+  clocks, GPU auth magic, OLP, exception vectors, TOM video
+  registers, JERRY timers, and SSP / run address. NTSC and PAL
+  timing match the real BIOS. Covered by 200+ pin tests in
+  test_hle_bios; the vast majority of commercial titles boot
+  cleanly without any BIOS image.
 * Save states (retro_serialize / retro_unserialize) with
   deterministic serialization for run-ahead support.
 * SRAM/EEPROM via the libretro SRAM interface, preserved across
@@ -71,6 +76,32 @@ durable test surface. Highlights since v2.1.0:
 * Portable xorshift PRNG for cross-platform RAM init.
 * Automated release workflow for tagged versions.
 * Debug-build timestamp reporting.
+
+== Game-specific fixes ==
+* Alien vs Predator: red-noise rendering on the accurate-blitter
+  path is gone — root cause was an M2 blitter `BKGWREN+BCOMPEN`
+  phrase-mode bug.
+* Doom: replaced the legacy resolution hack with proper TOM
+  `PWIDTH` pixel replication, so the frame is correct at the
+  hardware level rather than papered over in the front end.
+* Highlander (CD): boots through HLE CD with the multi-phase
+  sentinel scan; CD `_read` honours `D0` bit 31 (re-seek only)
+  and mirrors data into cart space.
+* Audio dropouts at frame edges across many titles: fixed by
+  interleaving JERRY events with the main execution loop and
+  dropping per-sample event scheduling.
+* Raiden / Kasumi Ninja and similar BIOS-sensitive titles: the
+  HLE BIOS state coverage now bridges what the cores depended on
+  the real BIOS to set up.
+
+== Known issues ==
+* White Men Can't Jump: occasional jumping-object glitch traced
+  to 68K-SR / TOM-timer IRQ phase accuracy, not bitmap geometry.
+  Tracking in docs/emulation-bug-hunt-todos.md.
+* Object Processor still uses a runaway-list guard rather than a
+  cycle-budgeted resumable scheduler; a few games with
+  overloaded display lists will need that work to render
+  faithfully.
 
 == Maintainers ==
 * libretro/Provenance fork: Joseph Mattiello (@JoeMatt, Provenance-Emu).
