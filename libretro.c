@@ -85,8 +85,10 @@ void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
 #define RETRO_DEVICE_ID_JOYPAD_RD 21
 #define RETRO_DEVICE_ID_JOYPAD_RL 22
 #define RETRO_DEVICE_ID_JOYPAD_RR 23
+#define RETROPAD_INPUT_COUNT (RETRO_DEVICE_ID_JOYPAD_RR + 1)
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
-static int jag_retropad[2][24];
+static int jag_retropad[2][RETROPAD_INPUT_COUNT];
 static int jag_numpad[2][12];
 static int numpad_to_kb[2];
 static bool show_input_options = true;
@@ -128,6 +130,11 @@ typedef struct {
    char value[10];
 } JagMapping;
 
+typedef struct {
+   const char *suffix;
+   unsigned id;
+} RetropadOptionMapping;
+
 static JagMapping jag_map[22] = {
    { BUTTON_U,      "up" },
    { BUTTON_D,      "down" },
@@ -152,6 +159,44 @@ static JagMapping jag_map[22] = {
    { BUTTON_d,      "hash" },
    { BUTTON_NONE,   "---" }
 };
+
+static const RetropadOptionMapping retropad_option_map[] = {
+   { "_retropad_up",        RETRO_DEVICE_ID_JOYPAD_UP },
+   { "_retropad_down",      RETRO_DEVICE_ID_JOYPAD_DOWN },
+   { "_retropad_left",      RETRO_DEVICE_ID_JOYPAD_LEFT },
+   { "_retropad_right",     RETRO_DEVICE_ID_JOYPAD_RIGHT },
+   { "_retropad_a",         RETRO_DEVICE_ID_JOYPAD_A },
+   { "_retropad_b",         RETRO_DEVICE_ID_JOYPAD_B },
+   { "_retropad_y",         RETRO_DEVICE_ID_JOYPAD_Y },
+   { "_retropad_select",    RETRO_DEVICE_ID_JOYPAD_SELECT },
+   { "_retropad_start",     RETRO_DEVICE_ID_JOYPAD_START },
+   { "_retropad_x",         RETRO_DEVICE_ID_JOYPAD_X },
+   { "_retropad_l1",        RETRO_DEVICE_ID_JOYPAD_L },
+   { "_retropad_r1",        RETRO_DEVICE_ID_JOYPAD_R },
+   { "_retropad_l2",        RETRO_DEVICE_ID_JOYPAD_L2 },
+   { "_retropad_r2",        RETRO_DEVICE_ID_JOYPAD_R2 },
+   { "_retropad_l3",        RETRO_DEVICE_ID_JOYPAD_L3 },
+   { "_retropad_r3",        RETRO_DEVICE_ID_JOYPAD_R3 },
+   { "_retropad_analog_lu", RETRO_DEVICE_ID_JOYPAD_LU },
+   { "_retropad_analog_ld", RETRO_DEVICE_ID_JOYPAD_LD },
+   { "_retropad_analog_ll", RETRO_DEVICE_ID_JOYPAD_LL },
+   { "_retropad_analog_lr", RETRO_DEVICE_ID_JOYPAD_LR },
+   { "_retropad_analog_ru", RETRO_DEVICE_ID_JOYPAD_RU },
+   { "_retropad_analog_rd", RETRO_DEVICE_ID_JOYPAD_RD },
+   { "_retropad_analog_rl", RETRO_DEVICE_ID_JOYPAD_RL },
+   { "_retropad_analog_rr", RETRO_DEVICE_ID_JOYPAD_RR },
+};
+
+static void build_port_option_key(char *key, size_t key_size, unsigned port, const char *suffix)
+{
+   size_t len;
+
+   len = strlcpy(key, "virtualjaguar_p", key_size);
+   if (len >= key_size)
+      return;
+   snprintf(key + len, key_size - len, "%u", port + 1);
+   strlcat(key, suffix, key_size);
+}
 
 static int get_button_id(const char *val)
 {
@@ -185,111 +230,19 @@ static bool update_option_visibility(void)
 
       for (i = 0; i < 2; i++)
       {
-         char base[20];
+         unsigned j;
          char key[64];
-         size_t _len        = strlcpy(base, "virtualjaguar_p", sizeof(base));
-         snprintf(base + _len, sizeof(base) - _len, "%d", i + 1);
 
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_numpad_to_kb", sizeof(key));
+         build_port_option_key(key, sizeof(key), i, "_numpad_to_kb");
          option_display.key = key;
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
 
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_up", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_down", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_left", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_right", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_a", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_b", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_x", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_y", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_select", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_start", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-         
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_l1", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_r1", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_l2", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_r2", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_l3", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_r3", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_lu", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_ld", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_ll", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_lr", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_ru", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_rd", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_rl", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-
-         strlcpy(key, base, sizeof(key));
-         strlcat(key, "_retropad_analog_rr", sizeof(key));
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         for (j = 0; j < ARRAY_SIZE(retropad_option_map); j++)
+         {
+            build_port_option_key(key, sizeof(key), i, retropad_option_map[j].suffix);
+            option_display.key = key;
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
+         }
       }
 
       updated = true;
@@ -376,19 +329,15 @@ static void check_variables(void)
 
    for (i = 0; i < 2; i++)
    {
-      int j;
-      char base[20];
+      unsigned j;
       char key[64];
-      size_t _len        = strlcpy(base, "virtualjaguar_p", sizeof(base));
-      snprintf(base + _len, sizeof(base) - _len, "%d", i + 1);
 
       /* Initialize all retropad mappings to BUTTON_NONE so unmapped
        * entries don't accidentally trigger BUTTON_U (index 0). */
-      for (j = 0; j < 24; j++)
+      for (j = 0; j < RETROPAD_INPUT_COUNT; j++)
          jag_retropad[i][j] = BUTTON_NONE;
 
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_numpad_to_kb", sizeof(key));
+      build_port_option_key(key, sizeof(key), i, "_numpad_to_kb");
       var.key   = key;
       var.value = NULL;
       if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -401,149 +350,14 @@ static void check_variables(void)
             numpad_to_kb[i] = 2;
       }
 
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_up", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_UP] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_down", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_DOWN] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_left", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LEFT] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_right", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RIGHT] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_a", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_A] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_b", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_B] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_y", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_Y] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_select", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_SELECT] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_start", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_START] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_x", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_X] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_l1", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_L] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_r1", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_R] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_l2", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_L2] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_r2", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_R2] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_l3", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_L3] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_r3", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_R3] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_lu", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LU] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_ld", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LD] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_ll", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LL] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_lr", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_LR] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_ru", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RU] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_rd", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RD] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_rl", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RL] = get_button_id(var.value);
-
-      strlcpy(key, base, sizeof(key));
-      strlcat(key, "_retropad_analog_rr", sizeof(key));
-      var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-         jag_retropad[i][RETRO_DEVICE_ID_JOYPAD_RR] = get_button_id(var.value);
+      for (j = 0; j < ARRAY_SIZE(retropad_option_map); j++)
+      {
+         build_port_option_key(key, sizeof(key), i, retropad_option_map[j].suffix);
+         var.key   = key;
+         var.value = NULL;
+         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+            jag_retropad[i][retropad_option_map[j].id] = get_button_id(var.value);
+      }
    }
 
    update_option_visibility();
