@@ -590,7 +590,7 @@ void BUTCHExec(uint32_t cycles)
          if (JERRYIRQEnabled(IRQ2_EXTERNAL))
             m68k_set_irq(2);
 
-         GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
+         GPUSetIRQLine(GPUIRQ_CPU, ASSERT_LINE);
       }
    }
 
