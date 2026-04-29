@@ -867,8 +867,14 @@ static bool load_external_cd_bios(void)
       "jagcd_bios.bin",
       "jaguarcd.bin",
       "jagcd.bin",
+      "Jaguar CD BIOS.rom",
+      "Jaguar CD BIOS.bin",
       "[BIOS] Atari Jaguar CD (World).j64",
+      "[BIOS] Atari Jaguar CD (World).rom",
+      "[BIOS] Atari Jaguar CD (World).bin",
       "[BIOS] Atari Jaguar Developer CD (World).j64",
+      "[BIOS] Atari Jaguar Developer CD (World).rom",
+      "[BIOS] Atari Jaguar Developer CD (World).bin",
       NULL
    };
    static const char *sub_dirs[] = {
