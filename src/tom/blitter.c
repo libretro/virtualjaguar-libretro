@@ -701,15 +701,13 @@ void blitter_generic(uint32_t cmd)
       a2_y += a2_step_y;//*/
 #endif
 
-      //New: Phrase mode taken into account! :-p
       if (a1_phrase_mode)			// v2
       {
          uint32_t pixelSize;
-         // Bump the pointer to the next phrase boundary
-         // Even though it works, this is crappy... Clean it up!
+         // Bump the pointer to the next phrase boundary.
          uint32_t size = 64 / a1_psize;
 
-         // Crappy kludge... ('aligning' source to destination)
+         // Align source to destination phrase position.
          if (a2_phrase_mode && DSTA2)
          {
             uint32_t extra = (a2_start >> 16) % size;

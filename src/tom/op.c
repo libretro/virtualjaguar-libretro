@@ -555,7 +555,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
        : -((phraseWidthToPixels[depth] * iwidth) + 1));
 
    // If the image is completely to the left or right of the line buffer, then bail.
-   //If in REFLECT mode, then these values are swapped! !!! FIX !!! [DONE]
+   // In REFLECT mode these edge cases are mirrored.
    //There are four possibilities:
    //  1. image sits on left edge and no REFLECT; starts out of bounds but ends in bounds.
    //  2. image sits on left edge and REFLECT; starts in bounds but ends out of bounds.
@@ -937,7 +937,6 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    uint32_t firstPix = (p1 >> 49) & 0x3F;
    // We can ignore the RELEASE (high order) bit for now--probably forever...!
    //	uint8_t flags = (p1 >> 45) & 0x0F;	// REFLECT, RMW, TRANS, RELEASE
-   //Optimize: break these out to their own BOOL values [DONE]
    uint8_t flags = (p1 >> 45) & 0x07;				// REFLECT (0), RMW (1), TRANS (2)
    bool flagREFLECT = ((flags & OPFLAG_REFLECT) ? true : false),
         flagRMW = ((flags & OPFLAG_RMW) ? true : false),
@@ -967,7 +966,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       return;
 
    // If the image is completely to the left or right of the line buffer, then bail.
-   //If in REFLECT mode, then these values are swapped! !!! FIX !!! [DONE]
+   // In REFLECT mode these edge cases are mirrored.
    //There are four possibilities:
    //  1. image sits on left edge and no REFLECT; starts out of bounds but ends in bounds.
    //  2. image sits on left edge and REFLECT; starts in bounds but ends out of bounds.
