@@ -77,6 +77,17 @@ describe guesses, timing gaps, or known emulation shortcuts.
   road/ground rendering.
 ## Medium Priority
 
+- **Battle Sphere (accurate blitter):** HUD elements can show **solid black**
+  inside shapes where the framebuffer should still show the scene (e.g. cockpit
+  reticles / targeting squares). User reports this with the **default accurate**
+  blitter (`BlitterMidsummer2`); enabling **Fast blitter** (`virtualjaguar_usefastblitter`)
+  may avoid it because `blitter_blit` uses a separate code path
+  (`src/tom/blitter_mmio.c` dispatches on `vjs.useFastBlitter`). Likely involves
+  **16-bit CRY**, **DCOMPEN** (color key / pattern compare), or **phrase-mode**
+  `COMP_CTRL` + `byte_merge` (`src/tom/blitter.c` `DATA()`, `blitter_simd_scalar.c`)
+  not matching hardware for inner pixels. Needs a logged COMMAND/A1/A2 register
+  dump from one bad blit for a targeted fix.
+
 - `src/tom/tom.c`: replace hard-coded visible-window constants with values
   derived from TOM timing registers where possible. This should be tested
   against NTSC, PAL, and games that reprogram HDB/HDE/VDB/VDE.
