@@ -917,7 +917,8 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    uint32_t lbufAddress;
    uint8_t * currentLineBuffer;
    uint32_t scaledPhrasePixelsUS;
-   uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;
+   uint32_t clippedWidthUS;
+   uint32_t phraseClippedWidth = 0, dataClippedWidth = 0;
    // Not sure if this is Jaguar Two only location or what...
    // From the docs, it is... If we want to limit here we should think of something else.
    //	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
@@ -946,12 +947,11 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    uint16_t * paletteRAM16 = (uint16_t *)paletteRAM;
 
    uint16_t hscale = p2 & 0xFF;
-   // Hmm. It seems that fixing the horizontal scale necessitated re-fixing this. Not sure why,
-   // but seems to be consistent with the vertical scaling now (and it may turn out to be wrong!)...
-   uint16_t horizontalRemainder = hscale;				// Not sure if it starts full, but seems reasonable [It's not!]
-   //	uint8_t horizontalRemainder = 0;					// Let's try zero! Seems to work! Yay! [No, it doesn't!]
+   /* Horizontal scale uses the same [3.5] fixed-point step as vertical scale.
+    * The initial remainder phase still needs hardware/repro coverage before
+    * changing it. */
+   uint16_t horizontalRemainder = hscale;
    int32_t scaledWidthInPixels = (iwidth * phraseWidthToPixels[depth] * hscale) >> 5;
-   uint32_t scaledPhrasePixels = (phraseWidthToPixels[depth] * hscale) >> 5;
    int32_t startPos = xpos;
    int32_t endPos = xpos +
       (!flagREFLECT ? scaledWidthInPixels - 1 : -(scaledWidthInPixels + 1));
@@ -991,73 +991,38 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    //       which pixel in the phrase is being written, and quit when either end of phrases
    //       is reached or line buffer extents are surpassed.
 
-   //This stuff is probably wrong as well... !!! FIX !!!
-   //The strange thing is that it seems to work, but that's no guarantee that it's bulletproof!
-   //Yup. Seems that JagMania doesn't work correctly with this...
-   //Dunno if this is the problem, but Atari Karts is showing *some* of the road now...
-   //Actually, it is! Or, it was. It doesn't seem to be clipping here, so the problem lies
-   //elsewhere! Hmm. Putting the scaling code into the 1/2/8 BPP cases seems to draw the ground
-   // a bit more accurately... Strange!
-   //It's probably a case of the REFLECT flag being set and the background being written
-   //from the right side of the screen...
-   //But no, it isn't... At least if the diagnostics are telling the truth!
-
-   // NOTE: We're just using endPos to figure out how much, if any, to clip by.
-   // ALSO: There may be another case where we start out of bounds and end out of bounds...!
-   // !!! FIX !!!
-
-   //There's a problem here with scaledPhrasePixels in that it can be forced to zero when
-   //the scaling factor is small. So fix it already! !!! FIX !!!
-   //NOTE: I'm almost 100% sure that this is wrong... And it is! :-p
-
-   //Try a simple example...
-   // Let's say we have a 8 BPP scanline with an hscale of $80 (4). Our xpos is -10,
-   // non-flipped. Pixels in the bitmap are XYZXYZXYZXYZXYZ.
-   // Scaled up, they would be XXXXYYYYZZZZXXXXYYYYZZZZXXXXYYYYZZZZ...
-   //
-   // Normally, we would expect this in the line buffer:
-   // ZZXXXXYYYYZZZZXXXXYYYYZZZZ...
-   //
-   // But instead we're getting:
-   // XXXXYYYYZZZZXXXXYYYYZZZZ...
-   //
-   // or are we??? It would seem so, simply by virtue of the fact that we're NOT starting
-   // on negative boundary--or are we? Hmm...
-   // cw = 10, dcw = pcw = 10 / ([8 * 4 = 32] 32) = 0, sp = -10
-   //
-   // Let's try a real world example:
-   //
-   //OP: Scaled bitmap (70, 8 BPP, spp=28) sp (-400) < 0... [new sp=-8, cw=400, dcw=pcw=14]
-   //OP: Scaled bitmap (6F, 8 BPP, spp=27) sp (-395) < 0... [new sp=-17, cw=395, dcw=pcw=14]
-   //
-   // Really, spp is 27.75 in the second case...
-   // So... If we do 395 / 27.75, we get 14. Ok so far... If we scale that against the
-   // start position (14 * 27.75), we get -6.5... NOT -17!
-
-   //Now it seems we're working OK, at least for the first case...
+   /* Scaled clipping is phrase-granular. Keep the unscaled numerator in
+    * scaledPhrasePixelsUS so small hscale values do not truncate each phrase
+    * to zero visible pixels before the clip calculation. */
    scaledPhrasePixelsUS = phraseWidthToPixels[depth] * hscale;
+   if (scaledPhrasePixelsUS == 0)
+      return;
 
    if (startPos < 0)			// Case #1: Begin out, end in, L to R
    {
-      clippedWidth = (0 - startPos) << 5,
-                   //		dataClippedWidth = phraseClippedWidth = clippedWidth / scaledPhrasePixels,
-                   dataClippedWidth = phraseClippedWidth = (clippedWidth / scaledPhrasePixelsUS) >> 5,
-                   //		startPos = 0 - (clippedWidth % scaledPhrasePixels);
-                   startPos += (dataClippedWidth * scaledPhrasePixelsUS) >> 5;
+      clippedWidthUS = (0 - startPos) << 5;
+      dataClippedWidth = phraseClippedWidth = clippedWidthUS / scaledPhrasePixelsUS;
+      startPos += (dataClippedWidth * scaledPhrasePixelsUS) >> 5;
    }
 
    if (endPos < 0)				// Case #2: Begin in, end out, R to L
-      clippedWidth = 0 - endPos,
-                   phraseClippedWidth = clippedWidth / scaledPhrasePixels;
+   {
+      clippedWidthUS = (0 - endPos) << 5;
+      phraseClippedWidth = clippedWidthUS / scaledPhrasePixelsUS;
+   }
 
    if (endPos > lbufWidth)		// Case #3: Begin in, end out, L to R
-      clippedWidth = endPos - lbufWidth,
-                   phraseClippedWidth = clippedWidth / scaledPhrasePixels;
+   {
+      clippedWidthUS = (endPos - lbufWidth) << 5;
+      phraseClippedWidth = clippedWidthUS / scaledPhrasePixelsUS;
+   }
 
    if (startPos > lbufWidth)	// Case #4: Begin out, end in, R to L
-      clippedWidth = startPos - lbufWidth,
-                   dataClippedWidth = phraseClippedWidth = clippedWidth / scaledPhrasePixels,
-                   startPos = lbufWidth + (clippedWidth % scaledPhrasePixels);
+   {
+      clippedWidthUS = (startPos - lbufWidth) << 5;
+      dataClippedWidth = phraseClippedWidth = clippedWidthUS / scaledPhrasePixelsUS;
+      startPos = lbufWidth + ((clippedWidthUS % scaledPhrasePixelsUS) >> 5);
+   }
 
    // If the image is sitting on the line buffer left or right edge, we need to compensate
    // by decreasing the image phrase width accordingly.
@@ -1114,11 +1079,8 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         /*
-            The reason we subtract the horizontalRemainder *after* the test is because we had too few
-            bytes for horizontalRemainder to properly recognize a negative number. But now it's 16 bits
-            wide, so we could probably go back to that (as long as we make it an int16_t and not a uint16!)
-            */
+         /* Emit one or more source pixels for the current [3.5] scale phase,
+          * then advance to the next destination pixel. */
          while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
          {
             horizontalRemainder += hscale;

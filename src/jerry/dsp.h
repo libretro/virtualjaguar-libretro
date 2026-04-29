@@ -21,7 +21,6 @@ void DSPReset(void);
 void DSPExec(int32_t);
 void DSPDone(void);
 void DSPUpdateRegisterBanks(void);
-void DSPHandleIRQs(void);
 void DSPSetIRQLine(int irqline, int state);
 uint8_t DSPReadByte(uint32_t offset, uint32_t who);
 uint16_t DSPReadWord(uint32_t offset, uint32_t who);

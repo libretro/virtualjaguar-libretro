@@ -13,6 +13,7 @@
 #include <dlfcn.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "../libretro-common/include/libretro.h"
 
 #ifdef __APPLE__
@@ -95,6 +96,7 @@ static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
 static void (*p_JERRYWriteWord)(uint32_t, uint16_t, uint32_t);
 static bool (*p_JERRYIRQEnabled)(int);
 static void (*p_JERRYSetPendingIRQ)(int);
+static void (*p_OPProcessScaledBitmap)(uint64_t, uint64_t, uint64_t, bool);
 
 /* Emulator internals via dlsym */
 static void *core_handle;
@@ -514,6 +516,27 @@ static void test_op_stop_list(void)
 }
 
 /* ================================================================
+ * Test 6a: OP Scaled Bitmap Small HScale Clipping
+ * Small hscale values can make an integer-scaled phrase width zero.
+ * Clipping must keep fractional precision and avoid divide-by-zero.
+ * ================================================================ */
+static void test_op_scaled_small_hscale_clip(void)
+{
+   uint64_t p0;
+   uint64_t p1;
+   uint64_t p2;
+
+   printf("\n=== Test 6a: OP Scaled Bitmap Small HScale Clipping ===\n");
+
+   p0 = (uint64_t)0x800000 << 40;
+   p1 = ((uint64_t)3 << 12) | ((uint64_t)128 << 28) | 700;
+   p2 = 1;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+   PASS("small hscale right-edge clip completed");
+}
+
+/* ================================================================
  * Test 7: Border Color Cleared
  * BORD1 and BORD2 should both be zero.
  * ================================================================ */
@@ -610,17 +633,24 @@ static void test_jerry_jintctrl_word_decode(void)
 static void test_jerry_i2s_defaults(void)
 {
    uint8_t sclk;
+   uint16_t sstat;
    uint32_t smode;
 
    printf("\n=== Test 9b: JERRY I2S Defaults ===\n");
 
    sclk = **p_sclk;
+   sstat = p_JERRYReadWord(JERRY_SCLK, WHO_M68K);
    smode = **p_smode;
 
    if (sclk == 0x0008)
       PASS("SCLK = $%02X", sclk);
    else
       FAIL("SCLK = $%02X (expected $08)", sclk);
+
+   if (sstat == 0x0000)
+      PASS("SSTAT = $%04X", sstat);
+   else
+      FAIL("SSTAT = $%04X (expected $0000)", sstat);
 
    if (smode == 0x0001)
       PASS("SMODE = $%08X", smode);
@@ -1009,6 +1039,7 @@ int main(int argc, char *argv[])
    LOAD(JERRYWriteWord);
    LOAD(JERRYIRQEnabled);
    LOAD(JERRYSetPendingIRQ);
+   LOAD(OPProcessScaledBitmap);
 
    LOAD_OPT(tomRam8);
    LOAD_OPT(jaguarMainRAM);
@@ -1072,6 +1103,7 @@ int main(int argc, char *argv[])
    test_jerry_clocks();
    test_endianness_registers();
    test_op_stop_list();
+   test_op_scaled_small_hscale_clip();
    test_border_clear();
    test_interrupts_cleared();
    test_jerry_pit_cleared();

@@ -47,7 +47,7 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 
    // And if that fails, try file sizes...
 
-   // If the file size is divisible by 1M, we probably have an regular ROM.
+   // If the file size is divisible by 1M, we probably have a regular ROM.
    // We can also check our CRC32 against the internal ROM database to be sure.
    // (We also check for the Memory Track cartridge size here as well...)
    if ((size % 1048576) == 0 || size == 131072)
@@ -92,9 +92,9 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       memset(jagMemSpace + 0x800000, 0xFF, 0x2000);
       memcpy(jagMemSpace + 0x802000, buffer, jaguarROMSize);
 
-      // Maybe instead of this, we could try requiring the STUBULATOR ROM? Just a thought...
-      // Try setting the vector to say, $1000 and putting an instruction there that loops forever:
-      // This kludge works! Yeah!
+      /* Alpine images do not provide a BIOS vector table. Point the illegal
+       * instruction vector at a local infinite loop to keep accidental traps
+       * inside mapped RAM. */
       SET32(jaguarMainRAM, 0x10, 0x00001000);
       SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
       return true;
@@ -132,7 +132,7 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       jaguarLoadedRAMStart = loadAddress;
       jaguarLoadedRAMEnd = loadAddress + codeSize;
 
-      // Hmm. Is this kludge necessary?
+      /* Match the Alpine trap guard used above for RAM-loaded server images. */
       SET32(jaguarMainRAM, 0x10, 0x00001000);		// Set Exception #4 (Illegal Instruction)
       SET16(jaguarMainRAM, 0x1000, 0x60FE);		// Here: bra Here
 

@@ -20,9 +20,17 @@ describe guesses, timing gaps, or known emulation shortcuts.
   reprogram TOM display registers.
 - The dead `objectp_running` flag and its misleading VMODE write side effect
   have been removed; OP execution is driven directly by halfline display state.
+- The unused pipelined `DSPHandleIRQs` export has been removed; live DSP
+  interrupt dispatch goes through the non-pipelined handler used by
+  `DSPSetIRQLine` and the IMASK-cleared path.
+- OP scaled bitmap clipping now keeps fractional phrase width for all edge
+  cases, avoiding divide-by-zero when small `hscale` values truncate an
+  integer-scaled phrase width to zero.
+- JERRY SSI `SSTAT` reads now report the modeled status bits instead of the
+  generic unmapped `$FFFF` placeholder.
 - `test_hle_bios` now covers HLE workspace state, exception vectors, I2S
-  defaults, JERRY JINTCTRL decode, deferred geometry updates, PAL timing, and
-  custom `VP` rollover.
+  defaults and `SSTAT` readback, JERRY JINTCTRL decode, OP scaled clipping,
+  deferred geometry updates, PAL timing, and custom `VP` rollover.
 - `make test` now includes event queue coverage for zero/negative-time event
   handling.
 
@@ -32,9 +40,11 @@ describe guesses, timing gaps, or known emulation shortcuts.
   resumable scheduler. The current `OP_RUNAWAY_GUARD_OBJECTS` limit prevents
   malformed lists from hanging the emulator, but it does not model OP cycle
   consumption or overloaded-list suspend/reentry timing.
-- `src/tom/op.c`: audit scaled bitmap clipping and horizontal remainder logic.
-  Multiple comments note that edge clipping, `firstPix`, `iwidth == 0`, and
-  scaled phrase alignment are guesses that affect road/ground rendering.
+- `src/tom/op.c`: continue auditing scaled bitmap semantics beyond the
+  small-`hscale` clipping fix. `firstPix`, `iwidth == 0`, initial horizontal
+  remainder phase, and scaled phrase alignment still need repro or hardware
+  coverage because they affect road/ground rendering.
+
 ## Medium Priority
 
 - `src/tom/tom.c`: replace hard-coded visible-window constants with values
@@ -43,9 +53,10 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - `src/tom/op.c`: document or test the transparent index / encoded black
   behavior in 4/8 BPP paths. Comments disagree about whether index 0 is
   transparent in all relevant modes.
-- `src/jerry/dac.c`: finish SSI/I2S default modeling. HLE sets internal state
-  for `SCLK`/`SMODE`, but the read path still reports placeholder values for
-  several DAC/I2S registers.
+- `src/jerry/dac.c`: continue SSI/I2S modeling beyond basic `SSTAT` readback,
+  including slave-clock timing and CD audio word-strobe behavior.
+- `src/jerry/dsp.c`: add targeted IRQ return-address coverage before changing
+  the live non-pipelined interrupt dispatch semantics.
 
 ## Lower Priority / CD Branch
 

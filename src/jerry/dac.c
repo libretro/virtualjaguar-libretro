@@ -14,31 +14,9 @@
 // JLH  04/30/2012  Changed SDL audio handler to run JERRY
 //
 
-// Need to set up defaults that the BIOS sets for the SSI here in DACInit()... !!! FIX !!!
-// or something like that... Seems like it already does, but it doesn't seem to
-// work correctly...! Perhaps just need to set up SSI stuff so BUTCH doesn't get
-// confused...
-
-// After testing on a real Jaguar, it seems clear that the I2S interrupt drives
-// the audio subsystem. So while you can drive the audio at a *slower* rate than
-// set by SCLK, you can't drive it any *faster*. Also note, that if the I2S
-// interrupt is not enabled/running on the DSP, then there is no audio. Also,
-// audio can be muted by clearing bit 8 of JOYSTICK (JOY1).
-//
-// Approach: We can run the DSP in the host system's audio IRQ, by running the
-// DSP for the alloted time (depending on the host buffer size & sample rate)
-// by simply reading the L/R_I2S (L/RTXD) registers at regular intervals. We
-// would also have to time the I2S/TIMER0/TIMER1 interrupts in the DSP as well.
-// This way, we can run the host audio IRQ at, say, 48 KHz and not have to care
-// so much about SCLK and running a separate buffer and all the attendant
-// garbage that comes with that awful approach.
-//
-// There would still be potential gotchas, as the SCLK can theoretically drive
-// the I2S at 26590906 / 2 (for SCLK == 0) = 13.3 MHz which corresponds to an
-// audio rate 416 KHz (dividing the I2S rate by 32, for 16-bit stereo). It
-// seems doubtful that anything useful could come of such a high rate, and we
-// can probably safely ignore any such ridiculously high audio rates. It won't
-// sound the same as on a real Jaguar, but who cares? :-)
+/* The libretro audio path samples LTXD/RTXD at 48 kHz into sampleBuffer.
+ * JERRYI2SCallback separately models DSP SSI interrupt timing from SCLK/SMODE;
+ * changing either path affects both audio output and DSP-side synchronization. */
 
 #include "dac.h"
 
@@ -89,6 +67,7 @@ void DACReset(void)
 {
    *ltxd = 0;
    lrxd  = 0;
+   sstat = 0;
 }
 
 void DACDone(void)
@@ -168,7 +147,12 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 
 uint8_t DACReadByte(uint32_t offset, uint32_t who)
 {
-   return 0xFF;
+   uint16_t value = DACReadWord(offset & 0xFFFFFFFE, who);
+
+   if (offset & 0x01)
+      return value & 0xFF;
+
+   return value >> 8;
 }
 
 uint16_t DACReadWord(uint32_t offset, uint32_t who)
@@ -179,8 +163,12 @@ uint16_t DACReadWord(uint32_t offset, uint32_t who)
       return lrxd;
    else if (offset == RRXD + 2)
       return rrxd;
+   else if (offset == SCLK)
+      return 0x0000;
+   else if (offset == SCLK + 2)
+      return sstat & 0x03;
 
-   return 0xFFFF;	// May need SSTAT as well... (but may be a Jaguar II only feature)
+   return 0xFFFF;
 }
 
 #include "state.h"
