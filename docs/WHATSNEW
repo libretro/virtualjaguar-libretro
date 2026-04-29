@@ -1,3 +1,81 @@
+Virtual Jaguar v2.2.0 libretro
+------------------------------
+
+A large libretro-fork release focused on accuracy, performance, and a
+durable test surface. Highlights since v2.1.0:
+
+== Hardware accuracy ==
+* DSP: 40-bit MAC accumulator semantics, FLAGS-write dispatch, IRQ
+  enable-on-set dispatch, IMASK preservation, ADDC carry overflow.
+* GPU: ADDC carry, IMASK preservation, missing symbol exports, PACK
+  test coverage, DIVL exception PC.
+* Blitter (accurate path): daddmode NAND tree, daddbsel bit 3,
+  ADDARRAY cinsel carry input, M2 BKGWREN+BCOMPEN phrase mode (Alien
+  vs Predator red-noise fix), SRCSHADE color corruption.
+* Object Processor: scaled-bitmap firstPix and edge clipping
+  (left/right/reflected), 1:1/3:2/2:1 hscale ratios, fixed-bitmap
+  firstPix for 2/4/16/24 BPP, OP GPU object handling.
+* TOM: IRQ pending status now latches even when CPU enables are
+  clear; enabling a pending source raises IPL2 via the new unified
+  TOMAssertEnabledIRQs path. Horizontal counter reads now advance.
+  Replaced the Doom resolution hack with proper PWIDTH pixel
+  replication.
+* JERRY: interrupt-control register decode, masked offset for
+  aligned PIT register access.
+* 68K: TOM underflow handling, mixed-declaration cleanup.
+* Event system: zero eventTime on init, scan all slots for next
+  event, timing-rollover and due-event handling.
+
+== Performance ==
+* ~2x speedup on DSP/GPU/memory hot paths.
+* SIMD-accelerated blitter operations (SSE2, NEON, scalar
+  fallback) with bit-exactness tests in CI.
+* Accurate-blitter inner loop tightened — dead code eliminated,
+  DCONTROL hoisted.
+
+== New features ==
+* HLE BIOS — boot games without a real BIOS image; covered by
+  test_hle_bios sanity tests.
+* Save states (retro_serialize / retro_unserialize) with
+  deterministic serialization for run-ahead support.
+* SRAM/EEPROM via the libretro SRAM interface, preserved across
+  soft resets.
+* Cheat code support (retro_cheat_set / retro_cheat_reset).
+* RetroAchievements memory map advertised
+  (RC_CONSOLE_ATARI_JAGUAR).
+* Headerless raw homebrew loading with conservative startup-base
+  inference.
+* Audio: refactored to eliminate per-sample events; interleaved
+  JERRY events with the main execution loop to fix frame-edge
+  audio dropouts.
+* Spike: Jaguar CD support exploration (BUTCH register map and
+  data-flow notes in docs/).
+
+== Tooling and testing ==
+* Headless test harness — make test runs C harnesses (HLE BIOS,
+  event queue, blitter SIMD, DSP MAC40, cheat, memory-map, RA
+  E2E, save-state round-trip / rewind) plus regression
+  screenshot diff via miniretro on push.
+* C89/GNU89 lint enforcement; mixed-declaration cleanup across
+  src.
+* Source-tree reorganization into src/core, src/tom, src/jerry,
+  src/cd, src/bios, src/m68000.
+* test_hle_bios pin coverage for TOM/JERRY/GPU/DSP IRQ register
+  semantics, PIT reload and byte-drop, video timing register
+  byte/word symmetry, PAL/NTSC defaults, VMODE bit-fields, IPL2
+  reassert, CLUT mirror, wavetable ROM write protection.
+
+== Build / platforms ==
+* MSVC 2005/2010 build fix (boolean.h vs stdbool.h).
+* Emscripten/WASM support, lighter NEON dcomp variant.
+* Portable xorshift PRNG for cross-platform RAM init.
+* Automated release workflow for tagged versions.
+* Debug-build timestamp reporting.
+
+== Maintainers ==
+* libretro/Provenance fork: Joseph Mattiello (Provenance-Emu).
+
+
 Virtual Jaguar v2.1.0 GCC/Qt
 ----------------------------
 

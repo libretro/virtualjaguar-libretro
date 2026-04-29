@@ -29,9 +29,9 @@
 #define GIT_VERSION ""
 #endif
 #ifdef BUILD_TIMESTAMP
-#define CORE_VERSION "v2.1.0" GIT_VERSION BUILD_TIMESTAMP
+#define CORE_VERSION "v2.2.0" GIT_VERSION BUILD_TIMESTAMP
 #else
-#define CORE_VERSION "v2.1.0" GIT_VERSION
+#define CORE_VERSION "v2.2.0" GIT_VERSION
 #endif
 
 int videoWidth               = 0;
