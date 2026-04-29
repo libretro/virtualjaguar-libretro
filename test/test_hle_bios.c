@@ -628,6 +628,25 @@ static void test_op_scaled_firstpix_4bpp(void)
 
    memset(p_tomRam8 + 0x1800, 0, 64);
 
+   p2 = 0x40;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x01 && p_tomRam8[0x1801] == 0x01
+         && p_tomRam8[0x1802] == 0x01 && p_tomRam8[0x1803] == 0x01
+         && p_tomRam8[0x1804] == 0x02 && p_tomRam8[0x1805] == 0x02
+         && p_tomRam8[0x1806] == 0x02 && p_tomRam8[0x1807] == 0x02)
+      PASS("4bpp scaled hscale=$40 duplicates each source pixel");
+   else
+      FAIL("4bpp scaled 2x first four pixels = %02X%02X %02X%02X %02X%02X %02X%02X (expected 0101 0101 0202 0202)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801],
+           p_tomRam8[0x1802], p_tomRam8[0x1803],
+           p_tomRam8[0x1804], p_tomRam8[0x1805],
+           p_tomRam8[0x1806], p_tomRam8[0x1807]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+   p2 = 0x20;
+
    p1 = ((uint64_t)8 << 49)
       | ((uint64_t)1 << 28)
       | ((uint64_t)1 << 15)

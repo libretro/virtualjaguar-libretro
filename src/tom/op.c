@@ -58,6 +58,20 @@ static uint32_t op_pointer;
 int32_t phraseWidthToPixels[8] = { 64, 32, 16, 8, 4, 2, 0, 0 };
 
 
+static void OPAdvanceScaledSource(uint16_t *horizontalRemainder, uint16_t hscale,
+      int bitsPerPixel, int *pixCount, uint64_t *pixels)
+{
+   *horizontalRemainder += 0x20;
+
+   while (*horizontalRemainder >= hscale)
+   {
+      *horizontalRemainder -= hscale;
+      (*pixCount)++;
+      *pixels <<= bitsPerPixel;
+   }
+}
+
+
 //
 // Object Processor initialization
 //
@@ -1136,15 +1150,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         /* Emit one or more source pixels for the current [3.5] scale phase,
-          * then advance to the next destination pixel. */
-         while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
-         {
-            horizontalRemainder += hscale;
-            pixCount++;
-            pixels <<= 1;
-         }
-         horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
+         OPAdvanceScaledSource(&horizontalRemainder, hscale, 1, &pixCount, &pixels);
 
          if (pixCount > 63)
          {
@@ -1196,13 +1202,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
-         {
-            horizontalRemainder += hscale;
-            pixCount++;
-            pixels <<= 2;
-         }
-         horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
+         OPAdvanceScaledSource(&horizontalRemainder, hscale, 2, &pixCount, &pixels);
 
          if (pixCount > 31)
          {
@@ -1254,13 +1254,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         while (horizontalRemainder < 0x20)		// I.e., it's <= 0 (*before* subtraction)
-         {
-            horizontalRemainder += hscale;
-            pixCount++;
-            pixels <<= 4;
-         }
-         horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
+         OPAdvanceScaledSource(&horizontalRemainder, hscale, 4, &pixCount, &pixels);
 
          if (pixCount > 15)
          {
@@ -1313,13 +1307,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
-         {
-            horizontalRemainder += hscale;
-            pixCount++;
-            pixels <<= 8;
-         }
-         horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
+         OPAdvanceScaledSource(&horizontalRemainder, hscale, 8, &pixCount, &pixels);
 
          if (pixCount > 7)
          {
@@ -1366,13 +1354,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
          currentLineBuffer += lbufDelta;
 
-         while (horizontalRemainder < 0x20)		// I.e., it's <= 1.0 (*before* subtraction)
-         {
-            horizontalRemainder += hscale;
-            pixCount++;
-            pixels <<= 16;
-         }
-         horizontalRemainder -= 0x20;		// Subtract 1.0f in [3.5] fixed point format
+         OPAdvanceScaledSource(&horizontalRemainder, hscale, 16, &pixCount, &pixels);
          if (pixCount > 3)
          {
             int phrasesToSkip = pixCount / 4, pixelShift = pixCount % 4;

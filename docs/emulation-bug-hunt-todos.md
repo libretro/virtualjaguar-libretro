@@ -28,8 +28,9 @@ describe guesses, timing gaps, or known emulation shortcuts.
   integer-scaled phrase width to zero.
 - OP scaled bitmap rendering now starts the horizontal scale phase at zero for
   1:1 `hscale=$20` output and applies `firstPix` to the first source phrase,
-  treats `iwidth == 0` as one phrase, and keeps the visible edge pixel for
-  reflected left-edge objects, with direct 4 BPP coverage in `test_hle_bios`.
+  treats `iwidth == 0` as one phrase, keeps the visible edge pixel for
+  reflected left-edge objects, and handles magnified `hscale` source stepping,
+  with direct 4 BPP coverage in `test_hle_bios`.
 - OP fixed bitmap rendering now honors `firstPix` for 2/4/16/24 BPP paths,
   not just 1/8 BPP, and avoids applying it again after clipping skips whole
   source phrases, with direct 4 BPP coverage in `test_hle_bios`.
@@ -54,7 +55,7 @@ describe guesses, timing gaps, or known emulation shortcuts.
   consumption or overloaded-list suspend/reentry timing.
 - `src/tom/op.c`: continue auditing scaled bitmap semantics beyond the
   small-`hscale`, `firstPix`, 1:1 phase, `iwidth == 0`, and reflected
-  left-edge fixes. Fractional scale ratios, clipping plus `firstPix`, and
+  left-edge fixes. Non-integer scale ratios, clipping plus `firstPix`, and
   reflected right-edge phrase alignment still need repro or hardware coverage
   because they affect road/ground rendering.
 ## Medium Priority
