@@ -73,7 +73,7 @@ durable test surface. Highlights since v2.1.0:
 * Debug-build timestamp reporting.
 
 == Maintainers ==
-* libretro/Provenance fork: Joseph Mattiello (Provenance-Emu).
+* libretro/Provenance fork: Joseph Mattiello (@JoeMatt, Provenance-Emu).
 
 
 Virtual Jaguar v2.1.0 GCC/Qt
