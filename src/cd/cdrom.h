@@ -25,8 +25,12 @@ void CDROMWriteByte(uint32_t offset, uint8_t data, uint32_t who);
 void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 
 bool ButchIsReadyToSend(void);
+bool CDROMHasData(void);  // True when sector buffer has valid data
+bool CDROMIsBiosOverride(void);
+uint8_t CDROMReadFifoByte(uint32_t who);
 uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who);
 void SetSSIWordsXmittedFromButch(void);
+void CDROMDiagSummary(void);
 
 #ifdef __cplusplus
 }
