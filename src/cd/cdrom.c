@@ -551,7 +551,16 @@ void BUTCHExec(uint32_t cycles)
    }
 
    biosHLE = (bootConfig.strategy == &cd_boot_strategy_bios);
-   hleActive = biosHLE && (hleSeeksSinceTransfer < HLE_FALLBACK_THRESHOLD);
+   /* HLETransferTick is the canonical CD-data path for both HLE and BIOS
+    * strategies until the GPU ISR's PTRPOS divergence (cdrom.c:319-333) is
+    * fixed. The previous "fall back to native FIFO IRQ after N seeks
+    * without HLE progress" path is destructive: it unleashes FIFO IRQs
+    * into the BIOS GPU ISR which writes to a wrong RAM address, corrupting
+    * the 68K stack/jump-table. Pre-Path-A this fallback was harmless
+    * because BUTCHExec never ticked; with BUTCHExec wired in, it becomes
+    * actively destructive (Hover Strike, Primal Rage land at $22xxxxxx). */
+   hleActive = biosHLE;
+   (void)hleSeeksSinceTransfer; /* still incremented for diagnostics */
 
    /* HLE data transfer: bypass GPU ISR fifo_read entirely for BIOS mode.
     * Copy CD data directly from cdBuf to main RAM at the BIOS-specified
@@ -587,9 +596,14 @@ void BUTCHExec(uint32_t cycles)
             diag_dsaIRQsFired++;
 
          JERRYSetPendingIRQ(IRQ2_EXTERNAL);
-         if (JERRYIRQEnabled(IRQ2_EXTERNAL))
-            m68k_set_irq(2);
-
+         /* CD BIOS clears BUTCH bit 0 before issuing CD_read, so the 68K
+          * side of the EXT1 line is dormant during transfers. The CD
+          * data path is GPU-side: BUTCH -> JERRY EXT1 latch -> GPU IRQ0.
+          * Asserting m68k IRQ2 here lands on a stale 68K vector when the
+          * BIOS hasn't installed its EXT1 trampoline (Hover Strike,
+          * Primal Rage), corrupting the stack with a bogus return address.
+          * Keep the JERRY pending bit (so JINTCTRL reads see it) but skip
+          * the m68k_set_irq dual-delivery path. */
          GPUSetIRQLine(GPUIRQ_CPU, ASSERT_LINE);
       }
    }
@@ -656,8 +670,7 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
        * never terminates because HLETransferTick keeps the refill cycle alive.
        * Suppress bit 4 only when HLE is actively transferring. */
       {
-         bool bHLEActive = (bootConfig.strategy == &cd_boot_strategy_bios)
-                           && (hleSeeksSinceTransfer < HLE_FALLBACK_THRESHOLD);
+         bool bHLEActive = (bootConfig.strategy == &cd_boot_strategy_bios);
          if (haveCDGoodness && fifoDataReady && !bHLEActive)
             data |= (1 << 4);
       }
