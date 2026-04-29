@@ -370,8 +370,6 @@ uint8_t bluecv[16][16] = {
 #define BG			0x58		// Background color
 #define INT1		0xE0
 
-//NOTE: These arbitrary cutoffs are NOT taken into account for PAL jaguar screens. !!! FIX !!! [DONE]
-
 #define LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
 #define RIGHT_VISIBLE_HC		(LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
 #define TOP_VISIBLE_VC			31
@@ -1224,8 +1222,7 @@ void TOMPITCallback(void);
 void TOMResetPIT(void)
 {
 #ifndef NEW_TIMER_SYSTEM
-   //Probably should *add* this amount to the counter to retain cycle accuracy! !!! FIX !!! [DONE]
-   //Also, why +1??? 'Cause that's what it says in the JTRM...!
+   // Add the next period to the counter; +1 is specified by the JTRM.
    //There is a small problem with this approach: If both the prescaler and the divider are equal
    //to $FFFF then the counter won't be large enough to handle it. !!! FIX !!!
    if (tom_timer_prescaler)

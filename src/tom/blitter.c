@@ -1693,12 +1693,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                if (phrase_mode && !dsten && !bkgwren)
                   dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
 
-               //Testing only... for now...
-               //This is wrong because the write data is a combination of srcd and dstd--either run
-               //thru the LFU or in PATDSEL or ADDDSEL mode. [DONE now, thru DATA module]
+               // Write data combines srcd and dstd through ADDDSEL, PATDSEL, or LFU.
                // Precedence is ADDDSEL > PATDSEL > LFU.
-               //Also, doesn't take into account the start & end masks, or the phrase width...
-               //Now it does!
 
                // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
                srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);

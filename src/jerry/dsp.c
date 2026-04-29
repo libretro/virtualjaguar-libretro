@@ -2206,7 +2206,6 @@ INLINE static void DSP_movei(void)
 
 INLINE static void DSP_movepc(void)
 {
-//Need to fix this to take into account pipelining effects... !!! FIX !!! [DONE]
 //Account for pipeline effects...
 	PRES = dsp_pc - 2 - (pipeline[plPtrRead].opcode == 38 ? 6 : (pipeline[plPtrRead].opcode == PIPELINE_STALL ? 0 : 2));
 }
