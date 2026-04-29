@@ -18,6 +18,8 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - Libretro geometry changes now apply after the frame rendered with the
   previous pitch is submitted, avoiding a one-frame pitch mismatch when games
   reprogram TOM display registers.
+- The dead `objectp_running` flag and its misleading VMODE write side effect
+  have been removed; OP execution is driven directly by halfline display state.
 - `test_hle_bios` now covers HLE workspace state, exception vectors, I2S
   defaults, JERRY JINTCTRL decode, deferred geometry updates, PAL timing, and
   custom `VP` rollover.
@@ -33,10 +35,6 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - `src/tom/op.c`: audit scaled bitmap clipping and horizontal remainder logic.
   Multiple comments note that edge clipping, `firstPix`, `iwidth == 0`, and
   scaled phrase alignment are guesses that affect road/ground rendering.
-- `src/tom/tom.c`: validate VMODE writes and Object Processor start behavior.
-  The code currently starts OP side effects on VMODE writes with comments
-  questioning whether VIDEN should gate this.
-
 ## Medium Priority
 
 - `src/tom/tom.c`: replace hard-coded visible-window constants with values

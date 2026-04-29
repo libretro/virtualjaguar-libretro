@@ -1140,11 +1140,6 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    }
 
    offset &= 0x3FFF;
-   if (offset == 0x28)			// VMODE (Why? Why not OBF?)
-      //Actually, we should check to see if the Enable bit of VMODE is set before doing this... !!! FIX !!!
-//#warning "Actually, we should check to see if the Enable bit of VMODE is set before doing this... !!! FIX !!!"
-      objectp_running = 1;
-
    if (offset >= 0x30 && offset <= 0x4E)
       data &= 0x07FF;			// These are (mostly) 11-bit registers
    if (offset == 0x2E || offset == 0x36 || offset == 0x54)

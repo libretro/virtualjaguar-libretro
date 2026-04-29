@@ -52,10 +52,6 @@ uint64_t OPLoadPhrase(uint32_t offset);
 // Blend tables (64K each)
 static uint8_t op_blend_y[0x10000];
 static uint8_t op_blend_cr[0x10000];
-// There may be a problem with this "RAM" overlapping (and thus being independent of)
-// some of the regular TOM RAM...
-uint8_t objectp_running = 0;
-
 static uint8_t op_bitmap_bit_depth[8] = { 1, 2, 4, 8, 16, 24, 32, 0 };
 static uint32_t op_pointer;
 
@@ -116,7 +112,6 @@ void OPInit(void)
 //
 void OPReset(void)
 {
-   objectp_running = 0;
 }
 
 

@@ -30,10 +30,6 @@ void OPSetCurrentObject(uint64_t object);
 #define OPFLAG_RMW			2					// Read-Modify-Write bit
 #define OPFLAG_REFLECT		1					// Horizontal mirror bit
 
-// Exported variables
-
-extern uint8_t objectp_running;
-
 #ifdef __cplusplus
 }
 #endif
