@@ -73,7 +73,12 @@
 #define JERRY_JINTCTRL   0xF10020
 #define JERRY_SCLK       0xF1A152
 #define JERRY_SMODE      0xF1A156
+#define IRQ2_EXTERNAL    0x01
+#define IRQ2_DSP         0x02
 #define IRQ2_TIMER1      0x04
+#define IRQ2_TIMER2      0x08
+#define IRQ2_ASI         0x10
+#define IRQ2_SSI         0x20
 
 /* who enum values from vjag_memory.h */
 #define WHO_M68K  6
@@ -93,10 +98,17 @@ static void (*p_retro_run)(void);
 static void (*p_JaguarReset)(void);
 static void (*p_JaguarApplyHLEBIOSState)(void);
 static void (*p_HalflineCallback)(void);
+static uint8_t (*p_TOMReadByte)(uint32_t, uint32_t);
+static uint16_t (*p_TOMReadWord)(uint32_t, uint32_t);
+static void (*p_TOMWriteByte)(uint32_t, uint8_t, uint32_t);
 static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
+static void (*p_TOMSetPendingVideoInt)(void);
+static void (*p_TOMSetPendingTimerInt)(void);
 static void (*p_JERRYWriteWord)(uint32_t, uint16_t, uint32_t);
+static void (*p_JERRYWriteByte)(uint32_t, uint8_t, uint32_t);
 static bool (*p_JERRYIRQEnabled)(int);
 static void (*p_JERRYSetPendingIRQ)(int);
+static void (*p_OPProcessList)(int, bool);
 static void (*p_OPProcessScaledBitmap)(uint64_t, uint64_t, uint64_t, bool);
 static void (*p_OPProcessFixedBitmap)(uint64_t, uint64_t, bool);
 
@@ -109,6 +121,16 @@ static uint8_t **p_sclk;
 static uint32_t **p_smode;
 static bool *p_lowerField;
 static uint32_t (*p_GPUReadLong)(uint32_t, uint32_t);
+static void (*p_GPUWriteLong)(uint32_t, uint32_t, uint32_t);
+static void (*p_GPUSetIRQLine)(int, int);
+static void (*p_GPUHandleIRQs)(void);
+static uint32_t *p_gpu_pc;
+static uint32_t (*p_DSPReadLong)(uint32_t, uint32_t);
+static void (*p_DSPWriteLong)(uint32_t, uint32_t, uint32_t);
+static void (*p_DSPSetIRQLine)(int, int);
+static void (*p_DSPHandleIRQsNP)(void);
+static uint32_t *p_dsp_pc;
+static uint32_t *p_dsp_control;
 static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
 static struct VJSettings *p_vjs;
 static uint32_t *p_jaguarLoadedRAMStart;
@@ -211,6 +233,23 @@ static int passes = 0, fails = 0;
 #define PASS(msg, ...) do { printf("  PASS: " msg "\n", ##__VA_ARGS__); passes++; } while(0)
 #define FAIL(msg, ...) do { printf("  FAIL: " msg "\n", ##__VA_ARGS__); fails++; } while(0)
 
+/* Mirror of struct regstruct from src/m68000/cpudefs.h. The core exports
+ * `regs` as a global symbol; we dlsym it and access it via this layout to
+ * observe the IPL line state set by m68k_set_irq -> m68k_set_irq2 path.
+ * The layout MUST match cpudefs.h exactly up through `intLevel`. */
+struct test_regstruct
+{
+   uint32_t regs[16];
+   uint32_t usp, isp;
+   uint16_t sr;
+   uint8_t  s;
+   uint8_t  stopped;
+   int      intmask;
+   int      intLevel;
+   /* Other fields follow but we only need state up to intLevel. */
+};
+static struct test_regstruct *p_regs;
+
 /* Helper: read 16-bit big-endian from tomRam8 */
 static uint16_t tom_get16(uint16_t offset)
 {
@@ -231,6 +270,12 @@ static uint16_t ram_get16(uint32_t offset)
 {
    uint8_t *ram = *p_jaguarMainRAM;
    return ((uint16_t)ram[offset] << 8) | (uint16_t)ram[offset + 1];
+}
+
+static void tom_set16(uint16_t offset, uint16_t value)
+{
+   p_tomRam8[offset] = (uint8_t)(value >> 8);
+   p_tomRam8[offset + 1] = (uint8_t)value;
 }
 
 static void ram_set32(uint32_t offset, uint32_t value)
@@ -684,6 +729,78 @@ static void test_op_scaled_firstpix_4bpp(void)
            p_tomRam8[0x1802], p_tomRam8[0x1803]);
 
    memset(p_tomRam8 + 0x1800, 0, 64);
+   ram_set32(0x100008, 0x23456789);
+   ram_set32(0x10000C, 0xABCDEF01);
+
+   p1 = ((uint64_t)8 << 49)
+      | ((uint64_t)3 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12)
+      | 0xFF0;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1800] == 0x02 && p_tomRam8[0x1801] == 0x02)
+      PASS("4bpp scaled clipped phrase ignores firstPix after source advance");
+   else
+      FAIL("4bpp scaled clipped first pixel = %02X%02X (expected 0202)",
+           p_tomRam8[0x1800], p_tomRam8[0x1801]);
+
+   memset(p_tomRam8 + 0x17F0, 0xEE, 0x50);
+   p_tomRam8[0x1800] = 0;
+   p_tomRam8[0x1801] = 0;
+
+   p1 = ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12)
+      | 0xFFF;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x17FE] == 0xEE && p_tomRam8[0x17FF] == 0xEE
+         && p_tomRam8[0x1800] == 0x02 && p_tomRam8[0x1801] == 0x02)
+      PASS("4bpp scaled partial left clip consumes source without pre-LBUF write");
+   else
+      FAIL("4bpp scaled partial left clip pre=%02X%02X first=%02X%02X (expected EEEE 0202)",
+           p_tomRam8[0x17FE], p_tomRam8[0x17FF],
+           p_tomRam8[0x1800], p_tomRam8[0x1801]);
+
+   memset(p_tomRam8 + 0x1D98, 0xEE, 0x20);
+
+   p1 = ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12)
+      | 719;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1D9E] == 0x01 && p_tomRam8[0x1D9F] == 0x01
+         && p_tomRam8[0x1DA0] == 0xEE && p_tomRam8[0x1DA1] == 0xEE)
+      PASS("4bpp scaled right edge stops at final LBUF pixel");
+   else
+      FAIL("4bpp scaled right edge last=%02X%02X post=%02X%02X (expected 0101 EEEE)",
+           p_tomRam8[0x1D9E], p_tomRam8[0x1D9F],
+           p_tomRam8[0x1DA0], p_tomRam8[0x1DA1]);
+
+   memset(p_tomRam8 + 0x1D98, 0xEE, 0x20);
+
+   p1 = ((uint64_t)1 << 45)
+      | ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)2 << 12)
+      | 720;
+
+   p_OPProcessScaledBitmap(p0, p1, p2, true);
+
+   if (p_tomRam8[0x1D9E] == 0x02 && p_tomRam8[0x1D9F] == 0x02
+         && p_tomRam8[0x1DA0] == 0xEE && p_tomRam8[0x1DA1] == 0xEE)
+      PASS("4bpp reflected scaled right edge consumes offscreen source pixel");
+   else
+      FAIL("4bpp reflected right edge last=%02X%02X post=%02X%02X (expected 0202 EEEE)",
+           p_tomRam8[0x1D9E], p_tomRam8[0x1D9F],
+           p_tomRam8[0x1DA0], p_tomRam8[0x1DA1]);
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
 
    p1 = ((uint64_t)1 << 15)
       | ((uint64_t)2 << 12);
@@ -766,6 +883,69 @@ static void test_op_fixed_firstpix_4bpp(void)
    else
       FAIL("4bpp clipped first pixel = %02X %02X (expected 02 02)",
            p_tomRam8[0x1800], p_tomRam8[0x1801]);
+}
+
+/* ================================================================
+ * Test 6d: OP Bitmap write-back
+ * Bitmap objects are consumed during list processing: height is
+ * decremented and the source pointer advances by dwidth.
+ * ================================================================ */
+static void test_op_fixed_bitmap_writeback(void)
+{
+   uint32_t listAddr;
+   uint32_t dataAddr;
+   uint32_t stopAddr;
+   uint64_t p0;
+   uint64_t p1;
+   uint32_t newP0Hi;
+   uint32_t newP0Lo;
+   uint32_t newData;
+   uint32_t newHeight;
+
+   printf("\n=== Test 6d: OP Fixed Bitmap write-back ===\n");
+
+   listAddr = 0x00012000;
+   dataAddr = 0x00100000;
+   stopAddr = listAddr + 0x18;
+
+   memset(p_tomRam8 + 0x1800, 0, 64);
+   ram_set32(dataAddr, 0x11223344);
+   ram_set32(dataAddr + 4, 0x55667788);
+
+   p0 = ((uint64_t)dataAddr << 40)
+      | ((uint64_t)stopAddr << 21)
+      | ((uint64_t)2 << 14)
+      | ((uint64_t)10 << 3);
+   p1 = ((uint64_t)1 << 28)
+      | ((uint64_t)1 << 18)
+      | ((uint64_t)1 << 15)
+      | ((uint64_t)4 << 12);
+
+   ram_set32(listAddr, (uint32_t)(p0 >> 32));
+   ram_set32(listAddr + 4, (uint32_t)p0);
+   ram_set32(listAddr + 8, (uint32_t)(p1 >> 32));
+   ram_set32(listAddr + 12, (uint32_t)p1);
+   ram_set32(listAddr + 16, 0x00000000);
+   ram_set32(listAddr + 20, 0x00000000);
+   ram_set32(stopAddr, 0x00000000);
+   ram_set32(stopAddr + 4, 0x00000004);
+
+   tom_set16(TOM_OLP_LO, (uint16_t)listAddr);
+   tom_set16(TOM_OLP_HI, (uint16_t)(listAddr >> 16));
+
+   p_OPProcessList(10, true);
+
+   newP0Hi = ram_get32(listAddr);
+   newP0Lo = ram_get32(listAddr + 4);
+   p0 = ((uint64_t)newP0Hi << 32) | newP0Lo;
+   newData = (uint32_t)((p0 >> 40) & 0xFFFFF8);
+   newHeight = (uint32_t)((p0 >> 14) & 0x3FF);
+
+   if (newHeight == 1 && newData == dataAddr + 8)
+      PASS("fixed bitmap write-back advanced data and decremented height");
+   else
+      FAIL("fixed bitmap write-back data=$%06X height=%u (expected data=$%06X height=1)",
+           newData, newHeight, dataAddr + 8);
 }
 
 /* ================================================================
@@ -855,6 +1035,333 @@ static void test_jerry_jintctrl_word_decode(void)
             pending, p_JERRYIRQEnabled(IRQ2_TIMER1) ? 1 : 0);
 
    p_JERRYWriteWord(JERRY_JINTCTRL, 0x0400, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 9c: JERRY JINTCTRL multiple pending sources
+ * Mirror of Test 10f for TOM INT1, but JINTCTRL has different byte/word
+ * semantics:
+ *   byte $F10020: clears pending bits matching data; mask untouched
+ *   byte $F10021: replaces mask; pending untouched
+ *   word $F10020: low byte = mask (replace), high byte = clear pending
+ * ================================================================ */
+static void test_jerry_jintctrl_multi_pending_selective_clear(void)
+{
+   uint16_t pending;
+   uint8_t saved_mask = 0;
+
+   printf("\n=== Test 9c: JERRY JINTCTRL Multi-Source Pending ===\n");
+
+   if (p_JERRYIRQEnabled(IRQ2_EXTERNAL)) saved_mask |= IRQ2_EXTERNAL;
+   if (p_JERRYIRQEnabled(IRQ2_DSP))      saved_mask |= IRQ2_DSP;
+   if (p_JERRYIRQEnabled(IRQ2_TIMER1))   saved_mask |= IRQ2_TIMER1;
+   if (p_JERRYIRQEnabled(IRQ2_TIMER2))   saved_mask |= IRQ2_TIMER2;
+   if (p_JERRYIRQEnabled(IRQ2_ASI))      saved_mask |= IRQ2_ASI;
+   if (p_JERRYIRQEnabled(IRQ2_SSI))      saved_mask |= IRQ2_SSI;
+
+   /* Word write: high byte clears pending bits, low byte replaces mask.
+    * 0x3F00 = clear all 6 IRQ pending sources, mask = 0. */
+   p_JERRYWriteWord(JERRY_JINTCTRL, 0x3F00, WHO_M68K);
+   pending = p_JERRYReadWord(JERRY_JINTCTRL, WHO_M68K);
+   if ((pending & 0x3F) == 0)
+      PASS("baseline: all pending cleared");
+   else
+      FAIL("baseline pending = $%04X (expected 0)", pending);
+
+   p_JERRYSetPendingIRQ(IRQ2_TIMER1);
+   p_JERRYSetPendingIRQ(IRQ2_TIMER2);
+   pending = p_JERRYReadWord(JERRY_JINTCTRL, WHO_M68K);
+   if ((pending & (IRQ2_TIMER1 | IRQ2_TIMER2)) == (IRQ2_TIMER1 | IRQ2_TIMER2))
+      PASS("timer1+timer2 latched together (pending=$%02X)", pending & 0xFF);
+   else
+      FAIL("pending = $%04X (expected timer1|timer2)", pending);
+
+   /* Byte write to $F10021 sets mask only; pending must not change. */
+   p_JERRYWriteByte(JERRY_JINTCTRL + 1, IRQ2_TIMER1, WHO_M68K);
+   pending = p_JERRYReadWord(JERRY_JINTCTRL, WHO_M68K);
+   if ((pending & (IRQ2_TIMER1 | IRQ2_TIMER2)) == (IRQ2_TIMER1 | IRQ2_TIMER2)
+         && p_JERRYIRQEnabled(IRQ2_TIMER1)
+         && !p_JERRYIRQEnabled(IRQ2_TIMER2))
+      PASS("$F10021 mask write keeps pending intact");
+   else
+      FAIL("pending=$%04X t1ena=%d t2ena=%d", pending,
+           p_JERRYIRQEnabled(IRQ2_TIMER1) ? 1 : 0,
+           p_JERRYIRQEnabled(IRQ2_TIMER2) ? 1 : 0);
+
+   /* Byte write to $F10020 clears matching pending bits; mask must not change. */
+   p_JERRYWriteByte(JERRY_JINTCTRL, IRQ2_TIMER1, WHO_M68K);
+   pending = p_JERRYReadWord(JERRY_JINTCTRL, WHO_M68K);
+   if ((pending & IRQ2_TIMER1) == 0
+         && (pending & IRQ2_TIMER2) == IRQ2_TIMER2
+         && p_JERRYIRQEnabled(IRQ2_TIMER1))
+      PASS("byte clear of timer1 leaves timer2 latched and mask intact");
+   else
+      FAIL("pending=$%04X t1ena=%d (expected timer2 only, mask unchanged)",
+           pending, p_JERRYIRQEnabled(IRQ2_TIMER1) ? 1 : 0);
+
+   /* Word write at $F10020: high byte clears timer2; low byte replaces mask. */
+   p_JERRYWriteWord(JERRY_JINTCTRL, ((uint16_t)IRQ2_TIMER2 << 8) | IRQ2_DSP, WHO_M68K);
+   pending = p_JERRYReadWord(JERRY_JINTCTRL, WHO_M68K);
+   if ((pending & 0x3F) == 0
+         && p_JERRYIRQEnabled(IRQ2_DSP)
+         && !p_JERRYIRQEnabled(IRQ2_TIMER1))
+      PASS("word write clears pending and replaces mask");
+   else
+      FAIL("pending=$%04X mask: dsp=%d t1=%d", pending,
+           p_JERRYIRQEnabled(IRQ2_DSP) ? 1 : 0,
+           p_JERRYIRQEnabled(IRQ2_TIMER1) ? 1 : 0);
+
+   /* Restore: clear any stray pending and replace mask with original. */
+   p_JERRYWriteWord(JERRY_JINTCTRL, 0x3F00 | saved_mask, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 9d: GPU IRQ Latch & Re-dispatch
+ * Pin the GPU's interrupt latch / enable / dispatch behavior. The
+ * latch lives in gpu_control bits 6..10, mirrored as INT_LAT0..4.
+ * GPUSetIRQLine(line, ASSERT_LINE) sets bit (6+line); the latch is
+ * sticky until SW writes the matching CINTxFLAG bit (bits 9..13) to
+ * gpu_flags via the memory-mapped F02100 path. With GPU off (HLE
+ * mode) and INT_ENA cleared, GPUHandleIRQs must NOT advance gpu_pc.
+ *
+ * We deliberately keep INT_ENA0..4 = 0 so HandleIRQs takes the
+ * "!bits" early-out and never dispatches; this lets us inspect the
+ * latch directly without perturbing R31/SP or GPU RAM.
+ *
+ * Observables (memory-mapped via GPUReadLong):
+ *   $F02100 - gpu_flags (returns gpu_flags & 0xFFFFC1FF)
+ *   $F02110 - gpu_pc
+ *   $F02114 - gpu_control (latch bits 6..10 visible)
+ * ================================================================ */
+#define ASSERT_LINE_LOCAL 1
+#define CLEAR_LINE_LOCAL  0
+static void test_gpu_irq_latch_redispatch(void)
+{
+   uint32_t saved_flags;
+   uint32_t saved_control;
+   uint32_t saved_pc;
+   uint32_t ctrl;
+   uint32_t pc_before;
+   uint32_t pc_after;
+
+   printf("\n=== Test 9d: GPU IRQ Latch & Re-dispatch ===\n");
+
+   /* Save state so we don't perturb later tests. */
+   saved_flags = p_GPUReadLong(0xF02100, WHO_M68K);
+   saved_control = p_GPUReadLong(0xF02114, WHO_M68K);
+   saved_pc = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+
+   /* Establish baseline: clear gpu_flags (INT_ENA all 0, IMASK 0)
+    * via the F02100 path, and clear any stray latch bits with
+    * CINT04FLAGS. GPUWriteLong applies CINT bits to gpu_control. */
+   p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* clear all CINTxFLAG */
+   p_GPUWriteLong(0xF02100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
+   pc_before = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+
+   /* --- Sub-assert 1: latch survives without enable --- */
+   p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   pc_after = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+   if ((ctrl & 0x40) && pc_after == pc_before)
+      PASS("IRQ0 latch set without enable, gpu_pc stable");
+   else
+      FAIL("ctrl=$%08X pc:%08X->%08X (want bit6 set, pc unchanged)",
+           ctrl, pc_before, pc_after);
+
+   /* --- Sub-assert 2: idempotent latch (set twice, still bit6 only) --- */
+   p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if ((ctrl & 0x7C0) == 0x40)
+      PASS("re-asserting IRQ0 leaves only bit6 set in latch");
+   else
+      FAIL("ctrl=$%08X after second assert (want only bit6 in 6..10)", ctrl);
+
+   /* --- Sub-assert 3: multi-source latch holds independent bits --- */
+   p_GPUSetIRQLine(4, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if ((ctrl & 0x7C0) == (0x40 | 0x400))
+      PASS("IRQ0 and IRQ4 both latched (bits 6 and 10)");
+   else
+      FAIL("ctrl=$%08X (want bits 6+10 set, others clear in 6..10)", ctrl);
+
+   /* --- Sub-assert 4: gpu_pc invariant under latches without enable --- */
+   pc_after = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+   if (pc_after == pc_before)
+      PASS("gpu_pc unchanged through 3 GPUSetIRQLine calls (IMASK gate)");
+   else
+      FAIL("gpu_pc moved %08X->%08X without dispatch", pc_before, pc_after);
+
+   /* --- Sub-assert 5: explicit CLEAR_LINE clears that latch bit --- */
+   p_GPUSetIRQLine(0, CLEAR_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if (!(ctrl & 0x40) && (ctrl & 0x400))
+      PASS("CLEAR_LINE on IRQ0 clears bit6, IRQ4 latch retained");
+   else
+      FAIL("ctrl=$%08X (want bit6 clear, bit10 set)", ctrl);
+
+   /* --- Sub-assert 6: SW clear via CINTxFLAG write to gpu_flags --- */
+   /* Write CINT4FLAG (0x2000) to gpu_flags; this should clear latch bit 10
+    * via the gpu_control &= ~((gpu_flags & CINT04FLAGS) >> 3) path. */
+   p_GPUWriteLong(0xF02100, 0x00002000, WHO_M68K);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if (!(ctrl & 0x400))
+      PASS("CINT4FLAG write to gpu_flags clears IRQ4 latch (bit10)");
+   else
+      FAIL("ctrl=$%08X after CINT4FLAG write (want bit10 clear)", ctrl);
+
+   /* Calling GPUHandleIRQs with no latched+enabled IRQs is a safe no-op. */
+   pc_before = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+   p_GPUHandleIRQs();
+   pc_after = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+   if (pc_after == pc_before)
+      PASS("GPUHandleIRQs with no enabled latches is a no-op");
+   else
+      FAIL("gpu_pc moved %08X->%08X via HandleIRQs no-op", pc_before, pc_after);
+
+   /* Restore state. Clear any stray latch first, then restore the
+    * pre-test gpu_flags and gpu_control. We can only fully restore
+    * gpu_flags if we have a path to set IMASK (we don't) -- but
+    * IMASK is 0 in HLE mode, so the visible portion (lower 14 bits
+    * minus IMASK quirks) round-trips cleanly. */
+   p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* clear all CINTxFLAG */
+   p_GPUWriteLong(0xF02100, saved_flags & ~0x00003E00u, WHO_M68K);
+   if (p_gpu_pc)
+      *p_gpu_pc = saved_pc;
+   /* gpu_control low bits writable; latch (F7C0) is masked off on write
+    * but we already cleared the latch above, matching saved baseline. */
+   p_GPUWriteLong(0xF02114, saved_control & ~0xF7C0u, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 9e: DSP IRQ Latch & Re-dispatch
+ * DSP analog of Test 9d. The DSP shares the GPU RISC instruction set
+ * but has 6 IRQ lines (vs GPU's 5). Latch layout in dsp_control:
+ *   bits 6..10  = INT_LAT0..INT_LAT4
+ *   bit  16     = INT_LAT5  (NON-CONTIGUOUS with LAT0..4)
+ * Enable mask in dsp_flags:
+ *   bits 4..8   = INT_ENA0..INT_ENA4
+ *   bit  16     = INT_ENA5
+ *   bit  3      = IMASK     (gates dispatch; HLE leaves it 0)
+ * SW clear path: writing CINTxFLAG bits to dsp_flags ($F1A100) clears
+ * the matching dsp_control latch via:
+ *   dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3)   (bits 9..13 -> 6..10)
+ *   dsp_control &= ~((dsp_flags & CINT5FLAG)   >> 1)   (bit 17 -> 16)
+ *
+ * As in Test 9d, we keep all INT_ENAx = 0 so DSPHandleIRQsNP() takes
+ * the early-out and never dispatches; this lets us inspect the latch
+ * directly without perturbing R30/R31/dsp_pc.
+ *
+ * Observables (memory-mapped via DSPReadLong):
+ *   $F1A100 - dsp_flags (returned as dsp_flags & 0xFFFFC1FF)
+ *   $F1A110 - dsp_pc
+ *   $F1A114 - dsp_control (latch bits 6..10, 16 visible)
+ *
+ * Note: dsp_flags is a file-static in src/jerry/dsp.c and is not
+ * dlsym-able, so we observe/mutate it only through the $F1A100 path.
+ * dsp_pc and dsp_control are exported globals and are pinned via
+ * dlsym for direct inspection (with $F1A110/$F1A114 fallbacks).
+ * ================================================================ */
+static void test_dsp_irq_latch_redispatch(void)
+{
+   uint32_t saved_flags;
+   uint32_t saved_control;
+   uint32_t saved_pc;
+   uint32_t ctrl;
+   uint32_t pc_before;
+   uint32_t pc_after;
+
+   printf("\n=== Test 9e: DSP IRQ Latch & Re-dispatch ===\n");
+
+   /* Save state so we don't perturb later tests. */
+   saved_flags = p_DSPReadLong(0xF1A100, WHO_M68K);
+   saved_control = p_DSPReadLong(0xF1A114, WHO_M68K);
+   saved_pc = p_dsp_pc ? *p_dsp_pc : p_DSPReadLong(0xF1A110, WHO_M68K);
+
+   /* Establish baseline: clear all CINTxFLAGs (which also clears any
+    * stray latch bits in dsp_control via the SW clear path), then set
+    * dsp_flags = 0 (INT_ENAx all 0, IMASK 0).
+    * CINT0..4FLAG are bits 9..13 (mask 0x3E00); CINT5FLAG is bit 17
+    * (0x20000). */
+   p_DSPWriteLong(0xF1A100, 0x00023E00, WHO_M68K); /* clear CINT0..5 latches */
+   p_DSPWriteLong(0xF1A100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
+   pc_before = p_dsp_pc ? *p_dsp_pc : p_DSPReadLong(0xF1A110, WHO_M68K);
+
+   /* --- Sub-assert 1: latch survives without enable --- */
+   p_DSPSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_DSPReadLong(0xF1A114, WHO_M68K);
+   pc_after = p_dsp_pc ? *p_dsp_pc : p_DSPReadLong(0xF1A110, WHO_M68K);
+   if ((ctrl & 0x40) && pc_after == pc_before)
+      PASS("IRQ0 latch set without enable, dsp_pc stable");
+   else
+      FAIL("ctrl=$%08X pc:%08X->%08X (want bit6 set, pc unchanged)",
+           ctrl, pc_before, pc_after);
+
+   /* --- Sub-assert 2: idempotent latch (set twice, only bit6 in 6..10) --- */
+   p_DSPSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_DSPReadLong(0xF1A114, WHO_M68K);
+   if ((ctrl & 0x7C0) == 0x40 && !(ctrl & 0x10000))
+      PASS("re-asserting IRQ0 leaves only bit6 set in latch");
+   else
+      FAIL("ctrl=$%08X after second assert (want only bit6 in {6..10,16})",
+           ctrl);
+
+   /* --- Sub-assert 3: multi-source latch holds independent bits ---
+    * IRQ5 latches at bit 16, NOT bit 11 (DSP layout is non-contiguous). */
+   p_DSPSetIRQLine(5, ASSERT_LINE_LOCAL);
+   ctrl = p_DSPReadLong(0xF1A114, WHO_M68K);
+   if ((ctrl & 0x40) && (ctrl & 0x10000) && (ctrl & 0x780) == 0)
+      PASS("IRQ0 and IRQ5 both latched (bits 6 and 16)");
+   else
+      FAIL("ctrl=$%08X (want bits 6+16 set, bits 7..10 clear)", ctrl);
+
+   /* --- Sub-assert 4: dsp_pc invariant under latches without enable --- */
+   pc_after = p_dsp_pc ? *p_dsp_pc : p_DSPReadLong(0xF1A110, WHO_M68K);
+   if (pc_after == pc_before)
+      PASS("dsp_pc unchanged through 3 DSPSetIRQLine calls (IMASK gate)");
+   else
+      FAIL("dsp_pc moved %08X->%08X without dispatch", pc_before, pc_after);
+
+   /* --- Sub-assert 5: explicit CLEAR_LINE clears that latch bit --- */
+   p_DSPSetIRQLine(0, CLEAR_LINE_LOCAL);
+   ctrl = p_DSPReadLong(0xF1A114, WHO_M68K);
+   if (!(ctrl & 0x40) && (ctrl & 0x10000))
+      PASS("CLEAR_LINE on IRQ0 clears bit6, IRQ5 latch retained");
+   else
+      FAIL("ctrl=$%08X (want bit6 clear, bit16 set)", ctrl);
+
+   /* --- Sub-assert 6: SW clear via CINT5FLAG write to dsp_flags ---
+    * Write CINT5FLAG (0x20000) to dsp_flags; this should clear latch
+    * bit 16 via the dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1)
+    * path. */
+   p_DSPWriteLong(0xF1A100, 0x00020000, WHO_M68K);
+   ctrl = p_DSPReadLong(0xF1A114, WHO_M68K);
+   if (!(ctrl & 0x10000))
+      PASS("CINT5FLAG write to dsp_flags clears IRQ5 latch (bit16)");
+   else
+      FAIL("ctrl=$%08X after CINT5FLAG write (want bit16 clear)", ctrl);
+
+   /* --- Sub-assert 7: DSPHandleIRQsNP no-op when nothing enabled --- */
+   pc_before = p_dsp_pc ? *p_dsp_pc : p_DSPReadLong(0xF1A110, WHO_M68K);
+   p_DSPHandleIRQsNP();
+   pc_after = p_dsp_pc ? *p_dsp_pc : p_DSPReadLong(0xF1A110, WHO_M68K);
+   if (pc_after == pc_before)
+      PASS("DSPHandleIRQsNP with no enabled latches is a no-op");
+   else
+      FAIL("dsp_pc moved %08X->%08X via HandleIRQs no-op",
+           pc_before, pc_after);
+
+   /* Restore state. Clear any stray latch first (CINT0..5), then
+    * restore the pre-test dsp_flags and dsp_control. We can only
+    * fully restore dsp_flags if we have a path to set IMASK -- but
+    * IMASK is 0 in HLE mode, so the visible portion round-trips. */
+   p_DSPWriteLong(0xF1A100, 0x00023E00, WHO_M68K); /* clear all CINTxFLAG */
+   p_DSPWriteLong(0xF1A100, saved_flags & ~0x00023E00u, WHO_M68K);
+   if (p_dsp_pc)
+      *p_dsp_pc = saved_pc;
+   /* dsp_control: VERSION and INT_LATx bits are protected on write
+    * (mask in DSPWriteLong); we already cleared the latches, matching
+    * the saved baseline for the unprotected portion. */
+   p_DSPWriteLong(0xF1A114, saved_control & ~0x0001F7C0u, WHO_M68K);
 }
 
 /* ================================================================
@@ -971,7 +1478,797 @@ static void test_tom_vp_rollover(void)
 }
 
 /* ================================================================
- * Test 10c: Libretro Geometry Update Ordering
+ * Test 10c: TOM video IRQ latch with disabled CPU enable
+ * IRQ sources latch even when their CPU enable bit is clear; enabling
+ * only gates whether the pending source asserts IPL2.
+ * ================================================================ */
+static void test_tom_video_irq_latches_when_disabled(void)
+{
+   uint16_t old_vp;
+   uint16_t old_vc;
+   uint16_t old_vi;
+   uint16_t pending;
+   bool old_lower_field;
+
+   printf("\n=== Test 10c: TOM Video IRQ Latches While Disabled ===\n");
+
+   old_vp = tom_get16(TOM_VP);
+   old_vc = tom_get16(TOM_VC);
+   old_vi = tom_get16(TOM_VI);
+   old_lower_field = *p_lowerField;
+
+   p_TOMWriteWord(0xF000E0, 0x0100, WHO_M68K);
+   p_TOMWriteWord(0xF000E0, 0x0000, WHO_M68K);
+   p_TOMWriteWord(0xF0003E, 7, WHO_M68K);
+   p_TOMWriteWord(0xF0004E, 3, WHO_M68K);
+   p_TOMWriteWord(0xF00006, 2, WHO_M68K);
+   *p_lowerField = false;
+
+   p_HalflineCallback();
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+
+   if (pending & 0x0001)
+      PASS("video IRQ source latched while CPU enable was disabled");
+   else
+      FAIL("INT1 pending = $%04X (expected video bit set)", pending);
+
+   p_TOMWriteWord(0xF000E0, 0x0100, WHO_M68K);
+   p_TOMWriteWord(0xF0003E, old_vp, WHO_M68K);
+   p_TOMWriteWord(0xF0004E, old_vi, WHO_M68K);
+   p_TOMWriteWord(0xF00006, old_vc, WHO_M68K);
+   *p_lowerField = old_lower_field;
+}
+
+/* ================================================================
+ * Test 10d: TOM INT1 byte clear
+ * Some software clears TOM IRQ sources with byte writes to INT1's
+ * high byte. Those writes must clear the pending latch just like
+ * word writes do.
+ * ================================================================ */
+static void test_tom_int1_byte_write_clears_pending(void)
+{
+   uint16_t old_vp;
+   uint16_t old_vc;
+   uint16_t old_vi;
+   uint16_t pending;
+   bool old_lower_field;
+
+   printf("\n=== Test 10d: TOM INT1 Byte Clear ===\n");
+
+   old_vp = tom_get16(TOM_VP);
+   old_vc = tom_get16(TOM_VC);
+   old_vi = tom_get16(TOM_VI);
+   old_lower_field = *p_lowerField;
+
+   p_TOMWriteWord(0xF000E0, 0x0100, WHO_M68K);
+   p_TOMWriteWord(0xF000E0, 0x0000, WHO_M68K);
+   p_TOMWriteWord(0xF0003E, 7, WHO_M68K);
+   p_TOMWriteWord(0xF0004E, 3, WHO_M68K);
+   p_TOMWriteWord(0xF00006, 2, WHO_M68K);
+   *p_lowerField = false;
+
+   p_HalflineCallback();
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+
+   if (pending & 0x0001)
+      PASS("video IRQ source latched before byte clear");
+   else
+      FAIL("INT1 pending = $%04X (expected video bit before clear)", pending);
+
+   if (p_TOMReadByte(0xF000E0, WHO_M68K) == 0
+       && (p_TOMReadByte(0xF000E1, WHO_M68K) & 0x01))
+      PASS("INT1 byte reads expose pending source bits");
+   else
+      FAIL("INT1 byte reads high=$%02X low=$%02X",
+            p_TOMReadByte(0xF000E0, WHO_M68K),
+            p_TOMReadByte(0xF000E1, WHO_M68K));
+
+   p_TOMWriteByte(0xF000E0, 0x01, WHO_M68K);
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+
+   if (!(pending & 0x0001))
+      PASS("INT1 high-byte write cleared video IRQ source");
+   else
+      FAIL("INT1 pending = $%04X (expected video bit clear)", pending);
+
+   p_TOMWriteWord(0xF000E0, 0x0100, WHO_M68K);
+   p_TOMWriteWord(0xF0003E, old_vp, WHO_M68K);
+   p_TOMWriteWord(0xF0004E, old_vi, WHO_M68K);
+   p_TOMWriteWord(0xF00006, old_vc, WHO_M68K);
+   *p_lowerField = old_lower_field;
+}
+
+/* ================================================================
+ * Test 10f: TOM INT1 multiple pending sources
+ * Software can have video and timer (or other) sources latched at once.
+ * Byte reads expose combined pending bits; high-byte clears are selective.
+ * ================================================================ */
+static void test_tom_int1_multi_pending_selective_clear(void)
+{
+   uint16_t old_int1;
+   uint16_t pending;
+
+   printf("\n=== Test 10f: TOM INT1 Multi-Source Pending ===\n");
+
+   old_int1 = tom_get16(TOM_INT1);
+
+   p_TOMWriteWord(0xF000E0, 0x1F00, WHO_M68K);
+   p_TOMWriteWord(0xF000E0, 0x0000, WHO_M68K);
+
+   p_TOMSetPendingVideoInt();
+   p_TOMSetPendingTimerInt();
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+
+   if ((pending & 0x09) == 0x09)
+      PASS("video and timer IRQ sources both latched");
+   else
+      FAIL("INT1 pending = $%04X (expected video+timer bits)", pending);
+
+   p_TOMWriteByte(0xF000E1, 0x01, WHO_M68K);
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+   if ((pending & 0x09) == 0x09)
+      PASS("enabling video only does not clear timer latch");
+   else
+      FAIL("INT1 pending = $%04X after enable write", pending);
+
+   p_TOMWriteByte(0xF000E0, 0x01, WHO_M68K);
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+   if ((pending & 0x08) == 0x08 && (pending & 0x01) == 0)
+      PASS("cleared video pending, timer still latched");
+   else
+      FAIL("INT1 pending = $%04X (expected timer only)", pending);
+
+   p_TOMWriteByte(0xF000E0, 0x08, WHO_M68K);
+   pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+   if ((pending & 0x1F) == 0)
+      PASS("cleared timer pending");
+   else
+      FAIL("INT1 pending = $%04X (expected no sources)", pending);
+
+   p_TOMWriteWord(0xF000E0, old_int1, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 10h: TOM PIT Reload Semantics
+ * Pin down the byte/word write decode for the TOM PIT prescaler ($F00050)
+ * and divider ($F00052). The PIT is observable through the same register
+ * pair: word reads return the full 16-bit value, byte reads return the
+ * high or low byte respectively. Writing zero to either field disables
+ * the PIT (TOMResetPIT removes the scheduled callback); rewriting a
+ * non-zero value re-arms it. We exercise the side effect by toggling
+ * through several configurations and confirming the read-back register
+ * state matches the write semantics in tom.c.
+ * ================================================================ */
+static void test_tom_pit_reload_semantics(void)
+{
+   uint16_t old_pre;
+   uint16_t old_div;
+   uint16_t v;
+   uint8_t  b;
+   int i;
+
+   printf("\n=== Test 10h: TOM PIT Reload Semantics ===\n");
+
+   old_pre = p_TOMReadWord(0xF00050, WHO_M68K);
+   old_div = p_TOMReadWord(0xF00052, WHO_M68K);
+
+   /* Disable PIT first so we have a known baseline. */
+   p_TOMWriteWord(0xF00050, 0x0000, WHO_M68K);
+   p_TOMWriteWord(0xF00052, 0x0000, WHO_M68K);
+
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x0000)
+      PASS("prescaler=0 disables PIT, read-back=$0000");
+   else
+      FAIL("prescaler read-back after zero write = $%04X", v);
+
+   v = p_TOMReadWord(0xF00052, WHO_M68K);
+   if (v == 0x0000)
+      PASS("divider=0 disables PIT, read-back=$0000");
+   else
+      FAIL("divider read-back after zero write = $%04X", v);
+
+   /* Word write to $F00050 sets the full 16-bit prescaler. */
+   p_TOMWriteWord(0xF00050, 0x1234, WHO_M68K);
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x1234)
+      PASS("word write $F00050 sets prescaler=$1234");
+   else
+      FAIL("prescaler word read-back = $%04X (want $1234)", v);
+
+   /* Byte reads at $F00050/$F00051 expose high/low halves. */
+   b = p_TOMReadByte(0xF00050, WHO_M68K);
+   if (b == 0x12)
+      PASS("byte read $F00050 returns prescaler high byte ($12)");
+   else
+      FAIL("byte read $F00050 = $%02X (want $12)", b);
+
+   b = p_TOMReadByte(0xF00051, WHO_M68K);
+   if (b == 0x34)
+      PASS("byte read $F00051 returns prescaler low byte ($34)");
+   else
+      FAIL("byte read $F00051 = $%02X (want $34)", b);
+
+   /* Word write to $F00052 sets divider; byte reads mirror. */
+   p_TOMWriteWord(0xF00052, 0xABCD, WHO_M68K);
+   v = p_TOMReadWord(0xF00052, WHO_M68K);
+   if (v == 0xABCD)
+      PASS("word write $F00052 sets divider=$ABCD");
+   else
+      FAIL("divider word read-back = $%04X (want $ABCD)", v);
+
+   b = p_TOMReadByte(0xF00052, WHO_M68K);
+   if (b == 0xAB)
+      PASS("byte read $F00052 returns divider high byte ($AB)");
+   else
+      FAIL("byte read $F00052 = $%02X (want $AB)", b);
+
+   b = p_TOMReadByte(0xF00053, WHO_M68K);
+   if (b == 0xCD)
+      PASS("byte read $F00053 returns divider low byte ($CD)");
+   else
+      FAIL("byte read $F00053 = $%02X (want $CD)", b);
+
+   /* Byte write to $F00050 replaces only the prescaler high byte. */
+   p_TOMWriteWord(0xF00050, 0x1122, WHO_M68K);
+   p_TOMWriteByte(0xF00050, 0x99, WHO_M68K);
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x9922)
+      PASS("byte write $F00050 updates prescaler high byte only");
+   else
+      FAIL("after high-byte write, prescaler = $%04X (want $9922)", v);
+
+   /* Byte write to $F00051 replaces only the prescaler low byte. */
+   p_TOMWriteByte(0xF00051, 0x55, WHO_M68K);
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x9955)
+      PASS("byte write $F00051 updates prescaler low byte only");
+   else
+      FAIL("after low-byte write, prescaler = $%04X (want $9955)", v);
+
+   /* Byte write to $F00052 replaces only the divider high byte. */
+   p_TOMWriteWord(0xF00052, 0x3344, WHO_M68K);
+   p_TOMWriteByte(0xF00052, 0x77, WHO_M68K);
+   v = p_TOMReadWord(0xF00052, WHO_M68K);
+   if (v == 0x7744)
+      PASS("byte write $F00052 updates divider high byte only");
+   else
+      FAIL("after high-byte write, divider = $%04X (want $7744)", v);
+
+   /* Byte write to $F00053 replaces only the divider low byte. */
+   p_TOMWriteByte(0xF00053, 0x66, WHO_M68K);
+   v = p_TOMReadWord(0xF00052, WHO_M68K);
+   if (v == 0x7766)
+      PASS("byte write $F00053 updates divider low byte only");
+   else
+      FAIL("after low-byte write, divider = $%04X (want $7766)", v);
+
+   /* Disabling via prescaler=0 leaves divider intact (no field cross-talk). */
+   p_TOMWriteWord(0xF00050, 0xBEEF, WHO_M68K);
+   p_TOMWriteWord(0xF00052, 0xCAFE, WHO_M68K);
+   p_TOMWriteWord(0xF00050, 0x0000, WHO_M68K);
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x0000)
+      PASS("prescaler clears to $0000 independently");
+   else
+      FAIL("prescaler after clear = $%04X", v);
+   v = p_TOMReadWord(0xF00052, WHO_M68K);
+   if (v == 0xCAFE)
+      PASS("divider preserved while prescaler cleared");
+   else
+      FAIL("divider after prescaler clear = $%04X (want $CAFE)", v);
+
+   /* Re-arming via word write replaces the prescaler cleanly. */
+   p_TOMWriteWord(0xF00050, 0x00FF, WHO_M68K);
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x00FF)
+      PASS("re-arming prescaler via word write yields $00FF");
+   else
+      FAIL("re-armed prescaler = $%04X (want $00FF)", v);
+
+   /* Repeated reload writes do not corrupt the register state. */
+   for (i = 0; i < 4; i++)
+   {
+      p_TOMWriteWord(0xF00050, (uint16_t)(0x0010 + i), WHO_M68K);
+      p_TOMWriteWord(0xF00052, (uint16_t)(0x0020 + i), WHO_M68K);
+   }
+   v = p_TOMReadWord(0xF00050, WHO_M68K);
+   if (v == 0x0013)
+   {
+      uint16_t v2 = p_TOMReadWord(0xF00052, WHO_M68K);
+      if (v2 == 0x0023)
+         PASS("repeated reloads land on the last written value");
+      else
+         FAIL("after repeated reloads, divider = $%04X (want $0023)", v2);
+   }
+   else
+   {
+      FAIL("after repeated reloads, prescaler = $%04X (want $0013)", v);
+   }
+
+   /* Restore previous values. */
+   p_TOMWriteWord(0xF00050, old_pre, WHO_M68K);
+   p_TOMWriteWord(0xF00052, old_div, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 10i: TOM Video Timing Register Symmetry
+ * Pin byte/word read/write behavior of the 11-bit TOM video timing
+ * registers VP ($F0003E), VDB ($F00046), VDE ($F00048),
+ * HDB1 ($F00038), HDB2 ($F0003A), HDE ($F0003C).
+ *
+ * Observed behavior in src/tom/tom.c:
+ *  - Word writes to offsets $30..$4E are masked to 11 bits (& $07FF)
+ *    before being decomposed into two TOMWriteByte calls.
+ *  - Byte writes go straight to tomRam8 (no mask), so a byte write to
+ *    the high byte CAN deposit bits 11-15.
+ *  - Reads are unconditional fetches from tomRam8.
+ *
+ * The test pins:
+ *   1. Word write of an in-range pattern round-trips exactly.
+ *   2. Word write of an out-of-range pattern is observed masked to 11 bits.
+ *   3. Byte write to high byte updates only the high byte.
+ *   4. Byte write to low byte updates only the low byte.
+ *   5. Byte reads at offset N / N+1 mirror (word>>8)&0xFF / word&0xFF.
+ *
+ * Original word values are restored at the end so later tests are
+ * not perturbed.
+ * ================================================================ */
+static void test_tom_video_timing_symmetry(void)
+{
+   /* Names + addresses for the six registers we exercise. */
+   struct vt_reg { const char *name; uint32_t addr; };
+   static const struct vt_reg regs[6] = {
+      { "VP",   0xF0003E },
+      { "VDB",  0xF00046 },
+      { "VDE",  0xF00048 },
+      { "HDB1", 0xF00038 },
+      { "HDB2", 0xF0003A },
+      { "HDE",  0xF0003C }
+   };
+   uint16_t saved[6];
+   int i;
+   uint16_t pat;
+   uint16_t v;
+   uint8_t  bh, bl;
+
+   printf("\n=== Test 10i: TOM Video Timing Register Symmetry ===\n");
+
+   /* Snapshot original values for restoration. */
+   for (i = 0; i < 6; i++)
+      saved[i] = p_TOMReadWord(regs[i].addr, WHO_M68K);
+
+   /* (1) Word write of an in-range (11-bit) pattern round-trips exactly.
+    * Use a different pattern per-register so no value gets lucky. */
+   for (i = 0; i < 6; i++)
+   {
+      pat = (uint16_t)(0x0500 + (i * 0x11));   /* all <= $07FF */
+      p_TOMWriteWord(regs[i].addr, pat, WHO_M68K);
+      v = p_TOMReadWord(regs[i].addr, WHO_M68K);
+      if (v == pat)
+         PASS("%s: word write $%04X round-trips", regs[i].name, pat);
+      else
+         FAIL("%s: word write $%04X read-back $%04X",
+            regs[i].name, pat, v);
+   }
+
+   /* (2) Word write of an out-of-range pattern is masked to 11 bits.
+    * Pick one register (VP) to exercise the mask path. */
+   p_TOMWriteWord(0xF0003E, 0xF234, WHO_M68K);
+   v = p_TOMReadWord(0xF0003E, WHO_M68K);
+   if (v == (0xF234 & 0x07FF))
+      PASS("VP: word write $F234 masked to $%04X", v);
+   else
+      FAIL("VP: word write $F234 read-back $%04X (want $%04X)",
+         v, 0xF234 & 0x07FF);
+
+   /* (3) Byte write to the high byte updates the high half only.
+    * After the masked $F234 write above, VP reads back $0234. We
+    * write $05 to the high byte and expect $0534 (byte writes are
+    * not masked, so writing $05 lands cleanly). */
+   p_TOMWriteByte(0xF0003E, 0x05, WHO_M68K);
+   v = p_TOMReadWord(0xF0003E, WHO_M68K);
+   if (v == 0x0534)
+      PASS("VP: byte write to high byte updates high half only");
+   else
+      FAIL("VP: after high-byte write, word=$%04X (want $0534)", v);
+
+   /* (4) Byte write to the low byte updates the low half only. */
+   p_TOMWriteByte(0xF0003F, 0xAB, WHO_M68K);
+   v = p_TOMReadWord(0xF0003E, WHO_M68K);
+   if (v == 0x05AB)
+      PASS("VP: byte write to low byte updates low half only");
+   else
+      FAIL("VP: after low-byte write, word=$%04X (want $05AB)", v);
+
+   /* (5) Byte reads at N / N+1 mirror the word value's halves.
+    * Run this matrix for all six registers, after re-establishing a
+    * known in-range word value per register. */
+   for (i = 0; i < 6; i++)
+   {
+      pat = (uint16_t)(0x0640 + (i * 0x07));   /* in 11-bit range */
+      p_TOMWriteWord(regs[i].addr, pat, WHO_M68K);
+      v = p_TOMReadWord(regs[i].addr, WHO_M68K);
+      bh = p_TOMReadByte(regs[i].addr, WHO_M68K);
+      bl = p_TOMReadByte(regs[i].addr + 1, WHO_M68K);
+      if (bh == ((v >> 8) & 0xFF) && bl == (v & 0xFF))
+         PASS("%s: byte reads mirror word halves ($%02X $%02X)",
+            regs[i].name, bh, bl);
+      else
+         FAIL("%s: byte reads $%02X $%02X vs word $%04X",
+            regs[i].name, bh, bl, v);
+   }
+
+   /* Restore original values. (Mask to 11 bits to avoid asserting an
+    * unrelated mask change here.) */
+   for (i = 0; i < 6; i++)
+      p_TOMWriteWord(regs[i].addr, saved[i] & 0x07FF, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 10l: TOM VMODE Register Bit-Field Read/Write ($F00028)
+ *
+ * Pin byte/word read/write behavior of the TOM VMODE register at
+ * $F00028. Bit layout (per src/tom/tom.c lines 52-61, 345-347):
+ *   bits 11-9 : PWIDTH (pixel width in clocks; value+1)
+ *   bit 8     : VARMOD (mixed CRY/RGB16 mode)
+ *   bit 7     : BGEN   (background enable)
+ *   bit 3     : GENLOCK
+ *   bits 2-1  : MODE  (00=CRY16, 01=RGB24, 10=DIRECT16, 11=RGB16)
+ *   bit 0     : VIDEN
+ *
+ * Observed write-path behavior (src/tom/tom.c TOMWriteWord, lines
+ * 1114-1205):
+ *  - Word writes to $F00028 are NOT masked: the 11-bit mask at
+ *    line 1175 only applies to offsets 0x30..0x4E, and the 10-bit
+ *    masks (line 1177) target $2E/$36/$54. So bits 12-15 of a write
+ *    to $28 land in tomRam8 just as written.
+ *  - The word write is decomposed into two TOMWriteByte calls
+ *    (lines 1181-1182) which deposit straight into tomRam8.
+ *  - After the byte writes, code at lines 1191-1204 may recompute
+ *    tomWidth/tomHeight; this is a side effect on geometry but does
+ *    NOT alter the stored VMODE word.
+ *  - Reads (TOMReadWord/Byte) for $28 are unconditional fetches
+ *    from tomRam8 (lines 1033-1034, 991).
+ *
+ * Strategy: snapshot the live VMODE word and restore it at the end
+ * so the running render loop is not destabilized. Use the lower
+ * MODE bit (bit 1) as the CRY(0)/RGB(1) toggle and bits 11-9 as
+ * PWIDTH.
+ * ================================================================ */
+static void test_tom_vmode_bitfields(void)
+{
+   const uint32_t addr_w = 0xF00028;
+   const uint32_t addr_h = 0xF00028;   /* high byte */
+   const uint32_t addr_l = 0xF00029;   /* low byte */
+   uint16_t saved;
+   uint16_t v;
+   uint16_t pat;
+   uint8_t  bh, bl;
+
+   printf("\n=== Test 10l: TOM VMODE Bit-Field Read/Write ===\n");
+
+   /* (1) Snapshot original VMODE so we can restore. */
+   saved = p_TOMReadWord(addr_w, WHO_M68K);
+   PASS("VMODE: snapshot original value $%04X", saved);
+
+   /* (2) Word write: PWIDTH=4 (field=011 -> bits 11..9 = 0x0600),
+    *     CRY mode (MODE bits 2..1 = 00), VIDEN=1, all other bits 0.
+    *     Pattern: $0601. Verify exact round-trip (no masking). */
+   pat = 0x0601;
+   p_TOMWriteWord(addr_w, pat, WHO_M68K);
+   v = p_TOMReadWord(addr_w, WHO_M68K);
+   if (v == pat)
+      PASS("VMODE: word write $%04X (PWIDTH=4,CRY) round-trips", pat);
+   else
+      FAIL("VMODE: word write $%04X read-back $%04X", pat, v);
+   if ((v & 0x0E00) == 0x0600)
+      PASS("VMODE: PWIDTH bits 11-9 preserved as 011");
+   else
+      FAIL("VMODE: PWIDTH bits = $%04X (want $0600)", v & 0x0E00);
+   if ((v & 0x0006) == 0x0000)
+      PASS("VMODE: MODE bits 2-1 preserved as CRY (00)");
+   else
+      FAIL("VMODE: MODE bits = $%04X (want $0000)", v & 0x0006);
+
+   /* (3) Word write: PWIDTH=2 (field=001 -> $0200), RGB16 mode
+    *     (MODE bits 2..1 = 11 -> $0006), VIDEN=1. Pattern: $0207. */
+   pat = 0x0207;
+   p_TOMWriteWord(addr_w, pat, WHO_M68K);
+   v = p_TOMReadWord(addr_w, WHO_M68K);
+   if (v == pat)
+      PASS("VMODE: word write $%04X (PWIDTH=2,RGB16) round-trips", pat);
+   else
+      FAIL("VMODE: word write $%04X read-back $%04X", pat, v);
+   if ((v & 0x0E00) == 0x0200 && (v & 0x0006) == 0x0006)
+      PASS("VMODE: PWIDTH+MODE updated together");
+   else
+      FAIL("VMODE: PWIDTH/MODE = $%04X / $%04X",
+         v & 0x0E00, v & 0x0006);
+
+   /* (4) Byte write to high byte changes only PWIDTH/high-byte bits;
+    *     low byte (MODE/VIDEN/etc.) untouched. Current word is
+    *     $0207; write $08 to high byte -> expect $0807. */
+   p_TOMWriteByte(addr_h, 0x08, WHO_M68K);
+   v = p_TOMReadWord(addr_w, WHO_M68K);
+   if (v == 0x0807)
+      PASS("VMODE: byte write to high byte updates only high half");
+   else
+      FAIL("VMODE: after high-byte write, word=$%04X (want $0807)", v);
+
+   /* (5) Byte write to low byte changes MODE/CRY-RGB bits;
+    *     high byte (PWIDTH) untouched. Write $01 (CRY+VIDEN). */
+   p_TOMWriteByte(addr_l, 0x01, WHO_M68K);
+   v = p_TOMReadWord(addr_w, WHO_M68K);
+   if (v == 0x0801)
+      PASS("VMODE: byte write to low byte updates only low half");
+   else
+      FAIL("VMODE: after low-byte write, word=$%04X (want $0801)", v);
+   if ((v & 0x0006) == 0x0000)
+      PASS("VMODE: CRY mode (bit 1=0) set via low-byte write");
+   else
+      FAIL("VMODE: MODE bits = $%04X (want $0000)", v & 0x0006);
+
+   /* (6) Byte reads at $28/$29 mirror (word>>8)&FF / word&FF. */
+   bh = p_TOMReadByte(addr_h, WHO_M68K);
+   bl = p_TOMReadByte(addr_l, WHO_M68K);
+   if (bh == ((v >> 8) & 0xFF) && bl == (v & 0xFF))
+      PASS("VMODE: byte reads mirror word halves ($%02X $%02X)", bh, bl);
+   else
+      FAIL("VMODE: byte reads $%02X $%02X vs word $%04X", bh, bl, v);
+
+   /* (7) Restore original VMODE so the running render loop sees the
+    *     same video mode it had before this test. */
+   p_TOMWriteWord(addr_w, saved, WHO_M68K);
+   v = p_TOMReadWord(addr_w, WHO_M68K);
+   if (v == saved)
+      PASS("VMODE: restored to original $%04X", saved);
+   else
+      FAIL("VMODE: restore failed, word=$%04X (want $%04X)", v, saved);
+}
+
+/* ================================================================
+ * Test 10j: TOM IPL2 Reassert After Selective Clear
+ *
+ * Pin the contract that TOMAssertEnabledIRQs (re-)raises IPL2 on the
+ * 68K whenever ANY enabled+pending TOM source remains, and does not
+ * raise it when no source remains. Concretely: with both video and
+ * timer enabled and pending, clearing video alone must keep IPL2
+ * asserted because timer is still pending+enabled.
+ *
+ * Observability: src/m68000/m68kinterface.c routes m68k_set_irq through
+ * m68k_set_irq2 only synchronously when regs.stopped is true, in which
+ * case it sets regs.intLevel directly. We force regs.stopped=1 and
+ * regs.intmask=7 so the level is recorded but never dispatched. We
+ * clear regs.intLevel before each TOMAssertEnabledIRQs trigger and
+ * inspect it afterward to see whether IPL2 was raised by that call.
+ *
+ * Limitation: TOMAssertEnabledIRQs only raises (m68k_set_irq) when a
+ * source is pending+enabled; it never lowers the line. The 68K core
+ * lowers intLevel only on interrupt acknowledge. So step 11 ("IPL2
+ * deasserted after final clear") is observed indirectly: after we
+ * zero regs.intLevel and trigger TOMAssertEnabledIRQs with no
+ * remaining pending+enabled source, intLevel must STAY zero (i.e.
+ * m68k_set_irq must NOT have been called).
+ *
+ * Trigger path: byte writes to $F000E0 invoke TOMClearPendingIRQs
+ * followed by TOMAssertEnabledIRQs (see TOMWriteByte in src/tom/tom.c
+ * around the INT1 case). Byte writes to $F000E1 (enable byte) also
+ * call TOMAssertEnabledIRQs.
+ * ================================================================ */
+static void test_tom_ipl2_reassert_after_selective_clear(void)
+{
+   uint16_t old_int1;
+   int      old_intmask;
+   int      old_intLevel;
+   uint8_t  old_stopped;
+
+   printf("\n=== Test 10j: TOM IPL2 Reassert After Selective Clear ===\n");
+
+   if (!p_regs)
+   {
+      FAIL("regs symbol not exported; cannot observe IPL2 line state");
+      return;
+   }
+
+   /* Save state we will mutate. */
+   old_int1     = tom_get16(TOM_INT1);
+   old_intmask  = p_regs->intmask;
+   old_intLevel = p_regs->intLevel;
+   old_stopped  = p_regs->stopped;
+
+   /* Force the synchronous IRQ path so m68k_set_irq writes regs.intLevel
+    * directly via m68k_set_irq2, and mask all interrupts so the change
+    * is recorded but no exception dispatches. */
+   p_regs->stopped = 1;
+   p_regs->intmask = 7;
+
+   /* Clear any stale pending bits and program enables: video (bit 0) +
+    * timer (bit 3) -> $09 in INT1+1 ($F000E1). Word write to $F000E0
+    * with 0x1F00 high byte clears all pending sources. */
+   p_TOMWriteWord(0xF000E0, 0x1F00, WHO_M68K);
+   p_TOMWriteByte(0xF000E1, 0x09, WHO_M68K);
+
+   /* (1) Latch video pending; should call m68k_set_irq(2). */
+   p_regs->intLevel = 0;
+   p_TOMSetPendingVideoInt();
+   if (p_regs->intLevel == 2)
+      PASS("video pending+enabled raises IPL2");
+   else
+      FAIL("after SetPendingVideoInt, intLevel=%d (want 2)", p_regs->intLevel);
+
+   /* (2) Also latch timer pending; should also raise IPL2. */
+   p_regs->intLevel = 0;
+   p_TOMSetPendingTimerInt();
+   if (p_regs->intLevel == 2)
+      PASS("timer pending+enabled raises IPL2 with both sources latched");
+   else
+      FAIL("after SetPendingTimerInt, intLevel=%d (want 2)", p_regs->intLevel);
+
+   /* Sanity: TOM still reports both sources pending in INT1 high byte. */
+   {
+      uint16_t pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+      if ((pending & 0x09) == 0x09)
+         PASS("INT1 reports video+timer both pending pre-clear");
+      else
+         FAIL("INT1 pending=$%04X pre-clear (want video+timer bits)", pending);
+   }
+
+   /* (3) Clear video pending only via byte write to $F000E0 = $01. The
+    * write triggers TOMAssertEnabledIRQs; timer is still pending+enabled,
+    * so IPL2 must be reasserted. */
+   p_regs->intLevel = 0;
+   p_TOMWriteByte(0xF000E0, 0x01, WHO_M68K);
+   if (p_regs->intLevel == 2)
+      PASS("clearing video alone keeps IPL2 asserted (timer still pending)");
+   else
+      FAIL("after clearing video, intLevel=%d (want 2; timer still pending)",
+           p_regs->intLevel);
+
+   /* (4) Clear timer pending via byte write to $F000E0 = $08. Now
+    * nothing is pending+enabled, so TOMAssertEnabledIRQs must NOT call
+    * m68k_set_irq -- intLevel must stay 0. */
+   p_regs->intLevel = 0;
+   p_TOMWriteByte(0xF000E0, 0x08, WHO_M68K);
+   if (p_regs->intLevel == 0)
+      PASS("clearing last pending source leaves IPL2 unraised");
+   else
+      FAIL("after clearing timer (last source), intLevel=%d (want 0)",
+           p_regs->intLevel);
+
+   /* (5) Sanity post-clear: INT1 reports no pending sources. */
+   {
+      uint16_t pending = p_TOMReadWord(0xF000E0, WHO_M68K);
+      if ((pending & 0x1F) == 0)
+         PASS("INT1 reports no pending sources after both cleared");
+      else
+         FAIL("INT1 pending=$%04X post-clear (want 0)", pending);
+   }
+
+   /* Restore mutated state. */
+   p_TOMWriteWord(0xF000E0, 0x1F00, WHO_M68K);   /* clear pending bits */
+   p_TOMWriteWord(0xF000E0, old_int1, WHO_M68K); /* restore enables byte */
+   p_regs->intLevel = old_intLevel;
+   p_regs->intmask  = old_intmask;
+   p_regs->stopped  = old_stopped;
+}
+
+/* ================================================================
+ * Test 10k: PAL vs NTSC Video Timing Defaults
+ *
+ * Pin the documented difference between NTSC and PAL HLE init values
+ * for the core vertical/horizontal timing registers. Source of truth
+ * is TOMReset() in src/tom/tom.c (NTSC ~ lines 898-923, PAL ~ lines
+ * 924-947): the two modes share VDB=38, VDE=518, HDB1=203, HDB2=203,
+ * HDE=1665, VEE=6, VI=0, but differ on VP (523 vs 623), VBB, VBE, VS,
+ * VEB, HP, HBB, HBE, HS, HVS, HEQ.
+ *
+ * This test runs in both passes (NTSC pre-load and PAL post-load) and
+ * asserts:
+ *   1) The mode-specific VP, VBB, VBE, VS values match the constants
+ *      from TOMReset() exactly.
+ *   2) The mode-INVARIANT defaults (VDB/VDE/HDB1/HDE/VI) are stable
+ *      across PAL and NTSC.
+ *   3) The PAL-vs-NTSC delta is internally consistent: PAL VP - NTSC VP
+ *      = 100, PAL VBB - NTSC VBB = 100, matching ~50 extra scanlines.
+ *      (Captured on the NTSC pass and re-checked on the PAL pass via
+ *      file-scope statics so a single function covers both modes.)
+ * ================================================================ */
+static int    saw_ntsc_pass = 0;
+static uint16_t saved_ntsc_vp  = 0;
+static uint16_t saved_ntsc_vbb = 0;
+static uint16_t saved_ntsc_vbe = 0;
+static uint16_t saved_ntsc_vs  = 0;
+static uint16_t saved_ntsc_veb = 0;
+static uint16_t saved_ntsc_vdb = 0;
+static uint16_t saved_ntsc_vde = 0;
+static uint16_t saved_ntsc_hdb1 = 0;
+static uint16_t saved_ntsc_hde  = 0;
+static uint16_t saved_ntsc_vi   = 0;
+
+static void test_video_timing_defaults_pal_ntsc(void)
+{
+   bool ntsc;
+   uint16_t vp, vbb, vbe, vs, veb;
+   uint16_t vdb, vde, hdb1, hde, vi;
+
+   printf("\n=== Test 10k: PAL vs NTSC Video Timing Defaults ===\n");
+
+   ntsc = p_vjs->hardwareTypeNTSC;
+   printf("  Mode: %s\n", ntsc ? "NTSC" : "PAL");
+
+   vp   = tom_get16(TOM_VP);
+   vbb  = tom_get16(TOM_VBB);
+   vbe  = tom_get16(TOM_VBE);
+   vs   = tom_get16(TOM_VS);
+   veb  = tom_get16(TOM_VEB);
+   vdb  = tom_get16(TOM_VDB);
+   vde  = tom_get16(TOM_VDE);
+   hdb1 = tom_get16(TOM_HDB1);
+   hde  = tom_get16(TOM_HDE);
+   vi   = tom_get16(TOM_VI);
+
+   if (ntsc)
+   {
+      /* Mode-specific values from TOMReset() NTSC branch. */
+      if (vp == 523)   PASS("NTSC VP = 523 (524 vertical lines)"); else FAIL("NTSC VP = %u (want 523)", vp);
+      if (vbb == 500)  PASS("NTSC VBB = 500"); else FAIL("NTSC VBB = %u (want 500)", vbb);
+      if (vbe == 24)   PASS("NTSC VBE = 24");  else FAIL("NTSC VBE = %u (want 24)", vbe);
+      if (vs == 517)   PASS("NTSC VS = 517");  else FAIL("NTSC VS = %u (want 517)", vs);
+      if (veb == 511)  PASS("NTSC VEB = 511"); else FAIL("NTSC VEB = %u (want 511)", veb);
+
+      /* Snapshot for the PAL pass to verify the documented delta. */
+      saved_ntsc_vp   = vp;
+      saved_ntsc_vbb  = vbb;
+      saved_ntsc_vbe  = vbe;
+      saved_ntsc_vs   = vs;
+      saved_ntsc_veb  = veb;
+      saved_ntsc_vdb  = vdb;
+      saved_ntsc_vde  = vde;
+      saved_ntsc_hdb1 = hdb1;
+      saved_ntsc_hde  = hde;
+      saved_ntsc_vi   = vi;
+      saw_ntsc_pass = 1;
+   }
+   else
+   {
+      /* Mode-specific values from TOMReset() PAL branch. */
+      if (vp == 623)   PASS("PAL VP = 623 (624 vertical lines)"); else FAIL("PAL VP = %u (want 623)", vp);
+      if (vbb == 600)  PASS("PAL VBB = 600"); else FAIL("PAL VBB = %u (want 600)", vbb);
+      if (vbe == 34)   PASS("PAL VBE = 34");  else FAIL("PAL VBE = %u (want 34)", vbe);
+      if (vs == 618)   PASS("PAL VS = 618");  else FAIL("PAL VS = %u (want 618)", vs);
+      if (veb == 613)  PASS("PAL VEB = 613"); else FAIL("PAL VEB = %u (want 613)", veb);
+
+      /* Cross-mode delta: PAL has ~50 extra scanlines vs NTSC, which is
+       * 100 halflines. VP and VBB both step by exactly 100. */
+      if (saw_ntsc_pass)
+      {
+         if ((uint16_t)(vp - saved_ntsc_vp) == 100)
+            PASS("PAL VP - NTSC VP = 100 (50 extra scanlines)");
+         else
+            FAIL("PAL VP - NTSC VP = %u (want 100)", (unsigned)(vp - saved_ntsc_vp));
+
+         if ((uint16_t)(vbb - saved_ntsc_vbb) == 100)
+            PASS("PAL VBB - NTSC VBB = 100");
+         else
+            FAIL("PAL VBB - NTSC VBB = %u (want 100)", (unsigned)(vbb - saved_ntsc_vbb));
+
+         /* Mode-invariant registers must match across both modes. */
+         if (vdb == saved_ntsc_vdb && vde == saved_ntsc_vde
+             && hdb1 == saved_ntsc_hdb1 && hde == saved_ntsc_hde
+             && vi == saved_ntsc_vi)
+            PASS("VDB/VDE/HDB1/HDE/VI are mode-invariant across PAL+NTSC");
+         else
+            FAIL("mode-invariant regs drifted: VDB %u/%u VDE %u/%u HDB1 %u/%u HDE %u/%u VI %u/%u",
+               vdb, saved_ntsc_vdb, vde, saved_ntsc_vde,
+               hdb1, saved_ntsc_hdb1, hde, saved_ntsc_hde,
+               vi, saved_ntsc_vi);
+      }
+   }
+}
+
+/* ================================================================
+ * Test 10g: Libretro Geometry Update Ordering
  * TOM can change video dimensions while a frame is being rendered.
  * The frame must be submitted with the pitch used to render it; the
  * new geometry should apply to the following frame.
@@ -981,7 +2278,7 @@ static void test_libretro_geometry_update_order(void)
    uint16_t old_hdb1;
    int old_geometry_count;
 
-   printf("\n=== Test 10c: Libretro Geometry Update Ordering ===\n");
+   printf("\n=== Test 10g: Libretro Geometry Update Ordering ===\n");
 
    old_hdb1 = tom_get16(TOM_HDB1);
    old_geometry_count = geometry_update_count;
@@ -1366,24 +2663,45 @@ int main(int argc, char *argv[])
    LOAD(JaguarReset);
    LOAD(JaguarApplyHLEBIOSState);
    LOAD(HalflineCallback);
+   LOAD(TOMReadByte);
+   LOAD(TOMReadWord);
+   LOAD(TOMWriteByte);
    LOAD(TOMWriteWord);
+   LOAD(TOMSetPendingVideoInt);
+   LOAD(TOMSetPendingTimerInt);
    LOAD(GPUReadLong);
+   LOAD(GPUWriteLong);
+   LOAD(GPUSetIRQLine);
+   LOAD(GPUHandleIRQs);
+   LOAD(DSPReadLong);
+   LOAD(DSPWriteLong);
+   LOAD(DSPSetIRQLine);
+   LOAD(DSPHandleIRQsNP);
    LOAD(JERRYReadWord);
    LOAD(JERRYWriteWord);
+   LOAD(JERRYWriteByte);
    LOAD(JERRYIRQEnabled);
    LOAD(JERRYSetPendingIRQ);
+   LOAD(OPProcessList);
    LOAD(OPProcessScaledBitmap);
    LOAD(OPProcessFixedBitmap);
 
    LOAD_OPT(tomRam8);
    LOAD_OPT(jaguarMainRAM);
    LOAD_OPT(jagMemSpace);
+   /* `regs` is the exported global m68k register state from
+    * src/m68000/cpuextra.c. Used by Test 10j to observe IPL2 line
+    * state. Optional: if absent, Test 10j will skip its sub-asserts. */
+   p_regs = (struct test_regstruct *)dlsym(handle, "regs");
    LOAD_OPT(sclk);
    LOAD_OPT(smode);
    LOAD_OPT(lowerField);
    LOAD_OPT(vjs);
    LOAD_OPT(jaguarLoadedRAMStart);
    LOAD_OPT(jaguarLoadedRAMEnd);
+   LOAD_OPT(gpu_pc);
+   LOAD_OPT(dsp_pc);
+   LOAD_OPT(dsp_control);
 
    if (!p_tomRam8 || !p_jaguarMainRAM || !p_jagMemSpace || !p_sclk
          || !p_smode || !p_lowerField || !p_vjs
@@ -1444,13 +2762,25 @@ int main(int argc, char *argv[])
    test_op_scaled_small_hscale_clip();
    test_op_scaled_firstpix_4bpp();
    test_op_fixed_firstpix_4bpp();
+   test_op_fixed_bitmap_writeback();
    test_border_clear();
    test_interrupts_cleared();
    test_jerry_pit_cleared();
    test_jerry_jintctrl_word_decode();
+   test_jerry_jintctrl_multi_pending_selective_clear();
+   test_gpu_irq_latch_redispatch();
+   test_dsp_irq_latch_redispatch();
    test_jerry_i2s_defaults();
    test_tom_video_registers();
    test_tom_vp_rollover();
+   test_tom_video_irq_latches_when_disabled();
+   test_tom_int1_byte_write_clears_pending();
+   test_tom_int1_multi_pending_selective_clear();
+   test_tom_pit_reload_semantics();
+   test_tom_video_timing_symmetry();
+   test_tom_vmode_bitfields();
+   test_video_timing_defaults_pal_ntsc();
+   test_tom_ipl2_reassert_after_selective_clear();
    test_libretro_geometry_update_order();
    test_ssp_init();
    test_run_address();
@@ -1481,6 +2811,7 @@ int main(int argc, char *argv[])
    test_hle_low_ram_workspace();
    test_jerry_clocks();
    test_tom_video_registers();
+   test_video_timing_defaults_pal_ntsc();
    test_memcon2();
    test_bg_color();
 
