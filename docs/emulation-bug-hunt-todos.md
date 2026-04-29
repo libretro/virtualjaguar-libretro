@@ -38,6 +38,11 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - TOM interrupt sources now latch pending status even when their CPU enable
   bits are clear; enabling a pending source asserts the 68K IPL2 line, with
   direct video IRQ latch coverage in `test_hle_bios`.
+- Accurate blitter alpha/transparency in phrase mode: when `BKGWREN` is on
+  with `DCOMPEN`/`BCOMPEN` masking, byte_merge now reads the framebuffer
+  (instead of the DSTDATA register) for inhibited bytes, so 'transparent'
+  sprite pixels no longer appear as dark dots over the underlying scene
+  (Battle Sphere targeting reticle).
 - Headerless raw homebrew loading is now conservative but supported for
   recognizable startup patterns at inferred `$4000`, `$20000`, or `$802000`
   bases; unknown raw files still fail instead of booting invalid RAM.
@@ -76,17 +81,6 @@ describe guesses, timing gaps, or known emulation shortcuts.
   alignment cases still need repro or hardware coverage because they affect
   road/ground rendering.
 ## Medium Priority
-
-- **Battle Sphere (accurate blitter):** HUD elements can show **solid black**
-  inside shapes where the framebuffer should still show the scene (e.g. cockpit
-  reticles / targeting squares). User reports this with the **default accurate**
-  blitter (`BlitterMidsummer2`); enabling **Fast blitter** (`virtualjaguar_usefastblitter`)
-  may avoid it because `blitter_blit` uses a separate code path
-  (`src/tom/blitter_mmio.c` dispatches on `vjs.useFastBlitter`). Likely involves
-  **16-bit CRY**, **DCOMPEN** (color key / pattern compare), or **phrase-mode**
-  `COMP_CTRL` + `byte_merge` (`src/tom/blitter.c` `DATA()`, `blitter_simd_scalar.c`)
-  not matching hardware for inner pixels. Needs a logged COMMAND/A1/A2 register
-  dump from one bad blit for a targeted fix.
 
 - `src/tom/tom.c`: replace hard-coded visible-window constants with values
   derived from TOM timing registers where possible. This should be tested
