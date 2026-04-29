@@ -26,7 +26,7 @@ Butch is a proprietary ASIC that serves as the primary interface between the Jag
 
 ### 1.3 Butch Register Map (Base: $DFFF00)
 
-All Butch registers are memory-mapped in the $DFFF00-$DFFF2F range. These are **already mapped in the codebase** (see `src/core/vjag_memory.c`, `src/core/mmu.c`, `src/cd/cdrom.c`).
+All Butch registers are memory-mapped in the $DFFF00-$DFFF2F range. These are **already mapped in the codebase** (see `src/core/vjag_memory.c`, `src/core/jaguar.c`, `src/cd/cdrom.c`).
 
 | Address | Size | Name | R/W | Description |
 |---------|------|------|-----|-------------|
@@ -222,7 +222,7 @@ The codebase contains a **substantial but incomplete** CD-ROM emulation framewor
 
 ### 4.2 What Already Works
 
-**Memory mapping is complete.** All read/write functions in `src/core/jaguar.c` route `$DFFF00-$DFFFFF` to CDROMReadByte/Word and CDROMWriteByte/Word. `src/core/vjag_memory.c` declares Butch registers as memory-mapped pointers at correct addresses. `src/core/mmu.c` has entries for all Butch registers.
+**Memory mapping is complete.** All read/write functions in `src/core/jaguar.c` route `$DFFF00-$DFFFFF` to CDROMReadByte/Word and CDROMWriteByte/Word. `src/core/vjag_memory.c` declares Butch registers as memory-mapped pointers at correct addresses.
 
 **Butch register handling is partially implemented.** `src/cd/cdrom.c` has a 256-byte `cdRam[]` array for CD register state. Read/write handlers for DS_DATA, BUTCH interrupt register, I2CNTRL, FIFO_DATA exist. The CD command protocol is partially decoded (stop, seek, read TOC, set mode). A serial bus state machine for EEPROM access is implemented. TOC reading protocol for session/track info is present.
 
@@ -244,7 +244,7 @@ The codebase contains a **substantial but incomplete** CD-ROM emulation framewor
 
 **5. CD audio playback path has issues.** `GetWordFromButchSSI()` and `SetSSIWordsXmittedFromButch()` call the stubbed `CDIntfReadBlock()`. Byte-swapping and interleaving logic has known issues (comments about MYST CD word offset at line 707). The `cdBuf` handling uses a self-described "crappy kludge" reading two sectors and splicing them.
 
-**6. Settings not wired for CD.** `settings.h` has `CDBootPath[MAX_PATH]` but it is never populated. No core option for CD BIOS type or CD unit emulation.
+**6. Settings not wired for CD.** The old standalone-emulator path settings have been removed from `settings.h`. No core option currently selects a CD BIOS type or enables CD unit emulation.
 
 ### 4.4 Upstream Virtual Jaguar Status
 

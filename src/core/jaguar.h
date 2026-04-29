@@ -15,6 +15,7 @@ void JaguarSetScreenBuffer(uint32_t * buffer);
 void JaguarSetScreenPitch(uint32_t pitch);
 void JaguarInit(void);
 void JaguarReset(void);
+void JaguarApplyHLEBIOSState(void);
 void JaguarDone(void);
 void JaguarSeedPRNG(uint32_t seed);
 uint32_t JaguarRand(void);

@@ -28,7 +28,6 @@
 #include "joystick.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
-#include "mmu.h"
 #include "settings.h"
 #include "tom.h"
 
@@ -200,9 +199,6 @@ int irq_ack_handler(int level)
    return M68K_INT_ACK_AUTOVECTOR;
 }
 
-
-//#define USE_NEW_MMU
-
 unsigned int m68k_read_memory_8(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
@@ -213,7 +209,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
-#ifndef USE_NEW_MMU
+
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       return jaguarMainRAM[address];
@@ -231,9 +227,6 @@ unsigned int m68k_read_memory_8(unsigned int address)
       return jaguar_unknown_readbyte(address, M68K);
 
    return 0;
-#else
-   return MMURead8(address, M68K);
-#endif
 }
 
 
@@ -251,7 +244,6 @@ unsigned int m68k_read_memory_16(unsigned int address)
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
 
-#ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
       return GET16(jaguarMainRAM, address);
@@ -274,9 +266,6 @@ unsigned int m68k_read_memory_16(unsigned int address)
       return JERRYReadWord(address, M68K);
 
    return jaguar_unknown_readword(address, M68K);
-#else
-   return MMURead16(address, M68K);
-#endif
 }
 
 
@@ -291,7 +280,6 @@ unsigned int m68k_read_memory_32(unsigned int address)
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
 
-#ifndef USE_NEW_MMU
    if (address <= 0x1FFFFC)
       return GET32(jaguarMainRAM, address);
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
@@ -304,9 +292,6 @@ unsigned int m68k_read_memory_32(unsigned int address)
    }
 
    return (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
-#else
-   return MMURead32(address, M68K);
-#endif
 }
 
 
@@ -321,7 +306,6 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
 
-#ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       jaguarMainRAM[address] = value;
@@ -333,9 +317,6 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
       JERRYWriteByte(address, value, M68K);
    else
       jaguar_unknown_writebyte(address, value, M68K);
-#else
-   MMUWrite8(address, value, M68K);
-#endif
 }
 
 
@@ -350,7 +331,6 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
 
-#ifndef USE_NEW_MMU
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
@@ -372,9 +352,6 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    {
       jaguar_unknown_writeword(address, value, M68K);
    }
-#else
-   MMUWrite16(address, value, M68K);
-#endif
 }
 
 
@@ -389,7 +366,6 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
 
-#ifndef USE_NEW_MMU
    if (address <= 0x1FFFFC)
    {
       SET32(jaguarMainRAM, address, value);
@@ -397,9 +373,6 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
    }
    m68k_write_memory_16(address, value >> 16);
    m68k_write_memory_16(address + 2, value & 0xFFFF);
-#else
-   MMUWrite32(address, value, M68K);
-#endif
 }
 
 /* Disassemble M68K instructions at the given offset */
@@ -657,6 +630,9 @@ void HalflineCallback(void)
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }
 
+#define HLE_BIOS_WORK_FLAG_ADDR 0x0804   /* Low-RAM BIOS workspace used by Battle Sphere */
+#define HLE_BIOS_WORK_READY     0x00000001
+
 void JaguarReset(void)
 {
    unsigned i;
@@ -767,6 +743,8 @@ void JaguarReset(void)
       for (v = 4; v <= 255; v++)
          SET32(jaguarMainRAM, v * 4, HLE_EXCEPT_HANDLER_RTE);
 
+      JaguarApplyHLEBIOSState();
+
       /* --- MEMCON1 auto-detect from cart header ---
        * The BIOS reads bits 1-4 for ROM bus width/speed. */
       cartTypeByte = jagMemSpace[CART_HEADER_BASE];
@@ -821,6 +799,14 @@ void JaguarReset(void)
 
    lowerField = false;								// Reset the lower field flag
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
+}
+
+
+void JaguarApplyHLEBIOSState(void)
+{
+   if (!vjs.useJaguarBIOS && jaguarCartInserted
+         && GET32(jaguarMainRAM, HLE_BIOS_WORK_FLAG_ADDR) == 0)
+      SET32(jaguarMainRAM, HLE_BIOS_WORK_FLAG_ADDR, HLE_BIOS_WORK_READY);
 }
 
 

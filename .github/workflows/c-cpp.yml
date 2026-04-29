@@ -287,7 +287,7 @@ jobs:
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
           src\cd\cdintf.c src\cd\cdrom.c src\core\crc32.c src\core\event.c ^
           src\jerry\eeprom.c src\core\filedb.c src\jerry\joystick.c src\core\settings.c ^
-          src\core\memtrack.c src\core\mmu.c src\core\vjag_memory.c src\core\cheat.c ^
+          src\core\memtrack.c src\core\vjag_memory.c src\core\cheat.c ^
           src\core\universalhdr.c src\jerry\wavetable.c ^
           src\bios\jagbios.c src\bios\jagbios2.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^

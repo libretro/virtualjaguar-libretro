@@ -2,7 +2,8 @@
    dumps framebuffer as PPM.
 
    Usage: test_screenshot <core.dylib> <rom_file> <state_file> [num_frames]
-          [--blitter fast|accurate] [--press-a START-END] [--press-b START-END] [--out file.ppm]
+          [--bios real|hle] [--blitter fast|accurate]
+          [--press-a START-END] [--press-b START-END] [--out file.ppm]
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,7 @@ static bool *pjoysticksEnabled;
 static unsigned int (*pm68k_get_reg)(void *, m68k_register_t);
 static uint8_t **pjaguarMainRAM;
 
+static const char *bios_value = "enabled";   /* default: real BIOS */
 static const char *blitter_value = "disabled"; /* default: accurate */
 static int bios_option_set = 0;
 static int current_frame = 0;
@@ -81,7 +83,7 @@ static bool environment_cb(unsigned cmd, void *data)
          struct retro_variable *var = (struct retro_variable *)data;
          if (strcmp(var->key, "virtualjaguar_bios") == 0)
          {
-            var->value = "enabled";
+            var->value = bios_value;
             bios_option_set = 1;
             return true;
          }
@@ -234,7 +236,8 @@ int main(int argc, char **argv)
    if (argc < 4)
    {
       fprintf(stderr, "Usage: %s <core.dylib> <rom_file> <state_file> [num_frames]\n"
-              "       [--blitter fast|accurate] [--press-a START-END] [--press-b START-END] [--out file.ppm]\n", argv[0]);
+              "       [--bios real|hle] [--blitter fast|accurate]\n"
+              "       [--press-a START-END] [--press-b START-END] [--out file.ppm]\n", argv[0]);
       return 1;
    }
 
@@ -251,6 +254,19 @@ int main(int argc, char **argv)
             blitter_value = "enabled";
          else if (strcmp(mode, "accurate") == 0)
             blitter_value = "disabled";
+      }
+      else if (strcmp(argv[i], "--bios") == 0 && i + 1 < argc)
+      {
+         const char *mode = argv[++i];
+         if (strcmp(mode, "real") == 0)
+            bios_value = "enabled";
+         else if (strcmp(mode, "hle") == 0)
+            bios_value = "disabled";
+         else
+         {
+            fprintf(stderr, "Invalid --bios mode: %s\n", mode);
+            return 1;
+         }
       }
       else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
          out_path = argv[++i];
@@ -337,6 +353,7 @@ int main(int argc, char **argv)
 
    pretro_init();
 
+   fprintf(stderr, "BIOS: %s\n", strcmp(bios_value, "enabled") == 0 ? "real" : "hle");
    fprintf(stderr, "Blitter: %s\n", strcmp(blitter_value, "enabled") == 0 ? "fast" : "accurate");
 
    if (!pretro_load_game(&info))

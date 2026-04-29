@@ -99,7 +99,6 @@ struct VJSettings {
    bool hardwareTypeNTSC;
    bool useJaguarBIOS;
    bool hardwareTypeAlpine;
-   uint32_t frameSkip;
    uint32_t biosType;
    bool useFastBlitter;
 };
@@ -205,6 +204,24 @@ static void test_gpu_auth_magic(void)
       PASS("GPU auth magic = $%08X", magic);
    else
       FAIL("GPU auth magic = $%08X (expected $03D0DEAD)", magic);
+}
+
+/* ================================================================
+ * Test 1b: HLE BIOS low-RAM workspace
+ * The real BIOS leaves non-zero workspace data at $804. Battle Sphere
+ * reaches this through a GPU blitter-idle polling path after menu load.
+ * ================================================================ */
+static void test_hle_low_ram_workspace(void)
+{
+   uint32_t value;
+
+   printf("\n=== Test 1b: HLE BIOS Low-RAM Workspace ($804) ===\n");
+
+   value = ram_get32(0x804);
+   if (value & 0x00000001)
+      PASS("RAM[$804] = $%08X has bit 0 set", value);
+   else
+      FAIL("RAM[$804] = $%08X (expected bit 0 set)", value);
 }
 
 /* ================================================================
@@ -760,6 +777,7 @@ int main(int argc, char *argv[])
    printf("\n========== HLE Mode (no BIOS) ==========\n");
 
    test_gpu_auth_magic();
+   test_hle_low_ram_workspace();
    test_memcon1();
    test_memcon1_nonzero_type();
    test_jerry_clocks();

@@ -6,14 +6,8 @@
 #define __SETTINGS_H__
 
 #include <stdint.h>
-#include <stdlib.h>								// for MAX_PATH on MinGW/Darwin
-#include <limits.h>
 
 #include <boolean.h>
-
-#ifndef MAX_PATH
-#define MAX_PATH		4096
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,15 +21,9 @@ struct VJSettings
 	bool hardwareTypeNTSC;						// Set to false for PAL
 	bool useJaguarBIOS;
 	bool hardwareTypeAlpine;
-	uint32_t frameSkip;
+	/* Legacy BIOS selector; currently always defaults to BT_K_SERIES. */
 	uint32_t biosType;
 	bool useFastBlitter;
-
-	// Paths
-
-	char jagBootPath[MAX_PATH];
-	char CDBootPath[MAX_PATH];
-	char alpineROMPath[MAX_PATH];
 };
 
 // BIOS types
