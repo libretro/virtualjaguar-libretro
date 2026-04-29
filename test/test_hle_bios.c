@@ -69,8 +69,10 @@
 #define JERRY_PIT1       0xF10002
 #define JERRY_PIT2       0xF10004
 #define JERRY_PIT3       0xF10006
+#define JERRY_JINTCTRL   0xF10020
 #define JERRY_SCLK       0xF1A152
 #define JERRY_SMODE      0xF1A156
+#define IRQ2_TIMER1      0x04
 
 /* who enum values from vjag_memory.h */
 #define WHO_M68K  6
@@ -89,6 +91,9 @@ static void (*p_retro_unload_game)(void);
 static void (*p_JaguarApplyHLEBIOSState)(void);
 static void (*p_HalflineCallback)(void);
 static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
+static void (*p_JERRYWriteWord)(uint32_t, uint16_t, uint32_t);
+static bool (*p_JERRYIRQEnabled)(int);
+static void (*p_JERRYSetPendingIRQ)(int);
 
 /* Emulator internals via dlsym */
 static void *core_handle;
@@ -553,6 +558,32 @@ static void test_jerry_pit_cleared(void)
 }
 
 /* ================================================================
+ * Test 9a: JERRY JINTCTRL Word Decode
+ * JINTCTRL is the word at $F10020. The adjacent word at $F10022
+ * must not alias interrupt enables or clear pending interrupts.
+ * ================================================================ */
+static void test_jerry_jintctrl_word_decode(void)
+{
+   uint16_t pending;
+
+   printf("\n=== Test 9a: JERRY JINTCTRL Word Decode ===\n");
+
+   p_JERRYWriteWord(JERRY_JINTCTRL, IRQ2_TIMER1, WHO_M68K);
+   p_JERRYSetPendingIRQ(IRQ2_TIMER1);
+   p_JERRYWriteWord(JERRY_JINTCTRL + 2, 0x0400, WHO_M68K);
+
+   pending = p_JERRYReadWord(JERRY_JINTCTRL, WHO_M68K);
+
+   if ((pending & IRQ2_TIMER1) && p_JERRYIRQEnabled(IRQ2_TIMER1))
+      PASS("$F10022 write did not alias JINTCTRL");
+   else
+      FAIL("JINTCTRL alias: pending=$%04X timer1Enabled=%d",
+            pending, p_JERRYIRQEnabled(IRQ2_TIMER1) ? 1 : 0);
+
+   p_JERRYWriteWord(JERRY_JINTCTRL, 0x0400, WHO_M68K);
+}
+
+/* ================================================================
  * Test 9b: JERRY I2S Defaults
  * HLE configures I2S so DSP SSI interrupts are available before games
  * install their own DSP programs.
@@ -908,6 +939,9 @@ int main(int argc, char *argv[])
    LOAD(TOMWriteWord);
    LOAD(GPUReadLong);
    LOAD(JERRYReadWord);
+   LOAD(JERRYWriteWord);
+   LOAD(JERRYIRQEnabled);
+   LOAD(JERRYSetPendingIRQ);
 
    LOAD_OPT(tomRam8);
    LOAD_OPT(jaguarMainRAM);
@@ -974,6 +1008,7 @@ int main(int argc, char *argv[])
    test_border_clear();
    test_interrupts_cleared();
    test_jerry_pit_cleared();
+   test_jerry_jintctrl_word_decode();
    test_jerry_i2s_defaults();
    test_tom_video_registers();
    test_tom_vp_rollover();

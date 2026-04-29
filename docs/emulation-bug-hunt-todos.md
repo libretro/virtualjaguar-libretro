@@ -12,22 +12,23 @@ describe guesses, timing gaps, or known emulation shortcuts.
   offscreen halflines.
 - Event scheduling now treats negative residual times as "due now" instead of
   feeding negative microseconds into CPU/GPU/DSP cycle conversion.
+- JERRY JINTCTRL word writes are now decoded only at `$F10020`, so writes to
+  the adjacent `$F10022` word cannot alter the 68K interrupt mask or pending
+  latches.
 - `test_hle_bios` now covers HLE workspace state, exception vectors, I2S
-  defaults, PAL timing, and custom `VP` rollover.
+  defaults, JERRY JINTCTRL decode, PAL timing, and custom `VP` rollover.
 - `make test` now includes event queue coverage for zero/negative-time event
   handling.
 
 ## High Priority
 
-- `src/tom/op.c`: replace the fixed `opCyclesToRun = 30000` budget with a
-  resumable Object Processor scheduler. Current comments explicitly call this
-  value arbitrary and warn that overloaded OP lists should suspend/reenter.
+- `src/tom/op.c`: replace the Object Processor runaway-list guard with a real
+  resumable scheduler. The current `OP_RUNAWAY_GUARD_OBJECTS` limit prevents
+  malformed lists from hanging the emulator, but it does not model OP cycle
+  consumption or overloaded-list suspend/reentry timing.
 - `src/tom/op.c`: audit scaled bitmap clipping and horizontal remainder logic.
   Multiple comments note that edge clipping, `firstPix`, `iwidth == 0`, and
   scaled phrase alignment are guesses that affect road/ground rendering.
-- `src/jerry/jerry.c`: verify JERRY interrupt register behavior around
-  `$F10020-$F10021`. Existing comments say the masking/latch handling is
-  incomplete and may expose the wrong bits.
 - `src/tom/tom.c`: validate VMODE writes and Object Processor start behavior.
   The code currently starts OP side effects on VMODE writes with comments
   questioning whether VIDEN should gate this.

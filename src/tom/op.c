@@ -38,6 +38,8 @@
 #define CONDITION_OP_FLAG_SET		3
 #define CONDITION_SECOND_HALF_LINE	4
 
+#define OP_RUNAWAY_GUARD_OBJECTS   30000
+
 // Private function prototypes
 
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render);
@@ -262,11 +264,10 @@ void OPStorePhrase(uint32_t offset, uint64_t p)
 //
 // Object Processor main routine
 //
-//#warning "Need to fix this so that when an GPU object IRQ happens, we can pick up OP processing where we left off. !!! FIX !!!"
 void OPProcessList(int halfline, bool render)
 {
    bool inhibit;
-   uint32_t opCyclesToRun = 30000;					// This is a pulled-out-of-the-air value (will need to be fixed, obviously!)
+   uint32_t opObjectsToRun = OP_RUNAWAY_GUARD_OBJECTS;
 
 //#warning "!!! NEED TO HANDLE MULTIPLE FIELDS PROPERLY !!!"
    // We ignore them, for now; not good D-:
@@ -486,13 +487,11 @@ void OPProcessList(int halfline, bool render)
 	    break;
       }
 
-      // Here is a little sanity check to keep the OP from locking up the machine
-      // when fed bad data. Better would be to count how many actual cycles it used
-      // and bail out/reenter to properly simulate an overloaded OP... !!! FIX !!!
-//#warning "Better would be to count how many actual cycles it used and bail out/reenter to properly simulate an overloaded OP... !!! FIX !!!"
-      opCyclesToRun--;
+      /* Keep malformed lists from hanging the emulator. This is not a hardware
+       * cycle model; overloaded-list timing still needs a real OP scheduler. */
+      opObjectsToRun--;
 
-      if (!opCyclesToRun)
+      if (!opObjectsToRun)
          return;
    }
 }

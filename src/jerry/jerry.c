@@ -590,8 +590,8 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
       return;
    }
-   // JERRY -> 68K interrupt enables/latches (need to be handled!)
-   else if (offset >= 0xF10020 && offset <= 0xF10022)
+   // JERRY -> 68K interrupt enables/latches
+   else if (offset == 0xF10020)
    {
       uint16_t oldMask = jerryInterruptMask;
       uint16_t oldPending = jerryPendingInterrupt;
