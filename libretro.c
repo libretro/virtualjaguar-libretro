@@ -1013,7 +1013,11 @@ void retro_run(void)
    cheat_apply_all();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
 
-   // Resolution changed
+   video_cb(videoBuffer, game_width, game_height, game_width << 2);
+
+   /* TOM register writes can change tomWidth/tomHeight during JaguarExecuteNew().
+    * Apply the frontend geometry and render pitch after submitting the frame
+    * that was just rendered with the previous pitch. */
    if ((tomWidth != videoWidth || tomHeight != videoHeight) && tomWidth > 0 && tomHeight > 0)
    {
       videoWidth = tomWidth, videoHeight = tomHeight;
@@ -1024,6 +1028,4 @@ void retro_run(void)
       retro_get_system_av_info(&g_av_info);
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
-
-   video_cb(videoBuffer, game_width, game_height, game_width << 2);
 }

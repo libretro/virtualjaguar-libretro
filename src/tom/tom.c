@@ -739,8 +739,9 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       tomHCReadPhase = 0;
    }
 
-   if (halfline & 0x01)							// Execute OP only on even halflines (non-interlaced only!)
-      // Execute OP only on even halflines (skip higher resolutions for now...)
+   /* Execute OP only on even halflines; higher horizontal resolutions need
+    * more precise halfline scheduling. */
+   if (halfline & 0x01)
       return;
 
    // Initial values that "well behaved" programs use

@@ -88,6 +88,7 @@ static void (*p_retro_set_input_poll)(retro_input_poll_t);
 static void (*p_retro_set_input_state)(retro_input_state_t);
 static bool (*p_retro_load_game)(const struct retro_game_info *);
 static void (*p_retro_unload_game)(void);
+static void (*p_retro_run)(void);
 static void (*p_JaguarApplyHLEBIOSState)(void);
 static void (*p_HalflineCallback)(void);
 static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
@@ -114,8 +115,20 @@ struct VJSettings {
 };
 
 /* Stub callbacks */
+static unsigned last_video_width;
+static unsigned last_video_height;
+static size_t last_video_pitch;
+static int geometry_update_count;
+static unsigned last_geometry_width;
+static unsigned last_geometry_height;
+
 static void video_refresh(const void *d, unsigned w, unsigned h, size_t p)
-{ (void)d; (void)w; (void)h; (void)p; }
+{
+   (void)d;
+   last_video_width = w;
+   last_video_height = h;
+   last_video_pitch = p;
+}
 static void audio_sample(int16_t l, int16_t r) { (void)l; (void)r; }
 static size_t audio_batch(const int16_t *d, size_t f) { (void)d; return f; }
 static void input_poll(void) {}
@@ -149,10 +162,16 @@ static bool environment(unsigned cmd, void *data)
    case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
    case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
    case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
-   case RETRO_ENVIRONMENT_SET_GEOMETRY:
    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
    case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
       return true;
+   case RETRO_ENVIRONMENT_SET_GEOMETRY: {
+      const struct retro_system_av_info *info = (const struct retro_system_av_info *)data;
+      geometry_update_count++;
+      last_geometry_width = info->geometry.base_width;
+      last_geometry_height = info->geometry.base_height;
+      return true;
+   }
    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
       *(const char **)data = "/tmp";
       return true;
@@ -690,6 +709,53 @@ static void test_tom_vp_rollover(void)
 }
 
 /* ================================================================
+ * Test 10c: Libretro Geometry Update Ordering
+ * TOM can change video dimensions while a frame is being rendered.
+ * The frame must be submitted with the pitch used to render it; the
+ * new geometry should apply to the following frame.
+ * ================================================================ */
+static void test_libretro_geometry_update_order(void)
+{
+   uint16_t old_hdb1;
+   int old_geometry_count;
+
+   printf("\n=== Test 10c: Libretro Geometry Update Ordering ===\n");
+
+   old_hdb1 = tom_get16(TOM_HDB1);
+   old_geometry_count = geometry_update_count;
+   last_video_width = 0;
+   last_video_height = 0;
+   last_video_pitch = 0;
+   last_geometry_width = 0;
+   last_geometry_height = 0;
+
+   p_TOMWriteWord(0xF00036, 203, WHO_M68K);
+   p_retro_run();
+
+   if (last_video_width == 320 && last_video_pitch == (320U << 2))
+      PASS("first frame after TOM size change used previous pitch");
+   else
+      FAIL("first frame after TOM size change was %ux%u pitch=%lu",
+            last_video_width, last_video_height, (unsigned long)last_video_pitch);
+
+   if (geometry_update_count > old_geometry_count && last_geometry_width == 326)
+      PASS("geometry update queued for next frame at width %u", last_geometry_width);
+   else
+      FAIL("geometry update missing or wrong width: count %d->%d width=%u",
+            old_geometry_count, geometry_update_count, last_geometry_width);
+
+   p_retro_run();
+
+   if (last_video_width == 326 && last_video_pitch == (326U << 2))
+      PASS("following frame used updated pitch");
+   else
+      FAIL("following frame was %ux%u pitch=%lu",
+            last_video_width, last_video_height, (unsigned long)last_video_pitch);
+
+   p_TOMWriteWord(0xF00036, old_hdb1, WHO_M68K);
+}
+
+/* ================================================================
  * Test 11: SSP (Stack Pointer) Initialization
  * RAM[0..3] should contain a valid SSP for HLE boot ($00004000).
  * ================================================================ */
@@ -934,6 +1000,7 @@ int main(int argc, char *argv[])
    LOAD(retro_set_input_state);
    LOAD(retro_load_game);
    LOAD(retro_unload_game);
+   LOAD(retro_run);
    LOAD(JaguarApplyHLEBIOSState);
    LOAD(HalflineCallback);
    LOAD(TOMWriteWord);
@@ -1012,6 +1079,7 @@ int main(int argc, char *argv[])
    test_jerry_i2s_defaults();
    test_tom_video_registers();
    test_tom_vp_rollover();
+   test_libretro_geometry_update_order();
    test_ssp_init();
    test_run_address();
    test_memcon2();

@@ -15,8 +15,12 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - JERRY JINTCTRL word writes are now decoded only at `$F10020`, so writes to
   the adjacent `$F10022` word cannot alter the 68K interrupt mask or pending
   latches.
+- Libretro geometry changes now apply after the frame rendered with the
+  previous pitch is submitted, avoiding a one-frame pitch mismatch when games
+  reprogram TOM display registers.
 - `test_hle_bios` now covers HLE workspace state, exception vectors, I2S
-  defaults, JERRY JINTCTRL decode, PAL timing, and custom `VP` rollover.
+  defaults, JERRY JINTCTRL decode, deferred geometry updates, PAL timing, and
+  custom `VP` rollover.
 - `make test` now includes event queue coverage for zero/negative-time event
   handling.
 

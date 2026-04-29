@@ -1,4 +1,4 @@
-/* test_wmcj_debug.c -- Trace WMCJ HLE boot to find where it gets stuck.
+/* test_wmcj_debug.c -- Trace WMCJ boot to inspect CPU/DSP state.
  * Build: cc -o test/test_wmcj_debug test/test_wmcj_debug.c -ldl -O0 -g
  * Usage: ./test/test_wmcj_debug <core.dylib> <wmcj.jag>
  */
@@ -181,7 +181,7 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   printf("=== WMCJ HLE boot trace ===\n");
+   printf("=== WMCJ boot trace ===\n");
    for (frame = 0; frame < 120; frame++) {
       p_retro_run();
       pc = p_m68k_get_reg(NULL, M68K_REG_PC);

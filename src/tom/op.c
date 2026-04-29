@@ -204,15 +204,11 @@ uint32_t OPGetListPointer(void)
 }
 
 
-// This is WRONG, since the OBF is only 16 bits wide!!! [FIXED]
-
 uint32_t OPGetStatusRegister(void)
 {
    return GET16(tomRam8, 0x26);
 }
 
-
-// This is WRONG, since the OBF is only 16 bits wide!!! [FIXED]
 
 void OPSetStatusRegister(uint32_t data)
 {
