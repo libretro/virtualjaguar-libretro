@@ -72,6 +72,33 @@ static void OPAdvanceScaledSource(uint16_t *horizontalRemainder, uint16_t hscale
 }
 
 
+static void OPSkipScaledDestinationPixels(uint32_t destPixels, uint16_t hscale,
+      int bitsPerPixel, int phrasePixels, uint32_t pitchBytes, uint32_t *data,
+      uint32_t *iwidth, uint16_t *horizontalRemainder, int *pixCount,
+      uint64_t *pixels)
+{
+   uint32_t phrasesToSkip;
+   uint32_t pixelShift;
+
+   while (destPixels-- && (int32_t)*iwidth > 0)
+   {
+      OPAdvanceScaledSource(horizontalRemainder, hscale, bitsPerPixel, pixCount, pixels);
+
+      if (*pixCount >= phrasePixels)
+      {
+         phrasesToSkip = (uint32_t)*pixCount / (uint32_t)phrasePixels;
+         pixelShift = (uint32_t)*pixCount % (uint32_t)phrasePixels;
+
+         *data += pitchBytes * phrasesToSkip;
+         *pixels = ((uint64_t)JaguarReadLong(*data, OP) << 32) | JaguarReadLong(*data + 4, OP);
+         *pixels <<= bitsPerPixel * pixelShift;
+         *iwidth -= phrasesToSkip;
+         *pixCount = (int)pixelShift;
+      }
+   }
+}
+
+
 //
 // Object Processor initialization
 //
@@ -950,6 +977,8 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    uint32_t scaledPhrasePixelsUS;
    uint32_t clippedWidthUS;
    uint32_t phraseClippedWidth = 0, dataClippedWidth = 0;
+   uint32_t clippedDestPixels = 0;
+   uint32_t visibleDestPixels;
    // Not sure if this is Jaguar Two only location or what...
    // From the docs, it is... If we want to limit here we should think of something else.
    //	int32_t limit = GET16(tom_ram_8, 0x0008);			// LIMIT
@@ -984,6 +1013,8 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
    int32_t scaledWidthInPixels;
    int32_t startPos;
    int32_t endPos;
+   int32_t visibleStart;
+   int32_t visibleEnd;
 
    // Looks like an hscale of zero means don't draw!
    if (!render || hscale == 0)
@@ -1067,6 +1098,11 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       clippedWidthUS = (0 - startPos) << 5;
       dataClippedWidth = phraseClippedWidth = clippedWidthUS / scaledPhrasePixelsUS;
       startPos += (dataClippedWidth * scaledPhrasePixelsUS) >> 5;
+      if (startPos < 0)
+      {
+         clippedDestPixels = (uint32_t)-startPos;
+         startPos = 0;
+      }
    }
 
    if (endPos < 0)				// Case #2: Begin in, end out, R to L
@@ -1086,6 +1122,11 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       clippedWidthUS = (startPos - lbufWidth) << 5;
       dataClippedWidth = phraseClippedWidth = clippedWidthUS / scaledPhrasePixelsUS;
       startPos = lbufWidth + ((clippedWidthUS % scaledPhrasePixelsUS) >> 5);
+      if (startPos > lbufWidth)
+      {
+         clippedDestPixels = (uint32_t)(startPos - lbufWidth);
+         startPos = lbufWidth;
+      }
    }
 
    // If the image is sitting on the line buffer left or right edge, we need to compensate
@@ -1101,6 +1142,26 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       firstPixShift = 0;
       firstPixPixels = 0;
    }
+
+   if (!flagREFLECT)
+   {
+      visibleStart = startPos;
+      visibleEnd = endPos;
+   }
+   else
+   {
+      visibleStart = endPos;
+      visibleEnd = startPos;
+   }
+
+   if (visibleStart < 0)
+      visibleStart = 0;
+   if (visibleEnd > lbufWidth)
+      visibleEnd = lbufWidth;
+   if (visibleEnd < visibleStart)
+      return;
+
+   visibleDestPixels = (uint32_t)(visibleEnd - visibleStart + 1);
 
    // NOTE: When the bitmap is in REFLECT mode, the XPOS marks the *right* side of the
    //       bitmap! This makes clipping & etc. MUCH, much easier...!
@@ -1124,8 +1185,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 
       pixels <<= firstPixShift;
+      OPSkipScaledDestinationPixels(clippedDestPixels, hscale, 1, 64, pitch << 3,
+            &data, &iwidth, &horizontalRemainder, &pixCount, &pixels);
 
-      while ((int32_t)iwidth > 0)
+      while ((int32_t)iwidth > 0 && visibleDestPixels > 0)
       {
          uint8_t bits = pixels >> 63;
 
@@ -1149,6 +1212,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             }
 
          currentLineBuffer += lbufDelta;
+         visibleDestPixels--;
 
          OPAdvanceScaledSource(&horizontalRemainder, hscale, 1, &pixCount, &pixels);
 
@@ -1176,8 +1240,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
       pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
       pixels <<= firstPixShift;
+      OPSkipScaledDestinationPixels(clippedDestPixels, hscale, 2, 32, pitch << 3,
+            &data, &iwidth, &horizontalRemainder, &pixCount, &pixels);
 
-      while ((int32_t)iwidth > 0)
+      while ((int32_t)iwidth > 0 && visibleDestPixels > 0)
       {
          uint8_t bits = pixels >> 62;
 
@@ -1201,6 +1267,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             }
 
          currentLineBuffer += lbufDelta;
+         visibleDestPixels--;
 
          OPAdvanceScaledSource(&horizontalRemainder, hscale, 2, &pixCount, &pixels);
 
@@ -1228,8 +1295,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
       pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
       pixels <<= firstPixShift;
+      OPSkipScaledDestinationPixels(clippedDestPixels, hscale, 4, 16, pitch << 3,
+            &data, &iwidth, &horizontalRemainder, &pixCount, &pixels);
 
-      while ((int32_t)iwidth > 0)
+      while ((int32_t)iwidth > 0 && visibleDestPixels > 0)
       {
          uint8_t bits = pixels >> 60;
 
@@ -1253,6 +1322,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             }
 
          currentLineBuffer += lbufDelta;
+         visibleDestPixels--;
 
          OPAdvanceScaledSource(&horizontalRemainder, hscale, 4, &pixCount, &pixels);
 
@@ -1277,8 +1347,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 
       pixels <<= firstPixShift;
+      OPSkipScaledDestinationPixels(clippedDestPixels, hscale, 8, 8, pitch << 3,
+            &data, &iwidth, &horizontalRemainder, &pixCount, &pixels);
 
-      while ((int32_t)iwidth > 0)
+      while ((int32_t)iwidth > 0 && visibleDestPixels > 0)
       {
          uint8_t bits = pixels >> 56;
 
@@ -1306,6 +1378,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             }
 
          currentLineBuffer += lbufDelta;
+         visibleDestPixels--;
 
          OPAdvanceScaledSource(&horizontalRemainder, hscale, 8, &pixCount, &pixels);
 
@@ -1330,8 +1403,10 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
       uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
 
       pixels <<= firstPixShift;
+      OPSkipScaledDestinationPixels(clippedDestPixels, hscale, 16, 4, pitch << 3,
+            &data, &iwidth, &horizontalRemainder, &pixCount, &pixels);
 
-      while ((int32_t)iwidth > 0)
+      while ((int32_t)iwidth > 0 && visibleDestPixels > 0)
       {
          uint8_t bitsHi = pixels >> 56, bitsLo = pixels >> 48;
 
@@ -1353,6 +1428,7 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
          }
 
          currentLineBuffer += lbufDelta;
+         visibleDestPixels--;
 
          OPAdvanceScaledSource(&horizontalRemainder, hscale, 16, &pixCount, &pixels);
          if (pixCount > 3)

@@ -30,10 +30,14 @@ describe guesses, timing gaps, or known emulation shortcuts.
   1:1 `hscale=$20` output and applies `firstPix` to the first source phrase,
   treats `iwidth == 0` as one phrase, keeps the visible edge pixel for
   reflected left-edge objects, and handles magnified `hscale` source stepping,
-  with direct 4 BPP coverage for 1:1, 3:2, and 2:1 ratios in `test_hle_bios`.
+  with direct 4 BPP coverage for 1:1, 3:2, 2:1, left/right-edge clipping, and
+  reflected edge clipping in `test_hle_bios`.
 - OP fixed bitmap rendering now honors `firstPix` for 2/4/16/24 BPP paths,
   not just 1/8 BPP, and avoids applying it again after clipping skips whole
   source phrases, with direct 4 BPP coverage in `test_hle_bios`.
+- TOM interrupt sources now latch pending status even when their CPU enable
+  bits are clear; enabling a pending source asserts the 68K IPL2 line, with
+  direct video IRQ latch coverage in `test_hle_bios`.
 - Headerless raw homebrew loading is now conservative but supported for
   recognizable startup patterns at inferred `$4000`, `$20000`, or `$802000`
   bases; unknown raw files still fail instead of booting invalid RAM.
@@ -53,11 +57,24 @@ describe guesses, timing gaps, or known emulation shortcuts.
   resumable scheduler. The current `OP_RUNAWAY_GUARD_OBJECTS` limit prevents
   malformed lists from hanging the emulator, but it does not model OP cycle
   consumption or overloaded-list suspend/reentry timing.
+- `White Men Can't Jump`: private-ROM tracing shows the visible jumps happen
+  with a stable `OLP` and object-list contents. The jumping object is a fixed
+  bitmap consumed by OP write-back and restored outside direct 68K stores,
+  through the 68K VBI path. Bad frames occur when the video interrupt lands
+  while the 68K SR masks level-2 IRQs, delaying the object restore until active
+  display (`VC=$0866` in the captured repro). Suppressing OP write-back hides
+  the jump but contradicts hardware behavior. TOM timer IRQs are the immediate
+  collision source: disabling TOM PIT interrupts removes the boot-logo jump,
+  while alternate PIT reload formulas and line-buffer clearing probes made the
+  frame sequence worse. A real TOM fix landed for `INT1` byte reads/writes
+  exposing and clearing pending IRQ sources consistently with word accesses,
+  but WMCJ still needs 68K/TOM interrupt phase accuracy rather than bitmap
+  geometry.
 - `src/tom/op.c`: continue auditing scaled bitmap semantics beyond the
   small-`hscale`, `firstPix`, 1:1 phase, `iwidth == 0`, and reflected
-  left-edge fixes. Clipping plus `firstPix`, additional non-integer ratios,
-  and reflected right-edge phrase alignment still need repro or hardware
-  coverage because they affect road/ground rendering.
+  edge fixes. Additional non-integer ratios and larger reflected phrase
+  alignment cases still need repro or hardware coverage because they affect
+  road/ground rendering.
 ## Medium Priority
 
 - `src/tom/tom.c`: replace hard-coded visible-window constants with values

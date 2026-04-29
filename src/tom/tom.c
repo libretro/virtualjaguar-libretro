@@ -406,6 +406,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer);
 void tom_render_16bpp_direct_scanline(uint32_t * backbuffer);
 void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer);
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer);
+uint16_t TOMIRQControlReg(void);
 
 render_xxx_scanline_fn * scanline_render[] =
 {
@@ -422,6 +423,32 @@ render_xxx_scanline_fn * scanline_render[] =
 uint32_t RGB16ToRGB32[0x10000];
 uint32_t CRY16ToRGB32[0x10000];
 uint32_t MIX16ToRGB32[0x10000];
+
+static void TOMAssertEnabledIRQs(void)
+{
+   uint16_t pending = (tom_jerry_int_pending << IRQ_DSP)
+      | (tom_timer_int_pending << IRQ_TIMER)
+      | (tom_object_int_pending << IRQ_OPFLAG)
+      | (tom_gpu_int_pending << IRQ_GPU)
+      | (tom_video_int_pending << IRQ_VIDEO);
+
+   if (pending & tomRam8[INT1 + 1])
+      m68k_set_irq(2);
+}
+
+static void TOMClearPendingIRQs(uint8_t clear)
+{
+   if (clear & 0x01)
+      tom_video_int_pending = 0;
+   if (clear & 0x02)
+      tom_gpu_int_pending = 0;
+   if (clear & 0x04)
+      tom_object_int_pending = 0;
+   if (clear & 0x08)
+      tom_timer_int_pending = 0;
+   if (clear & 0x10)
+      tom_jerry_int_pending = 0;
+}
 
 //#warning "This is not endian-safe. !!! FIX !!!"
 void TOMFillLookupTables(void)
@@ -455,30 +482,35 @@ void TOMFillLookupTables(void)
 void TOMSetPendingJERRYInt(void)
 {
    tom_jerry_int_pending = 1;
+   TOMAssertEnabledIRQs();
 }
 
 
 void TOMSetPendingTimerInt(void)
 {
    tom_timer_int_pending = 1;
+   TOMAssertEnabledIRQs();
 }
 
 
 void TOMSetPendingObjectInt(void)
 {
    tom_object_int_pending = 1;
+   TOMAssertEnabledIRQs();
 }
 
 
 void TOMSetPendingGPUInt(void)
 {
    tom_gpu_int_pending = 1;
+   TOMAssertEnabledIRQs();
 }
 
 
 void TOMSetPendingVideoInt(void)
 {
    tom_video_int_pending = 1;
+   TOMAssertEnabledIRQs();
 }
 
 
@@ -951,6 +983,10 @@ uint8_t TOMReadByte(uint32_t offset, uint32_t who)
       return tomTimerDivider >> 8;
    else if (offset == 0xF00053)
       return tomTimerDivider & 0xFF;
+   else if (offset == 0xF000E0)
+      return 0;
+   else if (offset == 0xF000E1)
+      return TOMIRQControlReg() & 0xFF;
 
    return tomRam8[offset & 0x3FFF];
 }
@@ -1066,7 +1102,12 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
       tomRam8[offset] = data, tomRam8[offset + 0x200] = data;
    }
 
-   tomRam8[offset & 0x3FFF] = data;
+   offset &= 0x3FFF;
+   if (offset == INT1)
+      TOMClearPendingIRQs(data);
+   tomRam8[offset] = data;
+   if (offset == INT1 || offset == (INT1 + 1))
+      TOMAssertEnabledIRQs();
 }
 
 // TOM word access (write)
@@ -1113,16 +1154,7 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    else if (offset == 0xF000E0)
    {
       //Check this out...
-      if (data & 0x0100)
-         tom_video_int_pending = 0;
-      if (data & 0x0200)
-         tom_gpu_int_pending = 0;
-      if (data & 0x0400)
-         tom_object_int_pending = 0;
-      if (data & 0x0800)
-         tom_timer_int_pending = 0;
-      if (data & 0x1000)
-         tom_jerry_int_pending = 0;
+      TOMClearPendingIRQs(data >> 8);
    }
    else if ((offset >= 0xF02200) && (offset <= 0xF0229F))
    {

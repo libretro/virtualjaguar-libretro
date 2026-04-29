@@ -606,13 +606,8 @@ void HalflineCallback(void)
    TOMWriteWord(0xF00006, vc, JAGUAR);
 
    // Time for Vertical Interrupt?
-   if ((vc & 0x7FF) == vi && (vc & 0x7FF) > 0 && TOMIRQEnabled(IRQ_VIDEO))
-   {
-      // We don't have to worry about autovectors & whatnot because the Jaguar
-      // tells you through its HW registers who sent the interrupt...
+   if ((vc & 0x7FF) == vi && (vc & 0x7FF) > 0)
       TOMSetPendingVideoInt();
-      m68k_set_irq(2);
-   }
 
    TOMExecHalfline(vc, true);
 
