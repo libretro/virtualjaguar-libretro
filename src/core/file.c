@@ -37,7 +37,7 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    if (buffer[0] == 0x01 && buffer[1] == 0x50)
       return JST_ABS_TYPE2;
 
-   // Jag Server & other old shite
+   // Jag Server and older RAM-loaded formats
    if (buffer[0] == 0x60 && buffer[1] == 0x1A)
    {
       if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
@@ -120,15 +120,11 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
       jaguarLoadedRAMEnd = loadAddress + codeSize;
       return true;
    }
-   // NB: This is *wrong*
    else if (fileType == JST_JAGSERVER)
    {
-      // This kind of shiaut should be in the detection code below...
-      // (and now it is! :-)
-      //		if (buffer[0x1C] == 'J' && buffer[0x1D] == 'A' && buffer[0x1E] == 'G')
-      //		{
-      // Still need to do some checking here for type 2 vs. type 3. This assumes 3
-      // Also, JAGR vs. JAGL (word command size vs. long command size)
+      /* Detection already verified the JAG header. This load path still assumes
+       * JAGSERVER type 3 and long command sizes; type 2/JAGR needs hardware docs
+       * or a repro before changing behavior. */
       uint32_t loadAddress = GET32(buffer, 0x22), runAddress = GET32(buffer, 0x2A);
       uint32_t codeSize = jaguarROMSize - 0x2E;
       memcpy(jagMemSpace + loadAddress, buffer + 0x2E, codeSize);

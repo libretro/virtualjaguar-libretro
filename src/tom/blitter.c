@@ -389,9 +389,6 @@ void blitter_generic(uint32_t cmd)
                //to honor the BPP when calculating the start address (which it kinda does already). Second,
                //it has to step bit by bit when using BCOMPEN. How to do this???
                if (BCOMPEN)
-                  //small problem with this approach: it's not accurate... We need a proper address to begin with
-                  //and *then* we can do the bit stepping from there the way it's *supposed* to be done... !!! FIX !!!
-                  //[DONE]
                {
                   uint32_t pixShift = (~bitPos) & (bppSrc - 1);
                   srcdata = (srcdata >> pixShift) & 0x01;
@@ -643,8 +640,6 @@ void blitter_generic(uint32_t cmd)
          }
 
          // Update x and y (inner loop)
-         //Now it does! But crappy, crappy, crappy! !!! FIX !!! [DONE]
-         //This is less than ideal, but it works...
          if (!BCOMPEN)
          {//*/
             a1_x += a1_xadd, a1_y += a1_yadd;
@@ -728,12 +723,10 @@ void blitter_generic(uint32_t cmd)
       if (a2_phrase_mode)			// v1
       {
          uint32_t pixelSize;
-         // Bump the pointer to the next phrase boundary
-         // Even though it works, this is crappy... Clean it up!
+         // Bump the pointer to the next phrase boundary.
          uint32_t size = 64 / a2_psize;
 
-         // Crappy kludge... ('aligning' source to destination)
-         // Prolly should do this for A1 channel as well... [DONE]
+         // Align source to destination phrase position.
          if (a1_phrase_mode && !DSTA2)
          {
             uint32_t extra = (a1_start >> 16) % size;
@@ -911,8 +904,7 @@ void blitter_blit(uint32_t cmd)
       a1_clip_x = REG(A1_CLIP) & 0x7FFF,
                 a1_clip_y = (REG(A1_CLIP) >> 16) & 0x7FFF;
 
-   // This phrase sizing is incorrect as well... !!! FIX !!! [NOTHING TO FIX]
-   // Err, this is pixel size... (and it's OK)
+   // Pixel size derived from the phrase control bits.
    a2_psize = 1 << ((REG(A2_FLAGS) >> 3) & 0x07);
    a1_psize = 1 << ((REG(A1_FLAGS) >> 3) & 0x07);
 
