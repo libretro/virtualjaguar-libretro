@@ -234,9 +234,6 @@ static void HLEHandleCDRead(void)
    bool foundSentinel;
    bool reseekOnly = (d0 & 0x80000000u) != 0;
    bool sentinelIsAscii = true;
-   bool fallbackFound = false;
-   uint32_t fallbackLBA = 0;
-   uint32_t fallbackOff = 0;
    uint32_t phase_starts[MAX_PHASES];
    uint32_t phase_count = 1;
    uint32_t startLBA;
@@ -448,11 +445,6 @@ static void HLEHandleCDRead(void)
             HLE_LOG("sentinel match: %u consecutive at LBA %u off %u (sector %u from seek)\n",
                    matchCount, scan_base + s, i, s);
             if (matchCount < MIN_SYNC_MATCHES) {
-               if (sentinelIsAscii && !fallbackFound) {
-                  fallbackFound = true;
-                  fallbackLBA   = scan_base + s;
-                  fallbackOff   = i + 4;
-               }
                continue;  /* stray match — keep searching for a real sync block */
             }
 
@@ -513,20 +505,12 @@ static void HLEHandleCDRead(void)
          /* Skip the sector copy loop — dest is already zeroed */
          goto hle_cd_read_complete;
       }
-      if (fallbackFound) {
-         HLE_LOG("CD_read: no sync block — using single-match fallback at LBA %u off %u\n",
-                 fallbackLBA, fallbackOff);
-         scanLBA = fallbackLBA;
-         scanOff = fallbackOff;
-         foundSentinel = true;
-      } else {
-         /* Honour streaming continuation: if a repeated CD_read advanced
-          * startLBA past `lba`, read from the new position so the game
-          * sees fresh sectors each call instead of the same 1 MB on loop. */
-         HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u\n", startLBA);
-         scanLBA = startLBA;
-         scanOff = 0;
-      }
+      /* Honour streaming continuation: if a repeated CD_read advanced
+       * startLBA past `lba`, read from the new position so the game
+       * sees fresh sectors each call instead of the same 1 MB on loop. */
+      HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u\n", startLBA);
+      scanLBA = startLBA;
+      scanOff = 0;
    }
 
 hle_cd_read_post_scan:
@@ -558,18 +542,9 @@ hle_cd_read_post_scan:
       for (i = 0; i < copyLen && (dst + i) < 0x200000; i++)
          jaguarMainRAM[dst + i] = sectorBuf[copyStart + i];
 
-      /* Mirror the same data into cart space at the same offset.
-       * Some boot stubs (e.g. BrainDead 13) scan cart-space addresses
-       * like $00851644 looking for the universal "ATRI" header.  On real
-       * Jaguar CD hardware, the CD cart's onboard buffer is mapped into
-       * cart space; in HLE we mirror the loaded data so direct cart-space
-       * scans hit the same payload.  Cart space is otherwise empty in HLE
-       * mode, so this overlay is harmless. */
-      {
-         uint32_t cartDst = dst + 0x800000;
-         for (i = 0; i < copyLen && (cartDst + i) < 0xE00000; i++)
-            jaguarMainROM[cartDst - 0x800000 + i] = sectorBuf[copyStart + i];
-      }
+      /* Per-CD_read cart-space mirror removed — HLEPopulateCartBuffer
+       * already covers BrainDead 13's "ATRI" cart-scan path at boot
+       * time; the per-read mirror was redundant write traffic. */
 
       bytesWritten += copyLen;
       s++;
@@ -713,22 +688,26 @@ static void HLEHandleCDPoll(void)
               pollCount, hle_read_pending, hle_read_end_addr,
               hle_gpu_data_base);
 
-   if (hle_read_pending)
-      hle_read_pending = false;
-
    /* The real BIOS's CD_poll returns A0 = [$3074] (the GPU data area
     * POINTER in GPU RAM, e.g. $F03B10), NOT the transfer position.
     * Boot stubs use two idioms to check completion:
     *   1. `cmpa.l A6,A0; blt poll`  — A0 >= end (Highlander, Battle Morph)
     *   2. `cmpa.l #$80000,A0; ble poll` — A0 > $80000 (BrainDead 13, IS2)
-    * Returning the GPU data area pointer satisfies BOTH: it's always in
-    * GPU RAM ($F03xxx > $80000) and always > any main RAM end address.
-    * The boot stub then reads the actual transfer state directly from
-    * the GPU data area in GPU RAM.
     *
-    * Fallback: if no ISR setup was called (hle_gpu_data_base == 0) or
-    * no transfer is active, return the legacy end_addr+4 value. */
-   if (hle_read_end_addr == 0)
+    * Defer one poll: real-hardware CD_poll bounces around (BUTCH FIFO
+    * isn't yet half-full / ISR hasn't yet processed the seek response)
+    * before reporting completion. Some boot stubs depend on observing
+    * the not-done state at least once to take a sequencing branch
+    * (BrainDead 13's HLE poll loop misses an init step otherwise).
+    * Return A0=0 the first time we see hle_read_pending and clear it,
+    * then on subsequent polls report completion via the GPU data area
+    * pointer. */
+   if (hle_read_pending)
+   {
+      hle_read_pending = false;
+      a0_val = 0;
+   }
+   else if (hle_read_end_addr == 0)
       a0_val = 0;
    else if (hle_gpu_data_base != 0)
       a0_val = hle_gpu_data_base;
@@ -1018,24 +997,12 @@ bool JaguarCDHLEHook(uint32_t pc)
       HLEHandleISRSetup(0x01);
       return true;
 
-   /* No-ops: these control hardware state that doesn't exist in HLE */
-   case JT_CD_I2S_ENABLE:
-   case JT_CD_SPIN_UP:
-   case JT_CD_STOP_DRIVE:
-   case JT_CD_SET_VOL_MUTE:
-   case JT_CD_SET_VOL_MAX:
-   case JT_CD_PAUSE:
-   case JT_CD_UNPAUSE:
-   case JT_CD_FIFO_DISABLE:
-   case JT_CD_HW_RESET:
-   case JT_CD_SET_DAC_MODE:
-   {
-      static uint32_t noop_count = 0;
-      noop_count++;
-      if (noop_count <= 20 || (noop_count % 10000) == 0)
-         HLE_LOG("No-op $%06X (call #%u)\n", pc, noop_count);
-      return true;
-   }
+   /* CD-control entries (CD_I2S_ENABLE, CD_SPIN_UP, CD_STOP_DRIVE,
+    * CD_SET_VOL_MUTE/MAX, CD_PAUSE, CD_UNPAUSE, CD_FIFO_DISABLE,
+    * CD_HW_RESET, CD_SET_DAC_MODE) are not intercepted — the jump table
+    * is pre-stubbed with $4E75 (RTS) by HLEInstallJumpTable, so falling
+    * through executes a no-op naturally. The previous explicit hooks
+    * only added log noise. */
 
    default:
       break;
