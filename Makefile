@@ -734,6 +734,10 @@ clean:
 		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
+		test/test_butch_cd test/test_bios_config test/test_boot_config \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot \
+		test/test_audio_dac test/test_blitter \
+		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
 
@@ -763,7 +767,11 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
-		test/test_framebuffer_integrity test/tools/test_memory_map
+		test/test_framebuffer_integrity \
+		test/test_butch_cd test/test_bios_config test/test_boot_config \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot \
+		test/test_audio_dac test/test_blitter \
+		test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_mmio
@@ -812,6 +820,10 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	else \
 		echo "  SKIP: Iron Soldier 1 ROM (private) not available (audio presence)"; \
 	fi
+	./test/test_butch_cd
+	./test/test_bios_config
+	./test/test_boot_config
+	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@if [ -f "test/roms/yarc.j64" ]; then \
@@ -823,6 +835,13 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
 		./test/test_eeprom_lifecycle ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	@echo ""
+	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
+	@echo "and test/test_blitter (register-readback) are built but not run from"
+	@echo "'make test'. The CD sweeps walk every disc in test/roms/private/; the"
+	@echo "blitter readback tests probe register read paths that the emulator"
+	@echo "does not currently expose. Invoke them directly when validating"
+	@echo "regressions in those subsystems."
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -932,6 +951,54 @@ test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
 		-o $@ test/test_framebuffer_integrity.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# CD-specific test harnesses (imported from PR #109).  Tests SKIP gracefully
+# when no disc images are present in test/roms/private/, so CI without
+# private ROMs still passes.
+test/test_butch_cd: test/test_butch_cd.c test/test_framework.h test/mister_ground_truth.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_butch_cd.c -ldl
+
+test/test_bios_config: test/test_bios_config.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_bios_config.c -ldl
+
+test/test_boot_config: test/test_boot_config.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_boot_config.c -ldl
+
+test/test_cd_boot: test/test_cd_boot.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_boot.c -ldl
+
+test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_hle_boot.c -ldl
+
+test/test_cd_bios_boot: test/test_cd_bios_boot.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_bios_boot.c -ldl
+
+test/test_audio_dac: test/test_audio_dac.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_dac.c -ldl -lm
+
+test/test_blitter: test/test_blitter.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_blitter.c -ldl
+
+# Diagnostic CD harnesses: invoked manually with a CUE/CHD argument.
+test/dump_pc: test/dump_pc.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/dump_pc.c -ldl
+
+test/heap_search: test/heap_search.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/heap_search.c -ldl
+
+# Aggregate target for the manual diagnostic tools.
+.PHONY: tools
+tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
