@@ -1,107 +1,100 @@
 Virtual Jaguar v2.2.0 libretro
 ------------------------------
 
-A large libretro-fork release focused on accuracy, performance, and a
-durable test surface. Highlights since v2.1.0:
+A large libretro-fork release. Highlights since v2.1.0:
 
-== Hardware accuracy ==
-* DSP: 40-bit MAC accumulator semantics, FLAGS-write dispatch, IRQ
-  enable-on-set dispatch, IMASK preservation, ADDC carry overflow.
-* GPU: ADDC carry, IMASK preservation, missing symbol exports, PACK
-  test coverage, DIVL exception PC.
-* Blitter (accurate path): daddmode NAND tree, daddbsel bit 3,
-  ADDARRAY cinsel carry input, M2 BKGWREN+BCOMPEN phrase mode (Alien
-  vs Predator red-noise fix), SRCSHADE color corruption.
-* Object Processor: scaled-bitmap firstPix and edge clipping
-  (left/right/reflected), 1:1/3:2/2:1 hscale ratios, fixed-bitmap
-  firstPix for 2/4/16/24 BPP, OP GPU object handling.
-* TOM: IRQ pending status now latches even when CPU enables are
-  clear; enabling a pending source raises IPL2 via the new unified
-  TOMAssertEnabledIRQs path. Horizontal counter reads now advance.
-  Replaced the Doom resolution hack with proper PWIDTH pixel
-  replication.
-* JERRY: interrupt-control register decode, masked offset for
-  aligned PIT register access.
-* 68K: TOM underflow handling, mixed-declaration cleanup.
-* Event system: zero eventTime on init, scan all slots for next
-  event, timing-rollover and due-event handling.
+== Compatibility ==
+* HLE BIOS now ships — boot most commercial titles without a real
+  BIOS image. Many games that previously needed the real BIOS, or
+  worked-but-broken with it, now run on HLE BIOS too.
+* Many homebrews now boot — non-Alpine raw .bin/.j64/.rom layouts
+  are accepted at common startup bases ($4000, $20000, $802000),
+  with conservative validation so unknown content fails fast
+  instead of running into garbage.
+* Compatibility list with per-game status is maintained in
+  docs/emulation-bug-hunt-todos.md (see the "Game compatibility
+  (v2.2.0)" section).
 
-== Performance ==
-* ~2x speedup on DSP/GPU/memory hot paths.
-* SIMD-accelerated blitter operations (SSE2, NEON, scalar
-  fallback) with bit-exactness tests in CI.
-* Accurate-blitter inner loop tightened — dead code eliminated,
-  DCONTROL hoisted.
+  Closes the long-standing libretro tracker:
+   - libretro/virtualjaguar-libretro#27 — improve emulation accuracy
+   - libretro/virtualjaguar-libretro#85 — make HLE actually usable
+   - libretro/virtualjaguar-libretro#38 — many sub-issues addressed
+     (per-game details in the compatibility doc)
 
 == New features ==
-* HLE BIOS — boot games without a real BIOS image. The HLE path
-  produces hardware-equivalent post-boot state across MEMCON1,
-  clocks, GPU auth magic, OLP, exception vectors, TOM video
-  registers, JERRY timers, and SSP / run address. NTSC and PAL
-  timing match the real BIOS. Covered by 200+ pin tests in
-  test_hle_bios; the vast majority of commercial titles boot
-  cleanly without any BIOS image.
 * Save states (retro_serialize / retro_unserialize) with
-  deterministic serialization for run-ahead support.
-* SRAM/EEPROM via the libretro SRAM interface, preserved across
-  soft resets.
+  deterministic serialization for run-ahead.
+* SRAM / EEPROM via the libretro SRAM interface, preserved
+  across soft resets.
 * Cheat code support (retro_cheat_set / retro_cheat_reset).
-* RetroAchievements memory map advertised
-  (RC_CONSOLE_ATARI_JAGUAR).
-* Headerless raw homebrew loading with conservative startup-base
-  inference.
-* Audio: refactored to eliminate per-sample events; interleaved
-  JERRY events with the main execution loop to fix frame-edge
-  audio dropouts.
-* Spike: Jaguar CD support exploration (BUTCH register map and
-  data-flow notes in docs/).
+* RetroAchievements memory map (RC_CONSOLE_ATARI_JAGUAR).
+* Audio rewrite: eliminated per-sample events and interleaved
+  JERRY with the main execution loop, fixing frame-edge audio
+  dropouts.
+
+== Hardware accuracy (chip side) ==
+* DSP: 40-bit MAC accumulator, FLAGS-write dispatch, IRQ
+  enable-on-set, IMASK preservation, ADDC carry overflow.
+* GPU: ADDC carry, IMASK preservation, DIVL exception PC,
+  PACK coverage, missing symbol exports.
+* Accurate blitter: daddmode NAND tree, daddbsel bit 3,
+  ADDARRAY cinsel carry input, M2 BKGWREN+BCOMPEN phrase
+  mode (Alien vs Predator red-noise), SRCSHADE color.
+* Object Processor: scaled-bitmap firstPix + left/right/
+  reflected edge clipping, 1:1/3:2/2:1 hscale ratios,
+  fixed-bitmap firstPix for 2/4/16/24 BPP, OP GPU-object
+  handling.
+* TOM: IRQ pending latches even when CPU enables are clear;
+  enabling a pending source raises IPL2 cleanly. Horizontal
+  counter reads advance. Doom resolution hack replaced with
+  proper PWIDTH pixel replication (the hack option is gone).
+* JERRY: interrupt-control decode, aligned PIT register
+  access.
+* 68K: TOM underflow handling, mixed-declaration cleanup.
+* Event system: zero eventTime on init, full slot scan,
+  timing-rollover and due-event handling.
+
+== Performance ==
+* ~2x speedup on DSP / GPU / memory hot paths.
+* SIMD-accelerated blitter (SSE2, NEON, scalar) with
+  bit-exactness CI.
+* Accurate-blitter inner loop tightened.
+* Note: the accurate blitter is still notably slower than the
+  fast blitter; some games (e.g. Tempest 2000) may run below
+  full speed on lower-end hardware. The fast blitter remains
+  available via core option.
 
 == Tooling and testing ==
-* Headless test harness — make test runs C harnesses (HLE BIOS,
-  event queue, blitter SIMD, DSP MAC40, cheat, memory-map, RA
-  E2E, save-state round-trip / rewind) plus regression
-  screenshot diff via miniretro on push.
-* C89/GNU89 lint enforcement; mixed-declaration cleanup across
-  src.
-* Source-tree reorganization into src/core, src/tom, src/jerry,
-  src/cd, src/bios, src/m68000.
-* test_hle_bios pin coverage for TOM/JERRY/GPU/DSP IRQ register
-  semantics, PIT reload and byte-drop, video timing register
-  byte/word symmetry, PAL/NTSC defaults, VMODE bit-fields, IPL2
-  reassert, CLUT mirror, wavetable ROM write protection.
+* Headless `make test` harness covering HLE BIOS state,
+  event queue, blitter SIMD bit-exactness, DSP MAC40, cheat
+  decoder, memory map / RetroAchievements wiring, save-state
+  round-trip and rewind, plus a regression screenshot diff
+  via miniretro on push.
+* Source-tree reorganization into src/core, src/tom,
+  src/jerry, src/cd, src/bios, src/m68000.
+* C89/GNU89 lint enforcement.
 
 == Build / platforms ==
 * MSVC 2005/2010 build fix (boolean.h vs stdbool.h).
-* Emscripten/WASM support, lighter NEON dcomp variant.
+* Emscripten / WASM support, lighter NEON dcomp variant.
 * Portable xorshift PRNG for cross-platform RAM init.
 * Automated release workflow for tagged versions.
 * Debug-build timestamp reporting.
 
-== Game-specific fixes ==
-* Alien vs Predator: red-noise rendering on the accurate-blitter
-  path is gone — root cause was an M2 blitter `BKGWREN+BCOMPEN`
-  phrase-mode bug.
-* Doom: replaced the legacy resolution hack with proper TOM
-  `PWIDTH` pixel replication, so the frame is correct at the
-  hardware level rather than papered over in the front end.
-* Audio dropouts at frame edges across many titles: fixed by
-  interleaving JERRY events with the main execution loop and
-  dropping per-sample event scheduling.
-* Raiden / Kasumi Ninja and similar BIOS-sensitive titles: the
-  HLE BIOS state coverage now bridges what the cores depended on
-  the real BIOS to set up.
-
-== Known issues ==
-* White Men Can't Jump: occasional jumping-object glitch traced
-  to 68K-SR / TOM-timer IRQ phase accuracy, not bitmap geometry.
-  Tracking in docs/emulation-bug-hunt-todos.md.
-* Object Processor still uses a runaway-list guard rather than a
-  cycle-budgeted resumable scheduler; a few games with
-  overloaded display lists will need that work to render
-  faithfully.
+== Known issues (still in flight) ==
+* See docs/emulation-bug-hunt-todos.md "Game compatibility
+  (v2.2.0)" — Hover Strike crashes during gameplay, Hyper
+  Force / Iron Soldier / Ruiner Pinball / Super Burnout /
+  Wolfenstein 3D / Fight for Life / Towers II still have
+  open issues, and the accurate blitter has a Battle Sphere
+  reticle-transparency bug (fast blitter has a separate
+  Battlesphere Gold menu glitch).
+* Jaguar CD support is in flight on a separate branch
+  (forthcoming PR), not part of this release.
 
 == Maintainers ==
-* libretro/Provenance fork: Joseph Mattiello (@JoeMatt, Provenance-Emu).
+* libretro/Provenance fork: Joseph Mattiello (@JoeMatt,
+  Provenance-Emu).
 
 
 Virtual Jaguar v2.1.0 GCC/Qt

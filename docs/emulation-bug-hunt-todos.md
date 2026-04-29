@@ -51,6 +51,114 @@ describe guesses, timing gaps, or known emulation shortcuts.
 - `make test` now includes event queue coverage for zero/negative-time event
   handling.
 
+## Game compatibility (v2.2.0)
+
+Status of titles called out in the libretro tracker (issue #38 sub-list).
+Verified against private ROMs unless otherwise noted.
+
+### Fixed in v2.2.0
+
+- Air Cars — title screen is no longer cut off.
+- Atari Karts — vertical bar artifact on the side during gameplay is gone.
+- Battlesphere Gold — menu black-screen on real-BIOS path is fixed (a
+  separate fast-blitter menu rendering glitch still exists; see below).
+- Club Drive — title screen is no longer cut off, missing textures restored.
+- Cybermorph — missing/glitched textures fixed; the digitised Skylar voice
+  also plays correctly now.
+- Doom — vertical bar gone; the legacy "Doom resolution hack" core option
+  is removed (proper PWIDTH pixel replication makes it unnecessary).
+- Flashback - Quest for Identity — full-screen display restored
+  (was anchored to the left).
+- I-War — title cut-off and gameplay glitches fixed on the accurate
+  blitter (fast blitter has a separate flickering issue; see below).
+- Kasumi Ninja — title-screen flicker, missing textures, and post-title
+  freezes fixed (some stages still show vertical tearing 3/4 down the
+  screen, regardless of BIOS — see below).
+- Missile Command 3D — minor flickering / glitches resolved.
+- Pinball Fantasies — intro screens no longer cut off.
+- Powerdrive Rally — intro screens no longer cut off; new-game crash gone.
+- Skyhammer — gameplay no longer freezes (audio is clipped/loud, see below).
+- Supercross 3D — full-screen display restored, textures readable.
+- Syndicate — pink-patches-in-text fixed on the accurate blitter (fast
+  blitter still has the original issue; see below).
+- Trevor McFur in the Crescent Galaxy — loading-screen cut-off fixed.
+- Val D'Isere Skiing & Snowboarding — full-screen display restored
+  (a player-vs-snow z-order regression introduced; see below).
+- Zero 5 — flickering resolved.
+- Zoop — game no longer crashes on launch.
+- HLE BIOS bridge — Raiden / Kasumi Ninja and similar titles that
+  previously needed a real BIOS image now boot under HLE.
+
+### Still broken / regressed (track these into v2.3.0)
+
+- **Battle Sphere (accurate blitter):** the targeting reticle drawn
+  over enemies leaves dark/dotted artefacts where the framebuffer
+  should show through. Fast blitter renders this correctly. Likely
+  involves phrase-mode `byte_merge` against `DCOMPEN` / `BCOMPEN`
+  comparators with `BKGWREN` enabled — the inhibited bytes are
+  taking the DSTDATA register value instead of the framebuffer
+  pixel. A first attempt to widen `phrase_mode && !dsten` to also
+  read framebuffer when comparators are on did **not** fix the
+  bug, so the case is more nuanced than the obvious gate. Needs a
+  logged COMMAND/A1/A2 register dump from one bad blit.
+- **Battlesphere Gold (fast blitter):** menu rendering glitches
+  (separate from the accurate-blitter reticle issue) regardless of
+  BIOS. Fast-blitter-only.
+- **Fight for Life:** flickering graphics, mainly in the menu —
+  looks like black bars scrolling over text/button texture layers.
+  Some layer compositing ordering is off.
+- **Hover Strike:** title and graphics fixed, but the game
+  **crashes during gameplay**, with or without real BIOS.
+- **Hyper Force:** black screen after title; doesn't progress with
+  or without real BIOS.
+- **Iron Soldier:** boots through title and character select, then
+  black-screens (music keeps looping, looks like a video-mode
+  switch that fails). With or without real BIOS.
+- **Iron Soldier 2:** title now displays correctly, but the music
+  is clipped/over-loud on the title and the screen black-screens
+  after character selection.
+- **NBA Jam Tournament Edition:** occasional screen jumping. Same
+  pattern as White Men Can't Jump (both High Voltage Software);
+  likely an engine-shared timing/IRQ-phase issue. Tracked
+  separately.
+- **Raiden:** still requires real BIOS — won't boot on HLE.
+- **Ruiner Pinball:** won't boot regardless of BIOS, PAL/NTSC, or
+  blitter mode.
+- **Super Burnout:** new-game now starts but doesn't render
+  correctly — only the background layer draws (no cars, scenery,
+  or HUD). Audio is present.
+- **Tempest 2000:** rare flickering still occurs; the accurate
+  blitter is also significantly slower than fast on this title,
+  enough to drop below full speed on hardware where Jaguar should
+  comfortably run. Performance-side TODO.
+- **Towers II:** unplayable due to flickering/flashing. PAL mode
+  is worse, and PAL audio is broken — looks like a timing issue.
+- **White Men Can't Jump:** boots, but lots of flickering; can't
+  get past main menu on HLE; real BIOS doesn't boot the splash
+  at all. (See the more-detailed entry in High Priority below.)
+- **Wolfenstein 3D:** if the real BIOS is allowed to fully boot
+  before pressing a button the game starts (audio still broken);
+  exiting BIOS early black-screens. HLE is broken.
+- **Val D'Isere (regression):** the player sprite z-order with the
+  snow layer is reversed — snow draws over the skier unless the
+  player jumps above the horizon line. New regression in v2.2.0.
+- **I-War (fast blitter):** title cut-off returns when the fast
+  blitter is enabled. Accurate blitter has a separate floor-layer
+  flicker during gameplay.
+- **Kasumi Ninja (some stages):** vertical tearing 3/4 down the
+  screen on certain stages, regardless of BIOS.
+- **Syndicate (fast blitter):** pink-patches-in-text remains on
+  the fast blitter (accurate blitter is fine).
+- **Skyhammer:** gameplay freezes are gone but audio is still
+  clipped/over-loud (same family as Iron Soldier 2 audio).
+
+### Performance
+- Accurate blitter is significantly slower than fast on several
+  titles (Tempest 2000 is the loudest). The fast-blitter and SIMD
+  paths cover the common case; the scalar accurate path needs more
+  inner-loop tightening or an SIMD-accelerated DCOMPEN / BCOMPEN
+  variant.
+
 ## High Priority
 
 - `src/tom/op.c`: replace the Object Processor runaway-list guard with a real
