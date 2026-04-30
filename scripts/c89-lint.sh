@@ -18,6 +18,8 @@ skip_file() {
         src/m68000/cpu*.c|src/m68000/read*.c) return 0 ;;
         src/bios/jag*bios*.c|src/bios/jagstub*bios.c) return 0 ;;
         src/tom/blitter_simd_neon.c|src/tom/blitter_simd_sse2.c) return 0 ;;
+        # Depends on rcheevos headers fetched at runtime by the e2e shell wrapper.
+        test/tools/test_rcheevos_e2e.c) return 0 ;;
     esac
     return 1
 }

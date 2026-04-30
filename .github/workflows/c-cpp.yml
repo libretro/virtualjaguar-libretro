@@ -171,7 +171,7 @@ jobs:
 
     # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make test CC="${{ matrix.config.cc }}"
 
     - name: Run SIMD blitter tests

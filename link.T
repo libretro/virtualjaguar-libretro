@@ -7,6 +7,9 @@
       DSP*;
       dsp_*;
       m68k_*;
+      Jaguar*;
+      jaguar*;
+      Halfline*;
       jaguarMainRAM;
       jaguarMainROM;
       jagMemSpace;
@@ -18,7 +21,13 @@
       gpu_*;
       JERRY*;
       TOM*;
+      OP*;
       tomRam8;
+      regs;
+      sclk;
+      smode;
+      lowerField;
+      vjs;
    local: *;
 };
 
