@@ -551,7 +551,7 @@ void JaguarInit(void)
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
    for(i=0; i<0x200000; i+=4)
-      *((uint32_t *)(&jaguarMainRAM[i])) = JaguarRand();
+      SET32(jaguarMainRAM, i, JaguarRand());
 
    lowerField = false;							// Reset the lower field flag
    memset(jaguarMainRAM + 0x804, 0xFF, 4);
@@ -681,11 +681,13 @@ void JaguarReset(void)
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
    else
    {
-      /* NB: SSP at 0x4000 may overlap RAM-loaded executables that start
-         below 0x4100.  In practice Jaguar game loaders place code above
-         0x4000 so this is safe, but a future improvement could derive
-         the SSP from the executable's BSS/stack segment. */
-      SET32(jaguarMainRAM, 0, 0x00004000);
+      /* For RAM-loaded executables (.abs/.cof/JagServer), park SSP at the
+         top of main RAM so the stack can't overlap loaded code/data.  For
+         cartridge HLE, keep the historical 0x4000 SSP that matches what
+         the real BIOS leaves behind. */
+      uint32_t hleSSP = (jaguarLoadedRAMEnd > jaguarLoadedRAMStart)
+         ? 0x00200000 : 0x00004000;
+      SET32(jaguarMainRAM, 0, hleSSP);
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
    }
 

@@ -867,7 +867,11 @@ uint32_t TOMGetVideoModeWidth(void)
       uint32_t startPos = (dispStart > leftHC)
          ? ((dispStart - leftHC) / pwidth) * pwidth_scale : 0;
 
-      if (width > 0 && width >= startPos && width <= VIRTUAL_SCREEN_WIDTH)
+      /* 652 = libretro retro_get_system_av_info max_width; matches the
+       * pwidth=8 fallback below. The old VIRTUAL_SCREEN_WIDTH (326) gate
+       * blocked pwidth=8 modes from reporting their actual register-derived
+       * width even though the fallback was free to return up to 652. */
+      if (width > 0 && width >= startPos && width <= 652)
          return width;
    }
 
