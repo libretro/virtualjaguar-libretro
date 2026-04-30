@@ -1487,20 +1487,27 @@ static void test_jerry_i2s_defaults(void)
    sstat = p_JERRYReadWord(JERRY_SCLK, WHO_M68K);
    smode = **p_smode;
 
-   if (sclk == 0x0008)
+   /* HLE init now matches what the real BIOS audio engine leaves in
+    * SCLK/SMODE: SCLK=0x13 (~20 kHz I2S) and SMODE=0x15
+    * (INTERNAL + WSEN + FALLING).  Empirically derived from a JERRY
+    * register snapshot at frame 30 with BIOS vs HLE; the previous
+    * defaults (0x08 / 0x01) were the BIOS's pre-engine values and
+    * left HLE running I2S at ~46 kHz which broke carts that depend
+    * on the BIOS audio engine state. */
+   if (sclk == 0x0013)
       PASS("SCLK = $%02X", sclk);
    else
-      FAIL("SCLK = $%02X (expected $08)", sclk);
+      FAIL("SCLK = $%02X (expected $13)", sclk);
 
    if (sstat == 0x0000)
       PASS("SSTAT = $%04X", sstat);
    else
       FAIL("SSTAT = $%04X (expected $0000)", sstat);
 
-   if (smode == 0x0001)
+   if (smode == 0x0015)
       PASS("SMODE = $%08X", smode);
    else
-      FAIL("SMODE = $%08X (expected $00000001)", smode);
+      FAIL("SMODE = $%08X (expected $00000015)", smode);
 }
 
 /* ================================================================

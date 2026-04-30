@@ -729,7 +729,15 @@ void JaguarReset(void)
 #define JERRY_PIT0              0xF10000 /* PIT timer base address */
 #define JERRY_SMODE             0xF1A156 /* I2S serial mode register (low word of $F1A154) */
 #define JERRY_SCLK              0xF1A152 /* I2S serial clock register (low word of $F1A150) */
-#define SCLK_DEFAULT            0x0008
+/* Match what the real BIOS audio engine ends up writing.  Empirically
+ * derived (2026-04-30) by snapshotting JERRY DAC regs at frame 30 with
+ * BIOS vs HLE: HLE was writing SCLK=0x08 (~46 kHz I2S) / SMODE=0x01
+ * (INTERNAL only); BIOS leaves SCLK=0x13 (~20 kHz) / SMODE=0x15
+ * (INTERNAL + WSEN + FALLING).  Carts that depend on the BIOS audio
+ * engine state (Skyhammer, Iron Soldier 2, ...) busy-wait on I2S
+ * sample counts that never fire at the wrong rate. */
+#define SCLK_DEFAULT            0x0013
+#define SMODE_DEFAULT           0x0015
 
    if (!vjs.useJaguarBIOS && jaguarCartInserted)
    {
@@ -805,7 +813,7 @@ void JaguarReset(void)
        * The BIOS configures I2S with internal clock so JERRY fires
        * periodic SSI interrupts on the DSP.  Games that load their own
        * DSP programs often rely on these interrupts being active. */
-      JERRYWriteWord(JERRY_SMODE, 0x0001, M68K);
+      JERRYWriteWord(JERRY_SMODE, SMODE_DEFAULT, M68K);
       JERRYWriteWord(JERRY_SCLK, SCLK_DEFAULT, M68K);
    }
 

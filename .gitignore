@@ -57,3 +57,4 @@ test/lldb_*.py
 /test/tools/test_benchmark
 /test/tools/test_blitter_compare
 /test/tools/test_screenshot
+test/tools/build/

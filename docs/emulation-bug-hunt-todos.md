@@ -3,6 +3,51 @@
 This tracks actionable issues found while auditing old inline comments that
 describe guesses, timing gaps, or known emulation shortcuts.
 
+## Cross-cutting finding from cluster investigation (2026-04-30)
+
+A round of parallel sub-agent investigation snapshotted DSP RAM, 68K regs,
+TOM/JERRY/DAC regs, low main RAM, and rendered framebuffers at multiple
+frames for the still-broken cart titles in **both real-BIOS and HLE
+modes**. Headline result: **4 of 5 hang/crash titles** (Hyper Force,
+Iron Soldier, Ruiner Pinball, Super Burnout) have **identical or
+near-identical behavior in BIOS vs HLE** — same stuck PC, same nonblack
+pixel count, same DSP state. So those titles are **real emulation bugs,
+not HLE-init issues**. Real BIOS doesn't fix them either.
+
+The narrowest reproducible per-title clue from the snapshots:
+
+- **Skyhammer (HLE, audio)**: 68K stuck at `0x008022EE` (DBF delay loop)
+  for frames 1-60 in HLE; BIOS reaches `0x000059B0` mainloop by frame 10.
+  The DBF loop is presumably waiting on an I2S sample count or DSP
+  completion that doesn't fire at HLE timing. Disassembling the loop's
+  branch condition is the next step.
+- **Raiden (HLE, won't boot)**: 68K cycling `0x180820-0x180890` then
+  jumps to `0x18014E` at frame 60 with `SR=0x2100` (trace flag set,
+  supervisor mode) and A1/A5 pointing at TOM register area — strongly
+  suggests an exception double-fault that the HLE generic-RTE stub at
+  `0x404` cannot meaningfully recover from.
+- **Ruiner Pinball**: identical 0x809CAE-stuck PC and 0% nonblack
+  pixels in BIOS and HLE. Cart never gets past initialization.
+- **Hyper Force, Iron Soldier, Super Burnout**: matching pixel
+  counts and PC ranges in BIOS/HLE. Engine-level bugs, not init.
+- **NBA Jam TE / Towers II / Tempest 2000**: empirical flicker score
+  2.6× / 2.6× / 1.3× the Atari Karts baseline (per-pixel temporal
+  stddev across a 16-frame window). Confirms the symptom and gives a
+  regression-watcher metric.
+
+A more accurate `JaguarReset` HLE init now writes `SCLK=0x13` and
+`SMODE=0x15` (matching what the BIOS audio engine ends up programming —
+INTERNAL + WSEN + FALLING; previous defaults `0x08` / `0x01` were the
+BIOS *pre-engine* values). Verified Atari Karts negative control still
+clean; **did NOT fix Skyhammer / IS2 audio clipping** — the DBF-loop
+diagnosis above explains why a single register-init tweak isn't enough.
+
+Raw investigation data left in `/tmp/`:
+`/tmp/cluster_findings.md` (summary), `/tmp/hle_diff_*.md`,
+`/tmp/flick_*.txt`+`.ppm`, `/tmp/boot_logs/*.txt`,
+`/tmp/{hyper,iron,hover,ruiner,super}_*_1800.png`.
+
+
 ## Recently Addressed
 
 - TOM frame rollover now follows the `VP` register instead of hard-coded
