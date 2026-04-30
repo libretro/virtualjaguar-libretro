@@ -2598,8 +2598,11 @@ static void test_video_timing_defaults_pal_ntsc(void)
 /* ================================================================
  * Test 10g: Libretro Geometry Update Ordering
  * TOM can change video dimensions while a frame is being rendered.
- * The frame must be submitted with the pitch used to render it; the
- * new geometry should apply to the following frame.
+ * The geometry change must apply BEFORE the next render so TOM's
+ * scanline renderer (which reads tomWidth and screenPitch live) keeps
+ * those two in sync.  Otherwise rows can overlap in the framebuffer
+ * (new tomWidth larger than old screenPitch) and the frontend may drop
+ * the frame entirely (iOS Metal re-allocates on SET_GEOMETRY).
  * ================================================================ */
 static void test_libretro_geometry_update_order(void)
 {
@@ -2619,25 +2622,35 @@ static void test_libretro_geometry_update_order(void)
    p_TOMWriteWord(0xF00036, 203, WHO_M68K);
    p_retro_run();
 
-   if (last_video_width == 320 && last_video_pitch == (320U << 2))
-      PASS("first frame after TOM size change used previous pitch");
+   /* The change is observed at retro_run() entry, the screen pitch is
+    * latched, SET_GEOMETRY fires, and only then does TOM render this
+    * frame — so the submitted frame already uses the new width. */
+   if (last_video_width == 326 && last_video_pitch == (326U << 2))
+      PASS("first frame after TOM size change uses new pitch");
    else
       FAIL("first frame after TOM size change was %ux%u pitch=%lu",
             last_video_width, last_video_height, (unsigned long)last_video_pitch);
 
    if (geometry_update_count > old_geometry_count && last_geometry_width == 326)
-      PASS("geometry update queued for next frame at width %u", last_geometry_width);
+      PASS("geometry update fired this frame at width %u", last_geometry_width);
    else
       FAIL("geometry update missing or wrong width: count %d->%d width=%u",
             old_geometry_count, geometry_update_count, last_geometry_width);
 
+   old_geometry_count = geometry_update_count;
    p_retro_run();
 
    if (last_video_width == 326 && last_video_pitch == (326U << 2))
-      PASS("following frame used updated pitch");
+      PASS("following frame stays at new pitch");
    else
       FAIL("following frame was %ux%u pitch=%lu",
             last_video_width, last_video_height, (unsigned long)last_video_pitch);
+
+   if (geometry_update_count == old_geometry_count)
+      PASS("no spurious SET_GEOMETRY on stable width");
+   else
+      FAIL("SET_GEOMETRY fired again with stable width (count %d->%d)",
+            old_geometry_count, geometry_update_count);
 
    p_TOMWriteWord(0xF00036, old_hdb1, WHO_M68K);
 }

@@ -586,6 +586,15 @@ endif
 CXXFLAGS += $(FLAGS)
 CFLAGS   += $(FLAGS)
 
+# Optional: build with framebuffer/audio presentation diagnostics.
+# Enables periodic LOG_INF dumps from libretro.c retro_run() showing
+# tomWidth/tomHeight, screenPitch, sample pixels, ltxd/rtxd, DSPIsRunning.
+# Use: make DEBUG_PRESENTATION=1
+ifeq ($(DEBUG_PRESENTATION), 1)
+CXXFLAGS += -DDEBUG_PRESENTATION
+CFLAGS   += -DDEBUG_PRESENTATION
+endif
+
 OBJOUT   = -o
 LINKOUT  = -o 
 

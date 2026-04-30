@@ -1007,6 +1007,38 @@ void retro_reset(void)
    JaguarReset();
 }
 
+#ifdef DEBUG_PRESENTATION
+extern uint16_t *ltxd, *rtxd;
+extern uint32_t screenPitch;
+static unsigned dbg_frame_counter = 0;
+
+static void dbg_dump_frame(void)
+{
+   const uint32_t *fb = videoBuffer;
+   unsigned nb = 0;
+   unsigned i;
+   uint32_t row0_first = 0, row_mid_first = 0, row_last_first = 0;
+   if (!fb) { LOG_INF("[DBG] frame %u videoBuffer=NULL\n", dbg_frame_counter); return; }
+   /* Sample 3 row starts and count nonblack across whole framebuffer */
+   row0_first = fb[0];
+   if (game_height > 0)
+   {
+      row_mid_first  = fb[(game_height / 2) * game_width];
+      row_last_first = fb[(game_height - 1) * game_width];
+   }
+   for (i = 0; i < (unsigned)(game_width * game_height); i++)
+      if (fb[i] & 0x00FFFFFF) nb++;
+   LOG_INF("[DBG] frame %u: tom=%ux%u game=%ux%u screenPitch=%u videoBuffer=%p\n"
+           "      pixels[0]=0x%08X mid=0x%08X last=0x%08X nonblack=%u/%u\n"
+           "      ltxd=0x%04X rtxd=0x%04X dsp_running=%d\n",
+           dbg_frame_counter, tomWidth, tomHeight, game_width, game_height,
+           screenPitch, (void *)fb, row0_first, row_mid_first, row_last_first,
+           nb, (unsigned)(game_width * game_height),
+           ltxd ? *ltxd : 0xFFFF, rtxd ? *rtxd : 0xFFFF,
+           DSPIsRunning() ? 1 : 0);
+}
+#endif
+
 void retro_run(void)
 {
    bool updated = false;
@@ -1024,6 +1056,30 @@ void retro_run(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
       check_variables();
 
+   /* Apply pending geometry change BEFORE rendering this frame.  TOM's
+    * scanline renderer reads tomWidth (pixels per row) and screenPitch
+    * (line stride) live; if tomWidth grew but screenPitch is stale, later
+    * rows overwrite the tail of earlier rows and the framebuffer comes out
+    * scrambled.  Frontends that re-allocate the texture on SET_GEOMETRY
+    * (iOS Metal) can also drop the next video_cb if the geometry change
+    * arrives after the frame is already submitted at the wrong size.
+    * Latching pitch + advertising new geometry up front keeps tomWidth and
+    * screenPitch in sync for the entire frame. */
+   if ((tomWidth != videoWidth || tomHeight != videoHeight) && tomWidth > 0 && tomHeight > 0)
+   {
+#ifdef DEBUG_PRESENTATION
+      LOG_INF("[DBG] frame %u: GEOMETRY CHANGE %ux%u -> %ux%u (applied pre-render)\n",
+              dbg_frame_counter, videoWidth, videoHeight, tomWidth, tomHeight);
+#endif
+      videoWidth = tomWidth, videoHeight = tomHeight;
+      game_width = tomWidth, game_height = tomHeight;
+
+      JaguarSetScreenPitch(game_width);
+
+      retro_get_system_av_info(&g_av_info);
+      environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
+   }
+
    update_input();
 
    DACPrepareFrame(vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
@@ -1033,17 +1089,15 @@ void retro_run(void)
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 
-   /* TOM register writes can change tomWidth/tomHeight during JaguarExecuteNew().
-    * Apply the frontend geometry and render pitch after submitting the frame
-    * that was just rendered with the previous pitch. */
-   if ((tomWidth != videoWidth || tomHeight != videoHeight) && tomWidth > 0 && tomHeight > 0)
-   {
-      videoWidth = tomWidth, videoHeight = tomHeight;
-      game_width = tomWidth, game_height = tomHeight;
-
-      JaguarSetScreenPitch(game_width);
-
-      retro_get_system_av_info(&g_av_info);
-      environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
-   }
+#ifdef DEBUG_PRESENTATION
+   if (dbg_frame_counter < 5
+       || dbg_frame_counter == 60
+       || dbg_frame_counter == 600
+       || dbg_frame_counter == 1200
+       || dbg_frame_counter == 1800
+       || dbg_frame_counter == 3600
+       || (dbg_frame_counter % 120) == 0)
+      dbg_dump_frame();
+   dbg_frame_counter++;
+#endif
 }
