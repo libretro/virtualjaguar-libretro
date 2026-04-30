@@ -30,6 +30,7 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 void DSPReleaseTimeslice(void);
 bool DSPIsRunning(void);
+uint8_t *DSPGetRAM(void);
 
 void DSPExecP(int32_t cycles);
 void DSPExecP2(int32_t cycles);

@@ -30,6 +30,7 @@
 #include "memtrack.h"
 #include "settings.h"
 #include "tom.h"
+#include "jagbios.h"
 
 static bool frameDone;
 
@@ -815,6 +816,19 @@ void JaguarReset(void)
        * DSP programs often rely on these interrupts being active. */
       JERRYWriteWord(JERRY_SMODE, SMODE_DEFAULT, M68K);
       JERRYWriteWord(JERRY_SCLK, SCLK_DEFAULT, M68K);
+
+      /* NB: The real BIOS would copy a 1992-byte DSP audio engine from
+       * jaguarBootROM[0x214E..0x2916] into DSP RAM at offset 0 and
+       * start the DSP, but this engine code alone does not work
+       * without also replicating the DSP register-bank state that the
+       * BIOS leaves behind.  Tried it (engine bytes + D_PC at engine
+       * entry / mainloop / DSPGO=1) and the DSP escapes DSP RAM
+       * within a few hundred frames (PC ends up at addresses like
+       * 0x8A or 0x74 — main-RAM nonsense), because the engine reads
+       * uninitialized DSP registers and uses them as jump targets.
+       * Wolfenstein 3D and Skyhammer / IS2 audio remain broken on
+       * HLE for this reason.  See docs/emulation-bug-hunt-todos.md
+       * "Skyhammer / Iron Soldier 2 audio clipping" for next steps. */
    }
 
    m68k_pulse_reset();								// Reset the 68000

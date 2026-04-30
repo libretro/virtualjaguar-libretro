@@ -16,6 +16,18 @@ not HLE-init issues**. Real BIOS doesn't fix them either.
 
 The narrowest reproducible per-title clue from the snapshots:
 
+- **Wolfenstein 3D (HLE, audio)**: completely silent on HLE
+  (RMS=0.0, first-audio frame=-1).  Real BIOS produces clean
+  RMS ~3987.  Tried memcpy'ing the BIOS DSP audio engine
+  (jaguarBootROM[0x214E..0x2916], 1992 bytes) into DSP RAM and
+  starting the DSP with D_PC = engine entry / mainloop / DSPGO=1
+  — DSP ran briefly then escaped DSP RAM (PC ended up at
+  0x0000008A and 0x00000074 in main RAM, executing nonsense)
+  because the engine reads DSP registers we never initialize and
+  uses them as jump targets.  Reverted the engine copy; the fix
+  needs DSP register-bank state replication, not just code copy.
+  Same root cause family as Skyhammer/IS2 audio clipping below,
+  different failure mode (Wolf3D = silent, Skyhammer = clipped).
 - **Skyhammer (HLE, audio)**: agent's snapshot showed 68K at
   `0x008022EE` for frames 1-60. Followup boot_timeline at frames
   60/300/600/1200/3600/7200 shows PC actually progresses through cart
