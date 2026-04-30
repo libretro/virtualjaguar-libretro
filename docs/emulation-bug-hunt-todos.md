@@ -16,11 +16,16 @@ not HLE-init issues**. Real BIOS doesn't fix them either.
 
 The narrowest reproducible per-title clue from the snapshots:
 
-- **Skyhammer (HLE, audio)**: 68K stuck at `0x008022EE` (DBF delay loop)
-  for frames 1-60 in HLE; BIOS reaches `0x000059B0` mainloop by frame 10.
-  The DBF loop is presumably waiting on an I2S sample count or DSP
-  completion that doesn't fire at HLE timing. Disassembling the loop's
-  branch condition is the next step.
+- **Skyhammer (HLE, audio)**: agent's snapshot showed 68K at
+  `0x008022EE` for frames 1-60. Followup boot_timeline at frames
+  60/300/600/1200/3600/7200 shows PC actually progresses through cart
+  code (0x832F4A → 0x8B6378 → 0x1644C → 0x16610 → 0x8AC7E2 → 0x8AC930)
+  — Skyhammer's 68K is NOT stuck. The DBF loop at 0x22EE is just a
+  long delay (D0=0xFFFFFF, ~167M cycles, ~6 seconds at 13.3 MHz).
+  Audio clipping is purely a DSP-side / I2S issue — the cart's main
+  68K thread runs fine. Cart-disassembly at the DBF address is not
+  the right approach; root cause is in JERRY/DSP timing or HLE
+  audio-engine missing state.
 - **Raiden (HLE, won't boot)**: 68K cycling `0x180820-0x180890` then
   jumps to `0x18014E` at frame 60 with `SR=0x2100` (trace flag set,
   supervisor mode) and A1/A5 pointing at TOM register area — strongly
@@ -28,6 +33,22 @@ The narrowest reproducible per-title clue from the snapshots:
   `0x404` cannot meaningfully recover from.
 - **Ruiner Pinball**: identical 0x809CAE-stuck PC and 0% nonblack
   pixels in BIOS and HLE. Cart never gets past initialization.
+  Disassembling around the stuck address shows a routine at 0x9CA0
+  that does `CMPI.L #0, $00005B18; BEQ +6; JMP $00802000`, plus a
+  separate routine at 0x2248 that calls a function pointer at
+  `$0000402C`, runs `JSR $00802380`, then writes
+  `MOVE.L #1, $00005B18` only if `RAM[$4068]` has bits 0+16 set and
+  bit 9 clear. Probing those addresses each frame for 600 frames in
+  both BIOS and HLE shows: **`$402C` and `$4068` stay 0 forever in
+  both modes**, while `$5B18` cycles through various non-zero values
+  (PRNG / cart-side scratch). So the cart is missing the
+  initialization that should populate `$402C` (function pointer) and
+  `$4068` (interrupt-flags accumulator). Real BIOS does not provide
+  these — implies the cart itself is responsible, but a precondition
+  for that init is failing (likely an interrupt that should fire
+  early in boot but doesn't). v2.3.0 work: trace the cart's
+  interrupt-handler installation path and identify what
+  precondition needs to hold for the init routine to run.
 - **Hyper Force, Iron Soldier, Super Burnout**: matching pixel
   counts and PC ranges in BIOS/HLE. Engine-level bugs, not init.
 - **NBA Jam TE / Towers II / Tempest 2000**: empirical flicker score
