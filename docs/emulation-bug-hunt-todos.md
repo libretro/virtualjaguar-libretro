@@ -50,6 +50,16 @@ describe guesses, timing gaps, or known emulation shortcuts.
   deferred geometry updates, PAL timing, and custom `VP` rollover.
 - `make test` now includes event queue coverage for zero/negative-time event
   handling.
+- `make test` now runs `test_audio_clipping`, an automated boot-time
+  audio clipping detector. The test captures the libretro audio batch
+  output, measures saturation density, longest run at +/-32767, and
+  sustained RMS, and asserts on a negative control (Atari Karts) plus
+  two known-broken regression watchers (Skyhammer, Iron Soldier 2)
+  flagged with `--expect-clipping` so the test goes red the day a fix
+  lands and the bug disappears. A/B-tested against `libretro/master`:
+  Skyhammer's clipping is pre-existing (master clips harder, ~34%
+  sample-saturation density vs ~25% on this branch) so it is not a
+  regression introduced here.
 
 ## Game compatibility (v2.2.0)
 

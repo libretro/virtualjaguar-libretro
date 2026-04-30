@@ -625,7 +625,7 @@ clean:
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
-		test/tools/test_memory_map
+		test/test_audio_clipping test/tools/test_memory_map
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -639,7 +639,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
-		test/test_audio_pipeline test/tools/test_memory_map
+		test/test_audio_pipeline test/test_audio_clipping test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_simd
@@ -654,6 +654,26 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
 	./test/test_audio_pipeline ./$(TARGET)
+	./test/test_audio_clipping ./$(TARGET) --self-test
+	@# Negative control: healthy boot should not trip the clipping detector.
+	@if [ -f "test/roms/private/Atari Karts (1995).jag" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Atari Karts (1995).jag" --label "Atari Karts (negative control)" --quiet; \
+	else \
+		echo "  SKIP: Atari Karts ROM (private) not available"; \
+	fi
+	@# Known-broken titles: --expect-clipping makes the test pass while the
+	@# bug is still there, but flips red the day a DSP-side fix lands and
+	@# clipping disappears — forces this manifest to be updated.
+	@if [ -f "test/roms/private/Skyhammer_(1999).jag" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --expect-clipping --quiet; \
+	else \
+		echo "  SKIP: Skyhammer ROM (private) not available"; \
+	fi
+	@if [ -f "test/roms/private/Iron Soldier 2 (World).j64" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --expect-clipping --quiet; \
+	else \
+		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
+	fi
 	./test/tools/test_memory_map ./$(TARGET)
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
@@ -709,6 +729,10 @@ test/test_boot_patterns: test/test_boot_patterns.c
 test/test_audio_pipeline: test/test_audio_pipeline.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_audio_pipeline.c -ldl -lm
+
+test/test_audio_clipping: test/test_audio_clipping.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_clipping.c -ldl -lm
 
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

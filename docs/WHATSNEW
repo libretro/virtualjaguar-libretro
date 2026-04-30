@@ -70,6 +70,13 @@ A large libretro-fork release. Highlights since v2.1.0:
   decoder, memory map / RetroAchievements wiring, save-state
   round-trip and rewind, plus a regression screenshot diff
   via miniretro on push.
+* Boot-time audio clipping detector (test_audio_clipping):
+  captures the libretro audio batch, asserts on saturation
+  density / longest run at +/-32767 / sustained RMS, with a
+  healthy negative control and `--expect-clipping`-tagged
+  regression watchers for known-broken titles (Skyhammer,
+  Iron Soldier 2) so a future DSP-side fix flips CI red and
+  forces the manifest to be updated.
 * Source-tree reorganization into src/core, src/tom,
   src/jerry, src/cd, src/bios, src/m68000.
 * C89/GNU89 lint enforcement.
