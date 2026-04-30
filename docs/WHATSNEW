@@ -89,13 +89,27 @@ A large libretro-fork release. Highlights since v2.1.0:
 * Debug-build timestamp reporting.
 
 == Known issues (still in flight) ==
+* Skyhammer / Iron Soldier 2 / Wolfenstein 3D audio: the
+  cart-side DSP audio engine doesn't run correctly under HLE
+  (Wolf3D produces no audio at all in either BIOS or HLE
+  mode after the BIOS startup tone; Skyhammer/IS2 produce a
+  saturated square wave on HLE).  Cause is shared: the BIOS
+  audio engine relies on DSP register-bank state that HLE
+  doesn't replicate, and copying just the engine code into
+  DSP RAM lets the DSP escape its work RAM by reading
+  uninitialized registers as jump targets.  Documented in
+  docs/emulation-bug-hunt-todos.md with concrete next steps.
 * See docs/emulation-bug-hunt-todos.md "Game compatibility
   (v2.2.0)" — Hover Strike crashes during gameplay, Hyper
   Force / Iron Soldier / Ruiner Pinball / Super Burnout /
-  Wolfenstein 3D / Fight for Life / Towers II still have
-  open issues, and the accurate blitter has a Battle Sphere
-  reticle-transparency bug (fast blitter has a separate
-  Battlesphere Gold menu glitch).
+  Fight for Life / Towers II still have open issues, and
+  the accurate blitter has a Battle Sphere reticle-
+  transparency bug (fast blitter has a separate Battlesphere
+  Gold menu glitch).
+* Of the still-broken hang/crash titles, four (Hyper Force,
+  Iron Soldier, Ruiner Pinball, Super Burnout) fail
+  identically with real BIOS and HLE — not HLE-init issues,
+  real engine-level emulation bugs.
 * Jaguar CD support is in flight on a separate branch
   (forthcoming PR), not part of this release.
 

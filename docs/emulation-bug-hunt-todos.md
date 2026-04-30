@@ -16,18 +16,31 @@ not HLE-init issues**. Real BIOS doesn't fix them either.
 
 The narrowest reproducible per-title clue from the snapshots:
 
-- **Wolfenstein 3D (HLE, audio)**: completely silent on HLE
-  (RMS=0.0, first-audio frame=-1).  Real BIOS produces clean
-  RMS ~3987.  Tried memcpy'ing the BIOS DSP audio engine
-  (jaguarBootROM[0x214E..0x2916], 1992 bytes) into DSP RAM and
-  starting the DSP with D_PC = engine entry / mainloop / DSPGO=1
-  — DSP ran briefly then escaped DSP RAM (PC ended up at
-  0x0000008A and 0x00000074 in main RAM, executing nonsense)
-  because the engine reads DSP registers we never initialize and
-  uses them as jump targets.  Reverted the engine copy; the fix
-  needs DSP register-bank state replication, not just code copy.
-  Same root cause family as Skyhammer/IS2 audio clipping below,
-  different failure mode (Wolf3D = silent, Skyhammer = clipped).
+- **Wolfenstein 3D (audio, both BIOS and HLE)**:
+  - HLE: completely silent (RMS=0, first-audio=-1) for the entire run
+    (verified up to frame 1800 / 30s).
+  - BIOS: brief BIOS-chime audio at frames 34-~600, then **silent
+    forever**.  The BIOS-chime is not Wolf3D's own audio, it's the
+    BIOS's startup tone played before the cart takes over.  Wolf3D's
+    own game audio never starts in either mode.
+  - User-reported (real RetroArch on iOS): also no audio in either
+    mode, plus a BIOS-specific quirk that pressing A/B during the
+    BIOS logo skips initialization and Wolf3D then fails to boot
+    entirely (no other game does that).
+  - Root cause: Wolf3D's DSP escapes work RAM by frame 1800.  At
+    that point dsp_pc=0x000003FA (HLE) / 0x00181C43 (BIOS) — both
+    in main RAM, not DSP work RAM (0xF1B000-0xF1CFFF).  Atari Karts
+    HLE keeps DSP at 0xF1B3FA correctly with active LTXD/RTXD.  So
+    Wolf3D's DSP code (whether BIOS-loaded or cart-loaded) has a
+    JUMP-through-register instruction where the register holds a
+    garbage value, sending the DSP into main-RAM/68K code.  Tried
+    memcpy'ing the BIOS DSP audio engine
+    (jaguarBootROM[0x214E..0x2916], 1992 bytes) into DSP RAM and
+    starting the DSP with D_PC = engine entry / mainloop / DSPGO=1
+    — same DSP-escape symptom because the engine reads DSP
+    registers we never initialize and uses them as jump targets.
+    Reverted the engine copy; needs full DSP register-bank state
+    replication.
 - **Skyhammer (HLE, audio)**: agent's snapshot showed 68K at
   `0x008022EE` for frames 1-60. Followup boot_timeline at frames
   60/300/600/1200/3600/7200 shows PC actually progresses through cart
