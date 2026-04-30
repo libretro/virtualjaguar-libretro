@@ -38,11 +38,23 @@ The narrowest reproducible per-title clue from the snapshots:
   68K thread runs fine. Cart-disassembly at the DBF address is not
   the right approach; root cause is in JERRY/DSP timing or HLE
   audio-engine missing state.
-- **Raiden (HLE, won't boot)**: 68K cycling `0x180820-0x180890` then
-  jumps to `0x18014E` at frame 60 with `SR=0x2100` (trace flag set,
-  supervisor mode) and A1/A5 pointing at TOM register area — strongly
-  suggests an exception double-fault that the HLE generic-RTE stub at
-  `0x404` cannot meaningfully recover from.
+- **Raiden (HLE, won't boot)**: cart's startup at `0x802000`
+  copies game code from cart `0x802026..0x802986` (0x960 bytes) into
+  main RAM at `0x180000+`, then JMPs there. Code runs initial
+  setup (LEA into A4 = `0x1803B2`) and then enters a polling loop
+  at `0x18014A`: `TST.B $2C7(A4); BEQ.S -4` — i.e. spin forever
+  until `RAM[0x180679]` becomes non-zero. Some interrupt handler
+  is supposed to set that byte; our HLE generic-RTE stub at
+  `0x404` just RTE's so the byte never gets set and the cart hangs.
+  68K stack pointer A7 stays stuck at `0x001FFFFC` (one push deep
+  from initial `0x00200000`), confirming no interrupts are
+  actually firing during the spin (so it's not "exception
+  double-fault" — agent's earlier hypothesis was based on wrong
+  dlsym dereference and is incorrect).
+  Fix path: cart probably installs its own IRQ handlers via the
+  BSRs at `0x180000` and `0x180004` BEFORE the poll loop; need to
+  trace what those BSRs do and identify why interrupts aren't
+  arriving (TOM video IRQ enable, JERRY IRQ enable, vector base).
 - **Ruiner Pinball**: identical 0x809CAE-stuck PC and 0% nonblack
   pixels in BIOS and HLE. Cart never gets past initialization.
   Disassembling around the stuck address shows a routine at 0x9CA0
