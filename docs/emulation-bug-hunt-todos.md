@@ -159,8 +159,28 @@ Verified against private ROMs unless otherwise noted.
   screen on certain stages, regardless of BIOS.
 - **Syndicate (fast blitter):** pink-patches-in-text remains on
   the fast blitter (accurate blitter is fine).
-- **Skyhammer:** gameplay freezes are gone but audio is still
-  clipped/over-loud (same family as Iron Soldier 2 audio).
+- **Skyhammer / Iron Soldier 2 audio clipping:** boot-time
+  audio is a saturated square wave (sustained +/-32767, ~25%
+  saturation density on Skyhammer, ~21% on IS2).  Detected
+  automatically by `test_audio_clipping`.
+  - **Repro:** load with HLE BIOS, run ~300 frames, alternates
+    +/-32767 with rare in-between values.
+  - **Critical clue (2026-04-29):** with **real BIOS**,
+    Skyhammer audio is **clean** (RMS ~3987, 0% saturation).
+    With HLE, it's the saturated square wave. So the bug is
+    **HLE-init delta**, not DSP arithmetic.  Atari Karts works
+    on HLE — its DSP code is self-contained, while Skyhammer /
+    IS2 likely depend on BIOS-loaded DSP audio engine state.
+    (Atari Karts was A/B-tested as the negative control.)
+  - **Pre-existing:** A/B-tested against `libretro/master` —
+    master clips harder (~34% on Skyhammer) so this is a
+    long-standing bug, not a regression introduced by this PR.
+  - **Next steps:** diff DSP RAM / DSP register state after
+    BIOS reset vs HLE reset; identify what DSP-side init the
+    real BIOS performs that we skip.  Likely a sound-engine
+    code blob the BIOS loads into DSP RAM that Skyhammer
+    expects to be present.  Trying simple SMODE bit changes
+    (added EVERYWORD) did not help.
 
 ### Performance
 - Accurate blitter is significantly slower than fast on several
