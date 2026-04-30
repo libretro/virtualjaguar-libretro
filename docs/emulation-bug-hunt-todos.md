@@ -175,12 +175,41 @@ Verified against private ROMs unless otherwise noted.
   - **Pre-existing:** A/B-tested against `libretro/master` —
     master clips harder (~34% on Skyhammer) so this is a
     long-standing bug, not a regression introduced by this PR.
-  - **Next steps:** diff DSP RAM / DSP register state after
-    BIOS reset vs HLE reset; identify what DSP-side init the
-    real BIOS performs that we skip.  Likely a sound-engine
-    code blob the BIOS loads into DSP RAM that Skyhammer
-    expects to be present.  Trying simple SMODE bit changes
-    (added EVERYWORD) did not help.
+  - **DSP-state diff (2026-04-29):** snapshotted DSP RAM at
+    frame 5/10 in BIOS vs HLE mode and binary-searched the
+    embedded `jaguarBootROM` blob for the matching prefix:
+    - The BIOS pre-loads a **1992-byte DSP audio engine** at
+      `jaguarBootROM[0x214E .. 0x2916]` into DSP RAM offset 0
+      and starts the DSP (DSPGO=1).
+    - Engine prefix at offset 0:
+      `98 00 B0 30 00 F1 D0 00 E4 00 E4 00 E4 00 E4 00`
+      (MOVEI #$F1D000, R0 — wavetable ROM ptr — then NOP slots).
+    - **But** copying this engine into DSP RAM and starting the
+      DSP in HLE init does NOT fix the clipping. Both Skyhammer
+      and IS2 OVERWRITE the engine with their own DSP code by
+      ~frame 30, so having it pre-loaded is moot for them.
+    - Atari Karts is unaffected by the engine copy
+      (verified — same RMS 410.8, 0% saturation).
+    - The DSP code Skyhammer loads in HLE-mode at frame 175 is
+      **dramatically different** from the code it loads in
+      BIOS-mode at frame 175 (DSP RAM contents diverge across
+      ~95% of the audio engine area). So Skyhammer's 68K code
+      is reading something at boot to choose which DSP audio
+      routine to load, and HLE provides a different value than
+      BIOS.
+  - **Next steps:** trace what Skyhammer's 68K code reads
+    early-boot from BIOS-area (`0xE00000+`), low main RAM
+    (`0x0000-0x0800`), or BIOS-installed exception vectors.
+    The BIOS leaves a vector table with handler addresses like
+    `06066xxx`, `06067xxx`; HLE installs RTE stubs at different
+    addresses. If Skyhammer JSRs through one of these vectors
+    to a BIOS audio-init routine, our RTE stub returns
+    immediately and the routine never runs. That's the most
+    plausible remaining hypothesis.
+  - Diagnostic tools: `/tmp/dsp_diff.c` and `/tmp/dsp_snapshot.c`
+    in the conversation log capture DSP RAM and key DAC/DSP
+    registers via dlsym — re-buildable from the recipe in
+    docs/test-infrastructure.md if needed.
 
 ### Performance
 - Accurate blitter is significantly slower than fast on several
