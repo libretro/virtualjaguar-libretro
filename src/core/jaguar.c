@@ -30,7 +30,6 @@
 #include "memtrack.h"
 #include "settings.h"
 #include "tom.h"
-#include "jagbios.h"
 
 static bool frameDone;
 
