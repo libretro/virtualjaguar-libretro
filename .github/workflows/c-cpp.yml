@@ -123,7 +123,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install multilib
       if: matrix.config.multilib
@@ -142,7 +142,7 @@ jobs:
 
     - name: Set up Emscripten
       if: matrix.config.emscripten
-      uses: mymindstorm/setup-emsdk@v14
+      uses: mymindstorm/setup-emsdk@v16
 
     - name: Set up Android NDK
       if: matrix.config.android
@@ -242,7 +242,7 @@ jobs:
 
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: build/rcheevos-static
         key: rcheevos-e2e-fd57e900-${{ runner.os }}-${{ matrix.config.cc }}-${{ matrix.config.displayTargetName }}
@@ -256,7 +256,7 @@ jobs:
       run: bash test/tools/test_rcheevos_e2e.sh ./${{ matrix.config.artifact }}
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ${{ matrix.config.displayTargetName }}
         path: ${{ matrix.config.artifact }}
@@ -270,7 +270,7 @@ jobs:
       matrix:
         arch: [x64, x86]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -303,13 +303,13 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       run: make -j4 platform=vita
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: PS Vita
         path: virtualjaguar_libretro_vita.a
@@ -321,7 +321,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       run: make -j4 platform=libnx
@@ -329,7 +329,7 @@ jobs:
         DEVKITPRO: /opt/devkitpro
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: Nintendo Switch
         path: virtualjaguar_libretro_libnx.a
@@ -339,7 +339,7 @@ jobs:
     name: EditorConfig compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install editorconfig-checker
       run: |
@@ -355,7 +355,7 @@ jobs:
     name: C89 compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Check for declaration-after-statement
       run: |

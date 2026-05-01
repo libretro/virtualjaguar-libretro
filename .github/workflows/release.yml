@@ -121,7 +121,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install multilib
       if: matrix.config.multilib
@@ -140,7 +140,7 @@ jobs:
 
     - name: Set up Emscripten
       if: matrix.config.emscripten
-      uses: mymindstorm/setup-emsdk@v14
+      uses: mymindstorm/setup-emsdk@v16
 
     - name: Set up Android NDK
       if: matrix.config.android
@@ -264,7 +264,7 @@ jobs:
         rm "dist/${DBG}"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: virtualjaguar_libretro-${{ matrix.config.platform }}
         path: dist/
@@ -279,7 +279,7 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       env:
@@ -301,7 +301,7 @@ jobs:
         rm "dist/${OUT}.debug"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: virtualjaguar_libretro-vita
         path: dist/
@@ -316,7 +316,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       env:
@@ -337,7 +337,7 @@ jobs:
         rm "dist/${OUT}.debug"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: virtualjaguar_libretro-switch
         path: dist/
@@ -352,10 +352,10 @@ jobs:
     needs: [build, vita-build, switch-build]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         path: artifacts/
 
