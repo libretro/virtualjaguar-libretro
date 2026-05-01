@@ -1679,7 +1679,10 @@ INLINE static void gpu_opcode_ror(void)
 
 INLINE static void gpu_opcode_rorq(void)
 {
-   uint32_t r1 = gpu_convert_zero[IMM_1 & 0x1F];
+   /* gpu_convert_zero[0] returns 32 (rotate-by-0 means rotate-by-full-word
+    * which is a no-op).  Masking to 0x1F maps 32 -> 0, preserving that
+    * semantic and avoiding `RN >> 32` UB in the rotate idiom below. */
+   uint32_t r1 = gpu_convert_zero[IMM_1 & 0x1F] & 0x1F;
    uint32_t r2 = RN;
    uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
    RN = res;

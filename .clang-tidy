@@ -66,5 +66,8 @@ FormatStyle: none
 #   locals that are read via macros (BCOMPEN, DSTA2, ...) clang-tidy can't see
 #   the linkage for.  Removing these inits would introduce real bugs.
 # - DeprecatedOrUnsafeBufferHandling: MSVC-flavored noise about strcpy/sprintf.
+# - optin.performance.Padding: upstream UAE/Virtual Jaguar struct layouts
+#   inherited from 1990s emulator code; reordering for tighter packing risks
+#   silent layout breaks in save-state / dlsym paths and isn't free perf.
 # - optin.portability.UnixAPI: false positive on libretro_core_options.h calloc.
 # - valist.Uninitialized: false-positive prone on our log macros.
