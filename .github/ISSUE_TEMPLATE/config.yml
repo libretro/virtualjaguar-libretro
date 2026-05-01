@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: libretro Discord
+    url: https://discord.com/invite/27Xxm2h
+    about: General libretro / RetroArch questions are best in the Discord; this tracker is for Virtual Jaguar core bugs and feature work.
+  - name: Upstream Virtual Jaguar
+    url: http://shamusworld.gotdns.org/git/virtualjaguar
+    about: Issues that are reproducible in standalone Virtual Jaguar (not specific to the libretro core) belong upstream.
