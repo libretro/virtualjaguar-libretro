@@ -431,19 +431,25 @@ jobs:
         # -O1 keeps inlining for cleaner stacks but is fast enough to
         # build in a reasonable time.  -fno-omit-frame-pointer for
         # ASAN backtraces.  TEST_EXPORTS=1 so test binaries can dlsym.
+        # LD must also carry -fsanitize so the link step pulls in
+        # the asan/ubsan runtime libs.
+        SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
         make -j4 TEST_EXPORTS=1 \
-          CC="clang -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g" \
-          CXX="clang++ -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
+          CC="clang $SAN_FLAGS" \
+          CXX="clang++ $SAN_FLAGS" \
+          LD="clang $SAN_FLAGS"
     - name: Run test suite under sanitizers
       env:
         # halt_on_error=1 -> first finding fails the step.  print_stacktrace=1
-        # is essential for triage.  exitcode=66 is the LLVM convention.
+        # is essential for triage.
         ASAN_OPTIONS: 'detect_leaks=1:abort_on_error=1:print_stacktrace=1'
         UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1:report_error_type=1'
       run: |
+        SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
         make test TEST_EXPORTS=1 \
-          CC="clang -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g" \
-          CXX="clang++ -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
+          CC="clang $SAN_FLAGS" \
+          CXX="clang++ $SAN_FLAGS" \
+          LD="clang $SAN_FLAGS"
 
   clang-tidy:
     name: clang-tidy on changed files
