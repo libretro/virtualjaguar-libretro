@@ -605,6 +605,16 @@ ifeq ($(RELEASE_DEBUG_INFO),1)
    endif
 endif
 
+# COVERAGE=1 instruments the build with gcov.  Used by `make coverage`
+# below; don't combine with optimized builds.  Compiler emits .gcno
+# files at build time, .gcda files at run time.
+ifeq ($(COVERAGE),1)
+   ifeq (,$(findstring msvc,$(platform)))
+      FLAGS   += --coverage -O0 -g
+      LDFLAGS += --coverage
+   endif
+endif
+
 ifeq (,$(findstring msvc,$(platform)))
 FLAGS += -ffast-math -fomit-frame-pointer -fno-common
 endif
@@ -820,11 +830,20 @@ test/tools/test_memory_map: test/tools/test_memory_map.c
 		-o $@ test/tools/test_memory_map.c -ldl
 endif
 
-.PHONY: clean test lint
+.PHONY: clean test lint coverage
 endif
 
 lint:
 	@scripts/c89-lint.sh
+
+# `make coverage` -- builds with gcov instrumentation, runs the full
+# test suite, and produces a Cobertura XML report at coverage.xml plus
+# a textual summary.  See gcovr.cfg for path filters.
+coverage:
+	$(MAKE) clean
+	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
+	gcovr --config gcovr.cfg --xml-pretty -o coverage.xml --txt --print-summary
 
 print-%:
 	@echo '$*=$($*)'

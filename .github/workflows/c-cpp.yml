@@ -385,6 +385,34 @@ jobs:
     - name: Run editorconfig-checker
       run: ec -verbose
 
+  coverage:
+    name: Code coverage (gcov + codecov)
+    runs-on: ubuntu-latest
+    # Coverage runs are advisory -- they don't gate merges.  The PR
+    # delta is what reviewers care about; codecov posts that as a
+    # comment automatically.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install gcov + gcovr
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc gcovr
+      - name: make coverage
+        run: |
+          bash scripts/gen-version-h.sh
+          make coverage CC="gcc" CXX="g++"
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          # Token optional for public repos; if set in repo secrets it
+          # avoids the anonymous-upload rate limit.
+          token: ${{ secrets.CODECOV_TOKEN }}
+
   sanitizers:
     name: AddressSanitizer + UndefinedBehaviorSanitizer
     runs-on: ubuntu-latest
