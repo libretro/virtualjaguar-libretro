@@ -7,6 +7,13 @@ on:
     branches: [ develop, master ]
   workflow_dispatch:
 
+# Cancel in-progress runs when a new commit lands on the same PR.
+# Pushes to master/develop run to completion (no cancellation) so we
+# always have a green-or-red record on the integration branches.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     strategy:
@@ -421,6 +428,9 @@ jobs:
       run: |
         echo "==> Checking C89 compliance (catches MSVC C89 errors)..."
         scripts/c89-lint.sh
+
+    - name: Verify .info display_version matches Makefile
+      run: bash scripts/check-info-version.sh
 
     - name: Check for stdbool.h usage (use boolean.h instead)
       run: |
