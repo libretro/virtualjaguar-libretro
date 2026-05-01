@@ -27,6 +27,7 @@ Checks: >
   -bugprone-incorrect-roundings,
   -bugprone-multi-level-implicit-pointer-conversion,
   -clang-analyzer-deadcode.DeadStores,
+  -clang-analyzer-optin.performance.Padding,
   -clang-analyzer-optin.portability.UnixAPI,
   -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
   -clang-analyzer-valist.Uninitialized
