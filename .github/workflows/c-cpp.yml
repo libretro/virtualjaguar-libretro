@@ -428,24 +428,28 @@ jobs:
     - name: Build with ASAN + UBSAN
       run: |
         bash scripts/gen-version-h.sh
-        # -O1 keeps inlining for cleaner stacks but is fast enough to
-        # build in a reasonable time.  -fno-omit-frame-pointer for
-        # ASAN backtraces.  TEST_EXPORTS=1 so test binaries can dlsym.
-        # LD must also carry -fsanitize so the link step pulls in
-        # the asan/ubsan runtime libs.
-        SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
+        # -shared-libasan: when building a shared library with
+        # -fsanitize, clang doesn't link the static asan/ubsan
+        # runtime into the .so (it's expected to be loaded by the
+        # host executable).  --no-undefined in the SHARED rule then
+        # rejects the runtime symbols.  -shared-libasan switches to
+        # the dynamic libclang_rt.asan-x86_64.so which the host
+        # process picks up at dlopen time.
+        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g"
         make -j4 TEST_EXPORTS=1 \
           CC="clang $SAN_FLAGS" \
           CXX="clang++ $SAN_FLAGS" \
           LD="clang $SAN_FLAGS"
     - name: Run test suite under sanitizers
       env:
-        # halt_on_error=1 -> first finding fails the step.  print_stacktrace=1
-        # is essential for triage.
         ASAN_OPTIONS: 'detect_leaks=1:abort_on_error=1:print_stacktrace=1'
         UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1:report_error_type=1'
       run: |
-        SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
+        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g"
+        # The shared-libasan path means the test binaries need to find
+        # libclang_rt.asan at runtime; expose its directory.
+        ASAN_LIB_DIR=$(clang -print-resource-dir)/lib/linux
+        export LD_LIBRARY_PATH="$ASAN_LIB_DIR:${LD_LIBRARY_PATH:-}"
         make test TEST_EXPORTS=1 \
           CC="clang $SAN_FLAGS" \
           CXX="clang++ $SAN_FLAGS" \
