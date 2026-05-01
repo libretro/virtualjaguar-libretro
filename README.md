@@ -58,7 +58,7 @@ This project is built on the work of many contributors. See the [full list on Gi
 - SDL/Linux/Win32 port by Niels Wagenaar & Carwin Jones (SDLEMU).
 - Cleanups, GUI/Qt port, and ongoing upstream maintenance by James Hammons (Shamus).
 - libretro core port by libretro/RetroArch contributors.
-- libretro fork maintenance — Provenance-Emu — Joseph Mattiello ([@JoeMatt](https://github.com/JoeMatt)).
+- libretro fork maintenance — Joseph Mattiello ([@JoeMatt](https://github.com/JoeMatt)).
 
 ## License
 
