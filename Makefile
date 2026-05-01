@@ -549,6 +549,18 @@ else
    endif
 endif
 
+# Release builds with split debug symbols.
+# Set RELEASE_DEBUG_INFO=1 (release.yml does this) to keep -g in the
+# optimized build so we can later run objcopy --only-keep-debug /
+# dsymutil to ship a separate debug-info archive next to the stripped
+# binary in the GitHub release.  Has no effect when DEBUG=1 (-g is
+# already on) or under MSVC (which uses /Zi and a .pdb instead).
+ifeq ($(RELEASE_DEBUG_INFO),1)
+   ifeq (,$(findstring msvc,$(platform)))
+      FLAGS += -g
+   endif
+endif
+
 ifeq (,$(findstring msvc,$(platform)))
 FLAGS += -ffast-math -fomit-frame-pointer -fno-common
 endif
