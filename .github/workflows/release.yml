@@ -8,6 +8,12 @@ permissions:
   contents: write
 
 jobs:
+  # ----------------------------------------------------------------
+  # Native + cross builds (Linux/macOS/Windows/iOS/tvOS/Android/WASM)
+  # Each job builds with RELEASE_DEBUG_INFO=1 so we keep -g on the
+  # optimized binary, then extracts split debug symbols and strips the
+  # shipped binary.
+  # ----------------------------------------------------------------
   build:
     strategy:
       fail-fast: false
@@ -145,26 +151,117 @@ jobs:
 
     - name: Build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
+      env:
+        RELEASE_DEBUG_INFO: '1'
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}"
 
     - name: Build (platform)
       if: matrix.config.make_platform
+      env:
+        RELEASE_DEBUG_INFO: '1'
       run: make -j4 platform=${{ matrix.config.make_platform }}
 
     - name: Build (Emscripten)
       if: matrix.config.emscripten
+      env:
+        RELEASE_DEBUG_INFO: '1'
       run: emmake make -j4 platform=emscripten
 
     - name: Build (Android NDK)
       if: matrix.config.android
+      env:
+        RELEASE_DEBUG_INFO: '1'
       run: |
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
-    - name: Package
+    # ----------------------------------------------------------------
+    # Package: emit
+    #   dist/<core-name>                   (stripped, shipped binary)
+    #   dist/<core-name>-debug.tar.gz      (split debug symbols)
+    # The shipped binary keeps a debug-link / dSYM reference so a
+    # debugger can find the symbols when the .tar.gz is extracted
+    # alongside it.
+    # ----------------------------------------------------------------
+    - name: Package (Linux native build)
+      if: ${{ runner.os == 'Linux' && !matrix.config.emscripten && !matrix.config.android }}
       run: |
+        set -e
         mkdir -p dist
-        cp ${{ matrix.config.artifact }} dist/virtualjaguar_libretro-${{ matrix.config.platform }}$(echo "${{ matrix.config.artifact }}" | grep -o '\.[^.]*$')
+        SRC="${{ matrix.config.artifact }}"
+        EXT=$(echo "$SRC" | grep -o '\.[^.]*$')
+        OUT="virtualjaguar_libretro-${{ matrix.config.platform }}${EXT}"
+        DBG="${OUT}.debug"
+        cp "$SRC" "dist/${OUT}"
+        objcopy --only-keep-debug "dist/${OUT}" "dist/${DBG}"
+        objcopy --strip-debug --strip-unneeded "dist/${OUT}"
+        ( cd dist && objcopy --add-gnu-debuglink="${DBG}" "${OUT}" )
+        tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
+        rm "dist/${DBG}"
+
+    - name: Package (Android)
+      if: matrix.config.android
+      run: |
+        set -e
+        mkdir -p dist
+        SRC="${{ matrix.config.artifact }}"
+        OUT="virtualjaguar_libretro-${{ matrix.config.platform }}.so"
+        DBG="${OUT}.debug"
+        cp "$SRC" "dist/${OUT}"
+        # NDK ships its own objcopy/strip; use the unprefixed system one
+        # (the artifact is already linked).  llvm-objcopy works on all ABIs.
+        OBJCOPY="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objcopy"
+        if [ ! -x "$OBJCOPY" ]; then OBJCOPY=objcopy; fi
+        "$OBJCOPY" --only-keep-debug "dist/${OUT}" "dist/${DBG}"
+        "$OBJCOPY" --strip-debug --strip-unneeded "dist/${OUT}"
+        ( cd dist && "$OBJCOPY" --add-gnu-debuglink="${DBG}" "${OUT}" )
+        tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
+        rm "dist/${DBG}"
+
+    - name: Package (Emscripten)
+      if: matrix.config.emscripten
+      run: |
+        set -e
+        mkdir -p dist
+        SRC="${{ matrix.config.artifact }}"
+        OUT="virtualjaguar_libretro-${{ matrix.config.platform }}.bc"
+        cp "$SRC" "dist/${OUT}"
+        # LLVM bitcode keeps debug info inline; ship the .bc twice with
+        # the second copy gzipped under -debug for symmetry with the
+        # other platforms.
+        gzip -c "dist/${OUT}" > "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz"
+
+    - name: Package (macOS / iOS / tvOS)
+      if: ${{ runner.os == 'macOS' }}
+      run: |
+        set -e
+        mkdir -p dist
+        SRC="${{ matrix.config.artifact }}"
+        EXT=$(echo "$SRC" | grep -o '\.[^.]*$')
+        OUT="virtualjaguar_libretro-${{ matrix.config.platform }}${EXT}"
+        cp "$SRC" "dist/${OUT}"
+        # dsymutil produces a .dSYM bundle next to the binary
+        dsymutil "dist/${OUT}" -o "dist/${OUT}.dSYM"
+        # Strip debug info from the shipped binary (-S = local syms,
+        # -x = remove non-globals); keeps externals so dlsym still works
+        strip -S -x "dist/${OUT}"
+        tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${OUT}.dSYM"
+        rm -rf "dist/${OUT}.dSYM"
+
+    - name: Package (Windows MSYS2)
+      if: ${{ runner.os == 'Windows' }}
+      run: |
+        set -e
+        mkdir -p dist
+        SRC="${{ matrix.config.artifact }}"
+        OUT="virtualjaguar_libretro-${{ matrix.config.platform }}.dll"
+        DBG="${OUT}.debug"
+        cp "$SRC" "dist/${OUT}"
+        objcopy --only-keep-debug "dist/${OUT}" "dist/${DBG}"
+        objcopy --strip-debug --strip-unneeded "dist/${OUT}"
+        ( cd dist && objcopy --add-gnu-debuglink="${DBG}" "${OUT}" )
+        tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
+        rm "dist/${DBG}"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -173,6 +270,9 @@ jobs:
         path: dist/
         if-no-files-found: error
 
+  # ----------------------------------------------------------------
+  # PS Vita (vitasdk) - cross-compiled .a static archive
+  # ----------------------------------------------------------------
   vita-build:
     name: build-vita
     runs-on: ubuntu-latest
@@ -182,12 +282,23 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Build
+      env:
+        RELEASE_DEBUG_INFO: '1'
       run: make -j4 platform=vita
 
     - name: Package
       run: |
+        set -e
         mkdir -p dist
-        cp virtualjaguar_libretro_vita.a dist/virtualjaguar_libretro-vita.a
+        OUT="virtualjaguar_libretro-vita.a"
+        cp virtualjaguar_libretro_vita.a "dist/${OUT}"
+        # Static archive — extract debug info via objcopy on the archive
+        # itself.  arm-vita-eabi-objcopy is in the vitasdk image.
+        OBJCOPY=arm-vita-eabi-objcopy
+        "$OBJCOPY" --only-keep-debug "dist/${OUT}" "dist/${OUT}.debug" || cp "dist/${OUT}" "dist/${OUT}.debug"
+        "$OBJCOPY" --strip-debug "dist/${OUT}" || true
+        tar -C dist -czf "dist/virtualjaguar_libretro-vita-debug.tar.gz" "${OUT}.debug"
+        rm "dist/${OUT}.debug"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -196,6 +307,9 @@ jobs:
         path: dist/
         if-no-files-found: error
 
+  # ----------------------------------------------------------------
+  # Nintendo Switch (devkitPro libnx) - .a static archive
+  # ----------------------------------------------------------------
   switch-build:
     name: build-switch
     runs-on: ubuntu-latest
@@ -205,14 +319,22 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Build
-      run: make -j4 platform=libnx
       env:
         DEVKITPRO: /opt/devkitpro
+        RELEASE_DEBUG_INFO: '1'
+      run: make -j4 platform=libnx
 
     - name: Package
       run: |
+        set -e
         mkdir -p dist
-        cp virtualjaguar_libretro_libnx.a dist/virtualjaguar_libretro-switch.a
+        OUT="virtualjaguar_libretro-switch.a"
+        cp virtualjaguar_libretro_libnx.a "dist/${OUT}"
+        OBJCOPY=/opt/devkitpro/devkitA64/bin/aarch64-none-elf-objcopy
+        "$OBJCOPY" --only-keep-debug "dist/${OUT}" "dist/${OUT}.debug" || cp "dist/${OUT}" "dist/${OUT}.debug"
+        "$OBJCOPY" --strip-debug "dist/${OUT}" || true
+        tar -C dist -czf "dist/virtualjaguar_libretro-switch-debug.tar.gz" "${OUT}.debug"
+        rm "dist/${OUT}.debug"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -221,6 +343,11 @@ jobs:
         path: dist/
         if-no-files-found: error
 
+  # ----------------------------------------------------------------
+  # Release: collect all artifacts, generate SHA256SUMS, build the
+  # release body from docs/RELEASE_NOTES_v<TAG>.md (with fall-back to
+  # GitHub auto-generated notes), then create the tagged release.
+  # ----------------------------------------------------------------
   release:
     needs: [build, vita-build, switch-build]
     runs-on: ubuntu-latest
@@ -232,15 +359,78 @@ jobs:
       with:
         path: artifacts/
 
-    - name: Create release
+    - name: Stage release files
+      run: |
+        set -e
+        mkdir -p release
+        # Flatten one level: each artifact directory contains the
+        # binary + matching -debug.tar.gz; copy them all into release/
+        find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+        # Include the RetroArch core .info file so frontend maintainers
+        # / users can drop it into RetroArch's info/ dir.  The same file
+        # is what gets PR'd to libretro/libretro-super after the release.
+        if [ -f dist/info/virtualjaguar_libretro.info ]; then
+          cp dist/info/virtualjaguar_libretro.info release/
+        fi
+        echo "==> Staged release files:"
+        ls -la release/
+
+    - name: Generate SHA256SUMS
+      run: |
+        set -e
+        cd release
+        # Deterministic ordering, two-space format compatible with
+        # `sha256sum -c SHA256SUMS.txt` on Linux + Mac (with coreutils).
+        sha256sum -- *  | sort -k 2 > SHA256SUMS.txt
+        echo "==> SHA256SUMS.txt:"
+        cat SHA256SUMS.txt
+
+    - name: Prepare release body
+      id: prep_body
+      run: |
+        set -e
+        TAG="${GITHUB_REF_NAME}"
+        NOTES_FILE="docs/RELEASE_NOTES_${TAG}.md"
+        BODY_FILE="$RUNNER_TEMP/release_body.md"
+        if [ -f "$NOTES_FILE" ]; then
+          echo "==> Using curated release notes: $NOTES_FILE"
+          cp "$NOTES_FILE" "$BODY_FILE"
+          # Append a brief artifact list to the body
+          {
+            echo
+            echo "---"
+            echo
+            echo "## Artifacts in this release"
+            echo
+            echo '```'
+            find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
+            echo '```'
+          } >> "$BODY_FILE"
+          echo "use_notes_file=1" >> "$GITHUB_OUTPUT"
+        else
+          echo "==> No curated $NOTES_FILE found; falling back to auto-generated notes"
+          echo "use_notes_file=0" >> "$GITHUB_OUTPUT"
+        fi
+        echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+    - name: Create release (curated notes)
+      if: steps.prep_body.outputs.use_notes_file == '1'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         TAG="${GITHUB_REF_NAME}"
-        echo "==> Creating release ${TAG} with artifacts:"
-        find artifacts/ -type f | sort
+        gh release create "${TAG}" \
+          --title "${TAG}" \
+          --notes-file "${{ steps.prep_body.outputs.body_file }}" \
+          release/*
 
+    - name: Create release (auto-generated notes)
+      if: steps.prep_body.outputs.use_notes_file == '0'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        TAG="${GITHUB_REF_NAME}"
         gh release create "${TAG}" \
           --title "${TAG}" \
           --generate-notes \
-          artifacts/virtualjaguar_libretro-*/*
+          release/*

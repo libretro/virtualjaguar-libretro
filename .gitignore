@@ -54,3 +54,7 @@ docs/atari-jaguar-1999/
 # LLDB scripts (local debug helpers)
 test/lldb_*.cmd
 test/lldb_*.py
+/test/tools/test_benchmark
+/test/tools/test_blitter_compare
+/test/tools/test_screenshot
+test/tools/build/

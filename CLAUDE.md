@@ -32,13 +32,13 @@ This codebase **must** compile as C89 (GNU89 dialect). The libretro buildbot use
 - **No mid-block variable declarations.** All variables must be declared at the top of their enclosing block (function or `{}`), before any statements. This is the most common violation.
 - `//` comments are allowed (GNU89 extension), but `/* */` is preferred for new code.
 - No C99 features: no `for (int i = ...)`, no compound literals, no designated initializers, no VLAs.
-- SIMD files (`src/blitter_simd_sse2.c`, `src/blitter_simd_neon.c`) are exempt from the lint check since they require platform-specific headers.
+- SIMD files (`src/tom/blitter_simd_sse2.c`, `src/tom/blitter_simd_neon.c`) are exempt from the lint check since they require platform-specific headers.
 - Machine-generated files (`src/m68000/*`) are also exempt.
 
 **Local check before pushing:**
 ```bash
 gcc -fsyntax-only -std=gnu89 -Werror=declaration-after-statement \
-    -I. -Isrc -Isrc/m68000 -Ilibretro-common/include \
+    -I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include \
     -D__LIBRETRO__ -DINLINE="inline" src/YOURFILE.c
 ```
 
@@ -47,21 +47,21 @@ gcc -fsyntax-only -std=gnu89 -Werror=declaration-after-statement \
 The Jaguar has four processors sharing a unified memory-mapped address space:
 
 - **Motorola 68000** (13.3 MHz) — main CPU for game logic. Emulated via UAE-derived core in `src/m68000/`. The `cpuemu.c` file is machine-generated and very large (~1.8 MB).
-- **GPU** (26.6 MHz RISC) — graphics coprocessor in `src/gpu.c`
-- **DSP** (26.6 MHz RISC) — audio coprocessor in `src/dsp.c`, same instruction set as GPU
-- **Object Processor** — sprite/bitmap rendering in `src/op.c`
+- **GPU** (26.6 MHz RISC) — graphics coprocessor in `src/tom/gpu.c`
+- **DSP** (26.6 MHz RISC) — audio coprocessor in `src/jerry/dsp.c`, same instruction set as GPU
+- **Object Processor** — sprite/bitmap rendering in `src/tom/op.c`
 
 Two custom chips contain these processors:
-- **TOM** (`src/tom.c`) — video output, GPU, Object Processor, Blitter (`src/blitter.c`)
-- **JERRY** (`src/jerry.c`) — audio DAC (`src/dac.c`), DSP, timers, EEPROM (`src/eeprom.c`)
+- **TOM** (`src/tom/tom.c`) — video output, GPU, Object Processor, Blitter (`src/tom/blitter.c`)
+- **JERRY** (`src/jerry/jerry.c`) — audio DAC (`src/jerry/dac.c`), DSP, timers, EEPROM (`src/jerry/eeprom.c`)
 
 ### Execution Model
 
-Frame execution is event-driven, not cycle-accurate. `JaguarExecuteNew()` in `src/jaguar.c` runs the main loop: the 68K executes until the next timed event, then GPU runs for the same timeslice, then event callbacks fire (half-line rendering, timer interrupts, etc.).
+Frame execution is event-driven, not cycle-accurate. `JaguarExecuteNew()` in `src/core/jaguar.c` runs the main loop: the 68K executes until the next timed event, then GPU runs for the same timeslice, then event callbacks fire (half-line rendering, timer interrupts, etc.).
 
 ### Memory
 
-Memory map defined in `src/vjag_memory.h`. The Jaguar is big-endian; `GET16/GET32/SET16/SET32` macros handle byte-swapping on little-endian hosts. Main RAM is 2 MB at 0x000000, cart ROM at 0x800000, TOM registers at 0xF00000, JERRY registers at 0xF10000.
+Memory map defined in `src/core/vjag_memory.h`. The Jaguar is big-endian; `GET16/GET32/SET16/SET32` macros handle byte-swapping on little-endian hosts. Main RAM is 2 MB at 0x000000, cart ROM at 0x800000, TOM registers at 0xF00000, JERRY registers at 0xF10000.
 
 ### Libretro Integration
 
@@ -71,7 +71,11 @@ Core options defined in `libretro_core_options.h` control blitter mode, BIOS usa
 
 ### Key Directories
 
-- `src/` — emulator core (hardware chips, CPU, I/O, BIOS ROMs as C arrays)
+- `src/core/` — top-level emulator orchestration, memory map, events, settings, files, cheats
+- `src/tom/` — TOM-side video, GPU, Object Processor, blitter, and blitter SIMD
+- `src/jerry/` — JERRY-side audio, DSP, DAC, EEPROM, input, wavetable
+- `src/cd/` — Jaguar CD/BUTCH and disc-interface layer
+- `src/bios/` — embedded BIOS and boot stub arrays
 - `src/m68000/` — UAE-derived 68K CPU emulation
 - `libretro-common/` — shared libretro utility library (string, file, VFS)
 - `docs/` — documentation: changelog, known issues, BUTCH register map, CD data flow, test infrastructure
@@ -84,7 +88,7 @@ Core options defined in `libretro_core_options.h` control blitter mode, BIOS usa
 
 ### Jaguar CD Emulation
 
-CD support is implemented across `src/cdrom.c` (BUTCH chip / FIFO / DSA commands), `src/cdintf.c` (disc image loading: CUE/BIN, CHD, CDI), and hooks in `src/jaguar.c` (BIOS auth bypass, boot stub injection).
+CD support is implemented across `src/cd/cdrom.c` (BUTCH chip / FIFO / DSA commands), `src/cd/cdintf.c` (disc image loading: CUE/BIN, CHD, CDI), and hooks in `src/core/jaguar.c` (BIOS auth bypass, boot stub injection).
 
 Key docs:
 - `docs/butch-registers.md` — full BUTCH register map ($DFFF00-$DFFF2F) with bit definitions

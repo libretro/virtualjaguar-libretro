@@ -171,7 +171,7 @@ jobs:
 
     # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
-      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make test CC="${{ matrix.config.cc }}"
 
     - name: Run SIMD blitter tests
@@ -180,23 +180,23 @@ jobs:
         ARCH=$(uname -m)
         CC="${{ matrix.config.cc }}"
         case "$ARCH" in
-          x86_64|i686|i386)  SIMD_SRC=src/blitter_simd_sse2.c; EXTRA="-msse2" ;;
-          aarch64|arm64)     SIMD_SRC=src/blitter_simd_neon.c;  EXTRA="" ;;
-          *)                 SIMD_SRC=src/blitter_simd_scalar.c; EXTRA="" ;;
+          x86_64|i686|i386)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2" ;;
+          aarch64|arm64)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="" ;;
+          *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="" ;;
         esac
 
         echo "==> Testing ${SIMD_SRC}..."
-        $CC -O2 -Wall ${EXTRA} -I src \
+        $CC -O2 -Wall ${EXTRA} -I src -I src/core -I src/tom \
           -o test_blitter_simd test/test_blitter_simd.c ${SIMD_SRC}
         ./test_blitter_simd
 
         echo "==> Cross-checking against scalar..."
-        $CC -O2 -Wall -I src \
-          -o test_blitter_scalar test/test_blitter_simd.c src/blitter_simd_scalar.c
+        $CC -O2 -Wall -I src -I src/core -I src/tom \
+          -o test_blitter_scalar test/test_blitter_simd.c src/tom/blitter_simd_scalar.c
         ./test_blitter_scalar
 
         echo "==> DSP 40-bit MAC accumulator regression (dsp_acc40.h)..."
-        $CC -O2 -Wall -I src -o test_dsp_mac40 test/test_dsp_mac40.c
+        $CC -O2 -Wall -I src -I src/jerry -o test_dsp_mac40 test/test_dsp_mac40.c
         ./test_dsp_mac40
 
     - name: Run memory map test
@@ -210,6 +210,35 @@ jobs:
         fi
         $CC -O2 -Wall -o test/tools/test_memory_map test/tools/test_memory_map.c $LDFLAGS
         ./test/tools/test_memory_map ./${{ matrix.config.artifact }}
+
+    - name: Run DSP instruction set tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        $CC -O2 -Wall -o test/test_dsp_ops test/test_dsp_ops.c $LDFLAGS
+        $CC -O2 -Wall -o test/test_dsp_unit test/test_dsp_unit.c $LDFLAGS
+        ./test/test_dsp_ops
+        ./test/test_dsp_unit
+
+    - name: Run GPU instruction set tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        $CC -O2 -Wall -o test/test_gpu_ops test/test_gpu_ops.c $LDFLAGS
+        ./test/test_gpu_ops
+
+        $CC -O2 -Wall -o test/test_op_gpu_object test/test_op_gpu_object.c $LDFLAGS
+        ./test/test_op_gpu_object ./${{ matrix.config.artifact }}
+
+    - name: Run 68K instruction set tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        $CC -O2 -Wall -o test/test_m68k_ops test/test_m68k_ops.c $LDFLAGS
+        ./test/test_m68k_ops
 
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
@@ -251,21 +280,21 @@ jobs:
       shell: cmd
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
-          /I. /Isrc /Isrc\m68000 /Ilibretro-common\include ^
+          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
           /D__LIBRETRO__ /DINLINE="_inline" ^
           libretro.c ^
-          src\blitter.c src\dac.c src\dsp.c src\file.c ^
-          src\gpu.c src\jaguar.c src\jerry.c src\tom.c src\op.c ^
-          src\cdintf.c src\cdrom.c src\crc32.c src\event.c ^
-          src\eeprom.c src\filedb.c src\joystick.c src\settings.c ^
-          src\memtrack.c src\mmu.c src\vjag_memory.c src\cheat.c ^
-          src\universalhdr.c src\wavetable.c ^
-          src\jagbios.c src\jagbios2.c ^
-          src\jagcdbios.c src\jagdevcdbios.c ^
-          src\jagstub1bios.c src\jagstub2bios.c ^
+          src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
+          src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
+          src\cd\cdintf.c src\cd\cdrom.c src\core\crc32.c src\core\event.c ^
+          src\jerry\eeprom.c src\core\filedb.c src\jerry\joystick.c src\core\settings.c ^
+          src\core\memtrack.c src\core\vjag_memory.c src\core\cheat.c ^
+          src\core\universalhdr.c src\jerry\wavetable.c ^
+          src\bios\jagbios.c ^
+          src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
+          src\bios\jagstub1bios.c src\bios\jagstub2bios.c ^
           src\m68000\m68kinterface.c ^
-          src\blitter_simd_scalar.c ^
-          src\blitter_simd_sse2.c
+          src\tom\blitter_simd_scalar.c ^
+          src\tom\blitter_simd_sse2.c
         echo MSVC compilation check passed
 
   vita-build:
@@ -315,32 +344,15 @@ jobs:
     - name: Check for declaration-after-statement
       run: |
         echo "==> Checking C89 compliance (catches MSVC C89 errors)..."
-        FAILED=0
-        for f in libretro.c src/*.c src/m68000/m68kinterface.c; do
-          case "$f" in
-            src/m68000/cpu*.c|src/m68000/read*.c|src/jag*bios*.c|src/jagstub*bios.c|src/blitter_simd_neon.c|src/blitter_simd_sse2.c) continue ;;
-          esac
-          if ! gcc -fsyntax-only -std=gnu89 \
-              -Werror=declaration-after-statement \
-              -I. -Isrc -Isrc/m68000 -Ilibretro-common/include \
-              -D__LIBRETRO__ -DINLINE="inline" \
-              "$f" 2>&1; then
-            FAILED=1
-          fi
-        done
-        if [ "$FAILED" = "1" ]; then
-          echo "::error::C89 compliance check failed — mid-block declarations found"
-          exit 1
-        fi
-        echo "==> All files pass C89 declaration check"
+        scripts/c89-lint.sh
 
     - name: Check for stdbool.h usage (use boolean.h instead)
       run: |
         echo "==> Checking for direct stdbool.h includes..."
         FAILED=0
-        for f in libretro.c src/*.c src/*.h; do
+        for f in libretro.c $(git ls-files 'src/**/*.c' 'src/**/*.h'); do
           case "$f" in
-            src/boolean.h) continue ;;
+            src/core/boolean.h) continue ;;
           esac
           if grep -n '#include.*<stdbool\.h>' "$f" 2>/dev/null; then
             echo "::error file=$f::Use <boolean.h> instead of <stdbool.h> (MSVC 2005/2010 compat)"

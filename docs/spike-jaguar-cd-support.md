@@ -26,7 +26,7 @@ Butch is a proprietary ASIC that serves as the primary interface between the Jag
 
 ### 1.3 Butch Register Map (Base: $DFFF00)
 
-All Butch registers are memory-mapped in the $DFFF00-$DFFF2F range. These are **already mapped in the codebase** (see `src/vjag_memory.c`, `src/mmu.c`, `src/cdrom.c`).
+All Butch registers are memory-mapped in the $DFFF00-$DFFF2F range. These are **already mapped in the codebase** (see `src/core/vjag_memory.c`, `src/core/jaguar.c`, `src/cd/cdrom.c`).
 
 | Address | Size | Name | R/W | Description |
 |---------|------|------|-----|-------------|
@@ -135,12 +135,12 @@ Two CD-related BIOS ROMs already exist as compiled-in C arrays in the codebase:
 
 | File | Source Array | Size | Description |
 |------|-------------|------|-------------|
-| `src/jagcdbios.c` | `jaguarCDBootROM[]` | 0x40000 (262,144 bytes = 256 KB) | Retail Jaguar CD BIOS |
-| `src/jagdevcdbios.c` | `jaguarDevCDBootROM[]` | 0x40000 (262,144 bytes = 256 KB) | Developer CD BIOS |
+| `src/bios/jagcdbios.c` | `jaguarCDBootROM[]` | 0x40000 (262,144 bytes = 256 KB) | Retail Jaguar CD BIOS |
+| `src/bios/jagdevcdbios.c` | `jaguarDevCDBootROM[]` | 0x40000 (262,144 bytes = 256 KB) | Developer CD BIOS |
 
 ### 2.2 BIOS Identification
 
-The file database (`src/filedb.c`) identifies two CD BIOS variants by CRC32:
+The file database (`src/core/filedb.c`) identifies two CD BIOS variants by CRC32:
 
 | CRC32 | Name | Flags |
 |-------|------|-------|
@@ -213,30 +213,30 @@ The codebase contains a **substantial but incomplete** CD-ROM emulation framewor
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `src/cdrom.c` | Butch register emulation, CD command handling | Partial |
-| `src/cdrom.h` | CD-ROM public API declarations | Complete |
-| `src/cdintf.c` | OS-agnostic CD interface (disc image abstraction) | **Stubbed** |
-| `src/cdintf.h` | CD interface declarations | Complete |
-| `src/jagcdbios.c` | Embedded retail CD BIOS ROM data (256 KB) | Present |
-| `src/jagdevcdbios.c` | Embedded developer CD BIOS ROM data (256 KB) | Present |
+| `src/cd/cdrom.c` | Butch register emulation, CD command handling | Partial |
+| `src/cd/cdrom.h` | CD-ROM public API declarations | Complete |
+| `src/cd/cdintf.c` | OS-agnostic CD interface (disc image abstraction) | **Stubbed** |
+| `src/cd/cdintf.h` | CD interface declarations | Complete |
+| `src/bios/jagcdbios.c` | Embedded retail CD BIOS ROM data (256 KB) | Present |
+| `src/bios/jagdevcdbios.c` | Embedded developer CD BIOS ROM data (256 KB) | Present |
 
 ### 4.2 What Already Works
 
-**Memory mapping is complete.** All read/write functions in `src/jaguar.c` route `$DFFF00-$DFFFFF` to CDROMReadByte/Word and CDROMWriteByte/Word (lines 206-207, 251-252, 308-309, 345-346, 408-409, 435-436, 458-460, 489-491). `src/vjag_memory.c` declares Butch registers as memory-mapped pointers at correct addresses (lines 40-50). `src/mmu.c` has entries for all Butch registers (lines 176-186).
+**Memory mapping is complete.** All read/write functions in `src/core/jaguar.c` route `$DFFF00-$DFFFFF` to CDROMReadByte/Word and CDROMWriteByte/Word. `src/core/vjag_memory.c` declares Butch registers as memory-mapped pointers at correct addresses.
 
-**Butch register handling is partially implemented.** `src/cdrom.c` has a 256-byte `cdRam[]` array for CD register state. Read/write handlers for DS_DATA, BUTCH interrupt register, I2CNTRL, FIFO_DATA exist. The CD command protocol is partially decoded (stop, seek, read TOC, set mode). A serial bus state machine for EEPROM access is implemented. TOC reading protocol for session/track info is present.
+**Butch register handling is partially implemented.** `src/cd/cdrom.c` has a 256-byte `cdRam[]` array for CD register state. Read/write handlers for DS_DATA, BUTCH interrupt register, I2CNTRL, FIFO_DATA exist. The CD command protocol is partially decoded (stop, seek, read TOC, set mode). A serial bus state machine for EEPROM access is implemented. TOC reading protocol for session/track info is present.
 
-**JERRY integration exists.** `src/jerry.c` line 298 checks `ButchIsReadyToSend()` in the I2S callback and calls `SetSSIWordsXmittedFromButch()` to transfer CD audio.
+**JERRY integration exists.** `src/jerry/jerry.c` checks `ButchIsReadyToSend()` in the I2S callback and calls `SetSSIWordsXmittedFromButch()` to transfer CD audio.
 
 **Init/Reset/Done lifecycle is wired up.** `CDROMInit()` at `JaguarInit()`, `CDROMReset()` at `JaguarReset()`, `CDROMDone()` at `JaguarDone()`.
 
-**CD EEPROM save/load exists.** `src/eeprom.c` maintains separate `cdromEEPROM[64]` and save/load functions for CD EEPROM data.
+**CD EEPROM save/load exists.** `src/jerry/eeprom.c` maintains separate `cdromEEPROM[64]` and save/load functions for CD EEPROM data.
 
 ### 4.3 What Does NOT Work (Critical Gaps)
 
-**1. CDIntf layer is completely stubbed (`src/cdintf.c`).** All functions return failure/dummy values. `CDIntfInit()` returns `false`. `CDIntfReadBlock()` returns `false`. `CDIntfGetSessionInfo()` returns `0xFF`. This is the **single biggest blocker**. The layer was originally designed for `libcdio` physical drive access (per `docs/INSTALL`), but that dependency was removed for the libretro port. No disc image loading exists.
+**1. CDIntf layer is completely stubbed (`src/cd/cdintf.c`).** All functions return failure/dummy values. `CDIntfInit()` returns `false`. `CDIntfReadBlock()` returns `false`. `CDIntfGetSessionInfo()` returns `0xFF`. This is the **single biggest blocker**. The layer was originally designed for `libcdio` physical drive access (per `docs/INSTALL`), but that dependency was removed for the libretro port. No disc image loading exists.
 
-**2. BUTCHExec() is disabled.** Line 206-208 of `src/cdrom.c`: immediately returns via `#if 1` guard. Interrupt generation logic is present but commented out.
+**2. BUTCHExec() is disabled.** `src/cd/cdrom.c` immediately returns via `#if 1` guard. Interrupt generation logic is present but commented out.
 
 **3. CD BIOS is not loaded.** `libretro.c` only loads the cart BIOS at `$E00000` (line 902-904). No code path loads the CD BIOS. No detection of CD vs cart content.
 
@@ -244,7 +244,7 @@ The codebase contains a **substantial but incomplete** CD-ROM emulation framewor
 
 **5. CD audio playback path has issues.** `GetWordFromButchSSI()` and `SetSSIWordsXmittedFromButch()` call the stubbed `CDIntfReadBlock()`. Byte-swapping and interleaving logic has known issues (comments about MYST CD word offset at line 707). The `cdBuf` handling uses a self-described "crappy kludge" reading two sectors and splicing them.
 
-**6. Settings not wired for CD.** `settings.h` has `CDBootPath[MAX_PATH]` but it is never populated. No core option for CD BIOS type or CD unit emulation.
+**6. Settings not wired for CD.** The old standalone-emulator path settings have been removed from `settings.h`. No core option currently selects a CD BIOS type or enables CD unit emulation.
 
 ### 4.4 Upstream Virtual Jaguar Status
 
@@ -411,7 +411,7 @@ All existing cartridge games must continue to work. The CD subsystem is already 
 
 ### 8.6 Test Data
 
-BIN/CUE from Redump set (28 verified dumps). Embedded CD BIOS for independent testing. MYST sector dump in `src/cdrom.c` comments as known-good reference data.
+BIN/CUE from Redump set (28 verified dumps). Embedded CD BIOS for independent testing. MYST sector dump in `src/cd/cdrom.c` comments as known-good reference data.
 
 ---
 
@@ -442,7 +442,7 @@ Phase 1 only: disc image loading and CDIntf implementation, with no behavioral c
 
 1. **The codebase is much further along than expected.** Roughly 60-70% of the CD subsystem infrastructure exists -- memory mapping, Butch registers, command protocol, JERRY integration, embedded BIOS ROMs, EEPROM handling. The core gap is the disc image reading layer.
 
-2. **The critical blocker is `src/cdintf.c`** -- every function is stubbed to return failure. Implementing real disc image reading here unlocks everything else.
+2. **The critical blocker is `src/cd/cdintf.c`** -- every function is stubbed to return failure. Implementing real disc image reading here unlocks everything else.
 
 3. **BigPEmu proves full compatibility is achievable.** The entire 13-title commercial library works in BigPEmu with a low-level approach. The closed-source MiSTer FPGA core is the best available open reference.
 
@@ -452,8 +452,8 @@ Phase 1 only: disc image loading and CDIntf implementation, with no behavioral c
 
 ### Key Codebase Files for Implementation
 
-- `src/cdintf.c` -- Primary implementation target (currently stubbed)
-- `src/cdrom.c` -- Butch emulation (needs BUTCHExec enabled, FIFO timing)
+- `src/cd/cdintf.c` -- Primary implementation target (currently stubbed)
+- `src/cd/cdrom.c` -- Butch emulation (needs BUTCHExec enabled, FIFO timing)
 - `libretro.c` -- Content detection, BIOS loading, disc control interface
-- `src/jaguar.c` -- BIOS loading path in JaguarReset()
-- `src/settings.h` -- CD-related settings
+- `src/core/jaguar.c` -- BIOS loading path in JaguarReset()
+- `src/core/settings.h` -- CD-related settings

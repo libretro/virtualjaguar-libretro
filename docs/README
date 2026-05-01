@@ -67,9 +67,9 @@ higher address than a Jaguar cartridge.
 
 The fourth type, the .bin file, is simply a Jaguar executable with no header.
 Since these files contain no information about where they load and execute,
-Virtual Jaguar does not support this file type. Go bug the author to release
-either a file with proper headers or a file in Alpine ROM format. Virtual
-Jaguar is not omniscient (yet)! ;)
+Virtual Jaguar can only support raw binaries that match known homebrew startup
+patterns with inferable load addresses. Other headerless binaries should be
+released with proper headers or in Alpine ROM format.
 
 There is a fifth type of file that is supported by Virtual Jaguar, the .j64
 file, which is simply a 1, 2, or 4 Meg dump of a Jaguar cartridge ROM which

@@ -14962,9 +14962,30 @@ unsigned long CPUFUNC(op_6101_4)(uint32_t opcode) /* BSR */
 unsigned long CPUFUNC(op_61ff_4)(uint32_t opcode) /* BSR */
 {
 	OpcodeFamily = 54; CurrentInstrCycles = 18; 
-{{	int32_t src = get_ilong(2);
-	int32_t s = (int32_t)src + 2;
-	m68k_do_bsr(m68k_getpc() + 6, s);
+{{	/* Atari Jaguar quirk: the Removers/aln linker (the de-facto
+	 * homebrew toolchain) emits BSR with an 8-bit displacement of $FF
+	 * — which on a real 68020+ would be the "long-form" escape into a
+	 * 32-bit *PC-relative* displacement — but the absolute TARGET
+	 * ADDRESS is what actually gets written into the 32-bit operand
+	 * slot, not a displacement.  Real 68000 hardware does not have
+	 * BSR.L at all, so any $61FF we encounter in a Jaguar binary
+	 * uses this convention.
+	 *
+	 * Reference: Removers `aln` linker source (the "JAG_HACK" branch
+	 * in their BSR emission path) and the matching note in the Jaguar
+	 * 68000 assembler manual ("aln/mac/rmac"); a quick way to verify
+	 * is to disassemble any Removers-built .cof and look at what
+	 * follows the $61FF opcode — it's an absolute target, not a
+	 * +/-2 GB PC-relative displacement.
+	 *
+	 * Without this special case the binaries hard-hang in libgcc
+	 * helpers (Hover Strike, Skyhammer, Iron Soldier 2, IS2 char
+	 * select, etc.) because the BSR resolves to a wildly wrong PC.
+	 *
+	 * Match in op_61ff_xx variants below; keep this comment as the
+	 * canonical explanation. */
+	uint32_t target = (uint32_t)get_ilong(2);
+	m68k_do_jsr(m68k_getpc() + 6, target);
 }}return 18;
 }
 unsigned long CPUFUNC(op_6200_4)(uint32_t opcode) /* Bcc */
@@ -46548,14 +46569,15 @@ return 18;
 unsigned long CPUFUNC(op_61ff_5)(uint32_t opcode) /* BSR */
 {
 	OpcodeFamily = 54; CurrentInstrCycles = 18; 
-{{	int32_t src = get_ilong_prefetch(2);
-	int32_t s = (int32_t)src + 2;
-	if (src & 1) {
+{{	/* See op_61ff_4: aln writes the absolute target address into the
+	 * 32-bit displacement slot of BSR.L. Treat operand as absolute. */
+	uint32_t target = (uint32_t)get_ilong_prefetch(2);
+	if (target & 1) {
 		last_addr_for_exception_3 = m68k_getpc() + 2;
-		last_fault_for_exception_3 = m68k_getpc() + s;
+		last_fault_for_exception_3 = target;
 		last_op_for_exception_3 = opcode; Exception(3,0,M68000_EXC_SRC_CPU); goto endlabel2596;
 	}
-	m68k_do_bsr(m68k_getpc() + 6, s);
+	m68k_do_jsr(m68k_getpc() + 6, target);
 fill_prefetch_0 ();
 }}endlabel2596: ;
 return 18;

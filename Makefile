@@ -47,6 +47,26 @@ GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
 ifneq ($(GIT_VERSION)," unknown")
 	CFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 endif
+ifeq ($(DEBUG),1)
+BUILD_TIMESTAMP := " debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
+	CFLAGS += -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
+endif
+
+# GNU-ld --version-script choice.
+#  link.T       : production ABI (retro_* only).
+#  link-test.T  : wide symbol set used by white-box test harnesses.
+# The `test` target re-invokes make with TEST_EXPORTS=1 so the
+# shipped .so on `make` (default) hides internal symbols, while
+# `make test` produces a .so the test binaries can dlsym into.
+# Only effective on platforms that link with GNU ld --version-script
+# (Linux, Windows MSYS2, ARM, etc.); macOS / iOS / tvOS dylibs and
+# static archives ignore this and currently still export everything
+# with default visibility.
+ifeq ($(TEST_EXPORTS),1)
+LINK_SCRIPT := link-test.T
+else
+LINK_SCRIPT := link.T
+endif
 
 # Unix
 ifeq ($(platform), unix)
@@ -55,7 +75,7 @@ ifeq ($(platform), unix)
 	ifneq ($(findstring SunOS,$(shell uname -a)),)
 		SHARED := -shared -z defs -z gnu-version-script-compat
 	else
-		SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+		SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	endif
 
 # Classic Platforms ####################
@@ -67,7 +87,7 @@ ifeq ($(platform), unix)
 else ifeq ($(platform), classic_armv7_a7)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	CFLAGS += -Ofast \
 	-flto=4 -fwhole-program -fuse-linker-plugin \
 	-fdata-sections -ffunction-sections -Wl,--gc-sections \
@@ -169,7 +189,7 @@ else ifeq ($(platform), theos_ios)
 else ifeq ($(platform), qnx)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).so
 	fpic := -fPIC
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	CC = qcc -Vgcc_ntoarmv7le
 	CXX = QCC -Vgcc_ntoarmv7le_cpp
 
@@ -177,7 +197,7 @@ else ifeq ($(platform), qnx)
 else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	ARCH = arm
 
 # Nintendo Switch (libnx)
@@ -513,7 +533,7 @@ else
 	TARGET := $(TARGET_NAME)_libretro.dll
 	CC ?= gcc
 	CXX ?= g++
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	LDFLAGS += -static-libgcc -static-libstdc++ -lwinmm
 
 endif
@@ -545,8 +565,20 @@ else
    endif
 endif
 
+# Release builds with split debug symbols.
+# Set RELEASE_DEBUG_INFO=1 (release.yml does this) to keep -g in the
+# optimized build so we can later run objcopy --only-keep-debug /
+# dsymutil to ship a separate debug-info archive next to the stripped
+# binary in the GitHub release.  Has no effect when DEBUG=1 (-g is
+# already on) or under MSVC (which uses /Zi and a .pdb instead).
+ifeq ($(RELEASE_DEBUG_INFO),1)
+   ifeq (,$(findstring msvc,$(platform)))
+      FLAGS += -g
+   endif
+endif
+
 ifeq (,$(findstring msvc,$(platform)))
-FLAGS += -ffast-math -fomit-frame-pointer
+FLAGS += -ffast-math -fomit-frame-pointer -fno-common
 endif
 
 LDFLAGS += $(fpic) $(SHARED)
@@ -563,6 +595,7 @@ else
 WARNINGS := -Wall \
 	-Wno-sign-compare \
 	-Wno-unused-variable \
+	-Wno-unused-but-set-variable \
 	-Wno-unused-function \
 	-Wno-uninitialized \
 	-Wno-strict-aliasing \
@@ -580,6 +613,15 @@ endif
 
 CXXFLAGS += $(FLAGS)
 CFLAGS   += $(FLAGS)
+
+# Optional: build with framebuffer/audio presentation diagnostics.
+# Enables periodic LOG_INF dumps from libretro.c retro_run() showing
+# tomWidth/tomHeight, screenPitch, sample pixels, ltxd/rtxd, DSPIsRunning.
+# Use: make DEBUG_PRESENTATION=1
+ifeq ($(DEBUG_PRESENTATION), 1)
+CXXFLAGS += -DDEBUG_PRESENTATION
+CFLAGS   += -DDEBUG_PRESENTATION
+endif
 
 OBJOUT   = -o
 LINKOUT  = -o 
@@ -614,7 +656,13 @@ else
 endif
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) test/test_cheat
+	rm -f $(TARGET) $(OBJECTS) \
+		test/test_cheat test/test_event_queue test/test_blitter_simd \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_gpu_ops \
+		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
+		test/test_subsystem_init test/test_subsystem_timeline \
+		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
+		test/test_audio_clipping test/tools/test_memory_map
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -623,17 +671,128 @@ ifneq (,$(findstring msvc,$(platform)))
 test:
 	@echo "make test requires GCC/Clang flags; use MSYS2/Unix or compile test/test_cheat.c manually."
 	@false
+else ifneq ($(TEST_EXPORTS),1)
+# When `make test` is invoked without TEST_EXPORTS=1, the shipped .so
+# was linked with link.T (production-slim, retro_* only) and the
+# white-box test binaries can't dlsym into JaguarReset / DSPGetRAM /
+# etc.  Force a re-link with link-test.T by removing the .so and
+# re-invoking make with TEST_EXPORTS=1 so the wider symbol set is
+# exported just for this build.  After `make test` finishes, the .so
+# in the working tree has the wider exports — re-run `make` (no flag)
+# to restore the production-slim ABI.
+test:
+	@rm -f $(TARGET)
+	@$(MAKE) TEST_EXPORTS=1 test
 else
-test: test/test_cheat
+test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
+		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
+		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
+		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
+		test/test_audio_pipeline test/test_audio_clipping test/tools/test_memory_map
 	./test/test_cheat
+	./test/test_event_queue
+	./test/test_blitter_simd
+	./test/test_dsp_mac40
+	./test/test_m68k_ops
+	./test/test_gpu_ops
+	./test/test_dsp_ops
+	./test/test_dsp_unit
+	./test/test_hle_bios
+	./test/test_subsystem_init ./$(TARGET)
+	./test/test_subsystem_timeline ./$(TARGET)
+	./test/test_irq_cascade ./$(TARGET)
+	./test/test_boot_patterns
+	./test/test_audio_pipeline ./$(TARGET)
+	./test/test_audio_clipping ./$(TARGET) --self-test
+	@# Negative control: healthy boot should not trip the clipping detector.
+	@if [ -f "test/roms/private/Atari Karts (1995).jag" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Atari Karts (1995).jag" --label "Atari Karts (negative control)" --quiet; \
+	else \
+		echo "  SKIP: Atari Karts ROM (private) not available"; \
+	fi
+	@# Known-broken titles: --expect-clipping makes the test pass while the
+	@# bug is still there, but flips red the day a DSP-side fix lands and
+	@# clipping disappears — forces this manifest to be updated.
+	@if [ -f "test/roms/private/Skyhammer_(1999).jag" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --expect-clipping --quiet; \
+	else \
+		echo "  SKIP: Skyhammer ROM (private) not available"; \
+	fi
+	@if [ -f "test/roms/private/Iron Soldier 2 (World).j64" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --expect-clipping --quiet; \
+	else \
+		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
+	fi
+	./test/tools/test_memory_map ./$(TARGET)
 
-test/test_cheat: test/test_cheat.c src/cheat.c src/cheat.h
-	$(CC) -O2 -Wall -std=c99 -I src -I libretro-common/include \
-		-o $@ test/test_cheat.c src/cheat.c
+test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cheat.c src/core/cheat.c
+
+test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_event_queue.c src/core/event.c
+
+test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
+	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
+
+test/test_dsp_mac40: test/test_dsp_mac40.c src/jerry/dsp_acc40.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_dsp_mac40.c
+
+test/test_m68k_ops: test/test_m68k_ops.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_m68k_ops.c -ldl
+
+test/test_gpu_ops: test/test_gpu_ops.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_gpu_ops.c -ldl
+
+test/test_dsp_ops: test/test_dsp_ops.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_dsp_ops.c -ldl
+
+test/test_hle_bios: test/test_hle_bios.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_hle_bios.c -ldl
+
+test/test_dsp_unit: test/test_dsp_unit.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_dsp_unit.c -ldl
+
+test/test_subsystem_init: test/test_subsystem_init.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_subsystem_init.c -ldl
+
+test/test_subsystem_timeline: test/test_subsystem_timeline.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_subsystem_timeline.c -ldl
+
+test/test_irq_cascade: test/test_irq_cascade.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_irq_cascade.c -ldl
+
+test/test_boot_patterns: test/test_boot_patterns.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_boot_patterns.c -ldl
+
+test/test_audio_pipeline: test/test_audio_pipeline.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_pipeline.c -ldl -lm
+
+test/test_audio_clipping: test/test_audio_clipping.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_clipping.c -ldl -lm
+
+test/tools/test_memory_map: test/tools/test_memory_map.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_memory_map.c -ldl
 endif
 
-.PHONY: clean test
+.PHONY: clean test lint
 endif
+
+lint:
+	@scripts/c89-lint.sh
 
 print-%:
 	@echo '$*=$($*)'
