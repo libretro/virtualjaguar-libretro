@@ -1,0 +1,65 @@
+name: clang-format check
+
+# Advisory check: runs clang-format on CHANGED LINES ONLY in the PR
+# diff, so the existing mixed-indent codebase isn't penalised.  Posts
+# a job-summary diff if the new code deviates from `.clang-format`.
+#
+# Currently advisory (continue-on-error: true) so it doesn't block
+# merges while contributors get used to the convention.  Flip to
+# gating once the team is ready.
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths: ['**/*.c', '**/*.h']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    name: clang-format on changed lines
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Run clang-format-diff on changed hunks
+        run: |
+          git fetch origin "${{ github.base_ref }}":__base
+          # -U0: zero context lines so clang-format-diff only sees
+          # added/changed lines.  Pathspec excludes the
+          # vendored/generated trees.
+          DIFF=$(git diff -U0 __base...HEAD -- \
+            ':(exclude)libretro-common/**' \
+            ':(exclude)src/m68000/**' \
+            ':(exclude)src/bios/jag*.c' \
+            ':(exclude)src/core/version.h')
+
+          # clang-format-diff ships in the Ubuntu clang-format package
+          # but isn't always on PATH; locate it.
+          CFD=$(command -v clang-format-diff || command -v clang-format-diff-18 || command -v clang-format-diff-17 || command -v clang-format-diff-16 || true)
+          if [ -z "$CFD" ]; then
+            echo "::error::clang-format-diff not found"
+            exit 1
+          fi
+
+          OUT=$(echo "$DIFF" | "$CFD" -p1 -style=file)
+          if [ -n "$OUT" ]; then
+            echo "::warning::clang-format suggests changes on new lines:"
+            echo "## clang-format suggestions" >> "$GITHUB_STEP_SUMMARY"
+            echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+            echo "$OUT" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$OUT"
+            exit 1
+          fi
+          echo "OK: no clang-format issues on changed lines"

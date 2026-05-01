@@ -1,0 +1,56 @@
+# clang-format config for virtualjaguar-libretro.
+#
+# This config is deliberately TOLERANT.  The codebase has mixed indent
+# style by file (src/tom/*.c, src/jerry/*.c use tabs; libretro.c,
+# src/core/cheat.c use 4-space) inherited from upstream Virtual Jaguar.
+# Mass reformat is out of scope -- so this config preserves both styles
+# and only enforces things that ARE consistent (brace placement,
+# spacing, no trailing whitespace).
+#
+# The CI check (`clang-format-check.yml`) runs clang-format-diff on
+# CHANGED LINES ONLY so existing files aren't penalised.
+
+BasedOnStyle: LLVM
+Language: Cpp
+
+# Indent: tolerate both tab and space; don't fight existing files.
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+
+# Braces / control flow: K&R / LLVM-ish, attach.
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+
+# Spacing: standard C.
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpaceBeforeAssignmentOperators: true
+SpacesInCStyleCastParentheses: false
+
+# Line length: 0 = advisory only (clang-format won't reflow).  We
+# leave wrapping decisions to the author.
+ColumnLimit: 0
+
+# Empty lines.
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+
+# Headers: libretro / UAE include order is hand-tuned, don't sort.
+SortIncludes: false
+IncludeBlocks: Preserve
+
+# Pointer alignment: codebase mixes `T* p` and `T *p`; pick the
+# more common one (T *p, K&R-style) but don't aggressively rewrite.
+PointerAlignment: Right
+
+# Don't rewrite preprocessor indentation -- breaks ifdef-guarded
+# blocks of code in subtle ways.
+IndentPPDirectives: None
