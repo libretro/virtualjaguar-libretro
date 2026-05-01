@@ -125,7 +125,7 @@
    ;
    eeprom	equ	$DFFF2c			;interface to CD-eeprom
    ;
-   ;  bit3 - busy if 0 after write cmd, or Data In after read cmd 
+   ;  bit3 - busy if 0 after write cmd, or Data In after read cmd
    ;  bit2 - Data Out
    ;  bit1 - clock
    ;  bit0 - Chip Select (CS)

@@ -1,0 +1,16 @@
+{
+  "Exclude": [
+    "test/roms/.*",
+    "test/baselines/.*",
+    "test/tools/build/.*",
+    "build/.*",
+    "src/m68000/.*",
+    "src/bios/jag.*\\.c$",
+    "libretro-common/.*",
+    "docs/atari-jaguar-1999/.*",
+    ".*\\.(png|jpg|jpeg|gif|bmp|ico|pdf|j64|jag|rom|cof|abs|bin|chd|cue|iso|cdi|so|dll|dylib|a|o|bc|exe|dat|gz|tar|zip|tgz|7z)$"
+  ],
+  "Disable": {
+    "MaxLineLength": true
+  }
+}

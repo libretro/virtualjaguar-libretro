@@ -535,7 +535,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
    uint32_t lbufAddress;
    uint8_t * currentLineBuffer;
    int32_t startPos,endPos;
-   // This is correct, the OP line buffer is a constant size... 
+   // This is correct, the OP line buffer is a constant size...
    int32_t limit = 720;
    int32_t lbufWidth = 719;
    uint32_t clippedWidth = 0, phraseClippedWidth = 0, dataClippedWidth = 0;//, phrasePixel = 0;

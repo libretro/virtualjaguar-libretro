@@ -335,6 +335,22 @@ jobs:
         path: virtualjaguar_libretro_libnx.a
         if-no-files-found: error
 
+  editorconfig-lint:
+    name: EditorConfig compliance check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install editorconfig-checker
+      run: |
+        VERSION=v3.0.3
+        curl -fsSL "https://github.com/editorconfig-checker/editorconfig-checker/releases/download/${VERSION}/ec-linux-amd64.tar.gz" \
+          | tar -xz -C /tmp
+        sudo install -m 0755 /tmp/bin/ec-linux-amd64 /usr/local/bin/ec
+
+    - name: Run editorconfig-checker
+      run: ec -verbose
+
   c89-lint:
     name: C89 compliance check
     runs-on: ubuntu-latest
