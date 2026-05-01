@@ -54,12 +54,20 @@ jobs:
 
           OUT=$(echo "$DIFF" | "$CFD" -p1 -style=file)
           if [ -n "$OUT" ]; then
-            echo "::warning::clang-format suggests changes on new lines:"
-            echo "## clang-format suggestions" >> "$GITHUB_STEP_SUMMARY"
-            echo '```diff' >> "$GITHUB_STEP_SUMMARY"
-            echo "$OUT" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::clang-format has style suggestions; see job summary."
+            {
+              echo "## clang-format suggestions"
+              echo
+              echo "These are advisory -- the codebase has mixed style per-file and"
+              echo "we do NOT auto-enforce.  Apply if they make sense for your hunk."
+              echo
+              echo '```diff'
+              echo "$OUT"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             echo "$OUT"
-            exit 1
+          else
+            echo "OK: no clang-format suggestions on changed lines"
           fi
-          echo "OK: no clang-format issues on changed lines"
+          # Always exit 0 -- this check is informational only.
+          exit 0

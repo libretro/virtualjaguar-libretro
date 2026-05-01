@@ -1,56 +1,34 @@
 # clang-format config for virtualjaguar-libretro.
 #
-# This config is deliberately TOLERANT.  The codebase has mixed indent
-# style by file (src/tom/*.c, src/jerry/*.c use tabs; libretro.c,
-# src/core/cheat.c use 4-space) inherited from upstream Virtual Jaguar.
-# Mass reformat is out of scope -- so this config preserves both styles
-# and only enforces things that ARE consistent (brace placement,
-# spacing, no trailing whitespace).
+# DELIBERATELY MINIMAL.  The upstream codebase has mixed brace style
+# AND mixed indent (tabs in src/tom/*, spaces in libretro.c, Allman
+# braces in src/jerry/jerry.h, K&R elsewhere) per-file.  No single
+# style works.  This config only enforces things that are universally
+# consistent across the tree: don't sort includes, don't reflow long
+# lines, don't touch preprocessor indent.  Brace placement, spacing,
+# and indent style are NOT enforced.
 #
-# The CI check (`clang-format-check.yml`) runs clang-format-diff on
-# CHANGED LINES ONLY so existing files aren't penalised.
+# The CI check (`clang-format.yml`) runs clang-format-diff on changed
+# lines and posts suggestions to the job summary -- it does NOT fail
+# the build.  Use it as a "consider this" prompt, not a gate.
 
 BasedOnStyle: LLVM
 Language: Cpp
 
-# Indent: tolerate both tab and space; don't fight existing files.
-UseTab: ForIndentation
-TabWidth: 4
-IndentWidth: 4
-ContinuationIndentWidth: 4
-
-# Braces / control flow: K&R / LLVM-ish, attach.
-BreakBeforeBraces: Attach
-AllowShortFunctionsOnASingleLine: None
-AllowShortIfStatementsOnASingleLine: false
-AllowShortLoopsOnASingleLine: false
-AllowShortBlocksOnASingleLine: Empty
-AllowShortCaseLabelsOnASingleLine: false
-
-# Spacing: standard C.
-SpaceAfterCStyleCast: false
-SpaceBeforeParens: ControlStatements
-SpacesInParentheses: false
-SpacesInSquareBrackets: false
-SpaceBeforeAssignmentOperators: true
-SpacesInCStyleCastParentheses: false
-
-# Line length: 0 = advisory only (clang-format won't reflow).  We
-# leave wrapping decisions to the author.
+# Don't reflow long lines -- author makes wrapping decisions.
 ColumnLimit: 0
 
-# Empty lines.
-KeepEmptyLinesAtTheStartOfBlocks: false
-MaxEmptyLinesToKeep: 1
-
-# Headers: libretro / UAE include order is hand-tuned, don't sort.
+# libretro / UAE include order is hand-tuned; don't reorder.
 SortIncludes: false
 IncludeBlocks: Preserve
 
-# Pointer alignment: codebase mixes `T* p` and `T *p`; pick the
-# more common one (T *p, K&R-style) but don't aggressively rewrite.
-PointerAlignment: Right
-
-# Don't rewrite preprocessor indentation -- breaks ifdef-guarded
-# blocks of code in subtle ways.
+# Don't touch preprocessor indent -- breaks ifdef-guarded code.
 IndentPPDirectives: None
+
+# Tolerate both tab and space indent without rewriting.
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+
+# Don't reformat comments (preserves the upstream's ASCII art).
+ReflowComments: false
