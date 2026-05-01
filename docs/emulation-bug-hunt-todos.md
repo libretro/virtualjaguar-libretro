@@ -430,12 +430,20 @@ shipping v2.2.0; capture them so they don't get lost.
   by responsibility (decode / dispatch / IRQ / scoreboard / state) so
   it's easier for humans + LLMs + static-analysis tools to reason
   about.
-- `link.T` exports a wide internal symbol surface (`DSP*`, `dsp_*`,
-  `m68k_*`, `OP*`, `pcQueue`, `tomRam8`, `regs`, `sclk`, `smode`,
-  `lowerField`, `vjs`).  These are needed by the white-box test
-  harnesses but expand the shared-library ABI.  v2.3 should split
-  into `link.T` (production: `retro_*` only) and `link-test.T`
-  (the current symbol set), gated by a `Makefile` test-build flag.
+- `link.T` export gating — **done in v2.2.0**.
+  Production `link.T` now exports `retro_*` only;
+  `link-test.T` carries the wider symbol surface for the
+  white-box test harnesses (DSP*, dsp_*, m68k_*, GPU*, gpu_*,
+  JERRY*, TOM*, OP*, Jaguar*, jaguarMainRAM, jagMemSpace,
+  regs, sclk, smode, lowerField, vjs, ...).  Makefile picks
+  link-test.T when `TEST_EXPORTS=1`, which the `test` target
+  sets automatically.
+  Remaining for v2.3.0: macOS / iOS / tvOS dylibs ignore
+  `--version-script` and currently still export everything
+  with default visibility.  Slim with
+  `-Wl,-exported_symbols_list,exports.list` + a per-platform
+  exports list, gated the same way (test builds get the wide
+  list).
 - `GIT_VERSION` / `CORE_VERSION` are spread between Makefile and
   libretro.c.  Move to a generated `version.h` so both sites read
   the same source of truth.
