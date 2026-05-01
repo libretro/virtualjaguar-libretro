@@ -338,7 +338,7 @@ uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 	if (offset >= 0xF02000 && offset <= 0xF020FF)
 	{
 		uint32_t reg = (offset & 0xFC) >> 2;
-		return (reg < 32 ? gpu_reg_bank_0[reg] : gpu_reg_bank_1[reg - 32]); 
+		return (reg < 32 ? gpu_reg_bank_0[reg] : gpu_reg_bank_1[reg - 32]);
 	}
 
 	if ((offset >= GPU_WORK_RAM_BASE) && (offset <= GPU_WORK_RAM_BASE + 0x0FFC))

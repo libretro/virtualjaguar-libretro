@@ -1,0 +1,11 @@
+# UBSAN ignorelist (clang -fsanitize-ignorelist=).
+#
+# src/m68000/ is the UAE 68000 emulator (machine-generated, ~1.8 MB
+# cpuemu.c).  It uses negative shifts and other UB idioms intentionally
+# (the generator emits them; fixing requires patching the generator
+# upstream).  We treat the directory as opaque, so UBSAN findings inside
+# it are noise that hides real issues in our own code.
+#
+# Add other entries here ONLY with a one-line comment justifying why.
+
+src:src/m68000/*

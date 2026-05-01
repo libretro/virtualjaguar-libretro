@@ -1,0 +1,56 @@
+# EditorConfig: https://editorconfig.org
+#
+# Project-wide consistency for line endings / charset / final newline.
+# Indentation style is intentionally NOT enforced for C sources here:
+# the upstream Virtual Jaguar tree mixes tabs (src/tom, src/jerry) with
+# 4-space (libretro.c, src/core/cheat.c) and a sweeping reformat is out
+# of scope.  Makefiles (tabs required) and YAML (2-space) are pinned.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Makefiles: recipe lines must be tabs (make will fail loudly if not),
+# but ifeq/else if blocks in this tree mix tab/space indentation for
+# readability; we don't enforce a single style here.
+
+# GitHub Actions / generic YAML.
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Shell scripts: only enforce no-tabs; the existing tree uses 3-space
+# in some files and 2-space in others, both fine.
+[*.sh]
+indent_style = space
+
+# Markdown: trailing two spaces are a hard line-break — don't strip.
+[*.md]
+trim_trailing_whitespace = false
+
+# Machine-generated UAE 68K core: do not touch.
+[src/m68000/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+# Embedded BIOS / boot stubs are bin2c-generated hex arrays;
+# every line ends in trailing whitespace by design.
+[src/bios/jag*.c]
+trim_trailing_whitespace = unset
+
+# libretro-common is a vendored subtree.
+[libretro-common/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

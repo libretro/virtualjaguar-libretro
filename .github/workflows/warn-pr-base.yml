@@ -1,0 +1,65 @@
+name: Warn on PR base
+
+# Posts a friendly comment on PRs that target master directly, asking
+# the contributor to retarget to develop (the integration branch under
+# our GitFlow setup).
+#
+# Skips PRs from `release/*` and `hotfix/*` branches, since those are
+# legitimately master-bound (the GitFlow exit ramps).
+#
+# Uses pull_request_target so we get write perms on PRs from forks
+# (the action only reads repository metadata, never executes PR code,
+# so this is safe).
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited]
+    branches: [master]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  warn:
+    runs-on: ubuntu-latest
+    if: |
+      !startsWith(github.event.pull_request.head.ref, 'release/') &&
+      !startsWith(github.event.pull_request.head.ref, 'hotfix/')
+    steps:
+    - name: Comment on PR
+      uses: actions/github-script@v8
+      with:
+        script: |
+          const marker = '<!-- warn-pr-base -->';
+          const body = [
+            marker,
+            '## Heads up: this PR targets `master`',
+            '',
+            'We use a [GitFlow](https://nvie.com/posts/a-successful-git-branching-model/)-style integration branch.  Could you retarget this PR to **`develop`**?  You can do that here without re-opening:',
+            '',
+            '```bash',
+            `gh pr edit ${context.payload.pull_request.number} --base develop`,
+            '```',
+            '',
+            'Or click *Edit* next to the title in the GitHub UI and change the base.',
+            '',
+            '`master` is reserved for release / hotfix branches (`release/*`, `hotfix/*`); everything else flows through `develop` first.  Thanks!',
+          ].join('\n');
+
+          // Avoid spamming on edits: only post once per PR.
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.payload.pull_request.number,
+          });
+          if (comments.some(c => (c.body || '').includes(marker))) {
+            core.info('warn-pr-base comment already present; skipping.');
+            return;
+          }
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.payload.pull_request.number,
+            body,
+          });

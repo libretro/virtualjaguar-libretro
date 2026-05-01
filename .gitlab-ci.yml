@@ -52,7 +52,7 @@ include:
   # MacOS ARM 64-bit
   - project: 'libretro-infrastructure/ci-templates'
     file: '/osx-arm64.yml'
-    
+
   ################################## CELLULAR ################################
   # Android
   - project: 'libretro-infrastructure/ci-templates'
@@ -70,7 +70,7 @@ include:
   # PlayStation Vita
   - project: 'libretro-infrastructure/ci-templates'
     file: '/vita-static.yml'
-    
+
   # Nintendo Switch
   - project: 'libretro-infrastructure/ci-templates'
     file: '/libnx-static.yml'
@@ -104,7 +104,7 @@ libretro-build-windows-x64:
   extends:
     - .libretro-windows-x64-mingw-make-default
     - .core-defs
-    
+
 # Windows 32-bit
 libretro-build-windows-i686:
   extends:
@@ -158,7 +158,7 @@ libretro-build-osx-arm64:
   extends:
     - .libretro-osx-arm64-make-default
     - .core-defs
-    
+
 ################################### CELLULAR #################################
 # Android ARMv7a
 android-armeabi-v7a:
@@ -195,7 +195,7 @@ libretro-build-ios9:
   extends:
     - .libretro-ios9-make-default
     - .core-defs
-    
+
 # tvOS
 libretro-build-tvos-arm64:
   extends:
@@ -208,7 +208,7 @@ libretro-build-vita:
   extends:
     - .libretro-vita-static-retroarch-master
     - .core-defs
-    
+
 # Nintendo Switch
 libretro-build-libnx-aarch64:
   extends:

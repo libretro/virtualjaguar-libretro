@@ -1662,7 +1662,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                else
                   inner_mask    = 0;
 
-               /* The actual mask used should be the 
+               /* The actual mask used should be the
                   lesser of the window masks and
                   the inner mask, where is all cases 000 means 1000. */
                window_mask = (window_mask == 0 ? 0x40 : window_mask);

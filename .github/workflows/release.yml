@@ -46,11 +46,17 @@ jobs:
             cc: clang
             cxx: clang++
 
+          # Cross-compiled from the macos-latest (arm64) runner via
+          # `clang -arch x86_64`.  Avoids the increasingly scarce
+          # macos-13 (Intel) runner pool that left v2.2.0's release
+          # job queued for an hour.  BLITTER_SIMD=sse2 is required
+          # because the Makefile's auto-detect uses host arch.
           - platform: macos-x86_64
             artifact: virtualjaguar_libretro.dylib
-            os: macos-13
-            cc: clang
-            cxx: clang++
+            os: macos-latest
+            cc: clang -arch x86_64
+            cxx: clang++ -arch x86_64
+            make_extra: 'BLITTER_SIMD=sse2'
 
           # Windows
           - platform: windows-x86_64
@@ -121,7 +127,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install multilib
       if: matrix.config.multilib
@@ -140,7 +146,7 @@ jobs:
 
     - name: Set up Emscripten
       if: matrix.config.emscripten
-      uses: mymindstorm/setup-emsdk@v14
+      uses: mymindstorm/setup-emsdk@v16
 
     - name: Set up Android NDK
       if: matrix.config.android
@@ -153,7 +159,7 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
       env:
         RELEASE_DEBUG_INFO: '1'
-      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}"
+      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
     - name: Build (platform)
       if: matrix.config.make_platform
@@ -172,6 +178,9 @@ jobs:
       env:
         RELEASE_DEBUG_INFO: '1'
       run: |
+        # ndk-build uses jni/Android.mk (not the project Makefile),
+        # so the parse-time version.h regen in Makefile doesn't run.
+        bash scripts/gen-version-h.sh
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
@@ -264,7 +273,7 @@ jobs:
         rm "dist/${DBG}"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: virtualjaguar_libretro-${{ matrix.config.platform }}
         path: dist/
@@ -279,7 +288,7 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       env:
@@ -301,7 +310,7 @@ jobs:
         rm "dist/${OUT}.debug"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: virtualjaguar_libretro-vita
         path: dist/
@@ -316,7 +325,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       env:
@@ -337,7 +346,7 @@ jobs:
         rm "dist/${OUT}.debug"
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: virtualjaguar_libretro-switch
         path: dist/
@@ -352,10 +361,10 @@ jobs:
     needs: [build, vita-build, switch-build]
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         path: artifacts/
 

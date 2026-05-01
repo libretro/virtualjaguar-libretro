@@ -1,0 +1,61 @@
+# clang-tidy config for virtualjaguar-libretro.
+#
+# Curated check list aimed at catching real bugs in emulator C code
+# without flooding the diff with style-preference noise.  See the
+# CI workflow `clang-tidy` job for how this is invoked (only on
+# PR-changed files).
+#
+# Disabled checks rationale below each `-` entry.
+
+Checks: >
+  bugprone-*,
+  clang-analyzer-*,
+  readability-inconsistent-declaration-parameter-name,
+  readability-misleading-indentation,
+  readability-redundant-control-flow,
+  misc-redundant-expression,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-reserved-identifier,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-macro-parentheses,
+  -bugprone-signed-char-misuse,
+  -bugprone-suspicious-include,
+  -bugprone-switch-missing-default-case,
+  -bugprone-branch-clone,
+  -clang-analyzer-deadcode.DeadStores,
+  -clang-analyzer-optin.portability.UnixAPI,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-valist.Uninitialized
+
+# Don't promote to errors yet -- the workflow itself decides via
+# --warnings-as-errors / continue-on-error.
+WarningsAsErrors: ''
+
+# Apply checks to in-tree headers but skip vendored / generated.
+HeaderFilterRegex: '^(src/(core|tom|jerry|cd)|libretro\.c).*'
+
+# Don't run clang-format inline (we have a separate clang-format job).
+FormatStyle: none
+
+# Disabled-check rationale:
+# - easily-swappable-parameters: emulator hot paths take many same-typed args.
+# - narrowing-conversions / implicit-widening: register byte ops trip these constantly.
+# - reserved-identifier: __LIBRETRO__ and UAE __regs/__pads use reserved names by design.
+# - assignment-in-if-condition: idiomatic in dispatch loops.
+# - macro-parentheses: misfires on GET16/SET32 byte-swap macros.
+# - signed-char-misuse: ROM byte buffers commonly use signed char.
+# - suspicious-include: project includes .c files in a couple of dispatch headers.
+# - switch-missing-default-case: cosmetic; switches on bit-field decode patterns
+#   commonly omit default because all valid bit values are handled.
+# - branch-clone: register-decode if-chains in src/cd/cdrom.c and src/tom/tom.c
+#   intentionally write the same value for several adjacent register addresses
+#   to make the address->effect mapping legible.  Real bug clones are caught
+#   by code review, not this check.
+# - deadcode.DeadStores: blitter / OP / register-decode functions self-doc-init
+#   locals that are read via macros (BCOMPEN, DSTA2, ...) clang-tidy can't see
+#   the linkage for.  Removing these inits would introduce real bugs.
+# - DeprecatedOrUnsafeBufferHandling: MSVC-flavored noise about strcpy/sprintf.
+# - optin.portability.UnixAPI: false positive on libretro_core_options.h calloc.
+# - valist.Uninitialized: false-positive prone on our log macros.

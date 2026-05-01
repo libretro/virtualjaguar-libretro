@@ -307,7 +307,7 @@ uint8_t greencv[16][16] = {
 	{  0,  19, 38, 57,77, 96, 115,134,154,173,192,211,231,250,255,255},   // E
 	{  0,  17, 34, 51,68, 85, 102,119,136,153,170,187,204,221,238,255}    // F
 };
-   
+
 // Blue Color Values for CrY<->RGB Color Conversion
 uint8_t bluecv[16][16] = {
    //  0   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
@@ -455,7 +455,7 @@ void TOMFillLookupTables(void)
 {
    // NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
    //       RRRR RBBB BBGG GGGG
-  
+
    unsigned i;
    for(i=0; i<0x10000; i++)
       RGB16ToRGB32[i] = 0xFF000000
