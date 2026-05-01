@@ -417,6 +417,43 @@ jobs:
           CC="clang -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g" \
           CXX="clang++ -fsanitize=address,undefined -fno-omit-frame-pointer -O1 -g"
 
+  clang-tidy:
+    name: clang-tidy on changed files
+    runs-on: ubuntu-latest
+    # Advisory at first.  The .clang-tidy check list is curated, but
+    # the first pass over emulator C will surface noisy true positives
+    # that need triage.  Flip continue-on-error to false once the
+    # baseline is calm.
+    continue-on-error: true
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install clang-tidy + bear
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy bear
+      - name: Generate compile_commands.json
+        run: |
+          bash scripts/gen-version-h.sh
+          # `bear -- make` records every compile invocation into
+          # compile_commands.json without affecting the build.
+          bear -- make -j4
+      - name: Run clang-tidy on PR-changed files
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          FILES=$(git diff --name-only "$BASE"...HEAD -- '*.c' '*.h' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$)' \
+            | grep -E '^(src/|libretro\.c$)' || true)
+          if [ -z "$FILES" ]; then
+            echo "No relevant C files changed; skipping clang-tidy."
+            exit 0
+          fi
+          echo "==> Running clang-tidy on:"
+          echo "$FILES"
+          echo "$FILES" | xargs clang-tidy -p . --quiet --warnings-as-errors='*'
+
   cppcheck:
     name: cppcheck static analysis
     runs-on: ubuntu-latest
