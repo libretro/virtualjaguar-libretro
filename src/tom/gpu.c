@@ -642,6 +642,20 @@ void GPUInit(void)
    GPUReset();
 }
 
+void GPUDone(void)
+{
+   /* Release the branch-condition LUT so process-lifetime ASAN runs
+    * don't report it as a leak.  Safe to call without a matching
+    * GPUInit (free(NULL) is a no-op) and safe to re-call after a
+    * subsequent GPUInit (build_branch_condition_table early-outs on
+    * non-NULL pointer). */
+   if (branch_condition_table)
+   {
+      free(branch_condition_table);
+      branch_condition_table = NULL;
+   }
+}
+
 void GPUReset(void)
 {
    unsigned i;

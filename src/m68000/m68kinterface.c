@@ -78,11 +78,25 @@ void M68KDebugResume(void)
 }
 
 
+// File-scope so m68k_done() below can reset it after freeing table68k.
+static uint32_t emulation_initialized = 0;
+
+// Free process-lifetime allocations made by read_table68k().  Called
+// from JaguarDone() so ASAN runs see a clean shutdown.
+extern struct instr * table68k;
+void m68k_done(void)
+{
+	if (table68k)
+	{
+		free(table68k);
+		table68k = NULL;
+	}
+	emulation_initialized = 0;
+}
+
 // Pulse the RESET line on the CPU
 void m68k_pulse_reset(void)
 {
-	static uint32_t emulation_initialized = 0;
-
 	// The first call to this function initializes the opcode handler jump table
 	if (!emulation_initialized)
 	{

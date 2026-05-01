@@ -846,6 +846,7 @@ void TOMDone(void)
 {
    OPDone();
    BlitterDone();
+   GPUDone();
 }
 
 
