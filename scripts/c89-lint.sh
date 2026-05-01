@@ -12,7 +12,7 @@ set -e
 # exists before we run -fsyntax-only -- this script is invoked from CI
 # and pre-commit hooks where `make` may not have run yet.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-[ -f "$ROOT/src/core/version.h" ] || bash "$ROOT/scripts/gen-version-h.sh"
+[ -f "$ROOT/src/core/version.h" ] || sh "$ROOT/scripts/gen-version-h.sh"
 
 CC="${CC:-gcc}"
 CFLAGS="-fsyntax-only -std=gnu89 -Werror=declaration-after-statement"

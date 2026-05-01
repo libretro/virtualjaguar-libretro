@@ -872,8 +872,12 @@ BENCH_BLITTER ?= fast
 benchmark: $(TARGET)
 	@# Build the harness inline so this works whether or not TEST_EXPORTS=1
 	@# was used for $(TARGET); the harness only uses retro_* exports.
+	@# -ldl is Linux-specific; macOS/BSD provide dl* in libSystem/libc
+	@# (and Apple's clang silently accepts -ldl as a no-op, but other
+	@# linkers may not).
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o test/tools/test_benchmark test/tools/test_benchmark.c -ldl
+		-o test/tools/test_benchmark test/tools/test_benchmark.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl)
 	./test/tools/test_benchmark ./$(TARGET) $(BENCH_ROM) $(BENCH_FRAMES) \
 		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER)
 

@@ -1,12 +1,17 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # Generates src/core/version.h from CORE_BASE_VERSION pinned in
-# Makefile + the current short git rev.  Called by the Makefile on
-# every build (FORCE rule) and by the c-cpp.yml msvc-check step which
-# invokes cl.exe directly without going through make.
+# Makefile + the current short git rev.  Called by:
+#   - The project Makefile at parse time via $(shell ...) (gated to
+#     skip read-only goals like clean / print-* / lint).
+#   - jni/Android.mk via $(shell ...) so ndk-build picks it up.
+#   - scripts/c89-lint.sh, scripts/install-hooks.sh's pre-commit, and
+#     the c-cpp.yml msvc-check step (which invokes cl.exe directly).
 #
 # Output is gitignored.  Re-runs are content-aware: if the new
 # contents match the existing file, the mtime is left alone so
 # incremental builds don't needlessly rebuild libretro.o.
+#
+# POSIX sh compatible -- no bashisms.
 
 set -e
 

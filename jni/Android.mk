@@ -6,10 +6,10 @@ include $(CORE_DIR)/Makefile.common
 
 COREFLAGS := -DINLINE="inline" -D__LIBRETRO__ $(INCFLAGS)
 
-GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
-ifneq ($(GIT_VERSION)," unknown")
-  COREFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
-endif
+# libretro.c includes the generated src/core/version.h.  Generate it
+# at parse time -- ndk-build doesn't go through the project Makefile,
+# so the parse-time $(shell ...) there doesn't fire for us.
+_VERSION_GEN := $(shell sh $(CORE_DIR)/scripts/gen-version-h.sh && echo ok)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE    := retro

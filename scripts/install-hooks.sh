@@ -3,7 +3,8 @@
 #
 # Currently installs a pre-commit that runs:
 #   - scripts/c89-lint.sh on staged .c files (catches MSVC C89 violations)
-#   - scripts/check-info-version.sh if dist/info/.info or Makefile is staged
+#   - scripts/check-info-version.sh if anything under dist/info/ or
+#     Makefile is staged (verifies display_version stays in sync)
 #
 # Skip with `git commit --no-verify` if you really need to (e.g., a WIP
 # squash); CI will catch it later anyway.
