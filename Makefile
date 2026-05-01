@@ -52,6 +52,22 @@ BUILD_TIMESTAMP := " debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
 	CFLAGS += -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
 endif
 
+# GNU-ld --version-script choice.
+#  link.T       : production ABI (retro_* only).
+#  link-test.T  : wide symbol set used by white-box test harnesses.
+# The `test` target re-invokes make with TEST_EXPORTS=1 so the
+# shipped .so on `make` (default) hides internal symbols, while
+# `make test` produces a .so the test binaries can dlsym into.
+# Only effective on platforms that link with GNU ld --version-script
+# (Linux, Windows MSYS2, ARM, etc.); macOS / iOS / tvOS dylibs and
+# static archives ignore this and currently still export everything
+# with default visibility.
+ifeq ($(TEST_EXPORTS),1)
+LINK_SCRIPT := link-test.T
+else
+LINK_SCRIPT := link.T
+endif
+
 # Unix
 ifeq ($(platform), unix)
 	TARGET := $(TARGET_NAME)_libretro.so
@@ -59,7 +75,7 @@ ifeq ($(platform), unix)
 	ifneq ($(findstring SunOS,$(shell uname -a)),)
 		SHARED := -shared -z defs -z gnu-version-script-compat
 	else
-		SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+		SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	endif
 
 # Classic Platforms ####################
@@ -71,7 +87,7 @@ ifeq ($(platform), unix)
 else ifeq ($(platform), classic_armv7_a7)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	CFLAGS += -Ofast \
 	-flto=4 -fwhole-program -fuse-linker-plugin \
 	-fdata-sections -ffunction-sections -Wl,--gc-sections \
@@ -173,7 +189,7 @@ else ifeq ($(platform), theos_ios)
 else ifeq ($(platform), qnx)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).so
 	fpic := -fPIC
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	CC = qcc -Vgcc_ntoarmv7le
 	CXX = QCC -Vgcc_ntoarmv7le_cpp
 
@@ -181,7 +197,7 @@ else ifeq ($(platform), qnx)
 else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	ARCH = arm
 
 # Nintendo Switch (libnx)
@@ -517,7 +533,7 @@ else
 	TARGET := $(TARGET_NAME)_libretro.dll
 	CC ?= gcc
 	CXX ?= g++
-	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=link.T
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	LDFLAGS += -static-libgcc -static-libstdc++ -lwinmm
 
 endif
@@ -655,6 +671,18 @@ ifneq (,$(findstring msvc,$(platform)))
 test:
 	@echo "make test requires GCC/Clang flags; use MSYS2/Unix or compile test/test_cheat.c manually."
 	@false
+else ifneq ($(TEST_EXPORTS),1)
+# When `make test` is invoked without TEST_EXPORTS=1, the shipped .so
+# was linked with link.T (production-slim, retro_* only) and the
+# white-box test binaries can't dlsym into JaguarReset / DSPGetRAM /
+# etc.  Force a re-link with link-test.T by removing the .so and
+# re-invoking make with TEST_EXPORTS=1 so the wider symbol set is
+# exported just for this build.  After `make test` finishes, the .so
+# in the working tree has the wider exports — re-run `make` (no flag)
+# to restore the production-slim ABI.
+test:
+	@rm -f $(TARGET)
+	@$(MAKE) TEST_EXPORTS=1 test
 else
 test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \

@@ -1,33 +1,17 @@
-/* Extra symbols beyond retro_* are exported intentionally so that
-   test harnesses (test_cd_boot, test_gpu_ops, test_rom_smoke, etc.)
-   can dlsym() into internal emulator state for white-box testing. */
+/* Production ABI export script.
+ *
+ * Only the retro_* libretro entry points are exported from the
+ * shipped .so / .dll.  Internal emulator state (DSP, GPU, blitter,
+ * 68K registers, jaguarMainRAM, etc.) is hidden so frontends and
+ * future refactors don't accidentally pin themselves to internal
+ * symbols.
+ *
+ * White-box test harnesses need the wider symbol set; the Makefile
+ * switches to link-test.T when TEST_EXPORTS=1 (which the `test`
+ * target sets automatically).
+ */
 {
    global:
       retro_*;
-      DSP*;
-      dsp_*;
-      m68k_*;
-      Jaguar*;
-      jaguar*;
-      Halfline*;
-      jaguarMainRAM;
-      jaguarMainROM;
-      jagMemSpace;
-      pcQueue;
-      pcQPtr;
-      a6Queue;
-      d0Queue;
-      GPU*;
-      gpu_*;
-      JERRY*;
-      TOM*;
-      OP*;
-      tomRam8;
-      regs;
-      sclk;
-      smode;
-      lowerField;
-      vjs;
    local: *;
 };
-
