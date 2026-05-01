@@ -25,11 +25,18 @@
 #define BUFNTSC 1600
 #define BUFMAX 2048
 
-/* File extensions accepted by the core for retro_load_game. Matches the
- * set the loader's ParseFileType() actually recognises (JST_ROM /
- * JST_ALPINE / JST_ABS_TYPE1 / JST_ABS_TYPE2 / JST_JAGSERVER plus the
- * conservative raw-binary detector for unheaded .bin homebrew). */
-#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|bin"
+/* File extensions accepted by the core for retro_load_game.
+ * Mirrors what src/core/file.c::ParseFileType() can identify by
+ * sniffing the header bytes (sizes/magic), regardless of the
+ * filename extension:
+ *   j64, jag, rom : standard cart images / JST_ROM / JST_ALPINE
+ *   abs           : Removers/aln output, JST_ABS_TYPE1 / TYPE2
+ *   cof           : COFF binaries (also routes through JST_ABS_TYPE1)
+ *   bin, prg      : conservative headerless raw-homebrew with valid
+ *                   68k bootstrap (JST_RAW_BINARY)
+ * Add `cdi`, `cue`, `iso`, and `chd` here when CD-image support
+ * lands on a future PR. */
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg"
 
 #ifndef GIT_VERSION
 #define GIT_VERSION ""

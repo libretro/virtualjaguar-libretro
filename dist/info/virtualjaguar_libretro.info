@@ -1,7 +1,7 @@
 # Software Information
 display_name = "Atari - Jaguar (Virtual Jaguar)"
 authors = "David Raingeard|Shamus|Joseph Mattiello"
-supported_extensions = "j64|jag|rom|bin"
+supported_extensions = "j64|jag|rom|abs|cof|bin|prg"
 corename = "Virtual Jaguar"
 license = "GPLv3"
 permissions = ""
