@@ -64,7 +64,7 @@ Suspicious-by-default places when something gets slow:
 | Subsystem | File | Notes |
 |---|---|---|
 | Object Processor (sprites, bitmaps) | `src/tom/op.c` | `OPProcessFixedBitmap`, `OPProcessScaledBitmap`, `OPDiscoverObjects`. Dominant on heavy-OP scenes (Wolf3D, Tempest 2000). |
-| Blitter | `src/tom/blitter.c`, `blitter_mmio.c`, `blitter_simd_*.c` | Two paths: fast (`BlitterFast`, ~equiv to upstream's old fast blitter) and accurate (`BlitterMidsummer2`).  SIMD only kicks in on the fast path's pixel loops. |
+| Blitter | `src/tom/blitter.c`, `blitter_mmio.c`, `blitter_simd_*.c` | Two paths: fast (`blitter_generic`, the upstream-derived path) and accurate (`BlitterMidsummer2`). SIMD (`blitter_simd_{sse2,neon,scalar}.c`) is currently wired only into the **accurate** blitter's pixel kernel — see [issue #124](https://github.com/libretro/virtualjaguar-libretro/issues/124) for the plan to widen SIMD coverage. |
 | 68K | `src/m68000/cpuemu.c` | Machine-generated UAE.  ~1.8 MB of source.  If this is hot, there's not much to do beyond JIT (out of scope). |
 | GPU (RISC, 26.6 MHz) | `src/tom/gpu.c` | `GPUExec` per-instruction. Hot when game uses GPU heavily (most do). |
 | DSP (RISC, audio) | `src/jerry/dsp.c` | `DSPExec` per-instruction.  See `src/jerry/dsp_acc40.h` for the 40-bit MAC. |

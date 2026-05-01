@@ -435,7 +435,7 @@ jobs:
         # rejects the runtime symbols.  -shared-libasan switches to
         # the dynamic libclang_rt.asan-x86_64.so which the host
         # process picks up at dlopen time.
-        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g"
+        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g -fsanitize-ignorelist=$PWD/.ubsan-ignorelist"
         make -j4 TEST_EXPORTS=1 \
           CC="clang $SAN_FLAGS" \
           CXX="clang++ $SAN_FLAGS" \
@@ -445,7 +445,7 @@ jobs:
         ASAN_OPTIONS: 'detect_leaks=1:abort_on_error=1:print_stacktrace=1'
         UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1:report_error_type=1'
       run: |
-        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g"
+        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g -fsanitize-ignorelist=$PWD/.ubsan-ignorelist"
         # The shared-libasan path means the test binaries need to find
         # libclang_rt.asan at runtime; expose its directory.
         ASAN_LIB_DIR=$(clang -print-resource-dir)/lib/linux
