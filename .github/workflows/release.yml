@@ -46,11 +46,17 @@ jobs:
             cc: clang
             cxx: clang++
 
+          # Cross-compiled from the macos-latest (arm64) runner via
+          # `clang -arch x86_64`.  Avoids the increasingly scarce
+          # macos-13 (Intel) runner pool that left v2.2.0's release
+          # job queued for an hour.  BLITTER_SIMD=sse2 is required
+          # because the Makefile's auto-detect uses host arch.
           - platform: macos-x86_64
             artifact: virtualjaguar_libretro.dylib
-            os: macos-13
-            cc: clang
-            cxx: clang++
+            os: macos-latest
+            cc: clang -arch x86_64
+            cxx: clang++ -arch x86_64
+            make_extra: 'BLITTER_SIMD=sse2'
 
           # Windows
           - platform: windows-x86_64
@@ -153,7 +159,7 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
       env:
         RELEASE_DEBUG_INFO: '1'
-      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}"
+      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
     - name: Build (platform)
       if: matrix.config.make_platform
