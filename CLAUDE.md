@@ -24,11 +24,11 @@ The libretro buildbot uses MSVC on Windows. CI has a `c89-lint` job. Run `bash s
 - **No mid-block declarations.** All vars at top of block, before any statement. Most common violation.
 - `//` comments allowed (GNU89), but prefer `/* */` for new code.
 - No C99: no `for (int i…)`, no compound literals, no designated initializers, no VLAs.
-- Exempt: `src/tom/blitter_simd_{sse2,neon}.c` (need platform headers), `src/m68000/*` (machine-generated).
+- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` and `src/bios/jagstub*bios.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
 
 ## Hardware model
 
-Four processors, unified memory map, big-endian. `GET16/GET32/SET16/SET32` macros byte-swap on LE hosts. Map in `src/core/vjag_memory.h`: RAM 0x000000 (2 MB), cart 0x800000, TOM regs 0xF00000, JERRY regs 0xF10000.
+Four processors, unified memory map, big-endian. `GET16/GET32/SET16/SET32` macros byte-swap on LE hosts. Address-range map is documented in `src/core/vjag_memory.c` (header comment); the dispatch logic lives in `src/core/jaguar.c`. RAM 0x000000 (2 MB), cart 0x800000, TOM regs 0xF00000, JERRY regs 0xF10000.
 
 - **68000** (13.3 MHz, `src/m68000/`) — main CPU. UAE-derived. `cpuemu.c` is **machine-generated, ~1.8 MB** — never read whole; grep first, then `Read` with offset/limit only on matched ranges.
 - **GPU** (26.6 MHz RISC, `src/tom/gpu.c`) — graphics coprocessor.
@@ -63,8 +63,7 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 Local-only RetroAchievements validation — no RA account/API/server. `test/tools/test_rcheevos_e2e.sh` downloads pinned `RCHEEVOS_REF` and verifies `rc_libretro` mapping (`RC_CONSOLE_ATARI_JAGUAR`) matches host RAM.
 
 Key harnesses:
-- `test/regression_test.sh` — screenshot regression vs `test/baselines/`
-- `test/headless.py` — libretro.py runner (frames, screenshots)
+- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build)
 - `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS`, `SET_SUPPORT_ACHIEVEMENTS=true`, descriptor layout
 - `test/tools/test_blitter_compare` — fast vs accurate blitter diff
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
@@ -73,7 +72,7 @@ Key harnesses:
 
 ### Headless framebuffer caveat
 
-Some non-RetroArch headless harnesses (libretro.py, miniretro) don't expose the same composited framebuffer that RetroArch reads. Symptom: `jag_240p_test_suite` main menu shows ~1k non-black pixels via headless vs tens of thousands via RetroArch. Treat that as a **headless read-path / presentation bug** (OP+blitter output vs what the host reads), not a 240p timing or `__muldi3` performance bug. Gate via `make screenshots-preflight`.
+The miniretro harness used by `test/regression_test.sh` doesn't expose the same composited framebuffer that RetroArch reads. Symptom: `jag_240p_test_suite` main menu shows ~1k non-black pixels via miniretro vs tens of thousands via RetroArch. Treat that as a **headless read-path / presentation bug** (OP+blitter output vs what the host reads), not a 240p timing or `__muldi3` performance bug. Verify against RetroArch before treating a regression as real.
 
 ## Known limitations
 

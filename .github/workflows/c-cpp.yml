@@ -389,12 +389,17 @@ jobs:
         # Scan in-tree sources only.  src/m68000 is machine-generated
         # UAE 68K, src/bios/jag*.c are bin2c hex tables, and
         # libretro-common is a vendored subtree -- all excluded.
+        #
         # Suppressions live in cppcheck-suppressions.txt with rationale.
+        # cppcheck 2.13 (Ubuntu 24.04) doesn't accept comment lines in
+        # the suppressions file; strip them before passing.
+        bash scripts/gen-version-h.sh
+        grep -vE '^\s*(#|$)' cppcheck-suppressions.txt > /tmp/cppcheck-suppressions.txt
         cppcheck \
           --enable=warning,performance,portability \
           --suppress=missingIncludeSystem \
           --suppress=unusedFunction \
-          --suppressions-list=cppcheck-suppressions.txt \
+          --suppressions-list=/tmp/cppcheck-suppressions.txt \
           --error-exitcode=1 \
           -i src/m68000 -i src/bios -i libretro-common \
           -I src -I src/core -I src/tom -I src/jerry -I src/cd \

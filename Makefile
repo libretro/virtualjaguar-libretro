@@ -556,19 +556,21 @@ OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
 # ----------------------------------------------------------------
 # version.h: generated header read by libretro.c.  Single source of
 # truth is CORE_BASE_VERSION above; the script also stamps in the
-# short git rev.  Regenerated on every build via the FORCE rule;
-# the script does an in-place cmp to avoid touching mtime when
-# contents are unchanged, so incremental builds stay incremental.
+# short git rev.
+#
+# Regeneration runs at Makefile parse time via $(shell ...) so the
+# dependency graph sees a stable file with a stable mtime.  The
+# alternative (a `: FORCE` rule) was racy under `make -j4` on the
+# stock /usr/bin/make 3.81 still shipped on macOS, which silently
+# stopped mid-build.  The script does an in-place cmp + mv so
+# unchanged content leaves mtime untouched and incremental builds
+# stay incremental.
 # ----------------------------------------------------------------
 VERSION_H := $(CORE_DIR)/src/core/version.h
-
-$(VERSION_H): FORCE
-	@bash scripts/gen-version-h.sh
-
-.PHONY: FORCE
-FORCE:
-
-$(CORE_DIR)/libretro.o: $(VERSION_H)
+_VERSION_GEN := $(shell bash scripts/gen-version-h.sh && echo ok)
+# Note: $(CORE_DIR)/libretro.o: $(VERSION_H) dependency is wired up
+# AFTER the `all:` rule below, so Make 3.81 doesn't latch onto
+# libretro.o as the default goal.
 
 ifeq ($(DEBUG),1)
    ifneq (,$(findstring msvc,$(platform)))
@@ -680,6 +682,10 @@ ifeq ($(STATIC_LINKING), 1)
 else
 	$(LD) $(LINKOUT)$@ $^ $(LDFLAGS)
 endif
+
+# version.h dependency hook (must come after `all:` so Make 3.81 on
+# stock macOS doesn't latch onto libretro.o as the default goal).
+$(CORE_DIR)/libretro.o: $(VERSION_H)
 
 clean:
 	rm -f $(TARGET) $(OBJECTS) \

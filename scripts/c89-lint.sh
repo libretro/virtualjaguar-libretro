@@ -8,6 +8,12 @@
 
 set -e
 
+# libretro.c includes the generated src/core/version.h.  Make sure it
+# exists before we run -fsyntax-only -- this script is invoked from CI
+# and pre-commit hooks where `make` may not have run yet.
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+[ -f "$ROOT/src/core/version.h" ] || bash "$ROOT/scripts/gen-version-h.sh"
+
 CC="${CC:-gcc}"
 CFLAGS="-fsyntax-only -std=gnu89 -Werror=declaration-after-statement"
 INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include"
