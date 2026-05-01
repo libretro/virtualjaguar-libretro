@@ -81,16 +81,14 @@ void M68KDebugResume(void)
 // File-scope so m68k_done() below can reset it after freeing table68k.
 static uint32_t emulation_initialized = 0;
 
-// Free process-lifetime allocations made by read_table68k().  Called
-// from JaguarDone() so ASAN runs see a clean shutdown.
-extern struct instr * table68k;
+// Symmetric counterpart to the lazy init in m68k_pulse_reset().
+// Defers the actual free to readcpu.c::free_table68k() so the table
+// is owned end-to-end by the module that allocates it (table68k is
+// declared in readcpu.h).  Called from JaguarDone() so ASAN sees a
+// clean shutdown.
 void m68k_done(void)
 {
-	if (table68k)
-	{
-		free(table68k);
-		table68k = NULL;
-	}
+	free_table68k();
 	emulation_initialized = 0;
 }
 
