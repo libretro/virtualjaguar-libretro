@@ -4,7 +4,7 @@ Virtual Jaguar v2.2.0 libretro
 A large libretro-fork release. Highlights since v2.1.0:
 
 == Compatibility ==
-* HLE BIOS now ships — boot most commercial titles without a real
+* HLE BIOS improved — boot most commercial titles without a real
   BIOS image. Many games that previously needed the real BIOS, or
   worked-but-broken with it, now run on HLE BIOS too.
 * Many homebrews now boot — non-Alpine raw .bin/.j64/.rom layouts
@@ -30,7 +30,21 @@ A large libretro-fork release. Highlights since v2.1.0:
 * RetroAchievements memory map (RC_CONSOLE_ATARI_JAGUAR).
 * Audio rewrite: eliminated per-sample events and interleaved
   JERRY with the main execution loop, fixing frame-edge audio
-  dropouts.
+  dropouts.  retro_run() now does
+  `update_input -> DACPrepareFrame -> JaguarExecuteNew ->
+  cheat_apply_all -> SoundCallback -> video_cb` so the audio
+  callback sees the same JERRY state the frame was rendered
+  against and doesn't drift.
+* Per-button retropad remapping via core options
+  (RetropadOptionMapping table + virtualjaguar_p1/p2_retropad_*
+  options).  Lets users rebind the Jaguar's 21-key controller
+  including numpad keys that the Controls menu can't reach.
+* libretro geometry change is now applied at the START of
+  retro_run rather than after video_cb.  Fixes Wolf3D black
+  screen on iOS Metal RetroArch (frontends that re-allocate
+  texture on SET_GEOMETRY were dropping the frame submitted at
+  the old size; pre-rendering means tomWidth and screenPitch
+  stay in sync for the entire frame).
 
 == Hardware accuracy (chip side) ==
 * DSP: 40-bit MAC accumulator, FLAGS-write dispatch, IRQ
@@ -78,7 +92,15 @@ A large libretro-fork release. Highlights since v2.1.0:
   Iron Soldier 2) so a future DSP-side fix flips CI red and
   forces the manifest to be updated.
 * Source-tree reorganization into src/core, src/tom,
-  src/jerry, src/cd, src/bios, src/m68000.
+  src/jerry, src/cd, src/bios, src/m68000.  Files now grouped
+  by chip / subsystem rather than the flat layout inherited
+  from upstream.
+* General code cleanup: removed dead inline-comment guesses,
+  promoted Jaguar memory layout / HLE BIOS magic numbers to
+  named constants at file scope rather than `#define`s
+  scattered inside JaguarReset(), and added explanatory
+  comments to non-obvious BIOS-handshake addresses (e.g.
+  $0804 Battle Sphere workspace flag, $F03000 GPU auth magic).
 * C89/GNU89 lint enforcement.
 
 == Build / platforms ==

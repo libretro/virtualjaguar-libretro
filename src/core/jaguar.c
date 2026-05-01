@@ -108,6 +108,111 @@ bool JaguarInterruptHandlerIsValid(uint32_t i) // Debug use only...
 // Really, need to include memory.h for this, but it might interfere with some stuff...
 extern uint8_t jagMemSpace[];
 
+/* ----------------------------------------------------------------
+ * HLE BIOS / Jaguar memory layout constants
+ *
+ * Constants shared by JaguarInit/JaguarReset/JaguarApplyHLEBIOSState.
+ * Kept at file scope (rather than `#define`s inside JaguarReset()) so
+ * the names don't leak past the function with no obvious owner; they
+ * are also easier for IDE/grep tooling to follow at file scope.
+ * ---------------------------------------------------------------- */
+
+/* Main RAM */
+#define JAGUAR_RAM_SIZE         0x00200000  /* 2 MB main RAM */
+#define VECTOR_TABLE_BYTES      0x00000400  /* 256 * 4-byte exception vectors */
+
+/* HLE supervisor stack pointer.
+ * Cart-mode SSP=0x4000 matches what the real BIOS leaves behind on a
+ * cart boot.  RAM-loaded executables (.abs/.cof/JagServer) park SSP at
+ * the top of main RAM (0x200000) so the first push doesn't land inside
+ * loaded code. */
+#define HLE_SSP_CART            0x00004000
+#define HLE_SSP_RAMLOAD         0x00200000
+
+/* HLE BIOS workspace flag at $0804.
+ *
+ * Battle Sphere polls a long word at low-RAM offset $0804 and waits
+ * for the high bit to be set before it considers the BIOS handshake
+ * complete.  Without this, BS hangs at the cartridge banner.  The
+ * real BIOS sets this byte during its boot sequence; the BS CRC is
+ * matched against the GPU auth flow elsewhere.
+ *
+ * Other titles tested do not consult $0804, so this is currently a
+ * single-game accommodation rather than a general BIOS-workspace
+ * model.  If we ever observe more carts probing this region, the
+ * fix is to widen the workspace block to cover the full
+ * $0804-$0830 range that the BIOS actually populates.
+ *
+ * test/tools/test_bios_diff.c probes $0804 in its BIOS-vs-HLE
+ * comparison, so any change here should be cross-checked there. */
+#define HLE_BIOS_WORK_FLAG_ADDR 0x0804
+#define HLE_BIOS_WORK_READY     0x00000001
+
+/* HLE 68K exception handlers.
+ * RAM[0x0400] = ADDQ.L #8,SP / RTE  (long-frame: bus/address error)
+ * RAM[0x0404] =                 RTE  (short-frame: everything else) */
+#define HLE_EXCEPT_HANDLER      0x0400
+#define HLE_EXCEPT_HANDLER_RTE  0x0404
+#define M68K_OP_ADDQ8_SP        0x508F
+#define M68K_OP_RTE             0x4E73
+
+/* Cart header: byte 0 of the 4-byte CARTRIDGE block at $800400.
+ * Bits 1-4 of this byte are the MEMCON1 ROM bus-width/speed bits the
+ * BIOS reads to size the cart bus on power-on. */
+#define CART_HEADER_BASE        0x800400
+#define MEMCON1_BASE            0x1861   /* default minus the cart bits */
+#define MEMCON1_CART_MASK       0x1E
+
+/* JERRY clock dividers (chroma + video clock). */
+#define JERRY_CLK3              0xF10014
+#define JERRY_CLK2              0xF10012
+#define CLK3_DEFAULT            0x0004
+#define CLK2_NTSC               0x00B5
+#define CLK2_PAL                0x00E2
+
+/* GPU/DSP endianness registers.
+ * Big-endian for both 16- and 32-bit accesses. */
+#define GPU_G_END               0xF0210C
+#define DSP_D_END_HI            0xF1A10C
+#define DSP_D_END_LO            0xF1A10E
+#define ENDIAN_BIG              0x0007
+#define ENDIAN_BIG32            0x00070007
+
+/* GPU auth-passed magic that real BIOS writes to $F03000 once it has
+ * verified the cart's encryption header.  Cart code reads this to
+ * decide whether the GPU has been trusted. */
+#define GPU_AUTH_MAGIC          0x03D0DEAD
+
+/* Object Processor STOP list.
+ * Two long words at RAM offset $1000:
+ *   .L 0x00000000        ; data
+ *   .L 0x00000004        ; OP object type 4 = STOP
+ * OLP is pointed at this list so the OP halts cleanly when the cart
+ * has not yet installed its own object list. */
+#define OP_STOP_LIST_ADDR       0x1000
+#define OP_STOP_OBJECT          0x00000004
+
+/* TOM register offsets within tomRam8 (relative to base $F00000). */
+#define TOM_OLP_LO              0x20
+#define TOM_OLP_HI              0x22
+#define TOM_BORD1               0x2A
+#define TOM_BORD2               0x2C
+#define TOM_INT                 0xF000E0
+#define TOM_INT_CLR_ALL         0x1F00
+
+/* JERRY PIT base + I2S regs. */
+#define JERRY_PIT0              0xF10000
+#define JERRY_SMODE             0xF1A156
+#define JERRY_SCLK              0xF1A152
+
+/* Match what the real BIOS audio engine ends up writing.  Empirically
+ * derived (2026-04-30) by snapshotting JERRY DAC regs at frame 30 with
+ * BIOS vs HLE: HLE was writing SCLK=0x08 (~46 kHz I2S) / SMODE=0x01
+ * (INTERNAL only); BIOS leaves SCLK=0x13 (~20 kHz) / SMODE=0x15
+ * (INTERNAL + WSEN + FALLING). */
+#define SCLK_DEFAULT            0x0013
+#define SMODE_DEFAULT           0x0015
+
 // Internal variables
 
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
@@ -550,7 +655,7 @@ void JaguarInit(void)
    JaguarSeedPRNG(12345);
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents
-   for(i=0; i<0x200000; i+=4)
+   for(i = 0; i < JAGUAR_RAM_SIZE; i += 4)
       SET32(jaguarMainRAM, i, JaguarRand());
 
    lowerField = false;							// Reset the lower field flag
@@ -622,14 +727,11 @@ void HalflineCallback(void)
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }
 
-#define HLE_BIOS_WORK_FLAG_ADDR 0x0804   /* Low-RAM BIOS workspace used by Battle Sphere */
-#define HLE_BIOS_WORK_READY     0x00000001
-
 void JaguarReset(void)
 {
    unsigned i;
-   uint32_t clearStart = 8;
-   uint32_t clearEnd = 0x200000;
+   uint32_t clearStart = 8;            /* skip RAM[0..7] (SSP+PC) */
+   uint32_t clearEnd = JAGUAR_RAM_SIZE;
    uint32_t preserveStart = jaguarLoadedRAMStart;
    uint32_t preserveEnd = jaguarLoadedRAMEnd;
 
@@ -640,7 +742,9 @@ void JaguarReset(void)
    if (vjs.useJaguarBIOS)
    {
       JaguarSeedPRNG(12345);
-      for(i=8; i<0x200000; i+=4)
+      /* Skip RAM[0..7] (SSP + initial PC vector); fill the rest unless
+       * a RAM-loaded executable lives in this address range. */
+      for(i = 8; i < JAGUAR_RAM_SIZE; i += 4)
       {
          uint32_t r = JaguarRand();
          if (jaguarLoadedRAMEnd > jaguarLoadedRAMStart
@@ -686,7 +790,7 @@ void JaguarReset(void)
          cartridge HLE, keep the historical 0x4000 SSP that matches what
          the real BIOS leaves behind. */
       uint32_t hleSSP = (jaguarLoadedRAMEnd > jaguarLoadedRAMStart)
-         ? 0x00200000 : 0x00004000;
+         ? HLE_SSP_RAMLOAD : HLE_SSP_CART;
       SET32(jaguarMainRAM, 0, hleSSP);
       SET32(jaguarMainRAM, 4, jaguarRunAddress);
    }
@@ -699,46 +803,10 @@ void JaguarReset(void)
 
    /* HLE BIOS: replicate post-boot hardware state that the real BIOS
     * leaves behind before jumping to the cartridge.  Without this,
-    * games that rely on BIOS-initialized registers won't boot. */
-#define HLE_EXCEPT_HANDLER      0x0400   /* RAM addr: bus/address error stub */
-#define HLE_EXCEPT_HANDLER_RTE  0x0404   /* RAM addr: generic exception stub */
-#define M68K_OP_ADDQ8_SP        0x508F   /* ADDQ.L #8,SP (skip 68K error frame) */
-#define M68K_OP_RTE             0x4E73   /* Return From Exception */
-#define CART_HEADER_BASE        0x800400 /* Cart ROM type/speed header byte */
-#define MEMCON1_BASE            0x1861   /* Default MEMCON1 (OR'd with cart bits 1-4) */
-#define MEMCON1_CART_MASK       0x1E     /* Bits 1-4: ROM bus width/speed */
-#define JERRY_CLK3              0xF10014 /* Chroma clock divider register */
-#define JERRY_CLK2              0xF10012 /* Video clock divider register */
-#define CLK3_DEFAULT            0x0004
-#define CLK2_NTSC               0x00B5
-#define CLK2_PAL                0x00E2
-#define GPU_G_END               0xF0210C /* GPU endianness register */
-#define DSP_D_END_HI            0xF1A10C /* DSP endianness (32-bit) */
-#define DSP_D_END_LO            0xF1A10E /* DSP endianness (16-bit) */
-#define ENDIAN_BIG              0x0007   /* Big-endian for one width */
-#define ENDIAN_BIG32            0x00070007 /* Big-endian for both widths */
-#define GPU_AUTH_MAGIC          0x03D0DEAD /* BIOS GPU auth success marker */
-#define OP_STOP_LIST_ADDR       0x1000   /* RAM addr: minimal OP STOP list */
-#define OP_STOP_OBJECT          0x00000004 /* Object type 4 = STOP */
-#define TOM_OLP_LO              0x20     /* Object List Pointer low word */
-#define TOM_OLP_HI              0x22     /* Object List Pointer high word */
-#define TOM_BORD1               0x2A     /* Border color 1 (red/green) */
-#define TOM_BORD2               0x2C     /* Border color 2 (blue) */
-#define TOM_INT                 0xF000E0 /* TOM interrupt control register */
-#define TOM_INT_CLR_ALL         0x1F00   /* Clear all pending, disable all */
-#define JERRY_PIT0              0xF10000 /* PIT timer base address */
-#define JERRY_SMODE             0xF1A156 /* I2S serial mode register (low word of $F1A154) */
-#define JERRY_SCLK              0xF1A152 /* I2S serial clock register (low word of $F1A150) */
-/* Match what the real BIOS audio engine ends up writing.  Empirically
- * derived (2026-04-30) by snapshotting JERRY DAC regs at frame 30 with
- * BIOS vs HLE: HLE was writing SCLK=0x08 (~46 kHz I2S) / SMODE=0x01
- * (INTERNAL only); BIOS leaves SCLK=0x13 (~20 kHz) / SMODE=0x15
- * (INTERNAL + WSEN + FALLING).  Carts that depend on the BIOS audio
- * engine state (Skyhammer, Iron Soldier 2, ...) busy-wait on I2S
- * sample counts that never fire at the wrong rate. */
-#define SCLK_DEFAULT            0x0013
-#define SMODE_DEFAULT           0x0015
-
+    * games that rely on BIOS-initialized registers won't boot.  All
+    * named constants used below are defined at file scope above this
+    * function (look for the "HLE BIOS / Jaguar memory layout
+    * constants" header comment). */
    if (!vjs.useJaguarBIOS && jaguarCartInserted)
    {
       uint8_t cartTypeByte;

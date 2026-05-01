@@ -14,9 +14,23 @@
 // JLH  04/30/2012  Changed SDL audio handler to run JERRY
 //
 
-/* The libretro audio path samples LTXD/RTXD at 48 kHz into sampleBuffer.
- * JERRYI2SCallback separately models DSP SSI interrupt timing from SCLK/SMODE;
- * changing either path affects both audio output and DSP-side synchronization. */
+/* The libretro audio path samples LTXD/RTXD at a fixed 48 kHz into
+ * sampleBuffer (see SoundCallback below).  JERRYI2SCallback in
+ * src/jerry/jerry.c separately models DSP SSI interrupt timing
+ * from SCLK/SMODE — these are two coupled clocks, and games that
+ * write SCLK at runtime (or use word-strobe modes) effectively
+ * change the DSP's I2S rate while the libretro output rate stays
+ * at 48 kHz.
+ *
+ * TODO(v2.3): the audio path currently assumes 48 kHz output and
+ * does not support games requesting non-48k host rates.  The DSP
+ * I2S rate (driven by SCLK) is decoupled from the host output rate
+ * by simple sampling; if a future fix wants to support games that
+ * vary SCLK at runtime for pitch effects, this layer needs to be
+ * either resampled properly or driven from the DSP-side clock.
+ * Cross-reference: Skyhammer / Iron Soldier 2 audio clipping family
+ * (docs/emulation-bug-hunt-todos.md) is partially related — those
+ * carts depend on a specific SCLK/SMODE pair the BIOS leaves. */
 
 #include "dac.h"
 

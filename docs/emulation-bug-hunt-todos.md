@@ -365,3 +365,86 @@ Verified against private ROMs unless otherwise noted.
   generation have several comments marked as approximate or hard-coded.
 - `src/core/filedb.c`: cartridge/file-type detection still has known edge
   cases noted by inline comments.
+
+## v2.3.0 follow-up notes (cleanup + investigations)
+
+These came out of the v2.2.0 manual pre-merge review.  None block
+shipping v2.2.0; capture them so they don't get lost.
+
+### Removed code we should remember
+
+- **STUBULATOR ROM hook** (was: `// Maybe instead of this, we could try
+  requiring the STUBULATOR ROM?`).  The Stubulator is a small Atari-era
+  PD ROM that bootstraps homebrew without needing the real BIOS.  We
+  removed the comment that suggested using it as a fallback.  Worth
+  considering as a v2.3 test-harness fixture (not shipping it as a
+  user-facing fallback) — it's a small, known-state cart we can drop
+  in for HLE-vs-real-BIOS A/B tests.
+- **Old `src/mmu.c`** removed in the source-tree reorganization.  The
+  original file emulated a Jaguar MMU (paging) that no shipping cart
+  ever used; the only consumer was an `Alpine` debugger mode that's
+  also been removed.  If we ever add Jaguar dev-cart / networking / CD
+  features that depend on memory protection, this is the file to
+  resurrect (in master at the time of the reorg).
+- **`vjs.hardwareTypeAlpine`** field + `alpineROMPath` (master had
+  these, branch removed them).  Alpine was an Atari developer board
+  with extra debug RAM at $C00000-$DFFFFF.  Removing the option leaves
+  RetroArch users without an "Alpine mode" toggle; if homebrew
+  developers ever ask for it back, restore the field, the file-load
+  path in `src/core/file.c::JST_ALPINE`, and the option entry in
+  `libretro_core_options.h`.
+- **`NEW_SCOREBOARD` `#ifdef` arms in `src/jerry/dsp.c`**.  Master had
+  19 references; branch has 15 (4 removed).  The remaining
+  `#define NEW_SCOREBOARD` toggles a hotter scoreboard path; the
+  removed `#else` arms were the cold/legacy variant kept for a
+  comparison that nobody runs anymore.  No functional change, but if
+  the new path ever regresses, the historical alternative is in
+  master's `src/dsp.c`.
+
+### Comments / TODOs that should not fall off
+
+- **`src/tom/blitter.c` `!!! FIX !!!` comments** (DCOMPEN 8/16 BPP-only,
+  1-bit expansion behaviour).  Pre-existing from upstream; wrap into
+  the OP/blitter audit task already on this list.
+- **HLE sound-engine auto-ack** in `src/jerry/dsp.c::DSPReadLong` —
+  current behaviour zero-acknowledges DSP-RAM polls in the
+  `DSP_SOUND_CMD_BASE..DSP_SOUND_CMD_END` range when the DSP isn't
+  running and we're in HLE.  This is a workaround for games that
+  poll sound-engine flags the BIOS engine would normally clear.
+  Documented inline; revisit when the BIOS DSP audio engine is
+  actually replicated (Wolf3D / Skyhammer / IS2 family).
+- **`JERRYI2SCallback` SCLK/SMODE coupling** (commented at top of
+  `src/jerry/dac.c`).  Output is hard-coded 48 kHz; SCLK changes
+  affect DSP I2S rate but don't resample the host output.  Future:
+  add proper resampling so games that vary SCLK at runtime for pitch
+  effects work.
+- **`test/baselines/{jagniccc,yarc}.png` are 241 px tall** (one row
+  taller than the 240-line NTSC visible region).  The extra row comes
+  from `miniretro` in our regression harness — it captures one row
+  past `max_height` for some video paths.  Not a Virtual Jaguar bug;
+  if we ever switch capture tools the baselines need re-shooting.
+
+### Code-organization items for v2.3.0
+
+- `src/jerry/dsp.c` is ~3000 lines with several long functions; split
+  by responsibility (decode / dispatch / IRQ / scoreboard / state) so
+  it's easier for humans + LLMs + static-analysis tools to reason
+  about.
+- `link.T` exports a wide internal symbol surface (`DSP*`, `dsp_*`,
+  `m68k_*`, `OP*`, `pcQueue`, `tomRam8`, `regs`, `sclk`, `smode`,
+  `lowerField`, `vjs`).  These are needed by the white-box test
+  harnesses but expand the shared-library ABI.  v2.3 should split
+  into `link.T` (production: `retro_*` only) and `link-test.T`
+  (the current symbol set), gated by a `Makefile` test-build flag.
+- `GIT_VERSION` / `CORE_VERSION` are spread between Makefile and
+  libretro.c.  Move to a generated `version.h` so both sites read
+  the same source of truth.
+- HLE constants block in `src/core/jaguar.c` was moved from inside
+  `JaguarReset()` to file scope this PR — done.  Future: consider
+  promoting the BIOS-known register addresses into a shared header
+  so other subsystems (e.g. `test/test_hle_bios.c`) don't have to
+  hard-code them.
+- Optional: add static-analysis bots / linting / dead-code finders
+  / `const`-correctness audits as a CI step.  `clang-tidy` and
+  `cppcheck` would be good starting points; the codebase already
+  has a C89 lint, so the infrastructure is there.

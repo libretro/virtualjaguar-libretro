@@ -426,10 +426,35 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       offset -= DSP_WORK_RAM_BASE;
       val = GET32(dsp_ram_8, offset);
 
-      /* HLE sound-engine auto-ack: the real BIOS loads a DSP sound
-       * engine that acknowledges commands by clearing flag words in
-       * DSP RAM.  In HLE mode the engine is absent and the DSP may
-       * not be running, so games hang polling non-zero flags. */
+      /* HLE sound-engine auto-ack:
+       *
+       * The real Jaguar BIOS loads a DSP sound engine into DSP RAM at
+       * boot; that engine acknowledges command words by clearing flag
+       * long words in the DSP_SOUND_CMD_BASE..DSP_SOUND_CMD_END region.
+       * Cart-side audio code writes a non-zero command, then polls the
+       * same word for it to go back to zero before issuing the next
+       * one.  In HLE mode the BIOS engine isn't loaded and the DSP may
+       * not even be running, so the cart spins forever polling
+       * non-zero values.
+       *
+       * This is a workaround, NOT a real fix: it satisfies the polling
+       * loop at the cost of dropping every command word the cart ever
+       * writes (the engine never gets to mix anything because the
+       * engine isn't there).  Audio is silent, but the game proceeds
+       * past sound-init.
+       *
+       * Conditions:
+       *   - val != 0    : only clear actual pending writes, not idle reads
+       *   - who == M68K : only the cart's polling, not internal accesses
+       *   - !DSP_RUNNING: the engine is absent / not consuming the cmd
+       *   - !useJaguarBIOS: real BIOS path runs the engine, so don't
+       *                     interfere there
+       *   - offset in command range
+       *
+       * TODO(v2.3): remove this once the BIOS DSP audio engine is
+       * properly replicated in HLE (Wolf3D / Skyhammer / IS2 family in
+       * docs/emulation-bug-hunt-todos.md).  At that point the engine
+       * will clear these words for real and we won't need the stub. */
       if (val != 0 && who == M68K && !DSP_RUNNING
             && !vjs.useJaguarBIOS
             && offset >= DSP_SOUND_CMD_BASE && offset < DSP_SOUND_CMD_END)

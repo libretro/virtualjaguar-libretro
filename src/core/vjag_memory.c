@@ -27,7 +27,20 @@ goes... Still completely doable though. :-)
 
 #include "vjag_memory.h"
 
-uint8_t jagMemSpace[0xF20000] = { 0 };			// The entire memory space of the Jaguar...!
+/* Backing store for the Jaguar's 24-bit address space.
+ *
+ *   0x000000 - 0x1FFFFF   Main RAM (2 MB)
+ *   0x200000 - 0x7FFFFF   Expansion / mirrored RAM (unused on stock)
+ *   0x800000 - 0xDFFEFF   Cartridge ROM (up to 6 MB)
+ *   0xDFFF00 - 0xDFFFFF   BUTCH (Jaguar CD) registers
+ *   0xE00000 - 0xEFFFFF   System BIOS (mapped from jaguarBootROM)
+ *   0xF00000 - 0xF0FFFF   TOM
+ *   0xF10000 - 0xF1FFFF   JERRY (incl. DSP work RAM at $F1B000)
+ *
+ * 0xF20000 covers everything we care about (the top 0xE0000 of the
+ * 24-bit space is unmapped). */
+#define JAG_MEMSPACE_BYTES  0x00F20000
+uint8_t jagMemSpace[JAG_MEMSPACE_BYTES] = { 0 };
 
 uint8_t * jaguarMainRAM = &jagMemSpace[0x000000];
 uint8_t * jaguarMainROM = &jagMemSpace[0x800000];

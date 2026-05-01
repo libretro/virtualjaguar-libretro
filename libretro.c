@@ -25,6 +25,12 @@
 #define BUFNTSC 1600
 #define BUFMAX 2048
 
+/* File extensions accepted by the core for retro_load_game. Matches the
+ * set the loader's ParseFileType() actually recognises (JST_ROM /
+ * JST_ALPINE / JST_ABS_TYPE1 / JST_ABS_TYPE2 / JST_JAGSERVER plus the
+ * conservative raw-binary detector for unheaded .bin homebrew). */
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|bin"
+
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
 #endif
@@ -573,7 +579,7 @@ void retro_get_system_info(struct retro_system_info *info)
    info->library_name     = "Virtual Jaguar";
    info->library_version  = CORE_VERSION;
    info->need_fullpath    = false;
-   info->valid_extensions = "j64|jag|rom|bin";
+   info->valid_extensions = JAGUAR_VALID_EXTENSIONS;
 }
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
