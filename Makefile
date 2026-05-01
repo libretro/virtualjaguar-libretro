@@ -43,13 +43,14 @@ else ifneq ($(findstring MINGW,$(shell uname -a)),)
 endif
 
 TARGET_NAME := virtualjaguar
-GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
-ifneq ($(GIT_VERSION)," unknown")
-	CFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
-endif
+
+# Single source-of-truth for the human-readable version string.
+# Bumped by .github/workflows/version-bump.yml (greps this line).
+# Composed into CORE_VERSION in src/core/version.h, generated below.
+CORE_BASE_VERSION := v2.2.0
+
 ifeq ($(DEBUG),1)
-BUILD_TIMESTAMP := " debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
-	CFLAGS += -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
+   CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
 endif
 
 # GNU-ld --version-script choice.
@@ -543,6 +544,23 @@ CORE_DIR     := .
 include Makefile.common
 
 OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
+
+# ----------------------------------------------------------------
+# version.h: generated header read by libretro.c.  Single source of
+# truth is CORE_BASE_VERSION above; the script also stamps in the
+# short git rev.  Regenerated on every build via the FORCE rule;
+# the script does an in-place cmp to avoid touching mtime when
+# contents are unchanged, so incremental builds stay incremental.
+# ----------------------------------------------------------------
+VERSION_H := $(CORE_DIR)/src/core/version.h
+
+$(VERSION_H): FORCE
+	@bash scripts/gen-version-h.sh
+
+.PHONY: FORCE
+FORCE:
+
+$(CORE_DIR)/libretro.o: $(VERSION_H)
 
 ifeq ($(DEBUG),1)
    ifneq (,$(findstring msvc,$(platform)))

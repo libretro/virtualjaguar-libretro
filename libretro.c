@@ -19,6 +19,7 @@
 #include "tom.h"
 #include "state.h"
 #include "log.h"
+#include "version.h" /* generated; defines CORE_VERSION */
 
 #define SAMPLERATE 48000
 #define BUFPAL  1920
@@ -37,15 +38,6 @@
  * Add `cdi`, `cue`, `iso`, and `chd` here when CD-image support
  * lands on a future PR. */
 #define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg"
-
-#ifndef GIT_VERSION
-#define GIT_VERSION ""
-#endif
-#ifdef BUILD_TIMESTAMP
-#define CORE_VERSION "v2.2.0" GIT_VERSION BUILD_TIMESTAMP
-#else
-#define CORE_VERSION "v2.2.0" GIT_VERSION
-#endif
 
 int videoWidth               = 0;
 int videoHeight              = 0;

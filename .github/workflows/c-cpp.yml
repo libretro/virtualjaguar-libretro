@@ -276,6 +276,10 @@ jobs:
       with:
         arch: ${{ matrix.arch }}
 
+    - name: Generate src/core/version.h
+      shell: bash
+      run: bash scripts/gen-version-h.sh
+
     - name: Compile all sources with cl.exe
       shell: cmd
       run: |

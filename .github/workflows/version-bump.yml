@@ -31,7 +31,8 @@ jobs:
     - name: Parse current version
       id: current
       run: |
-        VER=$(grep -oP 'library_version\s*=\s*"v\K[0-9]+\.[0-9]+\.[0-9]+' libretro.c)
+        # Source of truth: CORE_BASE_VERSION line in Makefile.
+        VER=$(grep -oP '^CORE_BASE_VERSION\s*:?=\s*v\K[0-9]+\.[0-9]+\.[0-9]+' Makefile)
         echo "version=${VER}" >> "$GITHUB_OUTPUT"
         echo "Current version: v${VER}"
 
@@ -48,17 +49,17 @@ jobs:
         echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
         echo "Next version: v${NEXT}"
 
-    - name: Update libretro.c
+    - name: Update Makefile
       run: |
-        sed -i 's/library_version  = "v${{ steps.current.outputs.version }}"/library_version  = "v${{ steps.next.outputs.version }}"/' libretro.c
-        grep 'library_version' libretro.c
+        sed -i 's/^CORE_BASE_VERSION := v${{ steps.current.outputs.version }}$/CORE_BASE_VERSION := v${{ steps.next.outputs.version }}/' Makefile
+        grep '^CORE_BASE_VERSION' Makefile
 
     - name: Commit, tag, and push
       if: ${{ !inputs.dry_run }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add libretro.c
+        git add Makefile
         git commit -m "Bump version to v${{ steps.next.outputs.version }}"
         git tag "v${{ steps.next.outputs.version }}"
         git push origin HEAD --tags
