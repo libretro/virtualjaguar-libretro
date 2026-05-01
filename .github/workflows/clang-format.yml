@@ -33,7 +33,12 @@ jobs:
           sudo apt-get install -y clang-format
 
       - name: Run clang-format-diff on changed hunks
+        # Disable -e: git diff returns 1 when diff is non-empty,
+        # clang-format-diff returns 1 when it has suggestions, neither
+        # is a real failure here.  We always exit 0 at the end.
+        shell: bash {0}
         run: |
+          set -u
           git fetch origin "${{ github.base_ref }}":__base
           # Stream diff -> clang-format-diff -> file.  Avoids capturing
           # potentially large diffs into shell variables.
@@ -51,12 +56,12 @@ jobs:
           # but isn't always on PATH; locate it.
           CFD=$(command -v clang-format-diff || command -v clang-format-diff-18 || command -v clang-format-diff-17 || command -v clang-format-diff-16 || true)
           if [ -z "$CFD" ]; then
-            echo "::error::clang-format-diff not found"
-            exit 1
+            echo "::warning::clang-format-diff not found; skipping advisory check."
+            exit 0
           fi
 
           OUT_FILE=$(mktemp)
-          "$CFD" -p1 -style=file < "$DIFF_FILE" > "$OUT_FILE"
+          "$CFD" -p1 -style=file < "$DIFF_FILE" > "$OUT_FILE" || true
           if [ -s "$OUT_FILE" ]; then
             echo "::notice::clang-format has style suggestions; see job summary."
             {
