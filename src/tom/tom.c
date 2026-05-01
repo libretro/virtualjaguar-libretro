@@ -548,6 +548,29 @@ uint16_t TOMGetMEMCON1(void)
 }
 
 #define LEFT_BG_FIX
+
+/* Clamp `width` so the per-pixel loop in a tom_render_*_scanline()
+ * cannot walk past the end of tomRam8 via current_line_buffer.
+ * Catches an ASAN-reported OOB read (#127): when display registers
+ * request a width larger than the on-chip line buffer holds
+ * (10240 bytes at tomRam8[0x1800..0x3FFF]).
+ *
+ *   bytes_per_iter: source bytes consumed per loop iter (2 for 16bpp
+ *                   variants, 4 for 24bpp).
+ *   pwidth_scale:   backbuffer pixels produced per loop iter. */
+static uint16_t tom_clamp_line_buffer_width(
+   const uint8_t *current_line_buffer, uint16_t width,
+   unsigned bytes_per_iter, uint8_t pwidth_scale)
+{
+   const uint8_t *lb_end = &tomRam8[sizeof(tomRam8)];
+   unsigned long bytes_left;
+   unsigned long safe_width;
+   if (current_line_buffer >= lb_end) return 0;
+   bytes_left = (unsigned long)(lb_end - current_line_buffer);
+   safe_width = (bytes_left / bytes_per_iter) * pwidth_scale;
+   return (width > safe_width) ? (uint16_t)safe_width : width;
+}
+
 // 16 BPP CRY/RGB mixed mode rendering
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 {
@@ -579,6 +602,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -620,6 +644,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -661,6 +686,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 4, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint32_t b;
@@ -687,6 +713,7 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -729,6 +756,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint32_t color = (*current_line_buffer++) << 8;
