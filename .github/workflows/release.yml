@@ -366,6 +366,12 @@ jobs:
         # Flatten one level: each artifact directory contains the
         # binary + matching -debug.tar.gz; copy them all into release/
         find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+        # Include the RetroArch core .info file so frontend maintainers
+        # / users can drop it into RetroArch's info/ dir.  The same file
+        # is what gets PR'd to libretro/libretro-super after the release.
+        if [ -f dist/info/virtualjaguar_libretro.info ]; then
+          cp dist/info/virtualjaguar_libretro.info release/
+        fi
         echo "==> Staged release files:"
         ls -la release/
 

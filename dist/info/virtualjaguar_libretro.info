@@ -1,0 +1,32 @@
+# Software Information
+display_name = "Atari - Jaguar (Virtual Jaguar)"
+authors = "David Raingeard|Shamus|Joseph Mattiello"
+supported_extensions = "j64|jag|rom|bin"
+corename = "Virtual Jaguar"
+license = "GPLv3"
+permissions = ""
+display_version = "v2.2.0"
+categories = "Emulator"
+
+# Hardware Information
+manufacturer = "Atari"
+systemname = "Jaguar"
+systemid = "atari_jaguar"
+
+# Libretro Features
+supports_no_game = "false"
+database = "Atari - Jaguar"
+savestate = "true"
+savestate_features = "2"
+cheats = "true"
+input_descriptors = "true"
+memory_descriptors = "true"
+libretro_saves = "true"
+core_options = "true"
+load_subsystem = "false"
+hw_render = "false"
+needs_fullpath = "false"
+disk_control = "false"
+is_experimental = "false"
+
+description = "A libretro port of Virtual Jaguar (originally Potato Emulation). The v2.2.0 release of the Provenance fork brings a usable HLE BIOS so most commercial titles boot without a real BIOS image, save state / SRAM / cheat / RetroAchievements support, an audio-pipeline rewrite, ~2x speedup on hot paths, and a SIMD-accelerated blitter. The core ships a Fast Blitter option for cases where the more accurate scalar path is too slow on lower-end hardware. Game compatibility, known issues, and per-platform debug symbols are documented in the GitHub release notes."
