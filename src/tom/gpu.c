@@ -1671,7 +1671,7 @@ INLINE static void gpu_opcode_shrq(void)
 INLINE static void gpu_opcode_ror(void)
 {
    uint32_t r1 = RM & 0x1F;
-   uint32_t res = (RN >> r1) | (RN << (32 - r1));
+   uint32_t res = (RN >> r1) | (RN << ((-r1) & 31));
    SET_ZN(res); gpu_flag_c = (RN >> 31) & 1;
    RN = res;
 }
@@ -1681,7 +1681,7 @@ INLINE static void gpu_opcode_rorq(void)
 {
    uint32_t r1 = gpu_convert_zero[IMM_1 & 0x1F];
    uint32_t r2 = RN;
-   uint32_t res = (r2 >> r1) | (r2 << (32 - r1));
+   uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
    RN = res;
    SET_ZN(res); gpu_flag_c = (r2 >> 31) & 0x01;
 }

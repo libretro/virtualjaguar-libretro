@@ -1409,7 +1409,7 @@ INLINE static void dsp_opcode_shrq(void)
 INLINE static void dsp_opcode_ror(void)
 {
 	uint32_t r1 = RM & 0x1F;
-	uint32_t res = (RN >> r1) | (RN << (32 - r1));
+	uint32_t res = (RN >> r1) | (RN << ((-r1) & 31));
 	SET_ZN(res); dsp_flag_c = (RN >> 31) & 1;
 	RN = res;
 }
@@ -1419,7 +1419,7 @@ INLINE static void dsp_opcode_rorq(void)
 {
 	uint32_t r1 = dsp_convert_zero[IMM_1 & 0x1F];
 	uint32_t r2 = RN;
-	uint32_t res = (r2 >> r1) | (r2 << (32 - r1));
+	uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
 	RN = res;
 	SET_ZN(res); dsp_flag_c = (r2 >> 31) & 0x01;
 }
@@ -2226,7 +2226,7 @@ INLINE static void DSP_resmac(void)
 INLINE static void DSP_ror(void)
 {
 	uint32_t r1 = PRM & 0x1F;
-	uint32_t res = (PRN >> r1) | (PRN << (32 - r1));
+	uint32_t res = (PRN >> r1) | (PRN << ((-r1) & 31));
 	SET_ZN(res); dsp_flag_c = (PRN >> 31) & 1;
 	PRES = res;
 }
@@ -2235,7 +2235,7 @@ INLINE static void DSP_rorq(void)
 {
 	uint32_t r1 = dsp_convert_zero[PIMM1 & 0x1F];
 	uint32_t r2 = PRN;
-	uint32_t res = (r2 >> r1) | (r2 << (32 - r1));
+	uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
 	PRES = res;
 	SET_ZN(res); dsp_flag_c = (r2 >> 31) & 0x01;
 }
