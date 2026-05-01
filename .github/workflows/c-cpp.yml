@@ -171,6 +171,9 @@ jobs:
     - name: Build (Android NDK)
       if: matrix.config.android
       run: |
+        # ndk-build uses jni/Android.mk (not the project Makefile),
+        # so the parse-time version.h regen in Makefile doesn't run.
+        bash scripts/gen-version-h.sh
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
