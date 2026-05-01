@@ -567,7 +567,18 @@ OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
 # stay incremental.
 # ----------------------------------------------------------------
 VERSION_H := $(CORE_DIR)/src/core/version.h
+
+# Skip the generator for read-only / metadata-only goals -- no point
+# spawning bash for `make clean`, `make print-FOO`, `make lint`, or
+# `make help`.  Builds (the empty MAKECMDGOALS case, default target)
+# always run it.
+NO_GEN_GOALS := clean lint help print-%
+ifeq ($(filter-out $(NO_GEN_GOALS),$(or $(MAKECMDGOALS),all)),)
+# All requested goals are read-only -- skip generator.
+else
 _VERSION_GEN := $(shell bash scripts/gen-version-h.sh && echo ok)
+endif
+
 # Note: $(CORE_DIR)/libretro.o: $(VERSION_H) dependency is wired up
 # AFTER the `all:` rule below, so Make 3.81 doesn't latch onto
 # libretro.o as the default goal.

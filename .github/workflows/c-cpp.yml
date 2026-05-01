@@ -501,7 +501,8 @@ jobs:
         # cppcheck 2.13 (Ubuntu 24.04) doesn't accept comment lines in
         # the suppressions file; strip them before passing.
         bash scripts/gen-version-h.sh
-        grep -vE '^\s*(#|$)' cppcheck-suppressions.txt > /tmp/cppcheck-suppressions.txt
+        # POSIX character class -- not GNU grep's \s extension.
+        grep -vE '^[[:space:]]*(#|$)' cppcheck-suppressions.txt > /tmp/cppcheck-suppressions.txt
         cppcheck \
           --enable=warning,performance,portability \
           --suppress=missingIncludeSystem \

@@ -35,14 +35,17 @@ jobs:
       - name: Run clang-format-diff on changed hunks
         run: |
           git fetch origin "${{ github.base_ref }}":__base
+          # Stream diff -> clang-format-diff -> file.  Avoids capturing
+          # potentially large diffs into shell variables.
           # -U0: zero context lines so clang-format-diff only sees
-          # added/changed lines.  Pathspec excludes the
-          # vendored/generated trees.
-          DIFF=$(git diff -U0 __base...HEAD -- \
+          # added/changed lines.  Pathspec excludes vendored/generated.
+          DIFF_FILE=$(mktemp)
+          git diff -U0 __base...HEAD -- \
             ':(exclude)libretro-common/**' \
             ':(exclude)src/m68000/**' \
             ':(exclude)src/bios/jag*.c' \
-            ':(exclude)src/core/version.h')
+            ':(exclude)src/core/version.h' \
+            > "$DIFF_FILE"
 
           # clang-format-diff ships in the Ubuntu clang-format package
           # but isn't always on PATH; locate it.
@@ -52,8 +55,9 @@ jobs:
             exit 1
           fi
 
-          OUT=$(echo "$DIFF" | "$CFD" -p1 -style=file)
-          if [ -n "$OUT" ]; then
+          OUT_FILE=$(mktemp)
+          "$CFD" -p1 -style=file < "$DIFF_FILE" > "$OUT_FILE"
+          if [ -s "$OUT_FILE" ]; then
             echo "::notice::clang-format has style suggestions; see job summary."
             {
               echo "## clang-format suggestions"
@@ -62,12 +66,13 @@ jobs:
               echo "we do NOT auto-enforce.  Apply if they make sense for your hunk."
               echo
               echo '```diff'
-              echo "$OUT"
+              cat "$OUT_FILE"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "$OUT"
+            cat "$OUT_FILE"
           else
             echo "OK: no clang-format suggestions on changed lines"
           fi
+          rm -f "$DIFF_FILE" "$OUT_FILE"
           # Always exit 0 -- this check is informational only.
           exit 0
