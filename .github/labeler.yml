@@ -1,0 +1,120 @@
+# PR auto-labeler config consumed by .github/workflows/labeler.yml.
+# Schema: https://github.com/actions/labeler#create-labeleryml
+#
+# Goal: any PR that touches files in a subsystem gets the matching
+# label so subsystem-focused review and triage queries work
+# (`is:pr label:dsp`).  Multiple labels per PR are normal.
+
+# --- Subsystems ---
+
+dsp:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/jerry/dsp*.c'
+      - 'src/jerry/dsp*.h'
+      - 'src/jerry/dsp_acc40.h'
+      - 'test/test_dsp_*.c'
+      - 'test/test_audio_*.c'
+
+gpu:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/tom/gpu.c'
+      - 'src/tom/gpu.h'
+      - 'test/test_gpu_*.c'
+
+blitter:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/tom/blitter*.c'
+      - 'src/tom/blitter*.h'
+      - 'test/test_blitter_*.c'
+      - 'test/tools/test_blitter_compare.c'
+
+op:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/tom/op.c'
+      - 'src/tom/op.h'
+      - 'test/test_op_*.c'
+
+m68k:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/m68000/**'
+      - 'test/test_m68k_*.c'
+
+cd:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/cd/**'
+      - 'test/test_cd_*.c'
+
+bios:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/bios/**'
+      - 'test/test_hle_bios.c'
+
+core:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/core/**'
+      - 'test/test_subsystem_*.c'
+      - 'test/test_event_*.c'
+      - 'test/test_irq_*.c'
+      - 'test/test_boot_*.c'
+
+# --- Areas ---
+
+libretro-glue:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'libretro.c'
+      - 'libretro_core_options.h'
+      - 'link.T'
+      - 'link-test.T'
+      - 'exports.list'
+      - 'exports-test.list'
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'test/**'
+
+build:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Makefile'
+      - 'Makefile.common'
+      - 'scripts/**'
+      - 'jni/Android.mk'
+
+"ci/cd :robot:":
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
+      - '.github/labeler.yml'
+      - '.editorconfig'
+      - '.ecrc'
+      - '.clang-format'
+      - '.clang-tidy'
+      - 'cppcheck-suppressions.txt'
+      - 'gcovr.cfg'
+      - 'codecov.yml'
+
+":book: documentation":
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**'
+      - 'CLAUDE.md'
+      - 'CONTRIBUTING.md'
+
+performance:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'docs/profiling.md'
+      - 'src/tom/blitter_simd_*.c'
+      - 'test/tools/test_benchmark.c'
