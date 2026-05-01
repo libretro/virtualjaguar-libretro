@@ -6,6 +6,10 @@ Guidance for Claude Code working in this repository.
 
 Virtual Jaguar libretro core — Atari Jaguar emulator on the libretro API. C, GPLv3. Upstream: `http://shamusworld.gotdns.org/git/virtualjaguar`.
 
+## Branching
+
+GitFlow: branch new work off **`develop`** (the integration branch); `master` is release-only (tagged commits, hotfix merges, release-branch merges). PRs targeting `master` get auto-warned by `.github/workflows/warn-pr-base.yml` — retarget to `develop` unless the source branch is `hotfix/*` or `release/*`. Full flow in [`docs/release-process.md`](docs/release-process.md).
+
 ## Build
 
 ```bash

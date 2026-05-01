@@ -2,12 +2,26 @@
 
 How to ship a new tagged release of the libretro core.
 
+## Branching model (GitFlow)
+
+This repo uses a [GitFlow](https://nvie.com/posts/a-successful-git-branching-model/)-style layout:
+
+- `master` — release-only.  Tagged commits, hotfix merges, release-branch merges.  Default branch on GitHub for visibility / clone defaults.
+- `develop` — integration branch.  All feature work flows in here first.
+- `feature/*` — branched from `develop`, merged back via PR.
+- `release/X.Y.Z` — branched from `develop` when cutting a release; bug-fix-only until tagged on `master`, then back-merged to `develop`.
+- `hotfix/X.Y.Z` — branched from `master`, fixed, tagged on `master`, back-merged to `develop`.
+
+PRs targeting `master` directly trigger a friendly comment from `.github/workflows/warn-pr-base.yml` asking the contributor to retarget to `develop` (skipped for `release/*` and `hotfix/*` source branches).
+
 ## TL;DR
 
-1. Merge the release PR into `master`.
-2. `git tag vX.Y.Z && git push libretro vX.Y.Z` (or via GitHub UI).
-3. Watch [Actions](https://github.com/libretro/virtualjaguar-libretro/actions) — `release.yml` builds 14 platforms, generates `SHA256SUMS.txt`, and publishes the release with `docs/RELEASE_NOTES_vX.Y.Z.md` as the body.
-4. After the tag publishes, send a small PR to [libretro/libretro-super](https://github.com/libretro/libretro-super) updating `dist/info/virtualjaguar_libretro.info` to match `dist/info/virtualjaguar_libretro.info` from this repo at the tag.
+1. Cut `release/X.Y.Z` from `develop`.  Bump `CORE_BASE_VERSION` in `Makefile` (or use the `Bump Version & Release` workflow).  Update `docs/RELEASE_NOTES_vX.Y.Z.md`.  Open a PR from `release/X.Y.Z` → `master`.
+2. Merge into `master`.
+3. `git tag vX.Y.Z && git push libretro vX.Y.Z` (or via GitHub UI).
+4. Watch [Actions](https://github.com/libretro/virtualjaguar-libretro/actions) — `release.yml` builds 14 platforms, generates `SHA256SUMS.txt`, and publishes the release with `docs/RELEASE_NOTES_vX.Y.Z.md` as the body.
+5. **Back-merge `master` → `develop`** so the version bump and any release-branch fixes are in `develop`: `git checkout develop && git merge master && git push libretro develop`.
+6. After the tag publishes, send a small PR to [libretro/libretro-super](https://github.com/libretro/libretro-super) updating `dist/info/virtualjaguar_libretro.info` to match `dist/info/virtualjaguar_libretro.info` from this repo at the tag.
 
 ## Detail
 
@@ -74,6 +88,22 @@ The libretro-super maintainers (typically @inactive123, @MrHuu, @aliaspider) mer
 The `docs/RELEASE_NOTES_v<TAG>.md` file is written by hand (or with a sub-agent's help) before tagging. Recommended structure is in [`docs/RELEASE_NOTES_v2.2.0.md`](RELEASE_NOTES_v2.2.0.md) — Highlights, What's new (lifted from `docs/WHATSNEW`), Game compatibility summary, Known issues, "Compared to upstream" stats from `git shortlog -sn` and `git diff --shortstat libretro/master...HEAD`, Downloads list, Maintainers.
 
 For future releases (where there's a previous tag to diff against), use `git shortlog vPREV..HEAD` instead of `libretro/master..HEAD`.
+
+### Hotfix flow
+
+When a critical bug ships in a release and can't wait for the next `develop` cycle:
+
+```
+git checkout master && git pull
+git checkout -b hotfix/X.Y.Z+1
+# ... fix, bump CORE_BASE_VERSION patch, update RELEASE_NOTES, commit ...
+gh pr create --base master --title "hotfix: <issue>" --body "Fixes #N.  Bumps to vX.Y.Z+1."
+# After merge:
+git tag vX.Y.Z+1 && git push libretro vX.Y.Z+1
+git checkout develop && git pull && git merge master && git push libretro develop
+```
+
+The `hotfix/*` source branch suppresses the warn-on-master-PR workflow.
 
 ### 6. If a release-job step fails
 
