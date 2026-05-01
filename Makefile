@@ -830,7 +830,7 @@ test/tools/test_memory_map: test/tools/test_memory_map.c
 		-o $@ test/tools/test_memory_map.c -ldl
 endif
 
-.PHONY: clean test lint coverage
+.PHONY: clean test lint coverage benchmark
 endif
 
 lint:
@@ -844,6 +844,27 @@ coverage:
 	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
 	gcovr --config gcovr.cfg --xml-pretty -o coverage.xml --txt --print-summary
+
+# `make benchmark` -- headless wall-clock perf measurement on a fixed
+# ROM.  Boots the core via dlopen, runs $(BENCH_FRAMES) frames after
+# $(BENCH_WARMUP) warmup, prints FPS / ms-per-frame.  Use during
+# perf-tuning code changes; commit-by-commit deltas are the signal.
+#
+# Override on the command line:
+#   make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
+#   make benchmark BENCH_FRAMES=3000 BENCH_WARMUP=120
+#   make benchmark BENCH_BLITTER=accurate    # default: fast
+BENCH_ROM     ?= test/roms/yarc.j64
+BENCH_FRAMES  ?= 600
+BENCH_WARMUP  ?= 60
+BENCH_BLITTER ?= fast
+benchmark: $(TARGET)
+	@# Build the harness inline so this works whether or not TEST_EXPORTS=1
+	@# was used for $(TARGET); the harness only uses retro_* exports.
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_benchmark test/tools/test_benchmark.c -ldl
+	./test/tools/test_benchmark ./$(TARGET) $(BENCH_ROM) $(BENCH_FRAMES) \
+		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER)
 
 print-%:
 	@echo '$*=$($*)'

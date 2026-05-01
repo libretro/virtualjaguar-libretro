@@ -41,6 +41,7 @@ Output: `virtualjaguar_libretro.{dylib,so,dll}` at the repo root.
 ```bash
 make test                                     # full white-box test suite
 ./test/regression_test.sh ./virtualjaguar_libretro.so   # screenshot regression vs test/baselines/
+make benchmark                                # headless wall-clock perf (see docs/profiling.md)
 ```
 
 `make test` re-invokes the build with `TEST_EXPORTS=1` (link-test.T / exports-test.list) so the test binaries can `dlsym` into the emulator internals.  `make` (default) restores the production-slim symbol set.
