@@ -3172,6 +3172,10 @@ int main(int argc, char *argv[])
 
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 
+   /* Match the second p_retro_load_game (PAL) call above.  Without
+    * this unload, JaguarDone() never runs for the PAL load and ASAN
+    * reports table68k + branch_condition_table as leaks. */
+   p_retro_unload_game();
    p_retro_deinit();
    dlclose(handle);
    free(dummy_rom);

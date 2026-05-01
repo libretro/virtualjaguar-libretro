@@ -919,6 +919,7 @@ void JaguarDone(void)
    DSPDone();
    TOMDone();
    JERRYDone();
+   m68k_done();
 }
 
 uint8_t * GetRamPtr(void)

@@ -15,6 +15,7 @@ extern "C" {
 #define GPU_WORK_RAM_BASE		0x00F03000
 
 void GPUInit(void);
+void GPUDone(void);
 void GPUReset(void);
 void GPUExec(int32_t);
 void GPUUpdateRegisterBanks(void);

@@ -642,6 +642,16 @@ void GPUInit(void)
    GPUReset();
 }
 
+void GPUDone(void)
+{
+   /* Release the branch-condition LUT so process-lifetime ASAN runs
+    * don't report it as a leak.  Unconditional: free(NULL) is a
+    * no-op, and a subsequent GPUInit() re-allocates cleanly because
+    * build_branch_condition_table() early-outs on non-NULL pointer. */
+   free(branch_condition_table);
+   branch_condition_table = NULL;
+}
+
 void GPUReset(void)
 {
    unsigned i;
@@ -1661,7 +1671,7 @@ INLINE static void gpu_opcode_shrq(void)
 INLINE static void gpu_opcode_ror(void)
 {
    uint32_t r1 = RM & 0x1F;
-   uint32_t res = (RN >> r1) | (RN << (32 - r1));
+   uint32_t res = (RN >> r1) | (RN << ((-r1) & 31));
    SET_ZN(res); gpu_flag_c = (RN >> 31) & 1;
    RN = res;
 }
@@ -1669,9 +1679,12 @@ INLINE static void gpu_opcode_ror(void)
 
 INLINE static void gpu_opcode_rorq(void)
 {
-   uint32_t r1 = gpu_convert_zero[IMM_1 & 0x1F];
+   /* gpu_convert_zero[0] returns 32 (rotate-by-0 means rotate-by-full-word
+    * which is a no-op).  Masking to 0x1F maps 32 -> 0, preserving that
+    * semantic and avoiding `RN >> 32` UB in the rotate idiom below. */
+   uint32_t r1 = gpu_convert_zero[IMM_1 & 0x1F] & 0x1F;
    uint32_t r2 = RN;
-   uint32_t res = (r2 >> r1) | (r2 << (32 - r1));
+   uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
    RN = res;
    SET_ZN(res); gpu_flag_c = (r2 >> 31) & 0x01;
 }

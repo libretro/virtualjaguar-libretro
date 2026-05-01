@@ -24,7 +24,10 @@ Checks: >
   -bugprone-suspicious-include,
   -bugprone-switch-missing-default-case,
   -bugprone-branch-clone,
+  -bugprone-incorrect-roundings,
+  -bugprone-multi-level-implicit-pointer-conversion,
   -clang-analyzer-deadcode.DeadStores,
+  -clang-analyzer-optin.performance.Padding,
   -clang-analyzer-optin.portability.UnixAPI,
   -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
   -clang-analyzer-valist.Uninitialized
@@ -49,6 +52,13 @@ FormatStyle: none
 # - suspicious-include: project includes .c files in a couple of dispatch headers.
 # - switch-missing-default-case: cosmetic; switches on bit-field decode patterns
 #   commonly omit default because all valid bit values are handled.
+# - incorrect-roundings: src/core/event.h's USEC_TO_RISC_CYCLES /
+#   USEC_TO_M68K_CYCLES use the (double + 0.5) integer-cast idiom for
+#   cycle conversion.  lround() is C99 (we're C89/GNU89), and the
+#   inputs are non-negative so the idiom is correct here.
+# - multi-level-implicit-pointer-conversion: dlsym() returns void*
+#   that test harnesses cast directly to function pointers / data
+#   pointer-to-pointer; canonical idiom in the libretro dlsym pattern.
 # - branch-clone: register-decode if-chains in src/cd/cdrom.c and src/tom/tom.c
 #   intentionally write the same value for several adjacent register addresses
 #   to make the address->effect mapping legible.  Real bug clones are caught
@@ -57,5 +67,8 @@ FormatStyle: none
 #   locals that are read via macros (BCOMPEN, DSTA2, ...) clang-tidy can't see
 #   the linkage for.  Removing these inits would introduce real bugs.
 # - DeprecatedOrUnsafeBufferHandling: MSVC-flavored noise about strcpy/sprintf.
+# - optin.performance.Padding: upstream UAE/Virtual Jaguar struct layouts
+#   inherited from 1990s emulator code; reordering for tighter packing risks
+#   silent layout breaks in save-state / dlsym paths and isn't free perf.
 # - optin.portability.UnixAPI: false positive on libretro_core_options.h calloc.
 # - valist.Uninitialized: false-positive prone on our log macros.
