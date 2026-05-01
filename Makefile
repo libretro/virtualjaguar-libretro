@@ -53,21 +53,29 @@ ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
 endif
 
-# GNU-ld --version-script choice.
-#  link.T       : production ABI (retro_* only).
-#  link-test.T  : wide symbol set used by white-box test harnesses.
-# The `test` target re-invokes make with TEST_EXPORTS=1 so the
-# shipped .so on `make` (default) hides internal symbols, while
-# `make test` produces a .so the test binaries can dlsym into.
-# Only effective on platforms that link with GNU ld --version-script
-# (Linux, Windows MSYS2, ARM, etc.); macOS / iOS / tvOS dylibs and
-# static archives ignore this and currently still export everything
-# with default visibility.
+# Symbol export gating.
+#
+#   GNU ld (Linux, Windows MSYS2, ARM, ...) honours --version-script:
+#     link.T       : production ABI (retro_* only).
+#     link-test.T  : wide symbol set used by white-box test harnesses.
+#
+#   Mach-O ld64 (macOS / iOS / tvOS) ignores --version-script; it uses
+#   -exported_symbols_list instead:
+#     exports.list       : production retro_* only.
+#     exports-test.list  : wide test ABI (mirrors link-test.T).
+#
+# The `test` target re-invokes make with TEST_EXPORTS=1 so the shipped
+# library on default `make` hides internals, while `make test` produces
+# a library the test binaries can dlsym into.  Static archives ignore
+# both mechanisms and still export everything with default visibility.
 ifeq ($(TEST_EXPORTS),1)
 LINK_SCRIPT := link-test.T
+MACHO_EXPORTS := exports-test.list
 else
 LINK_SCRIPT := link.T
+MACHO_EXPORTS := exports.list
 endif
+MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
 # Unix
 ifeq ($(platform), unix)
@@ -115,7 +123,7 @@ else ifeq ($(platform), classic_armv7_a7)
 else ifeq ($(platform), osx)
 	TARGET := $(TARGET_NAME)_libretro.dylib
 	fpic := -fPIC
-	SHARED := -dynamiclib
+	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
 	ifeq ($(arch),ppc)
 		FLAGS += -DMSB_FIRST
 		OLD_GCC = 1
@@ -142,7 +150,7 @@ endif
 else ifneq (,$(findstring ios,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro_ios.dylib
 	fpic := -fPIC
-	SHARED := -dynamiclib
+	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
 	MINVERSION :=
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk iphoneos Path)
@@ -166,7 +174,7 @@ else ifeq ($(platform), tvos-arm64)
 # tvOS
 	TARGET := $(TARGET_NAME)_libretro_tvos.dylib
 	fpic := -fPIC
-	SHARED := -dynamiclib
+	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk appletvos Path)
 	endif

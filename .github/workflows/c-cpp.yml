@@ -169,6 +169,21 @@ jobs:
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
 
+    # Mach-O symbol gating: production builds must export retro_* only.
+    # Runs before the test step (which would relink with TEST_EXPORTS=1
+    # and widen the symbol set).
+    - name: Verify Mach-O symbol gating (production)
+      if: ${{ runner.os == 'macOS' && !matrix.config.emscripten && !matrix.config.android }}
+      run: |
+        LEAKS=$(nm -gU "${{ matrix.config.artifact }}" | grep -v ' _retro_' || true)
+        if [ -n "$LEAKS" ]; then
+          echo "::error::Production dylib leaked non-retro_* symbols:"
+          echo "$LEAKS"
+          exit 1
+        fi
+        COUNT=$(nm -gU "${{ matrix.config.artifact }}" | wc -l | tr -d ' ')
+        echo "==> Production exports: ${COUNT} (all retro_*)"
+
     # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
