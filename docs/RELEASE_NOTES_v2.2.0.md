@@ -199,7 +199,3 @@ SHA256 checksums in `SHA256SUMS.txt`.
 ## Maintainers
 
 libretro/Provenance fork: Joseph Mattiello (@JoeMatt, Provenance-Emu).
-
----
-
-Generated with [Claude Code](https://claude.com/claude-code)
