@@ -33,7 +33,10 @@
 extern "C" {
 #endif
 
-#ifdef BENCH_PROFILE
+/* Registry types and entry points are *always* declared so the test
+ * ABI can export them unconditionally.  When BENCH_PROFILE is undefined
+ * the bodies (in perf_counters.c) become no-ops and no PERF_COUNTER
+ * macro registers anything, so the registry stays empty. */
 
 typedef struct perf_counter_entry
 {
@@ -45,6 +48,8 @@ typedef struct perf_counter_entry
 void perf_counters_register(perf_counter_entry_t *entry);
 void perf_counters_dump(FILE *out);
 void perf_counters_reset(void);
+
+#ifdef BENCH_PROFILE
 
 #define PERF_COUNTER(name) \
    static unsigned long long perf_##name = 0; \
@@ -71,10 +76,6 @@ void perf_counters_reset(void);
  * can use them inside comma operators without code changes. */
 #define PERF_INC(name)        (0)
 #define PERF_ADD(name, n)     ((void)(n), 0)
-
-/* Stubs so callers don't need their own #ifdef around dump/reset. */
-static __inline void perf_counters_dump(FILE *out)  { (void)out; }
-static __inline void perf_counters_reset(void)      { }
 
 #endif /* BENCH_PROFILE */
 
