@@ -34,6 +34,20 @@
 #define USE_ORIGINAL_BLITTER
 #define USE_MIDSUMMER_BLITTER_MKII
 
+/* Portable always-inline.  Spelled to include the inline keyword
+ * itself (MSVC's __forceinline IS the inline keyword for that
+ * compiler), so call sites use `static BLITTER_ALWAYS_INLINE void
+ * foo(...)` without an extra INLINE/inline.  Used to force inlining
+ * of the blitter helpers (ADD16SAT, ADDARRAY, COMP_CTRL, DATA) so
+ * the compiler can specialise them per call site. */
+#if defined(_MSC_VER)
+#  define BLITTER_ALWAYS_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define BLITTER_ALWAYS_INLINE inline __attribute__((always_inline))
+#else
+#  define BLITTER_ALWAYS_INLINE inline
+#endif
+
 // Local global variables
 
 // Blitter register RAM (most of it is hidden from the user)
@@ -993,7 +1007,7 @@ void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
  * call sites in BlitterMidsummer2 (compile-time daddasel/daddbsel/
  * daddmode -> dead switch arms eliminated) and the call inside DATA
  * (where the args are loop-invariant for the duration of a blit). */
-static INLINE __attribute__((always_inline))
+static BLITTER_ALWAYS_INLINE
 void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b,
               uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
@@ -1031,7 +1045,7 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b,
    *r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
 }
 
-static INLINE __attribute__((always_inline))
+static BLITTER_ALWAYS_INLINE
 void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
               uint8_t daddmode, uint64_t dstd, uint32_t iinc,
               uint8_t initcin[], uint64_t initinc, uint16_t initpix,
@@ -1119,7 +1133,7 @@ void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
    ADD16SAT(&addq[3], &co[3], adda[3], addb[3], cin[3], sat, eightbit, hicinh);
 }
 
-static INLINE __attribute__((always_inline))
+static BLITTER_ALWAYS_INLINE
 void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
 	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp)
@@ -1326,7 +1340,7 @@ Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
    *dbinh = ~*dbinh;
 }
 
-static INLINE __attribute__((always_inline))
+static BLITTER_ALWAYS_INLINE
 void DATA(uint64_t *wdata, uint8_t *dcomp, uint8_t *zcomp, bool *nowrite,
 	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
 	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t *patd, bool patdadd,
