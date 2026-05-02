@@ -372,66 +372,109 @@ int main(int argc, char **argv)
     * RASTATE format. */
    if (state_load_path)
    {
-      FILE *stf = fopen(state_load_path, "rb");
+      FILE *stf = NULL;
+      long st_total = 0;
+      uint8_t *st_buf = NULL;
+      const uint8_t *payload = NULL;
+      size_t payload_size = 0;
+      size_t expected;
+      const char *state_err = NULL;
+
+      stf = fopen(state_load_path, "rb");
       if (!stf)
       {
-         fprintf(stderr, "ERROR: cannot open state file: %s\n", state_load_path);
-         return 1;
+         state_err = "cannot open state file";
+         goto state_fail;
       }
+      if (fseek(stf, 0, SEEK_END) != 0)
       {
-         long st_total;
-         uint8_t *st_buf;
-         const uint8_t *payload;
-         size_t payload_size;
-         size_t expected;
-         fseek(stf, 0, SEEK_END);
-         st_total = ftell(stf);
-         fseek(stf, 0, SEEK_SET);
-         st_buf = (uint8_t *)malloc(st_total);
-         if (fread(st_buf, 1, st_total, stf) != (size_t)st_total)
+         state_err = "fseek to end failed";
+         goto state_fail;
+      }
+      st_total = ftell(stf);
+      if (st_total <= 0)
+      {
+         state_err = "ftell failed or empty state file";
+         goto state_fail;
+      }
+      if (fseek(stf, 0, SEEK_SET) != 0)
+      {
+         state_err = "fseek to start failed";
+         goto state_fail;
+      }
+      st_buf = (uint8_t *)malloc((size_t)st_total);
+      if (!st_buf)
+      {
+         state_err = "malloc failed for state buffer";
+         goto state_fail;
+      }
+      if (fread(st_buf, 1, (size_t)st_total, stf) != (size_t)st_total)
+      {
+         state_err = "short read on state file";
+         goto state_fail;
+      }
+      fclose(stf);
+      stf = NULL;
+      payload = st_buf;
+      payload_size = (size_t)st_total;
+      /* RASTATE container? "RASTATE" + 1 version byte, then chunks. */
+      if (st_total >= 16 && memcmp(st_buf, "RASTATE", 7) == 0)
+      {
+         const uint8_t *p = st_buf + 8;       /* past magic+version */
+         const uint8_t *end = st_buf + st_total;
+         int found = 0;
+         /* Each chunk: 4-byte type + 4-byte LE size + payload. */
+         while (p + 8 <= end)
          {
-            fprintf(stderr, "ERROR: short read on state file\n");
-            free(st_buf); fclose(stf); return 1;
-         }
-         fclose(stf);
-         payload = st_buf;
-         payload_size = (size_t)st_total;
-         /* RASTATE container? "RASTATE" + 1 version byte, then chunks. */
-         if (st_total >= 16 && memcmp(st_buf, "RASTATE", 7) == 0)
-         {
-            const uint8_t *p = st_buf + 8;       /* past magic+version */
-            const uint8_t *end = st_buf + st_total;
-            int found = 0;
-            while (p + 8 <= end)
+            uint32_t chunk_size = (uint32_t)p[4] | ((uint32_t)p[5] << 8)
+                               | ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
+            /* Bounds-check the declared chunk size against the buffer. */
+            if (chunk_size > (uint32_t)(end - (p + 8)))
             {
-               uint32_t chunk_size = (uint32_t)p[4] | ((uint32_t)p[5] << 8)
-                                  | ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
-               if (memcmp(p, "MEM ", 4) == 0)
-               {
-                  payload = p + 8;
-                  payload_size = chunk_size;
-                  found = 1;
-                  break;
-               }
-               p += 8 + chunk_size;
+               state_err = "RASTATE chunk size overruns buffer";
+               goto state_fail;
             }
-            if (!found)
+            if (memcmp(p, "MEM ", 4) == 0)
             {
-               fprintf(stderr, "ERROR: no MEM chunk in RASTATE file\n");
-               free(st_buf); return 1;
+               payload = p + 8;
+               payload_size = chunk_size;
+               found = 1;
+               break;
             }
-            fprintf(stderr, "--- RASTATE: extracted MEM chunk (%zu bytes) ---\n", payload_size);
+            p += 8 + chunk_size;
          }
-         expected = pretro_serialize_size();
-         fprintf(stderr, "--- State payload: %zu bytes (core expects %zu) ---\n",
-                 payload_size, expected);
-         if (!pretro_unserialize(payload, payload_size))
+         if (!found)
          {
-            fprintf(stderr, "ERROR: retro_unserialize failed\n");
-            free(st_buf); return 1;
+            state_err = "no MEM chunk in RASTATE file";
+            goto state_fail;
          }
-         fprintf(stderr, "--- State loaded from %s ---\n", state_load_path);
-         free(st_buf);
+         fprintf(stderr, "--- RASTATE: extracted MEM chunk (%zu bytes) ---\n", payload_size);
+      }
+      expected = pretro_serialize_size();
+      fprintf(stderr, "--- State payload: %zu bytes (core expects %zu) ---\n",
+              payload_size, expected);
+      if (!pretro_unserialize(payload, payload_size))
+      {
+         state_err = "retro_unserialize failed";
+         goto state_fail;
+      }
+      fprintf(stderr, "--- State loaded from %s ---\n", state_load_path);
+      free(st_buf);
+      st_buf = NULL;
+
+      if (0)
+      {
+state_fail:
+         fprintf(stderr, "ERROR: %s: %s\n",
+                 state_err ? state_err : "state load error",
+                 state_load_path);
+         if (stf) fclose(stf);
+         if (st_buf) free(st_buf);
+         pretro_unload_game();
+         pretro_deinit();
+         free((void *)info.data);
+         dlclose(handle);
+         return 1;
       }
    }
 
