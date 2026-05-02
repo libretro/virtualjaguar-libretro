@@ -53,6 +53,27 @@ static void   (*pretro_unload_game)(void);
 static void  *(*pretro_get_memory_data)(unsigned);
 static size_t (*pretro_get_memory_size)(unsigned);
 
+/* Optional: present when core was built with BENCH_PROFILE=1.  Used to
+ * dump a per-test perf delta so we can see what each acid test exercised
+ * (halflines, vblank IRQs, blits, inner-loop iters, etc). */
+static unsigned long long *(*pperf_counters_find)(const char *);
+
+/* Counters of interest for the per-test summary.  Names mirror what
+ * the various PERF_COUNTER definitions register. */
+static const char *kPerfCounters[] = {
+   "timing_jaguar_execute_calls",
+   "timing_halfline_callbacks",
+   "timing_vblank_irqs",
+   "timing_jerry_irqs",
+   "timing_gpu_irqs_to_68k",
+   "blitter_calls",
+   "blitter_outer",
+   "blitter_inner",
+   "blitter_phrase_reads",
+   "blitter_phrase_writes",
+};
+#define PERF_COUNTERS_N ((int)(sizeof(kPerfCounters)/sizeof(kPerfCounters[0])))
+
 /* libretro callback stubs. */
 static void log_printf(enum retro_log_level lvl, const char *fmt, ...)
 {
@@ -215,6 +236,7 @@ int main(int argc, char **argv)
    LOAD_SYM(retro_get_memory_data);
    LOAD_SYM(retro_get_memory_size);
 #undef LOAD_SYM
+   pperf_counters_find = dlsym(handle, "perf_counters_find"); /* optional */
 
    pretro_set_environment(environment_cb);
    pretro_set_video_refresh(video_refresh);
@@ -245,35 +267,72 @@ int main(int argc, char **argv)
     * boots is distinguishable from one that ran but failed silently. */
    memset(ram + ACID_RESULT, 0, 16);
 
+   /* Snapshot perf counters before the timed run so we can report a
+    * per-test delta.  All NULL if the core wasn't built with
+    * BENCH_PROFILE=1; the report block below skips itself in that case. */
    {
+      unsigned long long perf_before[PERF_COUNTERS_N];
+      unsigned long long perf_after[PERF_COUNTERS_N];
+      unsigned long long *perf_ptr[PERF_COUNTERS_N];
       int i;
+      int have_perf = 0;
+
+      for (i = 0; i < PERF_COUNTERS_N; i++) {
+         perf_ptr[i] = pperf_counters_find ? pperf_counters_find(kPerfCounters[i]) : NULL;
+         perf_before[i] = perf_ptr[i] ? *perf_ptr[i] : 0;
+         if (perf_ptr[i]) have_perf = 1;
+      }
+
       for (i = 0; i < num_frames; i++)
          pretro_run();
+
+      for (i = 0; i < PERF_COUNTERS_N; i++)
+         perf_after[i] = perf_ptr[i] ? *perf_ptr[i] : 0;
+
+      result   = read_be32(ram + ACID_RESULT);
+      detail   = read_be32(ram + ACID_DETAIL);
+      observed = read_be32(ram + ACID_OBSERVED);
+      expected = read_be32(ram + ACID_EXPECTED);
+
+      printf("[%-11s] %s", result_label(result), rom_path);
+      if (result == ACID_PASS_MAGIC)
+      {
+         printf("\n");
+         rc = 0;
+      }
+      else if (result == ACID_FAIL_MAGIC)
+      {
+         printf(" detail=0x%08x observed=0x%08x expected=0x%08x\n",
+                detail, observed, expected);
+         rc = 1;
+      }
+      else
+      {
+         printf(" (signature=0x%08x -- test never wrote a result; "
+                "boot stub or BIOS auth bypass may be broken)\n", result);
+         rc = 1;
+      }
+
+      /* Per-test perf delta (BENCH_PROFILE builds only). */
+      if (have_perf)
+      {
+         int any = 0;
+         printf("              perf:");
+         for (i = 0; i < PERF_COUNTERS_N; i++)
+         {
+            unsigned long long delta;
+            if (!perf_ptr[i]) continue;
+            delta = perf_after[i] - perf_before[i];
+            if (delta == 0) continue;
+            printf(" %s=%llu", kPerfCounters[i], delta);
+            any = 1;
+         }
+         printf("%s\n", any ? "" : " (all zero)");
+      }
+
    }
 
-   result   = read_be32(ram + ACID_RESULT);
-   detail   = read_be32(ram + ACID_DETAIL);
-   observed = read_be32(ram + ACID_OBSERVED);
-   expected = read_be32(ram + ACID_EXPECTED);
-
-   printf("[%-11s] %s", result_label(result), rom_path);
-   if (result == ACID_PASS_MAGIC)
-   {
-      printf("\n");
-      rc = 0;
-   }
-   else if (result == ACID_FAIL_MAGIC)
-   {
-      printf(" detail=0x%08x observed=0x%08x expected=0x%08x\n",
-             detail, observed, expected);
-      rc = 1;
-   }
-   else
-   {
-      printf(" (signature=0x%08x -- test never wrote a result; "
-             "boot stub or BIOS auth bypass may be broken)\n", result);
-      rc = 1;
-   }
+cleanup:
 
    pretro_unload_game();
    pretro_deinit();

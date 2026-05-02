@@ -909,7 +909,12 @@ benchmark:
 # (see test/acid/README.md).  Requires the vasm 68K assembler on $PATH;
 # if absent, the assemble step is skipped and only the runner harness
 # is built (so CI can still validate the harness compiles).
-acid: $(TARGET)
+#
+# Forces a BENCH_PROFILE=1 + TEST_EXPORTS=1 build of the core so the
+# acid runner can dlsym `perf_counters_find` and report a per-test
+# delta (halflines, vblank IRQs, blits, inner-loop iters, ...).
+acid:
+	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 	$(MAKE) -C test/acid test CORE=$(abspath $(TARGET))
 
 print-%:
