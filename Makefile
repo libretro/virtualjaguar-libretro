@@ -53,6 +53,22 @@ ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
 endif
 
+# Opt-in instrumentation counters (src/core/perf_counters.h).
+# `make BENCH_PROFILE=1` defines the macro so PERF_COUNTER/PERF_INC
+# emit real code; otherwise every counter macro is a no-op.
+ifeq ($(BENCH_PROFILE),1)
+   CFLAGS += -DBENCH_PROFILE
+endif
+
+# Per-blit slow-path tracing in BlitterMidsummer2.
+# `make BLITTER_TRACE=1` enables an stderr dump of any single blit
+# whose wall time exceeds ~1.5 ms (configurable via the threshold in
+# src/tom/blitter.c).  Useful for finding pathological blit commands
+# that dominate frame-time variance.  macOS-only (uses mach_*).
+ifeq ($(BLITTER_TRACE),1)
+   CFLAGS += -DBLITTER_TRACE
+endif
+
 # Symbol export gating.
 #
 #   GNU ld (Linux, Windows MSYS2, ARM, ...) honours --version-script:
@@ -869,17 +885,25 @@ BENCH_ROM     ?= test/roms/yarc.j64
 BENCH_FRAMES  ?= 600
 BENCH_WARMUP  ?= 60
 BENCH_BLITTER ?= fast
-benchmark: $(TARGET)
-	@# Build the harness inline so this works whether or not TEST_EXPORTS=1
-	@# was used for $(TARGET); the harness only uses retro_* exports.
-	@# -ldl is Linux-specific; macOS/BSD provide dl* in libSystem/libc
-	@# (and Apple's clang silently accepts -ldl as a no-op, but other
-	@# linkers may not).
+# BENCH_PROFILE=1 enables src/core/perf_counters.h instrumentation and
+# wide-export ABI so test_benchmark can dlsym `perf_counters_dump`.
+ifeq ($(BENCH_PROFILE),1)
+BENCH_TEST_EXPORTS := TEST_EXPORTS=1
+else
+BENCH_TEST_EXPORTS :=
+endif
+benchmark:
+	@# Re-invoke make so BENCH_PROFILE / TEST_EXPORTS take effect on the .so/.dylib.
+	$(MAKE) $(BENCH_TEST_EXPORTS) BENCH_PROFILE=$(BENCH_PROFILE) -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	@# Build the harness inline; it dlopens the core, so it only needs the retro_* ABI
+	@# (plus the optional perf_counters_dump symbol when BENCH_PROFILE=1).
+	@# -ldl is Linux-specific; macOS/BSD provide dl* in libSystem/libc.
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o test/tools/test_benchmark test/tools/test_benchmark.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl)
 	./test/tools/test_benchmark ./$(TARGET) "$(BENCH_ROM)" $(BENCH_FRAMES) \
-		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER)
+		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER) \
+		$(if $(BENCH_STATE),--load-state "$(BENCH_STATE)")
 
 print-%:
 	@echo '$*=$($*)'
