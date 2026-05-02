@@ -878,7 +878,7 @@ benchmark: $(TARGET)
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o test/tools/test_benchmark test/tools/test_benchmark.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl)
-	./test/tools/test_benchmark ./$(TARGET) $(BENCH_ROM) $(BENCH_FRAMES) \
+	./test/tools/test_benchmark ./$(TARGET) "$(BENCH_ROM)" $(BENCH_FRAMES) \
 		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER)
 
 print-%:
