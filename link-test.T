@@ -39,5 +39,6 @@
       perf_counters_dump;
       perf_counters_reset;
       perf_counters_register;
+      perf_counters_find;
    local: *;
 };

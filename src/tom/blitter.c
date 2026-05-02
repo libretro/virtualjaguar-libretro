@@ -1676,9 +1676,19 @@ Unused[0]	:= DUMMY (unused[0]);
 END;*/
 }
 
+#ifdef BLITTER_TRACE
+#include <mach/mach_time.h>
+#include <stdio.h>
+static double bm2_trace_threshold_ms = 0.3; /* dump any blit slower than this */
+static uint64_t bm2_trace_t0;
+#endif
+
 void BlitterMidsummer2(void)
 {
    uint32_t cmd = (PERF_INC(blitter_calls), GET32(blitter_ram, COMMAND));
+#ifdef BLITTER_TRACE
+   bm2_trace_t0 = mach_absolute_time();
+#endif
 
 
    // Line states passed in via the command register
@@ -2685,6 +2695,29 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
    SET16(blitter_ram, A2_PIXEL + 2, a2_x);
    SET16(blitter_ram, A2_PIXEL + 0, a2_y);
 
+#ifdef BLITTER_TRACE
+   {
+      static mach_timebase_info_data_t tb;
+      uint64_t t1 = mach_absolute_time();
+      double ms;
+      if (tb.denom == 0) mach_timebase_info(&tb);
+      ms = (double)(t1 - bm2_trace_t0) * (double)tb.numer / (double)tb.denom / 1e6;
+      if (ms >= bm2_trace_threshold_ms) {
+         uint16_t pcount = GET16(blitter_ram, PIXLINECOUNTER + 2);
+         uint16_t lcount = GET16(blitter_ram, PIXLINECOUNTER);
+         uint8_t pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
+         fprintf(stderr,
+            "[BLITTER_TRACE] %.2f ms cmd=%08x pixsize=%u inner=%u outer=%u "
+            "src(en=%d enx=%d enz=%d) dst(en=%d enz=%d wrz=%d) "
+            "gourd=%d gourz=%d srcshade=%d bcompen=%d dcompen=%d\n",
+            ms, cmd, pixsize, pcount, lcount,
+            (int)srcen, (int)srcenx, (int)srcenz,
+            (int)dsten, (int)dstenz, (int)dstwrz,
+            (int)gourd, (int)gourz, (int)srcshade,
+            (int)bcompen, (int)dcompen);
+      }
+   }
+#endif
 }
 
 // Various pieces of the blitter puzzle are teased out here...

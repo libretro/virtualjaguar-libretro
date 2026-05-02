@@ -6,6 +6,7 @@
  * In !BENCH_PROFILE builds the bodies are no-ops and no PERF_COUNTER
  * calls perf_counters_register, so the registry stays empty.
  */
+#include <string.h>
 #include "perf_counters.h"
 
 #ifdef BENCH_PROFILE
@@ -49,4 +50,18 @@ void perf_counters_dump(FILE *out)
 #else
    (void)out;
 #endif
+}
+
+unsigned long long *perf_counters_find(const char *name)
+{
+#ifdef BENCH_PROFILE
+   perf_counter_entry_t *e;
+   if (!name) return (unsigned long long *)0;
+   for (e = perf_head; e; e = e->next)
+      if (e->name && strcmp(e->name, name) == 0)
+         return e->value;
+#else
+   (void)name;
+#endif
+   return (unsigned long long *)0;
 }

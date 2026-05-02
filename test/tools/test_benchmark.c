@@ -38,6 +38,7 @@ static size_t (*pretro_serialize_size)(void);
 static bool (*pretro_unserialize)(const void *, size_t);
 /* Optional: only present when the core was built with BENCH_PROFILE=1. */
 static void (*pperf_counters_dump)(FILE *);
+static unsigned long long *(*pperf_counters_find)(const char *);
 
 /* Options state */
 static int bios_option_set = 0;
@@ -312,8 +313,9 @@ int main(int argc, char **argv)
    LOAD_SYM(retro_serialize_size);
    LOAD_SYM(retro_unserialize);
 
-   /* Optional perf-counter dump; absent unless built with BENCH_PROFILE=1. */
+   /* Optional perf-counter access; absent unless built with BENCH_PROFILE=1. */
    pperf_counters_dump = dlsym(handle, "perf_counters_dump");
+   pperf_counters_find = dlsym(handle, "perf_counters_find");
 
    pretro_set_environment(environment_cb);
    pretro_set_video_refresh(video_refresh);
@@ -492,29 +494,137 @@ state_fail:
       fprintf(stderr, "--- Warmup complete ---\n");
    }
 
-   /* Timed run */
-   fprintf(stderr, "--- Benchmarking %d frames ---\n", num_frames);
-   t_start = timer_now();
+   /* Timed run with per-frame samples to expose variance.  Audio
+    * dropouts in real frontends are caused by *worst-case* frames
+    * exceeding the 16.6 ms (60 Hz) budget, not by the average. */
+   {
+      double *frame_ms = (double *)malloc((size_t)num_frames * sizeof(double));
+      unsigned long long *blit_calls_at_frame = (unsigned long long *)malloc((size_t)num_frames * sizeof(unsigned long long));
+      unsigned long long *blit_inner_at_frame = (unsigned long long *)malloc((size_t)num_frames * sizeof(unsigned long long));
+      double frame_budget_ms = 1000.0 / 60.0;
+      int over_budget = 0;
+      double max_ms = 0.0;
+      double p50_ms = 0.0, p99_ms = 0.0, p999_ms = 0.0;
+      unsigned long long *blit_calls_ctr = pperf_counters_find ? pperf_counters_find("blitter_calls") : NULL;
+      unsigned long long *blit_inner_ctr = pperf_counters_find ? pperf_counters_find("blitter_inner") : NULL;
+      unsigned long long blit_calls_prev = blit_calls_ctr ? *blit_calls_ctr : 0;
+      unsigned long long blit_inner_prev = blit_inner_ctr ? *blit_inner_ctr : 0;
 
-   for (i = 0; i < num_frames; i++)
-      pretro_run();
+      if (!frame_ms || !blit_calls_at_frame || !blit_inner_at_frame)
+      {
+         fprintf(stderr, "ERROR: malloc failed for per-frame timing\n");
+         pretro_unload_game(); pretro_deinit();
+         free((void *)info.data); dlclose(handle);
+         return 1;
+      }
 
-   t_end = timer_now();
+      fprintf(stderr, "--- Benchmarking %d frames ---\n", num_frames);
+      t_start = timer_now();
 
-   elapsed = timer_elapsed_sec(t_start, t_end);
-   fps = (double)num_frames / elapsed;
-   ms_per_frame = (elapsed * 1000.0) / (double)num_frames;
+      for (i = 0; i < num_frames; i++)
+      {
+         uint64_t f0 = timer_now();
+         uint64_t f1;
+         pretro_run();
+         f1 = timer_now();
+         frame_ms[i] = timer_elapsed_sec(f0, f1) * 1000.0;
+         if (blit_calls_ctr) {
+            blit_calls_at_frame[i] = *blit_calls_ctr - blit_calls_prev;
+            blit_calls_prev = *blit_calls_ctr;
+         } else blit_calls_at_frame[i] = 0;
+         if (blit_inner_ctr) {
+            blit_inner_at_frame[i] = *blit_inner_ctr - blit_inner_prev;
+            blit_inner_prev = *blit_inner_ctr;
+         } else blit_inner_at_frame[i] = 0;
+      }
 
-   /* Print results */
-   printf("\n=== BENCHMARK RESULTS ===\n");
-   printf("Blitter mode:    %s\n",
-          strcmp(blitter_value, "enabled") == 0 ? "fast" : "accurate");
-   printf("Frames measured: %d\n", num_frames);
-   printf("Warmup frames:   %d\n", warmup_frames);
-   printf("Total time:      %.3f s\n", elapsed);
-   printf("Frames/sec:      %.2f\n", fps);
-   printf("Time/frame:      %.3f ms\n", ms_per_frame);
-   printf("=========================\n");
+      t_end = timer_now();
+
+      elapsed = timer_elapsed_sec(t_start, t_end);
+      fps = (double)num_frames / elapsed;
+      ms_per_frame = (elapsed * 1000.0) / (double)num_frames;
+
+      /* Quicksort copy so the original order is preserved for any
+       * later analysis (currently we don't print it, but cheap). */
+      {
+         double *sorted = (double *)malloc((size_t)num_frames * sizeof(double));
+         int j;
+         if (sorted)
+         {
+            memcpy(sorted, frame_ms, (size_t)num_frames * sizeof(double));
+            /* Insertion sort (small N typical). */
+            for (i = 1; i < num_frames; i++)
+            {
+               double key = sorted[i];
+               j = i - 1;
+               while (j >= 0 && sorted[j] > key) { sorted[j + 1] = sorted[j]; j--; }
+               sorted[j + 1] = key;
+            }
+            p50_ms  = sorted[(int)((double)num_frames * 0.50)];
+            p99_ms  = sorted[(int)((double)num_frames * 0.99)];
+            p999_ms = sorted[(int)((double)num_frames * 0.999)];
+            max_ms  = sorted[num_frames - 1];
+            free(sorted);
+         }
+      }
+      for (i = 0; i < num_frames; i++)
+         if (frame_ms[i] > frame_budget_ms) over_budget++;
+
+      /* Print results */
+      printf("\n=== BENCHMARK RESULTS ===\n");
+      printf("Blitter mode:    %s\n",
+             strcmp(blitter_value, "enabled") == 0 ? "fast" : "accurate");
+      printf("Frames measured: %d\n", num_frames);
+      printf("Warmup frames:   %d\n", warmup_frames);
+      printf("Total time:      %.3f s\n", elapsed);
+      printf("Frames/sec:      %.2f\n", fps);
+      printf("Time/frame avg:  %.3f ms\n", ms_per_frame);
+      printf("Time/frame p50:  %.3f ms\n", p50_ms);
+      printf("Time/frame p99:  %.3f ms\n", p99_ms);
+      printf("Time/frame p999: %.3f ms\n", p999_ms);
+      printf("Time/frame max:  %.3f ms\n", max_ms);
+      printf("Over 16.67 ms:   %d / %d frames (%.2f%%)\n",
+             over_budget, num_frames, 100.0 * over_budget / num_frames);
+      printf("=========================\n");
+
+      /* If we have per-frame blitter counters, dump the slowest frames
+       * so we can correlate blit volume with frame-time spikes. */
+      if (over_budget > 0 && blit_calls_ctr) {
+         int j;
+         double avg_calls = 0.0, avg_inner = 0.0;
+         double slow_calls = 0.0, slow_inner = 0.0;
+         int slow_n = 0;
+         printf("\n--- Worst frames (>16.67ms) -----------------------------\n");
+         printf("  idx  frame_ms  blit_calls  blit_inner_iter\n");
+         for (j = 0; j < num_frames; j++) {
+            avg_calls += blit_calls_at_frame[j];
+            avg_inner += blit_inner_at_frame[j];
+            if (frame_ms[j] > frame_budget_ms) {
+               slow_calls += blit_calls_at_frame[j];
+               slow_inner += blit_inner_at_frame[j];
+               slow_n++;
+               if (slow_n <= 12)
+                  printf("  %4d  %7.2f   %10llu   %15llu\n",
+                         j, frame_ms[j],
+                         blit_calls_at_frame[j],
+                         blit_inner_at_frame[j]);
+            }
+         }
+         printf("---\n");
+         printf("Avg per frame (all):    blits=%.0f  inner_iter=%.0f\n",
+                avg_calls / num_frames, avg_inner / num_frames);
+         if (slow_n > 0)
+            printf("Avg per frame (slow):   blits=%.0f  inner_iter=%.0f  (%dx, %dx vs avg)\n",
+                   slow_calls / slow_n, slow_inner / slow_n,
+                   (int)((slow_calls / slow_n) / (avg_calls / num_frames + 1e-9)),
+                   (int)((slow_inner / slow_n) / (avg_inner / num_frames + 1e-9)));
+         printf("=========================================================\n");
+      }
+
+      free(frame_ms);
+      free(blit_calls_at_frame);
+      free(blit_inner_at_frame);
+   }
 
    if (pperf_counters_dump)
       pperf_counters_dump(stderr);

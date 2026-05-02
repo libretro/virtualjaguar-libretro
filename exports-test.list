@@ -36,3 +36,4 @@ _vjs
 _perf_counters_dump
 _perf_counters_reset
 _perf_counters_register
+_perf_counters_find

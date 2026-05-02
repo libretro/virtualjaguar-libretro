@@ -60,6 +60,15 @@ ifeq ($(BENCH_PROFILE),1)
    CFLAGS += -DBENCH_PROFILE
 endif
 
+# Per-blit slow-path tracing in BlitterMidsummer2.
+# `make BLITTER_TRACE=1` enables an stderr dump of any single blit
+# whose wall time exceeds ~1.5 ms (configurable via the threshold in
+# src/tom/blitter.c).  Useful for finding pathological blit commands
+# that dominate frame-time variance.  macOS-only (uses mach_*).
+ifeq ($(BLITTER_TRACE),1)
+   CFLAGS += -DBLITTER_TRACE
+endif
+
 # Symbol export gating.
 #
 #   GNU ld (Linux, Windows MSYS2, ARM, ...) honours --version-script:

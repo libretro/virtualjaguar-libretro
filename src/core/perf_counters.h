@@ -48,6 +48,10 @@ typedef struct perf_counter_entry
 void perf_counters_register(perf_counter_entry_t *entry);
 void perf_counters_dump(FILE *out);
 void perf_counters_reset(void);
+/* Return a pointer to the named counter's value, or NULL if unknown.
+ * Lets harnesses snapshot a counter before/after retro_run for
+ * per-frame deltas without exporting individual symbols. */
+unsigned long long *perf_counters_find(const char *name);
 
 #ifdef BENCH_PROFILE
 
