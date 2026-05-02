@@ -28,7 +28,7 @@
 #include "libretro.h"
 
 /* Acid signature offsets and magic, mirrored from acid_test.s. */
-#define ACID_BASE         0x100
+#define ACID_BASE         0x100000
 #define ACID_RESULT       (ACID_BASE + 0)
 #define ACID_DETAIL       (ACID_BASE + 4)
 #define ACID_OBSERVED     (ACID_BASE + 8)
@@ -77,7 +77,13 @@ static bool environment_cb(unsigned cmd, void *data)
          /* Acid tests don't depend on these, but the core polls
           * them.  Return sane defaults. */
          if (strcmp(var->key, "virtualjaguar_bios") == 0)
-            { var->value = "enabled";  return true; }
+            { var->value = "disabled"; return true; } /* HLE BIOS:
+              * the real BIOS performs cart authentication that
+              * synthetic test ROMs can't satisfy without faking
+              * a CRC.  HLE skips that, sets the 68K reset PC from
+              * the cart's entry vector at $800404, and dumps us
+              * straight into the test code.  See
+              * src/core/jaguar.c:JaguarReset HLE path. */
          if (strcmp(var->key, "virtualjaguar_pal") == 0)
             { var->value = "disabled"; return true; }
          if (strcmp(var->key, "virtualjaguar_usefastblitter") == 0)

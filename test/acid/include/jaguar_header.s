@@ -1,41 +1,45 @@
 ;
-; jaguar_header.s - minimal Jaguar cart header + entry vector.
+; jaguar_header.s - minimal Jaguar cart header.
 ;
 ; Layout:
-;   $800000  ATARI tag           ; bypassed by emulators that skip auth
-;   $800400  jump table to entry ; standard Universal Header offset
-;   $802000  user code begins here
-;
-; The harness loads the .jag at $800000 and the BIOS jumps to $802000
-; via the universal header at $800400.  This is the same layout used by
-; Atari's tools and most homebrew.  Authentication is bypassed inside
-; the core (the BIOS auth-loop handler in src/core/jaguar.c short-
-; circuits when a cart is present), so we don't need a real cart
-; signature.
+;   $800000  ATARI tag                    ; cosmetic; emulator's HLE-BIOS
+;                                          path skips signature check
+;   $800404  dc.l  entry                  ; ROM-loader reads this 32-bit
+;                                          word as the cart entry point
+;                                          (see src/core/file.c:140
+;                                          jaguarRunAddress = GET32(
+;                                          jagMemSpace, 0x800404)).  HLE
+;                                          BIOS init then writes that
+;                                          value to the 68K reset PC
+;                                          vector at $00000004 before
+;                                          m68k_pulse_reset(), so the CPU
+;                                          starts execution at `entry`.
+;   $802000  user code begins here        ; conventional cart entry org
 ;
 ; Each test should:
-;   include "jaguar_header.s"          ; this file
-;   include "acid_test.s"              ; pass/fail macros
+;   include "include/jaguar_header.s"     ; this file
+;   include "include/acid_test.s"         ; pass/fail macros
 ;   org     $802000
-; entry:    ; <-- BIOS jumps here
+; entry:    ; <-- 68K starts execution here after reset
 ;     ACID_INIT
 ;     ; ... your test code ...
-;     ACID_PASS                         ; or ACID_FAIL ...,...,...
+;     ACID_PASS                            ; or ACID_FAIL ...,...,...
 ;
 
                 ;; ROM origin
                 org     $800000
 
-                ;; Skunkboard / Universal Header preamble.  Real carts
-                ;; have an "ATARI" tag and licence text here that the
-                ;; BIOS validates; we rely on the emulator skipping
-                ;; that check, so just pad to the entry vector.
+                ;; Cosmetic ATARI tag.  Real cart loader validates this
+                ;; against the boot ROM's expected hash; our emulator's
+                ;; HLE BIOS path skips that check entirely, so any
+                ;; non-zero text works here.
                 dc.b    "ATARI APPROVED DATA HEADER ATRI ",0
-                ds.b    $800400-*,0
+                ds.b    $800404-*,0
 
-                ;; Universal Header entry vector at $800400.
-                ;; The Jaguar BIOS jumps through this to start the cart.
-                jmp     entry
+                ;; Cart entry point: a literal 32-bit big-endian address
+                ;; that file.c picks up via GET32(jagMemSpace, 0x800404)
+                ;; and uses as the 68K's initial PC.
+                dc.l    entry
 
-                ;; Pad to the user code area.
+                ;; Pad to the user code area at $802000.
                 ds.b    $802000-*,0
