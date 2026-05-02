@@ -256,6 +256,17 @@ int main(int argc, char **argv)
          num_frames = atoi(argv[i]);
    }
 
+   if (num_frames <= 0)
+   {
+      fprintf(stderr, "ERROR: num_frames must be a positive integer (got %d)\n", num_frames);
+      return 1;
+   }
+   if (warmup_frames < 0)
+   {
+      fprintf(stderr, "ERROR: --warmup must be >= 0 (got %d)\n", warmup_frames);
+      return 1;
+   }
+
 #ifdef __APPLE__
    /* Initialize timebase for mach_absolute_time conversion */
    mach_timebase_info(&timebase_info);
