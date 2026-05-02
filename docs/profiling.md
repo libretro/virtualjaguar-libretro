@@ -23,11 +23,21 @@ Reports `Frames/sec`, `Time/frame`, total wall time.  Boots the core via `dlopen
 
 **Instruments (Time Profiler)** is the easiest way to get a flame graph on macOS.
 
+The wrapper at `scripts/profile-mac.sh` builds the core, runs the benchmark
+under `xctrace`, and writes a `.trace` bundle you can open in Instruments:
+
+```bash
+scripts/profile-mac.sh                                    # default: Time Profiler, accurate blitter
+scripts/profile-mac.sh --template "CPU Counters"          # PMU: cycles, instructions, branch misses
+scripts/profile-mac.sh --rom test/roms/yarc.j64 --open    # auto-open the trace
+```
+
+Manual invocation if you'd rather attach to a running process:
+
 ```bash
 make benchmark BENCH_FRAMES=6000 BENCH_WARMUP=120 &
 BENCH_PID=$!
 
-# Sample for 30 seconds, output to .trace bundle
 xcrun xctrace record --template "Time Profiler" --attach $BENCH_PID --output bench.trace --time-limit 30s
 open bench.trace
 ```
@@ -40,6 +50,57 @@ For a quick text dump without the GUI:
 sample $BENCH_PID 5 -file /tmp/sample.txt
 # 5-second sample.  Read /tmp/sample.txt for collapsed call stacks.
 ```
+
+## Bespoke counters — `BENCH_PROFILE=1`
+
+Sampling profilers tell you *where* time goes; counters tell you *how often*
+something happens.  When you want exact iteration counts (e.g., "did my
+fast-path actually skip the inner loop?"), use the `perf_counters` system in
+`src/core/perf_counters.h`.
+
+```bash
+make benchmark BENCH_PROFILE=1 BENCH_BLITTER=accurate BENCH_FRAMES=300
+# ...
+# [perf] counter dump:
+# [perf]   blitter_phrase_writes                    3034993
+# [perf]   blitter_phrase_reads                     931821
+# [perf]   blitter_inner_io                         3966814
+# [perf]   blitter_inner                            4131151
+# [perf]   blitter_outer                            337722
+# [perf]   blitter_calls                            131628
+```
+
+The macros are zero-overhead when `BENCH_PROFILE` is undefined (default
+build) — every `PERF_INC` becomes `((void)0)`, every `PERF_COUNTER`
+becomes a typedef.  Use them freely in hot paths to instrument
+hypotheses.
+
+Adding a counter:
+
+```c
+#include "perf_counters.h"
+
+PERF_COUNTER(my_event);             /* file scope */
+
+void hot(void) {
+    PERF_INC(my_event);             /* in-loop */
+    PERF_ADD(my_event, n);          /* batch */
+}
+```
+
+The harness (`test/tools/test_benchmark.c`) calls
+`perf_counters_dump(stderr)` at exit; counter values appear right
+before the `BENCHMARK RESULTS` block.
+
+When to reach for this vs. Time Profiler:
+
+| Question | Tool |
+|---|---|
+| "Where are we spending cycles?" | `xctrace` Time Profiler |
+| "How many times does the inner loop run per frame?" | `BENCH_PROFILE=1` |
+| "What fraction of inner iterations are no-ops?" | `BENCH_PROFILE=1` |
+| "Are we hitting L1 / branch-mispredicting?" | `xctrace` CPU Counters |
+| "Did this optimization change behavior, not just timing?" | `BENCH_PROFILE=1` (deltas in counts) |
 
 ## Linux — `perf` + flamegraph
 

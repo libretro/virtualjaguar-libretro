@@ -33,3 +33,6 @@ _sclk
 _smode
 _lowerField
 _vjs
+_perf_counters_dump
+_perf_counters_reset
+_perf_counters_register

@@ -26,6 +26,7 @@
 
 #include <string.h>
 #include "jaguar.h"
+#include "perf_counters.h"
 #include "state.h"
 
 // Various conditional compilation goodies...
@@ -43,6 +44,14 @@ uint8_t blitter_ram[0x100];
 
 void BlitterMidsummer(uint32_t cmd);
 void BlitterMidsummer2(void);
+
+PERF_COUNTER(blitter_calls);
+PERF_COUNTER(blitter_outer);
+PERF_COUNTER(blitter_inner);
+PERF_COUNTER(blitter_inner_io);
+PERF_COUNTER(blitter_inner_idle);
+PERF_COUNTER(blitter_phrase_reads);
+PERF_COUNTER(blitter_phrase_writes);
 
 #define REG(A)	(((uint32_t)blitter_ram[(A)] << 24) | ((uint32_t)blitter_ram[(A)+1] << 16) \
 				| ((uint32_t)blitter_ram[(A)+2] << 8) | (uint32_t)blitter_ram[(A)+3])
@@ -987,7 +996,7 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 
 void BlitterMidsummer2(void)
 {
-   uint32_t cmd = GET32(blitter_ram, COMMAND);
+   uint32_t cmd = (PERF_INC(blitter_calls), GET32(blitter_ram, COMMAND));
 
 
    // Line states passed in via the command register
@@ -1105,6 +1114,7 @@ void BlitterMidsummer2(void)
 
    while (true)
    {
+      PERF_INC(blitter_outer);
       // IDLE
 
       if ((idle && !go) || (inner && outer0 && indone))
@@ -1282,7 +1292,12 @@ void BlitterMidsummer2(void)
 
          while (true)
          {
-            uint16_t dstxwr, pseq;
+#ifdef BENCH_PROFILE
+            int blitter_did_io = 0;
+#endif
+            /* PERF_INC embedded via comma operator to keep C89 decl
+             * order valid (no statements before declarations).  */
+            uint16_t dstxwr = (PERF_INC(blitter_inner), 0), pseq;
             bool penden;
             uint8_t window_mask;
             uint8_t inner_mask = 0;
@@ -1498,6 +1513,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (sreadx)
             {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
                //uint32_t srcAddr, pixAddr;
                //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
                //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
@@ -1532,6 +1551,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (sread)
             {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
                srcd2 = srcd1;
                srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
                //Kludge to take pixel size into account...
@@ -1553,6 +1576,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (szread)
             {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
                srcz2 = srcz1;
                srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
                //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
@@ -1563,6 +1590,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             if (dread)
             {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
                dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
                //Kludge to take pixel size into account...
                if (!phrase_mode)
@@ -1591,9 +1622,12 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             //NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
             if (dwrite)
             {
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
                //Counter is done on the dwrite state...! (We'll do it first, since it affects dstart/dend calculations.)
                //Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
-               int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
+               int8_t inct = (PERF_INC(blitter_phrase_writes), -((dsta2 ? a2_x : a1_x) & 0x07));	// From INNER_CNT
                uint8_t inc = 0;
                uint16_t oldicount;
                uint8_t dstart = 0;
@@ -1836,6 +1870,10 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 
             if (dzwrite)
             {
+               PERF_INC(blitter_phrase_writes);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
                // OK, here's the big insight: When NOT in GOURZ mode, srcz1 & 2 function EXACTLY the same way that
                // srcd1 & 2 work--there's an implicit shift from srcz1 to srcz2 whenever srcz1 is read.
                // OTHERWISE, srcz1 is the integer for the computed Z and srcz2 is the fractional part.
@@ -1910,6 +1948,10 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                a2_x = addq_x;
                a2_y = addq_y;
             }
+#ifdef BENCH_PROFILE
+            if (blitter_did_io) PERF_INC(blitter_inner_io);
+            else                PERF_INC(blitter_inner_idle);
+#endif
          }
 
          indone = true;

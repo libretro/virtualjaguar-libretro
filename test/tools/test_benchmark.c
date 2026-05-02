@@ -36,6 +36,8 @@ static void *(*pretro_get_memory_data)(unsigned);
 static size_t (*pretro_get_memory_size)(unsigned);
 static size_t (*pretro_serialize_size)(void);
 static bool (*pretro_unserialize)(const void *, size_t);
+/* Optional: only present when the core was built with BENCH_PROFILE=1. */
+static void (*pperf_counters_dump)(FILE *);
 
 /* Options state */
 static int bios_option_set = 0;
@@ -310,6 +312,9 @@ int main(int argc, char **argv)
    LOAD_SYM(retro_serialize_size);
    LOAD_SYM(retro_unserialize);
 
+   /* Optional perf-counter dump; absent unless built with BENCH_PROFILE=1. */
+   pperf_counters_dump = dlsym(handle, "perf_counters_dump");
+
    pretro_set_environment(environment_cb);
    pretro_set_video_refresh(video_refresh);
    pretro_set_audio_sample(audio_sample);
@@ -510,6 +515,9 @@ state_fail:
    printf("Frames/sec:      %.2f\n", fps);
    printf("Time/frame:      %.3f ms\n", ms_per_frame);
    printf("=========================\n");
+
+   if (pperf_counters_dump)
+      pperf_counters_dump(stderr);
 
    pretro_unload_game();
    pretro_deinit();
