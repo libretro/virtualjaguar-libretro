@@ -1,0 +1,85 @@
+#
+# test/acid/Makefile - assembles the synthetic acid-test ROMs.
+#
+# Toolchain: vasm (motorola syntax) + vlink.  Get them from
+# http://sun.hasenbraten.de/vasm/ and http://sun.hasenbraten.de/vlink/.
+# Build vasm with `make CPU=m68k SYNTAX=mot`.
+#
+# If `vasmm68k_mot` is not on $PATH this Makefile prints a one-line
+# warning and skips the assemble step entirely.
+#
+
+SRCDIR     := tests
+INCDIR     := include
+RUNNER_BIN := acid_run
+
+VASM       ?= vasmm68k_mot
+
+VASM_FLAGS := -Fbin -m68000 -spaces -I$(INCDIR)
+
+SOURCES    := $(shell find $(SRCDIR) -name '*.s' -type f 2>/dev/null)
+ROMS       := $(SOURCES:.s=.jag)
+
+VASM_PRESENT := $(shell command -v $(VASM) 2>/dev/null)
+
+ifeq ($(VASM_PRESENT),)
+ROMS_TO_BUILD :=
+else
+ROMS_TO_BUILD := $(ROMS)
+endif
+
+.PHONY: all clean check-vasm test
+
+all: $(RUNNER_BIN) $(ROMS_TO_BUILD)
+	@$(MAKE) -s check-vasm
+
+check-vasm:
+ifeq ($(VASM_PRESENT),)
+	@echo "** $(VASM) not found on PATH"
+	@echo "** Skipped assembling acid-test ROMs."
+	@echo "** See test/acid/README.md for vasm install instructions."
+endif
+
+# .s -> .jag: assemble flat binary at the program's org address ($800000),
+# then pad to 1 MB so retro_load_game sees a normal-sized cart.
+%.jag: %.s
+	@mkdir -p $(dir $@)
+	$(VASM) $(VASM_FLAGS) -o $@ $<
+	@actual=$$(wc -c < $@); \
+	target=1048576; \
+	if [ $$actual -lt $$target ]; then \
+	   dd if=/dev/zero bs=1 count=$$(($$target - $$actual)) >> $@ 2>/dev/null; \
+	fi
+	@echo "  ASM   $< -> $@ ($$(wc -c < $@) bytes)"
+
+clean:
+	rm -f $(ROMS) $(RUNNER_BIN)
+
+# Build the harness (separate from the .jag ROMs themselves).
+$(RUNNER_BIN): run.c
+	$(CC) -O2 -Wall -std=c99 \
+	   -I../../libretro-common/include \
+	   -o $@ $< \
+	   $(if $(filter Linux,$(shell uname -s)),-ldl)
+
+# Run all built tests through the harness.  CORE points at the libretro
+# core .dylib/.so (defaults to the project root build).
+CORE ?= $(firstword $(wildcard ../../virtualjaguar_libretro.dylib ../../virtualjaguar_libretro.so))
+
+test: all
+	@if [ -z "$(CORE)" ]; then \
+	   echo "ERROR: set CORE=path/to/virtualjaguar_libretro.{dylib,so}"; \
+	   exit 2; \
+	fi
+	@if [ -z "$(ROMS_TO_BUILD)" ]; then \
+	   echo "Nothing to run (no .jag ROMs assembled)."; \
+	   exit 0; \
+	fi
+	@fail=0; total=0; \
+	for rom in $(ROMS_TO_BUILD); do \
+	   total=$$((total+1)); \
+	   if ! ./$(RUNNER_BIN) "$(CORE)" "$$rom"; then fail=$$((fail+1)); fi; \
+	done; \
+	echo "----"; \
+	echo "Acid tests: $$((total-fail)) / $$total passed"; \
+	exit $$fail
