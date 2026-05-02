@@ -4,9 +4,9 @@ Captured 2026-05-01 on Apple Silicon (M-series Mac), arm64 build, default flags 
 
 ## TL;DR
 
-**OP is not the bottleneck.  Blitter is rarely the bottleneck either.  GPU and DSP RISC interpretation dominate frame time across the board.**
+**OP is not the bottleneck.  GPU/DSP RISC interpretation is the biggest single target across the board.  The accurate blitter is genuinely hot during gameplay (not just at boot) — comparable in cost to DSP for users who enable that mode.**
 
-This redirects the next-up perf work from issue #123 (OP) to a different target — see "Recommendation" at the bottom.
+> **Methodology fix mid-investigation:** the first round of this doc profiled the headless boot/menu state and concluded blitter was always small.  That was misleading — boot screens don't draw much.  Re-profiled with a save state loaded on top of the live ROM (Alien vs Predator at an in-game state6 save) and the picture changes substantially for the accurate-blitter case.  Both data sets are below.
 
 ## Baseline FPS
 
@@ -76,6 +76,33 @@ Captured to `/tmp/op-baseline/sample-*-*.txt`.  Aggregated top-of-stack by symbo
 
 **The one case where the blitter genuinely matters — and only because the user opted into accurate mode.  Even here, DSP is comparable.**
 
+### `Alien vs Predator (1994)` at gameplay state6 (fast blitter)
+
+| Function | Samples | % of frame |
+|---|---:|---:|
+| `DSPExec` | 3303 | **~49%** |
+| `dsp_opcode_jr` | 977 | 14% |
+| **DSP TOTAL** | **~4280** | **~63%** |
+| `blitter_generic` | ~340 | 5% |
+| `GPUExec` | ~254 | 4% |
+| `HalflineCallback` / `JaguarExecuteNew` / `JaguarReadLong` | ~310 | 5% |
+| `OPProcessFixedBitmap` | 72 | 1% |
+
+**Same DSP-dominated picture as the boot profiles.**  Blitter is meaningfully present (5%) since the scene is actively drawing, but still single-digit.
+
+### `Alien vs Predator (1994)` at gameplay state6 (accurate blitter)
+
+| Function | Samples | % of frame |
+|---|---:|---:|
+| **`BlitterMidsummer2` family** (`+ ADDARRAY 2090-2094, DATA, BlitterMidsummer2 itself`) | ~2330 | **~34%** |
+| `DSPExec` | 1652 | **~24%** |
+| `dsp_opcode_jr` | 443 | 6.5% |
+| **DSP TOTAL** | **~2095** | **~31%** |
+
+**Accurate blitter is co-equal with DSP during gameplay.**  The hot inner code is `ADDARRAY` (lines 2090-2094 in `src/tom/blitter.c`) — the per-cycle FDSYNC cascade the spike report (#124) flagged — plus `DATA()` (line 2514).  Confirms the spike's hypothesis was right; the boot-only profile just didn't expose it.
+
+This matches the user-reported behavior: AvP slows down noticeably when the character moves, and the slowdown is worse with the accurate blitter selected.
+
 ## What this changes
 
 The original `[spike] OP performance audit` (#123) and `[spike] Blitter performance audit` (#124) both assumed those subsystems dominate.  They don't.
@@ -83,18 +110,37 @@ The original `[spike] OP performance audit` (#123) and `[spike] Blitter performa
 | Target | Hypothesis going in | Reality | ROI |
 |---|---|---|---|
 | **OP** (#123) | "dominates on heavy-OP scenes (Wolf3D, T2K, Iron Soldier)" | 1% on Iron Soldier; doesn't make top-15 elsewhere | Low — even a 10× OP speedup buys ~1% of frame time |
-| **Blitter** (#124) | "fast vs accurate matters for some games" | Fast is <2% everywhere except where accurate is opted-in (then ~21% on Skyhammer) | Medium — only for users running accurate blitter on specific titles |
-| **GPU/DSP RISC** (#122 sub-component) | "JIT might help on mobile/Pi" | **24-74% of frame time, every ROM** | **High** — single dynarec helps both because they share an ISA |
+| **Blitter — fast** (#124) | "default path matters" | <2% on boot, 5% on AvP gameplay — small everywhere | Low |
+| **Blitter — accurate** (#124) | "matters for some games" | **~34% on AvP gameplay**, 21% on Skyhammer (boot); ADDARRAY cycle cascade dominates | **High for accurate-blitter users** |
+| **GPU/DSP RISC** (#122 sub-component) | "JIT might help on mobile/Pi" | **24-74% on fast blitter, ~31% even with accurate** | **High** — single dynarec covers both (shared ISA) |
 | **68K** (#122 sub-component) | "wrap UAE JIT or Cyclone68k" | 0.7-2.6% — barely visible in any profile | Low |
 
 ## Recommendation
 
-**Redirect to #122 (JIT / dynarec / cached IR), specifically the GPU/DSP RISC half.**  Both Tom GPU and Jerry DSP share the same ISA (~64 opcodes, fixed 16-bit encoding, no MMU).  A single basic-block dynarec or cached-IR dispatcher covers both, and the profile data says it would attack the actual hot path on every game tested:
+Two genuine wins, depending on which user we optimize for:
 
-- Demos (yarc/jagniccc) → mostly GPU.
-- Commercial games (Iron Soldier, Doom, Skyhammer) → mostly DSP, sometimes both.
+### Path A — RISC dynarec / cached IR (#122, RISC half only)
 
-Closing #123 (OP) and #124 (blitter) as **wontfix-for-now** based on profile data is the honest call.  Cheap wins documented in those spikes (e.g., the OP `O(N²)` discovery bug, fast-blitter SIMD widening) can still land opportunistically — they're correct fixes, just won't move the headline number.
+Helps **everyone** (every ROM tested, every blitter mode):
+- Fast-blitter users: attacks the dominant 50-75% slice
+- Accurate-blitter users: attacks the ~31% DSP slice (the other ~34% is blitter)
+- Cross-platform reach: cached IR / threaded code works on JIT-restricted hosts (iOS without entitlement, Switch)
+- Both Tom GPU and Jerry DSP share the same ISA → single dispatcher covers both
+
+### Path B — accurate-blitter SIMD widening (#124, narrow scope)
+
+Helps **users who enable accurate blitter** specifically:
+- ADDARRAY (`src/tom/blitter.c:2090-2094`, the per-cycle FDSYNC cascade) is the biggest single function — ~15% of frame time on AvP gameplay
+- `BlitterMidsummer2` itself + `DATA()` add another ~19%
+- Existing `test_blitter_compare` infrastructure already gates bit-exactness regressions
+- Lower risk per change than dynarec — can be done in small, mergeable batches
+
+### Suggested order
+
+1. **Start with Path B (accurate-blitter perf)** — smaller surface, lower risk, immediate visible win for users hitting the AvP-style slowdown.  ADDARRAY is the obvious first target.
+2. **Then Path A (RISC dynarec)** — bigger lift, bigger payoff, helps everyone including accurate-blitter users still bottlenecked on DSP after step 1.
+
+Closing #123 (OP) as **wontfix-for-now** is still the honest call — even on gameplay it's <2%.  The cheap wins documented in #123 (OP `O(N²)` discovery scan, hoist transparency check) remain valid as code-quality fixes but won't move the headline number.
 
 ## Why we DIDN'T touch OP/blitter as planned
 

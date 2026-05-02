@@ -34,6 +34,8 @@ static void (*pretro_run)(void);
 static void (*pretro_unload_game)(void);
 static void *(*pretro_get_memory_data)(unsigned);
 static size_t (*pretro_get_memory_size)(unsigned);
+static size_t (*pretro_serialize_size)(void);
+static bool (*pretro_unserialize)(const void *, size_t);
 
 /* Options state */
 static int bios_option_set = 0;
@@ -181,13 +183,17 @@ static void print_usage(const char *progname)
    fprintf(stderr,
       "Usage: %s <core.dylib> <rom_file> [num_frames]\n"
       "       [--blitter fast|accurate] [--warmup N] [--load-srm file]\n"
+      "       [--load-state file]\n"
       "\n"
       "Options:\n"
       "  num_frames           Number of frames to benchmark (default: 300)\n"
       "  --blitter fast       Use fast blitter (default)\n"
       "  --blitter accurate   Use accurate (Midsummer2) blitter\n"
       "  --warmup N           Run N warmup frames before timing\n"
-      "  --load-srm file      Load EEPROM save data from file\n",
+      "  --load-srm file      Load EEPROM save data from file\n"
+      "  --load-state file    Load a save state into the core after retro_load_game.\n"
+      "                       Accepts raw retro_serialize() payloads or RetroArch\n"
+      "                       RASTATE container files (the MEM chunk is extracted).\n",
       progname);
 }
 
@@ -197,6 +203,7 @@ int main(int argc, char **argv)
    const char *core_path;
    const char *rom_path;
    const char *srm_load_path = NULL;
+   const char *state_load_path = NULL;
    struct retro_game_info info;
    FILE *f;
    long fsize;
@@ -235,6 +242,8 @@ int main(int argc, char **argv)
          warmup_frames = atoi(argv[++i]);
       else if (strcmp(argv[i], "--load-srm") == 0 && i + 1 < argc)
          srm_load_path = argv[++i];
+      else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc)
+         state_load_path = argv[++i];
       else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
       {
          print_usage(argv[0]);
@@ -298,6 +307,8 @@ int main(int argc, char **argv)
    LOAD_SYM(retro_unload_game);
    LOAD_SYM(retro_get_memory_data);
    LOAD_SYM(retro_get_memory_size);
+   LOAD_SYM(retro_serialize_size);
+   LOAD_SYM(retro_unserialize);
 
    pretro_set_environment(environment_cb);
    pretro_set_video_refresh(video_refresh);
@@ -353,6 +364,75 @@ int main(int argc, char **argv)
       }
       else
          fprintf(stderr, "WARNING: Core reports no SAVE_RAM area\n");
+   }
+
+   /* Load save state if provided.  Accepts both raw retro_serialize()
+    * payloads and RetroArch RASTATE container files (extracts the
+    * MEM chunk).  See https://github.com/libretro/RetroArch on the
+    * RASTATE format. */
+   if (state_load_path)
+   {
+      FILE *stf = fopen(state_load_path, "rb");
+      if (!stf)
+      {
+         fprintf(stderr, "ERROR: cannot open state file: %s\n", state_load_path);
+         return 1;
+      }
+      {
+         long st_total;
+         uint8_t *st_buf;
+         const uint8_t *payload;
+         size_t payload_size;
+         size_t expected;
+         fseek(stf, 0, SEEK_END);
+         st_total = ftell(stf);
+         fseek(stf, 0, SEEK_SET);
+         st_buf = (uint8_t *)malloc(st_total);
+         if (fread(st_buf, 1, st_total, stf) != (size_t)st_total)
+         {
+            fprintf(stderr, "ERROR: short read on state file\n");
+            free(st_buf); fclose(stf); return 1;
+         }
+         fclose(stf);
+         payload = st_buf;
+         payload_size = (size_t)st_total;
+         /* RASTATE container? "RASTATE" + 1 version byte, then chunks. */
+         if (st_total >= 16 && memcmp(st_buf, "RASTATE", 7) == 0)
+         {
+            const uint8_t *p = st_buf + 8;       /* past magic+version */
+            const uint8_t *end = st_buf + st_total;
+            int found = 0;
+            while (p + 8 <= end)
+            {
+               uint32_t chunk_size = (uint32_t)p[4] | ((uint32_t)p[5] << 8)
+                                  | ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
+               if (memcmp(p, "MEM ", 4) == 0)
+               {
+                  payload = p + 8;
+                  payload_size = chunk_size;
+                  found = 1;
+                  break;
+               }
+               p += 8 + chunk_size;
+            }
+            if (!found)
+            {
+               fprintf(stderr, "ERROR: no MEM chunk in RASTATE file\n");
+               free(st_buf); return 1;
+            }
+            fprintf(stderr, "--- RASTATE: extracted MEM chunk (%zu bytes) ---\n", payload_size);
+         }
+         expected = pretro_serialize_size();
+         fprintf(stderr, "--- State payload: %zu bytes (core expects %zu) ---\n",
+                 payload_size, expected);
+         if (!pretro_unserialize(payload, payload_size))
+         {
+            fprintf(stderr, "ERROR: retro_unserialize failed\n");
+            free(st_buf); return 1;
+         }
+         fprintf(stderr, "--- State loaded from %s ---\n", state_load_path);
+         free(st_buf);
+      }
    }
 
    /* Run warmup frames (not timed) */
