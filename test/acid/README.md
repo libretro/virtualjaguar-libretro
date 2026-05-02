@@ -137,15 +137,35 @@ is file-scoped) and append the name to `kPerfCounters[]` in
 
 ## Building & running
 
-vasm (motorola syntax) is the assembler. Build it from the `prb28`
-GitHub mirror (the upstream `sun.hasenbraten.de` site is sometimes
-unreachable):
+vasm (motorola syntax) is the assembler. Three options:
+
+**Option A — local source build (current default).** Build from the
+`prb28` GitHub mirror (the upstream `sun.hasenbraten.de` site is
+sometimes unreachable):
 
 ```bash
 git clone --depth 1 https://github.com/prb28/vasm.git /tmp/vasm
 cd /tmp/vasm && make CPU=m68k SYNTAX=mot
 sudo install vasmm68k_mot /usr/local/bin/
 ```
+
+**Option B — Docker image (recommended for CI).** A couple of
+ready-made Jaguar-toolchain images vendor vasm + vlink + vbcc:
+
+- `toarnold/jaguarvbcc` -- Docker Hub:
+  https://hub.docker.com/r/toarnold/jaguarvbcc/
+- `Leffmann/vasm` -- GitHub:
+  https://github.com/Leffmann/vasm
+
+Wire either into a CI job that volume-mounts the repo and runs
+`make acid` inside the container; the image already has `vasmm68k_mot`
+on `$PATH`.
+
+**Option C — alternative assembler.** `rmac` (Reboot's modern fork
+of Atari's `smac`) also assembles 68K motorola syntax for Jaguar,
+though our test sources currently target vasm idioms.  See
+https://www.commodore-news.com/news/item/13087/en/desktop for
+context on the wider Jaguar/Atari toolchain landscape.
 
 Then from the repo root:
 
