@@ -2,26 +2,31 @@
 ; tests/dsp/dsp_irq_to_68k.s - DSP triggers JERRY DSP IRQ to the 68K.
 ;
 ; Sequence:
-;   1. 68K enables JERRY IRQ2_DSP mask via J_INT ($F10020 low byte = $02).
-;   2. 68K loads a tiny DSP program that writes CPUINT (=$0002) to its
+;   1. 68K installs a hardware IRQ handler at vector 64 ($100).
+;      (Jaguar TOM/JERRY return user vector 64 on IACK -- they don't
+;      assert VPA -- so even a level-2 IRQ goes to $100, not the
+;      autovector slot at $68.)
+;   2. 68K enables JERRY IRQ2_DSP mask via J_INT ($F10020 low byte = $02).
+;   3. 68K loads a tiny DSP program that writes CPUINT (=$0002) to its
 ;      own D_CTRL.  That asks JERRY to fire IRQ2_DSP.
-;   3. 68K starts DSP, waits, stops DSP.
-;   4. 68K reads J_INT.  The JERRY pending-IRQ register should now show
-;      IRQ2_DSP=$0002 set.
-;   5. 68K also installs an autovector-2 IRQ handler that writes a
-;      marker; if 68K IRQs are unmasked the handler runs and the marker
-;      is set in addition to the pending-bit check.
+;   4. 68K runs in supervisor with IPL=0 so level-2 IRQs unmask.
+;   5. 68K starts DSP, spins, stops DSP.
+;   6. The IRQ handler runs during the spin, writes a known marker.
 ;
-; PASS = IRQ2_DSP bit set in the pending register AND the IRQ marker
-; was written by the handler.
+; PASS = IRQ marker written by the handler.
 ;
-; The IRQ marker check confirms the IRQ was actually delivered to the
-; 68K (the pending-bit check alone only confirms JERRY queued it).
+; (We don't separately check the J_INT pending bit because the
+; handler acks it via the high-byte clear.  Reading pending after
+; the handler runs would always return 0, which would make a
+; pending-bit assertion internally contradictory with the handler
+; the test installs.  Marker presence proves the full chain:
+; DSP CPUINT write -> JERRY pending latch -> m68k_set_irq(2) ->
+; CPU IACK -> vector 64 fetch -> handler entry.)
 ;
 ; Detail codes:
-;   1 = J_INT pending didn't include IRQ2_DSP (DSP didn't trigger or
-;       JERRY didn't latch it)
-;   2 = IRQ marker not written (IRQ wasn't delivered to 68K)
+;   1 = IRQ marker not written (IRQ wasn't delivered to 68K --
+;       chain broken at DSP CPUINT, JERRY latch, m68k_set_irq, or
+;       vector dispatch).
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
@@ -38,7 +43,13 @@ J_INT           equ     $00F10020
 IRQ_MARKER_ADDR equ     $00080010
 IRQ_MARKER_VAL  equ     $C0FFEE01
 
-VECTOR_AUTOIRQ2 equ     $00000068       ; autovector level 2 = vector 26 = address 0x68
+;; Jaguar HW does NOT assert VPA on IACK -- TOM/JERRY return user
+;; vector 64 ($100) for all hardware IRQs (see irq_ack_handler in
+;; src/core/jaguar.c).  So even though the 68K SR uses level-2
+;; (autovector) interrupts, the actual exception vector is 64, not
+;; the 68K-architectural autovector slot at $68.  This matches the
+;; convention used by the passing tests/irq/vblank_delivery.s.
+HW_IRQ_VECTOR   equ     $00000100
 
                 org     $802000
 entry:
@@ -50,9 +61,13 @@ entry:
                 ;; Init markers.
                 move.l  #$00000000,IRQ_MARKER_ADDR.l
 
-                ;; Install autovector-2 IRQ handler.
+                ;; Install hardware IRQ handler at vector 64 ($100).
+                ;; (The CPU takes a level-2 autovector interrupt, but
+                ;; Jaguar HW returns user vector 64 on IACK rather than
+                ;; asserting VPA -- so the handler lives at $100, not
+                ;; the 68K-architectural autovector slot at $68.)
                 lea     irq2_handler(pc),a1
-                move.l  a1,VECTOR_AUTOIRQ2.l
+                move.l  a1,HW_IRQ_VECTOR.l
 
                 ;; Enable JERRY DSP IRQ mask (clear any pending too).
                 move.w  #$FF02,J_INT.l   ; low byte mask=$02 (IRQ2_DSP);
@@ -88,23 +103,17 @@ entry:
 
                 move.l  #0,D_CTRL
 
-                ;; Check J_INT pending byte for IRQ2_DSP.
-                ;; (Reading $F10020 returns jerryPendingInterrupt.)
-                move.w  J_INT.l,d5
-                move.w  d5,d4
-                and.w   #$0002,d4        ; mask to IRQ2_DSP bit
-                tst.w   d4
-                beq.s   .no_pending
-
-                ;; Check IRQ handler ran.
+                ;; Check IRQ handler ran.  The handler acks the JERRY
+                ;; pending bit via the high-byte clear, so reading
+                ;; jerryPendingInterrupt here would always be 0 --
+                ;; marker presence is the load-bearing evidence.
                 move.l  IRQ_MARKER_ADDR.l,d6
                 cmp.l   #IRQ_MARKER_VAL,d6
                 bne.s   .no_handler
 
                 ACID_PASS
 
-.no_pending:    ACID_FAIL #1,d5,#$0002
-.no_handler:    ACID_FAIL #2,d6,#IRQ_MARKER_VAL
+.no_handler:    ACID_FAIL #1,d6,#IRQ_MARKER_VAL
 
 ;; -----------------------------------------------------------------
 ;; IRQ2 handler: write marker, ack JERRY DSP pending bit, RTE.

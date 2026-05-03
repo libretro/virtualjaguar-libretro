@@ -1,17 +1,34 @@
 ;
 ; tests/gpu/gpu_basic_run.s - GPU starts and runs.
 ;
-; Loads 256 NOP opcodes (each $E400, opcode 57) into GPU work RAM at
-; GPU_RAM, sets G_PC to the start, asserts GO in G_CTRL, runs the
-; 68K through a *short* spin (so the GPU doesn't walk off the NOP
-; slab), stops the GPU, and reads G_PC back.
+; Loads NOP opcodes (each $E400, opcode 57) into the *entire* 4 KB
+; GPU local RAM at GPU_RAM, sets G_PC to the start, asserts GO in
+; G_CTRL, runs the 68K through a short spin, stops the GPU, and
+; reads G_PC back.
 ;
-; Strict assertion: G_PC must equal GPU_RAM + 2*N where N is
-; the number of GPU instructions executed.  We require N to be in
+; Strict assertion: G_PC must equal GPU_RAM + 2*N where N is the
+; number of GPU instructions executed.  We require N to be in
 ; [N_MIN, N_MAX] -- N_MIN ensures the GPU actually ran (not just
 ; "G_PC > start"), and N_MAX ensures G_PC stayed inside the NOP
 ; slab (so we know the value reflects real fetches, not garbage past
 ; the program).
+;
+; *Sizing notes*: This emulator runs the GPU/DSP at 26.6 MHz vs the
+; 68K at 13.3 MHz, and the GPU executes far more NOPs per host-tick
+; than the naive 2x ratio implies.  An earlier version of this test
+; filled only the first 1024 NOPs (2 KB) and spun the 68K for 500
+; loop iterations (each ~18 68K cycles, so ~9000 68K cycles =
+; ~18000 GPU cycles wall) -- the GPU walked clear off the slab
+; into the trailing
+; randomized portion of gpu_ram_8 (src/tom/gpu.c reset fills
+; gpu_ram_8 with JaguarRand()), where random bytes decode as
+; JUMP/JR with bogus targets, landing PC at low addresses like
+; $9F0E.  The fix is twofold:
+;   (1) fill the entire 4 KB of GPU local RAM with NOPs so a slab
+;       overshoot is provably caught by N_MAX rather than masked
+;       by random bytes happening to decode as branches, and
+;   (2) shrink the 68K spin so the GPU is comfortably inside the
+;       slab when we sample G_PC.
 ;
 ; *Known emulator quirk*: the dispatch in src/tom/gpu.c:GPUReadLong
 ; intercepts every long-aligned read in $F02000..$F020FF as a GPU
@@ -38,11 +55,10 @@ G_CTRL          equ     GPU_BASE + $14          ; bit 0 = GO/RUN
 GO              equ     $00000001
 NOP_OP          equ     $E400                   ; opcode 57 << 10
 
-;; GPU runs at 26.6 MHz vs 68K @ 13.3 MHz; in this emulator the
-;; GPU eats many more instructions per host-tick than naive ratio
-;; suggests.  Use a large NOP slab so we can confidently bound the
-;; final PC inside it.
-NOP_SLOTS       equ     1024                    ; 2 KB of NOPs
+;; Fill the *entire* 4 KB GPU local RAM with NOPs.  See sizing
+;; notes above for why.
+NOP_SLOTS       equ     2048                    ; 4 KB of NOPs, full slab
+SPIN_COUNT      equ     20                      ; 68K spin iterations
 N_MIN           equ     1                       ; >=1 GPU insn fetched
 N_MAX           equ     NOP_SLOTS               ; <= slab size
 PC_MIN          equ     GPU_RAM + (N_MIN*2)
@@ -65,7 +81,7 @@ entry:
 
                 ;; Short spin so the GPU executes some NOPs without
                 ;; walking past the slab.
-                move.l  #500,d2
+                move.l  #SPIN_COUNT,d2
 .spin:          nop
                 subq.l  #1,d2
                 bne.s   .spin

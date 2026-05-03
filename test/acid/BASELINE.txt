@@ -5,9 +5,6 @@
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
 [FAIL tests/bus/bus_refresh_steals.jag
-[FAIL tests/dsp/dsp_basic_run.jag
-[FAIL tests/dsp/dsp_irq_to_68k.jag
-[FAIL tests/gpu/gpu_basic_run.jag
 [FAIL tests/quirks/divl_zero_traps.jag
 [PASS tests/blitter/bcompen_basic.jag
 [PASS tests/blitter/bkgwren_test.jag
@@ -42,6 +39,8 @@
 [PASS tests/blitter/zzz_smoke.jag
 [PASS tests/bus/blitter_back_to_back.jag
 [PASS tests/bus/cpu_blitter_concurrent.jag
+[PASS tests/dsp/dsp_basic_run.jag
+[PASS tests/dsp/dsp_irq_to_68k.jag
 [PASS tests/dsp/dsp_mailbox.jag
 [PASS tests/dsp/dsp_op_abs.jag
 [PASS tests/dsp/dsp_op_add.jag
@@ -61,6 +60,7 @@
 [PASS tests/dsp/dsp_op_sub.jag
 [PASS tests/dsp/dsp_op_xor.jag
 [PASS tests/dsp/dsp_reg_access.jag
+[PASS tests/gpu/gpu_basic_run.jag
 [PASS tests/gpu/gpu_op_abs.jag
 [PASS tests/gpu/gpu_op_add.jag
 [PASS tests/gpu/gpu_op_and.jag
