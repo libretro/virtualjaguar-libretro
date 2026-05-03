@@ -12,14 +12,20 @@
 ; dsp_ram_8[0x2000]) at $F1B000..$F1CFFF.  An earlier version of
 ; this test filled only the first 1024 NOPs (2 KB) and spun the
 ; 68K for 500 loop iterations (each ~18 68K cycles, so ~9000 68K
-; cycles wall) -- the DSP walked clean off the slab into
-; the upper, uninitialised half of dsp_ram_8 (and beyond, into the
-; JERRY register window) where bytes decode as random opcodes.
+; cycles wall) -- the DSP walked clean off the 2 KB NOP slab into
+; the trailing portion of dsp_ram_8 (DSPReset zero-fills this in
+; HLE mode -- the acid harness's mode -- and randomizes only when
+; vjs.useJaguarBIOS is set).  Zero opcodes decode as `add r0,r0`,
+; not NOPs and not branches, so PC keeps advancing linearly until
+; it falls off the end of dsp_ram_8 entirely and starts reading
+; from the JERRY register window where reads can return arbitrary
+; values that occasionally decode as JR / MOVEI-with-jump.
 ; Observed D_PC for that case: $00F1D1C8, well past DSP_RAM end.
 ; The fix is to (1) fill the entire 8 KB of DSP local RAM with
-; NOPs so an overshoot is caught by N_MAX rather than masked by
-; random branches, and (2) shrink the 68K spin so the DSP is
-; safely inside the slab when we sample D_PC.
+; real NOPs ($E400) so an overshoot is caught by N_MAX rather
+; than masked by add-r0-r0 walking us off the end, and (2) shrink
+; the 68K spin so the DSP is safely inside the slab when we sample
+; D_PC.
 ;
 ; Same MMIO-dispatch quirk as gpu_basic_run: long-aligned reads in
 ; the DSP control range may be intercepted as DSP register reads
