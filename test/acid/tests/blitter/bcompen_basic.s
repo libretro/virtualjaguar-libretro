@@ -14,13 +14,17 @@
 ; Expected dest 8 bytes (MSB first across pixels):
 ;   $11 $00 $11 $00  $00 $11 $00 $11
 ;
-; Command bits:
-;   SRCEN  = $0001
-;   PATDSEL= $00010000  (use B_PATD for the foreground colour)
-;   BCOMPEN= $0200
-;   LFU = doesn't really matter when BCOMPEN+PATDSEL drive output;
-;         leave LFU = $C (S short-form ity = $C000) for a sane default.
-; -> $0001C201
+; Command bits (per src/tom/blitter.c, which is authoritative for this
+; emulator and differs from JTRM's older bit numbering):
+;   SRCEN   = $00000001  (bit 0)
+;   PATDSEL = $00010000  (bit 16 -- use B_PATD for the foreground colour)
+;   BCOMPEN = $04000000  (bit 26)
+;   LFU function code lives in bits 21..24; leave 0 (zero-fill) since
+;   BCOMPEN+PATDSEL drive the output bytes when a source bit is 1.
+; -> $05810001  (BCOMPEN | PATDSEL | SRCEN)
+;
+; (Bit numbers per src/tom/blitter.c, which differ from JTRM's older
+;  numbering -- emulator authoritative.)
 ;
 ; A?_FLAGS for 8bpp phrase mode: pixsize=3, e=2 (8-px phrase),
 ; xadd=phrase=00 -> $00001018.
@@ -69,7 +73,7 @@ entry:
 
                 ;; 1 line, 8 pixels.
                 move.l  #$00010008,B_COUNT
-                move.l  #$05800001,B_COMMAND    ; SRCEN | PATDSEL? + BCOMPEN | ity=S
+                move.l  #$05810001,B_COMMAND    ; SRCEN | PATDSEL | BCOMPEN | ity=S
 
                 ;; Verify each of 8 dest bytes against the expected
                 ;; pattern.  Walk a small table.
