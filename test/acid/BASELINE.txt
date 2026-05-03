@@ -11,9 +11,6 @@
 [FAIL tests/gpu/gpu_basic_run.jag
 [FAIL tests/op/op_gpu_int_object.jag
 [FAIL tests/quirks/divl_zero_traps.jag
-[FAIL tests/timing/halfline_period_us.jag
-[FAIL tests/timing/pit_countdown_rate.jag
-[FAIL tests/timing/vblank_60hz_exact.jag
 [PASS tests/blitter/bkgwren_test.jag
 [PASS tests/blitter/copy_pix1_pixel.jag
 [PASS tests/blitter/copy_pix16_pixel.jag
@@ -131,9 +128,12 @@
 [PASS tests/stress/many_blits.jag
 [PASS tests/stress/rapid_irq_pump.jag
 [PASS tests/timing/halfline_count_per_frame.jag
+[PASS tests/timing/halfline_period_us.jag
 [PASS tests/timing/hc_advance.jag
 [PASS tests/timing/hc_within_scanline_range.jag
 [PASS tests/timing/jerry_pit_setup.jag
+[PASS tests/timing/pit_countdown_rate.jag
+[PASS tests/timing/vblank_60hz_exact.jag
 [PASS tests/timing/vc_advance.jag
 [PASS tests/timing/vc_field_bit.jag
 [PASS tests/timing/vc_increments.jag

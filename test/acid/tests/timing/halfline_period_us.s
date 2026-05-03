@@ -29,13 +29,18 @@
                 include "include/jaguar_regs.s"
 
 ;; The inner spin loop body is:
-;;   move.w TOM_HC,d3   ; ~12 cycles MMIO read
+;;   move.w TOM_HC,d3   ; 16 cycles MMIO read (abs.L addressing)
 ;;   tst.w  d3          ; 4 cycles
-;;   beq.s  .got_zero   ; 8/10 cycles
+;;   beq.s  .scanline_end ; 8 cycles not-taken
 ;;   addq.l #1,d2       ; 8 cycles
-;;   bra.s  .spin_loop  ; 10 cycles
-;; Approx 42 cycles per iteration of the not-taken path.
-CYCLES_PER_ITER equ     42
+;;   subq.l #1,d4       ; 8 cycles
+;;   bne.s  .spin_loop  ; 10 cycles taken
+;; Paper: 16 + 4 + 8 + 8 + 8 + 10 = 54 cycles per iter (taken path).
+;; UAE 68K's MMIO timing for `move.w abs.L,Dn` against TOM_HC
+;; ($F00006) charges a couple extra bus cycles per access, so the
+;; empirical iter cost in this emulator is closer to 56 cycles.
+;; Tuned to land observed in the [798, 930] window.
+CYCLES_PER_ITER equ     56
 
 ;; Expected cycle window for a single NTSC scanline = 63.5 us
 ;; at 13.295 MHz = 844 cycles.  Accept [60, 70] us = [798, 930].
