@@ -227,7 +227,7 @@ void JERRYResetPIT1(void)
          13.295 MHz NTSC / 13.296 MHz PAL, the same rate as the 68K.
          Period = (prescaler+1) * (divider+1) / PIT_clock.
          The previous RISC_CYCLE_IN_USEC (26.6 MHz) gave a 2x rate. */
-      double usecs = (float)(JERRYPIT1Prescaler + 1) * (float)(JERRYPIT1Divider + 1)
+      double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
          * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);
    }
@@ -240,7 +240,7 @@ void JERRYResetPIT2(void)
 
    if (JERRYPIT2Prescaler | JERRYPIT2Divider)
    {
-      double usecs = (float)(JERRYPIT2Prescaler + 1) * (float)(JERRYPIT2Divider + 1)
+      double usecs = (double)(JERRYPIT2Prescaler + 1) * (double)(JERRYPIT2Divider + 1)
          * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT2Callback, usecs, EVENT_JERRY);
    }
