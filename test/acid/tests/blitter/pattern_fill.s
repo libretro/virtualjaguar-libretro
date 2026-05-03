@@ -25,9 +25,11 @@
 ; index mapping, with regression coverage for games that depend on
 ; Gouraud (Tempest 2000, Atari Karts) before it can ship.
 ;
-; Detail codes:
-;   1 = blitter never finished, OR PATD high/low swap (current bug)
-;   N = first mismatched longword (1-based, 1..2)
+; Detail codes (the test does not poll BUSY -- emulator blitter is
+; synchronous -- so detail values come strictly from the compare):
+;   1 = first  longword (DST+0) mismatched expected PAT_HI (= $DEADBEEF)
+;   2 = second longword (DST+4) mismatched expected PAT_LO (= $CAFEBABE)
+; Currently fails with detail=1 due to the PATD swap described above.
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
