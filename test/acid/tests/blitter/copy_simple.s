@@ -1,5 +1,5 @@
 ;
-; tests/blitter/copy_simple.s - 4-pixel 16bpp blitter copy round-trip.
+; tests/blitter/copy_simple.s - 16-pixel 16bpp blitter copy round-trip.
 ;
 ; Detail codes:
 ;   1 = blitter never finished (BUSY stayed set)
@@ -50,7 +50,9 @@ entry:
                 move.l  #$00001020,B_A2_FLAGS
                 move.l  #0,B_A2_PIXEL
 
-                move.l  #$00010004,B_COUNT
+                ;; 16 px @ 16bpp = 32 bytes = 8 longwords (matches the
+                ;; 8-longword compare loop below).
+                move.l  #$00010010,B_COUNT
                 move.l  #$01800001,B_COMMAND    ; SRCEN | LFU=src
 
                 ;; Blitter is synchronous in this emulator; no wait needed.

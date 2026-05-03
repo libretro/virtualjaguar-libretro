@@ -4,9 +4,32 @@
 ; Programs the blitter without SRCEN, with PATDSEL set, and a known
 ; pattern in B_PATD.  Each phrase write should land the pattern.
 ;
-; Detail codes:
-;   1 = blitter never finished
-;   N = first mismatched longword (1-based, 1..2)
+; **KNOWN-FAIL** (root cause documented):
+;
+; BlitterWriteByte() in src/tom/blitter_mmio.c swaps the high and low
+; halves of B_PATD on CPU writes (offset+4 / offset-4 mapping).  This
+; means `move.l #X, B_PATD; move.l #Y, B_PATD+4` ends up with X in the
+; *low* 32 bits and Y in the *high* 32 bits of the internal 64-bit
+; pattern register, the inverse of JTRM addressing.  Phrase write to
+; dest then produces dest[0..3]=Y, dest[4..7]=X -- swapped from the
+; expected ordering.  The same swap applies to SRCDATA / DSTDATA / DSTZ
+; / SRCZINT / SRCZFRAC, but pattern_fill is the only test that uses
+; *asymmetric* halves of those registers from CPU writes, so it's the
+; only one that surfaces the bug.
+;
+; Removing the swap is non-trivial: the Gouraud reads in
+; src/tom/blitter.c (gd_c[]/gd_i[] near line 945) read PATTERNDATA in
+; reverse byte order -- pixel 0 reads PATD+6, pixel 3 reads PATD+0 --
+; which only produces correct per-pixel data because of the swap.  A
+; coordinated fix needs to drop the swap *and* reverse the Gouraud
+; index mapping, with regression coverage for games that depend on
+; Gouraud (Tempest 2000, Atari Karts) before it can ship.
+;
+; Detail codes (the test does not poll BUSY -- emulator blitter is
+; synchronous -- so detail values come strictly from the compare):
+;   1 = first  longword (DST+0) mismatched expected PAT_HI (= $DEADBEEF)
+;   2 = second longword (DST+4) mismatched expected PAT_LO (= $CAFEBABE)
+; Currently fails with detail=1 due to the PATD swap described above.
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
