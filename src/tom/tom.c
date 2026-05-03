@@ -262,7 +262,10 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
+#include "perf_counters.h"
 #include "settings.h"
+
+PERF_COUNTER(timing_gpu_irqs_to_68k);
 
 // Red Color Values for CrY<->RGB Color Conversion
 uint8_t redcv[16][16] = {
@@ -1316,7 +1319,10 @@ void TOMExecPIT(uint32_t cycles)
          GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE);	// GPUSetIRQLine does the 'IRQ enabled' checking
 
          if (TOMIRQEnabled(IRQ_TIMER))
+         {
+            PERF_INC(timing_gpu_irqs_to_68k);
             m68k_set_irq(2);				// Cause a 68000 IPL 2...
+         }
 
          TOMResetPIT();
       }
@@ -1329,7 +1335,10 @@ void TOMPITCallback(void)
    GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE); // It does the 'IRQ enabled' checking
 
    if (TOMIRQEnabled(IRQ_TIMER))
+   {
+      PERF_INC(timing_gpu_irqs_to_68k);
       m68k_set_irq(2); // Generate a 68K IPL 2...
+   }
 
    TOMResetPIT();
 }

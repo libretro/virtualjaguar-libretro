@@ -162,6 +162,9 @@
 #include "eeprom.h"
 #include "event.h"
 #include "jaguar.h"
+#include "perf_counters.h"
+
+PERF_COUNTER(timing_jerry_irqs);
 #include "joystick.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
@@ -250,6 +253,7 @@ void JERRYPIT1Callback(void)
          // Not sure, but I think we don't generate another IRQ if one's already going...
          // But this seems to work... :-/
          jerryPendingInterrupt |= IRQ2_TIMER1;
+         PERF_INC(timing_jerry_irqs);
          m68k_set_irq(2);						// Generate 68K IPL 2
       }
    }
@@ -266,6 +270,7 @@ void JERRYPIT2Callback(void)
       if (jerryInterruptMask & IRQ2_TIMER2)		// CPU Timer 2 IRQ
       {
          jerryPendingInterrupt |= IRQ2_TIMER2;
+         PERF_INC(timing_jerry_irqs);
          m68k_set_irq(2);						// Generate 68K IPL 2
       }
    }

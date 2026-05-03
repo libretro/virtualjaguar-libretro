@@ -61,3 +61,7 @@ test/lldb_*.py
 /test/tools/test_blitter_compare
 /test/tools/test_screenshot
 test/tools/build/
+
+# Acid-test build outputs
+test/acid/acid_run
+test/acid/tests/**/*.jag

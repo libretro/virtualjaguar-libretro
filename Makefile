@@ -857,7 +857,7 @@ test/tools/test_memory_map: test/tools/test_memory_map.c
 		-o $@ test/tools/test_memory_map.c -ldl
 endif
 
-.PHONY: clean test lint coverage benchmark
+.PHONY: clean test lint coverage benchmark acid
 endif
 
 lint:
@@ -904,6 +904,18 @@ benchmark:
 	./test/tools/test_benchmark ./$(TARGET) "$(BENCH_ROM)" $(BENCH_FRAMES) \
 		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER) \
 		$(if $(BENCH_STATE),--load-state "$(BENCH_STATE)")
+
+# `make acid` -- builds the core and runs the synthetic acid-test ROMs
+# (see test/acid/README.md).  Requires the vasm 68K assembler on $PATH;
+# if absent, the assemble step is skipped and only the runner harness
+# is built (so CI can still validate the harness compiles).
+#
+# Forces a BENCH_PROFILE=1 + TEST_EXPORTS=1 build of the core so the
+# acid runner can dlsym `perf_counters_find` and report a per-test
+# delta (halflines, vblank IRQs, blits, inner-loop iters, ...).
+acid:
+	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(MAKE) -C test/acid test CORE=$(abspath $(TARGET))
 
 print-%:
 	@echo '$*=$($*)'

@@ -19,6 +19,7 @@
 #include "jaguar.h"
 
 #include "cdrom.h"
+#include "perf_counters.h"
 #include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -32,6 +33,16 @@
 #include "tom.h"
 
 static bool frameDone;
+
+/* Frame-pacing instrumentation (no-op unless built with BENCH_PROFILE).
+ * Lets the acid runner / benchmark detect timing regressions like the
+ * Doom 2x speed bug -- e.g. expected 525 halflines/frame NTSC, 60 vblank
+ * IRQs/sec.  See test/acid/README.md and src/core/perf_counters.h.
+ * Counters that fire from other TUs are declared at their use sites
+ * (PERF_COUNTER backs each name with a file-scope static). */
+PERF_COUNTER(timing_halfline_callbacks);
+PERF_COUNTER(timing_vblank_irqs);
+PERF_COUNTER(timing_jaguar_execute_calls);
 
 // Platform-independent xorshift32 PRNG for deterministic RAM initialization.
 // libc rand() produces different sequences on different platforms (glibc vs
@@ -694,7 +705,8 @@ void JaguarInit(void)
 // Half line times are, naturally, half of this. :-P
 void HalflineCallback(void)
 {
-   uint16_t vc           = TOMReadWord(0xF00006, JAGUAR);
+   uint16_t vc           = (PERF_INC(timing_halfline_callbacks),
+                            TOMReadWord(0xF00006, JAGUAR));
    uint16_t vp           = TOMReadWord(0xF0003E, JAGUAR) + 1;
    uint16_t vi           = TOMReadWord(0xF0004E, JAGUAR);
 
@@ -712,7 +724,10 @@ void HalflineCallback(void)
 
    // Time for Vertical Interrupt?
    if ((vc & 0x7FF) == vi && (vc & 0x7FF) > 0)
+   {
+      PERF_INC(timing_vblank_irqs);
       TOMSetPendingVideoInt();
+   }
 
    TOMExecHalfline(vc, true);
 
@@ -934,6 +949,7 @@ uint8_t * GetRamPtr(void)
  * so the DSP runs alongside the 68K and GPU, matching real hardware timing. */
 void JaguarExecuteNew(void)
 {
+   PERF_INC(timing_jaguar_execute_calls);
    frameDone = false;
 
    do
