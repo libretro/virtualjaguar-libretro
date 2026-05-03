@@ -2,59 +2,79 @@
 ; tests/op/op_stop_terminates.s - OP must terminate on a STOP object.
 ;
 ; Builds a minimal OP list with just a single STOP object (type 4),
-; points OLP at it, lets it tick.  If the OP runs forever (cycles
-; through), HalflineCallback would either hang or take far longer
-; than expected.  We verify by counting halfline_callbacks via the
-; perf counter (test passes regardless; perf delta is the diagnostic).
+; points OLP at it, lets it tick.  A STOP object writes no pixels, so
+; the framebuffer-region we pre-fill with sentinels must remain
+; untouched after several OP-eligible halflines elapse.
 ;
-; Real check: a STOP object writes no pixels, so the framebuffer
-; stays whatever we left it.  We pre-fill RAM with a sentinel and
-; verify it's untouched after a few frames.
+; Strict assertion: pre-fill an 8 KB sentinel block at $00060000 with
+; alternating $A5A55A5A / $5A5AA5A5 patterns; after the spin every
+; longword in that block must still match the expected pattern.  This
+; catches any spurious OP-driven write -- not just a single sentinel.
 ;
 ; Detail codes:
-;   1 = sentinel modified (OP wrote pixels despite STOP)
+;   1 = sentinel modified at offset (d6 contains offset)
+;   observed = bad longword
+;   expected = expected longword
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
-
-;; TOM
-TOM_OLP_HI      equ     $F00020
-TOM_OLP_LO      equ     $F00022
-TOM_VMODE       equ     $F00028
+                include "include/jaguar_regs.s"
 
 ;; OP list location (well clear of code/stack/sig)
 OPLIST          equ     $00050000
 SENTINEL        equ     $00060000
-SENTINEL_VAL    equ     $A5A55A5A
+SENTINEL_LEN    equ     2048                    ; 2048 longs = 8 KB
+SENTINEL_A      equ     $A5A55A5A
+SENTINEL_B      equ     $5A5AA5A5
 SPIN_LIMIT      equ     500000
 
                 org     $802000
 entry:
                 ACID_INIT
 
-                ;; Pre-fill sentinel.
-                move.l  #SENTINEL_VAL,SENTINEL.l
+                ;; Pre-fill sentinel block with alternating pattern.
+                lea     SENTINEL.l,a0
+                move.l  #SENTINEL_LEN-1,d0
+                moveq   #0,d1                   ; parity counter
+.fill:          btst    #0,d1
+                bne.s   .odd
+                move.l  #SENTINEL_A,(a0)+
+                bra.s   .next
+.odd:           move.l  #SENTINEL_B,(a0)+
+.next:          addq.l  #1,d1
+                dbra    d0,.fill
 
-                ;; Build STOP object at OPLIST.
-                ;; STOP object format: 64 bits, low 3 bits = 4 (STOP).
-                ;; Just write phrase $0000000000000004:
+                ;; Build STOP object at OPLIST: low 3 bits = 4 (STOP).
                 move.l  #$00000000,OPLIST.l
                 move.l  #$00000004,OPLIST+4.l
 
-                ;; Point OLP at OPLIST (LO low word, HI high word).
+                ;; Point OLP at OPLIST.
                 move.w  #(OPLIST&$FFFF),TOM_OLP_LO
                 move.w  #((OPLIST>>16)&$FFFF),TOM_OLP_HI
 
-                ;; Spin a while so OP gets a chance to run.
+                ;; Spin so OP gets a chance to run.
                 move.l  #SPIN_LIMIT,d2
 .spin:          subq.l  #1,d2
                 bne.s   .spin
 
-                ;; Sentinel must be intact.
-                move.l  SENTINEL.l,d5
-                cmp.l   #SENTINEL_VAL,d5
-                bne.s   .bad
+                ;; Verify every sentinel longword is intact.
+                lea     SENTINEL.l,a0
+                move.l  #SENTINEL_LEN-1,d0
+                moveq   #0,d6                   ; offset counter
+                moveq   #0,d1                   ; parity counter
+.check:         move.l  (a0)+,d5
+                btst    #0,d1
+                bne.s   .checkB
+                cmp.l   #SENTINEL_A,d5
+                bne.s   .badA
+                bra.s   .ok1
+.checkB:        cmp.l   #SENTINEL_B,d5
+                bne.s   .badB
+.ok1:           addq.l  #4,d6
+                addq.l  #1,d1
+                dbra    d0,.check
 
                 ACID_PASS
 
-.bad:           ACID_FAIL #1,d5,#SENTINEL_VAL
+.badA:          ACID_FAIL #1,d5,#SENTINEL_A
+.badB:          ACID_FAIL #1,d5,#SENTINEL_B

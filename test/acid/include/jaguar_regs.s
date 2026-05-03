@@ -47,6 +47,7 @@ TOM_VDB         equ     $00F00030   ; TOM_BASE + $30
 TOM_VDE         equ     $00F00032   ; TOM_BASE + $32
 TOM_VEB         equ     $00F00034   ; TOM_BASE + $34
 TOM_VEE         equ     $00F00036   ; TOM_BASE + $36
+TOM_VP          equ     $00F0003E   ; TOM_BASE + $3E
 TOM_VI          equ     $00F0004E   ; TOM_BASE + $4E
 TOM_PIT0        equ     $00F00050   ; TOM_BASE + $50
 TOM_PIT1        equ     $00F00052   ; TOM_BASE + $52

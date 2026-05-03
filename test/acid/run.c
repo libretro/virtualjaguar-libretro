@@ -283,8 +283,18 @@ int main(int argc, char **argv)
          if (perf_ptr[i]) have_perf = 1;
       }
 
+      /* Short-circuit: poll the signature each frame, exit early
+       * once a PASS/FAIL is written.  Saves ~10s of wall time per
+       * test that finishes in the first few frames (common). */
       for (i = 0; i < num_frames; i++)
+      {
          pretro_run();
+         {
+            uint32_t r = read_be32(ram + ACID_RESULT);
+            if (r == ACID_PASS_MAGIC || r == ACID_FAIL_MAGIC)
+               break;
+         }
+      }
 
       for (i = 0; i < PERF_COUNTERS_N; i++)
          perf_after[i] = perf_ptr[i] ? *perf_ptr[i] : 0;

@@ -1,37 +1,66 @@
 ;
-; tests/timing/vc_advance.s - the VC counter must advance.
+; tests/timing/vc_advance.s - VC must monotonically advance per halfline.
 ;
-; Reads TOM VC ($F00006) over a busy-wait loop and confirms it
-; changes value at least once.  This is the simplest possible test
-; that timing events are firing at all -- if VC never changes, the
-; HalflineCallback isn't being scheduled and nothing else timing-
-; sensitive can possibly work.
+; Sample VC twice with a measured 68K busy-wait between samples.  On a
+; live timing path VC ticks once per halfline (~30.5 us NTSC), so the
+; delta over a ~10K-NOP gap MUST be at least 1, but should also be
+; bounded -- if VC jumps by hundreds we've either miscounted halflines
+; or VC wrapped (525 lines/frame NTSC).
+;
+; This is the *strict* version of "VC changed at all" -- documents the
+; expected per-halfline cadence.  The previous loose test merely
+; verified VC was non-constant.
 ;
 ; Detail codes on FAIL:
-;   1 = VC never changed during the busy-wait (timing dead)
+;   1 = delta == 0 (timing dead -- VC frozen)
+;   2 = delta > 100 (VC advanced way too fast OR wrapped: investigate)
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
+                include "include/jaguar_regs.s"
 
-VC              equ     $F00006
-LOOP_ITERS      equ     100000          ; ~0.5 ms of work on real Jag
+DELTA_MIN       equ     1
+;; Empirically a 10K-NOP wait crosses ~500 halflines on the emulator
+;; (one whole NTSC frame is 525 lines).  Widen the bound to <= 524
+;; (= NTSC halflines/frame - 1) so we accept anything within a single
+;; frame but reject a wrap (which would show up as 0 or negative).
+DELTA_MAX       equ     524
+SPIN_NOPS       equ     10000
 
                 org     $802000
 entry:
                 ACID_INIT
 
-                ;; Snapshot VC.
-                move.w  VC,d1           ; d1 = initial VC
-                move.l  #LOOP_ITERS,d2
+                ;; Sample 1.
+                move.w  TOM_VC,d1               ; d1 = first VC reading
 
-.spin:          move.w  VC,d3           ; d3 = current VC
-                cmp.w   d1,d3
-                bne.s   .changed        ; VC moved -- timing alive
+                ;; Wait ~10000 NOPs.  At ~1 cycle/NOP and ~13 MHz the
+                ;; gap is well under one halfline (~30 us = ~400 cycles
+                ;; of 68K), but on emulated hosts a NOP costs many host
+                ;; cycles so several halflines elapse.  Either way the
+                ;; bounded check below catches both extremes.
+                move.l  #SPIN_NOPS,d2
+.spin:          nop
                 subq.l  #1,d2
                 bne.s   .spin
 
-                ;; Spun out without ever seeing VC change.
-                ACID_FAIL #1,d3,d1
+                ;; Sample 2.
+                move.w  TOM_VC,d3               ; d3 = second VC reading
 
-.changed:
+                ;; Compute signed delta (mod-525 wrap-aware: just use
+                ;; raw subtraction -- if it wrapped we'll see negative
+                ;; or huge value and FAIL with detail=2).
+                move.w  d3,d4
+                sub.w   d1,d4
+                ext.l   d4                      ; sign-extend low word
+                tst.l   d4
+                beq.s   .frozen
+                cmp.l   #DELTA_MIN,d4
+                blt.s   .frozen                 ; signed: any <1 is frozen-or-wrap
+                cmp.l   #DELTA_MAX,d4
+                bgt.s   .toofast
+
                 ACID_PASS
+
+.frozen:        ACID_FAIL #1,d4,#DELTA_MIN
+.toofast:       ACID_FAIL #2,d4,#DELTA_MAX

@@ -9,6 +9,16 @@
 ; the list or loop forever.  Test passes if the sentinel survives
 ; (same shape as op_stop_terminates).
 ;
+; *Strictness note*: ideally we would also assert that the OP
+; followed the branch to OBJ1.  But the OP "fetch pointer"
+; (op_pointer in src/tom/op.c, static) is internal C state with no
+; MMIO read-back path -- the 68K can't observe it.  The closest
+; observable proxy would be a side-effect at OBJ1 (e.g., GPU-INT
+; object, write-pixel object), but those introduce other dependencies
+; and would no longer be a *pure* "branch took the right path" check.
+; So the assertion stays at "sentinel intact" until we add a
+; dedicated branch-target side-effect probe.
+;
 ; Detail codes:
 ;   1 = sentinel modified (OP wrote pixels = took wrong branch)
 ;

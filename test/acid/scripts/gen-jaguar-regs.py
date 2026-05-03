@@ -66,6 +66,7 @@ TOM_OFFSETS = {
     "VDE":         0x32,           # vertical display end
     "VEB":         0x34,
     "VEE":         0x36,
+    "VP":          0x3E,           # vertical period
     "VI":          0x4E,           # vertical interrupt position
     "PIT0":        0x50,
     "PIT1":        0x52,

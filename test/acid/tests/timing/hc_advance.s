@@ -1,36 +1,73 @@
 ;
-; tests/timing/hc_advance.s - HC counter must change within a scanline.
+; tests/timing/hc_advance.s - HC has the half-line bit (0x0400) AND a
+; bounded phase counter in the low bits.
 ;
-; The Horizontal Count register at $F00004 advances within each
-; halfline; reads at different times during one scanline should show
-; different values.
+; Per src/tom/tom.c:1042-1056, HC reads return:
+;   (hc_register & 0x0400) | (phase & 0x03FF)
+; where:
+;   * bit 0x0400 toggles per halfline (even halfline -> 0,
+;                                       odd  halfline -> 1)
+;   * phase is a small counter [0, (HP+1)/2) that increments on every
+;     HC read and wraps at HP/2 (~422 NTSC)
 ;
-; This is one of the registers that was a rand() stub before commit
-; 1ca2fdc.  Verify it now returns a varying-but-bounded value.
+; Tightened assertion (the loose previous test only required HC to
+; change at all):
+;   1. We must observe at least one sample with bit 0x0400 SET.
+;   2. We must observe at least one sample with bit 0x0400 CLEAR.
+;   3. Every sample's low 10 bits must be < 1024 (which is implied by
+;      the 0x03FF mask anyway), and our peak phase value must be
+;      below MAX_PHASE = 1024 (sanity bound).
+; If condition 1 or 2 never observed -> halfline timing is dead;
+; if condition 3 fails -> HC layout is wrong.
 ;
 ; Detail codes:
-;   1 = HC never changed across the spin (timing dead, or HC is a
-;       constant)
+;   1 = never observed bit 0x0400 SET
+;   2 = never observed bit 0x0400 CLEAR
+;   3 = a sample's low 10 bits exceeded MAX_PHASE (HC layout wrong)
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
+                include "include/jaguar_regs.s"
 
-HC              equ     $F00004
 LOOP_ITERS      equ     50000
+HALF_BIT        equ     $0400
+PHASE_MASK      equ     $03FF
+MAX_PHASE       equ     $0400           ; phase MUST be < this
 
                 org     $802000
 entry:
                 ACID_INIT
 
-                move.w  HC,d1                   ; d1 = initial sample
+                moveq   #0,d6                   ; saw HALF_BIT set
+                moveq   #0,d7                   ; saw HALF_BIT clear
                 move.l  #LOOP_ITERS,d2
 
-.spin:          move.w  HC,d3
-                cmp.w   d1,d3
-                bne.s   .changed
-                subq.l  #1,d2
+.spin:          move.w  TOM_HC,d3
+                ;; Sanity: low 10 bits < MAX_PHASE.
+                move.w  d3,d4
+                and.w   #PHASE_MASK,d4
+                cmp.w   #MAX_PHASE,d4
+                bge     .badphase
+                ;; Track HALF_BIT presence across samples.
+                move.w  d3,d4
+                and.w   #HALF_BIT,d4
+                bne.s   .seenset
+                moveq   #1,d7                   ; saw clear
+                bra.s   .check
+.seenset:       moveq   #1,d6                   ; saw set
+.check:         tst.b   d6
+                beq.s   .next
+                tst.b   d7
+                bne     .ok
+.next:          subq.l  #1,d2
                 bne.s   .spin
 
-                ACID_FAIL #1,d3,d1
+                ;; Spun out -- diagnose.
+                tst.b   d6
+                beq.s   .noset
+                ACID_FAIL #2,d3,#0              ; never saw HALF_BIT clear
+.noset:         ACID_FAIL #1,d3,#HALF_BIT       ; never saw HALF_BIT set
 
-.changed:       ACID_PASS
+.badphase:      ACID_FAIL #3,d4,#MAX_PHASE
+
+.ok:            ACID_PASS

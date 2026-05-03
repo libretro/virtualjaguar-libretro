@@ -1,32 +1,59 @@
 ;
 ; tests/stress/deep_call_chain.s - 16-deep BSR/RTS nest.
 ;
-; Calls level1 -> level2 -> ... -> level16, each setting a unique
-; bit in d6, then unwinds.  After all returns, d6 should have all
-; 16 low bits set ($0000FFFF).  Verifies stack push/pop survives a
-; 16-deep call chain.
+; Calls level1 -> ... -> level16, each setting a unique bit in d6,
+; then unwinds.  Strict assertion (tightened from "16 flags only"):
+;
+;   1. all 16 low bits of d6 set ($0000FFFF)
+;   2. SP after the unwind exactly equals SP before the first BSR
+;      (no leaked words)
+;   3. SR (T/S/IPL) after the unwind matches what it was before
 ;
 ; Detail codes:
-;   1 = some level's bit was not set after unwind
+;   1 = flag bitmap mismatch
+;   2 = SP shifted (stack leak in BSR/RTS path)
+;   3 = SR T/S/IPL changed across the call chain
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
+                include "include/jaguar_regs.s"
 
 EXPECTED        equ     $0000FFFF
+SR_MASK         equ     $E700           ; T1|T0|S|IPL
 
                 org     $802000
 entry:
                 ACID_INIT
 
-                moveq   #0,d6
-                bsr.s   .l1
+                ;; Snapshot SP and SR (architectural bits only) BEFORE
+                ;; the call chain.
+                move.l  a7,d4                   ; d4 = saved SP
+                move.w  sr,d3
+                and.l   #SR_MASK,d3             ; d3 = saved SR bits
 
+                moveq   #0,d6
+                bsr     .l1
+
+                ;; Check 1: flag bitmap.
                 cmp.l   #EXPECTED,d6
-                bne.s   .bad
+                bne.s   .badflags
+
+                ;; Check 2: SP intact.
+                move.l  a7,d5
+                cmp.l   d4,d5
+                bne.s   .badsp
+
+                ;; Check 3: SR intact.
+                move.w  sr,d5
+                and.l   #SR_MASK,d5
+                cmp.l   d3,d5
+                bne.s   .badsr
 
                 ACID_PASS
 
-.bad:           ACID_FAIL #1,d6,#EXPECTED
+.badflags:      ACID_FAIL #1,d6,#EXPECTED
+.badsp:         ACID_FAIL #2,d5,d4
+.badsr:         ACID_FAIL #3,d5,d3
 
 .l1:    bset #0,d6
         bsr.s   .l2
