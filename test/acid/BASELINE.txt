@@ -5,7 +5,6 @@
 [FAIL tests/blitter/copy_pix2_pixel.jag
 [FAIL tests/blitter/copy_pix4_phrase.jag
 [FAIL tests/blitter/copy_pix4_pixel.jag
-[FAIL tests/blitter/copy_simple.jag
 [FAIL tests/blitter/pattern_fill.jag
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
@@ -24,6 +23,7 @@
 [PASS tests/blitter/copy_pix32.jag
 [PASS tests/blitter/copy_pix8_pixel.jag
 [PASS tests/blitter/copy_pix8.jag
+[PASS tests/blitter/copy_simple.jag
 [PASS tests/blitter/dsta2_swap.jag
 [PASS tests/blitter/gourd_basic.jag
 [PASS tests/blitter/lfu_and.jag
