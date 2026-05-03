@@ -11,7 +11,8 @@
 ; *Sizing notes*: DSP local RAM is 8 KB (src/jerry/dsp.c
 ; dsp_ram_8[0x2000]) at $F1B000..$F1CFFF.  An earlier version of
 ; this test filled only the first 1024 NOPs (2 KB) and spun the
-; 68K for 500 cycles -- the DSP walked clean off the slab into
+; 68K for 500 loop iterations (each ~18 68K cycles, so ~9000 68K
+; cycles wall) -- the DSP walked clean off the slab into
 ; the upper, uninitialised half of dsp_ram_8 (and beyond, into the
 ; JERRY register window) where bytes decode as random opcodes.
 ; Observed D_PC for that case: $00F1D1C8, well past DSP_RAM end.

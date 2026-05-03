@@ -17,7 +17,9 @@
 ; 68K at 13.3 MHz, and the GPU executes far more NOPs per host-tick
 ; than the naive 2x ratio implies.  An earlier version of this test
 ; filled only the first 1024 NOPs (2 KB) and spun the 68K for 500
-; cycles -- the GPU walked clear off the slab into the trailing
+; loop iterations (each ~18 68K cycles, so ~9000 68K cycles =
+; ~18000 GPU cycles wall) -- the GPU walked clear off the slab
+; into the trailing
 ; randomized portion of gpu_ram_8 (src/tom/gpu.c reset fills
 ; gpu_ram_8 with JaguarRand()), where random bytes decode as
 ; JUMP/JR with bogus targets, landing PC at low addresses like

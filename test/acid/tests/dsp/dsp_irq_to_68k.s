@@ -61,7 +61,11 @@ entry:
                 ;; Init markers.
                 move.l  #$00000000,IRQ_MARKER_ADDR.l
 
-                ;; Install autovector-2 IRQ handler.
+                ;; Install hardware IRQ handler at vector 64 ($100).
+                ;; (The CPU takes a level-2 autovector interrupt, but
+                ;; Jaguar HW returns user vector 64 on IACK rather than
+                ;; asserting VPA -- so the handler lives at $100, not
+                ;; the 68K-architectural autovector slot at $68.)
                 lea     irq2_handler(pc),a1
                 move.l  a1,HW_IRQ_VECTOR.l
 
