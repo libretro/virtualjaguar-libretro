@@ -30,18 +30,12 @@
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
+                include "include/jaguar_regs.s"
 
-B_BASE          equ     $F02200
-B_A1_BASE       equ     B_BASE + $00
-B_A1_FLAGS      equ     B_BASE + $04
-B_A1_PIXEL      equ     B_BASE + $0C
-B_A2_BASE       equ     B_BASE + $24
-B_A2_FLAGS      equ     B_BASE + $28
-B_A2_PIXEL      equ     B_BASE + $30
-B_PATD_HI       equ     B_BASE + $50
-B_PATD_LO       equ     B_BASE + $54
-B_COMMAND       equ     B_BASE + $38
-B_COUNT         equ     B_BASE + $3C
+;; Most blitter symbols come from jaguar_regs.s now.
+B_PATD_HI       equ     B_PATTERNDATA
+B_PATD_LO       equ     B_PATTERNDATA + 4
+B_COUNT         equ     B_PIXLINECOUNTER
 
 SRC             equ     $00080000
 DST             equ     $00090000

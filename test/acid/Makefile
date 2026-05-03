@@ -28,10 +28,33 @@ else
 ROMS_TO_BUILD := $(ROMS)
 endif
 
-.PHONY: all clean check-vasm test
+.PHONY: all clean check-vasm test lint regs
 
-all: $(RUNNER_BIN) $(ROMS_TO_BUILD)
+# Regenerate the auto-derived include/jaguar_regs.s.  It depends on the
+# C source files it parses; if any of them change, the .s file rebuilds.
+REGS_OUT := include/jaguar_regs.s
+REGS_SRC := \
+   ../../src/tom/blitter.c \
+   ../../src/tom/tom.h \
+   ../../src/tom/gpu.h \
+   ../../src/jerry/jerry.h \
+   ../../src/jerry/dsp.h \
+   scripts/gen-jaguar-regs.py
+
+$(REGS_OUT): $(REGS_SRC)
+	@python3 scripts/gen-jaguar-regs.py
+
+regs: $(REGS_OUT)
+
+# Lint test sources for blitter cmd-bit + hard-coded address mistakes.
+# Catches the kind of bug Copilot review caught the first time round
+# (wrong LFU position, wrong DSTEN bit, wrong PIT setup address).
+lint: $(REGS_OUT)
+	@python3 scripts/lint-acid.py
+
+all: $(REGS_OUT) $(RUNNER_BIN) $(ROMS_TO_BUILD)
 	@$(MAKE) -s check-vasm
+	@$(MAKE) -s lint || true
 
 check-vasm:
 ifeq ($(VASM_PRESENT),)
