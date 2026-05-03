@@ -28,7 +28,7 @@ else
 ROMS_TO_BUILD := $(ROMS)
 endif
 
-.PHONY: all clean check-vasm test lint regs
+.PHONY: all clean check-vasm test lint regs baseline check-baseline
 
 # Regenerate the auto-derived include/jaguar_regs.s.  It depends on the
 # C source files it parses; if any of them change, the .s file rebuilds.
@@ -106,3 +106,29 @@ test: all
 	echo "----"; \
 	echo "Acid tests: $$((total-fail)) / $$total passed"; \
 	exit $$fail
+
+# `make baseline` -- regenerate test/acid/BASELINE.txt from a fresh
+# run.  Run this when (a) you add new tests that legitimately FAIL and
+# want them recorded as known FAILs, OR (b) you fix an emulator bug
+# and a test moves FAIL -> PASS (the next CI will then catch any
+# regression that brings it back to FAIL).
+baseline: all
+	@if [ -z "$(CORE)" ]; then \
+	   echo "ERROR: set CORE=path/to/virtualjaguar_libretro.{dylib,so}"; \
+	   exit 2; \
+	fi
+	@$(MAKE) -s test CORE=$(CORE) > /tmp/acid_baseline.log 2>&1 || true
+	@grep -E '^\[(PASS|FAIL|NOT-RUN-YET)' /tmp/acid_baseline.log \
+	   | awk '{print $$1, $$3}' | sort > BASELINE.txt
+	@wc -l BASELINE.txt
+	@echo "Updated BASELINE.txt -- review the diff before committing."
+
+# `make check-baseline` -- run the suite and compare against BASELINE.txt.
+# Exits non-zero if any previously-PASSing test now FAILs.  Used by CI.
+check-baseline: all
+	@if [ -z "$(CORE)" ]; then \
+	   echo "ERROR: set CORE=path/to/virtualjaguar_libretro.{dylib,so}"; \
+	   exit 2; \
+	fi
+	@$(MAKE) -s test CORE=$(CORE) > /tmp/acid_run.log 2>&1 || true
+	@python3 scripts/check-baseline.py /tmp/acid_run.log BASELINE.txt

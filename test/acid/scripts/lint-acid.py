@@ -2,7 +2,7 @@
 """
 lint-acid.py -- catch encoding mistakes in acid-test .s files.
 
-Three checks today:
+Four checks today:
 
   1. **B_COMMAND literal validation.**  Every `move.l #$XXXXXXXX,B_COMMAND`
      literal must use only bits defined in the blitter cmd set
@@ -12,14 +12,19 @@ Three checks today:
 
   2. **Hard-coded register address detection.**  Tests should reference
      symbolic names from include/jaguar_regs.s (B_COMMAND, TOM_INT1,
-     etc.), not hex literals like $F02238.  Greps for `\$F[0-9]{5,}`
-     in non-comment, non-equ contexts and warns.
+     etc.), not hex literals like $F02238.
 
   3. **Mode-flag-with-required-companion sanity.**  E.g. DCOMPEN with
      no DSTEN can't actually compare against the existing dest.
      LFU functions $1..$E require the operand they reference (S, D,
      or both) to be enabled.  Walks each B_COMMAND literal and warns
      on inconsistent combinations.
+
+  4. **Local equate must not shadow oracle symbols.**  If a test
+     defines `TOM_OLP_HI equ $F00020` locally, it overrides the
+     oracle's correct value -- exactly how the OLP_HI/LO swap snuck
+     through Copilot review batch 3.  Any local `name equ ...` whose
+     LHS is already in jaguar_regs.s is a warning.
 
 Exit code: 0 if clean, 1 if any warning, 2 on parse error.
 
@@ -124,10 +129,34 @@ CMD_LITERAL_RE = re.compile(
     r"^\s*move\.l\s+#\$([0-9A-Fa-f]+)\s*,\s*B_COMMAND")
 HEX_ADDR_RE = re.compile(
     r"\$F[0-9A-Fa-f]{5,}")           # F-prefixed MMIO literal
+EQU_RE      = re.compile(
+    r"^\s*(\w+)\s+equ\s+(.+?)\s*$", re.I)     # `name equ value` definition
+
+def eval_equ_value(expr, regs):
+    """Evaluate a vasm-style equ RHS using known oracle constants.
+    Supports: $hex literals, decimal, simple +/-/<<, and oracle symbols.
+    Returns int on success, None if anything is unparseable."""
+    # Strip end-of-line comments
+    if ";" in expr:
+        expr = expr.split(";", 1)[0]
+    # Replace vasm $hex with Python 0x and oracle names with their values.
+    py = re.sub(r"\$([0-9A-Fa-f]+)", r"0x\1", expr)
+    # Substitute known oracle symbols (longest first to avoid prefix bugs).
+    for name in sorted(regs, key=len, reverse=True):
+        py = re.sub(rf"\b{re.escape(name)}\b", str(regs[name]), py)
+    # vasm uses `<<` and `>>` like C; Python supports those natively.
+    # Bail on anything that still has letters (unknown symbol).
+    if re.search(r"[A-Za-z_]", py):
+        return None
+    try:
+        return int(eval(py, {"__builtins__": {}}, {}))
+    except Exception:
+        return None
 
 def check_file(path, facts, regs):
     warnings = []
     rel = os.path.relpath(path, REPO_ROOT)
+    in_oracle = path.endswith("jaguar_regs.s")
     with open(path) as fh:
         for lineno, line in enumerate(fh, start=1):
             # strip comments (everything after first ';')
@@ -138,12 +167,30 @@ def check_file(path, facts, regs):
             if m:
                 warnings += check_cmd_literal(rel, lineno, m.group(1), facts)
 
+            # check 4: local equate that DIVERGES from an oracle symbol.
+            # Pure value-duplicates are safe (just redundant); only flag
+            # cases where the local value differs from the oracle's --
+            # those are the ones that bypass the source of truth.
+            # The oracle file itself is exempt -- it's the source of truth.
+            if not in_oracle:
+                em = EQU_RE.match(code)
+                if em and em.group(1) in regs:
+                    name = em.group(1)
+                    local_val = eval_equ_value(em.group(2), regs)
+                    oracle_val = regs[name]
+                    if local_val is not None and local_val != oracle_val:
+                        warnings.append(
+                            f"{rel}:{lineno}: local `{name} equ ${local_val:X}` "
+                            f"DIVERGES from oracle `${oracle_val:X}` -- this "
+                            f"is the OLP_HI/LO-swap class of bug.  Delete the "
+                            f"local definition or fix the oracle.")
+
             # check 2: hard-coded MMIO addresses
             # skip lines that DEFINE a symbol (`equ $F...`) and the file
             # that legitimately contains the canonical addresses.
             if "equ" in code:
                 continue
-            if "include/" in path or path.endswith("jaguar_regs.s"):
+            if "include/" in path or in_oracle:
                 continue
             for hex_match in HEX_ADDR_RE.finditer(code):
                 # Reverse-lookup: is this address one we have a name for?
