@@ -33,21 +33,43 @@ codes; per-test perf-counter delta dumps when built with
 optional -- if absent, the assemble step is skipped with a warning
 and only the runner harness is built.
 
-| Category | Tests landed | Notes |
-|---|---|---|
-| smoke | 1 (PASS) | proves boot stub + signature mechanism |
-| timing | 2 (PASS) | VC advance + frame-rate estimate |
-| irq | 1 (NOT-RUN-YET) | IRQ raises but 68K vector path likely broken |
-| blitter | 1 PASS + 1 NOT-RUN | smoke OK; copy round-trip incomplete |
-| memory | 0 | next |
-| gpu | 0 | next |
-| dsp | 0 | next |
-| op | 0 | next |
-| bus | 0 | next |
-| hle-vs-bios | 0 | next |
-| quirks | 0 | next |
-| stress | 0 | next |
-| perf | 0 | next |
+**52 / 72 tests PASSing across 13 categories.**  Failures and
+NOT-RUN-YETs are intentional documentation of known emulator gaps.
+
+| Category | Tests | Pass | Open issues surfaced |
+|---|---:|---:|---|
+| smoke      |  1 |  1 | — |
+| memory     |  8 |  8 | — |
+| timing     |  9 |  8 | jerry_pit_setup: PIT readback returns 0 |
+| irq        |  9 |  6 | vblank_delivery + jerry_pit_irq + rapid_irq_pump NOT-RUN-YET (IRQ raises in TOM/JERRY per perf counters but never reaches 68K vec-64 handler) |
+| blitter    | 17 |  4 | 13 SRC-reading tests fail identically; lfu_zero_fill / lfu_one_fill / lfu_invert_src PASS — narrows bug to LFU source-routing |
+| gpu        |  2 |  2 | — (gpu_basic_run + gpu_reg_access) |
+| dsp        |  3 |  3 | dsp_mac_accumulator is currently a NOP-loop placeholder; real 40-bit-MAC math is a follow-up |
+| op         |  3 |  3 | — |
+| bus        |  2 |  1 | blitter_back_to_back: same root cause as blitter category |
+| hle        |  6 |  6 | — |
+| quirks     |  7 |  6 | divl_zero_traps: DIVS.L #0 doesn't trap to vec 5 (path code looks correct per agent trace; needs investigation) |
+| stress     |  3 |  2 | many_blits: same blitter root cause |
+| perf       |  3 |  3 | — |
+
+**Real bugs surfaced as failing tests** (each ready as a regression
+gate for a focused fix-PR):
+
+1. **Blitter source-data routing** — 13 of 14 SRC-reading tests
+   fail identically (`observed=0`, perf counters confirm blit ran).
+   PASS exceptions narrow the bug:
+   - LFU=$0 (always 0), LFU=$F (always 1) PASS — output ignores SRC
+   - LFU=$3 (~S) PASS — *anomaly*, suggests bug isn't a flat
+     "SRC read = 0" but in how SRC routes through the LFU
+2. **IRQ delivery to 68K vec 64** — TOM/JERRY raise IRQs (counters
+   tick), 68K handler never fires.  `vector_64_writable` PASSES,
+   so the vector-write path itself is fine; bug is in IPL ack /
+   vector fetch.  Likely load-bearing for Doom #131.
+3. **JERRY PIT register readback** returns 0 despite commit
+   `1ca2fdc` claiming to fix it.
+4. **DIVL zero-divide trap** doesn't fire — tracing in the agent
+   report suggests the code path is correct but the trap doesn't
+   reach the handler.
 
 ## Layout
 
