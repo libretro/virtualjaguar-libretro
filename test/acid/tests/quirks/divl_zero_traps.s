@@ -7,7 +7,8 @@
 ; ($00000014), just like the native 68000 DIV.W behaviour.
 ;
 ; Approach: install a tiny trap handler at vector 5 that sets d6=1,
-; then execute `divs.l #0,d2` (inline-encoded as $4C3C,$0800).
+; then execute `divs.l d4,d3` with d4=0.  Encoded as $4C04,$3800
+; (matches the same form as the muls.l test in illegal_opcode_traps.s).
 ; If the trap fires, d6 becomes 1 and the test passes.
 ;
 ; Detail codes:
@@ -27,14 +28,17 @@ entry:
                 move.l  a0,V_ZERODIV.l
 
                 moveq   #0,d6                   ; flag = 0
-                move.l  #12345,d2
+                move.l  #12345,d3              ; dividend
+                moveq   #0,d4                   ; divisor = 0
 
-                ;; divs.l #0,d2  => $4C3C,$2800,$00000000
-                ;; ($4C3C = DIV[?].L #imm; ext word fields:
-                ;;   bit11 sg=1 (signed), bit10 sz=0 (32-bit),
-                ;;   bits14-12 Dl=2, bits2-0 Dh=0 -> $2800)
-                dc.w    $4C3C,$2800
-                dc.l    $00000000
+                ;; divs.l d4,d3  =>  $4C04,$3800
+                ;; opcode $4C04: base $4C00, mode 0 (Dn), reg 4 (d4 src)
+                ;; ext   $3800:
+                ;;   bits14-12 Dl=3 (quotient/dividend in d3)
+                ;;   bit  11   sg=1 (signed)
+                ;;   bit  10   sz=0 (32-bit, no Dh)
+                ;;   bits  2-0 Dh=0 (don't-care)
+                dc.w    $4C04,$3800
 
                 tst.l   d6
                 beq.s   .bad

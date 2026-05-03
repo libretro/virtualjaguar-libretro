@@ -3,7 +3,7 @@
  *
  * Loads a libretro core via dlopen, loads a synthetic .jag test ROM,
  * runs it for a fixed number of frames, then reads the four-word
- * "acid signature" out of main RAM at offset 0x100 and prints
+ * "acid signature" out of main RAM at offset 0x100000 and prints
  * PASS / FAIL / NOT-RUN-YET.
  *
  * Usage: run <core.dylib> <test.jag> [num_frames]

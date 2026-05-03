@@ -35,10 +35,12 @@ entry:
                 move.l  a0,HW_IRQ_VECTOR.l
 
                 ;; Idle TOM, then arm video IRQ at scanline 2.
+                ;; TOM_INT1: HIGH byte = clear pending, LOW byte = enable
+                ;; (per src/tom/tom.c).  IRQ_VIDEO=0 -> $01.
                 move.w  #$1F00,TOM_INT1         ; clear all pending
                 move.w  #0,TOM_INT1             ; idle
                 move.w  #2,TOM_VI
-                move.w  #$0100,TOM_INT1         ; enable video IRQ
+                move.w  #$0001,TOM_INT1         ; enable video IRQ
 
                 ;; Drop interrupt mask: supervisor, IPL=0.
                 move.w  #$2000,sr
@@ -62,6 +64,7 @@ entry:
 ;
 irq_handler:
                 addq.l  #1,IRQ_COUNTER.l
-                ;; Clear pending VIDEO bit (bit 0) and re-enable.
+                ;; Clear pending VIDEO bit (HIGH byte) and re-enable
+                ;; mask (LOW byte): $0101.
                 move.w  #$0101,TOM_INT1
                 rte

@@ -33,7 +33,7 @@ codes; per-test perf-counter delta dumps when built with
 optional -- if absent, the assemble step is skipped with a warning
 and only the runner harness is built.
 
-**52 / 72 tests PASSing across 13 categories.**  Failures and
+**54 / 72 tests PASSing across 13 categories.**  Failures and
 NOT-RUN-YETs are intentional documentation of known emulator gaps.
 
 | Category | Tests | Pass | Open issues surfaced |
@@ -41,7 +41,7 @@ NOT-RUN-YETs are intentional documentation of known emulator gaps.
 | smoke      |  1 |  1 | — |
 | memory     |  8 |  8 | — |
 | timing     |  9 |  8 | jerry_pit_setup: PIT readback returns 0 |
-| irq        |  9 |  6 | vblank_delivery + jerry_pit_irq + rapid_irq_pump NOT-RUN-YET (IRQ raises in TOM/JERRY per perf counters but never reaches 68K vec-64 handler) |
+| irq        |  9 |  8 | jerry_pit_irq NOT-RUN-YET (PIT itself never raises an IRQ -- timing_jerry_irqs counter stays 0) |
 | blitter    | 17 |  4 | 13 SRC-reading tests fail identically; lfu_zero_fill / lfu_one_fill / lfu_invert_src PASS — narrows bug to LFU source-routing |
 | gpu        |  2 |  2 | — (gpu_basic_run + gpu_reg_access) |
 | dsp        |  3 |  3 | dsp_mac_accumulator is currently a NOP-loop placeholder; real 40-bit-MAC math is a follow-up |
@@ -131,11 +131,13 @@ after each test and dumps the delta:
 
 That tells us at a glance:
 - the test ran for 600 retro_run cycles (10 emulated seconds at 60 Hz)
-- the halfline callback fired 314400 times = exactly 524 per frame
-  (NTSC), which is what the hardware spec calls for
+- the halfline callback fired 314400 times = exactly **524 per
+  frame** (NTSC: VC sweeps 0..524 inclusive, but our HalflineCallback
+  is invoked once per *transition*, hence 524 not 525)
 
-If a future change makes the halfline rate jump to 1048800 (1048
-per frame), this number will catch it immediately even if no test
+If a future change makes the halfline rate jump to e.g. 1048800
+(1748 per frame, what the bug would look like if events fired on
+both edges), this number will catch it immediately even if no test
 explicitly checks for it.
 
 Counters surfaced in the per-test summary today:
@@ -143,7 +145,7 @@ Counters surfaced in the per-test summary today:
 | Counter | Source | Expected (NTSC default) |
 |---|---|---|
 | `timing_jaguar_execute_calls` | `JaguarExecuteNew` entry | 1 per `retro_run()` |
-| `timing_halfline_callbacks` | `HalflineCallback` entry | 525 per frame |
+| `timing_halfline_callbacks` | `HalflineCallback` entry | 524 per frame (NTSC) |
 | `timing_vblank_irqs` | TOM video-int raise | 1 per frame |
 | `timing_jerry_irqs` | JERRY PIT IRQ raise | 0 unless game enables PIT |
 | `timing_gpu_irqs_to_68k` | TOM PIT-→68K raise | 0 unless game enables TOM PIT |

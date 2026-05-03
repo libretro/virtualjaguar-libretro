@@ -30,9 +30,11 @@ entry:
                 move.l  a0,HW_IRQ_VECTOR.l
 
                 ;; Configure TOM to fire VBlank.
+                ;; TOM_INT1 byte layout: HIGH byte = clear pending,
+                ;; LOW byte = enable mask.  IRQ_VIDEO=0 -> $01.
                 move.w  #$1F00,TOM_INT1         ; clear pending
                 move.w  #2,TOM_VI               ; fire on halfline 2
-                move.w  #$0100,TOM_INT1         ; enable VIDEO
+                move.w  #$0001,TOM_INT1         ; enable VIDEO
 
                 ;; Keep 68K SR with IPL=7 (block everything).
                 move.w  #$2700,sr

@@ -23,9 +23,14 @@ JPIT1           equ     $F10036                 ; timer 1 prescaler
 JPIT2           equ     $F10038                 ; timer 1 divider
 JINTCTRL        equ     $F10020                 ; interrupt control
 
-;; Bits
-JINT_TIMER1     equ     $0002
-TOM_INT_DSP_EN  equ     $0400                   ; bit 10 enables DSP/JERRY IRQ
+;; Bits.
+;; - JERRY interrupt mask bits (per src/jerry/jerry.h):
+;;     IRQ2_DSP=$02, IRQ2_TIMER1=$04, IRQ2_TIMER2=$08, ...
+;; - TOM_INT1 enable mask is the LOW byte of the word at $F000E0
+;;   (per src/tom/tom.c TOMIRQEnabled reading tomRam8[INT1+1]).
+;;   IRQ_DSP=4, so enable bit is $10.
+JINT_TIMER1     equ     $0004
+TOM_INT_DSP_EN  equ     $0010
 
 IRQ_FIRED       equ     $00000800
 HW_IRQ_VECTOR   equ     $00000100

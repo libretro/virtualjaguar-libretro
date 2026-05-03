@@ -54,9 +54,14 @@ entry:
                 move.w  #2,TOM_VI               ; VC == 2 (halflines)
 
                 ;; Enable just the video interrupt.
-                ;; INT1 word: bit 8..12 = enable mask, bit 0..4 = clear.
-                ;; bit 0 = VIDEO -> mask bit at +8 = 0x0100.
-                move.w  #$0100,TOM_INT1
+                ;; TOM_INT1 byte layout (per src/tom/tom.c:85, 1142-1146,
+                ;; 1190-1194, 1244-1248): the LOW byte holds the enable
+                ;; mask (read by TOMIRQEnabled via tomRam8[INT1+1]); the
+                ;; HIGH byte is "clear pending" bits passed to
+                ;; TOMClearPendingIRQs.  Big-endian word: high byte is
+                ;; at offset $E0, low byte at $E1.
+                ;; IRQ_VIDEO=0 -> enable bit $01.
+                move.w  #$0001,TOM_INT1
 
                 ;; Drop 68K interrupt mask to allow IPL=2.
                 ;; SR bits 8..10 are I[2..0]; we want them all clear.

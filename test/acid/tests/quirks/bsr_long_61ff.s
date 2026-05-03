@@ -1,13 +1,20 @@
 ;
-; tests/quirks/bsr_long_61ff.s - 68K BSR.L $61FF Atari aln linker quirk.
+; tests/quirks/bsr_long_61ff.s - BSR.W control / sanity test.
 ;
-; The Atari `aln` linker emits BSR.L (opcode $61FF) with the
-; displacement filled in as an *absolute address* instead of
-; PC-relative.  Our 68K core was patched to handle this in commit
-; 4fcf958 (#119).  Verify by emitting one and checking it returned.
+; Originally drafted as a placeholder for the BSR.L $61FF quirk before
+; the real test (`bsr_l_61ff_real.s`, in this same directory) existed.
+;
+; Now repurposed as a BSR.W *sanity* gate -- if even a normal short-
+; branch BSR doesn't round-trip, the bsr_l_61ff_real test is
+; meaningless because we couldn't tell the failure was about the quirk
+; vs about call/return at all.
+;
+; The actual $61FF Atari aln quirk coverage lives in
+; `tests/quirks/bsr_l_61ff_real.s`, which emits the raw opcode
+; bytes and the absolute target.
 ;
 ; Detail codes:
-;   1 = BSR didn't return / target didn't run
+;   1 = BSR.W didn't return / target didn't run
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
@@ -16,15 +23,8 @@
 entry:
                 ACID_INIT
 
-                ;; Test approach: regular BSR works (control case);
-                ;; if even regular BSR fails, the test setup is wrong.
-                ;; The aln-quirk handling is hard to assemble portably
-                ;; via vasm (it's specifically the buggy emit pattern),
-                ;; so this test is currently a placeholder asserting
-                ;; only that BSR.L itself does what it should.
-
-                moveq   #0,d6                   ; flag = 0
-                bsr.w   .target                 ; BSR.W (sane)
+                moveq   #0,d6                   ; flag = "didn't return"
+                bsr.w   .target                 ; standard BSR.W
                 tst.l   d6
                 beq.s   .no_return
 
