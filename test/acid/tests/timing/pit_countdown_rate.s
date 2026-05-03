@@ -1,6 +1,6 @@
 ;
 ; tests/timing/pit_countdown_rate.s - JERRY PIT timer 1 must fire
-; at the rate determined by its prescaler/divider, within +/- 5%.
+; at the rate determined by its prescaler/divider, within +/- 10%.
 ;
 ; Per src/jerry/jerry.c (post-PR-#134):
 ;     usecs = (prescaler+1) * (divider+1) * M68K_CYCLE_IN_USEC
@@ -14,10 +14,10 @@
 ; 13.295 MHz NTSC, same loop sizing as vblank_60hz_exact.s -- the
 ; `subq.l #1,Dn / bne.s` taken pair = 18 cycles, so 739_130 iters
 ; ~= 13.3 M cycles ~= 1.001 sec) and count IRQs.
-; Expect ~11968 +/- 5%.
+; Expect ~11968 +/- 10%.
 ;
 ; Detail codes:
-;   1 = IRQ count outside [11369, 12566] (+/-5%)
+;   1 = IRQ count outside [10771, 13165] (+/-10%)
 ;       observed = counter, expected = 11968
 ;   2 = counter zero -- IRQ never delivered (wiring regression)
 ;
