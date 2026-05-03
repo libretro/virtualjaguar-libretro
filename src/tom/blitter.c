@@ -2428,8 +2428,15 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
                //Phrase mode needs destination data for start/end mask byte merging,
                //but NOT when bkgwren is set (hardware uses DSTDATA register value).
+               //Pixel mode at pixsize < 3 (1bpp/2bpp/4bpp) writes a single byte
+               //via JaguarWriteByte below, but the byte holds multiple pixels --
+               //byte_merge must see the existing dest byte in the low 8 bits of
+               //dstd or the unmodified pixel slots in that byte get zeroed
+               //(matches WRITE_PIXEL_1/2/4 RMW in the fast blitter).
                if (phrase_mode && !dsten && !bkgwren)
                   dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               else if (!phrase_mode && pixsize < 3 && !dsten && !bkgwren)
+                  dstd = (uint64_t)JaguarReadByte(address, BLITTER);
 
                // Write data combines srcd and dstd through ADDDSEL, PATDSEL, or LFU.
                // Precedence is ADDDSEL > PATDSEL > LFU.

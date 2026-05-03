@@ -1,10 +1,7 @@
 [FAIL tests/blitter/bcompen_basic.jag
 [FAIL tests/blitter/copy_pix1_phrase.jag
-[FAIL tests/blitter/copy_pix1_pixel.jag
 [FAIL tests/blitter/copy_pix2_phrase.jag
-[FAIL tests/blitter/copy_pix2_pixel.jag
 [FAIL tests/blitter/copy_pix4_phrase.jag
-[FAIL tests/blitter/copy_pix4_pixel.jag
 [FAIL tests/blitter/pattern_fill.jag
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
@@ -18,9 +15,12 @@
 [FAIL tests/timing/pit_countdown_rate.jag
 [FAIL tests/timing/vblank_60hz_exact.jag
 [PASS tests/blitter/bkgwren_test.jag
+[PASS tests/blitter/copy_pix1_pixel.jag
 [PASS tests/blitter/copy_pix16_pixel.jag
+[PASS tests/blitter/copy_pix2_pixel.jag
 [PASS tests/blitter/copy_pix32_pixel.jag
 [PASS tests/blitter/copy_pix32.jag
+[PASS tests/blitter/copy_pix4_pixel.jag
 [PASS tests/blitter/copy_pix8_pixel.jag
 [PASS tests/blitter/copy_pix8.jag
 [PASS tests/blitter/copy_simple.jag
