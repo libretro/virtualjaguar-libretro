@@ -9,9 +9,10 @@
 ;   * Drops 68K SR mask to allow IPL=2.
 ;   * Runs a busy loop sized to ~1 wall-clock second.
 ;     The 68K runs at 13.295453 MHz NTSC (M68K_CLOCK_RATE_NTSC).
-;     A `subq.l #1,Dn / bne.s` pair takes ~10 cycles.  So
-;     1 second / 10 cycles ~= 1.33 M iterations.  We use 1_300_000
-;     for a window slightly under a wall-second to avoid overshoot.
+;     A `subq.l #1,Dn / bne.s` (taken) pair takes 8 + 10 = 18 cycles
+;     on the UAE 68K timing model.  So 1 second / 18 cycles
+;     ~= 738_636 iterations.  We use 739_130 to land on a
+;     ~1.001 sec wall-clock window.
 ;
 ; Detail codes:
 ;   1 = VBlank counter outside [58, 62] -- emulator timing drift.
@@ -31,9 +32,10 @@ IRQ_COUNT       equ     $00000800
 HW_IRQ_VECTOR   equ     $00000100
 
 ;; Busy-loop iterations sized to ~1 second on a real (or accurate)
-;; NTSC 68K @ 13.295 MHz.  Inner loop is `subq.l #1,Dn / dbra-style`
-;; ~10 cycles -- 1.3 M iters ~= 13 M cycles ~= 1 sec wall.
-BUSY_ITERS      equ     1300000
+;; NTSC 68K @ 13.295 MHz.  Inner loop is `subq.l #1,Dn / bne.s`
+;; (taken) = 8 + 10 = 18 cycles -- 739_130 iters ~= 13.3 M cycles
+;; ~= 1 sec wall.
+BUSY_ITERS      equ     739130
 
 EXPECT_VBLANK   equ     60
 TOLERANCE       equ     2                       ; +/- accept
