@@ -16,9 +16,10 @@
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
+                include "include/jaguar_regs.s"
 
-TOM_OLP_HI      equ     $F00020
-TOM_OLP_LO      equ     $F00022
+;; OLP_HI / OLP_LO from oracle (LO=$F00020, HI=$F00022 per
+;; src/tom/op.c:238 "LO/HI WORD" comment).
 
 OPLIST          equ     $00050000               ; OP list
 SCALED_OBJ      equ     OPLIST + 0

@@ -54,23 +54,35 @@ BASES = {
 TOM_OFFSETS = {
     "MEMCON1":     0x00,
     "MEMCON2":     0x02,
-    "HC":          0x04,
-    "VC":          0x06,
+    "HC":          0x04,           # horizontal count
+    "VC":          0x06,           # vertical count
     "OLP":         0x20,           # object list pointer (LO=20, HI=22)
     "OLP_LO":      0x20,
     "OLP_HI":      0x22,
-    "VBB":         0x2A,           # vertical blank begin
-    "VBE":         0x2C,           # vertical blank end
-    "VS":          0x2E,
-    "VDB":         0x30,           # vertical display begin
-    "VDE":         0x32,           # vertical display end
-    "VEB":         0x34,
-    "VEE":         0x36,
+    "OBF":         0x26,           # object processor flag
+    "BORD1":       0x2A,           # border colour green/red (8 BPP)
+    "BORD2":       0x2C,           # border colour blue (8 BPP)
+    "HP":          0x2E,           # horizontal period (1..1024)
+    "HBB":         0x30,           # horizontal blank begin
+    "HBE":         0x32,           # horizontal blank end
+    "HS":          0x34,           # horizontal sync
+    "HVS":         0x36,           # horizontal vertical sync
+    "HDB1":        0x38,           # horizontal display begin 1
+    "HDB2":        0x3A,           # horizontal display begin 2
+    "HDE":         0x3C,           # horizontal display end
     "VP":          0x3E,           # vertical period
+    "VBB":         0x40,           # vertical blank begin   (NOT $2A)
+    "VBE":         0x42,           # vertical blank end     (NOT $2C)
+    "VS":          0x44,           # vertical sync
+    "VDB":         0x46,           # vertical display begin
+    "VDE":         0x48,           # vertical display end
+    "VEB":         0x4A,           # vertical equalisation begin
+    "VEE":         0x4C,           # vertical equalisation end
     "VI":          0x4E,           # vertical interrupt position
     "PIT0":        0x50,
     "PIT1":        0x52,
-    "BG":          0x58,
+    "HEQ":         0x54,
+    "BG":          0x58,           # background colour
     "INT1":        0xE0,           # CPU interrupt control reg
     "INT2":        0xE2,
 }
