@@ -1,10 +1,11 @@
 ;
 ; tests/blitter/bcompen_basic.s - BCOMPEN bit-mask compositing (font path).
 ;
-; With BCOMPEN (command bit 9 = $0200), source data is treated as a
-; bit-mask: each source bit selects whether the corresponding dest
-; pixel gets the pattern colour (1) or is left alone (0).  This is the
-; path many games use to render bitmap fonts.
+; With BCOMPEN (this emulator: command bit 26 = $04000000, see
+; src/tom/blitter.c:137), source data is treated as a bit-mask: each
+; source bit selects whether the corresponding dest pixel gets the
+; pattern colour (1) or is left alone (0).  This is the path many
+; games use to render bitmap fonts.
 ;
 ; Setup:
 ;   src bitmask byte = $A5 = 1010_0101
@@ -14,13 +15,18 @@
 ; Expected dest 8 bytes (MSB first across pixels):
 ;   $11 $00 $11 $00  $00 $11 $00 $11
 ;
-; Command bits:
-;   SRCEN  = $0001
-;   PATDSEL= $00010000  (use B_PATD for the foreground colour)
-;   BCOMPEN= $0200
-;   LFU = doesn't really matter when BCOMPEN+PATDSEL drive output;
-;         leave LFU = $C (S short-form ity = $C000) for a sane default.
-; -> $0001C201
+; Command bits (per src/tom/blitter.c, which is authoritative for this
+; emulator and differs from JTRM's older bit numbering):
+;   SRCEN    = $00000001  (bit 0)
+;   PATDSEL  = $00010000  (bit 16 -- use B_PATD for the foreground colour)
+;   LFU_AN   = $00800000  (bit 23) -- LFU term: src AND ~dst
+;   LFU_A    = $01000000  (bit 24) -- LFU term: src AND dst
+;   BCOMPEN  = $04000000  (bit 26)
+;   LFU_AN | LFU_A = function code $C ("passthrough src"); doesn't
+;   matter for the output since PATDSEL takes precedence in the data
+;   mux when set, but a sane default keeps the test consistent with
+;   how real games typically program BCOMPEN.
+; -> $05810001  (BCOMPEN | LFU_A | LFU_AN | PATDSEL | SRCEN)
 ;
 ; A?_FLAGS for 8bpp phrase mode: pixsize=3, e=2 (8-px phrase),
 ; xadd=phrase=00 -> $00001018.
@@ -69,7 +75,7 @@ entry:
 
                 ;; 1 line, 8 pixels.
                 move.l  #$00010008,B_COUNT
-                move.l  #$05800001,B_COMMAND    ; SRCEN | PATDSEL? + BCOMPEN | ity=S
+                move.l  #$05810001,B_COMMAND    ; SRCEN | PATDSEL | BCOMPEN | ity=S
 
                 ;; Verify each of 8 dest bytes against the expected
                 ;; pattern.  Walk a small table.

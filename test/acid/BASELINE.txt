@@ -1,4 +1,3 @@
-[FAIL tests/blitter/bcompen_basic.jag
 [FAIL tests/blitter/copy_pix1_phrase.jag
 [FAIL tests/blitter/copy_pix2_phrase.jag
 [FAIL tests/blitter/copy_pix4_phrase.jag
@@ -9,8 +8,8 @@
 [FAIL tests/dsp/dsp_basic_run.jag
 [FAIL tests/dsp/dsp_irq_to_68k.jag
 [FAIL tests/gpu/gpu_basic_run.jag
-[FAIL tests/op/op_gpu_int_object.jag
 [FAIL tests/quirks/divl_zero_traps.jag
+[PASS tests/blitter/bcompen_basic.jag
 [PASS tests/blitter/bkgwren_test.jag
 [PASS tests/blitter/copy_pix1_pixel.jag
 [PASS tests/blitter/copy_pix16_pixel.jag
@@ -105,6 +104,7 @@
 [PASS tests/op/op_bitmap_render.jag
 [PASS tests/op/op_branch_conditional.jag
 [PASS tests/op/op_branch_object.jag
+[PASS tests/op/op_gpu_int_object.jag
 [PASS tests/op/op_olp_alignment.jag
 [PASS tests/op/op_palette_8bpp.jag
 [PASS tests/op/op_reflect_modifier.jag
