@@ -67,7 +67,7 @@ jobs:
           # report per-test counter deltas).  TEST_EXPORTS=1 widens the
           # symbol set; BENCH_PROFILE=1 emits the actual counter code.
           make -j"$(getconf _NPROCESSORS_ONLN)" \
-               TEST_EXPORTS=1 BENCH_PROFILE=1
+              TEST_EXPORTS=1 BENCH_PROFILE=1
           ls -la virtualjaguar_libretro.so
 
       - name: Assemble acid-test ROMs (lint-clean check)
@@ -91,8 +91,8 @@ jobs:
           # check-baseline.py decide whether to fail the job.
           set +e
           make -C test/acid test \
-               CORE="$(pwd)/virtualjaguar_libretro.so" \
-               > test/acid/results.log 2>&1
+              CORE="$(pwd)/virtualjaguar_libretro.so" \
+              > test/acid/results.log 2>&1
           set -e
           tail -3 test/acid/results.log
 

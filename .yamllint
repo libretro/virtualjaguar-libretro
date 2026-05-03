@@ -1,0 +1,19 @@
+# yamllint config for this repo.
+#
+# We mostly accept yamllint defaults, but:
+#   - GitHub Actions workflows legitimately use `on:` as a key, which
+#     yamllint's `truthy` rule flags under YAML 1.1 semantics.  Quoting
+#     it (`"on":`) is the official escape hatch but is ugly and unusual,
+#     so we just allow `on` as a known truthy-looking key.
+#   - We don't require the leading `---` document-start marker.
+#   - Long lines (URLs, generated keys) are common; relax the limit.
+extends: default
+
+rules:
+  document-start: disable
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off']
+    check-keys: true
+  line-length:
+    max: 200
+    level: warning
