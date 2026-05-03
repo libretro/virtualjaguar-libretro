@@ -8,6 +8,18 @@
 ; number of DSP instructions executed; require N in [N_MIN, N_MAX]
 ; so D_PC stays inside our NOP slab.
 ;
+; *Sizing notes*: DSP local RAM is 8 KB (src/jerry/dsp.c
+; dsp_ram_8[0x2000]) at $F1B000..$F1CFFF.  An earlier version of
+; this test filled only the first 1024 NOPs (2 KB) and spun the
+; 68K for 500 cycles -- the DSP walked clean off the slab into
+; the upper, uninitialised half of dsp_ram_8 (and beyond, into the
+; JERRY register window) where bytes decode as random opcodes.
+; Observed D_PC for that case: $00F1D1C8, well past DSP_RAM end.
+; The fix is to (1) fill the entire 8 KB of DSP local RAM with
+; NOPs so an overshoot is caught by N_MAX rather than masked by
+; random branches, and (2) shrink the 68K spin so the DSP is
+; safely inside the slab when we sample D_PC.
+;
 ; Same MMIO-dispatch quirk as gpu_basic_run: long-aligned reads in
 ; the DSP control range may be intercepted as DSP register reads
 ; before the control-RAM dispatch, returning a register value
@@ -29,7 +41,9 @@ D_CTRL          equ     DSP_BASE + $14          ; bit 0 = GO
 GO              equ     $00000001
 NOP_OP          equ     $E400
 
-NOP_SLOTS       equ     1024
+;; Full 8 KB DSP local RAM (4096 NOP slots).
+NOP_SLOTS       equ     4096
+SPIN_COUNT      equ     50
 N_MIN           equ     1
 N_MAX           equ     NOP_SLOTS
 PC_MIN          equ     DSP_RAM + (N_MIN*2)
@@ -48,7 +62,7 @@ entry:
                 move.l  #DSP_RAM,D_PC
                 move.l  #GO,D_CTRL
 
-                move.l  #500,d2
+                move.l  #SPIN_COUNT,d2
 .spin:          nop
                 subq.l  #1,d2
                 bne.s   .spin

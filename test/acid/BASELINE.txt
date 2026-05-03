@@ -1,3 +1,4 @@
+[FAIL tests/blitter/bcompen_basic.jag
 [FAIL tests/blitter/copy_pix1_phrase.jag
 [FAIL tests/blitter/copy_pix2_phrase.jag
 [FAIL tests/blitter/copy_pix4_phrase.jag
@@ -5,11 +6,12 @@
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
 [FAIL tests/bus/bus_refresh_steals.jag
-[FAIL tests/dsp/dsp_basic_run.jag
 [FAIL tests/dsp/dsp_irq_to_68k.jag
-[FAIL tests/gpu/gpu_basic_run.jag
+[FAIL tests/op/op_gpu_int_object.jag
 [FAIL tests/quirks/divl_zero_traps.jag
-[PASS tests/blitter/bcompen_basic.jag
+[FAIL tests/timing/halfline_period_us.jag
+[FAIL tests/timing/pit_countdown_rate.jag
+[FAIL tests/timing/vblank_60hz_exact.jag
 [PASS tests/blitter/bkgwren_test.jag
 [PASS tests/blitter/copy_pix1_pixel.jag
 [PASS tests/blitter/copy_pix16_pixel.jag
@@ -42,6 +44,7 @@
 [PASS tests/blitter/zzz_smoke.jag
 [PASS tests/bus/blitter_back_to_back.jag
 [PASS tests/bus/cpu_blitter_concurrent.jag
+[PASS tests/dsp/dsp_basic_run.jag
 [PASS tests/dsp/dsp_mailbox.jag
 [PASS tests/dsp/dsp_op_abs.jag
 [PASS tests/dsp/dsp_op_add.jag
@@ -61,6 +64,7 @@
 [PASS tests/dsp/dsp_op_sub.jag
 [PASS tests/dsp/dsp_op_xor.jag
 [PASS tests/dsp/dsp_reg_access.jag
+[PASS tests/gpu/gpu_basic_run.jag
 [PASS tests/gpu/gpu_op_abs.jag
 [PASS tests/gpu/gpu_op_add.jag
 [PASS tests/gpu/gpu_op_and.jag
@@ -104,7 +108,6 @@
 [PASS tests/op/op_bitmap_render.jag
 [PASS tests/op/op_branch_conditional.jag
 [PASS tests/op/op_branch_object.jag
-[PASS tests/op/op_gpu_int_object.jag
 [PASS tests/op/op_olp_alignment.jag
 [PASS tests/op/op_palette_8bpp.jag
 [PASS tests/op/op_reflect_modifier.jag
@@ -128,12 +131,9 @@
 [PASS tests/stress/many_blits.jag
 [PASS tests/stress/rapid_irq_pump.jag
 [PASS tests/timing/halfline_count_per_frame.jag
-[PASS tests/timing/halfline_period_us.jag
 [PASS tests/timing/hc_advance.jag
 [PASS tests/timing/hc_within_scanline_range.jag
 [PASS tests/timing/jerry_pit_setup.jag
-[PASS tests/timing/pit_countdown_rate.jag
-[PASS tests/timing/vblank_60hz_exact.jag
 [PASS tests/timing/vc_advance.jag
 [PASS tests/timing/vc_field_bit.jag
 [PASS tests/timing/vc_increments.jag
