@@ -2,21 +2,23 @@
 ; tests/memory/dsp_local_ram.s - DSP local RAM RW round-trip.
 ;
 ; Writes a 32-bit pattern at the start, middle, and end of the DSP
-; local RAM window ($F1B000..$F1DFFF), reads back, verifies.  DSP
-; local RAM is 12 KB and lives behind a separate dispatch path from
-; main RAM, so it gets its own RW smoke test.
+; local RAM window ($F1B000..$F1CFFF -- 8 KB; src/jerry/dsp.c:296
+; allocates dsp_ram_8[0x2000] above DSP_WORK_RAM_BASE=$F1B000).  DSP
+; local RAM lives behind a separate dispatch path from main RAM, so
+; it gets its own RW smoke test; HI must land in the upper half so
+; we'd notice if the dispatcher silently truncated to 4 KB.
 ;
 ; Detail codes (which slot tripped):
 ;   1 = $F1B000 readback wrong
-;   2 = $F1B100 readback wrong
-;   3 = $F1BFFC readback wrong
+;   2 = $F1B800 readback wrong  (mid -- second 4 KB page)
+;   3 = $F1CFFC readback wrong  (last addressable long)
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
 
 DSP_RAM_LO      equ     $F1B000
-DSP_RAM_MID     equ     $F1B100
-DSP_RAM_HI      equ     $F1BFFC
+DSP_RAM_MID     equ     $F1B800
+DSP_RAM_HI      equ     $F1CFFC
 
 PAT_LO          equ     $12345678
 PAT_MID         equ     $5A5A5A5A
