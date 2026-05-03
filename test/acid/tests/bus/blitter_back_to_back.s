@@ -47,28 +47,28 @@ entry:
                 move.l  #SRC,B_A2_BASE
                 move.l  #0,B_A1_PIXEL
                 move.l  #0,B_A2_PIXEL
-                move.l  #$0001C000,B_COMMAND
+                move.l  #$01800001,B_COMMAND
 
                 ;; Blit 2: SRC+8 -> DST+8
                 move.l  #DST+8,B_A1_BASE
                 move.l  #SRC+8,B_A2_BASE
                 move.l  #0,B_A1_PIXEL
                 move.l  #0,B_A2_PIXEL
-                move.l  #$0001C000,B_COMMAND
+                move.l  #$01800001,B_COMMAND
 
                 ;; Blit 3: SRC+16 -> DST+16
                 move.l  #DST+16,B_A1_BASE
                 move.l  #SRC+16,B_A2_BASE
                 move.l  #0,B_A1_PIXEL
                 move.l  #0,B_A2_PIXEL
-                move.l  #$0001C000,B_COMMAND
+                move.l  #$01800001,B_COMMAND
 
                 ;; Blit 4: SRC+24 -> DST+24
                 move.l  #DST+24,B_A1_BASE
                 move.l  #SRC+24,B_A2_BASE
                 move.l  #0,B_A1_PIXEL
                 move.l  #0,B_A2_PIXEL
-                move.l  #$0001C000,B_COMMAND
+                move.l  #$01800001,B_COMMAND
 
                 ;; Verify all 4.
                 move.l  DST.l,d5

@@ -69,7 +69,7 @@ entry:
                 ;; 1 line, 8 pixels.
                 move.l  #$00010008,B_COUNT
                 ;; SRCEN | DSTEN | DCOMPEN | LFU=S
-                move.l  #$0001C121,B_COMMAND
+                move.l  #$19800009,B_COMMAND
 
                 ;; Walk dest vs expected.
                 lea     DST.l,a0

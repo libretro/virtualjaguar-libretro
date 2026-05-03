@@ -43,7 +43,7 @@ entry:
                 move.l  #$00001020,B_A2_FLAGS
                 move.l  #0,B_A2_PIXEL
                 move.l  #$00010004,B_COUNT
-                move.l  #$0001C000,B_COMMAND    ; blit fires here
+                move.l  #$01800001,B_COMMAND    ; blit fires here
 
                 ;; Read SRC immediately -- on async hardware this
                 ;; would race; here it should just succeed.

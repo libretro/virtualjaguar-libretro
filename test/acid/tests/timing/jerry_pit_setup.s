@@ -1,38 +1,45 @@
 ;
-; tests/timing/jerry_pit_setup.s - JERRY PIT registers readable after
-; configure.
+; tests/timing/jerry_pit_setup.s - JERRY PIT writable setup -> readback round-trip.
 ;
-; Writes a non-zero divider to JPIT1/JPIT2 and reads them back.  This
-; is the path that commit 1ca2fdc fixed (was returning 0 silently);
-; verify the read returns what we wrote.
+; Per src/jerry/jerry.c:
+;   $F10000/$F10002 are WRITE addresses for JPIT1/JPIT2 (timer 1
+;     prescaler/divider).  Writes here arm the timer via
+;     JERRYResetPIT1().
+;   $F10036/$F10038 are READBACK addresses for the same registers
+;     (added by commit 1ca2fdc).
 ;
-; NOTE: real hardware would have the PIT counting down from those
-; values; this test only checks the readback path, not the count-
-; down behaviour (that's a future test in this category).
+; This test arms the timer with a known prescaler/divider via the
+; WRITABLE addresses, then reads back through the READBACK addresses
+; and verifies the values match.
 ;
 ; Detail codes:
-;   1 = JPIT1 prescaler readback wrong
-;   2 = JPIT2 divider readback wrong
+;   1 = prescaler readback wrong
+;   2 = divider readback wrong
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
 
-JPIT1           equ     $F10036                 ; timer 1 prescaler
-JPIT2           equ     $F10038                 ; timer 1 divider
+;; WRITABLE setup
+JPIT1_W         equ     $F10000                 ; timer 1 prescaler (W)
+JPIT2_W         equ     $F10002                 ; timer 1 divider   (W)
+
+;; READBACK
+JPIT1_R         equ     $F10036
+JPIT2_R         equ     $F10038
 
                 org     $802000
 entry:
                 ACID_INIT
 
-                ;; Configure timer 1 with known values.
-                move.w  #$1234,JPIT1
-                move.w  #$5678,JPIT2
+                ;; Arm timer 1 with known values via writable regs.
+                move.w  #$1234,JPIT1_W
+                move.w  #$5678,JPIT2_W
 
-                ;; Read back.
-                move.w  JPIT1,d5
+                ;; Read back via readback regs.
+                move.w  JPIT1_R,d5
                 cmp.w   #$1234,d5
                 bne.s   .pit1_bad
-                move.w  JPIT2,d5
+                move.w  JPIT2_R,d5
                 cmp.w   #$5678,d5
                 bne.s   .pit2_bad
 

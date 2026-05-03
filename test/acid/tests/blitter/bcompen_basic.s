@@ -75,7 +75,7 @@ entry:
 
                 ;; 1 line, 8 pixels.
                 move.l  #$00010008,B_COUNT
-                move.l  #$0001C201,B_COMMAND    ; SRCEN | PATDSEL? + BCOMPEN | ity=S
+                move.l  #$05800001,B_COMMAND    ; SRCEN | PATDSEL? + BCOMPEN | ity=S
 
                 ;; Verify each of 8 dest bytes against the expected
                 ;; pattern.  Walk a small table.

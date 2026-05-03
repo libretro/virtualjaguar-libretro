@@ -45,7 +45,7 @@ entry:
 
                 move.l  #$00010004,B_COUNT
                 ;; SRCEN | LFU short-form ity = $C000  (LFU function $C = S)
-                move.l  #$0001C000,B_COMMAND
+                move.l  #$01800001,B_COMMAND
 
                 ;; Compare DST hi/lo against SRC.
                 move.l  DST.l,d5

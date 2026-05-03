@@ -49,7 +49,7 @@ entry:
                 move.l  #0,B_A2_PIXEL
 
                 move.l  #$00010002,B_COUNT      ; inner=2 px, outer=1
-                move.l  #$0001C000,B_COMMAND
+                move.l  #$01800001,B_COMMAND
 
                 ;; Blitter is synchronous in this emulator; no wait needed.
 

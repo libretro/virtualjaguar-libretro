@@ -19,8 +19,11 @@
 TOM_INT1        equ     $F000E0
 
 ;; JERRY
-JPIT1           equ     $F10036                 ; timer 1 prescaler
-JPIT2           equ     $F10038                 ; timer 1 divider
+;; Writable PIT setup -- per src/jerry/jerry.c, timer 1 is armed by
+;; writes to $F10000/$F10002 (which call JERRYResetPIT1).
+;; $F10036/$F10038 are READ-only aliases for the same regs.
+JPIT1           equ     $F10000                 ; timer 1 prescaler (W)
+JPIT2           equ     $F10002                 ; timer 1 divider   (W)
 JINTCTRL        equ     $F10020                 ; interrupt control
 
 ;; Bits.

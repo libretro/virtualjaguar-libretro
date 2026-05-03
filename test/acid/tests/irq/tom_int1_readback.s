@@ -27,20 +27,30 @@ TOM_INT1        equ     $F000E0
 entry:
                 ACID_INIT
 
-                ;; Clear any latched pending bits, then write a known
-                ;; enable mask.
+                ;; Clear any latched pending bits.
                 move.w  #$1F00,TOM_INT1                 ; CLR_ALL
-                move.w  #$0F00,TOM_INT1                 ; enable mask only
 
-                ;; Read back.  High byte (enable readback) must be zero;
-                ;; low byte (pending) must also be zero immediately
-                ;; after CLR_ALL.
+                ;; Write a real enable mask in the LOW byte (per
+                ;; src/tom/tom.c the LOW byte holds the enable mask;
+                ;; this is the path the test claims to be probing).
+                ;; $0F = enable VIDEO|GPU|OPFLAG|TIMER (not DSP).
+                move.w  #$000F,TOM_INT1
+
+                ;; Read back.
                 move.w  TOM_INT1,d5
+
+                ;; High byte must be zero -- the documented hardware
+                ;; semantic is that the enable mask is write-only
+                ;; (per the comment at src/tom/tom.c:85
+                ;; "R/W ---xxxxx ---xxxxx").
                 move.l  d5,d6
                 and.l   #$FF00,d6
                 tst.l   d6
                 bne.s   .high_leaked
 
+                ;; Low 5 bits hold pending status, which must be 0
+                ;; immediately after CLR_ALL (we never armed any IRQ
+                ;; source that could re-pend within these 5 cycles).
                 move.l  d5,d6
                 and.l   #$001F,d6
                 tst.l   d6

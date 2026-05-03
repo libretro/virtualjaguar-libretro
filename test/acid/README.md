@@ -33,43 +33,71 @@ codes; per-test perf-counter delta dumps when built with
 optional -- if absent, the assemble step is skipped with a warning
 and only the runner harness is built.
 
-**54 / 72 tests PASSing across 13 categories.**  Failures and
-NOT-RUN-YETs are intentional documentation of known emulator gaps.
+**67 / 72 tests PASSing across 13 categories.**  Failures are
+intentional documentation of known emulator gaps or deliberate
+follow-up placeholders.
 
 | Category | Tests | Pass | Open issues surfaced |
 |---|---:|---:|---|
 | smoke      |  1 |  1 | — |
 | memory     |  8 |  8 | — |
-| timing     |  9 |  8 | jerry_pit_setup: PIT readback returns 0 |
-| irq        |  9 |  8 | jerry_pit_irq NOT-RUN-YET (PIT itself never raises an IRQ -- timing_jerry_irqs counter stays 0) |
-| blitter    | 17 |  4 | 13 SRC-reading tests fail identically; lfu_zero_fill / lfu_one_fill / lfu_invert_src PASS — narrows bug to LFU source-routing |
-| gpu        |  2 |  2 | — (gpu_basic_run + gpu_reg_access) |
-| dsp        |  3 |  3 | dsp_mac_accumulator is currently a NOP-loop placeholder; real 40-bit-MAC math is a follow-up |
+| timing     |  9 |  9 | — |
+| irq        |  9 |  9 | — |
+| blitter    | 17 | 14 | bcompen_basic + copy_simple + pattern_fill: encoding still needs adjustment for those specific modes |
+| gpu        |  2 |  2 | — |
+| dsp        |  3 |  2 | dsp_mac_accumulator is a deliberate FAIL placeholder until the real IMACN/RESMAC sequence lands |
 | op         |  3 |  3 | — |
-| bus        |  2 |  1 | blitter_back_to_back: same root cause as blitter category |
+| bus        |  2 |  2 | — |
 | hle        |  6 |  6 | — |
-| quirks     |  7 |  6 | divl_zero_traps: DIVS.L #0 doesn't trap to vec 5 (path code looks correct per agent trace; needs investigation) |
-| stress     |  3 |  2 | many_blits: same blitter root cause |
+| quirks     |  7 |  6 | divl_zero_traps: DIVS.L #0 doesn't trap to vec 5 (real bug -- agent trace shows code path looks correct but trap doesn't reach handler) |
+| stress     |  3 |  3 | — |
 | perf       |  3 |  3 | — |
 
 **Real bugs surfaced as failing tests** (each ready as a regression
 gate for a focused fix-PR):
 
-1. **Blitter source-data routing** — 13 of 14 SRC-reading tests
-   fail identically (`observed=0`, perf counters confirm blit ran).
-   PASS exceptions narrow the bug:
-   - LFU=$0 (always 0), LFU=$F (always 1) PASS — output ignores SRC
-   - LFU=$3 (~S) PASS — *anomaly*, suggests bug isn't a flat
-     "SRC read = 0" but in how SRC routes through the LFU
-2. **IRQ delivery to 68K vec 64** — TOM/JERRY raise IRQs (counters
-   tick), 68K handler never fires.  `vector_64_writable` PASSES,
-   so the vector-write path itself is fine; bug is in IPL ack /
-   vector fetch.  Likely load-bearing for Doom #131.
-3. **JERRY PIT register readback** returns 0 despite commit
-   `1ca2fdc` claiming to fix it.
-4. **DIVL zero-divide trap** doesn't fire — tracing in the agent
-   report suggests the code path is correct but the trap doesn't
-   reach the handler.
+1. **DIVL zero-divide trap** doesn't fire — tracing suggests the
+   code path is correct but the trap doesn't reach the handler.
+   Real bug worth investigating.
+
+**Test-encoding follow-ups** (not emulator bugs, but unfinished
+test work):
+
+- `blitter/bcompen_basic` — got the source byte sign-extended
+  ($FFFFFFA5) where we expected the pattern foreground colour
+  ($11).  Test setup likely needs DCOMPEN + correct PATD layout.
+- `blitter/copy_simple` — partial copy: detail=3 means the 3rd
+  longword is wrong while the others are correct.  Suggests A1/A2
+  step or an iwidth/dwidth mismatch.
+- `blitter/pattern_fill` — PATDSEL alone doesn't write; the blit
+  needs additional config (UPDA1 / phrase-mode dest) to actually
+  land the pattern in dest.
+- `dsp/dsp_mac_accumulator` — deliberate FAIL placeholder until
+  the real IMACN/RESMAC test lands.
+
+## How we got from 33% → 93% PASSing in one review round
+
+Initial PR snapshot showed 33/72 PASS.  Copilot review caught two
+fundamental encoding mistakes that masked dozens of test failures
+as "real emulator bugs":
+
+1. **TOM_INT1 byte order**: I had the IRQ enable mask in the high
+   byte; per src/tom/tom.c it's the *low* byte.  Fixing this
+   recovered every IRQ-delivery test.
+2. **Blitter command bit positions**: I'd been writing `$0001C000`
+   thinking the high nibble was the LFU select, but the actual
+   layout (per src/tom/blitter.c) puts SRCEN at bit 0, DSTEN at
+   bit 3, and the LFU function at bits 21..24.  My encoding was
+   completely bogus.  Fixing this recovered all the blitter mode
+   tests.
+3. **JERRY PIT writable vs readable addresses**: $F10000/$F10002
+   are the writable JPIT1/JPIT2 setup regs; $F10036/$F10038 are
+   readback aliases.  Writes to the readback aliases don't arm
+   the timer.
+
+Big take-away: an acid suite is only as good as its test code,
+and getting the register encodings exactly right matters more than
+the volume of tests.  Worth keeping in mind for the next batch.
 
 ## Layout
 

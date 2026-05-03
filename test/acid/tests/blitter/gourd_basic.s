@@ -54,7 +54,7 @@ entry:
                 move.l  #0,B_A2_PIXEL
 
                 move.l  #$00010004,B_COUNT
-                move.l  #$0001D001,B_COMMAND    ; SRCEN | GOURD | ity=S
+                move.l  #$01801001,B_COMMAND    ; SRCEN | GOURD | ity=S
 
                 ;; If both halves stayed zero, gouraud path didn't run.
                 move.l  DST.l,d5

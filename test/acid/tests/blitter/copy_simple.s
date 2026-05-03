@@ -51,7 +51,7 @@ entry:
                 move.l  #0,B_A2_PIXEL
 
                 move.l  #$00010004,B_COUNT
-                move.l  #$0001C000,B_COMMAND    ; SRCEN | LFU=src
+                move.l  #$01800001,B_COMMAND    ; SRCEN | LFU=src
 
                 ;; Blitter is synchronous in this emulator; no wait needed.
 

@@ -51,7 +51,7 @@ entry:
                 move.l  #0,B_A2_PIXEL
 
                 move.l  #$00010004,B_COUNT
-                move.l  #$0001C801,B_COMMAND    ; SRCEN | DSTA2 | LFU=S
+                move.l  #$01800801,B_COMMAND    ; SRCEN | DSTA2 | LFU=S
 
                 move.l  DST.l,d5
                 cmp.l   #$CAFEBABE,d5

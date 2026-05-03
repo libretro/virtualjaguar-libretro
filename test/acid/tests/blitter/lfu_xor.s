@@ -47,7 +47,7 @@ entry:
                 move.l  #0,B_A2_PIXEL
 
                 move.l  #$00010004,B_COUNT
-                move.l  #$00C00021,B_COMMAND    ; SRCEN | DSTEN | LFU=$6 (S^D)
+                move.l  #$00C00009,B_COMMAND    ; SRCEN | DSTEN | LFU=$6 (S^D)
 
                 move.l  DST.l,d5
                 cmp.l   #$FFFFFFFF,d5
