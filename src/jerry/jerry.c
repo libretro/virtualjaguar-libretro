@@ -650,7 +650,10 @@ int JERRYGetPIT1Frequency(void)
 {
    /* Use M68K_CLOCK_RATE to match M68K_CYCLE_IN_USEC scheduling; see PIT clock rate note. */
    int systemClockFrequency = (vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL);
-   return systemClockFrequency / ((JERRYPIT1Prescaler + 1) * (JERRYPIT1Divider + 1));
+   int64_t divisor = (int64_t)(JERRYPIT1Prescaler + 1) * (int64_t)(JERRYPIT1Divider + 1);
+   if (divisor == 0)
+      return 0;
+   return (int)(systemClockFrequency / divisor);
 }
 
 
@@ -658,7 +661,10 @@ int JERRYGetPIT2Frequency(void)
 {
    /* Use M68K_CLOCK_RATE to match M68K_CYCLE_IN_USEC scheduling; see PIT clock rate note. */
    int systemClockFrequency = (vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL);
-   return systemClockFrequency / ((JERRYPIT2Prescaler + 1) * (JERRYPIT2Divider + 1));
+   int64_t divisor = (int64_t)(JERRYPIT2Prescaler + 1) * (int64_t)(JERRYPIT2Divider + 1);
+   if (divisor == 0)
+      return 0;
+   return (int)(systemClockFrequency / divisor);
 }
 
 #include "state.h"

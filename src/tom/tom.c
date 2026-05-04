@@ -1281,7 +1281,6 @@ void TOMSetIRQLatch(int irq, int enabled)
  * observed game behavior and other emulators.  See also jerry.c.
  */
 
-/* NEW: */
 /* TOM Programmable Interrupt Timer handler */
 /* NOTE: TOM's PIT is only enabled if the prescaler is != 0 */
 /*       The PIT only generates an interrupt when it counts down to zero, not when loaded! */
