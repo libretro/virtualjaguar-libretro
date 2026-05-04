@@ -208,6 +208,7 @@ INLINE static void dsp_opcode_subq(void);
 INLINE static void dsp_opcode_subqmod(void);
 INLINE static void dsp_opcode_subqt(void);
 INLINE static void dsp_opcode_illegal(void);
+INLINE static void dsp_executeOpcode(uint32_t index);
 
 //Here's a QnD kludge...
 //This is wrong, wrong, WRONG, but it seems to work for the time being...
@@ -854,11 +855,82 @@ INLINE void DSPExec(int32_t cycles)
 		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
-		dsp_opcode[index]();
+		dsp_executeOpcode(index);
 		cycles -= dsp_opcode_cycles[index];
 	}
 
 	dsp_in_exec--;
+}
+
+INLINE static void dsp_executeOpcode(uint32_t index)
+{
+	switch (index)
+	{
+	case 0: dsp_opcode_add(); break;
+	case 1: dsp_opcode_addc(); break;
+	case 2: dsp_opcode_addq(); break;
+	case 3: dsp_opcode_addqt(); break;
+	case 4: dsp_opcode_sub(); break;
+	case 5: dsp_opcode_subc(); break;
+	case 6: dsp_opcode_subq(); break;
+	case 7: dsp_opcode_subqt(); break;
+	case 8: dsp_opcode_neg(); break;
+	case 9: dsp_opcode_and(); break;
+	case 10: dsp_opcode_or(); break;
+	case 11: dsp_opcode_xor(); break;
+	case 12: dsp_opcode_not(); break;
+	case 13: dsp_opcode_btst(); break;
+	case 14: dsp_opcode_bset(); break;
+	case 15: dsp_opcode_bclr(); break;
+	case 16: dsp_opcode_mult(); break;
+	case 17: dsp_opcode_imult(); break;
+	case 18: dsp_opcode_imultn(); break;
+	case 19: dsp_opcode_resmac(); break;
+	case 20: dsp_opcode_imacn(); break;
+	case 21: dsp_opcode_div(); break;
+	case 22: dsp_opcode_abs(); break;
+	case 23: dsp_opcode_sh(); break;
+	case 24: dsp_opcode_shlq(); break;
+	case 25: dsp_opcode_shrq(); break;
+	case 26: dsp_opcode_sha(); break;
+	case 27: dsp_opcode_sharq(); break;
+	case 28: dsp_opcode_ror(); break;
+	case 29: dsp_opcode_rorq(); break;
+	case 30: dsp_opcode_cmp(); break;
+	case 31: dsp_opcode_cmpq(); break;
+	case 32: dsp_opcode_subqmod(); break;
+	case 33: dsp_opcode_sat16s(); break;
+	case 34: dsp_opcode_move(); break;
+	case 35: dsp_opcode_moveq(); break;
+	case 36: dsp_opcode_moveta(); break;
+	case 37: dsp_opcode_movefa(); break;
+	case 38: dsp_opcode_movei(); break;
+	case 39: dsp_opcode_loadb(); break;
+	case 40: dsp_opcode_loadw(); break;
+	case 41: dsp_opcode_load(); break;
+	case 42: dsp_opcode_sat32s(); break;
+	case 43: dsp_opcode_load_r14_indexed(); break;
+	case 44: dsp_opcode_load_r15_indexed(); break;
+	case 45: dsp_opcode_storeb(); break;
+	case 46: dsp_opcode_storew(); break;
+	case 47: dsp_opcode_store(); break;
+	case 48: dsp_opcode_mirror(); break;
+	case 49: dsp_opcode_store_r14_indexed(); break;
+	case 50: dsp_opcode_store_r15_indexed(); break;
+	case 51: dsp_opcode_move_pc(); break;
+	case 52: dsp_opcode_jump(); break;
+	case 53: dsp_opcode_jr(); break;
+	case 54: dsp_opcode_mmult(); break;
+	case 55: dsp_opcode_mtoi(); break;
+	case 56: dsp_opcode_normi(); break;
+	case 57: dsp_opcode_nop(); break;
+	case 58: dsp_opcode_load_r14_ri(); break;
+	case 59: dsp_opcode_load_r15_ri(); break;
+	case 60: dsp_opcode_store_r14_ri(); break;
+	case 61: dsp_opcode_store_r15_ri(); break;
+	case 62: dsp_opcode_illegal(); break;
+	case 63: dsp_opcode_addqmod(); break;
+	}
 }
 
 // DSP opcode handlers
