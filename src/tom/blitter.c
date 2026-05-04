@@ -2016,11 +2016,12 @@ void BlitterMidsummer2(void)
           *=================================================================*/
          if (patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
                && !gourd && !gourz && !srcshade && !adddsel
-               && !bcompen && !dcompen)
+               && !bcompen && !dcompen && !a2update)
          {
             /* Collapsed-path local variables (C89: all at top of block) */
             bool pf_a1_add, pf_a2_add;
             bool pf_gena2i;
+            bool pf_justify;
             uint8_t pf_addasel, pf_adda_xconst, pf_addbsel, pf_modx;
             bool pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y, pf_a1fracldi;
             uint8_t pf_maska1, pf_maska2;
@@ -2031,12 +2032,17 @@ void BlitterMidsummer2(void)
             pf_a2_add = dsta2;
             pf_gena2i = dsta2;
 
+            /* justify = !(!fontread && phrase_mode).
+               fontread = (sread||sreadx) && bcompen; eligibility excludes
+               bcompen/srcen/srcenx so fontread is always false here. */
+            pf_justify = !phrase_mode;
+
             /* Precompute address-adder decode (invariant for entire inner loop).
                These mirror the decode at lines 2131-2212 for the dwrite state. */
             pf_addasel = (pf_a1_add && a1addx == 3 ? 0x03 : 0x00);
-            pf_addasel |= (a2update ? 0x04 : 0x00);  /* a2update is false here */
+            pf_addasel |= (a2update ? 0x04 : 0x00);
             pf_adda_xconst = (pf_a2_add ? a2_xconst : a1_xconst);
-            pf_adda_yconst = a1addy;
+            pf_adda_yconst = (pf_a2_add ? a2addy : a1addy);
             pf_addareg = ((pf_a1_add && a1addx == 3) || (pf_a2_add && a2addx == 3)
                   ? true : false);
             pf_suba_x = ((pf_a1_add && a1xsign && a1addx == 1)
@@ -2057,7 +2063,7 @@ void BlitterMidsummer2(void)
                uint16_t pf_oldicount, pf_dstxwr, pf_pseq;
                bool pf_penden;
                uint8_t pf_window_mask, pf_inner_mask, pf_emask, pf_dend;
-               uint32_t pf_pma;
+               uint8_t pf_pma;
                uint64_t pf_wdata;
                uint8_t pf_dcomp, pf_zcomp;
                bool pf_winhibit;
@@ -2071,8 +2077,9 @@ void BlitterMidsummer2(void)
                      a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
                      a1_ya_cached, a2_ya_cached);
 
-               /* Phrase-align address (justify is false for patfill: !fontread && phrase_mode) */
-               if (phrase_mode)
+               /* Phrase-align address: matches state machine's `if (!justify)`.
+                  For patfill (fontread=false), !justify == phrase_mode. */
+               if (!pf_justify)
                   address &= 0xFFFFF8;
 
                dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
@@ -2157,7 +2164,8 @@ void BlitterMidsummer2(void)
                   pf_winhibit = true;
 
                /* ---- Write pixel/phrase ---- */
-               PERF_INC(blitter_phrase_writes);
+               if (phrase_mode)
+                  PERF_INC(blitter_phrase_writes);
                if (!pf_winhibit || bkgwren)
                {
                   if (phrase_mode)
