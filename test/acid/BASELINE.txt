@@ -1,18 +1,17 @@
-[PASS tests/blitter/copy_pix1_phrase.jag
-[PASS tests/blitter/copy_pix2_phrase.jag
-[PASS tests/blitter/copy_pix4_phrase.jag
-[FAIL tests/blitter/pattern_fill.jag
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
 [FAIL tests/bus/bus_refresh_steals.jag
-[FAIL tests/quirks/divl_zero_traps.jag
+[FAIL tests/timing/pit_countdown_rate.jag
 [PASS tests/blitter/bcompen_basic.jag
 [PASS tests/blitter/bkgwren_test.jag
+[PASS tests/blitter/copy_pix1_phrase.jag
 [PASS tests/blitter/copy_pix1_pixel.jag
 [PASS tests/blitter/copy_pix16_pixel.jag
+[PASS tests/blitter/copy_pix2_phrase.jag
 [PASS tests/blitter/copy_pix2_pixel.jag
 [PASS tests/blitter/copy_pix32_pixel.jag
 [PASS tests/blitter/copy_pix32.jag
+[PASS tests/blitter/copy_pix4_phrase.jag
 [PASS tests/blitter/copy_pix4_pixel.jag
 [PASS tests/blitter/copy_pix8_pixel.jag
 [PASS tests/blitter/copy_pix8.jag
@@ -36,6 +35,7 @@
 [PASS tests/blitter/lfu_xor.jag
 [PASS tests/blitter/lfu_zero_fill.jag
 [PASS tests/blitter/multiline_copy.jag
+[PASS tests/blitter/pattern_fill.jag
 [PASS tests/blitter/zzz_smoke.jag
 [PASS tests/bus/blitter_back_to_back.jag
 [PASS tests/bus/cpu_blitter_concurrent.jag
@@ -120,6 +120,7 @@
 [PASS tests/quirks/bsr_l_61ff_real.jag
 [PASS tests/quirks/bsr_long_61ff.jag
 [PASS tests/quirks/btst_dynamic.jag
+[PASS tests/quirks/divl_zero_traps.jag
 [PASS tests/quirks/divs_w_signed.jag
 [PASS tests/quirks/illegal_opcode_traps.jag
 [PASS tests/quirks/m68k_set_sr_supervisor.jag
@@ -132,7 +133,6 @@
 [PASS tests/timing/hc_advance.jag
 [PASS tests/timing/hc_within_scanline_range.jag
 [PASS tests/timing/jerry_pit_setup.jag
-[FAIL tests/timing/pit_countdown_rate.jag
 [PASS tests/timing/vblank_60hz_exact.jag
 [PASS tests/timing/vc_advance.jag
 [PASS tests/timing/vc_field_bit.jag
