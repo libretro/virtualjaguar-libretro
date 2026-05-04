@@ -1459,7 +1459,7 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	/* Parallel prefix (Kogge-Stone) replaces the 15-step serial
-	 * OAN1P ripple carry with 6 branchless shift-and-combine steps.
+	 * OAN1P ripple carry with O(log n) branchless shift-and-combine steps.
 	 *
 	 * The carry chain is: maskt[n] = (maskt[n-1] | s[n]) & e[n]
 	 * which is a generate-propagate network:
