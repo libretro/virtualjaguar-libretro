@@ -867,7 +867,7 @@ INLINE static void executeOpcode(uint32_t index) {
 	gpu_op_store_r14_ri:    gpu_opcode_store_r14_ri();    return;
 	gpu_op_store_r15_ri:    gpu_opcode_store_r15_ri();    return;
 	gpu_op_sat24:           gpu_opcode_sat24();           return;
-	gpu_op_pack:            gpu_opcode_pack();            return;
+	gpu_op_pack:            gpu_opcode_pack();            return; /* NOLINT(readability-redundant-control-flow) -- goto target */
 #else
 	/* Switch fallback for MSVC and other non-GNU compilers */
 	switch (index) {

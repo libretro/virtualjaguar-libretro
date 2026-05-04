@@ -971,7 +971,7 @@ INLINE static void dsp_executeOpcode(uint32_t index)
 	dsp_op_store_r14_ri:    dsp_opcode_store_r14_ri();    return;
 	dsp_op_store_r15_ri:    dsp_opcode_store_r15_ri();    return;
 	dsp_op_illegal:         dsp_opcode_illegal();         return;
-	dsp_op_addqmod:         dsp_opcode_addqmod();         return;
+	dsp_op_addqmod:         dsp_opcode_addqmod();         return; /* NOLINT(readability-redundant-control-flow) -- goto target */
 #else
 	/* Switch fallback for MSVC and other non-GNU compilers */
 	switch (index)
