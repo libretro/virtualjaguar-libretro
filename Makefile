@@ -817,7 +817,8 @@ test/test_pit_clock_rate: test/test_pit_clock_rate.c \
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_pit_clock_rate.c
 
 test/test_blitter_mmio: test/test_blitter_mmio.c src/tom/blitter_mmio.c \
-		src/tom/blitter_internal.h src/tom/blitter.h src/core/vjag_memory.h
+		src/tom/blitter_internal.h src/tom/blitter.h src/core/vjag_memory.h \
+		src/core/settings.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_blitter_mmio.c src/tom/blitter_mmio.c
 

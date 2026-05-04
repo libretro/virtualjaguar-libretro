@@ -6,11 +6,8 @@
  * internal blitter_ram layout expected by GET64 and the Gouraud
  * byte-level reads.
  *
- * Build:
- *   cc -O2 -Wall -std=c99 -I. -Isrc -Isrc/core -Isrc/tom \
- *      -D__LIBRETRO__ -DINLINE="inline" \
- *      -o test/test_blitter_mmio test/test_blitter_mmio.c \
- *      src/tom/blitter_mmio.c src/tom/blitter_compare.c
+ * Build (via Makefile):
+ *   make TEST_EXPORTS=1 test/test_blitter_mmio
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +15,7 @@
 #include <string.h>
 
 #include "vjag_memory.h"
+#include "settings.h"
 
 /* Provide blitter_ram storage (normally in blitter.c) */
 uint8_t blitter_ram[0x100];
@@ -26,7 +24,6 @@ void BlitterReset(void);
 void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who);
 
 /* Stubs for dependencies we don't need */
-struct VJSettings { int useFastBlitter; };
 struct VJSettings vjs = { 0 };
 int BlitterCompareIsEnabled(void) { return 0; }
 void BlitterRunComparison(void) {}
@@ -37,7 +34,7 @@ static int failures = 0;
 
 #define CHECK(cond, fmt, ...) do { \
    if (!(cond)) { \
-      fprintf(stderr, "FAIL: " fmt "\n", ##__VA_ARGS__); \
+      fprintf(stderr, "FAIL: " fmt "\n", __VA_ARGS__); \
       failures++; \
    } \
 } while(0)
@@ -143,7 +140,8 @@ static void test_direct_write_does_not_corrupt_phraseint(void)
    /* First set pixel 3 intensity via PHRASEINT */
    BlitterWriteByte(PHRASEINT3 + 1, 0xFF, 0);  /* → PATTERNDATA byte 1 */
    CHECK(blitter_ram[PATTERNDATA + 1] == 0xFF,
-         "pre-check: pixel 3 intensity at byte 1");
+         "pre-check: pixel 3 intensity at byte 1: got 0x%02X",
+         blitter_ram[PATTERNDATA + 1]);
 
    /* Now do a direct 32-bit write to PATTERNDATA+0 (low address).
     * With the swap this goes to bytes 4-7, not bytes 0-3.
