@@ -980,13 +980,10 @@ void blitter_blit(uint32_t cmd)
 
 #ifdef USE_MIDSUMMER_BLITTER_MKII
 
-void ADDRGEN(uint32_t *, uint32_t *, bool, bool,
+static void ADDRGEN(uint32_t *, uint32_t *, bool, bool,
 	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
 	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
 	uint32_t, uint32_t);
-/* Precompute the y*width row offset used by ADDRGEN.  Only depends on
-   y (12-bit) and the width register encoding, so it can be cached
-   across the inner loop where only x changes. */
 static uint32_t addrgen_ya(uint16_t y, uint8_t width)
 {
 	uint32_t y12 = (uint32_t)(y & 0x0FFF);
@@ -1000,14 +997,14 @@ static uint32_t addrgen_ya(uint16_t y, uint8_t width)
  * for daddasel/daddbsel/daddmode and the sat/eightbit/hicinh flags).
  * Profile data on AvP gameplay shows ADDARRAY as the single largest
  * leaf in the entire emulator, called millions of times per frame. */
-void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+static void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
 	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
 	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y);
-void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+static void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
 	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y);
-void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel);
-void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
+static void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel);
+static void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
 	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y);
 /* DATA + COMP_CTRL are defined inline below (above BlitterMidsummer2)
  * so the compiler can specialise them per call.  Both are called
@@ -2749,7 +2746,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 
 // Various pieces of the blitter puzzle are teased out here...
 
-void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
+static void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint16_t a1_x, uint16_t a1_y, uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width, uint8_t a1_zoffset,
 	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset,
 	uint32_t a1_ya_pre, uint32_t a2_ya_pre)
@@ -2786,7 +2783,7 @@ void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 
-void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+static void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
 	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
 	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
@@ -2857,7 +2854,7 @@ INT16/	a1_frac_y
 	:IN);
 INT16/	zero16 :LOCAL;
 BEGIN*/
-void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+static void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
 	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
 {
 
@@ -2897,7 +2894,7 @@ INT16/	addq_y
 INT16/	gpu_lo, gpu_hi
 :LOCAL;
 BEGIN*/
-void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
+static void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
 {
    if (addqsel)
    {
@@ -2932,7 +2929,7 @@ modx[0..2] take values
 
 ******************************************************************/
 
-void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
+static void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
 	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
 {
 
