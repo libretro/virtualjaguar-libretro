@@ -1962,7 +1962,7 @@ void BlitterMidsummer2(void)
          uint8_t data_sel;
          uint32_t address, pixAddr;
          uint8_t dstxp;
-         uint64_t srcz;
+         uint64_t srcz = 0;
          bool winhibit;
          uint32_t a1_ya_cached, a2_ya_cached;
 
