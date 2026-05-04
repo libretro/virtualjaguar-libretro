@@ -1,7 +1,6 @@
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
 [FAIL tests/bus/bus_refresh_steals.jag
-[FAIL tests/timing/pit_countdown_rate.jag
 [PASS tests/blitter/bcompen_basic.jag
 [PASS tests/blitter/bkgwren_test.jag
 [PASS tests/blitter/copy_pix1_phrase.jag
@@ -133,6 +132,7 @@
 [PASS tests/timing/hc_advance.jag
 [PASS tests/timing/hc_within_scanline_range.jag
 [PASS tests/timing/jerry_pit_setup.jag
+[PASS tests/timing/pit_countdown_rate.jag
 [PASS tests/timing/vblank_60hz_exact.jag
 [PASS tests/timing/vc_advance.jag
 [PASS tests/timing/vc_field_bit.jag
