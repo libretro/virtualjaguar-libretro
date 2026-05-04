@@ -1982,13 +1982,7 @@ void BlitterMidsummer2(void)
             dstxp0 = (dsta2 ? a2_x : a1_x) & 0x3F;
             srcxp0 = (dsta2 ? a1_x : a2_x) & 0x3F;
             shftv0 = ((dstxp0 - srcxp0) << pixsize) & 0x3F;
-            pobb0 = 0;
-            if (pixsize == 3)
-               pobb0 = dstxp0 & 0x07;
-            else if (pixsize == 4)
-               pobb0 = dstxp0 & 0x03;
-            else if (pixsize == 5)
-               pobb0 = dstxp0 & 0x01;
+            pobb0 = dstxp0 & ((64 >> pixsize) - 1);
 
             pobbsel0 = phrase_mode && bcompen;
             loshd0 = (pobbsel0 ? pobb0 : shftv0) & 0x07;
@@ -2333,15 +2327,17 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #endif
                //Counter is done on the dwrite state...! (We'll do it first, since it affects dstart/dend calculations.)
                //Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
-               int8_t inct = (PERF_INC(blitter_phrase_writes), -((dsta2 ? a2_x : a1_x) & 0x07));	// From INNER_CNT
-               uint8_t inc = 0;
+               uint8_t inc;
                uint16_t oldicount;
                uint8_t dstart = 0;
+               uint8_t ppp;
 
-               inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
-               inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
-               inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
-               inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
+               PERF_INC(blitter_phrase_writes);
+               ppp = 64 >> pixsize;
+               if (phrase_mode)
+                  inc = ppp - ((dsta2 ? a2_x : a1_x) & (ppp - 1));
+               else
+                  inc = 1;
 
                oldicount = icount;	// Save icount to detect underflow...
                icount -= inc;
@@ -2356,16 +2352,9 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
 
                if (phrase_mode)
-               {
-                  if (pixsize == 3)
-                     dstart = (dstxp & 0x07) << 3;
-                  else if (pixsize == 4)
-                     dstart = (dstxp & 0x03) << 4;
-                  else if (pixsize == 5)
-                     dstart = (dstxp & 0x01) << 5;
-               }
+                  dstart = (dstxp & (ppp - 1)) << pixsize;
                else
-                  dstart    = pixAddr & 0x07;
+                  dstart = pixAddr & 0x07;
 
                //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
                dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
@@ -2376,31 +2365,17 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                window_mask = 0;
 
                if (penden)
-               {
-                  if (pixsize == 3)
-                     window_mask = (a1_win_x & 0x07) << 3;
-                  else if (pixsize == 4)
-                     window_mask = (a1_win_x & 0x03) << 4;
-                  else if (pixsize == 5)
-                     window_mask = (a1_win_x & 0x01) << 5;
-               }
+                  window_mask = (a1_win_x & (ppp - 1)) << pixsize;
                else
-                  window_mask    = 0;
+                  window_mask = 0;
 
                /* The mask to be used if within one phrase of the end of the inner
                   loop, similarly */
 
                if (inner0)
-               {
-                  if (pixsize == 3)
-                     inner_mask = (icount & 0x07) << 3;
-                  else if (pixsize == 4)
-                     inner_mask = (icount & 0x03) << 4;
-                  else if (pixsize == 5)
-                     inner_mask = (icount & 0x01) << 5;
-               }
+                  inner_mask = (icount & (ppp - 1)) << pixsize;
                else
-                  inner_mask    = 0;
+                  inner_mask = 0;
 
                /* The actual mask used should be the
                   lesser of the window masks and
