@@ -134,6 +134,32 @@ void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
       case PHRASEZ3 + 3: blitter_ram[SRCZFRAC + 1] = data; break;
       }
    }
+   else if (((offset >= SRCDATA + 0) && (offset <= SRCDATA + 3))
+         || ((offset >= DSTDATA + 0) && (offset <= DSTDATA + 3))
+         || ((offset >= DSTZ + 0) && (offset <= DSTZ + 3))
+         || ((offset >= SRCZINT + 0) && (offset <= SRCZINT + 3))
+         || ((offset >= SRCZFRAC + 0) && (offset <= SRCZFRAC + 3))
+         || ((offset >= PATTERNDATA + 0) && (offset <= PATTERNDATA + 3)))
+   {
+      /* 64-bit register longword swap: the Jaguar's F-bus maps the first
+       * 32-bit write (lower address) to the LOW longword of the internal
+       * 64-bit register, and the second write (higher address) to the HIGH
+       * longword.  GET64 reads blitter_ram in big-endian byte order
+       * (offset+0 = MSB), so we swap the two halves on write to match.
+       * The PHRASEINT/PHRASEZ path above already has its own per-byte
+       * mapping and is unaffected.  The Gouraud init reads (gd_c[]/gd_i[]
+       * in blitter.c) are designed for this swapped layout. */
+      blitter_ram[offset + 4] = data;
+   }
+   else if (((offset >= SRCDATA + 4) && (offset <= SRCDATA + 7))
+         || ((offset >= DSTDATA + 4) && (offset <= DSTDATA + 7))
+         || ((offset >= DSTZ + 4) && (offset <= DSTZ + 7))
+         || ((offset >= SRCZINT + 4) && (offset <= SRCZINT + 7))
+         || ((offset >= SRCZFRAC + 4) && (offset <= SRCZFRAC + 7))
+         || ((offset >= PATTERNDATA + 4) && (offset <= PATTERNDATA + 7)))
+   {
+      blitter_ram[offset - 4] = data;
+   }
    else
       blitter_ram[offset] = data;
 }

@@ -732,7 +732,7 @@ clean:
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
 		test/test_audio_clipping test/test_pit_clock_rate \
-		test/tools/test_memory_map
+		test/test_blitter_mmio test/tools/test_memory_map
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -759,9 +759,10 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_pit_clock_rate \
-		test/tools/test_memory_map
+		test/test_blitter_mmio test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
+	./test/test_blitter_mmio
 	./test/test_pit_clock_rate
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
@@ -814,6 +815,11 @@ test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 test/test_pit_clock_rate: test/test_pit_clock_rate.c \
 		src/jerry/jerry.c src/tom/tom.c
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_pit_clock_rate.c
+
+test/test_blitter_mmio: test/test_blitter_mmio.c src/tom/blitter_mmio.c \
+		src/tom/blitter_internal.h src/tom/blitter.h src/core/vjag_memory.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_blitter_mmio.c src/tom/blitter_mmio.c
 
 test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
 	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)

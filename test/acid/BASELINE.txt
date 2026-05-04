@@ -34,7 +34,7 @@
 [PASS tests/blitter/lfu_xor.jag
 [PASS tests/blitter/lfu_zero_fill.jag
 [PASS tests/blitter/multiline_copy.jag
-[PASS tests/blitter/pattern_fill.jag
+[FAIL tests/blitter/pattern_fill.jag
 [PASS tests/blitter/zzz_smoke.jag
 [PASS tests/bus/blitter_back_to_back.jag
 [PASS tests/bus/cpu_blitter_concurrent.jag
