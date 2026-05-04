@@ -980,17 +980,31 @@ INLINE static void executeOpcode(uint32_t index) {
 
 INLINE static void gpu_opcode_jump(void)
 {
-   // normalize flags
-   /*	gpu_flag_c = (gpu_flag_c ? 1 : 0);
-      gpu_flag_z = (gpu_flag_z ? 1 : 0);
-      gpu_flag_n = (gpu_flag_n ? 1 : 0);*/
-   // KLUDGE: Used by BRANCH_CONDITION
+   /* normalize flags */
+   /* KLUDGE: Used by BRANCH_CONDITION */
    uint32_t jaguar_flags = (gpu_flag_n << 2) | (gpu_flag_c << 1) | gpu_flag_z;
 
    if (BRANCH_CONDITION(IMM_2))
    {
       uint32_t delayed_pc = RM;
-      GPUExec(1);
+      uint16_t ds_opcode;
+      uint32_t ds_index;
+      /* Inline delay-slot: fetch-decode-execute one instruction at current
+       * PC before applying the branch target.  This replaces the old
+       * recursive GPUExec(1) call, avoiding full function-call overhead,
+       * redundant IRQ checks, and pipeline-state save/restore. */
+      if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
+      {
+         uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
+         ds_opcode = ((uint16_t)gpu_ram_8[off] << 8) | (uint16_t)gpu_ram_8[off + 1];
+      }
+      else
+         ds_opcode = GPUReadWord(gpu_pc, GPU);
+      ds_index = ds_opcode >> 10;
+      gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+      gpu_opcode_second_parameter = ds_opcode & 0x1F;
+      gpu_pc += 2;
+      executeOpcode(ds_index);
       gpu_pc = delayed_pc;
    }
 }
@@ -1002,9 +1016,25 @@ INLINE static void gpu_opcode_jr(void)
 
    if (BRANCH_CONDITION(IMM_2))
    {
-      int32_t offset     = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
+      int32_t offset     = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		/* Sign extend IMM_1 */
       int32_t delayed_pc = gpu_pc + (offset * 2);
-      GPUExec(1);
+      uint16_t ds_opcode;
+      uint32_t ds_index;
+      /* Inline delay-slot: fetch-decode-execute one instruction at current
+       * PC before applying the branch target.  Same rationale as in
+       * gpu_opcode_jump above. */
+      if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
+      {
+         uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
+         ds_opcode = ((uint16_t)gpu_ram_8[off] << 8) | (uint16_t)gpu_ram_8[off + 1];
+      }
+      else
+         ds_opcode = GPUReadWord(gpu_pc, GPU);
+      ds_index = ds_opcode >> 10;
+      gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+      gpu_opcode_second_parameter = ds_opcode & 0x1F;
+      gpu_pc += 2;
+      executeOpcode(ds_index);
       gpu_pc = delayed_pc;
    }
 }

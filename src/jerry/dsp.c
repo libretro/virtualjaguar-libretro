@@ -1047,22 +1047,35 @@ INLINE static void dsp_executeOpcode(uint32_t index)
 
 // DSP opcode handlers
 
-// There is a problem here with interrupt handlers the JUMP and JR instructions that
-// can cause trouble because an interrupt can occur *before* the instruction following the
-// jump can execute... !!! FIX !!!
+/* There is a problem here with interrupt handlers the JUMP and JR instructions that
+ * can cause trouble because an interrupt can occur *before* the instruction following the
+ * jump can execute... !!! FIX !!! */
 INLINE static void dsp_opcode_jump(void)
 {
-	// normalize flags
-/*	dsp_flag_c=dsp_flag_c?1:0;
-	dsp_flag_z=dsp_flag_z?1:0;
-	dsp_flag_n=dsp_flag_n?1:0;*/
-	// KLUDGE: Used by BRANCH_CONDITION
+	/* KLUDGE: Used by BRANCH_CONDITION */
 	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
 
 	if (BRANCH_CONDITION(IMM_2))
 	{
 		uint32_t delayed_pc = RM;
-		DSPExec(1);
+		uint16_t ds_opcode;
+		uint32_t ds_index;
+		/* Inline delay-slot: fetch-decode-execute one instruction at current
+		 * PC before applying the branch target.  This replaces the old
+		 * recursive DSPExec(1) call, avoiding full function-call overhead,
+		 * redundant IRQ checks, and pipeline-state save/restore. */
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			ds_opcode = DSPReadWord(dsp_pc, DSP);
+		ds_index = ds_opcode >> 10;
+		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = ds_opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 	}
 }
@@ -1070,18 +1083,30 @@ INLINE static void dsp_opcode_jump(void)
 
 INLINE static void dsp_opcode_jr(void)
 {
-	// normalize flags
-/*	dsp_flag_c=dsp_flag_c?1:0;
-	dsp_flag_z=dsp_flag_z?1:0;
-	dsp_flag_n=dsp_flag_n?1:0;*/
-	// KLUDGE: Used by BRANCH_CONDITION
+	/* KLUDGE: Used by BRANCH_CONDITION */
 	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
 
 	if (BRANCH_CONDITION(IMM_2))
 	{
-		int32_t offset = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
+		int32_t offset = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		/* Sign extend IMM_1 */
 		int32_t delayed_pc = dsp_pc + (offset * 2);
-		DSPExec(1);
+		uint16_t ds_opcode;
+		uint32_t ds_index;
+		/* Inline delay-slot: fetch-decode-execute one instruction at current
+		 * PC before applying the branch target.  Same rationale as in
+		 * dsp_opcode_jump above. */
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			ds_opcode = DSPReadWord(dsp_pc, DSP);
+		ds_index = ds_opcode >> 10;
+		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = ds_opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 	}
 }
