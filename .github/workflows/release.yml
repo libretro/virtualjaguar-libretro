@@ -354,8 +354,9 @@ jobs:
 
   # ----------------------------------------------------------------
   # Release: collect all artifacts, generate SHA256SUMS, build the
-  # release body from docs/RELEASE_NOTES_v<TAG>.md (with fall-back to
-  # GitHub auto-generated notes), then create the tagged release.
+  # release body from docs/RELEASE_NOTES_v<TAG>.md (artifact list
+  # and embedded SHA256 checksums always appended), then create the
+  # tagged release.  See SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
     needs: [build, vita-build, switch-build]
@@ -404,26 +405,36 @@ jobs:
         if [ -f "$NOTES_FILE" ]; then
           echo "==> Using curated release notes: $NOTES_FILE"
           cp "$NOTES_FILE" "$BODY_FILE"
-          # Append a brief artifact list to the body
-          {
-            echo
-            echo "---"
-            echo
-            echo "## Artifacts in this release"
-            echo
-            echo '```'
-            find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
-            echo '```'
-          } >> "$BODY_FILE"
-          echo "use_notes_file=1" >> "$GITHUB_OUTPUT"
         else
-          echo "==> No curated $NOTES_FILE found; falling back to auto-generated notes"
-          echo "use_notes_file=0" >> "$GITHUB_OUTPUT"
+          echo "==> No curated $NOTES_FILE found; body will contain only artifacts and checksums"
         fi
+        # Append artifact list and embedded SHA256 checksums so users can
+        # verify binaries directly from the release page without needing to
+        # download SHA256SUMS.txt first.  See SECURITY.md for details.
+        {
+          echo
+          echo "---"
+          echo
+          echo "## Artifacts in this release"
+          echo
+          echo '```'
+          find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
+          echo '```'
+          echo
+          echo "## SHA-256 checksums"
+          echo
+          echo "Verify with \`sha256sum --check SHA256SUMS.txt\` (Linux) or"
+          echo "\`shasum -a 256 --check SHA256SUMS.txt\` (macOS)."
+          echo "See [SECURITY.md](https://github.com/${{ github.repository }}/blob/master/SECURITY.md)"
+          echo "for full verification instructions and antivirus false-positive guidance."
+          echo
+          echo '```'
+          cat release/SHA256SUMS.txt
+          echo '```'
+        } >> "$BODY_FILE"
         echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
 
-    - name: Create release (curated notes)
-      if: steps.prep_body.outputs.use_notes_file == '1'
+    - name: Create release
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
@@ -431,15 +442,4 @@ jobs:
         gh release create "${TAG}" \
           --title "${TAG}" \
           --notes-file "${{ steps.prep_body.outputs.body_file }}" \
-          release/*
-
-    - name: Create release (auto-generated notes)
-      if: steps.prep_body.outputs.use_notes_file == '0'
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        TAG="${GITHUB_REF_NAME}"
-        gh release create "${TAG}" \
-          --title "${TAG}" \
-          --generate-notes \
           release/*

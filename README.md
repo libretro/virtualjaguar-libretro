@@ -43,6 +43,7 @@ Output varies by platform: `.so` (Linux), `.dylib` (macOS), `.dll` (Windows).
 - [Source layout](docs/source-layout.md)
 - [Changelog](docs/WHATSNEW)
 - [Known issues & TODO](docs/TODO)
+- [Security policy & binary verification](SECURITY.md)
 - [libretro documentation](https://docs.libretro.com/)
 
 ## Links
