@@ -1274,10 +1274,17 @@ void TOMSetIRQLatch(int irq, int enabled)
 }
 
 
-// NEW:
-// TOM Programmable Interrupt Timer handler
-// NOTE: TOM's PIT is only enabled if the prescaler is != 0
-//       The PIT only generates an interrupt when it counts down to zero, not when loaded!
+/*
+ * PIT clock rate: The JTRM Software Reference says PIT divides the
+ * "processor clock" (26.59 MHz), but games like Doom were programmed
+ * assuming the half-rate (13.3 MHz).  Using M68K_CYCLE_IN_USEC matches
+ * observed game behavior and other emulators.  See also jerry.c.
+ */
+
+/* NEW: */
+/* TOM Programmable Interrupt Timer handler */
+/* NOTE: TOM's PIT is only enabled if the prescaler is != 0 */
+/*       The PIT only generates an interrupt when it counts down to zero, not when loaded! */
 
 void TOMPITCallback(void);
 
@@ -1285,23 +1292,18 @@ void TOMPITCallback(void);
 void TOMResetPIT(void)
 {
 #ifndef NEW_TIMER_SYSTEM
-   // Add the next period to the counter; +1 is specified by the JTRM.
-   //There is a small problem with this approach: If both the prescaler and the divider are equal
-   //to $FFFF then the counter won't be large enough to handle it. !!! FIX !!!
+   /* Add the next period to the counter; +1 is specified by the JTRM. */
+   /* There is a small problem with this approach: If both the prescaler and the divider are
+      equal to $FFFF then the counter won't be large enough to handle it. !!! FIX !!! */
    if (tom_timer_prescaler)
       tom_timer_counter += (1 + tom_timer_prescaler) * (1 + tom_timer_divider);
 #else
-   // Need to remove previous timer from the queue, if it exists...
+   /* Need to remove previous timer from the queue, if it exists... */
    RemoveCallback(TOMPITCallback);
 
    if (tomTimerPrescaler)
    {
-      /*
-       * The JTRM Software Reference says PIT divides the "processor
-       * clock" (26.59 MHz), but games like Doom were programmed
-       * assuming the half-rate (13.3 MHz).  Using M68K_CYCLE matches
-       * observed game behavior and other emulators.
-       */
+      /* See PIT clock rate note above. */
       double usecs = (double)(tomTimerPrescaler + 1) * (double)(tomTimerDivider + 1)
          * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(TOMPITCallback, usecs, EVENT_MAIN);
