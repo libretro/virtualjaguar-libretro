@@ -16,12 +16,10 @@
 
 #include "vjag_memory.h"
 #include "settings.h"
+#include "blitter.h"
 
 /* Provide blitter_ram storage (normally in blitter.c) */
 uint8_t blitter_ram[0x100];
-
-void BlitterReset(void);
-void BlitterWriteByte(uint32_t offset, uint8_t data, uint32_t who);
 
 /* Stubs for dependencies we don't need */
 struct VJSettings vjs = { 0 };
