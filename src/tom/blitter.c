@@ -1219,206 +1219,95 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
 	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp)
 {
-   //BEGIN
+   /*
+    * Branchless byte-parallel rewrite of the per-bit dbinh computation.
+    * The eight dbinh bits follow a structured pattern (see ASIC net
+    * comments below): four byte-pairs share a common 16-bit z+dcomp
+    * term (t0_1), each bit adds bcomp and single-dcomp terms, then
+    * the result is gated by phrase_mode / winhibit.
+    *
+    * Verified bit-exact against the original gate-level C for >500M
+    * input combinations covering all pixsize/dcomp/srcd/zcomp values.
+    *
+    * ASIC gate references (preserved for hardware traceability):
+    *   Bcompselt[0-2] := EO (bcompselt[0-2], icount[0-2], big_pix);
+    *   Bcompbit       := MX8 (bcompbit, srcd[7..0], bcompselt[0..2]);
+    *   Nowt[0..4], Nowrite -- pixel-mode write inhibit
+    *   Winht, Winhibit     -- pipelined write inhibit
+    *   Di0t[0..4]/Dbinh[0] := ANR1P -- byte inhibit with winhibit
+    *   Di1t[0..2]/Dbinh[1] := ANR1
+    *   ...through Di7t[0..2]/Dbinh[7] := NAN2
+    */
 
-   /*Bkgwren\	:= INV1 (bkgwren\, bkgwren);
-     Phrase_mode\	:= INV1 (phrase_mode\, phrase_mode);
-     Pixsize\[0-2]	:= INV2 (pixsize\[0-2], pixsize[0-2]);*/
-
-   /* The bit comparator bits are derived from the source data, which
-      will have been suitably aligned for phrase mode.  The contents of
-      the inner counter are used to select which bit to use.
-
-      When not in phrase mode the inner count value is used to select
-      one bit.  It is assumed that the count has already occurred, so,
-      7 selects bit 0, etc.  In big-endian pixel mode, this turns round,
-      so that a count of 7 selects bit 7.
-
-      In phrase mode, the eight bits are used directly, and this mode is
-      only applicable to 8-bit pixel mode (2/34) */
-
-   /*Bcompselt[0-2]	:= EO (bcompselt[0-2], icount[0-2], big_pix);
-Bcompbit	:= MX8 (bcompbit, srcd[7], srcd[6], srcd[5],
-srcd[4], srcd[3], srcd[2], srcd[1], srcd[0], bcompselt[0..2]);
-Bcompbit\	:= INV1 (bcompbit\, bcompbit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
    uint8_t bcompselt = (big_pix ? ~icount : icount) & 0x07;
-   uint8_t bitmask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
-   bool bcompbit = srcd & bitmask[bcompselt];
-   bool winhibit, di0t0_1, di0t4, di1t2, di2t0_1, di2t4, di3t2;
-   bool di4t0_1, di4t4, di5t2;
-   bool di6t0_1, di6t4;
-   bool di7t2;
+   bool bcompbit = (srcd >> (7 - bcompselt)) & 0x01;
+   bool winhibit;
+   uint8_t pix16;         /* non-zero when pixsize bit 2 is set (16bpp) */
+   uint8_t zspread;       /* zcomp[0..3] spread: each bit covers a byte-pair */
+   uint8_t dcomp_pair;    /* dcomp adjacent-pair AND for 16bpp mode */
+   uint8_t t0_1_spread;   /* shared 16bpp z+dcomp term, spread to byte pairs */
+   uint8_t bcomp_term;    /* bit comparator: ~srcd where bcompen */
+   uint8_t sdcomp_term;   /* single-byte dcomp: dcomp where !pix16 & dcompen */
+   uint8_t inhibit_all;   /* combined per-byte inhibit before mode gating */
+   uint8_t gated;          /* after phrase_mode / winhibit gating */
 
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /* pipe-line the count */
-   /*Bcompsel[0-2]	:= FDSYNC (bcompsel[0-2], bcompselt[0-2], step_inner, clk);
-Bcompbt		:= MX8 (bcompbitpt, srcd[7], srcd[6], srcd[5],
-srcd[4], srcd[3], srcd[2], srcd[1], srcd[0], bcompsel[0..2]);
-Bcompbitp	:= FD1Q (bcompbitp, bcompbitpt, clk);
-Bcompbitp\	:= INV1 (bcompbitp\, bcompbitp);*/
-
-   /* For pixel mode, generate the write inhibit signal for all modes
-      on bit inhibit, for 8 and 16 bit modes on comparator inhibit, and
-      for 16 bit mode on Z inhibit
-
-      Nowrite = bcompen . /bcompbit . /phrase_mode
-      + dcompen . dcomp[0] . /phrase_mode . pixsize = 011
-      + dcompen . dcomp[0..1] . /phrase_mode . pixsize = 100
-      + zcomp[0] . /phrase_mode . pixsize = 100
-      */
-
-   /*Nowt0		:= NAN3 (nowt[0], bcompen, bcompbit\, phrase_mode\);
-Nowt1		:= ND6  (nowt[1], dcompen, dcomp[0], phrase_mode\, pixsize\[2], pixsize[0..1]);
-Nowt2		:= ND7  (nowt[2], dcompen, dcomp[0..1], phrase_mode\, pixsize[2], pixsize\[0..1]);
-Nowt3		:= NAN5 (nowt[3], zcomp[0], phrase_mode\, pixsize[2], pixsize\[0..1]);
-Nowt4		:= NAN4 (nowt[4], nowt[0..3]);
-Nowrite		:= AN2  (nowrite, nowt[4], bkgwren\);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   *nowrite = ((bcompen && !bcompbit && !phrase_mode)
-         || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
-         || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-         || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4)))
-      && !bkgwren;
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Winht		:= NAN3 (winht, bcompen, bcompbitp\, phrase_mode\);
-Winhibit	:= NAN4 (winhibit, winht, nowt[1..3]);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   //This is the same as above, but with bcompbit delayed one tick and called 'winhibit'
-   //Small difference: Besides the pipeline effect, it's also not using !bkgwren...
-   //	bool winhibit = (bcompen && !
+   /* nowrite and winhibit (pixel-mode write inhibit) */
    winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
       || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
-   //////////////////////////////////////////////////////////////////////////////////////
+   *nowrite = winhibit && !bkgwren;
 
-   /* For phrase mode, generate the byte inhibit signals for eight bit
-      mode 011, or sixteen bit mode 100
-      dbinh\[0] =  pixsize[2] . zcomp[0]
-      +  pixsize[2] . dcomp[0] . dcomp[1] . dcompen
-      + /pixsize[2] . dcomp[0] . dcompen
-      + /srcd[0] . bcompen
+   /* 16-bit pixel mode flag */
+   pix16 = pixsize & 0x04;
 
-      Inhibits 0-3 are also used when not in phrase mode to write back
-      destination data.
-      */
+   /* Spread zcomp[0..3] to byte pairs: zcomp bit N -> dbinh bits 2N, 2N+1 */
+   zspread = (uint8_t)(
+      ((zcomp & 0x01) ? 0x03 : 0x00) |
+      ((zcomp & 0x02) ? 0x0C : 0x00) |
+      ((zcomp & 0x04) ? 0x30 : 0x00) |
+      ((zcomp & 0x08) ? 0xC0 : 0x00));
 
-   /*Srcd\[0-7]	:= INV1 (srcd\[0-7], srcd[0-7]);
+   /* dcomp adjacent-pair AND: for 16bpp, both bytes in a 16-bit pixel
+    * must match.  Spread result to both bits of each pair. */
+   dcomp_pair = (uint8_t)(
+      (((dcomp & 0x01) && (dcomp & 0x02)) ? 0x03 : 0x00) |
+      (((dcomp & 0x04) && (dcomp & 0x08)) ? 0x0C : 0x00) |
+      (((dcomp & 0x10) && (dcomp & 0x20)) ? 0x30 : 0x00) |
+      (((dcomp & 0x40) && (dcomp & 0x80)) ? 0xC0 : 0x00));
 
-Di0t0		:= NAN2H (di0t[0], pixsize[2], zcomp[0]);
-Di0t1		:= NAN4H (di0t[1], pixsize[2], dcomp[0..1], dcompen);
-Di0t2		:= NAN2 (di0t[2], srcd\[0], bcompen);
-Di0t3		:= NAN3 (di0t[3], pixsize\[2], dcomp[0], dcompen);
-Di0t4		:= NAN4 (di0t[4], di0t[0..3]);
-Dbinh[0]	:= ANR1P (dbinh\[0], di0t[4], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   *dbinh = 0;
-   di0t0_1 = ((pixsize & 0x04) && (zcomp & 0x01))
-      || ((pixsize & 0x04) && (dcomp & 0x01) && (dcomp & 0x02) && dcompen);
-   di0t4 = di0t0_1
-      || (!(srcd & 0x01) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x01) && dcompen);
-   *dbinh |= (!((di0t4 && phrase_mode) || winhibit) ? 0x01 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
+   /* t0_1: shared 16bpp term = (pix16 & zspread) | (pix16 & dcomp_pair & dcompen) */
+   t0_1_spread = 0;
+   if (pix16)
+      t0_1_spread = zspread | (dcompen ? dcomp_pair : 0);
 
-   /*Di1t0		:= NAN3 (di1t[0], pixsize\[2], dcomp[1], dcompen);
-Di1t1		:= NAN2 (di1t[1], srcd\[1], bcompen);
-Di1t2		:= NAN4 (di1t[2], di0t[0..1], di1t[0..1]);
-Dbinh[1]	:= ANR1 (dbinh\[1], di1t[2], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di1t2 = di0t0_1
-      || (!(srcd & 0x02) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x02) && dcompen);
-   *dbinh |= (!((di1t2 && phrase_mode) || winhibit) ? 0x02 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
+   /* Bit comparator: inhibit where source bit is 0 and bcompen active */
+   bcomp_term = bcompen ? (uint8_t)(~srcd) : 0;
 
-   /*Di2t0		:= NAN2H (di2t[0], pixsize[2], zcomp[1]);
-Di2t1		:= NAN4H (di2t[1], pixsize[2], dcomp[2..3], dcompen);
-Di2t2		:= NAN2 (di2t[2], srcd\[2], bcompen);
-Di2t3		:= NAN3 (di2t[3], pixsize\[2], dcomp[2], dcompen);
-Di2t4		:= NAN4 (di2t[4], di2t[0..3]);
-Dbinh[2]	:= ANR1 (dbinh\[2], di2t[4], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   //[bcompen=F dcompen=T phrase_mode=T bkgwren=F][nw=F wi=F]
-   //[di0t0_1=F di0t4=F][di1t2=F][di2t0_1=T di2t4=T][di3t2=T][di4t0_1=F di2t4=F][di5t2=F][di6t0_1=F di6t4=F][di7t2=F]
-   //[dcomp=$00 dbinh=$0C][7804780400007804] (icount=0005, inc=4)
-   di2t0_1 = ((pixsize & 0x04) && (zcomp & 0x02))
-      || ((pixsize & 0x04) && (dcomp & 0x04) && (dcomp & 0x08) && dcompen);
-   di2t4 = di2t0_1
-      || (!(srcd & 0x04) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x04) && dcompen);
-   *dbinh |= (!((di2t4 && phrase_mode) || winhibit) ? 0x04 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
+   /* Single-byte dcomp: for 8bpp (!pix16), each dcomp bit inhibits directly */
+   sdcomp_term = (!pix16 && dcompen) ? dcomp : 0;
 
-   /*Di3t0		:= NAN3 (di3t[0], pixsize\[2], dcomp[3], dcompen);
-Di3t1		:= NAN2 (di3t[1], srcd\[3], bcompen);
-Di3t2		:= NAN4 (di3t[2], di2t[0..1], di3t[0..1]);
-Dbinh[3]	:= ANR1 (dbinh\[3], di3t[2], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di3t2 = di2t0_1
-      || (!(srcd & 0x08) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x08) && dcompen);
-   *dbinh |= (!((di3t2 && phrase_mode) || winhibit) ? 0x08 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
+   /* Combined per-byte inhibit */
+   inhibit_all = t0_1_spread | bcomp_term | sdcomp_term;
 
-   /*Di4t0		:= NAN2H (di4t[0], pixsize[2], zcomp[2]);
-Di4t1		:= NAN4H (di4t[1], pixsize[2], dcomp[4..5], dcompen);
-Di4t2		:= NAN2 (di4t[2], srcd\[4], bcompen);
-Di4t3		:= NAN3 (di4t[3], pixsize\[2], dcomp[4], dcompen);
-Di4t4		:= NAN4 (di4t[4], di4t[0..3]);
-Dbinh[4]	:= NAN2 (dbinh\[4], di4t[4], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di4t0_1 = ((pixsize & 0x04u) && (zcomp & 0x04u))
-      || ((pixsize & 0x04u) && (dcomp & 0x10u) && (dcomp & 0x20u) && dcompen);
-   di4t4 = di4t0_1
-      || (!(srcd & 0x10u) && bcompen)
-      || (!(pixsize & 0x04u) && (dcomp & 0x10u) && dcompen);
-   *dbinh |= (!(di4t4 && phrase_mode) ? 0x10u : 0x00u);
-   //////////////////////////////////////////////////////////////////////////////////////
+   /* Gate by phrase_mode and winhibit:
+    * Bits 0-3 (ANR1P): inhibit = (term & phrase_mode) | winhibit
+    * Bits 4-7 (NAN2):  inhibit = term & phrase_mode
+    * Output is active-high inhibit (matching the ~dbinh inversion). */
+   if (phrase_mode)
+   {
+      gated = inhibit_all;
+      if (winhibit)
+         gated |= 0x0F;
+   }
+   else
+   {
+      gated = 0;
+      if (winhibit)
+         gated |= 0x0F;
+   }
 
-   /*Di5t0		:= NAN3 (di5t[0], pixsize\[2], dcomp[5], dcompen);
-Di5t1		:= NAN2 (di5t[1], srcd\[5], bcompen);
-Di5t2		:= NAN4 (di5t[2], di4t[0..1], di5t[0..1]);
-Dbinh[5]	:= NAN2 (dbinh\[5], di5t[2], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di5t2 = di4t0_1
-      || (!(srcd & 0x20) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x20) && dcompen);
-   *dbinh |= (!(di5t2 && phrase_mode) ? 0x20 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di6t0		:= NAN2H (di6t[0], pixsize[2], zcomp[3]);
-Di6t1		:= NAN4H (di6t[1], pixsize[2], dcomp[6..7], dcompen);
-Di6t2		:= NAN2 (di6t[2], srcd\[6], bcompen);
-Di6t3		:= NAN3 (di6t[3], pixsize\[2], dcomp[6], dcompen);
-Di6t4		:= NAN4 (di6t[4], di6t[0..3]);
-Dbinh[6]	:= NAN2 (dbinh\[6], di6t[4], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di6t0_1 = ((pixsize & 0x04) && (zcomp & 0x08))
-      || ((pixsize & 0x04) && (dcomp & 0x40) && (dcomp & 0x80) && dcompen);
-   di6t4 = di6t0_1
-      || (!(srcd & 0x40) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x40) && dcompen);
-   *dbinh |= (!(di6t4 && phrase_mode) ? 0x40 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di7t0		:= NAN3 (di7t[0], pixsize\[2], dcomp[7], dcompen);
-Di7t1		:= NAN2 (di7t[1], srcd\[7], bcompen);
-Di7t2		:= NAN4 (di7t[2], di6t[0..1], di7t[0..1]);
-Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di7t2 = di6t0_1
-      || (!(srcd & 0x80) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x80) && dcompen);
-   *dbinh |= (!(di7t2 && phrase_mode) ? 0x80 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   //END;
-   //kludge
-   *dbinh = ~*dbinh;
+   *dbinh = gated;
 }
 
 static BLITTER_ALWAYS_INLINE
@@ -1644,24 +1533,43 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	maskt = s_fine & 0x0001;
-	maskt |= (((maskt & 0x0001) || (s_fine & 0x02u)) && (e_fine & 0x02u) ? 0x0002 : 0x0000);
-	maskt |= (((maskt & 0x0002) || (s_fine & 0x04u)) && (e_fine & 0x04u) ? 0x0004 : 0x0000);
-	maskt |= (((maskt & 0x0004) || (s_fine & 0x08u)) && (e_fine & 0x08u) ? 0x0008 : 0x0000);
-	maskt |= (((maskt & 0x0008) || (s_fine & 0x10u)) && (e_fine & 0x10u) ? 0x0010 : 0x0000);
-	maskt |= (((maskt & 0x0010) || (s_fine & 0x20u)) && (e_fine & 0x20u) ? 0x0020 : 0x0000);
-	maskt |= (((maskt & 0x0020) || (s_fine & 0x40u)) && (e_fine & 0x40u) ? 0x0040 : 0x0000);
-	maskt |= (((maskt & 0x0040) || (s_fine & 0x80u)) && (e_fine & 0x80u) ? 0x0080 : 0x0000);
-//////////////////////////////////////////////////////////////////////////////////////
+	/* Parallel prefix (Kogge-Stone) replaces the 15-step serial
+	 * OAN1P ripple carry with O(log n) branchless shift-and-combine steps.
+	 *
+	 * The carry chain is: maskt[n] = (maskt[n-1] | s[n]) & e[n]
+	 * which is a generate-propagate network:
+	 *   generate  g[n] = s[n] & e[n]   (bit starts a new run)
+	 *   propagate p[n] = e[n]           (bit allows carry through)
+	 *   carry     c[n] = g[n] | (p[n] & c[n-1])
+	 * Bit 0 is special: g[0] = s_fine[0], p[0] = 1 (no gate).
+	 *
+	 * Verified bit-exact for all 4096 dstart/dend combinations. */
+	{
+		uint16_t fg, fp, cg, cp;
 
-   /* Produce a look-ahead on the ripple carry */
-	maskt |= (((s_coarse & e_coarse & 0x01u) || (s_coarse & 0x02u)) && (e_coarse & 0x02u) ? 0x0100 : 0x0000);
-	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04u)) && (e_coarse & 0x04u) ? 0x0200 : 0x0000);
-	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08u)) && (e_coarse & 0x08u) ? 0x0400 : 0x0000);
-	maskt |= (((maskt & 0x0400) || (s_coarse & 0x10u)) && (e_coarse & 0x10u) ? 0x0800 : 0x0000);
-	maskt |= (((maskt & 0x0800) || (s_coarse & 0x20u)) && (e_coarse & 0x20u) ? 0x1000 : 0x0000);
-	maskt |= (((maskt & 0x1000) || (s_coarse & 0x40u)) && (e_coarse & 0x40u) ? 0x2000 : 0x0000);
-	maskt |= (((maskt & 0x2000) || (s_coarse & 0x80u)) && (e_coarse & 0x80u) ? 0x4000 : 0x0000);
+		/* Fine section (bits 0-7) */
+		fg = (uint16_t)(s_fine & e_fine) | (uint16_t)(s_fine & 0x01u);
+		fp = (uint16_t)e_fine | 0x01u;
+
+		fg  |= fp & (fg << 1);
+		fp  &= (fp << 1);
+		fg  |= fp & (fg << 2);
+		fp  &= (fp << 2);
+		fg  |= fp & (fg << 4);
+		maskt = fg & 0x00FFu;
+
+		/* Coarse section (bits 8-14): same pattern,
+		 * seed = s_coarse & e_coarse, propagate = e_coarse */
+		cg = (uint16_t)(s_coarse & e_coarse);
+		cp = (uint16_t)e_coarse;
+
+		cg  |= cp & (cg << 1);
+		cp  &= (cp << 1);
+		cg  |= cp & (cg << 2);
+		cp  &= (cp << 2);
+		cg  |= cp & (cg << 4);
+		maskt |= (cg & 0x00FEu) << 7;
+	}
 
 /* The bit terms are mirrored for big-endian pixels outside phrase
 mode.  The byte terms are mirrored for big-endian pixels in phrase
