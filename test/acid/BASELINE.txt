@@ -1,6 +1,6 @@
-[FAIL tests/blitter/copy_pix1_phrase.jag
-[FAIL tests/blitter/copy_pix2_phrase.jag
-[FAIL tests/blitter/copy_pix4_phrase.jag
+[PASS tests/blitter/copy_pix1_phrase.jag
+[PASS tests/blitter/copy_pix2_phrase.jag
+[PASS tests/blitter/copy_pix4_phrase.jag
 [FAIL tests/blitter/pattern_fill.jag
 [FAIL tests/bus/bus_blitter_starves_cpu.jag
 [FAIL tests/bus/bus_cpu_starves_blitter.jag
