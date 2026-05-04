@@ -760,203 +760,184 @@ void GPUExec(int32_t cycles)
 }
 
 INLINE static void executeOpcode(uint32_t index) {
-    switch (index) {
-        case 0:
-            gpu_opcode_add();
-            break;
-        case 1:
-            gpu_opcode_addc();
-            break;
-        case 2:
-            gpu_opcode_addq();
-            break;
-        case 3:
-            gpu_opcode_addqt();
-            break;
-        case 4:
-            gpu_opcode_sub();
-            break;
-        case 5:
-            gpu_opcode_subc();
-            break;
-        case 6:
-            gpu_opcode_subq();
-            break;
-        case 7:
-            gpu_opcode_subqt();
-            break;
-        case 8:
-            gpu_opcode_neg();
-            break;
-        case 9:
-            gpu_opcode_and();
-            break;
-        case 10:
-            gpu_opcode_or();
-            break;
-        case 11:
-            gpu_opcode_xor();
-            break;
-        case 12:
-            gpu_opcode_not();
-            break;
-        case 13:
-            gpu_opcode_btst();
-            break;
-        case 14:
-            gpu_opcode_bset();
-            break;
-        case 15:
-            gpu_opcode_bclr();
-            break;
-        case 16:
-            gpu_opcode_mult();
-            break;
-        case 17:
-            gpu_opcode_imult();
-            break;
-        case 18:
-            gpu_opcode_imultn();
-            break;
-        case 19:
-            gpu_opcode_resmac();
-            break;
-        case 20:
-            gpu_opcode_imacn();
-            break;
-        case 21:
-            gpu_opcode_div();
-            break;
-        case 22:
-            gpu_opcode_abs();
-            break;
-        case 23:
-            gpu_opcode_sh();
-            break;
-        case 24:
-            gpu_opcode_shlq();
-            break;
-        case 25:
-            gpu_opcode_shrq();
-            break;
-        case 26:
-            gpu_opcode_sha();
-            break;
-        case 27:
-            gpu_opcode_sharq();
-            break;
-        case 28:
-            gpu_opcode_ror();
-            break;
-        case 29:
-            gpu_opcode_rorq();
-            break;
-        case 30:
-            gpu_opcode_cmp();
-            break;
-        case 31:
-            gpu_opcode_cmpq();
-            break;
-        case 32:
-            gpu_opcode_sat8();
-            break;
-        case 33:
-            gpu_opcode_sat16();
-            break;
-        case 34:
-            gpu_opcode_move();
-            break;
-        case 35:
-            gpu_opcode_moveq();
-            break;
-        case 36:
-            gpu_opcode_moveta();
-            break;
-        case 37:
-            gpu_opcode_movefa();
-            break;
-        case 38:
-            gpu_opcode_movei();
-            break;
-        case 39:
-            gpu_opcode_loadb();
-            break;
-        case 40:
-            gpu_opcode_loadw();
-            break;
-        case 41:
-            gpu_opcode_load();
-            break;
-        case 42:
-            gpu_opcode_loadp();
-            break;
-        case 43:
-            gpu_opcode_load_r14_indexed();
-            break;
-        case 44:
-            gpu_opcode_load_r15_indexed();
-            break;
-        case 45:
-            gpu_opcode_storeb();
-            break;
-        case 46:
-            gpu_opcode_storew();
-            break;
-        case 47:
-            gpu_opcode_store();
-            break;
-        case 48:
-            gpu_opcode_storep();
-            break;
-        case 49:
-            gpu_opcode_store_r14_indexed();
-            break;
-        case 50:
-            gpu_opcode_store_r15_indexed();
-            break;
-        case 51:
-            gpu_opcode_move_pc();
-            break;
-        case 52:
-            gpu_opcode_jump();
-            break;
-        case 53:
-            gpu_opcode_jr();
-            break;
-        case 54:
-            gpu_opcode_mmult();
-            break;
-        case 55:
-            gpu_opcode_mtoi();
-            break;
-        case 56:
-            gpu_opcode_normi();
-            break;
-        case 57:
-            gpu_opcode_nop();
-            break;
-        case 58:
-            gpu_opcode_load_r14_ri();
-            break;
-        case 59:
-            gpu_opcode_load_r15_ri();
-            break;
-        case 60:
-            gpu_opcode_store_r14_ri();
-            break;
-        case 61:
-            gpu_opcode_store_r15_ri();
-            break;
-        case 62:
-            gpu_opcode_sat24();
-            break;
-        case 63:
-            gpu_opcode_pack();
-            break;
-        default:
-            // WriteLog("\nUnknown opcode %i\n", index);
-            break;
-    }
+#ifdef __GNUC__
+	/* Computed-goto dispatch table -- one label per RISC opcode.
+	 * GCC/Clang extension: &&label yields the address of a label;
+	 * goto *ptr jumps through an arbitrary code address.  This
+	 * eliminates the single indirect-branch bottleneck of switch
+	 * dispatch and lets the branch predictor track each opcode
+	 * independently. */
+	static const void *gpu_dispatch[64] = {
+		&&gpu_op_add,             &&gpu_op_addc,
+		&&gpu_op_addq,            &&gpu_op_addqt,
+		&&gpu_op_sub,             &&gpu_op_subc,
+		&&gpu_op_subq,            &&gpu_op_subqt,
+		&&gpu_op_neg,             &&gpu_op_and,
+		&&gpu_op_or,              &&gpu_op_xor,
+		&&gpu_op_not,             &&gpu_op_btst,
+		&&gpu_op_bset,            &&gpu_op_bclr,
+		&&gpu_op_mult,            &&gpu_op_imult,
+		&&gpu_op_imultn,          &&gpu_op_resmac,
+		&&gpu_op_imacn,           &&gpu_op_div,
+		&&gpu_op_abs,             &&gpu_op_sh,
+		&&gpu_op_shlq,            &&gpu_op_shrq,
+		&&gpu_op_sha,             &&gpu_op_sharq,
+		&&gpu_op_ror,             &&gpu_op_rorq,
+		&&gpu_op_cmp,             &&gpu_op_cmpq,
+		&&gpu_op_sat8,            &&gpu_op_sat16,
+		&&gpu_op_move,            &&gpu_op_moveq,
+		&&gpu_op_moveta,          &&gpu_op_movefa,
+		&&gpu_op_movei,           &&gpu_op_loadb,
+		&&gpu_op_loadw,           &&gpu_op_load,
+		&&gpu_op_loadp,           &&gpu_op_load_r14_indexed,
+		&&gpu_op_load_r15_indexed,&&gpu_op_storeb,
+		&&gpu_op_storew,          &&gpu_op_store,
+		&&gpu_op_storep,          &&gpu_op_store_r14_indexed,
+		&&gpu_op_store_r15_indexed,&&gpu_op_move_pc,
+		&&gpu_op_jump,            &&gpu_op_jr,
+		&&gpu_op_mmult,           &&gpu_op_mtoi,
+		&&gpu_op_normi,           &&gpu_op_nop,
+		&&gpu_op_load_r14_ri,     &&gpu_op_load_r15_ri,
+		&&gpu_op_store_r14_ri,    &&gpu_op_store_r15_ri,
+		&&gpu_op_sat24,           &&gpu_op_pack
+	};
+
+	goto *gpu_dispatch[index];
+
+	gpu_op_add:             gpu_opcode_add();             return;
+	gpu_op_addc:            gpu_opcode_addc();            return;
+	gpu_op_addq:            gpu_opcode_addq();            return;
+	gpu_op_addqt:           gpu_opcode_addqt();           return;
+	gpu_op_sub:             gpu_opcode_sub();             return;
+	gpu_op_subc:            gpu_opcode_subc();            return;
+	gpu_op_subq:            gpu_opcode_subq();            return;
+	gpu_op_subqt:           gpu_opcode_subqt();           return;
+	gpu_op_neg:             gpu_opcode_neg();             return;
+	gpu_op_and:             gpu_opcode_and();             return;
+	gpu_op_or:              gpu_opcode_or();              return;
+	gpu_op_xor:             gpu_opcode_xor();             return;
+	gpu_op_not:             gpu_opcode_not();             return;
+	gpu_op_btst:            gpu_opcode_btst();            return;
+	gpu_op_bset:            gpu_opcode_bset();            return;
+	gpu_op_bclr:            gpu_opcode_bclr();            return;
+	gpu_op_mult:            gpu_opcode_mult();            return;
+	gpu_op_imult:           gpu_opcode_imult();           return;
+	gpu_op_imultn:          gpu_opcode_imultn();          return;
+	gpu_op_resmac:          gpu_opcode_resmac();          return;
+	gpu_op_imacn:           gpu_opcode_imacn();           return;
+	gpu_op_div:             gpu_opcode_div();             return;
+	gpu_op_abs:             gpu_opcode_abs();             return;
+	gpu_op_sh:              gpu_opcode_sh();              return;
+	gpu_op_shlq:            gpu_opcode_shlq();            return;
+	gpu_op_shrq:            gpu_opcode_shrq();            return;
+	gpu_op_sha:             gpu_opcode_sha();             return;
+	gpu_op_sharq:           gpu_opcode_sharq();           return;
+	gpu_op_ror:             gpu_opcode_ror();             return;
+	gpu_op_rorq:            gpu_opcode_rorq();            return;
+	gpu_op_cmp:             gpu_opcode_cmp();             return;
+	gpu_op_cmpq:            gpu_opcode_cmpq();            return;
+	gpu_op_sat8:            gpu_opcode_sat8();            return;
+	gpu_op_sat16:           gpu_opcode_sat16();           return;
+	gpu_op_move:            gpu_opcode_move();            return;
+	gpu_op_moveq:           gpu_opcode_moveq();           return;
+	gpu_op_moveta:          gpu_opcode_moveta();          return;
+	gpu_op_movefa:          gpu_opcode_movefa();          return;
+	gpu_op_movei:           gpu_opcode_movei();           return;
+	gpu_op_loadb:           gpu_opcode_loadb();           return;
+	gpu_op_loadw:           gpu_opcode_loadw();           return;
+	gpu_op_load:            gpu_opcode_load();            return;
+	gpu_op_loadp:           gpu_opcode_loadp();           return;
+	gpu_op_load_r14_indexed:gpu_opcode_load_r14_indexed();return;
+	gpu_op_load_r15_indexed:gpu_opcode_load_r15_indexed();return;
+	gpu_op_storeb:          gpu_opcode_storeb();          return;
+	gpu_op_storew:          gpu_opcode_storew();          return;
+	gpu_op_store:           gpu_opcode_store();           return;
+	gpu_op_storep:          gpu_opcode_storep();          return;
+	gpu_op_store_r14_indexed:gpu_opcode_store_r14_indexed();return;
+	gpu_op_store_r15_indexed:gpu_opcode_store_r15_indexed();return;
+	gpu_op_move_pc:         gpu_opcode_move_pc();         return;
+	gpu_op_jump:            gpu_opcode_jump();            return;
+	gpu_op_jr:              gpu_opcode_jr();              return;
+	gpu_op_mmult:           gpu_opcode_mmult();           return;
+	gpu_op_mtoi:            gpu_opcode_mtoi();            return;
+	gpu_op_normi:           gpu_opcode_normi();           return;
+	gpu_op_nop:             gpu_opcode_nop();             return;
+	gpu_op_load_r14_ri:     gpu_opcode_load_r14_ri();     return;
+	gpu_op_load_r15_ri:     gpu_opcode_load_r15_ri();     return;
+	gpu_op_store_r14_ri:    gpu_opcode_store_r14_ri();    return;
+	gpu_op_store_r15_ri:    gpu_opcode_store_r15_ri();    return;
+	gpu_op_sat24:           gpu_opcode_sat24();           return;
+	gpu_op_pack:            gpu_opcode_pack();            return;
+#else
+	/* Switch fallback for MSVC and other non-GNU compilers */
+	switch (index) {
+	case 0:  gpu_opcode_add();             break;
+	case 1:  gpu_opcode_addc();            break;
+	case 2:  gpu_opcode_addq();            break;
+	case 3:  gpu_opcode_addqt();           break;
+	case 4:  gpu_opcode_sub();             break;
+	case 5:  gpu_opcode_subc();            break;
+	case 6:  gpu_opcode_subq();            break;
+	case 7:  gpu_opcode_subqt();           break;
+	case 8:  gpu_opcode_neg();             break;
+	case 9:  gpu_opcode_and();             break;
+	case 10: gpu_opcode_or();              break;
+	case 11: gpu_opcode_xor();             break;
+	case 12: gpu_opcode_not();             break;
+	case 13: gpu_opcode_btst();            break;
+	case 14: gpu_opcode_bset();            break;
+	case 15: gpu_opcode_bclr();            break;
+	case 16: gpu_opcode_mult();            break;
+	case 17: gpu_opcode_imult();           break;
+	case 18: gpu_opcode_imultn();          break;
+	case 19: gpu_opcode_resmac();          break;
+	case 20: gpu_opcode_imacn();           break;
+	case 21: gpu_opcode_div();             break;
+	case 22: gpu_opcode_abs();             break;
+	case 23: gpu_opcode_sh();              break;
+	case 24: gpu_opcode_shlq();            break;
+	case 25: gpu_opcode_shrq();            break;
+	case 26: gpu_opcode_sha();             break;
+	case 27: gpu_opcode_sharq();           break;
+	case 28: gpu_opcode_ror();             break;
+	case 29: gpu_opcode_rorq();            break;
+	case 30: gpu_opcode_cmp();             break;
+	case 31: gpu_opcode_cmpq();            break;
+	case 32: gpu_opcode_sat8();            break;
+	case 33: gpu_opcode_sat16();           break;
+	case 34: gpu_opcode_move();            break;
+	case 35: gpu_opcode_moveq();           break;
+	case 36: gpu_opcode_moveta();          break;
+	case 37: gpu_opcode_movefa();          break;
+	case 38: gpu_opcode_movei();           break;
+	case 39: gpu_opcode_loadb();           break;
+	case 40: gpu_opcode_loadw();           break;
+	case 41: gpu_opcode_load();            break;
+	case 42: gpu_opcode_loadp();           break;
+	case 43: gpu_opcode_load_r14_indexed(); break;
+	case 44: gpu_opcode_load_r15_indexed(); break;
+	case 45: gpu_opcode_storeb();          break;
+	case 46: gpu_opcode_storew();          break;
+	case 47: gpu_opcode_store();           break;
+	case 48: gpu_opcode_storep();          break;
+	case 49: gpu_opcode_store_r14_indexed(); break;
+	case 50: gpu_opcode_store_r15_indexed(); break;
+	case 51: gpu_opcode_move_pc();         break;
+	case 52: gpu_opcode_jump();            break;
+	case 53: gpu_opcode_jr();              break;
+	case 54: gpu_opcode_mmult();           break;
+	case 55: gpu_opcode_mtoi();            break;
+	case 56: gpu_opcode_normi();           break;
+	case 57: gpu_opcode_nop();             break;
+	case 58: gpu_opcode_load_r14_ri();     break;
+	case 59: gpu_opcode_load_r15_ri();     break;
+	case 60: gpu_opcode_store_r14_ri();    break;
+	case 61: gpu_opcode_store_r15_ri();    break;
+	case 62: gpu_opcode_sat24();           break;
+	case 63: gpu_opcode_pack();            break;
+	default: break;
+	}
+#endif
 }
 
 // GPU opcodes
