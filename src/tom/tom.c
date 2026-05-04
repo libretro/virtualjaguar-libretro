@@ -1296,10 +1296,9 @@ void TOMResetPIT(void)
 
    if (tomTimerPrescaler)
    {
-      /* Per JTRM §3.7, the PIT runs at half the system clock --
-         13.295 MHz NTSC / 13.296 MHz PAL, the same rate as the 68K. */
+      /* JTRM: PIT divides the system clock (26.59 MHz) by (N+1). */
       double usecs = (double)(tomTimerPrescaler + 1) * (double)(tomTimerDivider + 1)
-         * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(TOMPITCallback, usecs, EVENT_MAIN);
    }
 #endif
