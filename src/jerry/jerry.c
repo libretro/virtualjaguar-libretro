@@ -217,15 +217,24 @@ void JERRYResetI2S(void)
 }
 
 
+/*
+ * PIT clock rate: The JTRM Software Reference says PIT divides the
+ * "processor clock" (26.59 MHz), but games like Doom were programmed
+ * assuming the half-rate (13.3 MHz).  Using M68K_CYCLE_IN_USEC for
+ * scheduling and M68K_CLOCK_RATE for frequency helpers matches observed
+ * game behavior and other emulators.  TOMResetPIT() in tom.c uses the
+ * same convention.
+ */
+
 void JERRYResetPIT1(void)
 {
    RemoveCallback(JERRYPIT1Callback);
 
    if (JERRYPIT1Prescaler | JERRYPIT1Divider)
    {
-      /* Period = (prescaler+1)*(divider+1) * RISC_CYCLE_{NTSC,PAL}. */
+      /* See PIT clock rate note above. */
       double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
-         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+         * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);
    }
 }
@@ -237,8 +246,9 @@ void JERRYResetPIT2(void)
 
    if (JERRYPIT2Prescaler | JERRYPIT2Divider)
    {
+      /* See PIT clock rate note above. */
       double usecs = (double)(JERRYPIT2Prescaler + 1) * (double)(JERRYPIT2Divider + 1)
-         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+         * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT2Callback, usecs, EVENT_JERRY);
    }
 }
@@ -638,15 +648,23 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
 int JERRYGetPIT1Frequency(void)
 {
-   int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   return systemClockFrequency / ((JERRYPIT1Prescaler + 1) * (JERRYPIT1Divider + 1));
+   /* Use M68K_CLOCK_RATE to match M68K_CYCLE_IN_USEC scheduling; see PIT clock rate note. */
+   int systemClockFrequency = (vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL);
+   int64_t divisor = (int64_t)(JERRYPIT1Prescaler + 1) * (int64_t)(JERRYPIT1Divider + 1);
+   if (divisor == 0)
+      return 0;
+   return (int)(systemClockFrequency / divisor);
 }
 
 
 int JERRYGetPIT2Frequency(void)
 {
-   int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   return systemClockFrequency / ((JERRYPIT2Prescaler + 1) * (JERRYPIT2Divider + 1));
+   /* Use M68K_CLOCK_RATE to match M68K_CYCLE_IN_USEC scheduling; see PIT clock rate note. */
+   int systemClockFrequency = (vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL);
+   int64_t divisor = (int64_t)(JERRYPIT2Prescaler + 1) * (int64_t)(JERRYPIT2Divider + 1);
+   if (divisor == 0)
+      return 0;
+   return (int)(systemClockFrequency / divisor);
 }
 
 #include "state.h"
