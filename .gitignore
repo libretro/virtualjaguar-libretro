@@ -46,6 +46,11 @@ test/*.dSYM/
 *.log
 test/*.log
 
+# SRAM and CDROM save files (left at repo root by test harnesses
+# that don't redirect the core's save path)
+/*.srm
+/*.cdrom.srm
+
 # Test ROMs (keep source scripts, ignore binaries)
 test/roms/*.jag
 test/roms/*.rom
