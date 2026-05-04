@@ -1127,10 +1127,7 @@ void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
    sat = daddmode & 0x03;
    hicinh = ((daddmode & 0x03) == 0x03);
 
-   ADD16SAT(&addq[0], &co[0], adda[0], addb[0], cin[0], sat, eightbit, hicinh);
-   ADD16SAT(&addq[1], &co[1], adda[1], addb[1], cin[1], sat, eightbit, hicinh);
-   ADD16SAT(&addq[2], &co[2], adda[2], addb[2], cin[2], sat, eightbit, hicinh);
-   ADD16SAT(&addq[3], &co[3], adda[3], addb[3], cin[3], sat, eightbit, hicinh);
+   blitter_simd_ops.add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
 }
 
 static BLITTER_ALWAYS_INLINE
