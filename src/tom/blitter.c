@@ -2713,10 +2713,11 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                }
 
                zSrcShift = srcshift & 0x30;
-               srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
-               //bleh, ugly ugly ugly
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
                if (zSrcShift == 0)
                   srcz = srcz1;
+               else
+                  srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
 
 
                //When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
