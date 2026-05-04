@@ -2016,7 +2016,7 @@ void BlitterMidsummer2(void)
           *=================================================================*/
          if (patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
                && !gourd && !gourz && !srcshade && !adddsel
-               && !bcompen && !dcompen && !a2update)
+               && !bcompen && !dcompen && !a2update && zmode == 0)
          {
             /* Collapsed-path local variables (C89: all at top of block) */
             bool pf_a1_add, pf_a2_add;
@@ -2164,8 +2164,7 @@ void BlitterMidsummer2(void)
                   pf_winhibit = true;
 
                /* ---- Write pixel/phrase ---- */
-               if (phrase_mode)
-                  PERF_INC(blitter_phrase_writes);
+               PERF_INC(blitter_phrase_writes);
                if (!pf_winhibit || bkgwren)
                {
                   if (phrase_mode)
