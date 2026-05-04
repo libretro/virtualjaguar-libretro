@@ -2015,7 +2015,8 @@ void BlitterMidsummer2(void)
           * The existing state machine is the fallback for all other configs.
           *=================================================================*/
          if (patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
-               && !gourd && !gourz && !srcshade && !adddsel)
+               && !gourd && !gourz && !srcshade && !adddsel
+               && !bcompen && !dcompen)
          {
             /* Collapsed-path local variables (C89: all at top of block) */
             bool pf_a1_add, pf_a2_add;
@@ -2117,7 +2118,12 @@ void BlitterMidsummer2(void)
                pf_pma = pixAddr + (1 << pixsize);
                pf_dend = (phrase_mode ? pf_emask : pf_pma);
 
-               /* Implicit dest read for phrase-mode byte merging (same as state machine) */
+               /* Implicit dest read for phrase-mode byte merging (same as state machine).
+                * Initialize to 0 then overwrite from memory: identical to state machine
+                * behavior, which only reads dstd in the dread state (skipped here since
+                * !dsten) and uses DSTDATA reg (dstd) as the background when bkgwren is
+                * set.  When bkgwren=true, DATA() blends against DSTDATA (0 = black) for
+                * any bits not covered by the patd mask — same as the state-machine path. */
                pf_dstd_local = 0;
                if (phrase_mode && !bkgwren)
                   pf_dstd_local = ((uint64_t)JaguarReadLong(address, BLITTER) << 32)
@@ -2674,10 +2680,11 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                // Precedence is ADDDSEL > PATDSEL > LFU.
 
                // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
-               srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
-               //bleh, ugly ugly ugly
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
                if (srcshift == 0)
                   srcd = srcd1;
+               else
+                  srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
 
                //NOTE: This only works with pixel sizes less than 8BPP...
                //DOUBLE NOTE: Still need to do regression testing to ensure that this doesn't break other stuff... !!! CHECK !!!
