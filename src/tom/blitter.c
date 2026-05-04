@@ -48,6 +48,62 @@
 #  define BLITTER_ALWAYS_INLINE inline
 #endif
 
+/* Fast-path RAM helpers for the blitter inner loop.
+ * ~98% of blitter memory accesses target main RAM (0x000000-0x1FFFFF).
+ * These helpers inline the RAM check and byte-swap, avoiding the full
+ * address dispatch in JaguarReadWord/JaguarWriteLong etc. for the common case. */
+
+static BLITTER_ALWAYS_INLINE uint8_t blitter_read_byte(uint32_t addr)
+{
+   if (addr < 0x200000)
+      return jaguarMainRAM[addr & 0x1FFFFF];
+   return JaguarReadByte(addr, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE uint16_t blitter_read_word(uint32_t addr)
+{
+   if (addr < 0x200000)
+      return GET16(jaguarMainRAM, addr & 0x1FFFFF);
+   return JaguarReadWord(addr, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE uint32_t blitter_read_long(uint32_t addr)
+{
+   if (addr < 0x200000)
+      return GET32(jaguarMainRAM, addr & 0x1FFFFF);
+   return JaguarReadLong(addr, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data)
+{
+   if (addr < 0x200000)
+   {
+      jaguarMainRAM[addr & 0x1FFFFF] = data;
+      return;
+   }
+   JaguarWriteByte(addr, data, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t data)
+{
+   if (addr < 0x200000)
+   {
+      SET16(jaguarMainRAM, addr & 0x1FFFFF, data);
+      return;
+   }
+   JaguarWriteWord(addr, data, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t data)
+{
+   if (addr < 0x200000)
+   {
+      SET32(jaguarMainRAM, addr & 0x1FFFFF, data);
+      return;
+   }
+   JaguarWriteLong(addr, data, BLITTER);
+}
+
 // Local global variables
 
 // Blitter register RAM (most of it is hidden from the user)
@@ -2234,8 +2290,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
                //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
                srcd2 = srcd1;
-               srcd1 = ((uint64_t)JaguarReadLong(address + 0, BLITTER) << 32)
-                  | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               srcd1 = ((uint64_t)blitter_read_long(address + 0) << 32)
+                  | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
                //Hmm. If we're not in phrase mode, this is most likely NOT going to be used...
                //Actually, it would be--because of BCOMPEN expansion, for example...
@@ -2258,7 +2314,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (szreadx)
             {
                srcz2 = srcz1;
-               srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               srcz1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
             }
 
             if (sread)
@@ -2268,7 +2324,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                blitter_did_io = 1;
 #endif
                srcd2 = srcd1;
-               srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               srcd1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
                if (!phrase_mode)
                {
@@ -2293,7 +2349,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                blitter_did_io = 1;
 #endif
                srcz2 = srcz1;
-               srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               srcz1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
                if (!phrase_mode && pixsize == 4)
                   srcz1 >>= 48;
@@ -2306,7 +2362,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
-               dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               dstd = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
                if (!phrase_mode)
                {
@@ -2322,7 +2378,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (dzread)
             {
                // Is Z always 64 bit read? Or sometimes 16 bit (dependent on phrase_mode)?
-               dstz = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               dstz = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
                if (!phrase_mode && pixsize == 4)
                   dstz >>= 48;
@@ -2421,9 +2477,9 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //dstd or the unmodified pixel slots in that byte get zeroed
                //(matches WRITE_PIXEL_1/2/4 RMW in the fast blitter).
                if (phrase_mode && !dsten && !bkgwren)
-                  dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+                  dstd = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                else if (!phrase_mode && pixsize < 3 && !dsten && !bkgwren)
-                  dstd = (uint64_t)JaguarReadByte(address, BLITTER);
+                  dstd = (uint64_t)blitter_read_byte(address);
 
                // Write data combines srcd and dstd through ADDDSEL, PATDSEL, or LFU.
                // Precedence is ADDDSEL > PATDSEL > LFU.
@@ -2552,17 +2608,17 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                {
                   if (phrase_mode)
                   {
-                     JaguarWriteLong(address + 0, wdata >> 32, BLITTER);
-                     JaguarWriteLong(address + 4, wdata & 0xFFFFFFFF, BLITTER);
+                     blitter_write_long(address + 0, wdata >> 32);
+                     blitter_write_long(address + 4, wdata & 0xFFFFFFFF);
                   }
                   else
                   {
                      if (pixsize == 5)
-                        JaguarWriteLong(address, wdata & 0xFFFFFFFF, BLITTER);
+                        blitter_write_long(address, wdata & 0xFFFFFFFF);
                      else if (pixsize == 4)
-                        JaguarWriteWord(address, wdata & 0x0000FFFF, BLITTER);
+                        blitter_write_word(address, wdata & 0x0000FFFF);
                      else
-                        JaguarWriteByte(address, wdata & 0x000000FF, BLITTER);
+                        blitter_write_byte(address, wdata & 0x000000FF);
                   }
                }
 
@@ -2590,13 +2646,13 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                {
                   if (phrase_mode)
                   {
-                     JaguarWriteLong(address + 0, srcz >> 32, BLITTER);
-                     JaguarWriteLong(address + 4, srcz & 0xFFFFFFFF, BLITTER);
+                     blitter_write_long(address + 0, srcz >> 32);
+                     blitter_write_long(address + 4, srcz & 0xFFFFFFFF);
                   }
                   else
                   {
                      if (pixsize == 4)
-                        JaguarWriteWord(address, srcz & 0x0000FFFF, BLITTER);
+                        blitter_write_word(address, srcz & 0x0000FFFF);
                   }
                }//*/
             }
