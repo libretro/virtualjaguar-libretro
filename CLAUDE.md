@@ -84,6 +84,29 @@ Key harnesses:
 
 The miniretro harness used by `test/regression_test.sh` doesn't expose the same composited framebuffer that RetroArch reads. Symptom: `jag_240p_test_suite` main menu shows ~1k non-black pixels via miniretro vs tens of thousands via RetroArch. Treat that as a **headless read-path / presentation bug** (OP+blitter output vs what the host reads), not a 240p timing or `__muldi3` performance bug. Verify against RetroArch before treating a regression as real.
 
+## Distilled hardware reference
+
+`docs/jtrm-*.md` — synthesized from the Jaguar Technical Reference Manual, optimized for LLM consumption:
+- `jtrm-clocks-timing.md` — clock hierarchy, video timing, PIT formulas, memory map, bus priority
+- `jtrm-register-map.md` — complete register addresses + bit fields (TOM, GPU, blitter, JERRY, DSP)
+- `jtrm-gpu-dsp.md` — RISC ISA, pipeline, score-boarding, interrupts, MAC, wave table ROM
+- `jtrm-blitter.md` — address generators, B_CMD, LFU truth table, modes of operation
+- `jtrm-jerry.md` — PIT timers, JINTCTRL, I2S/DAC, UART, clock dividers, EEPROM
+- `jtrm-object-processor.md` — object types, bit fields, display pipeline, colour space
+
+Read these **before** making hardware-accuracy decisions. They supersede comments in source code.
+
+## Sub-agent guidelines
+
+When spawning agents for work in this repo, include these rules:
+
+1. **C89 strict.** No mid-block declarations, no `for(int i…)`, no C99. All vars at top of block. Run `bash scripts/c89-lint.sh src/YOURFILE.c` before declaring done.
+2. **Branch from develop.** Use `git worktree` or branch off develop. Never target main.
+3. **Hardware reference.** For any emulation-accuracy work, read `docs/jtrm-*.md` first. Do NOT trust source-code comments for clock rates or register behavior.
+4. **Test after changes.** Run `make -j$(getconf _NPROCESSORS_ONLN)` to verify build. Run `make test` for the full suite. For blitter changes, also run `test/tools/test_blitter_compare` if available.
+5. **No unnecessary changes.** Don't refactor surrounding code, add abstractions, or clean up unrelated files. Surgical changes only.
+6. **Commit message style.** Use conventional commits: `fix(component):`, `perf(component):`, `test(component):`, `docs:`.
+
 ## Known limitations
 
 - Blitter not fully cycle-accurate (some games need fast mode).
