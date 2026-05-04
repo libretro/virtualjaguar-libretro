@@ -223,8 +223,7 @@ void JERRYResetPIT1(void)
 
    if (JERRYPIT1Prescaler | JERRYPIT1Divider)
    {
-      /* Period = (prescaler+1)*(divider+1) / system_clock.
-         System clock: 26.59 MHz NTSC, 26.59 MHz PAL. */
+      /* Period = (prescaler+1)*(divider+1) * RISC_CYCLE_{NTSC,PAL}. */
       double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
          * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);
