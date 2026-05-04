@@ -2115,10 +2115,10 @@ void BlitterMidsummer2(void)
                if (bkgwren)
                   pf_dstd_local = dstd;
                else if (phrase_mode)
-                  pf_dstd_local = ((uint64_t)JaguarReadLong(address, BLITTER) << 32)
-                     | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+                  pf_dstd_local = ((uint64_t)blitter_read_long(address) << 32)
+                     | (uint64_t)blitter_read_long(address + 4);
                else if (pixsize < 3)
-                  pf_dstd_local = (uint64_t)JaguarReadByte(address, BLITTER);
+                  pf_dstd_local = (uint64_t)blitter_read_byte(address);
                else
                   pf_dstd_local = 0;
 
@@ -2152,17 +2152,17 @@ void BlitterMidsummer2(void)
                {
                   if (phrase_mode)
                   {
-                     JaguarWriteLong(address + 0, pf_wdata >> 32, BLITTER);
-                     JaguarWriteLong(address + 4, pf_wdata & 0xFFFFFFFF, BLITTER);
+                     blitter_write_long(address + 0, pf_wdata >> 32);
+                     blitter_write_long(address + 4, pf_wdata & 0xFFFFFFFF);
                   }
                   else
                   {
                      if (pixsize == 5)
-                        JaguarWriteLong(address, pf_wdata & 0xFFFFFFFF, BLITTER);
+                        blitter_write_long(address, pf_wdata & 0xFFFFFFFF);
                      else if (pixsize == 4)
-                        JaguarWriteWord(address, pf_wdata & 0x0000FFFF, BLITTER);
+                        blitter_write_word(address, pf_wdata & 0x0000FFFF);
                      else
-                        JaguarWriteByte(address, pf_wdata & 0x000000FF, BLITTER);
+                        blitter_write_byte(address, pf_wdata & 0x000000FF);
                   }
                }
 
@@ -2359,8 +2359,8 @@ void BlitterMidsummer2(void)
 
                /* Source data pipeline: srcd2 = previous, srcd1 = new read */
                srcd2 = srcd1;
-               srcd1 = ((uint64_t)JaguarReadLong(fc_src_addr, BLITTER) << 32)
-                  | (uint64_t)JaguarReadLong(fc_src_addr + 4, BLITTER);
+               srcd1 = ((uint64_t)blitter_read_long(fc_src_addr) << 32)
+                  | (uint64_t)blitter_read_long(fc_src_addr + 4);
                PERF_INC(blitter_phrase_reads);
 
                /* Pixel mode: shift source to correct position */
@@ -2429,10 +2429,10 @@ void BlitterMidsummer2(void)
 
                /* Implicit dest read for byte merging (phrase mode or sub-byte pixels) */
                if (phrase_mode && !bkgwren)
-                  dstd = ((uint64_t)JaguarReadLong(fc_dst_addr, BLITTER) << 32)
-                     | (uint64_t)JaguarReadLong(fc_dst_addr + 4, BLITTER);
+                  dstd = ((uint64_t)blitter_read_long(fc_dst_addr) << 32)
+                     | (uint64_t)blitter_read_long(fc_dst_addr + 4);
                else if (!phrase_mode && pixsize < 3 && !bkgwren)
-                  dstd = (uint64_t)JaguarReadByte(fc_dst_addr, BLITTER);
+                  dstd = (uint64_t)blitter_read_byte(fc_dst_addr);
 
                /* Source shift/alignment */
                /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
@@ -2475,17 +2475,17 @@ void BlitterMidsummer2(void)
                {
                   if (phrase_mode)
                   {
-                     JaguarWriteLong(fc_dst_addr + 0, fc_wdata >> 32, BLITTER);
-                     JaguarWriteLong(fc_dst_addr + 4, fc_wdata & 0xFFFFFFFF, BLITTER);
+                     blitter_write_long(fc_dst_addr + 0, fc_wdata >> 32);
+                     blitter_write_long(fc_dst_addr + 4, fc_wdata & 0xFFFFFFFF);
                   }
                   else
                   {
                      if (pixsize == 5)
-                        JaguarWriteLong(fc_dst_addr, fc_wdata & 0xFFFFFFFF, BLITTER);
+                        blitter_write_long(fc_dst_addr, fc_wdata & 0xFFFFFFFF);
                      else if (pixsize == 4)
-                        JaguarWriteWord(fc_dst_addr, fc_wdata & 0x0000FFFF, BLITTER);
+                        blitter_write_word(fc_dst_addr, fc_wdata & 0x0000FFFF);
                      else
-                        JaguarWriteByte(fc_dst_addr, fc_wdata & 0x000000FF, BLITTER);
+                        blitter_write_byte(fc_dst_addr, fc_wdata & 0x000000FF);
                   }
                }
 
