@@ -2118,18 +2118,19 @@ void BlitterMidsummer2(void)
                pf_pma = pixAddr + (1 << pixsize);
                pf_dend = (phrase_mode ? pf_emask : pf_pma);
 
-               /* Implicit dest read for phrase-mode byte merging (same as state machine).
-                * Initialize to 0 then overwrite from memory: identical to state machine
-                * behavior, which only reads dstd in the dread state (skipped here since
-                * !dsten) and uses DSTDATA reg (dstd) as the background when bkgwren is
-                * set.  When bkgwren=true, DATA() blends against DSTDATA (0 = black) for
-                * any bits not covered by the patd mask — same as the state-machine path. */
-               pf_dstd_local = 0;
-               if (phrase_mode && !bkgwren)
+               /* Implicit dest read for phrase-mode byte merging.
+                * When bkgwren is set, use the DSTDATA register value (dstd) as the
+                * background — matching the state machine, where !dsten skips dread
+                * and dstd retains its register-init value. */
+               if (bkgwren)
+                  pf_dstd_local = dstd;
+               else if (phrase_mode)
                   pf_dstd_local = ((uint64_t)JaguarReadLong(address, BLITTER) << 32)
                      | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-               else if (!phrase_mode && pixsize < 3 && !bkgwren)
+               else if (pixsize < 3)
                   pf_dstd_local = (uint64_t)JaguarReadByte(address, BLITTER);
+               else
+                  pf_dstd_local = 0;
 
                /* ---- DATA: patd passthrough with masking ---- */
                /* For pure patfill (!gourd,!gourz,!srcshade): daddasel=0,
