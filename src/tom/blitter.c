@@ -2450,7 +2450,8 @@ void BlitterMidsummer2(void)
                   uint64_t fc_srcz_dummy = 0;
                   DATA(&fc_wdata, &fc_dcomp_val, &fc_zcomp_val, &fc_winhibit,
                         true/*big_pix*/, cmpdst,
-                        0/*daddasel*/, 0/*daddbsel*/, 7/*daddmode*/,
+                        0/*daddasel*/, 0/*daddbsel*/,
+                        (uint8_t)(0x05 | (topben ? 0x00 : 0x02))/*daddmode*/,
                         false/*daddq_sel*/, 1/*data_sel=LFU*/, 0/*dbinh*/,
                         fc_dend, fc_dstart, dstd, iinc, lfufunc, &patd,
                         false/*patdadd*/,
