@@ -6,8 +6,14 @@
 ;
 ; Detail codes (the test does not poll BUSY -- emulator blitter is
 ; synchronous -- so detail values come strictly from the compare):
-;   1 = first  longword (DST+0) mismatched expected PAT_HI (= $DEADBEEF)
-;   2 = second longword (DST+4) mismatched expected PAT_LO (= $CAFEBABE)
+;   1 = first  longword (DST+0) mismatched expected PAT_HI ($DEADBEEF)
+;   2 = second longword (DST+4) mismatched expected PAT_LO ($CAFEBABE)
+;
+; The writes use F-bus longword ordering: PAT_HI goes to B_PATD+4
+; (high address = high longword) and PAT_LO goes to B_PATD+0
+; (low address = low longword).  The blitter's internal swap means
+; GET64(B_PATD) = (PAT_HI << 32) | PAT_LO, so the phrase write
+; lands PAT_HI at DST+0 and PAT_LO at DST+4.
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
@@ -16,8 +22,11 @@
 ;; B_A1_BASE / B_A1_FLAGS / B_A1_PIXEL / B_COMMAND / B_PATTERNDATA all
 ;; come from jaguar_regs.s.  Don't redefine them locally -- the oracle
 ;; is generated from src/tom/blitter.c and stays in sync.
-B_PATD_HI       equ     B_PATTERNDATA
-B_PATD_LO       equ     B_PATTERNDATA + 4
+;;
+;; F-bus 64-bit layout: the low address (+0) carries the LOW longword,
+;; the high address (+4) carries the HIGH longword.
+B_PATD_LO       equ     B_PATTERNDATA
+B_PATD_HI       equ     B_PATTERNDATA + 4
 B_COUNT         equ     B_PIXLINECOUNTER
 
 DST             equ     $00090000
@@ -33,9 +42,9 @@ entry:
                 clr.l   (a0)+
                 clr.l   (a0)+
 
-                ;; Load pattern into B_PATD (64-bit; hi long then lo long).
-                move.l  #PAT_HI,B_PATD_HI
-                move.l  #PAT_LO,B_PATD_LO
+                ;; Load pattern into B_PATD using F-bus longword ordering.
+                move.l  #PAT_HI,B_PATD_HI      ; high address = HIGH longword
+                move.l  #PAT_LO,B_PATD_LO      ; low address  = LOW longword
 
                 move.l  #DST,B_A1_BASE
                 move.l  #$00001020,B_A1_FLAGS   ; 16bpp phrase
