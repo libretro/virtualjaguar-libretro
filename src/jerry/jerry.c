@@ -223,7 +223,8 @@ void JERRYResetPIT1(void)
 
    if (JERRYPIT1Prescaler | JERRYPIT1Divider)
    {
-      /* JTRM: PIT divides the processor clock (26.59 MHz) by (N+1). */
+      /* Period = (prescaler+1)*(divider+1) / system_clock.
+         System clock: 26.59 MHz NTSC, 26.59 MHz PAL. */
       double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
          * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);

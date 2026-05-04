@@ -1296,7 +1296,8 @@ void TOMResetPIT(void)
 
    if (tomTimerPrescaler)
    {
-      /* JTRM: PIT divides the system clock (26.59 MHz) by (N+1). */
+      /* Period = (prescaler+1)*(divider+1) / system_clock.
+         System clock: 26.59 MHz NTSC, 26.59 MHz PAL. */
       double usecs = (double)(tomTimerPrescaler + 1) * (double)(tomTimerDivider + 1)
          * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(TOMPITCallback, usecs, EVENT_MAIN);
