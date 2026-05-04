@@ -930,6 +930,7 @@ INLINE static void dsp_executeOpcode(uint32_t index)
 	case 61: dsp_opcode_store_r15_ri(); break;
 	case 62: dsp_opcode_illegal(); break;
 	case 63: dsp_opcode_addqmod(); break;
+	default: break;
 	}
 }
 
