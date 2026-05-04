@@ -982,7 +982,19 @@ void blitter_blit(uint32_t cmd)
 
 void ADDRGEN(uint32_t *, uint32_t *, bool, bool,
 	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
-	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t);
+	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
+	uint32_t, uint32_t);
+/* Precompute the y*width row offset used by ADDRGEN.  Only depends on
+   y (12-bit) and the width register encoding, so it can be cached
+   across the inner loop where only x changes. */
+static uint32_t addrgen_ya(uint16_t y, uint8_t width)
+{
+	uint32_t y12 = (uint32_t)(y & 0x0FFF);
+	uint32_t ytm = (y12 << 2)
+		+ ((width & 0x02) ? y12 << 1 : 0)
+		+ ((width & 0x01) ? y12 : 0);
+	return (ytm << (width >> 2)) >> 2;
+}
 /* ADD16SAT / ADDARRAY are defined inline below so the compiler can
  * specialise per call-site (most callers pass compile-time constants
  * for daddasel/daddbsel/daddmode and the sat/eightbit/hicinh flags).
@@ -1955,8 +1967,13 @@ void BlitterMidsummer2(void)
          uint8_t dstxp;
          uint64_t srcz;
          bool winhibit;
+         uint32_t a1_ya_cached, a2_ya_cached;
 
          indone = false;
+
+         /* Precompute y*width row offsets (invariant when y unchanged) */
+         a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+         a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
 
          /* Precompute address constants (invariant during inner loop) */
          a1_xconst = 6 - a1_pixsize;
@@ -2199,7 +2216,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 
             ADDRGEN(&address, &pixAddr, gena2i, zaddr,
                   a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-                  a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
+                  a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                  a1_ya_cached, a2_ya_cached);
 
             //Here's my guess as to how the addresses get truncated to phrase boundaries in phrase mode...
             if (!justify)
@@ -2613,10 +2631,22 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                   ADDBMUX(&addb_x,&addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
                   ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
 
-                  a1_x = addq_x, a1_y = addq_y;
+                  a1_x = addq_x;
+                  if (addq_y != a1_y)
+                  {
+                     a1_y = addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
                }
                else
-                  a1_x = addq_x, a1_y = addq_y;
+               {
+                  a1_x = addq_x;
+                  if (addq_y != a1_y)
+                  {
+                     a1_y = addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
             }
 
             if (a2_add)
@@ -2631,7 +2661,11 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                //a2ptrld comes from a2ptrldi...
                //I believe it's addbsel that determines the writeback...
                a2_x = addq_x;
-               a2_y = addq_y;
+               if (addq_y != a2_y)
+               {
+                  a2_y = addq_y;
+                  a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+               }
             }
 #ifdef BENCH_PROFILE
             if (blitter_did_io) PERF_INC(blitter_inner_io);
@@ -2717,19 +2751,16 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 
 void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint16_t a1_x, uint16_t a1_y, uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width, uint8_t a1_zoffset,
-	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset)
+	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset,
+	uint32_t a1_ya_pre, uint32_t a2_ya_pre)
 {
-	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	// Actually uses all 16 bits to generate address...!
-	uint16_t y = (gena2 ? a2_y : a1_y) & 0x0FFF;
-	uint8_t width = (gena2 ? a2_width : a1_width);
+	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
 	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
 	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
-	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;//Only upper 21 bits are passed around the bus? Seems like it...
+	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;/*Only upper 21 bits are passed around the bus? Seems like it...*/
 	uint8_t zoffset = (gena2 ? a2_zoffset : a1_zoffset);
 
-	uint32_t ytm = ((uint32_t)y << 2) + ((width & 0x02) ? (uint32_t)y << 1 : 0) + ((width & 0x01) ? (uint32_t)y : 0);
-
-	uint32_t ya = (ytm << (width >> 2)) >> 2;
+	uint32_t ya = (gena2 ? a2_ya_pre : a1_ya_pre);
 
 	uint32_t pa = ya + x;
    uint8_t pt, za;
