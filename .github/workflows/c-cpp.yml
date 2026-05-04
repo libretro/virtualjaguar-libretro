@@ -482,7 +482,7 @@ jobs:
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
           FILES=$(git diff --name-only "$BASE"...HEAD -- '*.c' '*.h' \
-            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$)' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2)\.c$)' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."

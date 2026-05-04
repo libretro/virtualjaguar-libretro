@@ -106,9 +106,63 @@ static uint64_t scalar_byte_merge(uint64_t src, uint64_t dst, uint16_t mask)
    return result;
 }
 
+/* ADD16SAT x4 — scalar reference
+ *
+ * Implements 4 parallel 16-bit saturating adds using the Jaguar's
+ * segmented carry chain: low byte, mid nibble (bits 11:8), high
+ * nibble (bits 15:12), with conditional carry propagation.
+ */
+static void scalar_add16sat_x4(uint16_t *addq, uint8_t *co,
+                                const uint16_t *adda, const uint16_t *addb,
+                                const uint8_t *cin,
+                                bool sat, bool eightbit, bool hicinh)
+{
+   int i;
+   for (i = 0; i < 4; i++)
+   {
+      uint16_t a = adda[i];
+      uint16_t b = addb[i];
+      uint8_t carry0, carry1, carry2, carry3;
+      uint8_t btop, ctop;
+      bool saturate, hisaturate;
+      uint32_t qt;
+      uint16_t q;
+
+      qt      = (a & 0xFF) + (b & 0xFF) + cin[i];
+      q       = qt & 0x00FF;
+      carry0  = ((qt & 0x0100) ? 1 : 0);
+      carry1  = (carry0 && !eightbit ? carry0 : 0);
+      qt      = (a & 0x0F00) + (b & 0x0F00) + (carry1 << 8);
+      carry2  = ((qt & 0x1000) ? 1 : 0);
+      q      |= qt & 0x0F00;
+      carry3  = (carry2 && !hicinh ? carry2 : 0);
+      qt      = (a & 0xF000) + (b & 0xF000) + (carry3 << 12);
+      co[i]   = ((qt & 0x10000) ? 1 : 0);
+      q      |= qt & 0xF000;
+
+      if (eightbit)
+      {
+         btop = (b & 0x0080) >> 7;
+         ctop = carry0;
+      }
+      else
+      {
+         btop = (b & 0x8000) >> 15;
+         ctop = co[i];
+      }
+
+      saturate   = sat && (btop ^ ctop);
+      hisaturate = saturate && !eightbit;
+
+      addq[i]  = (saturate ? (ctop ? 0x00FF : 0x0000) : q & 0x00FF);
+      addq[i] |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
+   }
+}
+
 const blitter_simd_ops_t blitter_simd_ops = {
    scalar_lfu,
    scalar_dcomp,
    scalar_zcomp,
-   scalar_byte_merge
+   scalar_byte_merge,
+   scalar_add16sat_x4
 };

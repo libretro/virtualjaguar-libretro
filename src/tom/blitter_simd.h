@@ -34,6 +34,27 @@ typedef struct
     * Bits 8-14 control bytes 1-7 (whole-byte select, one bit each).
     * Used for both pixel data (ddat/dstd) and Z data (srcz/dstz). */
    uint64_t (*byte_merge)(uint64_t src, uint64_t dst, uint16_t mask);
+
+   /* ADD16SAT x4: four parallel 16-bit saturating adds with the Jaguar's
+    * segmented carry chain (low byte, mid nibble, high nibble).
+    *
+    * Each lane computes:
+    *   q[7:0]  = a[7:0]  + b[7:0]  + cin[i]
+    *   q[11:8] = a[11:8] + b[11:8] + carry_from_byte (if !eightbit)
+    *   q[15:12]= a[15:12]+ b[15:12]+ carry_from_nib  (if !hicinh)
+    *
+    * When sat is true, the result saturates to 0x00/0xFF (eightbit) or
+    * 0x0000/0xFFFF (16-bit) on overflow.
+    *
+    * addq[0..3]: output 16-bit results.
+    * co[0..3]:   output carry-out bits (preserved between calls in HW).
+    * adda[0..3], addb[0..3]: input operands.
+    * cin[0..3]:  carry-in per lane.
+    * sat, eightbit, hicinh: mode flags (uniform across all 4 lanes). */
+   void (*add16sat_x4)(uint16_t *addq, uint8_t *co,
+                       const uint16_t *adda, const uint16_t *addb,
+                       const uint8_t *cin,
+                       bool sat, bool eightbit, bool hicinh);
 } blitter_simd_ops_t;
 
 extern const blitter_simd_ops_t blitter_simd_ops;
