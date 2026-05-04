@@ -1275,10 +1275,11 @@ void TOMSetIRQLatch(int irq, int enabled)
 
 
 /*
- * PIT clock rate: The JTRM Software Reference says PIT divides the
- * "processor clock" (26.59 MHz), but games like Doom were programmed
- * assuming the half-rate (13.3 MHz).  Using M68K_CYCLE_IN_USEC matches
- * observed game behavior and other emulators.  See also jerry.c.
+ * PIT clock rate: full system clock (26.59 MHz NTSC / 26.5939 MHz PAL).
+ * Per JTRM Software Reference and docs/jtrm-clocks-timing.md, PIT counters
+ * decrement at the full processor clock rate.  Historically a "half rate"
+ * (13.3 MHz) implementation has been tried and broke Doom/Rayman music
+ * timing.  See also JERRYResetPIT1/2 in jerry.c (also at full rate).
  */
 
 /* TOM Programmable Interrupt Timer handler */
@@ -1304,7 +1305,7 @@ void TOMResetPIT(void)
    {
       /* See PIT clock rate note above. */
       double usecs = (double)(tomTimerPrescaler + 1) * (double)(tomTimerDivider + 1)
-         * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(TOMPITCallback, usecs, EVENT_MAIN);
    }
 #endif

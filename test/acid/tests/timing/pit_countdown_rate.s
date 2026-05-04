@@ -2,26 +2,34 @@
 ; tests/timing/pit_countdown_rate.s - JERRY PIT timer 1 must fire
 ; at the rate determined by its prescaler/divider, within +/- 5%.
 ;
+; REGRESSION GUARD: this test catches the recurring bug of putting PIT
+; at the half (M68K) clock rate.  Per JTRM (docs/jtrm-clocks-timing.md)
+; the PIT counter decrements at the FULL system clock (~26.59 MHz NTSC).
+; Half-rate implementations have historically broken Doom and Rayman
+; music timing.  If you "fix" something by halving these constants you
+; will break this test.  Don't.
+;
 ; Per src/jerry/jerry.c:
-;     usecs = (prescaler+1) * (divider+1) * M68K_CYCLE_IN_USEC
-; with M68K_CYCLE_IN_USEC = 1 / 13.295453 MHz ~= 0.0752 us/cycle.
+;     usecs = (prescaler+1) * (divider+1) * RISC_CYCLE_IN_USEC
+; with RISC_CYCLE_IN_USEC = 1 / 26.590906 MHz ~= 0.0376 us/cycle.
 ;
 ; We arm with prescaler=255, divider=255:
-;     period = 256 * 256 / 13.295453e6 = ~4929.2 us per IRQ
-;     rate   = 1e6 / 4929.2 = ~202.9 Hz
+;     period = 256 * 256 / 26.590906e6 = ~2464.6 us per IRQ
+;     rate   = 1e6 / 2464.6 = ~405.8 Hz
 ;
 ; Run a calibrated 68K busy-loop window (~1 second wall clock at
 ; 13.295 MHz NTSC, same loop sizing as vblank_60hz_exact.s -- the
 ; `subq.l #1,Dn / bne.s` taken pair = 18 cycles, so 739_130 iters
 ; ~= 13.3 M cycles ~= 1.001 sec) and count IRQs.
 ;
-; Expected = BUSY_ITERS * 18 / 65536 = 739130 * 18 / 65536 = ~203.
-; At this low rate (~203 IRQs), handler overhead is negligible
-; (~0.002 sec), so a +/-5% tolerance is comfortable.
+; Expected ~406 IRQs/sec.  Note that handler overhead at this rate is
+; non-negligible (each IRQ steals ~12 us = ~0.5% of the window per
+; firing), so the effective observed count drops slightly below the
+; theoretical 406.  We use +/-5% tolerance which absorbs that.
 ;
 ; Detail codes:
-;   1 = IRQ count outside [193, 213] (+/-5%)
-;       observed = counter, expected = 203
+;   1 = IRQ count outside [385, 426] (+/-5%)
+;       observed = counter, expected = ~406
 ;   2 = counter zero -- IRQ never delivered (wiring regression)
 ;
                 include "include/jaguar_header.s"
@@ -44,12 +52,12 @@ HW_IRQ_VECTOR   equ     $00000100
 ;; Busy loop sized to ~1 second wall (matches vblank_60hz_exact).
 BUSY_ITERS      equ     739130
 
-;; Expected IRQ count for prescaler=255, divider=255 at the M68K-rate
-;; PIT clock.  At ~203 IRQs/sec the handler overhead is negligible
-;; (~0.2% of the measurement window), so +/-5% is reliable.
-EXPECT_IRQS     equ     203
-LO_IRQS         equ     193                     ; -5%
-HI_IRQS         equ     213                     ; +5%
+;; Expected IRQ count for prescaler=255, divider=255 at the FULL system
+;; clock PIT rate (RISC, ~26.59 MHz NTSC).  Handler overhead bites a
+;; little here, so widen the window to +/-5%.
+EXPECT_IRQS     equ     406
+LO_IRQS         equ     385                     ; -5%
+HI_IRQS         equ     426                     ; +5%
 
 PIT_PRESCALER   equ     255
 PIT_DIVIDER     equ     255

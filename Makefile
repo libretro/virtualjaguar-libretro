@@ -731,7 +731,8 @@ clean:
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
-		test/test_audio_clipping test/tools/test_memory_map
+		test/test_audio_clipping test/test_pit_clock_rate \
+		test/tools/test_memory_map
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -757,9 +758,11 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
-		test/test_audio_pipeline test/test_audio_clipping test/tools/test_memory_map
+		test/test_audio_pipeline test/test_audio_clipping test/test_pit_clock_rate \
+		test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
+	./test/test_pit_clock_rate
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_m68k_ops
@@ -801,6 +804,16 @@ test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
+
+# Regression guard: textually verifies that JERRYResetPIT1/2,
+# TOMResetPIT, and JERRYGetPIT*Frequency schedule using RISC clock
+# constants (full system clock).  Catches the recurring "halve PIT
+# rate to fix Doom" bug -- see docs/jtrm-clocks-timing.md and
+# test/acid/tests/timing/pit_countdown_rate.s for the in-emulation
+# equivalent.
+test/test_pit_clock_rate: test/test_pit_clock_rate.c \
+		src/jerry/jerry.c src/tom/tom.c
+	$(CC) -O2 -Wall -std=c99 -o $@ test/test_pit_clock_rate.c
 
 test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
 	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
