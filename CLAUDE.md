@@ -34,6 +34,8 @@ The libretro buildbot uses MSVC on Windows. CI has a `c89-lint` job. Run `bash s
 
 Four processors, unified memory map, big-endian. `GET16/GET32/SET16/SET32` macros byte-swap on LE hosts. Address-range map is documented in `src/core/vjag_memory.c` (header comment); the dispatch logic lives in `src/core/jaguar.c`. RAM 0x000000 (2 MB), cart 0x800000, TOM regs 0xF00000, JERRY regs 0xF10000.
 
+**Authoritative hardware reference:** The Jaguar Technical Reference Manual (JTRM) is the ground-truth spec for all emulation decisions. If you have a local copy, place it in `docs/atari-jaguar-1999/` (gitignored — copyrighted, not distributed). Key sections: Software Reference (register maps, PIT formulas, ISA), Technical Reference (clock hierarchy, bus timing), Hardware Bugs & Warnings (silicon errata). **Always verify clock rates and register behavior against the JTRM** — do not trust comments in the source code, which have historically been wrong (e.g. PIT clock was incorrectly halved). System clock: 26.590906 MHz NTSC / 26.593900 MHz PAL. 68K runs at half (~13.3 MHz). GPU/DSP/PIT run at the full system clock rate.
+
 - **68000** (13.3 MHz, `src/m68000/`) — main CPU. UAE-derived. `cpuemu.c` is **machine-generated, ~1.8 MB** — never read whole; grep first, then `Read` with offset/limit only on matched ranges.
 - **GPU** (26.6 MHz RISC, `src/tom/gpu.c`) — graphics coprocessor.
 - **DSP** (`src/jerry/dsp.c`) — same ISA as GPU; audio.

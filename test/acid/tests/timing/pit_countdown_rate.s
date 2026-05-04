@@ -2,23 +2,23 @@
 ; tests/timing/pit_countdown_rate.s - JERRY PIT timer 1 must fire
 ; at the rate determined by its prescaler/divider, within +/- 10%.
 ;
-; Per src/jerry/jerry.c (post-PR-#134):
-;     usecs = (prescaler+1) * (divider+1) * M68K_CYCLE_IN_USEC
-; with M68K_CYCLE_IN_USEC = 1 / 13.295453 MHz ~= 0.0752 us/cycle.
+; Per src/jerry/jerry.c:
+;     usecs = (prescaler+1) * (divider+1) * RISC_CYCLE_IN_USEC
+; with RISC_CYCLE_IN_USEC = 1 / 26.590906 MHz ~= 0.0376 us/cycle.
 ;
 ; We arm with prescaler=10, divider=100:
-;     usecs = 11 * 101 * 0.0752 = ~83.55 us per IRQ
-;     rate  = 1e6 / 83.55 = ~11968 Hz
+;     usecs = 11 * 101 * 0.0376 = ~41.78 us per IRQ
+;     rate  = 1e6 / 41.78 = ~23936 Hz
 ;
 ; Run a calibrated 68K busy-loop window (~1 second wall clock at
 ; 13.295 MHz NTSC, same loop sizing as vblank_60hz_exact.s -- the
 ; `subq.l #1,Dn / bne.s` taken pair = 18 cycles, so 739_130 iters
 ; ~= 13.3 M cycles ~= 1.001 sec) and count IRQs.
-; Expect ~11968 +/- 10%.
+; Expect ~23936 +/- 10%.
 ;
 ; Detail codes:
-;   1 = IRQ count outside [10771, 13165] (+/-10%)
-;       observed = counter, expected = 11968
+;   1 = IRQ count outside [21542, 26330] (+/-10%)
+;       observed = counter, expected = 23936
 ;   2 = counter zero -- IRQ never delivered (wiring regression)
 ;
                 include "include/jaguar_header.s"
@@ -41,16 +41,16 @@ HW_IRQ_VECTOR   equ     $00000100
 ;; Busy loop sized to ~1 second wall (matches vblank_60hz_exact).
 BUSY_ITERS      equ     739130
 
-;; Expected IRQ count for prescaler=10, divider=100 at the post-#134
-;; PIT rate of ~11968 Hz.  Tolerance widened to +/-10% from +/-5%
+;; Expected IRQ count for prescaler=10, divider=100 at the RISC-rate
+;; PIT clock (~23936 Hz).  Tolerance widened to +/-10% from +/-5%
 ;; because at this rate the IRQ handler overhead (~140 cycles per
-;; IRQ * ~12000 IRQs ~= 0.13 sec) materially extends the wall
+;; IRQ * ~24000 IRQs ~= 0.13 sec) materially extends the wall
 ;; window beyond the 1.001 sec the busy loop alone would take.
 ;; The vblank test fires only 60 IRQs in the same window so its
 ;; tighter +/-2 tolerance still works.
-EXPECT_IRQS     equ     11968
-LO_IRQS         equ     10771                   ; -10%
-HI_IRQS         equ     13165                   ; +10%
+EXPECT_IRQS     equ     23936
+LO_IRQS         equ     21542                   ; -10%
+HI_IRQS         equ     26330                   ; +10%
 
 PIT_PRESCALER   equ     10
 PIT_DIVIDER     equ     100
