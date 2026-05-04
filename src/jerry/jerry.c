@@ -223,9 +223,14 @@ void JERRYResetPIT1(void)
 
    if (JERRYPIT1Prescaler | JERRYPIT1Divider)
    {
-      /* Period = (prescaler+1)*(divider+1) * RISC_CYCLE_{NTSC,PAL}. */
+      /*
+       * The JTRM Software Reference says PIT divides the "processor
+       * clock" (26.59 MHz), but games like Doom were programmed
+       * assuming the half-rate (13.3 MHz).  Using M68K_CYCLE matches
+       * observed game behavior and other emulators.
+       */
       double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
-         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+         * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);
    }
 }
@@ -237,8 +242,14 @@ void JERRYResetPIT2(void)
 
    if (JERRYPIT2Prescaler | JERRYPIT2Divider)
    {
+      /*
+       * The JTRM Software Reference says PIT divides the "processor
+       * clock" (26.59 MHz), but games like Doom were programmed
+       * assuming the half-rate (13.3 MHz).  Using M68K_CYCLE matches
+       * observed game behavior and other emulators.
+       */
       double usecs = (double)(JERRYPIT2Prescaler + 1) * (double)(JERRYPIT2Divider + 1)
-         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+         * (vjs.hardwareTypeNTSC ? M68K_CYCLE_IN_USEC : M68K_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT2Callback, usecs, EVENT_JERRY);
    }
 }

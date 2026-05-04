@@ -3,25 +3,25 @@
 ; at the rate determined by its prescaler/divider, within +/- 5%.
 ;
 ; Per src/jerry/jerry.c:
-;     usecs = (prescaler+1) * (divider+1) * RISC_CYCLE_IN_USEC
-; with RISC_CYCLE_IN_USEC = 1 / 26.590906 MHz ~= 0.0376 us/cycle.
+;     usecs = (prescaler+1) * (divider+1) * M68K_CYCLE_IN_USEC
+; with M68K_CYCLE_IN_USEC = 1 / 13.295453 MHz ~= 0.0752 us/cycle.
 ;
 ; We arm with prescaler=255, divider=255:
-;     period = 256 * 256 / 26.590906e6 = ~2464.6 us per IRQ
-;     rate   = 1e6 / 2464.6 = ~405.7 Hz
+;     period = 256 * 256 / 13.295453e6 = ~4929.2 us per IRQ
+;     rate   = 1e6 / 4929.2 = ~202.9 Hz
 ;
 ; Run a calibrated 68K busy-loop window (~1 second wall clock at
 ; 13.295 MHz NTSC, same loop sizing as vblank_60hz_exact.s -- the
 ; `subq.l #1,Dn / bne.s` taken pair = 18 cycles, so 739_130 iters
 ; ~= 13.3 M cycles ~= 1.001 sec) and count IRQs.
 ;
-; Expected = BUSY_ITERS * 36 / 65536 = 739130 * 36 / 65536 = ~406.
-; At this low rate (~406 IRQs), handler overhead is negligible
-; (~0.004 sec), so a +/-5% tolerance is comfortable.
+; Expected = BUSY_ITERS * 18 / 65536 = 739130 * 18 / 65536 = ~203.
+; At this low rate (~203 IRQs), handler overhead is negligible
+; (~0.002 sec), so a +/-5% tolerance is comfortable.
 ;
 ; Detail codes:
-;   1 = IRQ count outside [386, 426] (+/-5%)
-;       observed = counter, expected = 406
+;   1 = IRQ count outside [193, 213] (+/-5%)
+;       observed = counter, expected = 203
 ;   2 = counter zero -- IRQ never delivered (wiring regression)
 ;
                 include "include/jaguar_header.s"
@@ -44,12 +44,12 @@ HW_IRQ_VECTOR   equ     $00000100
 ;; Busy loop sized to ~1 second wall (matches vblank_60hz_exact).
 BUSY_ITERS      equ     739130
 
-;; Expected IRQ count for prescaler=255, divider=255 at the RISC-rate
-;; PIT clock.  At ~406 IRQs/sec the handler overhead is negligible
-;; (~0.4% of the measurement window), so +/-5% is reliable.
-EXPECT_IRQS     equ     406
-LO_IRQS         equ     386                     ; -5%
-HI_IRQS         equ     426                     ; +5%
+;; Expected IRQ count for prescaler=255, divider=255 at the M68K-rate
+;; PIT clock.  At ~203 IRQs/sec the handler overhead is negligible
+;; (~0.2% of the measurement window), so +/-5% is reliable.
+EXPECT_IRQS     equ     203
+LO_IRQS         equ     193                     ; -5%
+HI_IRQS         equ     213                     ; +5%
 
 PIT_PRESCALER   equ     255
 PIT_DIVIDER     equ     255
