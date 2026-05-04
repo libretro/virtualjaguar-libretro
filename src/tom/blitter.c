@@ -2243,6 +2243,321 @@ void BlitterMidsummer2(void)
             goto patfill_inner_done;
          }
 
+         /*=================================================================
+          * FAST PATH: Collapsed inner loop for simple copy blits.
+          *
+          * Eligibility: SRCEN set, no SRCENX/SRCENZ/DSTEN/DSTENZ/DSTWRZ,
+          * no BCOMPEN/DCOMPEN/GOURD/GOURZ/SRCSHADE/ADDDSEL/PATDSEL.
+          * This covers the idle_inner -> sread -> dwrite state chain,
+          * collapsing 3 state-machine iterations per pixel into 1.
+          *
+          * The collapsed loop performs identical work to the state machine:
+          *   1. ADDRGEN for source, JaguarReadLong (sread)
+          *   2. Source shift/alignment (srcd1/srcd2 pipeline)
+          *   3. ADDRGEN for destination, compute dstart/dend masks
+          *   4. DATA function (LFU + byte merge)
+          *   5. CLIP_A1 window check
+          *   6. Write pixel/phrase
+          *   7. Step both A1 and A2 addresses
+          *   8. Decrement icount, check inner0
+          *=================================================================*/
+         if (srcen && !srcenx && !srcenz && !dsten && !dstenz && !dstwrz
+               && !bcompen && !dcompen && !gourd && !gourz && !srcshade
+               && !adddsel && !patdsel && zmode == 0
+               && a1addx != 3 && a2addx != 3)
+         {
+            /* Pre-decode values that are invariant across the inner loop.
+             * For a simple copy with no fractional increment:
+             *   - source pointer is A2 (if !dsta2) or A1 (if dsta2)
+             *   - dest pointer is A1 (if !dsta2) or A2 (if dsta2)
+             *   - data_sel = 1 (LFU, since !patdsel && !adddsel)
+             *   - daddasel/daddbsel/daddmode are constant (no gourd/srcshade)
+             *   - patfadd = false, patdadd = false
+             */
+            uint8_t fc_ppp = 64 >> pixsize;
+            /* Source stepping decode: when stepping the source ptr,
+             * a1_add/a2_add depend on dsta2, and the ADDAMUX/ADDBMUX
+             * selects depend on which channel is being stepped.
+             *
+             * For the source step (!dsta2 => a2_add, dsta2 => a1_add):
+             *   addasel = 0, addbsel = (!dsta2 ? 1 : 0)
+             *   adda_xconst = source channel's xconst
+             *   modx = source channel's mask
+             *   addareg/a1fracldi = false (no XADDINC for simple copy)
+             *   suba_x/suba_y from source channel's sign bits
+             *
+             * For the dest step (!dsta2 => a1_add, dsta2 => a2_add):
+             *   addasel = 0, addbsel = (!dsta2 ? 0 : 1)
+             *   adda_xconst = dest channel's xconst
+             *   modx = dest channel's mask
+             *   suba_x/suba_y from dest channel's sign bits
+             */
+
+            /* Source channel stepping parameters */
+            uint8_t fc_src_xconst = (dsta2 ? a1_xconst : a2_xconst);
+            uint8_t fc_src_addbsel = (dsta2 ? 0x00 : 0x01);
+            uint8_t fc_src_modx = 0;
+            bool fc_src_suba_x, fc_src_suba_y;
+            /* Dest channel stepping parameters */
+            uint8_t fc_dst_xconst = (dsta2 ? a2_xconst : a1_xconst);
+            uint8_t fc_dst_addbsel = (dsta2 ? 0x01 : 0x00);
+            uint8_t fc_dst_modx = 0;
+            bool fc_dst_suba_x, fc_dst_suba_y;
+            bool fc_inner0 = false;
+
+            if (dsta2)
+            {
+               /* Source is A1, dest is A2 */
+               fc_src_suba_x = (a1xsign && a1addx == 1);
+               fc_src_suba_y = (a1addy && a1ysign);
+               fc_dst_suba_x = (a2xsign && a2addx == 1);
+               fc_dst_suba_y = (a2addy && a2ysign);
+               if (a1addx == 0)
+                  fc_src_modx = 6 - a1_pixsize;
+               if (a2addx == 0)
+                  fc_dst_modx = 6 - a2_pixsize;
+            }
+            else
+            {
+               /* Source is A2, dest is A1 */
+               fc_src_suba_x = (a2xsign && a2addx == 1);
+               fc_src_suba_y = (a2addy && a2ysign);
+               fc_dst_suba_x = (a1xsign && a1addx == 1);
+               fc_dst_suba_y = (a1addy && a1ysign);
+               if (a2addx == 0)
+                  fc_src_modx = 6 - a2_pixsize;
+               if (a1addx == 0)
+                  fc_dst_modx = 6 - a1_pixsize;
+            }
+
+            while (!fc_inner0)
+            {
+               /* --- sread: read source data --- */
+               uint32_t fc_src_addr;
+               uint32_t fc_dst_addr, fc_dst_pixa;
+               uint64_t fc_srcd;
+               uint8_t fc_dstxp, fc_dstart;
+               uint8_t fc_inc;
+               uint16_t fc_oldicount;
+               uint16_t fc_dstxwr, fc_pseq;
+               bool fc_penden;
+               uint8_t fc_window_mask, fc_inner_mask, fc_emask, fc_pma, fc_dend;
+               uint64_t fc_wdata;
+               uint8_t fc_dcomp_val, fc_zcomp_val;
+               bool fc_winhibit;
+               int16_t fc_adda_x, fc_adda_y, fc_addb_x, fc_addb_y, fc_addq_x, fc_addq_y;
+
+               PERF_INC(blitter_inner);
+
+               /* Generate source address (gena2i = !dsta2 for source read) */
+               ADDRGEN(&fc_src_addr, &fc_dst_pixa, !dsta2, false/*zaddr*/,
+                     a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                     a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                     a1_ya_cached, a2_ya_cached);
+               if (phrase_mode)
+                  fc_src_addr &= 0xFFFFF8;
+
+               /* Source data pipeline: srcd2 = previous, srcd1 = new read */
+               srcd2 = srcd1;
+               srcd1 = ((uint64_t)JaguarReadLong(fc_src_addr, BLITTER) << 32)
+                  | (uint64_t)JaguarReadLong(fc_src_addr + 4, BLITTER);
+               PERF_INC(blitter_phrase_reads);
+
+               /* Pixel mode: shift source to correct position */
+               if (!phrase_mode)
+               {
+                  if (pixsize == 5)
+                     srcd1 >>= 32;
+                  else if (pixsize == 4)
+                     srcd1 >>= 48;
+                  else
+                     srcd1 >>= 56;
+               }
+
+               /* --- dwrite: compute and write destination --- */
+
+               /* Counter update (done first as in state machine) */
+               if (phrase_mode)
+                  fc_inc = fc_ppp - ((dsta2 ? a2_x : a1_x) & (fc_ppp - 1));
+               else
+                  fc_inc = 1;
+
+               fc_oldicount = icount;
+               icount -= fc_inc;
+
+               if (icount == 0 || ((icount & 0x8000) && !(fc_oldicount & 0x8000)))
+                  fc_inner0 = true;
+
+               /* Generate destination address (gena2i = dsta2 for dest write) */
+               ADDRGEN(&fc_dst_addr, &fc_dst_pixa, dsta2, false/*zaddr*/,
+                     a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                     a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                     a1_ya_cached, a2_ya_cached);
+               if (phrase_mode)
+                  fc_dst_addr &= 0xFFFFF8;
+
+               fc_dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+
+               /* Start/end mask computation */
+               fc_dstart = 0;
+               if (phrase_mode)
+                  fc_dstart = (fc_dstxp & (fc_ppp - 1)) << pixsize;
+               else
+                  fc_dstart = fc_dst_pixa & 0x07;
+
+               fc_dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               fc_pseq = fc_dstxwr ^ (a1_win_x & 0x7FFE);
+               fc_pseq = (pixsize == 5 ? fc_pseq : fc_pseq & 0x7FFC);
+               fc_pseq = ((pixsize & 0x06) == 4 ? fc_pseq : fc_pseq & 0x7FF8);
+               fc_penden = clip_a1 && (fc_pseq == 0);
+               fc_window_mask = 0;
+
+               if (fc_penden)
+                  fc_window_mask = (a1_win_x & (fc_ppp - 1)) << pixsize;
+               else
+                  fc_window_mask = 0;
+
+               fc_inner_mask = 0;
+               if (fc_inner0)
+                  fc_inner_mask = (icount & (fc_ppp - 1)) << pixsize;
+
+               fc_window_mask = (fc_window_mask == 0 ? 0x40 : fc_window_mask);
+               fc_inner_mask  = (fc_inner_mask == 0 ? 0x40 : fc_inner_mask);
+               fc_emask       = (fc_window_mask > fc_inner_mask ? fc_inner_mask : fc_window_mask);
+               fc_pma = fc_dst_pixa + (1 << pixsize);
+               fc_dend = (phrase_mode ? fc_emask : fc_pma);
+
+               /* Implicit dest read for byte merging (phrase mode or sub-byte pixels) */
+               if (phrase_mode && !bkgwren)
+                  dstd = ((uint64_t)JaguarReadLong(fc_dst_addr, BLITTER) << 32)
+                     | (uint64_t)JaguarReadLong(fc_dst_addr + 4, BLITTER);
+               else if (!phrase_mode && pixsize < 3 && !bkgwren)
+                  dstd = (uint64_t)JaguarReadByte(fc_dst_addr, BLITTER);
+
+               /* Source shift/alignment */
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
+               if (srcshift == 0)
+                  fc_srcd = srcd1;
+               else
+                  fc_srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
+               if (!phrase_mode && srcshift != 0)
+                  fc_srcd = ((srcd2 & 0xFF) << (8 - srcshift)) | ((srcd1 & 0xFF) >> srcshift);
+
+               /* DATA: LFU + masking + byte merge.
+                * For simple copy: data_sel=1 (LFU), no gourd, no patdadd,
+                * no srcshade, no bcompen/dcompen. */
+               {
+                  uint64_t fc_srcz_dummy = 0;
+                  DATA(&fc_wdata, &fc_dcomp_val, &fc_zcomp_val, &fc_winhibit,
+                        true/*big_pix*/, cmpdst,
+                        0/*daddasel*/, 0/*daddbsel*/,
+                        (uint8_t)(0x05 | (topben ? 0x00 : 0x02))/*daddmode*/,
+                        false/*daddq_sel*/, 1/*data_sel=LFU*/, 0/*dbinh*/,
+                        fc_dend, fc_dstart, dstd, iinc, lfufunc, &patd,
+                        false/*patdadd*/,
+                        phrase_mode, fc_srcd, false/*srcdread*/, false/*srczread*/,
+                        false/*srcz2add*/, zmode,
+                        false/*bcompen*/, bkgwren, false/*dcompen*/,
+                        icount & 0x07, pixsize,
+                        &fc_srcz_dummy, dstz, zinc);
+                  (void)fc_dcomp_val;
+                  (void)fc_zcomp_val;
+               }
+
+               /* Window clipping */
+               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000)
+                     || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+                  fc_winhibit = true;
+
+               /* Write */
+               PERF_INC(blitter_phrase_writes);
+               if (!fc_winhibit || bkgwren)
+               {
+                  if (phrase_mode)
+                  {
+                     JaguarWriteLong(fc_dst_addr + 0, fc_wdata >> 32, BLITTER);
+                     JaguarWriteLong(fc_dst_addr + 4, fc_wdata & 0xFFFFFFFF, BLITTER);
+                  }
+                  else
+                  {
+                     if (pixsize == 5)
+                        JaguarWriteLong(fc_dst_addr, fc_wdata & 0xFFFFFFFF, BLITTER);
+                     else if (pixsize == 4)
+                        JaguarWriteWord(fc_dst_addr, fc_wdata & 0x0000FFFF, BLITTER);
+                     else
+                        JaguarWriteByte(fc_dst_addr, fc_wdata & 0x000000FF, BLITTER);
+                  }
+               }
+
+               /* --- Step source pointer --- */
+               ADDAMUX(&fc_adda_x, &fc_adda_y, 0/*addasel*/,
+                     a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                     a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y,
+                     fc_src_xconst, (dsta2 ? a1addy : a2addy)/*adda_yconst*/,
+                     false/*addareg*/, fc_src_suba_x, fc_src_suba_y);
+               ADDBMUX(&fc_addb_x, &fc_addb_y, fc_src_addbsel,
+                     a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&fc_addq_x, &fc_addq_y, false/*a1fracldi*/,
+                     fc_adda_x, fc_adda_y, fc_addb_x, fc_addb_y,
+                     fc_src_modx, fc_src_suba_x, fc_src_suba_y);
+
+               if (dsta2)
+               {
+                  a1_x = fc_addq_x;
+                  if (fc_addq_y != a1_y)
+                  {
+                     a1_y = fc_addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
+               else
+               {
+                  a2_x = fc_addq_x;
+                  if (fc_addq_y != a2_y)
+                  {
+                     a2_y = fc_addq_y;
+                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  }
+               }
+
+               /* --- Step destination pointer --- */
+               ADDAMUX(&fc_adda_x, &fc_adda_y, 0/*addasel*/,
+                     a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                     a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y,
+                     fc_dst_xconst, (dsta2 ? a2addy : a1addy)/*adda_yconst*/,
+                     false/*addareg*/, fc_dst_suba_x, fc_dst_suba_y);
+               ADDBMUX(&fc_addb_x, &fc_addb_y, fc_dst_addbsel,
+                     a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&fc_addq_x, &fc_addq_y, false/*a1fracldi*/,
+                     fc_adda_x, fc_adda_y, fc_addb_x, fc_addb_y,
+                     fc_dst_modx, fc_dst_suba_x, fc_dst_suba_y);
+
+               if (dsta2)
+               {
+                  a2_x = fc_addq_x;
+                  if (fc_addq_y != a2_y)
+                  {
+                     a2_y = fc_addq_y;
+                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  }
+               }
+               else
+               {
+                  a1_x = fc_addq_x;
+                  if (fc_addq_y != a1_y)
+                  {
+                     a1_y = fc_addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
+            } /* end collapsed copy loop */
+
+            /* Mark inner loop as done and skip the state machine */
+            goto fc_inner_done;
+         }
+
          while (true)
          {
 #ifdef BENCH_PROFILE
@@ -2915,6 +3230,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
          }
 
 patfill_inner_done:
+fc_inner_done:
          indone = true;
          // The outer counter is updated here as well on the clock cycle...
 
