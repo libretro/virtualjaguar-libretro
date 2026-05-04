@@ -2001,6 +2001,251 @@ void BlitterMidsummer2(void)
             srcshift |= (srcen && phrase_mode ? shftv0 & 0x38 : 0);
          }
 
+         /*=================================================================
+          * COLLAPSED INNER LOOP — PATTERN FILL
+          *
+          * Conditions: PATDSEL set, SRCEN/SRCENX/DSTEN/DSTENZ/DSTWRZ off,
+          * no GOURD/GOURZ/SRCSHADE (pure pattern fill only).
+          *
+          * The hardware state machine takes 2 cycles per pixel for this
+          * config (idle_inner -> dwrite).  This collapsed path does exactly
+          * the same work in 1 iteration: ADDRGEN, dstart/dend masks, DATA
+          * (patd passthrough), write, address step, icount decrement.
+          *
+          * The existing state machine is the fallback for all other configs.
+          *=================================================================*/
+         if (patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
+               && !gourd && !gourz && !srcshade && !adddsel)
+         {
+            /* Collapsed-path local variables (C89: all at top of block) */
+            bool pf_a1_add, pf_a2_add;
+            bool pf_gena2i;
+            uint8_t pf_addasel, pf_adda_xconst, pf_addbsel, pf_modx;
+            bool pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y, pf_a1fracldi;
+            uint8_t pf_maska1, pf_maska2;
+
+            /* For pattern fill dwrite: dsta_addi=true, srca_addi=false.
+               Destination pointer (A1 if !dsta2, A2 if dsta2) steps. */
+            pf_a1_add = !dsta2;
+            pf_a2_add = dsta2;
+            pf_gena2i = dsta2;
+
+            /* Precompute address-adder decode (invariant for entire inner loop).
+               These mirror the decode at lines 2131-2212 for the dwrite state. */
+            pf_addasel = (pf_a1_add && a1addx == 3 ? 0x03 : 0x00);
+            pf_addasel |= (a2update ? 0x04 : 0x00);  /* a2update is false here */
+            pf_adda_xconst = (pf_a2_add ? a2_xconst : a1_xconst);
+            pf_adda_yconst = a1addy;
+            pf_addareg = ((pf_a1_add && a1addx == 3) || (pf_a2_add && a2addx == 3)
+                  ? true : false);
+            pf_suba_x = ((pf_a1_add && a1xsign && a1addx == 1)
+                  || (pf_a2_add && a2xsign && a2addx == 1) ? true : false);
+            pf_suba_y = ((pf_a1_add && a1addy && a1ysign)
+                  || (pf_a2_add && a2addy && a2ysign) ? true : false);
+            pf_addbsel = (pf_a2_add ? 0x01 : 0x00);
+            pf_addbsel |= (pf_a1_add && a1addx == 3 ? 0x02 : 0x00);
+            pf_maska1 = (pf_a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
+            pf_maska2 = (pf_a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
+            pf_modx = (pf_a2_add ? pf_maska2 : pf_maska1);
+            pf_a1fracldi = (pf_a1_add && a1addx == 3);
+
+            while (true)
+            {
+               /* Per-pixel locals (C89: all at top) */
+               uint8_t pf_inc, pf_dstart, pf_ppp;
+               uint16_t pf_oldicount, pf_dstxwr, pf_pseq;
+               bool pf_penden;
+               uint8_t pf_window_mask, pf_inner_mask, pf_emask, pf_dend;
+               uint32_t pf_pma;
+               uint64_t pf_wdata;
+               uint8_t pf_dcomp, pf_zcomp;
+               bool pf_winhibit;
+               uint64_t pf_dstd_local;
+
+               PERF_INC(blitter_inner);
+
+               /* ---- ADDRGEN for destination ---- */
+               ADDRGEN(&address, &pixAddr, pf_gena2i, false/*zaddr*/,
+                     a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                     a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                     a1_ya_cached, a2_ya_cached);
+
+               /* Phrase-align address (justify is false for patfill: !fontread && phrase_mode) */
+               if (phrase_mode)
+                  address &= 0xFFFFF8;
+
+               dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+
+               /* ---- icount decrement (same as dwrite state) ---- */
+               pf_ppp = 64 >> pixsize;
+               if (phrase_mode)
+                  pf_inc = pf_ppp - ((dsta2 ? a2_x : a1_x) & (pf_ppp - 1));
+               else
+                  pf_inc = 1;
+
+               pf_oldicount = icount;
+               icount -= pf_inc;
+
+               if (icount == 0 || ((icount & 0x8000) && !(pf_oldicount & 0x8000)))
+                  inner0 = true;
+
+               /* ---- dstart/dend mask computation ---- */
+               if (phrase_mode)
+                  pf_dstart = (dstxp & (pf_ppp - 1)) << pixsize;
+               else
+                  pf_dstart = pixAddr & 0x07;
+
+               pf_dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               pf_pseq = pf_dstxwr ^ (a1_win_x & 0x7FFE);
+               pf_pseq = (pixsize == 5 ? pf_pseq : pf_pseq & 0x7FFC);
+               pf_pseq = ((pixsize & 0x06) == 4 ? pf_pseq : pf_pseq & 0x7FF8);
+               pf_penden = clip_a1 && (pf_pseq == 0);
+
+               if (pf_penden)
+                  pf_window_mask = (a1_win_x & (pf_ppp - 1)) << pixsize;
+               else
+                  pf_window_mask = 0;
+
+               if (inner0)
+                  pf_inner_mask = (icount & (pf_ppp - 1)) << pixsize;
+               else
+                  pf_inner_mask = 0;
+
+               pf_window_mask = (pf_window_mask == 0 ? 0x40 : pf_window_mask);
+               pf_inner_mask = (pf_inner_mask == 0 ? 0x40 : pf_inner_mask);
+               pf_emask = (pf_window_mask > pf_inner_mask ? pf_inner_mask : pf_window_mask);
+               pf_pma = pixAddr + (1 << pixsize);
+               pf_dend = (phrase_mode ? pf_emask : pf_pma);
+
+               /* Implicit dest read for phrase-mode byte merging (same as state machine) */
+               pf_dstd_local = 0;
+               if (phrase_mode && !bkgwren)
+                  pf_dstd_local = ((uint64_t)JaguarReadLong(address, BLITTER) << 32)
+                     | (uint64_t)JaguarReadLong(address + 4, BLITTER);
+               else if (!phrase_mode && pixsize < 3 && !bkgwren)
+                  pf_dstd_local = (uint64_t)JaguarReadByte(address, BLITTER);
+
+               /* ---- DATA: patd passthrough with masking ---- */
+               /* For pure patfill (!gourd,!gourz,!srcshade): daddasel=0,
+                  daddbsel=0, patdadd=false, daddq_sel=false, data_sel=0.
+                  daddmode: bit0=1 (!gourd&&!gourz), bit1=!topben,
+                  bit2=1 (!gourd&&!gourz).  patdadd=false so ADDARRAY
+                  result is discarded — daddmode value is functionally
+                  irrelevant, but we compute it identically. */
+               DATA(&pf_wdata, &pf_dcomp, &pf_zcomp, &pf_winhibit,
+                     true/*big_pix*/, cmpdst,
+                     0/*daddasel*/, 0/*daddbsel*/,
+                     (uint8_t)(0x05 | (topben ? 0x00 : 0x02))/*daddmode*/,
+                     false/*daddq_sel*/,
+                     0/*data_sel*/, 0/*dbinh*/, pf_dend, pf_dstart, pf_dstd_local,
+                     iinc, lfufunc, &patd, false/*patdadd*/,
+                     phrase_mode, 0/*srcd*/, false/*srcdread*/, false/*srczread*/,
+                     false/*srcz2add*/, zmode,
+                     bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
+                     &srcz, dstz, zinc);
+
+               /* ---- Window clipping (CLIP_A1) ---- */
+               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000)
+                     || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+                  pf_winhibit = true;
+
+               /* ---- Write pixel/phrase ---- */
+               PERF_INC(blitter_phrase_writes);
+               if (!pf_winhibit || bkgwren)
+               {
+                  if (phrase_mode)
+                  {
+                     JaguarWriteLong(address + 0, pf_wdata >> 32, BLITTER);
+                     JaguarWriteLong(address + 4, pf_wdata & 0xFFFFFFFF, BLITTER);
+                  }
+                  else
+                  {
+                     if (pixsize == 5)
+                        JaguarWriteLong(address, pf_wdata & 0xFFFFFFFF, BLITTER);
+                     else if (pixsize == 4)
+                        JaguarWriteWord(address, pf_wdata & 0x0000FFFF, BLITTER);
+                     else
+                        JaguarWriteByte(address, pf_wdata & 0x000000FF, BLITTER);
+                  }
+               }
+
+               /* ---- Address stepping (same ADDAMUX/ADDBMUX/ADDRADD chain) ---- */
+               if (pf_a1_add)
+               {
+                  int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
+                  ADDAMUX(&adda_x, &adda_y, pf_addasel,
+                        a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                        a2_step_x, a2_step_y, a1_inc_x, a1_inc_y,
+                        a1_incf_x, a1_incf_y, pf_adda_xconst,
+                        pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y);
+                  ADDBMUX(&addb_x, &addb_y, pf_addbsel,
+                        a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(&addq_x, &addq_y, pf_a1fracldi,
+                        adda_x, adda_y, addb_x, addb_y,
+                        pf_modx, pf_suba_x, pf_suba_y);
+
+                  if (a1addx == 3)
+                  {
+                     a1_frac_x = addq_x;
+                     a1_frac_y = addq_y;
+                     ADDAMUX(&adda_x, &adda_y, 2/*addasel*/,
+                           a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                           a2_step_x, a2_step_y, a1_inc_x, a1_inc_y,
+                           a1_incf_x, a1_incf_y, pf_adda_xconst,
+                           pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y);
+                     ADDBMUX(&addb_x, &addb_y, 0/*addbsel*/,
+                           a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                     ADDRADD(&addq_x, &addq_y, false/*a1fracldi*/,
+                           adda_x, adda_y, addb_x, addb_y,
+                           pf_modx, pf_suba_x, pf_suba_y);
+                     a1_x = addq_x;
+                     if (addq_y != a1_y)
+                     {
+                        a1_y = addq_y;
+                        a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                     }
+                  }
+                  else
+                  {
+                     a1_x = addq_x;
+                     if (addq_y != a1_y)
+                     {
+                        a1_y = addq_y;
+                        a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                     }
+                  }
+               }
+
+               if (pf_a2_add)
+               {
+                  int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
+                  ADDAMUX(&adda_x, &adda_y, pf_addasel,
+                        a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                        a2_step_x, a2_step_y, a1_inc_x, a1_inc_y,
+                        a1_incf_x, a1_incf_y, pf_adda_xconst,
+                        pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y);
+                  ADDBMUX(&addb_x, &addb_y, pf_addbsel,
+                        a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(&addq_x, &addq_y, pf_a1fracldi,
+                        adda_x, adda_y, addb_x, addb_y,
+                        pf_modx, pf_suba_x, pf_suba_y);
+                  a2_x = addq_x;
+                  if (addq_y != a2_y)
+                  {
+                     a2_y = addq_y;
+                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  }
+               }
+
+               /* ---- Check if inner loop is done ---- */
+               if (inner0)
+                  break;
+            }
+
+            /* Skip the state machine — collapsed path handled everything */
+            goto patfill_inner_done;
+         }
+
          while (true)
          {
 #ifdef BENCH_PROFILE
@@ -2670,6 +2915,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 #endif
          }
 
+patfill_inner_done:
          indone = true;
          // The outer counter is updated here as well on the clock cycle...
 
