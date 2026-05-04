@@ -62,15 +62,26 @@ static BLITTER_ALWAYS_INLINE uint8_t blitter_read_byte(uint32_t addr)
 
 static BLITTER_ALWAYS_INLINE uint16_t blitter_read_word(uint32_t addr)
 {
+   uint32_t a;
    if (addr < 0x200000)
-      return GET16(jaguarMainRAM, addr & 0x1FFFFF);
+   {
+      a = addr & 0x1FFFFF;
+      return ((uint16_t)jaguarMainRAM[a] << 8) | jaguarMainRAM[(a + 1) & 0x1FFFFF];
+   }
    return JaguarReadWord(addr, BLITTER);
 }
 
 static BLITTER_ALWAYS_INLINE uint32_t blitter_read_long(uint32_t addr)
 {
+   uint32_t a;
    if (addr < 0x200000)
-      return GET32(jaguarMainRAM, addr & 0x1FFFFF);
+   {
+      a = addr & 0x1FFFFF;
+      return ((uint32_t)jaguarMainRAM[a] << 24)
+           | ((uint32_t)jaguarMainRAM[(a + 1) & 0x1FFFFF] << 16)
+           | ((uint32_t)jaguarMainRAM[(a + 2) & 0x1FFFFF] << 8)
+           | (uint32_t)jaguarMainRAM[(a + 3) & 0x1FFFFF];
+   }
    return JaguarReadLong(addr, BLITTER);
 }
 
@@ -86,9 +97,12 @@ static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data
 
 static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t data)
 {
+   uint32_t a;
    if (addr < 0x200000)
    {
-      SET16(jaguarMainRAM, addr & 0x1FFFFF, data);
+      a = addr & 0x1FFFFF;
+      jaguarMainRAM[a]                   = (uint8_t)(data >> 8);
+      jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)(data & 0xFF);
       return;
    }
    JaguarWriteWord(addr, data, BLITTER);
@@ -96,9 +110,14 @@ static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t dat
 
 static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t data)
 {
+   uint32_t a;
    if (addr < 0x200000)
    {
-      SET32(jaguarMainRAM, addr & 0x1FFFFF, data);
+      a = addr & 0x1FFFFF;
+      jaguarMainRAM[a]                   = (uint8_t)((data >> 24) & 0xFF);
+      jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)((data >> 16) & 0xFF);
+      jaguarMainRAM[(a + 2) & 0x1FFFFF] = (uint8_t)((data >> 8)  & 0xFF);
+      jaguarMainRAM[(a + 3) & 0x1FFFFF] = (uint8_t)(data         & 0xFF);
       return;
    }
    JaguarWriteLong(addr, data, BLITTER);
