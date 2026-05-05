@@ -373,18 +373,20 @@ uint8_t bluecv[16][16] = {
 #define BG			0x58		// Background color
 #define INT1		0xE0
 
-#define LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
-#define RIGHT_VISIBLE_HC		(LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
-#define TOP_VISIBLE_VC			31
-#define BOTTOM_VISIBLE_VC		511
+/* Default fallback values used when registers haven't been programmed yet */
+#define DEFAULT_LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
+#define DEFAULT_RIGHT_VISIBLE_HC		(DEFAULT_LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_TOP_VISIBLE_VC			31
+#define DEFAULT_BOTTOM_VISIBLE_VC		511
 
-//Are these PAL horizontals correct?
-//They seem to be for the most part, but there are some games that seem to be
-//shifted over to the right from this "window".
-#define LEFT_VISIBLE_HC_PAL	(208 - 16 - (-3 * 4))
-#define RIGHT_VISIBLE_HC_PAL	(LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
-#define TOP_VISIBLE_VC_PAL		67
-#define BOTTOM_VISIBLE_VC_PAL	579
+#define DEFAULT_LEFT_VISIBLE_HC_PAL		(208 - 16 - (-3 * 4))
+#define DEFAULT_RIGHT_VISIBLE_HC_PAL	(DEFAULT_LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_TOP_VISIBLE_VC_PAL		67
+#define DEFAULT_BOTTOM_VISIBLE_VC_PAL	579
+
+/* Maximum framebuffer extents (safety clamp) */
+#define MAX_VISIBLE_HEIGHT		512
+#define MAX_VISIBLE_HALFLINES	1024
 
 uint8_t tomRam8[0x4000];
 uint32_t tomWidth, tomHeight;
@@ -426,6 +428,92 @@ render_xxx_scanline_fn * scanline_render[] =
 uint32_t RGB16ToRGB32[0x10000];
 uint32_t CRY16ToRGB32[0x10000];
 uint32_t MIX16ToRGB32[0x10000];
+
+/*
+ * Derive visible-window boundaries from TOM display registers (VDB, VDE,
+ * HDB1, HDE) instead of using hardcoded constants.  Falls back to the
+ * legacy defaults when registers haven't been programmed yet (value == 0).
+ */
+
+/* Vertical visible window: derived from VDB/VDE.
+ * Returns the first visible halfline (topVisible) via the function,
+ * or the last visible halfline (bottomVisible) via the companion below. */
+static uint16_t TOMGetTopVisible(void)
+{
+	uint16_t vdb = GET16(tomRam8, VDB);
+	uint16_t fallback = vjs.hardwareTypeNTSC
+		? DEFAULT_TOP_VISIBLE_VC : DEFAULT_TOP_VISIBLE_VC_PAL;
+
+	/* If VDB is zero the registers haven't been set up yet; use fallback */
+	if (vdb == 0)
+		return fallback;
+
+	/* Use VDB directly -- the framebuffer starts where the OP starts.
+	 * Subtract a small margin (7 halflines) to include any visible border
+	 * above the active area, matching the legacy offset pattern. */
+	if (vdb > 7)
+		return vdb - 7;
+	return 0;
+}
+
+static uint16_t TOMGetBottomVisible(void)
+{
+	uint16_t vde = GET16(tomRam8, VDE);
+	uint16_t vp = GET16(tomRam8, VP);
+	uint16_t fallback = vjs.hardwareTypeNTSC
+		? DEFAULT_BOTTOM_VISIBLE_VC : DEFAULT_BOTTOM_VISIBLE_VC_PAL;
+
+	/* If VDE is zero or exceeds VP (VDE=$FFFF bug workaround), use fallback */
+	if (vde == 0)
+		return fallback;
+	if (vp > 0 && vde > vp)
+		return fallback;
+
+	/* Add small margin (7 halflines) below active area for border */
+	if (vde + 7 <= MAX_VISIBLE_HALFLINES)
+		return vde + 7;
+	return vde;
+}
+
+/* Horizontal visible window: derived from HDB1/HDE.
+ * Returns the left visible HC value. */
+static uint32_t TOMGetLeftVisibleHC(void)
+{
+	uint16_t hdb1 = GET16(tomRam8, HDB1);
+	uint32_t fallback = vjs.hardwareTypeNTSC
+		? DEFAULT_LEFT_VISIBLE_HC : DEFAULT_LEFT_VISIBLE_HC_PAL;
+
+	/* If HDB1 is zero, registers haven't been set up yet */
+	if (hdb1 == 0)
+		return fallback;
+
+	/* Use HDB1 minus a small margin (16 pixel clocks) so that
+	 * the framebuffer includes the left border region.
+	 * This matches the legacy pattern where LEFT_VISIBLE_HC was
+	 * approximately HDB1 - 15 for NTSC defaults (HDB1=203, LEFT=188). */
+	if (hdb1 > 16)
+		return (uint32_t)(hdb1 - 16);
+	return 0;
+}
+
+static uint32_t TOMGetRightVisibleHC(void)
+{
+	uint16_t hde = GET16(tomRam8, HDE);
+	uint32_t left = TOMGetLeftVisibleHC();
+	uint32_t max_span = (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
+	uint32_t right_from_left = left + max_span;
+
+	/* If HDE is zero, registers haven't been set up yet */
+	if (hde == 0)
+		return right_from_left;
+
+	/* Right edge is the lesser of HDE and the max viewport span from left.
+	 * This prevents overflow of the framebuffer while still respecting
+	 * games that set a narrower HDE. */
+	if ((uint32_t)hde < right_from_left)
+		return (uint32_t)hde;
+	return right_from_left;
+}
 
 static void TOMAssertEnabledIRQs(void)
 {
@@ -583,7 +671,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -625,7 +713,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -667,7 +755,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -737,7 +825,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -833,10 +921,10 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    else
       inActiveDisplayArea = false;
 
-   // Take PAL into account...
+   // Derive visible window from VDB/VDE registers (with fallback)
 
-   topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL);
-   bottomVisible = (vjs.hardwareTypeNTSC ? BOTTOM_VISIBLE_VC : BOTTOM_VISIBLE_VC_PAL);
+   topVisible = TOMGetTopVisible();
+   bottomVisible = TOMGetBottomVisible();
 
    // Here's our virtualized scanline code...
 
@@ -886,8 +974,8 @@ uint32_t TOMGetVideoModeWidth(void)
    uint16_t hdb1 = GET16(tomRam8, HDB1);
    uint16_t hde = GET16(tomRam8, HDE);
    uint16_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-   uint32_t leftHC = vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL;
-   uint32_t rightHC = vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL;
+   uint32_t leftHC = TOMGetLeftVisibleHC();
+   uint32_t rightHC = TOMGetRightVisibleHC();
    uint32_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
    uint32_t dispStart = (hdb1 > leftHC) ? hdb1 : leftHC;
