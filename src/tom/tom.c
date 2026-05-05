@@ -460,6 +460,7 @@ static uint16_t TOMGetTopVisible(void)
 
 static uint16_t TOMGetBottomVisible(void)
 {
+	uint16_t vdb = GET16(tomRam8, VDB);
 	uint16_t vde = GET16(tomRam8, VDE);
 	uint16_t vp = GET16(tomRam8, VP);
 	uint16_t fallback = vjs.hardwareTypeNTSC
@@ -468,9 +469,12 @@ static uint16_t TOMGetBottomVisible(void)
 	uint16_t top;
 	uint16_t max_bottom;
 
-	/* If VDE is zero, matches the shared reset default (518), or exceeds
-	 * VP, use the mode-specific fallback for correct PAL/NTSC window. */
-	if (vde == 0 || vde == 518)
+	/* Use mode-specific fallback only when BOTH VDB and VDE are at their
+	 * shared reset defaults.  If only one has been reprogrammed, derive
+	 * from the register to avoid window collapse. */
+	if (vde == 0)
+		return fallback;
+	if (vde == 518 && vdb == 38)
 		return fallback;
 	if (vp > 0 && vde > vp)
 		return fallback;
@@ -482,6 +486,11 @@ static uint16_t TOMGetBottomVisible(void)
 	max_bottom = top + (MAX_VISIBLE_HEIGHT * 2);
 	if (result > max_bottom)
 		result = max_bottom;
+
+	/* Guard: if result <= top (e.g. VDB reprogrammed above VDE), use
+	 * fallback to avoid a collapsed/inverted window. */
+	if (result <= top)
+		return fallback;
 
 	return result;
 }
@@ -507,21 +516,25 @@ static uint32_t TOMGetLeftVisibleHC(void)
 
 static uint32_t TOMGetRightVisibleHC(void)
 {
+	uint16_t hdb1 = GET16(tomRam8, HDB1);
 	uint16_t hde = GET16(tomRam8, HDE);
 	uint32_t left = TOMGetLeftVisibleHC();
 	uint32_t fallback = vjs.hardwareTypeNTSC
 		? DEFAULT_RIGHT_VISIBLE_HC : DEFAULT_RIGHT_VISIBLE_HC_PAL;
 	uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
 
-	/* If HDE is zero or matches the shared reset default (1665), use
-	 * the mode-specific fallback for correct PAL/NTSC right edge. */
-	if (hde == 0 || hde == 1665)
+	/* Use mode-specific fallback only when BOTH HDB1 and HDE are at their
+	 * shared reset defaults.  If HDB1 was reprogrammed but HDE wasn't,
+	 * derive from left to avoid right < left underflow. */
+	if (hde == 0)
+		return max_right;
+	if (hde == 1665 && hdb1 == 203)
 		return fallback;
 
 	/* Guard against HDE < left which would cause unsigned underflow
-	 * when callers compute (right - left). Fall back to mode default. */
+	 * when callers compute (right - left). */
 	if ((uint32_t)hde <= left)
-		return fallback;
+		return max_right;
 
 	/* Right edge is the lesser of HDE and max_right (derived from left
 	 * edge + max framebuffer width). This prevents overflow while
