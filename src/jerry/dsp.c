@@ -2067,7 +2067,10 @@ INLINE static void DSP_div(void)
 		}
 	}
 	else
+	{
 		PRES = 0xFFFFFFFF;
+		dsp_remain = 0;
+	}
 }
 
 INLINE static void DSP_imacn(void)
