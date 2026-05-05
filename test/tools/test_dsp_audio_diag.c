@@ -40,7 +40,6 @@ static unsigned dump_interval = 0;
 static bool frame_callback(void *userdata, unsigned frame)
 {
     harness_config *cfg = (harness_config *)userdata;
-    (void)cfg;
 
     if (!dsp_probe_per_frame(&probe)) {
         if (dump_on_escape) {

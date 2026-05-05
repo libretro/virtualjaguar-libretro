@@ -16,8 +16,8 @@ bool dsp_probe_init(dsp_probe *p, harness_config *cfg)
     p->sym.control   = harness_dlsym(cfg, "dsp_control");
     p->sym.bank0     = harness_dlsym(cfg, "dsp_reg_bank_0");
     p->sym.bank1     = harness_dlsym(cfg, "dsp_reg_bank_1");
-    p->sym.get_ram   = harness_dlsym(cfg, "DSPGetRAM");
-    p->sym.is_running = harness_dlsym(cfg, "DSPIsRunning");
+    p->sym.get_ram   = (uint8_t *(*)(void))harness_dlsym(cfg, "DSPGetRAM");
+    p->sym.is_running = (bool (*)(void))harness_dlsym(cfg, "DSPIsRunning");
     p->sym.get_flags = (uint32_t (*)(void))harness_dlsym(cfg, "DSPGetFlags");
     p->sym.ltxd      = (uint16_t **)harness_dlsym(cfg, "ltxd");
     p->sym.i2s_timer = harness_dlsym(cfg, "JERRYI2SInterruptTimer");
