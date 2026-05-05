@@ -43,7 +43,7 @@ extern retro_audio_sample_batch_t audio_batch_cb;
 #define DAC_AUDIO_RATE		48000	/* Set the audio rate to 48 KHz */
 
 /* Ring buffer for I2S samples produced by the DSP at hardware rate */
-#define I2S_RING_SIZE		4096	/* Power of 2, must be > max samples/frame */
+#define I2S_RING_SIZE		8192	/* Power of 2, must be > max samples/frame */
 #define I2S_RING_MASK		(I2S_RING_SIZE - 1)
 
 /* Jaguar memory locations */
@@ -114,11 +114,13 @@ void DACUpdateSCLKRate(void)
    i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
    i2sRateRatio = i2s_rate / (double)DAC_AUDIO_RATE;
 
-   /* Clamp to a sane range to avoid division by zero or absurd values */
+   /* Clamp to a sane range to avoid division by zero or absurd values.
+    * SCLK=0 gives divider=64, i2s_rate~415kHz, ratio~8.66.
+    * Upper bound of 16.0 allows all valid SCLK values (0-255). */
    if (i2sRateRatio < 0.1)
       i2sRateRatio = 0.1;
-   if (i2sRateRatio > 4.0)
-      i2sRateRatio = 4.0;
+   if (i2sRateRatio > 16.0)
+      i2sRateRatio = 16.0;
 }
 
 /* Called when the DSP writes a sample pair to LTXD/RTXD.
