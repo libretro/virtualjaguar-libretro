@@ -431,7 +431,8 @@ uint32_t MIX16ToRGB32[0x10000];
 /*
  * Derive visible-window boundaries from TOM display registers (VDB, VDE,
  * HDB1, HDE) instead of using hardcoded constants.  Falls back to the
- * legacy defaults when registers haven't been programmed yet (value == 0).
+ * mode-specific legacy defaults when registers are zero or still hold the
+ * shared reset values (VDB=38, VDE=518, HDB1=203, HDE=1665).
  */
 
 /* Vertical visible window: derived from VDB/VDE.
@@ -474,11 +475,7 @@ static uint16_t TOMGetBottomVisible(void)
 	if (vp > 0 && vde > vp)
 		return fallback;
 
-	/* Use VDE directly, clamped to VP */
-	if (vp > 0 && vde > vp)
-		result = vp;
-	else
-		result = vde;
+	result = vde;
 
 	/* Clamp so that (bottom - top) / 2 never exceeds MAX_VISIBLE_HEIGHT. */
 	top = TOMGetTopVisible();
@@ -514,6 +511,7 @@ static uint32_t TOMGetRightVisibleHC(void)
 	uint32_t left = TOMGetLeftVisibleHC();
 	uint32_t fallback = vjs.hardwareTypeNTSC
 		? DEFAULT_RIGHT_VISIBLE_HC : DEFAULT_RIGHT_VISIBLE_HC_PAL;
+	uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
 
 	/* If HDE is zero or matches the shared reset default (1665), use
 	 * the mode-specific fallback for correct PAL/NTSC right edge. */
@@ -525,12 +523,12 @@ static uint32_t TOMGetRightVisibleHC(void)
 	if ((uint32_t)hde <= left)
 		return fallback;
 
-	/* Right edge is the lesser of HDE and the fallback span.
-	 * This prevents overflow of the framebuffer while still respecting
-	 * games that set a narrower HDE. */
-	if ((uint32_t)hde < fallback)
+	/* Right edge is the lesser of HDE and max_right (derived from left
+	 * edge + max framebuffer width). This prevents overflow while
+	 * respecting games that set a narrower HDE. */
+	if ((uint32_t)hde < max_right)
 		return (uint32_t)hde;
-	return fallback;
+	return max_right;
 }
 
 static void TOMAssertEnabledIRQs(void)
