@@ -441,11 +441,16 @@ uint32_t MIX16ToRGB32[0x10000];
 static uint16_t TOMGetTopVisible(void)
 {
 	uint16_t vdb = GET16(tomRam8, VDB);
+	uint16_t vp = GET16(tomRam8, VP);
 	uint16_t fallback = vjs.hardwareTypeNTSC
 		? DEFAULT_TOP_VISIBLE_VC : DEFAULT_TOP_VISIBLE_VC_PAL;
 
 	/* If VDB is zero the registers haven't been set up yet; use fallback */
 	if (vdb == 0)
+		return fallback;
+
+	/* Guard against garbage VDB values exceeding VP (total halflines) */
+	if (vp > 0 && vdb > vp)
 		return fallback;
 
 	/* Use VDB directly -- the framebuffer starts where the OP starts.
@@ -469,7 +474,10 @@ static uint16_t TOMGetBottomVisible(void)
 	if (vp > 0 && vde > vp)
 		return fallback;
 
-	/* Add small margin (7 halflines) below active area for border */
+	/* Add small margin (7 halflines) below active area for border,
+	 * but clamp to VP so we never exceed the frame's total halflines. */
+	if (vp > 0 && vde + 7 > vp)
+		return vp;
 	if (vde + 7 <= MAX_VISIBLE_HALFLINES)
 		return vde + 7;
 	return vde;
