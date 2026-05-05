@@ -386,7 +386,6 @@ uint8_t bluecv[16][16] = {
 
 /* Maximum framebuffer extents (safety clamp) */
 #define MAX_VISIBLE_HEIGHT		512
-#define MAX_VISIBLE_HALFLINES	1024
 
 uint8_t tomRam8[0x4000];
 uint32_t tomWidth, tomHeight;
@@ -467,6 +466,9 @@ static uint16_t TOMGetBottomVisible(void)
 	uint16_t vp = GET16(tomRam8, VP);
 	uint16_t fallback = vjs.hardwareTypeNTSC
 		? DEFAULT_BOTTOM_VISIBLE_VC : DEFAULT_BOTTOM_VISIBLE_VC_PAL;
+	uint16_t result;
+	uint16_t top;
+	uint16_t max_bottom;
 
 	/* If VDE is zero or exceeds VP (VDE=$FFFF bug workaround), use fallback */
 	if (vde == 0)
@@ -477,10 +479,19 @@ static uint16_t TOMGetBottomVisible(void)
 	/* Add small margin (7 halflines) below active area for border,
 	 * but clamp to VP so we never exceed the frame's total halflines. */
 	if (vp > 0 && vde + 7 > vp)
-		return vp;
-	if (vde + 7 <= MAX_VISIBLE_HALFLINES)
-		return vde + 7;
-	return vde;
+		result = vp;
+	else
+		result = vde + 7;
+
+	/* Clamp so that (bottom - top) / 2 never exceeds MAX_VISIBLE_HEIGHT.
+	 * This prevents the visible span from being larger than the framebuffer
+	 * (e.g. 246 lines vs the 240 reported to the frontend for NTSC). */
+	top = TOMGetTopVisible();
+	max_bottom = top + (MAX_VISIBLE_HEIGHT * 2);
+	if (result > max_bottom)
+		result = max_bottom;
+
+	return result;
 }
 
 /* Horizontal visible window: derived from HDB1/HDE.
@@ -513,6 +524,11 @@ static uint32_t TOMGetRightVisibleHC(void)
 
 	/* If HDE is zero, registers haven't been set up yet */
 	if (hde == 0)
+		return right_from_left;
+
+	/* Guard against HDE < left which would cause unsigned underflow
+	 * when callers compute (right - left). Fall back to max span. */
+	if ((uint32_t)hde <= left)
 		return right_from_left;
 
 	/* Right edge is the lesser of HDE and the max viewport span from left.
