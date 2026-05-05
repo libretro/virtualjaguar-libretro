@@ -35,6 +35,9 @@ _sclk
 _smode
 _lowerField
 _vjs
+_videoBuffer
+_game_width
+_game_height
 _perf_counters_dump
 _perf_counters_reset
 _perf_counters_register

@@ -733,6 +733,7 @@ clean:
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
 		test/test_audio_clipping test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
+		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag
 
 # Self-contained unit tests (parser + list management + simulated
@@ -760,11 +761,13 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_pit_clock_rate \
-		test/test_blitter_mmio test/test_eeprom_lifecycle test/tools/test_memory_map
+		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
+		test/test_framebuffer_integrity test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_mmio
 	./test/test_pit_clock_rate
+	./test/test_tom_visible_window
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_m68k_ops
@@ -798,6 +801,12 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi
 	./test/tools/test_memory_map ./$(TARGET)
+	@# Framebuffer integrity: alpha corruption + screen position shift detection.
+	@if [ -f "test/roms/yarc.j64" ]; then \
+		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64; \
+	else \
+		echo "  SKIP: yarc.j64 ROM not available (framebuffer integrity)"; \
+	fi
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
@@ -826,6 +835,11 @@ test/test_blitter_mmio: test/test_blitter_mmio.c src/tom/blitter_mmio.c \
 		src/core/settings.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_blitter_mmio.c src/tom/blitter_mmio.c
+
+test/test_tom_visible_window: test/test_tom_visible_window.c src/tom/tom.c \
+		src/tom/tom.h src/core/vjag_memory.h src/core/settings.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_tom_visible_window.c
 
 test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
 	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
@@ -893,6 +907,13 @@ test/test_eeprom_lifecycle: test/test_eeprom_lifecycle.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_eeprom_lifecycle.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_framebuffer_integrity.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 endif
