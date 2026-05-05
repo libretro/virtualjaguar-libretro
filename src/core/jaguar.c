@@ -19,6 +19,7 @@
 #include "jaguar.h"
 
 #include "cdrom.h"
+#include "jagbios.h"
 #include "perf_counters.h"
 #include "dac.h"
 #include "dsp.h"
@@ -225,6 +226,14 @@ extern uint8_t jagMemSpace[];
  * (INTERNAL + WSEN + FALLING). */
 #define SCLK_DEFAULT            0x0013
 #define SMODE_DEFAULT           0x0015
+
+/* BIOS DSP audio engine location within jaguarBootROM.
+ * The real BIOS copies this 1992-byte block into DSP RAM at $F1B000
+ * and starts the DSP.  Games like Skyhammer / Iron Soldier 2 /
+ * Wolfenstein 3D check for a running DSP engine at boot and load
+ * different (broken) audio code if it's missing. */
+#define BIOS_DSP_ENGINE_OFFSET  0x214E
+#define BIOS_DSP_ENGINE_SIZE    0x07C8  /* 1992 bytes */
 
 // Internal variables
 
@@ -901,18 +910,30 @@ void JaguarReset(void)
       JERRYWriteWord(JERRY_SMODE, SMODE_DEFAULT, M68K);
       JERRYWriteWord(JERRY_SCLK, SCLK_DEFAULT, M68K);
 
-      /* NB: The real BIOS would copy a 1992-byte DSP audio engine from
-       * jaguarBootROM[0x214E..0x2916] into DSP RAM at offset 0 and
-       * start the DSP.  Previous attempts to load the engine code
-       * without the full register-bank state caused DSP PC escape
-       * (addresses like 0x8A or 0x74).  The root cause was a bug in
-       * DSPHandleIRQsNP: the ISR return address was saved as
-       * "dsp_pc - 2" which was wrong after MOVEI, JUMP, or JR
-       * (multi-word or branch instructions advance dsp_pc by more
-       * than 2).  With the fix (save dsp_pc directly), HLE DSP
-       * engine loading may now be feasible.
-       * TODO(v2.3): try loading the BIOS DSP engine again now that
-       * the IRQ return-address bug is fixed. */
+      /* --- BIOS DSP audio engine ---
+       * The real BIOS copies a 1992-byte DSP audio engine into DSP RAM
+       * ($F1B000) and starts it.  Games like Skyhammer, Iron Soldier 2,
+       * and Wolfenstein 3D check whether the DSP engine is present/running
+       * at boot and load completely different (broken) audio code if it
+       * is absent.  Replicating the engine here fixes the "saturated
+       * square-wave" audio that those games produce in HLE mode. */
+      {
+         unsigned i;
+         uint32_t word;
+         const uint8_t *eng = &jaguarBootROM[BIOS_DSP_ENGINE_OFFSET];
+
+         for (i = 0; i < BIOS_DSP_ENGINE_SIZE; i += 4)
+         {
+            word = ((uint32_t)eng[i] << 24)
+                 | ((uint32_t)eng[i + 1] << 16)
+                 | ((uint32_t)eng[i + 2] << 8)
+                 | (uint32_t)eng[i + 3];
+            DSPWriteLong(DSP_WORK_RAM_BASE + i, word, M68K);
+         }
+
+         DSPWriteLong(0xF1A110, DSP_WORK_RAM_BASE, M68K);
+         DSPWriteLong(0xF1A114, 0x00000001, M68K);
+      }
    }
 
    m68k_pulse_reset();								// Reset the 68000
