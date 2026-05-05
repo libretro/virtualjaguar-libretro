@@ -881,7 +881,8 @@ test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 		test/harness/dsp_probe.c test/harness/dsp_probe.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_dsp_audio_diag.c \
-		test/harness/harness.c test/harness/dsp_probe.c -ldl -lm
+		test/harness/harness.c test/harness/dsp_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag

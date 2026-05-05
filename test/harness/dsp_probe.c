@@ -126,6 +126,11 @@ void dsp_probe_dump_ram(const dsp_probe *p, uint32_t addr, unsigned words)
     }
 
     ram = p->sym.get_ram();
+
+    if (addr < DSP_WORK_RAM_BASE || addr > DSP_WORK_RAM_END) {
+        printf("  DSP RAM dump around $%06X: (outside DSP RAM)\n", addr);
+        return;
+    }
     offset = addr - DSP_WORK_RAM_BASE;
 
     printf("  DSP RAM dump around $%06X:\n", addr);

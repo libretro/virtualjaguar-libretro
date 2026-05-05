@@ -64,7 +64,7 @@ static size_t cb_audio_batch(const int16_t *data, size_t frames)
     harness_audio_stats *a;
     size_t i;
     unsigned nonsilent = 0;
-    int16_t peak_l = 0, peak_r = 0;
+    int peak_l = 0, peak_r = 0;
     double sum_sq_l = 0, sum_sq_r = 0;
 
     if (!active_cfg) return frames;
@@ -79,8 +79,8 @@ static size_t cb_audio_batch(const int16_t *data, size_t frames)
     for (i = 0; i < frames; i++) {
         int16_t l = data[i * 2];
         int16_t r = data[i * 2 + 1];
-        int16_t abs_l = (l < 0) ? (int16_t)-l : l;
-        int16_t abs_r = (r < 0) ? (int16_t)-r : r;
+        int abs_l = (l < 0) ? -((int)l) : (int)l;
+        int abs_r = (r < 0) ? -((int)r) : (int)r;
 
         if (abs_l > SILENCE_THRESHOLD || abs_r > SILENCE_THRESHOLD)
             nonsilent++;

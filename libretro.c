@@ -1045,10 +1045,17 @@ void retro_deinit(void)
 
    eeprom_dirty_cb = NULL;
    save_data_needs_unpack = false;
+   memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
    videoWidth = 0;
    videoHeight = 0;
    game_width = 0;
    game_height = 0;
+   memset(jag_retropad, 0, sizeof(jag_retropad));
+   memset(jag_numpad, 0, sizeof(jag_numpad));
+   numpad_to_kb[0] = 0;
+   numpad_to_kb[1] = 0;
+   show_input_options = true;
+   enable_alt_inputs = false;
 }
 
 void retro_reset(void)
