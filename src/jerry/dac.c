@@ -68,8 +68,6 @@ static uint32_t i2sWritePos = 0;	/* next write position in ring */
 static uint32_t i2sWriteCount = 0;	/* total samples captured this frame */
 static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
-static int16_t i2sLastL = 0;		/* last sample from previous frame */
-static int16_t i2sLastR = 0;
 
 /* Private function prototypes */
 
@@ -95,8 +93,6 @@ void DACReset(void)
    i2sWriteCount = 0;
    i2sPhase = 0.0;
    i2sRateRatio = 1.0;
-   i2sLastL = 0;
-   i2sLastR = 0;
    memset(i2sRingL, 0, sizeof(i2sRingL));
    memset(i2sRingR, 0, sizeof(i2sRingR));
 }
@@ -135,8 +131,6 @@ static void DACCaptureSample(int16_t left, int16_t right)
    i2sRingR[i2sWritePos & I2S_RING_MASK] = right;
    i2sWritePos++;
    i2sWriteCount++;
-   i2sLastL = left;
-   i2sLastR = right;
 }
 
 void DSPSampleCallback(void)
@@ -146,8 +140,8 @@ void DSPSampleCallback(void)
    double frac;
    int32_t s0L, s1L, s0R, s1R;
 
-   /* If no I2S samples have been produced yet, output silence / hold last */
-   if (i2sWriteCount == 0)
+   /* Guard: hold current register value if ring is empty (e.g. after reset) */
+   if (i2sWriteCount < 2)
    {
       outL = (int16_t)(*ltxd);
       outR = (int16_t)(*rtxd);
@@ -199,12 +193,15 @@ void DACPrepareFrame(int length)
    numberOfSamples = length;
    bufferDone = false;
 
-   /* Seed ring[0] with the last sample from the previous frame so that
-    * interpolation has a valid left endpoint at the frame boundary. */
-   i2sRingL[0] = i2sLastL;
-   i2sRingR[0] = i2sLastR;
-   i2sWritePos = 1;
-   i2sWriteCount = 1;
+   /* Seed ring with current DAC register values so interpolation has valid
+    * endpoints before the first real DSP write arrives.  Two copies give
+    * both idx0 and idx1 valid data for the interpolator. */
+   i2sRingL[0] = (int16_t)(*ltxd);
+   i2sRingR[0] = (int16_t)(*rtxd);
+   i2sRingL[1] = (int16_t)(*ltxd);
+   i2sRingR[1] = (int16_t)(*rtxd);
+   i2sWritePos = 2;
+   i2sWriteCount = 2;
    i2sPhase = i2sPhase - (double)(uint32_t)i2sPhase;
 
    /* Refresh rate ratio in case SCLK was written between frames */
