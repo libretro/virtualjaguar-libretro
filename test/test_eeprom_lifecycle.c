@@ -74,7 +74,8 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    /* Resolve memory API */
+    /* Resolve memory API (must re-resolve after each harness_load_core
+     * because harness_shutdown calls dlclose, invalidating pointers) */
     get_mem_data = (retro_get_memory_data_t)harness_dlsym(&cfg, "retro_get_memory_data");
     get_mem_size = (retro_get_memory_size_t)harness_dlsym(&cfg, "retro_get_memory_size");
     if (!get_mem_data || !get_mem_size) {
@@ -137,6 +138,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "Failed to reload core\n");
         return 2;
     }
+    get_mem_data = (retro_get_memory_data_t)harness_dlsym(&cfg, "retro_get_memory_data");
+    get_mem_size = (retro_get_memory_size_t)harness_dlsym(&cfg, "retro_get_memory_size");
     if (!harness_load_rom(&cfg)) {
         check(0, "reload_succeeds", "retro_load_game failed on reload",
               results, &num_results);
@@ -172,6 +175,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "Failed to reload core (test 3)\n");
         return 2;
     }
+    get_mem_data = (retro_get_memory_data_t)harness_dlsym(&cfg, "retro_get_memory_data");
+    get_mem_size = (retro_get_memory_size_t)harness_dlsym(&cfg, "retro_get_memory_size");
     if (!harness_load_rom(&cfg)) {
         check(0, "sram_persist", "load failed", results, &num_results);
     } else {
