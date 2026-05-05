@@ -102,6 +102,11 @@ void DACDone(void)
 {
 }
 
+uint32_t DACGetI2SWriteCount(void)
+{
+   return i2sWriteCount;
+}
+
 /* Update the rate ratio when SCLK changes */
 static void DACUpdateSCLKRate(void)
 {

@@ -489,14 +489,24 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
              * not terminate because it depends on BIOS-initialized
              * state.  A threshold of 8192 catches tight boot-time
              * poll loops (tens of thousands of reads/frame) while
-             * ignoring normal gameplay status checks (~1-10/frame). */
+             * ignoring normal gameplay status checks (~1-10/frame).
+             *
+             * Exception: if the DSP is actively producing audio
+             * (i2sWriteCount > 2, beyond the DACPrepareFrame seed),
+             * it is running a legitimate audio mixer (e.g. Doom) and
+             * must not be killed. */
             if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
             {
-               dspgo_poll_count++;
-               if (dspgo_poll_count > DSPGO_POLL_THRESHOLD)
-               {
-                  dsp_control &= ~0x01;
+               if (DACGetI2SWriteCount() > 2)
                   dspgo_poll_count = 0;
+               else
+               {
+                  dspgo_poll_count++;
+                  if (dspgo_poll_count > DSPGO_POLL_THRESHOLD)
+                  {
+                     dsp_control &= ~0x01;
+                     dspgo_poll_count = 0;
+                  }
                }
             }
             else
