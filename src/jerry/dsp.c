@@ -298,6 +298,23 @@ static uint8_t dsp_ram_8[0x2000];
 
 static uint32_t dspgo_poll_count;
 
+/* HLE "phantom DSPGO" flag.
+ *
+ * In HLE (no-BIOS) mode, the real BIOS normally loads and starts a DSP audio
+ * engine before handing control to the cartridge.  Games like Skyhammer and
+ * Iron Soldier 2 read D_CTRL to check whether DSPGO is set; if they see
+ * DSPGO=0 they take an alternate (buggy) audio initialization path that
+ * produces saturated full-scale output.
+ *
+ * This flag spoofs DSPGO=1 in D_CTRL reads until the 68K issues its first
+ * write to D_CTRL (indicating the game is taking over DSP control).  The DSP
+ * is NOT actually running during this period — it's purely a read-back lie so
+ * the game selects the correct code path.
+ *
+ * Cleared by: any 68K write to D_CTRL (offset 0x14 in DSP control space).
+ * Set by:     DSPReset() when vjs.useJaguarBIOS == false. */
+static bool dsp_phantom_running;
+
 #define BRANCH_CONDITION(x)		dsp_branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
 
 static uint32_t dsp_in_exec = 0;
@@ -483,6 +500,14 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          case 0x10:
             return dsp_pc;
          case 0x14:
+            /* HLE phantom DSPGO: if the game hasn't written D_CTRL
+             * yet, report DSPGO=1 so it takes the BIOS-compatible
+             * audio path.  The DSP isn't actually running — this is
+             * purely a readback lie.  No poll-threshold logic needed
+             * here because the DSP isn't consuming cycles. */
+            if (dsp_phantom_running && who == M68K)
+               return dsp_control | DSPGO;
+
             /* HLE: When the 68K tight-polls DSPGO, auto-clear it.
              * The real BIOS+I2S infrastructure lets DSP programs
              * finish during SoundCallback; in HLE mode the DSP may
@@ -543,8 +568,13 @@ void DSPWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
          dsp_div_control = (dsp_div_control & (~(0xFF << (bytenum << 3)))) | (data << (bytenum << 3));
       else
       {
-         //This looks funky. !!! FIX !!!
-         uint32_t old_data = DSPReadLong(offset&0xFFFFFFC, who);
+         uint32_t old_data;
+
+         /* Clear phantom before read-modify-write to D_CTRL */
+         if (who == M68K && reg == 0x14)
+            dsp_phantom_running = false;
+
+         old_data = DSPReadLong(offset&0xFFFFFFC, who);
          bytenum = 3 - bytenum; // convention motorola !!!
          old_data = (old_data & (~(0xFF << (bytenum << 3)))) | (data << (bytenum << 3));
          DSPWriteLong(offset & 0xFFFFFFC, old_data, who);
@@ -578,7 +608,15 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       }
       else
       {
-         uint32_t old_data = DSPReadLong(offset & 0xFFFFFFC, who);
+         uint32_t old_data;
+
+         /* Clear phantom before the read-modify-write so the
+          * DSPReadLong below returns the true D_CTRL value and
+          * doesn't accidentally set real DSPGO via the merge. */
+         if (who == M68K && (offset & 0x1C) == 0x14)
+            dsp_phantom_running = false;
+
+         old_data = DSPReadLong(offset & 0xFFFFFFC, who);
 
          if (offset & 0x03)
             old_data = (old_data & 0xFFFF0000) | (data & 0xFFFF);
@@ -643,6 +681,12 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                uint32_t mask;
                bool wasRunning = DSP_RUNNING;
                dspgo_poll_count = 0;
+
+               /* First 68K write to D_CTRL ends the phantom-DSPGO
+                * period: the game is now managing the DSP itself. */
+               if (who == M68K)
+                  dsp_phantom_running = false;
+
                // Check for DSP -> CPU interrupt
                if (data & CPUINT)
                {
@@ -801,6 +845,11 @@ void DSPReset(void)
 	dsp_control			  = 0x00002000;				// Report DSP version 2
 	dsp_div_control		  = 0x00000000;
 	dsp_in_exec			  = 0;
+
+	/* In HLE mode, spoof DSPGO=1 so games that check D_CTRL at boot
+	 * (Skyhammer, Iron Soldier 2) take their BIOS-compatible audio path.
+	 * Cleared on first 68K write to D_CTRL. */
+	dsp_phantom_running   = !vjs.useJaguarBIOS;
 
 	dsp_reg = dsp_reg_bank_0;
 	dsp_alternate_reg = dsp_reg_bank_1;
@@ -2865,6 +2914,10 @@ size_t DSPStateLoad(const uint8_t *buf)
    STATE_LOAD_VAR(buf, IMASKCleared);
 
    STATE_LOAD_VAR(buf, prevR1);
+
+   /* Phantom DSPGO is a boot-time-only hack; after state load the game
+    * has already chosen its audio path, so unconditionally clear it. */
+   dsp_phantom_running = false;
 
    return (size_t)(buf - start);
 }
