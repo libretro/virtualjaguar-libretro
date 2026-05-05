@@ -2977,17 +2977,13 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //byte_merge must see the existing dest byte in the low 8 bits of
                //dstd or the unmodified pixel slots in that byte get zeroed
                //(matches WRITE_PIXEL_1/2/4 RMW in the fast blitter).
-               /* Phrase writes merge via byte_merge(mask): inhibited bytes come
-                * from dstd.  When bkgwren is set, hardware uses the DSTDATA
-                * register value as background (typically zero), NOT live
-                * framebuffer data — reading memory here would inject existing
-                * pixels as noise (the AvP red-artifact bug).
-                *
-                * When bkgwren is NOT set and !DSTEN, dstd would stay at
-                * DSTDATA (often 0) and keyed/HUD pixels show black boxes
-                * (Battle Sphere cockpit reticle).  Read the framebuffer in
-                * that case so byte_merge has the live pixels.
-                * See commit 54ca486. */
+               /* Phrase writes merge via byte_merge(mask): inhibited bytes
+                * come from dstd.  When bkgwren is set, hardware uses the
+                * DSTDATA register value as background — reading memory
+                * would inject stale pixels as noise (AvP red-artifact bug).
+                * When bkgwren is NOT set, always read the framebuffer so
+                * byte_merge has the live pixels for uninhibited positions
+                * (Battle Sphere cockpit reticle fix, commit 54ca486). */
                if (phrase_mode && !bkgwren)
                   dstd = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                else if (!phrase_mode && pixsize < 3 && !dsten && !bkgwren)
