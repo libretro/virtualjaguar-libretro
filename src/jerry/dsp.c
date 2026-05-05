@@ -28,7 +28,7 @@
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
-//#define DSP_CORRECT_ALIGNMENT_STORE
+#define DSP_CORRECT_ALIGNMENT_STORE
 
 #define NEW_SCOREBOARD
 
@@ -1264,13 +1264,21 @@ INLINE static void dsp_opcode_load_r15_ri(void)
 
 INLINE static void dsp_opcode_store_r14_ri(void)
 {
+#ifdef DSP_CORRECT_ALIGNMENT_STORE
+	DSPWriteLong((dsp_reg[14] + RM) & 0xFFFFFFFC, RN, DSP);
+#else
 	DSPWriteLong(dsp_reg[14] + RM, RN, DSP);
+#endif
 }
 
 
 INLINE static void dsp_opcode_store_r15_ri(void)
 {
+#ifdef DSP_CORRECT_ALIGNMENT_STORE
+	DSPWriteLong((dsp_reg[15] + RM) & 0xFFFFFFFC, RN, DSP);
+#else
 	DSPWriteLong(dsp_reg[15] + RM, RN, DSP);
+#endif
 }
 
 
@@ -1543,30 +1551,47 @@ INLINE static void dsp_opcode_mmult(void)
 INLINE static void dsp_opcode_abs(void)
 {
 	uint32_t _Rn = RN;
+	uint32_t res;
 
 	if (_Rn == 0x80000000)
+	{
+		/* ABS(0x80000000) overflows back to 0x80000000; set flags accordingly:
+		 * C=1 (input was negative), N=1 (result is negative), Z=0. */
 		dsp_flag_n = 1;
+		dsp_flag_c = 1;
+		dsp_flag_z = 0;
+	}
 	else
 	{
-      uint32_t res;
-
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
 		res = RN   = ((_Rn & 0x80000000) ? -_Rn : _Rn);
 		CLR_ZN;
-      SET_Z(res);
+		SET_Z(res);
 	}
 }
 
 
 INLINE static void dsp_opcode_div(void)
 {
-   unsigned i;
-	// Real algorithm, courtesy of SCPCD: NYAN!
-	uint32_t q = RN;
-	uint32_t r = 0;
+	unsigned i;
+	uint32_t q;
+	uint32_t r;
 
-	// If 16.16 division, stuff top 16 bits of RN into remainder and put the
-	// bottom 16 of RN in top 16 of quotient
+	/* Guard against divide-by-zero: JTRM says result is undefined but no
+	 * trap occurs.  Match the pipelined version's behavior. */
+	if (RM == 0)
+	{
+		RN = 0xFFFFFFFF;
+		dsp_remain = 0;
+		return;
+	}
+
+	/* Real algorithm, courtesy of SCPCD: NYAN! */
+	q = RN;
+	r = 0;
+
+	/* If 16.16 division, stuff top 16 bits of RN into remainder and put the
+	 * bottom 16 of RN in top 16 of quotient */
 	if (dsp_div_control & 0x01)
 		q <<= 16, r = RN >> 16;
 
@@ -1924,7 +1949,15 @@ INLINE static void DSP_abs(void)
 	uint32_t _Rn = PRN;
 
 	if (_Rn == 0x80000000)
+	{
+		/* ABS(0x80000000) overflows back to 0x80000000; set flags accordingly:
+		 * C=1 (input was negative), N=1 (result is negative), Z=0.
+		 * Must set PRES so the writeback stage stores the correct value. */
+		PRES = 0x80000000;
 		dsp_flag_n = 1;
+		dsp_flag_c = 1;
+		dsp_flag_z = 0;
+	}
 	else
 	{
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
