@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+extern uint8_t mtMem[0x20000];
+
 void MTInit(void);
 void MTReset(void);
 void MTDone(void);
