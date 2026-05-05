@@ -25,6 +25,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The harness intentionally leaks ROM buffers (VJ keeps the pointer).
+ * Suppress LeakSanitizer for this known-benign leak. */
+#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+const char *__lsan_default_suppressions(void) {
+    return "leak:harness_load_rom\n";
+}
+#endif
+
 /* libretro memory API — resolved via dlsym */
 typedef void  *(*retro_get_memory_data_t)(unsigned);
 typedef size_t (*retro_get_memory_size_t)(unsigned);
