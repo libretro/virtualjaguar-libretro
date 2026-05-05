@@ -17,6 +17,9 @@
 #include "joystick.h"
 #include "settings.h"
 #include "tom.h"
+#include "eeprom.h"
+#include "memtrack.h"
+#include "vjag_memory.h"
 #include "state.h"
 #include "log.h"
 #include "version.h" /* generated; defines CORE_VERSION */
@@ -44,11 +47,6 @@ int videoHeight              = 0;
 uint32_t *videoBuffer        = NULL;
 int game_width               = 0;
 int game_height              = 0;
-
-extern uint16_t eeprom_ram[64];
-extern uint8_t mtMem[0x20000];
-extern uint32_t jaguarMainROMCRC32;
-extern void (*eeprom_dirty_cb)(void);
 
 /* Save buffer for RETRO_MEMORY_SAVE_RAM.
  * Regular carts: 128 bytes (64 x 16-bit EEPROM words, big-endian packed).
@@ -1071,8 +1069,6 @@ void retro_reset(void)
 }
 
 #ifdef DEBUG_PRESENTATION
-extern uint16_t *ltxd, *rtxd;
-extern uint32_t screenPitch;
 static unsigned dbg_frame_counter = 0;
 
 static void dbg_dump_frame(void)
