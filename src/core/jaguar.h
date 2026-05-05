@@ -55,6 +55,9 @@ extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 #define RISC_CLOCK_RATE_PAL		26593900
 #define RISC_CLOCK_RATE_NTSC	26590906
 
+#define SYSTEM_CLOCK_RATE		(vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL)
+#define M68K_CLOCK_RATE			(vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL)
+
 // Stuff for IRQ handling
 
 #define ASSERT_LINE		1
