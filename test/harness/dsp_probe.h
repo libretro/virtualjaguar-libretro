@@ -67,7 +67,6 @@ typedef struct {
 /* Resolved symbol pointers */
 typedef struct {
     uint32_t *pc;
-    uint32_t *flags;       /* via DSPGetFlags() accessor */
     uint32_t *control;
     uint32_t *bank0;
     uint32_t *bank1;

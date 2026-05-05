@@ -17,3 +17,9 @@ rules:
   line-length:
     max: 200
     level: warning
+  indentation:
+    spaces: 2
+    indent-sequences: whatever
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1

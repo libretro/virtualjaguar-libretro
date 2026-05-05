@@ -40,7 +40,6 @@ static unsigned dump_interval = 0;
 static bool frame_callback(void *userdata, unsigned frame)
 {
     harness_config *cfg = (harness_config *)userdata;
-    (void)cfg;
 
     if (!dsp_probe_per_frame(&probe)) {
         if (dump_on_escape) {
@@ -55,8 +54,8 @@ static bool frame_callback(void *userdata, unsigned frame)
         return false;
     }
 
-    if (dump_interval && (frame % dump_interval == 0)) {
-        dsp_probe_print_snapshot(&probe, cfg->json_output);
+    if (dump_interval && !cfg->json_output && (frame % dump_interval == 0)) {
+        dsp_probe_print_snapshot(&probe, 0);
     }
 
     return true;
@@ -95,6 +94,7 @@ int main(int argc, char **argv)
 
     if (!cfg.rom_path) {
         fprintf(stderr, "Usage: test_dsp_audio_diag [core.dylib] <rom.jag> [options]\n");
+        harness_shutdown(&cfg);
         return 2;
     }
 
@@ -106,7 +106,10 @@ int main(int argc, char **argv)
                cfg.use_bios ? "BIOS" : "HLE", cfg.frames);
     }
 
-    if (!harness_load_rom(&cfg)) return 2;
+    if (!harness_load_rom(&cfg)) {
+        harness_shutdown(&cfg);
+        return 2;
+    }
 
     if (!dsp_probe_init(&probe, &cfg)) {
         fprintf(stderr, "Cannot initialize DSP probe (need TEST_EXPORTS=1 build)\n");
