@@ -821,7 +821,16 @@ bool retro_load_game(const struct retro_game_info *info)
    videoWidth           = 320;
    videoHeight          = 240;
    videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
-   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t)); //found in dac.h
+   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t));
+
+   if (!videoBuffer || !sampleBuffer)
+   {
+      free(videoBuffer);
+      free(sampleBuffer);
+      videoBuffer = NULL;
+      sampleBuffer = NULL;
+      return false;
+   }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
 
    game_width           = 320;
@@ -923,12 +932,31 @@ void retro_unload_game(void)
 {
    retro_cheat_reset();
    JaguarDone();
+
    if (videoBuffer)
       free(videoBuffer);
    videoBuffer = NULL;
    if (sampleBuffer)
-      free(sampleBuffer); //found in dac.h
+      free(sampleBuffer);
    sampleBuffer = NULL;
+
+   /* Reset all module state so a subsequent retro_load_game in the same
+    * process (iOS cannot dlclose cores) starts clean. */
+   videoWidth = 0;
+   videoHeight = 0;
+   game_width = 0;
+   game_height = 0;
+
+   eeprom_dirty_cb = NULL;
+   save_data_needs_unpack = false;
+   memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
+
+   memset(jag_retropad, 0, sizeof(jag_retropad));
+   memset(jag_numpad, 0, sizeof(jag_numpad));
+   numpad_to_kb[0] = 0;
+   numpad_to_kb[1] = 0;
+   show_input_options = true;
+   enable_alt_inputs = false;
 }
 
 unsigned retro_get_region(void)
@@ -1005,6 +1033,22 @@ void retro_init(void)
 void retro_deinit(void)
 {
    libretro_supports_bitmasks = false;
+
+   /* Belt-and-suspenders: clear anything retro_unload_game might have
+    * missed if the frontend calls deinit without unload first. */
+   if (videoBuffer)
+      free(videoBuffer);
+   videoBuffer = NULL;
+   if (sampleBuffer)
+      free(sampleBuffer);
+   sampleBuffer = NULL;
+
+   eeprom_dirty_cb = NULL;
+   save_data_needs_unpack = false;
+   videoWidth = 0;
+   videoHeight = 0;
+   game_width = 0;
+   game_height = 0;
 }
 
 void retro_reset(void)
