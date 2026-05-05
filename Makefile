@@ -733,7 +733,7 @@ clean:
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
 		test/test_audio_clipping test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
-		test/tools/test_memory_map
+		test/tools/test_memory_map test/tools/test_dsp_audio_diag
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
