@@ -122,7 +122,8 @@ static void check_func_uses_risc(const char *path, const char *src, const char *
    has_risc = (strstr(snippet, "RISC_CYCLE_IN_USEC") != NULL)
       || (strstr(snippet, "RISC_CYCLE_PAL_IN_USEC") != NULL)
       || (strstr(snippet, "RISC_CLOCK_RATE_NTSC") != NULL)
-      || (strstr(snippet, "RISC_CLOCK_RATE_PAL") != NULL);
+      || (strstr(snippet, "RISC_CLOCK_RATE_PAL") != NULL)
+      || (strstr(snippet, "SYSTEM_CLOCK_RATE") != NULL);
    has_m68k = (strstr(snippet, "M68K_CYCLE_IN_USEC") != NULL)
       || (strstr(snippet, "M68K_CYCLE_PAL_IN_USEC") != NULL)
       || (strstr(snippet, "M68K_CLOCK_RATE_NTSC") != NULL)
