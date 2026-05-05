@@ -444,20 +444,17 @@ static uint16_t TOMGetTopVisible(void)
 	uint16_t fallback = vjs.hardwareTypeNTSC
 		? DEFAULT_TOP_VISIBLE_VC : DEFAULT_TOP_VISIBLE_VC_PAL;
 
-	/* If VDB is zero the registers haven't been set up yet; use fallback */
-	if (vdb == 0)
+	/* If VDB is zero or matches the shared reset default (38), use the
+	 * mode-specific fallback so PAL gets its distinct visible window. */
+	if (vdb == 0 || vdb == 38)
 		return fallback;
 
 	/* Guard against garbage VDB values exceeding VP (total halflines) */
 	if (vp > 0 && vdb > vp)
 		return fallback;
 
-	/* Use VDB directly -- the framebuffer starts where the OP starts.
-	 * Subtract a small margin (7 halflines) to include any visible border
-	 * above the active area, matching the legacy offset pattern. */
-	if (vdb > 7)
-		return vdb - 7;
-	return 0;
+	/* Use VDB directly as the top visible halfline. */
+	return vdb;
 }
 
 static uint16_t TOMGetBottomVisible(void)
@@ -470,22 +467,20 @@ static uint16_t TOMGetBottomVisible(void)
 	uint16_t top;
 	uint16_t max_bottom;
 
-	/* If VDE is zero or exceeds VP (VDE=$FFFF bug workaround), use fallback */
-	if (vde == 0)
+	/* If VDE is zero, matches the shared reset default (518), or exceeds
+	 * VP, use the mode-specific fallback for correct PAL/NTSC window. */
+	if (vde == 0 || vde == 518)
 		return fallback;
 	if (vp > 0 && vde > vp)
 		return fallback;
 
-	/* Add small margin (7 halflines) below active area for border,
-	 * but clamp to VP so we never exceed the frame's total halflines. */
-	if (vp > 0 && vde + 7 > vp)
+	/* Use VDE directly, clamped to VP */
+	if (vp > 0 && vde > vp)
 		result = vp;
 	else
-		result = vde + 7;
+		result = vde;
 
-	/* Clamp so that (bottom - top) / 2 never exceeds MAX_VISIBLE_HEIGHT.
-	 * This prevents the visible span from being larger than the framebuffer
-	 * (e.g. 246 lines vs the 240 reported to the frontend for NTSC). */
+	/* Clamp so that (bottom - top) / 2 never exceeds MAX_VISIBLE_HEIGHT. */
 	top = TOMGetTopVisible();
 	max_bottom = top + (MAX_VISIBLE_HEIGHT * 2);
 	if (result > max_bottom)
@@ -502,14 +497,12 @@ static uint32_t TOMGetLeftVisibleHC(void)
 	uint32_t fallback = vjs.hardwareTypeNTSC
 		? DEFAULT_LEFT_VISIBLE_HC : DEFAULT_LEFT_VISIBLE_HC_PAL;
 
-	/* If HDB1 is zero, registers haven't been set up yet */
-	if (hdb1 == 0)
+	/* If HDB1 is zero or matches the shared reset default (203), use
+	 * the mode-specific fallback so PAL gets its distinct left edge. */
+	if (hdb1 == 0 || hdb1 == 203)
 		return fallback;
 
-	/* Use HDB1 minus a small margin (16 pixel clocks) so that
-	 * the framebuffer includes the left border region.
-	 * This matches the legacy pattern where LEFT_VISIBLE_HC was
-	 * approximately HDB1 - 15 for NTSC defaults (HDB1=203, LEFT=188). */
+	/* Use HDB1 minus a small margin (16 pixel clocks) for left border. */
 	if (hdb1 > 16)
 		return (uint32_t)(hdb1 - 16);
 	return 0;
@@ -519,24 +512,25 @@ static uint32_t TOMGetRightVisibleHC(void)
 {
 	uint16_t hde = GET16(tomRam8, HDE);
 	uint32_t left = TOMGetLeftVisibleHC();
-	uint32_t max_span = (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
-	uint32_t right_from_left = left + max_span;
+	uint32_t fallback = vjs.hardwareTypeNTSC
+		? DEFAULT_RIGHT_VISIBLE_HC : DEFAULT_RIGHT_VISIBLE_HC_PAL;
 
-	/* If HDE is zero, registers haven't been set up yet */
-	if (hde == 0)
-		return right_from_left;
+	/* If HDE is zero or matches the shared reset default (1665), use
+	 * the mode-specific fallback for correct PAL/NTSC right edge. */
+	if (hde == 0 || hde == 1665)
+		return fallback;
 
 	/* Guard against HDE < left which would cause unsigned underflow
-	 * when callers compute (right - left). Fall back to max span. */
+	 * when callers compute (right - left). Fall back to mode default. */
 	if ((uint32_t)hde <= left)
-		return right_from_left;
+		return fallback;
 
-	/* Right edge is the lesser of HDE and the max viewport span from left.
+	/* Right edge is the lesser of HDE and the fallback span.
 	 * This prevents overflow of the framebuffer while still respecting
 	 * games that set a narrower HDE. */
-	if ((uint32_t)hde < right_from_left)
+	if ((uint32_t)hde < fallback)
 		return (uint32_t)hde;
-	return right_from_left;
+	return fallback;
 }
 
 static void TOMAssertEnabledIRQs(void)
