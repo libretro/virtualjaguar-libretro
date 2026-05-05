@@ -65,9 +65,11 @@ static bool bufferDone = false;
 static int16_t i2sRingL[I2S_RING_SIZE];
 static int16_t i2sRingR[I2S_RING_SIZE];
 static uint32_t i2sWritePos = 0;	/* next write position in ring */
-static uint32_t i2sReadCount = 0;	/* total samples written this frame */
+static uint32_t i2sWriteCount = 0;	/* total samples captured this frame */
 static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
+static int16_t i2sLastL = 0;		/* last sample from previous frame */
+static int16_t i2sLastR = 0;
 
 /* Private function prototypes */
 
@@ -90,9 +92,11 @@ void DACReset(void)
    sstat = 0;
 
    i2sWritePos = 0;
-   i2sReadCount = 0;
+   i2sWriteCount = 0;
    i2sPhase = 0.0;
    i2sRateRatio = 1.0;
+   i2sLastL = 0;
+   i2sLastR = 0;
    memset(i2sRingL, 0, sizeof(i2sRingL));
    memset(i2sRingR, 0, sizeof(i2sRingR));
 }
@@ -130,7 +134,9 @@ static void DACCaptureSample(int16_t left, int16_t right)
    i2sRingL[i2sWritePos & I2S_RING_MASK] = left;
    i2sRingR[i2sWritePos & I2S_RING_MASK] = right;
    i2sWritePos++;
-   i2sReadCount++;
+   i2sWriteCount++;
+   i2sLastL = left;
+   i2sLastR = right;
 }
 
 void DSPSampleCallback(void)
@@ -141,7 +147,7 @@ void DSPSampleCallback(void)
    int32_t s0L, s1L, s0R, s1R;
 
    /* If no I2S samples have been produced yet, output silence / hold last */
-   if (i2sReadCount == 0)
+   if (i2sWriteCount == 0)
    {
       outL = (int16_t)(*ltxd);
       outR = (int16_t)(*rtxd);
@@ -156,10 +162,10 @@ void DSPSampleCallback(void)
       idx1 = idx0 + 1;
 
       /* Clamp indices to available data */
-      if (idx0 >= i2sReadCount)
-         idx0 = i2sReadCount - 1;
-      if (idx1 >= i2sReadCount)
-         idx1 = i2sReadCount - 1;
+      if (idx0 >= i2sWriteCount)
+         idx0 = i2sWriteCount - 1;
+      if (idx1 >= i2sWriteCount)
+         idx1 = i2sWriteCount - 1;
 
       s0L = (int32_t)i2sRingL[idx0 & I2S_RING_MASK];
       s1L = (int32_t)i2sRingL[idx1 & I2S_RING_MASK];
@@ -193,9 +199,12 @@ void DACPrepareFrame(int length)
    numberOfSamples = length;
    bufferDone = false;
 
-   /* Preserve fractional phase for interpolation continuity across frames */
-   i2sWritePos = 0;
-   i2sReadCount = 0;
+   /* Seed ring[0] with the last sample from the previous frame so that
+    * interpolation has a valid left endpoint at the frame boundary. */
+   i2sRingL[0] = i2sLastL;
+   i2sRingR[0] = i2sLastR;
+   i2sWritePos = 1;
+   i2sWriteCount = 1;
    i2sPhase = i2sPhase - (double)(uint32_t)i2sPhase;
 
    /* Refresh rate ratio in case SCLK was written between frames */
@@ -293,7 +302,7 @@ size_t DACStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, numberOfSamples);
 	STATE_SAVE_VAR(buf, bufferDone);
 	STATE_SAVE_VAR(buf, i2sWritePos);
-	STATE_SAVE_VAR(buf, i2sReadCount);
+	STATE_SAVE_VAR(buf, i2sWriteCount);
 	STATE_SAVE_VAR(buf, i2sPhase);
 	STATE_SAVE_VAR(buf, i2sRateRatio);
 
@@ -308,7 +317,7 @@ size_t DACStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, numberOfSamples);
 	STATE_LOAD_VAR(buf, bufferDone);
 	STATE_LOAD_VAR(buf, i2sWritePos);
-	STATE_LOAD_VAR(buf, i2sReadCount);
+	STATE_LOAD_VAR(buf, i2sWriteCount);
 	STATE_LOAD_VAR(buf, i2sPhase);
 	STATE_LOAD_VAR(buf, i2sRateRatio);
 
