@@ -501,46 +501,32 @@ static uint16_t TOMGetBottomVisible(void)
 	return result;
 }
 
-/* Horizontal visible window: derived from HDB1/HDE.
- * Returns the left visible HC value. */
+/* Horizontal visible window: left edge.
+ *
+ * Always return the mode-specific fallback constant.  The left edge defines
+ * the fixed coordinate origin for HDB1-relative pixel positioning in the
+ * scanline renderers (startPos = HDB1 - leftHC).  Deriving leftHC from HDB1
+ * itself collapses startPos to a constant and shifts games that program HDB1
+ * to non-default values (e.g. Battle Sphere).  The original emulator always
+ * used a fixed left edge; preserve that behaviour. */
 static uint32_t TOMGetLeftVisibleHC(void)
 {
-	uint16_t hdb1 = GET16(tomRam8, HDB1);
-
-	/* If HDB1 is zero or matches the shared reset default (203), use
-	 * the mode-specific fallback so PAL gets its distinct left edge. */
-	if (hdb1 == 0 || hdb1 == 203)
-		return FALLBACK_LEFT_HC;
-
-	/* Use HDB1 minus a small margin (16 pixel clocks) for left border. */
-	if (hdb1 > 16)
-		return (uint32_t)(hdb1 - 16);
-	return 0;
+	return FALLBACK_LEFT_HC;
 }
 
 static uint32_t TOMGetRightVisibleHC(void)
 {
-	uint16_t hdb1 = GET16(tomRam8, HDB1);
 	uint16_t hde = GET16(tomRam8, HDE);
 	uint32_t left = TOMGetLeftVisibleHC();
 	uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
 
-	/* Use mode-specific fallback only when BOTH HDB1 and HDE are at their
-	 * shared reset defaults.  If HDB1 was reprogrammed but HDE wasn't,
-	 * derive from left to avoid right < left underflow. */
-	if (hde == 0)
-		return max_right;
-	if (hde == 1665 && hdb1 == 203)
-		return FALLBACK_RIGHT_HC;
-
-	/* Guard against HDE < left which would cause unsigned underflow
-	 * when callers compute (right - left). */
-	if ((uint32_t)hde <= left)
+	/* If HDE is zero or not usefully beyond the left edge, return
+	 * the max right (== FALLBACK_RIGHT_HC since left is fixed). */
+	if (hde == 0 || (uint32_t)hde <= left)
 		return max_right;
 
-	/* Right edge is the lesser of HDE and max_right (derived from left
-	 * edge + max framebuffer width). This prevents overflow while
-	 * respecting games that set a narrower HDE. */
+	/* Right edge is the lesser of HDE and max_right.  This respects
+	 * games that program a narrower HDE while preventing overflow. */
 	if ((uint32_t)hde < max_right)
 		return (uint32_t)hde;
 	return max_right;
