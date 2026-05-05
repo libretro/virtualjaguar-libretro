@@ -109,7 +109,8 @@ void DACUpdateSCLKRate(void)
    double sys_clock;
 
    sclk_val = (uint32_t)(*sclk);
-   sys_clock = vjs.hardwareTypeNTSC ? 26590906.0 : 26593900.0;
+   sys_clock = vjs.hardwareTypeNTSC
+      ? (double)RISC_CLOCK_RATE_NTSC : (double)RISC_CLOCK_RATE_PAL;
    /* sample_rate = system_clock / (64 * (SCLK + 1)) */
    i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
    i2sRateRatio = i2s_rate / (double)DAC_AUDIO_RATE;
@@ -232,7 +233,7 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
 void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    if (offset == SCLK + 3)
-      DACWriteWord(offset - 3, (uint16_t)data, UNKNOWN);
+      DACWriteWord(SCLK + 2, (uint16_t)data, UNKNOWN);
 }
 
 
