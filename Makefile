@@ -732,7 +732,8 @@ clean:
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
 		test/test_audio_clipping test/test_pit_clock_rate \
-		test/test_blitter_mmio test/tools/test_memory_map
+		test/test_blitter_mmio test/test_eeprom_lifecycle \
+		test/tools/test_memory_map
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -759,7 +760,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_pit_clock_rate \
-		test/test_blitter_mmio test/tools/test_memory_map
+		test/test_blitter_mmio test/test_eeprom_lifecycle test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_mmio
@@ -797,6 +798,10 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi
 	./test/tools/test_memory_map ./$(TARGET)
+	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
+	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
+		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
+		./test/test_eeprom_lifecycle ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -882,6 +887,13 @@ test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_eeprom_lifecycle: test/test_eeprom_lifecycle.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_eeprom_lifecycle.c \
+		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 endif
 

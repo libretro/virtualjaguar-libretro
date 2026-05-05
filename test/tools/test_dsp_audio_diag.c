@@ -95,6 +95,7 @@ int main(int argc, char **argv)
 
     if (!cfg.rom_path) {
         fprintf(stderr, "Usage: test_dsp_audio_diag [core.dylib] <rom.jag> [options]\n");
+        harness_shutdown(&cfg);
         return 2;
     }
 
@@ -106,7 +107,10 @@ int main(int argc, char **argv)
                cfg.use_bios ? "BIOS" : "HLE", cfg.frames);
     }
 
-    if (!harness_load_rom(&cfg)) return 2;
+    if (!harness_load_rom(&cfg)) {
+        harness_shutdown(&cfg);
+        return 2;
+    }
 
     if (!dsp_probe_init(&probe, &cfg)) {
         fprintf(stderr, "Cannot initialize DSP probe (need TEST_EXPORTS=1 build)\n");

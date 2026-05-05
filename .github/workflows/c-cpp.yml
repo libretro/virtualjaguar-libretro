@@ -270,6 +270,19 @@ jobs:
         $CC -O2 -Wall -o test/test_m68k_ops test/test_m68k_ops.c $LDFLAGS
         ./test/test_m68k_ops
 
+    - name: Run EEPROM lifecycle test
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        INCFLAGS="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Ilibretro-common/include"
+        $CC -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c
+        /tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64
+        $CC -O2 -Wall -std=c99 $INCFLAGS \
+          -o test/test_eeprom_lifecycle test/test_eeprom_lifecycle.c \
+          test/harness/harness.c $LDFLAGS -lm
+        ./test/test_eeprom_lifecycle ./${{ matrix.config.artifact }} /tmp/eeprom_lifecycle_test.j64
+
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       uses: actions/cache@v5

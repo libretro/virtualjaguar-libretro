@@ -863,6 +863,7 @@ bool retro_load_game(const struct retro_game_info *info)
    if (!JaguarLoadFile((uint8_t*)info->data, info->size))
    {
       LOG_ERR("[Virtual Jaguar] unsupported or invalid content format\n");
+      JaguarDone();
       free(videoBuffer);
       videoBuffer = NULL;
       free(sampleBuffer);
@@ -880,6 +881,7 @@ bool retro_load_game(const struct retro_game_info *info)
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
       {
          LOG_ERR("[Virtual Jaguar] failed to reload RAM-loaded content\n");
+         JaguarDone();
          free(videoBuffer);
          videoBuffer = NULL;
          free(sampleBuffer);
@@ -1034,10 +1036,15 @@ void retro_deinit(void)
 {
    libretro_supports_bitmasks = false;
 
-   /* Belt-and-suspenders: clear anything retro_unload_game might have
-    * missed if the frontend calls deinit without unload first. */
+   /* Belt-and-suspenders: shut down emulator subsystems if the frontend
+    * calls deinit without unload first (videoBuffer != NULL means a game
+    * was loaded and never unloaded). */
    if (videoBuffer)
+   {
+      retro_cheat_reset();
+      JaguarDone();
       free(videoBuffer);
+   }
    videoBuffer = NULL;
    if (sampleBuffer)
       free(sampleBuffer);
