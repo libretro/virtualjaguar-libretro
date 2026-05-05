@@ -34,6 +34,12 @@
 
 static bool frameDone;
 
+/* Bus contention counter: the blitter accumulates stolen 68K cycles here.
+ * JaguarExecuteNew() subtracts them from the 68K's next timeslice budget.
+ * Approximation: each blitter phrase read or write steals ~2 M68K cycles
+ * (one 64-bit bus transaction = 4 system clocks = 2 M68K clocks). */
+uint32_t blitter_bus_cycles_stolen = 0;
+
 /* Frame-pacing instrumentation (no-op unless built with BENCH_PROFILE).
  * Lets the acid runner / benchmark detect timing regressions like the
  * Doom 2x speed bug -- e.g. expected 525 halflines/frame NTSC, 60 vblank
@@ -750,6 +756,8 @@ void JaguarReset(void)
    uint32_t preserveStart = jaguarLoadedRAMStart;
    uint32_t preserveEnd = jaguarLoadedRAMEnd;
 
+   blitter_bus_cycles_stolen = 0;
+
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
    // In HLE (no-BIOS) mode, zero-fill instead: the real BIOS clears most of RAM
@@ -946,9 +954,17 @@ uint8_t * GetRamPtr(void)
 /* New Jaguar execution stack
  * This executes 1 frame's worth of code.
  * Interleaves EVENT_MAIN (video/halfline) and EVENT_JERRY (DSP/I2S/timers)
- * so the DSP runs alongside the 68K and GPU, matching real hardware timing. */
+ * so the DSP runs alongside the 68K and GPU, matching real hardware timing.
+ *
+ * Bus contention: after each 68K timeslice, any cycles stolen by the blitter
+ * (accumulated in blitter_bus_cycles_stolen) are subtracted from the next
+ * timeslice.  This models the real hardware behavior where the blitter has
+ * higher bus priority than the 68K and stalls it during DMA transfers. */
 void JaguarExecuteNew(void)
 {
+   uint32_t stolen;
+   int32_t m68k_budget;
+
    PERF_INC(timing_jaguar_execute_calls);
    frameDone = false;
 
@@ -959,7 +975,19 @@ void JaguarExecuteNew(void)
 
       if (timeToJerryEvent < timeToMainEvent)
       {
-         m68k_execute(USEC_TO_M68K_CYCLES(timeToJerryEvent));
+         m68k_budget = (int32_t)USEC_TO_M68K_CYCLES(timeToJerryEvent);
+
+         /* Apply bus contention penalty from previous blitter activity */
+         if (vjs.useBusContention)
+         {
+            stolen = blitter_bus_cycles_stolen;
+            blitter_bus_cycles_stolen = 0;
+            m68k_budget -= (int32_t)stolen;
+            if (m68k_budget < 0)
+               m68k_budget = 0;
+         }
+
+         m68k_execute(m68k_budget);
          GPUExec(USEC_TO_RISC_CYCLES(timeToJerryEvent));
          DSPExec(USEC_TO_RISC_CYCLES(timeToJerryEvent));
          SubtractEventTimes(timeToJerryEvent, EVENT_MAIN);
@@ -967,7 +995,19 @@ void JaguarExecuteNew(void)
       }
       else
       {
-         m68k_execute(USEC_TO_M68K_CYCLES(timeToMainEvent));
+         m68k_budget = (int32_t)USEC_TO_M68K_CYCLES(timeToMainEvent);
+
+         /* Apply bus contention penalty from previous blitter activity */
+         if (vjs.useBusContention)
+         {
+            stolen = blitter_bus_cycles_stolen;
+            blitter_bus_cycles_stolen = 0;
+            m68k_budget -= (int32_t)stolen;
+            if (m68k_budget < 0)
+               m68k_budget = 0;
+         }
+
+         m68k_execute(m68k_budget);
          GPUExec(USEC_TO_RISC_CYCLES(timeToMainEvent));
          DSPExec(USEC_TO_RISC_CYCLES(timeToMainEvent));
          SubtractEventTimes(timeToMainEvent, EVENT_JERRY);

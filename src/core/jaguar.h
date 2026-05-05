@@ -31,6 +31,9 @@ bool JaguarInterruptHandlerIsValid(uint32_t i);
 
 void JaguarExecuteNew(void);
 
+// Bus contention: blitter/OP steal cycles from the 68K
+extern uint32_t blitter_bus_cycles_stolen;
+
 // Exports from JAGUAR.CPP
 
 extern int32_t jaguarCPUInExec;

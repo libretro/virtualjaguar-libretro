@@ -27,6 +27,7 @@
 #include <string.h>
 #include "jaguar.h"
 #include "perf_counters.h"
+#include "settings.h"
 #include "state.h"
 
 // Various conditional compilation goodies...
@@ -141,6 +142,13 @@ PERF_COUNTER(blitter_inner_io);
 PERF_COUNTER(blitter_inner_idle);
 PERF_COUNTER(blitter_phrase_reads);
 PERF_COUNTER(blitter_phrase_writes);
+
+/* Bus contention: each phrase read/write steals 2 M68K cycles from the 68K.
+ * One phrase = one 64-bit bus transaction = 4 system clocks = 2 M68K clocks.
+ * We charge per-transaction rather than per-pixel for phrase-mode blits. */
+#define BUS_CONTENTION_CYCLES_PER_PHRASE 2
+#define BLITTER_BUS_CHARGE() \
+   do { blitter_bus_cycles_stolen += BUS_CONTENTION_CYCLES_PER_PHRASE; } while (0)
 
 #define REG(A)	(((uint32_t)blitter_ram[(A)] << 24) | ((uint32_t)blitter_ram[(A)+1] << 16) \
 				| ((uint32_t)blitter_ram[(A)+2] << 8) | (uint32_t)blitter_ram[(A)+3])
@@ -1045,6 +1053,13 @@ void blitter_blit(uint32_t cmd)
    }
 
    blitter_generic(cmd);
+
+   /* Fast blitter bus contention: charge 2 transactions per inner iteration
+    * (one source read + one destination write) for all pixels processed.
+    * In phrase mode each iteration covers a full phrase; in pixel mode
+    * the bus is still occupied for the phrase containing the pixel. */
+   blitter_bus_cycles_stolen += (n_pixels * n_lines)
+      * BUS_CONTENTION_CYCLES_PER_PHRASE * 2;
 }
 #endif
 /*******************************************************************************
@@ -2115,8 +2130,11 @@ void BlitterMidsummer2(void)
                if (bkgwren)
                   pf_dstd_local = dstd;
                else if (phrase_mode)
+               {
                   pf_dstd_local = ((uint64_t)blitter_read_long(address) << 32)
                      | (uint64_t)blitter_read_long(address + 4);
+                  BLITTER_BUS_CHARGE();
+               }
                else if (pixsize < 3)
                   pf_dstd_local = (uint64_t)blitter_read_byte(address);
                else
@@ -2148,6 +2166,7 @@ void BlitterMidsummer2(void)
 
                /* ---- Write pixel/phrase ---- */
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
                if (!pf_winhibit || bkgwren)
                {
                   if (phrase_mode)
@@ -2362,6 +2381,7 @@ void BlitterMidsummer2(void)
                srcd1 = ((uint64_t)blitter_read_long(fc_src_addr) << 32)
                   | (uint64_t)blitter_read_long(fc_src_addr + 4);
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 
                /* Pixel mode: shift source to correct position */
                if (!phrase_mode)
@@ -2429,8 +2449,11 @@ void BlitterMidsummer2(void)
 
                /* Implicit dest read for byte merging (phrase mode or sub-byte pixels) */
                if (phrase_mode && !bkgwren)
+               {
                   dstd = ((uint64_t)blitter_read_long(fc_dst_addr) << 32)
                      | (uint64_t)blitter_read_long(fc_dst_addr + 4);
+                  BLITTER_BUS_CHARGE();
+               }
                else if (!phrase_mode && pixsize < 3 && !bkgwren)
                   dstd = (uint64_t)blitter_read_byte(fc_dst_addr);
 
@@ -2471,6 +2494,7 @@ void BlitterMidsummer2(void)
 
                /* Write */
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
                if (!fc_winhibit || bkgwren)
                {
                   if (phrase_mode)
@@ -2783,6 +2807,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (sreadx)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2821,6 +2846,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (sread)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2846,6 +2872,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (szread)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2860,6 +2887,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (dread)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2902,6 +2930,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                uint8_t ppp;
 
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
                ppp = 64 >> pixsize;
                if (phrase_mode)
                   inc = ppp - ((dsta2 ? a2_x : a1_x) & (ppp - 1));
@@ -3137,6 +3166,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
             if (dzwrite)
             {
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif

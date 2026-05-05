@@ -298,6 +298,19 @@ static void check_variables(void)
          vjs.useFastBlitter = false;
    }
 
+   var.key = "virtualjaguar_bus_contention";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         vjs.useBusContention = true;
+      else
+         vjs.useBusContention = false;
+   }
+   else
+      vjs.useBusContention = true;
+
    var.key = "virtualjaguar_bios";
    var.value = NULL;
 

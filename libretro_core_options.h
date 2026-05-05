@@ -106,6 +106,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_bus_contention",
+      "Bus Contention (68K Slowdown)",
+      NULL,
+      "Model blitter bus cycle stealing from the 68K. On real hardware, the blitter has higher bus priority and stalls the 68K during DMA transfers. This slows games that rely on heavy blitter usage (e.g. Doom) to more accurate speeds. Disable if a game has issues.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_bios",
       "BIOS",
       NULL,
