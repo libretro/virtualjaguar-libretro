@@ -108,6 +108,7 @@ typedef struct {
     int      first_batch_frame;
     unsigned dropout_count;
     unsigned silent_after_onset;
+    int      was_playing;
     harness_audio_frame frames[HARNESS_MAX_AUDIO_FRAMES];
     unsigned frame_count;
 } harness_audio_stats;

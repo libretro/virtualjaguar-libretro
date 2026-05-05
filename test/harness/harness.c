@@ -97,18 +97,15 @@ static size_t cb_audio_batch(const int16_t *data, size_t frames)
         a->first_audio_frame = (int)active_cfg->current_frame;
 
     /* Dropout detection */
-    {
-        static int was_playing = 0;
-        if (nonsilent > 0) {
-            if (!was_playing && a->first_audio_frame >= 0 &&
-                (int)active_cfg->current_frame > a->first_audio_frame + 5)
-                a->dropout_count++;
-            was_playing = 1;
-        } else {
-            if (was_playing)
-                a->silent_after_onset++;
-            was_playing = 0;
-        }
+    if (nonsilent > 0) {
+        if (!a->was_playing && a->first_audio_frame >= 0 &&
+            (int)active_cfg->current_frame > a->first_audio_frame + 5)
+            a->dropout_count++;
+        a->was_playing = 1;
+    } else {
+        if (a->was_playing)
+            a->silent_after_onset++;
+        a->was_playing = 0;
     }
 
     /* Per-frame stats */
@@ -301,10 +298,20 @@ bool harness_load_rom(harness_config *cfg)
     }
     fseek(f, 0, SEEK_END);
     rom_size = ftell(f);
+    if (rom_size <= 0) {
+        fprintf(stderr, "harness: ROM '%s' is empty or unreadable\n", cfg->rom_path);
+        fclose(f);
+        return false;
+    }
     fseek(f, 0, SEEK_SET);
     rom_data = malloc((size_t)rom_size);
     if (!rom_data) { fclose(f); return false; }
-    fread(rom_data, 1, (size_t)rom_size, f);
+    if (fread(rom_data, 1, (size_t)rom_size, f) != (size_t)rom_size) {
+        fprintf(stderr, "harness: short read on ROM '%s'\n", cfg->rom_path);
+        free(rom_data);
+        fclose(f);
+        return false;
+    }
     fclose(f);
 
     active_cfg = cfg;

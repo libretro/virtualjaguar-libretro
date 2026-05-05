@@ -55,8 +55,8 @@ static bool frame_callback(void *userdata, unsigned frame)
         return false;
     }
 
-    if (dump_interval && (frame % dump_interval == 0)) {
-        dsp_probe_print_snapshot(&probe, cfg->json_output);
+    if (dump_interval && !cfg->json_output && (frame % dump_interval == 0)) {
+        dsp_probe_print_snapshot(&probe, 0);
     }
 
     return true;
