@@ -645,7 +645,7 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 int JERRYGetPIT1Frequency(void)
 {
    /* JERRY PIT uses RISC (full system) clock; see PIT clock rate note. */
-   int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+   int systemClockFrequency = SYSTEM_CLOCK_RATE;
    int64_t divisor = (int64_t)(JERRYPIT1Prescaler + 1) * (int64_t)(JERRYPIT1Divider + 1);
    if (divisor == 0)
       return 0;
@@ -656,7 +656,7 @@ int JERRYGetPIT1Frequency(void)
 int JERRYGetPIT2Frequency(void)
 {
    /* JERRY PIT uses RISC (full system) clock; see PIT clock rate note. */
-   int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
+   int systemClockFrequency = SYSTEM_CLOCK_RATE;
    int64_t divisor = (int64_t)(JERRYPIT2Prescaler + 1) * (int64_t)(JERRYPIT2Divider + 1);
    if (divisor == 0)
       return 0;
