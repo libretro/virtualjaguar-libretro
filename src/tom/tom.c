@@ -384,6 +384,12 @@ uint8_t bluecv[16][16] = {
 #define DEFAULT_TOP_VISIBLE_VC_PAL		67
 #define DEFAULT_BOTTOM_VISIBLE_VC_PAL	579
 
+/* Mode-aware fallback selectors (DRY the NTSC/PAL ternary) */
+#define FALLBACK_TOP_VC			(vjs.hardwareTypeNTSC ? DEFAULT_TOP_VISIBLE_VC : DEFAULT_TOP_VISIBLE_VC_PAL)
+#define FALLBACK_BOTTOM_VC		(vjs.hardwareTypeNTSC ? DEFAULT_BOTTOM_VISIBLE_VC : DEFAULT_BOTTOM_VISIBLE_VC_PAL)
+#define FALLBACK_LEFT_HC		(vjs.hardwareTypeNTSC ? DEFAULT_LEFT_VISIBLE_HC : DEFAULT_LEFT_VISIBLE_HC_PAL)
+#define FALLBACK_RIGHT_HC		(vjs.hardwareTypeNTSC ? DEFAULT_RIGHT_VISIBLE_HC : DEFAULT_RIGHT_VISIBLE_HC_PAL)
+
 /* Maximum framebuffer extents (safety clamp) */
 #define MAX_VISIBLE_HEIGHT		512
 
@@ -442,19 +448,18 @@ static uint16_t TOMGetTopVisible(void)
 {
 	uint16_t vdb = GET16(tomRam8, VDB);
 	uint16_t vp = GET16(tomRam8, VP);
-	uint16_t fallback = vjs.hardwareTypeNTSC
-		? DEFAULT_TOP_VISIBLE_VC : DEFAULT_TOP_VISIBLE_VC_PAL;
 
 	/* If VDB is zero or matches the shared reset default (38), use the
 	 * mode-specific fallback so PAL gets its distinct visible window. */
 	if (vdb == 0 || vdb == 38)
-		return fallback;
+		return FALLBACK_TOP_VC;
 
-	/* Guard against garbage VDB values exceeding VP (total halflines) */
-	if (vp > 0 && vdb > vp)
-		return fallback;
+	/* Guard against garbage VDB values exceeding VP (total halflines).
+	 * Treat VP==0 as uninitialized — fall back rather than skipping the
+	 * range check entirely. */
+	if (vp == 0 || vdb > vp)
+		return FALLBACK_TOP_VC;
 
-	/* Use VDB directly as the top visible halfline. */
 	return vdb;
 }
 
@@ -463,8 +468,6 @@ static uint16_t TOMGetBottomVisible(void)
 	uint16_t vdb = GET16(tomRam8, VDB);
 	uint16_t vde = GET16(tomRam8, VDE);
 	uint16_t vp = GET16(tomRam8, VP);
-	uint16_t fallback = vjs.hardwareTypeNTSC
-		? DEFAULT_BOTTOM_VISIBLE_VC : DEFAULT_BOTTOM_VISIBLE_VC_PAL;
 	uint16_t result;
 	uint16_t top;
 	uint16_t max_bottom;
@@ -473,11 +476,14 @@ static uint16_t TOMGetBottomVisible(void)
 	 * shared reset defaults.  If only one has been reprogrammed, derive
 	 * from the register to avoid window collapse. */
 	if (vde == 0)
-		return fallback;
+		return FALLBACK_BOTTOM_VC;
 	if (vde == 518 && vdb == 38)
-		return fallback;
-	if (vp > 0 && vde > vp)
-		return fallback;
+		return FALLBACK_BOTTOM_VC;
+
+	/* Guard against garbage VDE exceeding VP.  Treat VP==0 as
+	 * uninitialized — fall back rather than skipping the check. */
+	if (vp == 0 || vde > vp)
+		return FALLBACK_BOTTOM_VC;
 
 	result = vde;
 
@@ -490,7 +496,7 @@ static uint16_t TOMGetBottomVisible(void)
 	/* Guard: if result <= top (e.g. VDB reprogrammed above VDE), use
 	 * fallback to avoid a collapsed/inverted window. */
 	if (result <= top)
-		return fallback;
+		return FALLBACK_BOTTOM_VC;
 
 	return result;
 }
@@ -500,13 +506,11 @@ static uint16_t TOMGetBottomVisible(void)
 static uint32_t TOMGetLeftVisibleHC(void)
 {
 	uint16_t hdb1 = GET16(tomRam8, HDB1);
-	uint32_t fallback = vjs.hardwareTypeNTSC
-		? DEFAULT_LEFT_VISIBLE_HC : DEFAULT_LEFT_VISIBLE_HC_PAL;
 
 	/* If HDB1 is zero or matches the shared reset default (203), use
 	 * the mode-specific fallback so PAL gets its distinct left edge. */
 	if (hdb1 == 0 || hdb1 == 203)
-		return fallback;
+		return FALLBACK_LEFT_HC;
 
 	/* Use HDB1 minus a small margin (16 pixel clocks) for left border. */
 	if (hdb1 > 16)
@@ -519,8 +523,6 @@ static uint32_t TOMGetRightVisibleHC(void)
 	uint16_t hdb1 = GET16(tomRam8, HDB1);
 	uint16_t hde = GET16(tomRam8, HDE);
 	uint32_t left = TOMGetLeftVisibleHC();
-	uint32_t fallback = vjs.hardwareTypeNTSC
-		? DEFAULT_RIGHT_VISIBLE_HC : DEFAULT_RIGHT_VISIBLE_HC_PAL;
 	uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
 
 	/* Use mode-specific fallback only when BOTH HDB1 and HDE are at their
@@ -529,7 +531,7 @@ static uint32_t TOMGetRightVisibleHC(void)
 	if (hde == 0)
 		return max_right;
 	if (hde == 1665 && hdb1 == 203)
-		return fallback;
+		return FALLBACK_RIGHT_HC;
 
 	/* Guard against HDE < left which would cause unsigned underflow
 	 * when callers compute (right - left). */
