@@ -70,6 +70,7 @@ static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
 
 /* Private function prototypes */
+static void DACUpdateSCLKRate(void);
 
 void DACInit(void)
 {
@@ -101,8 +102,8 @@ void DACDone(void)
 {
 }
 
-/* Called by JTRM-accurate I2S rate to update the rate ratio when SCLK changes */
-void DACUpdateSCLKRate(void)
+/* Update the rate ratio when SCLK changes */
+static void DACUpdateSCLKRate(void)
 {
    uint32_t sclk_val;
    double i2s_rate;
@@ -233,6 +234,8 @@ void DACWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    if (offset == SCLK + 3)
       DACWriteWord(SCLK + 2, (uint16_t)data, UNKNOWN);
+   else if (offset == SMODE + 3)
+      DACWriteWord(SMODE + 2, (uint16_t)data, UNKNOWN);
 }
 
 
