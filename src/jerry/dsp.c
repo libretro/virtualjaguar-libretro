@@ -742,7 +742,17 @@ void DSPHandleIRQsNP(void)
 
 
 	dsp_reg[31] -= 4;
-	dsp_reg[30] = dsp_pc - 2; // -2 because we've executed the instruction already
+	/* Save the address of the next instruction to execute as the
+	 * return address.  dsp_pc already points past the last completed
+	 * instruction (the exec loop pre-increments before dispatch, and
+	 * multi-word instructions like MOVEI/JUMP/JR advance it further).
+	 * The old "dsp_pc - 2" was wrong after MOVEI (+6 total), JUMP, or
+	 * JR because it pointed into the middle of the previous instruction
+	 * or to an unrelated address (jump_target - 2).  When the I2S
+	 * callback fired between DSPExec slices and the last instruction
+	 * was a branch, the ISR return address was garbage, causing the
+	 * DSP PC to escape local RAM (e.g. Wolf3D → PC at $0006EE). */
+	dsp_reg[30] = dsp_pc;
 
 	DSPWriteLong(dsp_reg[31], dsp_reg[30], DSP);
 

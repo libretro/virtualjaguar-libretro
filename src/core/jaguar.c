@@ -903,16 +903,16 @@ void JaguarReset(void)
 
       /* NB: The real BIOS would copy a 1992-byte DSP audio engine from
        * jaguarBootROM[0x214E..0x2916] into DSP RAM at offset 0 and
-       * start the DSP, but this engine code alone does not work
-       * without also replicating the DSP register-bank state that the
-       * BIOS leaves behind.  Tried it (engine bytes + D_PC at engine
-       * entry / mainloop / DSPGO=1) and the DSP escapes DSP RAM
-       * within a few hundred frames (PC ends up at addresses like
-       * 0x8A or 0x74 — main-RAM nonsense), because the engine reads
-       * uninitialized DSP registers and uses them as jump targets.
-       * Wolfenstein 3D and Skyhammer / IS2 audio remain broken on
-       * HLE for this reason.  See docs/emulation-bug-hunt-todos.md
-       * "Skyhammer / Iron Soldier 2 audio clipping" for next steps. */
+       * start the DSP.  Previous attempts to load the engine code
+       * without the full register-bank state caused DSP PC escape
+       * (addresses like 0x8A or 0x74).  The root cause was a bug in
+       * DSPHandleIRQsNP: the ISR return address was saved as
+       * "dsp_pc - 2" which was wrong after MOVEI, JUMP, or JR
+       * (multi-word or branch instructions advance dsp_pc by more
+       * than 2).  With the fix (save dsp_pc directly), HLE DSP
+       * engine loading may now be feasible.
+       * TODO(v2.3): try loading the BIOS DSP engine again now that
+       * the IRQ return-address bug is fixed. */
    }
 
    m68k_pulse_reset();								// Reset the 68000

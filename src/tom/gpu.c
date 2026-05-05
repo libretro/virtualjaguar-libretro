@@ -611,15 +611,14 @@ void GPUHandleIRQs(void)
    gpu_flags |= IMASK;
    GPUUpdateRegisterBanks();
 
-   // subqt  #4,r31		; pre-decrement stack pointer
-   // move  pc,r30			; address of interrupted code
-   // store  r30,(r31)     ; store return address
+   /* Save the address of the next instruction to execute as the
+    * return address.  gpu_pc already points past the last completed
+    * instruction (the exec loop pre-increments before dispatch, and
+    * multi-word instructions like MOVEI/JUMP/JR advance it further).
+    * Using "gpu_pc - 2" was incorrect after branches or MOVEI. */
    gpu_reg[31] -= 4;
-   GPUWriteLong(gpu_reg[31], gpu_pc - 2, GPU);
+   GPUWriteLong(gpu_reg[31], gpu_pc, GPU);
 
-   // movei  #service_address,r30  ; pointer to ISR entry
-   // jump  (r30)					; jump to ISR
-   // nop
    gpu_pc = gpu_reg[30] = GPU_WORK_RAM_BASE + (which * 0x10);
 }
 
