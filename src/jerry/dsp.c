@@ -764,6 +764,11 @@ uint8_t * DSPGetRAM(void)
 	return dsp_ram_8;
 }
 
+uint32_t DSPGetFlags(void)
+{
+	return dsp_flags;
+}
+
 void DSPInit(void)
 {
 	dsp_build_branch_condition_table();

@@ -32,6 +32,8 @@
       OP*;
       tomRam8;
       regs;
+      ltxd;
+      rtxd;
       sclk;
       smode;
       lowerField;

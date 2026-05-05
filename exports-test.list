@@ -29,6 +29,8 @@ _TOM*
 _OP*
 _tomRam8
 _regs
+_ltxd
+_rtxd
 _sclk
 _smode
 _lowerField

@@ -875,9 +875,16 @@ test/test_audio_clipping: test/test_audio_clipping.c
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
+		test/harness/harness.c test/harness/harness.h \
+		test/harness/dsp_probe.c test/harness/dsp_probe.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_dsp_audio_diag.c \
+		test/harness/harness.c test/harness/dsp_probe.c -ldl -lm
 endif
 
-.PHONY: clean test lint coverage benchmark acid
+.PHONY: clean test lint coverage benchmark acid dsp-diag
 endif
 
 lint:
@@ -936,6 +943,23 @@ benchmark:
 acid:
 	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 	$(MAKE) -C test/acid test CORE=$(abspath $(TARGET))
+
+# `make dsp-diag` -- DSP audio diagnostic.  Builds core with TEST_EXPORTS=1,
+# compiles the harness + DSP probe, then runs the diagnostic against a ROM.
+#
+# Usage:
+#   make dsp-diag DSP_DIAG_ROM="test/roms/private/Wolfenstein 3D (1994).jag"
+#   make dsp-diag DSP_DIAG_ROM=path/to/rom.jag DSP_DIAG_FLAGS="--bios --frames 600"
+DSP_DIAG_ROM   ?= test/roms/private/Wolfenstein 3D (1994).jag
+DSP_DIAG_FLAGS ?= --dump-on-escape
+dsp-diag:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_dsp_audio_diag \
+		test/tools/test_dsp_audio_diag.c \
+		test/harness/harness.c test/harness/dsp_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+	./test/tools/test_dsp_audio_diag ./$(TARGET) "$(DSP_DIAG_ROM)" $(DSP_DIAG_FLAGS)
 
 print-%:
 	@echo '$*=$($*)'

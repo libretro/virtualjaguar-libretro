@@ -31,6 +31,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 void DSPReleaseTimeslice(void);
 bool DSPIsRunning(void);
 uint8_t *DSPGetRAM(void);
+uint32_t DSPGetFlags(void);
 
 void DSPExecP(int32_t cycles);
 void DSPExecP2(int32_t cycles);

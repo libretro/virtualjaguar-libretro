@@ -36,6 +36,7 @@ test/test_*
 !test/test_*.sh
 !test/test_*.py
 test/tools/test_memory_map
+test/tools/test_dsp_audio_diag
 test/tools/sram_test
 test/dump_caller
 test/dump_pc

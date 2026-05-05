@@ -68,12 +68,26 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 
 Local-only RetroAchievements validation — no RA account/API/server. `test/tools/test_rcheevos_e2e.sh` downloads pinned `RCHEEVOS_REF` and verifies `rc_libretro` mapping (`RC_CONSOLE_ATARI_JAGUAR`) matches host RAM.
 
-Key harnesses:
+### Shared test harness (`test/harness/`)
+
+New tests should use `test/harness/harness.h` — a shared library that eliminates dlopen/init/run boilerplate. See the header's AGENT QUICK-START comment for a full example. Key features:
+- Common CLI (`--json`, `--frames N`, `--bios`, `--option K=V`, `--quiet`)
+- Automatic audio/video stats collection
+- `harness_dlsym()` for probing internal core state
+- JSON output mode for machine-parseable results
+- Probe modules: `dsp_probe.h` (DSP registers, PC escape, LTXD ratio, RAM dumps)
+
+Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/harness.c [probe.c...] -ldl -lm`
+
+To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols via `harness_dlsym()`.
+
+### Key harnesses
+
 - `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build)
+- `test/tools/test_dsp_audio_diag.c` — DSP audio diagnostic (`make dsp-diag DSP_DIAG_ROM=path`); detects PC escape, bank init failures, silent LTXD
 - `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS`, `SET_SUPPORT_ACHIEVEMENTS=true`, descriptor layout
 - `test/tools/test_blitter_compare` — fast vs accurate blitter diff
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
-- `test/test_cd_boot.c` — dlsym harness for 68K regs/RAM
 - `test/sram_test.sh` — SRAM round-trip
 
 ### Performance / profiling
