@@ -27,7 +27,14 @@
 
 /* The harness intentionally leaks ROM buffers (VJ keeps the pointer).
  * Suppress LeakSanitizer for this known-benign leak. */
-#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+#if defined(__SANITIZE_ADDRESS__)
+#define EEPROM_TEST_HAS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define EEPROM_TEST_HAS_ASAN 1
+#endif
+#endif
+#ifdef EEPROM_TEST_HAS_ASAN
 const char *__lsan_default_suppressions(void) {
     return "leak:harness_load_rom\n";
 }
