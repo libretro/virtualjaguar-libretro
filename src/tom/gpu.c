@@ -32,6 +32,11 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
+#include "settings.h"
+#include "perf_counters.h"
+
+PERF_COUNTER(gpu_active_cycles);
+PERF_COUNTER(gpu_offered_cycles);
 
 
 // Seems alignment in loads & stores was off...
@@ -236,6 +241,25 @@ uint8_t * branch_condition_table = 0;
 
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
+static int32_t gpu_bus_contention_cycles = 0;
+PERF_COUNTER(gpu_ext_accesses);
+
+/* On real hardware, GPU external memory accesses (outside local RAM at
+ * 0xF03000-0xF03FFF) must arbitrate for the 64-bit system bus against
+ * the 68K, Object Processor, blitter, and DRAM refresh.  Without this
+ * penalty, GPU-rendered games (Doom, AvP, Wolfenstein) run 2-3x too
+ * fast because the GPU completes its rendering within 1-2 VBlanks
+ * instead of the 4-8 VBlanks real hardware requires.
+ *
+ * Penalty of 60 yields ~13.6fps for Doom (real hardware: 10-15fps).
+ * Calibrated against MiSTer FPGA measurements showing VJ gives the
+ * GPU ~8.5x too many effective cycles vs real bus arbitration. */
+#define GPU_EXT_MEM_PENALTY 60
+#define GPU_EXT_ACCESS() \
+   do { if (vjs.use68KContention) { \
+      gpu_bus_contention_cycles += GPU_EXT_MEM_PENALTY; \
+      PERF_ADD(gpu_ext_accesses, 1); \
+   } } while (0)
 
 void GPUReleaseTimeslice(void)
 {
@@ -711,6 +735,10 @@ void GPUDumpState(const char *tag)
 
 void GPUExec(int32_t cycles)
 {
+   int32_t initial_cycles;
+
+   PERF_ADD(gpu_offered_cycles, (unsigned long long)cycles);
+
    if (!GPU_RUNNING)
       return;
 
@@ -724,6 +752,7 @@ void GPUExec(int32_t cycles)
    GPUHandleIRQs();
    gpu_releaseTimeSlice_flag = 0;
    gpu_in_exec++;
+   initial_cycles = cycles;
 
    while (cycles > 0 && GPU_RUNNING)
    {
@@ -737,25 +766,22 @@ void GPUExec(int32_t cycles)
       else
          opcode = GPUReadWord(gpu_pc, GPU);
       index = opcode >> 10;
-      gpu_instruction = opcode;	// Added for GPU #3...
+      gpu_instruction = opcode;
       gpu_opcode_first_parameter  = (opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = opcode & 0x1F;
 
-      //$E400 -> 1110 01 -> $39 -> 57
-      //GPU #1
       gpu_pc += 2;
+      gpu_bus_contention_cycles = 0;
 #if 0
       gpu_opcode[index]();
 #else
        executeOpcode(index);
 #endif
-      // BIOS hacking
-      //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
-      //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
 
-      cycles -= gpu_opcode_cycles[index];
+      cycles -= gpu_opcode_cycles[index] + gpu_bus_contention_cycles;
    }
 
+   PERF_ADD(gpu_active_cycles, (unsigned long long)(initial_cycles - cycles));
    gpu_in_exec--;
 }
 
@@ -1187,9 +1213,16 @@ INLINE static void gpu_opcode_store_r14_indexed(void)
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
+   {
       GPUWriteLong(address, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   GPUWriteLong(gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2), RN, GPU);
+   {
+      uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
+      GPUWriteLong(address, RN, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1202,9 +1235,16 @@ INLINE static void gpu_opcode_store_r15_indexed(void)
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
+   {
       GPUWriteLong(address, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   GPUWriteLong(gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2), RN, GPU);
+   {
+      uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
+      GPUWriteLong(address, RN, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1217,9 +1257,16 @@ INLINE static void gpu_opcode_load_r14_ri(void)
    if (address >= 0xF03000 && address <= 0xF03FFF)
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
+   {
       RN = GPUReadLong(address, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   RN = GPUReadLong(gpu_reg[14] + RM, GPU);
+   {
+      uint32_t address = gpu_reg[14] + RM;
+      RN = GPUReadLong(address, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1232,9 +1279,16 @@ INLINE static void gpu_opcode_load_r15_ri(void)
    if (address >= 0xF03000 && address <= 0xF03FFF)
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
+   {
       RN = GPUReadLong(address, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   RN = GPUReadLong(gpu_reg[15] + RM, GPU);
+   {
+      uint32_t address = gpu_reg[15] + RM;
+      RN = GPUReadLong(address, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1247,9 +1301,16 @@ INLINE static void gpu_opcode_store_r14_ri(void)
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
+   {
       GPUWriteLong(address, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   GPUWriteLong(gpu_reg[14] + RM, RN, GPU);
+   {
+      uint32_t address = gpu_reg[14] + RM;
+      GPUWriteLong(address, RN, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1262,9 +1323,16 @@ INLINE static void gpu_opcode_store_r15_ri(void)
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
+   {
       GPUWriteLong(address, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   GPUWriteLong(gpu_reg[15] + RM, RN, GPU);
+   {
+      uint32_t address = gpu_reg[15] + RM;
+      GPUWriteLong(address, RN, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1287,12 +1355,13 @@ INLINE static void gpu_opcode_pack(void)
 
 INLINE static void gpu_opcode_storeb(void)
 {
-   //Is this right???
-   // Would appear to be so...!
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM, RN & 0xFF, GPU);
    else
+   {
       JaguarWriteByte(RM, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 }
 
 
@@ -1302,12 +1371,18 @@ INLINE static void gpu_opcode_storew(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM & 0xFFFFFFFE, RN & 0xFFFF, GPU);
    else
+   {
       JaguarWriteWord(RM, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM, RN & 0xFFFF, GPU);
    else
+   {
       JaguarWriteWord(RM, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1318,9 +1393,14 @@ INLINE static void gpu_opcode_store(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM & 0xFFFFFFFC, RN, GPU);
    else
+   {
       GPUWriteLong(RM, RN, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
    GPUWriteLong(RM, RN, GPU);
+   if (RM < 0xF03000 || RM > 0xF03FFF)
+      GPU_EXT_ACCESS();
 #endif
 }
 
@@ -1337,10 +1417,17 @@ INLINE static void gpu_opcode_storep(void)
    {
       GPUWriteLong(RM + 0, gpu_hidata, GPU);
       GPUWriteLong(RM + 4, RN, GPU);
+      GPU_EXT_ACCESS();
+      GPU_EXT_ACCESS();
    }
 #else
    GPUWriteLong(RM + 0, gpu_hidata, GPU);
    GPUWriteLong(RM + 4, RN, GPU);
+   if (RM < 0xF03000 || RM > 0xF03FFF)
+   {
+      GPU_EXT_ACCESS();
+      GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1349,7 +1436,10 @@ INLINE static void gpu_opcode_loadb(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       RN = GPUReadLong(RM, GPU) & 0xFF;
    else
+   {
       RN = JaguarReadByte(RM, GPU);
+      GPU_EXT_ACCESS();
+   }
 }
 
 
@@ -1359,12 +1449,18 @@ INLINE static void gpu_opcode_loadw(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       RN = GPUReadLong(RM & 0xFFFFFFFE, GPU) & 0xFFFF;
    else
+   {
       RN = JaguarReadWord(RM, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       RN = GPUReadLong(RM, GPU) & 0xFFFF;
    else
+   {
       RN = JaguarReadWord(RM, GPU);
+      GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1393,6 +1489,8 @@ INLINE static void gpu_opcode_load(void)
 #else
    RN = GPUReadLong(RM, GPU);
 #endif
+   if (RM < 0xF03000 || RM > 0xF03FFF)
+      GPU_EXT_ACCESS();
 }
 
 
@@ -1408,10 +1506,17 @@ INLINE static void gpu_opcode_loadp(void)
    {
       gpu_hidata = GPUReadLong(RM + 0, GPU);
       RN		   = GPUReadLong(RM + 4, GPU);
+      GPU_EXT_ACCESS();
+      GPU_EXT_ACCESS();
    }
 #else
    gpu_hidata = GPUReadLong(RM + 0, GPU);
    RN		   = GPUReadLong(RM + 4, GPU);
+   if (RM < 0xF03000 || RM > 0xF03FFF)
+   {
+      GPU_EXT_ACCESS();
+      GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1424,9 +1529,16 @@ INLINE static void gpu_opcode_load_r14_indexed(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
+   {
       RN = GPUReadLong(address, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   RN = GPUReadLong(gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2), GPU);
+   {
+      uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
+      RN = GPUReadLong(address, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 
@@ -1439,9 +1551,16 @@ INLINE static void gpu_opcode_load_r15_indexed(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
+   {
       RN = GPUReadLong(address, GPU);
+      GPU_EXT_ACCESS();
+   }
 #else
-   RN = GPUReadLong(gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2), GPU);
+   {
+      uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
+      RN = GPUReadLong(address, GPU);
+      if (address < 0xF03000 || address > 0xF03FFF) GPU_EXT_ACCESS();
+   }
 #endif
 }
 

@@ -20,6 +20,7 @@ struct VJSettings
 	bool hardwareTypeNTSC;						// Set to false for PAL
 	bool useJaguarBIOS;
 	bool useFastBlitter;
+	bool use68KContention;
 };
 
 // Exported variables

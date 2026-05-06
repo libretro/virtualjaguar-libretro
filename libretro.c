@@ -320,6 +320,17 @@ static void check_variables(void)
          vjs.hardwareTypeNTSC = true;
    }
 
+   var.key = "virtualjaguar_68k_contention";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         vjs.use68KContention = true;
+      else
+         vjs.use68KContention = false;
+   }
+
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -835,8 +846,9 @@ bool retro_load_game(const struct retro_game_info *info)
    game_height          = 240;
 
    // Emulate BIOS
-   vjs.hardwareTypeNTSC = true;
-   vjs.useJaguarBIOS    = false;
+   vjs.hardwareTypeNTSC   = true;
+   vjs.useJaguarBIOS      = false;
+   vjs.use68KContention   = false;
 
    check_variables();
 
@@ -1061,6 +1073,7 @@ void retro_deinit(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   vjs.use68KContention = false;
 }
 
 void retro_reset(void)

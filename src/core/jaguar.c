@@ -945,25 +945,51 @@ uint8_t * GetRamPtr(void)
 }
 
 
+/*
+ * Bus contention approximation.
+ *
+ * On real hardware, the 68K and GPU share a single 64-bit bus.  When
+ * the GPU is executing, its memory accesses stall the 68K (the GPU has
+ * higher bus priority).  Roughly 1 in 3 RISC instructions performs a
+ * memory access, so a running GPU steals about 1/3 of the bus bandwidth
+ * from the 68K.
+ *
+ * We approximate this by reducing the 68K cycle budget when the GPU is
+ * active.  The scale factor (0.68) was tuned against Jaguar Doom, whose
+ * game-tic rate is entirely governed by GPU-vs-68K bus sharing.
+ * Real-hardware Doom runs at ~10-15 fps; without contention our emulator
+ * gives ~20 fps.  The 0.68 factor brings it into the correct range.
+ */
+#define M68K_CONTENTION_SCALE 0.68
+
 /* New Jaguar execution stack
  * This executes 1 frame's worth of code.
  * Interleaves EVENT_MAIN (video/halfline) and EVENT_JERRY (DSP/I2S/timers)
  * so the DSP runs alongside the 68K and GPU, matching real hardware timing. */
 void JaguarExecuteNew(void)
 {
+   int gpu_running;
+   int apply_contention;
+
    PERF_INC(timing_jaguar_execute_calls);
    frameDone = false;
+   apply_contention = vjs.use68KContention;
 
    do
    {
       double timeToMainEvent = GetTimeToNextEvent(EVENT_MAIN);
       double timeToJerryEvent = GetTimeToNextEvent(EVENT_JERRY);
       double timeDelta;
+      int32_t m68k_cycles;
 
       if (timeToJerryEvent < timeToMainEvent)
       {
          timeDelta = timeToJerryEvent;
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+         m68k_cycles = USEC_TO_M68K_CYCLES(timeDelta);
+         gpu_running = GPUIsRunning();
+         if (apply_contention && gpu_running)
+            m68k_cycles = (int32_t)(m68k_cycles * M68K_CONTENTION_SCALE);
+         m68k_execute(m68k_cycles);
          GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
          DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
          SubtractEventTimes(timeDelta, EVENT_MAIN);
@@ -972,13 +998,17 @@ void JaguarExecuteNew(void)
       else
       {
          timeDelta = timeToMainEvent;
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+         m68k_cycles = USEC_TO_M68K_CYCLES(timeDelta);
+         gpu_running = GPUIsRunning();
+         if (apply_contention && gpu_running)
+            m68k_cycles = (int32_t)(m68k_cycles * M68K_CONTENTION_SCALE);
+         m68k_execute(m68k_cycles);
          GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
          DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
          SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }
-      PERF_ADD(timing_m68k_cycles, (unsigned long long)USEC_TO_M68K_CYCLES(timeDelta));
+      PERF_ADD(timing_m68k_cycles, (unsigned long long)m68k_cycles);
       PERF_ADD(timing_risc_cycles, (unsigned long long)USEC_TO_RISC_CYCLES(timeDelta));
    } while(!frameDone);
 }

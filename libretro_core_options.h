@@ -134,6 +134,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_68k_contention",
+      "Bus Contention (GPU Slowdown)",
+      NULL,
+      "Simulate bus arbitration between the GPU, 68K, and Object Processor. On real hardware, GPU external memory accesses must compete for the system bus, making GPU-rendered games (Doom, AvP, Wolfenstein 3D) run at their correct speed. Without this, GPU rendering completes too quickly and games run 2x too fast.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,
