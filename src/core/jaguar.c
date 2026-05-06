@@ -43,6 +43,8 @@ static bool frameDone;
 PERF_COUNTER(timing_halfline_callbacks);
 PERF_COUNTER(timing_vblank_irqs);
 PERF_COUNTER(timing_jaguar_execute_calls);
+PERF_COUNTER(timing_m68k_cycles);
+PERF_COUNTER(timing_risc_cycles);
 
 // Platform-independent xorshift32 PRNG for deterministic RAM initialization.
 // libc rand() produces different sequences on different platforms (glibc vs
@@ -956,22 +958,27 @@ void JaguarExecuteNew(void)
    {
       double timeToMainEvent = GetTimeToNextEvent(EVENT_MAIN);
       double timeToJerryEvent = GetTimeToNextEvent(EVENT_JERRY);
+      double timeDelta;
 
       if (timeToJerryEvent < timeToMainEvent)
       {
-         m68k_execute(USEC_TO_M68K_CYCLES(timeToJerryEvent));
-         GPUExec(USEC_TO_RISC_CYCLES(timeToJerryEvent));
-         DSPExec(USEC_TO_RISC_CYCLES(timeToJerryEvent));
-         SubtractEventTimes(timeToJerryEvent, EVENT_MAIN);
+         timeDelta = timeToJerryEvent;
+         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+         GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
+         DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
+         SubtractEventTimes(timeDelta, EVENT_MAIN);
          HandleNextEvent(EVENT_JERRY);
       }
       else
       {
-         m68k_execute(USEC_TO_M68K_CYCLES(timeToMainEvent));
-         GPUExec(USEC_TO_RISC_CYCLES(timeToMainEvent));
-         DSPExec(USEC_TO_RISC_CYCLES(timeToMainEvent));
-         SubtractEventTimes(timeToMainEvent, EVENT_JERRY);
+         timeDelta = timeToMainEvent;
+         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+         GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
+         DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
+         SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }
+      PERF_ADD(timing_m68k_cycles, (unsigned long long)USEC_TO_M68K_CYCLES(timeDelta));
+      PERF_ADD(timing_risc_cycles, (unsigned long long)USEC_TO_RISC_CYCLES(timeDelta));
    } while(!frameDone);
 }

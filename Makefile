@@ -734,7 +734,8 @@ clean:
 		test/test_audio_clipping test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
-		test/tools/test_memory_map test/tools/test_dsp_audio_diag
+		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
+		test/tools/test_frame_timing
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -918,7 +919,7 @@ test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 endif
 
-.PHONY: clean test lint coverage benchmark acid dsp-diag
+.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
 endif
 
 lint:
@@ -994,6 +995,26 @@ dsp-diag:
 		test/harness/harness.c test/harness/dsp_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 	./test/tools/test_dsp_audio_diag ./$(TARGET) "$(DSP_DIAG_ROM)" $(DSP_DIAG_FLAGS)
+
+# `make frame-timing` -- Per-frame timing diagnostic.  Builds core with
+# BENCH_PROFILE=1 + TEST_EXPORTS=1, compiles the timing probe + harness,
+# then runs the diagnostic against a ROM.  Reports per-frame halfline counts,
+# M68K/RISC cycles, VBlank IRQs, wall-clock time, and speed ratio.
+#
+# Usage:
+#   make frame-timing FRAME_TIMING_ROM=test/roms/yarc.j64
+#   make frame-timing FRAME_TIMING_ROM="path/to/Doom.jag" FRAME_TIMING_FLAGS="--frames 1200 --csv"
+#   make frame-timing FRAME_TIMING_ROM="path/to/rom.jag" FRAME_TIMING_FLAGS="--pal --bios"
+FRAME_TIMING_ROM   ?= test/roms/yarc.j64
+FRAME_TIMING_FLAGS ?=
+frame-timing:
+	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_frame_timing \
+		test/tools/test_frame_timing.c \
+		test/harness/harness.c test/harness/timing_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
 
 print-%:
 	@echo '$*=$($*)'

@@ -75,7 +75,7 @@ New tests should use `test/harness/harness.h` — a shared library that eliminat
 - Automatic audio/video stats collection
 - `harness_dlsym()` for probing internal core state
 - JSON output mode for machine-parseable results
-- Probe modules: `dsp_probe.h` (DSP registers, PC escape, LTXD ratio, RAM dumps)
+- Probe modules: `dsp_probe.h` (DSP registers, PC escape, LTXD ratio, RAM dumps), `timing_probe.h` (per-frame halflines, cycles, wall time, speed ratio)
 
 Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/harness.c [probe.c...] -ldl -lm`
 
@@ -85,6 +85,7 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 - `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build)
 - `test/tools/test_dsp_audio_diag.c` — DSP audio diagnostic (`make dsp-diag DSP_DIAG_ROM=path`); detects PC escape, bank init failures, silent LTXD
+- `test/tools/test_frame_timing.c` — per-frame timing diagnostic (`make frame-timing FRAME_TIMING_ROM=path`); reports halflines/cycles/VBlanks per frame, wall-clock speed ratio, anomaly detection. Use `--csv` for per-frame data, `--json` for machine output
 - `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS`, `SET_SUPPORT_ACHIEVEMENTS=true`, descriptor layout
 - `test/tools/test_blitter_compare` — fast vs accurate blitter diff
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
