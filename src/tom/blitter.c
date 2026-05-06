@@ -25,6 +25,7 @@
 #include "blitter_simd.h"
 
 #include <string.h>
+#include "bus_arbiter.h"
 #include "jaguar.h"
 #include "perf_counters.h"
 #include "state.h"
@@ -141,6 +142,15 @@ PERF_COUNTER(blitter_inner_io);
 PERF_COUNTER(blitter_inner_idle);
 PERF_COUNTER(blitter_phrase_reads);
 PERF_COUNTER(blitter_phrase_writes);
+
+/* Bus contention: each phrase read/write is a DRAM bus transaction.
+ * Charge the cost to the arbiter so the 68K gets penalized. */
+#define BLITTER_BUS_CHARGE() \
+   do { \
+      if (busArbiter.enabled) \
+         bus_arbiter_charge(BM_BLITTER, \
+            busArbiter.dram_base_clocks + busArbiter.dram_miss_penalty); \
+   } while (0)
 
 #define REG(A)	(((uint32_t)blitter_ram[(A)] << 24) | ((uint32_t)blitter_ram[(A)+1] << 16) \
 				| ((uint32_t)blitter_ram[(A)+2] << 8) | (uint32_t)blitter_ram[(A)+3])
@@ -1093,6 +1103,16 @@ void blitter_blit(uint32_t cmd)
    }
 
    blitter_generic(cmd);
+
+   /* Fast blitter bus contention: estimate 2 bus transactions per
+    * inner iteration (one source read + one destination write).
+    * Phrase mode processes a full phrase per iteration. */
+   if (busArbiter.enabled && n_pixels > 0 && n_lines > 0)
+   {
+      uint32_t total_ops = n_pixels * n_lines * 2;
+      bus_arbiter_charge(BM_BLITTER, total_ops *
+         (busArbiter.dram_base_clocks + busArbiter.dram_miss_penalty));
+   }
 }
 #endif
 /*******************************************************************************
@@ -2278,6 +2298,7 @@ void BlitterMidsummer2(void)
 
                /* ---- Write pixel/phrase ---- */
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
                if (!pf_winhibit || bkgwren)
                {
                   if (phrase_mode)
@@ -2492,6 +2513,7 @@ void BlitterMidsummer2(void)
                srcd1 = ((uint64_t)blitter_read_long(fc_src_addr) << 32)
                   | (uint64_t)blitter_read_long(fc_src_addr + 4);
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 
                /* Pixel mode: shift source to correct position */
                if (!phrase_mode)
@@ -2601,6 +2623,7 @@ void BlitterMidsummer2(void)
 
                /* Write */
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
                if (!fc_winhibit || bkgwren)
                {
                   if (phrase_mode)
@@ -2913,6 +2936,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (sreadx)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2955,6 +2979,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (sread)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2984,6 +3009,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (szread)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -2998,6 +3024,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
             if (dread)
             {
                PERF_INC(blitter_phrase_reads);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -3039,6 +3066,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #endif
 
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
                ppp = 64 >> pixsize;
                inct = -((dsta2 ? a2_x : a1_x) & 0x07);
                inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
@@ -3289,6 +3317,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
             if (dzwrite)
             {
                PERF_INC(blitter_phrase_writes);
+               BLITTER_BUS_CHARGE();
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif

@@ -16,6 +16,7 @@ int64_t rfseek(RFILE* stream, int64_t offset, int origin);
 int64_t rftell(RFILE* stream);
 int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream);
 
+#include "bus_arbiter.h"
 #include "cheat.h"
 #include "crash_detect.h"
 #include "file.h"
@@ -369,6 +370,20 @@ static void check_variables(void)
       CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       CDTraceSetEnabled(0);
+
+   var.key = "virtualjaguar_bus_contention";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         vjs.useBusContention = true;
+      else
+         vjs.useBusContention = false;
+   }
+   else
+      vjs.useBusContention = true;
+   busArbiter.enabled = vjs.useBusContention ? 1 : 0;
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -1136,6 +1151,7 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.cdBootMode       = CDBOOT_HLE;
    vjs.cdReadSpeed      = CDSPEED_2X;
 
+   bus_arbiter_init();
    check_variables();
 
    /* Always identify the exact build in the frontend log: version, short
@@ -1401,6 +1417,7 @@ void retro_init(void)
 
 void retro_deinit(void)
 {
+   bus_arbiter_reset();
    libretro_supports_bitmasks = false;
 
    /* Belt-and-suspenders: shut down emulator subsystems if the frontend

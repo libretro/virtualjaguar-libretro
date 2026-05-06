@@ -25,6 +25,7 @@
 #include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
+#include "bus_arbiter.h"
 #include "eeprom.h"
 #include "event.h"
 #include "gpu.h"
@@ -1045,9 +1046,18 @@ uint8_t * GetRamPtr(void)
 /* New Jaguar execution stack
  * This executes 1 frame's worth of code.
  * Interleaves EVENT_MAIN (video/halfline) and EVENT_JERRY (DSP/I2S/timers)
- * so the DSP runs alongside the 68K and GPU, matching real hardware timing. */
+ * so the DSP runs alongside the 68K and GPU, matching real hardware timing.
+ *
+ * Bus contention: GPU external memory accesses self-penalize (the GPU
+ * burns extra cycles per LOAD/STORE in gpu.c).  Those same cycles are
+ * also recorded in the bus arbiter.  At each timeslice boundary we
+ * deduct the accumulated higher-priority bus traffic from the 68K
+ * budget, modeling the real hardware priority: GPU > blitter > 68K. */
 void JaguarExecuteNew(void)
 {
+   int32_t m68k_budget;
+   uint32_t m68k_penalty;
+
    PERF_INC(timing_jaguar_execute_calls);
    frameDone = false;
 
@@ -1067,7 +1077,19 @@ void JaguarExecuteNew(void)
          timeDelta = timeToJerryEvent;
          riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
          GPUBeginSlice(riscCycles);
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+
+         m68k_budget = (int32_t)USEC_TO_M68K_CYCLES(timeDelta);
+         if (busArbiter.enabled)
+         {
+            m68k_penalty = bus_arbiter_penalty(BM_CPU) / 2;
+            if ((int32_t)m68k_penalty > m68k_budget)
+               m68k_budget = 0;
+            else
+               m68k_budget -= (int32_t)m68k_penalty;
+            bus_arbiter_begin_timeslice();
+         }
+
+         m68k_execute(m68k_budget);
          GPUExec(GPUSliceRemaining());
          DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_MAIN);
@@ -1078,7 +1100,19 @@ void JaguarExecuteNew(void)
          timeDelta = timeToMainEvent;
          riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
          GPUBeginSlice(riscCycles);
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+
+         m68k_budget = (int32_t)USEC_TO_M68K_CYCLES(timeDelta);
+         if (busArbiter.enabled)
+         {
+            m68k_penalty = bus_arbiter_penalty(BM_CPU) / 2;
+            if ((int32_t)m68k_penalty > m68k_budget)
+               m68k_budget = 0;
+            else
+               m68k_budget -= (int32_t)m68k_penalty;
+            bus_arbiter_begin_timeslice();
+         }
+
+         m68k_execute(m68k_budget);
          GPUExec(GPUSliceRemaining());
          DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_JERRY);

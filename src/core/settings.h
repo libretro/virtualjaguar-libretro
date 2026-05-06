@@ -46,6 +46,8 @@ struct VJSettings
 	char jagBootPath[MAX_PATH];
 	char CDBootPath[MAX_PATH];
 	char alpineROMPath[MAX_PATH];
+
+	bool useBusContention;
 };
 
 enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2 };
