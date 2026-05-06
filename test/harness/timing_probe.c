@@ -16,7 +16,9 @@ static const char *counter_names[TIMING_NUM_COUNTERS] = {
     "timing_gpu_irqs_to_68k",
     "timing_m68k_cycles",
     "timing_risc_cycles",
-    "blitter_calls"
+    "blitter_calls",
+    "gpu_active_cycles",
+    "gpu_offered_cycles"
 };
 
 static const char *counter_labels[TIMING_NUM_COUNTERS] = {
@@ -26,7 +28,9 @@ static const char *counter_labels[TIMING_NUM_COUNTERS] = {
     "GPU->68K IRQs",
     "M68K cycles",
     "RISC cycles",
-    "Blitter calls"
+    "Blitter calls",
+    "GPU active",
+    "GPU offered"
 };
 
 /* NTSC: 524 halflines/frame, PAL: 625 halflines/frame */

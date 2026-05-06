@@ -55,7 +55,7 @@
 #endif
 
 #define TIMING_MAX_FRAMES    16384
-#define TIMING_NUM_COUNTERS  7
+#define TIMING_NUM_COUNTERS  9
 
 /* Counter indices */
 #define TC_HALFLINES    0
@@ -65,6 +65,8 @@
 #define TC_M68K_CYC     4
 #define TC_RISC_CYC     5
 #define TC_BLITTER      6
+#define TC_GPU_ACTIVE   7
+#define TC_GPU_OFFERED  8
 
 /* Per-frame snapshot of counter deltas + wall time */
 typedef struct {

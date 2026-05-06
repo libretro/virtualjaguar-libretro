@@ -37,6 +37,8 @@ static void (*lr_set_input_state)(retro_input_state_t);
 static bool (*lr_load_game)(const struct retro_game_info *);
 static void (*lr_unload_game)(void);
 static void (*lr_run)(void);
+static size_t (*lr_serialize_size)(void);
+static bool (*lr_unserialize)(const void *, size_t);
 
 /* Active config pointer (needed by callbacks which have no userdata) */
 static harness_config *active_cfg;
@@ -210,6 +212,8 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->quiet = 1;
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             cfg->frames = (unsigned)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--savestate") == 0 && i + 1 < argc) {
+            cfg->savestate_path = argv[++i];
         } else if (strcmp(argv[i], "--snapshot-interval") == 0 && i + 1 < argc) {
             cfg->snapshot_interval = (unsigned)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc) {
@@ -268,6 +272,8 @@ bool harness_load_core(harness_config *cfg)
     lr_load_game = dlsym(cfg->core_handle, "retro_load_game");
     lr_unload_game = dlsym(cfg->core_handle, "retro_unload_game");
     lr_run = dlsym(cfg->core_handle, "retro_run");
+    lr_serialize_size = dlsym(cfg->core_handle, "retro_serialize_size");
+    lr_unserialize = dlsym(cfg->core_handle, "retro_unserialize");
 
     if (!lr_init || !lr_load_game || !lr_run) {
         fprintf(stderr, "harness: missing required libretro symbols\n");
@@ -339,6 +345,76 @@ bool harness_load_rom(harness_config *cfg)
      * but VJ keeps a pointer. We leak intentionally for test lifetime. */
 
     harness_reset_audio(cfg);
+
+    if (cfg->savestate_path) {
+        if (!harness_load_savestate(cfg, cfg->savestate_path))
+            return false;
+    }
+
+    return true;
+}
+
+/* RetroArch "RASTATE\x01" header: 8 bytes magic + version, then
+ * chunk type (4 bytes "MEM ") + chunk size (4 bytes LE) = 16 bytes
+ * before the raw core state data. */
+#define RASTATE_HEADER_SIZE 16
+
+bool harness_load_savestate(harness_config *cfg, const char *path)
+{
+    FILE *f;
+    long file_size;
+    uint8_t *buf;
+    const uint8_t *state_data;
+    size_t state_size, expected;
+
+    if (!lr_serialize_size || !lr_unserialize) {
+        fprintf(stderr, "harness: serialize/unserialize not available\n");
+        return false;
+    }
+
+    f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "harness: cannot open savestate '%s'\n", path);
+        return false;
+    }
+    fseek(f, 0, SEEK_END);
+    file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    buf = (uint8_t *)malloc((size_t)file_size);
+    if (!buf) { fclose(f); return false; }
+    if (fread(buf, 1, (size_t)file_size, f) != (size_t)file_size) {
+        fprintf(stderr, "harness: short read on savestate '%s'\n", path);
+        free(buf);
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+
+    expected = lr_serialize_size();
+
+    if ((size_t)file_size >= RASTATE_HEADER_SIZE + expected &&
+        memcmp(buf, "RASTATE", 7) == 0) {
+        state_data = buf + RASTATE_HEADER_SIZE;
+        state_size = expected;
+        if (!cfg->quiet)
+            fprintf(stderr, "harness: RetroArch savestate detected, "
+                    "skipping %d-byte header\n", RASTATE_HEADER_SIZE);
+    } else {
+        state_data = buf;
+        state_size = (size_t)file_size;
+    }
+
+    if (!lr_unserialize(state_data, state_size)) {
+        fprintf(stderr, "harness: retro_unserialize failed for '%s' "
+                "(size=%zu, expected=%zu)\n", path, state_size, expected);
+        free(buf);
+        return false;
+    }
+
+    if (!cfg->quiet)
+        fprintf(stderr, "harness: loaded savestate '%s'\n", path);
+    free(buf);
     return true;
 }
 

@@ -42,6 +42,7 @@
  *     --bios           Enable BIOS mode (default: HLE)
  *     --option K=V     Set core option (e.g. --option virtualjaguar_dsp=enabled)
  *     --quiet          Suppress per-frame output, only show final results
+ *     --savestate F    Load savestate after ROM init (RetroArch or raw VJSS)
  *     --snapshot-interval N   Probe snapshot every N frames (default: 1)
  *
  * ======================================================================
@@ -127,6 +128,7 @@ typedef struct {
     /* Configuration (set before init) */
     const char   *core_path;
     const char   *rom_path;
+    const char   *savestate_path;
     unsigned      frames;
     int           use_bios;
     int           json_output;
@@ -157,6 +159,7 @@ typedef struct {
 #define HARNESS_CONFIG_DEFAULT { \
     .core_path = NULL, \
     .rom_path = NULL, \
+    .savestate_path = NULL, \
     .frames = 300, \
     .use_bios = 0, \
     .json_output = 0, \
@@ -204,6 +207,10 @@ void harness_report(harness_config *cfg, const harness_result *results, unsigned
 
 /* Convenience: add a core option override. */
 void harness_set_option(harness_config *cfg, const char *key, const char *value);
+
+/* Load a savestate file after ROM init.  Handles both RetroArch
+ * "RASTATE" wrapper and raw VJSS format automatically. */
+bool harness_load_savestate(harness_config *cfg, const char *path);
 
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);
