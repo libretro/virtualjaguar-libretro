@@ -121,6 +121,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_bus_contention",
+      "Bus Contention",
+      NULL,
+      "Model bus arbitration between processors. GPU and blitter memory accesses stall appropriately based on DRAM timing. Fixes games that run too fast (e.g. Doom). Disable if a game has issues.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_bios",
       "BIOS",
       NULL,
