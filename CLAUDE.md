@@ -122,6 +122,31 @@ When spawning agents for work in this repo, include these rules:
 5. **No unnecessary changes.** Don't refactor surrounding code, add abstractions, or clean up unrelated files. Surgical changes only.
 6. **Commit message style.** Use conventional commits: `fix(component):`, `perf(component):`, `test(component):`, `docs:`.
 
+## Release process (GitFlow)
+
+Full details in [`docs/release-process.md`](docs/release-process.md). Quick reference:
+
+### Cutting a release
+
+1. **Branch**: `git checkout develop && git checkout -b release/vX.Y.Z`
+2. **Bump version** in these files (all must match):
+   - `Makefile` → `CORE_BASE_VERSION := vX.Y.Z`
+   - `dist/info/virtualjaguar_libretro.info` → `display_version = "vX.Y.Z"`
+   - `src/core/version.h` is auto-generated (gitignored) — `bash scripts/gen-version-h.sh` or just rebuild.
+3. **Write release notes**: `docs/RELEASE_NOTES_vX.Y.Z.md` — use `docs/RELEASE_NOTES_v2.3.0.md` as a template. Include: highlights, bug fixes, performance, testing, known issues, stats (`git diff --shortstat vPREV..HEAD`), downloads, maintainers.
+4. **Verify**: `make clean && make -j$(getconf _NPROCESSORS_ONLN)` builds clean, `make test` passes, `strings *.dylib | grep vX.Y.Z` confirms version in binary.
+5. **Commit**: `chore: bump version to vX.Y.Z, add release notes`
+6. **Push + PR**: `git push -u libretro release/vX.Y.Z` then `gh pr create --base master`.
+7. **After merge to master**: tag `vX.Y.Z` and push — CI (`release.yml`) builds 16 platforms and publishes the GitHub release using the release notes file as the body.
+8. **Back-merge**: `git checkout develop && git merge master && git push libretro develop`.
+9. **libretro-super**: send a PR updating `dist/info/virtualjaguar_libretro.info` there.
+
+### What NOT to do
+
+- Don't tag before the PR is merged to master.
+- Don't put new features on a release branch — bug fixes only.
+- Don't forget the back-merge to develop (step 8) — otherwise develop diverges from the tagged version string.
+
 ## Known limitations
 
 - Blitter not fully cycle-accurate (some games need fast mode).
