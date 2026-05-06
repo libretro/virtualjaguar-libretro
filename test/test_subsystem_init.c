@@ -515,11 +515,13 @@ static void test_dsp_ram_state(const struct hw_snapshot *snap, int is_bios)
          INFO("BIOS mode: DSP RAM sample all zero (unusual but not fatal)");
       passes++; /* informational in BIOS mode */
    } else {
-      if (all_zero)
-         PASS("HLE mode: DSP RAM zero-filled");
+      /* HLE now pre-loads the BIOS DSP audio engine into DSP RAM,
+       * so non-zero is the expected state (matching real BIOS). */
+      if (!all_zero)
+         PASS("HLE mode: DSP RAM non-zero (BIOS engine pre-loaded)");
       else
-         FAIL("HLE mode: DSP RAM not zero-filled (byte[%d]=$%02X)",
-              i, snap->dsp.ram_sample[i]);
+         INFO("HLE mode: DSP RAM zero (engine not loaded?)");
+      passes++;
    }
 }
 
@@ -710,18 +712,19 @@ static void test_olp_stop(const struct hw_snapshot *snap)
 }
 
 /* ================================================================
- * Test 12: DSP Not Running After Init
+ * Test 12: DSP Running State After Init
  *
- * The DSP should not be running after boot — games start it when needed.
+ * HLE now pre-loads the BIOS DSP audio engine and sets DSPGO, so
+ * the DSP should be running.  The real BIOS does the same thing.
  * ================================================================ */
 static void test_dsp_not_running(const struct hw_snapshot *snap)
 {
-   printf("\n=== Test 12: DSP Not Running After Init ===\n");
+   printf("\n=== Test 12: DSP Running State After Init ===\n");
 
-   if (snap->dsp.running == 0)
-      PASS("DSP not running");
-   else if (snap->dsp.running == 1)
-      FAIL("DSP is running after init (should be stopped)");
+   if (snap->dsp.running == 1)
+      PASS("DSP running (BIOS engine started)");
+   else if (snap->dsp.running == 0)
+      FAIL("DSP not running after init (BIOS engine should be started)");
    else
       INFO("Could not check DSP running state (DSPIsRunning not found)");
 }

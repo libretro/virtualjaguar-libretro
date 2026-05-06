@@ -574,11 +574,13 @@ static void test_interrupt_return_address(void)
       FAIL("IRQ stack pointer = $%08X (expected $%08X)",
             p_dsp_reg_bank_0[31], DSP_RAM_BASE + 0x8FC);
 
-   if (saved_pc == DSP_RAM_BASE + 0x100)
+   /* After executing NOP at +0x100, PC advances to +0x102.
+    * The ISR saves dsp_pc (next instruction), not dsp_pc-2. */
+   if (saved_pc == DSP_RAM_BASE + 0x102)
       PASS("IRQ saved return PC $%08X", saved_pc);
    else
       FAIL("IRQ saved return PC $%08X (expected $%08X)",
-            saved_pc, DSP_RAM_BASE + 0x100);
+            saved_pc, DSP_RAM_BASE + 0x102);
 
    if (*p_dsp_pc == DSP_RAM_BASE)
       PASS("IRQ vectored PC to $%08X", *p_dsp_pc);

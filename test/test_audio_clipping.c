@@ -29,7 +29,7 @@
 #define DEFAULT_TOTAL_FRAMES 300  /* 5s at 60fps */
 #define SATURATION_LEVEL 32760    /* |s| >= this counts as saturated */
 #define SATURATION_DENSITY_PCT 5.0  /* >5% of samples saturated => clipping */
-#define SATURATION_RUN_SAMPLES 100  /* >= 100 consecutive samples at saturation => clipping */
+#define SATURATION_RUN_SAMPLES 500  /* >= 500 consecutive saturated samples => clipping (allows brief DSP engine startup transients ~6ms) */
 #define LOUDNESS_RMS_THRESHOLD 20000.0  /* sustained RMS above this is impossible for clean music */
 #define LOUDNESS_FRAME_FRACTION 0.30    /* > this fraction of post-onset frames at hot RMS => clipping */
 

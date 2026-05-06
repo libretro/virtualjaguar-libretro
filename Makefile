@@ -797,7 +797,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		echo "  SKIP: Skyhammer ROM (private) not available"; \
 	fi
 	@if [ -f "test/roms/private/Iron Soldier 2 (World).j64" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --expect-clipping --quiet; \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --quiet; \
 	else \
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi
