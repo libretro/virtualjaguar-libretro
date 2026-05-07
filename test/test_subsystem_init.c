@@ -516,12 +516,14 @@ static void test_dsp_ram_state(const struct hw_snapshot *snap, int is_bios)
       passes++; /* informational in BIOS mode */
    } else {
       /* HLE now pre-loads the BIOS DSP audio engine into DSP RAM,
-       * so non-zero is the expected state (matching real BIOS). */
+       * so non-zero is the expected state (matching real BIOS).
+       * All-zero indicates the engine pre-load silently failed and
+       * games like Skyhammer / Iron Soldier 2 / Wolfenstein 3D will
+       * fall back to broken audio code paths. */
       if (!all_zero)
          PASS("HLE mode: DSP RAM non-zero (BIOS engine pre-loaded)");
       else
-         INFO("HLE mode: DSP RAM zero (engine not loaded?)");
-      passes++;
+         FAIL("HLE mode: DSP RAM all-zero (BIOS engine pre-load failed)");
    }
 }
 
@@ -717,7 +719,7 @@ static void test_olp_stop(const struct hw_snapshot *snap)
  * HLE now pre-loads the BIOS DSP audio engine and sets DSPGO, so
  * the DSP should be running.  The real BIOS does the same thing.
  * ================================================================ */
-static void test_dsp_not_running(const struct hw_snapshot *snap)
+static void test_dsp_running(const struct hw_snapshot *snap)
 {
    printf("\n=== Test 12: DSP Running State After Init ===\n");
 
@@ -894,7 +896,7 @@ int main(int argc, char **argv)
    test_boot_vectors(&hle_snap);
    test_pit_cleared(&hle_snap);
    test_olp_stop(&hle_snap);
-   test_dsp_not_running(&hle_snap);
+   test_dsp_running(&hle_snap);
    test_ram_clear();
    test_video_timing_consistency(&hle_snap);
 
