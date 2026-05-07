@@ -1,6 +1,6 @@
 # Virtual Jaguar libretro v2.3.0
 
-Performance and accuracy release — 154 commits since v2.2.0.  Major blitter
+Performance and accuracy release — 158 commits since v2.2.0.  Major blitter
 and RISC performance work, hardware accuracy fixes across TOM/JERRY/DSP, and
 improved iOS/Provenance stability.  No new features; this is a polish release.
 
@@ -86,7 +86,7 @@ improved iOS/Provenance stability.  No new features; this is a polish release.
 
 ## Compared to v2.2.0
 
-261 files changed, +25,096 / -2,800 lines across 154 commits.
+263 files changed, +25,240 / -2,805 lines across 158 commits.
 
 ## Downloads
 

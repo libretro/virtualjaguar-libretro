@@ -836,7 +836,7 @@ void DSPDone(void)
 
 /* DSP execution core */
 
-INLINE void DSPExec(int32_t cycles)
+void DSPExec(int32_t cycles)
 {
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
