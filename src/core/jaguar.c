@@ -931,8 +931,9 @@ void JaguarReset(void)
             DSPWriteLong(DSP_WORK_RAM_BASE + i, word, M68K);
          }
 
-         DSPWriteLong(0xF1A110, DSP_WORK_RAM_BASE, M68K);
-         DSPWriteLong(0xF1A114, 0x00000001, M68K);
+         /* D_PC <- engine entry, D_CTRL <- DSPGO (start the DSP) */
+         DSPWriteLong(DSP_CONTROL_RAM_BASE + 0x10, DSP_WORK_RAM_BASE, M68K);
+         DSPWriteLong(DSP_CONTROL_RAM_BASE + 0x14, 0x00000001, M68K);
       }
    }
 
