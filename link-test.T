@@ -45,5 +45,12 @@
       perf_counters_reset;
       perf_counters_register;
       perf_counters_find;
+      CDROM*;
+      BUTCH*;
+      GetRamPtr;
+      bootConfig;
+      cd_boot_strategy_*;
+      jaguar_cd_*;
+      ResolveBootConfig;
    local: *;
 };

@@ -42,3 +42,10 @@ _perf_counters_dump
 _perf_counters_reset
 _perf_counters_register
 _perf_counters_find
+_CDROM*
+_BUTCH*
+_GetRamPtr
+_bootConfig
+_cd_boot_strategy_*
+_jaguar_cd_*
+_ResolveBootConfig

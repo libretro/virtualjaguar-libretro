@@ -1247,7 +1247,12 @@ size_t retro_get_memory_size(unsigned type)
    {
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
-      return EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE;
+      /* CD discs share the cart EEPROM with their CD-side EEPROM bank
+       * (128 + 128 = 256 bytes).  Cart-only loads expose just the cart
+       * EEPROM so existing per-game saves remain compatible. */
+      if (jaguar_cd_mode)
+         return EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE;
+      return EEPROM_SAVE_SIZE;
    }
    return 0;
 }
