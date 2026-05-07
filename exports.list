@@ -1,0 +1,13 @@
+# Production ABI export list for Mach-O (macOS / iOS / tvOS).
+#
+# Mirrors link.T: only the libretro retro_* entry points are exported
+# from the shipped .dylib.  Internal emulator state (DSP, GPU, blitter,
+# 68K registers, jaguarMainRAM, etc.) stays hidden so frontends and
+# future refactors don't accidentally pin themselves to internals.
+#
+# White-box test harnesses need the wider symbol set; the Makefile
+# switches to exports-test.list when TEST_EXPORTS=1 (which the `test`
+# target sets automatically).
+#
+# Symbol names are prefixed with `_` per the Mach-O ABI.
+_retro_*

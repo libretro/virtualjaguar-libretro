@@ -1,0 +1,83 @@
+name: clang-format check
+
+# Advisory check: runs clang-format on CHANGED LINES ONLY in the PR
+# diff, so the existing mixed-indent codebase isn't penalised.  Posts
+# a job-summary diff if the new code deviates from `.clang-format`.
+#
+# Currently advisory (continue-on-error: true) so it doesn't block
+# merges while contributors get used to the convention.  Flip to
+# gating once the team is ready.
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths: ['**/*.c', '**/*.h']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    name: clang-format on changed lines
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Run clang-format-diff on changed hunks
+        # Disable -e: git diff returns 1 when diff is non-empty,
+        # clang-format-diff returns 1 when it has suggestions, neither
+        # is a real failure here.  We always exit 0 at the end.
+        shell: bash {0}
+        run: |
+          set -u
+          git fetch origin "${{ github.base_ref }}":__base
+          # Stream diff -> clang-format-diff -> file.  Avoids capturing
+          # potentially large diffs into shell variables.
+          # -U0: zero context lines so clang-format-diff only sees
+          # added/changed lines.  Pathspec excludes vendored/generated.
+          DIFF_FILE=$(mktemp)
+          git diff -U0 __base...HEAD -- \
+            ':(exclude)libretro-common/**' \
+            ':(exclude)src/m68000/**' \
+            ':(exclude)src/bios/jag*.c' \
+            ':(exclude)src/core/version.h' \
+            > "$DIFF_FILE"
+
+          # clang-format-diff ships in the Ubuntu clang-format package
+          # but isn't always on PATH; locate it.
+          CFD=$(command -v clang-format-diff || command -v clang-format-diff-18 || command -v clang-format-diff-17 || command -v clang-format-diff-16 || true)
+          if [ -z "$CFD" ]; then
+            echo "::warning::clang-format-diff not found; skipping advisory check."
+            exit 0
+          fi
+
+          OUT_FILE=$(mktemp)
+          "$CFD" -p1 -style=file < "$DIFF_FILE" > "$OUT_FILE" || true
+          if [ -s "$OUT_FILE" ]; then
+            echo "::notice::clang-format has style suggestions; see job summary."
+            {
+              echo "## clang-format suggestions"
+              echo
+              echo "These are advisory -- the codebase has mixed style per-file and"
+              echo "we do NOT auto-enforce.  Apply if they make sense for your hunk."
+              echo
+              echo '```diff'
+              cat "$OUT_FILE"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            cat "$OUT_FILE"
+          else
+            echo "OK: no clang-format suggestions on changed lines"
+          fi
+          rm -f "$DIFF_FILE" "$OUT_FILE"
+          # Always exit 0 -- this check is informational only.
+          exit 0

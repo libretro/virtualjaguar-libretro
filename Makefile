@@ -43,30 +43,55 @@ else ifneq ($(findstring MINGW,$(shell uname -a)),)
 endif
 
 TARGET_NAME := virtualjaguar
-GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
-ifneq ($(GIT_VERSION)," unknown")
-	CFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
-endif
+
+# Single source-of-truth for the human-readable version string.
+# Bumped by .github/workflows/version-bump.yml (greps this line).
+# Composed into CORE_VERSION in src/core/version.h, generated below.
+CORE_BASE_VERSION := v2.3.0
+
 ifeq ($(DEBUG),1)
-BUILD_TIMESTAMP := " debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)"
-	CFLAGS += -DBUILD_TIMESTAMP=\"$(BUILD_TIMESTAMP)\"
+   CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
 endif
 
-# GNU-ld --version-script choice.
-#  link.T       : production ABI (retro_* only).
-#  link-test.T  : wide symbol set used by white-box test harnesses.
-# The `test` target re-invokes make with TEST_EXPORTS=1 so the
-# shipped .so on `make` (default) hides internal symbols, while
-# `make test` produces a .so the test binaries can dlsym into.
-# Only effective on platforms that link with GNU ld --version-script
-# (Linux, Windows MSYS2, ARM, etc.); macOS / iOS / tvOS dylibs and
-# static archives ignore this and currently still export everything
-# with default visibility.
+# Opt-in instrumentation counters (src/core/perf_counters.h).
+# `make BENCH_PROFILE=1` defines the macro so PERF_COUNTER/PERF_INC
+# emit real code; otherwise every counter macro is a no-op.
+ifeq ($(BENCH_PROFILE),1)
+   CFLAGS += -DBENCH_PROFILE
+endif
+
+# Per-blit slow-path tracing in BlitterMidsummer2.
+# `make BLITTER_TRACE=1` enables an stderr dump of any single blit
+# whose wall time exceeds ~1.5 ms (configurable via the threshold in
+# src/tom/blitter.c).  Useful for finding pathological blit commands
+# that dominate frame-time variance.  macOS-only (uses mach_*).
+ifeq ($(BLITTER_TRACE),1)
+   CFLAGS += -DBLITTER_TRACE
+endif
+
+# Symbol export gating.
+#
+#   GNU ld (Linux, Windows MSYS2, ARM, ...) honours --version-script:
+#     link.T       : production ABI (retro_* only).
+#     link-test.T  : wide symbol set used by white-box test harnesses.
+#
+#   Mach-O ld64 (macOS / iOS / tvOS) ignores --version-script; it uses
+#   -exported_symbols_list instead:
+#     exports.list       : production retro_* only.
+#     exports-test.list  : wide test ABI (mirrors link-test.T).
+#
+# The `test` target re-invokes make with TEST_EXPORTS=1 so the shipped
+# library on default `make` hides internals, while `make test` produces
+# a library the test binaries can dlsym into.  Static archives ignore
+# both mechanisms and still export everything with default visibility.
 ifeq ($(TEST_EXPORTS),1)
 LINK_SCRIPT := link-test.T
+MACHO_EXPORTS := exports-test.list
 else
 LINK_SCRIPT := link.T
+MACHO_EXPORTS := exports.list
 endif
+MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
 # Unix
 ifeq ($(platform), unix)
@@ -82,8 +107,8 @@ ifeq ($(platform), unix)
 # Platform affix = classic_<ISA>_<µARCH>
 # Help at https://modmyclassic.com/comp
 
-# (armv7 a7, hard point, neon based) ### 
-# NESC, SNESC, C64 mini 
+# (armv7 a7, hard point, neon based) ###
+# NESC, SNESC, C64 mini
 else ifeq ($(platform), classic_armv7_a7)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
@@ -108,13 +133,13 @@ else ifeq ($(platform), classic_armv7_a7)
 	    LDFLAGS += -static-libgcc -static-libstdc++
 	  endif
 	endif
-#######################################	
-	
+#######################################
+
 # OSX
 else ifeq ($(platform), osx)
 	TARGET := $(TARGET_NAME)_libretro.dylib
 	fpic := -fPIC
-	SHARED := -dynamiclib
+	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
 	ifeq ($(arch),ppc)
 		FLAGS += -DMSB_FIRST
 		OLD_GCC = 1
@@ -141,7 +166,7 @@ endif
 else ifneq (,$(findstring ios,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro_ios.dylib
 	fpic := -fPIC
-	SHARED := -dynamiclib
+	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
 	MINVERSION :=
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk iphoneos Path)
@@ -165,7 +190,7 @@ else ifeq ($(platform), tvos-arm64)
 # tvOS
 	TARGET := $(TARGET_NAME)_libretro_tvos.dylib
 	fpic := -fPIC
-	SHARED := -dynamiclib
+	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk appletvos Path)
 	endif
@@ -544,6 +569,36 @@ include Makefile.common
 
 OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
 
+# ----------------------------------------------------------------
+# version.h: generated header read by libretro.c.  Single source of
+# truth is CORE_BASE_VERSION above; the script also stamps in the
+# short git rev.
+#
+# Regeneration runs at Makefile parse time via $(shell ...) so the
+# dependency graph sees a stable file with a stable mtime.  The
+# alternative (a `: FORCE` rule) was racy under `make -j4` on the
+# stock /usr/bin/make 3.81 still shipped on macOS, which silently
+# stopped mid-build.  The script does an in-place cmp + mv so
+# unchanged content leaves mtime untouched and incremental builds
+# stay incremental.
+# ----------------------------------------------------------------
+VERSION_H := $(CORE_DIR)/src/core/version.h
+
+# Skip the generator for read-only / metadata-only goals -- no point
+# spawning bash for `make clean`, `make print-FOO`, `make lint`, or
+# `make help`.  Builds (the empty MAKECMDGOALS case, default target)
+# always run it.
+NO_GEN_GOALS := clean lint help print-%
+ifeq ($(filter-out $(NO_GEN_GOALS),$(or $(MAKECMDGOALS),all)),)
+# All requested goals are read-only -- skip generator.
+else
+_VERSION_GEN := $(shell bash scripts/gen-version-h.sh && echo ok)
+endif
+
+# Note: $(CORE_DIR)/libretro.o: $(VERSION_H) dependency is wired up
+# AFTER the `all:` rule below, so Make 3.81 doesn't latch onto
+# libretro.o as the default goal.
+
 ifeq ($(DEBUG),1)
    ifneq (,$(findstring msvc,$(platform)))
       CFLAGS += -MTd
@@ -574,6 +629,16 @@ endif
 ifeq ($(RELEASE_DEBUG_INFO),1)
    ifeq (,$(findstring msvc,$(platform)))
       FLAGS += -g
+   endif
+endif
+
+# COVERAGE=1 instruments the build with gcov.  Used by `make coverage`
+# below; don't combine with optimized builds.  Compiler emits .gcno
+# files at build time, .gcda files at run time.
+ifeq ($(COVERAGE),1)
+   ifeq (,$(findstring msvc,$(platform)))
+      FLAGS   += --coverage -O0 -g
+      LDFLAGS += --coverage
    endif
 endif
 
@@ -624,7 +689,7 @@ CFLAGS   += -DDEBUG_PRESENTATION
 endif
 
 OBJOUT   = -o
-LINKOUT  = -o 
+LINKOUT  = -o
 
 ifneq (,$(findstring msvc,$(platform)))
 	OBJOUT = -Fo
@@ -655,6 +720,10 @@ else
 	$(LD) $(LINKOUT)$@ $^ $(LDFLAGS)
 endif
 
+# version.h dependency hook (must come after `all:` so Make 3.81 on
+# stock macOS doesn't latch onto libretro.o as the default goal).
+$(CORE_DIR)/libretro.o: $(VERSION_H)
+
 clean:
 	rm -f $(TARGET) $(OBJECTS) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
@@ -662,7 +731,11 @@ clean:
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
-		test/test_audio_clipping test/tools/test_memory_map
+		test/test_audio_clipping test/test_pit_clock_rate \
+		test/test_blitter_mmio test/test_eeprom_lifecycle \
+		test/test_tom_visible_window test/test_framebuffer_integrity \
+		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
+		test/tools/test_frame_timing
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -688,9 +761,14 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
-		test/test_audio_pipeline test/test_audio_clipping test/tools/test_memory_map
+		test/test_audio_pipeline test/test_audio_clipping test/test_pit_clock_rate \
+		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
+		test/test_framebuffer_integrity test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
+	./test/test_blitter_mmio
+	./test/test_pit_clock_rate
+	./test/test_tom_visible_window
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_m68k_ops
@@ -724,6 +802,16 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi
 	./test/tools/test_memory_map ./$(TARGET)
+	@# Framebuffer integrity: alpha corruption + screen position shift detection.
+	@if [ -f "test/roms/yarc.j64" ]; then \
+		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64; \
+	else \
+		echo "  SKIP: yarc.j64 ROM not available (framebuffer integrity)"; \
+	fi
+	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
+	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
+		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
+		./test/test_eeprom_lifecycle ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -732,6 +820,27 @@ test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
+
+# Regression guard: textually verifies that JERRYResetPIT1/2,
+# TOMResetPIT, and JERRYGetPIT*Frequency schedule using RISC clock
+# constants (full system clock).  Catches the recurring "halve PIT
+# rate to fix Doom" bug -- see docs/jtrm-clocks-timing.md and
+# test/acid/tests/timing/pit_countdown_rate.s for the in-emulation
+# equivalent.
+test/test_pit_clock_rate: test/test_pit_clock_rate.c \
+		src/jerry/jerry.c src/tom/tom.c
+	$(CC) -O2 -Wall -std=c99 -o $@ test/test_pit_clock_rate.c
+
+test/test_blitter_mmio: test/test_blitter_mmio.c src/tom/blitter_mmio.c \
+		src/tom/blitter_internal.h src/tom/blitter.h src/core/vjag_memory.h \
+		src/core/settings.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_blitter_mmio.c src/tom/blitter_mmio.c
+
+test/test_tom_visible_window: test/test_tom_visible_window.c src/tom/tom.c \
+		src/tom/tom.h src/core/vjag_memory.h src/core/settings.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_tom_visible_window.c
 
 test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
 	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
@@ -786,13 +895,126 @@ test/test_audio_clipping: test/test_audio_clipping.c
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
+		test/harness/harness.c test/harness/harness.h \
+		test/harness/dsp_probe.c test/harness/dsp_probe.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_dsp_audio_diag.c \
+		test/harness/harness.c test/harness/dsp_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_eeprom_lifecycle: test/test_eeprom_lifecycle.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_eeprom_lifecycle.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_framebuffer_integrity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 endif
 
-.PHONY: clean test lint
+.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
 endif
 
 lint:
 	@scripts/c89-lint.sh
+
+# `make coverage` -- builds with gcov instrumentation, runs the full
+# test suite, and produces a Cobertura XML report at coverage.xml plus
+# a textual summary.  See gcovr.cfg for path filters.
+coverage:
+	$(MAKE) clean
+	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
+	gcovr --config gcovr.cfg --xml-pretty -o coverage.xml --txt --print-summary
+
+# `make benchmark` -- headless wall-clock perf measurement on a fixed
+# ROM.  Boots the core via dlopen, runs $(BENCH_FRAMES) frames after
+# $(BENCH_WARMUP) warmup, prints FPS / ms-per-frame.  Use during
+# perf-tuning code changes; commit-by-commit deltas are the signal.
+#
+# Override on the command line:
+#   make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
+#   make benchmark BENCH_FRAMES=3000 BENCH_WARMUP=120
+#   make benchmark BENCH_BLITTER=accurate    # default: fast
+BENCH_ROM     ?= test/roms/yarc.j64
+BENCH_FRAMES  ?= 600
+BENCH_WARMUP  ?= 60
+BENCH_BLITTER ?= fast
+# BENCH_PROFILE=1 enables src/core/perf_counters.h instrumentation and
+# wide-export ABI so test_benchmark can dlsym `perf_counters_dump`.
+ifeq ($(BENCH_PROFILE),1)
+BENCH_TEST_EXPORTS := TEST_EXPORTS=1
+else
+BENCH_TEST_EXPORTS :=
+endif
+benchmark:
+	@# Re-invoke make so BENCH_PROFILE / TEST_EXPORTS take effect on the .so/.dylib.
+	$(MAKE) $(BENCH_TEST_EXPORTS) BENCH_PROFILE=$(BENCH_PROFILE) -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	@# Build the harness inline; it dlopens the core, so it only needs the retro_* ABI
+	@# (plus the optional perf_counters_dump symbol when BENCH_PROFILE=1).
+	@# -ldl is Linux-specific; macOS/BSD provide dl* in libSystem/libc.
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_benchmark test/tools/test_benchmark.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl)
+	./test/tools/test_benchmark ./$(TARGET) "$(BENCH_ROM)" $(BENCH_FRAMES) \
+		--warmup $(BENCH_WARMUP) --blitter $(BENCH_BLITTER) \
+		$(if $(BENCH_STATE),--load-state "$(BENCH_STATE)")
+
+# `make acid` -- builds the core and runs the synthetic acid-test ROMs
+# (see test/acid/README.md).  Requires the vasm 68K assembler on $PATH;
+# if absent, the assemble step is skipped and only the runner harness
+# is built (so CI can still validate the harness compiles).
+#
+# Forces a BENCH_PROFILE=1 + TEST_EXPORTS=1 build of the core so the
+# acid runner can dlsym `perf_counters_find` and report a per-test
+# delta (halflines, vblank IRQs, blits, inner-loop iters, ...).
+acid:
+	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(MAKE) -C test/acid test CORE=$(abspath $(TARGET))
+
+# `make dsp-diag` -- DSP audio diagnostic.  Builds core with TEST_EXPORTS=1,
+# compiles the harness + DSP probe, then runs the diagnostic against a ROM.
+#
+# Usage:
+#   make dsp-diag DSP_DIAG_ROM="test/roms/private/Wolfenstein 3D (1994).jag"
+#   make dsp-diag DSP_DIAG_ROM=path/to/rom.jag DSP_DIAG_FLAGS="--bios --frames 600"
+DSP_DIAG_ROM   ?= test/roms/private/Wolfenstein 3D (1994).jag
+DSP_DIAG_FLAGS ?= --dump-on-escape
+dsp-diag:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_dsp_audio_diag \
+		test/tools/test_dsp_audio_diag.c \
+		test/harness/harness.c test/harness/dsp_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+	./test/tools/test_dsp_audio_diag ./$(TARGET) "$(DSP_DIAG_ROM)" $(DSP_DIAG_FLAGS)
+
+# `make frame-timing` -- Per-frame timing diagnostic.  Builds core with
+# BENCH_PROFILE=1 + TEST_EXPORTS=1, compiles the timing probe + harness,
+# then runs the diagnostic against a ROM.  Reports per-frame halfline counts,
+# M68K/RISC cycles, VBlank IRQs, wall-clock time, and speed ratio.
+#
+# Usage:
+#   make frame-timing FRAME_TIMING_ROM=test/roms/yarc.j64
+#   make frame-timing FRAME_TIMING_ROM="path/to/Doom.jag" FRAME_TIMING_FLAGS="--frames 1200 --csv"
+#   make frame-timing FRAME_TIMING_ROM="path/to/rom.jag" FRAME_TIMING_FLAGS="--pal --bios"
+FRAME_TIMING_ROM   ?= test/roms/yarc.j64
+FRAME_TIMING_FLAGS ?=
+frame-timing:
+	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_frame_timing \
+		test/tools/test_frame_timing.c \
+		test/harness/harness.c test/harness/timing_probe.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
 
 print-%:
 	@echo '$*=$($*)'

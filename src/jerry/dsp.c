@@ -28,7 +28,7 @@
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
-//#define DSP_CORRECT_ALIGNMENT_STORE
+#define DSP_CORRECT_ALIGNMENT_STORE
 
 #define NEW_SCOREBOARD
 
@@ -208,6 +208,7 @@ INLINE static void dsp_opcode_subq(void);
 INLINE static void dsp_opcode_subqmod(void);
 INLINE static void dsp_opcode_subqt(void);
 INLINE static void dsp_opcode_illegal(void);
+INLINE static void dsp_executeOpcode(uint32_t index);
 
 //Here's a QnD kludge...
 //This is wrong, wrong, WRONG, but it seems to work for the time being...
@@ -488,14 +489,24 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
              * not terminate because it depends on BIOS-initialized
              * state.  A threshold of 8192 catches tight boot-time
              * poll loops (tens of thousands of reads/frame) while
-             * ignoring normal gameplay status checks (~1-10/frame). */
+             * ignoring normal gameplay status checks (~1-10/frame).
+             *
+             * Exception: if the DSP is actively producing audio
+             * (i2sWriteCount > 2, beyond the DACPrepareFrame seed),
+             * it is running a legitimate audio mixer (e.g. Doom) and
+             * must not be killed. */
             if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
             {
-               dspgo_poll_count++;
-               if (dspgo_poll_count > DSPGO_POLL_THRESHOLD)
-               {
-                  dsp_control &= ~0x01;
+               if (DACGetI2SWriteCount() > 2)
                   dspgo_poll_count = 0;
+               else
+               {
+                  dspgo_poll_count++;
+                  if (dspgo_poll_count > DSPGO_POLL_THRESHOLD)
+                  {
+                     dsp_control &= ~0x01;
+                     dspgo_poll_count = 0;
+                  }
                }
             }
             else
@@ -763,6 +774,11 @@ uint8_t * DSPGetRAM(void)
 	return dsp_ram_8;
 }
 
+uint32_t DSPGetFlags(void)
+{
+	return dsp_flags;
+}
+
 void DSPInit(void)
 {
 	dsp_build_branch_condition_table();
@@ -820,7 +836,7 @@ void DSPDone(void)
 
 /* DSP execution core */
 
-INLINE void DSPExec(int32_t cycles)
+void DSPExec(int32_t cycles)
 {
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
@@ -854,31 +870,227 @@ INLINE void DSPExec(int32_t cycles)
 		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
-		dsp_opcode[index]();
+		dsp_executeOpcode(index);
 		cycles -= dsp_opcode_cycles[index];
 	}
 
 	dsp_in_exec--;
 }
 
+INLINE static void dsp_executeOpcode(uint32_t index)
+{
+#ifdef __GNUC__
+	/* Computed-goto dispatch table -- one label per RISC opcode.
+	 * GCC/Clang extension: &&label yields the address of a label;
+	 * goto *ptr jumps through an arbitrary code address.  This
+	 * eliminates the single indirect-branch bottleneck of switch
+	 * dispatch and lets the branch predictor track each opcode
+	 * independently. */
+	static const void *dsp_dispatch[64] = {
+		&&dsp_op_add,             &&dsp_op_addc,
+		&&dsp_op_addq,            &&dsp_op_addqt,
+		&&dsp_op_sub,             &&dsp_op_subc,
+		&&dsp_op_subq,            &&dsp_op_subqt,
+		&&dsp_op_neg,             &&dsp_op_and,
+		&&dsp_op_or,              &&dsp_op_xor,
+		&&dsp_op_not,             &&dsp_op_btst,
+		&&dsp_op_bset,            &&dsp_op_bclr,
+		&&dsp_op_mult,            &&dsp_op_imult,
+		&&dsp_op_imultn,          &&dsp_op_resmac,
+		&&dsp_op_imacn,           &&dsp_op_div,
+		&&dsp_op_abs,             &&dsp_op_sh,
+		&&dsp_op_shlq,            &&dsp_op_shrq,
+		&&dsp_op_sha,             &&dsp_op_sharq,
+		&&dsp_op_ror,             &&dsp_op_rorq,
+		&&dsp_op_cmp,             &&dsp_op_cmpq,
+		&&dsp_op_subqmod,         &&dsp_op_sat16s,
+		&&dsp_op_move,            &&dsp_op_moveq,
+		&&dsp_op_moveta,          &&dsp_op_movefa,
+		&&dsp_op_movei,           &&dsp_op_loadb,
+		&&dsp_op_loadw,           &&dsp_op_load,
+		&&dsp_op_sat32s,          &&dsp_op_load_r14_indexed,
+		&&dsp_op_load_r15_indexed,&&dsp_op_storeb,
+		&&dsp_op_storew,          &&dsp_op_store,
+		&&dsp_op_mirror,          &&dsp_op_store_r14_indexed,
+		&&dsp_op_store_r15_indexed,&&dsp_op_move_pc,
+		&&dsp_op_jump,            &&dsp_op_jr,
+		&&dsp_op_mmult,           &&dsp_op_mtoi,
+		&&dsp_op_normi,           &&dsp_op_nop,
+		&&dsp_op_load_r14_ri,     &&dsp_op_load_r15_ri,
+		&&dsp_op_store_r14_ri,    &&dsp_op_store_r15_ri,
+		&&dsp_op_illegal,         &&dsp_op_addqmod
+	};
+
+	goto *dsp_dispatch[index];
+
+	dsp_op_add:             dsp_opcode_add();             return;
+	dsp_op_addc:            dsp_opcode_addc();            return;
+	dsp_op_addq:            dsp_opcode_addq();            return;
+	dsp_op_addqt:           dsp_opcode_addqt();           return;
+	dsp_op_sub:             dsp_opcode_sub();             return;
+	dsp_op_subc:            dsp_opcode_subc();            return;
+	dsp_op_subq:            dsp_opcode_subq();            return;
+	dsp_op_subqt:           dsp_opcode_subqt();           return;
+	dsp_op_neg:             dsp_opcode_neg();             return;
+	dsp_op_and:             dsp_opcode_and();             return;
+	dsp_op_or:              dsp_opcode_or();              return;
+	dsp_op_xor:             dsp_opcode_xor();             return;
+	dsp_op_not:             dsp_opcode_not();             return;
+	dsp_op_btst:            dsp_opcode_btst();            return;
+	dsp_op_bset:            dsp_opcode_bset();            return;
+	dsp_op_bclr:            dsp_opcode_bclr();            return;
+	dsp_op_mult:            dsp_opcode_mult();            return;
+	dsp_op_imult:           dsp_opcode_imult();           return;
+	dsp_op_imultn:          dsp_opcode_imultn();          return;
+	dsp_op_resmac:          dsp_opcode_resmac();          return;
+	dsp_op_imacn:           dsp_opcode_imacn();           return;
+	dsp_op_div:             dsp_opcode_div();             return;
+	dsp_op_abs:             dsp_opcode_abs();             return;
+	dsp_op_sh:              dsp_opcode_sh();              return;
+	dsp_op_shlq:            dsp_opcode_shlq();            return;
+	dsp_op_shrq:            dsp_opcode_shrq();            return;
+	dsp_op_sha:             dsp_opcode_sha();             return;
+	dsp_op_sharq:           dsp_opcode_sharq();           return;
+	dsp_op_ror:             dsp_opcode_ror();             return;
+	dsp_op_rorq:            dsp_opcode_rorq();            return;
+	dsp_op_cmp:             dsp_opcode_cmp();             return;
+	dsp_op_cmpq:            dsp_opcode_cmpq();            return;
+	dsp_op_subqmod:         dsp_opcode_subqmod();         return;
+	dsp_op_sat16s:          dsp_opcode_sat16s();          return;
+	dsp_op_move:            dsp_opcode_move();            return;
+	dsp_op_moveq:           dsp_opcode_moveq();           return;
+	dsp_op_moveta:          dsp_opcode_moveta();          return;
+	dsp_op_movefa:          dsp_opcode_movefa();          return;
+	dsp_op_movei:           dsp_opcode_movei();           return;
+	dsp_op_loadb:           dsp_opcode_loadb();           return;
+	dsp_op_loadw:           dsp_opcode_loadw();           return;
+	dsp_op_load:            dsp_opcode_load();            return;
+	dsp_op_sat32s:          dsp_opcode_sat32s();          return;
+	dsp_op_load_r14_indexed:dsp_opcode_load_r14_indexed();return;
+	dsp_op_load_r15_indexed:dsp_opcode_load_r15_indexed();return;
+	dsp_op_storeb:          dsp_opcode_storeb();          return;
+	dsp_op_storew:          dsp_opcode_storew();          return;
+	dsp_op_store:           dsp_opcode_store();           return;
+	dsp_op_mirror:          dsp_opcode_mirror();          return;
+	dsp_op_store_r14_indexed:dsp_opcode_store_r14_indexed();return;
+	dsp_op_store_r15_indexed:dsp_opcode_store_r15_indexed();return;
+	dsp_op_move_pc:         dsp_opcode_move_pc();         return;
+	dsp_op_jump:            dsp_opcode_jump();            return;
+	dsp_op_jr:              dsp_opcode_jr();              return;
+	dsp_op_mmult:           dsp_opcode_mmult();           return;
+	dsp_op_mtoi:            dsp_opcode_mtoi();            return;
+	dsp_op_normi:           dsp_opcode_normi();           return;
+	dsp_op_nop:             dsp_opcode_nop();             return;
+	dsp_op_load_r14_ri:     dsp_opcode_load_r14_ri();     return;
+	dsp_op_load_r15_ri:     dsp_opcode_load_r15_ri();     return;
+	dsp_op_store_r14_ri:    dsp_opcode_store_r14_ri();    return;
+	dsp_op_store_r15_ri:    dsp_opcode_store_r15_ri();    return;
+	dsp_op_illegal:         dsp_opcode_illegal();         return;
+	dsp_op_addqmod:         dsp_opcode_addqmod();         return; /* NOLINT(readability-redundant-control-flow) -- goto target */
+#else
+	/* Switch fallback for MSVC and other non-GNU compilers */
+	switch (index)
+	{
+	case 0:  dsp_opcode_add(); break;
+	case 1:  dsp_opcode_addc(); break;
+	case 2:  dsp_opcode_addq(); break;
+	case 3:  dsp_opcode_addqt(); break;
+	case 4:  dsp_opcode_sub(); break;
+	case 5:  dsp_opcode_subc(); break;
+	case 6:  dsp_opcode_subq(); break;
+	case 7:  dsp_opcode_subqt(); break;
+	case 8:  dsp_opcode_neg(); break;
+	case 9:  dsp_opcode_and(); break;
+	case 10: dsp_opcode_or(); break;
+	case 11: dsp_opcode_xor(); break;
+	case 12: dsp_opcode_not(); break;
+	case 13: dsp_opcode_btst(); break;
+	case 14: dsp_opcode_bset(); break;
+	case 15: dsp_opcode_bclr(); break;
+	case 16: dsp_opcode_mult(); break;
+	case 17: dsp_opcode_imult(); break;
+	case 18: dsp_opcode_imultn(); break;
+	case 19: dsp_opcode_resmac(); break;
+	case 20: dsp_opcode_imacn(); break;
+	case 21: dsp_opcode_div(); break;
+	case 22: dsp_opcode_abs(); break;
+	case 23: dsp_opcode_sh(); break;
+	case 24: dsp_opcode_shlq(); break;
+	case 25: dsp_opcode_shrq(); break;
+	case 26: dsp_opcode_sha(); break;
+	case 27: dsp_opcode_sharq(); break;
+	case 28: dsp_opcode_ror(); break;
+	case 29: dsp_opcode_rorq(); break;
+	case 30: dsp_opcode_cmp(); break;
+	case 31: dsp_opcode_cmpq(); break;
+	case 32: dsp_opcode_subqmod(); break;
+	case 33: dsp_opcode_sat16s(); break;
+	case 34: dsp_opcode_move(); break;
+	case 35: dsp_opcode_moveq(); break;
+	case 36: dsp_opcode_moveta(); break;
+	case 37: dsp_opcode_movefa(); break;
+	case 38: dsp_opcode_movei(); break;
+	case 39: dsp_opcode_loadb(); break;
+	case 40: dsp_opcode_loadw(); break;
+	case 41: dsp_opcode_load(); break;
+	case 42: dsp_opcode_sat32s(); break;
+	case 43: dsp_opcode_load_r14_indexed(); break;
+	case 44: dsp_opcode_load_r15_indexed(); break;
+	case 45: dsp_opcode_storeb(); break;
+	case 46: dsp_opcode_storew(); break;
+	case 47: dsp_opcode_store(); break;
+	case 48: dsp_opcode_mirror(); break;
+	case 49: dsp_opcode_store_r14_indexed(); break;
+	case 50: dsp_opcode_store_r15_indexed(); break;
+	case 51: dsp_opcode_move_pc(); break;
+	case 52: dsp_opcode_jump(); break;
+	case 53: dsp_opcode_jr(); break;
+	case 54: dsp_opcode_mmult(); break;
+	case 55: dsp_opcode_mtoi(); break;
+	case 56: dsp_opcode_normi(); break;
+	case 57: dsp_opcode_nop(); break;
+	case 58: dsp_opcode_load_r14_ri(); break;
+	case 59: dsp_opcode_load_r15_ri(); break;
+	case 60: dsp_opcode_store_r14_ri(); break;
+	case 61: dsp_opcode_store_r15_ri(); break;
+	case 62: dsp_opcode_illegal(); break;
+	case 63: dsp_opcode_addqmod(); break;
+	default: break;
+	}
+#endif
+}
+
 // DSP opcode handlers
 
-// There is a problem here with interrupt handlers the JUMP and JR instructions that
-// can cause trouble because an interrupt can occur *before* the instruction following the
-// jump can execute... !!! FIX !!!
+/* There is a problem here with interrupt handlers the JUMP and JR instructions that
+ * can cause trouble because an interrupt can occur *before* the instruction following the
+ * jump can execute... !!! FIX !!! */
 INLINE static void dsp_opcode_jump(void)
 {
-	// normalize flags
-/*	dsp_flag_c=dsp_flag_c?1:0;
-	dsp_flag_z=dsp_flag_z?1:0;
-	dsp_flag_n=dsp_flag_n?1:0;*/
-	// KLUDGE: Used by BRANCH_CONDITION
+	/* KLUDGE: Used by BRANCH_CONDITION */
 	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
 
 	if (BRANCH_CONDITION(IMM_2))
 	{
 		uint32_t delayed_pc = RM;
-		DSPExec(1);
+		uint16_t ds_opcode;
+		uint32_t ds_index;
+		/* Inline delay-slot: fetch-decode-execute one instruction at current
+		 * PC before applying the branch target.  This replaces the old
+		 * recursive DSPExec(1) call, avoiding full function-call overhead,
+		 * redundant IRQ checks, and pipeline-state save/restore. */
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			ds_opcode = DSPReadWord(dsp_pc, DSP);
+		ds_index = ds_opcode >> 10;
+		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = ds_opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 	}
 }
@@ -886,18 +1098,30 @@ INLINE static void dsp_opcode_jump(void)
 
 INLINE static void dsp_opcode_jr(void)
 {
-	// normalize flags
-/*	dsp_flag_c=dsp_flag_c?1:0;
-	dsp_flag_z=dsp_flag_z?1:0;
-	dsp_flag_n=dsp_flag_n?1:0;*/
-	// KLUDGE: Used by BRANCH_CONDITION
+	/* KLUDGE: Used by BRANCH_CONDITION */
 	uint32_t jaguar_flags = (dsp_flag_n << 2) | (dsp_flag_c << 1) | dsp_flag_z;
 
 	if (BRANCH_CONDITION(IMM_2))
 	{
-		int32_t offset = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		// Sign extend IMM_1
+		int32_t offset = ((IMM_1 & 0x10) ? 0xFFFFFFF0 | IMM_1 : IMM_1);		/* Sign extend IMM_1 */
 		int32_t delayed_pc = dsp_pc + (offset * 2);
-		DSPExec(1);
+		uint16_t ds_opcode;
+		uint32_t ds_index;
+		/* Inline delay-slot: fetch-decode-execute one instruction at current
+		 * PC before applying the branch target.  Same rationale as in
+		 * dsp_opcode_jump above. */
+		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
+		{
+			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
+			ds_opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
+		}
+		else
+			ds_opcode = DSPReadWord(dsp_pc, DSP);
+		ds_index = ds_opcode >> 10;
+		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
+		dsp_opcode_second_parameter = ds_opcode & 0x1F;
+		dsp_pc += 2;
+		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 	}
 }
@@ -1050,13 +1274,21 @@ INLINE static void dsp_opcode_load_r15_ri(void)
 
 INLINE static void dsp_opcode_store_r14_ri(void)
 {
+#ifdef DSP_CORRECT_ALIGNMENT_STORE
+	DSPWriteLong((dsp_reg[14] + RM) & 0xFFFFFFFC, RN, DSP);
+#else
 	DSPWriteLong(dsp_reg[14] + RM, RN, DSP);
+#endif
 }
 
 
 INLINE static void dsp_opcode_store_r15_ri(void)
 {
+#ifdef DSP_CORRECT_ALIGNMENT_STORE
+	DSPWriteLong((dsp_reg[15] + RM) & 0xFFFFFFFC, RN, DSP);
+#else
 	DSPWriteLong(dsp_reg[15] + RM, RN, DSP);
+#endif
 }
 
 
@@ -1329,30 +1561,47 @@ INLINE static void dsp_opcode_mmult(void)
 INLINE static void dsp_opcode_abs(void)
 {
 	uint32_t _Rn = RN;
+	uint32_t res;
 
 	if (_Rn == 0x80000000)
+	{
+		/* ABS(0x80000000) overflows back to 0x80000000; set flags accordingly:
+		 * C=1 (input was negative), N=1 (result is negative), Z=0. */
 		dsp_flag_n = 1;
+		dsp_flag_c = 1;
+		dsp_flag_z = 0;
+	}
 	else
 	{
-      uint32_t res;
-
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
 		res = RN   = ((_Rn & 0x80000000) ? -_Rn : _Rn);
 		CLR_ZN;
-      SET_Z(res);
+		SET_Z(res);
 	}
 }
 
 
 INLINE static void dsp_opcode_div(void)
 {
-   unsigned i;
-	// Real algorithm, courtesy of SCPCD: NYAN!
-	uint32_t q = RN;
-	uint32_t r = 0;
+	unsigned i;
+	uint32_t q;
+	uint32_t r;
 
-	// If 16.16 division, stuff top 16 bits of RN into remainder and put the
-	// bottom 16 of RN in top 16 of quotient
+	/* Guard against divide-by-zero: JTRM says result is undefined but no
+	 * trap occurs.  Match the pipelined version's behavior. */
+	if (RM == 0)
+	{
+		RN = 0xFFFFFFFF;
+		dsp_remain = 0;
+		return;
+	}
+
+	/* Real algorithm, courtesy of SCPCD: NYAN! */
+	q = RN;
+	r = 0;
+
+	/* If 16.16 division, stuff top 16 bits of RN into remainder and put the
+	 * bottom 16 of RN in top 16 of quotient */
 	if (dsp_div_control & 0x01)
 		q <<= 16, r = RN >> 16;
 
@@ -1409,7 +1658,7 @@ INLINE static void dsp_opcode_shrq(void)
 INLINE static void dsp_opcode_ror(void)
 {
 	uint32_t r1 = RM & 0x1F;
-	uint32_t res = (RN >> r1) | (RN << (32 - r1));
+	uint32_t res = (RN >> r1) | (RN << ((-r1) & 31));
 	SET_ZN(res); dsp_flag_c = (RN >> 31) & 1;
 	RN = res;
 }
@@ -1417,9 +1666,12 @@ INLINE static void dsp_opcode_ror(void)
 
 INLINE static void dsp_opcode_rorq(void)
 {
-	uint32_t r1 = dsp_convert_zero[IMM_1 & 0x1F];
+	/* dsp_convert_zero[0] returns 32 (rotate-by-0 means rotate-by-full-word,
+	 * a no-op).  Masking to 0x1F maps 32 -> 0, preserving that semantic and
+	 * avoiding `RN >> 32` UB in the rotate idiom below. */
+	uint32_t r1 = dsp_convert_zero[IMM_1 & 0x1F] & 0x1F;
 	uint32_t r2 = RN;
-	uint32_t res = (r2 >> r1) | (r2 << (32 - r1));
+	uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
 	RN = res;
 	SET_ZN(res); dsp_flag_c = (r2 >> 31) & 0x01;
 }
@@ -1707,7 +1959,15 @@ INLINE static void DSP_abs(void)
 	uint32_t _Rn = PRN;
 
 	if (_Rn == 0x80000000)
+	{
+		/* ABS(0x80000000) overflows back to 0x80000000; set flags accordingly:
+		 * C=1 (input was negative), N=1 (result is negative), Z=0.
+		 * Must set PRES so the writeback stage stores the correct value. */
+		PRES = 0x80000000;
 		dsp_flag_n = 1;
+		dsp_flag_c = 1;
+		dsp_flag_z = 0;
+	}
 	else
 	{
 		dsp_flag_c = ((_Rn & 0x80000000) >> 31);
@@ -1817,7 +2077,10 @@ INLINE static void DSP_div(void)
 		}
 	}
 	else
+	{
 		PRES = 0xFFFFFFFF;
+		dsp_remain = 0;
+	}
 }
 
 INLINE static void DSP_imacn(void)
@@ -2226,16 +2489,17 @@ INLINE static void DSP_resmac(void)
 INLINE static void DSP_ror(void)
 {
 	uint32_t r1 = PRM & 0x1F;
-	uint32_t res = (PRN >> r1) | (PRN << (32 - r1));
+	uint32_t res = (PRN >> r1) | (PRN << ((-r1) & 31));
 	SET_ZN(res); dsp_flag_c = (PRN >> 31) & 1;
 	PRES = res;
 }
 
 INLINE static void DSP_rorq(void)
 {
-	uint32_t r1 = dsp_convert_zero[PIMM1 & 0x1F];
+	/* See dsp_opcode_rorq above for why we mask to 0x1F. */
+	uint32_t r1 = dsp_convert_zero[PIMM1 & 0x1F] & 0x1F;
 	uint32_t r2 = PRN;
-	uint32_t res = (r2 >> r1) | (r2 << (32 - r1));
+	uint32_t res = (r2 >> r1) | (r2 << ((-r1) & 31));
 	PRES = res;
 	SET_ZN(res); dsp_flag_c = (r2 >> 31) & 0x01;
 }

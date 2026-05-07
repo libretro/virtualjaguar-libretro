@@ -1,0 +1,26 @@
+# Dependabot keeps GitHub Action versions current so deprecation
+# warnings (Node 20 -> 24, etc.) surface as PRs instead of CI noise.
+# Targets `develop` to align with our GitFlow setup.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    labels:
+      - "ci/cd :robot:"
+      - "dependencies"
+    commit-message:
+      prefix: "ci"
+    groups:
+      # One PR per Monday for routine action bumps.
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

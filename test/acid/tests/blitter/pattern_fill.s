@@ -1,0 +1,73 @@
+;
+; tests/blitter/pattern_fill.s - PATDSEL fills destination from B_PATD.
+;
+; Programs the blitter without SRCEN, with PATDSEL set, and a known
+; pattern in B_PATD.  Each phrase write should land the pattern.
+;
+; Detail codes (the test does not poll BUSY -- emulator blitter is
+; synchronous -- so detail values come strictly from the compare):
+;   1 = first  longword (DST+0) mismatched expected PAT_HI ($DEADBEEF)
+;   2 = second longword (DST+4) mismatched expected PAT_LO ($CAFEBABE)
+;
+; The writes use F-bus longword ordering: PAT_HI goes to B_PATD+4
+; (high address = high longword) and PAT_LO goes to B_PATD+0
+; (low address = low longword).  The blitter's internal swap means
+; GET64(B_PATD) = (PAT_HI << 32) | PAT_LO, so the phrase write
+; lands PAT_HI at DST+0 and PAT_LO at DST+4.
+;
+                include "include/jaguar_header.s"
+                include "include/acid_test.s"
+                include "include/jaguar_regs.s"
+
+;; B_A1_BASE / B_A1_FLAGS / B_A1_PIXEL / B_COMMAND / B_PATTERNDATA all
+;; come from jaguar_regs.s.  Don't redefine them locally -- the oracle
+;; is generated from src/tom/blitter.c and stays in sync.
+;;
+;; F-bus 64-bit layout: the low address (+0) carries the LOW longword,
+;; the high address (+4) carries the HIGH longword.
+B_PATD_LO       equ     B_PATTERNDATA
+B_PATD_HI       equ     B_PATTERNDATA + 4
+B_COUNT         equ     B_PIXLINECOUNTER
+
+DST             equ     $00090000
+PAT_HI          equ     $DEADBEEF
+PAT_LO          equ     $CAFEBABE
+SPIN_LIMIT      equ     1000000
+
+                org     $802000
+entry:
+                ACID_INIT
+
+                lea     DST.l,a0
+                clr.l   (a0)+
+                clr.l   (a0)+
+
+                ;; Load pattern into B_PATD using F-bus longword ordering.
+                move.l  #PAT_HI,B_PATD_HI      ; high address = HIGH longword
+                move.l  #PAT_LO,B_PATD_LO      ; low address  = LOW longword
+
+                move.l  #DST,B_A1_BASE
+                move.l  #$00001020,B_A1_FLAGS   ; 16bpp phrase
+                move.l  #0,B_A1_PIXEL
+
+                move.l  #$00010004,B_COUNT      ; 4 px = 1 phrase
+                ;; Command:
+                ;;   PATDSEL = bit 16 = $00010000
+                ;;   No SRCEN (we're filling from pattern).
+                move.l  #$00010000,B_COMMAND
+
+                ;; Blitter is synchronous in this emulator; no wait needed.
+
+.done:
+                ;; Compare DST against pattern.
+                move.l  DST.l,d5
+                cmp.l   #PAT_HI,d5
+                bne.s   .bad1
+                move.l  DST+4.l,d5
+                cmp.l   #PAT_LO,d5
+                bne.s   .bad2
+
+                ACID_PASS
+
+.bad1:          ACID_FAIL #1,d5,#PAT_HI
+.bad2:          ACID_FAIL #2,d5,#PAT_LO

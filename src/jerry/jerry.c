@@ -162,6 +162,9 @@
 #include "eeprom.h"
 #include "event.h"
 #include "jaguar.h"
+#include "perf_counters.h"
+
+PERF_COUNTER(timing_jerry_irqs);
 #include "joystick.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
@@ -214,13 +217,21 @@ void JERRYResetI2S(void)
 }
 
 
+/*
+ * PIT clock rate: JTRM says PIT divides the full processor clock
+ * (26.59 MHz NTSC). JERRY PIT uses RISC rate (full system clock) per
+ * the JTRM and the original emulator code. TOM PIT uses M68K rate
+ * (half system clock) to match observed Battle Sphere behavior.
+ */
+
 void JERRYResetPIT1(void)
 {
    RemoveCallback(JERRYPIT1Callback);
 
    if (JERRYPIT1Prescaler | JERRYPIT1Divider)
    {
-      double usecs = (float)(JERRYPIT1Prescaler + 1) * (float)(JERRYPIT1Divider + 1) * RISC_CYCLE_IN_USEC;
+      double usecs = (double)(JERRYPIT1Prescaler + 1) * (double)(JERRYPIT1Divider + 1)
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT1Callback, usecs, EVENT_JERRY);
    }
 }
@@ -232,7 +243,8 @@ void JERRYResetPIT2(void)
 
    if (JERRYPIT2Prescaler | JERRYPIT2Divider)
    {
-      double usecs = (float)(JERRYPIT2Prescaler + 1) * (float)(JERRYPIT2Divider + 1) * RISC_CYCLE_IN_USEC;
+      double usecs = (double)(JERRYPIT2Prescaler + 1) * (double)(JERRYPIT2Divider + 1)
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(JERRYPIT2Callback, usecs, EVENT_JERRY);
    }
 }
@@ -250,6 +262,7 @@ void JERRYPIT1Callback(void)
          // Not sure, but I think we don't generate another IRQ if one's already going...
          // But this seems to work... :-/
          jerryPendingInterrupt |= IRQ2_TIMER1;
+         PERF_INC(timing_jerry_irqs);
          m68k_set_irq(2);						// Generate 68K IPL 2
       }
    }
@@ -266,6 +279,7 @@ void JERRYPIT2Callback(void)
       if (jerryInterruptMask & IRQ2_TIMER2)		// CPU Timer 2 IRQ
       {
          jerryPendingInterrupt |= IRQ2_TIMER2;
+         PERF_INC(timing_jerry_irqs);
          m68k_set_irq(2);						// Generate 68K IPL 2
       }
    }
@@ -630,15 +644,23 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
 int JERRYGetPIT1Frequency(void)
 {
-   int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   return systemClockFrequency / ((JERRYPIT1Prescaler + 1) * (JERRYPIT1Divider + 1));
+   /* JERRY PIT uses RISC (full system) clock; see PIT clock rate note. */
+   int systemClockFrequency = SYSTEM_CLOCK_RATE;
+   int64_t divisor = (int64_t)(JERRYPIT1Prescaler + 1) * (int64_t)(JERRYPIT1Divider + 1);
+   if (divisor == 0)
+      return 0;
+   return (int)(systemClockFrequency / divisor);
 }
 
 
 int JERRYGetPIT2Frequency(void)
 {
-   int systemClockFrequency = (vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL);
-   return systemClockFrequency / ((JERRYPIT2Prescaler + 1) * (JERRYPIT2Divider + 1));
+   /* JERRY PIT uses RISC (full system) clock; see PIT clock rate note. */
+   int systemClockFrequency = SYSTEM_CLOCK_RATE;
+   int64_t divisor = (int64_t)(JERRYPIT2Prescaler + 1) * (int64_t)(JERRYPIT2Divider + 1);
+   if (divisor == 0)
+      return 0;
+   return (int)(systemClockFrequency / divisor);
 }
 
 #include "state.h"

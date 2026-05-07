@@ -37,7 +37,7 @@ enum
    IRQ2_TIMER1=0x04,
    IRQ2_TIMER2=0x08,
    IRQ2_ASI=0x10,
-   IRQ2_SSI=0x20 
+   IRQ2_SSI=0x20
 };
 
 bool JERRYIRQEnabled(int irq);

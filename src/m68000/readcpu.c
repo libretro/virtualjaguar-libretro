@@ -922,6 +922,20 @@ nomatch:
 }
 
 
+/* Symmetric counterpart to read_table68k: free the opcode table built
+   above.  Idempotent (free(NULL) is a no-op).  Called from
+   m68k_done() in m68kinterface.c so process-lifetime ASAN runs see a
+   clean shutdown. */
+void free_table68k(void)
+{
+	if (table68k)
+	{
+		free(table68k);
+		table68k = NULL;
+	}
+}
+
+
 void read_table68k(void)
 {
 	int i;

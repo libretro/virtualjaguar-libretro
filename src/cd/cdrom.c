@@ -125,7 +125,7 @@
    ;
    eeprom	equ	$DFFF2c			;interface to CD-eeprom
    ;
-   ;  bit3 - busy if 0 after write cmd, or Data In after read cmd 
+   ;  bit3 - busy if 0 after write cmd, or Data In after read cmd
    ;  bit2 - Data Out
    ;  bit1 - clock
    ;  bit0 - Chip Select (CS)
@@ -204,8 +204,10 @@ void CDROMDone(void)
 void BUTCHExec(uint32_t cycles)
 {
 #if 1
-   // We're chickening out for now...
-   return;
+   /* No-op for now: CD support is not exposed through this code path
+    * (HLE / DSP path handles audio).  No `return` -- end of void
+    * function suffices, and clang-tidy flags an explicit `return;`
+    * here as redundant. */
 #else
    //	extern uint8_t * jerry_ram_8;					// Hmm.
 

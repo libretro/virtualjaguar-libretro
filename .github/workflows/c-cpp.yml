@@ -2,10 +2,17 @@ name: C/C++ CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, develop ]
   pull_request:
-    branches: [ master ]
+    branches: [ develop, master ]
   workflow_dispatch:
+
+# Cancel in-progress runs when a new commit lands on the same PR.
+# Pushes to master/develop run to completion (no cancellation) so we
+# always have a green-or-red record on the integration branches.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -46,11 +53,16 @@ jobs:
             cc: 'clang'
             cxx: 'clang++'
 
-          - displayTargetName: 'macOS x86_64 (Clang)'
+          # Cross-compiled from macos-latest (arm64) -- avoids the
+          # scarce macos-13 Intel runner pool.  See release.yml for
+          # rationale.
+          - displayTargetName: 'macOS x86_64 (Clang, cross)'
             artifact: 'virtualjaguar_libretro.dylib'
-            os: macos-13
-            cc: 'clang'
-            cxx: 'clang++'
+            os: macos-latest
+            cc: 'clang -arch x86_64'
+            cxx: 'clang++ -arch x86_64'
+            make_extra: 'BLITTER_SIMD=sse2'
+            cross: true
 
           # Windows (MinGW)
           - displayTargetName: 'Windows x86_64 (MSYS2)'
@@ -123,7 +135,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install multilib
       if: matrix.config.multilib
@@ -142,7 +154,7 @@ jobs:
 
     - name: Set up Emscripten
       if: matrix.config.emscripten
-      uses: mymindstorm/setup-emsdk@v14
+      uses: mymindstorm/setup-emsdk@v16
 
     - name: Set up Android NDK
       if: matrix.config.android
@@ -153,7 +165,7 @@ jobs:
 
     - name: Build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.make_platform }}
-      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}"
+      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
     - name: Build (platform)
       if: matrix.config.make_platform
@@ -166,8 +178,26 @@ jobs:
     - name: Build (Android NDK)
       if: matrix.config.android
       run: |
+        # ndk-build uses jni/Android.mk (not the project Makefile),
+        # so the parse-time version.h regen in Makefile doesn't run.
+        bash scripts/gen-version-h.sh
         ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
           APP_ABI=${{ matrix.config.android_abi }} -j4
+
+    # Mach-O symbol gating: production builds must export retro_* only.
+    # Runs before the test step (which would relink with TEST_EXPORTS=1
+    # and widen the symbol set).
+    - name: Verify Mach-O symbol gating (production)
+      if: ${{ runner.os == 'macOS' && !matrix.config.emscripten && !matrix.config.android }}
+      run: |
+        LEAKS=$(nm -gU "${{ matrix.config.artifact }}" | grep -v ' _retro_' || true)
+        if [ -n "$LEAKS" ]; then
+          echo "::error::Production dylib leaked non-retro_* symbols:"
+          echo "$LEAKS"
+          exit 1
+        fi
+        COUNT=$(nm -gU "${{ matrix.config.artifact }}" | wc -l | tr -d ' ')
+        echo "==> Production exports: ${COUNT} (all retro_*)"
 
     # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
@@ -240,9 +270,22 @@ jobs:
         $CC -O2 -Wall -o test/test_m68k_ops test/test_m68k_ops.c $LDFLAGS
         ./test/test_m68k_ops
 
+    - name: Run EEPROM lifecycle test
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: |
+        CC="${{ matrix.config.cc }}"
+        if [ "$(uname)" = "Linux" ]; then LDFLAGS="-ldl"; else LDFLAGS=""; fi
+        INCFLAGS="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Ilibretro-common/include"
+        $CC -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c
+        /tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64
+        $CC -O2 -Wall -std=c99 $INCFLAGS \
+          -o test/test_eeprom_lifecycle test/test_eeprom_lifecycle.c \
+          test/harness/harness.c $LDFLAGS -lm
+        ./test/test_eeprom_lifecycle ./${{ matrix.config.artifact }} /tmp/eeprom_lifecycle_test.j64
+
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: build/rcheevos-static
         key: rcheevos-e2e-fd57e900-${{ runner.os }}-${{ matrix.config.cc }}-${{ matrix.config.displayTargetName }}
@@ -256,7 +299,7 @@ jobs:
       run: bash test/tools/test_rcheevos_e2e.sh ./${{ matrix.config.artifact }}
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: ${{ matrix.config.displayTargetName }}
         path: ${{ matrix.config.artifact }}
@@ -270,11 +313,15 @@ jobs:
       matrix:
         arch: [x64, x86]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: ${{ matrix.arch }}
+
+    - name: Generate src/core/version.h
+      shell: bash
+      run: bash scripts/gen-version-h.sh
 
     - name: Compile all sources with cl.exe
       shell: cmd
@@ -303,13 +350,13 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       run: make -j4 platform=vita
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: PS Vita
         path: virtualjaguar_libretro_vita.a
@@ -321,7 +368,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Build
       run: make -j4 platform=libnx
@@ -329,22 +376,182 @@ jobs:
         DEVKITPRO: /opt/devkitpro
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: Nintendo Switch
         path: virtualjaguar_libretro_libnx.a
         if-no-files-found: error
 
+  editorconfig-lint:
+    name: EditorConfig compliance check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Install editorconfig-checker
+      run: |
+        VERSION=v3.0.3
+        curl -fsSL "https://github.com/editorconfig-checker/editorconfig-checker/releases/download/${VERSION}/ec-linux-amd64.tar.gz" \
+          | tar -xz -C /tmp
+        sudo install -m 0755 /tmp/bin/ec-linux-amd64 /usr/local/bin/ec
+
+    - name: Run editorconfig-checker
+      run: ec -verbose
+
+  coverage:
+    name: Code coverage (gcov + codecov)
+    runs-on: ubuntu-latest
+    # Coverage runs are advisory -- they don't gate merges.  The PR
+    # delta is what reviewers care about; codecov posts that as a
+    # comment automatically.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install gcov + gcovr
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc gcovr
+      - name: make coverage
+        run: |
+          bash scripts/gen-version-h.sh
+          make coverage CC="gcc" CXX="g++"
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          # Token optional for public repos; if set in repo secrets it
+          # avoids the anonymous-upload rate limit.
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  sanitizers:
+    name: AddressSanitizer + UndefinedBehaviorSanitizer
+    runs-on: ubuntu-latest
+    # Initially advisory: lets the job report findings without blocking
+    # PRs while we triage the existing UB the cppcheck job already
+    # flagged (signed shifts in src/tom/{gpu,op}.c, etc.).  Flip to
+    # `false` to make sanitizer findings gate merges.
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v5
+    - name: Install clang
+      run: sudo apt-get update && sudo apt-get install -y clang
+    - name: Build with ASAN + UBSAN
+      run: |
+        bash scripts/gen-version-h.sh
+        # -shared-libasan: when building a shared library with
+        # -fsanitize, clang doesn't link the static asan/ubsan
+        # runtime into the .so (it's expected to be loaded by the
+        # host executable).  --no-undefined in the SHARED rule then
+        # rejects the runtime symbols.  -shared-libasan switches to
+        # the dynamic libclang_rt.asan-x86_64.so which the host
+        # process picks up at dlopen time.
+        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g -fsanitize-ignorelist=$PWD/.ubsan-ignorelist"
+        make -j4 TEST_EXPORTS=1 \
+          CC="clang $SAN_FLAGS" \
+          CXX="clang++ $SAN_FLAGS" \
+          LD="clang $SAN_FLAGS"
+    - name: Run test suite under sanitizers
+      env:
+        ASAN_OPTIONS: 'detect_leaks=1:abort_on_error=1:print_stacktrace=1'
+        UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1:report_error_type=1'
+      run: |
+        SAN_FLAGS="-fsanitize=address,undefined -shared-libasan -fno-omit-frame-pointer -O1 -g -fsanitize-ignorelist=$PWD/.ubsan-ignorelist"
+        # The shared-libasan path means the test binaries need to find
+        # libclang_rt.asan at runtime; expose its directory.
+        ASAN_LIB_DIR=$(clang -print-resource-dir)/lib/linux
+        export LD_LIBRARY_PATH="$ASAN_LIB_DIR:${LD_LIBRARY_PATH:-}"
+        make test TEST_EXPORTS=1 \
+          CC="clang $SAN_FLAGS" \
+          CXX="clang++ $SAN_FLAGS" \
+          LD="clang $SAN_FLAGS"
+
+  clang-tidy:
+    name: clang-tidy on changed files
+    runs-on: ubuntu-latest
+    # Advisory at first.  The .clang-tidy check list is curated, but
+    # the first pass over emulator C will surface noisy true positives
+    # that need triage.  Flip continue-on-error to false once the
+    # baseline is calm.
+    continue-on-error: true
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install clang-tidy + bear
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy bear
+      - name: Generate compile_commands.json
+        run: |
+          bash scripts/gen-version-h.sh
+          # `bear -- make` records every compile invocation into
+          # compile_commands.json without affecting the build.
+          bear -- make -j4
+      - name: Run clang-tidy on PR-changed files
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          FILES=$(git diff --name-only "$BASE"...HEAD -- '*.c' '*.h' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2)\.c$)' \
+            | grep -E '^(src/|libretro\.c$)' || true)
+          if [ -z "$FILES" ]; then
+            echo "No relevant C files changed; skipping clang-tidy."
+            exit 0
+          fi
+          echo "==> Running clang-tidy on:"
+          echo "$FILES"
+          echo "$FILES" | xargs clang-tidy -p . --quiet --warnings-as-errors='*'
+
+  cppcheck:
+    name: cppcheck static analysis
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Install cppcheck
+      run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+    - name: Run cppcheck
+      run: |
+        # Scan in-tree sources only.  src/m68000 is machine-generated
+        # UAE 68K, src/bios/jag*.c are bin2c hex tables, and
+        # libretro-common is a vendored subtree -- all excluded.
+        #
+        # Suppressions live in cppcheck-suppressions.txt with rationale.
+        # cppcheck 2.13 (Ubuntu 24.04) doesn't accept comment lines in
+        # the suppressions file; strip them before passing.
+        bash scripts/gen-version-h.sh
+        # POSIX character class -- not GNU grep's \s extension.
+        grep -vE '^[[:space:]]*(#|$)' cppcheck-suppressions.txt > /tmp/cppcheck-suppressions.txt
+        cppcheck \
+          --enable=warning,performance,portability \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          --suppressions-list=/tmp/cppcheck-suppressions.txt \
+          --error-exitcode=1 \
+          -i src/m68000 -i src/bios -i libretro-common \
+          -I src -I src/core -I src/tom -I src/jerry -I src/cd \
+          -I src/bios -I src/m68000 -I libretro-common/include \
+          -DINLINE=inline -D__LIBRETRO__ \
+          --quiet \
+          src/ libretro.c
+
   c89-lint:
     name: C89 compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Check for declaration-after-statement
       run: |
         echo "==> Checking C89 compliance (catches MSVC C89 errors)..."
         scripts/c89-lint.sh
+
+    - name: Verify .info display_version matches Makefile
+      run: bash scripts/check-info-version.sh
 
     - name: Check for stdbool.h usage (use boolean.h instead)
       run: |

@@ -32,9 +32,18 @@
       OP*;
       tomRam8;
       regs;
+      ltxd;
+      rtxd;
       sclk;
       smode;
       lowerField;
       vjs;
+      videoBuffer;
+      game_width;
+      game_height;
+      perf_counters_dump;
+      perf_counters_reset;
+      perf_counters_register;
+      perf_counters_find;
    local: *;
 };

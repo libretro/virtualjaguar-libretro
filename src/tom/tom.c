@@ -262,7 +262,10 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
+#include "perf_counters.h"
 #include "settings.h"
+
+PERF_COUNTER(timing_gpu_irqs_to_68k);
 
 // Red Color Values for CrY<->RGB Color Conversion
 uint8_t redcv[16][16] = {
@@ -307,7 +310,7 @@ uint8_t greencv[16][16] = {
 	{  0,  19, 38, 57,77, 96, 115,134,154,173,192,211,231,250,255,255},   // E
 	{  0,  17, 34, 51,68, 85, 102,119,136,153,170,187,204,221,238,255}    // F
 };
-   
+
 // Blue Color Values for CrY<->RGB Color Conversion
 uint8_t bluecv[16][16] = {
    //  0   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
@@ -370,18 +373,25 @@ uint8_t bluecv[16][16] = {
 #define BG			0x58		// Background color
 #define INT1		0xE0
 
-#define LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
-#define RIGHT_VISIBLE_HC		(LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
-#define TOP_VISIBLE_VC			31
-#define BOTTOM_VISIBLE_VC		511
+/* Default fallback values used when registers haven't been programmed yet */
+#define DEFAULT_LEFT_VISIBLE_HC			(208 - 16 - (1 * 4))
+#define DEFAULT_RIGHT_VISIBLE_HC		(DEFAULT_LEFT_VISIBLE_HC + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_TOP_VISIBLE_VC			31
+#define DEFAULT_BOTTOM_VISIBLE_VC		511
 
-//Are these PAL horizontals correct?
-//They seem to be for the most part, but there are some games that seem to be
-//shifted over to the right from this "window".
-#define LEFT_VISIBLE_HC_PAL	(208 - 16 - (-3 * 4))
-#define RIGHT_VISIBLE_HC_PAL	(LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
-#define TOP_VISIBLE_VC_PAL		67
-#define BOTTOM_VISIBLE_VC_PAL	579
+#define DEFAULT_LEFT_VISIBLE_HC_PAL		(208 - 16 - (-3 * 4))
+#define DEFAULT_RIGHT_VISIBLE_HC_PAL	(DEFAULT_LEFT_VISIBLE_HC_PAL + (VIRTUAL_SCREEN_WIDTH * 4))
+#define DEFAULT_TOP_VISIBLE_VC_PAL		67
+#define DEFAULT_BOTTOM_VISIBLE_VC_PAL	579
+
+/* Mode-aware fallback selectors (DRY the NTSC/PAL ternary) */
+#define FALLBACK_TOP_VC			(vjs.hardwareTypeNTSC ? DEFAULT_TOP_VISIBLE_VC : DEFAULT_TOP_VISIBLE_VC_PAL)
+#define FALLBACK_BOTTOM_VC		(vjs.hardwareTypeNTSC ? DEFAULT_BOTTOM_VISIBLE_VC : DEFAULT_BOTTOM_VISIBLE_VC_PAL)
+#define FALLBACK_LEFT_HC		(vjs.hardwareTypeNTSC ? DEFAULT_LEFT_VISIBLE_HC : DEFAULT_LEFT_VISIBLE_HC_PAL)
+#define FALLBACK_RIGHT_HC		(vjs.hardwareTypeNTSC ? DEFAULT_RIGHT_VISIBLE_HC : DEFAULT_RIGHT_VISIBLE_HC_PAL)
+
+/* Maximum framebuffer extents (safety clamp) */
+#define MAX_VISIBLE_HEIGHT		512
 
 uint8_t tomRam8[0x4000];
 uint32_t tomWidth, tomHeight;
@@ -424,6 +434,104 @@ uint32_t RGB16ToRGB32[0x10000];
 uint32_t CRY16ToRGB32[0x10000];
 uint32_t MIX16ToRGB32[0x10000];
 
+/*
+ * Derive visible-window boundaries from TOM display registers (VDB, VDE,
+ * HDB1, HDE) instead of using hardcoded constants.  Falls back to the
+ * mode-specific legacy defaults when registers are zero or still hold the
+ * shared reset values (VDB=38, VDE=518, HDB1=203, HDE=1665).
+ */
+
+/* Vertical visible window: derived from VDB/VDE.
+ * Returns the first visible halfline (topVisible) via the function,
+ * or the last visible halfline (bottomVisible) via the companion below. */
+static uint16_t TOMGetTopVisible(void)
+{
+	uint16_t vdb = GET16(tomRam8, VDB);
+	uint16_t vp = GET16(tomRam8, VP);
+
+	/* If VDB is zero or matches the shared reset default (38), use the
+	 * mode-specific fallback so PAL gets its distinct visible window. */
+	if (vdb == 0 || vdb == 38)
+		return FALLBACK_TOP_VC;
+
+	/* Guard against garbage VDB values exceeding VP (total halflines).
+	 * Treat VP==0 as uninitialized — fall back rather than skipping the
+	 * range check entirely. */
+	if (vp == 0 || vdb > vp)
+		return FALLBACK_TOP_VC;
+
+	return vdb;
+}
+
+static uint16_t TOMGetBottomVisible(void)
+{
+	uint16_t vdb = GET16(tomRam8, VDB);
+	uint16_t vde = GET16(tomRam8, VDE);
+	uint16_t vp = GET16(tomRam8, VP);
+	uint16_t result;
+	uint16_t top;
+	uint16_t max_bottom;
+
+	/* Use mode-specific fallback only when BOTH VDB and VDE are at their
+	 * shared reset defaults.  If only one has been reprogrammed, derive
+	 * from the register to avoid window collapse. */
+	if (vde == 0)
+		return FALLBACK_BOTTOM_VC;
+	if (vde == 518 && vdb == 38)
+		return FALLBACK_BOTTOM_VC;
+
+	/* Guard against garbage VDE exceeding VP.  Treat VP==0 as
+	 * uninitialized — fall back rather than skipping the check. */
+	if (vp == 0 || vde > vp)
+		return FALLBACK_BOTTOM_VC;
+
+	result = vde;
+
+	/* Clamp so that (bottom - top) / 2 never exceeds MAX_VISIBLE_HEIGHT. */
+	top = TOMGetTopVisible();
+	max_bottom = top + (MAX_VISIBLE_HEIGHT * 2);
+	if (result > max_bottom)
+		result = max_bottom;
+
+	/* Guard: if result <= top (e.g. VDB reprogrammed above VDE), use
+	 * fallback to avoid a collapsed/inverted window. */
+	if (result <= top)
+		return FALLBACK_BOTTOM_VC;
+
+	return result;
+}
+
+/* Horizontal visible window: left edge.
+ *
+ * Always return the mode-specific fallback constant.  The left edge defines
+ * the fixed coordinate origin for HDB1-relative pixel positioning in the
+ * scanline renderers (startPos = HDB1 - leftHC).  Deriving leftHC from HDB1
+ * itself collapses startPos to a constant and shifts games that program HDB1
+ * to non-default values (e.g. Battle Sphere).  The original emulator always
+ * used a fixed left edge; preserve that behaviour. */
+static uint32_t TOMGetLeftVisibleHC(void)
+{
+	return FALLBACK_LEFT_HC;
+}
+
+static uint32_t TOMGetRightVisibleHC(void)
+{
+	uint16_t hde = GET16(tomRam8, HDE);
+	uint32_t left = TOMGetLeftVisibleHC();
+	uint32_t max_right = left + (uint32_t)VIRTUAL_SCREEN_WIDTH * 4;
+
+	/* If HDE is zero or not usefully beyond the left edge, return
+	 * the max right (== FALLBACK_RIGHT_HC since left is fixed). */
+	if (hde == 0 || (uint32_t)hde <= left)
+		return max_right;
+
+	/* Right edge is the lesser of HDE and max_right.  This respects
+	 * games that program a narrower HDE while preventing overflow. */
+	if ((uint32_t)hde < max_right)
+		return (uint32_t)hde;
+	return max_right;
+}
+
 static void TOMAssertEnabledIRQs(void)
 {
    uint16_t pending = (tom_jerry_int_pending << IRQ_DSP)
@@ -455,7 +563,7 @@ void TOMFillLookupTables(void)
 {
    // NOTE: Jaguar 16-bit (non-CRY) color is RBG 556 like so:
    //       RRRR RBBB BBGG GGGG
-  
+
    unsigned i;
    for(i=0; i<0x10000; i++)
       RGB16ToRGB32[i] = 0xFF000000
@@ -548,6 +656,29 @@ uint16_t TOMGetMEMCON1(void)
 }
 
 #define LEFT_BG_FIX
+
+/* Clamp `width` so the per-pixel loop in a tom_render_*_scanline()
+ * cannot walk past the end of tomRam8 via current_line_buffer.
+ * Catches an ASAN-reported OOB read (#127): when display registers
+ * request a width larger than the on-chip line buffer holds
+ * (10240 bytes at tomRam8[0x1800..0x3FFF]).
+ *
+ *   bytes_per_iter: source bytes consumed per loop iter (2 for 16bpp
+ *                   variants, 4 for 24bpp).
+ *   pwidth_scale:   backbuffer pixels produced per loop iter. */
+static uint16_t tom_clamp_line_buffer_width(
+   const uint8_t *current_line_buffer, uint16_t width,
+   unsigned bytes_per_iter, uint8_t pwidth_scale)
+{
+   const uint8_t *lb_end = &tomRam8[sizeof(tomRam8)];
+   unsigned long bytes_left;
+   unsigned long safe_width;
+   if (current_line_buffer >= lb_end) return 0;
+   bytes_left = (unsigned long)(lb_end - current_line_buffer);
+   safe_width = (bytes_left / bytes_per_iter) * pwidth_scale;
+   return (width > safe_width) ? (uint16_t)safe_width : width;
+}
+
 // 16 BPP CRY/RGB mixed mode rendering
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 {
@@ -557,7 +688,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -579,6 +710,7 @@ void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -598,7 +730,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -620,6 +752,7 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -639,7 +772,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -661,6 +794,7 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 4, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint32_t b;
@@ -687,6 +821,7 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -707,7 +842,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
    uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
-   int16_t startPos = GET16(tomRam8, HDB1) - (vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL);
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
    uint16_t startPos_disp;
    startPos /= pwidth;
 
@@ -729,6 +864,7 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
    backbuffer += 2 * startPos, width -= startPos;
 #endif
 
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
    while (width >= pwidth_scale)
    {
       uint32_t color = (*current_line_buffer++) << 8;
@@ -802,10 +938,10 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    else
       inActiveDisplayArea = false;
 
-   // Take PAL into account...
+   // Derive visible window from VDB/VDE registers (with fallback)
 
-   topVisible = (vjs.hardwareTypeNTSC ? TOP_VISIBLE_VC : TOP_VISIBLE_VC_PAL);
-   bottomVisible = (vjs.hardwareTypeNTSC ? BOTTOM_VISIBLE_VC : BOTTOM_VISIBLE_VC_PAL);
+   topVisible = TOMGetTopVisible();
+   bottomVisible = TOMGetBottomVisible();
 
    // Here's our virtualized scanline code...
 
@@ -846,6 +982,7 @@ void TOMDone(void)
 {
    OPDone();
    BlitterDone();
+   GPUDone();
 }
 
 
@@ -854,8 +991,8 @@ uint32_t TOMGetVideoModeWidth(void)
    uint16_t hdb1 = GET16(tomRam8, HDB1);
    uint16_t hde = GET16(tomRam8, HDE);
    uint16_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
-   uint32_t leftHC = vjs.hardwareTypeNTSC ? LEFT_VISIBLE_HC : LEFT_VISIBLE_HC_PAL;
-   uint32_t rightHC = vjs.hardwareTypeNTSC ? RIGHT_VISIBLE_HC : RIGHT_VISIBLE_HC_PAL;
+   uint32_t leftHC = TOMGetLeftVisibleHC();
+   uint32_t rightHC = TOMGetRightVisibleHC();
    uint32_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
    uint32_t dispStart = (hdb1 > leftHC) ? hdb1 : leftHC;
@@ -1242,10 +1379,17 @@ void TOMSetIRQLatch(int irq, int enabled)
 }
 
 
-// NEW:
-// TOM Programmable Interrupt Timer handler
-// NOTE: TOM's PIT is only enabled if the prescaler is != 0
-//       The PIT only generates an interrupt when it counts down to zero, not when loaded!
+/*
+ * PIT clock rate: full system clock (26.59 MHz NTSC / 26.5939 MHz PAL).
+ * Per JTRM Software Reference and docs/jtrm-clocks-timing.md, PIT counters
+ * decrement at the full processor clock rate.  Historically a "half rate"
+ * (13.3 MHz) implementation has been tried and broke Doom/Rayman music
+ * timing.  See also JERRYResetPIT1/2 in jerry.c (also at full rate).
+ */
+
+/* TOM Programmable Interrupt Timer handler */
+/* NOTE: TOM's PIT is only enabled if the prescaler is != 0 */
+/*       The PIT only generates an interrupt when it counts down to zero, not when loaded! */
 
 void TOMPITCallback(void);
 
@@ -1253,18 +1397,20 @@ void TOMPITCallback(void);
 void TOMResetPIT(void)
 {
 #ifndef NEW_TIMER_SYSTEM
-   // Add the next period to the counter; +1 is specified by the JTRM.
-   //There is a small problem with this approach: If both the prescaler and the divider are equal
-   //to $FFFF then the counter won't be large enough to handle it. !!! FIX !!!
+   /* Add the next period to the counter; +1 is specified by the JTRM. */
+   /* There is a small problem with this approach: If both the prescaler and the divider are
+      equal to $FFFF then the counter won't be large enough to handle it. !!! FIX !!! */
    if (tom_timer_prescaler)
       tom_timer_counter += (1 + tom_timer_prescaler) * (1 + tom_timer_divider);
 #else
-   // Need to remove previous timer from the queue, if it exists...
+   /* Need to remove previous timer from the queue, if it exists... */
    RemoveCallback(TOMPITCallback);
 
    if (tomTimerPrescaler)
    {
-      double usecs = (float)(tomTimerPrescaler + 1) * (float)(tomTimerDivider + 1) * RISC_CYCLE_IN_USEC;
+      /* See PIT clock rate note above. */
+      double usecs = (double)(tomTimerPrescaler + 1) * (double)(tomTimerDivider + 1)
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
       SetCallbackTime(TOMPITCallback, usecs, EVENT_MAIN);
    }
 #endif
@@ -1287,7 +1433,10 @@ void TOMExecPIT(uint32_t cycles)
          GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE);	// GPUSetIRQLine does the 'IRQ enabled' checking
 
          if (TOMIRQEnabled(IRQ_TIMER))
+         {
+            PERF_INC(timing_gpu_irqs_to_68k);
             m68k_set_irq(2);				// Cause a 68000 IPL 2...
+         }
 
          TOMResetPIT();
       }
@@ -1300,7 +1449,10 @@ void TOMPITCallback(void)
    GPUSetIRQLine(GPUIRQ_TIMER, ASSERT_LINE); // It does the 'IRQ enabled' checking
 
    if (TOMIRQEnabled(IRQ_TIMER))
+   {
+      PERF_INC(timing_gpu_irqs_to_68k);
       m68k_set_irq(2); // Generate a 68K IPL 2...
+   }
 
    TOMResetPIT();
 }

@@ -1,0 +1,44 @@
+# Wide symbol export list for Mach-O test builds (TEST_EXPORTS=1).
+#
+# Mirrors link-test.T: exposes the internal symbols our headless test
+# harnesses dlsym into.  Used only when TEST_EXPORTS=1 (set by the
+# `test` target); production .dylib uses exports.list (retro_* only).
+#
+# If you add a new symbol here, that's an extension to the test ABI
+# only -- it does NOT change the production-shipped .dylib.
+#
+# Symbol names are prefixed with `_` per the Mach-O ABI.
+_retro_*
+_DSP*
+_dsp_*
+_m68k_*
+_Jaguar*
+_jaguar*
+_Halfline*
+_jaguarMainRAM
+_jaguarMainROM
+_jagMemSpace
+_pcQueue
+_pcQPtr
+_a6Queue
+_d0Queue
+_GPU*
+_gpu_*
+_JERRY*
+_TOM*
+_OP*
+_tomRam8
+_regs
+_ltxd
+_rtxd
+_sclk
+_smode
+_lowerField
+_vjs
+_videoBuffer
+_game_width
+_game_height
+_perf_counters_dump
+_perf_counters_reset
+_perf_counters_register
+_perf_counters_find

@@ -11,6 +11,9 @@
 extern "C" {
 #endif
 
+extern uint16_t eeprom_ram[64];
+extern void (*eeprom_dirty_cb)(void);
+
 void EepromInit(void);
 void EepromReset(void);
 void EepromDone(void);

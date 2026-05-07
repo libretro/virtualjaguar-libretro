@@ -302,16 +302,24 @@ int main(int argc, char **argv)
    info.path = rom_path;
    info.meta = NULL;
 
-   /* Load save state data */
-   state_data = read_file(state_path, &state_size);
-   if (!state_data) { fprintf(stderr, "Cannot read state: %s\n", state_path); return 1; }
-
-   /* Strip RetroArch "RASTATE" wrapper if present (16-byte header) */
-   if (state_size > 16 && memcmp(state_data, "RASTATE", 7) == 0)
+   /* Load save state data (optional: pass empty string "" or "-" to skip) */
+   if (state_path && state_path[0] && strcmp(state_path, "-") != 0)
    {
-      fprintf(stderr, "Detected RetroArch state wrapper, stripping 16-byte header\n");
-      memmove(state_data, (uint8_t *)state_data + 16, state_size - 16);
-      state_size -= 16;
+      state_data = read_file(state_path, &state_size);
+      if (!state_data) { fprintf(stderr, "Cannot read state: %s\n", state_path); return 1; }
+
+      /* Strip RetroArch "RASTATE" wrapper if present (16-byte header) */
+      if (state_size > 16 && memcmp(state_data, "RASTATE", 7) == 0)
+      {
+         fprintf(stderr, "Detected RetroArch state wrapper, stripping 16-byte header\n");
+         memmove(state_data, (uint8_t *)state_data + 16, state_size - 16);
+         state_size -= 16;
+      }
+   }
+   else
+   {
+      state_data = NULL;
+      state_size = 0;
    }
 
    /* Load core */
@@ -362,7 +370,8 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   /* Load save state */
+   /* Load save state (skip when --no-state) */
+   if (state_data)
    {
       size_t expected = pretro_serialize_size();
       fprintf(stderr, "State file: %zu bytes, core expects: %zu\n", state_size, expected);
@@ -375,6 +384,10 @@ int main(int argc, char **argv)
          return 1;
       }
       fprintf(stderr, "Save state loaded OK\n");
+   }
+   else
+   {
+      fprintf(stderr, "Cold boot (no state)\n");
    }
 
    /* Run frames to render */

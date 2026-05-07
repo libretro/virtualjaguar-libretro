@@ -456,3 +456,35 @@ shipping v2.2.0; capture them so they don't get lost.
   / `const`-correctness audits as a CI step.  `clang-tidy` and
   `cppcheck` would be good starting points; the codebase already
   has a C89 lint, so the infrastructure is there.
+
+## Original `docs/TODO` items still relevant (Shamus / CJ)
+
+The historical `docs/TODO` from the upstream Virtual Jaguar tree
+lists several still-open accuracy / feature items.  These map onto
+the acid-test categories in `test/acid/README.md`; tracking here so
+they don't get lost:
+
+- **"Fix VC behavior to match what a real Jaguar does. Still not
+  sure just what the heck is going on there." [Shamus]** —
+  acid `timing/`.  Active suspect for the Doom 1.5-2x speed
+  regression (issue #131).
+- **"Cycle accuracy for GPU/DSP/OP/Blitter." [Shamus]** —
+  cross-cutting; informs every category in `test/acid/`, especially
+  `bus/` (which can't pass without it).
+- **"Need to propagate blitter fixes in the A1 <- A2 direction
+  to the A1 -> A2 direction and the GPU fixes to various
+  instructions to the DSP." [Shamus]** — acid `blitter/` (A1↔A2
+  symmetry tests) and `gpu/` + `dsp/` (shared opcode coverage).
+- **"Blitter needs fixing." [Shamus]** — acid `blitter/`.
+  PR #129 fixed a perf-relevant chunk (`ADDARRAY` etc); accuracy
+  axis still wide open.
+- **"Need to emulate bus contention." [Shamus]** — acid `bus/`.
+  Almost certainly load-bearing for the Doom regression and the
+  AvP audio dropouts.
+- **"Need to fix timing in the OP. As it is now, it gives a false
+  impression of how much it's capable of." [Shamus]** —
+  acid `op/`.
+
+The original `docs/TODO` is intentionally left untouched — it's
+the authors' historical record and we track our own work via
+GitHub issues + this file + `test/acid/`.

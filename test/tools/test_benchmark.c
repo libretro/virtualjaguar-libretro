@@ -34,6 +34,11 @@ static void (*pretro_run)(void);
 static void (*pretro_unload_game)(void);
 static void *(*pretro_get_memory_data)(unsigned);
 static size_t (*pretro_get_memory_size)(unsigned);
+static size_t (*pretro_serialize_size)(void);
+static bool (*pretro_unserialize)(const void *, size_t);
+/* Optional: only present when the core was built with BENCH_PROFILE=1. */
+static void (*pperf_counters_dump)(FILE *);
+static unsigned long long *(*pperf_counters_find)(const char *);
 
 /* Options state */
 static int bios_option_set = 0;
@@ -181,13 +186,17 @@ static void print_usage(const char *progname)
    fprintf(stderr,
       "Usage: %s <core.dylib> <rom_file> [num_frames]\n"
       "       [--blitter fast|accurate] [--warmup N] [--load-srm file]\n"
+      "       [--load-state file]\n"
       "\n"
       "Options:\n"
       "  num_frames           Number of frames to benchmark (default: 300)\n"
       "  --blitter fast       Use fast blitter (default)\n"
       "  --blitter accurate   Use accurate (Midsummer2) blitter\n"
       "  --warmup N           Run N warmup frames before timing\n"
-      "  --load-srm file      Load EEPROM save data from file\n",
+      "  --load-srm file      Load EEPROM save data from file\n"
+      "  --load-state file    Load a save state into the core after retro_load_game.\n"
+      "                       Accepts raw retro_serialize() payloads or RetroArch\n"
+      "                       RASTATE container files (the MEM chunk is extracted).\n",
       progname);
 }
 
@@ -197,6 +206,7 @@ int main(int argc, char **argv)
    const char *core_path;
    const char *rom_path;
    const char *srm_load_path = NULL;
+   const char *state_load_path = NULL;
    struct retro_game_info info;
    FILE *f;
    long fsize;
@@ -235,6 +245,8 @@ int main(int argc, char **argv)
          warmup_frames = atoi(argv[++i]);
       else if (strcmp(argv[i], "--load-srm") == 0 && i + 1 < argc)
          srm_load_path = argv[++i];
+      else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc)
+         state_load_path = argv[++i];
       else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
       {
          print_usage(argv[0]);
@@ -242,6 +254,17 @@ int main(int argc, char **argv)
       }
       else
          num_frames = atoi(argv[i]);
+   }
+
+   if (num_frames <= 0)
+   {
+      fprintf(stderr, "ERROR: num_frames must be a positive integer (got %d)\n", num_frames);
+      return 1;
+   }
+   if (warmup_frames < 0)
+   {
+      fprintf(stderr, "ERROR: --warmup must be >= 0 (got %d)\n", warmup_frames);
+      return 1;
    }
 
 #ifdef __APPLE__
@@ -298,6 +321,12 @@ int main(int argc, char **argv)
    LOAD_SYM(retro_unload_game);
    LOAD_SYM(retro_get_memory_data);
    LOAD_SYM(retro_get_memory_size);
+   LOAD_SYM(retro_serialize_size);
+   LOAD_SYM(retro_unserialize);
+
+   /* Optional perf-counter access; absent unless built with BENCH_PROFILE=1. */
+   pperf_counters_dump = dlsym(handle, "perf_counters_dump");
+   pperf_counters_find = dlsym(handle, "perf_counters_find");
 
    pretro_set_environment(environment_cb);
    pretro_set_video_refresh(video_refresh);
@@ -355,6 +384,118 @@ int main(int argc, char **argv)
          fprintf(stderr, "WARNING: Core reports no SAVE_RAM area\n");
    }
 
+   /* Load save state if provided.  Accepts both raw retro_serialize()
+    * payloads and RetroArch RASTATE container files (extracts the
+    * MEM chunk).  See https://github.com/libretro/RetroArch on the
+    * RASTATE format. */
+   if (state_load_path)
+   {
+      FILE *stf = NULL;
+      long st_total = 0;
+      uint8_t *st_buf = NULL;
+      const uint8_t *payload = NULL;
+      size_t payload_size = 0;
+      size_t expected;
+      const char *state_err = NULL;
+
+      stf = fopen(state_load_path, "rb");
+      if (!stf)
+      {
+         state_err = "cannot open state file";
+         goto state_fail;
+      }
+      if (fseek(stf, 0, SEEK_END) != 0)
+      {
+         state_err = "fseek to end failed";
+         goto state_fail;
+      }
+      st_total = ftell(stf);
+      if (st_total <= 0)
+      {
+         state_err = "ftell failed or empty state file";
+         goto state_fail;
+      }
+      if (fseek(stf, 0, SEEK_SET) != 0)
+      {
+         state_err = "fseek to start failed";
+         goto state_fail;
+      }
+      st_buf = (uint8_t *)malloc((size_t)st_total);
+      if (!st_buf)
+      {
+         state_err = "malloc failed for state buffer";
+         goto state_fail;
+      }
+      if (fread(st_buf, 1, (size_t)st_total, stf) != (size_t)st_total)
+      {
+         state_err = "short read on state file";
+         goto state_fail;
+      }
+      fclose(stf);
+      stf = NULL;
+      payload = st_buf;
+      payload_size = (size_t)st_total;
+      /* RASTATE container? "RASTATE" + 1 version byte, then chunks. */
+      if (st_total >= 16 && memcmp(st_buf, "RASTATE", 7) == 0)
+      {
+         const uint8_t *p = st_buf + 8;       /* past magic+version */
+         const uint8_t *end = st_buf + st_total;
+         int found = 0;
+         /* Each chunk: 4-byte type + 4-byte LE size + payload. */
+         while (p + 8 <= end)
+         {
+            uint32_t chunk_size = (uint32_t)p[4] | ((uint32_t)p[5] << 8)
+                               | ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
+            /* Bounds-check the declared chunk size against the buffer. */
+            if (chunk_size > (uint32_t)(end - (p + 8)))
+            {
+               state_err = "RASTATE chunk size overruns buffer";
+               goto state_fail;
+            }
+            if (memcmp(p, "MEM ", 4) == 0)
+            {
+               payload = p + 8;
+               payload_size = chunk_size;
+               found = 1;
+               break;
+            }
+            p += 8 + chunk_size;
+         }
+         if (!found)
+         {
+            state_err = "no MEM chunk in RASTATE file";
+            goto state_fail;
+         }
+         fprintf(stderr, "--- RASTATE: extracted MEM chunk (%zu bytes) ---\n", payload_size);
+      }
+      expected = pretro_serialize_size();
+      fprintf(stderr, "--- State payload: %zu bytes (core expects %zu) ---\n",
+              payload_size, expected);
+      if (!pretro_unserialize(payload, payload_size))
+      {
+         state_err = "retro_unserialize failed";
+         goto state_fail;
+      }
+      fprintf(stderr, "--- State loaded from %s ---\n", state_load_path);
+      free(st_buf);
+      st_buf = NULL;
+
+      if (0)
+      {
+state_fail:
+         fprintf(stderr, "ERROR: %s: %s\n",
+                 state_err ? state_err : "state load error",
+                 state_load_path);
+         if (stf) fclose(stf);
+         if (st_buf) free(st_buf);
+         pretro_unload_game();
+         pretro_deinit();
+         free((void *)info.data);
+         dlclose(handle);
+         return 1;
+      }
+   }
+
    /* Run warmup frames (not timed) */
    if (warmup_frames > 0)
    {
@@ -364,29 +505,140 @@ int main(int argc, char **argv)
       fprintf(stderr, "--- Warmup complete ---\n");
    }
 
-   /* Timed run */
-   fprintf(stderr, "--- Benchmarking %d frames ---\n", num_frames);
-   t_start = timer_now();
+   /* Timed run with per-frame samples to expose variance.  Audio
+    * dropouts in real frontends are caused by *worst-case* frames
+    * exceeding the 16.6 ms (60 Hz) budget, not by the average. */
+   {
+      double *frame_ms = (double *)malloc((size_t)num_frames * sizeof(double));
+      unsigned long long *blit_calls_at_frame = (unsigned long long *)malloc((size_t)num_frames * sizeof(unsigned long long));
+      unsigned long long *blit_inner_at_frame = (unsigned long long *)malloc((size_t)num_frames * sizeof(unsigned long long));
+      double frame_budget_ms = 1000.0 / 60.0;
+      int over_budget = 0;
+      double max_ms = 0.0;
+      double p50_ms = 0.0, p99_ms = 0.0, p999_ms = 0.0;
+      unsigned long long *blit_calls_ctr = pperf_counters_find ? pperf_counters_find("blitter_calls") : NULL;
+      unsigned long long *blit_inner_ctr = pperf_counters_find ? pperf_counters_find("blitter_inner") : NULL;
+      unsigned long long blit_calls_prev = blit_calls_ctr ? *blit_calls_ctr : 0;
+      unsigned long long blit_inner_prev = blit_inner_ctr ? *blit_inner_ctr : 0;
 
-   for (i = 0; i < num_frames; i++)
-      pretro_run();
+      if (!frame_ms || !blit_calls_at_frame || !blit_inner_at_frame)
+      {
+         fprintf(stderr, "ERROR: malloc failed for per-frame timing\n");
+         pretro_unload_game(); pretro_deinit();
+         free((void *)info.data); dlclose(handle);
+         return 1;
+      }
 
-   t_end = timer_now();
+      fprintf(stderr, "--- Benchmarking %d frames ---\n", num_frames);
+      t_start = timer_now();
 
-   elapsed = timer_elapsed_sec(t_start, t_end);
-   fps = (double)num_frames / elapsed;
-   ms_per_frame = (elapsed * 1000.0) / (double)num_frames;
+      for (i = 0; i < num_frames; i++)
+      {
+         uint64_t f0 = timer_now();
+         uint64_t f1;
+         pretro_run();
+         f1 = timer_now();
+         frame_ms[i] = timer_elapsed_sec(f0, f1) * 1000.0;
+         if (blit_calls_ctr) {
+            blit_calls_at_frame[i] = *blit_calls_ctr - blit_calls_prev;
+            blit_calls_prev = *blit_calls_ctr;
+         } else blit_calls_at_frame[i] = 0;
+         if (blit_inner_ctr) {
+            blit_inner_at_frame[i] = *blit_inner_ctr - blit_inner_prev;
+            blit_inner_prev = *blit_inner_ctr;
+         } else blit_inner_at_frame[i] = 0;
+      }
 
-   /* Print results */
-   printf("\n=== BENCHMARK RESULTS ===\n");
-   printf("Blitter mode:    %s\n",
-          strcmp(blitter_value, "enabled") == 0 ? "fast" : "accurate");
-   printf("Frames measured: %d\n", num_frames);
-   printf("Warmup frames:   %d\n", warmup_frames);
-   printf("Total time:      %.3f s\n", elapsed);
-   printf("Frames/sec:      %.2f\n", fps);
-   printf("Time/frame:      %.3f ms\n", ms_per_frame);
-   printf("=========================\n");
+      t_end = timer_now();
+
+      elapsed = timer_elapsed_sec(t_start, t_end);
+      fps = (double)num_frames / elapsed;
+      ms_per_frame = (elapsed * 1000.0) / (double)num_frames;
+
+      /* Quicksort copy so the original order is preserved for any
+       * later analysis (currently we don't print it, but cheap). */
+      {
+         double *sorted = (double *)malloc((size_t)num_frames * sizeof(double));
+         int j;
+         if (sorted)
+         {
+            memcpy(sorted, frame_ms, (size_t)num_frames * sizeof(double));
+            /* Insertion sort (small N typical). */
+            for (i = 1; i < num_frames; i++)
+            {
+               double key = sorted[i];
+               j = i - 1;
+               while (j >= 0 && sorted[j] > key) { sorted[j + 1] = sorted[j]; j--; }
+               sorted[j + 1] = key;
+            }
+            p50_ms  = sorted[(int)((double)num_frames * 0.50)];
+            p99_ms  = sorted[(int)((double)num_frames * 0.99)];
+            p999_ms = sorted[(int)((double)num_frames * 0.999)];
+            max_ms  = sorted[num_frames - 1];
+            free(sorted);
+         }
+      }
+      for (i = 0; i < num_frames; i++)
+         if (frame_ms[i] > frame_budget_ms) over_budget++;
+
+      /* Print results */
+      printf("\n=== BENCHMARK RESULTS ===\n");
+      printf("Blitter mode:    %s\n",
+             strcmp(blitter_value, "enabled") == 0 ? "fast" : "accurate");
+      printf("Frames measured: %d\n", num_frames);
+      printf("Warmup frames:   %d\n", warmup_frames);
+      printf("Total time:      %.3f s\n", elapsed);
+      printf("Frames/sec:      %.2f\n", fps);
+      printf("Time/frame avg:  %.3f ms\n", ms_per_frame);
+      printf("Time/frame p50:  %.3f ms\n", p50_ms);
+      printf("Time/frame p99:  %.3f ms\n", p99_ms);
+      printf("Time/frame p999: %.3f ms\n", p999_ms);
+      printf("Time/frame max:  %.3f ms\n", max_ms);
+      printf("Over 16.67 ms:   %d / %d frames (%.2f%%)\n",
+             over_budget, num_frames, 100.0 * over_budget / num_frames);
+      printf("=========================\n");
+
+      /* If we have per-frame blitter counters, dump the slowest frames
+       * so we can correlate blit volume with frame-time spikes. */
+      if (over_budget > 0 && blit_calls_ctr) {
+         int j;
+         double avg_calls = 0.0, avg_inner = 0.0;
+         double slow_calls = 0.0, slow_inner = 0.0;
+         int slow_n = 0;
+         printf("\n--- Worst frames (>16.67ms) -----------------------------\n");
+         printf("  idx  frame_ms  blit_calls  blit_inner_iter\n");
+         for (j = 0; j < num_frames; j++) {
+            avg_calls += blit_calls_at_frame[j];
+            avg_inner += blit_inner_at_frame[j];
+            if (frame_ms[j] > frame_budget_ms) {
+               slow_calls += blit_calls_at_frame[j];
+               slow_inner += blit_inner_at_frame[j];
+               slow_n++;
+               if (slow_n <= 12)
+                  printf("  %4d  %7.2f   %10llu   %15llu\n",
+                         j, frame_ms[j],
+                         blit_calls_at_frame[j],
+                         blit_inner_at_frame[j]);
+            }
+         }
+         printf("---\n");
+         printf("Avg per frame (all):    blits=%.0f  inner_iter=%.0f\n",
+                avg_calls / num_frames, avg_inner / num_frames);
+         if (slow_n > 0)
+            printf("Avg per frame (slow):   blits=%.0f  inner_iter=%.0f  (%dx, %dx vs avg)\n",
+                   slow_calls / slow_n, slow_inner / slow_n,
+                   (int)((slow_calls / slow_n) / (avg_calls / num_frames + 1e-9)),
+                   (int)((slow_inner / slow_n) / (avg_inner / num_frames + 1e-9)));
+         printf("=========================================================\n");
+      }
+
+      free(frame_ms);
+      free(blit_calls_at_frame);
+      free(blit_inner_at_frame);
+   }
+
+   if (pperf_counters_dump)
+      pperf_counters_dump(stderr);
 
    pretro_unload_game();
    pretro_deinit();

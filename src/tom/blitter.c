@@ -26,12 +26,102 @@
 
 #include <string.h>
 #include "jaguar.h"
+#include "perf_counters.h"
 #include "state.h"
 
 // Various conditional compilation goodies...
 
 #define USE_ORIGINAL_BLITTER
 #define USE_MIDSUMMER_BLITTER_MKII
+
+/* Portable always-inline.  Spelled to include the inline keyword
+ * itself (MSVC's __forceinline IS the inline keyword for that
+ * compiler), so call sites use `static BLITTER_ALWAYS_INLINE void
+ * foo(...)` without an extra INLINE/inline.  Used to force inlining
+ * of the blitter helpers (ADD16SAT, ADDARRAY, COMP_CTRL, DATA) so
+ * the compiler can specialise them per call site. */
+#if defined(_MSC_VER)
+#  define BLITTER_ALWAYS_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define BLITTER_ALWAYS_INLINE inline __attribute__((always_inline))
+#else
+#  define BLITTER_ALWAYS_INLINE inline
+#endif
+
+/* Fast-path RAM helpers for the blitter inner loop.
+ * ~98% of blitter memory accesses target main RAM (0x000000-0x1FFFFF).
+ * These helpers inline the RAM check and byte-swap, avoiding the full
+ * address dispatch in JaguarReadWord/JaguarWriteLong etc. for the common case. */
+
+static BLITTER_ALWAYS_INLINE uint8_t blitter_read_byte(uint32_t addr)
+{
+   if (addr < 0x200000)
+      return jaguarMainRAM[addr & 0x1FFFFF];
+   return JaguarReadByte(addr, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE uint16_t blitter_read_word(uint32_t addr)
+{
+   uint32_t a;
+   if (addr < 0x200000)
+   {
+      a = addr & 0x1FFFFF;
+      return ((uint16_t)jaguarMainRAM[a] << 8) | jaguarMainRAM[(a + 1) & 0x1FFFFF];
+   }
+   return JaguarReadWord(addr, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE uint32_t blitter_read_long(uint32_t addr)
+{
+   uint32_t a;
+   if (addr < 0x200000)
+   {
+      a = addr & 0x1FFFFF;
+      return ((uint32_t)jaguarMainRAM[a] << 24)
+           | ((uint32_t)jaguarMainRAM[(a + 1) & 0x1FFFFF] << 16)
+           | ((uint32_t)jaguarMainRAM[(a + 2) & 0x1FFFFF] << 8)
+           | (uint32_t)jaguarMainRAM[(a + 3) & 0x1FFFFF];
+   }
+   return JaguarReadLong(addr, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data)
+{
+   if (addr < 0x200000)
+   {
+      jaguarMainRAM[addr & 0x1FFFFF] = data;
+      return;
+   }
+   JaguarWriteByte(addr, data, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t data)
+{
+   uint32_t a;
+   if (addr < 0x200000)
+   {
+      a = addr & 0x1FFFFF;
+      jaguarMainRAM[a]                   = (uint8_t)(data >> 8);
+      jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)(data & 0xFF);
+      return;
+   }
+   JaguarWriteWord(addr, data, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t data)
+{
+   uint32_t a;
+   if (addr < 0x200000)
+   {
+      a = addr & 0x1FFFFF;
+      jaguarMainRAM[a]                   = (uint8_t)((data >> 24) & 0xFF);
+      jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)((data >> 16) & 0xFF);
+      jaguarMainRAM[(a + 2) & 0x1FFFFF] = (uint8_t)((data >> 8)  & 0xFF);
+      jaguarMainRAM[(a + 3) & 0x1FFFFF] = (uint8_t)(data         & 0xFF);
+      return;
+   }
+   JaguarWriteLong(addr, data, BLITTER);
+}
 
 // Local global variables
 
@@ -43,6 +133,14 @@ uint8_t blitter_ram[0x100];
 
 void BlitterMidsummer(uint32_t cmd);
 void BlitterMidsummer2(void);
+
+PERF_COUNTER(blitter_calls);
+PERF_COUNTER(blitter_outer);
+PERF_COUNTER(blitter_inner);
+PERF_COUNTER(blitter_inner_io);
+PERF_COUNTER(blitter_inner_idle);
+PERF_COUNTER(blitter_phrase_reads);
+PERF_COUNTER(blitter_phrase_writes);
 
 #define REG(A)	(((uint32_t)blitter_ram[(A)] << 24) | ((uint32_t)blitter_ram[(A)+1] << 16) \
 				| ((uint32_t)blitter_ram[(A)+2] << 8) | (uint32_t)blitter_ram[(A)+3])
@@ -957,1144 +1055,45 @@ void blitter_blit(uint32_t cmd)
 
 #ifdef USE_MIDSUMMER_BLITTER_MKII
 
-void ADDRGEN(uint32_t *, uint32_t *, bool, bool,
+static void ADDRGEN(uint32_t *, uint32_t *, bool, bool,
 	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
-	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t);
-void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
-	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
-	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
-	uint32_t zinc, uint32_t zstep);
-void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b, uint8_t cin, bool sat, bool eightbit, bool hicinh);
-void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+	uint16_t, uint16_t, uint32_t, uint8_t, uint8_t, uint8_t, uint8_t,
+	uint32_t, uint32_t);
+static uint32_t addrgen_ya(uint16_t y, uint8_t width)
+{
+	uint32_t y12 = (uint32_t)(y & 0x0FFF);
+	uint32_t ytm = (y12 << 2)
+		+ ((width & 0x02) ? y12 << 1 : 0)
+		+ ((width & 0x01) ? y12 : 0);
+	return (ytm << (width >> 2)) >> 2;
+}
+/* ADD16SAT / ADDARRAY are defined inline below so the compiler can
+ * specialise per call-site (most callers pass compile-time constants
+ * for daddasel/daddbsel/daddmode and the sat/eightbit/hicinh flags).
+ * Profile data on AvP gameplay shows ADDARRAY as the single largest
+ * leaf in the entire emulator, called millions of times per frame. */
+static void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
 	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
 	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
 	bool adda_yconst, bool addareg, bool suba_x, bool suba_y);
-void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+static void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
 	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y);
-void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel);
-void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
+static void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel);
+static void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
 	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y);
-void DATA(uint64_t *wdata, uint8_t *dcomp, uint8_t *zcomp, bool *nowrite,
-	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
-	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t *patd, bool patdadd,
-	bool phrase_mode, uint64_t srcd, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
-	bool bcompen, bool bkgwren, bool dcompen, uint8_t icount, uint8_t pixsize,
-	uint64_t *srcz, uint64_t dstz, uint32_t zinc);
-void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
-	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
-	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp);
-
-
-void BlitterMidsummer2(void)
-{
-   uint32_t cmd = GET32(blitter_ram, COMMAND);
-
-
-   // Line states passed in via the command register
-
-   bool srcen = (SRCEN), srcenx = (SRCENX), srcenz = (SRCENZ),
-        dsten = (DSTEN), dstenz = (DSTENZ), dstwrz = (DSTWRZ), clip_a1 = (CLIPA1),
-        upda1 = (UPDA1), upda1f = (UPDA1F), upda2 = (UPDA2), dsta2 = (DSTA2),
-        gourd = (GOURD), gourz = (GOURZ), topben = (TOPBEN), topnen = (TOPNEN),
-        patdsel = (PATDSEL), adddsel = (ADDDSEL), cmpdst = (CMPDST), bcompen = (BCOMPEN),
-        dcompen = (DCOMPEN), bkgwren = (BKGWREN), srcshade = (SRCSHADE);
-
-   uint8_t zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
-   //Missing: BUSHI
-   //Where to find various lines:
-   // clip_a1  -> inner
-   // gourd    -> dcontrol, inner, outer, state
-   // gourz    -> dcontrol, inner, outer, state
-   // cmpdst   -> blit, data, datacomp, state
-   // bcompen  -> acontrol, inner, mcontrol, state
-   // dcompen  -> inner, state
-   // bkgwren  -> inner, state
-   // srcshade -> dcontrol, inner, state
-   // adddsel  -> dcontrol
-   //NOTE: ADDDSEL takes precedence over PATDSEL, PATDSEL over LFU_FUNC
-
-   // Lines that don't exist in Jaguar I (and will never be asserted)
-
-   bool polygon = false, datinit = false, a1_stepld = false, a2_stepld = false, ext_int = false;
-   bool istepadd = false, istepfadd = false;
-   bool zstepfadd = false, zstepadd = false;
-
-   // Various state lines (initial state--basically the reset state of the FDSYNCs)
-
-   bool go = true, idle = true, inner = false, a1fupdate = false, a1update = false,
-        zfupdate = false, zupdate = false, a2update = false, init_if = false, init_ii = false,
-        init_zf = false, init_zi = false;
-
-   bool outer0 = false, indone = false;
-
-   bool idlei, inneri, a1fupdatei, a1updatei, zfupdatei, zupdatei, a2updatei, init_ifi, init_iii,
-        init_zfi, init_zii;
-
-   bool notgzandp = !(gourz && polygon);
-
-
-   // Various registers set up by user
-
-   uint16_t ocount = GET16(blitter_ram, PIXLINECOUNTER);
-   uint8_t a1_pitch = blitter_ram[A1_FLAGS + 3] & 0x03;
-   uint8_t a2_pitch = blitter_ram[A2_FLAGS + 3] & 0x03;
-   uint8_t a1_pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
-   uint8_t a2_pixsize = (blitter_ram[A2_FLAGS + 3] & 0x38) >> 3;
-   uint8_t a1_zoffset = (GET16(blitter_ram, A1_FLAGS + 2) >> 6) & 0x07;
-   uint8_t a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
-   uint8_t a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
-   uint8_t a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
-   uint8_t a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
-   bool a1addy = blitter_ram[A1_FLAGS + 1] & 0x04, a2addy = blitter_ram[A2_FLAGS + 1] & 0x04;
-   bool a1xsign = blitter_ram[A1_FLAGS + 1] & 0x08, a2xsign = blitter_ram[A2_FLAGS + 1] & 0x08;
-   bool a1ysign = blitter_ram[A1_FLAGS + 1] & 0x10, a2ysign = blitter_ram[A2_FLAGS + 1] & 0x10;
-   uint32_t a1_base = GET32(blitter_ram, A1_BASE) & 0xFFFFFFF8;	// Phrase aligned by ignoring bottom 3 bits
-   uint32_t a2_base = GET32(blitter_ram, A2_BASE) & 0xFFFFFFF8;
-
-   uint16_t a1_win_x = GET16(blitter_ram, A1_CLIP + 2) & 0x7FFF;
-   uint16_t a1_win_y = GET16(blitter_ram, A1_CLIP + 0) & 0x7FFF;
-   int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
-   int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
-   int16_t a1_step_x = (int16_t)GET16(blitter_ram, A1_STEP + 2);
-   int16_t a1_step_y = (int16_t)GET16(blitter_ram, A1_STEP + 0);
-   uint16_t a1_stepf_x = GET16(blitter_ram, A1_FSTEP + 2);
-   uint16_t a1_stepf_y = GET16(blitter_ram, A1_FSTEP + 0);
-   uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
-   uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
-   int16_t a1_inc_x = (int16_t)GET16(blitter_ram, A1_INC + 2);
-   int16_t a1_inc_y = (int16_t)GET16(blitter_ram, A1_INC + 0);
-   uint16_t a1_incf_x = GET16(blitter_ram, A1_FINC + 2);
-   uint16_t a1_incf_y = GET16(blitter_ram, A1_FINC + 0);
-
-   int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
-   int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
-#if 0
-   bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
-   uint16_t a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
-   uint16_t a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
-   uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
-#endif
-   int16_t a2_step_x = (int16_t)GET16(blitter_ram, A2_STEP + 2);
-   int16_t a2_step_y = (int16_t)GET16(blitter_ram, A2_STEP + 0);
-
-   uint64_t srcd1 = GET64(blitter_ram, SRCDATA);
-   uint64_t srcd2 = 0;
-   uint64_t dstd = GET64(blitter_ram, DSTDATA);
-   uint64_t patd = GET64(blitter_ram, PATTERNDATA);
-   uint32_t iinc = GET32(blitter_ram, INTENSITYINC);
-   uint64_t srcz1 = GET64(blitter_ram, SRCZINT);
-   uint64_t srcz2 = GET64(blitter_ram, SRCZFRAC);
-   uint64_t dstz = GET64(blitter_ram, DSTZ);
-   uint32_t zinc = GET32(blitter_ram, ZINC);
-
-   uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
-
-   bool phrase_mode;
-   uint16_t a1FracCInX = 0, a1FracCInY = 0;
-
-   // Bugs in Jaguar I
-
-   a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
-
-   // Various state lines set up by user
-
-   phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
-
-   // Stopgap vars to simulate various lines
-
-
-   while (true)
-   {
-      // IDLE
-
-      if ((idle && !go) || (inner && outer0 && indone))
-      {
-         idlei = true;
-
-         //Instead of a return, let's try breaking out of the loop...
-         break;
-      }
-      else
-         idlei = false;
-
-      // INNER LOOP ACTIVE
-
-      if ((idle && go && !datinit)
-            || (inner && !indone)
-            || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && !datinit)
-            || (a1update && !upda2 && notgzandp && !datinit)
-            || (zupdate && !upda2 && !datinit)
-            || (a2update && !datinit)
-            || (init_ii && !gourz)
-            || (init_zi))
-         inneri = true;
-      else
-         inneri = false;
-
-      // A1 FRACTION UPDATE
-
-      if (inner && indone && !outer0 && upda1f)
-         a1fupdatei = true;
-      else
-         a1fupdatei = false;
-
-      // A1 POINTER UPDATE
-
-      if ((a1fupdate)
-            || (inner && indone && !outer0 && !upda1f && upda1))
-         a1updatei = true;
-      else
-         a1updatei = false;
-
-      // Z FRACTION UPDATE
-
-      if ((a1update && gourz && polygon)
-            || (inner && indone && !outer0 && !upda1f && !upda1 && gourz && polygon))
-         zfupdatei = true;
-      else
-         zfupdatei = false;
-
-      // Z INTEGER UPDATE
-
-      if (zfupdate)
-         zupdatei = true;
-      else
-         zupdatei = false;
-
-      // A2 POINTER UPDATE
-
-      if ((a1update && upda2 && notgzandp)
-            || (zupdate && upda2)
-            || (inner && indone && !outer0 && !upda1f && notgzandp && !upda1 && upda2))
-         a2updatei = true;
-      else
-         a2updatei = false;
-
-      // INITIALIZE INTENSITY FRACTION
-
-      if ((zupdate && !upda2 && datinit)
-            || (a1update && !upda2 && datinit && notgzandp)
-            || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && datinit)
-            || (a2update && datinit)
-            || (idle && go && datinit))
-         init_ifi = true;
-      else
-         init_ifi = false;
-
-      // INITIALIZE INTENSITY INTEGER
-
-      if (init_if)
-         init_iii = true;
-      else
-         init_iii = false;
-
-      // INITIALIZE Z FRACTION
-
-      if (init_ii && gourz)
-         init_zfi = true;
-      else
-         init_zfi = false;
-
-      // INITIALIZE Z INTEGER
-
-      if (init_zf)
-         init_zii = true;
-      else
-         init_zii = false;
-
-      // Here we move the fooi into their foo counterparts in order to simulate the moving
-      // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
-
-      idle = idlei;
-      inner = inneri;
-      a1fupdate = a1fupdatei;
-      a1update = a1updatei;
-      zfupdate = zfupdatei;		// *
-      zupdate = zupdatei;			// *
-      a2update = a2updatei;
-      init_if = init_ifi;			// *
-      init_ii = init_iii;			// *
-      init_zf = init_zfi;			// *
-      init_zi = init_zii;			// *
-      // * denotes states that will never assert for Jaguar I
-
-      // Now, depending on how we want to handle things, we could either put the implementation
-      // of the various pieces up above, or handle them down below here.
-
-      // Let's try postprocessing for now...
-
-      if (inner)
-      {
-         bool idle_inner = true, sreadx = false, szreadx = false, sread = false,
-              szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
-         bool inner0 = false;
-         bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
-         //other stuff
-         uint8_t srcshift = 0;
-         uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
-         bool srca_addi, dsta_addi, gensrc, gendst, gena2i, zaddr, fontread, justify, a1_add, a2_add;
-         bool adda_yconst, addareg, suba_x, suba_y, a1fracldi, shadeadd;
-         uint8_t addasel, a1_xconst, a2_xconst, adda_xconst, addbsel, maska1, maska2, modx, daddasel;
-         uint8_t daddbsel, daddmode;
-         bool patfadd, patdadd, srcz2add, daddq_sel;
-         uint8_t data_sel;
-         uint32_t address, pixAddr;
-         uint8_t dstxp;
-         uint64_t srcz;
-         bool winhibit;
-
-         indone = false;
-
-         /* Precompute address constants (invariant during inner loop) */
-         a1_xconst = 6 - a1_pixsize;
-         a2_xconst = 6 - a2_pixsize;
-         if (a1addx == 1)
-            a1_xconst = 0;
-         else if (a1addx & 0x02)
-            a1_xconst = 7;
-         if (a2addx == 1)
-            a2_xconst = 0;
-         else if (a2addx & 0x02)
-            a2_xconst = 7;
-
-         /* Precompute srcshift — loaded on first inner cycle (sshftld),
-            then held constant for all subsequent cycles. */
-         {
-            uint8_t dstxp0, srcxp0, shftv0, pobb0, loshd0;
-            bool pobbsel0;
-
-            dstxp0 = (dsta2 ? a2_x : a1_x) & 0x3F;
-            srcxp0 = (dsta2 ? a1_x : a2_x) & 0x3F;
-            shftv0 = ((dstxp0 - srcxp0) << pixsize) & 0x3F;
-            pobb0 = 0;
-            if (pixsize == 3)
-               pobb0 = dstxp0 & 0x07;
-            else if (pixsize == 4)
-               pobb0 = dstxp0 & 0x03;
-            else if (pixsize == 5)
-               pobb0 = dstxp0 & 0x01;
-
-            pobbsel0 = phrase_mode && bcompen;
-            loshd0 = (pobbsel0 ? pobb0 : shftv0) & 0x07;
-            srcshift = (srcen || pobbsel0 ? loshd0 : 0);
-            srcshift |= (srcen && phrase_mode ? shftv0 & 0x38 : 0);
-         }
-
-         while (true)
-         {
-            uint16_t dstxwr, pseq;
-            bool penden;
-            uint8_t window_mask;
-            uint8_t inner_mask = 0;
-            uint8_t emask, pma, dend;
-            uint64_t srcd;
-            uint8_t zSrcShift;
-            uint64_t wdata;
-            uint8_t dcomp, zcomp;
-
-            //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
-            /* State machine: step is always true (no bus contention in
-               Jaguar I), textext/txtread never assert. Both eliminated. */
-
-            if ((dzwrite && inner0)
-                  || (dwrite && !dstwrz && inner0))
-            {
-               idle_inneri = true;
-               break;
-            }
-            else
-               idle_inneri = false;
-
-            sreadxi = (idle_inner && srcenx);
-            szreadxi = (sreadx && srcenz);
-
-            sreadi = (szreadx
-                  || (sreadx && !srcenz && srcen)
-                  || (idle_inner && !srcenx && srcen)
-                  || (dzwrite && !inner0 && srcen)
-                  || (dwrite && !dstwrz && !inner0 && srcen));
-
-            szreadi = (sread && srcenz);
-
-            dreadi = ((szread && dsten)
-                  || (sread && !srcenz && dsten)
-                  || (sreadx && !srcenz && !srcen && dsten)
-                  || (idle_inner && !srcenx && !srcen && dsten)
-                  || (dzwrite && !inner0 && !srcen && dsten)
-                  || (dwrite && !dstwrz && !inner0 && !srcen && dsten));
-
-            dzreadi = ((dread && dstenz)
-                  || (szread && !dsten && dstenz)
-                  || (sread && !srcenz && !dsten && dstenz)
-                  || (sreadx && !srcenz && !srcen && !dsten && dstenz)
-                  || (idle_inner && !srcenx && !srcen && !dsten && dstenz)
-                  || (dzwrite && !inner0 && !srcen && !dsten && dstenz)
-                  || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && dstenz));
-
-            dwritei = (dzread
-                  || (dread && !dstenz)
-                  || (szread && !dsten && !dstenz)
-                  || (sread && !srcenz && !dsten && !dstenz)
-                  || (sreadx && !srcenz && !srcen && !dsten && !dstenz)
-                  || (idle_inner && !srcenx && !srcen && !dsten && !dstenz)
-                  || (dzwrite && !inner0 && !srcen && !dsten && !dstenz)
-                  || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && !dstenz));
-
-            dzwritei = (dwrite && dstwrz);
-
-            // Here we move the fooi into their foo counterparts in order to simulate the moving
-            // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
-
-            idle_inner = idle_inneri;
-            sreadx = sreadxi;
-            szreadx = szreadxi;
-            sread = sreadi;
-            szread = szreadi;
-            dread = dreadi;
-            dzread = dzreadi;
-            dwrite = dwritei;
-            dzwrite = dzwritei;
-
-            // Here's a few more decodes--not sure if they're supposed to go here or not...
-
-
-            srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
-
-            dsta_addi = (dwritei && !dstwrz) || dzwritei;
-
-            gensrc = sreadxi || szreadxi || sreadi || szreadi;
-            gendst = dreadi || dzreadi || dwritei || dzwritei;
-            gena2i = (gensrc && !dsta2) || (gendst && dsta2);
-
-            zaddr = szreadx || szread || dzread || dzwrite;
-
-            // Some stuff from MCONTROL.NET--not sure if this is the correct use of this decode or not...
-            /*Fontread\	:= OND1 (fontread\, sread[1], sreadx[1], bcompen);
-Fontread	:= INV1 (fontread, fontread\);
-Justt		:= NAN3 (justt, fontread\, phrase_mode, tactive\);
-Justify		:= TS (justify, justt, busen);*/
-            fontread = (sread || sreadx) && bcompen;
-            justify = !(!fontread && phrase_mode /*&& tactive*/);
-
-            /* Generate inner loop update enables */
-            /*
-A1_addi		:= MX2 (a1_addi, dsta_addi, srca_addi, dsta2);
-A2_addi		:= MX2 (a2_addi, srca_addi, dsta_addi, dsta2);
-A1_add		:= FD1 (a1_add, a1_add\, a1_addi, clk);
-A2_add		:= FD1 (a2_add, a2_add\, a2_addi, clk);
-A2_addb		:= BUF1 (a2_addb, a2_add);
-*/
-            a1_add = (dsta2 ? srca_addi : dsta_addi);
-            a2_add = (dsta2 ? dsta_addi : srca_addi);
-
-            /* Address adder input A register selection
-               000	A1 step integer part
-               001	A1 step fraction part
-               010	A1 increment integer part
-               011	A1 increment fraction part
-               100	A2 step
-
-               bit 2 = a2update
-               bit 1 = /a2update . (a1_add . a1addx[0..1])
-               bit 0 = /a2update . ( a1fupdate
-               + a1_add . atick[0] . a1addx[0..1])
-               The /a2update term on bits 0 and 1 is redundant.
-               Now look-ahead based
-               */
-
-            addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
-            addasel |= (a1_add && a1addx == 3 ? 0x02 : 0x00);
-            addasel |= (a2update ? 0x04 : 0x00);
-            /* Address adder input A X constant selection
-               adda_xconst[0..2] generate a power of 2 in the range 1-64 or all
-               zeroes when they are all 1
-               Remember - these are pixels, so to add one phrase the pixel size
-               has to be taken into account to get the appropriate value.
-               for A1
-               if a1addx[0..1] are 00 set 6 - pixel size
-               if a1addx[0..1] are 01 set the value 000
-               if a1addx[0..1] are 10 set the value 111
-               similarly for A2
-JLH: Also, 11 will likewise set the value to 111
-*/
-            adda_xconst = (a2_add ? a2_xconst : a1_xconst);
-            /* Address adder input A Y constant selection
-               22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
-               Therefore, the selection has to be controlled by a bug fix bit.
-JLH: Bug fix bit in Jaguar II--not in Jaguar I!
-*/
-            adda_yconst = a1addy;
-            /* Address adder input A register versus constant selection
-               given by	  a1_add . a1addx[0..1]
-               + a1update
-               + a1fupdate
-               + a2_add . a2addx[0..1]
-               + a2update
-               */
-            addareg = ((a1_add && a1addx == 3) || a1update || a1fupdate
-                  || (a2_add && a2addx == 3) || a2update ? true : false);
-            /* The adders can be put into subtract mode in add pixel size
-               mode when the corresponding flags are set */
-            suba_x = ((a1_add && a1xsign && a1addx == 1) || (a2_add && a2xsign && a2addx == 1) ? true : false);
-            suba_y = ((a1_add && a1addy && a1ysign) || (a2_add && a2addy && a2ysign) ? true : false);
-            /* Address adder input B selection
-               00	A1 pointer
-               01	A2 pointer
-               10	A1 fraction
-               11	Zero
-
-               Bit 1 =   a1fupdate
-               + (a1_add . atick[0] . a1addx[0..1])
-               + a1fupdate . a1_stepld
-               + a1update . a1_stepld
-               + a2update . a2_stepld
-               Bit 0 =   a2update + a2_add
-               + a1fupdate . a1_stepld
-               + a1update . a1_stepld
-               + a2update . a2_stepld
-               */
-            addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
-                  || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x01 : 0x00);
-            addbsel |= (a1fupdate || (a1_add && a1addx == 3) || (a1fupdate && a1_stepld)
-                  || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x02 : 0x00);
-
-            /* The modulo bits are used to align X onto a phrase boundary when
-               it is being updated by one phrase
-               000	no mask
-               001	mask bit 0
-               010	mask bits 1-0
-               ..
-               110  	mask bits 5-0
-
-               Masking is enabled for a1 when a1addx[0..1] is 00, and the value
-               is 6 - the pixel size (again!)
-               */
-            maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
-            maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
-            modx = (a2_add ? maska2 : maska1);
-            /* Generate load strobes for the increment updates */
-
-            /*A1pldt		:= NAN2 (a1pldt, atick[1], a1_add);
-A1ptrldi	:= NAN2 (a1ptrldi, a1update\, a1pldt);
-
-A1fldt		:= NAN4 (a1fldt, atick[0], a1_add, a1addx[0..1]);
-A1fracldi	:= NAN2 (a1fracldi, a1fupdate\, a1fldt);
-
-A2pldt		:= NAN2 (a2pldt, atick[1], a2_add);
-A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
-
-            a1fracldi = a1fupdate || (a1_add && a1addx == 3);
-
-            ADDRGEN(&address, &pixAddr, gena2i, zaddr,
-                  a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-                  a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-
-            //Here's my guess as to how the addresses get truncated to phrase boundaries in phrase mode...
-            if (!justify)
-               address &= 0xFFFFF8;
-
-            /* dstxp needed for dstart computation in dwrite */
-            dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
-
-            if (sreadx)
-            {
-               //uint32_t srcAddr, pixAddr;
-               //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
-               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
-               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
-               srcd2 = srcd1;
-               srcd1 = ((uint64_t)JaguarReadLong(address + 0, BLITTER) << 32)
-                  | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-               //Kludge to take pixel size into account...
-               //Hmm. If we're not in phrase mode, this is most likely NOT going to be used...
-               //Actually, it would be--because of BCOMPEN expansion, for example...
-               if (!phrase_mode)
-               {
-                  if (bcompen)
-                     srcd1 >>= 56;
-                  else
-                  {
-                     if (pixsize == 5)
-                        srcd1 >>= 32;
-                     else if (pixsize == 4)
-                        srcd1 >>= 48;
-                     else
-                        srcd1 >>= 56;
-                  }
-               }//*/
-            }
-
-            if (szreadx)
-            {
-               srcz2 = srcz1;
-               srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-            }
-
-            if (sread)
-            {
-               srcd2 = srcd1;
-               srcd1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-               //Kludge to take pixel size into account...
-               if (!phrase_mode)
-               {
-                  if (bcompen)
-                     srcd1 >>= 56;
-                  else
-                  {
-                     if (pixsize == 5)
-                        srcd1 >>= 32;
-                     else if (pixsize == 4)
-                        srcd1 >>= 48;
-                     else
-                        srcd1 >>= 56;
-                  }
-               }
-            }
-
-            if (szread)
-            {
-               srcz2 = srcz1;
-               srcz1 = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-               //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
-               if (!phrase_mode && pixsize == 4)
-                  srcz1 >>= 48;
-
-            }
-
-            if (dread)
-            {
-               dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-               //Kludge to take pixel size into account...
-               if (!phrase_mode)
-               {
-                  if (pixsize == 5)
-                     dstd >>= 32;
-                  else if (pixsize == 4)
-                     dstd >>= 48;
-                  else
-                     dstd >>= 56;
-               }
-            }
-
-            if (dzread)
-            {
-               // Is Z always 64 bit read? Or sometimes 16 bit (dependent on phrase_mode)?
-               dstz = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-               //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
-               if (!phrase_mode && pixsize == 4)
-                  dstz >>= 48;
-
-            }
-
-            // These vars should probably go further up in the code... !!! FIX !!!
-            // We can't preassign these unless they're static...
-            //NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
-            if (dwrite)
-            {
-               //Counter is done on the dwrite state...! (We'll do it first, since it affects dstart/dend calculations.)
-               //Here's the voodoo for figuring the correct amount of pixels in phrase mode (or not):
-               int8_t inct = -((dsta2 ? a2_x : a1_x) & 0x07);	// From INNER_CNT
-               uint8_t inc = 0;
-               uint16_t oldicount;
-               uint8_t dstart = 0;
-
-               inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
-               inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
-               inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
-               inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
-
-               oldicount = icount;	// Save icount to detect underflow...
-               icount -= inc;
-
-               if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
-                  inner0 = true;
-               // X/Y stepping is also done here, I think...No. It's done when a1_add or a2_add is asserted...
-
-               //*********************************************************************************
-               //Start & end write mask computations...
-               //*********************************************************************************
-
-
-               if (phrase_mode)
-               {
-                  if (pixsize == 3)
-                     dstart = (dstxp & 0x07) << 3;
-                  else if (pixsize == 4)
-                     dstart = (dstxp & 0x03) << 4;
-                  else if (pixsize == 5)
-                     dstart = (dstxp & 0x01) << 5;
-               }
-               else
-                  dstart    = pixAddr & 0x07;
-
-               //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
-               dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
-               pseq = dstxwr ^ (a1_win_x & 0x7FFE);
-               pseq = (pixsize == 5 ? pseq : pseq & 0x7FFC);
-               pseq = ((pixsize & 0x06) == 4 ? pseq : pseq & 0x7FF8);
-               penden = clip_a1 && (pseq == 0);
-               window_mask = 0;
-
-               if (penden)
-               {
-                  if (pixsize == 3)
-                     window_mask = (a1_win_x & 0x07) << 3;
-                  else if (pixsize == 4)
-                     window_mask = (a1_win_x & 0x03) << 4;
-                  else if (pixsize == 5)
-                     window_mask = (a1_win_x & 0x01) << 5;
-               }
-               else
-                  window_mask    = 0;
-
-               /* The mask to be used if within one phrase of the end of the inner
-                  loop, similarly */
-
-               if (inner0)
-               {
-                  if (pixsize == 3)
-                     inner_mask = (icount & 0x07) << 3;
-                  else if (pixsize == 4)
-                     inner_mask = (icount & 0x03) << 4;
-                  else if (pixsize == 5)
-                     inner_mask = (icount & 0x01) << 5;
-               }
-               else
-                  inner_mask    = 0;
-
-               /* The actual mask used should be the 
-                  lesser of the window masks and
-                  the inner mask, where is all cases 000 means 1000. */
-               window_mask = (window_mask == 0 ? 0x40 : window_mask);
-               inner_mask  = (inner_mask == 0 ? 0x40 : inner_mask);
-
-               emask       = (window_mask > inner_mask ? inner_mask : window_mask);
-               /* The mask to be used for the pixel size, to which must be added
-                  the bit offset */
-               pma = pixAddr + (1 << pixsize);
-               /* Select the mask */
-               dend = (phrase_mode ? emask : pma);
-
-               /* The cycle width in phrase mode is normally one phrase.  However,
-                  at the start and end it may be narrower.  The start and end masks
-                  are used to generate this.  The width is given by:
-
-                  8 - start mask - (8 - end mask)
-                  =	end mask - start mask
-
-                  This is only used for writes in phrase mode.
-                  Start and end from the address level of the pipeline are used.
-                  */
-
-               //Phrase mode needs destination data for start/end mask byte merging,
-               //but NOT when bkgwren is set (hardware uses DSTDATA register value).
-               if (phrase_mode && !dsten && !bkgwren)
-                  dstd = ((uint64_t)JaguarReadLong(address, BLITTER) << 32) | (uint64_t)JaguarReadLong(address + 4, BLITTER);
-
-               // Write data combines srcd and dstd through ADDDSEL, PATDSEL, or LFU.
-               // Precedence is ADDDSEL > PATDSEL > LFU.
-
-               // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
-               srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
-               //bleh, ugly ugly ugly
-               if (srcshift == 0)
-                  srcd = srcd1;
-
-               //NOTE: This only works with pixel sizes less than 8BPP...
-               //DOUBLE NOTE: Still need to do regression testing to ensure that this doesn't break other stuff... !!! CHECK !!!
-               if (!phrase_mode && srcshift != 0)
-                  srcd = ((srcd2 & 0xFF) << (8 - srcshift)) | ((srcd1 & 0xFF) >> srcshift);
-
-               //Z DATA() stuff done here... And it has to be done before any Z shifting...
-               //Note that we need to have phrase mode start/end support here... (Not since we moved it from dzwrite...!)
-               /*
-                  Here are a couple of Cybermorph blits with Z:
-                  $00113078	// DSTEN DSTENZ DSTWRZ CLIP_A1 GOURD GOURZ PATDSEL ZMODE=4
-                  $09900F39	// SRCEN DSTEN DSTENZ DSTWRZ UPDA1 UPDA1F UPDA2 DSTA2 ZMODE=4 LFUFUNC=C DCOMPEN
-
-                  We're having the same phrase mode overwrite problem we had with the pixels... !!! FIX !!!
-                  Odd. It's equating 0 with 0... Even though ZMODE is $04 (less than)!
-                  */
-               if (gourz)
-               {
-                  uint16_t addq[4];
-                  uint8_t initcin[4] = { 0, 0, 0, 0 };
-                  ADDARRAY(addq, 7/*daddasel*/, 6/*daddbsel*/, 0/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
-                  srcz2 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-                  ADDARRAY(addq, 6/*daddasel*/, 7/*daddbsel*/, 1/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
-                  srcz1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-
-               }
-
-               zSrcShift = srcshift & 0x30;
-               srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
-               //bleh, ugly ugly ugly
-               if (zSrcShift == 0)
-                  srcz = srcz1;
-
-
-               //When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
-               //According to following line, it gets LFU mode. But does it feed the source into the LFU
-               //after the add?
-               //Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
-               //Let's try this:
-               if (srcshade)
-               {
-                  uint16_t addq[4];
-                  uint8_t initcin[4] = { 0, 0, 0, 0 };
-                  uint32_t iinc_masked = iinc & 0x00FFFFFF;
-                  ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc_masked, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
-                  srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-               }
-
-               /* DCONTROL: compute data adder signals.  Moved here from
-                  the per-iteration scope since they are only consumed
-                  during dwrite (dwrite=true, dzwrite=false here). */
-               shadeadd = srcshade;
-               daddasel = (gourd ? 0x01 : 0x00);
-               daddasel |= ((gourd || gourz || srcshade) ? 0x04 : 0x00);
-               daddbsel = (gourd || srcshade ? 0x01 : 0x00);
-               daddbsel |= (gourd || srcshade ? 0x04 : 0x00);
-               /* daddmode bit 0: NAND tree (dcontrol.v:130-146) makes
-                  bit 0 always 1 when dwrite&&gourd, !gourd&&!gourz,
-                  or shadeadd. */
-               daddmode = (gourd || (!gourd && !gourz) || shadeadd ? 0x01 : 0x00);
-               daddmode |= ((gourd && !topben && !ext_int)
-                     || (!gourd && !gourz && !topben) || (shadeadd && !topben) ? 0x02 : 0x00);
-               daddmode |= ((!gourd && !gourz) || shadeadd || (gourd && ext_int) ? 0x04 : 0x00);
-               patfadd = gourd;
-               patdadd = gourd;
-               srcz2add = false;
-               daddq_sel = gourd;
-               data_sel = ((!patdsel && !adddsel) ? 0x01 : 0x00)
-                  | (adddsel ? 0x02 : 0x00);
-
-               if (patfadd)
-               {
-                  uint16_t addq[4];
-                  uint8_t initcin[4] = { 0, 0, 0, 0 };
-                  ADDARRAY(addq, 4/*daddasel*/, 4/*daddbsel*/, 0/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
-                  srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
-               }
-
-               /* atick[0]/[1] two-phase pipeline: fractional intensity/Z update
-                  runs in the patfadd/srcz2add block above (Phase 0), integer
-                  update runs via DATA→patdadd below (Phase 1).  The dbinh
-                  param below is overwritten inside DATA by COMP_CTRL. */
-
-               DATA(&wdata, &dcomp, &zcomp, &winhibit,
-                     true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
-                     dend, dstart, dstd, iinc, lfufunc, &patd, patdadd,
-                     phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
-                     bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
-                     &srcz, dstz, zinc);
-
-               /*
-                  DEF ADDRCOMP (
-                  a1_outside	// A1 pointer is outside window bounds
-                  :OUT;
-                  INT16/	a1_x
-                  INT16/	a1_y
-                  INT15/	a1_win_x
-                  INT15/	a1_win_y
-                  :IN);
-                  BEGIN
-
-               // The address is outside if negative, or if greater than or equal
-               // to the window size
-
-A1_xcomp	:= MAG_15 (a1xgr, a1xeq, a1xlt, a1_x{0..14}, a1_win_x{0..14});
-A1_ycomp	:= MAG_15 (a1ygr, a1yeq, a1ylt, a1_y{0..14}, a1_win_y{0..14});
-A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
-*/
-               //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
-               //      Actually, seems to be related to phrase mode writes...
-               //      Or is it? Could be related to non-15-bit compares as above?
-               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
-                  winhibit = true;
-
-
-               if (!winhibit || bkgwren)
-               {
-                  if (phrase_mode)
-                  {
-                     JaguarWriteLong(address + 0, wdata >> 32, BLITTER);
-                     JaguarWriteLong(address + 4, wdata & 0xFFFFFFFF, BLITTER);
-                  }
-                  else
-                  {
-                     if (pixsize == 5)
-                        JaguarWriteLong(address, wdata & 0xFFFFFFFF, BLITTER);
-                     else if (pixsize == 4)
-                        JaguarWriteWord(address, wdata & 0x0000FFFF, BLITTER);
-                     else
-                        JaguarWriteByte(address, wdata & 0x000000FF, BLITTER);
-                  }
-               }
-
-            }
-
-            if (dzwrite)
-            {
-               // OK, here's the big insight: When NOT in GOURZ mode, srcz1 & 2 function EXACTLY the same way that
-               // srcd1 & 2 work--there's an implicit shift from srcz1 to srcz2 whenever srcz1 is read.
-               // OTHERWISE, srcz1 is the integer for the computed Z and srcz2 is the fractional part.
-               // Writes to srcz1 & 2 follow the same pattern as the other 64-bit registers--low 32 at the low address,
-               // high 32 at the high address (little endian!).
-               // NOTE: GOURZ is still not properly supported. Check patd/patf handling...
-               //       Phrase mode start/end masks are not properly supported either...
-               //This is not correct... !!! FIX !!!
-               //Should be OK now... We'll see...
-               //Nope. Having the same starstep write problems in phrase mode as we had with pixels... !!! FIX !!!
-               //This is not causing the problem in Hover Strike... :-/
-               //The problem was with the SREADX not shifting. Still problems with Z comparisons & other text in pregame screen...
-               if (!winhibit)
-               {
-                  if (phrase_mode)
-                  {
-                     JaguarWriteLong(address + 0, srcz >> 32, BLITTER);
-                     JaguarWriteLong(address + 4, srcz & 0xFFFFFFFF, BLITTER);
-                  }
-                  else
-                  {
-                     if (pixsize == 4)
-                        JaguarWriteWord(address, srcz & 0x0000FFFF, BLITTER);
-                  }
-               }//*/
-            }
-
-
-            if (a1_add)
-            {
-               int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
-               ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
-                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-               ADDBMUX(&addb_x, &addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-               ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
-
-               //Now, write to what???
-               //a2ptrld comes from a2ptrldi...
-               //I believe it's addbsel that determines the writeback...
-               // This is where atick[0] & [1] come in, in determining which part (fractional, integer)
-               // gets written to...
-               //a1_x = addq_x;
-               //a1_y = addq_y;
-               //Kludge, to get A1 channel increment working...
-               if (a1addx == 3)
-               {
-                  a1_frac_x = addq_x, a1_frac_y = addq_y;
-
-                  addasel = 2, addbsel = 0, a1fracldi = false;
-                  ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
-                        a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-                  ADDBMUX(&addb_x,&addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-                  ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
-
-                  a1_x = addq_x, a1_y = addq_y;
-               }
-               else
-                  a1_x = addq_x, a1_y = addq_y;
-            }
-
-            if (a2_add)
-            {
-               int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
-               ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
-                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
-               ADDBMUX(&addb_x, &addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
-               ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
-
-               //Now, write to what???
-               //a2ptrld comes from a2ptrldi...
-               //I believe it's addbsel that determines the writeback...
-               a2_x = addq_x;
-               a2_y = addq_y;
-            }
-         }
-
-         indone = true;
-         // The outer counter is updated here as well on the clock cycle...
-
-         /* the inner loop is started whenever another state is about to
-            cause the inner state to go active */
-         //Instart		:= ND7 (instart, innert[0], innert[2..7]);
-
-         //Actually, it's done only when inner gets asserted without the 2nd line of conditions
-         //(inner AND !indone)
-         //fixed now...
-         //Since we don't get here until the inner loop is finished (indone = true) we can get
-         //away with doing it here...!
-         ocount--;
-
-         if (ocount == 0)
-            outer0 = true;
-      }
-
-      if (a1fupdate)
-      {
-         uint32_t a1_frac_xt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
-         uint32_t a1_frac_yt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
-         a1FracCInX = a1_frac_xt >> 16;
-         a1FracCInY = a1_frac_yt >> 16;
-         a1_frac_x = (uint16_t)(a1_frac_xt & 0xFFFF);
-         a1_frac_y = (uint16_t)(a1_frac_yt & 0xFFFF);
-      }
-
-      if (a1update)
-      {
-         a1_x += a1_step_x + a1FracCInX;
-         a1_y += a1_step_y + a1FracCInY;
-      }
-
-      if (a2update)
-      {
-         a2_x += a2_step_x;
-         a2_y += a2_step_y;
-      }
-   }
-
-   // Write values back to registers (in real blitter, these are continuously updated)
-   SET16(blitter_ram, A1_PIXEL + 2, a1_x);
-   SET16(blitter_ram, A1_PIXEL + 0, a1_y);
-   SET16(blitter_ram, A1_FPIXEL + 2, a1_frac_x);
-   SET16(blitter_ram, A1_FPIXEL + 0, a1_frac_y);
-   SET16(blitter_ram, A2_PIXEL + 2, a2_x);
-   SET16(blitter_ram, A2_PIXEL + 0, a2_y);
-
-}
-
-// Various pieces of the blitter puzzle are teased out here...
-
-void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
-	uint16_t a1_x, uint16_t a1_y, uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width, uint8_t a1_zoffset,
-	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset)
-{
-	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	// Actually uses all 16 bits to generate address...!
-	uint16_t y = (gena2 ? a2_y : a1_y) & 0x0FFF;
-	uint8_t width = (gena2 ? a2_width : a1_width);
-	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
-	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
-	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;//Only upper 21 bits are passed around the bus? Seems like it...
-	uint8_t zoffset = (gena2 ? a2_zoffset : a1_zoffset);
-
-	uint32_t ytm = ((uint32_t)y << 2) + ((width & 0x02) ? (uint32_t)y << 1 : 0) + ((width & 0x01) ? (uint32_t)y : 0);
-
-	uint32_t ya = (ytm << (width >> 2)) >> 2;
-
-	uint32_t pa = ya + x;
-   uint8_t pt, za;
-   uint32_t phradr, shup, addr;
-
-	*pixa = pa << pixsize;
-
-	pt = ((pitch & 0x01) && !(pitch & 0x02) ? 0x01 : 0x00)
-		| (!(pitch & 0x01) && (pitch & 0x02) ? 0x02 : 0x00);
-	phradr = (*pixa >> 6) << pt;
-	shup = (pitch == 0x03 ? (*pixa >> 6) : 0);
-
-	za = (zaddr ? zoffset : 0) & 0x03;
-	addr = za + phradr + (shup << 1) + base;
-	*address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
-	*pixa &= 0x07;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////
-// Here's an important bit: The source data adder logic. Need to track down the inputs!!! //
-////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////
-
-void ADDARRAY(uint16_t * addq, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode,
-	uint64_t dstd, uint32_t iinc, uint8_t initcin[], uint64_t initinc, uint16_t initpix,
-	uint32_t istep, uint64_t patd, uint64_t srcd, uint64_t srcz1, uint64_t srcz2,
-	uint32_t zinc, uint32_t zstep)
-{
-   unsigned i;
-   uint16_t adda[4];
-   uint16_t addb[4];
-   uint64_t adda_val;
-   uint32_t initpix2;
-   uint16_t word;
-   uint8_t cinsel;
-   static uint8_t co[4]; /* preserved between calls */
-   uint8_t cin[4];
-   bool eightbit;
-   bool sat, hicinh;
-   uint8_t bsel_idx;
-
-   initpix2 = ((uint32_t)initpix << 16) | initpix;
-
-   /* Select adda source directly (replaces 8-element addalo/addahi arrays) */
-   switch (daddasel)
-   {
-      case 0:  adda_val = dstd; break;
-      case 1:  adda_val = ((uint64_t)initpix2 << 32) | initpix2; break;
-      case 2:  /* fall through */
-      case 3:  adda_val = 0; break;
-      case 4:  adda_val = srcd; break;
-      case 5:  adda_val = patd; break;
-      case 6:  adda_val = srcz1; break;
-      default: adda_val = srcz2; break;
-   }
-   adda[0] = (uint16_t)adda_val;
-   adda[1] = (uint16_t)(adda_val >> 16);
-   adda[2] = (uint16_t)(adda_val >> 32);
-   adda[3] = (uint16_t)(adda_val >> 48);
-
-   /* Select addb source (replaces wordmux array + dbsel2/iincsel logic) */
-   if (!(daddbsel & 0x04))
-   {
-      if (daddbsel & 0x01)
-      {
-         addb[0] = (uint16_t)initinc;
-         addb[1] = (uint16_t)(initinc >> 16);
-         addb[2] = (uint16_t)(initinc >> 32);
-         addb[3] = (uint16_t)(initinc >> 48);
-      }
-      else
-      {
-         addb[0] = (uint16_t)srcd;
-         addb[1] = (uint16_t)(srcd >> 16);
-         addb[2] = (uint16_t)(srcd >> 32);
-         addb[3] = (uint16_t)(srcd >> 48);
-      }
-   }
-   else
-   {
-      bsel_idx = ((daddbsel & 0x08) >> 1) | (daddbsel & 0x03);
-      switch (bsel_idx)
-      {
-         case 0: word = iinc & 0xFFFF; break;
-         case 1: word = iinc >> 16; break;
-         case 2: word = zinc & 0xFFFF; break;
-         case 3: word = zinc >> 16; break;
-         case 4: word = istep & 0xFFFF; break;
-         case 5: word = istep >> 16; break;
-         case 6: word = zstep & 0xFFFF; break;
-         default: word = zstep >> 16; break;
-      }
-      addb[0] = addb[1] = addb[2] = addb[3] = word;
-   }
-
-   /* Hardware: cinsel = (daddmode[0] | daddmode[1]) & ~daddmode[2]
-      Only modes 1-3 use carry input; mode 4+ do not. */
-   cinsel = ((daddmode & 0x03) && !(daddmode & 0x04) ? 1 : 0);
-
-   for(i = 0; i < 4; i++)
-      cin[i] = initcin[i] | (co[i] & cinsel);
-
-   eightbit = daddmode & 0x02;
-   sat = daddmode & 0x03;
-   hicinh = ((daddmode & 0x03) == 0x03);
-
-   ADD16SAT(&addq[0], &co[0], adda[0], addb[0], cin[0], sat, eightbit, hicinh);
-   ADD16SAT(&addq[1], &co[1], adda[1], addb[1], cin[1], sat, eightbit, hicinh);
-   ADD16SAT(&addq[2], &co[2], adda[2], addb[2], cin[2], sat, eightbit, hicinh);
-   ADD16SAT(&addq[3], &co[3], adda[3], addb[3], cin[3], sat, eightbit, hicinh);
-}
-
-
-void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, const uint16_t b, const uint8_t cin, const bool sat, const bool eightbit, const bool hicinh)
+/* DATA + COMP_CTRL are defined inline below (above BlitterMidsummer2)
+ * so the compiler can specialise them per call.  Both are called
+ * exclusively from the BlitterMidsummer2 inner loop. */
+
+
+/* AvP-gameplay hot path: ADDARRAY at 1910 samples, ADD16SAT inlined
+ * inside it.  Inlined here so the compiler can specialise the 4
+ * call sites in BlitterMidsummer2 (compile-time daddasel/daddbsel/
+ * daddmode -> dead switch arms eliminated) and the call inside DATA
+ * (where the args are loop-invariant for the duration of a blit). */
+static BLITTER_ALWAYS_INLINE
+void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, uint16_t b,
+              uint8_t cin, bool sat, bool eightbit, bool hicinh)
 {
    uint8_t carry[4];
    uint8_t btop, ctop;
@@ -2130,271 +1129,188 @@ void ADD16SAT(uint16_t *r, uint8_t *co, uint16_t a, const uint16_t b, const uint
    *r |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
 }
 
-void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
-	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
-	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
-	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
+static BLITTER_ALWAYS_INLINE
+void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
+              uint8_t daddmode, uint64_t dstd, uint32_t iinc,
+              uint8_t initcin[], uint64_t initinc, uint16_t initpix,
+              uint32_t istep, uint64_t patd, uint64_t srcd,
+              uint64_t srcz1, uint64_t srcz2, uint32_t zinc,
+              uint32_t zstep)
 {
+   unsigned i;
+   uint16_t adda[4];
+   uint16_t addb[4];
+   uint64_t adda_val;
+   uint32_t initpix2;
+   uint16_t word;
+   uint8_t cinsel;
+   static uint8_t co[4]; /* preserved between calls (hardware artifact) */
+   uint8_t cin[4];
+   bool eightbit;
+   bool sat, hicinh;
+   uint8_t bsel_idx;
 
-   int16_t addar_x, addar_y, addac_x, addac_y, addas_x, addas_y;
-	int16_t xterm[4], yterm[4];
-	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
-	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
-   if (addasel & 0x04)
+   initpix2 = ((uint32_t)initpix << 16) | initpix;
+
+   switch (daddasel)
    {
-      addar_x = a2_step_x;
-      addar_y = a2_step_y;
+      case 0:  adda_val = dstd; break;
+      case 1:  adda_val = ((uint64_t)initpix2 << 32) | initpix2; break;
+      case 2:
+      case 3:  adda_val = 0; break;
+      case 4:  adda_val = srcd; break;
+      case 5:  adda_val = patd; break;
+      case 6:  adda_val = srcz1; break;
+      default: adda_val = srcz2; break;
+   }
+   adda[0] = (uint16_t)adda_val;
+   adda[1] = (uint16_t)(adda_val >> 16);
+   adda[2] = (uint16_t)(adda_val >> 32);
+   adda[3] = (uint16_t)(adda_val >> 48);
+
+   if (!(daddbsel & 0x04))
+   {
+      if (daddbsel & 0x01)
+      {
+         addb[0] = (uint16_t)initinc;
+         addb[1] = (uint16_t)(initinc >> 16);
+         addb[2] = (uint16_t)(initinc >> 32);
+         addb[3] = (uint16_t)(initinc >> 48);
+      }
+      else
+      {
+         addb[0] = (uint16_t)srcd;
+         addb[1] = (uint16_t)(srcd >> 16);
+         addb[2] = (uint16_t)(srcd >> 32);
+         addb[3] = (uint16_t)(srcd >> 48);
+      }
    }
    else
    {
-      addar_x = xterm[addasel & 0x03];
-      addar_y = yterm[addasel & 0x03];
+      bsel_idx = ((daddbsel & 0x08) >> 1) | (daddbsel & 0x03);
+      switch (bsel_idx)
+      {
+         case 0: word = iinc & 0xFFFF; break;
+         case 1: word = iinc >> 16; break;
+         case 2: word = zinc & 0xFFFF; break;
+         case 3: word = zinc >> 16; break;
+         case 4: word = istep & 0xFFFF; break;
+         case 5: word = istep >> 16; break;
+         case 6: word = zstep & 0xFFFF; break;
+         default: word = zstep >> 16; break;
+      }
+      addb[0] = addb[1] = addb[2] = addb[3] = word;
    }
 
-   /* Generate a constant value - this is a power of 2 in the range
-      0-64, or zero.  The control bits are adda_xconst[0..2], when they
-      are all 1  the result is 0.
-      Constants for Y can only be 0 or 1 */
+   cinsel = ((daddmode & 0x03) && !(daddmode & 0x04) ? 1 : 0);
 
-	addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
-	addac_y = (adda_yconst ? 0x01 : 0);
+   for (i = 0; i < 4; i++)
+      cin[i] = initcin[i] | (co[i] & cinsel);
 
-   /* Select between constant value and register value */
+   eightbit = daddmode & 0x02;
+   sat = daddmode & 0x03;
+   hicinh = ((daddmode & 0x03) == 0x03);
 
-   if (addareg)
+   blitter_simd_ops.add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
+}
+
+static BLITTER_ALWAYS_INLINE
+void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
+	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
+	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp)
+{
+   /*
+    * Branchless byte-parallel rewrite of the per-bit dbinh computation.
+    * The eight dbinh bits follow a structured pattern (see ASIC net
+    * comments below): four byte-pairs share a common 16-bit z+dcomp
+    * term (t0_1), each bit adds bcomp and single-dcomp terms, then
+    * the result is gated by phrase_mode / winhibit.
+    *
+    * Verified bit-exact against the original gate-level C for >500M
+    * input combinations covering all pixsize/dcomp/srcd/zcomp values.
+    *
+    * ASIC gate references (preserved for hardware traceability):
+    *   Bcompselt[0-2] := EO (bcompselt[0-2], icount[0-2], big_pix);
+    *   Bcompbit       := MX8 (bcompbit, srcd[7..0], bcompselt[0..2]);
+    *   Nowt[0..4], Nowrite -- pixel-mode write inhibit
+    *   Winht, Winhibit     -- pipelined write inhibit
+    *   Di0t[0..4]/Dbinh[0] := ANR1P -- byte inhibit with winhibit
+    *   Di1t[0..2]/Dbinh[1] := ANR1
+    *   ...through Di7t[0..2]/Dbinh[7] := NAN2
+    */
+
+   uint8_t bcompselt = (big_pix ? ~icount : icount) & 0x07;
+   bool bcompbit = (srcd >> (7 - bcompselt)) & 0x01;
+   bool winhibit;
+   uint8_t pix16;         /* non-zero when pixsize bit 2 is set (16bpp) */
+   uint8_t zspread;       /* zcomp[0..3] spread: each bit covers a byte-pair */
+   uint8_t dcomp_pair;    /* dcomp adjacent-pair AND for 16bpp mode */
+   uint8_t t0_1_spread;   /* shared 16bpp z+dcomp term, spread to byte pairs */
+   uint8_t bcomp_term;    /* bit comparator: ~srcd where bcompen */
+   uint8_t sdcomp_term;   /* single-byte dcomp: dcomp where !pix16 & dcompen */
+   uint8_t inhibit_all;   /* combined per-byte inhibit before mode gating */
+   uint8_t gated;          /* after phrase_mode / winhibit gating */
+
+   /* nowrite and winhibit (pixel-mode write inhibit) */
+   winhibit = (bcompen && !bcompbit && !phrase_mode)
+      || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
+      || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
+      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
+   *nowrite = winhibit && !bkgwren;
+
+   /* 16-bit pixel mode flag */
+   pix16 = pixsize & 0x04;
+
+   /* Spread zcomp[0..3] to byte pairs: zcomp bit N -> dbinh bits 2N, 2N+1 */
+   zspread = (uint8_t)(
+      ((zcomp & 0x01) ? 0x03 : 0x00) |
+      ((zcomp & 0x02) ? 0x0C : 0x00) |
+      ((zcomp & 0x04) ? 0x30 : 0x00) |
+      ((zcomp & 0x08) ? 0xC0 : 0x00));
+
+   /* dcomp adjacent-pair AND: for 16bpp, both bytes in a 16-bit pixel
+    * must match.  Spread result to both bits of each pair. */
+   dcomp_pair = (uint8_t)(
+      (((dcomp & 0x01) && (dcomp & 0x02)) ? 0x03 : 0x00) |
+      (((dcomp & 0x04) && (dcomp & 0x08)) ? 0x0C : 0x00) |
+      (((dcomp & 0x10) && (dcomp & 0x20)) ? 0x30 : 0x00) |
+      (((dcomp & 0x40) && (dcomp & 0x80)) ? 0xC0 : 0x00));
+
+   /* t0_1: shared 16bpp term = (pix16 & zspread) | (pix16 & dcomp_pair & dcompen) */
+   t0_1_spread = 0;
+   if (pix16)
+      t0_1_spread = zspread | (dcompen ? dcomp_pair : 0);
+
+   /* Bit comparator: inhibit where source bit is 0 and bcompen active */
+   bcomp_term = bcompen ? (uint8_t)(~srcd) : 0;
+
+   /* Single-byte dcomp: for 8bpp (!pix16), each dcomp bit inhibits directly */
+   sdcomp_term = (!pix16 && dcompen) ? dcomp : 0;
+
+   /* Combined per-byte inhibit */
+   inhibit_all = t0_1_spread | bcomp_term | sdcomp_term;
+
+   /* Gate by phrase_mode and winhibit:
+    * Bits 0-3 (ANR1P): inhibit = (term & phrase_mode) | winhibit
+    * Bits 4-7 (NAN2):  inhibit = term & phrase_mode
+    * Output is active-high inhibit (matching the ~dbinh inversion). */
+   if (phrase_mode)
    {
-      addas_x = (addareg ? addar_x : addac_x);
-      addas_y = (addareg ? addar_y : addac_y);
+      gated = inhibit_all;
+      if (winhibit)
+         gated |= 0x0F;
    }
    else
    {
-      addas_x = (addareg ? addar_x : addac_x);
-      addas_y = (addareg ? addar_y : addac_y);
+      gated = 0;
+      if (winhibit)
+         gated |= 0x0F;
    }
 
-   /* Complement these values (complement flag gives adder carry in)*/
-
-	*adda_x = addas_x ^ (suba_x ? 0xFFFF : 0x0000);
-	*adda_y = addas_y ^ (suba_y ? 0xFFFF : 0x0000);
+   *dbinh = gated;
 }
 
-
-/**  ADDBMUX - Address adder input B selection  *******************
-
-This module selects the register to be updated by the address
-adder.  This can be one of three registers, the A1 and A2
-pointers, or the A1 fractional part. It can also be zero, so that the step
-registers load directly into the pointers.
-*/
-
-/*DEF ADDBMUX (
-INT16/	addb_x
-INT16/	addb_y
-	:OUT;
-	addbsel[0..1]
-INT16/	a1_x
-INT16/	a1_y
-INT16/	a2_x
-INT16/	a2_y
-INT16/	a1_frac_x
-INT16/	a1_frac_y
-	:IN);
-INT16/	zero16 :LOCAL;
-BEGIN*/
-void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
-	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
-{
-
-/*Zero		:= TIE0 (zero);
-Zero16		:= JOIN (zero16, zero, zero, zero, zero, zero, zero, zero,
-			zero, zero, zero, zero, zero, zero, zero, zero, zero);
-Addbselb[0-1]	:= BUF8 (addbselb[0-1], addbsel[0-1]);
-Addb_x		:= MX4 (addb_x, a1_x, a2_x, a1_frac_x, zero16, addbselb[0..1]);
-Addb_y		:= MX4 (addb_y, a1_y, a2_y, a1_frac_y, zero16, addbselb[0..1]);*/
-////////////////////////////////////// C++ CODE //////////////////////////////////////
-	int16_t xterm[4], yterm[4];
-	xterm[0] = a1_x, xterm[1] = a2_x, xterm[2] = a1_frac_x, xterm[3] = 0;
-	yterm[0] = a1_y, yterm[1] = a2_y, yterm[2] = a1_frac_y, yterm[3] = 0;
-	*addb_x = xterm[addbsel & 0x03];
-	*addb_y = yterm[addbsel & 0x03];
-//////////////////////////////////////////////////////////////////////////////////////
-
-//END;
-}
-
-
-/**  DATAMUX - Address local data bus selection  ******************
-
-Select between the adder output and the input data bus
-*/
-
-/*DEF DATAMUX (
-INT16/	data_x
-INT16/	data_y
-	:OUT;
-INT32/	gpu_din
-INT16/	addq_x
-INT16/	addq_y
-	addqsel
-	:IN);
-
-INT16/	gpu_lo, gpu_hi
-:LOCAL;
-BEGIN*/
-void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
-{
-   if (addqsel)
-   {
-      *data_x = addq_x;
-      *data_y = addq_y;
-   }
-   else
-   {
-      *data_x = (int16_t)(gpu_din & 0xFFFF);
-      *data_y = (int16_t)(gpu_din >> 16);
-   }
-}
-
-
-/******************************************************************
-addradd
-29/11/90
-
-Blitter Address Adder
----------------------
-The blitter address adder is a pair of sixteen bit adders, one
-each for X and Y.  The multiplexing of the input terms is
-performed elsewhere, but this adder can also perform modulo
-arithmetic to align X-addresses onto phrase boundaries.
-
-modx[0..2] take values
-000	no mask
-001	mask bit 0
-010	mask bits 1-0
-..
-110  	mask bits 5-0
-
-******************************************************************/
-
-void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
-	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
-{
-
-/* Perform the addition */
-
-/*Adder_x		:= ADD16 (addqt_x[0..15], co_x, adda_x{0..15}, addb_x{0..15}, ci_x);
-Adder_y		:= ADD16 (addq_y[0..15], co_y, adda_y{0..15}, addb_y{0..15}, ci_y);*/
-
-/* latch carry and propagate if required */
-
-/*Cxt0		:= AN2 (cxt[0], co_x, a1fracldi);
-Cxt1		:= FD1Q (cxt[1], cxt[0], clk[0]);
-Ci_x		:= EO (ci_x, cxt[1], suba_x);
-
-yt0			:= AN2 (cyt[0], co_y, a1fracldi);
-Cyt1		:= FD1Q (cyt[1], cyt[0], clk[0]);
-Ci_y		:= EO (ci_y, cyt[1], suba_y);*/
-
-////////////////////////////////////// C++ CODE //////////////////////////////////////
-//I'm sure the following will generate a bunch of warnings, but will have to do for now.
-	static uint16_t co_x = 0, co_y = 0;	// Carry out has to propogate between function calls...
-	uint16_t ci_x = co_x ^ (suba_x ? 1 : 0);
-	uint16_t ci_y = co_y ^ (suba_y ? 1 : 0);
-	uint32_t addqt_x = adda_x + addb_x + ci_x;
-	uint32_t addqt_y = adda_y + addb_y + ci_y;
-	uint16_t mask[8] = { 0xFFFF, 0xFFFE, 0xFFFC, 0xFFF8, 0xFFF0, 0xFFE0, 0xFFC0, 0x0000 };
-	co_x = ((addqt_x & 0x10000) && a1fracldi ? 1 : 0);
-	co_y = ((addqt_y & 0x10000) && a1fracldi ? 1 : 0);
-//////////////////////////////////////////////////////////////////////////////////////
-
-/* Mask low bits of X to 0 if required */
-
-/*Masksel		:= D38H (unused[0], masksel[0..4], maskbit[5], unused[1], modx[0..2]);
-
-Maskbit[0-4]	:= OR2 (maskbit[0-4], masksel[0-4], maskbit[1-5]);
-
-Mask[0-5]	:= MX2 (addq_x[0-5], addqt_x[0-5], zero, maskbit[0-5]);
-
-Addq_x		:= JOIN (addq_x, addq_x[0..5], addqt_x[6..15]);
-Addq_y		:= JOIN (addq_y, addq_y[0..15]);*/
-
-////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*addq_x = addqt_x & mask[modx];
-	*addq_y = addqt_y & 0xFFFF;
-//////////////////////////////////////////////////////////////////////////////////////
-
-//Unused[0-1]	:= DUMMY (unused[0-1]);
-
-//END;
-}
-
-
-/*
-DEF DATA (
-		wdata[0..63]	// co-processor write data bus
-		:BUS;
-		dcomp[0..7]		// data byte equal flags
-		srcd[0..7]		// bits to use for bit to byte expansion
-		zcomp[0..3]		// output from Z comparators
-		:OUT;
-		a1_x[0..1]		// low two bits of A1 X pointer
-		big_pix			// pixel organisation is big-endian
-		blitter_active	// blitter is active
-		clk				// co-processor clock
-		cmpdst			// compare dest rather than source
-		colorld			// load the pattern color fields
-		daddasel[0..2]	// data adder input A selection
-		daddbsel[0..3]	// data adder input B selection
-		daddmode[0..2]	// data adder mode
-		daddq_sel		// select adder output vs. GPU data
-		data[0..63]		// co-processor read data bus
-		data_ena		// enable write data
-		data_sel[0..1]	// select data to write
-		dbinh\[0..7]	// byte oriented changed data inhibits
-		dend[0..5]		// end of changed write data zone
-		dpipe[0..1]		// load computed data pipe-line latch
-		dstart[0..5]	// start of changed write data zone
-		dstdld[0..1]	// dest data load (two halves)
-		dstzld[0..1]	// dest zed load (two halves)
-		ext_int			// enable extended precision intensity calculations
-INT32/	gpu_din			// GPU data bus
-		iincld			// I increment load
-		iincldx			// alternate I increment load
-		init_if			// initialise I fraction phase
-		init_ii			// initialise I integer phase
-		init_zf			// initialise Z fraction phase
-		intld[0..3]		// computed intensities load
-		istepadd		// intensity step integer add
-		istepfadd		// intensity step fraction add
-		istepld			// I step load
-		istepdld		// I step delta load
-		lfu_func[0..3]	// LFU function code
-		patdadd			// pattern data gouraud add
-		patdld[0..1]	// pattern data load (two halves)
-		pdsel[0..1]		// select pattern data type
-		phrase_mode		// phrase write mode
-		reload			// transfer contents of double buffers
-		reset\			// system reset
-		srcd1ld[0..1]	// source register 1 load (two halves)
-		srcdread		// source data read load enable
-		srczread		// source zed read load enable
-		srcshift[0..5]	// source alignment shift
-		srcz1ld[0..1]	// source zed 1 load (two halves)
-		srcz2add		// zed fraction gouraud add
-		srcz2ld[0..1]	// source zed 2 load (two halves)
-		textrgb			// texture mapping in RGB mode
-		txtd[0..63]		// data from the texture unit
-		zedld[0..3]		// computed zeds load
-		zincld			// Z increment load
-		zmode[0..2]		// Z comparator mode
-		zpipe[0..1]		// load computed zed pipe-line latch
-		zstepadd		// zed step integer add
-		zstepfadd		// zed step fraction add
-		zstepld			// Z step load
-		zstepdld		// Z step delta load
-		:IN);
-*/
-
+static BLITTER_ALWAYS_INLINE
 void DATA(uint64_t *wdata, uint8_t *dcomp, uint8_t *zcomp, bool *nowrite,
 	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
 	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t *patd, bool patdadd,
@@ -2617,24 +1533,43 @@ Sfine		:= DECH38EL (s_fine[0..7], dstart[0..2], sfen\);*/
 /*Maskt[0]	:= BUF1 (maskt[0], s_fine[0]);
 Maskt[1-7]	:= OAN1P (maskt[1-7], maskt[0-6], s_fine[1-7], e_fine\[1-7]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	maskt = s_fine & 0x0001;
-	maskt |= (((maskt & 0x0001) || (s_fine & 0x02u)) && (e_fine & 0x02u) ? 0x0002 : 0x0000);
-	maskt |= (((maskt & 0x0002) || (s_fine & 0x04u)) && (e_fine & 0x04u) ? 0x0004 : 0x0000);
-	maskt |= (((maskt & 0x0004) || (s_fine & 0x08u)) && (e_fine & 0x08u) ? 0x0008 : 0x0000);
-	maskt |= (((maskt & 0x0008) || (s_fine & 0x10u)) && (e_fine & 0x10u) ? 0x0010 : 0x0000);
-	maskt |= (((maskt & 0x0010) || (s_fine & 0x20u)) && (e_fine & 0x20u) ? 0x0020 : 0x0000);
-	maskt |= (((maskt & 0x0020) || (s_fine & 0x40u)) && (e_fine & 0x40u) ? 0x0040 : 0x0000);
-	maskt |= (((maskt & 0x0040) || (s_fine & 0x80u)) && (e_fine & 0x80u) ? 0x0080 : 0x0000);
-//////////////////////////////////////////////////////////////////////////////////////
+	/* Parallel prefix (Kogge-Stone) replaces the 15-step serial
+	 * OAN1P ripple carry with O(log n) branchless shift-and-combine steps.
+	 *
+	 * The carry chain is: maskt[n] = (maskt[n-1] | s[n]) & e[n]
+	 * which is a generate-propagate network:
+	 *   generate  g[n] = s[n] & e[n]   (bit starts a new run)
+	 *   propagate p[n] = e[n]           (bit allows carry through)
+	 *   carry     c[n] = g[n] | (p[n] & c[n-1])
+	 * Bit 0 is special: g[0] = s_fine[0], p[0] = 1 (no gate).
+	 *
+	 * Verified bit-exact for all 4096 dstart/dend combinations. */
+	{
+		uint16_t fg, fp, cg, cp;
 
-   /* Produce a look-ahead on the ripple carry */
-	maskt |= (((s_coarse & e_coarse & 0x01u) || (s_coarse & 0x02u)) && (e_coarse & 0x02u) ? 0x0100 : 0x0000);
-	maskt |= (((maskt & 0x0100) || (s_coarse & 0x04u)) && (e_coarse & 0x04u) ? 0x0200 : 0x0000);
-	maskt |= (((maskt & 0x0200) || (s_coarse & 0x08u)) && (e_coarse & 0x08u) ? 0x0400 : 0x0000);
-	maskt |= (((maskt & 0x0400) || (s_coarse & 0x10u)) && (e_coarse & 0x10u) ? 0x0800 : 0x0000);
-	maskt |= (((maskt & 0x0800) || (s_coarse & 0x20u)) && (e_coarse & 0x20u) ? 0x1000 : 0x0000);
-	maskt |= (((maskt & 0x1000) || (s_coarse & 0x40u)) && (e_coarse & 0x40u) ? 0x2000 : 0x0000);
-	maskt |= (((maskt & 0x2000) || (s_coarse & 0x80u)) && (e_coarse & 0x80u) ? 0x4000 : 0x0000);
+		/* Fine section (bits 0-7) */
+		fg = (uint16_t)(s_fine & e_fine) | (uint16_t)(s_fine & 0x01u);
+		fp = (uint16_t)e_fine | 0x01u;
+
+		fg  |= fp & (fg << 1);
+		fp  &= (fp << 1);
+		fg  |= fp & (fg << 2);
+		fp  &= (fp << 2);
+		fg  |= fp & (fg << 4);
+		maskt = fg & 0x00FFu;
+
+		/* Coarse section (bits 8-14): same pattern,
+		 * seed = s_coarse & e_coarse, propagate = e_coarse */
+		cg = (uint16_t)(s_coarse & e_coarse);
+		cp = (uint16_t)e_coarse;
+
+		cg  |= cp & (cg << 1);
+		cp  &= (cp << 1);
+		cg  |= cp & (cg << 2);
+		cp  &= (cp << 2);
+		cg  |= cp & (cg << 4);
+		maskt |= (cg & 0x00FEu) << 7;
+	}
 
 /* The bit terms are mirrored for big-endian pixels outside phrase
 mode.  The byte terms are mirrored for big-endian pixels in phrase
@@ -2744,6 +1679,1950 @@ Unused[0]	:= DUMMY (unused[0]);
 END;*/
 }
 
+#ifdef BLITTER_TRACE
+#include <mach/mach_time.h>
+#include <stdio.h>
+static double bm2_trace_threshold_ms = 0.3; /* dump any blit slower than this */
+static uint64_t bm2_trace_t0;
+#endif
+
+void BlitterMidsummer2(void)
+{
+   uint32_t cmd = (PERF_INC(blitter_calls), GET32(blitter_ram, COMMAND));
+#ifdef BLITTER_TRACE
+   bm2_trace_t0 = mach_absolute_time();
+#endif
+
+
+   // Line states passed in via the command register
+
+   bool srcen = (SRCEN), srcenx = (SRCENX), srcenz = (SRCENZ),
+        dsten = (DSTEN), dstenz = (DSTENZ), dstwrz = (DSTWRZ), clip_a1 = (CLIPA1),
+        upda1 = (UPDA1), upda1f = (UPDA1F), upda2 = (UPDA2), dsta2 = (DSTA2),
+        gourd = (GOURD), gourz = (GOURZ), topben = (TOPBEN), topnen = (TOPNEN),
+        patdsel = (PATDSEL), adddsel = (ADDDSEL), cmpdst = (CMPDST), bcompen = (BCOMPEN),
+        dcompen = (DCOMPEN), bkgwren = (BKGWREN), srcshade = (SRCSHADE);
+
+   uint8_t zmode = (cmd & 0x01C0000) >> 18, lfufunc = (cmd & 0x1E00000) >> 21;
+   //Missing: BUSHI
+   //Where to find various lines:
+   // clip_a1  -> inner
+   // gourd    -> dcontrol, inner, outer, state
+   // gourz    -> dcontrol, inner, outer, state
+   // cmpdst   -> blit, data, datacomp, state
+   // bcompen  -> acontrol, inner, mcontrol, state
+   // dcompen  -> inner, state
+   // bkgwren  -> inner, state
+   // srcshade -> dcontrol, inner, state
+   // adddsel  -> dcontrol
+   //NOTE: ADDDSEL takes precedence over PATDSEL, PATDSEL over LFU_FUNC
+
+   // Lines that don't exist in Jaguar I (and will never be asserted)
+
+   bool polygon = false, datinit = false, a1_stepld = false, a2_stepld = false, ext_int = false;
+   bool istepadd = false, istepfadd = false;
+   bool zstepfadd = false, zstepadd = false;
+
+   // Various state lines (initial state--basically the reset state of the FDSYNCs)
+
+   bool go = true, idle = true, inner = false, a1fupdate = false, a1update = false,
+        zfupdate = false, zupdate = false, a2update = false, init_if = false, init_ii = false,
+        init_zf = false, init_zi = false;
+
+   bool outer0 = false, indone = false;
+
+   bool idlei, inneri, a1fupdatei, a1updatei, zfupdatei, zupdatei, a2updatei, init_ifi, init_iii,
+        init_zfi, init_zii;
+
+   bool notgzandp = !(gourz && polygon);
+
+
+   // Various registers set up by user
+
+   uint16_t ocount = GET16(blitter_ram, PIXLINECOUNTER);
+   uint8_t a1_pitch = blitter_ram[A1_FLAGS + 3] & 0x03;
+   uint8_t a2_pitch = blitter_ram[A2_FLAGS + 3] & 0x03;
+   uint8_t a1_pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
+   uint8_t a2_pixsize = (blitter_ram[A2_FLAGS + 3] & 0x38) >> 3;
+   uint8_t a1_zoffset = (GET16(blitter_ram, A1_FLAGS + 2) >> 6) & 0x07;
+   uint8_t a2_zoffset = (GET16(blitter_ram, A2_FLAGS + 2) >> 6) & 0x07;
+   uint8_t a1_width = (blitter_ram[A1_FLAGS + 2] >> 1) & 0x3F;
+   uint8_t a2_width = (blitter_ram[A2_FLAGS + 2] >> 1) & 0x3F;
+   uint8_t a1addx = blitter_ram[A1_FLAGS + 1] & 0x03, a2addx = blitter_ram[A2_FLAGS + 1] & 0x03;
+   bool a1addy = blitter_ram[A1_FLAGS + 1] & 0x04, a2addy = blitter_ram[A2_FLAGS + 1] & 0x04;
+   bool a1xsign = blitter_ram[A1_FLAGS + 1] & 0x08, a2xsign = blitter_ram[A2_FLAGS + 1] & 0x08;
+   bool a1ysign = blitter_ram[A1_FLAGS + 1] & 0x10, a2ysign = blitter_ram[A2_FLAGS + 1] & 0x10;
+   uint32_t a1_base = GET32(blitter_ram, A1_BASE) & 0xFFFFFFF8;	// Phrase aligned by ignoring bottom 3 bits
+   uint32_t a2_base = GET32(blitter_ram, A2_BASE) & 0xFFFFFFF8;
+
+   uint16_t a1_win_x = GET16(blitter_ram, A1_CLIP + 2) & 0x7FFF;
+   uint16_t a1_win_y = GET16(blitter_ram, A1_CLIP + 0) & 0x7FFF;
+   int16_t a1_x = (int16_t)GET16(blitter_ram, A1_PIXEL + 2);
+   int16_t a1_y = (int16_t)GET16(blitter_ram, A1_PIXEL + 0);
+   int16_t a1_step_x = (int16_t)GET16(blitter_ram, A1_STEP + 2);
+   int16_t a1_step_y = (int16_t)GET16(blitter_ram, A1_STEP + 0);
+   uint16_t a1_stepf_x = GET16(blitter_ram, A1_FSTEP + 2);
+   uint16_t a1_stepf_y = GET16(blitter_ram, A1_FSTEP + 0);
+   uint16_t a1_frac_x = GET16(blitter_ram, A1_FPIXEL + 2);
+   uint16_t a1_frac_y = GET16(blitter_ram, A1_FPIXEL + 0);
+   int16_t a1_inc_x = (int16_t)GET16(blitter_ram, A1_INC + 2);
+   int16_t a1_inc_y = (int16_t)GET16(blitter_ram, A1_INC + 0);
+   uint16_t a1_incf_x = GET16(blitter_ram, A1_FINC + 2);
+   uint16_t a1_incf_y = GET16(blitter_ram, A1_FINC + 0);
+
+   int16_t a2_x = (int16_t)GET16(blitter_ram, A2_PIXEL + 2);
+   int16_t a2_y = (int16_t)GET16(blitter_ram, A2_PIXEL + 0);
+#if 0
+   bool a2_mask = blitter_ram[A2_FLAGS + 2] & 0x80;
+   uint16_t a2_mask_x = GET16(blitter_ram, A2_MASK + 2);
+   uint16_t a2_mask_y = GET16(blitter_ram, A2_MASK + 0);
+   uint32_t collision = GET32(blitter_ram, COLLISIONCTRL);// 0=RESUME, 1=ABORT, 2=STOPEN
+#endif
+   int16_t a2_step_x = (int16_t)GET16(blitter_ram, A2_STEP + 2);
+   int16_t a2_step_y = (int16_t)GET16(blitter_ram, A2_STEP + 0);
+
+   uint64_t srcd1 = GET64(blitter_ram, SRCDATA);
+   uint64_t srcd2 = 0;
+   uint64_t dstd = GET64(blitter_ram, DSTDATA);
+   uint64_t patd = GET64(blitter_ram, PATTERNDATA);
+   uint32_t iinc = GET32(blitter_ram, INTENSITYINC);
+   uint64_t srcz1 = GET64(blitter_ram, SRCZINT);
+   uint64_t srcz2 = GET64(blitter_ram, SRCZFRAC);
+   uint64_t dstz = GET64(blitter_ram, DSTZ);
+   uint32_t zinc = GET32(blitter_ram, ZINC);
+
+   uint8_t pixsize = (dsta2 ? a2_pixsize : a1_pixsize);	// From ACONTROL
+
+   bool phrase_mode;
+   uint16_t a1FracCInX = 0, a1FracCInY = 0;
+
+   // Bugs in Jaguar I
+
+   a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
+
+   // Various state lines set up by user
+
+   phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
+
+   // Stopgap vars to simulate various lines
+
+
+   while (true)
+   {
+      PERF_INC(blitter_outer);
+      // IDLE
+
+      if ((idle && !go) || (inner && outer0 && indone))
+      {
+         idlei = true;
+
+         //Instead of a return, let's try breaking out of the loop...
+         break;
+      }
+      else
+         idlei = false;
+
+      // INNER LOOP ACTIVE
+
+      if ((idle && go && !datinit)
+            || (inner && !indone)
+            || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && !datinit)
+            || (a1update && !upda2 && notgzandp && !datinit)
+            || (zupdate && !upda2 && !datinit)
+            || (a2update && !datinit)
+            || (init_ii && !gourz)
+            || (init_zi))
+         inneri = true;
+      else
+         inneri = false;
+
+      // A1 FRACTION UPDATE
+
+      if (inner && indone && !outer0 && upda1f)
+         a1fupdatei = true;
+      else
+         a1fupdatei = false;
+
+      // A1 POINTER UPDATE
+
+      if ((a1fupdate)
+            || (inner && indone && !outer0 && !upda1f && upda1))
+         a1updatei = true;
+      else
+         a1updatei = false;
+
+      // Z FRACTION UPDATE
+
+      if ((a1update && gourz && polygon)
+            || (inner && indone && !outer0 && !upda1f && !upda1 && gourz && polygon))
+         zfupdatei = true;
+      else
+         zfupdatei = false;
+
+      // Z INTEGER UPDATE
+
+      if (zfupdate)
+         zupdatei = true;
+      else
+         zupdatei = false;
+
+      // A2 POINTER UPDATE
+
+      if ((a1update && upda2 && notgzandp)
+            || (zupdate && upda2)
+            || (inner && indone && !outer0 && !upda1f && notgzandp && !upda1 && upda2))
+         a2updatei = true;
+      else
+         a2updatei = false;
+
+      // INITIALIZE INTENSITY FRACTION
+
+      if ((zupdate && !upda2 && datinit)
+            || (a1update && !upda2 && datinit && notgzandp)
+            || (inner && indone && !outer0 && !upda1f && !upda1 && notgzandp && !upda2 && datinit)
+            || (a2update && datinit)
+            || (idle && go && datinit))
+         init_ifi = true;
+      else
+         init_ifi = false;
+
+      // INITIALIZE INTENSITY INTEGER
+
+      if (init_if)
+         init_iii = true;
+      else
+         init_iii = false;
+
+      // INITIALIZE Z FRACTION
+
+      if (init_ii && gourz)
+         init_zfi = true;
+      else
+         init_zfi = false;
+
+      // INITIALIZE Z INTEGER
+
+      if (init_zf)
+         init_zii = true;
+      else
+         init_zii = false;
+
+      // Here we move the fooi into their foo counterparts in order to simulate the moving
+      // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
+
+      idle = idlei;
+      inner = inneri;
+      a1fupdate = a1fupdatei;
+      a1update = a1updatei;
+      zfupdate = zfupdatei;		// *
+      zupdate = zupdatei;			// *
+      a2update = a2updatei;
+      init_if = init_ifi;			// *
+      init_ii = init_iii;			// *
+      init_zf = init_zfi;			// *
+      init_zi = init_zii;			// *
+      // * denotes states that will never assert for Jaguar I
+
+      // Now, depending on how we want to handle things, we could either put the implementation
+      // of the various pieces up above, or handle them down below here.
+
+      // Let's try postprocessing for now...
+
+      if (inner)
+      {
+         bool idle_inner = true, sreadx = false, szreadx = false, sread = false,
+              szread = false, dread = false, dzread = false, dwrite = false, dzwrite = false;
+         bool inner0 = false;
+         bool idle_inneri, sreadxi, szreadxi, sreadi, szreadi, dreadi, dzreadi, dwritei, dzwritei;
+         //other stuff
+         uint8_t srcshift = 0;
+         uint16_t icount = GET16(blitter_ram, PIXLINECOUNTER + 2);
+         bool srca_addi, dsta_addi, gensrc, gendst, gena2i, zaddr, fontread, justify, a1_add, a2_add;
+         bool adda_yconst, addareg, suba_x, suba_y, a1fracldi, shadeadd;
+         uint8_t addasel, a1_xconst, a2_xconst, adda_xconst, addbsel, maska1, maska2, modx, daddasel;
+         uint8_t daddbsel, daddmode;
+         bool patfadd, patdadd, srcz2add, daddq_sel;
+         uint8_t data_sel;
+         uint32_t address, pixAddr;
+         uint8_t dstxp;
+         uint64_t srcz = 0;
+         bool winhibit;
+         uint32_t a1_ya_cached, a2_ya_cached;
+
+         indone = false;
+
+         /* Precompute y*width row offsets (invariant when y unchanged) */
+         a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+         a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+
+         /* Precompute address constants (invariant during inner loop) */
+         a1_xconst = 6 - a1_pixsize;
+         a2_xconst = 6 - a2_pixsize;
+         if (a1addx == 1)
+            a1_xconst = 0;
+         else if (a1addx & 0x02)
+            a1_xconst = 7;
+         if (a2addx == 1)
+            a2_xconst = 0;
+         else if (a2addx & 0x02)
+            a2_xconst = 7;
+
+         /* Precompute srcshift — loaded on first inner cycle (sshftld),
+            then held constant for all subsequent cycles. */
+         {
+            uint8_t dstxp0, srcxp0, shftv0, pobb0, loshd0;
+            bool pobbsel0;
+
+            dstxp0 = (dsta2 ? a2_x : a1_x) & 0x3F;
+            srcxp0 = (dsta2 ? a1_x : a2_x) & 0x3F;
+            shftv0 = ((dstxp0 - srcxp0) << pixsize) & 0x3F;
+            pobb0 = 0;
+            if (pixsize == 3)
+               pobb0 = dstxp0 & 0x07;
+            else if (pixsize == 4)
+               pobb0 = dstxp0 & 0x03;
+            else if (pixsize == 5)
+               pobb0 = dstxp0 & 0x01;
+
+            pobbsel0 = phrase_mode && bcompen;
+            loshd0 = (pobbsel0 ? pobb0 : shftv0) & 0x07;
+            srcshift = (srcen || pobbsel0 ? loshd0 : 0);
+            srcshift |= (srcen && phrase_mode ? shftv0 & 0x38 : 0);
+         }
+
+         /*=================================================================
+          * COLLAPSED INNER LOOP — PATTERN FILL
+          *
+          * Conditions: PATDSEL set, SRCEN/SRCENX/DSTEN/DSTENZ/DSTWRZ off,
+          * no GOURD/GOURZ/SRCSHADE (pure pattern fill only).
+          *
+          * The hardware state machine takes 2 cycles per pixel for this
+          * config (idle_inner -> dwrite).  This collapsed path does exactly
+          * the same work in 1 iteration: ADDRGEN, dstart/dend masks, DATA
+          * (patd passthrough), write, address step, icount decrement.
+          *
+          * The existing state machine is the fallback for all other configs.
+          *=================================================================*/
+         if (patdsel && !srcen && !srcenx && !dsten && !dstenz && !dstwrz
+               && !gourd && !gourz && !srcshade && !adddsel
+               && !bcompen && !dcompen && !a2update && zmode == 0)
+         {
+            /* Collapsed-path local variables (C89: all at top of block) */
+            bool pf_a1_add, pf_a2_add;
+            bool pf_gena2i;
+            bool pf_justify;
+            uint8_t pf_addasel, pf_adda_xconst, pf_addbsel, pf_modx;
+            bool pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y, pf_a1fracldi;
+            uint8_t pf_maska1, pf_maska2;
+
+            /* For pattern fill dwrite: dsta_addi=true, srca_addi=false.
+               Destination pointer (A1 if !dsta2, A2 if dsta2) steps. */
+            pf_a1_add = !dsta2;
+            pf_a2_add = dsta2;
+            pf_gena2i = dsta2;
+
+            /* justify = !(!fontread && phrase_mode).
+               fontread = (sread||sreadx) && bcompen; eligibility excludes
+               bcompen/srcen/srcenx so fontread is always false here. */
+            pf_justify = !phrase_mode;
+
+            /* Precompute address-adder decode (invariant for entire inner loop).
+               These mirror the decode at lines 2131-2212 for the dwrite state. */
+            pf_addasel = (pf_a1_add && a1addx == 3 ? 0x03 : 0x00);
+            pf_addasel |= (a2update ? 0x04 : 0x00);
+            pf_adda_xconst = (pf_a2_add ? a2_xconst : a1_xconst);
+            pf_adda_yconst = (pf_a2_add ? a2addy : a1addy);
+            pf_addareg = ((pf_a1_add && a1addx == 3) || (pf_a2_add && a2addx == 3)
+                  ? true : false);
+            pf_suba_x = ((pf_a1_add && a1xsign && a1addx == 1)
+                  || (pf_a2_add && a2xsign && a2addx == 1) ? true : false);
+            pf_suba_y = ((pf_a1_add && a1addy && a1ysign)
+                  || (pf_a2_add && a2addy && a2ysign) ? true : false);
+            pf_addbsel = (pf_a2_add ? 0x01 : 0x00);
+            pf_addbsel |= (pf_a1_add && a1addx == 3 ? 0x02 : 0x00);
+            pf_maska1 = (pf_a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
+            pf_maska2 = (pf_a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
+            pf_modx = (pf_a2_add ? pf_maska2 : pf_maska1);
+            pf_a1fracldi = (pf_a1_add && a1addx == 3);
+
+            while (true)
+            {
+               /* Per-pixel locals (C89: all at top) */
+               uint8_t pf_inc, pf_dstart, pf_ppp;
+               uint16_t pf_oldicount, pf_dstxwr, pf_pseq;
+               bool pf_penden;
+               uint8_t pf_window_mask, pf_inner_mask, pf_emask, pf_dend;
+               uint8_t pf_pma;
+               uint64_t pf_wdata;
+               uint8_t pf_dcomp, pf_zcomp;
+               bool pf_winhibit;
+               uint64_t pf_dstd_local;
+
+               PERF_INC(blitter_inner);
+
+               /* ---- ADDRGEN for destination ---- */
+               ADDRGEN(&address, &pixAddr, pf_gena2i, false/*zaddr*/,
+                     a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                     a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                     a1_ya_cached, a2_ya_cached);
+
+               /* Phrase-align address: matches state machine's `if (!justify)`.
+                  For patfill (fontread=false), !justify == phrase_mode. */
+               if (!pf_justify)
+                  address &= 0xFFFFF8;
+
+               dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+
+               /* ---- icount decrement (same as dwrite state) ---- */
+               pf_ppp = 64 >> pixsize;
+               if (phrase_mode)
+                  pf_inc = pf_ppp - ((dsta2 ? a2_x : a1_x) & (pf_ppp - 1));
+               else
+                  pf_inc = 1;
+
+               pf_oldicount = icount;
+               icount -= pf_inc;
+
+               if (icount == 0 || ((icount & 0x8000) && !(pf_oldicount & 0x8000)))
+                  inner0 = true;
+
+               /* ---- dstart/dend mask computation ---- */
+               if (phrase_mode)
+                  pf_dstart = (dstxp & (pf_ppp - 1)) << pixsize;
+               else
+                  pf_dstart = pixAddr & 0x07;
+
+               pf_dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               pf_pseq = pf_dstxwr ^ (a1_win_x & 0x7FFE);
+               pf_pseq = (pixsize == 5 ? pf_pseq : pf_pseq & 0x7FFC);
+               pf_pseq = ((pixsize & 0x06) == 4 ? pf_pseq : pf_pseq & 0x7FF8);
+               pf_penden = clip_a1 && (pf_pseq == 0);
+
+               if (pf_penden)
+                  pf_window_mask = (a1_win_x & (pf_ppp - 1)) << pixsize;
+               else
+                  pf_window_mask = 0;
+
+               if (inner0)
+                  pf_inner_mask = (icount & (pf_ppp - 1)) << pixsize;
+               else
+                  pf_inner_mask = 0;
+
+               pf_window_mask = (pf_window_mask == 0 ? 0x40 : pf_window_mask);
+               pf_inner_mask = (pf_inner_mask == 0 ? 0x40 : pf_inner_mask);
+               pf_emask = (pf_window_mask > pf_inner_mask ? pf_inner_mask : pf_window_mask);
+               pf_pma = pixAddr + (1 << pixsize);
+               pf_dend = (phrase_mode ? pf_emask : pf_pma);
+
+               /* Implicit dest read for phrase-mode byte merging.
+                * When bkgwren is set, use the DSTDATA register value (dstd) as the
+                * background — matching the state machine, where !dsten skips dread
+                * and dstd retains its register-init value. */
+               if (bkgwren)
+                  pf_dstd_local = dstd;
+               else if (phrase_mode)
+                  pf_dstd_local = ((uint64_t)blitter_read_long(address) << 32)
+                     | (uint64_t)blitter_read_long(address + 4);
+               else if (pixsize < 3)
+                  pf_dstd_local = (uint64_t)blitter_read_byte(address);
+               else
+                  pf_dstd_local = 0;
+
+               /* ---- DATA: patd passthrough with masking ---- */
+               /* For pure patfill (!gourd,!gourz,!srcshade): daddasel=0,
+                  daddbsel=0, patdadd=false, daddq_sel=false, data_sel=0.
+                  daddmode: bit0=1 (!gourd&&!gourz), bit1=!topben,
+                  bit2=1 (!gourd&&!gourz).  patdadd=false so ADDARRAY
+                  result is discarded — daddmode value is functionally
+                  irrelevant, but we compute it identically. */
+               DATA(&pf_wdata, &pf_dcomp, &pf_zcomp, &pf_winhibit,
+                     true/*big_pix*/, cmpdst,
+                     0/*daddasel*/, 0/*daddbsel*/,
+                     (uint8_t)(0x05 | (topben ? 0x00 : 0x02))/*daddmode*/,
+                     false/*daddq_sel*/,
+                     0/*data_sel*/, 0/*dbinh*/, pf_dend, pf_dstart, pf_dstd_local,
+                     iinc, lfufunc, &patd, false/*patdadd*/,
+                     phrase_mode, 0/*srcd*/, false/*srcdread*/, false/*srczread*/,
+                     false/*srcz2add*/, zmode,
+                     bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
+                     &srcz, dstz, zinc);
+
+               /* ---- Window clipping (CLIP_A1) ---- */
+               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000)
+                     || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+                  pf_winhibit = true;
+
+               /* ---- Write pixel/phrase ---- */
+               PERF_INC(blitter_phrase_writes);
+               if (!pf_winhibit || bkgwren)
+               {
+                  if (phrase_mode)
+                  {
+                     blitter_write_long(address + 0, pf_wdata >> 32);
+                     blitter_write_long(address + 4, pf_wdata & 0xFFFFFFFF);
+                  }
+                  else
+                  {
+                     if (pixsize == 5)
+                        blitter_write_long(address, pf_wdata & 0xFFFFFFFF);
+                     else if (pixsize == 4)
+                        blitter_write_word(address, pf_wdata & 0x0000FFFF);
+                     else
+                        blitter_write_byte(address, pf_wdata & 0x000000FF);
+                  }
+               }
+
+               /* ---- Address stepping (same ADDAMUX/ADDBMUX/ADDRADD chain) ---- */
+               if (pf_a1_add)
+               {
+                  int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
+                  ADDAMUX(&adda_x, &adda_y, pf_addasel,
+                        a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                        a2_step_x, a2_step_y, a1_inc_x, a1_inc_y,
+                        a1_incf_x, a1_incf_y, pf_adda_xconst,
+                        pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y);
+                  ADDBMUX(&addb_x, &addb_y, pf_addbsel,
+                        a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(&addq_x, &addq_y, pf_a1fracldi,
+                        adda_x, adda_y, addb_x, addb_y,
+                        pf_modx, pf_suba_x, pf_suba_y);
+
+                  if (a1addx == 3)
+                  {
+                     a1_frac_x = addq_x;
+                     a1_frac_y = addq_y;
+                     ADDAMUX(&adda_x, &adda_y, 2/*addasel*/,
+                           a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                           a2_step_x, a2_step_y, a1_inc_x, a1_inc_y,
+                           a1_incf_x, a1_incf_y, pf_adda_xconst,
+                           pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y);
+                     ADDBMUX(&addb_x, &addb_y, 0/*addbsel*/,
+                           a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                     ADDRADD(&addq_x, &addq_y, false/*a1fracldi*/,
+                           adda_x, adda_y, addb_x, addb_y,
+                           pf_modx, pf_suba_x, pf_suba_y);
+                     a1_x = addq_x;
+                     if (addq_y != a1_y)
+                     {
+                        a1_y = addq_y;
+                        a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                     }
+                  }
+                  else
+                  {
+                     a1_x = addq_x;
+                     if (addq_y != a1_y)
+                     {
+                        a1_y = addq_y;
+                        a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                     }
+                  }
+               }
+
+               if (pf_a2_add)
+               {
+                  int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
+                  ADDAMUX(&adda_x, &adda_y, pf_addasel,
+                        a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                        a2_step_x, a2_step_y, a1_inc_x, a1_inc_y,
+                        a1_incf_x, a1_incf_y, pf_adda_xconst,
+                        pf_adda_yconst, pf_addareg, pf_suba_x, pf_suba_y);
+                  ADDBMUX(&addb_x, &addb_y, pf_addbsel,
+                        a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(&addq_x, &addq_y, pf_a1fracldi,
+                        adda_x, adda_y, addb_x, addb_y,
+                        pf_modx, pf_suba_x, pf_suba_y);
+                  a2_x = addq_x;
+                  if (addq_y != a2_y)
+                  {
+                     a2_y = addq_y;
+                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  }
+               }
+
+               /* ---- Check if inner loop is done ---- */
+               if (inner0)
+                  break;
+            }
+
+            /* Skip the state machine — collapsed path handled everything */
+            goto patfill_inner_done;
+         }
+
+         /*=================================================================
+          * FAST PATH: Collapsed inner loop for simple copy blits.
+          *
+          * Eligibility: SRCEN set, no SRCENX/SRCENZ/DSTEN/DSTENZ/DSTWRZ,
+          * no BCOMPEN/DCOMPEN/GOURD/GOURZ/SRCSHADE/ADDDSEL/PATDSEL.
+          * This covers the idle_inner -> sread -> dwrite state chain,
+          * collapsing 3 state-machine iterations per pixel into 1.
+          *
+          * The collapsed loop performs identical work to the state machine:
+          *   1. ADDRGEN for source, JaguarReadLong (sread)
+          *   2. Source shift/alignment (srcd1/srcd2 pipeline)
+          *   3. ADDRGEN for destination, compute dstart/dend masks
+          *   4. DATA function (LFU + byte merge)
+          *   5. CLIP_A1 window check
+          *   6. Write pixel/phrase
+          *   7. Step both A1 and A2 addresses
+          *   8. Decrement icount, check inner0
+          *=================================================================*/
+         if (srcen && !srcenx && !srcenz && !dsten && !dstenz && !dstwrz
+               && !bcompen && !dcompen && !gourd && !gourz && !srcshade
+               && !adddsel && !patdsel && zmode == 0
+               && a1addx != 3 && a2addx != 3)
+         {
+            /* Pre-decode values that are invariant across the inner loop.
+             * For a simple copy with no fractional increment:
+             *   - source pointer is A2 (if !dsta2) or A1 (if dsta2)
+             *   - dest pointer is A1 (if !dsta2) or A2 (if dsta2)
+             *   - data_sel = 1 (LFU, since !patdsel && !adddsel)
+             *   - daddasel/daddbsel/daddmode are constant (no gourd/srcshade)
+             *   - patfadd = false, patdadd = false
+             */
+            uint8_t fc_ppp = 64 >> pixsize;
+            /* Source stepping decode: when stepping the source ptr,
+             * a1_add/a2_add depend on dsta2, and the ADDAMUX/ADDBMUX
+             * selects depend on which channel is being stepped.
+             *
+             * For the source step (!dsta2 => a2_add, dsta2 => a1_add):
+             *   addasel = 0, addbsel = (!dsta2 ? 1 : 0)
+             *   adda_xconst = source channel's xconst
+             *   modx = source channel's mask
+             *   addareg/a1fracldi = false (no XADDINC for simple copy)
+             *   suba_x/suba_y from source channel's sign bits
+             *
+             * For the dest step (!dsta2 => a1_add, dsta2 => a2_add):
+             *   addasel = 0, addbsel = (!dsta2 ? 0 : 1)
+             *   adda_xconst = dest channel's xconst
+             *   modx = dest channel's mask
+             *   suba_x/suba_y from dest channel's sign bits
+             */
+
+            /* Source channel stepping parameters */
+            uint8_t fc_src_xconst = (dsta2 ? a1_xconst : a2_xconst);
+            uint8_t fc_src_addbsel = (dsta2 ? 0x00 : 0x01);
+            uint8_t fc_src_modx = 0;
+            bool fc_src_suba_x, fc_src_suba_y;
+            /* Dest channel stepping parameters */
+            uint8_t fc_dst_xconst = (dsta2 ? a2_xconst : a1_xconst);
+            uint8_t fc_dst_addbsel = (dsta2 ? 0x01 : 0x00);
+            uint8_t fc_dst_modx = 0;
+            bool fc_dst_suba_x, fc_dst_suba_y;
+            bool fc_inner0 = false;
+
+            if (dsta2)
+            {
+               /* Source is A1, dest is A2 */
+               fc_src_suba_x = (a1xsign && a1addx == 1);
+               fc_src_suba_y = (a1addy && a1ysign);
+               fc_dst_suba_x = (a2xsign && a2addx == 1);
+               fc_dst_suba_y = (a2addy && a2ysign);
+               if (a1addx == 0)
+                  fc_src_modx = 6 - a1_pixsize;
+               if (a2addx == 0)
+                  fc_dst_modx = 6 - a2_pixsize;
+            }
+            else
+            {
+               /* Source is A2, dest is A1 */
+               fc_src_suba_x = (a2xsign && a2addx == 1);
+               fc_src_suba_y = (a2addy && a2ysign);
+               fc_dst_suba_x = (a1xsign && a1addx == 1);
+               fc_dst_suba_y = (a1addy && a1ysign);
+               if (a2addx == 0)
+                  fc_src_modx = 6 - a2_pixsize;
+               if (a1addx == 0)
+                  fc_dst_modx = 6 - a1_pixsize;
+            }
+
+            while (!fc_inner0)
+            {
+               /* --- sread: read source data --- */
+               uint32_t fc_src_addr;
+               uint32_t fc_dst_addr, fc_dst_pixa;
+               uint64_t fc_srcd;
+               uint8_t fc_dstxp, fc_dstart;
+               uint8_t fc_inc;
+               uint16_t fc_oldicount;
+               uint16_t fc_dstxwr, fc_pseq;
+               bool fc_penden;
+               uint8_t fc_window_mask, fc_inner_mask, fc_emask, fc_pma, fc_dend;
+               uint64_t fc_wdata;
+               uint8_t fc_dcomp_val, fc_zcomp_val;
+               bool fc_winhibit;
+               int16_t fc_adda_x, fc_adda_y, fc_addb_x, fc_addb_y, fc_addq_x, fc_addq_y;
+
+               PERF_INC(blitter_inner);
+
+               /* Generate source address (gena2i = !dsta2 for source read) */
+               ADDRGEN(&fc_src_addr, &fc_dst_pixa, !dsta2, false/*zaddr*/,
+                     a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                     a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                     a1_ya_cached, a2_ya_cached);
+               if (phrase_mode)
+                  fc_src_addr &= 0xFFFFF8;
+
+               /* Source data pipeline: srcd2 = previous, srcd1 = new read */
+               srcd2 = srcd1;
+               srcd1 = ((uint64_t)blitter_read_long(fc_src_addr) << 32)
+                  | (uint64_t)blitter_read_long(fc_src_addr + 4);
+               PERF_INC(blitter_phrase_reads);
+
+               /* Pixel mode: shift source to correct position */
+               if (!phrase_mode)
+               {
+                  if (pixsize == 5)
+                     srcd1 >>= 32;
+                  else if (pixsize == 4)
+                     srcd1 >>= 48;
+                  else
+                     srcd1 >>= 56;
+               }
+
+               /* --- dwrite: compute and write destination --- */
+
+               /* Counter update (done first as in state machine) */
+               if (phrase_mode)
+                  fc_inc = fc_ppp - ((dsta2 ? a2_x : a1_x) & (fc_ppp - 1));
+               else
+                  fc_inc = 1;
+
+               fc_oldicount = icount;
+               icount -= fc_inc;
+
+               if (icount == 0 || ((icount & 0x8000) && !(fc_oldicount & 0x8000)))
+                  fc_inner0 = true;
+
+               /* Generate destination address (gena2i = dsta2 for dest write) */
+               ADDRGEN(&fc_dst_addr, &fc_dst_pixa, dsta2, false/*zaddr*/,
+                     a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                     a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                     a1_ya_cached, a2_ya_cached);
+               if (phrase_mode)
+                  fc_dst_addr &= 0xFFFFF8;
+
+               fc_dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+
+               /* Start/end mask computation */
+               fc_dstart = 0;
+               if (phrase_mode)
+                  fc_dstart = (fc_dstxp & (fc_ppp - 1)) << pixsize;
+               else
+                  fc_dstart = fc_dst_pixa & 0x07;
+
+               fc_dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               fc_pseq = fc_dstxwr ^ (a1_win_x & 0x7FFE);
+               fc_pseq = (pixsize == 5 ? fc_pseq : fc_pseq & 0x7FFC);
+               fc_pseq = ((pixsize & 0x06) == 4 ? fc_pseq : fc_pseq & 0x7FF8);
+               fc_penden = clip_a1 && (fc_pseq == 0);
+               fc_window_mask = 0;
+
+               if (fc_penden)
+                  fc_window_mask = (a1_win_x & (fc_ppp - 1)) << pixsize;
+               else
+                  fc_window_mask = 0;
+
+               fc_inner_mask = 0;
+               if (fc_inner0)
+                  fc_inner_mask = (icount & (fc_ppp - 1)) << pixsize;
+
+               fc_window_mask = (fc_window_mask == 0 ? 0x40 : fc_window_mask);
+               fc_inner_mask  = (fc_inner_mask == 0 ? 0x40 : fc_inner_mask);
+               fc_emask       = (fc_window_mask > fc_inner_mask ? fc_inner_mask : fc_window_mask);
+               fc_pma = fc_dst_pixa + (1 << pixsize);
+               fc_dend = (phrase_mode ? fc_emask : fc_pma);
+
+               /* Implicit dest read for byte merging (phrase mode or sub-byte pixels) */
+               if (phrase_mode && !bkgwren)
+                  dstd = ((uint64_t)blitter_read_long(fc_dst_addr) << 32)
+                     | (uint64_t)blitter_read_long(fc_dst_addr + 4);
+               else if (!phrase_mode && pixsize < 3 && !bkgwren)
+                  dstd = (uint64_t)blitter_read_byte(fc_dst_addr);
+
+               /* Source shift/alignment */
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
+               if (srcshift == 0)
+                  fc_srcd = srcd1;
+               else
+                  fc_srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
+               if (!phrase_mode && srcshift != 0)
+                  fc_srcd = ((srcd2 & 0xFF) << (8 - srcshift)) | ((srcd1 & 0xFF) >> srcshift);
+
+               /* DATA: LFU + masking + byte merge.
+                * For simple copy: data_sel=1 (LFU), no gourd, no patdadd,
+                * no srcshade, no bcompen/dcompen. */
+               {
+                  uint64_t fc_srcz_dummy = 0;
+                  DATA(&fc_wdata, &fc_dcomp_val, &fc_zcomp_val, &fc_winhibit,
+                        true/*big_pix*/, cmpdst,
+                        0/*daddasel*/, 0/*daddbsel*/,
+                        (uint8_t)(0x05 | (topben ? 0x00 : 0x02))/*daddmode*/,
+                        false/*daddq_sel*/, 1/*data_sel=LFU*/, 0/*dbinh*/,
+                        fc_dend, fc_dstart, dstd, iinc, lfufunc, &patd,
+                        false/*patdadd*/,
+                        phrase_mode, fc_srcd, false/*srcdread*/, false/*srczread*/,
+                        false/*srcz2add*/, zmode,
+                        false/*bcompen*/, bkgwren, false/*dcompen*/,
+                        icount & 0x07, pixsize,
+                        &fc_srcz_dummy, dstz, zinc);
+                  (void)fc_dcomp_val;
+                  (void)fc_zcomp_val;
+               }
+
+               /* Window clipping */
+               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000)
+                     || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+                  fc_winhibit = true;
+
+               /* Write */
+               PERF_INC(blitter_phrase_writes);
+               if (!fc_winhibit || bkgwren)
+               {
+                  if (phrase_mode)
+                  {
+                     blitter_write_long(fc_dst_addr + 0, fc_wdata >> 32);
+                     blitter_write_long(fc_dst_addr + 4, fc_wdata & 0xFFFFFFFF);
+                  }
+                  else
+                  {
+                     if (pixsize == 5)
+                        blitter_write_long(fc_dst_addr, fc_wdata & 0xFFFFFFFF);
+                     else if (pixsize == 4)
+                        blitter_write_word(fc_dst_addr, fc_wdata & 0x0000FFFF);
+                     else
+                        blitter_write_byte(fc_dst_addr, fc_wdata & 0x000000FF);
+                  }
+               }
+
+               /* --- Step source pointer --- */
+               ADDAMUX(&fc_adda_x, &fc_adda_y, 0/*addasel*/,
+                     a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                     a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y,
+                     fc_src_xconst, (dsta2 ? a1addy : a2addy)/*adda_yconst*/,
+                     false/*addareg*/, fc_src_suba_x, fc_src_suba_y);
+               ADDBMUX(&fc_addb_x, &fc_addb_y, fc_src_addbsel,
+                     a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&fc_addq_x, &fc_addq_y, false/*a1fracldi*/,
+                     fc_adda_x, fc_adda_y, fc_addb_x, fc_addb_y,
+                     fc_src_modx, fc_src_suba_x, fc_src_suba_y);
+
+               if (dsta2)
+               {
+                  a1_x = fc_addq_x;
+                  if (fc_addq_y != a1_y)
+                  {
+                     a1_y = fc_addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
+               else
+               {
+                  a2_x = fc_addq_x;
+                  if (fc_addq_y != a2_y)
+                  {
+                     a2_y = fc_addq_y;
+                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  }
+               }
+
+               /* --- Step destination pointer --- */
+               ADDAMUX(&fc_adda_x, &fc_adda_y, 0/*addasel*/,
+                     a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y,
+                     a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y,
+                     fc_dst_xconst, (dsta2 ? a2addy : a1addy)/*adda_yconst*/,
+                     false/*addareg*/, fc_dst_suba_x, fc_dst_suba_y);
+               ADDBMUX(&fc_addb_x, &fc_addb_y, fc_dst_addbsel,
+                     a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&fc_addq_x, &fc_addq_y, false/*a1fracldi*/,
+                     fc_adda_x, fc_adda_y, fc_addb_x, fc_addb_y,
+                     fc_dst_modx, fc_dst_suba_x, fc_dst_suba_y);
+
+               if (dsta2)
+               {
+                  a2_x = fc_addq_x;
+                  if (fc_addq_y != a2_y)
+                  {
+                     a2_y = fc_addq_y;
+                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  }
+               }
+               else
+               {
+                  a1_x = fc_addq_x;
+                  if (fc_addq_y != a1_y)
+                  {
+                     a1_y = fc_addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
+            } /* end collapsed copy loop */
+
+            /* Mark inner loop as done and skip the state machine */
+            goto fc_inner_done;
+         }
+
+         while (true)
+         {
+#ifdef BENCH_PROFILE
+            int blitter_did_io = 0;
+#endif
+            /* PERF_INC embedded via comma operator to keep C89 decl
+             * order valid (no statements before declarations).  */
+            uint16_t dstxwr = (PERF_INC(blitter_inner), 0), pseq;
+            bool penden;
+            uint8_t window_mask;
+            uint8_t inner_mask = 0;
+            uint8_t emask, pma, dend;
+            uint64_t srcd;
+            uint8_t zSrcShift;
+            uint64_t wdata;
+            uint8_t dcomp, zcomp;
+
+            //NOTE: sshftld probably is only asserted at the beginning of the inner loop. !!! FIX !!!
+            /* State machine: step is always true (no bus contention in
+               Jaguar I), textext/txtread never assert. Both eliminated. */
+
+            if ((dzwrite && inner0)
+                  || (dwrite && !dstwrz && inner0))
+            {
+               idle_inneri = true;
+               break;
+            }
+            else
+               idle_inneri = false;
+
+            sreadxi = (idle_inner && srcenx);
+            szreadxi = (sreadx && srcenz);
+
+            sreadi = (szreadx
+                  || (sreadx && !srcenz && srcen)
+                  || (idle_inner && !srcenx && srcen)
+                  || (dzwrite && !inner0 && srcen)
+                  || (dwrite && !dstwrz && !inner0 && srcen));
+
+            szreadi = (sread && srcenz);
+
+            dreadi = ((szread && dsten)
+                  || (sread && !srcenz && dsten)
+                  || (sreadx && !srcenz && !srcen && dsten)
+                  || (idle_inner && !srcenx && !srcen && dsten)
+                  || (dzwrite && !inner0 && !srcen && dsten)
+                  || (dwrite && !dstwrz && !inner0 && !srcen && dsten));
+
+            dzreadi = ((dread && dstenz)
+                  || (szread && !dsten && dstenz)
+                  || (sread && !srcenz && !dsten && dstenz)
+                  || (sreadx && !srcenz && !srcen && !dsten && dstenz)
+                  || (idle_inner && !srcenx && !srcen && !dsten && dstenz)
+                  || (dzwrite && !inner0 && !srcen && !dsten && dstenz)
+                  || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && dstenz));
+
+            dwritei = (dzread
+                  || (dread && !dstenz)
+                  || (szread && !dsten && !dstenz)
+                  || (sread && !srcenz && !dsten && !dstenz)
+                  || (sreadx && !srcenz && !srcen && !dsten && !dstenz)
+                  || (idle_inner && !srcenx && !srcen && !dsten && !dstenz)
+                  || (dzwrite && !inner0 && !srcen && !dsten && !dstenz)
+                  || (dwrite && !dstwrz && !inner0 && !srcen && !dsten && !dstenz));
+
+            dzwritei = (dwrite && dstwrz);
+
+            // Here we move the fooi into their foo counterparts in order to simulate the moving
+            // of data into the various FDSYNCs... Each time we loop we simulate one clock cycle...
+
+            idle_inner = idle_inneri;
+            sreadx = sreadxi;
+            szreadx = szreadxi;
+            sread = sreadi;
+            szread = szreadi;
+            dread = dreadi;
+            dzread = dzreadi;
+            dwrite = dwritei;
+            dzwrite = dzwritei;
+
+            // Here's a few more decodes--not sure if they're supposed to go here or not...
+
+
+            srca_addi = (sreadxi && !srcenz) || (sreadi && !srcenz) || szreadxi || szreadi;
+
+            dsta_addi = (dwritei && !dstwrz) || dzwritei;
+
+            gensrc = sreadxi || szreadxi || sreadi || szreadi;
+            gendst = dreadi || dzreadi || dwritei || dzwritei;
+            gena2i = (gensrc && !dsta2) || (gendst && dsta2);
+
+            zaddr = szreadx || szread || dzread || dzwrite;
+
+            // Some stuff from MCONTROL.NET--not sure if this is the correct use of this decode or not...
+            /*Fontread\	:= OND1 (fontread\, sread[1], sreadx[1], bcompen);
+Fontread	:= INV1 (fontread, fontread\);
+Justt		:= NAN3 (justt, fontread\, phrase_mode, tactive\);
+Justify		:= TS (justify, justt, busen);*/
+            fontread = (sread || sreadx) && bcompen;
+            justify = !(!fontread && phrase_mode /*&& tactive*/);
+
+            /* Generate inner loop update enables */
+            /*
+A1_addi		:= MX2 (a1_addi, dsta_addi, srca_addi, dsta2);
+A2_addi		:= MX2 (a2_addi, srca_addi, dsta_addi, dsta2);
+A1_add		:= FD1 (a1_add, a1_add\, a1_addi, clk);
+A2_add		:= FD1 (a2_add, a2_add\, a2_addi, clk);
+A2_addb		:= BUF1 (a2_addb, a2_add);
+*/
+            a1_add = (dsta2 ? srca_addi : dsta_addi);
+            a2_add = (dsta2 ? dsta_addi : srca_addi);
+
+            /* Address adder input A register selection
+               000	A1 step integer part
+               001	A1 step fraction part
+               010	A1 increment integer part
+               011	A1 increment fraction part
+               100	A2 step
+
+               bit 2 = a2update
+               bit 1 = /a2update . (a1_add . a1addx[0..1])
+               bit 0 = /a2update . ( a1fupdate
+               + a1_add . atick[0] . a1addx[0..1])
+               The /a2update term on bits 0 and 1 is redundant.
+               Now look-ahead based
+               */
+
+            addasel = (a1fupdate || (a1_add && a1addx == 3) ? 0x01 : 0x00);
+            addasel |= (a1_add && a1addx == 3 ? 0x02 : 0x00);
+            addasel |= (a2update ? 0x04 : 0x00);
+            /* Address adder input A X constant selection
+               adda_xconst[0..2] generate a power of 2 in the range 1-64 or all
+               zeroes when they are all 1
+               Remember - these are pixels, so to add one phrase the pixel size
+               has to be taken into account to get the appropriate value.
+               for A1
+               if a1addx[0..1] are 00 set 6 - pixel size
+               if a1addx[0..1] are 01 set the value 000
+               if a1addx[0..1] are 10 set the value 111
+               similarly for A2
+JLH: Also, 11 will likewise set the value to 111
+*/
+            adda_xconst = (a2_add ? a2_xconst : a1_xconst);
+            /* Address adder input A Y constant selection
+               22 June 94 - This was erroneous, because only the a1addy bit was reflected here.
+               Therefore, the selection has to be controlled by a bug fix bit.
+JLH: Bug fix bit in Jaguar II--not in Jaguar I!
+*/
+            adda_yconst = a1addy;
+            /* Address adder input A register versus constant selection
+               given by	  a1_add . a1addx[0..1]
+               + a1update
+               + a1fupdate
+               + a2_add . a2addx[0..1]
+               + a2update
+               */
+            addareg = ((a1_add && a1addx == 3) || a1update || a1fupdate
+                  || (a2_add && a2addx == 3) || a2update ? true : false);
+            /* The adders can be put into subtract mode in add pixel size
+               mode when the corresponding flags are set */
+            suba_x = ((a1_add && a1xsign && a1addx == 1) || (a2_add && a2xsign && a2addx == 1) ? true : false);
+            suba_y = ((a1_add && a1addy && a1ysign) || (a2_add && a2addy && a2ysign) ? true : false);
+            /* Address adder input B selection
+               00	A1 pointer
+               01	A2 pointer
+               10	A1 fraction
+               11	Zero
+
+               Bit 1 =   a1fupdate
+               + (a1_add . atick[0] . a1addx[0..1])
+               + a1fupdate . a1_stepld
+               + a1update . a1_stepld
+               + a2update . a2_stepld
+               Bit 0 =   a2update + a2_add
+               + a1fupdate . a1_stepld
+               + a1update . a1_stepld
+               + a2update . a2_stepld
+               */
+            addbsel = (a2update || a2_add || (a1fupdate && a1_stepld)
+                  || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x01 : 0x00);
+            addbsel |= (a1fupdate || (a1_add && a1addx == 3) || (a1fupdate && a1_stepld)
+                  || (a1update && a1_stepld) || (a2update && a2_stepld) ? 0x02 : 0x00);
+
+            /* The modulo bits are used to align X onto a phrase boundary when
+               it is being updated by one phrase
+               000	no mask
+               001	mask bit 0
+               010	mask bits 1-0
+               ..
+               110  	mask bits 5-0
+
+               Masking is enabled for a1 when a1addx[0..1] is 00, and the value
+               is 6 - the pixel size (again!)
+               */
+            maska1 = (a1_add && a1addx == 0 ? 6 - a1_pixsize : 0);
+            maska2 = (a2_add && a2addx == 0 ? 6 - a2_pixsize : 0);
+            modx = (a2_add ? maska2 : maska1);
+            /* Generate load strobes for the increment updates */
+
+            /*A1pldt		:= NAN2 (a1pldt, atick[1], a1_add);
+A1ptrldi	:= NAN2 (a1ptrldi, a1update\, a1pldt);
+
+A1fldt		:= NAN4 (a1fldt, atick[0], a1_add, a1addx[0..1]);
+A1fracldi	:= NAN2 (a1fracldi, a1fupdate\, a1fldt);
+
+A2pldt		:= NAN2 (a2pldt, atick[1], a2_add);
+A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
+
+            a1fracldi = a1fupdate || (a1_add && a1addx == 3);
+
+            ADDRGEN(&address, &pixAddr, gena2i, zaddr,
+                  a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+                  a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset,
+                  a1_ya_cached, a2_ya_cached);
+
+            //Here's my guess as to how the addresses get truncated to phrase boundaries in phrase mode...
+            if (!justify)
+               address &= 0xFFFFF8;
+
+            /* dstxp needed for dstart computation in dwrite */
+            dstxp = (dsta2 ? a2_x : a1_x) & 0x3F;
+
+            if (sreadx)
+            {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
+               //uint32_t srcAddr, pixAddr;
+               //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
+               //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
+               //	a2_x, a2_y, a2_base, a2_pitch, a2_pixsize, a2_width, a2_zoffset);
+               srcd2 = srcd1;
+               srcd1 = ((uint64_t)blitter_read_long(address + 0) << 32)
+                  | (uint64_t)blitter_read_long(address + 4);
+               //Kludge to take pixel size into account...
+               //Hmm. If we're not in phrase mode, this is most likely NOT going to be used...
+               //Actually, it would be--because of BCOMPEN expansion, for example...
+               if (!phrase_mode)
+               {
+                  if (bcompen)
+                     srcd1 >>= 56;
+                  else
+                  {
+                     if (pixsize == 5)
+                        srcd1 >>= 32;
+                     else if (pixsize == 4)
+                        srcd1 >>= 48;
+                     else
+                        srcd1 >>= 56;
+                  }
+               }//*/
+            }
+
+            if (szreadx)
+            {
+               srcz2 = srcz1;
+               srcz1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
+            }
+
+            if (sread)
+            {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
+               srcd2 = srcd1;
+               srcd1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
+               //Kludge to take pixel size into account...
+               if (!phrase_mode)
+               {
+                  if (bcompen)
+                     srcd1 >>= 56;
+                  else
+                  {
+                     if (pixsize == 5)
+                        srcd1 >>= 32;
+                     else if (pixsize == 4)
+                        srcd1 >>= 48;
+                     else
+                        srcd1 >>= 56;
+                  }
+               }
+            }
+
+            if (szread)
+            {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
+               srcz2 = srcz1;
+               srcz1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
+               //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
+               if (!phrase_mode && pixsize == 4)
+                  srcz1 >>= 48;
+
+            }
+
+            if (dread)
+            {
+               PERF_INC(blitter_phrase_reads);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
+               dstd = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
+               //Kludge to take pixel size into account...
+               if (!phrase_mode)
+               {
+                  if (pixsize == 5)
+                     dstd >>= 32;
+                  else if (pixsize == 4)
+                     dstd >>= 48;
+                  else
+                     dstd >>= 56;
+               }
+            }
+
+            if (dzread)
+            {
+               // Is Z always 64 bit read? Or sometimes 16 bit (dependent on phrase_mode)?
+               dstz = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
+               //Kludge to take pixel size into account... I believe that it only has to take 16BPP mode into account. Not sure tho.
+               if (!phrase_mode && pixsize == 4)
+                  dstz >>= 48;
+
+            }
+
+            // These vars should probably go further up in the code... !!! FIX !!!
+            // We can't preassign these unless they're static...
+            //NOTE: SRCSHADE requires GOURZ to be set to work properly--another Jaguar I bug
+            if (dwrite)
+            {
+               int8_t inct;
+               uint8_t inc = 0;
+               uint16_t oldicount;
+               uint8_t dstart = 0;
+               uint8_t ppp;
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
+
+               PERF_INC(blitter_phrase_writes);
+               ppp = 64 >> pixsize;
+               inct = -((dsta2 ? a2_x : a1_x) & 0x07);
+               inc = (!phrase_mode || (phrase_mode && (inct & 0x01)) ? 0x01 : 0x00);
+               inc |= (phrase_mode && (((pixsize == 3 || pixsize == 4) && (inct & 0x02)) || (pixsize == 5 && !(inct & 0x01))) ? 0x02 : 0x00);
+               inc |= (phrase_mode && ((pixsize == 3 && (inct & 0x04)) || (pixsize == 4 && !(inct & 0x03))) ? 0x04 : 0x00);
+               inc |= (phrase_mode && pixsize == 3 && !(inct & 0x07) ? 0x08 : 0x00);
+
+               oldicount = icount;
+               icount -= inc;
+
+               if (icount == 0 || ((icount & 0x8000) && !(oldicount & 0x8000)))
+                  inner0 = true;
+               // X/Y stepping is also done here, I think...No. It's done when a1_add or a2_add is asserted...
+
+               //*********************************************************************************
+               //Start & end write mask computations...
+               //*********************************************************************************
+
+
+               if (phrase_mode)
+                  dstart = (dstxp & (ppp - 1)) << pixsize;
+               else
+                  dstart = pixAddr & 0x07;
+
+               //This is the other Jaguar I bug... Normally, should ALWAYS select a1_x here.
+               dstxwr = (dsta2 ? a2_x : a1_x) & 0x7FFE;
+               pseq = dstxwr ^ (a1_win_x & 0x7FFE);
+               pseq = (pixsize == 5 ? pseq : pseq & 0x7FFC);
+               pseq = ((pixsize & 0x06) == 4 ? pseq : pseq & 0x7FF8);
+               penden = clip_a1 && (pseq == 0);
+               window_mask = 0;
+
+               if (penden)
+                  window_mask = (a1_win_x & (ppp - 1)) << pixsize;
+               else
+                  window_mask = 0;
+
+               /* The mask to be used if within one phrase of the end of the inner
+                  loop, similarly */
+
+               if (inner0)
+                  inner_mask = (icount & (ppp - 1)) << pixsize;
+               else
+                  inner_mask = 0;
+
+               /* The actual mask used should be the
+                  lesser of the window masks and
+                  the inner mask, where is all cases 000 means 1000. */
+               window_mask = (window_mask == 0 ? 0x40 : window_mask);
+               inner_mask  = (inner_mask == 0 ? 0x40 : inner_mask);
+
+               emask       = (window_mask > inner_mask ? inner_mask : window_mask);
+               /* The mask to be used for the pixel size, to which must be added
+                  the bit offset */
+               pma = pixAddr + (1 << pixsize);
+               /* Select the mask */
+               dend = (phrase_mode ? emask : pma);
+
+               /* The cycle width in phrase mode is normally one phrase.  However,
+                  at the start and end it may be narrower.  The start and end masks
+                  are used to generate this.  The width is given by:
+
+                  8 - start mask - (8 - end mask)
+                  =	end mask - start mask
+
+                  This is only used for writes in phrase mode.
+                  Start and end from the address level of the pipeline are used.
+                  */
+
+               //Phrase mode needs destination data for start/end mask byte merging,
+               //but NOT when bkgwren is set (hardware uses DSTDATA register value).
+               //Pixel mode at pixsize < 3 (1bpp/2bpp/4bpp) writes a single byte
+               //via JaguarWriteByte below, but the byte holds multiple pixels --
+               //byte_merge must see the existing dest byte in the low 8 bits of
+               //dstd or the unmodified pixel slots in that byte get zeroed
+               //(matches WRITE_PIXEL_1/2/4 RMW in the fast blitter).
+               /* Phrase writes merge via byte_merge(mask): inhibited bytes
+                * come from dstd.  When bkgwren is set, hardware uses the
+                * DSTDATA register value as background — reading memory
+                * would inject stale pixels as noise (AvP red-artifact bug).
+                * When bkgwren is NOT set, always read the framebuffer so
+                * byte_merge has the live pixels for uninhibited positions
+                * (Battle Sphere cockpit reticle fix, commit 54ca486). */
+               if (phrase_mode && !bkgwren)
+                  dstd = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
+               else if (!phrase_mode && pixsize < 3 && !dsten && !bkgwren)
+                  dstd = (uint64_t)blitter_read_byte(address);
+
+               // Write data combines srcd and dstd through ADDDSEL, PATDSEL, or LFU.
+               // Precedence is ADDDSEL > PATDSEL > LFU.
+
+               // srcd2 = xxxx xxxx 0123 4567, srcd = 8901 2345 xxxx xxxx, srcshift = $20 (32)
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
+               if (srcshift == 0)
+                  srcd = srcd1;
+               else
+                  srcd = (srcd2 << (64 - srcshift)) | (srcd1 >> srcshift);
+
+               //NOTE: This only works with pixel sizes less than 8BPP...
+               //DOUBLE NOTE: Still need to do regression testing to ensure that this doesn't break other stuff... !!! CHECK !!!
+               if (!phrase_mode && srcshift != 0)
+                  srcd = ((srcd2 & 0xFF) << (8 - srcshift)) | ((srcd1 & 0xFF) >> srcshift);
+
+               //Z DATA() stuff done here... And it has to be done before any Z shifting...
+               //Note that we need to have phrase mode start/end support here... (Not since we moved it from dzwrite...!)
+               /*
+                  Here are a couple of Cybermorph blits with Z:
+                  $00113078	// DSTEN DSTENZ DSTWRZ CLIP_A1 GOURD GOURZ PATDSEL ZMODE=4
+                  $09900F39	// SRCEN DSTEN DSTENZ DSTWRZ UPDA1 UPDA1F UPDA2 DSTA2 ZMODE=4 LFUFUNC=C DCOMPEN
+
+                  We're having the same phrase mode overwrite problem we had with the pixels... !!! FIX !!!
+                  Odd. It's equating 0 with 0... Even though ZMODE is $04 (less than)!
+                  */
+               if (gourz)
+               {
+                  uint16_t addq[4];
+                  uint8_t initcin[4] = { 0, 0, 0, 0 };
+                  ADDARRAY(addq, 7/*daddasel*/, 6/*daddbsel*/, 0/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
+                  srcz2 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+                  ADDARRAY(addq, 6/*daddasel*/, 7/*daddbsel*/, 1/*daddmode*/, 0, 0, initcin, 0, 0, 0, 0, 0, srcz1, srcz2, zinc, 0);
+                  srcz1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+
+               }
+
+               zSrcShift = srcshift & 0x30;
+               /* Guard against UB: shifting a 64-bit value by 64 is undefined in C. */
+               if (zSrcShift == 0)
+                  srcz = srcz1;
+               else
+                  srcz = (srcz2 << (64 - zSrcShift)) | (srcz1 >> zSrcShift);
+
+
+               //When in SRCSHADE mode, it adds the IINC to the read source (from LFU???)
+               //According to following line, it gets LFU mode. But does it feed the source into the LFU
+               //after the add?
+               //Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
+               //Let's try this:
+               if (srcshade)
+               {
+                  uint16_t addq[4];
+                  uint8_t initcin[4] = { 0, 0, 0, 0 };
+                  uint32_t iinc_masked = iinc & 0x00FFFFFF;
+                  ADDARRAY(addq, 4/*daddasel*/, 5/*daddbsel*/, 7/*daddmode*/, dstd, iinc_masked, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
+                  srcd = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+               }
+
+               /* DCONTROL: compute data adder signals.  Moved here from
+                  the per-iteration scope since they are only consumed
+                  during dwrite (dwrite=true, dzwrite=false here). */
+               shadeadd = srcshade;
+               daddasel = (gourd ? 0x01 : 0x00);
+               daddasel |= ((gourd || gourz || srcshade) ? 0x04 : 0x00);
+               daddbsel = (gourd || srcshade ? 0x01 : 0x00);
+               daddbsel |= (gourd || srcshade ? 0x04 : 0x00);
+               /* daddmode bit 0: NAND tree (dcontrol.v:130-146) makes
+                  bit 0 always 1 when dwrite&&gourd, !gourd&&!gourz,
+                  or shadeadd. */
+               daddmode = (gourd || (!gourd && !gourz) || shadeadd ? 0x01 : 0x00);
+               daddmode |= ((gourd && !topben && !ext_int)
+                     || (!gourd && !gourz && !topben) || (shadeadd && !topben) ? 0x02 : 0x00);
+               daddmode |= ((!gourd && !gourz) || shadeadd || (gourd && ext_int) ? 0x04 : 0x00);
+               patfadd = gourd;
+               patdadd = gourd;
+               srcz2add = false;
+               daddq_sel = gourd;
+               data_sel = ((!patdsel && !adddsel) ? 0x01 : 0x00)
+                  | (adddsel ? 0x02 : 0x00);
+
+               if (patfadd)
+               {
+                  uint16_t addq[4];
+                  uint8_t initcin[4] = { 0, 0, 0, 0 };
+                  ADDARRAY(addq, 4/*daddasel*/, 4/*daddbsel*/, 0/*daddmode*/, dstd, iinc, initcin, 0, 0, 0, patd, srcd, 0, 0, 0, 0);
+                  srcd1 = ((uint64_t)addq[3] << 48) | ((uint64_t)addq[2] << 32) | ((uint64_t)addq[1] << 16) | (uint64_t)addq[0];
+               }
+
+               /* atick[0]/[1] two-phase pipeline: fractional intensity/Z update
+                  runs in the patfadd/srcz2add block above (Phase 0), integer
+                  update runs via DATA→patdadd below (Phase 1).  The dbinh
+                  param below is overwritten inside DATA by COMP_CTRL. */
+
+               DATA(&wdata, &dcomp, &zcomp, &winhibit,
+                     true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
+                     dend, dstart, dstd, iinc, lfufunc, &patd, patdadd,
+                     phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
+                     bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
+                     &srcz, dstz, zinc);
+
+               /*
+                  DEF ADDRCOMP (
+                  a1_outside	// A1 pointer is outside window bounds
+                  :OUT;
+                  INT16/	a1_x
+                  INT16/	a1_y
+                  INT15/	a1_win_x
+                  INT15/	a1_win_y
+                  :IN);
+                  BEGIN
+
+               // The address is outside if negative, or if greater than or equal
+               // to the window size
+
+A1_xcomp	:= MAG_15 (a1xgr, a1xeq, a1xlt, a1_x{0..14}, a1_win_x{0..14});
+A1_ycomp	:= MAG_15 (a1ygr, a1yeq, a1ylt, a1_y{0..14}, a1_win_y{0..14});
+A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
+*/
+               //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
+               //      Actually, seems to be related to phrase mode writes...
+               //      Or is it? Could be related to non-15-bit compares as above?
+               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+                  winhibit = true;
+
+
+               if (!winhibit || bkgwren)
+               {
+                  if (phrase_mode)
+                  {
+                     blitter_write_long(address + 0, wdata >> 32);
+                     blitter_write_long(address + 4, wdata & 0xFFFFFFFF);
+                  }
+                  else
+                  {
+                     if (pixsize == 5)
+                        blitter_write_long(address, wdata & 0xFFFFFFFF);
+                     else if (pixsize == 4)
+                        blitter_write_word(address, wdata & 0x0000FFFF);
+                     else
+                        blitter_write_byte(address, wdata & 0x000000FF);
+                  }
+               }
+
+            }
+
+            if (dzwrite)
+            {
+               PERF_INC(blitter_phrase_writes);
+#ifdef BENCH_PROFILE
+               blitter_did_io = 1;
+#endif
+               // OK, here's the big insight: When NOT in GOURZ mode, srcz1 & 2 function EXACTLY the same way that
+               // srcd1 & 2 work--there's an implicit shift from srcz1 to srcz2 whenever srcz1 is read.
+               // OTHERWISE, srcz1 is the integer for the computed Z and srcz2 is the fractional part.
+               // Writes to srcz1 & 2 follow the same pattern as the other 64-bit registers--low 32 at the low address,
+               // high 32 at the high address (little endian!).
+               // NOTE: GOURZ is still not properly supported. Check patd/patf handling...
+               //       Phrase mode start/end masks are not properly supported either...
+               //This is not correct... !!! FIX !!!
+               //Should be OK now... We'll see...
+               //Nope. Having the same starstep write problems in phrase mode as we had with pixels... !!! FIX !!!
+               //This is not causing the problem in Hover Strike... :-/
+               //The problem was with the SREADX not shifting. Still problems with Z comparisons & other text in pregame screen...
+               if (!winhibit)
+               {
+                  if (phrase_mode)
+                  {
+                     blitter_write_long(address + 0, srcz >> 32);
+                     blitter_write_long(address + 4, srcz & 0xFFFFFFFF);
+                  }
+                  else
+                  {
+                     if (pixsize == 4)
+                        blitter_write_word(address, srcz & 0x0000FFFF);
+                  }
+               }//*/
+            }
+
+
+            if (a1_add)
+            {
+               int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
+               ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
+               ADDBMUX(&addb_x, &addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+
+               //Now, write to what???
+               //a2ptrld comes from a2ptrldi...
+               //I believe it's addbsel that determines the writeback...
+               // This is where atick[0] & [1] come in, in determining which part (fractional, integer)
+               // gets written to...
+               //a1_x = addq_x;
+               //a1_y = addq_y;
+               //Kludge, to get A1 channel increment working...
+               if (a1addx == 3)
+               {
+                  a1_frac_x = addq_x, a1_frac_y = addq_y;
+
+                  addasel = 2, addbsel = 0, a1fracldi = false;
+                  ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                        a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
+                  ADDBMUX(&addb_x,&addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+                  ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+
+                  a1_x = addq_x;
+                  if (addq_y != a1_y)
+                  {
+                     a1_y = addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
+               else
+               {
+                  a1_x = addq_x;
+                  if (addq_y != a1_y)
+                  {
+                     a1_y = addq_y;
+                     a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
+                  }
+               }
+            }
+
+            if (a2_add)
+            {
+               int16_t adda_x, adda_y, addb_x, addb_y, addq_x, addq_y;
+               ADDAMUX(&adda_x, &adda_y, addasel, a1_step_x, a1_step_y, a1_stepf_x, a1_stepf_y, a2_step_x, a2_step_y,
+                     a1_inc_x, a1_inc_y, a1_incf_x, a1_incf_y, adda_xconst, adda_yconst, addareg, suba_x, suba_y);
+               ADDBMUX(&addb_x, &addb_y, addbsel, a1_x, a1_y, a2_x, a2_y, a1_frac_x, a1_frac_y);
+               ADDRADD(&addq_x, &addq_y, a1fracldi, adda_x, adda_y, addb_x, addb_y, modx, suba_x, suba_y);
+
+               //Now, write to what???
+               //a2ptrld comes from a2ptrldi...
+               //I believe it's addbsel that determines the writeback...
+               a2_x = addq_x;
+               if (addq_y != a2_y)
+               {
+                  a2_y = addq_y;
+                  a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+               }
+            }
+#ifdef BENCH_PROFILE
+            if (blitter_did_io) PERF_INC(blitter_inner_io);
+            else                PERF_INC(blitter_inner_idle);
+#endif
+         }
+
+patfill_inner_done:
+fc_inner_done:
+         indone = true;
+         // The outer counter is updated here as well on the clock cycle...
+
+         /* the inner loop is started whenever another state is about to
+            cause the inner state to go active */
+         //Instart		:= ND7 (instart, innert[0], innert[2..7]);
+
+         //Actually, it's done only when inner gets asserted without the 2nd line of conditions
+         //(inner AND !indone)
+         //fixed now...
+         //Since we don't get here until the inner loop is finished (indone = true) we can get
+         //away with doing it here...!
+         ocount--;
+
+         if (ocount == 0)
+            outer0 = true;
+      }
+
+      if (a1fupdate)
+      {
+         uint32_t a1_frac_xt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
+         uint32_t a1_frac_yt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
+         a1FracCInX = a1_frac_xt >> 16;
+         a1FracCInY = a1_frac_yt >> 16;
+         a1_frac_x = (uint16_t)(a1_frac_xt & 0xFFFF);
+         a1_frac_y = (uint16_t)(a1_frac_yt & 0xFFFF);
+      }
+
+      if (a1update)
+      {
+         a1_x += a1_step_x + a1FracCInX;
+         a1_y += a1_step_y + a1FracCInY;
+      }
+
+      if (a2update)
+      {
+         a2_x += a2_step_x;
+         a2_y += a2_step_y;
+      }
+   }
+
+   // Write values back to registers (in real blitter, these are continuously updated)
+   SET16(blitter_ram, A1_PIXEL + 2, a1_x);
+   SET16(blitter_ram, A1_PIXEL + 0, a1_y);
+   SET16(blitter_ram, A1_FPIXEL + 2, a1_frac_x);
+   SET16(blitter_ram, A1_FPIXEL + 0, a1_frac_y);
+   SET16(blitter_ram, A2_PIXEL + 2, a2_x);
+   SET16(blitter_ram, A2_PIXEL + 0, a2_y);
+
+#ifdef BLITTER_TRACE
+   {
+      static mach_timebase_info_data_t tb;
+      uint64_t t1 = mach_absolute_time();
+      double ms;
+      if (tb.denom == 0) mach_timebase_info(&tb);
+      ms = (double)(t1 - bm2_trace_t0) * (double)tb.numer / (double)tb.denom / 1e6;
+      if (ms >= bm2_trace_threshold_ms) {
+         uint16_t pcount = GET16(blitter_ram, PIXLINECOUNTER + 2);
+         uint16_t lcount = GET16(blitter_ram, PIXLINECOUNTER);
+         uint8_t pixsize = (blitter_ram[A1_FLAGS + 3] & 0x38) >> 3;
+         fprintf(stderr,
+            "[BLITTER_TRACE] %.2f ms cmd=%08x pixsize=%u inner=%u outer=%u "
+            "src(en=%d enx=%d enz=%d) dst(en=%d enz=%d wrz=%d) "
+            "gourd=%d gourz=%d srcshade=%d bcompen=%d dcompen=%d\n",
+            ms, cmd, pixsize, pcount, lcount,
+            (int)srcen, (int)srcenx, (int)srcenz,
+            (int)dsten, (int)dstenz, (int)dstwrz,
+            (int)gourd, (int)gourz, (int)srcshade,
+            (int)bcompen, (int)dcompen);
+      }
+   }
+#endif
+}
+
+// Various pieces of the blitter puzzle are teased out here...
+
+static void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
+	uint16_t a1_x, uint16_t a1_y, uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width, uint8_t a1_zoffset,
+	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset,
+	uint32_t a1_ya_pre, uint32_t a2_ya_pre)
+{
+	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
+	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
+	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
+	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;/*Only upper 21 bits are passed around the bus? Seems like it...*/
+	uint8_t zoffset = (gena2 ? a2_zoffset : a1_zoffset);
+
+	uint32_t ya = (gena2 ? a2_ya_pre : a1_ya_pre);
+
+	uint32_t pa = ya + x;
+   uint8_t pt, za;
+   uint32_t phradr, shup, addr;
+
+	*pixa = pa << pixsize;
+
+	pt = ((pitch & 0x01) && !(pitch & 0x02) ? 0x01 : 0x00)
+		| (!(pitch & 0x01) && (pitch & 0x02) ? 0x02 : 0x00);
+	phradr = (*pixa >> 6) << pt;
+	shup = (pitch == 0x03 ? (*pixa >> 6) : 0);
+
+	za = (zaddr ? zoffset : 0) & 0x03;
+	addr = za + phradr + (shup << 1) + base;
+	*address = ((*pixa & 0x38) >> 3) | ((addr & 0x1FFFFF) << 3);
+	*pixa &= 0x07;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+// Here's an important bit: The source data adder logic. Need to track down the inputs!!! //
+////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+static void ADDAMUX(int16_t *adda_x, int16_t *adda_y, uint8_t addasel, int16_t a1_step_x, int16_t a1_step_y,
+	int16_t a1_stepf_x, int16_t a1_stepf_y, int16_t a2_step_x, int16_t a2_step_y,
+	int16_t a1_inc_x, int16_t a1_inc_y, int16_t a1_incf_x, int16_t a1_incf_y, uint8_t adda_xconst,
+	bool adda_yconst, bool addareg, bool suba_x, bool suba_y)
+{
+
+   int16_t addar_x, addar_y, addac_x, addac_y, addas_x, addas_y;
+	int16_t xterm[4], yterm[4];
+	xterm[0] = a1_step_x, xterm[1] = a1_stepf_x, xterm[2] = a1_inc_x, xterm[3] = a1_incf_x;
+	yterm[0] = a1_step_y, yterm[1] = a1_stepf_y, yterm[2] = a1_inc_y, yterm[3] = a1_incf_y;
+   if (addasel & 0x04)
+   {
+      addar_x = a2_step_x;
+      addar_y = a2_step_y;
+   }
+   else
+   {
+      addar_x = xterm[addasel & 0x03];
+      addar_y = yterm[addasel & 0x03];
+   }
+
+   /* Generate a constant value - this is a power of 2 in the range
+      0-64, or zero.  The control bits are adda_xconst[0..2], when they
+      are all 1  the result is 0.
+      Constants for Y can only be 0 or 1 */
+
+	addac_x = (adda_xconst == 0x07 ? 0 : 1 << adda_xconst);
+	addac_y = (adda_yconst ? 0x01 : 0);
+
+   /* Select between constant value and register value */
+
+   if (addareg)
+   {
+      addas_x = (addareg ? addar_x : addac_x);
+      addas_y = (addareg ? addar_y : addac_y);
+   }
+   else
+   {
+      addas_x = (addareg ? addar_x : addac_x);
+      addas_y = (addareg ? addar_y : addac_y);
+   }
+
+   /* Complement these values (complement flag gives adder carry in)*/
+
+	*adda_x = addas_x ^ (suba_x ? 0xFFFF : 0x0000);
+	*adda_y = addas_y ^ (suba_y ? 0xFFFF : 0x0000);
+}
+
+
+/**  ADDBMUX - Address adder input B selection  *******************
+
+This module selects the register to be updated by the address
+adder.  This can be one of three registers, the A1 and A2
+pointers, or the A1 fractional part. It can also be zero, so that the step
+registers load directly into the pointers.
+*/
+
+/*DEF ADDBMUX (
+INT16/	addb_x
+INT16/	addb_y
+	:OUT;
+	addbsel[0..1]
+INT16/	a1_x
+INT16/	a1_y
+INT16/	a2_x
+INT16/	a2_y
+INT16/	a1_frac_x
+INT16/	a1_frac_y
+	:IN);
+INT16/	zero16 :LOCAL;
+BEGIN*/
+static void ADDBMUX(int16_t *addb_x, int16_t *addb_y, uint8_t addbsel, int16_t a1_x, int16_t a1_y,
+	int16_t a2_x, int16_t a2_y, int16_t a1_frac_x, int16_t a1_frac_y)
+{
+
+/*Zero		:= TIE0 (zero);
+Zero16		:= JOIN (zero16, zero, zero, zero, zero, zero, zero, zero,
+			zero, zero, zero, zero, zero, zero, zero, zero, zero);
+Addbselb[0-1]	:= BUF8 (addbselb[0-1], addbsel[0-1]);
+Addb_x		:= MX4 (addb_x, a1_x, a2_x, a1_frac_x, zero16, addbselb[0..1]);
+Addb_y		:= MX4 (addb_y, a1_y, a2_y, a1_frac_y, zero16, addbselb[0..1]);*/
+////////////////////////////////////// C++ CODE //////////////////////////////////////
+	int16_t xterm[4], yterm[4];
+	xterm[0] = a1_x, xterm[1] = a2_x, xterm[2] = a1_frac_x, xterm[3] = 0;
+	yterm[0] = a1_y, yterm[1] = a2_y, yterm[2] = a1_frac_y, yterm[3] = 0;
+	*addb_x = xterm[addbsel & 0x03];
+	*addb_y = yterm[addbsel & 0x03];
+//////////////////////////////////////////////////////////////////////////////////////
+
+//END;
+}
+
+
+/**  DATAMUX - Address local data bus selection  ******************
+
+Select between the adder output and the input data bus
+*/
+
+/*DEF DATAMUX (
+INT16/	data_x
+INT16/	data_y
+	:OUT;
+INT32/	gpu_din
+INT16/	addq_x
+INT16/	addq_y
+	addqsel
+	:IN);
+
+INT16/	gpu_lo, gpu_hi
+:LOCAL;
+BEGIN*/
+static void DATAMUX(int16_t *data_x, int16_t *data_y, uint32_t gpu_din, int16_t addq_x, int16_t addq_y, bool addqsel)
+{
+   if (addqsel)
+   {
+      *data_x = addq_x;
+      *data_y = addq_y;
+   }
+   else
+   {
+      *data_x = (int16_t)(gpu_din & 0xFFFF);
+      *data_y = (int16_t)(gpu_din >> 16);
+   }
+}
+
+
+/******************************************************************
+addradd
+29/11/90
+
+Blitter Address Adder
+---------------------
+The blitter address adder is a pair of sixteen bit adders, one
+each for X and Y.  The multiplexing of the input terms is
+performed elsewhere, but this adder can also perform modulo
+arithmetic to align X-addresses onto phrase boundaries.
+
+modx[0..2] take values
+000	no mask
+001	mask bit 0
+010	mask bits 1-0
+..
+110  	mask bits 5-0
+
+******************************************************************/
+
+static void ADDRADD(int16_t *addq_x, int16_t *addq_y, bool a1fracldi,
+	uint16_t adda_x, uint16_t adda_y, uint16_t addb_x, uint16_t addb_y, uint8_t modx, bool suba_x, bool suba_y)
+{
+
+/* Perform the addition */
+
+/*Adder_x		:= ADD16 (addqt_x[0..15], co_x, adda_x{0..15}, addb_x{0..15}, ci_x);
+Adder_y		:= ADD16 (addq_y[0..15], co_y, adda_y{0..15}, addb_y{0..15}, ci_y);*/
+
+/* latch carry and propagate if required */
+
+/*Cxt0		:= AN2 (cxt[0], co_x, a1fracldi);
+Cxt1		:= FD1Q (cxt[1], cxt[0], clk[0]);
+Ci_x		:= EO (ci_x, cxt[1], suba_x);
+
+yt0			:= AN2 (cyt[0], co_y, a1fracldi);
+Cyt1		:= FD1Q (cyt[1], cyt[0], clk[0]);
+Ci_y		:= EO (ci_y, cyt[1], suba_y);*/
+
+////////////////////////////////////// C++ CODE //////////////////////////////////////
+//I'm sure the following will generate a bunch of warnings, but will have to do for now.
+	static uint16_t co_x = 0, co_y = 0;	// Carry out has to propogate between function calls...
+	uint16_t ci_x = co_x ^ (suba_x ? 1 : 0);
+	uint16_t ci_y = co_y ^ (suba_y ? 1 : 0);
+	uint32_t addqt_x = adda_x + addb_x + ci_x;
+	uint32_t addqt_y = adda_y + addb_y + ci_y;
+	uint16_t mask[8] = { 0xFFFF, 0xFFFE, 0xFFFC, 0xFFF8, 0xFFF0, 0xFFE0, 0xFFC0, 0x0000 };
+	co_x = ((addqt_x & 0x10000) && a1fracldi ? 1 : 0);
+	co_y = ((addqt_y & 0x10000) && a1fracldi ? 1 : 0);
+//////////////////////////////////////////////////////////////////////////////////////
+
+/* Mask low bits of X to 0 if required */
+
+/*Masksel		:= D38H (unused[0], masksel[0..4], maskbit[5], unused[1], modx[0..2]);
+
+Maskbit[0-4]	:= OR2 (maskbit[0-4], masksel[0-4], maskbit[1-5]);
+
+Mask[0-5]	:= MX2 (addq_x[0-5], addqt_x[0-5], zero, maskbit[0-5]);
+
+Addq_x		:= JOIN (addq_x, addq_x[0..5], addqt_x[6..15]);
+Addq_y		:= JOIN (addq_y, addq_y[0..15]);*/
+
+////////////////////////////////////// C++ CODE //////////////////////////////////////
+	*addq_x = addqt_x & mask[modx];
+	*addq_y = addqt_y & 0xFFFF;
+//////////////////////////////////////////////////////////////////////////////////////
+
+//Unused[0-1]	:= DUMMY (unused[0-1]);
+
+//END;
+}
+
+
+/*
+DEF DATA (
+		wdata[0..63]	// co-processor write data bus
+		:BUS;
+		dcomp[0..7]		// data byte equal flags
+		srcd[0..7]		// bits to use for bit to byte expansion
+		zcomp[0..3]		// output from Z comparators
+		:OUT;
+		a1_x[0..1]		// low two bits of A1 X pointer
+		big_pix			// pixel organisation is big-endian
+		blitter_active	// blitter is active
+		clk				// co-processor clock
+		cmpdst			// compare dest rather than source
+		colorld			// load the pattern color fields
+		daddasel[0..2]	// data adder input A selection
+		daddbsel[0..3]	// data adder input B selection
+		daddmode[0..2]	// data adder mode
+		daddq_sel		// select adder output vs. GPU data
+		data[0..63]		// co-processor read data bus
+		data_ena		// enable write data
+		data_sel[0..1]	// select data to write
+		dbinh\[0..7]	// byte oriented changed data inhibits
+		dend[0..5]		// end of changed write data zone
+		dpipe[0..1]		// load computed data pipe-line latch
+		dstart[0..5]	// start of changed write data zone
+		dstdld[0..1]	// dest data load (two halves)
+		dstzld[0..1]	// dest zed load (two halves)
+		ext_int			// enable extended precision intensity calculations
+INT32/	gpu_din			// GPU data bus
+		iincld			// I increment load
+		iincldx			// alternate I increment load
+		init_if			// initialise I fraction phase
+		init_ii			// initialise I integer phase
+		init_zf			// initialise Z fraction phase
+		intld[0..3]		// computed intensities load
+		istepadd		// intensity step integer add
+		istepfadd		// intensity step fraction add
+		istepld			// I step load
+		istepdld		// I step delta load
+		lfu_func[0..3]	// LFU function code
+		patdadd			// pattern data gouraud add
+		patdld[0..1]	// pattern data load (two halves)
+		pdsel[0..1]		// select pattern data type
+		phrase_mode		// phrase write mode
+		reload			// transfer contents of double buffers
+		reset\			// system reset
+		srcd1ld[0..1]	// source register 1 load (two halves)
+		srcdread		// source data read load enable
+		srczread		// source zed read load enable
+		srcshift[0..5]	// source alignment shift
+		srcz1ld[0..1]	// source zed 1 load (two halves)
+		srcz2add		// zed fraction gouraud add
+		srcz2ld[0..1]	// source zed 2 load (two halves)
+		textrgb			// texture mapping in RGB mode
+		txtd[0..63]		// data from the texture unit
+		zedld[0..3]		// computed zeds load
+		zincld			// Z increment load
+		zmode[0..2]		// Z comparator mode
+		zpipe[0..1]		// load computed zed pipe-line latch
+		zstepadd		// zed step integer add
+		zstepfadd		// zed step fraction add
+		zstepld			// Z step load
+		zstepdld		// Z step delta load
+		:IN);
+*/
+
+
 
 /**  COMP_CTRL - Comparator output control logic  *****************
 
@@ -2775,211 +3654,6 @@ performed.  The is taken care of within the zed comparator by
 pipe-lining the comparator inputs where appropriate.
 */
 
-void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
-	bool bcompen, bool big_pix, bool bkgwren, uint8_t dcomp, bool dcompen, uint8_t icount,
-	uint8_t pixsize, bool phrase_mode, uint8_t srcd, uint8_t zcomp)
-{
-   //BEGIN
-
-   /*Bkgwren\	:= INV1 (bkgwren\, bkgwren);
-     Phrase_mode\	:= INV1 (phrase_mode\, phrase_mode);
-     Pixsize\[0-2]	:= INV2 (pixsize\[0-2], pixsize[0-2]);*/
-
-   /* The bit comparator bits are derived from the source data, which
-      will have been suitably aligned for phrase mode.  The contents of
-      the inner counter are used to select which bit to use.
-
-      When not in phrase mode the inner count value is used to select
-      one bit.  It is assumed that the count has already occurred, so,
-      7 selects bit 0, etc.  In big-endian pixel mode, this turns round,
-      so that a count of 7 selects bit 7.
-
-      In phrase mode, the eight bits are used directly, and this mode is
-      only applicable to 8-bit pixel mode (2/34) */
-
-   /*Bcompselt[0-2]	:= EO (bcompselt[0-2], icount[0-2], big_pix);
-Bcompbit	:= MX8 (bcompbit, srcd[7], srcd[6], srcd[5],
-srcd[4], srcd[3], srcd[2], srcd[1], srcd[0], bcompselt[0..2]);
-Bcompbit\	:= INV1 (bcompbit\, bcompbit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   uint8_t bcompselt = (big_pix ? ~icount : icount) & 0x07;
-   uint8_t bitmask[8] = { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 };
-   bool bcompbit = srcd & bitmask[bcompselt];
-   bool winhibit, di0t0_1, di0t4, di1t2, di2t0_1, di2t4, di3t2;
-   bool di4t0_1, di4t4, di5t2;
-   bool di6t0_1, di6t4;
-   bool di7t2;
-
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /* pipe-line the count */
-   /*Bcompsel[0-2]	:= FDSYNC (bcompsel[0-2], bcompselt[0-2], step_inner, clk);
-Bcompbt		:= MX8 (bcompbitpt, srcd[7], srcd[6], srcd[5],
-srcd[4], srcd[3], srcd[2], srcd[1], srcd[0], bcompsel[0..2]);
-Bcompbitp	:= FD1Q (bcompbitp, bcompbitpt, clk);
-Bcompbitp\	:= INV1 (bcompbitp\, bcompbitp);*/
-
-   /* For pixel mode, generate the write inhibit signal for all modes
-      on bit inhibit, for 8 and 16 bit modes on comparator inhibit, and
-      for 16 bit mode on Z inhibit
-
-      Nowrite = bcompen . /bcompbit . /phrase_mode
-      + dcompen . dcomp[0] . /phrase_mode . pixsize = 011
-      + dcompen . dcomp[0..1] . /phrase_mode . pixsize = 100
-      + zcomp[0] . /phrase_mode . pixsize = 100
-      */
-
-   /*Nowt0		:= NAN3 (nowt[0], bcompen, bcompbit\, phrase_mode\);
-Nowt1		:= ND6  (nowt[1], dcompen, dcomp[0], phrase_mode\, pixsize\[2], pixsize[0..1]);
-Nowt2		:= ND7  (nowt[2], dcompen, dcomp[0..1], phrase_mode\, pixsize[2], pixsize\[0..1]);
-Nowt3		:= NAN5 (nowt[3], zcomp[0], phrase_mode\, pixsize[2], pixsize\[0..1]);
-Nowt4		:= NAN4 (nowt[4], nowt[0..3]);
-Nowrite		:= AN2  (nowrite, nowt[4], bkgwren\);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   *nowrite = ((bcompen && !bcompbit && !phrase_mode)
-         || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
-         || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-         || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4)))
-      && !bkgwren;
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Winht		:= NAN3 (winht, bcompen, bcompbitp\, phrase_mode\);
-Winhibit	:= NAN4 (winhibit, winht, nowt[1..3]);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   //This is the same as above, but with bcompbit delayed one tick and called 'winhibit'
-   //Small difference: Besides the pipeline effect, it's also not using !bkgwren...
-   //	bool winhibit = (bcompen && !
-   winhibit = (bcompen && !bcompbit && !phrase_mode)
-      || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
-      || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /* For phrase mode, generate the byte inhibit signals for eight bit
-      mode 011, or sixteen bit mode 100
-      dbinh\[0] =  pixsize[2] . zcomp[0]
-      +  pixsize[2] . dcomp[0] . dcomp[1] . dcompen
-      + /pixsize[2] . dcomp[0] . dcompen
-      + /srcd[0] . bcompen
-
-      Inhibits 0-3 are also used when not in phrase mode to write back
-      destination data.
-      */
-
-   /*Srcd\[0-7]	:= INV1 (srcd\[0-7], srcd[0-7]);
-
-Di0t0		:= NAN2H (di0t[0], pixsize[2], zcomp[0]);
-Di0t1		:= NAN4H (di0t[1], pixsize[2], dcomp[0..1], dcompen);
-Di0t2		:= NAN2 (di0t[2], srcd\[0], bcompen);
-Di0t3		:= NAN3 (di0t[3], pixsize\[2], dcomp[0], dcompen);
-Di0t4		:= NAN4 (di0t[4], di0t[0..3]);
-Dbinh[0]	:= ANR1P (dbinh\[0], di0t[4], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   *dbinh = 0;
-   di0t0_1 = ((pixsize & 0x04) && (zcomp & 0x01))
-      || ((pixsize & 0x04) && (dcomp & 0x01) && (dcomp & 0x02) && dcompen);
-   di0t4 = di0t0_1
-      || (!(srcd & 0x01) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x01) && dcompen);
-   *dbinh |= (!((di0t4 && phrase_mode) || winhibit) ? 0x01 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di1t0		:= NAN3 (di1t[0], pixsize\[2], dcomp[1], dcompen);
-Di1t1		:= NAN2 (di1t[1], srcd\[1], bcompen);
-Di1t2		:= NAN4 (di1t[2], di0t[0..1], di1t[0..1]);
-Dbinh[1]	:= ANR1 (dbinh\[1], di1t[2], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di1t2 = di0t0_1
-      || (!(srcd & 0x02) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x02) && dcompen);
-   *dbinh |= (!((di1t2 && phrase_mode) || winhibit) ? 0x02 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di2t0		:= NAN2H (di2t[0], pixsize[2], zcomp[1]);
-Di2t1		:= NAN4H (di2t[1], pixsize[2], dcomp[2..3], dcompen);
-Di2t2		:= NAN2 (di2t[2], srcd\[2], bcompen);
-Di2t3		:= NAN3 (di2t[3], pixsize\[2], dcomp[2], dcompen);
-Di2t4		:= NAN4 (di2t[4], di2t[0..3]);
-Dbinh[2]	:= ANR1 (dbinh\[2], di2t[4], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   //[bcompen=F dcompen=T phrase_mode=T bkgwren=F][nw=F wi=F]
-   //[di0t0_1=F di0t4=F][di1t2=F][di2t0_1=T di2t4=T][di3t2=T][di4t0_1=F di2t4=F][di5t2=F][di6t0_1=F di6t4=F][di7t2=F]
-   //[dcomp=$00 dbinh=$0C][7804780400007804] (icount=0005, inc=4)
-   di2t0_1 = ((pixsize & 0x04) && (zcomp & 0x02))
-      || ((pixsize & 0x04) && (dcomp & 0x04) && (dcomp & 0x08) && dcompen);
-   di2t4 = di2t0_1
-      || (!(srcd & 0x04) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x04) && dcompen);
-   *dbinh |= (!((di2t4 && phrase_mode) || winhibit) ? 0x04 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di3t0		:= NAN3 (di3t[0], pixsize\[2], dcomp[3], dcompen);
-Di3t1		:= NAN2 (di3t[1], srcd\[3], bcompen);
-Di3t2		:= NAN4 (di3t[2], di2t[0..1], di3t[0..1]);
-Dbinh[3]	:= ANR1 (dbinh\[3], di3t[2], phrase_mode, winhibit);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di3t2 = di2t0_1
-      || (!(srcd & 0x08) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x08) && dcompen);
-   *dbinh |= (!((di3t2 && phrase_mode) || winhibit) ? 0x08 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di4t0		:= NAN2H (di4t[0], pixsize[2], zcomp[2]);
-Di4t1		:= NAN4H (di4t[1], pixsize[2], dcomp[4..5], dcompen);
-Di4t2		:= NAN2 (di4t[2], srcd\[4], bcompen);
-Di4t3		:= NAN3 (di4t[3], pixsize\[2], dcomp[4], dcompen);
-Di4t4		:= NAN4 (di4t[4], di4t[0..3]);
-Dbinh[4]	:= NAN2 (dbinh\[4], di4t[4], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di4t0_1 = ((pixsize & 0x04u) && (zcomp & 0x04u))
-      || ((pixsize & 0x04u) && (dcomp & 0x10u) && (dcomp & 0x20u) && dcompen);
-   di4t4 = di4t0_1
-      || (!(srcd & 0x10u) && bcompen)
-      || (!(pixsize & 0x04u) && (dcomp & 0x10u) && dcompen);
-   *dbinh |= (!(di4t4 && phrase_mode) ? 0x10u : 0x00u);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di5t0		:= NAN3 (di5t[0], pixsize\[2], dcomp[5], dcompen);
-Di5t1		:= NAN2 (di5t[1], srcd\[5], bcompen);
-Di5t2		:= NAN4 (di5t[2], di4t[0..1], di5t[0..1]);
-Dbinh[5]	:= NAN2 (dbinh\[5], di5t[2], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di5t2 = di4t0_1
-      || (!(srcd & 0x20) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x20) && dcompen);
-   *dbinh |= (!(di5t2 && phrase_mode) ? 0x20 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di6t0		:= NAN2H (di6t[0], pixsize[2], zcomp[3]);
-Di6t1		:= NAN4H (di6t[1], pixsize[2], dcomp[6..7], dcompen);
-Di6t2		:= NAN2 (di6t[2], srcd\[6], bcompen);
-Di6t3		:= NAN3 (di6t[3], pixsize\[2], dcomp[6], dcompen);
-Di6t4		:= NAN4 (di6t[4], di6t[0..3]);
-Dbinh[6]	:= NAN2 (dbinh\[6], di6t[4], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di6t0_1 = ((pixsize & 0x04) && (zcomp & 0x08))
-      || ((pixsize & 0x04) && (dcomp & 0x40) && (dcomp & 0x80) && dcompen);
-   di6t4 = di6t0_1
-      || (!(srcd & 0x40) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x40) && dcompen);
-   *dbinh |= (!(di6t4 && phrase_mode) ? 0x40 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   /*Di7t0		:= NAN3 (di7t[0], pixsize\[2], dcomp[7], dcompen);
-Di7t1		:= NAN2 (di7t[1], srcd\[7], bcompen);
-Di7t2		:= NAN4 (di7t[2], di6t[0..1], di7t[0..1]);
-Dbinh[7]	:= NAN2 (dbinh\[7], di7t[2], phrase_mode);*/
-   ////////////////////////////////////// C++ CODE //////////////////////////////////////
-   di7t2 = di6t0_1
-      || (!(srcd & 0x80) && bcompen)
-      || (!(pixsize & 0x04) && (dcomp & 0x80) && dcompen);
-   *dbinh |= (!(di7t2 && phrase_mode) ? 0x80 : 0x00);
-   //////////////////////////////////////////////////////////////////////////////////////
-
-   //END;
-   //kludge
-   *dbinh = ~*dbinh;
-}
 
 #endif
 

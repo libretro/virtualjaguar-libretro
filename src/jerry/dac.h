@@ -17,6 +17,7 @@ void DACInit(void);
 void DACReset(void);
 void DACDone(void);
 void DACPrepareFrame(int length);
+uint32_t DACGetI2SWriteCount(void);
 
 // DAC memory access
 

@@ -7,6 +7,10 @@
 
 #include <stdint.h>
 
+#define MT_MEM_SIZE 0x20000
+
+extern uint8_t mtMem[MT_MEM_SIZE];
+
 void MTInit(void);
 void MTReset(void);
 void MTDone(void);

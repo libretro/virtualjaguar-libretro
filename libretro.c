@@ -17,8 +17,12 @@
 #include "joystick.h"
 #include "settings.h"
 #include "tom.h"
+#include "eeprom.h"
+#include "memtrack.h"
+#include "vjag_memory.h"
 #include "state.h"
 #include "log.h"
+#include "version.h" /* generated; defines CORE_VERSION */
 
 #define SAMPLERATE 48000
 #define BUFPAL  1920
@@ -38,25 +42,11 @@
  * lands on a future PR. */
 #define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg"
 
-#ifndef GIT_VERSION
-#define GIT_VERSION ""
-#endif
-#ifdef BUILD_TIMESTAMP
-#define CORE_VERSION "v2.2.0" GIT_VERSION BUILD_TIMESTAMP
-#else
-#define CORE_VERSION "v2.2.0" GIT_VERSION
-#endif
-
 int videoWidth               = 0;
 int videoHeight              = 0;
 uint32_t *videoBuffer        = NULL;
 int game_width               = 0;
 int game_height              = 0;
-
-extern uint16_t eeprom_ram[64];
-extern uint8_t mtMem[0x20000];
-extern uint32_t jaguarMainROMCRC32;
-extern void (*eeprom_dirty_cb)(void);
 
 /* Save buffer for RETRO_MEMORY_SAVE_RAM.
  * Regular carts: 128 bytes (64 x 16-bit EEPROM words, big-endian packed).
@@ -829,7 +819,16 @@ bool retro_load_game(const struct retro_game_info *info)
    videoWidth           = 320;
    videoHeight          = 240;
    videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
-   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t)); //found in dac.h
+   sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t));
+
+   if (!videoBuffer || !sampleBuffer)
+   {
+      free(videoBuffer);
+      free(sampleBuffer);
+      videoBuffer = NULL;
+      sampleBuffer = NULL;
+      return false;
+   }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
 
    game_width           = 320;
@@ -862,6 +861,7 @@ bool retro_load_game(const struct retro_game_info *info)
    if (!JaguarLoadFile((uint8_t*)info->data, info->size))
    {
       LOG_ERR("[Virtual Jaguar] unsupported or invalid content format\n");
+      JaguarDone();
       free(videoBuffer);
       videoBuffer = NULL;
       free(sampleBuffer);
@@ -879,6 +879,7 @@ bool retro_load_game(const struct retro_game_info *info)
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
       {
          LOG_ERR("[Virtual Jaguar] failed to reload RAM-loaded content\n");
+         JaguarDone();
          free(videoBuffer);
          videoBuffer = NULL;
          free(sampleBuffer);
@@ -931,12 +932,31 @@ void retro_unload_game(void)
 {
    retro_cheat_reset();
    JaguarDone();
+
    if (videoBuffer)
       free(videoBuffer);
    videoBuffer = NULL;
    if (sampleBuffer)
-      free(sampleBuffer); //found in dac.h
+      free(sampleBuffer);
    sampleBuffer = NULL;
+
+   /* Reset all module state so a subsequent retro_load_game in the same
+    * process (iOS cannot dlclose cores) starts clean. */
+   videoWidth = 0;
+   videoHeight = 0;
+   game_width = 0;
+   game_height = 0;
+
+   eeprom_dirty_cb = NULL;
+   save_data_needs_unpack = false;
+   memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
+
+   memset(jag_retropad, 0, sizeof(jag_retropad));
+   memset(jag_numpad, 0, sizeof(jag_numpad));
+   numpad_to_kb[0] = 0;
+   numpad_to_kb[1] = 0;
+   show_input_options = true;
+   enable_alt_inputs = false;
 }
 
 unsigned retro_get_region(void)
@@ -1013,6 +1033,34 @@ void retro_init(void)
 void retro_deinit(void)
 {
    libretro_supports_bitmasks = false;
+
+   /* Belt-and-suspenders: shut down emulator subsystems if the frontend
+    * calls deinit without unload first (videoBuffer != NULL means a game
+    * was loaded and never unloaded). */
+   if (videoBuffer)
+   {
+      retro_cheat_reset();
+      JaguarDone();
+      free(videoBuffer);
+   }
+   videoBuffer = NULL;
+   if (sampleBuffer)
+      free(sampleBuffer);
+   sampleBuffer = NULL;
+
+   eeprom_dirty_cb = NULL;
+   save_data_needs_unpack = false;
+   memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
+   videoWidth = 0;
+   videoHeight = 0;
+   game_width = 0;
+   game_height = 0;
+   memset(jag_retropad, 0, sizeof(jag_retropad));
+   memset(jag_numpad, 0, sizeof(jag_numpad));
+   numpad_to_kb[0] = 0;
+   numpad_to_kb[1] = 0;
+   show_input_options = true;
+   enable_alt_inputs = false;
 }
 
 void retro_reset(void)
@@ -1021,8 +1069,6 @@ void retro_reset(void)
 }
 
 #ifdef DEBUG_PRESENTATION
-extern uint16_t *ltxd, *rtxd;
-extern uint32_t screenPitch;
 static unsigned dbg_frame_counter = 0;
 
 static void dbg_dump_frame(void)

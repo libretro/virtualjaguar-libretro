@@ -1,0 +1,98 @@
+name: Bug report
+description: A reproducible behavior bug (crash, wrong output, hang, freeze) in a specific game or scenario.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing.  The more reproducible this is, the faster it gets fixed.  For perf regressions, use the `Performance issue` template instead.
+
+  - type: input
+    id: game
+    attributes:
+      label: Game / ROM
+      description: Title, region, dump notes (homebrew vs commercial, .jag vs .j64, CD vs cart).
+      placeholder: "e.g. Atari Karts (1995, USA, .jag)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order, including which menu screens / inputs.
+      placeholder: |
+        1. Boot ROM
+        2. Press Start at title
+        3. Select Single Race
+        4. Crash on track-select screen
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      placeholder: |
+        Expected: track-select renders normally.
+        Actual: black screen, audio loops 0.5s buffer, RetroArch logs "GPU stalled".
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bios
+    attributes:
+      label: BIOS mode
+      description: Set in RetroArch core options as `virtualjaguar_bios`.
+      options:
+        - "HLE BIOS (default; no real BIOS file)"
+        - "Real BIOS (jagboot.rom in system/)"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: blitter
+    attributes:
+      label: Blitter mode
+      description: Set in RetroArch core options as `virtualjaguar_usefastblitter`.
+      options:
+        - "Fast (default)"
+        - "Accurate (Midsummer2)"
+        - "Both (issue is independent of blitter)"
+    validations:
+      required: true
+
+  - type: input
+    id: core_version
+    attributes:
+      label: Core version
+      description: RetroArch -> Information -> Core Information -> "Core Version", or strings on the binary. (e.g. v2.2.0 abc1234)
+    validations:
+      required: true
+
+  - type: input
+    id: frontend
+    attributes:
+      label: Frontend + platform
+      placeholder: "e.g. RetroArch 1.21.0, macOS 14.5 (arm64); or Provenance 3.x iOS"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant lines from the RetroArch log (Settings -> Logging -> Logging Verbosity = Debug, then check `~/Library/Application Support/RetroArch/logs/` on macOS or platform equivalent).  Use `<details><summary>Log</summary>...</details>` for long pastes.
+      render: shell
+
+  - type: checkboxes
+    id: pre
+    attributes:
+      label: Pre-flight
+      options:
+        - label: Verified the issue is in this libretro core (not standalone Virtual Jaguar or another emulator).
+          required: true
+        - label: Searched [existing issues](https://github.com/libretro/virtualjaguar-libretro/issues?q=is%3Aissue) for duplicates.
+          required: true

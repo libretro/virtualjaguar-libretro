@@ -93,6 +93,54 @@ static uint64_t ref_byte_merge(uint64_t src, uint64_t dst, uint16_t mask)
    return result;
 }
 
+/* --- Scalar reference for ADD16SAT x4 --- */
+static void ref_add16sat_x4(uint16_t *addq, uint8_t *co,
+                             const uint16_t *adda, const uint16_t *addb,
+                             const uint8_t *cin,
+                             bool sat, bool eightbit, bool hicinh)
+{
+   int i;
+   for (i = 0; i < 4; i++)
+   {
+      uint16_t a = adda[i];
+      uint16_t b = addb[i];
+      uint8_t carry0, carry1, carry2, carry3;
+      uint8_t btop, ctop;
+      bool saturate, hisaturate;
+      uint32_t qt;
+      uint16_t q;
+
+      qt      = (a & 0xFF) + (b & 0xFF) + cin[i];
+      q       = qt & 0x00FF;
+      carry0  = ((qt & 0x0100) ? 1 : 0);
+      carry1  = (carry0 && !eightbit ? carry0 : 0);
+      qt      = (a & 0x0F00) + (b & 0x0F00) + (carry1 << 8);
+      carry2  = ((qt & 0x1000) ? 1 : 0);
+      q      |= qt & 0x0F00;
+      carry3  = (carry2 && !hicinh ? carry2 : 0);
+      qt      = (a & 0xF000) + (b & 0xF000) + (carry3 << 12);
+      co[i]   = ((qt & 0x10000) ? 1 : 0);
+      q      |= qt & 0xF000;
+
+      if (eightbit)
+      {
+         btop = (b & 0x0080) >> 7;
+         ctop = carry0;
+      }
+      else
+      {
+         btop = (b & 0x8000) >> 15;
+         ctop = co[i];
+      }
+
+      saturate   = sat && (btop ^ ctop);
+      hisaturate = saturate && !eightbit;
+
+      addq[i]  = (saturate ? (ctop ? 0x00FF : 0x0000) : q & 0x00FF);
+      addq[i] |= (hisaturate ? (ctop ? 0xFF00 : 0x0000) : q & 0xFF00);
+   }
+}
+
 /* --- Simple xorshift64 PRNG --- */
 static uint64_t prng_state = 0x123456789ABCDEF0ULL;
 
@@ -297,6 +345,175 @@ static void test_byte_merge(void)
    }
 }
 
+/* --- ADD16SAT x4 tests --- */
+static void test_add16sat_x4(void)
+{
+   int i;
+
+   printf("Testing add16sat_x4...\n");
+
+   /* Exhaustive test over all daddmode combinations: sat/eightbit/hicinh
+    * are derived from daddmode bits 0..2.  The 3 flags have 8 combos but
+    * only a few are reachable in the real blitter (mode 0,1,2,3,7).  We
+    * test all boolean combos anyway. */
+   {
+      /* Test: simple add without saturation (mode 0) */
+      uint16_t adda[4] = { 0x0100, 0x0200, 0x0300, 0x0400 };
+      uint16_t addb[4] = { 0x0010, 0x0020, 0x0030, 0x0040 };
+      uint8_t cin[4] = { 0, 0, 0, 0 };
+      uint16_t got_q[4], ref_q[4];
+      uint8_t got_co[4] = {0}, ref_co[4] = {0};
+
+      blitter_simd_ops.add16sat_x4(got_q, got_co, adda, addb, cin, false, false, false);
+      ref_add16sat_x4(ref_q, ref_co, adda, addb, cin, false, false, false);
+
+      for (i = 0; i < 4; i++)
+      {
+         CHECK(got_q[i] == ref_q[i],
+               "add16sat_x4 simple lane %d: got 0x%04x exp 0x%04x",
+               i, got_q[i], ref_q[i]);
+         CHECK(got_co[i] == ref_co[i],
+               "add16sat_x4 simple co lane %d: got %u exp %u",
+               i, got_co[i], ref_co[i]);
+      }
+   }
+
+   {
+      /* Test: overflow producing carry-out */
+      uint16_t adda[4] = { 0xFFF0, 0xFF00, 0xF000, 0x8000 };
+      uint16_t addb[4] = { 0x0020, 0x0100, 0x1000, 0x8000 };
+      uint8_t cin[4] = { 0, 0, 0, 0 };
+      uint16_t got_q[4], ref_q[4];
+      uint8_t got_co[4] = {0}, ref_co[4] = {0};
+
+      blitter_simd_ops.add16sat_x4(got_q, got_co, adda, addb, cin, false, false, false);
+      ref_add16sat_x4(ref_q, ref_co, adda, addb, cin, false, false, false);
+
+      for (i = 0; i < 4; i++)
+      {
+         CHECK(got_q[i] == ref_q[i],
+               "add16sat_x4 overflow lane %d: got 0x%04x exp 0x%04x",
+               i, got_q[i], ref_q[i]);
+         CHECK(got_co[i] == ref_co[i],
+               "add16sat_x4 overflow co lane %d: got %u exp %u",
+               i, got_co[i], ref_co[i]);
+      }
+   }
+
+   {
+      /* Test: saturation mode (16-bit) — sat=true, eightbit=false, hicinh=false */
+      uint16_t adda[4] = { 0x7FFF, 0x0001, 0x8000, 0x0000 };
+      uint16_t addb[4] = { 0x0001, 0xFFFE, 0x0001, 0xFFFF };
+      uint8_t cin[4] = { 0, 0, 0, 0 };
+      uint16_t got_q[4], ref_q[4];
+      uint8_t got_co[4] = {0}, ref_co[4] = {0};
+
+      blitter_simd_ops.add16sat_x4(got_q, got_co, adda, addb, cin, true, false, false);
+      ref_add16sat_x4(ref_q, ref_co, adda, addb, cin, true, false, false);
+
+      for (i = 0; i < 4; i++)
+      {
+         CHECK(got_q[i] == ref_q[i],
+               "add16sat_x4 sat16 lane %d: got 0x%04x exp 0x%04x",
+               i, got_q[i], ref_q[i]);
+      }
+   }
+
+   {
+      /* Test: 8-bit mode (eightbit=true) — carry does not propagate past byte 0 */
+      uint16_t adda[4] = { 0x00FF, 0x0080, 0x00C0, 0x0001 };
+      uint16_t addb[4] = { 0x0001, 0x0080, 0x0040, 0x00FE };
+      uint8_t cin[4] = { 0, 0, 0, 1 };
+      uint16_t got_q[4], ref_q[4];
+      uint8_t got_co[4] = {0}, ref_co[4] = {0};
+
+      blitter_simd_ops.add16sat_x4(got_q, got_co, adda, addb, cin, true, true, false);
+      ref_add16sat_x4(ref_q, ref_co, adda, addb, cin, true, true, false);
+
+      for (i = 0; i < 4; i++)
+      {
+         CHECK(got_q[i] == ref_q[i],
+               "add16sat_x4 eight lane %d: got 0x%04x exp 0x%04x",
+               i, got_q[i], ref_q[i]);
+         CHECK(got_co[i] == ref_co[i],
+               "add16sat_x4 eight co lane %d: got %u exp %u",
+               i, got_co[i], ref_co[i]);
+      }
+   }
+
+   {
+      /* Test: hicinh mode — carry does not propagate into top nibble */
+      uint16_t adda[4] = { 0x0FF0, 0x0F00, 0x0100, 0x0FFF };
+      uint16_t addb[4] = { 0x0010, 0x0100, 0x0F00, 0x0001 };
+      uint8_t cin[4] = { 0, 0, 0, 0 };
+      uint16_t got_q[4], ref_q[4];
+      uint8_t got_co[4] = {0}, ref_co[4] = {0};
+
+      blitter_simd_ops.add16sat_x4(got_q, got_co, adda, addb, cin, true, false, true);
+      ref_add16sat_x4(ref_q, ref_co, adda, addb, cin, true, false, true);
+
+      for (i = 0; i < 4; i++)
+      {
+         CHECK(got_q[i] == ref_q[i],
+               "add16sat_x4 hicinh lane %d: got 0x%04x exp 0x%04x",
+               i, got_q[i], ref_q[i]);
+         CHECK(got_co[i] == ref_co[i],
+               "add16sat_x4 hicinh co lane %d: got %u exp %u",
+               i, got_co[i], ref_co[i]);
+      }
+   }
+
+   /* Random fuzz across all mode combinations */
+   {
+      int mode;
+      for (mode = 0; mode < 8; mode++)
+      {
+         bool s   = (mode & 0x01) || (mode & 0x02);  /* sat = daddmode & 0x03 */
+         bool eb  = (mode & 0x02) != 0;               /* eightbit */
+         bool hci = ((mode & 0x03) == 0x03);           /* hicinh */
+         int j;
+
+         for (j = 0; j < 2000; j++)
+         {
+            uint16_t adda[4], addb[4], got_q[4], ref_q[4];
+            uint8_t cin[4], got_co[4] = {0}, ref_co[4] = {0};
+            uint64_t r;
+            bool match = true;
+
+            r = xorshift64();
+            adda[0] = (uint16_t)r; adda[1] = (uint16_t)(r >> 16);
+            adda[2] = (uint16_t)(r >> 32); adda[3] = (uint16_t)(r >> 48);
+            r = xorshift64();
+            addb[0] = (uint16_t)r; addb[1] = (uint16_t)(r >> 16);
+            addb[2] = (uint16_t)(r >> 32); addb[3] = (uint16_t)(r >> 48);
+            r = xorshift64();
+            cin[0] = r & 1; cin[1] = (r >> 1) & 1;
+            cin[2] = (r >> 2) & 1; cin[3] = (r >> 3) & 1;
+
+            blitter_simd_ops.add16sat_x4(got_q, got_co, adda, addb, cin, s, eb, hci);
+            ref_add16sat_x4(ref_q, ref_co, adda, addb, cin, s, eb, hci);
+
+            for (i = 0; i < 4; i++)
+            {
+               if (got_q[i] != ref_q[i] || got_co[i] != ref_co[i])
+                  match = false;
+            }
+
+            CHECK(match,
+                  "add16sat_x4 fuzz mode=%d #%d: "
+                  "q=[%04x,%04x,%04x,%04x] exp=[%04x,%04x,%04x,%04x] "
+                  "co=[%u,%u,%u,%u] exp_co=[%u,%u,%u,%u]",
+                  mode, j,
+                  got_q[0], got_q[1], got_q[2], got_q[3],
+                  ref_q[0], ref_q[1], ref_q[2], ref_q[3],
+                  got_co[0], got_co[1], got_co[2], got_co[3],
+                  ref_co[0], ref_co[1], ref_co[2], ref_co[3]);
+            if (!match) break;
+         }
+      }
+   }
+}
+
 /* --- Performance benchmark --- */
 
 #define BENCH_ITERS 1000000
@@ -424,6 +641,44 @@ static void bench_byte_merge(void)
    (void)sink;
 }
 
+static void bench_add16sat_x4(void)
+{
+   TIMER_DECL();
+   volatile uint16_t sink = 0;
+   int i;
+   double ref_ns, simd_ns;
+   uint16_t adda[4] = { 0x1234, 0x5678, 0x9ABC, 0xDEF0 };
+   uint16_t addb[4] = { 0x0011, 0x0022, 0x0033, 0x0044 };
+   uint8_t cin[4] = { 0, 0, 0, 0 };
+   uint16_t q[4];
+   uint8_t co[4];
+
+   TIMER_START();
+   for (i = 0; i < BENCH_ITERS; i++)
+   {
+      adda[0] = (uint16_t)(adda[0] + 1);
+      ref_add16sat_x4(q, co, adda, addb, cin, true, false, false);
+      sink += q[0];
+   }
+   TIMER_STOP();
+   ref_ns = TIMER_NS() / BENCH_ITERS;
+
+   adda[0] = 0x1234; /* reset */
+   TIMER_START();
+   for (i = 0; i < BENCH_ITERS; i++)
+   {
+      adda[0] = (uint16_t)(adda[0] + 1);
+      blitter_simd_ops.add16sat_x4(q, co, adda, addb, cin, true, false, false);
+      sink += q[0];
+   }
+   TIMER_STOP();
+   simd_ns = TIMER_NS() / BENCH_ITERS;
+
+   printf("  ADD16SATx4: ref=%6.1f ns/op  simd=%6.1f ns/op  speedup=%.2fx\n",
+          ref_ns, simd_ns, ref_ns / simd_ns);
+   (void)sink;
+}
+
 int main(int argc, char *argv[])
 {
    bool bench = (argc > 1 && strcmp(argv[1], "--bench") == 0);
@@ -435,6 +690,7 @@ int main(int argc, char *argv[])
       bench_dcomp();
       bench_zcomp();
       bench_byte_merge();
+      bench_add16sat_x4();
       printf("\nDone.\n");
       return 0;
    }
@@ -445,6 +701,7 @@ int main(int argc, char *argv[])
    test_dcomp();
    test_zcomp();
    test_byte_merge();
+   test_add16sat_x4();
 
    printf("\n==> Results: %d tests, %d passed, %d failed\n",
           tests_run, tests_run - failures, failures);

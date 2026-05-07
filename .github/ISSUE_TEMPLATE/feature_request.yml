@@ -1,0 +1,39 @@
+name: Feature request
+description: A new capability you'd like the core to expose.
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: this is a libretro fork of upstream Virtual Jaguar.  Hardware-emulation requests should usually go upstream; this tracker is for libretro-specific surface (core options, save state shape, RetroAchievements, input remapping, etc.).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: One sentence on what you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why / use case
+      description: Concrete scenario.  "I want X so I can do Y" beats "X would be nice".
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How (if you have ideas)
+      description: Optional.  Pointers to where you think it'd hook in (`libretro_core_options.h`, a specific subsystem) help if you have them.
+
+  - type: checkboxes
+    id: pre
+    attributes:
+      label: Pre-flight
+      options:
+        - label: This is libretro-fork-specific, not a general Virtual Jaguar emulation feature (those go upstream).
+          required: true

@@ -1,0 +1,128 @@
+name: Acid test suite
+
+# Runs the synthetic-ROM acid-test suite against every PR and push to
+# main branches.  Builds vasm from source (cached), assembles the
+# tests, builds the core with TEST_EXPORTS=1 + BENCH_PROFILE=1, runs
+# the suite, and gates on `test/acid/BASELINE.txt` -- a PR is blocked
+# only if a previously-PASSing test now FAILs.  New failing tests are
+# allowed (they document bugs); the baseline is updated alongside.
+
+on:
+  push:
+    branches: [develop, master, 'release/**']
+  pull_request:
+    branches: [develop, master]
+    paths:
+      # Only run when something the suite touches actually changes.
+      - 'src/**'
+      - 'libretro.c'
+      - 'test/acid/**'
+      - 'Makefile'
+      - 'Makefile.common'
+      - '.github/workflows/acid-test.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: acid-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acid:
+    name: Acid suite (linux x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need the full history if we want to inspect the baseline diff
+          # against develop later, but shallow is fine for now.
+          fetch-depth: 1
+
+      - name: Cache vasm
+        id: vasm-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/vasmm68k_mot
+          # Bust the cache if anyone bumps prb28/vasm SHA.
+          key: vasm-1.9-prb28-${{ runner.os }}-v1
+
+      - name: Build vasm from source
+        if: steps.vasm-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vasm-build && cd /tmp/vasm-build
+          # prb28 mirror -- upstream sun.hasenbraten.de is intermittently
+          # unreachable.  See test/acid/README.md for context.
+          git clone --depth 1 https://github.com/prb28/vasm.git src
+          cd src && make CPU=m68k SYNTAX=mot
+          sudo install vasmm68k_mot /usr/local/bin/vasmm68k_mot
+          vasmm68k_mot 2>&1 | head -3 || true
+
+      - name: Build the core (TEST_EXPORTS=1 BENCH_PROFILE=1)
+        run: |
+          set -euo pipefail
+          # The acid runner needs perf_counters_find exported (so it can
+          # report per-test counter deltas).  TEST_EXPORTS=1 widens the
+          # symbol set; BENCH_PROFILE=1 emits the actual counter code.
+          make -j"$(getconf _NPROCESSORS_ONLN)" \
+              TEST_EXPORTS=1 BENCH_PROFILE=1
+          ls -la virtualjaguar_libretro.so
+
+      - name: Assemble acid-test ROMs (lint-clean check)
+        run: |
+          set -euo pipefail
+          # Builds include/jaguar_regs.s from C source, assembles every
+          # tests/**/*.s into a .jag, and runs the lint pass.  The lint
+          # pass MUST pass -- any divergence between a local equate and
+          # the oracle, or any unknown bit in a B_COMMAND literal, is a
+          # blocking failure.
+          make -C test/acid all
+          make -C test/acid lint
+
+      - name: Run acid suite + capture output
+        id: run
+        run: |
+          set -euxo pipefail
+          # The suite's own exit code reports the FAIL count, which is
+          # not what we want to gate on (we *expect* known FAILs that
+          # document bugs).  Capture the output and let
+          # check-baseline.py decide whether to fail the job.
+          set +e
+          make -C test/acid test \
+              CORE="$(pwd)/virtualjaguar_libretro.so" \
+              > test/acid/results.log 2>&1
+          set -e
+          tail -3 test/acid/results.log
+
+      - name: Compare against baseline (regression gate)
+        run: |
+          python3 test/acid/scripts/check-baseline.py \
+                  test/acid/results.log \
+                  test/acid/BASELINE.txt | tee acid-summary.txt
+          # check-baseline.py exits non-zero on regressions; the `set -e`
+          # at job level propagates it.
+
+      - name: Post summary to PR (job summary)
+        if: always()
+        run: |
+          {
+            echo "## Acid suite results"
+            echo
+            echo "\`\`\`"
+            cat acid-summary.txt 2>/dev/null || echo "(no summary)"
+            echo "\`\`\`"
+            echo
+            echo "Full output: artifacts \`acid-results.log\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acid-results
+          path: |
+            test/acid/results.log
+            acid-summary.txt
+          retention-days: 14

@@ -33,6 +33,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/cd/cdrom.c \
 	$(CORE_DIR)/src/core/cheat.c \
 	$(CORE_DIR)/src/core/crc32.c \
+	$(CORE_DIR)/src/core/perf_counters.c \
 	$(CORE_DIR)/src/core/event.c \
 	$(CORE_DIR)/src/jerry/eeprom.c \
 	$(CORE_DIR)/src/core/filedb.c \

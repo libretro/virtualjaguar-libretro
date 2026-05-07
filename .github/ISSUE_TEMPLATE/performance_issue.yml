@@ -1,0 +1,77 @@
+name: Performance issue
+description: Slowdown, frame drops, or audio stutter in a specific game or scenario.
+title: "[perf] "
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for perf regressions, frame drops, audio stutter, slow boot.  For functional bugs (crashes, wrong output), use the `Bug report` template instead.
+
+        Run `make benchmark BENCH_ROM=<your rom>` from a fresh clone to get a stable wall-clock number that's easier to triage than "it feels slow".  See [`docs/profiling.md`](https://github.com/libretro/virtualjaguar-libretro/blob/develop/docs/profiling.md).
+
+  - type: input
+    id: game
+    attributes:
+      label: Game / ROM
+      placeholder: "e.g. Wolfenstein 3D (1994, USA, .jag)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: Where in the game.  "Title screen" vs "level 3 with 5 enemies on screen" matter.
+      placeholder: "Level 3 first room: 4 visible enemies + animated wall textures."
+    validations:
+      required: true
+
+  - type: input
+    id: bench
+    attributes:
+      label: Benchmark numbers (if you have them)
+      description: Output of `make benchmark BENCH_ROM=<your rom>` -- frames/sec, ms/frame.  Mention CPU + OS so we can sanity-check.
+      placeholder: "make benchmark BENCH_ROM=Wolf3D.jag -> 42 FPS / 23.8 ms (M2 MBP, macOS 14.5)"
+
+  - type: dropdown
+    id: blitter
+    attributes:
+      label: Blitter mode (matters for perf!)
+      options:
+        - "Fast (default)"
+        - "Accurate (Midsummer2)"
+        - "Both equally slow"
+        - "Tested fast only"
+    validations:
+      required: true
+
+  - type: input
+    id: core_version
+    attributes:
+      label: Core version
+      placeholder: "v2.2.0 abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: frontend
+    attributes:
+      label: Frontend + hardware
+      placeholder: "RetroArch 1.21.0, macOS 14.5, M2 Pro (arm64)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: regression
+    attributes:
+      label: Did this work better before?
+      description: If yes, name the version it was fast in, or the commit/release that broke it. `git bisect` results welcome.
+
+  - type: checkboxes
+    id: pre
+    attributes:
+      label: Pre-flight
+      options:
+        - label: Verified by running with both `Fast` and `Accurate` blitter modes.
+        - label: Other libretro cores run at full speed on the same hardware (rules out general system slowness).

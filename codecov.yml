@@ -1,0 +1,26 @@
+# Codecov config: per-PR coverage delta + project floor.
+#
+# Patch threshold = 0% means any drop in patch coverage flags red.
+# Project threshold = 1% absorbs measurement noise from re-runs of
+# nondeterministic tests.
+
+coverage:
+  status:
+    project:
+      default:
+        threshold: 1%
+    patch:
+      default:
+        threshold: 0%
+
+ignore:
+  - "libretro-common/**"
+  - "src/m68000/**"
+  - "src/bios/jag*.c"
+  - "test/**"
+  - "src/core/version.h"
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
