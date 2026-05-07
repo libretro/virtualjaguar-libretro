@@ -71,3 +71,4 @@ test/tools/build/
 # Acid-test build outputs
 test/acid/acid_run
 test/acid/tests/**/*.jag
+/test/tools/test_frame_timing
