@@ -1086,14 +1086,15 @@ bool retro_load_game(const struct retro_game_info *info)
       sampleBuffer = NULL;
       return false;
    }
-   JaguarReset();
 
-   /* JaguarReset() randomizes RAM contents, which destroys RAM-loaded
-    * executables (ABS, COFF, JAGSERVER formats).  Cart ROMs are safe
-    * because they live at $800000+ which isn't touched by reset.
-    * Re-load the file so the program data is back in place. */
+   /* For RAM-loaded executables (.abs/.cof/JagServer), JaguarReset()
+    * randomizes RAM and destroys the loaded program.  The cart and CD
+    * boot strategies handle their own JaguarReset() ordering internally
+    * so the post-boot state is preserved.  We only need to do an extra
+    * reset+reload here for the RAM-loaded path. */
    if (!jaguarCartInserted && !jaguar_cd_mode)
    {
+      JaguarReset();
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
       {
          LOG_ERR("[Virtual Jaguar] failed to reload RAM-loaded content\n");
