@@ -42,7 +42,7 @@ jobs:
 
       - name: Cache vasm
         id: vasm-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /usr/local/bin/vasmm68k_mot
           # Bust the cache if anyone bumps prb28/vasm SHA.
