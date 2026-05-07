@@ -418,7 +418,7 @@ jobs:
           bash scripts/gen-version-h.sh
           make coverage CC="gcc" CXX="g++"
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
