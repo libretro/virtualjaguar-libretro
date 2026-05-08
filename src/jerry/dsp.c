@@ -859,6 +859,25 @@ void DSPExec(int32_t cycles)
 			IMASKCleared = false;
 		}
 
+		/* PC escape bail-out.  When the DSP PC has wandered into a
+		 * region that doesn't contain executable code (between main
+		 * RAM and DSP local SRAM, or above the cart space), every
+		 * "fetched opcode" is bus-default 0xFFFF garbage that decodes
+		 * to a near-zero-cost opcode -- the inner loop then burns the
+		 * entire timeslice without making progress, hanging the
+		 * frontend.  See Wolf3D / issue #38: PC escapes to $0006EE
+		 * area and the headless harness wedged for 12+ minutes per
+		 * frame.  Drain cycles instead and let the runtime watchdog
+		 * (src/core/crash_detect.c) log the dsp_pc_escape signature.
+		 * DSP_RUNNING is left alone so games that legitimately stop
+		 * the DSP via DSPGO=0 are unaffected. */
+		if (!((dsp_pc <= 0x001FFFFF) ||
+		      (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)))
+		{
+			cycles = 0;
+			break;
+		}
+
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
