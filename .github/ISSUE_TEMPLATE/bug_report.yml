@@ -47,7 +47,7 @@ body:
       description: Set in RetroArch core options as `virtualjaguar_bios`.
       options:
         - "HLE BIOS (default; no real BIOS file)"
-        - "Real BIOS (jagboot.rom in system/)"
+        - "Real BIOS (real BIOS file is included in Virtual Jaguar core)"
         - "Not sure"
     validations:
       required: true
