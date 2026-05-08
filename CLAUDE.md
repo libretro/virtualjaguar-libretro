@@ -97,6 +97,19 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 `make benchmark` runs `test/tools/test_benchmark` headlessly against a fixed ROM (default `test/roms/yarc.j64`, 600 frames) and prints FPS / ms-per-frame. Use as a same-host commit-to-commit delta — don't compare across machines. Full guide: [`docs/profiling.md`](docs/profiling.md) covers Instruments / `perf` / flame graphs and the SIMD A/B knob.
 
+### Runtime crash watchdog
+
+`src/core/crash_detect.c` runs once per frame from `retro_run` and logs to the RetroArch log on these signatures:
+
+- `gpu_pc_escape` — GPU running with PC outside `[$F03000,$F03FFF]` ∪ `[$0,$1FFFFF]`
+- `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$1FFFFF]`
+- `gpu_wedge` / `dsp_wedge` — same PC for ≥180 / 600 frames while still flagged running
+- `video_stall` — framebuffer hash unchanged for 300 frames while a processor is running
+
+Toggled via core option `virtualjaguar_crash_detect = enabled` (default) / `disabled` / `verbose`. Verbose mode adds a state heartbeat every 600 frames. Cost when enabled: one indirect call + ~256-pixel hash per frame; off-mode short-circuits at the first instruction.
+
+When triaging "X crashes / hangs / goes to a black screen" reports, the user's RetroArch log should show the signature. No save state, no input recording needed — the log line at the moment-of-crash points at which subsystem broke. **Add new signatures here when you find a recurring failure mode that isn't already covered**; don't sprinkle one-off `LOG_ERR` calls across the subsystem files.
+
 ### Audio / DSP work — required tests
 
 **Any change to `src/jerry/dac.c`, `src/jerry/dsp.c`, the HLE BIOS DSP/audio engine path in `src/core/jaguar.c`, or the DSP IRQ return-address logic MUST be validated against both audio tests, not just one.** A clipping check alone is insufficient: PR #170 (closed) shipped a "fix" that took Iron Soldier 2 from 17% saturated samples to RMS=521 (silent), and the clipping test passed because silence has 0% saturation.

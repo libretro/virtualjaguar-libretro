@@ -9,6 +9,7 @@
 #include <compat/strl.h>
 
 #include "cheat.h"
+#include "crash_detect.h"
 #include "file.h"
 #include "jagbios.h"
 #include "jaguar.h"
@@ -296,6 +297,22 @@ static void check_variables(void)
          vjs.useFastBlitter = true;
       else
          vjs.useFastBlitter = false;
+   }
+
+   var.key = "virtualjaguar_crash_detect";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "verbose") == 0)
+         CrashDetectSetMode(CRASH_DETECT_VERBOSE);
+      else if (strcmp(var.value, "disabled") == 0)
+         CrashDetectSetMode(CRASH_DETECT_OFF);
+      else
+         CrashDetectSetMode(CRASH_DETECT_ON);
+   }
+   else
+   {
+      CrashDetectSetMode(CRASH_DETECT_ON);
    }
 
    var.key = "virtualjaguar_bios";
@@ -848,6 +865,7 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
 
    JaguarInit();                                             // set up hardware
+   CrashDetectReset();                                       // zero per-game watchdog state
    memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000); // Use the stock BIOS
 
    JaguarSetScreenPitch(videoWidth);
@@ -1028,6 +1046,8 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
+
+   CrashDetectInit();
 }
 
 void retro_deinit(void)
@@ -1145,6 +1165,13 @@ void retro_run(void)
    JaguarExecuteNew();
    cheat_apply_all();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
+
+   /* Runtime watchdog: looks for GPU/DSP PC escape, GPU/DSP wedge,
+    * and video stall. Fires LOG_WRN/LOG_ERR via vj_log_cb so the
+    * signature shows up in the RetroArch log without extra wiring.
+    * Off-mode short-circuits in CrashDetectFrameTick, so the cost
+    * when disabled is one indirect function call per frame. */
+   CrashDetectFrameTick(videoBuffer, (unsigned)game_width, (unsigned)game_height);
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 
