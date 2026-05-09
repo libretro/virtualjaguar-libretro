@@ -181,7 +181,12 @@ static bool load_core(const char *path)
       return false;
    }
 #define LOAD(sym) do { p_##sym = dlsym(core_handle, #sym); \
-   if (!p_##sym) { fprintf(stderr, "Missing symbol: %s\n", #sym); return false; } } while (0)
+   if (!p_##sym) { \
+      fprintf(stderr, "Missing symbol: %s\n", #sym); \
+      dlclose(core_handle); core_handle = NULL; \
+      return false; \
+   } \
+} while (0)
    LOAD(retro_init);
    LOAD(retro_deinit);
    LOAD(retro_set_environment);
@@ -321,6 +326,8 @@ int main(int argc, char **argv)
    if (!p_retro_load_game(&game))
    {
       fprintf(stderr, "FAIL: retro_load_game failed\n");
+      p_retro_deinit();
+      dlclose(core_handle); core_handle = NULL;
       free(rom_buf);
       return 1;
    }
@@ -330,6 +337,7 @@ int main(int argc, char **argv)
 
    p_retro_unload_game();
    p_retro_deinit();
+   dlclose(core_handle); core_handle = NULL;
    free(rom_buf);
 
    /* ---------- Report ---------- */

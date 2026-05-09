@@ -860,17 +860,24 @@ void DSPExec(int32_t cycles)
 		}
 
 		/* PC escape bail-out.  When the DSP PC has wandered into a
-		 * region that doesn't contain executable code (register space
-		 * above $E40000 outside DSP local SRAM), every "fetched opcode"
+		 * region that doesn't contain executable code -- register
+		 * space at $F00000-$F1FFFF outside DSP local SRAM, or the
+		 * unmapped territory above $E40000 -- every "fetched opcode"
 		 * is bus-default 0xFFFF garbage that decodes to a near-zero-
-		 * cost opcode -- the inner loop then burns the entire timeslice
-		 * without making progress, hanging the frontend.  See Wolf3D /
-		 * issue #38: PC escapes to $0006EE area and the headless
-		 * harness wedged for 12+ minutes per frame.  Drain cycles
-		 * instead and let the runtime watchdog
-		 * (src/core/crash_detect.c) log the dsp_pc_escape signature.
-		 * DSP_RUNNING is left alone so games that legitimately stop
-		 * the DSP via DSPGO=0 are unaffected.
+		 * cost opcode.  The inner loop then burns the entire
+		 * timeslice without making progress, hanging the frontend.
+		 *
+		 * Wolf3D headless triage caught this in v2.3.0: the runtime
+		 * watchdog logged `dsp_pc_escape pc=$00FFF004E8` (PC top-byte
+		 * corrupted) and the harness wedged for 12+ minutes per
+		 * frame.  An earlier dsp-diag snapshot showed PC=$0006EE in
+		 * RAM at frame 48 -- that's the upstream bug (separate from
+		 * this bail-out: $0006EE is *valid* RAM and decodes to real
+		 * opcodes; it's where the DSP eventually drifts INTO bad
+		 * territory that triggers the wedge).  Drain cycles here and
+		 * let the runtime watchdog (src/core/crash_detect.c) log the
+		 * actual escape PC.  DSP_RUNNING is left alone so games that
+		 * legitimately stop the DSP via DSPGO=0 are unaffected.
 		 *
 		 * Valid execution regions match JaguarReadX address decoding
 		 * (src/core/jaguar.c): anything <= $E3FFFF (main RAM mirrored

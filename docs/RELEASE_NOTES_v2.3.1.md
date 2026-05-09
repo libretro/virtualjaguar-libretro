@@ -77,10 +77,13 @@ bug reports about them have a real chance of being actionable.
 - **Doom**: runs at ~2x speed, music silent.  Bus arbitration / cycle
   accuracy modeling not implemented; PR #169 (draft) is in design
   limbo.
-- **Wolfenstein 3D**: no audio (DSP escapes to $0006EE around frame
-  48).  Long-standing — present in v2.2.0 too, not a v2.3.x
-  regression.  Watchdog now logs the escape signature cleanly when
-  it happens.
+- **Wolfenstein 3D**: no audio.  The dsp-diag tool shows the DSP
+  PC drifting to $0006EE in main RAM around frame 48 (Bank1
+  registers never finish initializing); the runtime watchdog
+  subsequently logs `dsp_pc_escape pc=$00FFF004E8` once the
+  drift hits unmapped register space, and the new wedge bail-out
+  (this release) prevents the headless harness from hanging on it.
+  Long-standing — present in v2.2.0 too, not a v2.3.x regression.
 - **Skyhammer / Iron Soldier 2**: saturated square-wave audio in HLE
   (DSP engine state not fully replicated).  Both tests deliberately
   flag these as `EXPECTED-FAIL` in the suite manifest until a real

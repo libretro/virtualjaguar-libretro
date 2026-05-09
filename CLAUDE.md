@@ -101,8 +101,8 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 `src/core/crash_detect.c` runs once per frame from `retro_run` and logs to the RetroArch log on these signatures:
 
-- `gpu_pc_escape` — GPU running with PC outside `[$F03000,$F03FFF]` ∪ `[$0,$1FFFFF]`
-- `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$1FFFFF]`
+- `gpu_pc_escape` — GPU running with PC outside `[$F03000,$F03FFF]` ∪ `[$0,$E3FFFF]` (matches the JaguarReadX address decoding: main RAM mirrors at the bottom 8MB, cart ROM, boot ROM)
+- `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$E3FFFF]`
 - `gpu_wedge` / `dsp_wedge` — same PC for ≥180 / 600 frames while still flagged running
 - `video_stall` — framebuffer hash unchanged for 300 frames while a processor is running
 
