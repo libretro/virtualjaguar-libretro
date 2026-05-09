@@ -299,7 +299,7 @@ jobs:
       run: bash test/tools/test_rcheevos_e2e.sh ./${{ matrix.config.artifact }}
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.config.displayTargetName }}
         path: ${{ matrix.config.artifact }}
@@ -356,7 +356,7 @@ jobs:
       run: make -j4 platform=vita
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: PS Vita
         path: virtualjaguar_libretro_vita.a
@@ -376,7 +376,7 @@ jobs:
         DEVKITPRO: /opt/devkitpro
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: Nintendo Switch
         path: virtualjaguar_libretro_libnx.a
@@ -418,7 +418,7 @@ jobs:
           bash scripts/gen-version-h.sh
           make coverage CC="gcc" CXX="g++"
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
           fail_ci_if_error: false

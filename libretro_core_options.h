@@ -106,6 +106,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_crash_detect",
+      "Crash Detect",
+      NULL,
+      "Lightweight runtime watchdog that logs GPU/DSP PC escape, GPU/DSP wedge, and video stall events to the RetroArch log. Helpful when filing bug reports about games that hang or go to a black screen mid-play. Verbose mode also dumps a state heartbeat every 10 seconds.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  "Enabled" },
+         { "disabled", "Disabled" },
+         { "verbose",  "Enabled (verbose / heartbeat)" },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_bios",
       "BIOS",
       NULL,

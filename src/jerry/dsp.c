@@ -859,6 +859,40 @@ void DSPExec(int32_t cycles)
 			IMASKCleared = false;
 		}
 
+		/* PC escape bail-out.  When the DSP PC has wandered into a
+		 * region that doesn't contain executable code -- register
+		 * space at $F00000-$F1FFFF outside DSP local SRAM, or the
+		 * unmapped territory above $E40000 -- every "fetched opcode"
+		 * is bus-default 0xFFFF garbage that decodes to a near-zero-
+		 * cost opcode.  The inner loop then burns the entire
+		 * timeslice without making progress, hanging the frontend.
+		 *
+		 * Wolf3D headless triage caught this in v2.3.0: the runtime
+		 * watchdog logged `dsp_pc_escape pc=$00FFF004E8` (PC top-byte
+		 * corrupted) and the harness wedged for 12+ minutes per
+		 * frame.  An earlier dsp-diag snapshot showed PC=$0006EE in
+		 * RAM at frame 48 -- that's the upstream bug (separate from
+		 * this bail-out: $0006EE is *valid* RAM and decodes to real
+		 * opcodes; it's where the DSP eventually drifts INTO bad
+		 * territory that triggers the wedge).  Drain cycles here and
+		 * let the runtime watchdog (src/core/crash_detect.c) log the
+		 * actual escape PC.  DSP_RUNNING is left alone so games that
+		 * legitimately stop the DSP via DSPGO=0 are unaffected.
+		 *
+		 * Valid execution regions match JaguarReadX address decoding
+		 * (src/core/jaguar.c): anything <= $E3FFFF (main RAM mirrored
+		 * 4x for the bottom 8MB, cart ROM, boot ROM) plus DSP local
+		 * SRAM.  Earlier versions of this check used `<= 0x1FFFFF`
+		 * and would have false-flagged DSP code running from a RAM
+		 * mirror at $200000-$7FFFFF or from cart ROM at $800000+.
+		 * Caught by Copilot review on PR #182. */
+		if (!((dsp_pc <= 0x00E3FFFF) ||
+		      (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)))
+		{
+			cycles = 0;
+			break;
+		}
+
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;

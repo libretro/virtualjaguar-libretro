@@ -47,7 +47,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v2.3.0
+CORE_BASE_VERSION := v2.3.1
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -731,7 +731,7 @@ clean:
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
-		test/test_audio_clipping test/test_pit_clock_rate \
+		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
@@ -761,7 +761,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
-		test/test_audio_pipeline test/test_audio_clipping test/test_pit_clock_rate \
+		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/tools/test_memory_map
 	./test/test_cheat
@@ -800,6 +800,17 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --expect-clipping --quiet; \
 	else \
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
+	fi
+	@# Presence check: counterpart to the clipping check.  A "fix" that
+	@# silences the game (e.g. PR #170 closed without merge) drops RMS
+	@# to zero — clipping passes but the game has no audio.  Iron
+	@# Soldier 1 boots straight to a music-on title; envelope was
+	@# measured on develop (RMS ~1175).  Floor 200 catches silence
+	@# regressions; ceiling 25000 catches loud-broken regressions.
+	@if [ -f "test/roms/private/Iron Soldier (1994).jag" ]; then \
+		./test/test_audio_presence ./$(TARGET) "test/roms/private/Iron Soldier (1994).jag" --label "Iron Soldier 1" --rms-floor 200 --rms-ceiling 25000 --quiet; \
+	else \
+		echo "  SKIP: Iron Soldier 1 ROM (private) not available (audio presence)"; \
 	fi
 	./test/tools/test_memory_map ./$(TARGET)
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
@@ -891,6 +902,10 @@ test/test_audio_pipeline: test/test_audio_pipeline.c
 test/test_audio_clipping: test/test_audio_clipping.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_audio_clipping.c -ldl -lm
+
+test/test_audio_presence: test/test_audio_presence.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_presence.c -ldl -lm
 
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
