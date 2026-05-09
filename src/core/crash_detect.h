@@ -28,7 +28,7 @@ extern "C" {
 
 /* Lifecycle */
 void CrashDetectInit(void);
-void CrashDetectReset(void);   /* called on retro_load_game / JaguarReset */
+void CrashDetectReset(void);   /* called from retro_load_game */
 void CrashDetectSetMode(int mode);
 
 /* Per-frame hook -- call once at the END of JaguarExecuteNew so all

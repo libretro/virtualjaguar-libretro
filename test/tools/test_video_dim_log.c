@@ -155,7 +155,14 @@ static bool load_core(const char *path)
 {
    core_handle = dlopen(path, RTLD_NOW);
    if (!core_handle) { fprintf(stderr, "dlopen: %s\n", dlerror()); return false; }
-#define LOAD(s) do { p_##s = dlsym(core_handle, #s); if (!p_##s) { fprintf(stderr, "missing %s\n", #s); return false; } } while (0)
+#define LOAD(s) do { \
+   p_##s = dlsym(core_handle, #s); \
+   if (!p_##s) { \
+      fprintf(stderr, "missing %s\n", #s); \
+      dlclose(core_handle); core_handle = NULL; \
+      return false; \
+   } \
+} while (0)
    LOAD(retro_init); LOAD(retro_deinit);
    LOAD(retro_set_environment); LOAD(retro_set_video_refresh);
    LOAD(retro_set_audio_sample); LOAD(retro_set_audio_sample_batch);
@@ -184,10 +191,16 @@ int main(int argc, char **argv)
    }
    if (!core || !rom) { fprintf(stderr, "Usage: %s <core> <rom> [--frames N] [--bios]\n", argv[0]); return 2; }
 
-   fp = fopen(rom, "rb"); if (!fp) { fprintf(stderr, "open %s: fail\n", rom); return 2; }
-   fseek(fp, 0, SEEK_END); sz = ftell(fp); fseek(fp, 0, SEEK_SET);
+   fp = fopen(rom, "rb");
+   if (!fp) { fprintf(stderr, "open %s: fail\n", rom); return 2; }
+   if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); fprintf(stderr, "fseek: fail\n"); return 2; }
+   sz = ftell(fp);
+   if (sz <= 0) { fclose(fp); fprintf(stderr, "ftell: bad size %ld\n", sz); return 2; }
+   if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); fprintf(stderr, "fseek rewind: fail\n"); return 2; }
    buf = malloc((size_t)sz);
-   if (fread(buf, 1, (size_t)sz, fp) != (size_t)sz) { fclose(fp); free(buf); return 2; }
+   if (!buf) { fclose(fp); fprintf(stderr, "malloc(%ld): fail\n", sz); return 2; }
+   if (fread(buf, 1, (size_t)sz, fp) != (size_t)sz)
+   { fclose(fp); free(buf); fprintf(stderr, "fread: short read\n"); return 2; }
    fclose(fp);
 
    if (!load_core(core)) { free(buf); return 1; }
@@ -201,7 +214,14 @@ int main(int argc, char **argv)
 
    memset(&game, 0, sizeof(game));
    game.path = rom; game.data = buf; game.size = (size_t)sz;
-   if (!p_retro_load_game(&game)) { fprintf(stderr, "load_game failed\n"); free(buf); return 1; }
+   if (!p_retro_load_game(&game))
+   {
+      fprintf(stderr, "load_game failed\n");
+      p_retro_deinit();
+      dlclose(core_handle); core_handle = NULL;
+      free(buf);
+      return 1;
+   }
 
    printf("=== Video dim log: %s, %u frames, BIOS=%s ===\n",
           rom, frames, use_bios ? "on" : "off");
@@ -220,6 +240,7 @@ int main(int argc, char **argv)
 
    p_retro_unload_game();
    p_retro_deinit();
+   dlclose(core_handle); core_handle = NULL;
    free(buf);
    return 0;
 }

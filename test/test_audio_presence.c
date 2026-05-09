@@ -78,8 +78,11 @@ static size_t audio_batch(const int16_t *data, size_t frames)
    {
       int16_t l = data[i * 2];
       int16_t r = data[i * 2 + 1];
-      int16_t abs_l = (l < 0) ? -l : l;
-      int16_t abs_r = (r < 0) ? -r : r;
+      /* Promote to int32_t so that negating INT16_MIN doesn't overflow
+       * (-(-32768) is undefined as a 16-bit op).  Caught by Copilot
+       * review on PR #182. */
+      int32_t abs_l = (l < 0) ? -(int32_t)l : (int32_t)l;
+      int32_t abs_r = (r < 0) ? -(int32_t)r : (int32_t)r;
       bool near_zero = (abs_l <= ZERO_THRESHOLD) && (abs_r <= ZERO_THRESHOLD);
 
       if (first_audio_frame < 0 && (abs_l > ONSET_THRESHOLD || abs_r > ONSET_THRESHOLD))
@@ -178,7 +181,12 @@ static bool load_core(const char *path)
       return false;
    }
 #define LOAD(sym) do { p_##sym = dlsym(core_handle, #sym); \
-   if (!p_##sym) { fprintf(stderr, "Missing symbol: %s\n", #sym); return false; } } while (0)
+   if (!p_##sym) { \
+      fprintf(stderr, "Missing symbol: %s\n", #sym); \
+      dlclose(core_handle); core_handle = NULL; \
+      return false; \
+   } \
+} while (0)
    LOAD(retro_init);
    LOAD(retro_deinit);
    LOAD(retro_set_environment);
@@ -283,6 +291,19 @@ int main(int argc, char **argv)
       return 2;
    }
 
+   /* `--frames` must leave a non-empty measurement window past the
+    * boot-skip prefix; otherwise the report's `total_frames -
+    * WINDOW_START_FRAME` underflows when printed via %u.
+    * Caught by Copilot review on PR #182. */
+   if (total_frames <= WINDOW_START_FRAME)
+   {
+      fprintf(stderr,
+              "ERROR: --frames %u must exceed the %u-frame boot skip "
+              "(WINDOW_START_FRAME).  Pick a value > %u.\n",
+              total_frames, WINDOW_START_FRAME, WINDOW_START_FRAME);
+      return 2;
+   }
+
    if (load_rom(rom_path) < 0)
    {
       fprintf(stderr, "SKIP: ROM not found or unreadable: %s\n", rom_path);
@@ -305,6 +326,8 @@ int main(int argc, char **argv)
    if (!p_retro_load_game(&game))
    {
       fprintf(stderr, "FAIL: retro_load_game failed\n");
+      p_retro_deinit();
+      dlclose(core_handle); core_handle = NULL;
       free(rom_buf);
       return 1;
    }
@@ -314,6 +337,7 @@ int main(int argc, char **argv)
 
    p_retro_unload_game();
    p_retro_deinit();
+   dlclose(core_handle); core_handle = NULL;
    free(rom_buf);
 
    /* ---------- Report ---------- */
