@@ -155,7 +155,14 @@ static bool load_core(const char *path)
 {
    core_handle = dlopen(path, RTLD_NOW);
    if (!core_handle) { fprintf(stderr, "dlopen: %s\n", dlerror()); return false; }
-#define LOAD(s) do { p_##s = dlsym(core_handle, #s); if (!p_##s) { fprintf(stderr, "missing %s\n", #s); return false; } } while (0)
+#define LOAD(s) do { \
+   p_##s = dlsym(core_handle, #s); \
+   if (!p_##s) { \
+      fprintf(stderr, "missing %s\n", #s); \
+      dlclose(core_handle); core_handle = NULL; \
+      return false; \
+   } \
+} while (0)
    LOAD(retro_init); LOAD(retro_deinit);
    LOAD(retro_set_environment); LOAD(retro_set_video_refresh);
    LOAD(retro_set_audio_sample); LOAD(retro_set_audio_sample_batch);

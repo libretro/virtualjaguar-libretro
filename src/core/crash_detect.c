@@ -2,27 +2,38 @@
 
 #include "crash_detect.h"
 #include "log.h"
+#include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
+#include "../tom/gpu.h"     /* GPUIsRunning() */
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
 /* External state we sample (see src/tom/gpu.c, src/jerry/dsp.c).
- * We declare the symbols we need directly rather than pulling the
- * full subsystem headers, to keep this TU light and avoid include
- * coupling to the rest of the core. */
+ * The IsRunning() functions come from the headers above; only the PC
+ * statics need explicit extern decls here. */
 extern uint32_t gpu_pc;
 extern uint32_t dsp_pc;
-int  GPUIsRunning(void);
-int  DSPIsRunning(void);  /* declared as bool in dsp.h, ABI-compatible with int */
 
 /* ---------- tunables ---------- */
 
-/* Valid PC ranges per processor.  Outside these = "PC escape". */
+/* Valid PC ranges per processor.  Outside these = "PC escape".
+ *
+ * Match the address decoding in JaguarReadX/WriteX (src/core/jaguar.c):
+ * any address < $E40000 lands in main RAM (mirrored 4x for the bottom
+ * 8 MB), cart ROM, or the boot ROM region -- all of which can host
+ * legitimate executable code.  Above $E40000 is register space and
+ * unmapped territory; only the processor's own local SRAM is valid
+ * for execution there.
+ *
+ * Earlier versions of this watchdog used `pc <= 0x1FFFFF` and
+ * false-positively flagged any DSP/GPU code that ran from a RAM mirror
+ * at $200000-$7FFFFF or from cart ROM at $800000+.  Caught by Copilot
+ * review on PR #182. */
 #define GPU_LOCAL_LO   0x00F03000u
 #define GPU_LOCAL_HI   0x00F03FFFu
 #define DSP_LOCAL_LO   0x00F1B000u
 #define DSP_LOCAL_HI   0x00F1CFFFu
-#define MAIN_RAM_LO    0x00000000u
-#define MAIN_RAM_HI    0x001FFFFFu
+#define MAPPED_CODE_HI 0x00E3FFFFu  /* RAM mirrors + cart + boot ROM */
 
 /* Wedge thresholds.  We sample once per frame, so 600 frames @ 60Hz =
  * 10 seconds of the same PC while still flagged "running". */
@@ -66,15 +77,15 @@ static unsigned last_log_fb_stall;
 
 static int gpu_pc_valid(uint32_t pc)
 {
+   if (pc <= MAPPED_CODE_HI) return 1;
    if (pc >= GPU_LOCAL_LO && pc <= GPU_LOCAL_HI) return 1;
-   if (pc >= MAIN_RAM_LO && pc <= MAIN_RAM_HI) return 1;
    return 0;
 }
 
 static int dsp_pc_valid(uint32_t pc)
 {
+   if (pc <= MAPPED_CODE_HI) return 1;
    if (pc >= DSP_LOCAL_LO && pc <= DSP_LOCAL_HI) return 1;
-   if (pc >= MAIN_RAM_LO && pc <= MAIN_RAM_HI) return 1;
    return 0;
 }
 
@@ -162,7 +173,7 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    if (gpu_running && !gpu_pc_valid(cur_gpu_pc))
    {
       if (may_log(&last_log_gpu_escape))
-         LOG_ERR("[CRASH-DETECT] gpu_pc_escape frame=%u pc=$%08X (valid: F03000-F03FFF or main RAM)\n",
+         LOG_ERR("[CRASH-DETECT] gpu_pc_escape frame=%u pc=$%08X (valid: $0-$E3FFFF or $F03000-$F03FFF)\n",
                  frame_no, cur_gpu_pc);
    }
 
@@ -170,7 +181,7 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    if (dsp_running && !dsp_pc_valid(cur_dsp_pc))
    {
       if (may_log(&last_log_dsp_escape))
-         LOG_ERR("[CRASH-DETECT] dsp_pc_escape frame=%u pc=$%08X (valid: F1B000-F1CFFF or main RAM)\n",
+         LOG_ERR("[CRASH-DETECT] dsp_pc_escape frame=%u pc=$%08X (valid: $0-$E3FFFF or $F1B000-$F1CFFF)\n",
                  frame_no, cur_dsp_pc);
    }
 
