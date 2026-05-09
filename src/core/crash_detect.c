@@ -4,7 +4,7 @@
 #include "log.h"
 #include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
 #include "../tom/gpu.h"     /* GPUIsRunning() */
-#include <stdbool.h>
+#include <boolean.h>        /* MSVC 2005/2010-compat shim for <stdbool.h> */
 #include <stdint.h>
 #include <stddef.h>
 
