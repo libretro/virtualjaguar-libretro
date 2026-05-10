@@ -1234,6 +1234,58 @@ static void test_gpu_irq_latch_redispatch(void)
 }
 
 /* ================================================================
+ * Test 9d-cd: BUTCH -> GPU IRQ0 (CD ISR) symbol mapping
+ *
+ * Pins the GPUIRQ_CPU/GPUIRQ_DSP enum mapping and verifies the
+ * GPUSetIRQLine(line, ASSERT) -> gpu_control bit (6+line) formula
+ * for the two lines BUTCH could plausibly target. Regression for
+ * the cdrom.c bug where BUTCH was asserting IRQ1 (DSP, vector
+ * $F03010) instead of IRQ0 (EXT1/CPU, vector $F03000) where the
+ * CD BIOS installs its CD-data ISR.
+ *
+ * Pure latch test: INT_ENA all 0 / IMASK 0 so no dispatch happens;
+ * we just inspect gpu_control bits 6 and 7.
+ * ================================================================ */
+static void test_butch_gpu_irq_line_mapping(void)
+{
+   uint32_t saved_flags;
+   uint32_t saved_control;
+   uint32_t ctrl;
+
+   printf("\n=== Test 9d-cd: BUTCH -> GPU IRQ0 (CD ISR) Line Mapping ===\n");
+
+   saved_flags = p_GPUReadLong(0xF02100, WHO_M68K);
+   saved_control = p_GPUReadLong(0xF02114, WHO_M68K);
+
+   /* Clear any latch and disable enables so this is a pure-latch test. */
+   p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* CINT0..4FLAG -> clear latch */
+   p_GPUWriteLong(0xF02100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
+
+   /* IRQ line 0 (GPUIRQ_CPU == 0, EXT1, vector $F03000) -> bit 6. */
+   p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if ((ctrl & 0x40) && !(ctrl & 0x80))
+      PASS("GPUSetIRQLine(0, ASSERT) sets gpu_control bit 6 (CD ISR line)");
+   else
+      FAIL("ctrl=$%08X (want bit6=1, bit7=0 after IRQ0 assert)", ctrl);
+
+   /* Clear and re-test the other line so the symbol mapping is pinned both ways. */
+   p_GPUSetIRQLine(0, CLEAR_LINE_LOCAL);
+   p_GPUSetIRQLine(1, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if (!(ctrl & 0x40) && (ctrl & 0x80))
+      PASS("GPUSetIRQLine(1, ASSERT) sets gpu_control bit 7 (DSP line, NOT CD ISR)");
+   else
+      FAIL("ctrl=$%08X (want bit6=0, bit7=1 after IRQ1 assert)", ctrl);
+
+   /* Restore. */
+   p_GPUSetIRQLine(1, CLEAR_LINE_LOCAL);
+   p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K);
+   p_GPUWriteLong(0xF02100, saved_flags & ~0x00003E00u, WHO_M68K);
+   p_GPUWriteLong(0xF02114, saved_control & ~0xF7C0u, WHO_M68K);
+}
+
+/* ================================================================
  * Test 9e: DSP IRQ Latch & Re-dispatch
  * DSP analog of Test 9d. The DSP shares the GPU RISC instruction set
  * but has 6 IRQ lines (vs GPU's 5). Latch layout in dsp_control:
@@ -3118,6 +3170,7 @@ int main(int argc, char *argv[])
    test_jerry_jintctrl_word_decode();
    test_jerry_jintctrl_multi_pending_selective_clear();
    test_gpu_irq_latch_redispatch();
+   test_butch_gpu_irq_line_mapping();
    test_dsp_irq_latch_redispatch();
    test_jerry_pit_byte_writes_dropped();
    test_jerry_i2s_defaults();

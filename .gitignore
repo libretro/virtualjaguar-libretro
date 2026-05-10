@@ -33,6 +33,7 @@ test/test_blitter_simd
 test/test_blitter_scalar
 test/test_*
 !test/test_*.c
+!test/test_*.h
 !test/test_*.sh
 !test/test_*.py
 test/tools/test_memory_map

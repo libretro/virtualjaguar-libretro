@@ -179,6 +179,11 @@ void (*gpu_opcode[64])()=
 
 static uint8_t gpu_ram_8[0x1000];
 uint32_t gpu_pc;
+
+/* Diagnostic IRQ counters (see gpu.h). Pure observability — incremented on
+ * GPUSetIRQLine(line, ASSERT_LINE), reset in GPUReset. */
+uint32_t gpu_irq0_count = 0;
+uint32_t gpu_irq3_count = 0;
 static uint32_t gpu_acc;
 static uint32_t gpu_remain;
 static uint32_t gpu_hidata;
@@ -630,6 +635,10 @@ void GPUSetIRQLine(int irqline, int state)
 
    if (state)
    {
+      /* Diagnostic counters — see gpu.h */
+      if (irqline == 0) gpu_irq0_count++;
+      else if (irqline == 3) gpu_irq3_count++;
+
       gpu_control |= mask;			// Assert the interrupt latch
       GPUHandleIRQs();				// And handle the interrupt...
    }
@@ -662,6 +671,8 @@ void GPUReset(void)
    gpu_pointer_to_matrix = 0x00000000;
    gpu_data_organization = 0xFFFFFFFF;
    gpu_pc				  = 0x00F03000;
+   gpu_irq0_count       = 0;
+   gpu_irq3_count       = 0;
    gpu_control			  = 0x00002800;			// Correctly sets this as TOM Rev. 2
    gpu_hidata			  = 0x00000000;
    gpu_remain			  = 0x00000000;			// These two registers are RO/WO

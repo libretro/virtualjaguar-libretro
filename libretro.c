@@ -8,11 +8,22 @@
 #include <compat/posix_string.h>
 #include <compat/strl.h>
 
+/* Forward declarations for file stream functions used in CD BIOS loading.
+ * These come from libretro-common/streams/file_stream.c. */
+RFILE* rfopen(const char *path, const char *mode);
+int rfclose(RFILE* stream);
+int64_t rfseek(RFILE* stream, int64_t offset, int origin);
+int64_t rftell(RFILE* stream);
+int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream);
+
 #include "cheat.h"
 #include "crash_detect.h"
 #include "file.h"
 #include "jagbios.h"
 #include "jaguar.h"
+#include "cdintf.h"
+#include "jagcd_boot.h"
+#include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
 #include "joystick.h"
@@ -41,7 +52,7 @@
  *                   68k bootstrap (JST_RAW_BINARY)
  * Add `cdi`, `cue`, `iso`, and `chd` here when CD-image support
  * lands on a future PR. */
-#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg"
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi|iso"
 
 int videoWidth               = 0;
 int videoHeight              = 0;
@@ -49,15 +60,23 @@ uint32_t *videoBuffer        = NULL;
 int game_width               = 0;
 int game_height              = 0;
 
+extern uint16_t eeprom_ram[64];
+extern uint16_t cdrom_eeprom_ram[64];
+extern uint8_t mtMem[0x20000];
+extern uint32_t jaguarMainROMCRC32;
+extern void (*eeprom_dirty_cb)(void);
+
 /* Save buffer for RETRO_MEMORY_SAVE_RAM.
- * Regular carts: 128 bytes (64 x 16-bit EEPROM words, big-endian packed).
+ * Regular carts: 128 bytes (64 x 16-bit EEPROM words, big-endian packed),
+ *                followed by 128 bytes of CD EEPROM (64 x 16-bit words).
  * Memory Track cart (CRC 0xFDF37F47): mtMem is used directly (128K).
  *
  * The save buffer is kept in sync on every EEPROM write via eeprom_dirty_cb,
  * so frontends that cache the pointer always see current data. */
-#define EEPROM_SAVE_SIZE 128  /* 64 x 16-bit words, big-endian */
-#define MT_SAVE_SIZE     0x20000  /* 128K Memory Track */
-static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE];
+#define EEPROM_SAVE_SIZE    128  /* 64 x 16-bit words, big-endian */
+#define CD_EEPROM_SAVE_SIZE 128  /* CD EEPROM: 64 x 16-bit words */
+#define MT_SAVE_SIZE        0x20000  /* 128K Memory Track */
+static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE];
 static void eeprom_pack_save_buf(void);
 static void eeprom_unpack_save_buf(void);
 
@@ -70,6 +89,13 @@ retro_log_printf_t vj_log_cb = NULL;
 
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
+
+/* CD content state. The Tier 1 weak symbols for external_cd_bios[] and
+ * cd_bios_loaded_externally are overridden by the strong definitions below. */
+static bool jaguar_cd_mode = false;
+static char cd_image_path[4096] = {0};
+bool cd_bios_loaded_externally = false;
+uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -335,6 +361,30 @@ static void check_variables(void)
          vjs.hardwareTypeNTSC = false;
       else
          vjs.hardwareTypeNTSC = true;
+   }
+
+   var.key = "virtualjaguar_cd_bios_type";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "dev") == 0)
+         vjs.cdBiosType = CDBIOS_DEV;
+      else
+         vjs.cdBiosType = CDBIOS_RETAIL;
+   }
+
+   var.key = "virtualjaguar_cd_boot_mode";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "hle") == 0)
+         vjs.cdBootMode = CDBOOT_HLE;
+      else if (strcmp(var.value, "bios") == 0)
+         vjs.cdBootMode = CDBOOT_BIOS;
+      else
+         vjs.cdBootMode = CDBOOT_AUTO;
    }
 
    var.key = "virtualjaguar_alt_inputs";
@@ -764,6 +814,127 @@ static void cheat_apply_all(void)
    cheat_list_apply(&cheat_list, cheat_write_jaguar, NULL);
 }
 
+/* Case-insensitive extension test on a path. */
+static bool has_extension(const char *path, const char *ext)
+{
+   const char *dot;
+   if (!path || !ext)
+      return false;
+   dot = strrchr(path, '.');
+   if (!dot)
+      return false;
+   return strcasecmp(dot + 1, ext) == 0;
+}
+
+/* Try to load a 256 KB CD BIOS image from the given path.
+ * Returns true on success and sets cd_bios_loaded_externally. */
+static bool try_load_cd_bios_file(const char *path)
+{
+   RFILE   *f;
+   int64_t  size;
+   uint32_t run_addr;
+
+   f = rfopen(path, "rb");
+   if (!f)
+      return false;
+
+   rfseek(f, 0, SEEK_END);
+   size = rftell(f);
+   rfseek(f, 0, SEEK_SET);
+
+   if (size != 0x40000)
+   {
+      LOG_DBG("[CD-BIOS]   wrong size (%lld, need 262144): %s\n",
+              (long long)size, path);
+      rfclose(f);
+      return false;
+   }
+
+   if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
+   {
+      rfclose(f);
+      return false;
+   }
+   rfclose(f);
+
+   run_addr = ((uint32_t)external_cd_bios[0x404] << 24)
+            | ((uint32_t)external_cd_bios[0x405] << 16)
+            | ((uint32_t)external_cd_bios[0x406] <<  8)
+            |  (uint32_t)external_cd_bios[0x407];
+
+   if (run_addr < 0x800000 || run_addr > 0x840000)
+   {
+      LOG_DBG("[CD-BIOS]   bad run addr $%08X: %s\n",
+              (unsigned)run_addr, path);
+      return false;
+   }
+
+   LOG_INF("[CD-BIOS] Loaded CD BIOS: %s (run=$%06X)\n",
+           path, (unsigned)run_addr);
+   cd_bios_loaded_externally = true;
+   return true;
+}
+
+/* Search common CD BIOS filenames in the system directory (and a handful
+ * of well-known sub-directories used by Provenance/RetroArch front-ends). */
+static bool load_external_cd_bios(void)
+{
+   static const char *bios_names[] = {
+      "jaguarcd_bios.bin",
+      "jagcd_bios.bin",
+      "jaguarcd.bin",
+      "jagcd.bin",
+      "Jaguar CD BIOS.rom",
+      "Jaguar CD BIOS.bin",
+      "[BIOS] Atari Jaguar CD (World).j64",
+      "[BIOS] Atari Jaguar CD (World).rom",
+      "[BIOS] Atari Jaguar CD (World).bin",
+      "[BIOS] Atari Jaguar Developer CD (World).j64",
+      "[BIOS] Atari Jaguar Developer CD (World).rom",
+      "[BIOS] Atari Jaguar Developer CD (World).bin",
+      NULL
+   };
+   static const char *sub_dirs[] = {
+      "",
+      "Atari - Jaguar",
+      "Atari - Jaguar CD",
+      "jaguar",
+      "jaguarcd",
+      NULL
+   };
+   const char *system_dir = NULL;
+   int s, i;
+
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
+       || !system_dir)
+   {
+      LOG_WRN("[CD-BIOS] No system directory available\n");
+      return false;
+   }
+
+   LOG_INF("[CD-BIOS] Searching for CD BIOS in: %s\n", system_dir);
+
+   for (s = 0; sub_dirs[s]; s++)
+   {
+      for (i = 0; bios_names[i]; i++)
+      {
+         char path[4096];
+         if (sub_dirs[s][0])
+            snprintf(path, sizeof(path), "%s/%s/%s",
+                     system_dir, sub_dirs[s], bios_names[i]);
+         else
+            snprintf(path, sizeof(path), "%s/%s",
+                     system_dir, bios_names[i]);
+
+         if (try_load_cd_bios_file(path))
+            return true;
+      }
+   }
+
+   LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
+   return false;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    unsigned i;
@@ -854,6 +1025,8 @@ bool retro_load_game(const struct retro_game_info *info)
    // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
+   vjs.cdBiosType       = CDBIOS_RETAIL;
+   vjs.cdBootMode       = CDBOOT_HLE;
 
    check_variables();
 
@@ -863,6 +1036,47 @@ bool retro_load_game(const struct retro_game_info *info)
 
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;
+
+   /* Detect CD content (CUE/CDI/ISO) and locate an external CD BIOS so
+    * ResolveBootConfig can pick the right boot strategy. */
+   jaguar_cd_mode            = false;
+   cd_image_path[0]          = '\0';
+   cd_bios_loaded_externally = false;
+
+   if (info && info->path && (has_extension(info->path, "cue")
+                              || has_extension(info->path, "cdi")
+                              || has_extension(info->path, "iso")))
+   {
+      jaguar_cd_mode = true;
+      strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
+      cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+
+      if (vjs.cdBootMode != CDBOOT_HLE)
+         load_external_cd_bios();
+   }
+
+   /* Resolve boot configuration — single source of truth for which
+    * strategy (cart / HLE / real BIOS) we will dispatch to below. */
+   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                     vjs.cdBootMode, vjs.useJaguarBIOS);
+   vjs.useJaguarBIOS = bootConfig.showBootROM;
+
+   /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
+    * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
+   if (jaguar_cd_mode)
+   {
+      LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
+      if (!CDIntfOpenImage(cd_image_path))
+      {
+         LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
+         free(videoBuffer);
+         videoBuffer = NULL;
+         free(sampleBuffer);
+         sampleBuffer = NULL;
+         return false;
+      }
+      LOG_INF("[CD] Disc image opened OK\n");
+   }
 
    JaguarInit();                                             // set up hardware
    CrashDetectReset();                                       // zero per-game watchdog state
@@ -875,10 +1089,14 @@ bool retro_load_game(const struct retro_game_info *info)
    for (i = 0; i < videoWidth * videoHeight; ++i)
       videoBuffer[i] = 0xFF00FFFF;
 
-   SET32(jaguarMainRAM, 0, 0x00200000);
-   if (!JaguarLoadFile((uint8_t*)info->data, info->size))
+   /* Dispatch through the selected boot strategy (cart / HLE / real BIOS).
+    * The cart strategy handles the existing JaguarLoadFile + JaguarReset
+    * flow; the CD strategies handle their own boot sequencing. */
+   if (!bootConfig.strategy || !bootConfig.strategy->boot(info))
    {
       LOG_ERR("[Virtual Jaguar] unsupported or invalid content format\n");
+      if (jaguar_cd_mode)
+         CDIntfCloseImage();
       JaguarDone();
       free(videoBuffer);
       videoBuffer = NULL;
@@ -886,14 +1104,15 @@ bool retro_load_game(const struct retro_game_info *info)
       sampleBuffer = NULL;
       return false;
    }
-   JaguarReset();
 
-   /* JaguarReset() randomizes RAM contents, which destroys RAM-loaded
-    * executables (ABS, COFF, JAGSERVER formats).  Cart ROMs are safe
-    * because they live at $800000+ which isn't touched by reset.
-    * Re-load the file so the program data is back in place. */
-   if (!jaguarCartInserted)
+   /* For RAM-loaded executables (.abs/.cof/JagServer), JaguarReset()
+    * randomizes RAM and destroys the loaded program.  The cart and CD
+    * boot strategies handle their own JaguarReset() ordering internally
+    * so the post-boot state is preserved.  We only need to do an extra
+    * reset+reload here for the RAM-loaded path. */
+   if (!jaguarCartInserted && !jaguar_cd_mode)
    {
+      JaguarReset();
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
       {
          LOG_ERR("[Virtual Jaguar] failed to reload RAM-loaded content\n");
@@ -949,6 +1168,9 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *i
 void retro_unload_game(void)
 {
    retro_cheat_reset();
+   CDIntfCloseImage();
+   jaguar_cd_mode    = false;
+   cd_image_path[0]  = '\0';
    JaguarDone();
 
    if (videoBuffer)
@@ -987,9 +1209,10 @@ unsigned retro_api_version(void)
    return RETRO_API_VERSION;
 }
 
-/* Pack eeprom_ram[] into the save buffer (big-endian byte order).
- * Called on every EEPROM write via eeprom_dirty_cb so the buffer
- * is always up-to-date for frontends that cache the pointer. */
+/* Pack eeprom_ram[] and cdrom_eeprom_ram[] into the save buffer
+ * (big-endian byte order).  Called on every EEPROM write via
+ * eeprom_dirty_cb so the buffer is always up-to-date for frontends
+ * that cache the pointer. */
 static void eeprom_pack_save_buf(void)
 {
    unsigned i;
@@ -998,9 +1221,15 @@ static void eeprom_pack_save_buf(void)
       eeprom_save_buf[(i * 2) + 0] = eeprom_ram[i] >> 8;
       eeprom_save_buf[(i * 2) + 1] = eeprom_ram[i] & 0xFF;
    }
+   /* CD EEPROM follows cart EEPROM in the save buffer */
+   for (i = 0; i < 64; i++)
+   {
+      eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] = cdrom_eeprom_ram[i] >> 8;
+      eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1] = cdrom_eeprom_ram[i] & 0xFF;
+   }
 }
 
-/* Unpack the save buffer back into eeprom_ram[].
+/* Unpack the save buffer back into eeprom_ram[] and cdrom_eeprom_ram[].
  * Called once after the frontend loads .srm data. */
 static void eeprom_unpack_save_buf(void)
 {
@@ -1008,6 +1237,10 @@ static void eeprom_unpack_save_buf(void)
    for (i = 0; i < 64; i++)
       eeprom_ram[i] = ((uint16_t)eeprom_save_buf[(i * 2) + 0] << 8)
                     | eeprom_save_buf[(i * 2) + 1];
+   for (i = 0; i < 64; i++)
+      cdrom_eeprom_ram[i] =
+            ((uint16_t)eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] << 8)
+          |  eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1];
 }
 
 void *retro_get_memory_data(unsigned type)
@@ -1033,6 +1266,11 @@ size_t retro_get_memory_size(unsigned type)
    {
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
+      /* CD discs share the cart EEPROM with their CD-side EEPROM bank
+       * (128 + 128 = 256 bytes).  Cart-only loads expose just the cart
+       * EEPROM so existing per-game saves remain compatible. */
+      if (jaguar_cd_mode)
+         return EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE;
       return EEPROM_SAVE_SIZE;
    }
    return 0;
