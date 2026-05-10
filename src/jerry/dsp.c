@@ -492,12 +492,23 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
              * ignoring normal gameplay status checks (~1-10/frame).
              *
              * Exception: if the DSP is actively producing audio
-             * (i2sWriteCount > 2, beyond the DACPrepareFrame seed),
-             * it is running a legitimate audio mixer (e.g. Doom) and
-             * must not be killed. */
+             * (non-zero LTXD/RTXD samples beyond the DACPrepareFrame
+             * seed), it is running a legitimate audio mixer (e.g.
+             * Doom) and must not be killed.  Issue #181 (Battle
+             * Sphere): the silenced/escaped DSP still issues STORE
+             * 0,RTXD per loop iteration, so we gate on non-zero
+             * sample count, not raw write count. */
             if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
             {
-               if (DACGetI2SWriteCount() > 2)
+               /* "Real audio" gate: a DSP that's mixing for the user
+                * writes non-zero LTXD/RTXD pairs.  A DSP that wrote
+                * silence (Battle Sphere with an escaped DSP that still
+                * issues STORE 0,RTXD per loop iteration) racks up
+                * thousands of i2sWriteCount per frame but produces no
+                * audio.  Counting that as "real audio" wedges the
+                * cart's DSPGO poll forever.  Require non-zero samples
+                * before declaring the engine alive. */
+               if (DACGetI2SNonZeroCount() > 2)
                   dspgo_poll_count = 0;
                else
                {
