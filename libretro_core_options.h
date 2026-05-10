@@ -124,7 +124,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios",
       "BIOS",
       NULL,
-      "Use the Jaguar BIOS, required for some games.",
+      "Use the Jaguar BIOS, required for some games. The BIOS file is provided by the core.",
       NULL,
       NULL,
       {
