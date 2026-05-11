@@ -1,11 +1,45 @@
 #include "blitter.h"
 #include "blitter_internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "jaguar.h"
 #include "log.h"
 #include "state.h"
+
+/* Per-write trace ring (instrumentation for fast-vs-accurate divergence work).
+ * Triggered only when BlitterCompareEnable is on AND blit_cmp_total matches
+ * the target blit number (env BLIT_TRACE_BLIT, default disabled). */
+#define BLIT_TRACE_MAX 16384
+
+typedef struct {
+   uint8_t  phase;  /* 1=fast, 2=acc */
+   uint8_t  bits;   /* 16 or 32 */
+   uint16_t pad;
+   uint32_t addr;
+   uint32_t value;
+} blit_trace_entry_t;
+
+int blit_cmp_trace_phase = 0;
+
+static blit_trace_entry_t blit_trace[BLIT_TRACE_MAX];
+static int blit_trace_count       = 0;
+static int blit_trace_fast_count  = 0;
+static int blit_cmp_trace_blit    = -1; /* -1 = no tracing */
+
+void BlitterCompareTraceWrite(uint32_t addr, uint32_t value, int bits)
+{
+   if (blit_cmp_trace_phase == 0)
+      return;
+   if (blit_trace_count >= BLIT_TRACE_MAX)
+      return;
+   blit_trace[blit_trace_count].phase = (uint8_t)blit_cmp_trace_phase;
+   blit_trace[blit_trace_count].bits  = (uint8_t)bits;
+   blit_trace[blit_trace_count].addr  = addr;
+   blit_trace[blit_trace_count].value = value;
+   blit_trace_count++;
+}
 
 #define A1_BASE         ((uint32_t)0x00)
 #define A1_FLAGS        ((uint32_t)0x04)
@@ -49,6 +83,19 @@ void BlitterCompareEnable(int enable)
    blit_cmp_diff_cmd_count = 0;
    memset(blit_cmp_diff_cmds, 0, sizeof(blit_cmp_diff_cmds));
    memset(blit_cmp_diff_cmd_counts, 0, sizeof(blit_cmp_diff_cmd_counts));
+
+   if (enable)
+   {
+      const char *env = getenv("BLIT_TRACE_BLIT");
+      blit_cmp_trace_blit = env ? atoi(env) : -1;
+      if (blit_cmp_trace_blit >= 0)
+         LOG_WRN("[BLIT TRACE] tracing blit #%d (set BLIT_TRACE_BLIT to change)\n",
+            blit_cmp_trace_blit);
+   }
+   else
+   {
+      blit_cmp_trace_blit = -1;
+   }
 
    if (enable && !blit_cmp_saved_region)
    {
@@ -95,6 +142,46 @@ void BlitterCompareDumpCmdStats(void)
          (c & 0x00002000) ? " GOURZ" : "",
          (c & 0x40000000) ? " SRCSHADE" : "");
    }
+}
+
+static void BlitterCompareDumpTrace(void)
+{
+   int i;
+   int fast_n = blit_trace_fast_count;
+   int acc_n  = blit_trace_count - blit_trace_fast_count;
+   int n      = (fast_n > acc_n) ? fast_n : acc_n;
+   int first_div = -1;
+
+   LOG_WRN("[BLIT TRACE] blit #%d: fast writes=%d  accurate writes=%d\n",
+      blit_cmp_trace_blit, fast_n, acc_n);
+
+   for (i = 0; i < n; i++)
+   {
+      blit_trace_entry_t *fe = (i < fast_n) ? &blit_trace[i] : NULL;
+      blit_trace_entry_t *ae = (i < acc_n)  ? &blit_trace[fast_n + i] : NULL;
+      int diff = 0;
+      if (!fe || !ae)
+         diff = 1;
+      else if (fe->addr != ae->addr || fe->value != ae->value || fe->bits != ae->bits)
+         diff = 1;
+      if (diff && first_div < 0)
+         first_div = i;
+      LOG_WRN("[BLIT TRACE] i=%4d  fast=%s  acc=%s%s\n",
+         i,
+         fe ? "" : "  -",
+         ae ? "" : "  -",
+         diff ? "  <-- DIFF" : "");
+      if (fe)
+         LOG_WRN("                  fast: %2u-bit addr=%06X value=%08X\n",
+            (unsigned)fe->bits, (unsigned)fe->addr, (unsigned)fe->value);
+      if (ae)
+         LOG_WRN("                  acc : %2u-bit addr=%06X value=%08X\n",
+            (unsigned)ae->bits, (unsigned)ae->addr, (unsigned)ae->value);
+   }
+   if (first_div >= 0)
+      LOG_WRN("[BLIT TRACE] first divergence at write index %d\n", first_div);
+   else
+      LOG_WRN("[BLIT TRACE] no divergence detected in trace\n");
 }
 
 void BlitterRunComparison(void)
@@ -159,7 +246,23 @@ void BlitterRunComparison(void)
       return;
    }
 
-   blitter_blit(cmd);
+   {
+      int trace_active = (blit_cmp_trace_blit >= 0
+                        && (int)blit_cmp_total == blit_cmp_trace_blit);
+      if (trace_active)
+      {
+         blit_trace_count = 0;
+         blit_cmp_trace_phase = 1; /* fast */
+      }
+
+      blitter_blit(cmd);
+
+      if (trace_active)
+      {
+         blit_trace_fast_count = blit_trace_count;
+         blit_cmp_trace_phase = 2; /* accurate */
+      }
+   }
 
    memcpy(blit_cmp_fast_region, jaguarMainRAM + save_start, save_size);
    {
@@ -170,6 +273,12 @@ void BlitterRunComparison(void)
       BlitterStateLoad(blit_cmp_state_buf);
 
       BlitterMidsummer2();
+
+      if (blit_cmp_trace_phase == 2)
+      {
+         blit_cmp_trace_phase = 0;
+         BlitterCompareDumpTrace();
+      }
 
       if (blit_cmp_logged < 10)
       {

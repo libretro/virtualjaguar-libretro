@@ -98,6 +98,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data
 static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t data)
 {
    uint32_t a;
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceWrite(addr, data, 16);
    if (addr < 0x200000)
    {
       a = addr & 0x1FFFFF;
@@ -111,6 +113,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t dat
 static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t data)
 {
    uint32_t a;
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceWrite(addr, data, 32);
    if (addr < 0x200000)
    {
       a = addr & 0x1FFFFF;
@@ -120,6 +124,23 @@ static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t dat
       jaguarMainRAM[(a + 3) & 0x1FFFFF] = (uint8_t)(data         & 0xFF);
       return;
    }
+   JaguarWriteLong(addr, data, BLITTER);
+}
+
+/* Tracer-aware wrappers used by the fast-path WRITE_PIXEL_* / WRITE_ZDATA_16
+ * macros. Fast path historically called JaguarWriteWord/Long directly; route
+ * them through here so the comparator can see every write. */
+static BLITTER_ALWAYS_INLINE void blitter_pixel_write_word(uint32_t addr, uint16_t data)
+{
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceWrite(addr, data, 16);
+   JaguarWriteWord(addr, data, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE void blitter_pixel_write_long(uint32_t addr, uint32_t data)
+{
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceWrite(addr, data, 32);
    JaguarWriteLong(addr, data, BLITTER);
 }
 
@@ -286,7 +307,7 @@ PERF_COUNTER(blitter_phrase_writes);
 #define READ_ZDATA(a,f) (READ_ZDATA_16(a))
 
 // 16 bpp z data write
-#define WRITE_ZDATA_16(a,d)     {  JaguarWriteWord(a##_addr+(ZDATA_OFFSET_16(a)<<1), d, BLITTER); }
+#define WRITE_ZDATA_16(a,d)     {  blitter_pixel_write_word(a##_addr+(ZDATA_OFFSET_16(a)<<1), d); }
 
 // z data write
 #define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
@@ -331,10 +352,10 @@ PERF_COUNTER(blitter_phrase_writes);
 #define WRITE_PIXEL_8(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_8(a), d, BLITTER); }
 
 // 16 bpp pixel write
-#define WRITE_PIXEL_16(a,d)     {  JaguarWriteWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), d, BLITTER); }
+#define WRITE_PIXEL_16(a,d)     {  blitter_pixel_write_word(a##_addr+(PIXEL_OFFSET_16(a)<<1), d); }
 
 // 32 bpp pixel write
-#define WRITE_PIXEL_32(a,d)		{ JaguarWriteLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), d, BLITTER); }
+#define WRITE_PIXEL_32(a,d)		{ blitter_pixel_write_long(a##_addr+(PIXEL_OFFSET_32(a)<<2), d); }
 
 // pixel write
 #define WRITE_PIXEL(a,f,d) {\
