@@ -318,6 +318,7 @@ size_t DACStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, bufferDone);
 	STATE_SAVE_VAR(buf, i2sWritePos);
 	STATE_SAVE_VAR(buf, i2sWriteCount);
+	STATE_SAVE_VAR(buf, i2sNonZeroCount);
 	STATE_SAVE_VAR(buf, i2sPhase);
 	STATE_SAVE_VAR(buf, i2sRateRatio);
 
@@ -333,6 +334,7 @@ size_t DACStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, bufferDone);
 	STATE_LOAD_VAR(buf, i2sWritePos);
 	STATE_LOAD_VAR(buf, i2sWriteCount);
+	STATE_LOAD_VAR(buf, i2sNonZeroCount);
 	STATE_LOAD_VAR(buf, i2sPhase);
 	STATE_LOAD_VAR(buf, i2sRateRatio);
 

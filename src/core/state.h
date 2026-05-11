@@ -19,7 +19,7 @@ extern "C" {
 
 /* Save state format identifier and version */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   2
+#define STATE_VERSION   3
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

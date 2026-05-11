@@ -501,14 +501,16 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
             if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
             {
                /* "Real audio" gate: a DSP that's mixing for the user
-                * writes non-zero LTXD/RTXD pairs.  A DSP that wrote
-                * silence (Battle Sphere with an escaped DSP that still
-                * issues STORE 0,RTXD per loop iteration) racks up
-                * thousands of i2sWriteCount per frame but produces no
-                * audio.  Counting that as "real audio" wedges the
-                * cart's DSPGO poll forever.  Require non-zero samples
-                * before declaring the engine alive. */
-               if (DACGetI2SNonZeroCount() > 2)
+                * writes non-zero LTXD/RTXD samples.  The non-zero
+                * counter is reset to 0 at every DACPrepareFrame
+                * (unlike i2sWriteCount which is seeded to 2 for the
+                * resampler), so any non-zero sample this frame is
+                * enough to declare the engine alive.  A DSP that
+                * wrote only silence -- Battle Sphere with an escaped
+                * DSP still issuing STORE 0,RTXD per loop iteration --
+                * stays at 0 and the auto-clear correctly fires.
+                * Counter ticks when either channel is non-zero. */
+               if (DACGetI2SNonZeroCount() > 0)
                   dspgo_poll_count = 0;
                else
                {
