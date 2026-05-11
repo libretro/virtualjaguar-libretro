@@ -357,8 +357,18 @@ int main(int argc, char **argv)
       state_buf = malloc(sz);
       if (fread(state_buf, 1, sz, sf) == sz)
       {
-         if (pretro_unserialize(state_buf, sz))
-            fprintf(stderr, "--- Loaded save state from %s (%zu bytes) ---\n", state_load_path, sz);
+         /* RetroArch wraps savestates with a 16-byte "RASTATE\x01MEM "
+          * header.  Strip it so the core's retro_unserialize sees just
+          * its own VJSS payload. */
+         void *unser_buf = state_buf;
+         size_t unser_sz = sz;
+         if (sz > 16 && memcmp(state_buf, "RASTATE", 7) == 0)
+         {
+            unser_buf = (uint8_t *)state_buf + 16;
+            unser_sz  = sz - 16;
+         }
+         if (pretro_unserialize(unser_buf, unser_sz))
+            fprintf(stderr, "--- Loaded save state from %s (%zu bytes) ---\n", state_load_path, unser_sz);
          else
             fprintf(stderr, "WARNING: retro_unserialize failed for %s\n", state_load_path);
       }
