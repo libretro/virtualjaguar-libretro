@@ -15,8 +15,9 @@
 
 typedef struct {
    uint8_t  phase;  /* 1=fast, 2=acc */
-   uint8_t  bits;   /* 16 or 32 */
-   uint16_t pad;
+   uint8_t  bits;   /* 8, 16 or 32 */
+   uint8_t  kind;   /* 0=write, 1=read */
+   uint8_t  pad;
    uint32_t addr;
    uint32_t value;
 } blit_trace_entry_t;
@@ -28,7 +29,7 @@ static int blit_trace_count       = 0;
 static int blit_trace_fast_count  = 0;
 static int blit_cmp_trace_blit    = -1; /* -1 = no tracing */
 
-void BlitterCompareTraceWrite(uint32_t addr, uint32_t value, int bits)
+static void blit_trace_record(uint32_t addr, uint32_t value, int bits, int kind)
 {
    if (blit_cmp_trace_phase == 0)
       return;
@@ -36,9 +37,20 @@ void BlitterCompareTraceWrite(uint32_t addr, uint32_t value, int bits)
       return;
    blit_trace[blit_trace_count].phase = (uint8_t)blit_cmp_trace_phase;
    blit_trace[blit_trace_count].bits  = (uint8_t)bits;
+   blit_trace[blit_trace_count].kind  = (uint8_t)kind;
    blit_trace[blit_trace_count].addr  = addr;
    blit_trace[blit_trace_count].value = value;
    blit_trace_count++;
+}
+
+void BlitterCompareTraceWrite(uint32_t addr, uint32_t value, int bits)
+{
+   blit_trace_record(addr, value, bits, 0);
+}
+
+void BlitterCompareTraceRead(uint32_t addr, uint32_t value, int bits)
+{
+   blit_trace_record(addr, value, bits, 1);
 }
 
 #define A1_BASE         ((uint32_t)0x00)
@@ -172,10 +184,12 @@ static void BlitterCompareDumpTrace(void)
          ae ? "" : "  -",
          diff ? "  <-- DIFF" : "");
       if (fe)
-         LOG_WRN("                  fast: %2u-bit addr=%06X value=%08X\n",
+         LOG_WRN("                  fast: %s %2u-bit addr=%06X value=%08X\n",
+            fe->kind ? "RD" : "WR",
             (unsigned)fe->bits, (unsigned)fe->addr, (unsigned)fe->value);
       if (ae)
-         LOG_WRN("                  acc : %2u-bit addr=%06X value=%08X\n",
+         LOG_WRN("                  acc : %s %2u-bit addr=%06X value=%08X\n",
+            ae->kind ? "RD" : "WR",
             (unsigned)ae->bits, (unsigned)ae->addr, (unsigned)ae->value);
    }
    if (first_div >= 0)
@@ -251,6 +265,18 @@ void BlitterRunComparison(void)
                         && (int)blit_cmp_total == blit_cmp_trace_blit);
       if (trace_active)
       {
+         LOG_WRN("[BLIT TRACE] pre-FAST  A1_BASE=%08X A2_BASE=%08X "
+            "A1_PIX=%08X A1_FPIX=%08X A2_PIX=%08X A1_FLAGS=%08X A2_FLAGS=%08X "
+            "PIXLINE=%08X CMD=%08X\n",
+            (unsigned)GET32(blitter_ram, A1_BASE),
+            (unsigned)GET32(blitter_ram, A2_BASE),
+            (unsigned)GET32(blitter_ram, A1_PIXEL),
+            (unsigned)GET32(blitter_ram, 0x18 /* A1_FPIXEL */),
+            (unsigned)GET32(blitter_ram, 0x30 /* A2_PIXEL */),
+            (unsigned)GET32(blitter_ram, A1_FLAGS),
+            (unsigned)GET32(blitter_ram, A2_FLAGS),
+            (unsigned)GET32(blitter_ram, PIXLINECOUNTER),
+            (unsigned)cmd);
          blit_trace_count = 0;
          blit_cmp_trace_phase = 1; /* fast */
       }
@@ -271,6 +297,22 @@ void BlitterRunComparison(void)
 
       memcpy(jaguarMainRAM + save_start, blit_cmp_saved_region, save_size);
       BlitterStateLoad(blit_cmp_state_buf);
+
+      if (blit_cmp_trace_phase == 2)
+      {
+         LOG_WRN("[BLIT TRACE] pre-ACC   A1_BASE=%08X A2_BASE=%08X "
+            "A1_PIX=%08X A1_FPIX=%08X A2_PIX=%08X A1_FLAGS=%08X A2_FLAGS=%08X "
+            "PIXLINE=%08X CMD=%08X\n",
+            (unsigned)GET32(blitter_ram, A1_BASE),
+            (unsigned)GET32(blitter_ram, A2_BASE),
+            (unsigned)GET32(blitter_ram, A1_PIXEL),
+            (unsigned)GET32(blitter_ram, 0x18 /* A1_FPIXEL */),
+            (unsigned)GET32(blitter_ram, 0x30 /* A2_PIXEL */),
+            (unsigned)GET32(blitter_ram, A1_FLAGS),
+            (unsigned)GET32(blitter_ram, A2_FLAGS),
+            (unsigned)GET32(blitter_ram, PIXLINECOUNTER),
+            (unsigned)cmd);
+      }
 
       BlitterMidsummer2();
 

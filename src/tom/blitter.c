@@ -26,6 +26,7 @@
 
 #include <string.h>
 #include "jaguar.h"
+#include "log.h"
 #include "perf_counters.h"
 #include "state.h"
 
@@ -63,26 +64,36 @@ static BLITTER_ALWAYS_INLINE uint8_t blitter_read_byte(uint32_t addr)
 static BLITTER_ALWAYS_INLINE uint16_t blitter_read_word(uint32_t addr)
 {
    uint32_t a;
+   uint16_t v;
    if (addr < 0x200000)
    {
       a = addr & 0x1FFFFF;
-      return ((uint16_t)jaguarMainRAM[a] << 8) | jaguarMainRAM[(a + 1) & 0x1FFFFF];
+      v = ((uint16_t)jaguarMainRAM[a] << 8) | jaguarMainRAM[(a + 1) & 0x1FFFFF];
    }
-   return JaguarReadWord(addr, BLITTER);
+   else
+      v = JaguarReadWord(addr, BLITTER);
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceRead(addr, v, 16);
+   return v;
 }
 
 static BLITTER_ALWAYS_INLINE uint32_t blitter_read_long(uint32_t addr)
 {
    uint32_t a;
+   uint32_t v;
    if (addr < 0x200000)
    {
       a = addr & 0x1FFFFF;
-      return ((uint32_t)jaguarMainRAM[a] << 24)
-           | ((uint32_t)jaguarMainRAM[(a + 1) & 0x1FFFFF] << 16)
-           | ((uint32_t)jaguarMainRAM[(a + 2) & 0x1FFFFF] << 8)
-           | (uint32_t)jaguarMainRAM[(a + 3) & 0x1FFFFF];
+      v = ((uint32_t)jaguarMainRAM[a] << 24)
+        | ((uint32_t)jaguarMainRAM[(a + 1) & 0x1FFFFF] << 16)
+        | ((uint32_t)jaguarMainRAM[(a + 2) & 0x1FFFFF] << 8)
+        | (uint32_t)jaguarMainRAM[(a + 3) & 0x1FFFFF];
    }
-   return JaguarReadLong(addr, BLITTER);
+   else
+      v = JaguarReadLong(addr, BLITTER);
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceRead(addr, v, 32);
+   return v;
 }
 
 static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data)
@@ -128,8 +139,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t dat
 }
 
 /* Tracer-aware wrappers used by the fast-path WRITE_PIXEL_* / WRITE_ZDATA_16
- * macros. Fast path historically called JaguarWriteWord/Long directly; route
- * them through here so the comparator can see every write. */
+ * and READ_PIXEL_* macros. Fast path historically called Jaguar*Word/Long
+ * directly; route them through here so the comparator can see every access. */
 static BLITTER_ALWAYS_INLINE void blitter_pixel_write_word(uint32_t addr, uint16_t data)
 {
    if (blit_cmp_trace_phase)
@@ -142,6 +153,22 @@ static BLITTER_ALWAYS_INLINE void blitter_pixel_write_long(uint32_t addr, uint32
    if (blit_cmp_trace_phase)
       BlitterCompareTraceWrite(addr, data, 32);
    JaguarWriteLong(addr, data, BLITTER);
+}
+
+static BLITTER_ALWAYS_INLINE uint16_t blitter_pixel_read_word(uint32_t addr)
+{
+   uint16_t v = JaguarReadWord(addr, BLITTER);
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceRead(addr, v, 16);
+   return v;
+}
+
+static BLITTER_ALWAYS_INLINE uint32_t blitter_pixel_read_long(uint32_t addr)
+{
+   uint32_t v = JaguarReadLong(addr, BLITTER);
+   if (blit_cmp_trace_phase)
+      BlitterCompareTraceRead(addr, v, 32);
+   return v;
 }
 
 // Local global variables
@@ -284,11 +311,11 @@ PERF_COUNTER(blitter_phrase_writes);
 
 // 16 bpp pixel read
 #define PIXEL_OFFSET_16(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~3)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 3))
-#define READ_PIXEL_16(a)       (JaguarReadWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), BLITTER))
+#define READ_PIXEL_16(a)       (blitter_pixel_read_word(a##_addr+(PIXEL_OFFSET_16(a)<<1)))
 
 // 32 bpp pixel read
 #define PIXEL_OFFSET_32(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
-#define READ_PIXEL_32(a)      (JaguarReadLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), BLITTER))
+#define READ_PIXEL_32(a)      (blitter_pixel_read_long(a##_addr+(PIXEL_OFFSET_32(a)<<2)))
 
 // pixel read
 #define READ_PIXEL(a,f) (\
@@ -691,6 +718,12 @@ void blitter_generic(uint32_t cmd)
 
             if (CLIPA1)
             {
+               if (blit_cmp_trace_phase)
+                  LOG_WRN("[BLIT TRACE]   FAST-clip: a1_x>>16=%d a1_y>>16=%d clip=(%d,%d) "
+                     "srcd=%08X srczd=%08X dstzd=%08X prev_inh=%d\n",
+                     (int)(int32_t)(a1_x >> 16), (int)(int32_t)(a1_y >> 16),
+                     (int)a1_clip_x, (int)a1_clip_y,
+                     (unsigned)srcdata, (unsigned)srczdata, (unsigned)dstzdata, inhibit);
                inhibit |= (((a1_x >> 16) < a1_clip_x && (a1_x >> 16) >= 0
                         && (a1_y >> 16) < a1_clip_y && (a1_y >> 16) >= 0) ? 0 : 1);
             }
@@ -3137,6 +3170,13 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
                //      Actually, seems to be related to phrase mode writes...
                //      Or is it? Could be related to non-15-bit compares as above?
+               if (blit_cmp_trace_phase)
+                  LOG_WRN("[BLIT TRACE]   ACC-comp: a1_x=%d a1_y=%d zmode=%u srcz=%016llX dstz=%016llX "
+                     "dcomp=%02X zcomp=%02X winhibit=%d  (pixsize=%u phrase=%d)\n",
+                     (int)a1_x, (int)a1_y, (unsigned)zmode,
+                     (unsigned long long)srcz, (unsigned long long)dstz,
+                     (unsigned)dcomp, (unsigned)zcomp, winhibit ? 1 : 0,
+                     (unsigned)pixsize, phrase_mode ? 1 : 0);
                if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
                   winhibit = true;
 
