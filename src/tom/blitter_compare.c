@@ -11,7 +11,7 @@
 /* Per-write trace ring (instrumentation for fast-vs-accurate divergence work).
  * Triggered only when BlitterCompareEnable is on AND blit_cmp_total matches
  * the target blit number (env BLIT_TRACE_BLIT, default disabled). */
-#define BLIT_TRACE_MAX 16384
+#define BLIT_TRACE_MAX 131072
 
 typedef struct {
    uint8_t  phase;  /* 1=fast, 2=acc */
@@ -267,7 +267,7 @@ void BlitterRunComparison(void)
       {
          LOG_WRN("[BLIT TRACE] pre-FAST  A1_BASE=%08X A2_BASE=%08X "
             "A1_PIX=%08X A1_FPIX=%08X A2_PIX=%08X A1_FLAGS=%08X A2_FLAGS=%08X "
-            "PIXLINE=%08X CMD=%08X\n",
+            "A1_STEP=%08X A1_FSTEP=%08X A2_STEP=%08X PIXLINE=%08X CMD=%08X\n",
             (unsigned)GET32(blitter_ram, A1_BASE),
             (unsigned)GET32(blitter_ram, A2_BASE),
             (unsigned)GET32(blitter_ram, A1_PIXEL),
@@ -275,6 +275,9 @@ void BlitterRunComparison(void)
             (unsigned)GET32(blitter_ram, 0x30 /* A2_PIXEL */),
             (unsigned)GET32(blitter_ram, A1_FLAGS),
             (unsigned)GET32(blitter_ram, A2_FLAGS),
+            (unsigned)GET32(blitter_ram, 0x10 /* A1_STEP */),
+            (unsigned)GET32(blitter_ram, 0x14 /* A1_FSTEP */),
+            (unsigned)GET32(blitter_ram, 0x34 /* A2_STEP */),
             (unsigned)GET32(blitter_ram, PIXLINECOUNTER),
             (unsigned)cmd);
          blit_trace_count = 0;
@@ -295,6 +298,12 @@ void BlitterRunComparison(void)
       uint8_t fast_regs[0x100];
       memcpy(fast_regs, blitter_ram, 0x100);
 
+      if (blit_cmp_trace_blit >= 0 && (int)blit_cmp_total == blit_cmp_trace_blit)
+         LOG_WRN("[BLIT TRACE] post-FAST A1_PIX=%08X A1_FPIX=%08X A2_PIX=%08X\n",
+            (unsigned)GET32(fast_regs, A1_PIXEL),
+            (unsigned)GET32(fast_regs, 0x18 /* A1_FPIXEL */),
+            (unsigned)GET32(fast_regs, 0x30 /* A2_PIXEL */));
+
       memcpy(jaguarMainRAM + save_start, blit_cmp_saved_region, save_size);
       BlitterStateLoad(blit_cmp_state_buf);
 
@@ -302,7 +311,7 @@ void BlitterRunComparison(void)
       {
          LOG_WRN("[BLIT TRACE] pre-ACC   A1_BASE=%08X A2_BASE=%08X "
             "A1_PIX=%08X A1_FPIX=%08X A2_PIX=%08X A1_FLAGS=%08X A2_FLAGS=%08X "
-            "PIXLINE=%08X CMD=%08X\n",
+            "A1_STEP=%08X A1_FSTEP=%08X A2_STEP=%08X PIXLINE=%08X CMD=%08X\n",
             (unsigned)GET32(blitter_ram, A1_BASE),
             (unsigned)GET32(blitter_ram, A2_BASE),
             (unsigned)GET32(blitter_ram, A1_PIXEL),
@@ -310,6 +319,9 @@ void BlitterRunComparison(void)
             (unsigned)GET32(blitter_ram, 0x30 /* A2_PIXEL */),
             (unsigned)GET32(blitter_ram, A1_FLAGS),
             (unsigned)GET32(blitter_ram, A2_FLAGS),
+            (unsigned)GET32(blitter_ram, 0x10 /* A1_STEP */),
+            (unsigned)GET32(blitter_ram, 0x14 /* A1_FSTEP */),
+            (unsigned)GET32(blitter_ram, 0x34 /* A2_STEP */),
             (unsigned)GET32(blitter_ram, PIXLINECOUNTER),
             (unsigned)cmd);
       }
@@ -318,6 +330,10 @@ void BlitterRunComparison(void)
 
       if (blit_cmp_trace_phase == 2)
       {
+         LOG_WRN("[BLIT TRACE] post-ACC  A1_PIX=%08X A1_FPIX=%08X A2_PIX=%08X\n",
+            (unsigned)GET32(blitter_ram, A1_PIXEL),
+            (unsigned)GET32(blitter_ram, 0x18 /* A1_FPIXEL */),
+            (unsigned)GET32(blitter_ram, 0x30 /* A2_PIXEL */));
          blit_cmp_trace_phase = 0;
          BlitterCompareDumpTrace();
       }
