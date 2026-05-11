@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Need the full history if we want to inspect the baseline diff
           # against develop later, but shallow is fine for now.

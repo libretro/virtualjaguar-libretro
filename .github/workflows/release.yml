@@ -127,7 +127,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install multilib
         if: matrix.config.multilib
@@ -288,7 +288,7 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Build
         env:
@@ -325,7 +325,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Build
         env:
@@ -362,7 +362,7 @@ jobs:
     needs: [build, vita-build, switch-build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8
