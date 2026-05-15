@@ -1410,6 +1410,44 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*dcomp = blitter_simd_ops.dcomp(*patd, srcd, dstd, cmpdst);
+
+	/* Source-pixel transparency for DCOMPEN+!CMPDST.
+	 *
+	 * The fast blitter's DCOMPEN+!CMPDST path inhibits writes whenever
+	 * the source pixel is zero (blitter.c:497-500, "if (srcdata == 0)
+	 * inhibit = 1").  JTRM calls DCOMPEN "pixel-level transparency",
+	 * which matches that behaviour -- the transparent colour is
+	 * hardcoded to zero, regardless of PATD.
+	 *
+	 * The gate-level rewrite of dcomp above (scalar_dcomp & SIMD
+	 * variants) only checks byte-equality against PATD, which is the
+	 * documented DATACOMP module behaviour but is missing the pixel
+	 * transparency check the fast path performs.  For sprite blits
+	 * with non-zero PATD and zero source pixels (BSG cmd=0x49802609
+	 * family, ~120 blits / 3.76% residual divergence on develop),
+	 * accurate writes zeros over the existing destination while fast
+	 * preserves it via the source-zero inhibit.
+	 *
+	 * OR the per-byte "source byte == 0" mask into dcomp so the
+	 * existing dcomp_pair (16bpp pair AND) and pixel-mode winhibit
+	 * paths in COMP_CTRL fire when the source pixel is fully zero.
+	 * Augment-only (no replacement) so cases where the original
+	 * byte-equality already matched (PATD-based pattern stamping)
+	 * continue to inhibit identically. */
+	if (dcompen && !cmpdst)
+	{
+		uint64_t s = srcd;
+		uint8_t zero_mask = 0;
+		if ((s & UINT64_C(0x00000000000000FF)) == 0) zero_mask |= 0x01;
+		if ((s & UINT64_C(0x000000000000FF00)) == 0) zero_mask |= 0x02;
+		if ((s & UINT64_C(0x0000000000FF0000)) == 0) zero_mask |= 0x04;
+		if ((s & UINT64_C(0x00000000FF000000)) == 0) zero_mask |= 0x08;
+		if ((s & UINT64_C(0x000000FF00000000)) == 0) zero_mask |= 0x10;
+		if ((s & UINT64_C(0x0000FF0000000000)) == 0) zero_mask |= 0x20;
+		if ((s & UINT64_C(0x00FF000000000000)) == 0) zero_mask |= 0x40;
+		if ((s & UINT64_C(0xFF00000000000000)) == 0) zero_mask |= 0x80;
+		*dcomp |= zero_mask;
+	}
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Zed comparator for Z-buffer operations
