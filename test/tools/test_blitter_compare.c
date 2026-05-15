@@ -37,6 +37,10 @@ static void (*pBlitterCompareEnable)(int);
 static int (*pBlitterCompareIsEnabled)(void);
 static void (*pBlitterCompareGetStats)(uint32_t *, uint32_t *, uint32_t *);
 static void (*pBlitterCompareDumpCmdStats)(void);
+static void (*pBlitterCompareSetFrame)(uint32_t);
+static void (*pBlitterCompareSetFrameWindow)(uint32_t, uint32_t);
+static void (*pBlitterCompareSetCmdMask)(uint32_t, uint32_t);
+static void (*pBlitterCompareSetVerbose)(int);
 
 static int bios_option_set = 0;
 
@@ -201,11 +205,25 @@ int main(int argc, char **argv)
    int num_frames = 60;
    int warmup_frames = 0;
    uint32_t total, diffs, skipped;
+   /* Filter args.  Default: window covers all frames, mask=0 = accept all. */
+   uint32_t frame_first = 0;
+   uint32_t frame_last = 0xFFFFFFFFu;
+   uint32_t cmd_mask = 0;
+   uint32_t cmd_value = 0;
+   int verbose_dump = 0;
 
    if (argc < 3)
    {
-      fprintf(stderr, "Usage: %s <core.dylib> <rom_file> [num_frames] "
-              "[--load-state file] [--save-state file] [--load-srm file] [--warmup N]\n", argv[0]);
+      fprintf(stderr,
+         "Usage: %s <core.dylib> <rom_file> [num_frames] "
+         "[--load-state file] [--save-state file] [--load-srm file] "
+         "[--warmup N] [--frame-window FIRST LAST] "
+         "[--cmd-filter MASK VAL] [--verbose-dump]\n",
+         argv[0]);
+      fprintf(stderr,
+         "  --frame-window FIRST LAST  inclusive frame range to compare\n"
+         "  --cmd-filter MASK VAL      compare only when (cmd & MASK) == VAL\n"
+         "  --verbose-dump             dump pre-blit regs + dst hex on diff\n");
       return 1;
    }
 
@@ -221,6 +239,18 @@ int main(int argc, char **argv)
          srm_load_path = argv[++i];
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
          warmup_frames = atoi(argv[++i]);
+      else if (strcmp(argv[i], "--frame-window") == 0 && i + 2 < argc)
+      {
+         frame_first = (uint32_t)strtoul(argv[++i], NULL, 0);
+         frame_last  = (uint32_t)strtoul(argv[++i], NULL, 0);
+      }
+      else if (strcmp(argv[i], "--cmd-filter") == 0 && i + 2 < argc)
+      {
+         cmd_mask  = (uint32_t)strtoul(argv[++i], NULL, 0);
+         cmd_value = (uint32_t)strtoul(argv[++i], NULL, 0);
+      }
+      else if (strcmp(argv[i], "--verbose-dump") == 0)
+         verbose_dump = 1;
       else
          num_frames = atoi(argv[i]);
    }
@@ -278,6 +308,10 @@ int main(int argc, char **argv)
    LOAD_SYM_OPT(BlitterCompareIsEnabled);
    LOAD_SYM_OPT(BlitterCompareGetStats);
    LOAD_SYM_OPT(BlitterCompareDumpCmdStats);
+   LOAD_SYM_OPT(BlitterCompareSetFrame);
+   LOAD_SYM_OPT(BlitterCompareSetFrameWindow);
+   LOAD_SYM_OPT(BlitterCompareSetCmdMask);
+   LOAD_SYM_OPT(BlitterCompareSetVerbose);
 
    if (!pBlitterCompareEnable || !pBlitterCompareGetStats)
    {
@@ -428,11 +462,41 @@ int main(int argc, char **argv)
    /* Enable blitter comparison mode */
    pBlitterCompareEnable(1);
    fprintf(stderr, "--- Blitter comparison enabled ---\n");
+
+   /* Apply filters.  Setters are optional symbols so older cores still
+    * link; warn if the user passed a filter flag but the core lacks it. */
+   if (pBlitterCompareSetFrameWindow)
+   {
+      pBlitterCompareSetFrameWindow(frame_first, frame_last);
+      if (frame_first != 0 || frame_last != 0xFFFFFFFFu)
+         fprintf(stderr, "--- Frame window: [%u, %u] ---\n",
+            (unsigned)frame_first, (unsigned)frame_last);
+   }
+   else if (frame_first != 0 || frame_last != 0xFFFFFFFFu)
+      fprintf(stderr, "WARNING: core lacks BlitterCompareSetFrameWindow; --frame-window ignored\n");
+
+   if (pBlitterCompareSetCmdMask)
+   {
+      pBlitterCompareSetCmdMask(cmd_mask, cmd_value);
+      if (cmd_mask != 0)
+         fprintf(stderr, "--- Cmd filter: (cmd & %08X) == %08X ---\n",
+            (unsigned)cmd_mask, (unsigned)cmd_value);
+   }
+   else if (cmd_mask != 0)
+      fprintf(stderr, "WARNING: core lacks BlitterCompareSetCmdMask; --cmd-filter ignored\n");
+
+   if (pBlitterCompareSetVerbose)
+      pBlitterCompareSetVerbose(verbose_dump);
+   else if (verbose_dump)
+      fprintf(stderr, "WARNING: core lacks BlitterCompareSetVerbose; --verbose-dump ignored\n");
+
    fprintf(stderr, "--- Running %d frames ---\n", num_frames);
 
    for (i = 0; i < num_frames; i++)
    {
       current_frame = i;
+      if (pBlitterCompareSetFrame)
+         pBlitterCompareSetFrame((uint32_t)i);
       pretro_run();
 
       /* Print periodic stats */
