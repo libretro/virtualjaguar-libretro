@@ -229,31 +229,62 @@ int main(int argc, char **argv)
 
    core_path = argv[1];
    rom_path = argv[2];
+   /* Match the flag name first so a "missing args" condition errors
+    * explicitly instead of silently falling through to num_frames =
+    * atoi(argv[i]) (which usually yields 0 and confuses the user).
+    * Unknown --... options are also rejected outright. */
+#define NEED_ARGS(name, n) do { \
+   if (i + (n) >= argc) { \
+      fprintf(stderr, "%s: '%s' requires %d argument%s\n", \
+              argv[0], (name), (n), (n) == 1 ? "" : "s"); \
+      return 1; \
+   } \
+} while (0)
    for (i = 3; i < argc; i++)
    {
-      if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc)
-         state_load_path = argv[++i];
-      else if (strcmp(argv[i], "--save-state") == 0 && i + 1 < argc)
-         state_save_path = argv[++i];
-      else if (strcmp(argv[i], "--load-srm") == 0 && i + 1 < argc)
-         srm_load_path = argv[++i];
-      else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
-         warmup_frames = atoi(argv[++i]);
-      else if (strcmp(argv[i], "--frame-window") == 0 && i + 2 < argc)
+      if (strcmp(argv[i], "--load-state") == 0)
       {
+         NEED_ARGS("--load-state", 1);
+         state_load_path = argv[++i];
+      }
+      else if (strcmp(argv[i], "--save-state") == 0)
+      {
+         NEED_ARGS("--save-state", 1);
+         state_save_path = argv[++i];
+      }
+      else if (strcmp(argv[i], "--load-srm") == 0)
+      {
+         NEED_ARGS("--load-srm", 1);
+         srm_load_path = argv[++i];
+      }
+      else if (strcmp(argv[i], "--warmup") == 0)
+      {
+         NEED_ARGS("--warmup", 1);
+         warmup_frames = atoi(argv[++i]);
+      }
+      else if (strcmp(argv[i], "--frame-window") == 0)
+      {
+         NEED_ARGS("--frame-window", 2);
          frame_first = (uint32_t)strtoul(argv[++i], NULL, 0);
          frame_last  = (uint32_t)strtoul(argv[++i], NULL, 0);
       }
-      else if (strcmp(argv[i], "--cmd-filter") == 0 && i + 2 < argc)
+      else if (strcmp(argv[i], "--cmd-filter") == 0)
       {
+         NEED_ARGS("--cmd-filter", 2);
          cmd_mask  = (uint32_t)strtoul(argv[++i], NULL, 0);
          cmd_value = (uint32_t)strtoul(argv[++i], NULL, 0);
       }
       else if (strcmp(argv[i], "--verbose-dump") == 0)
          verbose_dump = 1;
+      else if (argv[i][0] == '-')
+      {
+         fprintf(stderr, "%s: unknown option '%s'\n", argv[0], argv[i]);
+         return 1;
+      }
       else
          num_frames = atoi(argv[i]);
    }
+#undef NEED_ARGS
 
    /* Load ROM */
    f = fopen(rom_path, "rb");

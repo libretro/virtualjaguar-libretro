@@ -362,7 +362,7 @@ void BlitterRunComparison(void)
    blitter_blit(cmd);
 
    memcpy(blit_cmp_fast_region, jaguarMainRAM + save_start, save_size);
-   memcpy(fast_regs, blitter_ram, 0x100);
+   memcpy(fast_regs, blitter_ram, sizeof(fast_regs));
    {
       memcpy(jaguarMainRAM + save_start, blit_cmp_saved_region, save_size);
       BlitterStateLoad(blit_cmp_state_buf);

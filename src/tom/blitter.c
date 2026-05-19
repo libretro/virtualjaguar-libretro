@@ -1436,16 +1436,18 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 	 * continue to inhibit identically. */
 	if (dcompen && !cmpdst)
 	{
+		/* Per-byte "byte is 0" mask.  Compact loop over the 8 bytes of
+		 * srcd.  (A SWAR byte-zero bit-trick would be tempting but
+		 * `(s - 0x01...01) & ~s & 0x80...80` fails on cross-byte
+		 * borrow -- e.g. s=0x0001_0000 spuriously flags byte 2 as zero
+		 * because the borrow chain propagates the wrong way.  The loop
+		 * is honest and compiles to predictable code on every target.) */
 		uint64_t s = srcd;
 		uint8_t zero_mask = 0;
-		if ((s & UINT64_C(0x00000000000000FF)) == 0) zero_mask |= 0x01;
-		if ((s & UINT64_C(0x000000000000FF00)) == 0) zero_mask |= 0x02;
-		if ((s & UINT64_C(0x0000000000FF0000)) == 0) zero_mask |= 0x04;
-		if ((s & UINT64_C(0x00000000FF000000)) == 0) zero_mask |= 0x08;
-		if ((s & UINT64_C(0x000000FF00000000)) == 0) zero_mask |= 0x10;
-		if ((s & UINT64_C(0x0000FF0000000000)) == 0) zero_mask |= 0x20;
-		if ((s & UINT64_C(0x00FF000000000000)) == 0) zero_mask |= 0x40;
-		if ((s & UINT64_C(0xFF00000000000000)) == 0) zero_mask |= 0x80;
+		unsigned i;
+		for (i = 0; i < 8; i++)
+			if (((s >> (i * 8)) & 0xFFu) == 0)
+				zero_mask |= (uint8_t)(1u << i);
 		*dcomp |= zero_mask;
 	}
 //////////////////////////////////////////////////////////////////////////////////////
