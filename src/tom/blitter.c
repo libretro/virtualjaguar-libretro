@@ -3136,7 +3136,18 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                /* Check CLIP_A1 against the pre-step a1 position (the one
                 * used for the sread that loaded srcd), not the post-step
                 * a1.  See a1_x_at_sread declaration above for the
-                * rationale.  This matches fast's CLIP_A1 timing. */
+                * rationale.  This matches fast's CLIP_A1 timing.
+                *
+                * When srcen/srcenx are both clear, no sread/sreadx ever
+                * fires to refresh the cache, but a1 can still step each
+                * iteration via dsta_addi (when !dsta2).  Refresh from
+                * live a1_x/a1_y at the top of dwrite -- the step for
+                * this cycle hasn't fired yet, so live a1 == pre-step. */
+               if (!srcen && !srcenx)
+               {
+                  a1_x_at_sread = a1_x;
+                  a1_y_at_sread = a1_y;
+               }
                if (clip_a1 && ((a1_x_at_sread & 0x8000) || (a1_y_at_sread & 0x8000)
                             || (a1_x_at_sread >= (int16_t)a1_win_x)
                             || (a1_y_at_sread >= (int16_t)a1_win_y)))
