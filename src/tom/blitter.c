@@ -1948,6 +1948,18 @@ void BlitterMidsummer2(void)
          uint64_t srcz = 0;
          bool winhibit;
          uint32_t a1_ya_cached, a2_ya_cached;
+         /* CLIP_A1 must check the a1 position THAT WAS USED for the
+          * sread that loaded srcd, not the post-step a1.  The state
+          * machine steps a1 (via srca_addi) during the same cycle as
+          * sread but BEFORE the dwrite that consumes srcd, so by the
+          * time we evaluate the clip check at dwrite, a1 is one step
+          * ahead.  Cache a1_x/a1_y at sread time and use the cached
+          * values for the clip test below.  Matches fast, which checks
+          * CLIP_A1 against pre-step a1.  Fixes BSG cmd=0x09800F41
+          * family per-pixel divergence at row-edge positions where the
+          * fractional source X drifts across 0 mid-row. */
+         int16_t a1_x_at_sread = a1_x;
+         int16_t a1_y_at_sread = a1_y;
 
          indone = false;
 
@@ -2792,6 +2804,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
+               /* Snapshot pre-step a1 for the CLIP_A1 check at dwrite
+                * time -- see a1_x_at_sread declaration. */
+               a1_x_at_sread = a1_x;
+               a1_y_at_sread = a1_y;
                //uint32_t srcAddr, pixAddr;
                //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
                //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
@@ -2830,6 +2846,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
+               /* Snapshot pre-step a1 for the CLIP_A1 check at dwrite
+                * time -- see a1_x_at_sread declaration. */
+               a1_x_at_sread = a1_x;
+               a1_y_at_sread = a1_y;
                srcd2 = srcd1;
                srcd1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
@@ -3113,10 +3133,13 @@ A1_xcomp	:= MAG_15 (a1xgr, a1xeq, a1xlt, a1_x{0..14}, a1_win_x{0..14});
 A1_ycomp	:= MAG_15 (a1ygr, a1yeq, a1ylt, a1_y{0..14}, a1_win_y{0..14});
 A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 */
-               //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
-               //      Actually, seems to be related to phrase mode writes...
-               //      Or is it? Could be related to non-15-bit compares as above?
-               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+               /* Check CLIP_A1 against the pre-step a1 position (the one
+                * used for the sread that loaded srcd), not the post-step
+                * a1.  See a1_x_at_sread declaration above for the
+                * rationale.  This matches fast's CLIP_A1 timing. */
+               if (clip_a1 && ((a1_x_at_sread & 0x8000) || (a1_y_at_sread & 0x8000)
+                            || (a1_x_at_sread >= (int16_t)a1_win_x)
+                            || (a1_y_at_sread >= (int16_t)a1_win_y)))
                   winhibit = true;
 
 
