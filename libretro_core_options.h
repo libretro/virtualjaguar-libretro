@@ -124,7 +124,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bus_contention",
       "Bus Contention",
       NULL,
-      "Model bus arbitration between processors. GPU and blitter memory accesses stall appropriately based on DRAM timing. Fixes games that run too fast (e.g. Doom). Disable if a game has issues.",
+      "Model bus arbitration between processors. GPU and blitter memory accesses stall based on DRAM timing. Disable if a game has issues.",
       NULL,
       NULL,
       {
@@ -133,6 +133,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "enabled"
+   },
+   {
+      "virtualjaguar_bus_contention_scale",
+      "Bus Contention Scale",
+      NULL,
+      "Scales bus contention penalty charged to GPU/blitter accesses. Use larger values to tune slowdown for bus-bound titles.",
+      NULL,
+      NULL,
+      {
+         { "1x", "1x (default)" },
+         { "2x", "2x" },
+         { "4x", "4x" },
+         { "8x", "8x" },
+         { NULL, NULL },
+      },
+      "1x"
    },
    {
       "virtualjaguar_bios",

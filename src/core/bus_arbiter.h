@@ -62,6 +62,9 @@ struct BusArbiter {
 
     /* Feature toggle (from core option) */
     uint8_t enabled;
+
+    /* Scale factor applied to charged contention cycles (1x, 2x, ...). */
+    uint8_t contention_scale;
 };
 
 extern struct BusArbiter busArbiter;
