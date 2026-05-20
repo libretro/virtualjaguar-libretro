@@ -1434,7 +1434,18 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 	 * Augment-only (no replacement) so cases where the original
 	 * byte-equality already matched (PATD-based pattern stamping)
 	 * continue to inhibit identically. */
-	if (dcompen && !cmpdst)
+	/* Gated to 8bpp (pixsize==3) and 16bpp (pixsize==4) only.  In those
+	 * modes the per-byte zero mask matches fast's per-pixel zero check:
+	 * 8bpp = one byte per pixel (1:1); 16bpp is reconciled by the
+	 * dcomp_pair adjacent-byte AND inside COMP_CTRL.
+	 *
+	 * For 32bpp (pixsize==5) COMP_CTRL has no 4-byte AND, so OR'ing the
+	 * per-byte mask here would inhibit a 32-bit pixel whenever any one
+	 * of its bytes is zero, which differs from fast's "full 32-bit
+	 * srcdata == 0" check.  No failing testcase currently exercises
+	 * 32bpp DCOMPEN; gating out keeps semantics conservative and
+	 * matches fast for the modes BSG and other failing titles use. */
+	if (dcompen && !cmpdst && (pixsize == 3 || pixsize == 4))
 	{
 		/* Per-byte "byte is 0" mask.  Compact loop over the 8 bytes of
 		 * srcd.  (A SWAR byte-zero bit-trick would be tempting but
