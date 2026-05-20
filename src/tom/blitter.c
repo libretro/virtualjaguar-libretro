@@ -1410,6 +1410,57 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*dcomp = blitter_simd_ops.dcomp(*patd, srcd, dstd, cmpdst);
+
+	/* Source-pixel transparency for DCOMPEN+!CMPDST.
+	 *
+	 * The fast blitter's DCOMPEN+!CMPDST path inhibits writes whenever
+	 * the source pixel is zero (blitter.c:497-500, "if (srcdata == 0)
+	 * inhibit = 1").  JTRM calls DCOMPEN "pixel-level transparency",
+	 * which matches that behaviour -- the transparent colour is
+	 * hardcoded to zero, regardless of PATD.
+	 *
+	 * The gate-level rewrite of dcomp above (scalar_dcomp & SIMD
+	 * variants) only checks byte-equality against PATD, which is the
+	 * documented DATACOMP module behaviour but is missing the pixel
+	 * transparency check the fast path performs.  For sprite blits
+	 * with non-zero PATD and zero source pixels (BSG cmd=0x49802609
+	 * family, ~120 blits / 3.76% residual divergence on develop),
+	 * accurate writes zeros over the existing destination while fast
+	 * preserves it via the source-zero inhibit.
+	 *
+	 * OR the per-byte "source byte == 0" mask into dcomp so the
+	 * existing dcomp_pair (16bpp pair AND) and pixel-mode winhibit
+	 * paths in COMP_CTRL fire when the source pixel is fully zero.
+	 * Augment-only (no replacement) so cases where the original
+	 * byte-equality already matched (PATD-based pattern stamping)
+	 * continue to inhibit identically. */
+	/* Gated to 8bpp (pixsize==3) and 16bpp (pixsize==4) only.  In those
+	 * modes the per-byte zero mask matches fast's per-pixel zero check:
+	 * 8bpp = one byte per pixel (1:1); 16bpp is reconciled by the
+	 * dcomp_pair adjacent-byte AND inside COMP_CTRL.
+	 *
+	 * For 32bpp (pixsize==5) COMP_CTRL has no 4-byte AND, so OR'ing the
+	 * per-byte mask here would inhibit a 32-bit pixel whenever any one
+	 * of its bytes is zero, which differs from fast's "full 32-bit
+	 * srcdata == 0" check.  No failing testcase currently exercises
+	 * 32bpp DCOMPEN; gating out keeps semantics conservative and
+	 * matches fast for the modes BSG and other failing titles use. */
+	if (dcompen && !cmpdst && (pixsize == 3 || pixsize == 4))
+	{
+		/* Per-byte "byte is 0" mask.  Compact loop over the 8 bytes of
+		 * srcd.  (A SWAR byte-zero bit-trick would be tempting but
+		 * `(s - 0x01...01) & ~s & 0x80...80` fails on cross-byte
+		 * borrow -- e.g. s=0x0001_0000 spuriously flags byte 2 as zero
+		 * because the borrow chain propagates the wrong way.  The loop
+		 * is honest and compiles to predictable code on every target.) */
+		uint64_t s = srcd;
+		uint8_t zero_mask = 0;
+		unsigned i;
+		for (i = 0; i < 8; i++)
+			if (((s >> (i * 8)) & 0xFFu) == 0)
+				zero_mask |= (uint8_t)(1u << i);
+		*dcomp |= zero_mask;
+	}
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Zed comparator for Z-buffer operations
