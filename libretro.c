@@ -8,6 +8,7 @@
 #include <compat/posix_string.h>
 #include <compat/strl.h>
 
+#include "bus_arbiter.h"
 #include "cheat.h"
 #include "crash_detect.h"
 #include "file.h"
@@ -287,6 +288,7 @@ void retro_set_environment(retro_environment_t cb)
 static void check_variables(void)
 {
    unsigned i;
+   unsigned contention_scale;
    struct retro_variable var;
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
@@ -314,6 +316,35 @@ static void check_variables(void)
    {
       CrashDetectSetMode(CRASH_DETECT_ON);
    }
+
+   var.key = "virtualjaguar_bus_contention";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         vjs.useBusContention = true;
+      else
+         vjs.useBusContention = false;
+   }
+   else
+      vjs.useBusContention = true;
+
+   contention_scale = 1;
+   var.key = "virtualjaguar_bus_contention_scale";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "8x") == 0)
+         contention_scale = 8;
+      else if (strcmp(var.value, "4x") == 0)
+         contention_scale = 4;
+      else if (strcmp(var.value, "2x") == 0)
+         contention_scale = 2;
+   }
+
+   busArbiter.enabled = vjs.useBusContention ? 1 : 0;
+   busArbiter.contention_scale = (uint8_t)contention_scale;
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -855,6 +886,7 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
 
+   bus_arbiter_init();
    check_variables();
 
 #ifdef BUILD_TIMESTAMP
@@ -1052,6 +1084,7 @@ void retro_init(void)
 
 void retro_deinit(void)
 {
+   bus_arbiter_reset();
    libretro_supports_bitmasks = false;
 
    /* Belt-and-suspenders: shut down emulator subsystems if the frontend
