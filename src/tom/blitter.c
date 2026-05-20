@@ -1251,11 +1251,25 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
    uint8_t inhibit_all;   /* combined per-byte inhibit before mode gating */
    uint8_t gated;          /* after phrase_mode / winhibit gating */
 
-   /* nowrite and winhibit (pixel-mode write inhibit) */
+   /* nowrite and winhibit (pixel-mode write inhibit)
+    *
+    * Z-comparator lane in pixel-mode 16bpp: the fast blitter reads
+    * source/dest Z via `REG(SRCZINT|DSTZ) & 0xFFFF`, which is bytes 2-3
+    * of the 8-byte register (low 16 of the high 32 half).  In the
+    * GET64-shift lane convention here, that is lane 2 -- so
+    * `zcomp & 0x04` matches fast.  Previously accurate used `zcomp & 0x01`
+    * (lane 0 = bytes 6-7), which produced visibly wrong z-inhibit
+    * decisions in BSG sprite blits (cmd=09900F71 / 09800F41 families:
+    * pixel-mode 16bpp DCOMPEN sprites with constant source Z).
+    *
+    * This is a match-fast pragmatic fix; the JTRM-pure behaviour would
+    * select the lane based on the destination pixel's position within a
+    * phrase, which neither path currently does.  See #189 for the full
+    * divergence writeup. */
    winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
+      || ((zcomp & 0x04) && !phrase_mode && (pixsize == 4));
    *nowrite = winhibit && !bkgwren;
 
    /* 16-bit pixel mode flag */
