@@ -22,12 +22,21 @@ static const uint8_t dramspeed_table[4] = { 2, 3, 4, 5 };
 /* RAS precharge penalty for page miss (row activation + precharge). */
 #define PAGE_MISS_PENALTY 4
 
+static uint32_t bus_arbiter_apply_scale(uint32_t sys_clocks)
+{
+    if (busArbiter.contention_scale <= 1)
+        return sys_clocks;
+
+    return sys_clocks * busArbiter.contention_scale;
+}
+
 void bus_arbiter_init(void)
 {
     memset(&busArbiter, 0, sizeof(busArbiter));
     busArbiter.dram_base_clocks = 5;
     busArbiter.dram_miss_penalty = PAGE_MISS_PENALTY;
     busArbiter.enabled = 1;
+    busArbiter.contention_scale = 1;
 }
 
 void bus_arbiter_reset(void)
@@ -48,7 +57,7 @@ void bus_arbiter_update_memcon(uint16_t memcon1)
 void bus_arbiter_charge(int master, uint32_t sys_clocks)
 {
     if (master >= 0 && master < BM_COUNT)
-        busArbiter.bus_cycles[master] += sys_clocks;
+        busArbiter.bus_cycles[master] += bus_arbiter_apply_scale(sys_clocks);
 }
 
 uint32_t bus_arbiter_penalty(int master)
@@ -112,8 +121,13 @@ uint32_t bus_arbiter_dram_cost(uint32_t addr)
 uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
 {
     uint32_t cost;
+    uint32_t scaled_cost;
     cost = bus_arbiter_dram_cost(addr);
-    if (cost > 0)
+    if (cost > 0) {
+        scaled_cost = bus_arbiter_apply_scale(cost);
         bus_arbiter_charge(master, cost);
-    return cost;
+        return scaled_cost;
+    }
+    
+    return 0;
 }

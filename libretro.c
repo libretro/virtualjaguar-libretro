@@ -336,6 +336,7 @@ void retro_set_environment(retro_environment_t cb)
 static void check_variables(void)
 {
    unsigned i;
+   unsigned contention_scale;
    struct retro_variable var;
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
@@ -383,7 +384,22 @@ static void check_variables(void)
    }
    else
       vjs.useBusContention = true;
+
+   contention_scale = 1;
+   var.key = "virtualjaguar_bus_contention_scale";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "8x") == 0)
+         contention_scale = 8;
+      else if (strcmp(var.value, "4x") == 0)
+         contention_scale = 4;
+      else if (strcmp(var.value, "2x") == 0)
+         contention_scale = 2;
+   }
+
    busArbiter.enabled = vjs.useBusContention ? 1 : 0;
+   busArbiter.contention_scale = (uint8_t)contention_scale;
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
