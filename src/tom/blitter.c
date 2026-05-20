@@ -3384,6 +3384,44 @@ fc_inner_done:
       }
    }
 
+   /* Per JTRM: "the X pointer will be left pointing at the start of the
+    * first phrase not written by the blit."  The fast blitter applies its
+    * outer-loop step unconditionally on every iteration including the
+    * last, leaving the pointer past the last write.  The Midsummer state
+    * machine here only applies the step between inner iterations (a1update
+    * fires when transitioning from one inner to the next), so after
+    * n_lines inner passes it has performed only n_lines-1 steps.  Mirror
+    * fast's "one closing step" so the writeback values match between
+    * modes and chained-blit games (e.g. Battle Sphere Gold sprite
+    * pipeline) see consistent A1_PIXEL/A2_PIXEL between blits. */
+   {
+      uint16_t fcx_carry = 0, fcy_carry = 0;
+      if (upda1f)
+      {
+         uint32_t fxt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
+         uint32_t fyt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
+         fcx_carry = (uint16_t)(fxt >> 16);
+         fcy_carry = (uint16_t)(fyt >> 16);
+         a1_frac_x = (uint16_t)(fxt & 0xFFFF);
+         a1_frac_y = (uint16_t)(fyt & 0xFFFF);
+      }
+      /* Match the in-loop a1update gate at line 1862-1864: the integer
+       * step fires whenever a1fupdate fires OR (upda1 && !upda1f), i.e.,
+       * whenever (upda1 || upda1f).  Gating only on upda1 would diverge
+       * by one a1_step on every iteration in the UPDA1F=1, UPDA1=0 case
+       * (rotated/scaled blits without integer-pixel writeback). */
+      if (upda1 || upda1f)
+      {
+         a1_x += a1_step_x + (int16_t)fcx_carry;
+         a1_y += a1_step_y + (int16_t)fcy_carry;
+      }
+      if (upda2)
+      {
+         a2_x += a2_step_x;
+         a2_y += a2_step_y;
+      }
+   }
+
    // Write values back to registers (in real blitter, these are continuously updated)
    SET16(blitter_ram, A1_PIXEL + 2, a1_x);
    SET16(blitter_ram, A1_PIXEL + 0, a1_y);
