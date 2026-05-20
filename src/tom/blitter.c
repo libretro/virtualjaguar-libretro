@@ -3405,7 +3405,12 @@ fc_inner_done:
          a1_frac_x = (uint16_t)(fxt & 0xFFFF);
          a1_frac_y = (uint16_t)(fyt & 0xFFFF);
       }
-      if (upda1)
+      /* Match the in-loop a1update gate at line 1862-1864: the integer
+       * step fires whenever a1fupdate fires OR (upda1 && !upda1f), i.e.,
+       * whenever (upda1 || upda1f).  Gating only on upda1 would diverge
+       * by one a1_step on every iteration in the UPDA1F=1, UPDA1=0 case
+       * (rotated/scaled blits without integer-pixel writeback). */
+      if (upda1 || upda1f)
       {
          a1_x += a1_step_x + (int16_t)fcx_carry;
          a1_y += a1_step_y + (int16_t)fcy_carry;
