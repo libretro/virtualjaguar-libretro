@@ -2030,7 +2030,7 @@ void BlitterMidsummer2(void)
 
          /* Precompute y*width row offsets (invariant when y unchanged) */
          a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
-         a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+         a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
 
          /* Precompute address constants (invariant during inner loop) */
          a1_xconst = 6 - a1_pixsize;
@@ -2313,7 +2313,7 @@ void BlitterMidsummer2(void)
                   if (addq_y != a2_y)
                   {
                      a2_y = addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
 
@@ -2600,7 +2600,7 @@ void BlitterMidsummer2(void)
                   if (fc_addq_y != a2_y)
                   {
                      a2_y = fc_addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
 
@@ -2623,7 +2623,7 @@ void BlitterMidsummer2(void)
                   if (fc_addq_y != a2_y)
                   {
                      a2_y = fc_addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
                else
@@ -3332,7 +3332,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                if (addq_y != a2_y)
                {
                   a2_y = addq_y;
-                  a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                }
             }
 #ifdef BENCH_PROFILE
@@ -3462,7 +3462,18 @@ static void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset,
 	uint32_t a1_ya_pre, uint32_t a2_ya_pre)
 {
-	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
+	/* A2 texture-wrap mask: when A2_FLAGS bit 15 is set, the A2 source X
+	 * coordinate is wrapped by the A2_MASK X modulo (low 16 bits) for ADDRESS
+	 * generation only -- the raw accumulator a2_x is never altered.  Matches
+	 * the MiSTer Jaguar core address.v (a2_xm = a2_xr & a2_mask_x,
+	 * https://github.com/MiSTer-devel/Jaguar_MiSTer) and the fast blitter's
+	 * integer-part masking.  Gated on bit 15, so channels that do not enable
+	 * wrapping are bit-for-bit unchanged.  Single ternary keeps it C89-clean. */
+	uint16_t x = (gena2
+		? (uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80)
+			? (a2_x & GET16(blitter_ram, A2_MASK + 2))
+			: a2_x)
+		: a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
 	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
 	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
 	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;/*Only upper 21 bits are passed around the bus? Seems like it...*/
