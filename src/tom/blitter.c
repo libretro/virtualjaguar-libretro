@@ -496,8 +496,22 @@ void blitter_generic(uint32_t cmd)
 
                if (!CMPDST)
                {
-                  if (srcdata == 0)
-                     inhibit = 1;//*/
+                  /* DCOMPEN+!CMPDST source transparency: inhibit where the
+                   * source pixel is 0 (pixel transparency) OR equals PATTERNDATA
+                   * (the DATACOMP colour-key).  The fast path historically
+                   * tested only "== 0"; adding the PATD test matches the
+                   * accurate gate-level comparator (dcomp = patd ^ srcd) and the
+                   * MiSTer Jaguar core comp_ctrl.v
+                   * (https://github.com/MiSTer-devel/Jaguar_MiSTer), so blits
+                   * keying transparency on a non-zero colour render correctly.
+                   * BCOMPEN keeps its single-bit "transparent on 0" test. */
+                  if (BCOMPEN)
+                  {
+                     if (srcdata == 0)
+                        inhibit = 1;
+                  }
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
+                     inhibit = 1;
                }
                else
                {
@@ -658,7 +672,14 @@ void blitter_generic(uint32_t cmd)
 
                if (!CMPDST)
                {
-                  if (srcdata == 0)
+                  /* DCOMPEN zero-transparency + PATTERNDATA colour-key (see the
+                   * A1<-A2 branch above); source channel here is A1. */
+                  if (BCOMPEN)
+                  {
+                     if (srcdata == 0)
+                        inhibit = 1;
+                  }
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
                      inhibit = 1;
                }
                else
@@ -1413,11 +1434,10 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 
 	/* Source-pixel transparency for DCOMPEN+!CMPDST.
 	 *
-	 * The fast blitter's DCOMPEN+!CMPDST path inhibits writes whenever
-	 * the source pixel is zero (blitter.c:497-500, "if (srcdata == 0)
-	 * inhibit = 1").  JTRM calls DCOMPEN "pixel-level transparency",
-	 * which matches that behaviour -- the transparent colour is
-	 * hardcoded to zero, regardless of PATD.
+	 * The fast blitter's DCOMPEN+!CMPDST path inhibits writes when the
+	 * source pixel is zero (pixel-level transparency, what JTRM calls
+	 * DCOMPEN) OR when it equals PATTERNDATA (the DATACOMP colour-key) --
+	 * see the two !CMPDST branches earlier in blitter_generic.
 	 *
 	 * The gate-level rewrite of dcomp above (scalar_dcomp & SIMD
 	 * variants) only checks byte-equality against PATD, which is the
