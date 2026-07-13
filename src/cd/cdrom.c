@@ -16,6 +16,7 @@
 #include "cdrom.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "cdintf.h"
 #include "jagcd_boot.h"
@@ -302,6 +303,155 @@ static uint16_t DSAQueuePop(void)
 }
 
 
+/* --- CD trace ring: records DSA traffic + seek/FIFO state transitions ---
+ *
+ * Diagnostic-only instrumentation for Task 5's boot-hang triage (see
+ * docs/cd-boot-matrix.md).  Never touches savestates -- all of this is
+ * reset to empty on CDROMReset() the same as the other diag_* counters,
+ * never serialized.
+ *
+ * Toggle: core option `virtualjaguar_cd_trace` (CDTraceSetEnabled(),
+ * called from libretro.c's check_variables()) OR'd with env
+ * VJ_CD_TRACE=1 for headless harness use (CDTraceEnvWantsTrace(), cached
+ * after the first call so getenv() runs at most once per process).
+ *
+ * Zero-cost when off: CDTracePush()'s very first statement is the
+ * `!cdTraceEnabled` branch, so every call site pays exactly one untaken
+ * branch and nothing else -- no extra work, no memory writes.
+ *
+ * Ring size is a power of 2 so the head index wraps with a mask
+ * (`& (CD_TRACE_SIZE - 1)`) instead of modulo -- cheap and, since
+ * cdTraceHead is unsigned, never invokes negative-modulo UB. */
+#define CD_TRACE_SIZE 256
+
+enum
+{
+   CD_TRACE_DSA_TX = 0,     /* DS_DATA write (command sent to drive) */
+   CD_TRACE_DSA_RX,         /* DS_DATA read (response consumed) */
+   CD_TRACE_SEEK_START,     /* $12xx armed a real (non-redundant) seek */
+   CD_TRACE_SEEK_DONE,      /* seekDelay reached 0, $0100 queued */
+   CD_TRACE_FIFO_FILL,      /* fifoDataReady transitioned to true */
+   CD_TRACE_FIFO_DRAIN,     /* FIFO_DRAIN_READS reached, fifoDataReady cleared */
+   CD_TRACE_STOP,           /* $0200 (STOP) command processed */
+   CD_TRACE_HLE_READ        /* HLE CD_read (see jagcd_hle.c) -- carries LBA */
+};
+
+static const char * const cdTraceKindName[] = {
+   "DSA_TX", "DSA_RX", "SEEK_START", "SEEK_DONE",
+   "FIFO_FILL", "FIFO_DRAIN", "STOP", "HLE_READ"
+};
+
+typedef struct
+{
+   uint32_t tick;    /* diag_butchExecCalls at event time -- one tick per
+                         BUTCHExec() invocation, which HalflineCallback()
+                         drives once per halfline (~524 NTSC / ~624 PAL per
+                         frame; see crash_detect.c's halfline comment).
+                         Not itself a frame counter -- cdrom.c has no
+                         direct frame counter in scope -- but monotonic and
+                         fine-grained enough to order events within and
+                         across frames; divide by ~524/2 for a rough NTSC
+                         frame estimate when reading a dump by eye. */
+   uint16_t kind;    /* CD_TRACE_* */
+   uint16_t value;   /* command/response word, or (HLE_READ) low 16 bits
+                         of the requested byte count */
+   uint32_t block;   /* absolute block/LBA at event time */
+} CDTraceEntry;
+
+static CDTraceEntry cdTrace[CD_TRACE_SIZE];
+static uint32_t cdTraceHead = 0;    /* next slot to write (wraps via mask) */
+static uint32_t cdTraceCount = 0;   /* valid entries, saturates at CD_TRACE_SIZE */
+static int cdTraceEnabled = 0;
+static int cdTraceEnvChecked = 0;   /* cache: getenv() runs at most once */
+static int cdTraceEnvWants = 0;
+
+/* Activity counters consumed by crash_detect.c's cd_seek_wedge watchdog
+ * (CDROMDiagGetSeekWedgeState()).  Cheap monotonic uint32 counters -- no
+ * allocation, not part of any savestate. */
+static uint32_t cdSeekStartCount = 0;
+static uint32_t cdSeekDoneCount = 0;
+static uint32_t cdFifoDrainCount = 0;
+
+static int CDTraceEnvWantsTrace(void)
+{
+   const char *e;
+
+   if (cdTraceEnvChecked)
+      return cdTraceEnvWants;
+
+   e = getenv("VJ_CD_TRACE");
+   cdTraceEnvWants = (e != NULL && e[0] == '1') ? 1 : 0;
+   cdTraceEnvChecked = 1;
+   return cdTraceEnvWants;
+}
+
+/* Called from libretro.c's check_variables() with the core option's
+ * enabled/disabled state; always OR'd with the env override so
+ * VJ_CD_TRACE=1 works even for harnesses that never poll core options. */
+void CDTraceSetEnabled(int enabled)
+{
+   cdTraceEnabled = enabled || CDTraceEnvWantsTrace();
+}
+
+static void CDTracePush(uint16_t kind, uint16_t value, uint32_t blk)
+{
+   CDTraceEntry *e;
+
+   if (!cdTraceEnabled)
+      return;
+
+   e = &cdTrace[cdTraceHead & (CD_TRACE_SIZE - 1)];
+   e->tick  = diag_butchExecCalls;
+   e->kind  = kind;
+   e->value = value;
+   e->block = blk;
+   cdTraceHead++;
+   if (cdTraceCount < CD_TRACE_SIZE)
+      cdTraceCount++;
+}
+
+/* Public wrapper for jagcd_hle.c -- the HLE CD_read path performs a
+ * synchronous seek+transfer in one call (no separate seek-delay state
+ * machine like the real-BIOS path), so a single HLE_READ event carrying
+ * the target LBA is the start+done pair for that path. */
+void CDTraceHLERead(uint32_t lba, uint16_t byteCountTrunc)
+{
+   CDTracePush(CD_TRACE_HLE_READ, byteCountTrunc, lba);
+}
+
+void CDTraceDump(void)
+{
+   uint32_t i, n, start;
+   const CDTraceEntry *e;
+
+   if (cdTraceCount == 0)
+   {
+      LOG_INF("[CD-TRACE] ring empty (trace was off, or no events recorded yet)\n");
+      return;
+   }
+
+   n = cdTraceCount;
+   start = (cdTraceHead - n) & (CD_TRACE_SIZE - 1);
+   LOG_INF("[CD-TRACE] dumping %u entries (ring capacity %u)\n", n, (unsigned)CD_TRACE_SIZE);
+   for (i = 0; i < n; i++)
+   {
+      e = &cdTrace[(start + i) & (CD_TRACE_SIZE - 1)];
+      LOG_INF("[CD-TRACE] #%u tick=%u kind=%-10s value=$%04X block=%u\n",
+              i, e->tick, cdTraceKindName[e->kind], e->value, e->block);
+   }
+}
+
+/* Read-only accessor for crash_detect.c's cd_seek_wedge watchdog. Any
+ * pointer may be NULL. */
+void CDROMDiagGetSeekWedgeState(uint32_t *seekStarts, uint32_t *seekDones,
+                                uint32_t *fifoDrains)
+{
+   if (seekStarts) *seekStarts = cdSeekStartCount;
+   if (seekDones)  *seekDones  = cdSeekDoneCount;
+   if (fifoDrains) *fifoDrains = cdFifoDrainCount;
+}
+
+
 void CDROMInit(void)
 {
    haveCDGoodness = CDIntfInit();
@@ -346,6 +496,17 @@ void CDROMReset(void)
    diag_fifoReads = 0;
    diag_seekCommands = 0;
    diag_butchGlobalDisabled = 0;
+
+   // Trace ring + wedge-watchdog counters are diagnostic state, not part
+   // of the emulated hardware -- reset per game load same as the diag_*
+   // counters above, but cdTraceEnabled itself is a runtime toggle (core
+   // option / env var) and must NOT be reset here or every reset would
+   // silently drop the user's VJ_CD_TRACE=1 / core-option setting.
+   cdTraceHead = 0;
+   cdTraceCount = 0;
+   cdSeekStartCount = 0;
+   cdSeekDoneCount = 0;
+   cdFifoDrainCount = 0;
 
    // Initialize EEPROM to 0xFFFF (blank/erased state), then set
    // factory default values.  The Jaguar CD BIOS reads specific EEPROM
@@ -427,6 +588,8 @@ void BUTCHExec(uint32_t cycles)
          // at seek completion — it only becomes available after the GPU ISR
          // processes the DSARX response and re-enables I2CNTRL bit 2.
          DSAQueuePush(0x0100);
+         cdSeekDoneCount++;
+         CDTracePush(CD_TRACE_SEEK_DONE, 0x0100, block);
          cdPlaying = true;
          {
             bool i2sDataEnabled = (cdRam[I2CNTRL + 3] & 0x04) != 0;
@@ -434,6 +597,7 @@ void BUTCHExec(uint32_t cycles)
             {
                fifoDataReady = true;
                fifoReadCount = 0;
+               CDTracePush(CD_TRACE_FIFO_FILL, 0, block);
             }
             else
             {
@@ -461,6 +625,7 @@ void BUTCHExec(uint32_t cycles)
       {
          fifoDataReady = true;
          fifoReadCount = 0;
+         CDTracePush(CD_TRACE_FIFO_FILL, 0, block);
          CD_LOG("BUTCHExec: FIFO half-full — ready for GPU ISR\n");
       }
       else if (fifoFillDelay == 0 && cdPlaying && !i2sDataEnabled)
@@ -801,6 +966,8 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          dsaResponseReady = false;
          isMultiWordResponse = false;
       }
+
+      CDTracePush(CD_TRACE_DSA_RX, data, block);
    }
    else if (offset == DS_DATA && !haveCDGoodness)
       data = 0x0400;								// No CD interface present, so return error
@@ -835,6 +1002,8 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          {
             fifoDataReady = false;
             fifoFillDelay = FIFO_REFILL_TICKS;
+            cdFifoDrainCount++;
+            CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
          }
       }
    }
@@ -858,6 +1027,8 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          {
             fifoDataReady = false;
             fifoFillDelay = FIFO_REFILL_TICKS;
+            cdFifoDrainCount++;
+            CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
          }
       }
    }
@@ -921,6 +1092,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       CD_LOG("DS_DATA write: cmd=0x%04X\n", data);
       cdCmd = data;
       txBufferEmpty = true;  // Per MiSTer: set bit 12 on command write
+      CDTracePush(CD_TRACE_DSA_TX, data, block);
 
       // $10xx/$11xx (Goto Min/Sec): no actual response data, but the BIOS's
       // DSA_tx routine polls BUTCH bit 13 after every command. We must keep
@@ -947,6 +1119,8 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          else
          {
             diag_seekCommands++;
+            cdSeekStartCount++;
+            CDTracePush(CD_TRACE_SEEK_START, data, newBlock);
             dsaResponseReady = false;
             isMultiWordResponse = false;
             seekDelay = SEEK_DELAY_TICKS;
@@ -1013,6 +1187,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          }
          // Queue the STOP response in the DSA RX buffer
          DSAQueuePush(0x0200);
+         CDTracePush(CD_TRACE_STOP, 0x0200, block);
       }
       else if ((data & 0xFF00) == 0x0300)			// Read session TOC (5 words)
          cdPtr = 0;

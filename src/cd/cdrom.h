@@ -44,6 +44,32 @@ void CDROMDiagGetCounters(uint32_t *butchExec,
                           uint32_t *globalDisabled,
                           uint32_t *hleBytes);
 
+/* --- CD trace ring (Task 4 instrumentation, see cdrom.c) ---
+ * Diagnostic only; never touches savestates. */
+
+/* Enable/disable the trace ring. Called from libretro.c's check_variables()
+ * with the `virtualjaguar_cd_trace` core option state; internally OR'd
+ * with the VJ_CD_TRACE=1 env override so headless harnesses work even if
+ * they never poll core options. */
+void CDTraceSetEnabled(int enabled);
+
+/* Dump the ring to the RetroArch log (LOG_INF, "[CD-TRACE]" prefix).
+ * Called on-demand (e.g. by crash_detect.c's cd_seek_wedge watchdog) or
+ * by test harnesses that want the DSA conversation leading up to a stall. */
+void CDTraceDump(void);
+
+/* Push a trace event for the HLE CD_read path (src/cd/jagcd_hle.c) -- the
+ * only call site outside cdrom.c, since jagcd_hle.c performs a synchronous
+ * seek+transfer with no separate BUTCH-driven seek/FIFO state machine. */
+void CDTraceHLERead(uint32_t lba, uint16_t byteCountTrunc);
+
+/* Read-only accessor for crash_detect.c's cd_seek_wedge watchdog. Any
+ * pointer may be NULL. seekStarts/seekDones count genuine (non-redundant)
+ * $12xx seeks and their $0100 completions; fifoDrains counts completed
+ * 16-word FIFO drain cycles. */
+void CDROMDiagGetSeekWedgeState(uint32_t *seekStarts, uint32_t *seekDones,
+                                uint32_t *fifoDrains);
+
 #ifdef __cplusplus
 }
 #endif

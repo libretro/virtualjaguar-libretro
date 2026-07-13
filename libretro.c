@@ -22,6 +22,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jagbios.h"
 #include "jaguar.h"
 #include "cdintf.h"
+#include "cdrom.h"
 #include "jagcd_boot.h"
 #include "jagcd_hle.h"
 #include "dac.h"
@@ -340,6 +341,13 @@ static void check_variables(void)
    {
       CrashDetectSetMode(CRASH_DETECT_ON);
    }
+
+   var.key = "virtualjaguar_cd_trace";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      CDTraceSetEnabled(0);
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;

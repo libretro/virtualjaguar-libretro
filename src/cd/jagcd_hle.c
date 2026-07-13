@@ -17,6 +17,7 @@
 #include "jagcd_hle.h"
 #include "jagcd_boot.h"
 #include "cdintf.h"
+#include "cdrom.h"
 #include "log.h"
 #include "settings.h"
 #include "vjag_memory.h"
@@ -274,6 +275,12 @@ static void HLEHandleCDRead(void)
            (d1 >> 24) & 0x7F, (d1 >> 16) & 0x7F,
            (d1 >>  8) & 0x7F,  d1        & 0x7F,
            min, sec, frm, lba, destAddr, a1, byteCount);
+
+   /* HLE_READ trace event: carries the requested LBA (in the `block`
+    * field) so Task 5's wrong-LBA hypothesis can be checked against the
+    * HLE path too, not just the real-BIOS/BUTCHExec path. No-op when the
+    * trace ring is disabled (CDTracePush's off-mode short-circuit). */
+   CDTraceHLERead(lba, (uint16_t)(byteCount > 0xFFFF ? 0xFFFF : byteCount));
 
    if (destAddr == 0 || destAddr >= 0x200000)
    {
