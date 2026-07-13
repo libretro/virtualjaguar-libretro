@@ -132,3 +132,176 @@ fresh dated section; do not retrofit old ones.
 | Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12 |
 
 Raw per-run logs: /tmp/cdmx_full_logs (not committed; re-run to regenerate).
+
+## Diagnosis (Task 5) -- 2026-07-13, branch feature/jaguar-cd-support @ 5827940
+
+Trace-based root-cause analysis of the BIOS-mode boot failures, using the
+Task 4 instrumentation (`VJ_CD_TRACE=1`, `test/test_cd_bios_boot` /
+`test_cd_hle_boot`, 1500 frames). Every classification below cites trace
+lines, `[CD-DIAG]` counters, register values, or disassembly. Temporary
+per-register counters (`[T5-DIAG]`) were added to `src/cd/cdrom.c` for the
+run, cited here, and reverted -- they are NOT in the tree. Two distinct
+mechanisms account for all four failure classes.
+
+### Mechanism A -- I2S FIFO never enabled after seek (FIFO-wait deadlock)
+
+Affects: **Primal Rage (bios)** [class 1, BOOT_STUB $0803AC] and
+**Highlander (bios)** [class 3] -- **CONFIRMED** (airtight); **Iron Soldier
+2 (bios)** [class 3] -- **CONFIRMED root cause, UNCONFIRMED exact chain**
+(see IS2 caveat below).
+
+The DSA/seek handshake completes correctly. Primal Rage ring tail:
+
+```
+#7 DSA_TX  $1244   #8 SEEK_START $1244 block=116618   #9 SEEK_DONE $0100 block=116618
+[CD-DIAG] butchExec=786000 globalDisabled=229109 seeks=1 fifoIRQs=0 dsaIRQs=556791 fifoReads=2 cdPlaying=1 fifoReady=0 i2sEn=0
+```
+
+`SEEK_DONE` fires 100 ticks after `SEEK_START` (== `SEEK_DELAY_TICKS`), the
+`$0100` "Found" response is queued -- the seek is NOT the problem. But **no
+`FIFO_FILL` event ever appears** and `i2sEn=0`.
+
+Root cause, confirmed by temporary per-register counters:
+
+```
+Primal Rage  [T5-DIAG] dsDataReads=3 (afterSeek=0) i2cntrlWrites=6 (afterSeek=0) lastI2cWrite=$0001@PC$00365E i2cReg=$00000001
+Highlander   [T5-DIAG] dsDataReads=3 (afterSeek=0) i2cntrlWrites=6 (afterSeek=0) lastI2cWrite=$0001@PC$00365E i2cReg=$00000001
+Iron Sold 2  [T5-DIAG] dsDataReads=8 (afterSeek=4) i2cntrlReads=5804936 i2cntrlWrites=10 (afterSeek=4) lastI2cWrite=$0011@PC$00365E i2cReg=$00100011
+```
+
+- The CD BIOS CD-read routine (PC `$00365E`) writes **I2CNTRL = $0001**
+  (bit 0 = `i2s_drive`, per `test/mister_ground_truth.h` butch.v map). It
+  **never sets bit 2 (`i2s_fifo_enabled`, mask $04)** -- for Iron Soldier 2
+  the last write is `$0011` (bits 0+4; bit 4 is the read-only FIFO-not-empty
+  *status* line, not the enable). `i2cReg` (live register bytes) confirms
+  bit 2 clear in every case.
+- `src/cd/cdrom.c` `BUTCHExec()` gates FIFO fill on I2CNTRL bit 2
+  (`cdRam[I2CNTRL+3] & 0x04`, lines ~595 and ~622). With bit 2 never set,
+  the delayed-fill countdown perpetually re-arms (`fifoFillDelay = 1; //
+  Retry next tick`) and `fifoDataReady` never becomes true. FIFO never
+  fills; the guest polls forever (Primal Rage's boot stub at `$0803AC`;
+  Highlander/IS2 in the BIOS CD_read poll band `$003610`-`$0036BE`, which
+  longword-reads `$00DFFF00` = BUTCH status).
+
+**Iron Soldier 2 caveat (confirmed root, scoped-UNCONFIRMED chain):** the
+shared confirmed fact -- I2CNTRL bit 2 never set, `i2sEn=0`, `fifoReady=0` --
+holds for IS2. But IS2's *exact* deadlock chain is not identical to Primal
+Rage's: IS2 reads DS_DATA 4 times after the seek (`dsDataReads afterSeek=4`),
+and the DS_DATA `$0100`-pop branch (`cdrom.c` ~763-773) sets
+`fifoDataReady=true` *unconditionally* (independent of bit 2). Yet IS2 still
+ends `fifoReady=0` with 5.8M FIFO_DATA reads and `fifo_drains=0`. Whether IS2
+pops `$0100` at all and, if so, what re-clears `fifoDataReady` before a drain
+completes is **not fully resolved** (would need a one-run `fifoDataReady`-
+transition trace). So IS2 = same confirmed root cause (bit 2 never set), with
+its FIFO drain/refill interaction left UNCONFIRMED; the Primal Rage /
+Highlander chain below is the airtight one.
+
+**This is "the guest never issues the write", NOT "our emulation drops a
+write."** The value the BIOS writes ($0001/$0011) is stored correctly
+(`i2cReg` reflects it); the BIOS simply never asserts bit 2. `i2cntrlWrites
+afterSeek=0` for Primal Rage/Highlander, and CD-range writes from **every**
+processor route through `CDROMWriteWord`/`Byte` (`src/core/jaguar.c:480,592,
+623,447`), so this also rules out a GPU/DSP ISR quietly setting bit 2.
+
+Secondary confirmed symptom (not the deadlock cause): `dsDataReads
+afterSeek=0` for Primal Rage/Highlander means the `$0100` seek response is
+**never consumed** via DS_DATA. `dsaResponseReady` therefore stays latched
+true, so `BUTCHExec` re-asserts GPU IRQ0 on every interrupt-enabled halfline
+(`dsaIRQs=556791`) with no effect -- the DSCNTRL-read latch-clear at
+`cdrom.c:743` is on a path the guest never takes here. The GPU IRQ storm is
+downstream of the same FIFO stall, not an independent fault.
+
+**Task 6 pointer (not resolved here -- hardware-correctness is Task 6's
+call):** the FIFO-fill gate on I2CNTRL bit 2 is the divergence to
+investigate. The BIOS enables the path with bit 0 (`i2s_drive` = "I2S data
+from drive is ON", per the butch.v register comment) and expects data to
+flow. Whether the fix is "fill on `i2s_drive` (bit 0)" or "fill on
+seek-complete regardless of I2CNTRL" must be checked against MiSTer butch.v
+FIFO logic -- do NOT trust the cdrom.c comments claiming "the GPU ISR
+re-enables I2CNTRL bit 2", which the trace disproves (no post-seek I2CNTRL
+write from any processor).
+
+### Mechanism B -- unpopulated 68K exception vectors in CD-BIOS mode
+
+Affects: **Battle Morph (bios)** [class 2, pc_escape $8FBFB758] and
+**Baldies (bios)** [class 4, reclassified from video_stall/HARNESS_HANG].
+**CONFIRMED escape mechanism; exact exception trigger UNCONFIRMED.**
+
+Both titles pc-escape at **exactly frame 437** from the same `prev_pc`, with
+**no CD activity whatsoever** beforehand:
+
+```
+Battle Morph [PC-OOB] first oob at frame 437 PC=$8CA88044   [OOB-FROZEN] prev_pc=$8020A2 -> oob_pc=$8CA88044
+Baldies      [PC-OOB] first oob at frame 437 PC=$A7E08FA0   [OOB-FROZEN] prev_pc=$8020A2 -> oob_pc=$A7E08FA0
+both         [CD-DIAG] ... seeks=0 ... dsaIRQs=0 ... cdPlaying=0 i2sEn=0
+```
+
+- **`seeks=0`, `dsaIRQs=0`, `cdPlaying=0`**: the crash happens *before any
+  seek or CD read*. This **rejects the wrong-LBA / $2C00-TOC / 149-sector
+  pregap-MSF hypothesis** for these titles -- the MSF->LBA path never runs.
+- The harness `[OOB-PREVBYTES $8020A2]` label is misleading: with
+  `prev_pc >= 0x200000` the dump offset falls back to 0
+  (`test/test_cd_bios_boot.c:231`), so those 32 bytes are actually **main
+  RAM $000000-$00001F -- the 68K exception vector table**:
+  `00 00 00 00 | 00 E0 00 08 | C6 E5 74 7A | 65 2A 09 AF | A7 E0 8F A0 ...`
+  = SSP=$0, reset=$00E00008 (valid), then bus-error/address-error/
+  illegal-instruction vectors = PRNG garbage. Vector $10 (illegal
+  instruction) = **$A7E08FA0**, which is exactly Baldies' escape target.
+- Confirmed in code: in CD-BIOS mode `vjs.useJaguarBIOS = true`
+  (`libretro.c:1070`, `bootConfig.showBootROM`). `src/core/jaguar.c:831`
+  then copies only the first **8 bytes** (SSP + reset PC) from the boot ROM
+  into RAM, and the HLE exception-vector-stub block
+  (`src/core/jaguar.c:857-881`, which fills vectors 2-255 with RTE stubs) is
+  **gated on `!vjs.useJaguarBIOS`** and therefore skipped. The auth-bypass +
+  boot-stub-injection boot flow never runs the real BIOS code that would
+  populate them either. Result: any exception/interrupt after boot vectors
+  through PRNG garbage and the 68K pc-escapes.
+
+Baldies' target `$A7E08FA0` is a direct hit on the dumped illegal-instruction
+vector (RAM offset $10) -- the smoking gun. Battle Morph's `$8CA88044` does
+NOT appear in the 32-byte RAM[0..31] dump, so it would sit in an un-dumped
+higher vector slot (vectors 8-255, RAM $20-$3FF); Battle Morph is therefore
+confirmed by the *shared code gate + identical crash signature*, not by a
+located slot. Both titles inject large boot stubs (Battle Morph `$65290` @
+`$004400`, Baldies `$4000` @ `$004000`) and take their fatal exception at
+**exactly frame 437** (an identical deterministic onset across two unrelated
+games -- consistent with a common BIOS/timing-driven trigger rather than
+game data, though the trigger itself is not isolated here). The escape
+*mechanism* (garbage vector table) is CONFIRMED by the RAM dump + the
+`jaguar.c:857` gate; the specific exception that fires at frame 437 (illegal
+opcode vs bus/address error vs a spurious interrupt) is UNCONFIRMED --
+isolating it needs a 68K single-step/exception-vector trap, beyond this
+diagnosis budget.
+
+### HLE-mode wrong-LBA spot check -- Iron Soldier 2 (hle)
+
+**Wrong-LBA hypothesis REJECTED; failure is a repeated-read continuation
+loop.** IS2 hle scores 0/1 with `not_thrash=0`. The `HLE_READ` sequence:
+
+```
+CD_read: D1='D8A' MSF=50:00:01 LBA=224851 dest=$00CB00 size=$14FE  -> sentinel match at LBA 224857
+CD_read: (identical) LBA=224851 ... -> repeated read -- resuming from LBA 224860 ... sentinel NOT found
+CD_read: (identical) LBA=224851 ... -> repeated read -- resuming from LBA 224863 ... sentinel NOT found
+... (+3 LBA per identical call, indefinitely: 224866, 224869, 224872, ...)
+```
+
+- MSF 50:00:01 -> LBA `((50*60+0)*75 + 1) - 150 = 224851`. Disc layout
+  (`[CD-LAYOUT]`) puts track 12 (session 2 boot/data) at startLBA 224391,
+  len 764 (ends 225155); **224851 is validly inside track 12** -- the LBA
+  and MSF->LBA math are correct.
+- The game re-issues a byte-identical `CD_read` (same MSF/LBA/dest/size),
+  but the `jagcd_hle.c` "repeated read" heuristic advances the resume LBA by
+  +3 each call and reports "sentinel NOT found", so the game never receives
+  the data it expects and retries forever. The bug is the HLE
+  repeated-read/continuation logic, **not** MSF->LBA mapping.
+
+### Summary
+
+| Class | Title(s) | Verdict | Mechanism |
+|---|---|---|---|
+| 1 | Primal Rage (bios) | CONFIRMED | I2CNTRL bit 2 never set by BIOS -> FIFO-fill gate never opens -> boot stub polls $0803AC forever (Mechanism A) |
+| 3 | Highlander (bios) | CONFIRMED | Same as class 1 (Mechanism A); counters byte-identical to Primal Rage |
+| 3 | Iron Soldier 2 (bios) | CONFIRMED root / UNCONFIRMED chain | Same confirmed root (bit 2 never set, i2sEn=0); post-seek DS_DATA activity differs, exact FIFO drain/refill interaction unresolved |
+| 2 | Battle Morph (bios) | CONFIRMED escape / UNCONFIRMED trigger | Unpopulated 68K exception vectors in CD-BIOS mode -> exception vectors through garbage (Mechanism B); pre-CD-read, wrong-LBA rejected |
+| 4 | Baldies (bios) | CONFIRMED | Same as class 2 (Mechanism B); reclassified from video_stall/HANG. video_stall is downstream of the frame-437 escape |
+| -- | Iron Soldier 2 (hle) | wrong-LBA REJECTED | LBAs correct; repeated-read continuation loop in jagcd_hle.c |
