@@ -759,7 +759,8 @@ void HalflineCallback(void)
 
    /* Tick BUTCH once per halfline when CD content is loaded.
     * BUTCHExec advances the seek/FIFO state machine and (when armed)
-    * asserts GPU IRQ0 to drive the CD-data ISR. Halfline cadence
+    * asserts GPU IRQ1 (the DSP/JERRY-sourced interrupt, vector $F03010
+    * where the CD BIOS installs its CD-data ISR). Halfline cadence
     * (~32 us) is much coarser than real BUTCH I2S timing, but matches
     * our existing event-queue resolution. */
    if (bootConfig.isCDGame)

@@ -669,13 +669,24 @@ void BUTCHExec(uint32_t cycles)
          JERRYSetPendingIRQ(IRQ2_EXTERNAL);
          /* CD BIOS clears BUTCH bit 0 before issuing CD_read, so the 68K
           * side of the EXT1 line is dormant during transfers. The CD
-          * data path is GPU-side: BUTCH -> JERRY EXT1 latch -> GPU IRQ0.
+          * data path is GPU-side: BUTCH -> JERRY external latch -> GPU
+          * IRQ **1** (the DSP/JERRY-sourced GPU interrupt, vector
+          * $F03010 = int# * 16 per JTRM). The CD BIOS installs its
+          * CD-data ISR entry stub at $F03010, enables only G_FLAGS
+          * INT_ENA1 ($20), acks via INT_CLR1 (G_FLAGS bit 10) and
+          * re-arms the JERRY external latch (J_INT = $0101) in the ISR
+          * epilogue — all four fingerprints of IRQ1, none of IRQ0.
+          * Asserting GPUIRQ_CPU (IRQ0) here left the latch permanently
+          * masked (the BIOS never sets INT_ENA0): the ISR never ran,
+          * never consumed the DSA response, never set I2CNTRL bit 2, so
+          * the FIFO never filled — the BIOS-mode boot deadlock in
+          * Primal Rage / Highlander / Iron Soldier 2.
           * Asserting m68k IRQ2 here lands on a stale 68K vector when the
           * BIOS hasn't installed its EXT1 trampoline (Hover Strike,
           * Primal Rage), corrupting the stack with a bogus return address.
           * Keep the JERRY pending bit (so JINTCTRL reads see it) but skip
           * the m68k_set_irq dual-delivery path. */
-         GPUSetIRQLine(GPUIRQ_CPU, ASSERT_LINE);
+         GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
       }
    }
 
