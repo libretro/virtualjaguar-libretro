@@ -50,6 +50,9 @@
 #   CD_MATRIX_OUT         output markdown path (default: docs/cd-boot-matrix.md)
 #   CD_MATRIX_LOGDIR      where per-run raw logs are kept (default: a fresh
 #                         mktemp -d; NOT committed -- path is printed at the end)
+#   CD_MATRIX_MAX_RUNS    max NEW title x mode runs per invocation (default 0 =
+#                         unlimited). Combined with the resume guard this lets
+#                         a long sweep be chunked across short invocations.
 set -u
 
 # ---------------------------------------------------------------------------
@@ -254,11 +257,18 @@ classify_stage() {
         # the boot stub ($090000-$1FFFFF), game code is running and calling
         # BIOS services -> GAME_CODE; otherwise the evidence only supports
         # "still in BIOS service code".
-        if grep -a '\[PC-SET\]' "$log" 2>/dev/null | head -1 \
-             | grep -qE '\$(09|0[A-Fa-f]|1[0-9A-Fa-f])[0-9A-Fa-f]{4}'; then
+        # NOTE: the harness only prints [PC-SET] when unique_pcs <= 32 and
+        # the unique-PC tracker didn't overflow (test_cd_bios_boot.c).
+        # Absence of the line means the game-band check NEVER RAN -- that is
+        # weaker evidence than a checked negative, and the two must not be
+        # conflated in the emitted stage text.
+        pcset_line="$(grep -am1 '\[PC-SET\]' "$log" 2>/dev/null)"
+        if [ -z "$pcset_line" ]; then
+            echo "? (BIOS service band \$0-\$3FFF; PC-SET suppressed, unique_pcs>32 -- game handoff undetermined)"
+        elif printf '%s' "$pcset_line" | grep -qE '\$(09|0[A-Fa-f]|1[0-9A-Fa-f])[0-9A-Fa-f]{4}'; then
             echo "GAME_CODE"
         else
-            echo "? (BIOS service band \$0-\$3FFF, no game-band PCs seen)"
+            echo "? (BIOS service band \$0-\$3FFF; PC-SET showed no game-band entries)"
         fi
     else echo "GAME_CODE"
     fi
@@ -338,7 +348,21 @@ else
     printf 'Core must be built `make TEST_EXPORTS=1` (a plain `make` strips the dlsym export\n'
     printf 'set the harnesses need -- the script auto-rebuilds if it detects this).\n'
     printf 'Env knobs: `CD_MATRIX_FRAMES` (default 3000), `CD_MATRIX_TIMEOUT` (default 120s\n'
-    printf 'per title x mode), `CD_MATRIX_ROMS_ROOT` (default `test/roms/private`).\n\n'
+    printf 'per title x mode), `CD_MATRIX_ROMS_ROOT` (default `test/roms/private`),\n'
+    printf '`CD_MATRIX_OUT` (output path, default `docs/cd-boot-matrix.md`),\n'
+    printf '`CD_MATRIX_LOGDIR` (raw per-run logs, default a fresh `mktemp -d`; pass a\n'
+    printf 'fixed dir to keep logs across chunked invocations), and\n'
+    printf '`CD_MATRIX_MAX_RUNS` (max NEW runs per invocation, default 0 = unlimited).\n\n'
+    printf 'Rows append incrementally with a resume guard: already-recorded title x mode\n'
+    printf 'combos are skipped, so an interrupted sweep resumes where it left off. For\n'
+    printf 'long sweeps (or agent sessions with per-command time limits), run chunked:\n\n'
+    printf '```bash\n'
+    printf '# ~3 runs x <=120s wall each per invocation; repeat until every line\n'
+    printf '# reports "already recorded, skipping":\n'
+    printf 'CD_MATRIX_MAX_RUNS=3 CD_MATRIX_LOGDIR=/tmp/cdmx_logs bash test/tools/cd_boot_matrix.sh\n'
+    printf '```\n\n'
+    printf 'To force a re-run of specific rows, delete those table lines from the output\n'
+    printf 'file first -- the resume guard re-runs only missing title x mode combos.\n\n'
     printf '## Legend\n\n'
     printf '**Stage** (finest level the harness evidence supports; `?` = insufficient\n'
     printf 'evidence to classify further, never fabricated):\n\n'
@@ -350,13 +374,14 @@ else
     printf '| `MENU` / `IN_GAME` | Not distinguished by any current harness -- see "Headless framebuffer caveat" in CLAUDE.md. Reported as `GAME_CODE` with a note. |\n'
     printf '| `HARNESS_HANG` | Killed at the wall-clock timeout; the harness process itself did not exit |\n'
     printf '| `? (pc_escape)` | Final 68K PC outside every valid execute window (RAM <`$200000`, boot ROM `$E00000`-`$E1FFFF`, cart/CD BIOS `$800000`-`$8FFFFF`) -- a crash, not a reached stage |\n'
-    printf '| `? (BIOS service band ...)` | Final PC in `$0`-`$3FFF` (BIOS TOC / CD_read service code, used both by the BIOS during boot and by games after handoff) with no game-band PCs observed -- evidence insufficient to pick a stage |\n\n'
+    printf '| `? (BIOS service band ...)` | Final PC in `$0`-`$3FFF` (BIOS TOC / CD_read service code, used both by the BIOS during boot and by games after handoff). Two variants, distinct evidence strength: "PC-SET showed no game-band entries" = the visited-PC dump was checked and contains no `$090000`-`$1FFFFF` addresses (checked negative); "PC-SET suppressed, unique_pcs>32" = the harness never emitted the dump, so the game-band check could not run (undetermined) |\n\n'
     printf 'Score `N/1` follows the harness'"'"'s own PASS/FAIL heuristic (PC stays in\n'
     printf 'RAM/BIOS/cart range, not self-looping, not thrashing among <=4 distinct PCs,\n'
     printf 'RAM has non-trivial non-zero payload) -- see `test/cd_assertions.h`. It is\n'
     printf 'informational, not the stage classification: a title can score FAIL yet still\n'
     printf 'classify as GAME_CODE (e.g. stuck in its own hardware-poll wait loop after\n'
     printf 'booting), or score PASS while stuck in a still-early BIOS/boot-stub band.\n\n'
+    printf '## Results\n\n'
     printf '| Title | Mode | Score | Stage | Watchdog | PC evidence |\n'
     printf '|---|---|---|---|---|---|\n'
 } > "$OUT"
@@ -391,6 +416,16 @@ run_title() {
         else evidence="(no PASS/FAIL line captured -- see $log)"
         fi
     fi
+    # Self-auditing rows: when the harness dumped a [PC-SET] containing
+    # game-band PCs ($090000-$1FFFFF), quote them in the evidence column so
+    # a GAME_CODE call made from them is verifiable from the row itself.
+    gameband="$(grep -am1 '\[PC-SET\]' "$log" 2>/dev/null \
+        | grep -oE '\$(09|0[A-Fa-f]|1[0-9A-Fa-f])[0-9A-Fa-f]{4}' \
+        | tr '\n' ' ' | sed -E 's/ +$//')"
+    if [ -n "$gameband" ]; then
+        evidence="$evidence; PC-SET game-band: $gameband"
+    fi
+
     score="?/1"
     if grep -aqE '^\s*\[PASS\]' "$log" 2>/dev/null; then score="1/1"; fi
     if grep -aqE '^\s*\[FAIL\]' "$log" 2>/dev/null; then score="0/1"; fi

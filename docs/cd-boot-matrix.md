@@ -19,7 +19,24 @@ checkout: `ln -s /path/to/main-checkout/test/roms/private test/roms/private`.
 Core must be built `make TEST_EXPORTS=1` (a plain `make` strips the dlsym export
 set the harnesses need -- the script auto-rebuilds if it detects this).
 Env knobs: `CD_MATRIX_FRAMES` (default 3000), `CD_MATRIX_TIMEOUT` (default 120s
-per title x mode), `CD_MATRIX_ROMS_ROOT` (default `test/roms/private`).
+per title x mode), `CD_MATRIX_ROMS_ROOT` (default `test/roms/private`),
+`CD_MATRIX_OUT` (output path, default `docs/cd-boot-matrix.md`),
+`CD_MATRIX_LOGDIR` (raw per-run logs, default a fresh `mktemp -d`; pass a
+fixed dir to keep logs across chunked invocations), and
+`CD_MATRIX_MAX_RUNS` (max NEW runs per invocation, default 0 = unlimited).
+
+Rows append incrementally with a resume guard: already-recorded title x mode
+combos are skipped, so an interrupted sweep resumes where it left off. For
+long sweeps (or agent sessions with per-command time limits), run chunked:
+
+```bash
+# ~3 runs x <=120s wall each per invocation; repeat until every line
+# reports "already recorded, skipping":
+CD_MATRIX_MAX_RUNS=3 CD_MATRIX_LOGDIR=/tmp/cdmx_logs bash test/tools/cd_boot_matrix.sh
+```
+
+To force a re-run of specific rows, delete those table lines from the output
+file first -- the resume guard re-runs only missing title x mode combos.
 
 ## Legend
 
@@ -35,7 +52,7 @@ evidence to classify further, never fabricated):
 | `MENU` / `IN_GAME` | Not distinguished by any current harness -- see "Headless framebuffer caveat" in CLAUDE.md. Reported as `GAME_CODE` with a note. |
 | `HARNESS_HANG` | Killed at the wall-clock timeout; the harness process itself did not exit |
 | `? (pc_escape)` | Final 68K PC outside every valid execute window (RAM <`$200000`, boot ROM `$E00000`-`$E1FFFF`, cart/CD BIOS `$800000`-`$8FFFFF`) -- a crash, not a reached stage |
-| `? (BIOS service band ...)` | Final PC in `$0`-`$3FFF` (BIOS TOC / CD_read service code, used both by the BIOS during boot and by games after handoff) with no game-band PCs observed -- evidence insufficient to pick a stage |
+| `? (BIOS service band ...)` | Final PC in `$0`-`$3FFF` (BIOS TOC / CD_read service code, used both by the BIOS during boot and by games after handoff). Two variants, distinct evidence strength: "PC-SET showed no game-band entries" = the visited-PC dump was checked and contains no `$090000`-`$1FFFFF` addresses (checked negative); "PC-SET suppressed, unique_pcs>32" = the harness never emitted the dump, so the game-band check could not run (undetermined) |
 
 Score `N/1` follows the harness's own PASS/FAIL heuristic (PC stays in
 RAM/BIOS/cart range, not self-looping, not thrashing among <=4 distinct PCs,
@@ -43,32 +60,6 @@ RAM has non-trivial non-zero payload) -- see `test/cd_assertions.h`. It is
 informational, not the stage classification: a title can score FAIL yet still
 classify as GAME_CODE (e.g. stuck in its own hardware-poll wait loop after
 booting), or score PASS while stuck in a still-early BIOS/boot-stub band.
-
-| Title | Mode | Score | Stage | Watchdog | PC evidence |
-|---|---|---|---|---|---|
-| Baldies (USA) (Rev 1).cue | hle | 0/1 | GAME_CODE | (none) |     [FAIL]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=250B unique_pcs=20 final_pc=$1FFFDE |
-| Baldies (USA) (Rev 1).cue | bios | 0/1 | HARNESS_HANG | [CRASH-DETECT] video_stall frame=745 fb_hash=$EB4463AA unchanged for 300 frames gpu_pc=$00F03060 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 | killed after 120s wall-clock |
-| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1359 fb_hash=$114AB567 unchanged for 300 frames gpu_pc=$00F031D8 gpu_run=0 dsp_pc=$00F1B57E dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=22288B unique_pcs=126 final_pc=$0046DC |
-| Battle Morph (USA).cue | bios | 0/1 | ? (pc_escape) | (none) |     [FAIL]  Battle Morph (USA).cue : pc_in_ram=0 not_loop=1 not_thrash=1 ram_payload=32704B unique_pcs=256+ final_pc=$8FBFB758 |
-| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=3393B unique_pcs=6 final_pc=$1243BC |
-| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=737 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25922B unique_pcs=23 final_pc=$00361E |
-| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=412 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=884B unique_pcs=44 final_pc=$005412 |
-| Dragon's Lair (USA).cue | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] video_stall frame=840 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B0CE dsp_run=1 |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23401B unique_pcs=38 final_pc=$0060D8 |
-| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] dsp_pc_escape frame=128 pc=$FFFFCE03 (valid: $0-$E3FFFF or $F1B000-$F1CFFF) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=15319B unique_pcs=5 final_pc=$008D66 |
-| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | ? (BIOS service band $0-$3FFF, no game-band PCs seen) | [CRASH-DETECT] video_stall frame=739 fb_hash=$34B20A74 unchanged for 300 frames gpu_pc=$00F03080 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25603B unique_pcs=23 final_pc=$003610 |
-| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=301 fb_hash=$481B4D2B unchanged for 300 frames gpu_pc=$00F03062 gpu_run=1 dsp_pc=$00F1B000 dsp_run=0 |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=319B unique_pcs=5 final_pc=$059786 |
-| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25579B unique_pcs=22 final_pc=$0040F2 |
-| Iron Soldier 2 (USA) (Songbird).cue | hle | 0/1 | GAME_CODE | (none) |     [FAIL]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=0 ram_payload=483B unique_pcs=3 final_pc=$007416 |
-| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | ? (BIOS service band $0-$3FFF, no game-band PCs seen) | [CRASH-DETECT] video_stall frame=740 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03064 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=466B unique_pcs=34 final_pc=$0036BE |
-| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=530 fb_hash=$BFFF6779 unchanged for 300 frames gpu_pc=$00F031F8 gpu_run=1 dsp_pc=$00F1B0AC dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=6679B unique_pcs=14 final_pc=$00419E |
-| Primal Rage (USA).cue | bios | 1/1 | BOOT_STUB | [CRASH-DETECT] video_stall frame=739 fb_hash=$4668CD35 unchanged for 300 frames gpu_pc=$00F03060 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25623B unique_pcs=22 final_pc=$0803AC |
-| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=414 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B016 dsp_run=1 |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=961B unique_pcs=47 final_pc=$0055CC |
-| Space Ace (USA).cue | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] video_stall frame=840 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B0CC dsp_run=1 |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23478B unique_pcs=38 final_pc=$0062F4 |
-| baldies.cdi | hle | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
-| baldies.cdi | bios | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
-| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12 |
-
-Raw per-run logs: /tmp/cdmx_full_logs (not committed; re-run to regenerate).
 
 ## Baseline notes -- 2026-07-13, branch feature/jaguar-cd-support @ cbd2518
 
@@ -81,8 +72,11 @@ fresh dated section; do not retrofit old ones.
   i.e. GAME_CODE only in the "68K executing game-owned RAM" sense), 1 LOAD_FAIL
   (baldies.cdi segfault). BIOS -- 4 BIOS_INTRO, 1 BOOT_STUB (Primal Rage,
   `final_pc=$0803AC` = documented boot-stub poll loop), 1 GAME_CODE
-  (BrainDead 13, PC-SET shows game code at `$1243xx` calling BIOS CD_read),
-  2 `? (BIOS service band)` (Highlander, Iron Soldier 2), 1 `? (pc_escape)`
+  (BrainDead 13 -- the disambiguating game-band PCs `$124342 $124346 $12434C`
+  are quoted in the row's own evidence column), 2 `? (BIOS service band)`
+  (Highlander: PC-SET checked, no game-band entries; Iron Soldier 2: PC-SET
+  suppressed at unique_pcs=34, so the game-band check never ran --
+  undetermined, not a checked negative), 1 `? (pc_escape)`
   (Battle Morph, `final_pc=$8FBFB758`), 1 HARNESS_HANG (Baldies, video_stall
   watchdog fired at frame 745, GPU wedged at `$F03060`), 1 LOAD_FAIL
   (baldies.cdi), plus the ISO documentation row (BIOS_INTRO,
@@ -110,3 +104,31 @@ fresh dated section; do not retrofit old ones.
   absent: per-title DSA tracing is Task 4 instrumentation. The `[CD-DIAG]`
   counters (`seeks`, `dsaIRQs`, `fifoReads`) in the raw logs carry the
   equivalent evidence for now.
+
+## Results
+
+| Title | Mode | Score | Stage | Watchdog | PC evidence |
+|---|---|---|---|---|---|
+| Baldies (USA) (Rev 1).cue | hle | 0/1 | GAME_CODE | (none) |     [FAIL]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=250B unique_pcs=20 final_pc=$1FFFDE |
+| Baldies (USA) (Rev 1).cue | bios | 0/1 | HARNESS_HANG | [CRASH-DETECT] video_stall frame=745 fb_hash=$EB4463AA unchanged for 300 frames gpu_pc=$00F03060 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 | killed after 120s wall-clock |
+| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1359 fb_hash=$114AB567 unchanged for 300 frames gpu_pc=$00F031D8 gpu_run=0 dsp_pc=$00F1B57E dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=22288B unique_pcs=126 final_pc=$0046DC |
+| Battle Morph (USA).cue | bios | 0/1 | ? (pc_escape) | (none) |     [FAIL]  Battle Morph (USA).cue : pc_in_ram=0 not_loop=1 not_thrash=1 ram_payload=32704B unique_pcs=256+ final_pc=$8FBFB758 |
+| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=3393B unique_pcs=6 final_pc=$1243BC |
+| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=737 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25922B unique_pcs=23 final_pc=$00361E; PC-SET game-band: $124342 $124346 $12434C |
+| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=412 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=884B unique_pcs=44 final_pc=$005412 |
+| Dragon's Lair (USA).cue | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] video_stall frame=840 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B0CE dsp_run=1 |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23401B unique_pcs=38 final_pc=$0060D8 |
+| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] dsp_pc_escape frame=128 pc=$FFFFCE03 (valid: $0-$E3FFFF or $F1B000-$F1CFFF) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=15319B unique_pcs=5 final_pc=$008D66 |
+| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | ? (BIOS service band $0-$3FFF; PC-SET showed no game-band entries) | [CRASH-DETECT] video_stall frame=739 fb_hash=$34B20A74 unchanged for 300 frames gpu_pc=$00F03080 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25603B unique_pcs=23 final_pc=$003610 |
+| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=301 fb_hash=$481B4D2B unchanged for 300 frames gpu_pc=$00F03062 gpu_run=1 dsp_pc=$00F1B000 dsp_run=0 |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=319B unique_pcs=5 final_pc=$059786 |
+| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25579B unique_pcs=22 final_pc=$0040F2 |
+| Iron Soldier 2 (USA) (Songbird).cue | hle | 0/1 | GAME_CODE | (none) |     [FAIL]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=0 ram_payload=483B unique_pcs=3 final_pc=$007416 |
+| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | ? (BIOS service band $0-$3FFF; PC-SET suppressed, unique_pcs>32 -- game handoff undetermined) | [CRASH-DETECT] video_stall frame=740 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03064 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=466B unique_pcs=34 final_pc=$0036BE |
+| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=530 fb_hash=$BFFF6779 unchanged for 300 frames gpu_pc=$00F031F8 gpu_run=1 dsp_pc=$00F1B0AC dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=6679B unique_pcs=14 final_pc=$00419E |
+| Primal Rage (USA).cue | bios | 1/1 | BOOT_STUB | [CRASH-DETECT] video_stall frame=739 fb_hash=$4668CD35 unchanged for 300 frames gpu_pc=$00F03060 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25623B unique_pcs=22 final_pc=$0803AC |
+| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=414 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B016 dsp_run=1 |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=961B unique_pcs=47 final_pc=$0055CC |
+| Space Ace (USA).cue | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] video_stall frame=840 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B0CC dsp_run=1 |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23478B unique_pcs=38 final_pc=$0062F4 |
+| baldies.cdi | hle | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
+| baldies.cdi | bios | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
+| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12 |
+
+Raw per-run logs: /tmp/cdmx_full_logs (not committed; re-run to regenerate).
