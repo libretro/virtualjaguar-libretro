@@ -146,9 +146,19 @@ mechanisms account for all four failure classes.
 ### Mechanism A -- I2S FIFO never enabled after seek (FIFO-wait deadlock)
 
 Affects: **Primal Rage (bios)** [class 1, BOOT_STUB $0803AC] and
-**Highlander (bios)** [class 3] -- **CONFIRMED** (airtight); **Iron Soldier
-2 (bios)** [class 3] -- **CONFIRMED root cause, UNCONFIRMED exact chain**
-(see IS2 caveat below).
+**Highlander (bios)** [class 3]; **Iron Soldier 2 (bios)** [class 3] shares
+the same deadlock with a partially-unresolved chain (see IS2 caveat below).
+
+Verdict is split in two, at different confidence levels:
+
+- **The deadlock itself -- CONFIRMED (airtight):** I2CNTRL bit 2
+  (`i2s_fifo_enabled`) is never set by any processor after the seek, so
+  `BUTCHExec`'s bit-2 FIFO-fill gate never opens, `FIFO_FILL` never fires,
+  and the guest polls forever.
+- **Attribution (whose fault) -- UNCONFIRMED:** whether the guest *never
+  intends* to set bit 2 on this path, or a guest GPU CD-ISR is *supposed*
+  to set it but our GPU/IRQ emulation stalls it before it gets there, is
+  not resolved by this evidence (see below).
 
 The DSA/seek handshake completes correctly. Primal Rage ring tail:
 
@@ -192,34 +202,53 @@ and the DS_DATA `$0100`-pop branch (`cdrom.c` ~763-773) sets
 ends `fifoReady=0` with 5.8M FIFO_DATA reads and `fifo_drains=0`. Whether IS2
 pops `$0100` at all and, if so, what re-clears `fifoDataReady` before a drain
 completes is **not fully resolved** (would need a one-run `fifoDataReady`-
-transition trace). So IS2 = same confirmed root cause (bit 2 never set), with
+transition trace). So IS2 = same confirmed deadlock (bit 2 never set), with
 its FIFO drain/refill interaction left UNCONFIRMED; the Primal Rage /
-Highlander chain below is the airtight one.
+Highlander deadlock chain below is the airtight one.
 
-**This is "the guest never issues the write", NOT "our emulation drops a
-write."** The value the BIOS writes ($0001/$0011) is stored correctly
-(`i2cReg` reflects it); the BIOS simply never asserts bit 2. `i2cntrlWrites
-afterSeek=0` for Primal Rage/Highlander, and CD-range writes from **every**
-processor route through `CDROMWriteWord`/`Byte` (`src/core/jaguar.c:480,592,
-623,447`), so this also rules out a GPU/DSP ISR quietly setting bit 2.
+**What the write counters do and do not prove.** The `[T5-DIAG]` counters
+lived in the common `CDROMWriteWord`/`CDROMWriteByte` handlers -- the single
+choke point every processor's CD-range writes funnel through
+(`src/core/jaguar.c:480,623` for the 68K path, `:447,592` for the
+`who`-tagged GPU/DSP/DMA path) -- so "no bit-2 write" holds for **all**
+processors, and no write was mis-decoded or dropped (the values that were
+written, $0001/$0011, are stored correctly; `i2cReg` reflects them). But
+that only proves **no processor executed a bit-2 write**, NOT that the guest
+never intended one. The CD-data path is architecturally driven by a guest
+GPU CD-ISR that the CD BIOS uploads into GPU RAM -- `src/core/jaguar.c:762`
+asserts GPU IRQ0 precisely "to drive the CD-data ISR". The trace signature
+here -- 556k GPU IRQ0 assertions, GPU running (`gpu_run=1`, PC circling
+`$F03060`-`$F03080` in GPU RAM), yet `dsDataReads afterSeek=0` and zero
+post-seek I2CNTRL writes -- is equally consistent with **that guest ISR
+firing but never completing its DSA-consume -> I2CNTRL handshake**, i.e.
+the "our GPU/IRQ emulation breaks the path" branch. Attribution between
+"guest never issues" and "guest ISR stalls under our GPU/IRQ emulation" is
+therefore **UNCONFIRMED**.
 
-Secondary confirmed symptom (not the deadlock cause): `dsDataReads
-afterSeek=0` for Primal Rage/Highlander means the `$0100` seek response is
-**never consumed** via DS_DATA. `dsaResponseReady` therefore stays latched
+Related confirmed symptom (cause vs effect unresolved, same ambiguity):
+`dsDataReads afterSeek=0` for Primal Rage/Highlander means the `$0100` seek
+response is **never consumed** via DS_DATA. `dsaResponseReady` stays latched
 true, so `BUTCHExec` re-asserts GPU IRQ0 on every interrupt-enabled halfline
-(`dsaIRQs=556791`) with no effect -- the DSCNTRL-read latch-clear at
-`cdrom.c:743` is on a path the guest never takes here. The GPU IRQ storm is
-downstream of the same FIFO stall, not an independent fault.
+(`dsaIRQs=556791`) -- the DSCNTRL-read latch-clear at `cdrom.c:743` is on a
+path that never runs here. If the guest GPU ISR is supposed to consume the
+response and set bit 2, this un-consumed response and the IRQ storm are the
+*same* stall observed from the DSA side, not a separate fault.
 
-**Task 6 pointer (not resolved here -- hardware-correctness is Task 6's
-call):** the FIFO-fill gate on I2CNTRL bit 2 is the divergence to
-investigate. The BIOS enables the path with bit 0 (`i2s_drive` = "I2S data
-from drive is ON", per the butch.v register comment) and expects data to
-flow. Whether the fix is "fill on `i2s_drive` (bit 0)" or "fill on
-seek-complete regardless of I2CNTRL" must be checked against MiSTer butch.v
-FIFO logic -- do NOT trust the cdrom.c comments claiming "the GPU ISR
-re-enables I2CNTRL bit 2", which the trace disproves (no post-seek I2CNTRL
-write from any processor).
+**Task 6 pointers (hardware-correctness is Task 6's call), three candidates
+to resolve against JTRM/MiSTer butch.v -- in this order:**
+
+1. **Determine whether the CD BIOS's uploaded GPU IRQ0 CD-ISR is expected to
+   consume the DSA response and set I2CNTRL bit 2 -- and if so, why our GPU
+   execution of it stalls** (disassemble the GPU-RAM ISR the BIOS uploads;
+   check its progress against the GPU PC band `$F03060`-`$F03080` observed
+   wedged). This MUST be resolved first: if the ISR is being blocked by a
+   GPU/IRQ emulation bug, any change to the FIFO gate would mask it.
+2. Check MiSTer butch.v FIFO-fill logic: does hardware fill depend on bit 2
+   (`i2s_fifo_enabled`), bit 0 (`i2s_drive`), or seek-complete alone?
+3. Only then decide whether the `cdrom.c` bit-2 gate is itself wrong. Do NOT
+   trust the cdrom.c comments claiming "the GPU ISR re-enables I2CNTRL
+   bit 2" as established fact -- the trace shows no such write occurs today,
+   but whether it *should* occur is exactly candidate 1.
 
 ### Mechanism B -- unpopulated 68K exception vectors in CD-BIOS mode
 
@@ -266,12 +295,27 @@ located slot. Both titles inject large boot stubs (Battle Morph `$65290` @
 `$004400`, Baldies `$4000` @ `$004000`) and take their fatal exception at
 **exactly frame 437** (an identical deterministic onset across two unrelated
 games -- consistent with a common BIOS/timing-driven trigger rather than
-game data, though the trigger itself is not isolated here). The escape
-*mechanism* (garbage vector table) is CONFIRMED by the RAM dump + the
-`jaguar.c:857` gate; the specific exception that fires at frame 437 (illegal
-opcode vs bus/address error vs a spurious interrupt) is UNCONFIRMED --
-isolating it needs a 68K single-step/exception-vector trap, beyond this
-diagnosis budget.
+game data, though the trigger itself is not isolated here). An unexplained
+detail worth flagging: both games escape from the *same* `prev_pc` under the
+*same* deterministic PRNG-seeded vector table, yet land on *different*
+targets (`$8CA88044` vs `$A7E08FA0`) -- i.e. they take different vector
+slots (or RAM at those slots had already been overwritten differently by the
+two boot stubs), which the 32-byte dump cannot distinguish.
+
+The escape *mechanism* (garbage vector table) is CONFIRMED by the RAM dump +
+the `jaguar.c:857` gate; the specific exception that fires at frame 437
+(illegal opcode vs bus/address error vs a spurious interrupt) is UNCONFIRMED
+here. It is, however, **cheaply knowable without single-stepping**:
+`prev_pc=$8020A2` is cart/BIOS ROM (CD BIOS file offset $20A2), statically
+disassemblable -- the pristine bytes there (`b1ca 65fa 2009 5e80 0240 fff8
+2240 51c9 ffe8 4e75`) are a `cmpm/bcs` alignment loop ending in `rts`.
+**Task 6 REQUIREMENT:** identify the exception class via static disasm
+around $8020A2 (and what the surrounding BIOS routine enables -- e.g. an
+interrupt source) BEFORE trusting "populate vectors with RTE stubs" as the
+fix. An RTE stub is *correct* for an expected-but-unhandled interrupt, but a
+*mask* for a genuine fault (bus/address error or illegal opcode would mean
+something upstream is already corrupt, and stubbing the vector just defers
+the crash).
 
 ### HLE-mode wrong-LBA spot check -- Iron Soldier 2 (hle)
 
@@ -299,9 +343,9 @@ CD_read: (identical) LBA=224851 ... -> repeated read -- resuming from LBA 224863
 
 | Class | Title(s) | Verdict | Mechanism |
 |---|---|---|---|
-| 1 | Primal Rage (bios) | CONFIRMED | I2CNTRL bit 2 never set by BIOS -> FIFO-fill gate never opens -> boot stub polls $0803AC forever (Mechanism A) |
-| 3 | Highlander (bios) | CONFIRMED | Same as class 1 (Mechanism A); counters byte-identical to Primal Rage |
-| 3 | Iron Soldier 2 (bios) | CONFIRMED root / UNCONFIRMED chain | Same confirmed root (bit 2 never set, i2sEn=0); post-seek DS_DATA activity differs, exact FIFO drain/refill interaction unresolved |
+| 1 | Primal Rage (bios) | deadlock CONFIRMED / attribution UNCONFIRMED | I2CNTRL bit 2 never set -> FIFO-fill gate never opens -> boot stub polls $0803AC forever (Mechanism A); guest-never-issues vs our-GPU-ISR-stalls unresolved |
+| 3 | Highlander (bios) | deadlock CONFIRMED / attribution UNCONFIRMED | Same as class 1 (Mechanism A); counters byte-identical to Primal Rage |
+| 3 | Iron Soldier 2 (bios) | deadlock CONFIRMED / chain+attribution UNCONFIRMED | Same deadlock (bit 2 never set, i2sEn=0); post-seek DS_DATA activity differs, exact FIFO drain/refill interaction unresolved |
 | 2 | Battle Morph (bios) | CONFIRMED escape / UNCONFIRMED trigger | Unpopulated 68K exception vectors in CD-BIOS mode -> exception vectors through garbage (Mechanism B); pre-CD-read, wrong-LBA rejected |
 | 4 | Baldies (bios) | CONFIRMED | Same as class 2 (Mechanism B); reclassified from video_stall/HANG. video_stall is downstream of the frame-437 escape |
 | -- | Iron Soldier 2 (hle) | wrong-LBA REJECTED | LBAs correct; repeated-read continuation loop in jagcd_hle.c |
