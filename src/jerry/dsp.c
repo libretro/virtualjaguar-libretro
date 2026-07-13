@@ -492,12 +492,25 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
              * ignoring normal gameplay status checks (~1-10/frame).
              *
              * Exception: if the DSP is actively producing audio
-             * (i2sWriteCount > 2, beyond the DACPrepareFrame seed),
-             * it is running a legitimate audio mixer (e.g. Doom) and
-             * must not be killed. */
+             * (non-zero LTXD/RTXD samples beyond the DACPrepareFrame
+             * seed), it is running a legitimate audio mixer (e.g.
+             * Doom) and must not be killed.  Issue #181 (Battle
+             * Sphere): the silenced/escaped DSP still issues STORE
+             * 0,RTXD per loop iteration, so we gate on non-zero
+             * sample count, not raw write count. */
             if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
             {
-               if (DACGetI2SWriteCount() > 2)
+               /* "Real audio" gate: a DSP that's mixing for the user
+                * writes non-zero LTXD/RTXD samples.  The non-zero
+                * counter is reset to 0 at every DACPrepareFrame
+                * (unlike i2sWriteCount which is seeded to 2 for the
+                * resampler), so any non-zero sample this frame is
+                * enough to declare the engine alive.  A DSP that
+                * wrote only silence -- Battle Sphere with an escaped
+                * DSP still issuing STORE 0,RTXD per loop iteration --
+                * stays at 0 and the auto-clear correctly fires.
+                * Counter ticks when either channel is non-zero. */
+               if (DACGetI2SNonZeroCount() > 0)
                   dspgo_poll_count = 0;
                else
                {
@@ -857,6 +870,40 @@ void DSPExec(int32_t cycles)
 		{
 			DSPHandleIRQsNP();					// See if any other interrupts are pending!
 			IMASKCleared = false;
+		}
+
+		/* PC escape bail-out.  When the DSP PC has wandered into a
+		 * region that doesn't contain executable code -- register
+		 * space at $F00000-$F1FFFF outside DSP local SRAM, or the
+		 * unmapped territory above $E40000 -- every "fetched opcode"
+		 * is bus-default 0xFFFF garbage that decodes to a near-zero-
+		 * cost opcode.  The inner loop then burns the entire
+		 * timeslice without making progress, hanging the frontend.
+		 *
+		 * Wolf3D headless triage caught this in v2.3.0: the runtime
+		 * watchdog logged `dsp_pc_escape pc=$00FFF004E8` (PC top-byte
+		 * corrupted) and the harness wedged for 12+ minutes per
+		 * frame.  An earlier dsp-diag snapshot showed PC=$0006EE in
+		 * RAM at frame 48 -- that's the upstream bug (separate from
+		 * this bail-out: $0006EE is *valid* RAM and decodes to real
+		 * opcodes; it's where the DSP eventually drifts INTO bad
+		 * territory that triggers the wedge).  Drain cycles here and
+		 * let the runtime watchdog (src/core/crash_detect.c) log the
+		 * actual escape PC.  DSP_RUNNING is left alone so games that
+		 * legitimately stop the DSP via DSPGO=0 are unaffected.
+		 *
+		 * Valid execution regions match JaguarReadX address decoding
+		 * (src/core/jaguar.c): anything <= $E3FFFF (main RAM mirrored
+		 * 4x for the bottom 8MB, cart ROM, boot ROM) plus DSP local
+		 * SRAM.  Earlier versions of this check used `<= 0x1FFFFF`
+		 * and would have false-flagged DSP code running from a RAM
+		 * mirror at $200000-$7FFFFF or from cart ROM at $800000+.
+		 * Caught by Copilot review on PR #182. */
+		if (!((dsp_pc <= 0x00E3FFFF) ||
+		      (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)))
+		{
+			cycles = 0;
+			break;
 		}
 
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)

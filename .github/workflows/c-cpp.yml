@@ -135,7 +135,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Install multilib
       if: matrix.config.multilib
@@ -313,7 +313,7 @@ jobs:
       matrix:
         arch: [x64, x86]
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -350,7 +350,7 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Build
       run: make -j4 platform=vita
@@ -368,7 +368,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Build
       run: make -j4 platform=libnx
@@ -386,7 +386,7 @@ jobs:
     name: EditorConfig compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Install editorconfig-checker
       run: |
@@ -406,7 +406,7 @@ jobs:
     # comment automatically.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Install gcov + gcovr
@@ -435,7 +435,7 @@ jobs:
     # `false` to make sanitizer findings gate merges.
     continue-on-error: true
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Install clang
       run: sudo apt-get update && sudo apt-get install -y clang
     - name: Build with ASAN + UBSAN
@@ -478,7 +478,7 @@ jobs:
     continue-on-error: true
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Install clang-tidy + bear
@@ -509,7 +509,7 @@ jobs:
     name: cppcheck static analysis
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Install cppcheck
       run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -543,7 +543,7 @@ jobs:
     name: C89 compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Check for declaration-after-statement
       run: |

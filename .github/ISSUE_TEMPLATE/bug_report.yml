@@ -46,8 +46,8 @@ body:
       label: BIOS mode
       description: Set in RetroArch core options as `virtualjaguar_bios`.
       options:
-        - "HLE BIOS (default; no real BIOS file)"
-        - "Real BIOS (jagboot.rom in system/)"
+        - "HLE BIOS (default; faked post-boot state, faster)"
+        - "Real BIOS (built into the core; runs the actual boot sequence)"
         - "Not sure"
     validations:
       required: true

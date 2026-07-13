@@ -52,5 +52,6 @@
       cd_boot_strategy_*;
       jaguar_cd_*;
       ResolveBootConfig;
+      BlitterCompare*;
    local: *;
 };
