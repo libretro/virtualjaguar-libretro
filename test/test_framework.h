@@ -162,7 +162,6 @@ struct vj_core {
     void (*DSPInit)(void);
     void (*DSPReset)(void);
     void (*DSPExec)(int32_t);
-    void (*DSPHandleIRQs)(void);
     void (*DSPSetIRQLine)(int, int);
     uint8_t  (*DSPReadByte)(uint32_t, uint32_t);
     uint16_t (*DSPReadWord)(uint32_t, uint32_t);
@@ -331,7 +330,6 @@ static bool vj_core_load(struct vj_core *core)
     LOAD_SYM(core, DSPInit);
     LOAD_SYM(core, DSPReset);
     LOAD_SYM(core, DSPExec);
-    LOAD_SYM(core, DSPHandleIRQs);
     LOAD_SYM(core, DSPSetIRQLine);
     LOAD_SYM(core, DSPReadByte);
     LOAD_SYM(core, DSPReadWord);
