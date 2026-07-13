@@ -256,6 +256,98 @@ TEST(butch_int_fifo_requires_both_bits)
 }
 
 /* ================================================================== */
+/* CD interrupt routing — BUTCH -> JERRY ext -> GPU IRQ1               */
+/* ================================================================== */
+
+/* The CD BIOS installs its CD-data ISR at $F03010 — the GPU IRQ **1**
+ * vector (JTRM: vector = int# * 16; int 1 = DSP/JERRY source) — and
+ * enables only G_FLAGS INT_ENA1 ($20). Its ISR epilogue acks via
+ * INT_CLR1 (G_FLAGS bit 10) and re-arms the JERRY external latch
+ * (J_INT = $0101), because BUTCH's eint enters through JERRY
+ * (MiSTer butch.v line 83: "external interrupt to Jerry").
+ *
+ * Therefore when a DSA response is ready and BUTCH interrupts are
+ * enabled, the GPU must see IRQ **1** latched (G_CTRL INT_LAT1, bit 7)
+ * and dispatch to $F03010. Asserting IRQ0 instead leaves the interrupt
+ * permanently masked (BIOS never sets INT_ENA0) — the FIFO-never-fills
+ * boot deadlock (Primal Rage / Highlander / Iron Soldier 2, bios mode).
+ *
+ * Needs a loaded disc image (haveCDGoodness gates BUTCHExec), so we
+ * synthesize a 16-sector single-track CUE/BIN — no ROM required. */
+TEST(butch_dsa_irq_routes_to_gpu_irq1)
+{
+    bool (*openImage)(const char *);
+    void (*closeImage)(void);
+    void (*butchExec)(uint32_t);
+    char dir[512], cuePath[600], binPath[600];
+    static const char *tmpl = "/tmp";
+    const char *tmp;
+    FILE *f;
+    uint32_t i, gctrl, gpc;
+    static uint8_t sector[2352];
+
+    openImage = (bool (*)(const char *))dlsym(core.handle, "CDIntfOpenImage");
+    closeImage = (void (*)(void))dlsym(core.handle, "CDIntfCloseImage");
+    butchExec = (void (*)(uint32_t))dlsym(core.handle, "BUTCHExec");
+    if (!openImage || !closeImage || !butchExec)
+        { FAIL("CDIntfOpenImage/CDIntfCloseImage/BUTCHExec not exported (need TEST_EXPORTS=1)"); }
+
+    tmp = getenv("TMPDIR");
+    if (!tmp) tmp = tmpl;
+    snprintf(dir, sizeof(dir), "%s", tmp);
+    snprintf(binPath, sizeof(binPath), "%s/t6_butch_irq.bin", dir);
+    snprintf(cuePath, sizeof(cuePath), "%s/t6_butch_irq.cue", dir);
+
+    f = fopen(binPath, "wb");
+    if (!f) { FAIL("cannot create synthetic BIN"); }
+    for (i = 0; i < 16; i++)
+        fwrite(sector, 1, sizeof(sector), f);
+    fclose(f);
+    f = fopen(cuePath, "w");
+    if (!f) { remove(binPath); FAIL("cannot create synthetic CUE"); }
+    fprintf(f, "FILE \"t6_butch_irq.bin\" BINARY\n"
+               "  TRACK 01 MODE1/2352\n"
+               "    INDEX 01 00:00:00\n");
+    fclose(f);
+
+    if (!openImage(cuePath))
+        { remove(cuePath); remove(binPath); FAIL("synthetic CUE did not load"); }
+    core.CDROMInit();     /* re-latch haveCDGoodness now that an image is open */
+    core.CDROMReset();
+    core.GPUReset();
+
+    /* Mimic the CD BIOS interrupt setup exactly:
+     * G_FLAGS = INT_ENA1 only; BUTCH = master enable + DSA RX enable. */
+    core.GPUWriteLong(0xF02100, GPU_FLAGS_INT_ENA1, CALLER_M68K);
+    core.CDROMWriteWord(BUTCH_INT_CTRL + 2,
+                        BUTCH_INT_ENABLE | BUTCH_INT_RBUF_EN, CALLER_M68K);
+    core.CDROMWriteWord(BUTCH_DSCNTRL, 0x0001, CALLER_M68K);   /* DSA enable */
+
+    /* Seek to MSF 00:02:00 (block 0) — Goto Min / Sec / Frame. */
+    core.CDROMWriteWord(BUTCH_DS_DATA, 0x1000, CALLER_M68K);
+    core.CDROMWriteWord(BUTCH_DS_DATA, 0x1102, CALLER_M68K);
+    core.CDROMWriteWord(BUTCH_DS_DATA, 0x1200, CALLER_M68K);
+
+    /* Tick BUTCH past SEEK_DELAY_TICKS so the $0100 response queues and
+     * the DSA interrupt fires. */
+    for (i = 0; i < 200; i++)
+        butchExec(0);
+
+    gctrl = core.GPUReadLong(0xF02114, CALLER_M68K);
+    gpc   = core.GPUReadLong(0xF02110, CALLER_M68K);
+
+    closeImage();
+    remove(cuePath);
+    remove(binPath);
+
+    /* INT_LAT1 (bit 7) must be latched — the line the BIOS enables. */
+    CHECK_EQ((gctrl >> 7) & 1, 1);
+    /* And with only INT_ENA1 set, the GPU must dispatch to the IRQ1
+     * vector, where the BIOS's CD ISR entry stub lives. */
+    CHECK_EQ(gpc, 0xF03010);
+}
+
+/* ================================================================== */
 /* Main                                                                */
 /* ================================================================== */
 
@@ -291,6 +383,7 @@ int main(int argc, char *argv[])
     /* Interrupt logic */
     RUN_TEST(butch_eint_requires_master_enable);
     RUN_TEST(butch_int_fifo_requires_both_bits);
+    RUN_TEST(butch_dsa_irq_routes_to_gpu_irq1);
 
     vj_core_unload(&core);
     return TEST_REPORT();
