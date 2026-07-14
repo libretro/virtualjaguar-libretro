@@ -356,20 +356,50 @@ targets (`$8CA88044` vs `$A7E08FA0`) -- i.e. they take different vector
 slots (or RAM at those slots had already been overwritten differently by the
 two boot stubs), which the 32-byte dump cannot distinguish.
 
-The escape *mechanism* (garbage vector table) is CONFIRMED by the RAM dump +
-the `jaguar.c:857` gate; the specific exception that fires at frame 437
-(illegal opcode vs bus/address error vs a spurious interrupt) is UNCONFIRMED
-here. It is, however, **cheaply knowable without single-stepping**:
-`prev_pc=$8020A2` is cart/BIOS ROM (CD BIOS file offset $20A2), statically
-disassemblable -- the pristine bytes there (`b1ca 65fa 2009 5e80 0240 fff8
-2240 51c9 ffe8 4e75`) are a `cmpm/bcs` alignment loop ending in `rts`.
-**Task 6 REQUIREMENT:** identify the exception class via static disasm
-around $8020A2 (and what the surrounding BIOS routine enables -- e.g. an
-interrupt source) BEFORE trusting "populate vectors with RTE stubs" as the
-fix. An RTE stub is *correct* for an expected-but-unhandled interrupt, but a
-*mask* for a genuine fault (bus/address error or illegal opcode would mean
-something upstream is already corrupt, and stubbing the vector just defers
-the crash).
+#### Task 6B update — premise OVERTURNED by instruction-level disasm; this is a MASK, real cause is the $2C00 TOC
+
+The Task-6 REQUIREMENT (disasm before trusting RTE stubs) was carried out.
+It **rejects** the "populate vectors" fix for these two titles. Full trace in
+`.superpowers/sdd/task-6b-report.md`; essentials:
+
+- `prev_pc=$8020A2` is a **red herring**: the harness samples PC once per
+  frame (`test_cd_bios_boot.c:198,255`), so it only means "the 68K was in
+  this BIOS ROM→RAM copy loop (`cmpa.l a2,a0 / bcs.b`, cannot fault) at the
+  end of frame 436" — it is not instruction-adjacent to the fault.
+- The **actual first fault** (logged from `cpuextra.c::Exception`, since
+  reverted) is a *synchronous CPU trap the loaded boot stub executes on its
+  own error path*, not an async interrupt:
+  ```
+  Baldies:      Exception nr=4  currpc=$004D54 op=$4AFC  (68000 ILLEGAL)   -> vec4 =$A7E08FA0 garbage
+  Battle Morph: Exception nr=10 currpc=$0507E2 op=$AFDE  (Line-A word)     -> vec10=$8CA71E78 garbage
+  ```
+- **Baldies**: coherent stub code `moveq #1,d0; jsr $4E18; tst.l d0; bpl
+  $004D56; move.w #$C000,$F00058; ILLEGAL`. `$4E18` is a TOC scanner
+  (`movea.l #$2C08,a0; movem.l (a0)+,d2-d3; tst.l d2; beq → moveq #-1,d0`).
+  Our injected TOC (`src/cd/jagcd_bios.c:96-121`) puts the session marker as
+  an 8-byte slot with **first longword = 0 at `$2C08`**, so the scanner's
+  first `tst.l d2` sees 0 and returns error (-1) → the stub deliberately traps
+  via ILLEGAL. **Root cause = the `$2C00` TOC format is incompatible with the
+  boot stub's scanner** (see `project_cd_toc_format.md`), NOT the vectors.
+- **Battle Morph**: `currpc=$0507E2` is inside a **data region** (`7838 7834
+  7838 7834 …` run) — PC has derailed into data and executes it until hitting
+  the Line-A word. Uncharacterized derailment (PC-in-data proven; the
+  derailing jump not traced), likely downstream of the same loaded-data/TOC
+  path.
+- **Anomaly resolved**: different vectors (4 vs 10) *and* once-per-frame
+  sampling landing mid-runaway. Vec 4 = `$A7E08FA0` re-faults on itself
+  (`$8888` = illegal) so Baldies' sampled PC == the raw vector; Battle Morph's
+  vec-10 target `$8CA71E78` differs from its sampled `$8CA88044` (which is
+  absent from the entire pristine 2 MB PRNG image) because its runaway
+  wandered before the frame-boundary sample.
+
+**Verdict: populating vectors MASKS.** The existing HLE stub sets vector 4 =
+plain `RTE`; the 68000 stacks PC *at* the illegal instruction, so `RTE`
+returns to `$004D54` and re-executes ILLEGAL forever — Baldies would turn
+`pc_escape` into a **wedge** while a "vectors populated" test goes GREEN
+(PR#170 pattern). The real fix is the `$2C00` TOC layout (a different
+mechanism, needs the authoritative MiSTer format) — tracked separately, **not
+under 6B**. Task 6B outcome: **BLOCKED with artifacts**, no `src/` change.
 
 ### HLE-mode wrong-LBA spot check -- Iron Soldier 2 (hle)
 
