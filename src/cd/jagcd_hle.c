@@ -129,55 +129,57 @@ void JaguarCDHLESetActive(bool active)
 static void HLEPopulateTOC(uint32_t addr)
 {
    uint32_t numTracks = CDIntfGetNumTracks();
+   uint32_t base;
    uint32_t t;
-   bool wroteSessionMarker = false;
-   uint32_t base = addr;
+   uint8_t  maxTrack = 0;
 
    if (addr + 0x400 > 0x200000)
       addr = 0x2C00;
+   base = addr;
 
-   memset(&jaguarMainRAM[addr], 0, 0x400);
+   memset(&jaguarMainRAM[base], 0, 0x400);
 
-   for (t = 1; t <= numTracks && addr < base + 0x3F8; t++)
+   /* Track-INDEXED layout, matching the real CD BIOS DSP TOC writer
+    * ($808BE8): entry for track N at base + N*8, byte[0]=track#,
+    * byte[1..3]=start MSF, byte[4]=0-based session number.  base+0 is a
+    * header (skipped by the boot-stub scanners, which start at base+8).
+    * The old standalone zero-longword session-marker slot terminated
+    * Baldies' $4E18 scan early and left every byte[4] zero, so the
+    * session-key match could never succeed. */
+   for (t = 1; t <= numTracks; t++)
    {
-      uint8_t min  = CDIntfGetTrackInfo(t, 0);
-      uint8_t sec  = CDIntfGetTrackInfo(t, 1);
-      uint8_t frm  = CDIntfGetTrackInfo(t, 2);
-      uint8_t sess = CDIntfGetTrackSession(t);
+      uint32_t off = base + t * 8;
+      uint8_t  sess;
 
-      if (sess >= 2 && !wroteSessionMarker)
-      {
-         HLE_LOG("TOC: session marker at $%04X (before track %u)\n",
-                addr, t);
-         jaguarMainRAM[addr + 0] = 0x00;
-         jaguarMainRAM[addr + 1] = 0x00;
-         jaguarMainRAM[addr + 2] = 0x00;
-         jaguarMainRAM[addr + 3] = 0x00;
-         jaguarMainRAM[addr + 4] = 0x01;
-         jaguarMainRAM[addr + 5] = 0x00;
-         jaguarMainRAM[addr + 6] = 0x00;
-         jaguarMainRAM[addr + 7] = 0x00;
-         addr += 8;
-         wroteSessionMarker = true;
-      }
+      if (off + 8 > base + 0x400)
+         break;
+
+      sess = CDIntfGetTrackSession(t);
+
+      jaguarMainRAM[off + 0] = (uint8_t)t;
+      jaguarMainRAM[off + 1] = CDIntfGetTrackInfo(t, 0);
+      jaguarMainRAM[off + 2] = CDIntfGetTrackInfo(t, 1);
+      jaguarMainRAM[off + 3] = CDIntfGetTrackInfo(t, 2);
+      jaguarMainRAM[off + 4] = (uint8_t)((sess >= 1) ? (sess - 1) : 0);
 
       if (sess >= 2 || t >= numTracks - 4)
-         HLE_LOG("TOC: track %2u session=%u MSF=%02u:%02u:%02u at $%04X\n",
-                t, sess, min, sec, frm, addr);
+         HLE_LOG("TOC: track %2u session=%u(0-based %u) MSF=%02u:%02u:%02u at $%04X\n",
+                t, sess, jaguarMainRAM[off + 4],
+                jaguarMainRAM[off + 1], jaguarMainRAM[off + 2],
+                jaguarMainRAM[off + 3], off);
 
-      jaguarMainRAM[addr + 0] = (uint8_t)t;
-      jaguarMainRAM[addr + 1] = min;
-      jaguarMainRAM[addr + 2] = sec;
-      jaguarMainRAM[addr + 3] = frm;
-      jaguarMainRAM[addr + 4] = 0x00;
-      jaguarMainRAM[addr + 5] = 0x00;
-      jaguarMainRAM[addr + 6] = 0x00;
-      jaguarMainRAM[addr + 7] = 0x00;
-      addr += 8;
+      maxTrack = (uint8_t)t;
    }
 
-   HLE_LOG("Populated TOC at $%04X: %u tracks, marker=%s, end=$%04X\n",
-           base, numTracks, wroteSessionMarker ? "yes" : "no", addr);
+   /* Header: byte[2]=min track (1), byte[3]=max track. */
+   if (maxTrack)
+   {
+      jaguarMainRAM[base + 2] = 0x01;
+      jaguarMainRAM[base + 3] = maxTrack;
+   }
+
+   HLE_LOG("Populated TOC at $%04X: %u tracks (track-indexed, 0-based session)\n",
+           base, numTracks);
 }
 
 /* ------------------------------------------------------------------ */

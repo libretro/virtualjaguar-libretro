@@ -87,37 +87,80 @@ static bool bios_instruction_hook(uint32_t m68kPC)
                     jaguarMainRAM[0x080005] = (loadAddr >>  0) & 0xFF;
                 }
 
-                /* Populate TOC at $2C00 */
+                /* Populate the $2C00 track-info table.
+                 *
+                 * Layout is track-INDEXED to match the real CD BIOS's own DSP
+                 * TOC writer (disassembled at ROM $808BE8 in the retail CD
+                 * BIOS: `movea.l #$2C00,a0; bra $808be8`).  That routine clears
+                 * $2C00..$2FFF, then for each full-TOC response word
+                 * ($60nn=track#, $62nn=min, $63nn=sec, $64nn=frm) writes the
+                 * entry for track nn at $2C00 + nn*8 ($808CB4:
+                 * `move.w d2,d5; lsl.w #3,d5; move.b d2,(a0,d5.w)`), stamping
+                 * the 0-based session number into byte[+4]
+                 * ($808CC2: `move.b d7,$4(a0,d5.w)`).  $2C00 itself is a
+                 * header, not track 1.
+                 *
+                 * Per-entry (track N at $2C00 + N*8):
+                 *   +0 track number       +4 session number (0-based)
+                 *   +1 start minute (MSF) +5..+7 track duration (unused here)
+                 *   +2 start second
+                 *   +3 start frame
+                 *
+                 * The game boot stubs read this table:
+                 *   - Baldies $4E18 scans from $2C08 (track 1) in 8-byte steps,
+                 *     terminating on a zero first longword and matching byte[+4]
+                 *     against a session key of 1 (the data session).
+                 *   - Primal Rage $0803E2 scans from $2C08 for the first
+                 *     byte[+4]==1 entry, then reads the NEXT entry's MSF.
+                 * Both require real track entries with a nonzero track# in
+                 * byte[0] and the 0-based session in byte[4] — which the old
+                 * sequential layout with a standalone zero-longword marker slot
+                 * did not provide (Baldies' scan hit the zero terminator and
+                 * ILLEGAL-halted; Primal Rage landed one track early). */
                 {
                     uint32_t numTracks = CDIntfGetNumTracks();
-                    uint32_t t, tocAddr = 0x2C00;
-                    bool wroteMarker = false;
+                    uint32_t t;
+                    uint8_t  maxTrack = 0;
 
                     memset(&jaguarMainRAM[0x2C00], 0, 0x400);
 
-                    for (t = 1; t <= numTracks && tocAddr < 0x2C00 + 0x3F8; t++)
+                    for (t = 1; t <= numTracks; t++)
                     {
-                        uint8_t tmin  = CDIntfGetTrackInfo(t, 0);
-                        uint8_t tsec  = CDIntfGetTrackInfo(t, 1);
-                        uint8_t tfrm  = CDIntfGetTrackInfo(t, 2);
-                        uint8_t tsess = CDIntfGetTrackSession(t);
+                        uint32_t tocAddr = 0x2C00 + t * 8;
+                        uint8_t  tsess;
 
-                        if (tsess >= 2 && !wroteMarker)
-                        {
-                            jaguarMainRAM[tocAddr + 4] = 0x01;
-                            tocAddr += 8;
-                            wroteMarker = true;
-                        }
+                        if (tocAddr + 8 > 0x2C00 + 0x400)
+                            break;   /* out of table space (max ~127 tracks) */
+
+                        tsess = CDIntfGetTrackSession(t);
 
                         jaguarMainRAM[tocAddr + 0] = (uint8_t)t;
-                        jaguarMainRAM[tocAddr + 1] = tmin;
-                        jaguarMainRAM[tocAddr + 2] = tsec;
-                        jaguarMainRAM[tocAddr + 3] = tfrm;
-                        tocAddr += 8;
+                        jaguarMainRAM[tocAddr + 1] = CDIntfGetTrackInfo(t, 0);
+                        jaguarMainRAM[tocAddr + 2] = CDIntfGetTrackInfo(t, 1);
+                        jaguarMainRAM[tocAddr + 3] = CDIntfGetTrackInfo(t, 2);
+                        /* byte[4] = 0-based session number (BIOS writer stores
+                         * d7, which counts sessions from 0); CDIntf reports
+                         * 1-based sessions. */
+                        jaguarMainRAM[tocAddr + 4] =
+                            (uint8_t)((tsess >= 1) ? (tsess - 1) : 0);
+
+                        maxTrack = (uint8_t)t;
                     }
-                    LOG_INF("[CD-BOOTSTUB] Populated TOC at $2C00: %u tracks, "
-                            "session marker=%s\n", numTracks,
-                            wroteMarker ? "yes" : "no");
+
+                    /* Header at $2C00: bytes[0,1]=0, byte[2]=min track (1),
+                     * byte[3]=max track.  The two boot-stub scanners start at
+                     * $2C08 and never read the header; these cheap fields match
+                     * the BIOS writer's header without reproducing its intricate
+                     * leadout encoding, which nothing in scope consumes. */
+                    if (maxTrack)
+                    {
+                        jaguarMainRAM[0x2C02] = 0x01;
+                        jaguarMainRAM[0x2C03] = maxTrack;
+                    }
+
+                    LOG_INF("[CD-BOOTSTUB] Populated TOC at $2C00: %u tracks "
+                            "(track-indexed, 0-based session in byte[4])\n",
+                            numTracks);
                 }
                 cdBootStubInjected = true;
             }

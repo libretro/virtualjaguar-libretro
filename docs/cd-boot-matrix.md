@@ -169,6 +169,43 @@ same knobs); all other rows are the earlier baseline.
   which self-declared "no behaviour change without the BUTCHExec
   scheduler tick". The original IRQ1 routing it removed was correct.
 
+## Re-run notes -- 2026-07-14, Task 6D fix ($2C00 TOC track-indexed layout)
+
+Rewrote the $2C00 TOC injector (both `src/cd/jagcd_bios.c` and the HLE path's
+`HLEPopulateTOC` in `src/cd/jagcd_hle.c`) to the authoritative track-indexed
+layout produced by the real BIOS DSP/TOC writer (disasm ROM `$808BE8`: entry
+for track N at `$2C00 + N*8`, `byte[0]=track#`, `byte[1..3]=start MSF`,
+`byte[4]=0-based session`). The old standalone zero-longword marker slot
+terminated Baldies' `$4E18` scan early (deliberate ILLEGAL) and left every
+`byte[4]` zero so the session-key match was impossible; both defects fixed.
+Full derivation + RED/GREEN contract test in `.superpowers/sdd/task-6d-report.md`.
+Boot-mode determination: **outcome (c)** — `$2C00` is PRNG garbage at injection
+time (the BIOS DSP writer never runs under the auth-bypass boot), so the
+injected table must be correct itself.
+
+- **Target that moved -- Baldies (bios):** `HARNESS_HANG` (frame-437 ILLEGAL
+  halt; the boot stub's TOC scan returned -1) -> **`[PASS]` final_pc=$003610**,
+  now in the BIOS CD-read poll band with the CD stream live (seeks=1, i2sEn=1,
+  fifoReads=2.1M) -- the same downstream wall as Highlander/IS2. The ILLEGAL
+  halt is cleared.
+- **Targets unchanged (different blockers) -- Primal Rage / Battle Morph
+  (bios):** Primal Rage still BOOT_STUB $0803AC (its blocker is the downstream
+  sentinel scan per Task 6A, not the TOC; the TOC is now faithfully
+  track-indexed and its `$0803E2` scanner lands on the correct track). Battle
+  Morph still pc-escapes at frame 437 ($8CA88044) -- **the Task 6B UNCONFIRMED
+  "derailment <-> TOC" link is now evidence-negative**: fixing the TOC did not
+  change it; its derailment is a distinct, still-uncharacterized mechanism.
+- **HLE rows (targets -- HLE injector also fixed):** Primal Rage (hle)
+  `[PASS]` final_pc=$00419E and Iron Soldier 2 (hle) final_pc=$007416
+  uniq=3 -- both byte-identical to baseline (their blockers are not the TOC
+  scan; no regression).
+- **Controls -- BrainDead 13 / Dragon's Lair / Highlander (bios):**
+  byte-identical to baseline (final_pc $00361E with game-band $124342/46/4C;
+  $0060D8; $003610 respectively). No regression.
+- `make TEST_EXPORTS=1 test` exit 0 (56103/56103); c89-lint clean on both
+  touched src files. New run-gated harness `test/test_cd_toc_contract.c`
+  (needs `VJ_TOC_DISC`).
+
 ## Diagnosis (Task 5) -- 2026-07-13, branch feature/jaguar-cd-support @ 5827940
 
 Trace-based root-cause analysis of the BIOS-mode boot failures, using the
