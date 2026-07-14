@@ -139,8 +139,10 @@ static void HLEPopulateTOC(uint32_t addr)
 
    memset(&jaguarMainRAM[base], 0, 0x400);
 
-   /* Track-INDEXED layout, matching the real CD BIOS DSP TOC writer
-    * ($808BE8): entry for track N at base + N*8, byte[0]=track#,
+   /* Track-INDEXED layout, matching the real CD BIOS's 68K-side TOC
+    * builder ($808BE8, a 68K routine in the BIOS ROM that reads BUTCH DSA
+    * TOC responses and writes $2C00 — NOT the DSP code the BIOS uploads to
+    * $F1B000): entry for track N at base + N*8, byte[0]=track#,
     * byte[1..3]=start MSF, byte[4]=0-based session number.  base+0 is a
     * header (skipped by the boot-stub scanners, which start at base+8).
     * The old standalone zero-longword session-marker slot terminated

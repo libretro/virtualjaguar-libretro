@@ -89,9 +89,13 @@ static bool bios_instruction_hook(uint32_t m68kPC)
 
                 /* Populate the $2C00 track-info table.
                  *
-                 * Layout is track-INDEXED to match the real CD BIOS's own DSP
-                 * TOC writer (disassembled at ROM $808BE8 in the retail CD
-                 * BIOS: `movea.l #$2C00,a0; bra $808be8`).  That routine clears
+                 * Layout is track-INDEXED to match the real CD BIOS's own TOC
+                 * builder (disassembled at ROM $808BE8 in the retail CD
+                 * BIOS: `movea.l #$2C00,a0; bra $808be8`).  Note: this is a
+                 * 68K routine in the BIOS ROM that polls BUTCH DSA responses
+                 * directly at $DFFF0A — NOT the DSP code the BIOS uploads to
+                 * $F1B000 (that handles drive-level transport, a separate
+                 * stage).  That routine clears
                  * $2C00..$2FFF, then for each full-TOC response word
                  * ($60nn=track#, $62nn=min, $63nn=sec, $64nn=frm) writes the
                  * entry for track nn at $2C00 + nn*8 ($808CB4:

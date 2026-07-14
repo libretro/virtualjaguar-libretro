@@ -173,15 +173,40 @@ same knobs); all other rows are the earlier baseline.
 
 Rewrote the $2C00 TOC injector (both `src/cd/jagcd_bios.c` and the HLE path's
 `HLEPopulateTOC` in `src/cd/jagcd_hle.c`) to the authoritative track-indexed
-layout produced by the real BIOS DSP/TOC writer (disasm ROM `$808BE8`: entry
-for track N at `$2C00 + N*8`, `byte[0]=track#`, `byte[1..3]=start MSF`,
-`byte[4]=0-based session`). The old standalone zero-longword marker slot
-terminated Baldies' `$4E18` scan early (deliberate ILLEGAL) and left every
-`byte[4]` zero so the session-key match was impossible; both defects fixed.
-Full derivation + RED/GREEN contract test in `.superpowers/sdd/task-6d-report.md`.
+layout produced by the real CD BIOS's own $2C00 TOC builder (disasm ROM
+`$808BE8`: entry for track N at `$2C00 + N*8`, `byte[0]=track#`,
+`byte[1..3]=start MSF`, `byte[4]=0-based session`). The old standalone
+zero-longword marker slot terminated Baldies' `$4E18` scan early (deliberate
+ILLEGAL) and left every `byte[4]` zero so the session-key match was
+impossible; both defects fixed. Full derivation + RED/GREEN contract test in
+`.superpowers/sdd/task-6d-report.md`.
 Boot-mode determination: **outcome (c)** — `$2C00` is PRNG garbage at injection
-time (the BIOS DSP writer never runs under the auth-bypass boot), so the
+time (the BIOS TOC builder never runs under the auth-bypass boot), so the
 injected table must be correct itself.
+
+**Writer provenance (reconciling prior project notes):** `$808BE8` is a
+**68K routine in the BIOS ROM** — every quoted instruction is 68K
+(`movem.l`/`lea`/`dbra`) and it polls BUTCH DSA responses directly at
+`$DFFF0A` — not the DSP code the prior notes said the BIOS copies to
+`$F1B000` to query the drive via BUTCH `$14xx` TOC requests. The two are
+most plausibly different stages of one pipeline (DSP handles drive-level
+transport; this 68K routine consumes the `$60`-`$64` DSA response words and
+builds `$2C00`), but this disasm does not confirm the DSP stage either way —
+the earlier "the DSP writes $2C00" belief was at minimum imprecise about
+which processor does the writing. The layout's real validation anchors are
+(1) the two independently disassembled game boot-stub scanners, which read
+exactly this track-indexed format, and (2) the reviewer-reproduced GREEN on
+the real Baldies disc. Note also that track-indexed and the old sequential
+placement coincide byte-for-byte when track numbering is contiguous from 1
+(as on real discs) — the load-bearing fixes are the removed zero-longword
+marker slot and the byte[4] session stamp, not the indexing scheme itself.
+
+**Contract-test scope:** `test_cd_toc_contract`'s Primal Rage MSF assertion
+compares the injected table against `CDIntfGetTrackInfo()` — the injector's
+own data source — so it proves copy fidelity into the scanner-visible
+layout, NOT seek-target/LBA correctness (an H1-class pregap/offset bug would
+still pass it); Primal Rage's marker-then-NEXT-entry path is likewise not
+yet exercised end-to-end in-game (title blocked downstream of the TOC scan).
 
 - **Target that moved -- Baldies (bios):** `HARNESS_HANG` (frame-437 ILLEGAL
   halt; the boot stub's TOC scan returned -1) -> **`[PASS]` final_pc=$003610**,

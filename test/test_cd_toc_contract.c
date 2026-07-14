@@ -5,9 +5,20 @@
  * this reads the actual $2C00 table out of main RAM and runs BOTH game
  * boot-stub scanner algorithms against it, asserting each lands on the
  * session-2 (data) game track.  The two scanners were reverse-engineered
- * from real game boot stubs and the authoritative BIOS DSP/TOC writer
- * ($808BE8 in the retail CD BIOS); see docs/cd-boot-matrix.md and
+ * from real game boot stubs and the CD BIOS's own $2C00 TOC builder — a
+ * 68K routine in the BIOS ROM at $808BE8 that polls BUTCH DSA responses
+ * directly (not the DSP code the BIOS uploads to $F1B000, which handles
+ * drive-level transport); see docs/cd-boot-matrix.md and
  * .superpowers/sdd/task-6d-report.md for the layout derivation.
+ *
+ * SCOPE: this is a table-format contract test, not an end-to-end boot test.
+ * The Primal Rage MSF assertion below compares the injected table against
+ * CDIntfGetTrackInfo() — the injector's own data source — so it proves the
+ * injector copies track data faithfully into the layout the scanners
+ * expect, NOT that the MSF->LBA seek mapping is correct (an H1-class
+ * pregap/offset bug would still pass here).  Primal Rage's
+ * marker-then-NEXT-entry path is also not yet exercised end-to-end in-game
+ * (the title is blocked downstream of the TOC scan).
  *
  *   Scanner A -- Baldies boot-stub $4E18:
  *       movea.l #$2C08,a0                 ; entries start at track 1 ($2C08)
@@ -241,7 +252,10 @@ static void test_toc_contract(void)
     /* --- Contract 3: Primal Rage $0803E2 scan lands on the NEXT entry
      *     after the first session-2 track, i.e. (firstDataTrack + 1), with an
      *     MSF matching CDIntf.  Pre-fix the standalone marker shifts this one
-     *     track early (lands on firstDataTrack). --------------------------- */
+     *     track early (lands on firstDataTrack).
+     *     NOTE: the expected MSF comes from CDIntfGetTrackInfo — the same
+     *     source the injector copies from — so this checks copy fidelity into
+     *     the scanner-visible layout, not seek-target/LBA correctness. ----- */
     nextTrack = firstData + 1;
     if (nextTrack > numTracks) {
         fprintf(stderr, "    (data session has a single track; skipping Primal NEXT-entry check)\n");
