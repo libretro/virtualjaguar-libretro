@@ -735,7 +735,7 @@ clean:
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_hle_idempotent \
 		test/test_audio_dac test/test_blitter \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
@@ -769,7 +769,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_hle_idempotent \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map
 	./test/test_cheat
@@ -979,6 +979,10 @@ test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_ass
 test/test_cd_bios_boot: test/test_cd_bios_boot.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_bios_boot.c -ldl
+
+test/test_cd_hle_idempotent: test/test_cd_hle_idempotent.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_hle_idempotent.c -ldl
 
 test/test_cd_toc_contract: test/test_cd_toc_contract.c test/test_framework.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \

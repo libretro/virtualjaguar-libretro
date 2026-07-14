@@ -521,6 +521,73 @@ CD_read: (identical) LBA=224851 ... -> repeated read -- resuming from LBA 224863
   the data it expects and retries forever. The bug is the HLE
   repeated-read/continuation logic, **not** MSF->LBA mapping.
 
+#### Task 6C fix -- delete the continuation heuristic (CD_read is idempotent)
+
+**Contract.** `CD_read` (`$303C`) is a discrete, self-contained read: `D0`
+(packed MSF) fully specifies the source position, `A0`/`A1` the destination
+range, `D1` the sync marker to lock onto in the I2S stream after the seek. A
+re-issued byte-identical call re-seeks to the SAME position and reproduces the
+SAME data. There is no per-call "continuation" pointer. This holds under both
+readings of the real service (stateless-idempotent, or a BIOS that streams
+internally): a repeat with an identical MSF is a *restart from the same
+position* either way. The only reading in which the removed heuristic is
+correct -- a BIOS that ignores the passed MSF and advances an internal pointer
+-- is self-contradictory (why pass an MSF at all) and unsupported.
+
+**Where the heuristic came from.** It was a tuned guess, not a disassembled
+contract: the writeback `hle_next_lba = scanLBA + s` (post-transfer LBA) plus
+the `hle_have_last` "repeated read -- resuming from LBA" block, extended by
+commit `4844f6b` into the raw-fallback and counter-ID paths. The `+3/call`
+IS2 saw is just `s` = ceil(0x14FE / 2352) = 3 sectors per transfer. The
+comment admitted it "mimics the I2S stream that real hardware would still be
+feeding" -- a fabricated streaming model layered on a stateless service.
+
+**LBA trace, IS2 (hle), before vs after** (`VJ_CD_TRACE`/HLE_LOG, identical
+`D0=$00320001 D1=$4438410B dest=$00CB00 size=$14FE` every call):
+
+```
+BEFORE (heuristic):                          AFTER (idempotent):
+call 1: sync block @ LBA 224857 off 278  ->  call 1: sync block @ LBA 224857 off 278
+call 2: resume 224860, sentinel NOT found    call 2: sync block @ LBA 224857 off 278
+call 3: resume 224863, sentinel NOT found    call 3: sync block @ LBA 224857 off 278
+call N: resume 224857+3N, raw garbage        call N: sync block @ LBA 224857 off 278
+   -> dest $00CB00 corrupted on every repeat     -> dest $00CB00 stable (correct) every repeat
+```
+
+**RED/GREEN.** `test/test_cd_hle_idempotent.c` runs IS2 (hle) and counts how
+many times the destination region `$00CB00..$00DFFF` changes content after it
+is first populated. RED (heuristic present): 27 changes over 300 frames.
+GREEN (heuristic removed): 0 changes. Golden-free, deterministic, game-agnostic.
+
+**Matrix (current HEAD, before vs after the fix, matched frame budgets --
+the older rows in the table below predate the HEAD~1 TOC-writer rewrite and
+are stale for Baldies hle):**
+
+| Row | Mode | Frames | BEFORE (heuristic) | AFTER (fix) |
+|---|---|---|---|---|
+| Iron Soldier 2 | hle | 3000 | FAIL not_thrash=0 unique=3 $007416 | FAIL not_thrash=0 unique=3 $007416 |
+| Baldies | hle | 3000 | FAIL unique=3 $05FE0C | FAIL unique=3 $05FE0C |
+| Primal Rage | hle | 3000 | PASS unique=14 $00419E | PASS unique=14 $00419E |
+| BrainDead 13 | hle | 3000 | PASS unique=6 $1243BC | PASS unique=6 $1243BC |
+| Dragon's Lair | hle | 3000 | PASS $005412 | PASS unique=60 $005412 |
+| Primal Rage | bios | 300 | PASS/BIOS_INTRO $0059B0 | PASS/BIOS_INTRO $0059B0 |
+| Baldies | bios | 300 | PASS/BIOS_INTRO $0059B0 | PASS/BIOS_INTRO $0059B0 |
+
+All controls unchanged. bios rows are structurally unaffected -- the heuristic
+lives only on the HLE path (`cd_boot_strategy_hle`).
+
+**Honest outcome (necessary, not sufficient).** The fix provably stops the
+corruption -- IS2's first read stays correct and idempotent on every repeat --
+but IS2 (hle) does NOT boot past the loop: its harness verdict is unchanged
+(`not_thrash=0`, 3 game-code PCs `$007416/$006F78/$006B74`, `final_pc=$007416`).
+CD_poll reports completion (A0 reaches the GPU data pointer), so the residual
+loop is downstream **game logic** re-issuing the read -- a separate defect from
+the continuation heuristic (candidate: the game validates loaded state / awaits
+a subsequent read that isn't modelled). Not re-tuned to force a boot.
+Baldies (hle) does not issue repeated-identical reads at HEAD, so it neither
+regressed nor advanced -- the "Baldies shares the heuristic" hypothesis is
+**not** supported by the trace.
+
 ### Summary
 
 | Class | Title(s) | Verdict | Mechanism |

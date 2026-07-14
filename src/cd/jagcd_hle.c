@@ -94,19 +94,6 @@ static bool     hle_read_pending   = false;
  * the transfer state structure there. */
 static uint32_t hle_gpu_data_base  = 0;
 
-/* Streaming continuation: when the boot stub re-issues the SAME
- * CD_read (same MSF + dest + sentinel) repeatedly, real hardware
- * is continuously serving the next sectors of disc data.  Track
- * the prior call's signature and post-scan LBA so we can resume
- * from there instead of re-scanning the same start. */
-static uint32_t hle_last_d0        = 0;
-static uint32_t hle_last_d1        = 0;
-static uint32_t hle_last_dest      = 0;
-static uint32_t hle_last_end       = 0;
-static uint32_t hle_next_lba       = 0;
-static bool     hle_have_last      = false;
-
-
 bool JaguarCDHLEActive(void)
 {
    return bootConfig.strategy == &cd_boot_strategy_hle && hle_active;
@@ -343,14 +330,16 @@ static void HLEHandleCDRead(void)
     *               on multi-track discs (Hover Strike, Highlander), so we
     *               try each one in track order until the pattern is found. */
 
-   /* Streaming continuation: if this CD_read repeats the prior call's
-    * (D0/D1/dest/end), advance the source LBA past the previously
-    * transferred sectors so the boot stub sees fresh data each time
-    * (mimics the I2S stream that real hardware would still be feeding).
-    *
-    * Examples: Iron Soldier 2 issues the same CD_read repeatedly to
-    * pull successive chunks; without continuation we hand it the same
-    * 5KB over and over. */
+   /* CD_read is a discrete, stateless read: D0 (packed MSF) fully specifies
+    * the source position, and A0/A1 the destination range.  A re-issued
+    * byte-identical CD_read re-seeks to the SAME position and reproduces the
+    * SAME data — there is no per-call "continuation" that advances the source
+    * LBA.  (Iron Soldier 2's boot stub re-issues an identical CD_read while
+    * it polls for completion; the correct response is to hand it the same
+    * bytes each time, which its data-validation then accepts.  The former
+    * `+N sectors/call` heuristic instead drifted past the sync block, streamed
+    * raw garbage into the same buffer, and corrupted the good first read on
+    * every repeat.) */
    startLBA = lba;
 
    /* The BIOS packs D0 as (frame<<16)|(second<<8)|minute, which our HLE
@@ -377,21 +366,13 @@ static void HLEHandleCDRead(void)
       }
    }
 
-   if (hle_have_last && d0 == hle_last_d0 && d1 == hle_last_d1
-       && a0 == hle_last_dest && a1 == hle_last_end
-       && hle_next_lba > lba)
-   {
-      HLE_LOG("CD_read: repeated read — resuming from LBA %u "
-              "(would have been %u)\n", hle_next_lba, lba);
-      startLBA = hle_next_lba;
-   }
    /* Streaming-data shortcut: when D1's top 16 bits are zero, the value is
     * almost certainly a transfer ID / byte counter (e.g. Space Ace passes
     * D1=$00000001), not a 4-byte sync pattern.  A scan would find millions
     * of false-positive `\0\0\0\x01` matches across the disc and never accept
     * a real sync block, then fall back to "read raw" anyway — but with 4 M
     * log lines of churn first and several seconds of CPU.  Skip the scan and
-    * stream raw from the (continuation-respecting) startLBA. */
+    * stream raw from the requested (possibly redirected) startLBA. */
    if ((d1 >> 16) == 0)
    {
       HLE_LOG("CD_read: D1=$%08X is a counter/ID — skipping sentinel scan, "
@@ -516,9 +497,8 @@ static void HLEHandleCDRead(void)
          /* Skip the sector copy loop — dest is already zeroed */
          goto hle_cd_read_complete;
       }
-      /* Honour streaming continuation: if a repeated CD_read advanced
-       * startLBA past `lba`, read from the new position so the game
-       * sees fresh sectors each call instead of the same 1 MB on loop. */
+      /* Sync block not found: fall back to a raw read from the requested
+       * (possibly redirected) start position. */
       HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u\n", startLBA);
       scanLBA = startLBA;
       scanOff = 0;
@@ -566,15 +546,6 @@ hle_cd_read_complete:
    hle_read_end_addr = destAddr + byteCount;
    hle_read_progress = byteCount;
    hle_read_pending  = true;
-
-   /* Remember this call's signature + the LBA AFTER the data we just
-    * transferred so a repeat call resumes from there. */
-   hle_last_d0  = d0;
-   hle_last_d1  = d1;
-   hle_last_dest = a0;
-   hle_last_end  = a1;
-   hle_next_lba  = scanLBA + s;
-   hle_have_last = true;
 
    /* Write $FFFF sentinel padding after the transferred data.
     *
@@ -889,8 +860,6 @@ bool JaguarCDHLEBoot(void)
    hle_read_end_addr = 0;
    hle_read_dest     = 0;
    hle_read_progress = 0;
-   hle_have_last     = false;
-   hle_next_lba      = 0;
 
    if (!CDIntfIsImageLoaded())
    {
@@ -1071,8 +1040,6 @@ static void hle_strategy_reset(void)
    hle_read_end_addr = 0;
    hle_read_dest     = 0;
    hle_read_progress = 0;
-   hle_have_last     = false;
-   hle_next_lba      = 0;
 }
 
 const CDBootStrategy cd_boot_strategy_hle = {
