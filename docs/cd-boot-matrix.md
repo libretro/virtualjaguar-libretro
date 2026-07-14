@@ -113,7 +113,7 @@ fresh dated section; do not retrofit old ones.
 | Baldies (USA) (Rev 1).cue | bios | 0/1 | HARNESS_HANG | [CRASH-DETECT] video_stall frame=745 fb_hash=$EB4463AA unchanged for 300 frames gpu_pc=$00F03060 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 | killed after 120s wall-clock |
 | Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1359 fb_hash=$114AB567 unchanged for 300 frames gpu_pc=$00F031D8 gpu_run=0 dsp_pc=$00F1B57E dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=22288B unique_pcs=126 final_pc=$0046DC |
 | Battle Morph (USA).cue | bios | 0/1 | ? (pc_escape) | (none) |     [FAIL]  Battle Morph (USA).cue : pc_in_ram=0 not_loop=1 not_thrash=1 ram_payload=32704B unique_pcs=256+ final_pc=$8FBFB758 |
-| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=3393B unique_pcs=6 final_pc=$1243BC |
+| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=3393B unique_pcs=6 final_pc=$1243BC; PC-SET game-band: $12438A $1243BC $12438E $1257E8 $12438C $124382 |
 | BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=737 seek_starts=1 seek_dones=1 fifo_drains=0 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25922B unique_pcs=23 final_pc=$00361E; PC-SET game-band: $124342 $124346 $12434C |
 | Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=412 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=884B unique_pcs=44 final_pc=$005412 |
 | Dragon's Lair (USA).cue | bios | 1/1 | BIOS_INTRO | [CRASH-DETECT] video_stall frame=840 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B0CE dsp_run=1 |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23401B unique_pcs=38 final_pc=$0060D8 |
@@ -153,8 +153,21 @@ same knobs); all other rows are the earlier baseline.
   score, and PC evidence identical to baseline (Dragon's Lair row is
   byte-identical; BrainDead differs only in which watchdog signature got
   logged first -- `cd_seek_wedge` vs `video_stall`, both fire at the same
-  frame; its game-band PC set `$124342 $124346 $12434C` is unchanged).
-  No regression.
+  frame, and its stalled gpu_pc moved $F03270 -> $F03276 within the same
+  GPU poll band; its game-band PC set `$124342 $124346 $12434C` is
+  unchanged). No regression.
+- **HLE rows re-validated post-reroute** (BUTCHExec ticks for all
+  `bootConfig.isCDGame` modes, so the IRQ0->IRQ1 change is live in HLE
+  too): Primal Rage (hle), Iron Soldier 2 (hle), BrainDead 13 (hle)
+  deleted + re-run -- all three unchanged vs baseline (Primal Rage and
+  IS2 rows byte-identical; BrainDead identical stage/score/final_pc,
+  the re-run row merely adds the informational PC-SET game-band list).
+  No spurious $F03010 dispatches surfaced in HLE mode.
+- **Provenance:** the reroute functionally reverts commit `3279b30`
+  ("CD: fix BUTCH->GPU IRQ line - route to GPU IRQ0 (EXT1), not IRQ1
+  (DSP)", 2026-04-29), whose "$F03000 = EXT1" premise was unverified and
+  which self-declared "no behaviour change without the BUTCHExec
+  scheduler tick". The original IRQ1 routing it removed was correct.
 
 ## Diagnosis (Task 5) -- 2026-07-13, branch feature/jaguar-cd-support @ 5827940
 
