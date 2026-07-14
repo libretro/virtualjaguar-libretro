@@ -397,9 +397,45 @@ It **rejects** the "populate vectors" fix for these two titles. Full trace in
 plain `RTE`; the 68000 stacks PC *at* the illegal instruction, so `RTE`
 returns to `$004D54` and re-executes ILLEGAL forever — Baldies would turn
 `pc_escape` into a **wedge** while a "vectors populated" test goes GREEN
-(PR#170 pattern). The real fix is the `$2C00` TOC layout (a different
-mechanism, needs the authoritative MiSTer format) — tracked separately, **not
-under 6B**. Task 6B outcome: **BLOCKED with artifacts**, no `src/` change.
+(PR#170 pattern). The same holds for Battle Morph's Line-A trap (vector 10
+also stacks the faulting PC on a 68000, so plain `RTE` re-executes `$AFDE` =
+wedge), and for the `jagcd_hle.c:934-949` "skip-2" ILLEGAL-handler variant
+(`ADDQ.L #2,(2,SP); RTE`): skipping past the deliberate halt lets the stub
+continue with `d0=-1` and garbage TOC state — an equally effective mask.
+The real fix is the `$2C00` TOC layout (a different mechanism, needs the
+authoritative MiSTer format) — tracked separately, **not under 6B**. Task 6B
+outcome: **BLOCKED with artifacts**, no `src/` change.
+
+**TOC defect spec for the fix task** (what the disasm establishes; resolve
+the open points against MiSTer/BIOS-DSP ground truth, not guesswork):
+
+1. **Defect (1) — marker slot terminates the scan.** The injector writes the
+   session-2 marker as an 8-byte slot whose first longword is 0 at `$2C08`
+   (marker byte `01` at `+4`); Baldies' `$4E18` scanner reads entries from
+   `$2C08` and treats a zero first longword as end-of-table → instant
+   `d0=-1`.
+2. **Defect (2) — no entry carries the byte[4] key.** Even past the marker,
+   the scanner matches via `rol.l #8,d3; cmp.b d0,d3` — i.e. it compares the
+   search key against **entry byte[4]** (first byte of the second longword).
+   `jagcd_bios.c` writes only bytes [0..3] = `[track][min][sec][frm]` and
+   leaves [4..7] zero, so the key match can never succeed for any entry.
+   **A fix that only un-zeroes the marker still returns `d0=-1`.**
+3. **Format-model question to resolve:** per-entry session/type byte at
+   offset [4] (structurally closer to what `$4E18` expects — it counts
+   *occurrences* of the key byte, consistent with "Nth entry of session S")
+   vs the current standalone-marker-slot design. Decide from MiSTer ground
+   truth, not by making one scanner happy.
+4. **Two-scanner requirement:** any TOC layout must satisfy BOTH Baldies'
+   `$4E18` occurrence-counting scan AND Primal Rage's `$0803E2`
+   marker-then-NEXT-entry scan (`project_cd_toc_format.md`). The found-path
+   payload — which MSF fields the stub consumes from the matched entry
+   (`$4E48: ror.l #8,d3; bsr $4E54` onward) — is still unknown;
+   MiSTer/BIOS-DSP ground truth required before writing bytes.
+5. **Frame-437 determinism, crisply:** the shared CD BIOS reaches the
+   `$050176` boot-stub injection hook at ~frame 437 in both titles; each
+   injected stub then faults within its first frame of execution. The
+   constant is a property of the deterministic BIOS boot sequence, not a
+   timer/interrupt.
 
 ### HLE-mode wrong-LBA spot check -- Iron Soldier 2 (hle)
 
