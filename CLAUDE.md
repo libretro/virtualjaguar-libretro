@@ -94,6 +94,8 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
   Usage: `<core.so|.dylib> <rom> [frames] --load-state <file> [--frame-window F L] [--cmd-filter MASK VAL] [--verbose-dump]` (note: `--load-state`, not `--savestate`).
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
 - `test/sram_test.sh` — SRAM round-trip
+- `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS mode) vs `docs/cd-boot-matrix.md`; env knobs `CD_MATRIX_FRAMES`, `CD_MATRIX_TIMEOUT`, `CD_MATRIX_MAX_RUNS`, `CD_MATRIX_LOGDIR`, `CD_MATRIX_OUT`, `CD_MATRIX_ROMS_ROOT`; chunked/resumable across invocations
+- CD trace ring: core option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1` for headless use) records `DSA_TX`/`DSA_RX`, `SEEK_START`/`SEEK_DONE`, `FIFO_FILL`/`FIFO_DRAIN`, `STOP`, `HLE_READ` events; dumped to the log on `cd_seek_wedge` or on request
 
 ### Performance / profiling
 
@@ -107,6 +109,7 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 - `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$E3FFFF]`
 - `gpu_wedge` / `dsp_wedge` — same PC for ≥180 / 600 frames while still flagged running
 - `video_stall` — framebuffer hash unchanged for 300 frames while a processor is running
+- `cd_seek_wedge` — a CD seek was started but FIFO drain progress is frozen for 300 frames while a processor is still running; dumps the CD trace ring (see above, "Key harnesses") to the log
 
 Toggled via core option `virtualjaguar_crash_detect = enabled` (default) / `disabled` / `verbose`. Verbose mode adds a state heartbeat every 600 frames. Cost when enabled: one indirect call + ~256-pixel hash per frame; off-mode short-circuits at the first instruction.
 

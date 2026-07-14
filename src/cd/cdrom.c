@@ -637,7 +637,7 @@ void BUTCHExec(uint32_t cycles)
    /* Removed: HLETransferTick shortcut for BIOS strategy.  It existed to
     * compensate for the GPU CD ISR's PTRPOS divergence on the FIFO path
     * back when BUTCH wasn't ticking and the GPU IRQ chain was broken.
-    * With BUTCHExec wired in, the IRQ-line fix routing to GPU IRQ0, and
+    * With BUTCHExec wired in, the IRQ-line fix routing to GPU IRQ1, and
     * the recent CPU/GPU/DSP/IRQ accuracy work, the native FIFO path now
     * delivers correct transfers — and the HLE shortcut became actively
     * harmful (Primal Rage's BIOS path was wedging at $22002200 because

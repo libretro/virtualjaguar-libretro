@@ -821,6 +821,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		echo "  SKIP: Iron Soldier 1 ROM (private) not available (audio presence)"; \
 	fi
 	./test/test_butch_cd
+	./test/test_cd_hle_idempotent
 	./test/test_bios_config
 	./test/test_boot_config
 	./test/test_audio_dac

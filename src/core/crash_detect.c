@@ -275,7 +275,7 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
          if (cd_seek_wedge_frames == WEDGE_FRAMES_CD_SEEK
              && may_log(&last_log_cd_seek_wedge))
          {
-            LOG_ERR("[CRASH-DETECT] cd_seek_wedge frame=%u seek_starts=%u seek_dones=%u "
+            LOG_WRN("[CRASH-DETECT] cd_seek_wedge frame=%u seek_starts=%u seek_dones=%u "
                     "fifo_drains=%u unchanged for %u frames gpu_pc=$%08X gpu_run=%d "
                     "dsp_pc=$%08X dsp_run=%d\n",
                     frame_no, cd_seek_starts, cd_seek_dones, cd_fifo_drains,
