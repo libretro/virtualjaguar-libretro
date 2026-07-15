@@ -735,7 +735,7 @@ clean:
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_second_transfer test/test_cd_hle_idempotent \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
@@ -769,7 +769,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_second_transfer test/test_cd_hle_idempotent \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map
 	./test/test_cheat
@@ -839,7 +839,8 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@echo ""
 	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
 	@echo "test/test_cd_toc_contract (needs VJ_TOC_DISC=<image>),"
-	@echo "test/test_cd_fifo_stream and test/test_cd_second_transfer (need VJ_FIFO_DISC=<image>),"
+	@echo "test/test_cd_fifo_stream, test/test_cd_second_transfer and test/test_cd_lost_wakeup"
+	@echo "(need VJ_FIFO_DISC=<image>),"
 	@echo "and test/test_blitter (register-readback) are built but not run from"
 	@echo "'make test'. The CD sweeps walk every disc in test/roms/private/; the"
 	@echo "blitter readback tests probe register read paths that the emulator"
@@ -997,6 +998,10 @@ test/test_cd_fifo_stream: test/test_cd_fifo_stream.c test/test_framework.h
 test/test_cd_second_transfer: test/test_cd_second_transfer.c test/test_framework.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_second_transfer.c -ldl
+
+test/test_cd_lost_wakeup: test/test_cd_lost_wakeup.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_lost_wakeup.c -ldl
 
 test/test_audio_dac: test/test_audio_dac.c test/test_framework.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \

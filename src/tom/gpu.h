@@ -31,6 +31,7 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 
 uint32_t GPUGetPC(void);
 void GPUReleaseTimeslice(void);
+void GPUCPUINTCallback(void);
 void GPUResetStats(void);
 uint32_t GPUReadPC(void);
 int GPUIsRunning(void);

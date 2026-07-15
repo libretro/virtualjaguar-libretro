@@ -32,6 +32,8 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
+#include "event.h"
+#include "settings.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -259,9 +261,41 @@ uint8_t * branch_condition_table = 0;
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
 
+/* Timeslice bookkeeping for GPU-raised 68K interrupts (CPUINT).
+ *
+ * The main loop runs the 68K's timeslice to completion BEFORE the GPU's
+ * (JaguarExecuteNew), so the GPU observes 68K writes "from the future": a
+ * mailbox command written near the END of a 68K slice is visible to the GPU
+ * at the START of its own slice covering the same emulated interval.  If the
+ * GPU responds with a CPUINT and we deliver it synchronously, the 68K can
+ * receive the interrupt BEFORE it has executed the instructions that follow
+ * the mailbox write -- on silicon that ordering is physically impossible,
+ * because the GPU's decode path from mailbox poll to the G_CTRL store takes
+ * thousands of GPU cycles while `move.l -> stop` is ~6 CPU cycles.  Games
+ * built on the standard coprocessor handshake (command; stop; wait for the
+ * one-shot CPUINT) then deadlock on a lost wakeup (BrainDead 13 FMV engine).
+ *
+ * Fix: deliver GPU-raised CPUINT through the event scheduler at
+ *   (slice budget + GPU cycles actually consumed to reach the store) usec,
+ * i.e. the GPU's own measured decode latency replayed into the 68K's next
+ * slice.  That is provably never EARLIER than silicon (write time <= slice
+ * end, decode consumed >= true decode path) and late by at most one slice
+ * (~32 usec), well inside real-world interrupt-latency slack.  No tuned
+ * constants: the offset is whatever the emulated GPU actually executed. */
+static int32_t gpuExecSliceBudget = 0;
+static int32_t gpuExecSliceRemaining = 0;
+
 void GPUReleaseTimeslice(void)
 {
 	gpu_releaseTimeSlice_flag = 1;
+}
+
+/* Event-scheduler callback: deliver a GPU-raised CPUINT to the 68K.
+ * TOMSetPendingGPUInt() latches the pending bit and asserts the 68K IRQ
+ * if the GPU interrupt is still enabled in INT1 (TOMAssertEnabledIRQs). */
+void GPUCPUINTCallback(void)
+{
+	TOMSetPendingGPUInt();
 }
 
 uint32_t GPUGetPC(void)
@@ -535,6 +569,25 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   {
                      //This is the programmer's responsibility, to make sure the handler is valid, not ours!
                      //					if ((TOMIRQEnabled(IRQ_GPU))// && (JaguarInterruptHandlerIsValid(64)))
+                     if (who == GPU && !m68k_is_stopped())
+                     {
+                        /* GPU-raised CPUINT while the 68K is RUNNING: never
+                         * deliver synchronously -- the 68K may still be on
+                         * its way to the `stop` of a command/stop/wait
+                         * handshake, and consuming the one-shot wakeup
+                         * before the halt deadlocks it.  See the
+                         * gpuExecSliceBudget comment block.  (If the 68K is
+                         * already stopped, immediate delivery just wakes it
+                         * -- no race is possible -- so we keep the cheap
+                         * path and avoid fragmenting the timeslice.) */
+                        double riscUSec = (vjs.hardwareTypeNTSC
+                           ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+                        double consumed = (double)(gpuExecSliceBudget - gpuExecSliceRemaining);
+                        SetCallbackTime(GPUCPUINTCallback,
+                           ((double)gpuExecSliceBudget + consumed) * riscUSec, EVENT_MAIN);
+                        GPUReleaseTimeslice();
+                     }
+                     else
                      {
                         TOMSetPendingGPUInt();
                         m68k_set_irq(2);			// Set 68000 IPL 2
@@ -702,6 +755,8 @@ void GPUReset(void)
    gpu_pc				  = 0x00F03000;
    gpu_irq0_count       = 0;
    gpu_irq3_count       = 0;
+   gpuExecSliceBudget   = 0;
+   gpuExecSliceRemaining = 0;
    gpu_control			  = 0x00002800;			// Correctly sets this as TOM Rev. 2
    gpu_hidata			  = 0x00000000;
    gpu_remain			  = 0x00000000;			// These two registers are RO/WO
@@ -769,11 +824,13 @@ void GPUExec(int32_t cycles)
    GPUHandleIRQs();
    gpu_releaseTimeSlice_flag = 0;
    gpu_in_exec++;
+   gpuExecSliceBudget = cycles;
 
    while (cycles > 0 && GPU_RUNNING)
    {
       uint16_t opcode;
       uint32_t index;
+      gpuExecSliceRemaining = cycles;
       if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
       {
          uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
