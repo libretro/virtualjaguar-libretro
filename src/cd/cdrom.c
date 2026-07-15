@@ -372,6 +372,10 @@ static uint32_t cdSeekStartCount = 0;
 static uint32_t cdSeekDoneCount = 0;
 static uint32_t cdFifoDrainCount = 0;
 
+/* First (boot-relevant) seek target LBA, captured post-redirect the first
+ * time a non-redundant $12xx seek runs after reset.  0xFFFFFFFF = none. */
+static uint32_t diag_firstSeekBlock = 0xFFFFFFFFu;
+
 static int CDTraceEnvWantsTrace(void)
 {
    const char *e;
@@ -451,6 +455,11 @@ void CDROMDiagGetSeekWedgeState(uint32_t *seekStarts, uint32_t *seekDones,
    if (fifoDrains) *fifoDrains = cdFifoDrainCount;
 }
 
+uint32_t CDROMDiagGetFirstSeekBlock(void)
+{
+   return diag_firstSeekBlock;
+}
+
 
 void CDROMInit(void)
 {
@@ -507,6 +516,7 @@ void CDROMReset(void)
    cdSeekStartCount = 0;
    cdSeekDoneCount = 0;
    cdFifoDrainCount = 0;
+   diag_firstSeekBlock = 0xFFFFFFFFu;
 
    // Initialize EEPROM to 0xFFFF (blank/erased state), then set
    // factory default values.  The Jaguar CD BIOS reads specific EEPROM
@@ -995,7 +1005,18 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
                    fifoReadTraceCount, offset, who, fifoDataReady, cdPlaying, cdBufPtr, gpu_pc);
          }
       }
-      if (haveCDGoodness && fifoDataReady)
+      /* Deliver data whenever the drive is playing, not only while
+       * fifoDataReady.  The CD BIOS GPU ISR reads NINE longwords (18 word
+       * reads) per invocation in sentinel-scan mode -- more than
+       * FIFO_DRAIN_READS (16).  Gating data on fifoDataReady made word
+       * reads 17-18 of every invocation return $0000, which reset the
+       * ISR's 16-consecutive-sentinel counter ($F03234: moveq #16,r26) on
+       * EVERY invocation, so the sync mark could never be accepted.  Real
+       * BUTCH reads past the fill level return stale FIFO content, never
+       * zeros; delivering the next sequential words is the closest linear
+       * approximation.  fifoDataReady still paces the half-full IRQ
+       * (drain/refill below) exactly as before. */
+      if (haveCDGoodness && (fifoDataReady || cdPlaying))
       {
          if (cdBufPtr >= 2352 && cdPlaying)
          {
@@ -1008,19 +1029,24 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             data = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr];
             cdBufPtr += 2;
          }
-         fifoReadCount++;
-         if (fifoReadCount >= FIFO_DRAIN_READS)
+         if (fifoDataReady)
          {
-            fifoDataReady = false;
-            fifoFillDelay = FIFO_REFILL_TICKS;
-            cdFifoDrainCount++;
-            CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
+            fifoReadCount++;
+            if (fifoReadCount >= FIFO_DRAIN_READS)
+            {
+               fifoDataReady = false;
+               fifoFillDelay = FIFO_REFILL_TICKS;
+               cdFifoDrainCount++;
+               CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
+            }
          }
       }
    }
    else if (offset >= FIFO_DATA + 4 && offset <= FIFO_DATA + 7)
    {
-      if (haveCDGoodness && fifoDataReady)
+      /* Same delivery rule as FIFO_DATA above (I2SDAT2 pops the same
+       * sequential stream; see that comment). */
+      if (haveCDGoodness && (fifoDataReady || cdPlaying))
       {
          if (cdBufPtr >= 2352 && cdPlaying)
          {
@@ -1033,13 +1059,16 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             data = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr];
             cdBufPtr += 2;
          }
-         fifoReadCount++;
-         if (fifoReadCount >= FIFO_DRAIN_READS)
+         if (fifoDataReady)
          {
-            fifoDataReady = false;
-            fifoFillDelay = FIFO_REFILL_TICKS;
-            cdFifoDrainCount++;
-            CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
+            fifoReadCount++;
+            if (fifoReadCount >= FIFO_DRAIN_READS)
+            {
+               fifoDataReady = false;
+               fifoFillDelay = FIFO_REFILL_TICKS;
+               cdFifoDrainCount++;
+               CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
+            }
          }
       }
    }
@@ -1239,7 +1268,25 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             }
 
             CDIntfReadBlock(block, cdBuf);
-            cdBufPtr = 0;
+            /* Start the word stream ONE 16-bit word into the sector, not at
+             * byte 0.  BUTCH assembles its 32-bit FIFO entries from the I2S
+             * word stream with a one-word capture skew relative to sector
+             * data, and Jaguar CD discs are mastered for exactly that
+             * grouping: the boot-stub sync mark (16 repeats of the D1
+             * sentinel, e.g. Primal Rage DDL9=$44444C39 at LBA 117224 byte
+             * 42, Baldies CINE=$43494E45 at LBA 20958 byte 46) always sits
+             * at byte offset == 2 (mod 4).  Grouped from word 1, entries
+             * assemble as (sentinel_hi<<16)|sentinel_lo for exactly 16
+             * consecutive longwords -- the count the CD BIOS GPU ISR
+             * requires at $F03248 (subq #1,r26 from 16) -- and the game
+             * code that follows begins exactly on an entry boundary.
+             * Grouped from word 0 (the old behaviour) every entry reads
+             * ($4C39xxxx) and the ISR scans the disc forever: the
+             * "streaming wall".  One skipped word once per seek; the
+             * stream stays linear from byte 2 onward. */
+            cdBufPtr = 2;
+            if (diag_firstSeekBlock == 0xFFFFFFFFu)
+               diag_firstSeekBlock = block;
             CD_LOG("Seek started: block=%u (MSF %02u:%02u:%02u), delay=%d ticks\n",
                    block, min, sec, frm, SEEK_DELAY_TICKS);
          }

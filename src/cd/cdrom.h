@@ -70,6 +70,12 @@ void CDTraceHLERead(uint32_t lba, uint16_t byteCountTrunc);
 void CDROMDiagGetSeekWedgeState(uint32_t *seekStarts, uint32_t *seekDones,
                                 uint32_t *fifoDrains);
 
+/* First (boot-relevant) $12xx seek target, post-redirect, as an absolute
+ * disc LBA.  Returns 0xFFFFFFFF if no seek has been issued since reset.
+ * Consumed by test/test_cd_fifo_stream.c to locate the sync mark the GPU
+ * CD ISR must find in the FIFO stream. Diagnostic only, never serialized. */
+uint32_t CDROMDiagGetFirstSeekBlock(void);
+
 #ifdef __cplusplus
 }
 #endif
