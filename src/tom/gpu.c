@@ -206,6 +206,23 @@ static uint32_t gpu_instruction;
 static uint32_t gpu_opcode_first_parameter;
 static uint32_t gpu_opcode_second_parameter;
 
+/* Branch delay-slot IRQ hazard state.  gpu_opcode_jump/jr execute their
+ * delay-slot instruction inline and then apply the branch target to gpu_pc.
+ * If the delay-slot instruction's side effects dispatch a GPU interrupt
+ * synchronously -- the canonical case is the CD BIOS / game streaming-ISR
+ * epilogue `JUMP T,(Rret)` with `STORE Rflags,(G_FLAGS)` in the delay slot,
+ * where the store clears IMASK while a FIFO interrupt is already latched --
+ * then GPUHandleIRQs must push the BRANCH TARGET as the return address
+ * (the delay slot has completed; the next instruction is the target), and
+ * the jump must NOT overwrite gpu_pc afterwards, or the vector jump is
+ * clobbered: IMASK stays set forever, no interrupt is ever delivered again,
+ * and CD transfers wedge (video_stall / cd_seek_wedge with G_FLAGS IMASK
+ * stuck).  Transient within a single opcode's execution -- never live at a
+ * savestate boundary, so deliberately not serialized. */
+static uint32_t gpu_ds_branch_target;
+static uint8_t  gpu_in_delay_slot;
+static uint8_t  gpu_ds_irq_dispatched;
+
 #define GPU_RUNNING	(gpu_control & 0x01)
 
 #define RM		gpu_reg[gpu_opcode_first_parameter]
@@ -620,7 +637,19 @@ void GPUHandleIRQs(void)
    // move  pc,r30			; address of interrupted code
    // store  r30,(r31)     ; store return address
    gpu_reg[31] -= 4;
-   GPUWriteLong(gpu_reg[31], gpu_pc - 2, GPU);
+   if (gpu_in_delay_slot)
+   {
+      /* Dispatch triggered by the delay-slot instruction itself (e.g. an
+       * IMASK-clearing G_FLAGS store in an ISR epilogue's delay slot).
+       * The delay slot has already executed, so the interrupted-code
+       * address is the pending BRANCH TARGET, not gpu_pc (which still
+       * points just past the delay slot).  Flag the in-flight jump opcode
+       * so it does not overwrite gpu_pc (the vector) afterwards. */
+      GPUWriteLong(gpu_reg[31], gpu_ds_branch_target - 2, GPU);
+      gpu_ds_irq_dispatched = 1;
+   }
+   else
+      GPUWriteLong(gpu_reg[31], gpu_pc - 2, GPU);
 
    // movei  #service_address,r30  ; pointer to ISR entry
    // jump  (r30)					; jump to ISR
@@ -680,6 +709,11 @@ void GPUReset(void)
 
    // GPU internal register
    gpu_acc				  = 0x00000000;
+
+   // Delay-slot IRQ hazard state (transient; reset for iOS static-state hygiene)
+   gpu_ds_branch_target  = 0x00000000;
+   gpu_in_delay_slot     = 0;
+   gpu_ds_irq_dispatched = 0;
 
    gpu_reg = gpu_reg_bank_0;
    gpu_alternate_reg = gpu_reg_bank_1;
@@ -1015,8 +1049,16 @@ INLINE static void gpu_opcode_jump(void)
       gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = ds_opcode & 0x1F;
       gpu_pc += 2;
+      gpu_in_delay_slot = 1;
+      gpu_ds_branch_target = delayed_pc;
+      gpu_ds_irq_dispatched = 0;
       executeOpcode(ds_index);
-      gpu_pc = delayed_pc;
+      gpu_in_delay_slot = 0;
+      /* If the delay-slot instruction dispatched an interrupt, gpu_pc is
+       * the ISR vector and the branch target is on the ISR stack as the
+       * return address -- do not clobber the vector. */
+      if (!gpu_ds_irq_dispatched)
+         gpu_pc = delayed_pc;
    }
 }
 
@@ -1045,8 +1087,15 @@ INLINE static void gpu_opcode_jr(void)
       gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = ds_opcode & 0x1F;
       gpu_pc += 2;
+      gpu_in_delay_slot = 1;
+      gpu_ds_branch_target = (uint32_t)delayed_pc;
+      gpu_ds_irq_dispatched = 0;
       executeOpcode(ds_index);
-      gpu_pc = delayed_pc;
+      gpu_in_delay_slot = 0;
+      /* See gpu_opcode_jump: don't clobber a vector jump dispatched by
+       * the delay-slot instruction. */
+      if (!gpu_ds_irq_dispatched)
+         gpu_pc = delayed_pc;
    }
 }
 
