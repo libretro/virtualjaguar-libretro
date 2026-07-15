@@ -1464,7 +1464,21 @@ INLINE static void gpu_opcode_storep(void)
 INLINE static void gpu_opcode_loadb(void)
 {
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-      RN = GPUReadLong(RM, GPU) & 0xFF;
+   {
+      /* JTRM (Technical Reference v8, "Load Byte"): "The destination
+       * register will have the byte loaded into bits 0-7 ... This applies
+       * to external memory only, internal memory will perform a 32-bit
+       * read."  Internal RAM is one long per row; a byte load returns the
+       * ENTIRE long containing the address -- no byte extraction at all.
+       * Atari's own Cinepak decompressor (JTRM vol. 12) depends on this:
+       * its CRY/RGB clamp tables in GPU local RAM store one entry per
+       * 32-bit long (value in the low byte, upper bytes zero) and index
+       * them with LOADB at arbitrary byte offsets.  The old code returned
+       * `GPUReadLong(RM) & 0xFF` (= the byte at RM+3): every decoded FMV
+       * frame came out as structured garbage (BrainDead 13 / Dragon's
+       * Lair / Space Ace). */
+      RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
+   }
    else
       RN = JaguarReadByte(RM, GPU);
 }
@@ -1472,17 +1486,14 @@ INLINE static void gpu_opcode_loadb(void)
 
 INLINE static void gpu_opcode_loadw(void)
 {
-#ifdef GPU_CORRECT_ALIGNMENT
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-      RN = GPUReadLong(RM & 0xFFFFFFFE, GPU) & 0xFFFF;
+   {
+      /* Same JTRM rule as LOADB: word loads from internal RAM perform a
+       * full 32-bit read of the long containing the address. */
+      RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
+   }
    else
       RN = JaguarReadWord(RM, GPU);
-#else
-   if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-      RN = GPUReadLong(RM, GPU) & 0xFFFF;
-   else
-      RN = JaguarReadWord(RM, GPU);
-#endif
 }
 
 
