@@ -1382,7 +1382,14 @@ INLINE static void dsp_opcode_store(void)
 INLINE static void dsp_opcode_loadb(void)
 {
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM, DSP) & 0xFF;
+	{
+		/* JTRM (Technical Reference v8, "Load Byte"): byte extraction
+		 * "applies to external memory only, internal memory will perform
+		 * a 32-bit read."  A byte load from DSP local RAM returns the
+		 * ENTIRE long containing the address -- same rule as the GPU
+		 * (see gpu_opcode_loadb). */
+		RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
+	}
 	else
 		RN = JaguarReadByte(RM, DSP);
 }
@@ -1390,14 +1397,16 @@ INLINE static void dsp_opcode_loadb(void)
 
 INLINE static void dsp_opcode_loadw(void)
 {
-#ifdef DSP_CORRECT_ALIGNMENT
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM & 0xFFFFFFFE, DSP) & 0xFFFF;
+	{
+		/* Same JTRM rule as LOADB: word loads from internal RAM perform
+		 * a full 32-bit read of the long containing the address. */
+		RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
+	}
+#ifdef DSP_CORRECT_ALIGNMENT
 	else
 		RN = JaguarReadWord(RM & 0xFFFFFFFE, DSP);
 #else
-	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM, DSP) & 0xFFFF;
 	else
 		RN = JaguarReadWord(RM, DSP);
 #endif
@@ -2328,21 +2337,27 @@ INLINE static void DSP_load(void)
 INLINE static void DSP_loadb(void)
 {
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM, DSP) & 0xFF;
+	{
+		/* JTRM: internal-RAM byte loads perform a full 32-bit read
+		 * (see dsp_opcode_loadb). */
+		PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
+	}
 	else
 		PRES = JaguarReadByte(PRM, DSP);
 }
 
 INLINE static void DSP_loadw(void)
 {
-#ifdef DSP_CORRECT_ALIGNMENT
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM & 0xFFFFFFFE, DSP) & 0xFFFF;
+	{
+		/* JTRM: internal-RAM word loads perform a full 32-bit read
+		 * (see dsp_opcode_loadw). */
+		PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
+	}
+#ifdef DSP_CORRECT_ALIGNMENT
 	else
 		PRES = JaguarReadWord(PRM & 0xFFFFFFFE, DSP);
 #else
-	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM, DSP) & 0xFFFF;
 	else
 		PRES = JaguarReadWord(PRM, DSP);
 #endif
