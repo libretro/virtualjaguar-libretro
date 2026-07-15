@@ -14,7 +14,7 @@ Jaguar CD games boot the BIOS, load their boot stub, stream real disc data, and 
 
 | Title | State |
 |---|---|
-| BrainDead 13 | Boots → splash clears → loads → **audio plays** → black screen, 68K halted (§4 bug). Device-confirmed. |
+| BrainDead 13 | Boots → splash clears → loads → **audio plays** → §4 lost-wakeup deadlock **FIXED** (`61aca48`); now runs further, then a NEW post-transfer-2 wait (video_stall ~1601 headless — needs diagnosis + device re-test). |
 | Baldies (CUE) | Reaches GAME_CODE (`$060106`). Was an ILLEGAL-halt crash. |
 | Primal Rage | Completes transfer #2, lands in the same wait state its working HLE mode reaches. |
 | Highlander / Iron Soldier 2 | Stall earlier — a **different** pre-sentinel mechanism (drains freeze at 54/0). Undiagnosed. |
@@ -34,7 +34,20 @@ HLE mode gets most titles into game code; it is not a substitute for the real-BI
 | `7c98e16` | **GPU: don't clobber IRQ dispatch raised in a branch delay slot.** The CD ISR epilogue is `JUMP T,(Rret)` with `STORE Rflags,(G_FLAGS)` in the delay slot; that store clears IMASK, gpu.c dispatched the IRQ synchronously *inside* the delay slot, then `gpu_opcode_jump/jr` overwrote `gpu_pc` with the branch target — **clobbering the ISR vector, IMASK stuck set forever**. Fix pushes the branch target as the return address and suppresses the overwrite. Matches `dsp.c`'s proven deferred-dispatch semantics (that equivalence was the review's load-bearing proof). |
 | `17f4145` | **HLE `CD_read` made idempotent** — deleted a fabricated `+3 sectors/call` continuation heuristic that made repeated identical reads drift and corrupt RAM. |
 
-## 4. THE CURRENT BLOCKER — lost-wakeup race (diagnosed, **not** fixed)
+## 4. ~~THE CURRENT BLOCKER~~ — lost-wakeup race (**FIXED 2026-07-15**, commit `61aca48`, local/unpushed)
+
+> **Status update:** fixed by delivering GPU-raised CPUINT through the event
+> scheduler at `(slice budget + GPU cycles consumed)` µs when the 68K is not
+> already stopped (`src/tom/gpu.c`, `GPUCPUINTCallback`). Contract test:
+> `test/test_cd_lost_wakeup.c` (in `make test`; needs `VJ_FIFO_DISC`).
+> Verified: full suite 56103/56103, cart library crash-signature A/B identical,
+> matrix monotonic (see the 2026-07-15 notes in `cd-boot-matrix.md`). Known
+> cost: Towers II −6.5 % FPS headless (hardware-accurate handshake latency).
+> **Unpushed pending maintainer device testing of GPU-heavy carts.**
+> BrainDead 13 now runs past the old wall and hits a NEW, undiagnosed wait
+> (~frame 1601 video_stall, cd_seek_wedge at 2266 with drains frozen at 38916
+> after transfer 2 completes) — that is the next investigation, plus the §5
+> backlog. The mechanism analysis below is kept for reference.
 
 **Not a CD bug.** A core 68K/GPU scheduler race that CD FMV engines expose.
 
