@@ -150,7 +150,21 @@ python3 test/tools/analyze_cd_roms.py <image>     # track/session layout, MSF↔
 python3 test/tools/disasm_gpu_isr.py              # GPU RISC disassembly (used for every ISR finding above)
 python3 test/tools/bios_disasm.py                 # 68K BIOS ROM disassembly
 ./test/tools/test_benchmark <core.dylib> <rom> [frames]   # cart smoke-test; surfaces crash-detect lines
+make cd-visual CD_VISUAL_DISC="<image.cue>" \
+     CD_VISUAL_FLAGS="--bios --frames 3000 --outdir /tmp/cdshots"
+# ^ automated visual+audio verdict: per-second motion timeline, audio RMS,
+#   screenshots (PPM -> `sips -s format png *.ppm --out .`). An agent can Read
+#   the PNGs to SEE what the game shows — used to confirm BrainDead 13 renders
+#   the BIOS cube, plays its FMV, and freezes on real game artwork at the
+#   post-transfer-2 wall.
 ```
+
+### Build-identity guard
+All harnesses print the core's embedded `vX.Y.Z <gitrev>[-dirty]` at load and
+hard-fail if it doesn't match `VJ_EXPECT_BUILD` (`make test` and
+`cd_boot_matrix.sh` set it automatically from `scripts/build-id.sh`). Set it
+manually when invoking harnesses by hand: a stale binary once produced a false
+PASS in this effort — see the SKIP≠PASS fix in `test/test_framework.h`.
 
 ### Test material (`test/roms/private/`, gitignored)
 CUE/BIN: Baldies, Battle Morph, BrainDead 13, Dragon's Lair, Highlander, Hover Strike, Iron Soldier 2, Primal Rage, Space Ace. Also `baldies.cdi`, loose ISOs (non-bootable — documented), `Jaguar CD BIOS.rom`, `[BIOS] Atari Jaguar CD (World).j64`, `jagboot.rom`, and ~25 cart ROMs for regression/blast-radius testing.

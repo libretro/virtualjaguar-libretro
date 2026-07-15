@@ -1038,9 +1038,11 @@ bool retro_load_game(const struct retro_game_info *info)
 
    check_variables();
 
-#ifdef BUILD_TIMESTAMP
+   /* Always identify the exact build in the frontend log: version, short
+    * git rev (+"-dirty" for uncommitted trees), and timestamp for DEBUG
+    * builds.  Answers "which binary is this?" in every bug report and
+    * stops test runs against a stale core from going unnoticed. */
    LOG_INF("[Virtual Jaguar] build: %s\n", CORE_VERSION);
-#endif
 
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;

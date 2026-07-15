@@ -123,6 +123,13 @@ typedef struct {
  * Return false to stop execution early. */
 typedef bool (*harness_frame_cb)(void *userdata, unsigned frame);
 
+/* Video frame callback: called from the core's video refresh with the raw
+ * XRGB8888 framebuffer (data may be NULL on duped frames).  Lets tests
+ * inspect pixels (motion detection, screenshots) without reimplementing
+ * the libretro plumbing. */
+typedef void (*harness_video_cb)(void *userdata, const void *data,
+                                 unsigned width, unsigned height, size_t pitch);
+
 typedef struct {
     /* Configuration (set before init) */
     const char   *core_path;
@@ -138,6 +145,15 @@ typedef struct {
     /* Per-frame hook */
     harness_frame_cb frame_callback;
     void            *frame_callback_data;
+
+    /* Video pixel hook (optional) */
+    harness_video_cb video_callback;
+    void            *video_callback_data;
+
+    /* Directory returned for GET_SYSTEM_DIRECTORY (CD BIOS discovery).
+     * Default "/tmp"; set to "test/roms/private" for CD titles, or use
+     * --system-dir. */
+    const char   *system_dir;
 
     /* Runtime state (set by harness) */
     void  *core_handle;
@@ -166,6 +182,9 @@ typedef struct {
     .num_options = 0, \
     .frame_callback = NULL, \
     .frame_callback_data = NULL, \
+    .video_callback = NULL, \
+    .video_callback_data = NULL, \
+    .system_dir = "/tmp", \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \

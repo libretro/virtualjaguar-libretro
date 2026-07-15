@@ -96,6 +96,11 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 - `test/sram_test.sh` — SRAM round-trip
 - `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS mode) vs `docs/cd-boot-matrix.md`; env knobs `CD_MATRIX_FRAMES`, `CD_MATRIX_TIMEOUT`, `CD_MATRIX_MAX_RUNS`, `CD_MATRIX_LOGDIR`, `CD_MATRIX_OUT`, `CD_MATRIX_ROMS_ROOT`; chunked/resumable across invocations
 - CD trace ring: core option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1` for headless use) records `DSA_TX`/`DSA_RX`, `SEEK_START`/`SEEK_DONE`, `FIFO_FILL`/`FIFO_DRAIN`, `STOP`, `HLE_READ` events; dumped to the log on `cd_seek_wedge` or on request
+- `test/tools/cd_visual_verify.c` — automated visual+audio verification for CD titles (`make cd-visual CD_VISUAL_DISC=<image.cue>`): per-second frame-motion timeline, non-black coverage, audio RMS, periodic screenshots (PPM; `sips -s format png` to view). Replaces most "boot it on a device and look" checks — an agent can Read the PNGs directly. Headless read-path caveat still applies for final "looks right" sign-off.
+
+### Build-identity guard (stale-binary protection)
+
+Every harness that dlopens the core prints the binary's embedded version (`vX.Y.Z <gitrev>[-dirty]`, also logged by the core at `retro_init`). If `VJ_EXPECT_BUILD` is set (as `make test` and `cd_boot_matrix.sh` do automatically, via `scripts/build-id.sh`), a core whose version doesn't token-match fails the load loudly instead of silently testing stale code. When running harnesses by hand after edits, use `VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/...`. Note `make` can skip rebuilds when file mtimes are second-identical — the guard catches that class; `nm -gU <dylib> | grep <newsymbol>` is the manual fallback.
 
 ### Performance / profiling
 

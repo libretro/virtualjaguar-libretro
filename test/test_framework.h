@@ -36,6 +36,7 @@ static int tf_skip = 0;
 static const char *tf_suite_name = "";
 static const char *tf_current_test = "";
 static bool tf_current_failed = false;
+static bool tf_current_skipped = false;
 
 #define TEST_INIT(name) \
     do { tf_suite_name = (name); tf_pass = tf_fail = tf_skip = 0; \
@@ -43,17 +44,24 @@ static bool tf_current_failed = false;
 
 #define TEST(name) static void test_##name(void)
 
+/* A test that SKIPs must NOT also be printed/counted as PASS -- a body
+ * that bailed out (missing disc, missing exports) proved nothing.  This
+ * exact bug produced a false PASS against a stale core binary that
+ * lacked the exports a test needed (2026-07-15). */
 #define RUN_TEST(name) \
     do { \
         tf_current_test = #name; \
         tf_current_failed = false; \
+        tf_current_skipped = false; \
         test_##name(); \
         if (tf_current_failed) { tf_fail++; } \
-        else { tf_pass++; fprintf(stderr, "  PASS  %s\n", #name); } \
+        else if (!tf_current_skipped) \
+            { tf_pass++; fprintf(stderr, "  PASS  %s\n", #name); } \
     } while(0)
 
 #define SKIP_TEST(name, reason) \
-    do { tf_skip++; fprintf(stderr, "  SKIP  %s (%s)\n", #name, reason); } while(0)
+    do { tf_skip++; tf_current_skipped = true; \
+         fprintf(stderr, "  SKIP  %s (%s)\n", #name, reason); } while(0)
 
 #define TEST_REPORT() \
     (fprintf(stderr, "\n--- %s: %d passed, %d failed, %d skipped ---\n\n", \
@@ -299,6 +307,46 @@ static bool vj_core_load(struct vj_core *core)
     {
         fprintf(stderr, "FATAL: dlopen(%s): %s\n", lib, dlerror());
         return false;
+    }
+
+    /* Build-identity guard: print exactly which binary we are testing, and
+     * if VJ_EXPECT_BUILD is set (e.g. by `make test` / cd_boot_matrix.sh to
+     * `scripts/build-id.sh` output), refuse a core whose embedded version
+     * string does not contain it.  Prevents silently testing a stale build
+     * -- which has produced a false PASS before (2026-07-15). */
+    {
+        void (*p_sysinfo)(struct retro_system_info *) =
+            (void (*)(struct retro_system_info *))dlsym(core->handle, "retro_get_system_info");
+        const char *expect = getenv("VJ_EXPECT_BUILD");
+        struct retro_system_info si;
+        memset(&si, 0, sizeof(si));
+        if (p_sysinfo)
+        {
+            p_sysinfo(&si);
+            fprintf(stderr, "core: %s %s (%s)\n",
+                    si.library_name ? si.library_name : "?",
+                    si.library_version ? si.library_version : "?", lib);
+        }
+        if (expect && expect[0])
+        {
+            /* Token-boundary match: "91f0804" must not accept a stale
+             * "91f0804-dirty" build (version format: "vX.Y.Z rev[-dirty]"). */
+            const char *hit = si.library_version ? strstr(si.library_version, expect) : NULL;
+            char tail = hit ? hit[strlen(expect)] : '-';
+            if (!hit || (tail != '\0' && tail != ' '))
+            {
+                fprintf(stderr,
+                        "FATAL: build mismatch -- core reports \"%s\" but "
+                        "VJ_EXPECT_BUILD=\"%s\".  The binary under test is "
+                        "stale or from another branch; rebuild with "
+                        "`make TEST_EXPORTS=1` and re-run.\n",
+                        si.library_version ? si.library_version : "(none)", expect);
+                dlclose(core->handle);
+                core->handle = NULL;
+                return false;
+            }
+            fprintf(stderr, "core build id verified: %s\n", expect);
+        }
     }
 
     /* libretro API */

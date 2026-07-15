@@ -25,7 +25,10 @@ if [ -z "$CORE_BASE_VERSION" ]; then
   exit 1
 fi
 
-GIT_REV=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+# Short rev + "-dirty" when tracked files are modified (see build-id.sh).
+# Content-aware output below keeps incremental builds cheap: the file is
+# only rewritten when the rev or dirty state actually changes.
+GIT_REV=$("$ROOT/scripts/build-id.sh")
 
 mkdir -p "$(dirname "$OUT")"
 TMP="$OUT.tmp"

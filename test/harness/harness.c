@@ -47,11 +47,13 @@ static harness_config *active_cfg;
 
 static void cb_video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
-    (void)data; (void)pitch;
     if (!active_cfg) return;
     active_cfg->video.total_frames_rendered++;
     active_cfg->video.last_width = w;
     active_cfg->video.last_height = h;
+    if (active_cfg->video_callback)
+        active_cfg->video_callback(active_cfg->video_callback_data,
+                                   data, w, h, pitch);
 }
 
 static void cb_audio_sample(int16_t l, int16_t r)
@@ -157,7 +159,8 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
         return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
-        *(const char **)data = "/tmp";
+        *(const char **)data = (active_cfg && active_cfg->system_dir)
+                                   ? active_cfg->system_dir : "/tmp";
         return true;
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
         *(const char **)data = "/tmp";
@@ -212,6 +215,8 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->frames = (unsigned)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--snapshot-interval") == 0 && i + 1 < argc) {
             cfg->snapshot_interval = (unsigned)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--system-dir") == 0 && i + 1 < argc) {
+            cfg->system_dir = argv[++i];
         } else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc) {
             char *eq;
             i++;
@@ -274,6 +279,41 @@ bool harness_load_core(harness_config *cfg)
         dlclose(cfg->core_handle);
         cfg->core_handle = NULL;
         return false;
+    }
+
+    /* Build-identity guard (mirrors test_framework.h): always print which
+     * binary is under test; if VJ_EXPECT_BUILD is set, refuse a core whose
+     * version string does not contain it (stale/wrong-branch binary). */
+    {
+        void (*p_sysinfo)(struct retro_system_info *) =
+            (void (*)(struct retro_system_info *))dlsym(cfg->core_handle,
+                                                        "retro_get_system_info");
+        const char *expect = getenv("VJ_EXPECT_BUILD");
+        struct retro_system_info si;
+        memset(&si, 0, sizeof(si));
+        if (p_sysinfo) {
+            p_sysinfo(&si);
+            if (!cfg->quiet)
+                fprintf(stderr, "harness: core %s %s (%s)\n",
+                        si.library_name ? si.library_name : "?",
+                        si.library_version ? si.library_version : "?",
+                        cfg->core_path);
+        }
+        if (expect && expect[0]) {
+            /* Token-boundary match: "91f0804" must not accept a stale
+             * "91f0804-dirty" build (version format: "vX.Y.Z rev[-dirty]"). */
+            const char *hit = si.library_version ? strstr(si.library_version, expect) : NULL;
+            char tail = hit ? hit[strlen(expect)] : '-';
+            if (!hit || (tail != '\0' && tail != ' ')) {
+                fprintf(stderr,
+                        "harness: FATAL build mismatch -- core reports \"%s\" but "
+                        "VJ_EXPECT_BUILD=\"%s\"; rebuild with `make TEST_EXPORTS=1`.\n",
+                        si.library_version ? si.library_version : "(none)", expect);
+                dlclose(cfg->core_handle);
+                cfg->core_handle = NULL;
+                return false;
+            }
+        }
     }
 
     return true;

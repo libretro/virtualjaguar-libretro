@@ -104,6 +104,21 @@ if command -v nm >/dev/null 2>&1; then
     fi
 fi
 
+# Build-identity guard: every harness invocation below verifies that the
+# core's embedded git rev matches the working tree (scripts/build-id.sh),
+# so matrix rows can never be produced by a stale/wrong-branch binary.
+VJ_EXPECT_BUILD=$(scripts/build-id.sh 2>/dev/null || true)
+export VJ_EXPECT_BUILD
+if [ -n "$VJ_EXPECT_BUILD" ]; then
+    echo "expected core build id: $VJ_EXPECT_BUILD" >&2
+    if ! strings "$DYLIB" 2>/dev/null | grep -Eq "$VJ_EXPECT_BUILD( |\$)"; then
+        echo "$DYLIB does not embed build id $VJ_EXPECT_BUILD -- rebuilding..." >&2
+        rm -f "$DYLIB"
+        make TEST_EXPORTS=1 -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" || {
+            echo "FATAL: build failed" >&2; exit 1; }
+    fi
+fi
+
 for bin in test/test_cd_hle_boot test/test_cd_bios_boot; do
     if [ ! -x "$bin" ]; then
         echo "Building $bin..." >&2

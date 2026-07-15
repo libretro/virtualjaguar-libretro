@@ -761,6 +761,10 @@ test:
 	@rm -f $(TARGET)
 	@$(MAKE) TEST_EXPORTS=1 test
 else
+# Every harness that dlopens the core verifies the binary's embedded git
+# rev (+ -dirty) against this before running -- a stale dylib fails loudly
+# instead of silently testing the wrong code (see scripts/build-id.sh).
+test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
@@ -1121,6 +1125,25 @@ frame-timing:
 		test/harness/harness.c test/harness/timing_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
+
+# Automated visual + audio verification for CD titles: frame-motion timeline,
+# audio RMS, periodic screenshots (PPM).  See the tool header for usage.
+#   make cd-visual CD_VISUAL_DISC="test/roms/private/Title/Title.cue" \
+#        CD_VISUAL_FLAGS="--bios --frames 3000 --outdir /tmp/cdshots"
+CD_VISUAL_DISC  ?=
+CD_VISUAL_FLAGS ?= --bios --frames 3000
+cd-visual:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/cd_visual_verify \
+		test/tools/cd_visual_verify.c test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+	@if [ -n "$(CD_VISUAL_DISC)" ]; then \
+		VJ_EXPECT_BUILD=$$(./scripts/build-id.sh) \
+		./test/tools/cd_visual_verify ./$(TARGET) "$(CD_VISUAL_DISC)" $(CD_VISUAL_FLAGS); \
+	else \
+		echo "built test/tools/cd_visual_verify -- pass CD_VISUAL_DISC=<image> to run"; \
+	fi
 
 print-%:
 	@echo '$*=$($*)'
