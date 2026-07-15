@@ -97,6 +97,7 @@ The `stop`-wait idiom is **not** CD-only. Static scan of the local cart library 
 
 ## 5. Backlog (independent, each needs its own diagnosis)
 
+0. **FMV pixel corruption (NEW top target, user-confirmed on device)** — decoded FMV frames are value-garbage with intact block structure on BrainDead 13 (+ other ReadySoft titles). Diagnosed to the **GPU decode stage**: compressed input in RAM is bit-correct (byte-order verified against executing code), display mode/OP list healthy (RGB16, no VARMOD), no 16bpp re-interpretation of the output renders clean, and disc-loaded logo assets through the same FIFO are pixel-perfect. Pre-existing (unreachable before the §4 fix). Full evidence + next steps: [`cd-diagnosis/fmv-corruption-diagnosis.md`](cd-diagnosis/fmv-corruption-diagnosis.md).
 1. **Highlander / IS2 (bios)** stall earlier than the sentinel scan — drains freeze at 54/0. Different mechanism from every fix above.
 2. **Battle Morph** — 68K PC lands in data (`$AFDE`, Line-A) **before any CD I/O** (`seeks=0`, ~frame 437, right after the `$050176` stub injection). Its TOC link tested **negative**. Note: in CD-BIOS mode, vectors 2–255 are PRNG garbage (`jaguar.c` vector-stub block is gated `!vjs.useJaguarBIOS`). **Populating them would MASK real failures** — boot stubs execute deliberate ILLEGAL halts on error paths. Fix the underlying error, not the halt. (Same for `jagcd_hle.c`'s ADDQ skip-handler.)
 3. **IS2 (HLE)** — `CD_poll` signals completion but the game re-reads forever. Downstream of the idempotency fix.
