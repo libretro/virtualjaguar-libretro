@@ -650,7 +650,6 @@ engine, $F0327x BrainDead / Dragon's Lair / Space Ace class). Contract test:
 | Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=530 fb_hash=$BFFF6779 unchanged for 300 frames gpu_pc=$00F031F6 gpu_run=1 dsp_pc=$00F1B0AE dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=0 not_thrash=1 ram_payload=6679B unique_pcs=14 final_pc=$00419E |
 | Primal Rage (USA).cue | bios | 1/1 | ? (BIOS service band $0-$3FFF; PC-SET suppressed, unique_pcs>32 -- game handoff undetermined) | [CRASH-DETECT] cd_seek_wedge frame=958 seek_starts=2 seek_dones=2 fifo_drains=17996 unchanged for 300 frames gpu_pc=$00F031F6 gpu_run=1 dsp_pc=$00F1B0B0 dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=6790B unique_pcs=45 final_pc=$0036B8 |
 
-Raw per-run logs: /tmp/cdmx_task8 (not committed; re-run to regenerate).
 
 ## Re-run notes -- 2026-07-15, lost-wakeup fix (event-scheduled GPU CPUINT)
 
@@ -682,3 +681,5 @@ of a command/stop/wait handshake. Raw logs: /tmp/cdmx_postfix.
 - **No row moved backward** on score or on evidence-verified stage; baldies.cdi
   LOAD_FAIL and Battle Morph (bios) pc_escape are unchanged pre-existing
   backlog items (see handoff doc section 5).
+
+Raw per-run logs: /tmp/cdmx_postfix (not committed; re-run to regenerate).
