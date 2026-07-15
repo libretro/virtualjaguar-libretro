@@ -322,7 +322,9 @@ static uint16_t DSAQueuePop(void)
  * Ring size is a power of 2 so the head index wraps with a mask
  * (`& (CD_TRACE_SIZE - 1)`) instead of modulo -- cheap and, since
  * cdTraceHead is unsigned, never invokes negative-modulo UB. */
+#ifndef CD_TRACE_SIZE          /* overridable (-DCD_TRACE_SIZE=8192) for deep traces; power of two */
 #define CD_TRACE_SIZE 256
+#endif
 
 enum
 {
@@ -1185,6 +1187,31 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       else if ((data & 0xFF00) == 0x0200)
       {
          // STOP response is queued below, don't set dsaResponseReady here
+         isMultiWordResponse = false;
+      }
+      else if ((data & 0xFF00) == 0x1500 || (data & 0xFF00) == 0x1800 ||
+               (data & 0xFF00) == 0x5000 || (data & 0xFF00) == 0x5400 ||
+               (data & 0xFF00) == 0x7000)
+      {
+         /* Single-word, side-effect-free responses: synthesize NOW and
+          * queue them, like real hardware's DSA RX path.  Synthesizing on
+          * READ from the single cdCmd latch loses a response whenever a
+          * game sends two commands back-to-back without reading DS_DATA
+          * in between -- device-traced on Baldies (bios): $7001 (Set DAC
+          * Mode) immediately followed by $150A (Set Mode) dropped the
+          * $70nn echo and the game wedged polling for it. */
+         uint16_t resp;
+         if ((data & 0xFF00) == 0x1500)
+            resp = 0x1700 | (data & 0xFF);                    /* Mode Status */
+         else if ((data & 0xFF00) == 0x1800)
+            resp = 0x0143;                                    /* Spun Up     */
+         else if ((data & 0xFF00) == 0x5000)
+            resp = 0x0300 | (CDIntfGetNumSessions() & 0xFF);  /* Disc status */
+         else if ((data & 0xFF00) == 0x5400)
+            resp = 0x5400 | (CDIntfGetNumSessions() & 0xFF);  /* # sessions  */
+         else
+            resp = data;                                      /* $70nn echo  */
+         DSAQueuePush(resp);
          isMultiWordResponse = false;
       }
       else

@@ -274,6 +274,69 @@ TEST(butch_int_fifo_requires_both_bits)
  *
  * Needs a loaded disc image (haveCDGoodness gates BUTCHExec), so we
  * synthesize a 16-sector single-track CUE/BIN — no ROM required. */
+/* Back-to-back single-word DSA commands must BOTH deliver their responses.
+ * Device-traced on Baldies (bios, 2026-07-15): after transfer #2 the game
+ * writes $7001 (Set DAC Mode) and $150A (Set Mode) to DS_DATA in the same
+ * tick without reading between them.  With a single command latch the
+ * $70nn echo is silently replaced by the $17nn mode status; the game polls
+ * DS_DATA repeatedly for its echo and wedges (cd_seek_wedge, GPU spinning).
+ * Real hardware queues each drive response in the DSA RX path. */
+TEST(butch_dsa_back_to_back_responses)
+{
+    bool (*openImage)(const char *);
+    void (*closeImage)(void);
+    char dir[512], cuePath[600], binPath[600];
+    static const char *tmpl = "/tmp";
+    const char *tmp;
+    FILE *f;
+    uint32_t i;
+    uint16_t r1, r2;
+    static uint8_t sector[2352];
+
+    openImage = (bool (*)(const char *))dlsym(core.handle, "CDIntfOpenImage");
+    closeImage = (void (*)(void))dlsym(core.handle, "CDIntfCloseImage");
+    if (!openImage || !closeImage)
+        { FAIL("CDIntfOpenImage/CDIntfCloseImage not exported (need TEST_EXPORTS=1)"); }
+
+    tmp = getenv("TMPDIR");
+    if (!tmp) tmp = tmpl;
+    snprintf(dir, sizeof(dir), "%s", tmp);
+    snprintf(binPath, sizeof(binPath), "%s/t7_dsa_b2b.bin", dir);
+    snprintf(cuePath, sizeof(cuePath), "%s/t7_dsa_b2b.cue", dir);
+
+    f = fopen(binPath, "wb");
+    if (!f) { FAIL("cannot create synthetic BIN"); }
+    for (i = 0; i < 16; i++)
+        fwrite(sector, 1, sizeof(sector), f);
+    fclose(f);
+    f = fopen(cuePath, "w");
+    if (!f) { remove(binPath); FAIL("cannot create synthetic CUE"); }
+    fprintf(f, "FILE \"t7_dsa_b2b.bin\" BINARY\n"
+               "  TRACK 01 MODE1/2352\n"
+               "    INDEX 01 00:00:00\n");
+    fclose(f);
+
+    if (!openImage(cuePath))
+        { remove(cuePath); remove(binPath); FAIL("synthetic CUE did not load"); }
+    core.CDROMInit();
+    core.CDROMReset();
+    core.CDROMWriteWord(BUTCH_DSCNTRL, 0x0001, CALLER_M68K);
+
+    /* The traced sequence: two commands, no read in between */
+    core.CDROMWriteWord(BUTCH_DS_DATA, 0x7001, CALLER_M68K);  /* Set DAC Mode 1 */
+    core.CDROMWriteWord(BUTCH_DS_DATA, 0x150A, CALLER_M68K);  /* Set Mode $0A  */
+
+    r1 = core.CDROMReadWord(BUTCH_DS_DATA, CALLER_M68K);
+    r2 = core.CDROMReadWord(BUTCH_DS_DATA, CALLER_M68K);
+
+    closeImage();
+    remove(cuePath);
+    remove(binPath);
+
+    CHECK_EQ(r1, 0x7001);   /* DAC-mode echo must not be lost */
+    CHECK_EQ(r2, 0x170A);   /* then the mode status           */
+}
+
 TEST(butch_dsa_irq_routes_to_gpu_irq1)
 {
     bool (*openImage)(const char *);
@@ -372,6 +435,7 @@ int main(int argc, char *argv[])
     RUN_TEST(butch_dsa_command_write);
     RUN_TEST(butch_dsa_read_toc_command);
     RUN_TEST(butch_dsa_get_status_command);
+    RUN_TEST(butch_dsa_back_to_back_responses);
 
     /* FIFO */
     RUN_TEST(butch_fifo_write_read);
