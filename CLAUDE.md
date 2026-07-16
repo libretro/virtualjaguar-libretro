@@ -72,6 +72,8 @@ Local-only RetroAchievements validation — no RA account/API/server. `test/tool
 
 New tests should use `test/harness/harness.h` — a shared library that eliminates dlopen/init/run boilerplate. See the header's AGENT QUICK-START comment for a full example. Key features:
 - Common CLI (`--json`, `--frames N`, `--bios`, `--option K=V`, `--quiet`)
+- Scripted input: `--press FRAME:BUTTON[:HOLD]` (repeatable; buttons `up down left right a b c pause option 0-6`) — enough to navigate menus into gameplay headlessly; programmatic tests use `harness_press()` or a `harness_input_cb`
+- Log verbosity env: `VJ_HARNESS_LOG_INFO=1` passes core INFO logs (CD trace dumps), `VJ_HARNESS_LOG_DEBUG=1` additionally passes DEBUG (per-call CD HLE trace)
 - Automatic audio/video stats collection
 - `harness_dlsym()` for probing internal core state
 - JSON output mode for machine-parseable results
@@ -96,6 +98,7 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 - `test/sram_test.sh` — SRAM round-trip
 - `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS mode) vs `docs/cd-boot-matrix.md`; env knobs `CD_MATRIX_FRAMES`, `CD_MATRIX_TIMEOUT`, `CD_MATRIX_MAX_RUNS`, `CD_MATRIX_LOGDIR`, `CD_MATRIX_OUT`, `CD_MATRIX_ROMS_ROOT`; chunked/resumable across invocations
 - CD trace ring: core option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1` for headless use) records `DSA_TX`/`DSA_RX`, `SEEK_START`/`SEEK_DONE`, `FIFO_FILL`/`FIFO_DRAIN`, `STOP`, `HLE_READ` events; dumped to the log on `cd_seek_wedge` or on request
+- `test/tools/cd_wedge_probe.c` — catches intermittent CD lockups: detects a frozen framebuffer (`--arm N --freeze-frames N`, script the repro with `--press`), then dumps 68K registers, the pcQueue traceback ring, CD counters + trace ring, and a RAM hexdump around the stuck PC; exits 42 when caught so a retry loop can distinguish "caught" from "ran clean". Found the Hover Strike instant-CD_read code-stomp.
 - `test/tools/cd_visual_verify.c` — automated visual+audio verification for CD titles (`make cd-visual CD_VISUAL_DISC=<image.cue>`): per-second frame-motion timeline, non-black coverage, audio RMS, periodic screenshots (PPM; `sips -s format png` to view). Replaces most "boot it on a device and look" checks — an agent can Read the PNGs directly. Headless read-path caveat still applies for final "looks right" sign-off.
 
 ### Build-identity guard (stale-binary protection)
