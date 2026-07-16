@@ -228,6 +228,19 @@ static bool haveCDGoodness;
 static uint32_t min, sec, frm, block;
 static uint8_t cdBuf[2352 + 96];
 static uint32_t cdBufPtr = 2352;
+/* Independent read head for the slave-mode SSI (CD -> JERRY I2S) path.
+ * On real hardware the drive outputs ONE stream that both the BUTCH FIFO
+ * and JERRY's I2S port observe; consumers don't advance the disc.  Our
+ * FIFO path and SSI path each emulate "the stream" by pulling sectors on
+ * demand, so they MUST NOT share a cursor: with a shared cdBufPtr every
+ * GPU-ISR FIFO word-read stole 2 bytes out of the DSP's LRXD/RRXD stream
+ * (and vice versa).  Device-traced: a CD_jeri title streaming data via
+ * the DSP in slave mode while its GPU ISR drained the FIFO storm got a
+ * gap-riddled stream, failed sector validation, and re-seeked forever
+ * (audio loops, next screen never loads). */
+static uint8_t ssiBuf[2352 + 96];
+static uint32_t ssiBufPtr = 2352;
+static uint32_t ssiBlock = 0;
 
 // NM93C14 EEPROM: 64 x 16-bit words (128 bytes)
 // Exposed so libretro.c can pack/unpack it into the .srm save buffer.
@@ -544,6 +557,8 @@ void CDROMReset(void)
    cdPtr = 0;
    min = sec = frm = block = 0;
    cdBufPtr = 2352;
+   ssiBufPtr = 2352;
+   ssiBlock = 0;
    fifoDataReady = false;
    dsaResponseReady = false;
    isMultiWordResponse = false;
@@ -1460,6 +1475,12 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
              * "streaming wall".  One skipped word once per seek; the
              * stream stays linear from byte 2 onward. */
             cdBufPtr = 2;
+            /* The SSI head starts at the same position with the same
+             * one-word capture skew (it's the same I2S capture logic;
+             * the skew belongs to BUTCH, not to the consumer). */
+            ssiBlock = block;
+            memcpy(ssiBuf, cdBuf, sizeof(ssiBuf));
+            ssiBufPtr = 2;
             if (diag_firstSeekBlock == 0xFFFFFFFFu)
                diag_firstSeekBlock = block;
             CD_LOG("Seek started: block=%u (MSF %02u:%02u:%02u), delay=%d ticks\n",
@@ -1613,18 +1634,19 @@ uint16_t GetWordFromButchSSI(uint32_t offset, uint32_t who/*= UNKNOWN*/)
    if (!go)
       return 0x000;
 
-   cdBufPtr += 2;
+   /* SSI head, not the FIFO cursor -- see ssiBuf declaration. */
+   ssiBufPtr += 2;
 
-   if (cdBufPtr >= 2352)
+   if (ssiBufPtr >= 2352)
    {
-      CDIntfReadBlock(block, cdBuf);
-      block++;
-      cdBufPtr = 0;
+      CDIntfReadBlock(ssiBlock, ssiBuf);
+      ssiBlock++;
+      ssiBufPtr = 0;
    }
 
    // CD audio is 16-bit stereo, little-endian on disc (Red Book format)
    // The Jaguar expects right channel in upper 16 bits, left in lower 16
-   return (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr + 0];
+   return (ssiBuf[ssiBufPtr + 1] << 8) | ssiBuf[ssiBufPtr + 0];
 }
 
 bool CDROMHasData(void)
@@ -1665,9 +1687,9 @@ bool ButchIsReadyToSend(void)
    // CD drive, independent of software register writes. The emulation runs
    // the DSP (audio callback) AFTER the 68K finishes the frame, so the DSP
    // never sees intermediate I2CNTRL values. Check actual data availability
-   // instead of the software register bit. The sector buffer (cdBuf) is
+   // instead of the software register bit. The SSI head's sector buffer is
    // loaded during seek and contains valid data until fully consumed.
-   if (haveCDGoodness && cdBufPtr < 2352)
+   if (haveCDGoodness && ssiBufPtr < 2352)
       return true;
    return ((cdRam[I2CNTRL + 3] & 0x02) ? true : false);
 }
@@ -1682,23 +1704,25 @@ void SetSSIWordsXmittedFromButch(void)
 {
    ssiXmitCount++;
    if (ssiXmitCount <= 5 || (ssiXmitCount % 10000) == 0)
-      CD_LOG("SSI xmit #%u: cdBufPtr=%u block=%u cdPlaying=%d\n",
-             ssiXmitCount, cdBufPtr, block, cdPlaying);
-   // Advance by 4 bytes (one stereo sample: 2 bytes L + 2 bytes R)
-   cdBufPtr += 4;
+      CD_LOG("SSI xmit #%u: ssiBufPtr=%u ssiBlock=%u cdPlaying=%d\n",
+             ssiXmitCount, ssiBufPtr, ssiBlock, cdPlaying);
+   // Advance by 4 bytes (one stereo sample: 2 bytes L + 2 bytes R).
+   // Uses the SSI head's own cursor -- see ssiBuf declaration for why
+   // this must not share cdBufPtr with the FIFO read path.
+   ssiBufPtr += 4;
 
-   if (cdBufPtr >= 2352)
+   if (ssiBufPtr >= 2352)
    {
-      CDIntfReadBlock(block, cdBuf);
-      block++;
-      cdBufPtr = 0;
+      CDIntfReadBlock(ssiBlock, ssiBuf);
+      ssiBlock++;
+      ssiBufPtr = 0;
    }
 
    // CD audio is interleaved 16-bit stereo samples in little-endian
    // Left channel = bytes [ptr+2..ptr+3], Right channel = bytes [ptr+0..ptr+1]
    // (CD audio byte order: LL LH RL RH per sample pair)
-   lrxd = (cdBuf[cdBufPtr + 3] << 8) | cdBuf[cdBufPtr + 2];
-   rrxd = (cdBuf[cdBufPtr + 1] << 8) | cdBuf[cdBufPtr + 0];
+   lrxd = (ssiBuf[ssiBufPtr + 3] << 8) | ssiBuf[ssiBufPtr + 2];
+   rrxd = (ssiBuf[ssiBufPtr + 1] << 8) | ssiBuf[ssiBufPtr + 0];
 }
 
 /*
@@ -2148,6 +2172,9 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, fifoDataReady);
 	STATE_SAVE_VAR(buf, fifoReadCount);
 	STATE_SAVE_VAR(buf, fifoFillDelay);
+	STATE_SAVE_BUF(buf, ssiBuf, sizeof(ssiBuf));
+	STATE_SAVE_VAR(buf, ssiBufPtr);
+	STATE_SAVE_VAR(buf, ssiBlock);
 
 	return (size_t)(buf - start);
 }
@@ -2186,6 +2213,9 @@ size_t CDROMStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, fifoDataReady);
 	STATE_LOAD_VAR(buf, fifoReadCount);
 	STATE_LOAD_VAR(buf, fifoFillDelay);
+	STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
+	STATE_LOAD_VAR(buf, ssiBufPtr);
+	STATE_LOAD_VAR(buf, ssiBlock);
 
 	return (size_t)(buf - start);
 }
