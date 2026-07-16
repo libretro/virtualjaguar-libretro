@@ -1706,6 +1706,20 @@ void SetSSIWordsXmittedFromButch(void)
    if (ssiXmitCount <= 5 || (ssiXmitCount % 10000) == 0)
       CD_LOG("SSI xmit #%u: ssiBufPtr=%u ssiBlock=%u cdPlaying=%d\n",
              ssiXmitCount, ssiBufPtr, ssiBlock, cdPlaying);
+
+   /* A paused/stopped/seeking drive outputs silence and holds position;
+    * the I2S bit clock keeps running (the DSP synth is clocked off these
+    * interrupts in slave mode) but no disc data moves.  Without this
+    * gate the head streamed forever -- through pauses and past track
+    * ends into data sectors, which a game with its CD mix enabled plays
+    * as full-scale noise ("loud clipped static"). */
+   if (!cdPlaying || seekDelay > 0)
+   {
+      lrxd = 0;
+      rrxd = 0;
+      return;
+   }
+
    // Advance by 4 bytes (one stereo sample: 2 bytes L + 2 bytes R).
    // Uses the SSI head's own cursor -- see ssiBuf declaration for why
    // this must not share cdBufPtr with the FIFO read path.
