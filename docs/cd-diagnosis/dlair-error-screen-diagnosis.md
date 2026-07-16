@@ -103,6 +103,32 @@ it declare a read error while data is flowing? Leading suspects, in order:
    made the decision). Break on the I2S off-edge (I2S_CTRL trace) and dump
    68K PC/stack at that moment — one probe run.
 
+### Progress so far on suspect 3 (the abort decision — decoded)
+
+Subcode (suspect 1) is RULED OUT: instrumented run shows zero accesses to
+SBCNTRL/SUBDATA/SUBDATB/SB_TIME and no BUTCH subcode-interrupt enables.
+
+The game's transfer-wait/abort logic at 68K `$4C0C` (from mainram.bin):
+
+    $4C0C: move.l $562E,d0     ; transfer progress counter
+    $4C12: cmp.l  d0,d2        ; d2 = requested target
+    $4C14: bgt.s  $4C0C        ; wait until progress >= target
+    $4C16: tst.w  $565E / bne $4C30
+    $4C1E: sub.l  d2,d0        ; overshoot = progress - target
+    $4C20: cmp.l  $5660,d0     ; vs threshold
+    $4C26: bmi.s  $4C4E        ; small overshoot -> OK
+    $4C28: move.w #1,$565E ... ; else flag + bsr $93E2 (error path)
+
+So the game errors on progress OVERSHOOT (or the error flag $565E), not on
+a timeout. Readers of `$562E`: $4A7E (stability re-read loop + clr.l at
+$4A8C), $4C0A (wait loop), $4D12 (progress-delta calc). Watchpoint run on
+m68k_write_memory_32 + JaguarWriteLong ($562C-$562E) caught ONLY the clr.l
+(pc $4A94) — the incrementer writes through an unhooked path. **Next hook:
+m68k_write_memory_16 (word writes to $562C/$562E/$5630) and the blitter's
+direct-RAM path; find who advances the counter and from what source
+(GPU mailbox dest? block position?), then compare its update law against
+what the game expects of a real 2x drive.**
+
 Supporting instrument for any of these: a control-events-only trace mode
 (e.g. `VJ_CD_TRACE=2` skipping FILL/DRAIN pushes) so one 256-entry ring
 covers a whole retry cycle; fills/drains currently flood 16K-deep rings in
