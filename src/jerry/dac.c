@@ -115,17 +115,34 @@ uint32_t DACGetI2SNonZeroCount(void)
    return i2sNonZeroCount;
 }
 
-/* Update the rate ratio when SCLK changes */
+/* Update the rate ratio when SCLK or SMODE changes */
 static void DACUpdateSCLKRate(void)
 {
    uint32_t sclk_val;
    double i2s_rate;
    double sys_clock;
 
-   sclk_val = (uint32_t)(*sclk);
-   sys_clock = (double)SYSTEM_CLOCK_RATE;
-   /* sample_rate = system_clock / (64 * (SCLK + 1)) */
-   i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
+   if (*smode & SMODE_INTERNAL)
+   {
+      /* Master mode: JERRY generates the bit clock from SCLK. */
+      sclk_val = (uint32_t)(*sclk);
+      sys_clock = (double)SYSTEM_CLOCK_RATE;
+      /* sample_rate = system_clock / (64 * (SCLK + 1)) */
+      i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
+   }
+   else
+   {
+      /* Slave mode: the word clock is external (BUTCH, CD audio).  SCLK
+       * is meaningless here -- JERRYI2SCallback drives the DSP ISR at a
+       * fixed 22.675737 us (44100 Hz), so LTXD/RTXD writes land in the
+       * ring at that rate.  Deriving the ratio from a stale SCLK (games
+       * leave the reset value 19 = 20.8 kHz) made the resampler consume
+       * under half of each frame's samples and discard the rest at the
+       * DACPrepareFrame ring reset -- a 60 Hz chop over ALL slave-mode
+       * DSP output (CD music and synth SFX alike), heard as loud
+       * crunched static on Jaguar CD titles. */
+      i2s_rate = 44100.0;
+   }
    i2sRateRatio = i2s_rate / (double)DAC_AUDIO_RATE;
 
    /* Clamp to a sane range to avoid division by zero or absurd values.
@@ -287,6 +304,8 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
          LOG_INF("[CDDA] SMODE $%04X -> $%04X (%s)\n", *smode, data,
                  (data & 0x01) ? "INTERNAL/master" : "slave: CD -> I2S");
       *smode = data;
+      /* The resample ratio depends on master/slave (see DACUpdateSCLKRate) */
+      DACUpdateSCLKRate();
    }
 }
 
