@@ -31,8 +31,11 @@ _tomRam8
 _regs
 _ltxd
 _rtxd
+_lrxd
+_rrxd
 _sclk
 _smode
+_SetSSIWordsXmittedFromButch
 _lowerField
 _vjs
 _videoBuffer

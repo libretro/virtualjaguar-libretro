@@ -34,8 +34,11 @@
       regs;
       ltxd;
       rtxd;
+      lrxd;
+      rrxd;
       sclk;
       smode;
+      SetSSIWordsXmittedFromButch;
       lowerField;
       vjs;
       videoBuffer;

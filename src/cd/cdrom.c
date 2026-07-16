@@ -1526,12 +1526,15 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
              * "streaming wall".  One skipped word once per seek; the
              * stream stays linear from byte 2 onward. */
             cdBufPtr = 2;
-            /* The SSI head starts at the same position with the same
-             * one-word capture skew (it's the same I2S capture logic;
-             * the skew belongs to BUTCH, not to the consumer). */
-            ssiBlock = block;
+            /* The SSI (DSP audio) head starts sample-aligned at byte 0:
+             * the one-word capture skew above belongs to BUTCH's FIFO
+             * entry assembly, not to the raw I2S word stream -- Red Book
+             * samples are framed L/R from the start of the sector.
+             * ssiBuf already holds this sector, so the next sector the
+             * head will need from disc is block + 1. */
+            ssiBlock = block + 1;
             memcpy(ssiBuf, cdBuf, sizeof(ssiBuf));
-            ssiBufPtr = 2;
+            ssiBufPtr = 0;
             if (diag_firstSeekBlock == 0xFFFFFFFFu)
                diag_firstSeekBlock = block;
             CD_LOG("Seek started: block=%u (MSF %02u:%02u:%02u), delay=%d ticks\n",
@@ -1771,11 +1774,8 @@ void SetSSIWordsXmittedFromButch(void)
       return;
    }
 
-   // Advance by 4 bytes (one stereo sample: 2 bytes L + 2 bytes R).
-   // Uses the SSI head's own cursor -- see ssiBuf declaration for why
-   // this must not share cdBufPtr with the FIFO read path.
-   ssiBufPtr += 4;
-
+   /* Safety: if the head is somehow past the sector (e.g. I2S enabled
+    * before any seek loaded ssiBuf), refill before reading. */
    if (ssiBufPtr >= 2352)
    {
       CDIntfReadBlock(ssiBlock, ssiBuf);
@@ -1783,11 +1783,26 @@ void SetSSIWordsXmittedFromButch(void)
       ssiBufPtr = 0;
    }
 
-   // CD audio is interleaved 16-bit stereo samples in little-endian
-   // Left channel = bytes [ptr+2..ptr+3], Right channel = bytes [ptr+0..ptr+1]
-   // (CD audio byte order: LL LH RL RH per sample pair)
-   lrxd = (ssiBuf[ssiBufPtr + 3] << 8) | ssiBuf[ssiBufPtr + 2];
-   rrxd = (ssiBuf[ssiBufPtr + 1] << 8) | ssiBuf[ssiBufPtr + 0];
+   // Red Book audio is interleaved 16-bit little-endian stereo samples,
+   // LEFT first: bytes [ptr+0..1] = left, [ptr+2..3] = right.  The drive
+   // frames the I2S word stream on sample boundaries, so unlike the BUTCH
+   // FIFO data path (cdBufPtr, one-word capture skew) the audio head is
+   // sample-aligned from byte 0 of the sector.
+   lrxd = (ssiBuf[ssiBufPtr + 1] << 8) | ssiBuf[ssiBufPtr + 0];
+   rrxd = (ssiBuf[ssiBufPtr + 3] << 8) | ssiBuf[ssiBufPtr + 2];
+
+   // Advance by 4 bytes (one stereo sample).  Uses the SSI head's own
+   // cursor -- see ssiBuf declaration for why this must not share
+   // cdBufPtr with the FIFO read path.  Refill eagerly on exhaustion so
+   // ButchIsReadyToSend() (ssiBufPtr < 2352) stays true across sector
+   // boundaries while the drive plays.
+   ssiBufPtr += 4;
+   if (ssiBufPtr >= 2352)
+   {
+      CDIntfReadBlock(ssiBlock, ssiBuf);
+      ssiBlock++;
+      ssiBufPtr = 0;
+   }
 }
 
 /*
