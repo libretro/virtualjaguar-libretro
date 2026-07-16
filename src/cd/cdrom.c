@@ -335,12 +335,17 @@ enum
    CD_TRACE_FIFO_FILL,      /* fifoDataReady transitioned to true */
    CD_TRACE_FIFO_DRAIN,     /* FIFO_DRAIN_READS reached, fifoDataReady cleared */
    CD_TRACE_STOP,           /* $0200 (STOP) command processed */
-   CD_TRACE_HLE_READ        /* HLE CD_read (see jagcd_hle.c) -- carries LBA */
+   CD_TRACE_HLE_READ,       /* HLE CD_read (see jagcd_hle.c) -- carries LBA */
+   CD_TRACE_I2S_CTRL        /* I2CNTRL data-enable (bit 2) transition; value =
+                                new low word.  The FIFO refill loop silently
+                                parks while this bit is clear, so an OFF edge
+                                with no later ON edge explains every "drains
+                                frozen" wedge that isn't a STOP. */
 };
 
 static const char * const cdTraceKindName[] = {
    "DSA_TX", "DSA_RX", "SEEK_START", "SEEK_DONE",
-   "FIFO_FILL", "FIFO_DRAIN", "STOP", "HLE_READ"
+   "FIFO_FILL", "FIFO_DRAIN", "STOP", "HLE_READ", "I2S_CTRL"
 };
 
 typedef struct
@@ -373,6 +378,11 @@ static int cdTraceEnvWants = 0;
 static uint32_t cdSeekStartCount = 0;
 static uint32_t cdSeekDoneCount = 0;
 static uint32_t cdFifoDrainCount = 0;
+
+/* Last-observed I2CNTRL data-enable state (bit 2 of the low byte), so
+ * writes that don't change it stay out of the trace ring.  -1 = unknown
+ * (traces the first write after reset regardless of value). */
+static int cdTraceLastI2SEnable = -1;
 
 /* First (boot-relevant) seek target LBA, captured post-redirect the first
  * time a non-redundant $12xx seek runs after reset.  0xFFFFFFFF = none. */
@@ -414,6 +424,22 @@ static void CDTracePush(uint16_t kind, uint16_t value, uint32_t blk)
    cdTraceHead++;
    if (cdTraceCount < CD_TRACE_SIZE)
       cdTraceCount++;
+}
+
+/* Trace I2CNTRL data-enable (bit 2) edges.  Called after any store that
+ * touches the I2CNTRL low byte (word or byte path -- the GPU ISR uses
+ * 32-bit stores that arrive as two word writes, but byte stores exist). */
+static void CDTraceI2SWrite(void)
+{
+   int enable = (cdRam[I2CNTRL + 3] & 0x04) ? 1 : 0;
+
+   if (enable != cdTraceLastI2SEnable)
+   {
+      CDTracePush(CD_TRACE_I2S_CTRL,
+                  (uint16_t)((cdRam[I2CNTRL + 2] << 8) | cdRam[I2CNTRL + 3]),
+                  block);
+      cdTraceLastI2SEnable = enable;
+   }
 }
 
 /* Public wrapper for jagcd_hle.c -- the HLE CD_read path performs a
@@ -500,6 +526,7 @@ void CDROMReset(void)
    dsaQueueHead = 0;
    dsaQueueTail = 0;
    dsaQueueCount = 0;
+   cdTraceLastI2SEnable = -1;
 
    diag_butchExecCalls = 0;
    diag_fifoIRQsFired = 0;
@@ -1100,7 +1127,13 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
 void CDROMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 {
    offset &= 0xFF;
+   /* I2CNTRL bit 4 (FIFO-not-empty) is read-only status, computed from
+    * FIFO state on read -- see CDROMWriteWord below. */
+   if (offset == I2CNTRL + 3)
+      data &= ~0x10;
    cdRam[offset] = data;
+   if (offset == I2CNTRL + 3)
+      CDTraceI2SWrite();
 }
 
 void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
@@ -1123,7 +1156,23 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       return;
    }
 
+   /* I2CNTRL bit 4 (FIFO-not-empty) is read-only status ("When read: b4 -
+    * FIFO state is not empty if 1" -- BUTCH register doc above), computed
+    * from fifoDataReady in the read handler.  Games do read-modify-write
+    * cycles on I2CNTRL, so a set status bit rides along in the write data;
+    * storing it made the bit stick at 1 forever.  Device-traced on Dragon's
+    * Lair (bios): end-of-transfer writes $0011 (RMW carrying b4), then
+    * drains the FIFO with a "read FIFO_DATA; btst #4,I2CNTRL; bne" flush
+    * loop that can never see empty -- 68K wedges, GPU parks in its mailbox
+    * wait, video freezes after the play command.  Same silicon pattern as
+    * the BUTCH+2 enable/status split above. */
+   if (offset == I2CNTRL + 2)
+      data &= ~0x0010;
+
    SET16(cdRam, offset, data);
+
+   if (offset == I2CNTRL + 2)
+      CDTraceI2SWrite();
 
    if (offset < UNKNOWN)  // Don't log EEPROM bus writes ($2C/$2E) — too noisy
       CD_LOG("WriteWord offset=0x%02X data=0x%04X [PC=$%06X]\n", offset, data, m68k_get_reg(NULL, M68K_REG_PC));

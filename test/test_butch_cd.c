@@ -281,6 +281,25 @@ TEST(butch_int_fifo_requires_both_bits)
  * $70nn echo is silently replaced by the $17nn mode status; the game polls
  * DS_DATA repeatedly for its echo and wedges (cd_seek_wedge, GPU spinning).
  * Real hardware queues each drive response in the DSA RX path. */
+TEST(butch_i2cntrl_status_bit_readonly)
+{
+    uint16_t readback;
+    core.CDROMReset();
+    /* Games do read-modify-write cycles on I2CNTRL, so a set FIFO-not-empty
+     * status bit (b4, read-only per butch.v) rides along in the write data.
+     * Device-traced on Dragon's Lair (bios): end-of-transfer writes $0011,
+     * then flushes the FIFO with a "btst #4; bne" loop.  If the written b4
+     * is stored and echoed, the loop never sees FIFO-empty and the 68K
+     * wedges.  With no FIFO data pending, b4 must read back 0 regardless
+     * of what was written. */
+    core.CDROMWriteWord(BUTCH_I2CNTRL + 2,
+                        BUTCH_I2S_DRIVE | BUTCH_I2S_FIFONEMPTY, CALLER_M68K);
+    readback = core.CDROMReadWord(BUTCH_I2CNTRL + 2, CALLER_M68K);
+    CHECK_EQ(readback & BUTCH_I2S_FIFONEMPTY, 0);
+    /* the writable bits still stick */
+    CHECK_EQ(readback & BUTCH_I2S_DRIVE, BUTCH_I2S_DRIVE);
+}
+
 TEST(butch_dsa_back_to_back_responses)
 {
     bool (*openImage)(const char *);
@@ -435,6 +454,7 @@ int main(int argc, char *argv[])
     RUN_TEST(butch_dsa_command_write);
     RUN_TEST(butch_dsa_read_toc_command);
     RUN_TEST(butch_dsa_get_status_command);
+    RUN_TEST(butch_i2cntrl_status_bit_readonly);
     RUN_TEST(butch_dsa_back_to_back_responses);
 
     /* FIFO */
