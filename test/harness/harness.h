@@ -43,6 +43,9 @@
  *     --option K=V     Set core option (e.g. --option virtualjaguar_dsp=enabled)
  *     --quiet          Suppress per-frame output, only show final results
  *     --snapshot-interval N   Probe snapshot every N frames (default: 1)
+ *     --press F:BTN[:HOLD]    Hold button BTN from frame F for HOLD frames
+ *                      (default 10).  BTN: up down left right a b c pause
+ *                      option 0-6, or raw retropad id.  Repeatable.
  *
  * ======================================================================
  * CORE OPTION OVERRIDE TABLE
@@ -82,6 +85,8 @@
 #define HARNESS_MAX_RESULTS  64
 /* Audio capture frames */
 #define HARNESS_MAX_AUDIO_FRAMES 1200
+/* Maximum number of scripted input events */
+#define HARNESS_MAX_INPUT_EVENTS 128
 
 /* ----------------------------------------------------------------
  * Types
@@ -91,6 +96,26 @@ typedef struct {
     const char *key;
     const char *value;
 } harness_option;
+
+/* Scripted input: hold RETRO_DEVICE_ID_JOYPAD_<button> on <port> from
+ * first_frame through last_frame (inclusive).  Populated from repeated
+ *   --press FRAME:BUTTON[:HOLD_FRAMES]      (HOLD_FRAMES default 10)
+ * flags, where BUTTON is one of: up down left right a b c pause option
+ * 0 1 2 3 4 5 6 (Jaguar numpad -> retropad x/l/r/l2/r2/l3/r3), or a raw
+ * retropad id number.  Port 0 only via CLI; tests can fill events for
+ * other ports programmatically. */
+typedef struct {
+    unsigned first_frame;
+    unsigned last_frame;
+    unsigned port;
+    unsigned button;   /* RETRO_DEVICE_ID_JOYPAD_* */
+} harness_input_event;
+
+/* Optional programmatic input hook: return the input_state value for
+ * (port, device, index, id); takes precedence over the event table. */
+typedef int16_t (*harness_input_cb)(void *userdata, unsigned port,
+                                    unsigned device, unsigned index,
+                                    unsigned id);
 
 typedef struct {
     unsigned frame;
@@ -150,6 +175,12 @@ typedef struct {
     harness_video_cb video_callback;
     void            *video_callback_data;
 
+    /* Scripted input (optional) */
+    harness_input_event input_events[HARNESS_MAX_INPUT_EVENTS];
+    unsigned            num_input_events;
+    harness_input_cb    input_callback;
+    void               *input_callback_data;
+
     /* Directory returned for GET_SYSTEM_DIRECTORY (CD BIOS discovery).
      * Default "/tmp"; set to "test/roms/private" for CD titles, or use
      * --system-dir. */
@@ -184,6 +215,10 @@ typedef struct {
     .frame_callback_data = NULL, \
     .video_callback = NULL, \
     .video_callback_data = NULL, \
+    .input_events = {{0}}, \
+    .num_input_events = 0, \
+    .input_callback = NULL, \
+    .input_callback_data = NULL, \
     .system_dir = "/tmp", \
     .core_handle = NULL, \
     .current_frame = 0, \
@@ -223,6 +258,10 @@ void harness_report(harness_config *cfg, const harness_result *results, unsigned
 
 /* Convenience: add a core option override. */
 void harness_set_option(harness_config *cfg, const char *key, const char *value);
+
+/* Convenience: schedule a scripted button press (see harness_input_event). */
+void harness_press(harness_config *cfg, unsigned port, unsigned button,
+                   unsigned first_frame, unsigned hold_frames);
 
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);

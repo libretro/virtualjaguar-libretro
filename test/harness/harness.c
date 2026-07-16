@@ -127,21 +127,134 @@ static size_t cb_audio_batch(const int16_t *data, size_t frames)
 }
 
 static void cb_input_poll(void) {}
+
 static int16_t cb_input_state(unsigned p, unsigned d, unsigned i, unsigned id)
-{ (void)p; (void)d; (void)i; (void)id; return 0; }
+{
+    unsigned e;
+    if (!active_cfg) return 0;
+    if (active_cfg->input_callback)
+        return active_cfg->input_callback(active_cfg->input_callback_data,
+                                          p, d, i, id);
+    if (d != RETRO_DEVICE_JOYPAD) return 0;
+    for (e = 0; e < active_cfg->num_input_events; e++) {
+        const harness_input_event *ev = &active_cfg->input_events[e];
+        if (ev->port == p && ev->button == id &&
+            active_cfg->current_frame >= ev->first_frame &&
+            active_cfg->current_frame <= ev->last_frame)
+            return 1;
+    }
+    return 0;
+}
+
+/* Map a --press button token to a RETRO_DEVICE_ID_JOYPAD_* id, following
+ * the core's default (non-custom) retropad layout in libretro.c:
+ * Jaguar A/B/C = retropad A/B/Y, Pause = Select, Option = Start,
+ * numpad 0-6 = X/L/R/L2/R2/L3/R3. */
+static int harness_button_id(const char *name)
+{
+    static const struct { const char *name; unsigned id; } map[] = {
+        { "up",     RETRO_DEVICE_ID_JOYPAD_UP },
+        { "down",   RETRO_DEVICE_ID_JOYPAD_DOWN },
+        { "left",   RETRO_DEVICE_ID_JOYPAD_LEFT },
+        { "right",  RETRO_DEVICE_ID_JOYPAD_RIGHT },
+        { "a",      RETRO_DEVICE_ID_JOYPAD_A },
+        { "b",      RETRO_DEVICE_ID_JOYPAD_B },
+        { "c",      RETRO_DEVICE_ID_JOYPAD_Y },
+        { "pause",  RETRO_DEVICE_ID_JOYPAD_SELECT },
+        { "option", RETRO_DEVICE_ID_JOYPAD_START },
+        { "0",      RETRO_DEVICE_ID_JOYPAD_X },
+        { "1",      RETRO_DEVICE_ID_JOYPAD_L },
+        { "2",      RETRO_DEVICE_ID_JOYPAD_R },
+        { "3",      RETRO_DEVICE_ID_JOYPAD_L2 },
+        { "4",      RETRO_DEVICE_ID_JOYPAD_R2 },
+        { "5",      RETRO_DEVICE_ID_JOYPAD_L3 },
+        { "6",      RETRO_DEVICE_ID_JOYPAD_R3 },
+    };
+    size_t i;
+    for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+        if (strcmp(name, map[i].name) == 0)
+            return (int)map[i].id;
+    /* Multi-digit tokens fall through the table (0-6 are single chars),
+     * allowing raw retropad ids like "10". */
+    if (name[0] >= '0' && name[0] <= '9' && name[1] != '\0')
+        return atoi(name);
+    return -1;
+}
+
+/* Parse "FRAME:BUTTON[:HOLD]" into an input event on port 0. */
+static bool harness_parse_press(harness_config *cfg, const char *spec)
+{
+    char buf[64];
+    char *btn, *hold_s;
+    unsigned frame, hold = 10;
+    int id;
+
+    if (cfg->num_input_events >= HARNESS_MAX_INPUT_EVENTS) {
+        fprintf(stderr, "harness: too many --press events (max %d)\n",
+                HARNESS_MAX_INPUT_EVENTS);
+        return false;
+    }
+    strncpy(buf, spec, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    btn = strchr(buf, ':');
+    if (!btn) {
+        fprintf(stderr, "harness: bad --press '%s' (want FRAME:BUTTON[:HOLD])\n", spec);
+        return false;
+    }
+    *btn++ = '\0';
+    frame = (unsigned)atoi(buf);
+
+    hold_s = strchr(btn, ':');
+    if (hold_s) {
+        *hold_s++ = '\0';
+        hold = (unsigned)atoi(hold_s);
+        if (hold == 0) hold = 1;
+    }
+
+    id = harness_button_id(btn);
+    if (id < 0) {
+        fprintf(stderr, "harness: unknown button '%s' in --press '%s'\n", btn, spec);
+        return false;
+    }
+
+    cfg->input_events[cfg->num_input_events].first_frame = frame;
+    cfg->input_events[cfg->num_input_events].last_frame  = frame + hold - 1;
+    cfg->input_events[cfg->num_input_events].port        = 0;
+    cfg->input_events[cfg->num_input_events].button      = (unsigned)id;
+    cfg->num_input_events++;
+    return true;
+}
+
+void harness_press(harness_config *cfg, unsigned port, unsigned button,
+                   unsigned first_frame, unsigned hold_frames)
+{
+    if (cfg->num_input_events >= HARNESS_MAX_INPUT_EVENTS) return;
+    if (hold_frames == 0) hold_frames = 1;
+    cfg->input_events[cfg->num_input_events].first_frame = first_frame;
+    cfg->input_events[cfg->num_input_events].last_frame  = first_frame + hold_frames - 1;
+    cfg->input_events[cfg->num_input_events].port        = port;
+    cfg->input_events[cfg->num_input_events].button      = button;
+    cfg->num_input_events++;
+}
 
 static void cb_log(enum retro_log_level level, const char *fmt, ...)
 {
     va_list ap;
     /* VJ_HARNESS_LOG_INFO=1 lets INFO-level core logs through -- needed to
-     * see CDTraceDump / CDROMDiagSummary output, which print at LOG_INF. */
-    static int info_checked = 0, info_wanted = 0;
-    if (!info_checked) {
-        const char *e = getenv("VJ_HARNESS_LOG_INFO");
-        info_wanted = (e && e[0] == '1');
-        info_checked = 1;
+     * see CDTraceDump / CDROMDiagSummary output, which print at LOG_INF.
+     * VJ_HARNESS_LOG_DEBUG=1 additionally passes DEBUG (e.g. the CD HLE
+     * per-call trace, which logs at LOG_DBG). */
+    static int checked = 0;
+    static enum retro_log_level min_level = RETRO_LOG_WARN;
+    if (!checked) {
+        const char *ei = getenv("VJ_HARNESS_LOG_INFO");
+        const char *ed = getenv("VJ_HARNESS_LOG_DEBUG");
+        if (ei && ei[0] == '1') min_level = RETRO_LOG_INFO;
+        if (ed && ed[0] == '1') min_level = RETRO_LOG_DEBUG;
+        checked = 1;
     }
-    if (level < (info_wanted ? RETRO_LOG_INFO : RETRO_LOG_WARN)) return;
+    if (level < min_level) return;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -225,6 +338,9 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->snapshot_interval = (unsigned)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--system-dir") == 0 && i + 1 < argc) {
             cfg->system_dir = argv[++i];
+        } else if (strcmp(argv[i], "--press") == 0 && i + 1 < argc) {
+            if (!harness_parse_press(cfg, argv[++i]))
+                return false;
         } else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc) {
             char *eq;
             i++;

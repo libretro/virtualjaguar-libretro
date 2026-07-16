@@ -44,6 +44,7 @@ _perf_counters_register
 _perf_counters_find
 _CDROM*
 _CDIntf*
+_CDTrace*
 _BUTCH*
 _GetRamPtr
 _bootConfig

@@ -47,6 +47,7 @@
       perf_counters_find;
       CDROM*;
       CDIntf*;
+      CDTrace*;
       BUTCH*;
       GetRamPtr;
       bootConfig;
