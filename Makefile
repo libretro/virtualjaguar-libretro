@@ -760,6 +760,17 @@ else ifneq ($(TEST_EXPORTS),1)
 test:
 	@rm -f $(TARGET)
 	@$(MAKE) TEST_EXPORTS=1 test
+
+# The per-binary rules below only exist in the TEST_EXPORTS=1 branch.
+# Without this guard, a bare `make test/<binary>` silently falls through
+# to GNU make's built-in %:%.c rule, which links with the core's
+# -dynamiclib LDFLAGS and produces an UNEXECUTABLE shared library
+# ("cannot execute binary file" at run time -- this broke
+# cd_boot_matrix.sh's harness build).  Fail loudly instead.
+test/test_% test/tools/test_%:
+	@echo "ERROR: test binaries need the TEST_EXPORTS=1 rule set:" >&2
+	@echo "  make TEST_EXPORTS=1 $@" >&2
+	@false
 else
 # Every harness that dlopens the core verifies the binary's embedded git
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly

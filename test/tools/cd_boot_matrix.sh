@@ -119,10 +119,16 @@ if [ -n "$VJ_EXPECT_BUILD" ]; then
     fi
 fi
 
+# TEST_EXPORTS=1 is required: the per-binary rules only exist in that
+# Makefile branch.  A bare `make test/<bin>` falls through to GNU make's
+# built-in %:%.c rule, which links with the core's -dynamiclib LDFLAGS
+# and produces an unexecutable shared library (every matrix row then
+# reads "cannot execute binary file" -> all '?').
 for bin in test/test_cd_hle_boot test/test_cd_bios_boot; do
-    if [ ! -x "$bin" ]; then
+    if [ ! -x "$bin" ] || ! file "$bin" 2>/dev/null | grep -q executable; then
         echo "Building $bin..." >&2
-        make "$bin" || { echo "FATAL: failed to build $bin" >&2; exit 1; }
+        rm -f "$bin"
+        make TEST_EXPORTS=1 "$bin" || { echo "FATAL: failed to build $bin" >&2; exit 1; }
     fi
 done
 
