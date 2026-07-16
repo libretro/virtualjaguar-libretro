@@ -274,7 +274,10 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       DACUpdateSCLKRate();
       JERRYI2SInterruptTimer = -1;
       RemoveCallback(JERRYI2SCallback);
-      JERRYI2SCallback();
+      /* Restart the timer chain one I2S frame period out; a synchronous
+       * JERRYI2SCallback() here would assert the SSI interrupt inside
+       * the very instruction that wrote SCLK (see jerry.c). */
+      JERRYRescheduleI2S();
    }
    else if (offset == SMODE + 2)
    {

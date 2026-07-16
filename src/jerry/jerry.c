@@ -289,6 +289,33 @@ void JERRYPIT2Callback(void)
 }
 
 
+/* Restart the I2S interrupt timer chain WITHOUT asserting an interrupt
+ * now.  Called on SCLK writes (src/jerry/dac.c).  On real hardware the
+ * SSI raises its first word-strobe interrupt only after a complete I2S
+ * word has been shifted -- 32 bits x 2 clock phases x (SCLK+1) system
+ * clocks -- never in the same instruction that programmed the clock.
+ * Invoking JERRYI2SCallback() synchronously here vectored the DSP into
+ * its I2S handler in the middle of the store that wrote SCLK, before
+ * the DSP module's init code had set up the handler's pointer
+ * registers; the handler then wrote CD samples through stale pointers
+ * over its own code (Highlander / Dragon's Lair CD crash: dsp_pc
+ * escape to $FFFFCE03 after a module re-upload). */
+void JERRYRescheduleI2S(void)
+{
+   double usecs;
+
+   jerryI2SCycles = 32 * (2 * (*sclk + 1));
+
+   if (*smode & SMODE_INTERNAL)
+      usecs = (double)jerryI2SCycles
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+   else
+      usecs = 22.675737;
+
+   SetCallbackTime(JERRYI2SCallback, usecs, EVENT_JERRY);
+}
+
+
 void JERRYI2SCallback(void)
 {
    // We don't have to divide the RISC clock rate by this--the reason is a bit
