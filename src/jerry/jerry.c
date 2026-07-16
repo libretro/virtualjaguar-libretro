@@ -321,6 +321,13 @@ void JERRYI2SCallback(void)
 
       if (ButchIsReadyToSend())//Not sure this is right spot to check...
       {
+         /* CDDA-DIAG: samples/s delivered from BUTCH to LRXD/RRXD in
+          * slave mode; ~44100/s expected while CD audio should play. */
+         static uint32_t ssiDeliveries = 0;
+         ssiDeliveries++;
+         if (ssiDeliveries <= 3 || (ssiDeliveries % 220500) == 0)
+            LOG_INF("[CDDA] BUTCH->SSI delivery #%u (%us of samples)\n",
+                    ssiDeliveries, ssiDeliveries / 44100);
          //	return GetWordFromButchSSI(offset, who);
          SetSSIWordsXmittedFromButch();
          DSPSetIRQLine(DSPIRQ_SSI, ASSERT_LINE);
@@ -611,6 +618,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       uint16_t oldPending = jerryPendingInterrupt;
       jerryInterruptMask = data & 0xFF;
       jerryPendingInterrupt &= ~(data >> 8);
+      /* CDDA-DIAG: JINTCTRL external-int enable edges gate the BUTCH ->
+       * 68K IPL2 delivery (cdrom.c BUTCHExec); rare, log unconditionally. */
+      if ((oldMask ^ jerryInterruptMask) & IRQ2_EXTERNAL)
+         LOG_INF("[CDDA] JINTCTRL ext-int enable %s (J_INT=$%04X who=%u 68kpc=$%06X)\n",
+                 (jerryInterruptMask & IRQ2_EXTERNAL) ? "ON" : "OFF",
+                 data, who, m68k_get_reg(NULL, M68K_REG_PC));
       if (oldMask != jerryInterruptMask || oldPending != jerryPendingInterrupt)
       {
          JERRY_TRACE("J_INT write word data=$%04X who=%u mask $%02X->$%02X pending $%02X->$%02X%s%s\n",

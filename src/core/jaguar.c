@@ -17,6 +17,7 @@
 #include <stdlib.h>
 
 #include "jaguar.h"
+#include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
 #include "perf_counters.h"
@@ -653,6 +654,15 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
    uint32_t addr = offset & 0xFFFFFF;
+   /* CDDA-DIAG (Primal Rage): $F1B274 is the game's DSP command mailbox --
+    * cmd 1 enables the DSP ISR's CD-audio mix (r20), cmd 2 disables.  The
+    * missing "cmd 1" write is the open question in
+    * docs/cd-diagnosis/primal-rage-cdda-diagnosis.md.  Address is game-
+    * specific but the log line is harmless elsewhere (rare false hits at
+    * worst).  Remove with the rest of the CDDA-DIAG layer when resolved. */
+   if (addr == 0xF1B274 && data != 0)
+      LOG_INF("[CDDA] DSP mailbox $F1B274 = %08X who=%u 68kpc=$%06X\n",
+              data, who, m68k_get_reg(NULL, M68K_REG_PC));
    if (addr < 0x800000)
    {
       SET32(jaguarMainRAM, addr & 0x1FFFFF, data);

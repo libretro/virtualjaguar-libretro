@@ -25,6 +25,7 @@
 #include "dsp.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "tom.h"
 #include "settings.h"
 #include "m68000/m68kinterface.h"
 
@@ -266,6 +267,7 @@ static bool fifoDataReady = false;
 // the FIFO. After drain, it refills at I2S rate before the next interrupt.
 static uint32_t fifoReadCount = 0;
 static int32_t fifoFillDelay = 0;
+static bool cdPrevShouldIRQ = false;   /* edge detect for 68K EXT delivery */
 static int32_t fifoRefillAccum = 0;   /* hundredths of a tick, error diffusion */
 
 // Diagnostic counters for CD data path debugging
@@ -551,6 +553,7 @@ void CDROMReset(void)
    fifoReadCount = 0;
    fifoFillDelay = 0;
    fifoRefillAccum = 0;
+   cdPrevShouldIRQ = false;
    dsaQueueHead = 0;
    dsaQueueTail = 0;
    dsaQueueCount = 0;
@@ -752,9 +755,45 @@ void BUTCHExec(uint32_t cycles)
           * BIOS hasn't installed its EXT1 trampoline (Hover Strike,
           * Primal Rage), corrupting the stack with a bogus return address.
           * Keep the JERRY pending bit (so JINTCTRL reads see it) but skip
-          * the m68k_set_irq dual-delivery path. */
+          * BLIND m68k_set_irq dual-delivery. */
          GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
+
+         /* 68K delivery IS required when software asks for it: gate on
+          * JINTCTRL's external-interrupt enable, exactly like the JERRY
+          * timer IRQs (jerry.c JERRYPIT1Callback).  The CD BIOS leaves
+          * the enable clear during boot (no EXT trampoline installed
+          * yet -- blind delivery corrupted the 68K stack in Hover
+          * Strike / Primal Rage), but the CD_jeri/DSP flow ("Jaguar
+          * CD-ROM" doc p.7/p.12: SMODE=$14, just-seek CD_read + CD_ack
+          * for Red Book audio) installs a 68K-side handler and enables
+          * the JERRY external interrupt; CD_ack then waits for that
+          * handler to consume the DSA response.  Suspected missing link
+          * for Primal Rage CD-audio (see
+          * docs/cd-diagnosis/primal-rage-cdda-diagnosis.md). */
+         /* Edge-triggered: deliver once per condition onset, not per tick.
+          * Level delivery every halfline is an IRQ storm that starves the
+          * 68K (4 matrix titles regressed to wall-clock hangs when this
+          * was level-triggered). */
+         if (!cdPrevShouldIRQ)
+         {
+            int tomEna = TOMIRQEnabled(IRQ_DSP);
+            int jerEna = JERRYIRQEnabled(IRQ2_EXTERNAL) ? 1 : 0;
+            /* CDDA-DIAG: log every rising edge with gate states so device
+             * logs show WHY delivery did or didn't happen. */
+            static uint32_t cddaEdgeCount = 0;
+            cddaEdgeCount++;
+            if (cddaEdgeCount <= 20 || (cddaEdgeCount % 5000) == 0)
+               LOG_INF("[CDDA] BUTCH IRQ edge #%u tom=%d jerryExt=%d "
+                       "fifoReady=%d dsaReady=%d butch=$%08X tick=%u%s\n",
+                       cddaEdgeCount, tomEna, jerEna,
+                       fifoDataReady, dsaResponseReady, butchWrite,
+                       diag_butchExecCalls,
+                       (tomEna && jerEna) ? " -> 68K IPL2" : "");
+            if (tomEna && jerEna)
+               m68k_set_irq(2);
+         }
       }
+      cdPrevShouldIRQ = shouldIRQ;
    }
 
 }
@@ -1209,6 +1248,23 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    if (offset == DS_DATA)
    {
       CD_LOG("DS_DATA write: cmd=0x%04X\n", data);
+      /* CDDA-DIAG: audio-flow commands, rare -- log unconditionally so
+       * device RetroArch logs show the play sequence without a wedge dump.
+       * $01 Play / $02 Stop / $04 Pause / $05 Unpause? / $15 Set Mode /
+       * $51 Mute-Unmute / $70 Set DAC Mode. */
+      {
+         uint8_t hi = (uint8_t)(data >> 8);
+         if (hi == 0x01 || hi == 0x04 || hi == 0x05 || hi == 0x15 ||
+             hi == 0x51 || hi == 0x70)
+         {
+            static uint32_t cddaCmdCount = 0;
+            cddaCmdCount++;
+            if (cddaCmdCount <= 40 || (cddaCmdCount % 500) == 0)
+               LOG_INF("[CDDA] DSA cmd $%04X #%u tick=%u block=%u i2s=$%02X\n",
+                       data, cddaCmdCount, diag_butchExecCalls, block,
+                       cdRam[I2CNTRL + 3]);
+         }
+      }
       cdCmd = data;
       txBufferEmpty = true;  // Per MiSTer: set bit 12 on command write
       CDTracePush(CD_TRACE_DSA_TX, data, block);

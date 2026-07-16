@@ -25,6 +25,7 @@
  * produce the output stream. */
 
 #include "dac.h"
+#include "log.h"  /* CDDA-DIAG */
 
 #include <string.h>
 #include "cdrom.h"
@@ -277,6 +278,11 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    }
    else if (offset == SMODE + 2)
    {
+      /* CDDA-DIAG: SMODE master/slave switches are the CD_jeri fingerprint
+       * (doc 06 p.7: slave $14 = CD data flows to the I2S port). Rare. */
+      if ((*smode ^ data) & 0x01)
+         LOG_INF("[CDDA] SMODE $%04X -> $%04X (%s)\n", *smode, data,
+                 (data & 0x01) ? "INTERNAL/master" : "slave: CD -> I2S");
       *smode = data;
    }
 }
@@ -296,7 +302,15 @@ uint16_t DACReadWord(uint32_t offset, uint32_t who)
    if (offset == LRXD || offset == RRXD)
       return 0x0000;
    else if (offset == LRXD + 2)
+   {
+      /* CDDA-DIAG: the CD-audio mix gate opening shows up as a flood of
+       * LRXD reads from the DSP ISR; near-zero reads = gate closed. */
+      static uint32_t lrxdReads = 0;
+      lrxdReads++;
+      if (lrxdReads <= 5 || (lrxdReads % 100000) == 0)
+         LOG_INF("[CDDA] LRXD read #%u val=$%04X who=%u\n", lrxdReads, lrxd, who);
       return lrxd;
+   }
    else if (offset == RRXD + 2)
       return rrxd;
    else if (offset == SCLK)
