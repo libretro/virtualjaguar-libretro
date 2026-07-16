@@ -775,7 +775,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
-		test/tools/test_memory_map
+		test/tools/test_memory_map test/tools/test_op_gpu_object
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_mmio
@@ -830,6 +830,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/test_boot_config
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@if [ -f "test/roms/yarc.j64" ]; then \
 		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64; \
@@ -937,6 +938,13 @@ test/test_audio_presence: test/test_audio_presence.c
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+test/tools/test_op_gpu_object: test/tools/test_op_gpu_object.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_op_gpu_object.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/harness.h \
