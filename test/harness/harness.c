@@ -133,7 +133,15 @@ static int16_t cb_input_state(unsigned p, unsigned d, unsigned i, unsigned id)
 static void cb_log(enum retro_log_level level, const char *fmt, ...)
 {
     va_list ap;
-    if (level < RETRO_LOG_WARN) return;
+    /* VJ_HARNESS_LOG_INFO=1 lets INFO-level core logs through -- needed to
+     * see CDTraceDump / CDROMDiagSummary output, which print at LOG_INF. */
+    static int info_checked = 0, info_wanted = 0;
+    if (!info_checked) {
+        const char *e = getenv("VJ_HARNESS_LOG_INFO");
+        info_wanted = (e && e[0] == '1');
+        info_checked = 1;
+    }
+    if (level < (info_wanted ? RETRO_LOG_INFO : RETRO_LOG_WARN)) return;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
