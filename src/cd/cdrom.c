@@ -1322,7 +1322,8 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          // STOP response is queued below, don't set dsaResponseReady here
          isMultiWordResponse = false;
       }
-      else if ((data & 0xFF00) == 0x1500 || (data & 0xFF00) == 0x1800 ||
+      else if ((data & 0xFF00) == 0x0400 || (data & 0xFF00) == 0x0500 ||
+               (data & 0xFF00) == 0x1500 || (data & 0xFF00) == 0x1800 ||
                (data & 0xFF00) == 0x5000 || (data & 0xFF00) == 0x5400 ||
                (data & 0xFF00) == 0x7000)
       {
@@ -1334,7 +1335,15 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
           * Mode) immediately followed by $150A (Set Mode) dropped the
           * $70nn echo and the game wedged polling for it. */
          uint16_t resp;
-         if ((data & 0xFF00) == 0x1500)
+         if ((data & 0xFF00) == 0x0400 || (data & 0xFF00) == 0x0500)
+            /* Pause / Pause-Release complete with Found ($01) in the
+             * Philips CDD-family DSA protocol (mister_ground_truth.h
+             * response table has no $04xx/$05xx completion; $04 is the
+             * ERROR response).  Returning the old $0400 fallthrough made
+             * Primal Rage read "error" after Unpause and instantly
+             * re-Pause -- CD-audio test silent, match start blocked. */
+            resp = 0x0100;
+         else if ((data & 0xFF00) == 0x1500)
             resp = 0x1700 | (data & 0xFF);                    /* Mode Status */
          else if ((data & 0xFF00) == 0x1800)
             resp = 0x0143;                                    /* Spun Up     */
