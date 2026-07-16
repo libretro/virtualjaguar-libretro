@@ -772,9 +772,14 @@ void HalflineCallback(void)
     * asserts GPU IRQ1 (the DSP/JERRY-sourced interrupt, vector $F03010
     * where the CD BIOS installs its CD-data ISR). Halfline cadence
     * (~32 us) is much coarser than real BUTCH I2S timing, but matches
-    * our existing event-queue resolution. */
+    * our existing event-queue resolution.
+    * JaguarCDHLEStreamTick advances any in-flight HLE CD_read transfer
+    * at the real drive rate (no-op when idle / in BIOS mode). */
    if (bootConfig.isCDGame)
+   {
       BUTCHExec(0);
+      JaguarCDHLEStreamTick();
+   }
 
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }

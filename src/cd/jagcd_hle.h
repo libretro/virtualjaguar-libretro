@@ -26,6 +26,17 @@ bool JaguarCDHLEGPUDataPhase(void);
 /* True if HLE mode is active (set by JaguarCDHLEBoot on success). */
 bool JaguarCDHLEActive(void);
 
+/* Streamed CD_read transfer: CD_read arms a transfer that this tick
+ * advances at the real double-speed drive rate (352,800 B/s).  Called
+ * once per halfline from HalflineCallback when CD content is loaded.
+ * Instant delivery is NOT correct: games poll from code inside the
+ * destination range and rely on the drive's streaming latency to jump
+ * away before their own code is overwritten. */
+void JaguarCDHLEStreamTick(void);
+
+/* True while a streamed CD_read transfer is in flight. */
+bool JaguarCDHLEStreamActive(void);
+
 /* Force HLE active state (for unit testing without a disc image). */
 void JaguarCDHLESetActive(bool active);
 

@@ -94,6 +94,51 @@ static bool     hle_read_pending   = false;
  * the transfer state structure there. */
 static uint32_t hle_gpu_data_base  = 0;
 
+/* ------------------------------------------------------------------ */
+/* Streaming CD_read transfer                                          */
+/*                                                                     */
+/* CD_read data must NOT be delivered instantaneously.  Games issue    */
+/* overlay loads whose destination range covers the very code that     */
+/* polls for completion (Hover Strike's LVL loads span $05D340-$1F0000 */
+/* while its poll loop executes at $1B4xxx inside that window).  On    */
+/* real hardware the drive streams at the double-speed data rate       */
+/* (352,800 B/s), giving the game seconds to watch the write pointer   */
+/* advance and jump into the freshly-loaded code before the stream     */
+/* reaches its own address.  An instant transfer stomps the running    */
+/* poll loop mid-instruction and the 68K double-faults (intermittent   */
+/* menu/cutscene-skip lockups).                                        */
+/*                                                                     */
+/* So CD_read only ARMS this state; HalflineCallback drives            */
+/* JaguarCDHLEStreamTick(), which copies bytes at the real drive rate  */
+/* and updates the GPU data area write pointer as it goes.  The        */
+/* completion side effects (done flag, FF pad, ATRI block) fire only   */
+/* when the last byte lands.                                           */
+/* ------------------------------------------------------------------ */
+
+/* 150 double-speed sectors/s x 2352 bytes -- same rate cdrom.c uses
+ * for the real-BIOS FIFO path. */
+#define HLE_STREAM_BYTES_PER_SEC 352800.0
+/* Halfline periods must match HalflineCallback's SetCallbackTime. */
+#define HLE_NTSC_HALFLINE_US 31.777777
+#define HLE_PAL_HALFLINE_US  32.0
+
+static struct
+{
+   bool     active;
+   uint32_t lba;        /* next sector to fetch */
+   uint32_t bufOff;     /* next unread byte in buf (first sector: sentinel skip) */
+   bool     bufValid;
+   uint32_t dest;       /* destination base in main RAM */
+   uint32_t total;      /* bytes requested */
+   uint32_t written;    /* bytes delivered so far */
+   uint32_t accFrac;    /* 16.16 fractional byte budget accumulator */
+   uint32_t d1;         /* sentinel word (for the GPU data area) */
+   uint32_t sigD0, sigD1, sigA0, sigA1;  /* raw args for duplicate detection */
+   uint8_t  buf[2352];
+} hleStream;
+
+static void HLEStreamFinish(void);
+
 bool JaguarCDHLEActive(void)
 {
    return bootConfig.strategy == &cd_boot_strategy_hle && hle_active;
@@ -256,6 +301,19 @@ static void HLEHandleCDRead(void)
       HLE_LOG("CD_read: re-seek only (D0 bit31 set, D0=$%08X) — "
               "skipping data transfer\n", d0);
       hle_read_pending = false;
+      return;
+   }
+
+   /* A byte-identical CD_read re-issued while the previous one is still
+    * streaming is a poll-retry idiom (Iron Soldier 2's boot stub) — keep
+    * the in-flight stream instead of restarting from byte 0, which would
+    * never converge if the game retries faster than the stream finishes. */
+   if (hleStream.active && d0 == hleStream.sigD0 && d1 == hleStream.sigD1 &&
+       a0 == hleStream.sigA0 && a1 == hleStream.sigA1)
+   {
+      HLE_LOG("CD_read: identical re-issue while streaming ($%06X/$%06X done) — "
+              "keeping in-flight transfer\n",
+              hleStream.written, hleStream.total);
       return;
    }
 
@@ -510,43 +568,68 @@ static void HLEHandleCDRead(void)
    }
 
 hle_cd_read_post_scan:
-   /* Transfer data from the sentinel position into Jaguar RAM */
-   bytesWritten = 0;
-   s = 0;
+   /* Arm the streamed transfer.  The actual copy happens sector-by-sector
+    * in JaguarCDHLEStreamTick() at the real drive rate — see the streaming
+    * rationale above hleStream.  (Per-CD_read cart-space mirror removed —
+    * HLEPopulateCartBuffer already covers BrainDead 13's "ATRI" cart-scan
+    * path at boot time.) */
+   hleStream.active   = true;
+   hleStream.lba      = scanLBA;
+   hleStream.bufOff   = scanOff;
+   hleStream.bufValid = false;
+   hleStream.dest     = destAddr;
+   hleStream.total    = byteCount;
+   hleStream.written  = 0;
+   hleStream.accFrac  = 0;
+   hleStream.d1       = d1;
+   hleStream.sigD0    = d0;
+   hleStream.sigD1    = d1;
+   hleStream.sigA0    = a0;
+   hleStream.sigA1    = a1;
 
-   while (bytesWritten < byteCount)
+   hle_read_dest     = destAddr;
+   hle_read_end_addr = destAddr + byteCount;
+   hle_read_progress = 0;
+   hle_read_pending  = false;   /* CD_poll reports not-done while streaming */
+
+   /* Make the transfer-state structure visible to pollers from the first
+    * frame: write pointer at the start, end address, size, sentinel. */
+   if (hle_gpu_data_base != 0)
    {
-      uint32_t copyStart, copyLen, dst;
-
-      if (!CDIntfReadBlock(scanLBA + s, sectorBuf))
-         memset(sectorBuf, 0, 2352);
-
-      /* I2S un-swap */
-      for (i = 0; i + 1 < 2352; i += 2)
-      {
-         uint8_t tmp = sectorBuf[i];
-         sectorBuf[i]     = sectorBuf[i + 1];
-         sectorBuf[i + 1] = tmp;
-      }
-
-      copyStart = (s == 0) ? scanOff : 0;
-      copyLen = 2352 - copyStart;
-      if (copyLen > byteCount - bytesWritten)
-         copyLen = byteCount - bytesWritten;
-
-      dst = destAddr + bytesWritten;
-      for (i = 0; i < copyLen && (dst + i) < 0x200000; i++)
-         jaguarMainRAM[dst + i] = sectorBuf[copyStart + i];
-
-      /* Per-CD_read cart-space mirror removed — HLEPopulateCartBuffer
-       * already covers BrainDead 13's "ATRI" cart-scan path at boot
-       * time; the per-read mirror was redundant write traffic. */
-
-      bytesWritten += copyLen;
-      s++;
+      GPUWriteLong(hle_gpu_data_base + 0,  destAddr, 0);
+      GPUWriteLong(hle_gpu_data_base + 4,  destAddr + byteCount, 0);
+      GPUWriteLong(hle_gpu_data_base + 8,  byteCount, 0);
+      GPUWriteLong(hle_gpu_data_base + 16, d1, 0);
    }
 
+   HLE_LOG("CD_read: streaming %u bytes to $%06X-$%06X from LBA %u offset %u\n",
+           byteCount, destAddr, destAddr + byteCount - 1, scanLBA, scanOff);
+   return;
+
 hle_cd_read_complete:
+   /* Instant-completion path (sentinel-not-found-after-redirect zeroing):
+    * dest already holds its final content; run the completion side effects
+    * immediately. */
+   hleStream.active  = false;
+   hleStream.dest    = destAddr;
+   hleStream.total   = byteCount;
+   hleStream.written = byteCount;
+   hleStream.d1      = d1;
+   HLEStreamFinish();
+   (void)bytesWritten;
+   (void)s;
+}
+
+/* Completion side effects of a CD_read: run when the last streamed byte
+ * lands (or immediately, for the zeroed-dest fallback). */
+static void HLEStreamFinish(void)
+{
+   uint32_t destAddr  = hleStream.dest;
+   uint32_t byteCount = hleStream.total;
+   uint32_t d1        = hleStream.d1;
+
+   hleStream.active  = false;
+
    hle_read_dest     = destAddr;
    hle_read_end_addr = destAddr + byteCount;
    hle_read_progress = byteCount;
@@ -651,10 +734,90 @@ hle_cd_read_complete:
     * the end address. */
    DSPWriteLong(CD_DSP_DONE_FLAG_ADDR, 0xFFFFFFFFu, UNKNOWN);
 
-   HLE_LOG("CD_read: transferred %u bytes (%u sectors) "
+   HLE_LOG("CD_read: transfer complete — %u bytes (%u sectors) "
            "to $%06X-$%06X\n",
-           byteCount, s, destAddr, hle_read_end_addr - 1);
+           byteCount, (byteCount + 2351) / 2352, destAddr,
+           hle_read_end_addr - 1);
+}
 
+/* ------------------------------------------------------------------ */
+/* Streaming tick — called once per halfline from HalflineCallback     */
+/* ------------------------------------------------------------------ */
+
+bool JaguarCDHLEStreamActive(void)
+{
+   return hleStream.active;
+}
+
+void JaguarCDHLEStreamTick(void)
+{
+   uint32_t budget;
+   uint32_t i;
+
+   if (!hleStream.active)
+      return;
+
+   /* Accumulate this halfline's byte budget in 16.16 fixed point:
+    * 352,800 B/s x halfline period (~11.2 bytes per halfline). */
+   hleStream.accFrac += (uint32_t)(HLE_STREAM_BYTES_PER_SEC
+                                   * (vjs.hardwareTypeNTSC ? HLE_NTSC_HALFLINE_US
+                                                           : HLE_PAL_HALFLINE_US)
+                                   / 1.0e6 * 65536.0);
+   budget = hleStream.accFrac >> 16;
+   hleStream.accFrac &= 0xFFFFu;
+
+   while (budget > 0 && hleStream.written < hleStream.total)
+   {
+      uint32_t chunk, dst;
+
+      if (!hleStream.bufValid)
+      {
+         if (!CDIntfReadBlock(hleStream.lba, hleStream.buf))
+            memset(hleStream.buf, 0, 2352);
+         /* I2S un-swap: real hardware swaps bytes within 16-bit words */
+         for (i = 0; i + 1 < 2352; i += 2)
+         {
+            uint8_t tmp = hleStream.buf[i];
+            hleStream.buf[i]     = hleStream.buf[i + 1];
+            hleStream.buf[i + 1] = tmp;
+         }
+         hleStream.bufValid = true;
+      }
+
+      chunk = 2352 - hleStream.bufOff;
+      if (chunk > budget)
+         chunk = budget;
+      if (chunk > hleStream.total - hleStream.written)
+         chunk = hleStream.total - hleStream.written;
+
+      dst = hleStream.dest + hleStream.written;
+      for (i = 0; i < chunk && (dst + i) < 0x200000; i++)
+         jaguarMainRAM[dst + i] = hleStream.buf[hleStream.bufOff + i];
+
+      hleStream.written += chunk;
+      hleStream.bufOff  += chunk;
+      budget            -= chunk;
+
+      if (hleStream.bufOff >= 2352)
+      {
+         hleStream.bufOff   = 0;
+         hleStream.bufValid = false;
+         hleStream.lba++;
+      }
+   }
+
+   hle_read_progress = hleStream.written;
+
+   if (hleStream.written >= hleStream.total)
+   {
+      HLEStreamFinish();
+      return;
+   }
+
+   /* Advance the write pointer the game's poll loop watches. */
+   if (hle_gpu_data_base != 0)
+      GPUWriteLong(hle_gpu_data_base + 0,
+                   hleStream.dest + hleStream.written, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -689,7 +852,12 @@ static void HLEHandleCDPoll(void)
     * Return A0=0 the first time we see hle_read_pending and clear it,
     * then on subsequent polls report completion via the GPU data area
     * pointer. */
-   if (hle_read_pending)
+   if (hleStream.active)
+   {
+      /* Transfer still streaming — honestly not done yet. */
+      a0_val = 0;
+   }
+   else if (hle_read_pending)
    {
       hle_read_pending = false;
       a0_val = 0;
@@ -1045,6 +1213,7 @@ static void hle_strategy_reset(void)
    hle_read_end_addr = 0;
    hle_read_dest     = 0;
    hle_read_progress = 0;
+   memset(&hleStream, 0, sizeof(hleStream));
 }
 
 const CDBootStrategy cd_boot_strategy_hle = {
