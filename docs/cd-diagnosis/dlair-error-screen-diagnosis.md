@@ -1,6 +1,18 @@
-# Dragon's Lair (bios) in-game "CD error" screen — diagnosis in progress
+# Dragon's Lair (bios) in-game "CD error" screen — RESOLVED
 
-**State (2026-07-15):** root cause narrowed, not yet fixed. Follows from the
+**State (2026-07-15, late):** root-caused and FIXED — the FIFO refill pacing
+delivered ~201 KB/s vs the real double-speed drive's 352,800 B/s, and the
+ReadySoft engine (Dragon's Lair, Space Ace — same abort signature device-
+traced on both) dead-reckons the disc schedule against a GPU-timer clock,
+declaring a read error when the stream slips behind. Fix: error-diffused
+2.85-tick refill period (`FIFO_REFILL_PERIOD_X100`) matching the hardware
+rate. Post-fix both titles stream FMV continuously through 4200-frame runs,
+no error dialog, no watchdogs; full suite green; matrix re-run below.
+
+The rest of this document is the diagnosis trail, kept for the method and
+the decoded game/BIOS internals.
+
+Follows from the
 I2CNTRL status-bit fix (`f74ce09`), which unwedged the end-of-transfer FIFO
 flush loop shared by all bios-mode titles.
 

@@ -49,8 +49,22 @@
 // within a few frames but long enough to occur AFTER the BIOS's single poll.
 #define SEEK_DELAY_TICKS     100  // ~3.2ms — completes after BIOS poll + STOP
 #define FIFO_FILL_TICKS      8    // ~254μs before FIFO half-full after play starts
-#define FIFO_REFILL_TICKS    5    // ~159μs to refill FIFO after GPU ISR drains it
 #define FIFO_DRAIN_READS     16   // 16 word-reads = 8 GPU longword loads = 32 bytes
+
+/* Refill pacing: the real drive streams data at double-speed CD-DA rate,
+ * 150 sectors/s x 2352 bytes = 352,800 B/s (= the 2x I2S rate).  One
+ * half-full batch (8 x 32-bit FIFO entries = 32 bytes) therefore arrives
+ * every 90.7us = 2.85 halfline ticks (31.78us each).  The old fixed
+ * 5-tick period paced the stream at ~201 KB/s -- 57% of hardware -- and
+ * schedule-driven streaming engines (ReadySoft: Dragon's Lair, Space Ace)
+ * dead-reckon the disc position against a GPU-timer clock (48-bit counter
+ * at $562E/$5630, incremented in the game's GPU IRQ2 handler) and declare
+ * a CD read error when the data stream slips behind the disc schedule
+ * (68K $4C0C deadline-overshoot check).  Device-traced on both titles:
+ * FMV segment loops, then the in-game "error reading CD" dialog.
+ * The period is error-diffused in hundredths of a tick so the average
+ * rate matches hardware without a fractional-time event system. */
+#define FIFO_REFILL_PERIOD_X100  285
 
 /*
    BUTCH     equ  $DFFF00		; base of Butch=interrupt control register, R/W
@@ -252,6 +266,7 @@ static bool fifoDataReady = false;
 // the FIFO. After drain, it refills at I2S rate before the next interrupt.
 static uint32_t fifoReadCount = 0;
 static int32_t fifoFillDelay = 0;
+static int32_t fifoRefillAccum = 0;   /* hundredths of a tick, error diffusion */
 
 // Diagnostic counters for CD data path debugging
 static uint32_t diag_butchExecCalls = 0;
@@ -426,6 +441,18 @@ static void CDTracePush(uint16_t kind, uint16_t value, uint32_t blk)
       cdTraceCount++;
 }
 
+/* Next FIFO refill delay in whole ticks, error-diffusing the fractional
+ * 2.85-tick hardware period (see FIFO_REFILL_PERIOD_X100) so the long-run
+ * average matches the real drive's 352,800 B/s. Returns 2 or 3. */
+static int32_t CDROMNextRefillDelay(void)
+{
+   int32_t d;
+   fifoRefillAccum += FIFO_REFILL_PERIOD_X100;
+   d = fifoRefillAccum / 100;
+   fifoRefillAccum %= 100;
+   return d;
+}
+
 /* Trace I2CNTRL data-enable (bit 2) edges.  Called after any store that
  * touches the I2CNTRL low byte (word or byte path -- the GPU ISR uses
  * 32-bit stores that arrive as two word writes, but byte stores exist). */
@@ -523,6 +550,7 @@ void CDROMReset(void)
    seekDelay = 0;
    fifoReadCount = 0;
    fifoFillDelay = 0;
+   fifoRefillAccum = 0;
    dsaQueueHead = 0;
    dsaQueueTail = 0;
    dsaQueueCount = 0;
@@ -1064,7 +1092,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             if (fifoReadCount >= FIFO_DRAIN_READS)
             {
                fifoDataReady = false;
-               fifoFillDelay = FIFO_REFILL_TICKS;
+               fifoFillDelay = CDROMNextRefillDelay();
                cdFifoDrainCount++;
                CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
             }
@@ -1094,7 +1122,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             if (fifoReadCount >= FIFO_DRAIN_READS)
             {
                fifoDataReady = false;
-               fifoFillDelay = FIFO_REFILL_TICKS;
+               fifoFillDelay = CDROMNextRefillDelay();
                cdFifoDrainCount++;
                CDTracePush(CD_TRACE_FIFO_DRAIN, (uint16_t)fifoReadCount, block);
             }
