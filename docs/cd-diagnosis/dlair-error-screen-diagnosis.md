@@ -51,24 +51,62 @@ Repro: `make cd-visual CD_VISUAL_DISC="<DL cue>" CD_VISUAL_FLAGS="--frames
 - HLE comparison is unusable: DL in HLE mode black-screens with silent audio
   (separate pre-existing failure).
 
+## CD BIOS GPU ISR — data path decoded (from gpuram.bin)
+
+IRQ1 vector `$F03010` → ISR body `$F03B1C`. Key facts:
+
+- Mailbox in GPU RAM at `$F03B10`: `[0]=dest ptr, [4]=end ptr, [8]=saved
+  initial dest`. Completion = dest past end → clears BUTCH ICR bit 0.
+- DSARX branch (`$F03B3E`): consumes DS_DATA, **re-enables I2CNTRL bit 2**
+  (matches the CD_read flow comments in cdrom.c).
+- Data branch (`$F03B88`): reads **I2SDAT2 ($DFFF28) first, then FIFO_DATA
+  ($DFFF24), alternating — 4 pairs = 8 longwords per invocation**; stores
+  with pre-increment (`addq #4, r26; store`), so the first byte of caller
+  data lands at mailbox[0]+4. The stale longword observed at `$3E2F0` is
+  therefore *outside* the buffer — buffer-head corruption is RULED OUT.
+  Delivered payload (`sector[2:]` at `$3E2F4`) matches the same capture-skew
+  model that boots Primal Rage byte-exact.
+
+## Transfer timeline of the failure (mailbox sampled per run endpoint)
+
+The failing load requests ~1MB (end=`$13E000`). An earlier pass reached
+dest=`$F6FB0` (~70%) before the game abandoned it and re-sought — so
+segments *were* completing. The fatal cycle: seek 10 to MSF 3:40:52
+(block 16402), stream runs at full FIFO pace (~200 KB/s, ≈1x; note real
+drive is 2x = 300 KB/s), and after exactly 47 blocks (~110 KB, ~33 frames)
+the game itself turns I2S off, sends STOP, interrogates disc status, and
+shows the error dialog. The stream was healthy to the last tick. Post-error
+the game retries the whole load forever (cycle ~335,768 ticks, identical
+block trajectory each time).
+
+So the game aborts a *flowing* transfer on some verification WE fail, not
+on starvation and not on buffer content at the head.
+
 ## Open question (next step)
 
-Who writes the first longword (`$4B4B4B4B`) of the destination buffer, and
-what does real BUTCH deliver in the first FIFO entry after a mid-session
-seek? Candidates:
+What check does the game run ~2 seconds into the seek-10 segment that makes
+it declare a read error while data is flowing? Leading suspects, in order:
 
-1. The CD BIOS GPU ISR's data loop stores one register of residue before the
-   fresh stream (disassemble the data-mode ISR from the probe's
-   `gpuram.bin`; the sentinel-scan loop is at `$F03234`, data path nearby).
-   Check LOADP/HIDATA pairing on the FIFO ports.
-2. The capture-skew model (`09a62d6`) may be incomplete for stream restarts:
-   real hardware pairs the seeked sector's word 0 with prior residue in the
-   first 32-bit entry instead of dropping it. If so the fix is to deliver
-   `[residue, w0], [w1, w2]...` rather than dropping w0 — same sentinel
-   alignment (scan is word-tolerant), but no 2-byte payload loss.
-3. Find the game's validation routine (68K, buffer at a0=$3E2F0 in the
-   final state of the 2820-frame run) and read what it compares — decides
-   between (1) and (2).
+1. **Subcode Q position verification.** We do not emulate subcode at all —
+   SBCNTRL/SUBDATA/SUBDATB/SB_TIME ($DFFF14/18/1C/20) are inert cdRam
+   bytes, and BUTCH bits 2/3 (subcode frame / time-match interrupts) never
+   fire. A game validating head position via subcode during long reads
+   would read static garbage and conclude the drive is lost. Instrument:
+   temp fprintf on CDROMReadWord/WriteWord for offsets $14-$20 + BUTCH
+   enable-bit writes with bits 2/3 set, re-run to frame 2760.
+2. **Transfer rate** — we deliver ~200 KB/s vs the real drive's 2x
+   300 KB/s; a rate-based watchdog in the game could fire early. Check
+   FIFO_FILL cadence constants in cdrom.c (FIFO_FILL_TICKS/
+   FIFO_REFILL_TICKS) against real 2x timing before touching anything.
+3. Find the 68K abort decision: the code that wrote I2CNTRL=$0001 + STOP
+   at tick 1440021 (68K PC band $36xx is BIOS service code; the *caller*
+   made the decision). Break on the I2S off-edge (I2S_CTRL trace) and dump
+   68K PC/stack at that moment — one probe run.
+
+Supporting instrument for any of these: a control-events-only trace mode
+(e.g. `VJ_CD_TRACE=2` skipping FILL/DRAIN pushes) so one 256-entry ring
+covers a whole retry cycle; fills/drains currently flood 16K-deep rings in
+~2 cycles.
 
 ## Tooling added this session
 
