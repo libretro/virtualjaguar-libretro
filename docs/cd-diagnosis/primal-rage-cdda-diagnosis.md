@@ -1,4 +1,33 @@
-# Primal Rage CD-audio silence — diagnosis in progress
+# Primal Rage CD-audio silence — RESOLVED (2026-07-16)
+
+**Root cause:** the boot-stub TOC at $2C00 left bytes [5..7] of every
+track entry (track duration as MSF) zeroed.  Primal Rage's music player
+(RAM $3A2D6, transient overlay) computes its DSP playback countdown from
+exactly those bytes — `[5]*4500 + [6]*75 + [7]` sectors — and stores it
+to the synth-DSP's sector counter at $F1B278.  With duration 0 the DSP's
+per-588-sample countdown ($F1B23A) underflowed on the first sector,
+set the done flag at $F1B27C, and the 68K service loop ($3A3CC) sent
+mailbox cmd 2 (mix OFF) within ~13 ms of cmd 1 (mix ON).  The mix gate
+(bank-0 r20) was never the problem — the 68K opened it every attempt and
+immediately closed it because the track "ended".
+
+**Fix:** `CDIntfGetTrackDuration()` (lengthLBA minus pregap, as MSF) now
+fills TOC bytes [5..7] in both TOC writers (jagcd_bios.c boot stub,
+jagcd_hle.c).  Also reverted the Pause/Pause-Release DSA response to
+$0400: the game's own CD driver ($BE42) masks the response high byte and
+treats only $04xx (error-status, code $00 = none) as success — $0400 is
+the Philips-protocol completion ack, not an error.
+
+**Verified:** headless BIOS-mode run — mailbox cmd 1 arrives, no cmd 2
+follows, LRXD reads go from 5 to 900 000+ with live waveform data, and
+per-second host audio RMS holds 1 000–4 500 from music start (was 0).
+Old "68K enable-gate" hypothesis below is obsolete: Primal Rage never
+sets INT1 C_JERENA at all (all INT1 writes are $100/$101); its CD flow
+is poll-driven, no 68K CD interrupt needed.
+
+---
+
+Historical notes (pre-resolution):
 
 **State (2026-07-15, late):** the entire playback mechanism is decoded
 end-to-end; the remaining unknown is the 68K's precondition for enabling

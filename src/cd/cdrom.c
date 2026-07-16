@@ -1336,13 +1336,19 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
           * $70nn echo and the game wedged polling for it. */
          uint16_t resp;
          if ((data & 0xFF00) == 0x0400 || (data & 0xFF00) == 0x0500)
-            /* Pause / Pause-Release complete with Found ($01) in the
-             * Philips CDD-family DSA protocol (mister_ground_truth.h
-             * response table has no $04xx/$05xx completion; $04 is the
-             * ERROR response).  Returning the old $0400 fallthrough made
-             * Primal Rage read "error" after Unpause and instantly
-             * re-Pause -- CD-audio test silent, match start blocked. */
-            resp = 0x0100;
+            /* Pause / Pause-Release complete with the error-status word
+             * $04nn, nn = error code, $00 = none -- i.e. $0400 is the
+             * generic "done, no error" ack in the Philips CDD-family DSA
+             * protocol, NOT an error indicator.  Ground truth: Primal
+             * Rage's own 68K CD driver (RAM $BE42, from the Atari CD
+             * library) masks the response to its high byte and treats
+             * ONLY $04xx as success for Stop/Mute/Pause/Unpause-class
+             * commands, and its multi-word collector ($C20C) uses an
+             * $04xx word as the end-of-response terminator.  A previous
+             * change made these complete with Found ($0100) after
+             * misreading mister_ground_truth.h's DSA_RSP_ERROR -- that
+             * made the game flag every Pause/Unpause as failed. */
+            resp = 0x0400;
          else if ((data & 0xFF00) == 0x1500)
             resp = 0x1700 | (data & 0xFF);                    /* Mode Status */
          else if ((data & 0xFF00) == 0x1800)

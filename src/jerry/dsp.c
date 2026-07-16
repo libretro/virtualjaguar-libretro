@@ -17,12 +17,14 @@
 #include "dsp.h"
 #include "dsp_acc40.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "dac.h"
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
@@ -574,6 +576,38 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
    if ((offset >= DSP_WORK_RAM_BASE) && (offset < DSP_WORK_RAM_BASE+0x2000))
    {
+      /* CDDA-DIAG: see DSPWriteLong -- Primal Rage synth mailbox.
+       * Rate-capped: other titles may use this RAM range as data. */
+      if (offset >= 0xF1B270 && offset <= 0xF1B277)
+      {
+         static uint32_t mboxWrites = 0;
+         mboxWrites++;
+         if (mboxWrites <= 40 || (mboxWrites % 10000) == 0)
+            LOG_INF("[CDDA] DSP mailbox write.w $%06X = $%04X who=%u 68kpc=$%06X\n",
+                    offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+         /* One-shot main-RAM snapshot at the mix-ON edge so the transient
+          * music-player overlay around the writer PC can be disassembled.
+          * Enabled only when VJ_CDDA_SNAPDIR is set (diagnostic builds). */
+         if (offset == 0xF1B276 && data == 0x0001)
+         {
+            const char *dir = getenv("VJ_CDDA_SNAPDIR");
+            static int snapped = 0;
+            if (dir && !snapped)
+            {
+               char path[1024];
+               FILE *f;
+               snapped = 1;
+               snprintf(path, sizeof(path), "%s/mixon_mainram.bin", dir);
+               f = fopen(path, "wb");
+               if (f)
+               {
+                  fwrite(jaguarMainRAM, 1, 0x200000, f);
+                  fclose(f);
+                  LOG_INF("[CDDA] snapshot: %s\n", path);
+               }
+            }
+         }
+      }
       offset -= DSP_WORK_RAM_BASE;
       dsp_ram_8[offset] = data >> 8;
       dsp_ram_8[offset+1] = data & 0xFF;
@@ -613,6 +647,18 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 
    if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE + 0x1FFF)
    {
+      /* CDDA-DIAG: Primal Rage's synth-DSP command mailbox lives at
+       * $F1B274 (cmd 1 = CD mix ON, 2 = OFF, 3 = reset, 4 = exit) --
+       * log external writes so we can see who opens the mix gate.
+       * Rate-capped: other titles may use this RAM range as data. */
+      if (offset >= 0xF1B270 && offset <= 0xF1B277)
+      {
+         static uint32_t mboxWritesL = 0;
+         mboxWritesL++;
+         if (mboxWritesL <= 40 || (mboxWritesL % 10000) == 0)
+            LOG_INF("[CDDA] DSP mailbox write $%06X = $%08X who=%u 68kpc=$%06X\n",
+                    offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+      }
       offset -= DSP_WORK_RAM_BASE;
       SET32(dsp_ram_8, offset, data);
       //CC only!

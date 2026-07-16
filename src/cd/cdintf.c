@@ -1170,6 +1170,43 @@ uint8_t CDIntfGetTrackInfo(uint32_t track, uint32_t offset)
    }
 }
 
+// Returns one byte of the track's playing duration as MSF (offset 0/1/2 =
+// minutes/seconds/frames).  Duration is a sector-count delta, NOT a disc
+// position, so no 150-frame lead-in offset applies.  The pregap (startLBA
+// to dataLBA) is excluded: playback and the $2C00 TOC both start at
+// INDEX 01.  Games size their CD-audio playback from this: Primal Rage's
+// music player loads TOC bytes [5..7] (length MSF) into its DSP sector
+// countdown at $F1B278 -- a zero length there stops the track after one
+// sector (~13 ms).
+uint8_t CDIntfGetTrackDuration(uint32_t track, uint32_t offset)
+{
+   uint32_t pregap, durLBA;
+   uint8_t m, s, f;
+
+   if (!disc.loaded || track < 1 || track > disc.numTracks)
+      return 0;
+
+   pregap = disc.tracks[track - 1].dataLBA
+              ? (disc.tracks[track - 1].dataLBA - disc.tracks[track - 1].startLBA)
+              : 0;
+   durLBA = (disc.tracks[track - 1].lengthLBA > pregap)
+              ? (disc.tracks[track - 1].lengthLBA - pregap)
+              : 0;
+   MSFFromLBA(durLBA, &m, &s, &f);
+
+   switch (offset)
+   {
+      case 0:
+         return m;
+      case 1:
+         return s;
+      case 2:
+         return f;
+      default:
+         return 0;
+   }
+}
+
 // Returns the session number (1-based) for a given track
 uint8_t CDIntfGetTrackSession(uint32_t track)
 {

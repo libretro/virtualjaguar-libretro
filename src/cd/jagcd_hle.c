@@ -150,6 +150,11 @@ static void HLEPopulateTOC(uint32_t addr)
       jaguarMainRAM[off + 2] = CDIntfGetTrackInfo(t, 1);
       jaguarMainRAM[off + 3] = CDIntfGetTrackInfo(t, 2);
       jaguarMainRAM[off + 4] = (uint8_t)((sess >= 1) ? (sess - 1) : 0);
+      /* bytes[5..7] = track duration as MSF -- games size CD-audio
+       * playback from these (Primal Rage DSP countdown at $F1B278). */
+      jaguarMainRAM[off + 5] = CDIntfGetTrackDuration(t, 0);
+      jaguarMainRAM[off + 6] = CDIntfGetTrackDuration(t, 1);
+      jaguarMainRAM[off + 7] = CDIntfGetTrackDuration(t, 2);
 
       if (sess >= 2 || t >= numTracks - 4)
          HLE_LOG("TOC: track %2u session=%u(0-based %u) MSF=%02u:%02u:%02u at $%04X\n",

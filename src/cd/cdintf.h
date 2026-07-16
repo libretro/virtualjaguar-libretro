@@ -70,6 +70,7 @@ uint32_t CDIntfGetCurrentDrive(void);
 const uint8_t * CDIntfGetDriveName(uint32_t driveNum);
 uint8_t CDIntfGetSessionInfo(uint32_t session, uint32_t offset);
 uint8_t CDIntfGetTrackInfo(uint32_t track, uint32_t offset);
+uint8_t CDIntfGetTrackDuration(uint32_t track, uint32_t offset);
 uint8_t CDIntfGetTrackSession(uint32_t track);
 
 // Returns true if the given disc-image LBA falls within a session 2 track

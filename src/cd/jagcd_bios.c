@@ -147,6 +147,14 @@ static bool bios_instruction_hook(uint32_t m68kPC)
                          * 1-based sessions. */
                         jaguarMainRAM[tocAddr + 4] =
                             (uint8_t)((tsess >= 1) ? (tsess - 1) : 0);
+                        /* bytes[5..7] = track duration as MSF.  Primal Rage's
+                         * music player multiplies these into a sector count
+                         * for its DSP playback countdown ($F1B278); zeroes
+                         * here made every CD-audio track "finish" after one
+                         * sector and the game silenced the mix instantly. */
+                        jaguarMainRAM[tocAddr + 5] = CDIntfGetTrackDuration(t, 0);
+                        jaguarMainRAM[tocAddr + 6] = CDIntfGetTrackDuration(t, 1);
+                        jaguarMainRAM[tocAddr + 7] = CDIntfGetTrackDuration(t, 2);
 
                         maxTrack = (uint8_t)t;
                     }
