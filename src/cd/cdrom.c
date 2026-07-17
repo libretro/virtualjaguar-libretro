@@ -303,6 +303,27 @@ static uint32_t dsaQueueHead = 0;
 static uint32_t dsaQueueTail = 0;
 static uint32_t dsaQueueCount = 0;
 
+// DSA response turnaround, in half-line ticks (~31.8us each).  On real
+// hardware a response word arrives over the DSA serial link hundreds of
+// microseconds after the command — it is NEVER already pending in the same
+// instant the 68K writes DS_DATA.  Making queued responses visible
+// synchronously created a steal race: if the 68K's timeslice ended between
+// writing a command and its first BUTCH bit-13 poll iteration, the game's
+// GPU CD ISR (entered for a routine FIFO half-full service — near-constant
+// during streaming) saw bit 13 already set, acked DSCNTRL and consumed the
+// response from DS_DATA.  The 68K then polled bit 13 forever.
+// Device-traced on Primal Rage (bios): the attract loop's CDDA hand-off
+// sends Set Mode $1501 + Set DAC $7001 and blocks on bit 13 for the $70nn
+// echo (68K wait loop at $3544); losing that race blacked out the attract
+// sequence ~103 s in, permanently.  Deferring visibility to a BUTCHExec
+// tick closes the race structurally: JaguarExecuteNew runs the 68K slice
+// first after every event boundary, so a polling 68K always sees the
+// response before the GPU ISR can run.  A GPU-consumed response with no
+// 68K waiter (this game's normal $12xx seek flow) still works exactly as
+// before, just one serial delay later.
+#define DSA_RESPONSE_DELAY_TICKS 4
+static int32_t dsaResponseDelay = 0;
+
 static void DSAQueuePush(uint16_t response)
 {
    if (dsaQueueCount < DSA_QUEUE_SIZE)
@@ -310,7 +331,12 @@ static void DSAQueuePush(uint16_t response)
       dsaQueue[dsaQueueTail] = response;
       dsaQueueTail = (dsaQueueTail + 1) % DSA_QUEUE_SIZE;
       dsaQueueCount++;
-      dsaResponseReady = true;
+      // Response becomes visible (BUTCH bit 13) after a serial-transfer
+      // delay, counted down in BUTCHExec — never in the same timeslice.
+      // If a previous response is still visible or already in transit,
+      // this word just queues behind it.
+      if (!dsaResponseReady && dsaResponseDelay <= 0)
+         dsaResponseDelay = DSA_RESPONSE_DELAY_TICKS;
       CD_LOG("DSA queue push: $%04X (count=%u)\n", response, dsaQueueCount);
    }
 }
@@ -325,6 +351,13 @@ static uint16_t DSAQueuePop(void)
       if (dsaQueueCount == 0)
       {
          dsaResponseReady = false;
+         dsaResponseDelay = 0;
+      }
+      else
+      {
+         // Next queued word arrives after its own serial-word delay.
+         dsaResponseReady = false;
+         dsaResponseDelay = DSA_RESPONSE_DELAY_TICKS;
       }
       CD_LOG("DSA queue pop: $%04X (remaining=%u)\n", response, dsaQueueCount);
       return response;
@@ -572,6 +605,7 @@ void CDROMReset(void)
    dsaQueueHead = 0;
    dsaQueueTail = 0;
    dsaQueueCount = 0;
+   dsaResponseDelay = 0;
    cdTraceLastI2SEnable = -1;
 
    diag_butchExecCalls = 0;
@@ -717,6 +751,16 @@ void BUTCHExec(uint32_t cycles)
       {
          fifoFillDelay = 1;  // Retry next tick
       }
+   }
+
+   // DSA response turnaround countdown — runs independently of the BUTCH
+   // interrupt enables below (response arrival is drive-side; the CD BIOS
+   // clears BUTCH bit 0 during CD_read and still expects responses).
+   if (dsaResponseDelay > 0)
+   {
+      dsaResponseDelay--;
+      if (dsaResponseDelay == 0 && dsaQueueCount > 0)
+         dsaResponseReady = true;
    }
 
    /* Removed: HLETransferTick shortcut for BIOS strategy.  It existed to
@@ -873,6 +917,13 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       // mailbox the GPU can't write to because the ISR never returns
       // long enough to do real work).
       dsaResponseReady = false;
+      /* If a queued response word is still undelivered, re-assert RX-full
+       * after another serial-word delay: the ack clears the interrupt
+       * latch, but the drive MCU still has data to hand over, and on real
+       * hardware bit 13 (rec buffer full) rises again when the next word
+       * lands in the receive buffer. */
+      if (dsaQueueCount > 0 && dsaResponseDelay <= 0)
+         dsaResponseDelay = DSA_RESPONSE_DELAY_TICKS;
    }
    else if (offset == I2CNTRL || offset == I2CNTRL + 2)
    {
@@ -2189,6 +2240,11 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_BUF(buf, ssiBuf, sizeof(ssiBuf));
 	STATE_SAVE_VAR(buf, ssiBufPtr);
 	STATE_SAVE_VAR(buf, ssiBlock);
+	STATE_SAVE_BUF(buf, dsaQueue, sizeof(dsaQueue));
+	STATE_SAVE_VAR(buf, dsaQueueHead);
+	STATE_SAVE_VAR(buf, dsaQueueTail);
+	STATE_SAVE_VAR(buf, dsaQueueCount);
+	STATE_SAVE_VAR(buf, dsaResponseDelay);
 
 	return (size_t)(buf - start);
 }
@@ -2230,6 +2286,11 @@ size_t CDROMStateLoad(const uint8_t *buf)
 	STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
 	STATE_LOAD_VAR(buf, ssiBufPtr);
 	STATE_LOAD_VAR(buf, ssiBlock);
+	STATE_LOAD_BUF(buf, dsaQueue, sizeof(dsaQueue));
+	STATE_LOAD_VAR(buf, dsaQueueHead);
+	STATE_LOAD_VAR(buf, dsaQueueTail);
+	STATE_LOAD_VAR(buf, dsaQueueCount);
+	STATE_LOAD_VAR(buf, dsaResponseDelay);
 
 	return (size_t)(buf - start);
 }

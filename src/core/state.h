@@ -17,9 +17,10 @@
 extern "C" {
 #endif
 
-/* Save state format identifier and version */
+/* Save state format identifier and version.
+ * v4: CDROM chunk gained the DSA response queue + serial-delay counter. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   3
+#define STATE_VERSION   4
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
