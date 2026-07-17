@@ -94,6 +94,12 @@ static bool     hle_read_pending   = false;
  * the transfer state structure there. */
 static uint32_t hle_gpu_data_base  = 0;
 
+/* Drive position after the last CD_read (LBA one past the final sector
+ * consumed).  On real hardware CD_read leaves the drive playing there;
+ * a following CD_I2S_enable (SMODE slave) streams that audio into the
+ * DSP.  $FFFFFFFF = no read yet. */
+static uint32_t hle_post_read_lba  = 0xFFFFFFFFu;
+
 /* ------------------------------------------------------------------ */
 /* Streaming CD_read transfer                                          */
 /*                                                                     */
@@ -300,6 +306,13 @@ static void HLEHandleCDRead(void)
    {
       HLE_LOG("CD_read: re-seek only (D0 bit31 set, D0=$%08X) — "
               "skipping data transfer\n", d0);
+      /* A just-seek repositions the drive and leaves it playing — this is
+       * the documented CDDA-play API ("call CD_read with the Just Seek bit
+       * set and the timecode of your track. Audio will be played by your
+       * interrupt handler" — Jaguar CD-ROM manual p.8).  Start the CD->I2S
+       * stream there; with SMODE in master mode this is inert. */
+      hle_post_read_lba = lba;
+      CDROMHLEStartAudio(lba);
       hle_read_pending = false;
       return;
    }
@@ -615,6 +628,8 @@ hle_cd_read_complete:
    hleStream.total   = byteCount;
    hleStream.written = byteCount;
    hleStream.d1      = d1;
+   hleStream.lba     = lba;
+   hleStream.bufOff  = 0;
    HLEStreamFinish();
    (void)bytesWritten;
    (void)s;
@@ -634,6 +649,12 @@ static void HLEStreamFinish(void)
    hle_read_end_addr = destAddr + byteCount;
    hle_read_progress = byteCount;
    hle_read_pending  = true;
+
+   /* Real hardware leaves the drive playing one sector past the data it
+    * just delivered; a following CD_I2S_enable streams audio from there
+    * (Primal Rage's Probe-logo music).  hleStream.lba is the next sector
+    * to fetch; round a partially-consumed sector up to the next one. */
+   hle_post_read_lba = hleStream.lba + (hleStream.bufOff ? 1 : 0);
 
    /* Write $FFFF sentinel padding after the transferred data.
     *
@@ -704,12 +725,15 @@ static void HLEStreamFinish(void)
             }
             for (r = 0; r < 2352 && (headerAddr + r) < 0x600000; r++)
                jaguarMainROM[headerAddr + r] = bootSec[r];
-            /* Mirror boot sector to main RAM for scans that read via 68K */
-            if (headerAddr + 2352 <= 0x200000)
-            {
-               for (r = 0; r < 2352 && (headerAddr + r) < 0x200000; r++)
-                  jaguarMainRAM[headerAddr + r] = bootSec[r];
-            }
+            /* NO main-RAM mirror of the boot sector here.  Games allocate
+             * their CD-read buffers from a heap (Primal Rage: first-fit
+             * free list at $1FB750, nodes = {next,len} 8 bytes before each
+             * block), and the free-list remainder node sits just past the
+             * allocation — a 2352-byte RAM write at dest+count+64 stomps
+             * it (Primal Rage: node $89630, mirror covered $89620-$89F4F),
+             * corrupting the heap -> address error -> the game's 'NRL1'
+             * exception trap at the Probe logo.  Cart-space copy above is
+             * kept: cart ROM is ours to synthesize. */
          }
       }
 
@@ -1033,6 +1057,7 @@ bool JaguarCDHLEBoot(void)
    hle_read_end_addr = 0;
    hle_read_dest     = 0;
    hle_read_progress = 0;
+   hle_post_read_lba = 0xFFFFFFFFu;
 
    if (!CDIntfIsImageLoaded())
    {
@@ -1150,12 +1175,34 @@ bool JaguarCDHLEHook(uint32_t pc)
       HLEHandleISRSetup(0x01);
       return true;
 
-   /* CD-control entries (CD_I2S_ENABLE, CD_SPIN_UP, CD_STOP_DRIVE,
-    * CD_SET_VOL_MUTE/MAX, CD_PAUSE, CD_UNPAUSE, CD_FIFO_DISABLE,
-    * CD_HW_RESET, CD_SET_DAC_MODE) are not intercepted — the jump table
-    * is pre-stubbed with $4E75 (RTS) by HLEInstallJumpTable, so falling
-    * through executes a no-op naturally. The previous explicit hooks
-    * only added log noise. */
+   /* CD_I2S_enable: on real hardware this sends DSA "Set Mode audio"
+    * ($1501) + enables I2CNTRL, and the drive — still playing from the
+    * position the last CD_read/just-seek left it at — streams audio over
+    * I2S into the DSP (SMODE slave).  Start the emulated CD->SSI stream
+    * from that position so the DSP's audio driver gets clocked and fed
+    * (Primal Rage's Probe-logo music; the game wedges without it). */
+   case JT_CD_I2S_ENABLE:
+      if (hle_post_read_lba != 0xFFFFFFFFu)
+      {
+         HLE_LOG("CD_I2S_enable: starting CD audio stream at LBA %u\n",
+                 hle_post_read_lba);
+         CDROMHLEStartAudio(hle_post_read_lba);
+      }
+      return true;
+
+   case JT_CD_STOP_DRIVE:
+   case JT_CD_PAUSE:
+      CDROMHLESetAudioPlaying(0);
+      return true;
+
+   case JT_CD_UNPAUSE:
+      CDROMHLESetAudioPlaying(1);
+      return true;
+
+   /* Remaining CD-control entries (CD_SPIN_UP, CD_SET_VOL_MUTE/MAX,
+    * CD_FIFO_DISABLE, CD_HW_RESET, CD_SET_DAC_MODE) are not intercepted —
+    * the jump table is pre-stubbed with $4E75 (RTS) by
+    * HLEInstallJumpTable, so falling through executes a no-op naturally. */
 
    default:
       break;
@@ -1213,6 +1260,7 @@ static void hle_strategy_reset(void)
    hle_read_end_addr = 0;
    hle_read_dest     = 0;
    hle_read_progress = 0;
+   hle_post_read_lba = 0xFFFFFFFFu;
    memset(&hleStream, 0, sizeof(hleStream));
 }
 

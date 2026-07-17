@@ -63,6 +63,12 @@ void CDTraceDump(void);
  * seek+transfer with no separate BUTCH-driven seek/FIFO state machine. */
 void CDTraceHLERead(uint32_t lba, uint16_t byteCountTrunc);
 
+/* HLE audio-streaming control (jagcd_hle.c): start CD->I2S playback at an
+ * LBA (primes the SSI head so slave-mode SSI IRQs reach the DSP), and
+ * pause/resume the stream. */
+void CDROMHLEStartAudio(uint32_t lba);
+void CDROMHLESetAudioPlaying(int playing);
+
 /* Read-only accessor for crash_detect.c's cd_seek_wedge watchdog. Any
  * pointer may be NULL. seekStarts/seekDones count genuine (non-redundant)
  * $12xx seeks and their $0100 completions; fifoDrains counts completed

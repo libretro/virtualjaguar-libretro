@@ -472,6 +472,25 @@ void CDTraceSetEnabled(int enabled)
    cdTraceEnabled = enabled || CDTraceEnvWantsTrace();
 }
 
+/* VJ_CD_TRACE_LIVE=1: log every trace event as it is pushed instead of
+ * relying on the 256-entry ring dump (which only fires on cd_seek_wedge).
+ * Diagnostic-only, env-gated, cached after first check. */
+static int cdTraceLiveChecked = 0;
+static int cdTraceLiveWants = 0;
+
+static int CDTraceLive(void)
+{
+   const char *e;
+
+   if (cdTraceLiveChecked)
+      return cdTraceLiveWants;
+
+   e = getenv("VJ_CD_TRACE_LIVE");
+   cdTraceLiveWants = (e != NULL && e[0] == '1') ? 1 : 0;
+   cdTraceLiveChecked = 1;
+   return cdTraceLiveWants;
+}
+
 static void CDTracePush(uint16_t kind, uint16_t value, uint32_t blk)
 {
    CDTraceEntry *e;
@@ -487,6 +506,10 @@ static void CDTracePush(uint16_t kind, uint16_t value, uint32_t blk)
    cdTraceHead++;
    if (cdTraceCount < CD_TRACE_SIZE)
       cdTraceCount++;
+
+   if (CDTraceLive())
+      LOG_INF("[CD-TRACE-LIVE] tick=%u kind=%-10s value=$%04X block=%u\n",
+              e->tick, cdTraceKindName[kind], value, blk);
 }
 
 /* Next FIFO refill delay in whole ticks, error-diffusing the fractional
@@ -524,6 +547,43 @@ static void CDTraceI2SWrite(void)
 void CDTraceHLERead(uint32_t lba, uint16_t byteCountTrunc)
 {
    CDTracePush(CD_TRACE_HLE_READ, byteCountTrunc, lba);
+}
+
+/* --- HLE audio-streaming control (called from jagcd_hle.c) ---
+ *
+ * On real hardware a CD_read leaves the drive PLAYING at the position
+ * just past the transferred data; games then call CD_I2S_enable (+
+ * CD_set_DAC_mode) with SMODE in slave mode and the drive's I2S stream
+ * flows through the SSI into the DSP (Primal Rage plays its Probe-logo
+ * music exactly this way).  The HLE CD_read is a synchronous memcpy that
+ * never touches the drive state, so without these hooks the SSI head
+ * stays unprimed, ButchIsReadyToSend() is false, and the DSP receives
+ * ZERO slave-mode SSI interrupts — its audio driver is unclocked and the
+ * game wedges waiting for playback progress.
+ *
+ * CDROMHLEStartAudio(): position the drive/SSI head at `lba` and start
+ * playback, mirroring the seek-completion priming in BUTCHExec.
+ * CDROMHLESetAudioPlaying(): pause/resume gate — SetSSIWordsXmittedFromButch
+ * outputs silence (but keeps clocking the DSP) while cdPlaying is false. */
+void CDROMHLEStartAudio(uint32_t lba)
+{
+   if (!haveCDGoodness)
+      return;
+
+   block = lba;
+   if (!CDIntfReadBlock(lba, ssiBuf))
+      memset(ssiBuf, 0, 2352);
+   ssiBlock  = lba + 1;
+   ssiBufPtr = 0;
+   cdPlaying = true;
+   seekDelay = 0;
+   CD_LOG("HLE audio start: LBA %u (SSI head primed)\n", lba);
+}
+
+void CDROMHLESetAudioPlaying(int playing)
+{
+   cdPlaying = playing ? true : false;
+   CD_LOG("HLE audio playing=%d (block=%u)\n", playing, block);
 }
 
 void CDTraceDump(void)
