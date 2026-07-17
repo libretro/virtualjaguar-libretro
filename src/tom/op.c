@@ -40,6 +40,13 @@
 
 #define OP_RUNAWAY_GUARD_OBJECTS   30000
 
+/* GPU-object release wait: how many GPU cycles to run inline waiting for
+ * the ISR's OBF write, and the step size between checks.  A real halfline
+ * is ~845 GPU cycles; ISRs that take longer would break the display on
+ * hardware too, so ~5 halflines of budget is generous. */
+#define OP_GPU_RELEASE_GUARD_CYCLES   4000
+#define OP_GPU_RELEASE_STEP_CYCLES    16
+
 // Private function prototypes
 
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render);
@@ -48,6 +55,10 @@ void OPDiscoverObjects(uint32_t address);
 uint64_t OPLoadPhrase(uint32_t offset);
 
 // Local global variables
+
+/* Set by the TOM write path on any write to OBF ($F00026) — the GPU's
+ * "release the Object Processor" signal after servicing a GPU object. */
+static bool op_obf_written = false;
 
 // Blend tables (64K each)
 static uint8_t op_blend_y[0x10000];
@@ -250,6 +261,15 @@ void OPSetStatusRegister(uint32_t data)
 {
    tomRam8[0x26] = (data & 0x0000FF00) >> 8;
    tomRam8[0x27] |= (data & 0xFE);
+}
+
+
+/* Called by the TOM write path on any write to OBF ($F00026).  Writing the
+ * object flag is how the GPU releases a halted OP after servicing a GPU
+ * object. */
+void OPNotifyOBFWrite(void)
+{
+   op_obf_written = true;
 }
 
 
@@ -459,12 +479,47 @@ void OPProcessList(int halfline, bool render)
             }
          case OBJECT_TYPE_GPU:
             {
+               /* The GPU object fires whenever the OP reaches it — the
+                * silicon does not honor the YPOS field the JTRM describes
+                * (games gate the object with BRANCH objects instead, and
+                * carry non-matching YPOS values: yarc uses a BRANCH
+                * VC==506 in front of a stale-YPOS object, Primal Rage
+                * gates a YPOS=0 object to halflines >= 352).  The object
+                * is latched into OB, the GPU is interrupted, and the OP
+                * halts until the GPU's ISR writes OBF ($F00026), then
+                * continues with the next sequential phrase (single-phrase
+                * object, no link — MAME resumes at +8 the same way).
+                *
+                * Our OP is synchronous inside the halfline callback, so
+                * "halt until OBF" is modeled by running the GPU inline,
+                * bounded so a title whose ISR never releases the OP keeps
+                * the old stop-for-this-line behavior instead of wedging.
+                * Without the resume, every object after the GPU object
+                * was dropped for the rest of the frame — Primal Rage
+                * rendered the bottom third of fight scenes black. */
+               int32_t guard = OP_GPU_RELEASE_GUARD_CYCLES;
+
                OPSetCurrentObject(p0);
+               op_obf_written = false;
                GPUSetIRQLine(3, ASSERT_LINE);
-               /* The OP must stop here so the GPU sees this object in OB.
-                * Continuing to the next object can overwrite OB before the
-                * GPU services IRQ3. */
-               return;
+
+               /* Waiting is only meaningful if the GPU can actually take
+                * the interrupt — don't burn inline cycles for games that
+                * never enabled IRQ3. */
+               while (!op_obf_written && guard > 0 && GPUIsRunning()
+                      && GPUOPInterruptEnabled())
+               {
+                  GPUExec(OP_GPU_RELEASE_STEP_CYCLES);
+                  guard -= OP_GPU_RELEASE_STEP_CYCLES;
+               }
+
+               if (!op_obf_written)
+               {
+                  /* GPU idle, ISR missing, or no release: stop here so
+                   * the GPU still sees this object in OB. */
+                  return;
+               }
+               break;
             }
          case OBJECT_TYPE_BRANCH:
             {

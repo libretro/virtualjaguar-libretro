@@ -801,6 +801,14 @@ int GPUIsRunning(void)
    return GPU_RUNNING ? 1 : 0;
 }
 
+/* Is the Object Processor interrupt (IRQ3) enabled in G_FLAGS?  Used by
+ * OPProcessList to decide whether a GPU object's inline release-wait can
+ * ever be serviced — if the game never enabled IRQ3, waiting is futile. */
+int GPUOPInterruptEnabled(void)
+{
+   return (gpu_flags & 0x80) ? 1 : 0;
+}
+
 void GPUDumpState(const char *tag)
 {
    LOG_INF("[GPU %s] PC=%08X ctrl=%08X flags=%08X running=%d\n",

@@ -35,6 +35,7 @@ void GPUCPUINTCallback(void);
 void GPUResetStats(void);
 uint32_t GPUReadPC(void);
 int GPUIsRunning(void);
+int GPUOPInterruptEnabled(void);
 void GPUDumpState(const char *tag);
 
 // GPU interrupt numbers (from $F00100, bits 4-8)

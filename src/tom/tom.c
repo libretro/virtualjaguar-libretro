@@ -1245,6 +1245,10 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    }
 
    offset &= 0x3FFF;
+   /* Any write to OBF releases an OP halted on a GPU object (see
+    * OPProcessList OBJECT_TYPE_GPU). */
+   if (offset == OBF || offset == OBF + 1)
+      OPNotifyOBFWrite();
    if (offset == INT1)
       TOMClearPendingIRQs(data);
    if (offset == INT1 + 1)
