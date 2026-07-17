@@ -1701,6 +1701,10 @@ INLINE static void gpu_opcode_mmult(void)
    int64_t accum = 0;
    uint32_t res;
 
+   /* Per JTRM ("Systolic Matrix Multiplies"), the packed vector operand
+    * lives in the SECONDARY register bank (bank 1) — an absolute bank
+    * reference, not "the bank not currently selected".  See the DSP's
+    * dsp_opcode_mmult for the full story (Baldies clipped-music bug). */
    if (gpu_matrix_control & 0x10)				// Column stepping
    {
       for(i=0; i<count; i++)
@@ -1708,9 +1712,9 @@ INLINE static void gpu_opcode_mmult(void)
          int16_t a;
          int16_t b;
          if (i & 0x01)
-            a = (int16_t)((gpu_alternate_reg[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
+            a = (int16_t)((gpu_reg_bank_1[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
          else
-            a = (int16_t)(gpu_alternate_reg[IMM_1 + (i >> 1)] & 0xFFFF);
+            a = (int16_t)(gpu_reg_bank_1[IMM_1 + (i >> 1)] & 0xFFFF);
 
          b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;
@@ -1724,9 +1728,9 @@ INLINE static void gpu_opcode_mmult(void)
          int16_t a;
          int16_t b;
          if (i & 0x01)
-            a = (int16_t)((gpu_alternate_reg[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
+            a = (int16_t)((gpu_reg_bank_1[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
          else
-            a = (int16_t)(gpu_alternate_reg[IMM_1 + (i >> 1)] & 0xFFFF);
+            a = (int16_t)(gpu_reg_bank_1[IMM_1 + (i >> 1)] & 0xFFFF);
 
          b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;

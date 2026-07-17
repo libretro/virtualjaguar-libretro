@@ -811,16 +811,17 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	else \
 		echo "  SKIP: Atari Karts ROM (private) not available"; \
 	fi
-	@# Known-broken titles: --expect-clipping makes the test pass while the
-	@# bug is still there, but flips red the day a DSP-side fix lands and
-	@# clipping disappears — forces this manifest to be updated.
+	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
+	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
+	@# register bank 1, not "the non-current bank").  These now assert
+	@# clean audio so a regression flips them red again.
 	@if [ -f "test/roms/private/Skyhammer_(1999).jag" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --expect-clipping --quiet; \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --quiet; \
 	else \
 		echo "  SKIP: Skyhammer ROM (private) not available"; \
 	fi
 	@if [ -f "test/roms/private/Iron Soldier 2 (World).j64" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --expect-clipping --quiet; \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --quiet; \
 	else \
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi

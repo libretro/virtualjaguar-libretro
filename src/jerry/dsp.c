@@ -1621,6 +1621,15 @@ INLINE static void dsp_opcode_mmult(void)
    uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
    int64_t accum = 0;
 
+   /* Per JTRM ("Systolic Matrix Multiplies"), the packed vector operand
+    * lives in the SECONDARY register bank (bank 1) — an absolute bank
+    * reference, not "the bank not currently selected".  With IMASK set
+    * (interrupt service) the current bank is forced to 0, so the old
+    * dsp_alternate_reg happened to be bank 1 and looked correct; but a
+    * mixer running mainline with REGPAGE=1 (e.g. Baldies) loads its
+    * sample vector into bank 1 as its CURRENT bank, and reading the
+    * "alternate" bank 0 multiplies the matrix by the interrupt
+    * handler's pointers instead — rail-to-rail clipped audio. */
    if (!(dsp_matrix_control & 0x10))
    {
       for (i = 0; i < count; i++)
@@ -1629,9 +1638,9 @@ INLINE static void dsp_opcode_mmult(void)
          int16_t b;
 
          if (i&0x01)
-            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+            a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
-            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+            a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4;
@@ -1645,9 +1654,9 @@ INLINE static void dsp_opcode_mmult(void)
          int16_t b;
 
          if (i&0x01)
-            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+            a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
-            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+            a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4 * count;
@@ -2460,6 +2469,8 @@ INLINE static void DSP_mmult(void)
 	uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
 	int64_t accum = 0;
 
+	/* Vector operand comes from the SECONDARY bank (bank 1) per JTRM —
+	 * see dsp_opcode_mmult above. */
 	if (!(dsp_matrix_control & 0x10))
 	{
 		for (i = 0; i < count; i++)
@@ -2468,9 +2479,9 @@ INLINE static void DSP_mmult(void)
          int16_t b;
 
 			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+				a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4;
@@ -2484,9 +2495,9 @@ INLINE static void DSP_mmult(void)
          int16_t b;
 
 			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+				a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4 * count;
