@@ -17,12 +17,21 @@
  *   destination region therefore changed content on essentially every frame.
  *
  * Invariant checked (golden-free, game-agnostic):
- *   Once the destination region is first populated by a CD_read, its content
- *   must remain STABLE for the rest of the run, because IS2 only ever issues
- *   byte-identical CD_reads in this window.  We count how many times the
- *   region's content transitions after the first population:
- *     RED  (heuristic present): dozens/hundreds of transitions (drift loop).
+ *   Once a destination byte is populated by a CD_read, its content must
+ *   remain STABLE for the rest of the run, because IS2 only ever issues
+ *   byte-identical CD_reads in this window.  We count how many times
+ *   previously-populated (nonzero) bytes change value after the first
+ *   population:
+ *     RED  (heuristic present): dozens/hundreds of transitions (drift loop
+ *           streams different garbage over the good first read each call).
  *     GREEN (heuristic removed): zero transitions (idempotent re-reads).
+ *
+ *   CD_read has streamed at the real drive rate (352,800 B/s, ~5.9 KB per
+ *   NTSC frame) since a1f1ac1 -- an in-flight transfer that starts mid-frame
+ *   spans two frame samples, so the region fills across consecutive frames.
+ *   A transition whose differing bytes were ALL previously zero is that
+ *   fill continuing (zero -> data), not corruption; only transitions that
+ *   rewrite previously-nonzero bytes count against maxChanges.
  *
  * This test needs the Iron Soldier 2 (Songbird) private disc image and is NOT
  * part of the default `make test` body -- like the other CD sweeps it walks
@@ -124,6 +133,7 @@ TEST(cd_read_is_idempotent)
     void (*p_retro_unload_game)(void);
     const char *disc_path = NULL;
     uint8_t *ram;
+    uint8_t *snap;
     unsigned frames, f;
     uint32_t addr, len, maxChanges;
     uint32_t prevHash, changes, firstPopFrame;
@@ -185,6 +195,9 @@ TEST(cd_read_is_idempotent)
     fprintf(stderr, "    disc=%s frames=%u region=$%06X..$%06X\n",
             disc_path, frames, addr, addr + len - 1);
 
+    snap = (uint8_t *)calloc(len, 1);
+    if (!snap) FAIL("out of memory for %u-byte region snapshot", len);
+
     prevHash      = region_hash(ram, addr, len);   /* all-zero baseline */
     changes       = 0;
     firstPopSeen  = false;
@@ -196,19 +209,40 @@ TEST(cd_read_is_idempotent)
         h = region_hash(ram, addr, len);
         if (h != prevHash) {
             if (!firstPopSeen && region_nonzero(ram, addr, len)) {
-                /* zero -> first CD_read landed: not a corruption. */
+                /* zero -> first CD_read data landed: not a corruption. */
                 firstPopSeen  = true;
                 firstPopFrame = f;
+                memcpy(snap, &ram[addr], len);
             } else if (firstPopSeen) {
-                changes++;
-                if (changes <= 8)
-                    fprintf(stderr,
-                            "    [CHANGE] frame %u: region content mutated "
-                            "(hash $%08X, change #%u)\n", f, h, changes);
+                /* Streamed CD_read fills the region across frames: a
+                 * transition whose differing bytes were ALL zero in the
+                 * previous snapshot is population continuing.  Rewriting a
+                 * previously-nonzero byte is the guarded corruption. */
+                uint32_t k;
+                bool mutated = false;
+                for (k = 0; k < len; k++) {
+                    if (snap[k] != ram[addr + k] && snap[k] != 0) {
+                        mutated = true;
+                        break;
+                    }
+                }
+                if (mutated) {
+                    changes++;
+                    if (changes <= 8)
+                        fprintf(stderr,
+                                "    [CHANGE] frame %u: populated byte at "
+                                "$%06X mutated $%02X -> $%02X "
+                                "(hash $%08X, change #%u)\n",
+                                f, addr + k, snap[k], ram[addr + k],
+                                h, changes);
+                }
+                memcpy(snap, &ram[addr], len);
             }
             prevHash = h;
         }
     }
+
+    free(snap);
 
     if (p_retro_unload_game) p_retro_unload_game();
 
