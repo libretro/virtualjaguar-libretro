@@ -1297,6 +1297,19 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
    else
       data = GET16(cdRam, offset);
 
+   /* SUBCODE-DIAG: reads of the (unimplemented) subcode registers. */
+   if (offset >= SBCNTRL && offset < SB_TIME + 4)
+   {
+      static uint32_t subReads = 0;
+      subReads++;
+      if (subReads <= 40 || (subReads % 10000) == 0)
+         LOG_INF("[SUBCODE] read %s+%u -> $%04X who=%u 68kpc=$%06X\n",
+                 (offset >= SB_TIME) ? "SB_TIME" :
+                 (offset >= SUBDATB) ? "SUBDATB" :
+                 (offset >= SUBDATA) ? "SUBDATA" : "SBCNTRL",
+                 offset & 3, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+   }
+
    //Returning $00000008 seems to cause it to use the starfield. Dunno why.
    // It looks like it's getting the CD_mode this way...
    if (offset == UNKNOWN + 2)
@@ -1343,10 +1356,38 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    //   - DSARX (bit 13): consume response by reading DS_DATA
    if (offset == BUTCH + 2)
    {
+      /* SUBCODE-DIAG: BUTCH bit2 = subcode frame-time int enable, bit3 =
+       * SB_TIME time-match int enable.  Neither is emulated yet -- log
+       * arming edges so device/headless runs show which titles depend on
+       * the subcode position path (suspected FMV scene sequencing). */
+      {
+         static uint16_t prevSubEna = 0;
+         if ((prevSubEna ^ data) & 0x0C)
+            LOG_INF("[SUBCODE] BUTCH int enables $%02X -> $%02X (frame=%d match=%d) who=%u 68kpc=$%06X\n",
+                    prevSubEna & 0x7F, data & 0x7F,
+                    (data >> 2) & 1, (data >> 3) & 1, who,
+                    m68k_get_reg(NULL, M68K_REG_PC));
+         prevSubEna = data;
+      }
       SET16(cdRam, offset, data & 0x007F);  // Store only enable bits (0-6)
       CD_LOG("WriteWord BUTCH+2: data=0x%04X enables=0x%02X [PC=$%06X]\n",
              data, data & 0x7F, m68k_get_reg(NULL, M68K_REG_PC));
       return;
+   }
+
+   /* SUBCODE-DIAG: any traffic on the subcode registers (SBCNTRL $14,
+    * SUBDATA $18, SUBDATB $1C, SB_TIME $20) -- currently RAM-backed
+    * no-ops in this emulator. */
+   if (offset >= SBCNTRL && offset < SB_TIME + 4)
+   {
+      static uint32_t subWrites = 0;
+      subWrites++;
+      if (subWrites <= 40 || (subWrites % 10000) == 0)
+         LOG_INF("[SUBCODE] write %s+%u = $%04X who=%u 68kpc=$%06X\n",
+                 (offset >= SB_TIME) ? "SB_TIME" :
+                 (offset >= SUBDATB) ? "SUBDATB" :
+                 (offset >= SUBDATA) ? "SUBDATA" : "SBCNTRL",
+                 offset & 3, data, who, m68k_get_reg(NULL, M68K_REG_PC));
    }
 
    /* I2CNTRL bit 4 (FIFO-not-empty) is read-only status ("When read: b4 -
