@@ -317,6 +317,23 @@ static void HLEHandleCDRead(void)
       return;
    }
 
+   /* Real BIOS CD_read ($3624) executes `subq.l #4,a0` on every
+    * non-bit-31 call and leaves A0 = dest-4 on return (the GPU ISR's
+    * pre-decremented write pointer).  Games reuse the post-call A0, so
+    * the clobber is part of the ABI.  (Bit-31 re-seeks branch past the
+    * subq and preserve A0 — handled by the early return above.)
+    *
+    * Deliberate divergence: only applied to calls we accept as data
+    * reads (valid RAM dest).  Audio-mode plays arrive here with A0 =
+    * whatever pointer the game happens to hold (Highlander: its GPU
+    * control-register pointer, $F02114) — on hardware the play succeeds
+    * once and one -4 is absorbed, but our unmodeled audio path makes
+    * the game retry every frame, and accumulating -4s would corrupt
+    * the game's live pointer.  Until audio-mode CD_read is modeled,
+    * skipping the clobber on the rejected path is the safer shape. */
+   if (a0 != 0 && a0 < 0x200000)
+      m68k_set_reg(M68K_REG_A0, a0 - 4);
+
    /* A byte-identical CD_read re-issued while the previous one is still
     * streaming is a poll-retry idiom (Iron Soldier 2's boot stub) — keep
     * the in-flight stream instead of restarting from byte 0, which would
@@ -609,9 +626,15 @@ hle_cd_read_post_scan:
     * frame: write pointer at the start, end address, size, sentinel. */
    if (hle_gpu_data_base != 0)
    {
-      GPUWriteLong(hle_gpu_data_base + 0,  destAddr, 0);
+      /* [+0] mirrors the real GPU ISR's pre-decremented write pointer:
+       * CD_read does `subq.l #4,a0` before storing it ($362C/$3666), so
+       * the pointer runs dest-4 .. end-4 across the transfer. */
+      GPUWriteLong(hle_gpu_data_base + 0,  destAddr - 4, 0);
       GPUWriteLong(hle_gpu_data_base + 4,  destAddr + byteCount, 0);
-      GPUWriteLong(hle_gpu_data_base + 8,  byteCount, 0);
+      /* [+8] is the ISR error/status long, NOT progress: real CD_read
+       * zeroes it ($366A move.l #0,(a2)+) and boot stubs ABORT the load
+       * when CD_poll hands it back nonzero in A1 (Baldies $4DA2). */
+      GPUWriteLong(hle_gpu_data_base + 8,  0, 0);
       GPUWriteLong(hle_gpu_data_base + 16, d1, 0);
    }
 
@@ -747,9 +770,22 @@ static void HLEStreamFinish(void)
     * The real GPU ISR pre-decrements dest by 4, so [+0] = A0-4. */
    if (hle_gpu_data_base != 0)
    {
-      GPUWriteLong(hle_gpu_data_base + 0,  destAddr + byteCount, 0);
+      /* Final [+0]: the real GPU ISR drains 32-byte FIFO batches with a
+       * pre-incremented pointer WHILE ptr <= end, so the last batch
+       * overshoots and the pointer comes to rest past the requested end
+       * (module code at $F0315C-$F0318C: cmp ptr,end / jr pl / drain 32).
+       * Boot stubs rely on that: Primal Rage exits on `cmpa.l a6,a0 /
+       * blt` with a6 = end, Baldies on a3 = end-4 — both need a value
+       * beyond end, never an exact stop AT end. */
+      {
+         uint32_t ptr0  = destAddr - 4;
+         uint32_t span  = (destAddr + byteCount) - ptr0;
+         uint32_t final = ptr0 + ((span / 32) + 1) * 32;
+         GPUWriteLong(hle_gpu_data_base + 0, final, 0);
+      }
       GPUWriteLong(hle_gpu_data_base + 4,  destAddr + byteCount, 0);
-      GPUWriteLong(hle_gpu_data_base + 8,  byteCount, 0);
+      /* [+8] = error status, 0 on success — see the arm-time comment. */
+      GPUWriteLong(hle_gpu_data_base + 8,  0, 0);
       GPUWriteLong(hle_gpu_data_base + 16, d1, 0);
    }
 
@@ -856,53 +892,77 @@ static void HLEHandleCDPoll(void)
 {
    static uint32_t pollCount = 0;
    uint32_t a0_val;
+   uint32_t a1_val;
    pollCount++;
    if (pollCount <= 5 || (pollCount % 100000) == 0)
       HLE_LOG("CD_poll #%u: pending=%d end=$%06X gpu_data=$%06X\n",
               pollCount, hle_read_pending, hle_read_end_addr,
               hle_gpu_data_base);
 
-   /* The real BIOS's CD_poll returns A0 = [$3074] (the GPU data area
-    * POINTER in GPU RAM, e.g. $F03B10), NOT the transfer position.
-    * Boot stubs use two idioms to check completion:
-    *   1. `cmpa.l A6,A0; blt poll`  — A0 >= end (Highlander, Battle Morph)
-    *   2. `cmpa.l #$80000,A0; ble poll` — A0 > $80000 (BrainDead 13, IS2)
+   /* Real BIOS CD_poll (resident code at $3610, disassembled from a
+    * live BIOS-mode session):
+    *   movea.l $3074.l,a0    ; a0 = transfer-state struct (GPU RAM)
+    *   movea.l a0,a1
+    *   adda.l  #8,a1
+    *   movea.l (a0),a0       ; A0 = [struct+0]  — CURRENT DEST POINTER
+    *   movea.l (a1),a1       ; A1 = [struct+8]  — progress count
+    *   rts
+    * A0 is the advancing destination pointer, NOT the struct pointer.
+    * Boot stubs compare it against the transfer end (`cmpa.l A6,A0`,
+    * Highlander / Battle Morph) or a threshold (`cmpa.l #$80000,A0`,
+    * BrainDead 13 / IS2) — both behave correctly with the advancing-
+    * pointer semantics, exactly as on hardware.
     *
-    * Defer one poll: real-hardware CD_poll bounces around (BUTCH FIFO
-    * isn't yet half-full / ISR hasn't yet processed the seek response)
-    * before reporting completion. Some boot stubs depend on observing
-    * the not-done state at least once to take a sequencing branch
-    * (BrainDead 13's HLE poll loop misses an init step otherwise).
-    * Return A0=0 the first time we see hle_read_pending and clear it,
-    * then on subsequent polls report completion via the GPU data area
-    * pointer. */
+    * Getting this right matters beyond the completion checks: games
+    * REUSE the returned A0 long after the load.  Baldies' engine init
+    * does `clr.l (a0)` on whatever its last BIOS call left in A0 —
+    * with the old struct-pointer return that cleared $F030C0, the
+    * frame-counter increment inside its own freshly-uploaded GPU OP
+    * ISR, wedging the 68K forever on a counter nobody bumps.  With
+    * the dest-pointer return it clears end-of-buffer scratch, same
+    * as on hardware.
+    *
+    * Defer one poll after an instant completion: some boot stubs
+    * (BrainDead 13) must observe the not-done state at least once to
+    * take a sequencing branch.  A0=0 fails both completion idioms. */
    if (hleStream.active)
    {
-      /* Transfer still streaming — honestly not done yet. */
-      a0_val = 0;
+      /* Transfer still streaming — report the partial position.
+       * A1 (the [+8] error status) stays 0: boot stubs abort on
+       * nonzero A1, it is NOT a progress counter. */
+      a0_val = hleStream.dest - 4 + hleStream.written;
+      a1_val = 0;
    }
    else if (hle_read_pending)
    {
       hle_read_pending = false;
       a0_val = 0;
+      a1_val = 0;
    }
    else if (hle_read_end_addr == 0)
+   {
       a0_val = 0;
+      a1_val = 0;
+   }
    else if (hle_gpu_data_base != 0)
-      a0_val = hle_gpu_data_base;
+   {
+      a0_val = GPUReadLong(hle_gpu_data_base + 0, UNKNOWN);
+      a1_val = GPUReadLong(hle_gpu_data_base + 8, UNKNOWN);
+   }
    else
    {
-      /* No ISR setup call yet — synthesize a GPU data area pointer.
-       * Must be > $80000 to pass threshold checks in boot stubs. */
+      /* No ISR setup call yet — synthesize the transfer-state struct
+       * the way the boot-time BIOS would have. */
       hle_gpu_data_base = 0xF03B00;
-      GPUWriteLong(hle_gpu_data_base + 0, hle_read_end_addr, 0);
+      GPUWriteLong(hle_gpu_data_base + 0, hle_read_end_addr + 28, 0);
       GPUWriteLong(hle_gpu_data_base + 4, hle_read_end_addr, 0);
       SET32(jaguarMainRAM, 0x3074, hle_gpu_data_base);
-      a0_val = hle_gpu_data_base;
+      a0_val = hle_read_end_addr + 28;
+      a1_val = 0;
    }
 
    m68k_set_reg(M68K_REG_A0, a0_val);
-   m68k_set_reg(M68K_REG_A1, 0);
+   m68k_set_reg(M68K_REG_A1, a1_val);
 }
 
 /* ------------------------------------------------------------------ */
