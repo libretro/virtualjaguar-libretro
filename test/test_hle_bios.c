@@ -1122,12 +1122,17 @@ static void test_jerry_jintctrl_multi_pending_selective_clear(void)
  * latch lives in gpu_control bits 6..10, mirrored as INT_LAT0..4.
  * GPUSetIRQLine(line, ASSERT_LINE) sets bit (6+line); the latch is
  * sticky until SW writes the matching CINTxFLAG bit (bits 9..13) to
- * gpu_flags via the memory-mapped F02100 path. With GPU off (HLE
- * mode) and INT_ENA cleared, GPUHandleIRQs must NOT advance gpu_pc.
+ * gpu_flags via the memory-mapped F02100 path.
  *
- * We deliberately keep INT_ENA0..4 = 0 so HandleIRQs takes the
- * "!bits" early-out and never dispatches; this lets us inspect the
- * latch directly without perturbing R31/SP or GPU RAM.
+ * A HALTED GPU (GPUGO=0) captures no interrupts at all: the RISC
+ * clock is stopped, so asserts are dropped, not latched (see
+ * GPUSetIRQLine).  Latching a stale interrupt across a 68K
+ * stop/reprogram/restart cycle dispatched it into the new program
+ * before its r31 stack init — Hover Strike's B-skip lockup.  The
+ * latch mechanics below therefore run with GPUGO=1; INT_ENA0..4
+ * stay 0 so HandleIRQs takes the "!bits" early-out and never
+ * dispatches (and the harness never calls GPUExec), which lets us
+ * inspect the latch without perturbing R31/SP, gpu_pc, or GPU RAM.
  *
  * Observables (memory-mapped via GPUReadLong):
  *   $F02100 - gpu_flags (returns gpu_flags & 0xFFFFC1FF)
@@ -1158,6 +1163,20 @@ static void test_gpu_irq_latch_redispatch(void)
    p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* clear all CINTxFLAG */
    p_GPUWriteLong(0xF02100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
    pc_before = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+
+   /* --- Sub-assert 0: halted GPU captures no interrupts --- */
+   p_GPUWriteLong(0xF02114, 0x00000000, WHO_M68K); /* GPUGO=0 */
+   p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if (!(ctrl & 0x40))
+      PASS("assert while GPUGO=0 is dropped (halted GPU latches nothing)");
+   else
+      FAIL("ctrl=$%08X (want bit6 clear: halted GPU must not latch)", ctrl);
+
+   /* Latch mechanics below need a running GPU (GPUGO=1).  INT_ENA
+    * stays 0, so nothing can dispatch, and the harness never calls
+    * GPUExec — the "running" GPU executes no instructions. */
+   p_GPUWriteLong(0xF02114, 0x00000001, WHO_M68K);
 
    /* --- Sub-assert 1: latch survives without enable --- */
    p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
@@ -1244,7 +1263,9 @@ static void test_gpu_irq_latch_redispatch(void)
  * CD BIOS installs its CD-data ISR.
  *
  * Pure latch test: INT_ENA all 0 / IMASK 0 so no dispatch happens;
- * we just inspect gpu_control bits 6 and 7.
+ * we just inspect gpu_control bits 6 and 7.  GPUGO is set for the
+ * duration — a halted GPU drops asserts instead of latching them
+ * (see Test 9d sub-assert 0).
  * ================================================================ */
 static void test_butch_gpu_irq_line_mapping(void)
 {
@@ -1260,6 +1281,7 @@ static void test_butch_gpu_irq_line_mapping(void)
    /* Clear any latch and disable enables so this is a pure-latch test. */
    p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* CINT0..4FLAG -> clear latch */
    p_GPUWriteLong(0xF02100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
+   p_GPUWriteLong(0xF02114, 0x00000001, WHO_M68K); /* GPUGO=1: halted GPU drops asserts */
 
    /* IRQ line 0 (GPUIRQ_CPU == 0, EXT1, vector $F03000) -> bit 6. */
    p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);

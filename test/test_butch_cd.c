@@ -399,7 +399,14 @@ TEST(butch_dsa_irq_routes_to_gpu_irq1)
     core.GPUReset();
 
     /* Mimic the CD BIOS interrupt setup exactly:
-     * G_FLAGS = INT_ENA1 only; BUTCH = master enable + DSA RX enable. */
+     * G_FLAGS = INT_ENA1 only; BUTCH = master enable + DSA RX enable.
+     * GPUGO must be set: the BIOS's GPU is RUNNING (parked in its wait
+     * loop) when the DSA response arrives — a halted GPU captures no
+     * interrupts at all (asserts are dropped, not latched; that stale
+     * latch dispatching at restart was Hover Strike's B-skip lockup).
+     * INT_ENA1 + a pending latch dispatches immediately on assert, so
+     * the "running" GPU never needs GPUExec to run garbage code. */
+    core.GPUWriteLong(0xF02114, 0x00000001, CALLER_M68K);
     core.GPUWriteLong(0xF02100, GPU_FLAGS_INT_ENA1, CALLER_M68K);
     core.CDROMWriteWord(BUTCH_INT_CTRL + 2,
                         BUTCH_INT_ENABLE | BUTCH_INT_RBUF_EN, CALLER_M68K);

@@ -46,7 +46,52 @@ typedef struct {
     unsigned arm_frame;
     unsigned freeze_frames;
     int      wedged;
+    const char *ram_dump_path;
+    unsigned snap_frames[8];
+    unsigned n_snaps;
+    const char *snap_prefix;
 } wp_state;
+
+/* Dump main RAM (2MB) and GPU local RAM ($F03000-$F03FFF) to files. */
+static void wp_snapshot(harness_config *cfg, const char *base)
+{
+    /* jaguarMainRAM is a POINTER variable (into jagMemSpace) — dlsym gives
+     * the address of the pointer; dereference to get the RAM base. */
+    uint8_t **ramp = (uint8_t **)harness_dlsym(cfg, "jaguarMainRAM");
+    uint8_t *ram = ramp ? *ramp : NULL;
+    uint32_t (*p_gpurl)(uint32_t, uint32_t) =
+        (uint32_t (*)(uint32_t, uint32_t))harness_dlsym(cfg, "GPUReadLong");
+    uint32_t *p_gpupc = (uint32_t *)harness_dlsym(cfg, "gpu_pc");
+    char path[1024];
+    FILE *f;
+
+    if (ram) {
+        snprintf(path, sizeof(path), "%s.ram", base);
+        f = fopen(path, "wb");
+        if (f) {
+            fwrite(ram, 1, 0x200000, f);
+            fclose(f);
+            fprintf(stderr, "[WEDGE-PROBE] main RAM -> %s\n", path);
+        }
+    }
+    if (p_gpurl) {
+        uint32_t a;
+        snprintf(path, sizeof(path), "%s.gpu", base);
+        f = fopen(path, "wb");
+        if (f) {
+            for (a = 0xF03000; a < 0xF04000; a += 4) {
+                uint32_t v = p_gpurl(a, 0);
+                uint8_t b[4];
+                b[0] = (uint8_t)(v >> 24); b[1] = (uint8_t)(v >> 16);
+                b[2] = (uint8_t)(v >> 8);  b[3] = (uint8_t)v;
+                fwrite(b, 1, 4, f);
+            }
+            fclose(f);
+            fprintf(stderr, "[WEDGE-PROBE] GPU RAM -> %s (gpu_pc=$%06X)\n",
+                    path, p_gpupc ? *p_gpupc : 0);
+        }
+    }
+}
 
 static wp_state g_st;
 
@@ -121,13 +166,32 @@ static void wp_dump(harness_config *cfg, unsigned frame)
         fprintf(stderr, "\n");
     }
 
+    /* GPU PC history ring (TEMP Myst diag in gpu.c) — newest last. */
+    {
+        uint32_t *ring = (uint32_t *)harness_dlsym(cfg, "gpu_pc_ring");
+        uint32_t *rptr = (uint32_t *)harness_dlsym(cfg, "gpu_pc_ring_ptr");
+        uint32_t *rfrz = (uint32_t *)harness_dlsym(cfg, "gpu_pc_ring_frozen");
+        if (ring && rptr) {
+            unsigned n, idx = (*rptr - 64) & 511;
+            fprintf(stderr, "[WEDGE-PROBE] GPU PC trail (frozen=%u, oldest first):",
+                    rfrz ? *rfrz : 0);
+            for (n = 0; n < 64; n++) {
+                if ((n % 6) == 0) fprintf(stderr, "\n[WEDGE-PROBE]   ");
+                fprintf(stderr, "$%06X ", ring[idx]);
+                idx = (idx + 1) & 511;
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
     if (p_cdsum)  p_cdsum();
     if (p_cddump) p_cddump();
 
     /* Hex-dump main RAM around the spinning code so the wait loop can be
      * disassembled offline, plus the HLE DSP done-flag and CDDA mailbox. */
     {
-        uint8_t *ram = (uint8_t *)harness_dlsym(cfg, "jaguarMainRAM");
+        uint8_t **ramp = (uint8_t **)harness_dlsym(cfg, "jaguarMainRAM");
+        uint8_t *ram = ramp ? *ramp : NULL;
         uint32_t (*p_dspr)(uint32_t, uint32_t) =
             (uint32_t (*)(uint32_t, uint32_t))harness_dlsym(cfg, "DSPReadLong");
 
@@ -153,6 +217,10 @@ static void wp_dump(harness_config *cfg, unsigned frame)
                 }
             }
         }
+        /* Full main-RAM + GPU-RAM snapshot for offline stack walking /
+         * disassembly of the code the 68K wedged in. */
+        if (g_st.ram_dump_path)
+            wp_snapshot(cfg, g_st.ram_dump_path);
         if (p_dspr) {
             fprintf(stderr, "[WEDGE-PROBE] DSP $F1B4C8 (HLE done flag) = $%08X\n",
                     p_dspr(0xF1B4C8, 0));
@@ -166,6 +234,15 @@ static void wp_dump(harness_config *cfg, unsigned frame)
 static bool wp_frame_cb(void *ud, unsigned frame)
 {
     harness_config *cfg = (harness_config *)ud;
+    unsigned i;
+
+    for (i = 0; i < g_st.n_snaps; i++) {
+        if (g_st.snap_frames[i] == frame && g_st.snap_prefix) {
+            char base[900];
+            snprintf(base, sizeof(base), "%s_f%u", g_st.snap_prefix, frame);
+            wp_snapshot(cfg, base);
+        }
+    }
 
     if (frame >= g_st.arm_frame && g_st.same_frames >= g_st.freeze_frames) {
         g_st.wedged = 1;
@@ -188,6 +265,13 @@ int main(int argc, char **argv)
             g_st.arm_frame = (unsigned)atoi(argv[i + 1]);
         else if (strcmp(argv[i], "--freeze-frames") == 0 && i + 1 < argc)
             g_st.freeze_frames = (unsigned)atoi(argv[i + 1]);
+        else if (strcmp(argv[i], "--ram-dump") == 0 && i + 1 < argc)
+            g_st.ram_dump_path = argv[i + 1];
+        else if (strcmp(argv[i], "--snap") == 0 && i + 1 < argc &&
+                 g_st.n_snaps < 8)
+            g_st.snap_frames[g_st.n_snaps++] = (unsigned)atoi(argv[i + 1]);
+        else if (strcmp(argv[i], "--snap-prefix") == 0 && i + 1 < argc)
+            g_st.snap_prefix = argv[i + 1];
     }
 
     cfg.frames = 4800;
@@ -200,7 +284,8 @@ int main(int argc, char **argv)
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;
     if (!cfg.rom_path) {
         fprintf(stderr, "usage: cd_wedge_probe [core] <disc.cue> [--frames N] "
-                        "[--arm N] [--freeze-frames N] [--press F:BTN[:HOLD]]... "
+                        "[--arm N] [--freeze-frames N] [--ram-dump FILE] "
+                        "[--press F:BTN[:HOLD]]... "
                         "[--system-dir DIR]\n");
         return 1;
     }

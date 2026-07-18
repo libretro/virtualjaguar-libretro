@@ -43,8 +43,18 @@ static bool bios_instruction_hook(uint32_t m68kPC)
 {
     /* GPU auth magic — boot ROM checks this to verify GPU ran auth code.
      * Empirically still load-bearing: removing it makes every BIOS disc
-     * loop at $0050B6 because the GPU never naturally writes the magic. */
-    if (m68kPC == 0x005E40)
+     * loop at $0050B6 because the GPU never naturally writes the magic.
+     *
+     * Gated on the boot stub NOT having been injected yet: $005E40 is a
+     * BIOS-phase PC, but after handoff the GAME owns that RAM.  Myst
+     * loads its 68K code at $5000-$1D380 and hot paths cross $5E40 —
+     * every crossing re-stomped $F03000 with the magic, overwriting the
+     * first two words of Myst's GPU IRQ0 handler stub
+     * (`movei #$F0D000,r0 / jump (r0)`).  The 68K's next command kick
+     * (G_CTRL=$05, Myst's 68K->GPU doorbell) then dispatched IRQ0 into
+     * the corrupted slot and the GPU flew off through a stale r0 —
+     * frozen black screen during boot. */
+    if (m68kPC == 0x005E40 && !cdBootStubInjected)
     {
         GPUWriteLong(0xF03000, 0x03D0DEAD, 0);
         return true;

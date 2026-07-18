@@ -182,6 +182,7 @@ void (*gpu_opcode[64])()=
 static uint8_t gpu_ram_8[0x1000];
 uint32_t gpu_pc;
 
+
 /* Diagnostic IRQ counters (see gpu.h). Pure observability — incremented on
  * GPUSetIRQLine(line, ASSERT_LINE), reset in GPUReset. */
 uint32_t gpu_irq0_count = 0;
@@ -597,6 +598,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   data &= ~0x02;
                }
 
+               /* Apply GO and the other persistent control bits BEFORE
+                * processing the CPU->GPU interrupt request below: a single
+                * write may set GPUGO and INT0 together, and the interrupt
+                * is only captured by a RUNNING GPU (see GPUSetIRQLine) —
+                * so the GO bit must land first.  $06 (the two transient
+                * interrupt-request bits) never persists in gpu_control. */
+               gpu_control = (gpu_control & 0xF7C0) | (data & ~(0xF7C0 | 0x06));
+
                // check for CPU -> GPU interrupt #0
                if (data & 0x04)
                {
@@ -605,8 +614,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   DSPReleaseTimeslice();
                   data &= ~0x04;
                }
-
-               gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
 
                // if gpu wasn't running but is now running, execute a few cycles
 #ifdef GPU_SINGLE_STEPPING
@@ -657,6 +664,18 @@ void GPUHandleIRQs(void)
 {
    uint32_t bits, mask;
    uint32_t which = 0; //Isn't there a #pragma to disable this warning???
+
+   /* A halted GPU (G_CTRL GPUGO=0) latches interrupts but cannot service
+    * them: the dispatch sequence (push return address via r31, jump to
+    * vector) is executed by the RISC core itself, and a stopped core
+    * executes nothing.  Dispatching here while stopped pushes a return
+    * address through the STOPPED context's r31 — if the 68K halted the
+    * GPU mid-handler (as Hover Strike's CD driver does around seeks),
+    * that push lands inside GPU code/variables and corrupts them.
+    * Pending latches are serviced by GPUExec() when the GPU next runs. */
+   if (!GPU_RUNNING)
+      return;
+
    // Bail out if we're already in an interrupt!
    if (gpu_flags & IMASK)
       return;
@@ -717,6 +736,19 @@ void GPUSetIRQLine(int irqline, int state)
 
    if (state)
    {
+      /* A halted GPU (GPUGO=0) does not capture interrupts: the RISC
+       * core's clock is stopped, so nothing samples the interrupt lines
+       * and no latch accumulates.  Dropping the assert here is what real
+       * silicon does — the source's LEVEL either still holds when the
+       * GPU is restarted (and re-edges once software services it) or the
+       * condition was consumed by the 68K in the meantime (e.g. a polled
+       * DSA response) and no interrupt should be seen at all.  Latching
+       * here instead meant every 68K stop/reprogram/restart of the GPU
+       * could dispatch a stale interrupt into the new program before its
+       * r31 stack init, pushing a return address into GPU code — Hover
+       * Strike's B-skip lockup. */
+      if (!GPU_RUNNING)
+         return;
       /* Diagnostic counters — see gpu.h */
       if (irqline == 0) gpu_irq0_count++;
       else if (irqline == 3) gpu_irq3_count++;

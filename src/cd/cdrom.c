@@ -874,8 +874,22 @@ void BUTCHExec(uint32_t cycles)
           * BIOS hasn't installed its EXT1 trampoline (Hover Strike,
           * Primal Rage), corrupting the stack with a bogus return address.
           * Keep the JERRY pending bit (so JINTCTRL reads see it) but skip
-          * BLIND m68k_set_irq dual-delivery. */
-         GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
+          * BLIND m68k_set_irq dual-delivery.
+          *
+          * The GPU latch assert lives INSIDE the edge gate below: real
+          * BUTCH raises its IRQ line once per condition onset (FIFO
+          * crossing half-full, DSA response arriving), and TOM latches
+          * that edge.  Asserting every BUTCHExec tick while the level
+          * holds re-latches GPU IRQ1 immediately after every ISR ack —
+          * an IRQ storm that livelocks the GPU (RTI -> instant
+          * redispatch), and guarantees a stale pending latch whenever
+          * the 68K stop/reprograms/restarts the GPU.  That pending latch
+          * dispatched at restart BEFORE the new program's `movei
+          * #$F04000,r31` stack init, pushing the return address through
+          * a stale r31 into GPU code — Hover Strike's B-skip lockup
+          * (press B at the boot logo: the CD driver's timer stub movei
+          * at $F03110 got its operand overwritten, the game's schedule
+          * clock at $5DC2E froze, and the 68K polled it forever). */
 
          /* 68K delivery IS required when software asks for it: gate on
           * JINTCTRL's external-interrupt enable, exactly like the JERRY
@@ -893,6 +907,11 @@ void BUTCHExec(uint32_t cycles)
           * Level delivery every halfline is an IRQ storm that starves the
           * 68K (4 matrix titles regressed to wall-clock hangs when this
           * was level-triggered). */
+         /* Edge-paced (see the BUTCH+2 ack comment in CDROMWriteWord):
+          * assert the GPU latch once per service cycle, not per tick. */
+         if (!cdPrevShouldIRQ)
+            GPUSetIRQLine(GPUIRQ_DSP, ASSERT_LINE);
+
          if (!cdPrevShouldIRQ)
          {
             int tomEna = TOMIRQEnabled(IRQ_DSP);
@@ -912,7 +931,14 @@ void BUTCHExec(uint32_t cycles)
                m68k_set_irq(2);
          }
       }
-      cdPrevShouldIRQ = shouldIRQ;
+      /* The edge is only "consumed" if a RUNNING GPU could capture it —
+       * a halted GPU's interrupt logic is not clocked (GPUSetIRQLine
+       * drops asserts while stopped).  Keeping the tracker false across
+       * a stopped window means the still-high line re-asserts on the
+       * first tick after the 68K restarts the GPU; marking it true there
+       * would swallow the edge forever and stall the transfer (the
+       * press-B@550/650 variant of the Hover Strike lockup). */
+      cdPrevShouldIRQ = shouldIRQ && GPUIsRunning();
    }
 
 }
@@ -1370,6 +1396,19 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          prevSubEna = data;
       }
       SET16(cdRam, offset, data & 0x007F);  // Store only enable bits (0-6)
+      /* Writing the enable word is how software services/acks the BUTCH
+       * interrupt (the GPU ISR entry does a RMW here every invocation).
+       * Real BUTCH re-evaluates its IRQ line after the ack: if a condition
+       * (FIFO half-full, DSA response) still holds, the line rises again
+       * and TOM latches a NEW edge.  Re-arm the edge detector so BUTCHExec
+       * asserts once per SERVICE CYCLE — not once per condition onset
+       * (starves transfers: a single missed edge kills the stream) and
+       * not once per tick (IRQ storm: the GPU latch is pending at every
+       * instant, so any 68K stop/reprogram/restart of the GPU dispatches
+       * into the new program before its `movei #$F04000,r31` stack init
+       * and pushes a return address through stale r31 into GPU code —
+       * Hover Strike's B-skip lockup). */
+      cdPrevShouldIRQ = false;
       CD_LOG("WriteWord BUTCH+2: data=0x%04X enables=0x%02X [PC=$%06X]\n",
              data, data & 0x7F, m68k_get_reg(NULL, M68K_REG_PC));
       return;
