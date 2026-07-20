@@ -43,6 +43,9 @@
  *     --option K=V     Set core option (e.g. --option virtualjaguar_dsp=enabled)
  *     --quiet          Suppress per-frame output, only show final results
  *     --snapshot-interval N   Probe snapshot every N frames (default: 1)
+ *     --load-state F   Restore a RetroArch .state after the game loads,
+ *                      to start deep inside a title without scripting
+ *                      the whole way in with --press
  *     --press F:BTN[:HOLD]    Hold button BTN from frame F for HOLD frames
  *                      (default 10).  BTN: up down left right a b c pause
  *                      option 0-6, or raw retropad id.  Repeatable.
@@ -186,6 +189,15 @@ typedef struct {
      * --system-dir. */
     const char   *system_dir;
 
+    /* Optional RetroArch .state to restore right after the game loads,
+     * so a test can start deep inside a title instead of scripting its
+     * way in.  Set via --load-state. */
+    const char   *load_state_path;
+
+    /* Optional path to write the core state to when harness_run()
+     * finishes, for capturing a repro point.  Set via --save-state. */
+    const char   *save_state_path;
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -220,6 +232,8 @@ typedef struct {
     .input_callback = NULL, \
     .input_callback_data = NULL, \
     .system_dir = "/tmp", \
+    .load_state_path = NULL, \
+    .save_state_path = NULL, \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \
@@ -237,8 +251,15 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv);
 /* Load the core dynamic library.  Called by init_from_args. */
 bool harness_load_core(harness_config *cfg);
 
-/* Load a ROM into the core.  Requires core loaded + rom_path set. */
+/* Load a ROM into the core.  Requires core loaded + rom_path set.
+ * If cfg->load_state_path is set, the state is restored afterwards. */
 bool harness_load_rom(harness_config *cfg);
+
+/* Write the core's current state to `path` (raw core blob). */
+bool harness_save_state(harness_config *cfg, const char *path);
+
+/* Restore a RetroArch .state blob.  Call after harness_load_rom(). */
+bool harness_load_state(harness_config *cfg, const char *path);
 
 /* Run cfg->frames frames, collecting audio/video stats.
  * Calls cfg->frame_callback after each frame if set. */

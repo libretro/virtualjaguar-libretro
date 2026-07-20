@@ -37,6 +37,9 @@ static void (*lr_set_input_state)(retro_input_state_t);
 static bool (*lr_load_game)(const struct retro_game_info *);
 static void (*lr_unload_game)(void);
 static void (*lr_run)(void);
+static size_t (*lr_serialize_size)(void);
+static bool (*lr_unserialize)(const void *, size_t);
+static bool (*lr_serialize)(void *, size_t);
 
 /* Active config pointer (needed by callbacks which have no userdata) */
 static harness_config *active_cfg;
@@ -338,6 +341,10 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->snapshot_interval = (unsigned)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--system-dir") == 0 && i + 1 < argc) {
             cfg->system_dir = argv[++i];
+        } else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc) {
+            cfg->load_state_path = argv[++i];
+        } else if (strcmp(argv[i], "--save-state") == 0 && i + 1 < argc) {
+            cfg->save_state_path = argv[++i];
         } else if (strcmp(argv[i], "--press") == 0 && i + 1 < argc) {
             if (!harness_parse_press(cfg, argv[++i]))
                 return false;
@@ -397,6 +404,9 @@ bool harness_load_core(harness_config *cfg)
     lr_load_game = dlsym(cfg->core_handle, "retro_load_game");
     lr_unload_game = dlsym(cfg->core_handle, "retro_unload_game");
     lr_run = dlsym(cfg->core_handle, "retro_run");
+    lr_serialize_size = dlsym(cfg->core_handle, "retro_serialize_size");
+    lr_unserialize = dlsym(cfg->core_handle, "retro_unserialize");
+    lr_serialize = dlsym(cfg->core_handle, "retro_serialize");
 
     if (!lr_init || !lr_load_game || !lr_run) {
         fprintf(stderr, "harness: missing required libretro symbols\n");
@@ -502,8 +512,149 @@ bool harness_load_rom(harness_config *cfg)
     /* rom_data ownership: libretro spec says core copies what it needs,
      * but VJ keeps a pointer. We leak intentionally for test lifetime. */
 
+    if (cfg->load_state_path && !harness_load_state(cfg, cfg->load_state_path))
+        return false;
+
     harness_reset_audio(cfg);
     return true;
+}
+
+/* Write the core's current state to `path` as a raw core blob (no RASTATE
+ * container).  Useful for capturing a headless repro point that
+ * harness_load_state() can restore later. */
+bool harness_save_state(harness_config *cfg, const char *path)
+{
+    size_t  size;
+    void   *buf;
+    FILE   *f;
+    bool    ok;
+
+    if (!lr_serialize || !lr_serialize_size) {
+        fprintf(stderr, "harness: core has no retro_serialize\n");
+        return false;
+    }
+    size = lr_serialize_size();
+    buf  = malloc(size);
+    if (!buf)
+        return false;
+    if (!lr_serialize(buf, size)) {
+        fprintf(stderr, "harness: retro_serialize failed\n");
+        free(buf);
+        return false;
+    }
+    f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "harness: cannot write save state '%s'\n", path);
+        free(buf);
+        return false;
+    }
+    ok = (fwrite(buf, 1, size, f) == size);
+    fclose(f);
+    free(buf);
+    if (ok && !cfg->quiet)
+        printf("harness: wrote save state '%s' (%u bytes)\n",
+               path, (unsigned)size);
+    return ok;
+}
+
+/* Restore a RetroArch .state blob.  Must be called after harness_load_rom()
+ * -- the core sizes its state against the loaded game.  Lets a test start
+ * from a hand-captured point deep inside a title (a mission briefing, a
+ * menu) instead of scripting the whole way in with --press. */
+bool harness_load_state(harness_config *cfg, const char *path)
+{
+    FILE   *f;
+    long    len;
+    size_t  want;
+    size_t  plen;
+    void   *buf;
+    void   *payload;
+    bool    ok;
+
+    if (!lr_unserialize || !lr_serialize_size) {
+        fprintf(stderr, "harness: core has no retro_unserialize/serialize_size\n");
+        return false;
+    }
+
+    f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "harness: cannot open save state '%s'\n", path);
+        return false;
+    }
+    fseek(f, 0, SEEK_END);
+    len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (len <= 0) {
+        fprintf(stderr, "harness: save state '%s' is empty\n", path);
+        fclose(f);
+        return false;
+    }
+
+    want = lr_serialize_size();
+
+    buf = malloc((size_t)len);
+    if (!buf) { fclose(f); return false; }
+    if (fread(buf, 1, (size_t)len, f) != (size_t)len) {
+        fprintf(stderr, "harness: short read on save state '%s'\n", path);
+        free(buf);
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+
+    /* RetroArch wraps the core payload in a "RASTATE" container:
+     *   "RASTATE" + u8 version, then blocks of { 4-byte id, u32 LE size,
+     *   payload }, terminated by "END " with size 0.  The core's own blob
+     *   is the "MEM " block.  Unwrap it so a state saved from RetroArch
+     *   (which is what a user can actually hand us) loads directly. */
+    payload = buf;
+    plen    = (size_t)len;
+    if (plen > 16 && memcmp(buf, "RASTATE", 7) == 0) {
+        const uint8_t *p   = (const uint8_t *)buf + 8;
+        const uint8_t *end = (const uint8_t *)buf + plen;
+        bool found = false;
+        while (p + 8 <= end) {
+            uint32_t bsize = (uint32_t)p[4] | ((uint32_t)p[5] << 8) |
+                             ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
+            if (memcmp(p, "END ", 4) == 0)
+                break;
+            if (memcmp(p, "MEM ", 4) == 0) {
+                if (p + 8 + bsize > end) {
+                    fprintf(stderr, "harness: RASTATE MEM block overruns file\n");
+                    free(buf);
+                    return false;
+                }
+                payload = (void *)(p + 8);
+                plen    = bsize;
+                found   = true;
+                break;
+            }
+            p += 8 + bsize;
+        }
+        if (!found) {
+            fprintf(stderr, "harness: RASTATE container has no MEM block\n");
+            free(buf);
+            return false;
+        }
+        if (!cfg->quiet)
+            printf("harness: unwrapped RASTATE container (%u byte core state)\n",
+                   (unsigned)plen);
+    }
+
+    if (plen != want)
+        fprintf(stderr,
+                "harness: warning: core state is %u bytes, core expects %u\n",
+                (unsigned)plen, (unsigned)want);
+
+    ok = lr_unserialize(payload, plen);
+    free(buf);
+
+    if (!ok)
+        fprintf(stderr, "harness: retro_unserialize rejected '%s'\n", path);
+    else if (!cfg->quiet)
+        printf("harness: restored save state '%s' (%ld bytes)\n", path, len);
+
+    return ok;
 }
 
 void harness_run(harness_config *cfg)
@@ -521,6 +672,9 @@ void harness_run(harness_config *cfg)
                 break;
         }
     }
+
+    if (cfg->save_state_path)
+        harness_save_state(cfg, cfg->save_state_path);
 }
 
 void harness_step(harness_config *cfg)
