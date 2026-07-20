@@ -1521,6 +1521,19 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          if (cdPlaying && newBlock == block && seekDelay <= 0 && dsaQueueCount == 0)
          {
             CD_LOG("Skipping redundant seek to block %u (already playing)\n", block);
+            /* The drive still answers a no-op Goto with Found ($0100) —
+             * every $12xx elicits a response on real hardware.  Skipping
+             * it entirely left drivers that wait for the seek-complete
+             * DSA IRQ hanging: Philia seeks to the block it is already
+             * streaming ($1006/$1105/$123E -> LBA 27287 while at 27287),
+             * its GPU driver waits for Found, never drains the FIFO
+             * again, and the game freezes (cd_seek_wedge with all seeks
+             * done).  Queue the response WITHOUT restarting the seek
+             * state machine — the guard's purpose (don't cycle
+             * dsaResponseReady/seekDelay, don't disturb the in-flight
+             * stream, keep cdBufPtr) is preserved; DSAQueuePush paces
+             * delivery like any other immediate DSA answer. */
+            DSAQueuePush(0x0100);
          }
          else
          {
