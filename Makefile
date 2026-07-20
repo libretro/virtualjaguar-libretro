@@ -732,7 +732,7 @@ clean:
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
 		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
-		test/test_blitter_mmio test/test_eeprom_lifecycle \
+		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
@@ -781,7 +781,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
-		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
+		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
@@ -790,6 +790,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_mmio
+	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
 	./test/test_tom_visible_window
 	./test/test_blitter_simd
@@ -978,6 +979,17 @@ test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_framebuffer_integrity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Drives blitter_blit() through the MMIO path with varied B_CMD words and
+# checks destination bytes, plus a save-state check on the command field
+# decode (the render-inert half of it) -- see the header comment in the
+# test for why both halves are needed.
+test/test_blitter_cmd: test/test_blitter_cmd.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_blitter_cmd.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
