@@ -40,11 +40,31 @@
  *      where the first leaves colour_index != 0.  This catches the
  *      colour_index line.
  *
- * The remaining vectors (pixel copy, phrase copy, LFU ops, pitch>1) are
- * plain output verification.  They do not trip on the decode deletion --
- * nothing that reads destination memory can -- but the blit path had zero
- * output coverage before this file, which is the deeper reason the
- * regression survived.  They are worth having on their own merits.
+ * The remaining vectors (pixel copy, phrase copy, LFU ops, pitch>1,
+ * Gouraud) are plain output verification.  They do not trip on the decode
+ * deletion -- nothing that reads destination memory can -- but the blit
+ * path had zero output coverage before this file, which is the deeper
+ * reason the regression survived.  They are worth having on their own
+ * merits.
+ *
+ * BOTH BLITTERS
+ * =============
+ * The output vectors run twice, against blitter_blit() (the fast blitter)
+ * and BlitterMidsummer2() (the accurate one, and the default: the
+ * virtualjaguar_usefastblitter core option ships "disabled").  The two are
+ * separate implementations and each gets its own row of golden bytes.
+ *
+ * They agree on every vector here except Gouraud, where the four
+ * PHRASEINT seeds come out in opposite order within the phrase --
+ * 0x11,0x44,0x77,0xAA under the fast blitter and 0xAA,0x77,0x44,0x11
+ * under the accurate one.  That divergence is recorded, not judged; see
+ * test/tools/test_blitter_compare for the tooling that explores this
+ * class of difference.
+ *
+ * The two decode checks stay fast-only.  Midsummer2 reads blitter_ram
+ * directly and never assigns colour_index or the nine decoded fields, so
+ * it has no decode to guard -- the accurate vectors would NOT catch a
+ * gutted field decode.
  *
  * EXPECTED BYTES ARE CHARACTERIZATION VALUES.  They were captured from a
  * known-good build via --record and assert "no change", not "matches real
@@ -70,6 +90,20 @@
 #include <stdbool.h>
 
 #include "harness/harness.h"
+#include "settings.h"
+
+/* Which blit implementation blitter_mmio.c dispatches B_CMD to.
+ *
+ * The output vectors run under both.  The two decode checks are fast-path
+ * only: BlitterMidsummer2() reads blitter_ram directly and never assigns
+ * colour_index or the nine decoded fields, so it has no decode to guard.
+ * The accurate vectors are therefore pure output regression -- they would
+ * NOT catch a gutted field decode.  Their value is that Midsummer2 is the
+ * blitter shipped by default (virtualjaguar_usefastblitter defaults to
+ * "disabled") and had no output coverage at all. */
+enum { BLIT_FAST = 0, BLIT_ACCURATE = 1, BLIT_MODES = 2 };
+
+static const char *blit_mode_name[BLIT_MODES] = { "fast", "accurate" };
 
 /* ================================================================
  * Hardware addresses
@@ -155,10 +189,22 @@ static void     (*p_JaguarWriteLong)(uint32_t, uint32_t, uint32_t);
 static uint8_t   *p_jaguarMainRAM;
 static size_t   (*p_retro_serialize_size)(void);
 static bool     (*p_retro_serialize)(void *, size_t);
+static void     (*p_BlitterCompareEnable)(int);
+static struct VJSettings *p_vjs;
 
-static int failures = 0;
-static int checks   = 0;
+static int failures  = 0;
+static int checks    = 0;
 static int recording = 0;
+static int blit_mode = BLIT_FAST;
+
+/* blitter_mmio.c re-reads vjs.useFastBlitter on every B_CMD write, and we
+ * run zero frames so check_variables() never fires again -- flipping the
+ * setting here is all it takes to retarget the dispatch. */
+static void select_blitter(int mode)
+{
+   blit_mode = mode;
+   p_vjs->useFastBlitter = (mode == BLIT_FAST);
+}
 
 /* ================================================================
  * Register / memory helpers
@@ -206,8 +252,13 @@ static void blit_regs_reset(void)
  * Result checking
  * ================================================================ */
 
+/* `expected` is indexed by blitter mode: the fast and accurate blitters
+ * are separate implementations and do not agree byte-for-byte (that
+ * divergence is what test/tools/test_blitter_compare exists to explore),
+ * so each gets its own golden row. */
 static void check_window(const char *name, uint32_t addr,
-                         const uint8_t *expected, size_t len)
+                         const uint8_t expected[BLIT_MODES][WINDOW],
+                         size_t len)
 {
    const uint8_t *got = p_jaguarMainRAM + addr;
    size_t i;
@@ -216,24 +267,25 @@ static void check_window(const char *name, uint32_t addr,
 
    if (recording)
    {
-      printf("static const uint8_t expect_%s[%u] = {\n", name, (unsigned)len);
+      printf("/* %s [%s] */\n", name, blit_mode_name[blit_mode]);
       for (i = 0; i < len; i++)
       {
          printf("%s0x%02X,", (i % 8) == 0 ? "   " : " ", got[i]);
          if ((i % 8) == 7)
             printf("\n");
       }
-      printf("};\n\n");
+      printf("\n");
       return;
    }
 
    for (i = 0; i < len; i++)
    {
-      if (got[i] != expected[i])
+      if (got[i] != expected[blit_mode][i])
       {
          fprintf(stderr,
-            "FAIL: %s: destination byte %u = 0x%02X, expected 0x%02X\n",
-            name, (unsigned)i, got[i], expected[i]);
+            "FAIL: %s [%s]: destination byte %u = 0x%02X, expected 0x%02X\n",
+            name, blit_mode_name[blit_mode], (unsigned)i, got[i],
+            expected[blit_mode][i]);
          fprintf(stderr, "      (blit output changed; if intentional, re-record"
                          " with --record and update the golden bytes)\n");
          failures++;
@@ -241,7 +293,7 @@ static void check_window(const char *name, uint32_t addr,
       }
    }
 
-   printf("PASS: %s\n", name);
+   printf("PASS: %s [%s]\n", name, blit_mode_name[blit_mode]);
 }
 
 static void check_true(const char *name, int cond, const char *detail)
@@ -264,7 +316,8 @@ static void check_true(const char *name, int cond, const char *detail)
  * Vector 1 -- 16bpp pixel-mode copy, A1 <- A2
  * ================================================================ */
 
-static const uint8_t expect_pixel_copy[WINDOW] = {
+static const uint8_t expect_pixel_copy[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x11, 0x18, 0x1F, 0x26, 0x2D, 0x34, 0x3B, 0x42,
    0x49, 0x50, 0x57, 0x5E, 0x65, 0x6C, 0x73, 0x7A,
    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -273,6 +326,17 @@ static const uint8_t expect_pixel_copy[WINDOW] = {
    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
    0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
+{  /* accurate */
+   0x11, 0x18, 0x1F, 0x26, 0x2D, 0x34, 0x3B, 0x42,
+   0x49, 0x50, 0x57, 0x5E, 0x65, 0x6C, 0x73, 0x7A,
+   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+   0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+   0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
 };
 
 static void setup_16bpp_copy(uint32_t xadd)
@@ -305,7 +369,8 @@ static void test_pixel_copy(void)
  * Vector 2 -- phrase-mode copy (XADD=phrase on both address generators)
  * ================================================================ */
 
-static const uint8_t expect_phrase_copy[WINDOW] = {
+static const uint8_t expect_phrase_copy[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x11, 0x18, 0x1F, 0x26, 0x2D, 0x34, 0x3B, 0x42,
    0x49, 0x50, 0x57, 0x5E, 0x65, 0x6C, 0x73, 0x7A,
    0x81, 0x88, 0x8F, 0x96, 0x9D, 0xA4, 0xAB, 0xB2,
@@ -314,6 +379,17 @@ static const uint8_t expect_phrase_copy[WINDOW] = {
    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
    0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
+{  /* accurate */
+   0x11, 0x18, 0x1F, 0x26, 0x2D, 0x34, 0x3B, 0x42,
+   0x49, 0x50, 0x57, 0x5E, 0x65, 0x6C, 0x73, 0x7A,
+   0x81, 0x88, 0x8F, 0x96, 0x9D, 0xA4, 0xAB, 0xB2,
+   0xB9, 0xC0, 0xC7, 0xCE, 0xD5, 0xDC, 0xE3, 0xEA,
+   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+   0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
 };
 
 static void test_phrase_copy(void)
@@ -332,7 +408,8 @@ static void test_phrase_copy(void)
  * (source, destination): NAN=!s&!d, NA=!s&d, AN=s&!d, A=s&d.
  * ================================================================ */
 
-static const uint8_t expect_lfu_and[WINDOW] = {
+static const uint8_t expect_lfu_and[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x10, 0x10, 0x12, 0x22, 0x24, 0x34, 0x32, 0x42,
    0x48, 0x50, 0x52, 0x5A, 0x64, 0x6C, 0x72, 0x7A,
    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -341,8 +418,20 @@ static const uint8_t expect_lfu_and[WINDOW] = {
    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
    0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
+{  /* accurate */
+   0x10, 0x10, 0x12, 0x22, 0x24, 0x34, 0x32, 0x42,
+   0x48, 0x50, 0x52, 0x5A, 0x64, 0x6C, 0x72, 0x7A,
+   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+   0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+   0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
 };
-static const uint8_t expect_lfu_or[WINDOW] = {
+static const uint8_t expect_lfu_or[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0xF1, 0xF9, 0xFF, 0xF7, 0xFD, 0xF5, 0xFF, 0xF7,
    0xF9, 0xF9, 0xFF, 0xFF, 0xFD, 0xFD, 0xFF, 0xFF,
    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -351,8 +440,20 @@ static const uint8_t expect_lfu_or[WINDOW] = {
    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
    0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
+{  /* accurate */
+   0xF1, 0xF9, 0xFF, 0xF7, 0xFD, 0xF5, 0xFF, 0xF7,
+   0xF9, 0xF9, 0xFF, 0xFF, 0xFD, 0xFD, 0xFF, 0xFF,
+   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+   0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+   0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
 };
-static const uint8_t expect_lfu_xor[WINDOW] = {
+static const uint8_t expect_lfu_xor[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0xE1, 0xE9, 0xED, 0xD5, 0xD9, 0xC1, 0xCD, 0xB5,
    0xB1, 0xA9, 0xAD, 0xA5, 0x99, 0x91, 0x8D, 0x85,
    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -361,8 +462,20 @@ static const uint8_t expect_lfu_xor[WINDOW] = {
    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
    0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
+{  /* accurate */
+   0xE1, 0xE9, 0xED, 0xD5, 0xD9, 0xC1, 0xCD, 0xB5,
+   0xB1, 0xA9, 0xAD, 0xA5, 0x99, 0x91, 0x8D, 0x85,
+   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+   0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+   0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
 };
-static const uint8_t expect_lfu_clear[WINDOW] = {
+static const uint8_t expect_lfu_clear[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -371,9 +484,21 @@ static const uint8_t expect_lfu_clear[WINDOW] = {
    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
    0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
+{  /* accurate */
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+   0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+   0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+   0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+},
 };
 
-static void run_lfu(const char *name, uint32_t lfu, const uint8_t *expected)
+static void run_lfu(const char *name, uint32_t lfu,
+                    const uint8_t expected[BLIT_MODES][WINDOW])
 {
    setup_16bpp_copy(XADD_PIXEL);
    fire(C_SRCEN | C_DSTEN | C_UPDA1 | C_UPDA2 | lfu);
@@ -396,7 +521,8 @@ static void test_lfu_ops(void)
  * the Battle Morph boot stub, so it is worth pinning down.
  * ================================================================ */
 
-static const uint8_t expect_pitch3[WINDOW] = {
+static const uint8_t expect_pitch3[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x21, 0x26, 0x2B, 0x30, 0x35, 0x3A, 0x3F, 0x44,
    0x98, 0x9B, 0x9E, 0xA1, 0xA4, 0xA7, 0xAA, 0xAD,
    0xB0, 0xB3, 0xB6, 0xB9, 0xBC, 0xBF, 0xC2, 0xC5,
@@ -405,6 +531,17 @@ static const uint8_t expect_pitch3[WINDOW] = {
    0xF8, 0xFB, 0xFE, 0x01, 0x04, 0x07, 0x0A, 0x0D,
    0x10, 0x13, 0x16, 0x19, 0x1C, 0x1F, 0x22, 0x25,
    0x28, 0x2B, 0x2E, 0x31, 0x34, 0x37, 0x3A, 0x3D,
+},
+{  /* accurate */
+   0x21, 0x26, 0x2B, 0x30, 0x35, 0x3A, 0x3F, 0x44,
+   0x98, 0x9B, 0x9E, 0xA1, 0xA4, 0xA7, 0xAA, 0xAD,
+   0xB0, 0xB3, 0xB6, 0xB9, 0xBC, 0xBF, 0xC2, 0xC5,
+   0xC8, 0xCB, 0xCE, 0xD1, 0xD4, 0xD7, 0xDA, 0xDD,
+   0x49, 0x4E, 0x53, 0x58, 0x5D, 0x62, 0x67, 0x6C,
+   0xF8, 0xFB, 0xFE, 0x01, 0x04, 0x07, 0x0A, 0x0D,
+   0x10, 0x13, 0x16, 0x19, 0x1C, 0x1F, 0x22, 0x25,
+   0x28, 0x2B, 0x2E, 0x31, 0x34, 0x37, 0x3A, 0x3D,
+},
 };
 
 static void test_pitch(void)
@@ -443,7 +580,8 @@ static void test_pitch(void)
 /* The four PHRASEINT seeds (0x11/0x44/0x77/0xAA) appear in colour_index
  * order across the first phrase, then again incremented by B_IINC across
  * the second -- direct evidence that colour_index is cycling per pixel. */
-static const uint8_t expect_gourd_single[WINDOW] = {
+static const uint8_t expect_gourd_single[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x00, 0x11, 0x00, 0x44, 0x00, 0x77, 0x00, 0xAA,
    0x00, 0x12, 0x00, 0x45, 0x00, 0x78, 0x00, 0xAB,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -452,10 +590,24 @@ static const uint8_t expect_gourd_single[WINDOW] = {
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+},
+{  /* accurate */
+   0x00, 0xAA, 0x00, 0x77, 0x00, 0x44, 0x00, 0x11,
+   0x00, 0xAB, 0x00, 0x78, 0x00, 0x45, 0x00, 0x12,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+},
 };
-/* Identical to the above: the preceding 6-pixel blit must not shift the
- * starting colour_index.  Without the reset this starts at 0x77. */
-static const uint8_t expect_gourd_second[WINDOW] = {
+/* Identical to the fast row above: the preceding 6-pixel blit must not
+ * shift the starting colour_index.  Without the reset this starts at
+ * 0x77.  Fast-path only, so the accurate row is never read -- it exists
+ * only to satisfy check_window()'s per-mode indexing. */
+static const uint8_t expect_gourd_second[BLIT_MODES][WINDOW] = {
+{  /* fast */
    0x00, 0x11, 0x00, 0x44, 0x00, 0x77, 0x00, 0xAA,
    0x00, 0x12, 0x00, 0x45, 0x00, 0x78, 0x00, 0xAB,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -464,6 +616,17 @@ static const uint8_t expect_gourd_second[WINDOW] = {
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+},
+{  /* accurate */
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+},
 };
 
 /* Per-pixel Gouraud seeds.  The PHRASEINT registers feed the four
@@ -494,30 +657,37 @@ static void setup_gouraud(uint32_t dst_addr, uint32_t pixels)
    wreg(PIXLINECOUNTER, (1u << 16) | pixels);
 }
 
+#define GOURD_CMD  (C_GOURD | C_PATDSEL | C_UPDA1 | C_UPDA2)
+
+/* Output vector: a Gouraud blit run on its own.  Runs under both
+ * blitters. */
+static void test_gouraud_output(void)
+{
+   setup_gouraud(DST_ADDR, 8);
+   fire(GOURD_CMD);
+   check_window("gourd_single", DST_ADDR, expect_gourd_single, WINDOW);
+}
+
+/* Decode guard -- fast blitter only.  BlitterMidsummer2() has no
+ * colour_index to reset, so this concept does not apply to it. */
 static void test_gouraud_colour_index_reset(void)
 {
-   uint32_t cmd = C_GOURD | C_PATDSEL | C_UPDA1 | C_UPDA2;
-
-   /* Baseline: a Gouraud blit run on its own. */
-   setup_gouraud(DST_ADDR, 8);
-   fire(cmd);
-   check_window("gourd_single", DST_ADDR, expect_gourd_single, WINDOW);
-
-   /* Now the same blit, but preceded by a 6-pixel Gouraud blit that
-    * leaves colour_index == 2.  With the reset intact the second blit
-    * must produce exactly the same bytes as the baseline above. */
+   /* The same blit as test_gouraud_output(), but preceded by a 6-pixel
+    * Gouraud blit that leaves colour_index == 2.  With the reset intact
+    * the second blit must produce exactly the baseline bytes. */
    setup_gouraud(SCRATCH_ADDR, 6);
-   fire(cmd);
+   fire(GOURD_CMD);
 
    setup_gouraud(DST_ADDR, 8);
-   fire(cmd);
+   fire(GOURD_CMD);
    check_window("gourd_second", DST_ADDR, expect_gourd_second, WINDOW);
 
-   /* The guard itself: the two must agree.  If colour_index is not reset
-    * per blit, the second run starts mid-table and this fails. */
+   /* The guard itself: this must match the standalone baseline.  If
+    * colour_index is not reset per blit, the second run starts mid-table
+    * and this fails. */
    check_true("gourd_colour_index_reset",
               memcmp(p_jaguarMainRAM + DST_ADDR,
-                     expect_gourd_single, WINDOW) == 0,
+                     expect_gourd_single[BLIT_FAST], WINDOW) == 0,
               "a preceding Gouraud blit changed this blit's output -- "
               "colour_index is not being reset at the top of blitter_blit()");
 }
@@ -699,14 +869,17 @@ int main(int argc, char **argv)
    p_JaguarWriteLong      = harness_dlsym(&cfg, "JaguarWriteLong");
    p_retro_serialize_size = harness_dlsym(&cfg, "retro_serialize_size");
    p_retro_serialize      = harness_dlsym(&cfg, "retro_serialize");
+   p_BlitterCompareEnable = harness_dlsym(&cfg, "BlitterCompareEnable");
+   p_vjs                  = harness_dlsym(&cfg, "vjs");
 
    /* jaguarMainRAM is `uint8_t *`, so the symbol is the pointer variable
     * itself -- dereference to reach the 2 MB main RAM block. */
    ram_slot        = harness_dlsym(&cfg, "jaguarMainRAM");
    p_jaguarMainRAM = ram_slot ? *ram_slot : NULL;
 
-   if (!p_JaguarWriteLong || !p_jaguarMainRAM ||
-       !p_retro_serialize_size || !p_retro_serialize)
+   if (!p_JaguarWriteLong || !p_jaguarMainRAM || !p_vjs ||
+       !p_retro_serialize_size || !p_retro_serialize ||
+       !p_BlitterCompareEnable)
    {
       fprintf(stderr,
          "FAIL: required core symbols missing -- build with TEST_EXPORTS=1\n");
@@ -714,10 +887,24 @@ int main(int argc, char **argv)
       return 1;
    }
 
-   test_pixel_copy();
-   test_phrase_copy();
-   test_lfu_ops();
-   test_pitch();
+   /* blitter_mmio.c checks compare mode *before* the fast/accurate split;
+    * with it on, both passes would run the comparison harness instead of
+    * the implementation under test.  It is off by default -- assert it. */
+   p_BlitterCompareEnable(0);
+
+   /* Output vectors run under both blit implementations. */
+   for (i = 0; i < BLIT_MODES; i++)
+   {
+      select_blitter(i);
+      test_pixel_copy();
+      test_phrase_copy();
+      test_lfu_ops();
+      test_pitch();
+      test_gouraud_output();
+   }
+
+   /* Decode guards: fast path only (see the enum comment up top). */
+   select_blitter(BLIT_FAST);
    test_gouraud_colour_index_reset();
    test_cmd_decode_reaches_savestate();
 
