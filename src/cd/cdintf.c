@@ -1232,6 +1232,15 @@ uint8_t CDIntfGetTrackSession(uint32_t track)
  *
  * On success: writes load address to *outLoadAddr, length to *outLength, and
  * fills outBuf (size outBufSize) with the code bytes.  Returns true. */
+/* Disc LBA one past the end of the extracted boot executable (see
+ * CDIntfExtractBootStub); 0 until an extraction succeeds. */
+static uint32_t bootStubEndLBA = 0;
+
+uint32_t CDIntfGetBootStubEndLBA(void)
+{
+   return bootStubEndLBA;
+}
+
 bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
                            uint32_t *outLoadAddr, uint32_t *outLength)
 {
@@ -1332,6 +1341,14 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    memcpy(outBuf, swapped + 0x6A, length);
    *outLoadAddr = loadAddr;
    *outLength   = length;
+
+   /* Remember where the boot executable ends on disc.  The real BIOS
+    * leaves the drive head parked just past the executable it streamed;
+    * games that continue with a bare Unpause (Battle Morph: $0400 pause,
+    * $0500 unpause, no seek) expect data to flow from there, not from
+    * block 0. */
+   bootStubEndLBA = disc.tracks[firstS2Idx].startLBA
+                  + (0x6A + length + 2351) / 2352;
 
    LOG_INF("[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
            length, loadAddr,

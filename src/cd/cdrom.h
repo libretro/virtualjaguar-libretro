@@ -15,6 +15,7 @@ extern "C" {
 
 void CDROMInit(void);
 void CDROMReset(void);
+void CDROMSetHeadPosition(uint32_t lba);
 void CDROMDone(void);
 
 void BUTCHExec(uint32_t cycles);

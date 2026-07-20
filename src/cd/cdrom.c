@@ -586,6 +586,31 @@ void CDROMHLESetAudioPlaying(int playing)
    CD_LOG("HLE audio playing=%d (block=%u)\n", playing, block);
 }
 
+/* Park the drive head at `lba`, paused, with the data-path framing the
+ * seek handler establishes (cdBufPtr=2: BUTCH's one-word capture skew —
+ * see the $12xx Goto Frame handler).  Used by the BIOS boot-stub
+ * shortcut: the real BIOS leaves the head just past the boot executable
+ * it streamed, and games may resume with a bare Unpause ($0500) and no
+ * seek (Battle Morph) — data must then flow from here, not block 0. */
+void CDROMSetHeadPosition(uint32_t lba)
+{
+   if (!haveCDGoodness)
+      return;
+
+   block = lba;
+   if (!CDIntfReadBlock(block, cdBuf))
+      memset(cdBuf, 0, 2352);
+   cdBufPtr = 2;
+   memcpy(ssiBuf, cdBuf, sizeof(ssiBuf));
+   ssiBufPtr = 0;
+   ssiBlock  = lba + 1;
+   cdPlaying = false;
+   fifoDataReady = false;
+   fifoReadCount = 0;
+   seekDelay = 0;
+   LOG_INF("[CD] Head parked at LBA %u (post-boot-stub position)\n", lba);
+}
+
 void CDTraceDump(void)
 {
    uint32_t i, n, start;

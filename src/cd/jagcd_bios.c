@@ -97,6 +97,23 @@ static bool bios_instruction_hook(uint32_t m68kPC)
                     jaguarMainRAM[0x080005] = (loadAddr >>  0) & 0xFF;
                 }
 
+                /* The real BIOS streamed the boot executable off the disc,
+                 * leaving the drive head parked just past it.  Games can
+                 * resume reading with a bare Unpause and no seek (Battle
+                 * Morph); park our head where the hardware's would be. */
+                CDROMSetHeadPosition(CDIntfGetBootStubEndLBA());
+
+                /* Redirect the 68K straight to the game entry instead of
+                 * letting it execute the BIOS's own `JSR $80000.l` at
+                 * $050176: a large boot executable overwrites that BIOS
+                 * RAM code during the injection above (Battle Morph loads
+                 * $65290 bytes at $4400, ending at $69690 — past $050176),
+                 * and resuming there executes injected DATA, sending the
+                 * 68K into the weeds ($8xDFFFxx wild-PC hang).  The real
+                 * BIOS's JSR return address is never used — CD games do
+                 * not return to the BIOS. */
+                m68k_set_reg(M68K_REG_PC, 0x00080000);
+
                 /* Populate the $2C00 track-info table.
                  *
                  * Layout is track-INDEXED to match the real CD BIOS's own TOC

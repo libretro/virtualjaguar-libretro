@@ -110,6 +110,7 @@ bool CDIntfIsImageLoaded(void);
  *
  * outBuf must be at least *outLength bytes; pass outBufSize as a guard.
  * Returns true on success. */
+uint32_t CDIntfGetBootStubEndLBA(void);
 bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
                            uint32_t *outLoadAddr, uint32_t *outLength);
 
