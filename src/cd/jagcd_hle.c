@@ -16,6 +16,7 @@
 
 #include "jagcd_hle.h"
 #include "jagcd_boot.h"
+#include "jerry.h"
 #include "cdintf.h"
 #include "cdrom.h"
 #include "log.h"
@@ -1151,6 +1152,18 @@ bool JaguarCDHLEBoot(void)
 
    /* GPU auth magic ($03D0DEAD at $F03000) */
    GPUWriteLong(GPU_AUTH_ADDR, GPU_AUTH_MAGIC, 0);
+
+   /* I2S clock state the real CD BIOS leaves behind: SCLK=$13 (~20 kHz),
+    * SMODE=$15 (INTERNAL/master) — its DSP module programs these during
+    * boot (visible as "SMODE $0000 -> $0015" in every BIOS-mode log).
+    * The cart-HLE reset block in JaguarReset() does the same for carts,
+    * but the CD-HLE path skips it (no cart inserted).  Without a running
+    * I2S clock JERRY never fires SSI interrupts, and games whose DSP
+    * engine idles on an interrupt-set event mask never advance: Battle
+    * Morph's DSP main loop spins on r22==0 at $F1B580, its 68K waits on
+    * the DSP, and the game sits on a black screen forever. */
+   JERRYWriteWord(0xF1A152, 0x0013, M68K);   /* SCLK */
+   JERRYWriteWord(0xF1A156, 0x0015, M68K);   /* SMODE */
 
    /* Install safe interrupt vectors.  JaguarReset() randomizes RAM, so
     * the 68K vector table ($000-$3FF) contains garbage.  When TOM fires

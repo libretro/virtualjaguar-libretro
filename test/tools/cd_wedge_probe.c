@@ -91,6 +91,28 @@ static void wp_snapshot(harness_config *cfg, const char *base)
                     path, p_gpupc ? *p_gpupc : 0);
         }
     }
+    {
+        uint32_t (*p_dsprl)(uint32_t, uint32_t) =
+            (uint32_t (*)(uint32_t, uint32_t))harness_dlsym(cfg, "DSPReadLong");
+        uint32_t *p_dsppc = (uint32_t *)harness_dlsym(cfg, "dsp_pc");
+        if (p_dsprl) {
+            uint32_t a;
+            snprintf(path, sizeof(path), "%s.dsp", base);
+            f = fopen(path, "wb");
+            if (f) {
+                for (a = 0xF1B000; a < 0xF1D000; a += 4) {
+                    uint32_t v = p_dsprl(a, 0);
+                    uint8_t b[4];
+                    b[0] = (uint8_t)(v >> 24); b[1] = (uint8_t)(v >> 16);
+                    b[2] = (uint8_t)(v >> 8);  b[3] = (uint8_t)v;
+                    fwrite(b, 1, 4, f);
+                }
+                fclose(f);
+                fprintf(stderr, "[WEDGE-PROBE] DSP RAM -> %s (dsp_pc=$%06X)\n",
+                        path, p_dsppc ? *p_dsppc : 0);
+            }
+        }
+    }
 }
 
 static wp_state g_st;
