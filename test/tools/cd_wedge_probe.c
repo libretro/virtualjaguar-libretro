@@ -92,6 +92,19 @@ static void wp_snapshot(harness_config *cfg, const char *base)
         }
     }
     {
+        /* tomRam8 is a plain array — dlsym returns the data directly. */
+        uint8_t *tom = (uint8_t *)harness_dlsym(cfg, "tomRam8");
+        if (tom) {
+            snprintf(path, sizeof(path), "%s.tom", base);
+            f = fopen(path, "wb");
+            if (f) {
+                fwrite(tom, 1, 0x4000, f);
+                fclose(f);
+                fprintf(stderr, "[WEDGE-PROBE] TOM RAM -> %s\n", path);
+            }
+        }
+    }
+    {
         uint32_t (*p_dsprl)(uint32_t, uint32_t) =
             (uint32_t (*)(uint32_t, uint32_t))harness_dlsym(cfg, "DSPReadLong");
         uint32_t *p_dsppc = (uint32_t *)harness_dlsym(cfg, "dsp_pc");
