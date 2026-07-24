@@ -582,12 +582,25 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    offset &= 0xFFFFFF;
 
-   // First 2M is mirrored in the $0 - $7FFFFF range
-   if (offset < 0x800000)
+   /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
+    * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
+    * expansion space).  Writes there fall on no device and vanish.
+    * Mirroring them into the low 2MB (the old behaviour) let a game's
+    * own out-of-range writes corrupt its code: Battle Morph's bottom
+    * scroll-buffer row blits legitimately compute addresses past
+    * $200000 (harmless on hardware) and the write-mirror folded them
+    * onto the game's 68K code at $4400+, shredding it 8 bytes per 24
+    * (the pitch-3 phrase stride) — black screen in both boot modes.
+    * Reads keep the historical mirror for now: real unpopulated DRAM
+    * reads float, and several recovery paths (wild-PC diagnostics)
+    * depend on reads staying harmless. */
+   if (offset < 0x200000)
    {
-      jaguarMainRAM[offset & 0x1FFFFF] = data;
+      jaguarMainRAM[offset] = data;
       return;
    }
+   else if (offset < 0x800000)
+      return;
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
    {
       CDROMWriteByte(offset, data, who);
@@ -612,13 +625,15 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    offset &= 0xFFFFFF;
 
-   // First 2M is mirrored in the $0 - $7FFFFF range
-   if (offset <= 0x7FFFFE)
+   /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
+   if (offset <= 0x1FFFFE)
    {
-      jaguarMainRAM[(offset+0) & 0x1FFFFF] = data >> 8;
-      jaguarMainRAM[(offset+1) & 0x1FFFFF] = data & 0xFF;
+      jaguarMainRAM[offset+0] = data >> 8;
+      jaguarMainRAM[offset+1] = data & 0xFF;
       return;
    }
+   else if (offset <= 0x7FFFFE)
+      return;
    else if (offset >= 0xDFFF00 && offset <= 0xDFFFFE)
    {
       CDROMWriteWord(offset, data, who);
@@ -663,11 +678,14 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
    if (addr == 0xF1B274 && data != 0)
       LOG_INF("[CDDA] DSP mailbox $F1B274 = %08X who=%u 68kpc=$%06X\n",
               data, who, m68k_get_reg(NULL, M68K_REG_PC));
-   if (addr < 0x800000)
+   if (addr < 0x200000)
    {
-      SET32(jaguarMainRAM, addr & 0x1FFFFF, data);
+      SET32(jaguarMainRAM, addr, data);
       return;
    }
+   /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
+   else if (addr < 0x800000)
+      return;
    JaguarWriteWord(offset, data >> 16, who);
    JaguarWriteWord(offset+2, data & 0xFFFF, who);
 }
