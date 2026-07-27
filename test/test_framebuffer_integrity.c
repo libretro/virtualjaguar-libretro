@@ -23,7 +23,8 @@
 
 #include "harness/harness.h"
 
-#include <libretro.h>
+#include "../libretro-common/include/libretro.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -92,6 +93,7 @@ int main(int argc, char **argv)
     uint32_t *fb;
     int w, h;
     void (*av_info_fn)(struct retro_system_av_info *);
+    int max_w, max_h;
     char geom_detail_buf[128];
     unsigned total_pixels, nonblack_count;
     unsigned i, x, y;
@@ -134,7 +136,9 @@ int main(int argc, char **argv)
     fb_ptr = (uint32_t **)harness_dlsym(&cfg, "videoBuffer");
     width_ptr = (int *)harness_dlsym(&cfg, "game_width");
     height_ptr = (int *)harness_dlsym(&cfg, "game_height");
-    *(void **)(&av_info_fn) = harness_dlsym(&cfg, "retro_get_system_av_info");
+    /* Direct assignment, matching how harness.c resolves the retro_* entry
+     * points (harness.c:260+), rather than casting through void **. */
+    av_info_fn = harness_dlsym(&cfg, "retro_get_system_av_info");
     if (!fb_ptr || !width_ptr || !height_ptr) {
         fprintf(stderr, "Cannot resolve videoBuffer/game_width/game_height\n");
         harness_shutdown(&cfg);
@@ -188,11 +192,15 @@ int main(int argc, char **argv)
         /* Own buffer, not the shared detail_buf: check() stores the pointer
          * rather than copying, so a shared buffer would report whatever the
          * last assertion wrote. */
+        /* Compare in the signed domain: w/h are ints already validated > 0
+         * above, and the advertised maxima are far below INT_MAX, so this
+         * avoids a sign conversion in the comparison. */
+        max_w = (int)av.geometry.max_width;
+        max_h = (int)av.geometry.max_height;
         snprintf(geom_detail_buf, sizeof(geom_detail_buf),
-                 "emitted %dx%d must fit advertised max %ux%u",
-                 w, h, av.geometry.max_width, av.geometry.max_height);
-        check((unsigned)w <= av.geometry.max_width
-              && (unsigned)h <= av.geometry.max_height,
+                 "emitted %dx%d must fit advertised max %dx%d",
+                 w, h, max_w, max_h);
+        check(w <= max_w && h <= max_h,
               "frame_within_advertised_geometry", geom_detail_buf,
               results, &num_results);
     } else {

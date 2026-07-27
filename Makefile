@@ -816,8 +816,10 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
 	@# height is not, so a region-specific overflow must not hide.
+	@# Chained with && so an NTSC failure cannot be masked by a passing PAL
+	@# run -- with `;` the block would still exit 0 on the second command.
 	@if [ -f "test/roms/yarc.j64" ]; then \
-		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64; \
+		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 && \
 		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 \
 			--option virtualjaguar_pal=enabled; \
 	else \
