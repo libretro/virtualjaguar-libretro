@@ -695,7 +695,12 @@ bool retro_unserialize(const void *data, size_t size)
    STATE_LOAD_VAR(buf, flags);
    STATE_LOAD_VAR(buf, reserved);
 
-   if (magic != STATE_MAGIC || version != STATE_VERSION)
+   /* Accept older layouts down to STATE_MIN_VERSION so a core update does
+    * not invalidate the user's existing states; per-module loaders skip
+    * fields the older version did not carry.  We always WRITE
+    * STATE_VERSION, and states newer than we understand are refused. */
+   if (magic != STATE_MAGIC
+       || version < STATE_MIN_VERSION || version > STATE_VERSION)
       return false;
 
    /* Large memory blocks */
@@ -719,7 +724,7 @@ bool retro_unserialize(const void *data, size_t size)
    buf += CDROMStateLoad(buf);
    buf += JoystickStateLoad(buf);
    buf += MTStateLoad(buf);
-   buf += DACStateLoad(buf);
+   buf += DACStateLoad(buf, version);
 
    JaguarApplyHLEBIOSState();
 

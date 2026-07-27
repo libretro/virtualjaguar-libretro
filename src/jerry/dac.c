@@ -325,7 +325,7 @@ size_t DACStateSave(uint8_t *buf)
 	return (size_t)(buf - start);
 }
 
-size_t DACStateLoad(const uint8_t *buf)
+size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion)
 {
 	const uint8_t *start = buf;
 
@@ -334,7 +334,14 @@ size_t DACStateLoad(const uint8_t *buf)
 	STATE_LOAD_VAR(buf, bufferDone);
 	STATE_LOAD_VAR(buf, i2sWritePos);
 	STATE_LOAD_VAR(buf, i2sWriteCount);
-	STATE_LOAD_VAR(buf, i2sNonZeroCount);
+	/* i2sNonZeroCount was added in STATE_VERSION 3.  Version 2 states do
+	 * not carry it, so consume nothing and start from the value
+	 * DACPrepareFrame would establish; reading it would desync every
+	 * module that follows. */
+	if (stateVersion >= 3)
+		STATE_LOAD_VAR(buf, i2sNonZeroCount);
+	else
+		i2sNonZeroCount = 0;
 	STATE_LOAD_VAR(buf, i2sPhase);
 	STATE_LOAD_VAR(buf, i2sRateRatio);
 
