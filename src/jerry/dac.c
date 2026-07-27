@@ -334,11 +334,11 @@ size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	STATE_LOAD_VAR(buf, bufferDone);
 	STATE_LOAD_VAR(buf, i2sWritePos);
 	STATE_LOAD_VAR(buf, i2sWriteCount);
-	/* i2sNonZeroCount was added in STATE_VERSION 3.  Version 2 states do
-	 * not carry it, so consume nothing and start from the value
-	 * DACPrepareFrame would establish; reading it would desync every
+	/* i2sNonZeroCount was added in STATE_VERSION_DAC_I2S_NONZEROCOUNT.
+	 * Older states do not carry it, so consume nothing and start from the
+	 * value DACPrepareFrame would establish; reading it would desync every
 	 * module that follows. */
-	if (stateVersion >= 3)
+	if (stateVersion >= STATE_VERSION_DAC_I2S_NONZEROCOUNT)
 		STATE_LOAD_VAR(buf, i2sNonZeroCount);
 	else
 		i2sNonZeroCount = 0;
