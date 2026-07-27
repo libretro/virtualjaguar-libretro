@@ -93,6 +93,11 @@ MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
+# Records which ABI the library in the tree was last linked with; see the
+# mode-switch hook next to the link rule below.
+LINK_MODE := $(if $(filter 1,$(TEST_EXPORTS)),test,prod)
+LINK_MODE_STAMP := .link-mode
+
 # Unix
 ifeq ($(platform), unix)
 	TARGET := $(TARGET_NAME)_libretro.so
@@ -712,12 +717,24 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
+# Force a re-link when the exported ABI changes.  The objects are identical
+# either way, so a plain `make` followed by `make TEST_EXPORTS=1 test` would
+# otherwise reuse the production-slim library -- it is newer than every
+# object, so nothing relinks -- and the white-box tests fail with
+# "Missing: m68k_execute".  Delete the library outright rather than relying
+# on a stamp file's mtime: the stamp and the library can land in the same
+# second, which is exactly the timestamp-granularity trap this is meant to
+# close.  Runs at parse time, once TARGET is known.
+$(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
+        || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
+             rm -f $(TARGET); })
+
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
 else
-	$(LD) $(LINKOUT)$@ $^ $(LDFLAGS)
+	$(LD) $(LINKOUT)$@ $(OBJECTS) $(LDFLAGS)
 endif
 
 # version.h dependency hook (must come after `all:` so Make 3.81 on
@@ -725,7 +742,7 @@ endif
 $(CORE_DIR)/libretro.o: $(VERSION_H)
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) \
+	rm -f $(TARGET) $(OBJECTS) $(LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
 		test/test_dsp_mac40 test/test_m68k_ops test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \

@@ -95,6 +95,16 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
 - `test/sram_test.sh` — SRAM round-trip
 
+### Test ABI and re-linking
+
+`make` links the production-slim ABI (`retro_*` only); `make test` needs the
+wide test ABI so harnesses can `dlsym` internals. Switching between them
+re-links automatically — the Makefile deletes the library when the mode
+changes, so `make` followed by `make TEST_EXPORTS=1 test` works. (It did not
+before v2.3.2: the library was newer than every object, nothing relinked, and
+the suite failed with `Missing: m68k_execute`.) After `make test`, the library
+in the tree carries the wide exports; plain `make` restores the shipped ABI.
+
 ### Build-identity guard (stale-binary protection)
 
 Every harness that dlopens the core prints the binary's embedded version
