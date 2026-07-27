@@ -76,3 +76,4 @@ test/acid/acid_run
 test/acid/tests/**/*.jag
 /test/tools/test_frame_timing
 /test/tools/cd_visual_verify
+/test/tools/cue2cdi
