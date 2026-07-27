@@ -653,7 +653,7 @@ static bool ParseCDI(const char *cdiPath)
          uint8_t newFmt[4], marker[20];
          uint32_t newFmtVal;
          uint8_t fnameLen;
-         uint8_t trkData[256];  // 0x70-ish bytes
+         uint8_t trkData[256];  // holds the 0x57-byte packed track-data block
          uint32_t pregapLen, length, mode, startLba, totalLength, sectorCode;
          uint32_t sectorSize;
 
@@ -683,35 +683,40 @@ static bool ParseCDI(const char *cdiPath)
          newFmtVal = (uint32_t)newFmt[0] | ((uint32_t)newFmt[1] << 8) |
                      ((uint32_t)newFmt[2] << 16) | ((uint32_t)newFmt[3] << 24);
          if (newFmtVal == 0x80000000)
-            rfseek(cdi_file, 10, SEEK_CUR);
+            rfseek(cdi_file, 10, SEEK_CUR);    // DJ4 extra u64 + index count (u16, normally 2)
          else
-            rfseek(cdi_file, 2, SEEK_CUR);
+            rfseek(cdi_file, 2, SEEK_CUR);     // index count (u16, normally 2)
 
          // Read the track-data block. We only need the documented fields;
          // the offsets within the block are fixed regardless of CDI version.
-         // sizeof(CDI_track_data) = 4+4+6+4+0xc+4+4+0x10+4+0x1d = 0x55+? — use 0x70 to be safe.
+         // DreamShell's CDI_track_data is __attribute__((packed)):
+         // sizeof = 4+4+6+4+4+4+4+4+4+0x10+4+1+0x1c = 0x57 bytes exactly.
          memset(trkData, 0, sizeof(trkData));
-         if (rfread(trkData, 1, 0x70, cdi_file) != 0x70)
+         if (rfread(trkData, 1, 0x57, cdi_file) != 0x57)
             goto fail;
 
-         // Field offsets per DreamShell CDI_track_data layout:
+         // Field offsets per DreamShell CDI_track_data (packed) layout,
+         // cross-checked against cdirip and libmirage:
          //   +0x00 pregap_length (u32)
          //   +0x04 length (u32)
-         //   +0x0a unknown (6 bytes)
-         //   +0x10 mode (u32)
-         //   +0x14 unknown (12 bytes)
-         //   +0x20 start_lba (u32)
-         //   +0x24 total_length (u32)
-         //   +0x28 unknown (16 bytes)
-         //   +0x38 sector_size (u32, code: 0=2048, 1=2336, 2=2352)
+         //   +0x08 unknown (6 bytes)
+         //   +0x0e mode (u32)
+         //   +0x12 unknown (4 bytes)
+         //   +0x16 session_idx (u32)
+         //   +0x1a track_idx (u32)
+         //   +0x1e start_lba (u32)
+         //   +0x22 total_length (u32)
+         //   +0x26 unknown (16 bytes)
+         //   +0x36 sector_size (u32, code: 0=2048, 1=2336, 2=2352)
+         //   +0x3a track CTL (u8), then 0x1c unknown bytes to +0x57
          #define LE32(p, o) ((uint32_t)(p)[(o)] | ((uint32_t)(p)[(o)+1] << 8) | \
                              ((uint32_t)(p)[(o)+2] << 16) | ((uint32_t)(p)[(o)+3] << 24))
          pregapLen   = LE32(trkData, 0x00);
          length      = LE32(trkData, 0x04);
-         mode        = LE32(trkData, 0x10);
-         startLba    = LE32(trkData, 0x20);
-         totalLength = LE32(trkData, 0x24);
-         sectorCode  = LE32(trkData, 0x38);
+         mode        = LE32(trkData, 0x0e);
+         startLba    = LE32(trkData, 0x1e);
+         totalLength = LE32(trkData, 0x22);
+         sectorCode  = LE32(trkData, 0x36);
          #undef LE32
 
          sectorSize = CDISectorSizeFromCode(mode, sectorCode);
@@ -1256,6 +1261,7 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    static uint8_t raw[2352 * 256];
    static uint8_t swapped[sizeof(raw)];
    int64_t bytesRead;
+   int64_t trackFileBase;
    uint32_t loadAddr, length;
 
    if (!disc.loaded || disc.numSessions < 2)
@@ -1274,24 +1280,40 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
          break;
       }
    }
-   if (!foundS2 || !disc.tracks[firstS2Idx].binFilePath[0])
+   if (!foundS2 || (!disc.tracks[firstS2Idx].binFilePath[0] && !disc.binPath[0]))
    {
       LOG_WRN("[CD-BOOTSTUB] No session-2 track found (foundS2=%d, pathEmpty=%d)\n",
               foundS2, foundS2 ? !disc.tracks[firstS2Idx].binFilePath[0] : -1);
       return false;
    }
 
-   LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s\n",
-           disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
-   trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
+   /* Multi-file CUE: the session-2 track has its own BIN starting at the
+    * track region.  Single-file images (CDI, single-BIN CUE) only set
+    * disc.binPath; the track's region starts at tracks[].fileOffset. */
+   if (disc.tracks[firstS2Idx].binFilePath[0])
+   {
+      LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s\n",
+              disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
+      trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
+      trackFileBase = 0;
+   }
+   else
+   {
+      LOG_INF("[CD-BOOTSTUB] Opening track %u in single-file image: %s (offset $%X)\n",
+              disc.tracks[firstS2Idx].number, disc.binPath,
+              disc.tracks[firstS2Idx].fileOffset);
+      trackFile = rfopen(disc.binPath, "rb");
+      trackFileBase = (int64_t)disc.tracks[firstS2Idx].fileOffset;
+   }
    if (!trackFile)
    {
       LOG_ERR("[CD-BOOTSTUB] rfopen failed for %s\n",
-              disc.tracks[firstS2Idx].binFilePath);
+              disc.tracks[firstS2Idx].binFilePath[0] ?
+                 disc.tracks[firstS2Idx].binFilePath : disc.binPath);
       return false;
    }
 
-   rfseek(trackFile, 0, SEEK_SET);
+   rfseek(trackFile, trackFileBase, SEEK_SET);
    bytesRead = rfread(raw, 1, sizeof(raw), trackFile);
    rfclose(trackFile);
    LOG_INF("[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
