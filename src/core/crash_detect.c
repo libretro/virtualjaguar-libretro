@@ -48,7 +48,21 @@ extern uint32_t dsp_pc;
  * a processor is still running. SEEK_DELAY_TICKS in cdrom.c is ~100
  * halfline ticks (~0.2 frames at NTSC's ~524 halflines/frame) even for a
  * from-scratch seek, so 300 frames (5 sec) is far beyond any legitimate
- * seek -- this only fires on a genuine stall. */
+ * seek.
+ *
+ * KNOWN BENIGN CASE: a title that legitimately goes CD-idle for >5s
+ * fires this too -- the signature cannot tell "game stopped draining
+ * because it wedged" from "game finished the transfer and doesn't need
+ * the disc right now".  Ground truth: Myst (bios mode) fires
+ * cd_seek_wedge at ~frame 2260 with the drain frozen at the intro
+ * movie's payload end (LBA 21189) while the game plays the movie's
+ * ~6-second all-black dramatic pause (Cyan logo -> black -> match
+ * strike -> burning MYST logo) entirely from RAM; the movie clock
+ * (TOM PIT -> GPU IRQ2 -> $1D58C accumulator) keeps ticking at 12 Hz
+ * throughout and the next asset loads right on schedule.  HLE mode
+ * shows the identical black window (fires video_stall instead).
+ * Corroborate with the trace ring / a longer freeze window before
+ * treating a lone cd_seek_wedge line as a real stall. */
 #define WEDGE_FRAMES_CD_SEEK 300
 
 /* Halfline expectation per frame: 524 NTSC, 624 PAL.  Anomaly band is +/- 4. */

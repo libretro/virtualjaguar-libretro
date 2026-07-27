@@ -133,7 +133,7 @@ fallback: `nm -gU <dylib> | grep <newsymbol>`.
 - `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$E3FFFF]`
 - `gpu_wedge` / `dsp_wedge` — same PC for ≥180 / 600 frames while still flagged running
 - `video_stall` — framebuffer hash unchanged for 300 frames while a processor is running
-- `cd_seek_wedge` — a CD seek was started but FIFO drain progress is frozen for 300 frames while a processor is still running; dumps the CD trace ring (see above, "Key harnesses") to the log
+- `cd_seek_wedge` — a CD seek was started but FIFO drain progress is frozen for 300 frames while a processor is still running; dumps the CD trace ring (see above, "Key harnesses") to the log. **Known benign case:** a title that goes CD-idle >5s after finishing a transfer fires this too — e.g. Myst (bios) fires it during the intro movie's ~6s all-black pause (drain parked at payload end LBA 21189, movie playing from RAM, clock still ticking); HLE shows the identical black window (fires `video_stall` instead). Corroborate before treating a lone line as a wedge.
 
 Toggled via core option `virtualjaguar_crash_detect = enabled` (default) / `disabled` / `verbose`. Verbose mode adds a state heartbeat every 600 frames. Cost when enabled: one indirect call + ~256-pixel hash per frame; off-mode short-circuits at the first instruction.
 
