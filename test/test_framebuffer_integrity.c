@@ -136,9 +136,14 @@ int main(int argc, char **argv)
     fb_ptr = (uint32_t **)harness_dlsym(&cfg, "videoBuffer");
     width_ptr = (int *)harness_dlsym(&cfg, "game_width");
     height_ptr = (int *)harness_dlsym(&cfg, "game_height");
-    /* Direct assignment, matching how harness.c resolves the retro_* entry
-     * points (harness.c:260+), rather than casting through void **. */
-    av_info_fn = harness_dlsym(&cfg, "retro_get_system_av_info");
+    /* Object pointer -> function pointer via memcpy: the conversion is not
+     * defined by ISO C in either direction (neither a plain assignment nor a
+     * cast through void **), so copy the representation instead.  This is the
+     * POSIX-recommended idiom for dlsym results. */
+    {
+        void *av_info_sym = harness_dlsym(&cfg, "retro_get_system_av_info");
+        memcpy(&av_info_fn, &av_info_sym, sizeof(av_info_fn));
+    }
     if (!fb_ptr || !width_ptr || !height_ptr) {
         fprintf(stderr, "Cannot resolve videoBuffer/game_width/game_height\n");
         harness_shutdown(&cfg);
