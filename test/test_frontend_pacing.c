@@ -84,6 +84,19 @@
 #if defined(__SANITIZE_ADDRESS__) && !defined(VJ_SANITIZER_BUILD)
 #  define VJ_SANITIZER_BUILD 1
 #endif
+/* gcov needs a runtime signal rather than a macro: `make coverage` builds
+ * the *core* at -O0 with --coverage, but the test binaries compile with
+ * $(INCFLAGS) only, so no -D reaches them.  The coverage target exports
+ * VJ_INSTRUMENTED_BUILD=1 instead. */
+static int instrumented_build(void)
+{
+#ifdef VJ_SANITIZER_BUILD
+    return 1;
+#else
+    const char *e = getenv("VJ_INSTRUMENTED_BUILD");
+    return (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
+#endif
+}
 
 typedef struct {
     uint64_t t_prev;
@@ -279,13 +292,14 @@ int main(int argc, char **argv)
              cfg.video.set_av_info_calls, cfg.video.dimension_changes,
              cfg.video.last_width, cfg.video.last_height);
 
-#ifdef VJ_SANITIZER_BUILD
-    results[nres].status = "SKIP";
-    strncat(detail_throttle, "  [SKIP: sanitizer build, timing not meaningful]",
-            sizeof(detail_throttle) - strlen(detail_throttle) - 1);
-#else
-    results[nres].status = ok_throttle ? "PASS" : "FAIL";
-#endif
+    if (instrumented_build()) {
+        results[nres].status = "SKIP";
+        strncat(detail_throttle,
+                "  [SKIP: instrumented build, timing not meaningful]",
+                sizeof(detail_throttle) - strlen(detail_throttle) - 1);
+    } else {
+        results[nres].status = ok_throttle ? "PASS" : "FAIL";
+    }
     results[nres].name   = "fastest_frame_beats_realtime";
     results[nres].detail = detail_throttle;
     nres++;
@@ -308,12 +322,9 @@ int main(int argc, char **argv)
     harness_report(&cfg, results, nres);
     harness_shutdown(&cfg);
 
-#ifdef VJ_SANITIZER_BUILD
-    /* Throttle result is SKIP here (see above), so it must not gate the
-     * exit code -- but the three counter checks still must. */
-    all_ok = ok_audio && ok_batch && ok_geom;
-#else
-    all_ok = ok_throttle && ok_audio && ok_batch && ok_geom;
-#endif
+    /* When the throttle result is SKIP it must not gate the exit code --
+     * but the three counter checks always do. */
+    all_ok = ok_audio && ok_batch && ok_geom
+             && (instrumented_build() || ok_throttle);
     return all_ok ? 0 : 1;
 }

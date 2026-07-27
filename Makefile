@@ -1002,7 +1002,11 @@ lint:
 coverage:
 	$(MAKE) clean
 	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
-	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
+	@# VJ_INSTRUMENTED_BUILD: the core is built -O0 + --coverage here and
+	@# runs below realtime, so wall-clock assertions must skip rather than
+	@# report a false failure.  It has to be an env var: the test binaries
+	@# compile with $(INCFLAGS) only, so a -D on $(FLAGS) never reaches them.
+	VJ_INSTRUMENTED_BUILD=1 $(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
 	gcovr --config gcovr.cfg --xml-pretty -o coverage.xml --txt --print-summary
 
 # `make benchmark` -- headless wall-clock perf measurement on a fixed

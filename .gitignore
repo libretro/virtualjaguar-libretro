@@ -74,3 +74,8 @@ test/acid/acid_run
 test/acid/tests/**/*.jag
 /test/tools/test_frame_timing
 .link-mode
+
+# gcov instrumentation output (make coverage)
+*.gcda
+*.gcno
+coverage.xml

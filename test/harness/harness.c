@@ -54,6 +54,11 @@ static void (*lr_run)(void);
 
 /* Active config pointer (needed by callbacks which have no userdata) */
 static harness_config *active_cfg;
+/* ROM image handed to retro_load_game.  The core copies it, but keep the
+ * pointer so harness_shutdown can release it after retro_unload_game --
+ * otherwise every ROM-loading harness leaks the whole image, which
+ * LeakSanitizer reports (1 MB per run for test/roms/yarc.j64). */
+static void *active_rom_data;
 
 /* ----------------------------------------------------------------
  * Libretro callbacks
@@ -387,8 +392,11 @@ bool harness_load_rom(harness_config *cfg)
     game.data = rom_data;
     game.size = (size_t)rom_size;
 
+    active_rom_data = rom_data;
+
     if (!lr_load_game(&game)) {
         fprintf(stderr, "harness: retro_load_game failed for '%s'\n", cfg->rom_path);
+        active_rom_data = NULL;
         free(rom_data);
         return false;
     }
@@ -427,6 +435,9 @@ void harness_step(harness_config *cfg)
 void harness_shutdown(harness_config *cfg)
 {
     if (lr_unload_game) lr_unload_game();
+    /* After unload_game: the core must not reference the image any more. */
+    free(active_rom_data);
+    active_rom_data = NULL;
     if (lr_deinit) lr_deinit();
     if (cfg->core_handle) {
         dlclose(cfg->core_handle);
