@@ -934,21 +934,21 @@ test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_eeprom_lifecycle: test/test_eeprom_lifecycle.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_eeprom_lifecycle.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_framebuffer_integrity.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 # Save-state backwards-compatibility regression guard.  Needs DACStateSave
 # from the wide test symbol set (DAC* in exports-test.list / link-test.T).
@@ -957,14 +957,14 @@ test/test_state_compat: test/test_state_compat.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_state_compat.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_frontend_pacing: test/test_frontend_pacing.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_frontend_pacing.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
@@ -1041,7 +1041,7 @@ dsp-diag:
 		-o test/tools/test_dsp_audio_diag \
 		test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_dsp_audio_diag ./$(TARGET) "$(DSP_DIAG_ROM)" $(DSP_DIAG_FLAGS)
 
 # `make frame-timing` -- Per-frame timing diagnostic.  Builds core with
@@ -1061,7 +1061,7 @@ frame-timing:
 		-o test/tools/test_frame_timing \
 		test/tools/test_frame_timing.c \
 		test/harness/harness.c test/harness/timing_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
 
 print-%:

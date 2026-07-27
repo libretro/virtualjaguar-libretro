@@ -57,6 +57,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <inttypes.h>
 
 #include "harness/harness.h"
 #include <libretro.h>
@@ -112,7 +113,9 @@ int main(int argc, char **argv)
     uint64_t t0;
     double elapsed, realtime, frame_period, mean_frame;
     double expected_frames_f, tolerance, sample_err;
-    long expected_samples, actual_samples;
+    /* 64-bit: --frames N is user-supplied, and total_samples can exceed
+     * 32-bit long on LLP64 platforms for large N. */
+    int64_t expected_samples, actual_samples;
     char detail_throttle[320], detail_audio[256], detail_batch[160], detail_geom[224];
     int ok_throttle, ok_audio, ok_batch, ok_geom, all_ok;
     int i;
@@ -120,10 +123,26 @@ int main(int argc, char **argv)
     cfg.frames = 300;
 
     for (i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--max-fastest-frame-fraction") == 0 && i + 1 < argc)
-            max_fastest_fraction = atof(argv[++i]);
-        else if (strcmp(argv[i], "--max-geometry-calls") == 0 && i + 1 < argc)
-            max_geometry_calls = (unsigned)atoi(argv[++i]);
+        if (strcmp(argv[i], "--max-fastest-frame-fraction") == 0 && i + 1 < argc) {
+            /* strtod, not atof: atof returns 0 on a malformed value, which
+             * would silently set the threshold to 0 and force a failure. */
+            char *end = NULL;
+            double v = strtod(argv[++i], &end);
+            if (end == argv[i] || *end != '\0' || v <= 0.0) {
+                fprintf(stderr, "invalid --max-fastest-frame-fraction: %s\n",
+                        argv[i]);
+                return 2;
+            }
+            max_fastest_fraction = v;
+        } else if (strcmp(argv[i], "--max-geometry-calls") == 0 && i + 1 < argc) {
+            char *end = NULL;
+            unsigned long v = strtoul(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0') {
+                fprintf(stderr, "invalid --max-geometry-calls: %s\n", argv[i]);
+                return 2;
+            }
+            max_geometry_calls = (unsigned)v;
+        }
         else if (strcmp(argv[i], "--force-fail-throttle") == 0)
             force_fail_throttle = 1;
         else if (strcmp(argv[i], "--force-fail-audio") == 0)
@@ -213,8 +232,8 @@ int main(int argc, char **argv)
 
     /* --- 2. audio-rate contract ------------------------------------- */
     expected_frames_f = (double)cfg.frames * av.timing.sample_rate / av.timing.fps;
-    expected_samples  = (long)(expected_frames_f + 0.5);
-    actual_samples    = (long)cfg.audio.total_samples;
+    expected_samples  = (int64_t)(expected_frames_f + 0.5);
+    actual_samples    = (int64_t)cfg.audio.total_samples;
     if (force_fail_audio)
         actual_samples = 0;
     sample_err = (expected_frames_f > 0.0)
@@ -223,7 +242,7 @@ int main(int argc, char **argv)
     tolerance = 0.01;
     ok_audio = (sample_err <= tolerance);
     snprintf(detail_audio, sizeof(detail_audio),
-             "submitted %ld sample-frames, expected %ld "
+             "submitted %" PRId64 " sample-frames, expected %" PRId64 " "
              "(%u frames x %.1f Hz / %.4f fps); error %.3f%% (limit %.1f%%)",
              actual_samples, expected_samples, cfg.frames,
              av.timing.sample_rate, av.timing.fps,
