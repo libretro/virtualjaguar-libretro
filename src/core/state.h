@@ -25,6 +25,12 @@ extern "C" {
  * after them (see DACStateLoad); STATE_VERSION is always what we write. */
 #define STATE_MIN_VERSION 2
 
+/* Per-field version gates.  A module loader that has to skip a field an
+ * older layout did not carry compares the header version against the
+ * constant naming that field, never a bare literal. */
+/* First version whose DAC block carries i2sNonZeroCount. */
+#define STATE_VERSION_DAC_I2S_NONZEROCOUNT 3
+
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
 #define STATE_FLAG_CDROM     0x02
