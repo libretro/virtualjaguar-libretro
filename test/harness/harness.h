@@ -117,6 +117,15 @@ typedef struct {
     unsigned total_frames_rendered;
     unsigned last_width;
     unsigned last_height;
+    /* Frontend-negotiation counters.  A core that renegotiates geometry or
+     * A/V timing every frame makes real frontends re-init their texture /
+     * audio driver per frame, which pins the frame rate and defeats
+     * fast-forward.  See test/test_frontend_pacing.c. */
+    unsigned set_geometry_calls;
+    unsigned set_av_info_calls;
+    /* Number of frames whose reported width/height differed from the
+     * previous frame's (boot resolution changes are expected; churn is not). */
+    unsigned dimension_changes;
 } harness_video_stats;
 
 /* Per-frame callback: called after each retro_run().

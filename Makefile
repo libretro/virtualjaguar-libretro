@@ -734,7 +734,7 @@ clean:
 		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
-		test/test_state_compat \
+		test/test_state_compat test/test_frontend_pacing \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
 
@@ -765,6 +765,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
+		test/test_frontend_pacing \
 		test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
@@ -827,6 +828,15 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@# committed in-tree, so a missing ROM is a broken checkout and the
 	@# test's exit 77 should stop the suite rather than read as a pass.
 	./test/test_state_compat ./$(TARGET) test/roms/yarc.j64
+	@# Frontend pacing / fast-forward contract: the core must not throttle
+	@# itself, and samples-per-frame must match the advertised fps and
+	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
+	@# bottleneck and fast-forward has nothing to give.
+	@if [ -f "test/roms/yarc.j64" ]; then \
+		./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet; \
+	else \
+		echo "  SKIP: yarc.j64 ROM not available (frontend pacing)"; \
+	fi
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
@@ -947,6 +957,13 @@ test/test_state_compat: test/test_state_compat.c \
 		test/harness/harness.c test/harness/harness.h src/core/state.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_state_compat.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_frontend_pacing: test/test_frontend_pacing.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_frontend_pacing.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 endif

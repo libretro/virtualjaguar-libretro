@@ -49,6 +49,9 @@ static void cb_video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
     (void)data; (void)pitch;
     if (!active_cfg) return;
+    if (active_cfg->video.total_frames_rendered > 0 &&
+        (w != active_cfg->video.last_width || h != active_cfg->video.last_height))
+        active_cfg->video.dimension_changes++;
     active_cfg->video.total_frames_rendered++;
     active_cfg->video.last_width = w;
     active_cfg->video.last_height = h;
@@ -152,9 +155,14 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
-    case RETRO_ENVIRONMENT_SET_GEOMETRY:
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+        return true;
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+        if (active_cfg) active_cfg->video.set_geometry_calls++;
+        return true;
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+        if (active_cfg) active_cfg->video.set_av_info_calls++;
         return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
         *(const char **)data = "/tmp";
