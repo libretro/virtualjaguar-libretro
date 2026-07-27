@@ -5,22 +5,30 @@
  * style: session 1 = short audio warning track(s), session 2 = "data"
  * tracks recorded as AUDIO-type tracks containing byte-swapped data).
  * BigPEmu and other tools prefer DiscJuggler .cdi. This tool converts
- * CUE/BIN to a CDI whose layout matches EXACTLY what this repo's parser
- * (src/cd/cdintf.c :: ParseCDI) reads, preserving session structure and
- * track types faithfully — tracks are NOT forced to data mode.
+ * CUE/BIN to a CDI in the CANONICAL DiscJuggler layout, preserving session
+ * structure and track types faithfully — tracks are NOT forced to data mode.
  *
  * Emitted variant: DiscJuggler V3 (trailer version id $80000005, absolute
- * header offset). Field offsets inside the 0x70-byte per-track data block
- * are the ones ParseCDI reads:
- *   +0x00 pregap_length  +0x04 length        +0x10 mode
- *   +0x20 start_lba      +0x24 total_length  +0x38 sector-size code
+ * header offset), DJ 3.00.780+ style track blocks. Canonical field offsets
+ * inside the 0x57-byte per-track data block (packed — verified against
+ * cdirip cdi.c, DreamShell modules/isofs/cdi.c struct CDI_track_data
+ * __attribute__((packed)), and libmirage image-cdi/parser.c):
+ *   +0x00 pregap_length  +0x04 length        +0x0e mode
+ *   +0x1e start_lba      +0x22 total_length  +0x36 sector-size code
  * (sector-size code: 0=2048, 1=2336, 2=2352)
+ *
+ * NOTE: src/cd/cdintf.c ParseCDI currently reads these fields 2 bytes late
+ * (+0x10/+0x20/+0x24/+0x38, an unpacked-struct misreading of the DreamShell
+ * reference) and consumes a 0x70-byte block instead of 0x57 — so the core
+ * cannot load the files this tool produces until that parser is fixed.
+ * Canonical correctness wins: genuine DiscJuggler images and BigPEmu use
+ * the layout emitted here.
  *
  * Usage:
  *   cue2cdi input.cue [output.cdi] [--verify] [--quiet] [--version]
  *
- * --verify re-parses the produced CDI with the same walk cdintf.c performs
- * and byte-compares every track's payload against the source BIN(s).
+ * --verify re-parses the produced CDI with the canonical cdirip walk and
+ * byte-compares every track's payload against the source BIN(s).
  *
  * Build:
  *   cc -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
@@ -46,12 +54,17 @@
  * a multi-file CUE (session 1 lead-out + run-out + session 2 lead-in). */
 #define INTER_SESSION_GAP 11400
 
-/* DiscJuggler trailer version ids (src/cd/cdintf.c lines 570-572) */
+/* DiscJuggler trailer version ids (cdirip cdi.h) */
 #define CDI_V2_ID  0x80000004u
 #define CDI_V3_ID  0x80000005u
 #define CDI_V35_ID 0x80000006u
 
-/* Track start marker (src/cd/cdintf.c lines 574-577) */
+/* Filler values observed in genuine DiscJuggler images (libmirage
+ * image-cdi/parser.c expected-field tables) */
+#define CDI_DISC_CAPACITY 0x00057E40u  /* 360000 sectors = 80 min */
+#define CDI_MEDIUM_CD     0x0098u      /* 0x38 would be DVD */
+
+/* Track start marker (cdirip cdi.c TRACK_START_MARK, twice) */
 static const uint8_t cdi_track_start_marker[20] = {
    0x00,0x00,0x01,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,
    0x00,0x00,0x01,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF
@@ -188,6 +201,14 @@ static uint32_t get_le32(const uint8_t *p)
 {
    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void store_le32(uint8_t *p, uint32_t v)
+{
+   p[0] = (uint8_t)(v & 0xFF);
+   p[1] = (uint8_t)((v >> 8) & 0xFF);
+   p[2] = (uint8_t)((v >> 16) & 0xFF);
+   p[3] = (uint8_t)((v >> 24) & 0xFF);
 }
 
 static const char *mode_name(int mode)
@@ -517,57 +538,84 @@ static int copy_bytes(FILE *dst, const char *srcPath, uint64_t offset,
    return 0;
 }
 
-/* Emit the per-track header entry exactly as ParseCDI consumes it
- * (cdintf.c lines 651-754, non-V2 branch). */
-static void write_track_header(FILE *f, const Track *t)
+/* Emit one per-track header entry in the canonical DJ 3.00.780+ layout
+ * shared by cdirip CDI_read_track(), DreamShell cdi_open() and libmirage
+ * mirage_parser_cdi_load_track().
+ *
+ * isFirst: first track of its session. The reader's per-track prelude
+ * ("read u32; if != 0 skip 8") consumes a 4-byte zero for the session's
+ * first track; for later tracks it consumes the 12 inter-track bytes that
+ * write_cdi() emits between entries (as genuine images do). */
+static void write_track_header(FILE *f, const Track *t, int isFirst,
+                               int totalTracks, int sessIdx0, int trkIdx0)
 {
-   uint8_t blk[0x70];
+   uint8_t blk[0x57];
+   uint8_t tail[87];
+   uint8_t pre[19];
    const char *fname = basename_of(t->binPath);
    size_t fnameLen = strlen(fname);
+   uint32_t dataLen = t->regionSectors - t->pregapLen;
+   uint32_t code = sector_code_from_size(t->sectorSize);
+   uint32_t ctl = (t->mode == 0) ? 0 : 4;    /* CTL: data bit for data tracks */
+
    if (fnameLen > 255)
       fnameLen = 255;
 
-   put_le32(f, 0);                               /* newFmt == 0: no extra skip */
-   fwrite(cdi_track_start_marker, 1, 20, f);     /* start marker */
-   put_zeros(f, 4);                              /* skipped (line 675) */
-   fputc((int)fnameLen, f);                      /* filename length */
-   fwrite(fname, 1, fnameLen, f);                /* filename (skipped) */
-   put_zeros(f, 19);                             /* skipped (line 679) */
-   put_le32(f, 0);                               /* != 0x80000000 (line 685) */
-   put_zeros(f, 2);                              /* skipped (line 688) */
+   if (isFirst)
+      put_le32(f, 0);                        /* prelude u32 == 0: no skip */
 
-   /* 0x70-byte track data block; offsets per cdintf.c lines 697-714 */
+   fwrite(cdi_track_start_marker, 1, 20, f); /* two 10-byte start marks */
+   put_zeros(f, 3);
+   fputc(totalTracks & 0xFF, f);             /* total tracks (libmirage hdr[15]) */
+   fputc((int)fnameLen, f);                  /* filename length */
+   fwrite(fname, 1, fnameLen, f);            /* filename */
+
+   /* 19 bytes after filename; genuine images have 0x02 at byte 11 */
+   memset(pre, 0, sizeof(pre));
+   pre[11] = 0x02;
+   fwrite(pre, 1, sizeof(pre), f);
+
+   put_le32(f, 0x80000000u);                 /* DJ 3.00.780+ format tag */
+   put_le32(f, CDI_DISC_CAPACITY);           /* disc capacity in sectors */
+   put_zeros(f, 2);
+   put_le16(f, CDI_MEDIUM_CD);               /* medium type */
+   put_le16(f, 2);                           /* index entries: pregap + data */
+
+   /* 0x57-byte track data block, canonical packed layout */
    memset(blk, 0, sizeof(blk));
-   blk[0x00] = (uint8_t)(t->pregapLen & 0xFF);
-   blk[0x01] = (uint8_t)((t->pregapLen >> 8) & 0xFF);
-   blk[0x02] = (uint8_t)((t->pregapLen >> 16) & 0xFF);
-   blk[0x03] = (uint8_t)((t->pregapLen >> 24) & 0xFF);
-   {
-      uint32_t dataLen = t->regionSectors - t->pregapLen;
-      blk[0x04] = (uint8_t)(dataLen & 0xFF);
-      blk[0x05] = (uint8_t)((dataLen >> 8) & 0xFF);
-      blk[0x06] = (uint8_t)((dataLen >> 16) & 0xFF);
-      blk[0x07] = (uint8_t)((dataLen >> 24) & 0xFF);
-   }
-   blk[0x10] = (uint8_t)(t->mode & 0xFF);
-   blk[0x20] = (uint8_t)(t->startLBA & 0xFF);
-   blk[0x21] = (uint8_t)((t->startLBA >> 8) & 0xFF);
-   blk[0x22] = (uint8_t)((t->startLBA >> 16) & 0xFF);
-   blk[0x23] = (uint8_t)((t->startLBA >> 24) & 0xFF);
-   blk[0x24] = (uint8_t)(t->regionSectors & 0xFF);
-   blk[0x25] = (uint8_t)((t->regionSectors >> 8) & 0xFF);
-   blk[0x26] = (uint8_t)((t->regionSectors >> 16) & 0xFF);
-   blk[0x27] = (uint8_t)((t->regionSectors >> 24) & 0xFF);
-   {
-      uint32_t code = sector_code_from_size(t->sectorSize);
-      blk[0x38] = (uint8_t)(code & 0xFF);
-   }
+   store_le32(blk + 0x00, t->pregapLen);     /* index 0 length */
+   store_le32(blk + 0x04, dataLen);          /* index 1 length */
+   /* +0x08 CD-TEXT block count (0), +0x0c u16 (0) */
+   store_le32(blk + 0x0e, (uint32_t)t->mode);
+   /* +0x12 unknown (0) */
+   store_le32(blk + 0x16, (uint32_t)sessIdx0);   /* session index, 0-based */
+   store_le32(blk + 0x1a, (uint32_t)trkIdx0);    /* track index, 0-based */
+   store_le32(blk + 0x1e, t->startLBA);
+   store_le32(blk + 0x22, t->regionSectors);     /* total length */
+   /* +0x26 16 unknown bytes (0) */
+   store_le32(blk + 0x36, code);                 /* read mode / sector size */
+   store_le32(blk + 0x3a, ctl);                  /* track CTL */
+   /* +0x3e 0, +0x3f repeated total length, +0x43 4 zeros */
+   store_le32(blk + 0x3f, t->regionSectors);
+   /* +0x47 ISRC (12 bytes, zero) + 0x53 ISRC-valid (0) */
    fwrite(blk, 1, sizeof(blk), f);
 
-   /* Non-V2 per-track tail (cdintf.c lines 721-733): 5 skipped bytes, then
-    * a 4-byte marker. We write 0 (not 0xFFFFFFFF) so no 78-byte extension. */
-   put_zeros(f, 5);
-   put_le32(f, 0);
+   /* 87-byte extension tail: readers skip 5, hit the 0xFFFFFFFF marker at
+    * [5..8], then skip the 78-byte DJ 3.00.780+ extension. Filler bytes as
+    * documented by libmirage ([25..26] = 0xAC44 = 44100 Hz). */
+   memset(tail, 0, sizeof(tail));
+   memset(tail + 1, 0xFF, 8);
+   tail[9]  = 0x01;
+   tail[13] = 0x80;
+   tail[17] = 0x02;
+   tail[21] = 0x10;
+   tail[25] = 0x44;
+   tail[26] = 0xAC;
+   tail[71] = 0xFF;
+   tail[72] = 0xFF;
+   tail[73] = 0xFF;
+   tail[74] = 0xFF;
+   fwrite(tail, 1, sizeof(tail), f);
 }
 
 static int write_cdi(const Disc *d, const char *outPath)
@@ -595,24 +643,49 @@ static int write_cdi(const Disc *d, const char *outPath)
       }
    }
 
-   /* 2. Header table (ParseCDI walk, cdintf.c lines 633-761) */
-   headerOffset = ftello(out);
-   put_le16(out, (uint16_t)d->numSessions);
-   for (s = 1; s <= d->numSessions; s++) {
-      uint16_t n = 0;
-      for (i = 0; i < d->numTracks; i++)
-         if (d->tracks[i].session == s)
-            n++;
-      put_le16(out, n);
-      for (i = 0; i < d->numTracks; i++)
-         if (d->tracks[i].session == s)
-            write_track_header(out, &d->tracks[i]);
-      /* Per-session trailer: 12 bytes + 1 (non-V2), cdintf.c lines 757-760 */
-      put_zeros(out, 12 + 1);
+   /* 2. Header table (canonical cdirip/DreamShell walk).
+    * Inter-track bytes: the reader's per-track "read u32; if != 0 skip 8"
+    * prelude; genuine images carry {01 00 00 00 | 00 00 01 00 00 00 FF FF}
+    * between consecutive tracks of a session.
+    * Per-session trailer: 12 bytes + 1 (non-V2); last four are 00 00 FF FF
+    * in genuine images. */
+   {
+      static const uint8_t interTrack[12] =
+         { 0x01,0x00,0x00,0x00, 0x00,0x00,0x01,0x00, 0x00,0x00,0xFF,0xFF };
+      static const uint8_t sessTail[13] =
+         { 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0xFF,0xFF,
+           0x00 };
+      /* Empty end-of-disc session descriptor present in genuine images
+       * (never read by the track walk) */
+      static const uint8_t endDesc[14] =
+         { 0x00,0x00, 0x00,0x00,0x00,0x00,0x00,0x00, 0x01, 0x00,0x00,0x00,
+           0xFF,0xFF };
+      int trkIdx0 = 0;
+
+      headerOffset = ftello(out);
+      put_le16(out, (uint16_t)d->numSessions);
+      for (s = 1; s <= d->numSessions; s++) {
+         uint16_t n = 0, k = 0;
+         for (i = 0; i < d->numTracks; i++)
+            if (d->tracks[i].session == s)
+               n++;
+         put_le16(out, n);
+         for (i = 0; i < d->numTracks; i++) {
+            if (d->tracks[i].session != s)
+               continue;
+            write_track_header(out, &d->tracks[i], k == 0,
+                               d->numTracks, s - 1, trkIdx0);
+            k++;
+            trkIdx0++;
+            if (k < n)
+               fwrite(interTrack, 1, sizeof(interTrack), out);
+         }
+         fwrite(sessTail, 1, sizeof(sessTail), out);
+      }
+      fwrite(endDesc, 1, sizeof(endDesc), out);
    }
 
-   /* 3. Trailer: version id + absolute header offset (V2/V3 semantics,
-    * cdintf.c lines 615-631) */
+   /* 3. Trailer: version id + absolute header offset (V2/V3 semantics) */
    put_le32(out, CDI_V3_ID);
    put_le32(out, (uint32_t)headerOffset);
 
@@ -627,8 +700,8 @@ static int write_cdi(const Disc *d, const char *outPath)
 }
 
 /* -------------------------------------------------------------------------
- * Verification: re-parse the CDI with the same walk ParseCDI performs and
- * byte-compare every track's payload against the source BIN region.
+ * Verification: re-parse the CDI with the canonical cdirip/DreamShell walk
+ * and byte-compare every track's payload against the source BIN region.
  * ------------------------------------------------------------------------- */
 
 typedef struct {
@@ -641,7 +714,10 @@ typedef struct {
    uint64_t fileOffset;
 } CdiTrack;
 
-/* Mirror of ParseCDI (cdintf.c lines 593-761). Returns track count, or -1. */
+/* Canonical CDI track walk (cdirip cdi.c CDI_read_track / DreamShell
+ * cdi_open). Returns track count, or -1. NOTE: src/cd/cdintf.c ParseCDI
+ * deviates from this — it reads mode/start_lba/total_length/sector-size
+ * 2 bytes late and a 0x70-byte block instead of 0x57. */
 static int cdi_walk(FILE *f, CdiTrack *out, int maxTracks)
 {
    uint8_t trailer[8], buf2[2];
@@ -684,7 +760,7 @@ static int cdi_walk(FILE *f, CdiTrack *out, int maxTracks)
 
       for (t = 0; t < sessTrackCount; t++) {
          uint8_t newFmt[4], marker[20], fnameLen;
-         uint8_t trkData[0x70];
+         uint8_t trkData[0x57];
          uint32_t newFmtVal, pregapLen, length, mode, startLba;
          uint32_t totalLength, sectorCode, sectorSize;
 
@@ -716,14 +792,14 @@ static int cdi_walk(FILE *f, CdiTrack *out, int maxTracks)
          else
             fseeko(f, 2, SEEK_CUR);
 
-         if (fread(trkData, 1, 0x70, f) != 0x70)
+         if (fread(trkData, 1, 0x57, f) != 0x57)
             return -1;
          pregapLen   = get_le32(trkData + 0x00);
          length      = get_le32(trkData + 0x04);
-         mode        = get_le32(trkData + 0x10);
-         startLba    = get_le32(trkData + 0x20);
-         totalLength = get_le32(trkData + 0x24);
-         sectorCode  = get_le32(trkData + 0x38);
+         mode        = get_le32(trkData + 0x0e);
+         startLba    = get_le32(trkData + 0x1e);
+         totalLength = get_le32(trkData + 0x22);
+         sectorCode  = get_le32(trkData + 0x36);
 
          sectorSize = cdi_effective_sector_size(mode, sectorCode);
 
@@ -864,8 +940,8 @@ static void usage(FILE *to)
       ".cdi, preserving session structure and track types. Default output is\n"
       "the input path with the extension replaced by .cdi.\n"
       "\n"
-      "  --verify   re-parse the produced CDI (same walk as src/cd/cdintf.c)\n"
-      "             and byte-compare every track payload against the BIN(s)\n"
+      "  --verify   re-parse the produced CDI (canonical cdirip walk) and\n"
+      "             byte-compare every track payload against the BIN(s)\n"
       "  --quiet    suppress progress output\n"
       "  --version  print version and exit\n"
       "\n"
