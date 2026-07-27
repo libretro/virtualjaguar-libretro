@@ -842,6 +842,13 @@ int GPUIsRunning(void)
    return GPU_RUNNING ? 1 : 0;
 }
 
+/* See gpu.h: matches the assert-drop condition in GPUSetIRQLine (a
+ * stopped or single-step-parked core samples no interrupt lines). */
+int GPUCanCaptureIRQ(void)
+{
+   return (GPU_RUNNING && !(gpu_control & 0x08)) ? 1 : 0;
+}
+
 /* Is the Object Processor interrupt (IRQ3) enabled in G_FLAGS?  Used by
  * OPProcessList to decide whether a GPU object's inline release-wait can
  * ever be serviced — if the game never enabled IRQ3, waiting is futile. */

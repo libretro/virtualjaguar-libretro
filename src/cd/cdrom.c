@@ -20,6 +20,7 @@
 #include <string.h>
 #include "cdintf.h"
 #include "jagcd_boot.h"
+#include "jagcd_hle.h"
 #include "log.h"
 #include "gpu.h"
 #include "dsp.h"
@@ -324,6 +325,22 @@ static uint32_t dsaQueueCount = 0;
 #define DSA_RESPONSE_DELAY_TICKS 4
 static int32_t dsaResponseDelay = 0;
 
+/* While an HLE CD_read stream is delivering into the destination buffer,
+ * BUTCH must not flag FIFO data ready: the HLE stream *is* the transfer,
+ * and the game's GPU CD ISR would otherwise drain unframed FIFO words
+ * into the same buffer at its live write pointer, corrupting freshly
+ * streamed bytes.  Iron Soldier 2's loader issues its own DSA seek
+ * ($10/$11/$12) to the data track in parallel with the BIOS CD_read
+ * call; the seek-done path re-armed the FIFO mid-stream and the ISR
+ * stomped 13 bytes at the match checksum base -> checksum mismatch ->
+ * infinite retry.  Once the stream completes the ISR's write pointer is
+ * parked past the end address, so post-stream FIFO drains are harmless
+ * (and some drivers rely on them to see the drive "playing"). */
+static bool FIFOFeedAllowed(void)
+{
+   return !JaguarCDHLEStreamActive();
+}
+
 static void DSAQueuePush(uint16_t response)
 {
    if (dsaQueueCount < DSA_QUEUE_SIZE)
@@ -586,6 +603,27 @@ void CDROMHLESetAudioPlaying(int playing)
    CD_LOG("HLE audio playing=%d (block=%u)\n", playing, block);
 }
 
+/* An HLE data CD_read models the real BIOS CD_read's DSA seek to the
+ * data track: any in-progress audio play ends there, and the BUTCH FIFO
+ * stops feeding the GPU CD ISR (the HLE stream delivers the data
+ * itself, so the ISR has nothing to drain).  Leaving the CDDA feed
+ * running double-drives the transfer: the game's GPU CD ISR keeps
+ * firing on FIFO-ready edges and drains stale audio words to its live
+ * write pointer inside the destination buffer, stomping freshly
+ * streamed data (Iron Soldier 2 match load: the ISR corrupted 13 bytes
+ * at the checksum base -> checksum mismatch -> infinite retry loop).
+ * Audio resumes when the game calls CD_I2S_enable (hle_post_read_lba)
+ * or issues a bit-31 just-seek CD_read, exactly as on hardware. */
+void CDROMHLEDataReadBegin(void)
+{
+   if (!haveCDGoodness)
+      return;
+   cdPlaying     = false;
+   fifoDataReady = false;
+   fifoReadCount = 0;
+   CD_LOG("HLE data read: audio play + FIFO feed stopped\n");
+}
+
 /* Park the drive head at `lba`, paused, with the data-path framing the
  * seek handler establishes (cdBufPtr=2: BUTCH's one-word capture skew —
  * see the $12xx Goto Frame handler).  Used by the BIOS boot-stub
@@ -797,7 +835,7 @@ void BUTCHExec(uint32_t cycles)
          cdPlaying = true;
          {
             bool i2sDataEnabled = (cdRam[I2CNTRL + 3] & 0x04) != 0;
-            if (i2sDataEnabled)
+            if (i2sDataEnabled && FIFOFeedAllowed())
             {
                fifoDataReady = true;
                fifoReadCount = 0;
@@ -825,14 +863,14 @@ void BUTCHExec(uint32_t cycles)
    {
       bool i2sDataEnabled = (cdRam[I2CNTRL + 3] & 0x04) != 0;
       fifoFillDelay--;
-      if (fifoFillDelay == 0 && cdPlaying && i2sDataEnabled)
+      if (fifoFillDelay == 0 && cdPlaying && i2sDataEnabled && FIFOFeedAllowed())
       {
          fifoDataReady = true;
          fifoReadCount = 0;
          CDTracePush(CD_TRACE_FIFO_FILL, 0, block);
          CD_LOG("BUTCHExec: FIFO half-full — ready for GPU ISR\n");
       }
-      else if (fifoFillDelay == 0 && cdPlaying && !i2sDataEnabled)
+      else if (fifoFillDelay == 0 && cdPlaying && (!i2sDataEnabled || !FIFOFeedAllowed()))
       {
          fifoFillDelay = 1;  // Retry next tick
       }
@@ -956,14 +994,17 @@ void BUTCHExec(uint32_t cycles)
                m68k_set_irq(2);
          }
       }
-      /* The edge is only "consumed" if a RUNNING GPU could capture it —
-       * a halted GPU's interrupt logic is not clocked (GPUSetIRQLine
-       * drops asserts while stopped).  Keeping the tracker false across
-       * a stopped window means the still-high line re-asserts on the
-       * first tick after the 68K restarts the GPU; marking it true there
-       * would swallow the edge forever and stall the transfer (the
-       * press-B@550/650 variant of the Hover Strike lockup). */
-      cdPrevShouldIRQ = shouldIRQ && GPUIsRunning();
+      /* The edge is only "consumed" if a GPU that can capture IRQs saw
+       * it — a halted OR single-step-parked GPU's interrupt logic is not
+       * clocked (GPUSetIRQLine drops asserts in both states).  Keeping
+       * the tracker false across such a window means the still-high line
+       * re-asserts on the first tick after the 68K lets the GPU run;
+       * marking it true there would swallow the edge forever and stall
+       * the transfer (the press-B@550/650 variant of the Hover Strike
+       * lockup; Iron Soldier 2's post-load engine bring-up drives the
+       * GPU through a SINGLE_STEP handshake and lost the FIFO-ready
+       * edge the same way — the streaming ISR never got its first IRQ). */
+      cdPrevShouldIRQ = shouldIRQ && GPUCanCaptureIRQ();
    }
 
 }
@@ -1060,7 +1101,7 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
             // at seek completion in BUTCHExec. Re-assert in case STOP
             // cleared them between seek completion and this read.
             cdPlaying = true;
-            if (!fifoDataReady)
+            if (!fifoDataReady && FIFOFeedAllowed())
             {
                fifoDataReady = true;
                fifoReadCount = 0;
@@ -1078,7 +1119,8 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       {
          data = 0x0100 | (cdCmd & 0xFF);			// Echo: $01nn -> $01nn (Found)
          cdPlaying = true;
-         fifoDataReady = true;
+         if (FIFOFeedAllowed())
+            fifoDataReady = true;
          CD_LOG("Play Title response consumed — playback and FIFO now active\n");
       }
       else if ((cdCmd & 0xFF00) == 0x0200)			// Stop CD
@@ -1144,8 +1186,11 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
       {
          data = 0x0100;	// Found (seek complete)
          cdPlaying = true;
-         fifoDataReady = true;
-         fifoReadCount = 0;
+         if (FIFOFeedAllowed())
+         {
+            fifoDataReady = true;
+            fifoReadCount = 0;
+         }
          CD_LOG("Seek response $0100 consumed (direct) — cdPlaying=true\n");
       }
       else if ((cdCmd & 0xFF00) == 0x1400)		// Read "full" session TOC

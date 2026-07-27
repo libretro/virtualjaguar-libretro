@@ -390,6 +390,15 @@ static void HLEHandleCDRead(void)
       return;
    }
 
+   /* Accepted data read: the real CD_read's DSA seek ends any running
+    * audio play before data flows.  Stop the CDDA/FIFO feed for the
+    * duration of this transfer — otherwise the game's GPU CD ISR keeps
+    * draining stale FIFO audio words to its live write pointer inside
+    * the destination buffer, corrupting the freshly streamed data
+    * (Iron Soldier 2 match-load checksum stomp).  Audio restarts via
+    * CD_I2S_enable / bit-31 just-seek, as on hardware. */
+   CDROMHLEDataReadBegin();
+
    /* Clear the DSP completion flag so polling code sees a 0 -> $FFFFFFFF
     * transition once the transfer finishes.  Real hardware: the GPU CD ISR
     * writes $FFFFFFFF here when its write pointer reaches the end address. */
@@ -912,10 +921,22 @@ void JaguarCDHLEStreamTick(void)
    }
 
    /* Advance the write pointer the game's poll loop watches — at the
-    * base latched when this read was armed (see statusBase). */
+    * base latched when this read was armed (see statusBase).
+    *
+    * Report it with the real GPU ISR's cadence: the pre-decremented
+    * pointer (dest-4) advancing in whole 32-byte FIFO batches, and
+    * never past the bytes actually delivered.  Games read this pointer
+    * straight out of the GPU data area (IS2's driver CD_poll at $304E
+    * does `movea.l ($3074).l,a0; movea.l (a0),a0`) and checksum the
+    * buffer INCREMENTALLY against it as it advances.  A byte-granular
+    * `dest+written` value exposed partial longs whose tail bytes had
+    * not been written yet — the running sum consumed up to 3 stale
+    * bytes, never re-read them, and the final compare missed (Iron
+    * Soldier 2 match-load retry loop). */
    if (hleStream.statusBase != 0)
       GPUWriteLong(hleStream.statusBase + 0,
-                   hleStream.dest + hleStream.written, 0);
+                   hleStream.dest - 4 + ((hleStream.written + 4) / 32) * 32,
+                   0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -965,10 +986,13 @@ static void HLEHandleCDPoll(void)
     * take a sequencing branch.  A0=0 fails both completion idioms. */
    if (hleStream.active)
    {
-      /* Transfer still streaming — report the partial position.
+      /* Transfer still streaming — report the partial position with
+       * the same 32-byte-batch quantization as the GPU-data-area
+       * pointer (see JaguarCDHLEStreamTick): never past the bytes
+       * actually delivered, so incremental checksummers stay exact.
        * A1 (the [+8] error status) stays 0: boot stubs abort on
        * nonzero A1, it is NOT a progress counter. */
-      a0_val = hleStream.dest - 4 + hleStream.written;
+      a0_val = hleStream.dest - 4 + ((hleStream.written + 4) / 32) * 32;
       a1_val = 0;
    }
    else if (hle_read_pending)
@@ -1267,6 +1291,19 @@ bool JaguarCDHLEHook(uint32_t pc)
 
    /* Fast rejection: jump table is $3000-$306B */
    if (pc < BIOS_JUMPTABLE_BASE || pc > 0x00306B)
+      return false;
+
+   /* Step aside for games that install their own BIOS-workalike CD
+    * driver over the jump table (Iron Soldier 2's loader copies a full
+    * driver to $3000+, replacing our $4E75 stubs with real code).  Such
+    * a driver performs the complete transfer protocol natively — DSA
+    * seek, GPU CD ISR, FIFO drain — against the BUTCH emulation, which
+    * is exactly the path BIOS mode runs (and it works).  Intercepting
+    * on top of it double-drives the transfer: the HLE stream and the
+    * driver's ISR write the same buffer, and the HLE CD_poll fights the
+    * driver's own register returns.  Hook only while OUR stub is still
+    * what executes at the entry PC. */
+   if (GET16(jaguarMainRAM, pc) != 0x4E75)
       return false;
 
    switch (pc)

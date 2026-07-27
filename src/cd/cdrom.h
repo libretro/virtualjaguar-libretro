@@ -69,6 +69,11 @@ void CDTraceHLERead(uint32_t lba, uint16_t byteCountTrunc);
  * pause/resume the stream. */
 void CDROMHLEStartAudio(uint32_t lba);
 void CDROMHLESetAudioPlaying(int playing);
+/* Stop the CDDA play + BUTCH FIFO feed when an HLE data CD_read is
+ * armed (models the BIOS CD_read's seek away from the audio position;
+ * prevents the game's GPU CD ISR from draining stale FIFO words into
+ * the destination buffer while the HLE stream delivers the data). */
+void CDROMHLEDataReadBegin(void);
 
 /* Read-only accessor for crash_detect.c's cd_seek_wedge watchdog. Any
  * pointer may be NULL. seekStarts/seekDones count genuine (non-redundant)
