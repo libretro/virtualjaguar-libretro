@@ -77,8 +77,10 @@ const char *__lsan_default_suppressions(void) {
 #define DRIFT_FRAMES 60
 
 /* Fraction of pixels that must be non-black after loading the v2 state and
- * running DRIFT_FRAMES more frames.  A load that returns true but leaves a
- * dead core must not pass.  yarc.j64 measures ~78% here. */
+ * running DRIFT_FRAMES more frames.  yarc.j64 measures ~78% here.  Note this
+ * is the WEAKER of the two post-load liveness checks: yarc's screen is
+ * near-static, so the count is bit-identical whether the load succeeded or
+ * was refused.  "core_advances_after_v2_load" is the one with teeth. */
 #define MIN_NONBLACK_FRACTION 0.01
 
 /* Layout of the DAC state block, verified against DACStateSave() in
@@ -101,8 +103,8 @@ const char *__lsan_default_suppressions(void) {
 
 typedef size_t (*dac_state_save_fn)(uint8_t *buf);
 typedef size_t (*serialize_size_fn)(void);
-typedef int    (*serialize_fn)(void *data, size_t size);
-typedef int    (*unserialize_fn)(const void *data, size_t size);
+typedef bool   (*serialize_fn)(void *data, size_t size);
+typedef bool   (*unserialize_fn)(const void *data, size_t size);
 
 static int pass_count = 0;
 static int fail_count = 0;
@@ -170,13 +172,13 @@ static unsigned find_pattern(const uint8_t *hay, size_t hay_len,
 }
 
 /* Patch the header of a copy of `src` and try to load it. */
-static int try_load_patched(unserialize_fn unser, const uint8_t *src,
-                            size_t len, size_t off, uint32_t value,
-                            uint8_t *scratch)
+static bool try_load_patched(unserialize_fn unser, const uint8_t *src,
+                             size_t len, size_t off, uint32_t value,
+                             uint8_t *scratch)
 {
     memcpy(scratch, src, len);
     put_u32(scratch, off, value);
-    return unser(scratch, len) ? 1 : 0;
+    return unser(scratch, len);
 }
 
 int main(int argc, char **argv)
@@ -189,7 +191,7 @@ int main(int argc, char **argv)
     uint32_t **fb_ptr;
     int *width_ptr, *height_ptr;
     uint8_t *state_v3 = NULL, *state_v2 = NULL, *scratch = NULL;
-    uint8_t dac_v3[256], dac_now[256], dac_expect[256];
+    uint8_t dac_v3[256], dac_now[256], dac_expect[256], dac_post[256];
     size_t state_size, dac_size, dac_size_now, dac_off = 0;
     size_t tail_nonzero = 0, i;
     unsigned matches;
@@ -320,7 +322,7 @@ int main(int argc, char **argv)
     }
 
     /* ---- 4. Same-version round trip (positive control) -------------- */
-    check(unser(state_v3, state_size) != 0, "v3_round_trip",
+    check(unser(state_v3, state_size), "v3_round_trip",
           "retro_unserialize() of a freshly written v%d state", STATE_VERSION);
     dac_size_now = dac_save(dac_now);
     check(dac_size_now == dac_size
@@ -363,7 +365,7 @@ int main(int argc, char **argv)
           "vacuous", DRIFT_FRAMES);
 
     /* ---- 6. The v2 state must load (libretro.c half of the fix) ----- */
-    check(unser(state_v2, state_size) != 0, "v2_state_loads",
+    check(unser(state_v2, state_size), "v2_state_loads",
           "retro_unserialize() of a v%d-layout state (pre-fix: refused "
           "because the gate demanded version == %d)",
           STATE_MIN_VERSION, STATE_VERSION);
@@ -381,8 +383,21 @@ int main(int argc, char **argv)
           "zeroed (fields after the skipped one must not shift)");
 
     /* ---- 8. ...and the core must still be alive --------------------- */
+    /* Emulation has to keep ADVANCING, which is the part a framebuffer
+     * check cannot establish: yarc's screen is near-static, so its
+     * non-black pixel count comes out bit-identical whether the load took
+     * or was refused (measured: 61071/78566 either way).  Comparing the
+     * DAC block against its immediately-post-load value is what actually
+     * distinguishes a live core from a frozen one. */
+    memcpy(dac_post, dac_now, dac_size);   /* immediately-post-load snapshot */
     for (frame = 0; frame < (unsigned)DRIFT_FRAMES; frame++)
         harness_step(&cfg);
+    dac_size_now = dac_save(dac_now);
+    check(dac_size_now == dac_size
+          && memcmp(dac_now, dac_post, dac_size) != 0,
+          "core_advances_after_v2_load",
+          "DAC state advanced over %d frames following the v2 load",
+          DRIFT_FRAMES);
     {
         uint32_t *fb = *fb_ptr;
         int w = *width_ptr, h = *height_ptr;
@@ -406,19 +421,19 @@ int main(int argc, char **argv)
 
     /* ---- 9. Rejections -------------------------------------------- */
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,
-                           1u, scratch) == 0,
+                           1u, scratch) == false,
           "v1_state_rejected",
           "version 1 is below STATE_MIN_VERSION (%d) — the v1->v2 layout "
           "change shipped in v2.3.0", STATE_MIN_VERSION);
 
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,
-                           (uint32_t)STATE_VERSION + 1u, scratch) == 0,
+                           (uint32_t)STATE_VERSION + 1u, scratch) == false,
           "future_state_rejected",
           "version %d is newer than STATE_VERSION (%d)",
           STATE_VERSION + 1, STATE_VERSION);
 
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_MAGIC,
-                           0xDEADBEEFu, scratch) == 0,
+                           0xDEADBEEFu, scratch) == false,
           "bad_magic_rejected", "magic 0xDEADBEEF is not 0x%08X",
           (uint32_t)STATE_MAGIC);
 
