@@ -672,8 +672,14 @@ void GPUHandleIRQs(void)
     * address through the STOPPED context's r31 — if the 68K halted the
     * GPU mid-handler (as Hover Strike's CD driver does around seeks),
     * that push lands inside GPU code/variables and corrupts them.
-    * Pending latches are serviced by GPUExec() when the GPU next runs. */
-   if (!GPU_RUNNING)
+    * Pending latches are serviced by GPUExec() when the GPU next runs.
+    *
+    * A single-step-paused GPU (G_CTRL SINGLE_STEP, bit 3) is the same case:
+    * GPUGO is still set but the RISC core is not advancing (it is parked in a
+    * coprocessor barrier — see GPUExec), so it likewise cannot run a dispatch
+    * sequence.  Dispatching would retarget gpu_pc to a vector mid-barrier and
+    * corrupt the handshake; defer until SINGLE_STEP clears and the core runs. */
+   if (!GPU_RUNNING || (gpu_control & 0x08))
       return;
 
    // Bail out if we're already in an interrupt!
@@ -746,8 +752,11 @@ void GPUSetIRQLine(int irqline, int state)
        * here instead meant every 68K stop/reprogram/restart of the GPU
        * could dispatch a stale interrupt into the new program before its
        * r31 stack init, pushing a return address into GPU code — Hover
-       * Strike's B-skip lockup. */
-      if (!GPU_RUNNING)
+       * Strike's B-skip lockup.  A single-step-paused GPU (SINGLE_STEP, bit 3)
+       * is likewise not sampling — GPUGO is set but the core is parked in a
+       * coprocessor barrier — so drop the assert the same way; the source
+       * re-edges once the 68K clears SINGLE_STEP and the core resumes. */
+      if (!GPU_RUNNING || (gpu_control & 0x08))
          return;
       /* Diagnostic counters — see gpu.h */
       if (irqline == 0) gpu_irq0_count++;
@@ -854,6 +863,14 @@ void GPUExec(int32_t cycles)
    if (!GPU_RUNNING)
       return;
 
+   /* Paused in single-step mode: a running GPU that has set G_CTRL
+    * SINGLE_STEP (bit 3) does not free-run and does not service interrupts
+    * until software clears SINGLE_STEP (or steps it via SINGLE_GO).  See the
+    * barrier note in the exec loop below — this is the resting state of Iron
+    * Soldier 2's match-load coprocessor handshake between 68K acknowledgements. */
+   if (gpu_control & 0x08)
+      return;
+
 #ifdef GPU_SINGLE_STEPPING
    if (gpu_control & 0x18)
    {
@@ -896,6 +913,21 @@ void GPUExec(int32_t cycles)
       //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
 
       cycles -= gpu_opcode_cycles[index];
+
+      /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
+       * that has just set SINGLE_STEP has entered single-step mode and stops
+       * free-running — it now advances only when software clears SINGLE_STEP
+       * or writes SINGLE_GO.  Iron Soldier 2's match-load geometry coprocessor
+       * job (GPU $F03024) uses this as a producer/consumer barrier: after
+       * posting each object's result to a main-RAM mailbox it writes G_CTRL=9
+       * (GPUGO|SINGLE_STEP) to pause, and the 68K consumer resumes it by
+       * writing G_CTRL=$11 (GPUGO|SINGLE_GO, SINGLE_STEP clear) once it has
+       * drained the result.  Without honoring SINGLE_STEP the GPU free-runs the
+       * whole job to its self-halt before the 68K reads a single result, then
+       * the 68K re-kicks the parked GPU and both wedge (JTRM: bit 3 enables
+       * single-step mode). */
+      if (gpu_control & 0x08)
+         break;
    }
 
    gpu_in_exec--;
