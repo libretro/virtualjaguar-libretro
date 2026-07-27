@@ -831,12 +831,11 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@# Frontend pacing / fast-forward contract: the core must not throttle
 	@# itself, and samples-per-frame must match the advertised fps and
 	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
-	@# bottleneck and fast-forward has nothing to give.
-	@if [ -f "test/roms/yarc.j64" ]; then \
-		./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet; \
-	else \
-		echo "  SKIP: yarc.j64 ROM not available (frontend pacing)"; \
-	fi
+	@# bottleneck and fast-forward has nothing to give.  Unguarded for the
+	@# same reason as test_state_compat above: yarc.j64 is committed in-tree,
+	@# so a missing ROM means a broken checkout and should fail the suite
+	@# rather than silently read as a pass.
+	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \

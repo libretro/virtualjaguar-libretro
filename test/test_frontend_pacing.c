@@ -57,38 +57,44 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <sys/time.h>
 
 #include "harness/harness.h"
 #include <libretro.h>
 
-typedef struct {
-    double t_prev;
-    double min_frame;
-    double max_frame;
-    double sum_frame;
-    unsigned samples;
-} frame_timer;
+/* Timing comes from harness_time_now() / harness_time_elapsed_sec(), which
+ * are monotonic.  A wall clock (gettimeofday) must not be used here: the
+ * throttle assertion is phrased against the *minimum* frame interval, so a
+ * single backwards clock step — NTP correction, manual clock change — would
+ * produce a negative delta, drag min_frame below the limit and report a
+ * false PASS on exactly the bug this test exists to catch. */
 
-static double now_seconds(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
-}
+typedef struct {
+    uint64_t t_prev;
+    double   min_frame;      /* smallest usable (positive) interval, seconds */
+    double   max_frame;
+    double   sum_frame;
+    unsigned timed_frames;   /* retro_run() calls timed */
+    unsigned usable_frames;  /* of those, ones with a positive interval */
+} frame_timer;
 
 /* Called by the harness after every retro_run(). */
 static bool on_frame(void *userdata, unsigned frame)
 {
     frame_timer *ft = (frame_timer *)userdata;
-    double now = now_seconds();
-    double dt = now - ft->t_prev;
+    uint64_t now = harness_time_now();
+    double dt = harness_time_elapsed_sec(ft->t_prev, now);
     (void)frame;
     ft->t_prev = now;
-    if (dt < ft->min_frame) ft->min_frame = dt;
+    ft->timed_frames++;
+    ft->sum_frame += (dt > 0.0) ? dt : 0.0;
     if (dt > ft->max_frame) ft->max_frame = dt;
-    ft->sum_frame += dt;
-    ft->samples++;
+    /* Belt and braces on top of the monotonic source: reject a non-positive
+     * interval rather than clamping it.  min_frame = 0 would satisfy the
+     * throttle assertion unconditionally. */
+    if (dt > 0.0) {
+        if (dt < ft->min_frame) ft->min_frame = dt;
+        ft->usable_frames++;
+    }
     return true;
 }
 
@@ -103,7 +109,8 @@ int main(int argc, char **argv)
     double max_fastest_fraction = 0.5;
     unsigned max_geometry_calls = 8;
     int force_fail_throttle = 0, force_fail_audio = 0, force_fail_geometry = 0;
-    double t0, elapsed, realtime, frame_period, mean_frame;
+    uint64_t t0;
+    double elapsed, realtime, frame_period, mean_frame;
     double expected_frames_f, tolerance, sample_err;
     long expected_samples, actual_samples;
     char detail_throttle[320], detail_audio[256], detail_batch[160], detail_geom[224];
@@ -160,11 +167,12 @@ int main(int argc, char **argv)
                av.geometry.base_width, av.geometry.base_height,
                av.geometry.max_width, av.geometry.max_height);
 
-    /* Reset counters so boot-time SET_GEOMETRY from retro_load_game is not
-     * counted; we only care about steady-state churn. */
-    cfg.video.set_geometry_calls = 0;
-    cfg.video.set_av_info_calls  = 0;
-    cfg.video.dimension_changes  = 0;
+    /* Reset counters so boot-time SET_GEOMETRY and the boot resolution change
+     * from retro_load_game are not counted; we only care about steady-state
+     * churn.  harness_reset_video clears total_frames_rendered and
+     * last_width/last_height too, so both dimension_changes and the reported
+     * "last WxH" below describe the timed window rather than boot state. */
+    harness_reset_video(&cfg);
     harness_reset_audio(&cfg);
 
     memset(&ft, 0, sizeof(ft));
@@ -172,15 +180,16 @@ int main(int argc, char **argv)
     cfg.frame_callback = on_frame;
     cfg.frame_callback_data = &ft;
 
-    t0 = now_seconds();
+    t0 = harness_time_now();
     ft.t_prev = t0;
     harness_run(&cfg);
-    elapsed = now_seconds() - t0;
+    elapsed = harness_time_elapsed_sec(t0, harness_time_now());
 
     frame_period = 1.0 / av.timing.fps;
     realtime     = (double)cfg.frames * frame_period;
-    mean_frame   = (ft.samples > 0) ? ft.sum_frame / (double)ft.samples : 0.0;
-    if (ft.samples == 0)
+    mean_frame   = (ft.timed_frames > 0)
+                 ? ft.sum_frame / (double)ft.timed_frames : 0.0;
+    if (ft.usable_frames == 0)
         ft.min_frame = 0.0;
     if (force_fail_throttle)
         max_fastest_fraction = 0.0;
@@ -188,15 +197,16 @@ int main(int argc, char **argv)
         max_geometry_calls = 0;
 
     /* --- 1. fastest frame must clear the frame period --------------- */
-    ok_throttle = (ft.samples > 0)
+    ok_throttle = (ft.usable_frames > 0)
                && (ft.min_frame < max_fastest_fraction * frame_period);
     snprintf(detail_throttle, sizeof(detail_throttle),
              "fastest frame %.3f ms must be < %.3f ms (%.2f x frame period "
-             "%.3f ms); mean %.3f ms, slowest %.3f ms; %u frames in %.3fs "
-             "(realtime %.3fs, %.2fx, %.1f eff. fps)",
+             "%.3f ms); mean %.3f ms, slowest %.3f ms; %u/%u intervals usable; "
+             "%u frames in %.3fs (realtime %.3fs, %.2fx, %.1f eff. fps)",
              ft.min_frame * 1000.0, max_fastest_fraction * frame_period * 1000.0,
              max_fastest_fraction, frame_period * 1000.0,
              mean_frame * 1000.0, ft.max_frame * 1000.0,
+             ft.usable_frames, ft.timed_frames,
              cfg.frames, elapsed, realtime,
              (elapsed > 0.0) ? realtime / elapsed : 0.0,
              (elapsed > 0.0) ? (double)cfg.frames / elapsed : 0.0);

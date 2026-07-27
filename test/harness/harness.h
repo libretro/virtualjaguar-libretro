@@ -217,4 +217,20 @@ void harness_set_option(harness_config *cfg, const char *key, const char *value)
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);
 
+/* Reset video stats — counterpart to harness_reset_audio.  Use when a test
+ * measures a window of steady-state execution and must discard boot-time
+ * geometry / resolution churn.  Note this also zeroes total_frames_rendered
+ * and last_width/last_height, so harness_report's summary line then
+ * describes the window rather than the whole run. */
+void harness_reset_video(harness_config *cfg);
+
+/* Monotonic wall clock, for tests that measure durations.
+ *
+ * Deliberately not gettimeofday(): the wall clock can step backwards (NTP
+ * correction, manual clock change), and a negative interval can turn a
+ * timing assertion green.  Ticks are opaque; convert a pair with
+ * harness_time_elapsed_sec(). */
+uint64_t harness_time_now(void);
+double   harness_time_elapsed_sec(uint64_t start, uint64_t end);
+
 #endif /* HARNESS_H */

@@ -35,6 +35,15 @@ frame limiter, does not register
 
 ## Why fast-forward can still look broken
 
+> **As of RetroArch 1.22.2.** Everything in this section — the
+> `runloop_set_frame_limit()` logic below, the setting names
+> (`fastforward_ratio`, `vrr_runloop_enable`, `audio_sync`) and the menu paths
+> — was read off RetroArch 1.22.2, which is also the version the measurements
+> in this document were taken on. These are frontend internals, not a stable
+> API: re-check them against the user's actual RetroArch version before
+> concluding anything from them. The core-side contract above does not depend
+> on any of it.
+
 RetroArch injects its own sleep in `runloop_iterate()` only when
 `frame_limit_minimum_time != 0`. That value comes from
 `runloop_set_frame_limit(av_info, ratio)`:
@@ -83,7 +92,8 @@ the frontend is unblocked and the remaining limit is the core's own cost.
 
 ## Regression test
 
-`test/test_frontend_pacing.c` (in `make test`, needs `test/roms/yarc.j64`):
+`test/test_frontend_pacing.c` (unconditionally in `make test`, against
+`test/roms/yarc.j64`, which is committed in-tree):
 
 1. `fastest_frame_beats_realtime` — the quickest of 300 `retro_run()` calls
    must finish in under half a frame period. A core that sleeps pays that
@@ -91,7 +101,10 @@ the frontend is unblocked and the remaining limit is the core's own cost.
    Deliberately phrased against the *minimum* rather than the mean:
    background CPU load can only make frames slower, so a busy CI host
    cannot turn this red, while an average-based check can (measured 0.59x
-   realtime on a machine at load average 250).
+   realtime on a machine at load average 250). Because it is a minimum, the
+   measurement must come from a monotonic clock
+   (`harness_time_now()`); a backwards wall-clock step would fabricate a
+   short interval and pass the check.
 2. `audio_rate_contract` — submitted sample-frames must equal
    `frames * sample_rate / fps` within 1%.
 3. `one_batch_per_frame` — exactly one `retro_audio_sample_batch` call per
