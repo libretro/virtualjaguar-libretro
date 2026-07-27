@@ -338,7 +338,6 @@ jobs:
           src\core\universalhdr.c src\jerry\wavetable.c ^
           src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
-          src\bios\jagstub1bios.c src\bios\jagstub2bios.c ^
           src\m68000\m68kinterface.c ^
           src\tom\blitter_simd_scalar.c ^
           src\tom\blitter_simd_sse2.c
