@@ -1066,7 +1066,7 @@ test/heap_search: test/heap_search.c
 tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
-.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
+.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi
 endif
 
 lint:
@@ -1181,6 +1181,18 @@ cd-visual:
 	else \
 		echo "built test/tools/cd_visual_verify -- pass CD_VISUAL_DISC=<image> to run"; \
 	fi
+
+# `make cue2cdi` -- build the standalone CUE/BIN -> DiscJuggler CDI
+# converter (host-side tool, libc only; no core, no libretro deps).
+# Not part of the default build or `make test`; build it on demand.
+#
+# Usage:
+#   make cue2cdi
+#   ./test/tools/cue2cdi game.cue --verify
+#   ./test/tools/cue2cdi --batch --verify path/to/dumps/
+.PHONY: cue2cdi
+cue2cdi:
+	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
 
 print-%:
 	@echo '$*=$($*)'

@@ -26,9 +26,16 @@
  *
  * Usage:
  *   cue2cdi input.cue [output.cdi] [--verify] [--quiet] [--version]
+ *   cue2cdi [--batch] DIR [--verify] [--force] [--quiet]
  *
  * --verify re-parses the produced CDI with the canonical cdirip walk and
  * byte-compares every track's payload against the source BIN(s).
+ *
+ * Batch mode (a directory argument implies --batch): recursively walks DIR
+ * (hidden entries and symlinks skipped), converts every *.cue in place to
+ * <same-dir>/<same-basename>.cdi, skipping targets already newer than their
+ * sources (--force reconverts). Per-file failures are reported and the queue
+ * continues; exit code is 1 if any file failed.
  *
  * Build:
  *   cc -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
@@ -44,7 +51,12 @@
 #include <ctype.h>
 #include <stdint.h>
 
-#define CUE2CDI_VERSION "1.0"
+/* Batch mode is host-side POSIX (opendir/readdir/lstat) */
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <dirent.h>
+
+#define CUE2CDI_VERSION "1.1"
 
 #define MAX_TRACKS   99
 #define MAX_SESSIONS 16
@@ -928,6 +940,210 @@ static int verify_cdi(const Disc *d, const char *cdiPath)
 }
 
 /* -------------------------------------------------------------------------
+ * Conversion driver (shared by single-file and batch modes)
+ * ------------------------------------------------------------------------- */
+
+/* Default output path: input with the extension replaced by .cdi
+ * (same logic the single-file mode has always used). */
+static void derive_out_path(const char *inPath, char *outPath, size_t size)
+{
+   const char *ext = strrchr(inPath, '.');
+   size_t stem = ext ? (size_t)(ext - inPath) : strlen(inPath);
+   if (stem > size - 5)
+      stem = size - 5;
+   memcpy(outPath, inPath, stem);
+   strcpy(outPath + stem, ".cdi");
+}
+
+/* Layout + write + optional verify on an already-parsed Disc.
+ * Returns 0 = OK, 1 = conversion failed, 2 = verify failed. */
+static int convert_parsed(Disc *d, const char *inPath, const char *outPath,
+                          int doVerify)
+{
+   if (compute_layout(d) != 0)
+      return 1;
+
+   INFO("%s: %d track(s), %d session(s), %s\n", basename_of(inPath),
+        d->numTracks, d->numSessions,
+        d->multiFile ? "multi-file BIN" : "single-file BIN");
+   if (d->numSessions > 2)
+      WARN("more than 2 sessions: this core's parser clamps numSessions to 2\n");
+   if (d->numSessions == 1)
+      INFO("note: single session — a bootable Jaguar CD needs 2 sessions\n");
+
+   INFO("writing %s\n", outPath);
+   if (write_cdi(d, outPath) != 0)
+      return 1;
+
+   if (doVerify) {
+      if (verify_cdi(d, outPath) != 0)
+         return 2;
+      INFO("verify: all %d track(s) OK\n", d->numTracks);
+   }
+
+   INFO("done: %s\n", outPath);
+   return 0;
+}
+
+/* -------------------------------------------------------------------------
+ * Batch mode: recursively convert every *.cue under a directory
+ * ------------------------------------------------------------------------- */
+
+typedef struct {
+   char **paths;
+   int    count;
+   int    cap;
+} PathList;
+
+static int pathlist_add(PathList *pl, const char *path)
+{
+   char *copy;
+   if (pl->count == pl->cap) {
+      int ncap = pl->cap ? pl->cap * 2 : 64;
+      char **np = (char **)realloc(pl->paths, (size_t)ncap * sizeof(char *));
+      if (!np)
+         return -1;
+      pl->paths = np;
+      pl->cap = ncap;
+   }
+   copy = (char *)malloc(strlen(path) + 1);
+   if (!copy)
+      return -1;
+   strcpy(copy, path);
+   pl->paths[pl->count++] = copy;
+   return 0;
+}
+
+static int cmp_paths(const void *a, const void *b)
+{
+   return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+/* Recursive walk: collect every regular *.cue (case-insensitive) under
+ * dirPath. Hidden entries (leading '.', which also covers "."/"..") and
+ * symlinks are skipped; subdirectories are followed. Unreadable
+ * directories warn and are skipped. Returns -1 only on OOM. */
+static int collect_cues(const char *dirPath, PathList *out)
+{
+   DIR *dp = opendir(dirPath);
+   struct dirent *de;
+   struct stat st;
+   char full[PATH_MAX_LEN];
+   int ret = 0;
+
+   if (!dp) {
+      WARN("cannot open directory: %s\n", dirPath);
+      return 0;
+   }
+   while ((de = readdir(dp)) != NULL) {
+      if (de->d_name[0] == '.')
+         continue;
+      snprintf(full, sizeof(full), "%s/%s", dirPath, de->d_name);
+      if (lstat(full, &st) != 0)
+         continue;
+      if (S_ISLNK(st.st_mode))
+         continue;
+      if (S_ISDIR(st.st_mode)) {
+         if (collect_cues(full, out) != 0)
+            ret = -1;
+      } else if (S_ISREG(st.st_mode)) {
+         const char *ext = strrchr(de->d_name, '.');
+         if (ext && istrncmp(ext, ".cue", 5) == 0)
+            if (pathlist_add(out, full) != 0)
+               ret = -1;
+      }
+   }
+   closedir(dp);
+   return ret;
+}
+
+/* 1 = target CDI exists and is strictly newer than the CUE and every
+ * referenced BIN (safe to skip); 0 = needs (re)conversion. */
+static int cdi_up_to_date(const char *cdiPath, const char *cuePath,
+                          const Disc *d)
+{
+   struct stat stCdi, stSrc;
+   int i;
+   if (stat(cdiPath, &stCdi) != 0)
+      return 0;
+   if (stat(cuePath, &stSrc) != 0 || stSrc.st_mtime >= stCdi.st_mtime)
+      return 0;
+   for (i = 0; i < d->numTracks; i++) {
+      if (stat(d->tracks[i].binPath, &stSrc) != 0 ||
+          stSrc.st_mtime >= stCdi.st_mtime)
+         return 0;
+   }
+   return 1;
+}
+
+static int batch_convert(const char *rootDir, int doVerify, int doForce)
+{
+   PathList pl = { NULL, 0, 0 };
+   int i, nConverted = 0, nSkipped = 0, nFailed = 0;
+
+   if (collect_cues(rootDir, &pl) != 0) {
+      ERR("out of memory while scanning %s\n", rootDir);
+      return 1;
+   }
+   if (pl.count == 0) {
+      ERR("no .cue files found under %s\n", rootDir);
+      return 1;
+   }
+   qsort(pl.paths, (size_t)pl.count, sizeof(char *), cmp_paths);
+
+   /* The per-file progress lines are the batch output; silence the
+    * inner per-track chatter (the --verify table still prints). */
+   g_quiet = 1;
+
+   for (i = 0; i < pl.count; i++) {
+      const char *cue = pl.paths[i];
+      char outPath[PATH_MAX_LEN];
+      Disc d;
+      int parsed, rc;
+
+      derive_out_path(cue, outPath, sizeof(outPath));
+      parsed = (parse_cue(cue, &d) == 0);
+
+      if (parsed && !doForce && cdi_up_to_date(outPath, cue, &d)) {
+         printf("[%d/%d] Skipping: %s (CDI up to date; --force to reconvert)\n",
+                i + 1, pl.count, cue);
+         nSkipped++;
+         continue;
+      }
+
+      printf("[%d/%d] Converting: %s%s", i + 1, pl.count, cue,
+             doVerify ? "\n" : " ... ");
+      fflush(stdout);
+      if (!parsed) {
+         printf("%sFAILED\n", doVerify ? "  -> " : "");
+         nFailed++;
+         continue;
+      }
+      rc = convert_parsed(&d, cue, outPath, doVerify);
+      if (rc == 0) {
+         printf("%sOK (%d track%s, %d session%s)\n",
+                doVerify ? "  -> " : "",
+                d.numTracks, d.numTracks == 1 ? "" : "s",
+                d.numSessions, d.numSessions == 1 ? "" : "s");
+         nConverted++;
+      } else {
+         printf("%sFAILED%s\n", doVerify ? "  -> " : "",
+                rc == 2 ? " (verify)" : "");
+         nFailed++;
+      }
+   }
+
+   printf("converted %d, skipped %d, failed %d\n",
+          nConverted, nSkipped, nFailed);
+
+   for (i = 0; i < pl.count; i++)
+      free(pl.paths[i]);
+   free(pl.paths);
+
+   return nFailed ? 1 : 0;
+}
+
+/* -------------------------------------------------------------------------
  * main
  * ------------------------------------------------------------------------- */
 
@@ -935,13 +1151,22 @@ static void usage(FILE *to)
 {
    fprintf(to,
       "usage: cue2cdi input.cue [output.cdi] [--verify] [--quiet] [--version]\n"
+      "       cue2cdi [--batch] DIR [--verify] [--force] [--quiet]\n"
       "\n"
       "Converts a (possibly multi-session) CUE/BIN image to DiscJuggler V3\n"
       ".cdi, preserving session structure and track types. Default output is\n"
       "the input path with the extension replaced by .cdi.\n"
       "\n"
+      "With --batch (implied when the input is a directory), recursively\n"
+      "finds every *.cue under DIR and converts each in place to\n"
+      "<same-dir>/<same-basename>.cdi. Hidden directories and symlinks are\n"
+      "skipped. Targets newer than their CUE + BIN(s) are skipped; failures\n"
+      "are reported and the queue continues (exit 1 if any file failed).\n"
+      "\n"
       "  --verify   re-parse the produced CDI (canonical cdirip walk) and\n"
       "             byte-compare every track payload against the BIN(s)\n"
+      "  --batch    treat the input as a directory tree of CUE/BIN sets\n"
+      "  --force    batch mode: reconvert even if the CDI is up to date\n"
       "  --quiet    suppress progress output\n"
       "  --version  print version and exit\n"
       "\n"
@@ -955,12 +1180,20 @@ int main(int argc, char **argv)
    const char *outArg = NULL;
    char outPath[PATH_MAX_LEN];
    int doVerify = 0;
+   int doBatch = 0;
+   int doForce = 0;
+   int isDir;
+   struct stat st;
    int i;
    Disc d;
 
    for (i = 1; i < argc; i++) {
       if (strcmp(argv[i], "--verify") == 0)
          doVerify = 1;
+      else if (strcmp(argv[i], "--batch") == 0)
+         doBatch = 1;
+      else if (strcmp(argv[i], "--force") == 0)
+         doForce = 1;
       else if (strcmp(argv[i], "--quiet") == 0)
          g_quiet = 1;
       else if (strcmp(argv[i], "--version") == 0) {
@@ -992,6 +1225,20 @@ int main(int argc, char **argv)
       return 1;
    }
 
+   /* Batch mode: explicit --batch, or a directory as the input path */
+   isDir = (stat(inPath, &st) == 0 && S_ISDIR(st.st_mode));
+   if (doBatch || isDir) {
+      if (!isDir) {
+         ERR("--batch requires a directory: %s\n", inPath);
+         return 1;
+      }
+      if (outArg) {
+         ERR("batch mode takes a single directory argument\n");
+         return 1;
+      }
+      return batch_convert(inPath, doVerify, doForce);
+   }
+
    {
       const char *ext = strrchr(inPath, '.');
       if (ext && istrncmp(ext, ".iso", 5) == 0) {
@@ -1002,40 +1249,12 @@ int main(int argc, char **argv)
       }
    }
 
-   if (outArg) {
+   if (outArg)
       snprintf(outPath, sizeof(outPath), "%s", outArg);
-   } else {
-      const char *ext = strrchr(inPath, '.');
-      size_t stem = ext ? (size_t)(ext - inPath) : strlen(inPath);
-      if (stem > sizeof(outPath) - 5)
-         stem = sizeof(outPath) - 5;
-      memcpy(outPath, inPath, stem);
-      strcpy(outPath + stem, ".cdi");
-   }
+   else
+      derive_out_path(inPath, outPath, sizeof(outPath));
 
    if (parse_cue(inPath, &d) != 0)
       return 1;
-   if (compute_layout(&d) != 0)
-      return 1;
-
-   INFO("%s: %d track(s), %d session(s), %s\n", basename_of(inPath),
-        d.numTracks, d.numSessions,
-        d.multiFile ? "multi-file BIN" : "single-file BIN");
-   if (d.numSessions > 2)
-      WARN("more than 2 sessions: this core's parser clamps numSessions to 2\n");
-   if (d.numSessions == 1)
-      INFO("note: single session — a bootable Jaguar CD needs 2 sessions\n");
-
-   INFO("writing %s\n", outPath);
-   if (write_cdi(&d, outPath) != 0)
-      return 1;
-
-   if (doVerify) {
-      if (verify_cdi(&d, outPath) != 0)
-         return 2;
-      INFO("verify: all %d track(s) OK\n", d.numTracks);
-   }
-
-   INFO("done: %s\n", outPath);
-   return 0;
+   return convert_parsed(&d, inPath, outPath, doVerify);
 }

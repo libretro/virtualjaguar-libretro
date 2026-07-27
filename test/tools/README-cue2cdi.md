@@ -9,15 +9,19 @@ and the emitted file is laid out exactly the way this repo's own parser
 ## Build
 
 ```bash
+make cue2cdi
+# equivalent to:
 cc -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
 ```
 
-Single self-contained C file, libc only.
+Single self-contained C file, libc only (batch mode uses POSIX
+`opendir`/`readdir`). Not part of the default build or `make test`.
 
 ## Usage
 
 ```
 cue2cdi input.cue [output.cdi] [--verify] [--quiet] [--version]
+cue2cdi [--batch] DIR [--verify] [--force] [--quiet]
 ```
 
 - Default output: input path with the extension replaced by `.cdi`.
@@ -32,6 +36,42 @@ Handles multi-file CUEs (redump style, one BIN per track) and single-file
 CUEs (INDEX offsets slice the BIN). `AUDIO`, `MODE1/xxxx`, `MODE2/xxxx`
 tracks with 2048/2336/2352-byte sectors are supported; sectors are written
 at the source's raw size (no 2048→2352 re-framing).
+
+## Batch mode
+
+Point the tool at a directory — either explicitly with `--batch` or just by
+passing a directory as the input — and it recursively finds every `*.cue`
+(case-insensitive) and converts each one in place to
+`<same-dir>/<same-basename>.cdi`:
+
+```bash
+make cue2cdi
+./test/tools/cue2cdi --batch --verify ~/jaguar-dumps/
+./test/tools/cue2cdi ~/jaguar-dumps/          # directory implies --batch
+```
+
+Behavior:
+
+- **Recursive walk**: subdirectories are followed; hidden directories/files
+  (leading `.`) and symlinks are skipped. Files are processed in sorted
+  path order.
+- **Progress**: one line per file —
+  `[3/17] Converting: path/to/Game.cue ... OK (11 tracks, 2 sessions)` —
+  and a final summary: `converted X, skipped Y, failed Z`.
+- **Skip logic**: if the target `.cdi` already exists and is newer than the
+  `.cue` and every referenced BIN, the file is skipped with a note.
+  `--force` reconverts regardless.
+- **Failures don't stop the queue**: a broken CUE or missing BIN prints its
+  error, is counted as failed, and the run continues. Exit code is 0 when
+  nothing failed, 1 otherwise.
+- `--verify` composes with batch mode: each converted image gets the full
+  per-track verify table (header lines print before each table instead of
+  the single-line format).
+
+Batch mode takes no output-path argument (outputs are always placed next to
+their sources). The per-track conversion chatter of single-file mode is
+always suppressed in batch runs — the progress lines and summary are the
+output, and they print regardless of `--quiet`.
 
 ## The Jaguar multi-session caveat
 
