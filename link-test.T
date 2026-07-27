@@ -58,5 +58,8 @@
       jaguar_cd_*;
       ResolveBootConfig;
       BlitterCompare*;
+      DAC*;
+      JoystickState*;
+      MTState*;
    local: *;
 };

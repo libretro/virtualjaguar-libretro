@@ -145,6 +145,15 @@ typedef struct {
     unsigned total_frames_rendered;
     unsigned last_width;
     unsigned last_height;
+    /* Frontend-negotiation counters.  A core that renegotiates geometry or
+     * A/V timing every frame makes real frontends re-init their texture /
+     * audio driver per frame, which pins the frame rate and defeats
+     * fast-forward.  See test/test_frontend_pacing.c. */
+    unsigned set_geometry_calls;
+    unsigned set_av_info_calls;
+    /* Number of frames whose reported width/height differed from the
+     * previous frame's (boot resolution changes are expected; churn is not). */
+    unsigned dimension_changes;
 } harness_video_stats;
 
 /* Per-frame callback: called after each retro_run().
@@ -286,5 +295,21 @@ void harness_press(harness_config *cfg, unsigned port, unsigned button,
 
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);
+
+/* Reset video stats — counterpart to harness_reset_audio.  Use when a test
+ * measures a window of steady-state execution and must discard boot-time
+ * geometry / resolution churn.  Note this also zeroes total_frames_rendered
+ * and last_width/last_height, so harness_report's summary line then
+ * describes the window rather than the whole run. */
+void harness_reset_video(harness_config *cfg);
+
+/* Monotonic wall clock, for tests that measure durations.
+ *
+ * Deliberately not gettimeofday(): the wall clock can step backwards (NTP
+ * correction, manual clock change), and a negative interval can turn a
+ * timing assertion green.  Ticks are opaque; convert a pair with
+ * harness_time_elapsed_sec(). */
+uint64_t harness_time_now(void);
+double   harness_time_elapsed_sec(uint64_t start, uint64_t end);
 
 #endif /* HARNESS_H */

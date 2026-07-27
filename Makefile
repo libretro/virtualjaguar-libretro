@@ -47,7 +47,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v2.3.1
+CORE_BASE_VERSION := v2.3.2
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -92,6 +92,11 @@ LINK_SCRIPT := link.T
 MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
+
+# Records which ABI the library in the tree was last linked with; see the
+# mode-switch hook next to the link rule below.
+LINK_MODE := $(if $(filter 1,$(TEST_EXPORTS)),test,prod)
+LINK_MODE_STAMP := .link-mode
 
 # Unix
 ifeq ($(platform), unix)
@@ -712,12 +717,24 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
+# Force a re-link when the exported ABI changes.  The objects are identical
+# either way, so a plain `make` followed by `make TEST_EXPORTS=1 test` would
+# otherwise reuse the production-slim library -- it is newer than every
+# object, so nothing relinks -- and the white-box tests fail with
+# "Missing: m68k_execute".  Delete the library outright rather than relying
+# on a stamp file's mtime: the stamp and the library can land in the same
+# second, which is exactly the timestamp-granularity trap this is meant to
+# close.  Runs at parse time, once TARGET is known.
+$(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
+        || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
+             rm -f $(TARGET); })
+
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJECTS)
 else
-	$(LD) $(LINKOUT)$@ $^ $(LDFLAGS)
+	$(LD) $(LINKOUT)$@ $(OBJECTS) $(LDFLAGS)
 endif
 
 # version.h dependency hook (must come after `all:` so Make 3.81 on
@@ -725,7 +742,7 @@ endif
 $(CORE_DIR)/libretro.o: $(VERSION_H)
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) \
+	rm -f $(TARGET) $(OBJECTS) $(LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
 		test/test_dsp_mac40 test/test_m68k_ops test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
@@ -737,6 +754,7 @@ clean:
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
+		test/test_state_compat test/test_frontend_pacing \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
@@ -782,7 +800,8 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_tom_visible_window \
-		test/test_framebuffer_integrity \
+		test/test_framebuffer_integrity test/test_state_compat \
+		test/test_frontend_pacing \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
@@ -845,11 +864,31 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/tools/test_memory_map ./$(TARGET)
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
+	@# Run both regions: max_height is region-independent, but the emitted
+	@# height is not, so a region-specific overflow must not hide.
+	@# Chained with && so an NTSC failure cannot be masked by a passing PAL
+	@# run -- with `;` the block would still exit 0 on the second command.
 	@if [ -f "test/roms/yarc.j64" ]; then \
-		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64; \
+		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 && \
+		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 \
+			--option virtualjaguar_pal=enabled; \
 	else \
 		echo "  SKIP: yarc.j64 ROM not available (framebuffer integrity)"; \
 	fi
+	@# Save-state version gate: a v2-layout state must still load, v1 and
+	@# future versions must be refused.  Deliberately NOT wrapped in an
+	@# `if [ -f ... ]` guard like the framebuffer test above: yarc.j64 is
+	@# committed in-tree, so a missing ROM is a broken checkout and the
+	@# test's exit 77 should stop the suite rather than read as a pass.
+	./test/test_state_compat ./$(TARGET) test/roms/yarc.j64
+	@# Frontend pacing / fast-forward contract: the core must not throttle
+	@# itself, and samples-per-frame must match the advertised fps and
+	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
+	@# bottleneck and fast-forward has nothing to give.  Unguarded for the
+	@# same reason as test_state_compat above: yarc.j64 is committed in-tree,
+	@# so a missing ROM means a broken checkout and should fail the suite
+	@# rather than silently read as a pass.
+	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
@@ -966,21 +1005,37 @@ test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_eeprom_lifecycle: test/test_eeprom_lifecycle.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_eeprom_lifecycle.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_framebuffer_integrity.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Save-state backwards-compatibility regression guard.  Needs DACStateSave
+# from the wide test symbol set (DAC* in exports-test.list / link-test.T).
+test/test_state_compat: test/test_state_compat.c \
+		test/harness/harness.c test/harness/harness.h src/core/state.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_state_compat.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/test_frontend_pacing: test/test_frontend_pacing.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_frontend_pacing.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 # Drives blitter_blit() through the MMIO path with varied B_CMD words and
 # checks destination bytes, plus a save-state check on the command field
@@ -1078,7 +1133,11 @@ lint:
 coverage:
 	$(MAKE) clean
 	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
-	$(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
+	@# VJ_INSTRUMENTED_BUILD: the core is built -O0 + --coverage here and
+	@# runs below realtime, so wall-clock assertions must skip rather than
+	@# report a false failure.  It has to be an env var: the test binaries
+	@# compile with $(INCFLAGS) only, so a -D on $(FLAGS) never reaches them.
+	VJ_INSTRUMENTED_BUILD=1 $(MAKE) COVERAGE=1 TEST_EXPORTS=1 test
 	gcovr --config gcovr.cfg --xml-pretty -o coverage.xml --txt --print-summary
 
 # `make benchmark` -- headless wall-clock perf measurement on a fixed
@@ -1140,7 +1199,7 @@ dsp-diag:
 		-o test/tools/test_dsp_audio_diag \
 		test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_dsp_audio_diag ./$(TARGET) "$(DSP_DIAG_ROM)" $(DSP_DIAG_FLAGS)
 
 # `make frame-timing` -- Per-frame timing diagnostic.  Builds core with
@@ -1160,7 +1219,7 @@ frame-timing:
 		-o test/tools/test_frame_timing \
 		test/tools/test_frame_timing.c \
 		test/harness/harness.c test/harness/timing_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
 
 # Automated visual + audio verification for CD titles: frame-motion timeline,

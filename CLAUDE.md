@@ -105,6 +105,16 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 Every harness that dlopens the core prints the binary's embedded version (`vX.Y.Z <gitrev>[-dirty]`, also logged by the core at `retro_init`). If `VJ_EXPECT_BUILD` is set (as `make test` and `cd_boot_matrix.sh` do automatically, via `scripts/build-id.sh`), a core whose version doesn't token-match fails the load loudly instead of silently testing stale code. When running harnesses by hand after edits, use `VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/...`. Note `make` can skip rebuilds when file mtimes are second-identical — the guard catches that class; `nm -gU <dylib> | grep <newsymbol>` is the manual fallback.
 
+### Test ABI and re-linking
+
+`make` links the production-slim ABI (`retro_*` only); `make test` needs the
+wide test ABI so harnesses can `dlsym` internals. Switching between them
+re-links automatically — the Makefile deletes the library when the mode
+changes, so `make` followed by `make TEST_EXPORTS=1 test` works. (It did not
+before v2.3.2: the library was newer than every object, nothing relinked, and
+the suite failed with `Missing: m68k_execute`.) After `make test`, the library
+in the tree carries the wide exports; plain `make` restores the shipped ABI.
+
 ### Build-identity guard (stale-binary protection)
 
 Every harness that dlopens the core prints the binary's embedded version

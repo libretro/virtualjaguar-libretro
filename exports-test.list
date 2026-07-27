@@ -55,3 +55,6 @@ _cd_boot_strategy_*
 _jaguar_cd_*
 _ResolveBootConfig
 _BlitterCompare*
+_DAC*
+_JoystickState*
+_MTState*

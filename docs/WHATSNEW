@@ -1,3 +1,44 @@
+Virtual Jaguar v2.3.2 libretro
+------------------------------
+
+Correctness and housekeeping. Full notes: docs/RELEASE_NOTES_v2.3.2.md
+
+== Compatibility ==
+* Battle Sphere Gold now launches with the HLE BIOS (#181).
+* Save states from v2.3.0/v2.3.1 still load -- retro_unserialize now
+  accepts a version range instead of an exact match.
+* Advertised max_height now bounds the frames the core actually emits,
+  so drivers no longer clip or drop 241-line NTSC output.
+
+== Graphics ==
+* Ten blitter accuracy fixes checked against the JTRM: DCOMPEN colour
+  keying, A2 texture-wrap masking, CLIP_A1 caching, accurate-writeback
+  outer-loop step, z-comparator lane in 16bpp pixel mode.
+* BIOS boot-animation artifacts fixed (#180).
+
+== Interface ==
+* Core options reworded: Blitter is now Accurate/Fast and BIOS is now
+  HLE/Real (#184). Stored values are unchanged, so settings carry over.
+
+== Housekeeping ==
+* Dropped two unused 128 KB boot-ROM blobs -- 258 KB smaller binaries.
+* New regression tests: save-state version gate, frontend pacing /
+  fast-forward contract, advertised-geometry bounds, plus a
+  build-identity guard against testing stale binaries.
+
+
+Virtual Jaguar v2.3.1 libretro
+------------------------------
+
+Maintenance release. Full notes: docs/RELEASE_NOTES_v2.3.1.md
+
+
+Virtual Jaguar v2.3.0 libretro
+------------------------------
+
+Full notes: docs/RELEASE_NOTES_v2.3.0.md
+
+
 Virtual Jaguar v2.2.0 libretro
 ------------------------------
 

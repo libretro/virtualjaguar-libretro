@@ -493,7 +493,10 @@ jobs:
       - name: Run clang-tidy on PR-changed files
         run: |
           BASE="${{ github.event.pull_request.base.sha }}"
-          FILES=$(git diff --name-only "$BASE"...HEAD -- '*.c' '*.h' \
+          # --diff-filter=d drops deleted paths: clang-tidy cannot lint a
+          # file that no longer exists and fails the whole job with
+          # "no input files" / "expected exactly one compiler job".
+          FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
             | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2)\.c$)' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then

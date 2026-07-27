@@ -2487,7 +2487,7 @@ size_t CDROMStateSave(uint8_t *buf)
 	return (size_t)(buf - start);
 }
 
-size_t CDROMStateLoad(const uint8_t *buf)
+size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 {
 	const uint8_t *start = buf;
 
@@ -2524,11 +2524,25 @@ size_t CDROMStateLoad(const uint8_t *buf)
 	STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
 	STATE_LOAD_VAR(buf, ssiBufPtr);
 	STATE_LOAD_VAR(buf, ssiBlock);
-	STATE_LOAD_BUF(buf, dsaQueue, sizeof(dsaQueue));
-	STATE_LOAD_VAR(buf, dsaQueueHead);
-	STATE_LOAD_VAR(buf, dsaQueueTail);
-	STATE_LOAD_VAR(buf, dsaQueueCount);
-	STATE_LOAD_VAR(buf, dsaResponseDelay);
+	/* v3 and older states predate the DSA response queue (see
+	 * STATE_VERSION_CDROM_DSA_QUEUE): leave those fields at a safe empty
+	 * state instead of consuming bytes the layout never carried. */
+	if (stateVersion >= STATE_VERSION_CDROM_DSA_QUEUE)
+	{
+		STATE_LOAD_BUF(buf, dsaQueue, sizeof(dsaQueue));
+		STATE_LOAD_VAR(buf, dsaQueueHead);
+		STATE_LOAD_VAR(buf, dsaQueueTail);
+		STATE_LOAD_VAR(buf, dsaQueueCount);
+		STATE_LOAD_VAR(buf, dsaResponseDelay);
+	}
+	else
+	{
+		memset(dsaQueue, 0, sizeof(dsaQueue));
+		dsaQueueHead = 0;
+		dsaQueueTail = 0;
+		dsaQueueCount = 0;
+		dsaResponseDelay = 0;
+	}
 
 	return (size_t)(buf - start);
 }
