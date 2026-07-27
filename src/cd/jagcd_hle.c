@@ -140,6 +140,16 @@ static struct
    uint32_t written;    /* bytes delivered so far */
    uint32_t accFrac;    /* 16.16 fractional byte budget accumulator */
    uint32_t d1;         /* sentinel word (for the GPU data area) */
+   uint32_t statusBase; /* transfer-status struct base, LATCHED at arm time.
+                         * All in-flight status writes (StreamTick / Finish)
+                         * use this, never the live hle_gpu_data_base: a
+                         * mid-stream JT_CD_SETUP_CDROM_ISR retarget must
+                         * only affect the NEXT CD_read.  Battle Morph
+                         * uploads its own GPU worker to $F03000-$F031A7,
+                         * then calls the $3060 ISR setup with A0=$F03158
+                         * while a 917KB streamed read is active — writing
+                         * status words there shreds the worker's movei
+                         * streams at $F0315A-$F03170 and wedges the game. */
    uint32_t sigD0, sigD1, sigA0, sigA1;  /* raw args for duplicate detection */
    uint8_t  buf[2352];
 } hleStream;
@@ -613,6 +623,7 @@ hle_cd_read_post_scan:
    hleStream.written  = 0;
    hleStream.accFrac  = 0;
    hleStream.d1       = d1;
+   hleStream.statusBase = hle_gpu_data_base;  /* latch for this transfer */
    hleStream.sigD0    = d0;
    hleStream.sigD1    = d1;
    hleStream.sigA0    = a0;
@@ -625,18 +636,18 @@ hle_cd_read_post_scan:
 
    /* Make the transfer-state structure visible to pollers from the first
     * frame: write pointer at the start, end address, size, sentinel. */
-   if (hle_gpu_data_base != 0)
+   if (hleStream.statusBase != 0)
    {
       /* [+0] mirrors the real GPU ISR's pre-decremented write pointer:
        * CD_read does `subq.l #4,a0` before storing it ($362C/$3666), so
        * the pointer runs dest-4 .. end-4 across the transfer. */
-      GPUWriteLong(hle_gpu_data_base + 0,  destAddr - 4, 0);
-      GPUWriteLong(hle_gpu_data_base + 4,  destAddr + byteCount, 0);
+      GPUWriteLong(hleStream.statusBase + 0,  destAddr - 4, 0);
+      GPUWriteLong(hleStream.statusBase + 4,  destAddr + byteCount, 0);
       /* [+8] is the ISR error/status long, NOT progress: real CD_read
        * zeroes it ($366A move.l #0,(a2)+) and boot stubs ABORT the load
        * when CD_poll hands it back nonzero in A1 (Baldies $4DA2). */
-      GPUWriteLong(hle_gpu_data_base + 8,  0, 0);
-      GPUWriteLong(hle_gpu_data_base + 16, d1, 0);
+      GPUWriteLong(hleStream.statusBase + 8,  0, 0);
+      GPUWriteLong(hleStream.statusBase + 16, d1, 0);
    }
 
    HLE_LOG("CD_read: streaming %u bytes to $%06X-$%06X from LBA %u offset %u\n",
@@ -654,6 +665,7 @@ hle_cd_read_complete:
    hleStream.d1      = d1;
    hleStream.lba     = lba;
    hleStream.bufOff  = 0;
+   hleStream.statusBase = hle_gpu_data_base;
    HLEStreamFinish();
    (void)bytesWritten;
    (void)s;
@@ -768,8 +780,11 @@ static void HLEStreamFinish(void)
    /* Write completion state to the GPU data area.
     * The boot stub reads [$3074] to find this structure, then checks
     * [+0] (current write pos) against [+4] (end addr) for completion.
-    * The real GPU ISR pre-decrements dest by 4, so [+0] = A0-4. */
-   if (hle_gpu_data_base != 0)
+    * The real GPU ISR pre-decrements dest by 4, so [+0] = A0-4.
+    * Uses the base LATCHED at arm time (statusBase), not the live
+    * hle_gpu_data_base — a mid-stream ISR-setup retarget only applies
+    * to the next CD_read. */
+   if (hleStream.statusBase != 0)
    {
       /* Final [+0]: the real GPU ISR drains 32-byte FIFO batches with a
        * pre-incremented pointer WHILE ptr <= end, so the last batch
@@ -782,12 +797,12 @@ static void HLEStreamFinish(void)
          uint32_t ptr0  = destAddr - 4;
          uint32_t span  = (destAddr + byteCount) - ptr0;
          uint32_t final = ptr0 + ((span / 32) + 1) * 32;
-         GPUWriteLong(hle_gpu_data_base + 0, final, 0);
+         GPUWriteLong(hleStream.statusBase + 0, final, 0);
       }
-      GPUWriteLong(hle_gpu_data_base + 4,  destAddr + byteCount, 0);
+      GPUWriteLong(hleStream.statusBase + 4,  destAddr + byteCount, 0);
       /* [+8] = error status, 0 on success — see the arm-time comment. */
-      GPUWriteLong(hle_gpu_data_base + 8,  0, 0);
-      GPUWriteLong(hle_gpu_data_base + 16, d1, 0);
+      GPUWriteLong(hleStream.statusBase + 8,  0, 0);
+      GPUWriteLong(hleStream.statusBase + 16, d1, 0);
    }
 
    /* Signal completion to BIOS-style polling code via DSP RAM flag.
@@ -875,9 +890,10 @@ void JaguarCDHLEStreamTick(void)
       return;
    }
 
-   /* Advance the write pointer the game's poll loop watches. */
-   if (hle_gpu_data_base != 0)
-      GPUWriteLong(hle_gpu_data_base + 0,
+   /* Advance the write pointer the game's poll loop watches — at the
+    * base latched when this read was armed (see statusBase). */
+   if (hleStream.statusBase != 0)
+      GPUWriteLong(hleStream.statusBase + 0,
                    hleStream.dest + hleStream.written, 0);
 }
 
@@ -1009,6 +1025,20 @@ static void HLEHandleWaitResponse(void)
 static void HLEHandleISRSetup(uint8_t mode)
 {
    uint32_t a0 = m68k_get_reg(NULL, M68K_REG_A0);
+
+   /* Retarget applies to the NEXT CD_read only.  An in-flight streamed
+    * transfer keeps writing its status struct at the base latched when
+    * the read was armed (hleStream.statusBase) — on real hardware those
+    * writes come from the BIOS's own GPU ISR, whose data area doesn't
+    * move mid-transfer (and which dies outright when the game reloads
+    * GPU RAM with its own code).  Battle Morph calls this vector with
+    * A0=$F03158 — inside its freshly-uploaded GPU worker — while a
+    * 917KB streamed CD_read is active; retargeting live status writes
+    * there shreds the worker code and wedges the game. */
+   if (hleStream.active)
+      HLE_LOG("ISR setup mid-stream: new base $%06X deferred to next "
+              "CD_read (active stream keeps $%06X)\n",
+              a0, hleStream.statusBase);
 
    hle_gpu_data_base = a0;
 
