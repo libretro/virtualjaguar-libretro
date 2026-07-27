@@ -78,6 +78,19 @@
 #define GPU_AUTH_MAGIC 0x03D0DEAD
 #define M68K_RTS       0x4E75
 
+/* $3E00: the real CD BIOS's DSA status word — the first variable of the
+ * driver work area that follows the RAM-relocated driver code
+ * ($3000-$3DFF).  Its DSA wait-for-response helper (RAM $3544 in the
+ * retail BIOS) writes it after every command sent with the wait flag
+ * (D0 != 0): 0 when the drive's response class is $04 (the CDD-family
+ * "done, no error" ack used by Pause/Unpause), 1 for any other response
+ * class (e.g. Spun Up $01nn after CD_spin, Stopped $02nn after CD_stop).
+ * Games poll it as a "the drive answered" flag: Myst's boot code loops
+ * { CD_spin(D0=1,D1=1); } while ($3E00.w == 0) — with a bare-RTS stub
+ * and randomized RAM it polls a word nobody writes, forever (HLE-mode
+ * black screen at frame 0). */
+#define CD_BIOS_DSA_STATUS_ADDR  0x003E00
+
 /* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
@@ -260,6 +273,112 @@ static void HLEInstallJumpTable(void)
    HLE_LOG("Installed RTS stubs at $%06X-$%06X\n",
            BIOS_JUMPTABLE_BASE,
            BIOS_JUMPTABLE_BASE + BIOS_JUMPTABLE_SIZE - 1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Raw-read stream phase alignment                                     */
+/*                                                                     */
+/* Atari-mastered data regions start with a standard header:           */
+/*   10 zero bytes | 'ATRI'x16 | "ATARI APPROVED DATA HEADER ATRI!"    */
+/*   | "0000"x16 | payload                                             */
+/* Games that read raw (no D1 sentinel) locate the payload by scanning */
+/* their own destination buffer at 4-byte stride for 16 consecutive    */
+/* sync longwords (Myst hunts the "0000" run: RAM $E980 loop compares  */
+/* (a2) against D3='0000', needs d2==16 hits, a2+=4).  On hardware the */
+/* I2S capture phase relative to the destination varies per attempt,   */
+/* and games simply re-issue the CD_read until the sync run lands      */
+/* 4-byte aligned.  Our stream is deterministic — sector boundaries    */
+/* always land at stream offset 0 — so when the header sits at an      */
+/* offset that is 2 (mod 4) from the destination (Myst: LBA 19115      */
+/* offset 10 => stream offset 18922), every retry reproduces the same  */
+/* misaligned buffer and the game retries forever (post-boot black     */
+/* screen).  Detect the header's 'ATRI' run near the requested LBA and */
+/* return the 2-byte stream shift that lands the whole header block    */
+/* (all components are 4-byte multiples apart) aligned to the          */
+/* destination.  No header found => no shift (plain raw read).         */
+/* ------------------------------------------------------------------ */
+
+#define HLE_ALIGN_SCAN_SECTORS 600
+/* A game's sync hunt wants ~16 consecutive marker longs; requiring 8
+ * here keeps stray payload repeats from faking a run while still
+ * matching every real marker block. */
+#define HLE_ALIGN_D1_RUN   8u
+/* The 'ATRI' header run is 16 longs; 3 is the established sync-block
+ * threshold elsewhere in this file. */
+#define HLE_ALIGN_ATRI_RUN 3u
+
+/* Count consecutive repeats of pat[0..3] at sec[i..]. */
+static uint32_t HLEPatRunLen(const uint8_t *sec, uint32_t i, const uint8_t *pat)
+{
+   uint32_t n = 0;
+   while (i + 4 <= 2352 &&
+          sec[i]   == pat[0] && sec[i+1] == pat[1] &&
+          sec[i+2] == pat[2] && sec[i+3] == pat[3])
+   {
+      n++;
+      i += 4;
+   }
+   return n;
+}
+
+static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
+                                        uint32_t d1, bool d1Usable)
+{
+   static const uint8_t atri[4] = { 'A', 'T', 'R', 'I' };
+   uint8_t  sec[2352];
+   uint8_t  pat[4];
+   uint32_t s, i, run;
+
+   pat[0] = (uint8_t)(d1 >> 24);
+   pat[1] = (uint8_t)(d1 >> 16);
+   pat[2] = (uint8_t)(d1 >> 8);
+   pat[3] = (uint8_t)d1;
+
+   for (s = 0; s < HLE_ALIGN_SCAN_SECTORS; s++)
+   {
+      if (!CDIntfReadBlock(startLBA + s, sec))
+         continue;
+
+      /* I2S un-swap (byte pairs), same as the delivered stream. */
+      for (i = 0; i + 1 < 2352; i += 2)
+      {
+         uint8_t tmp = sec[i];
+         sec[i]     = sec[i + 1];
+         sec[i + 1] = tmp;
+      }
+
+      for (i = 0; i + 4 <= 2352; i++)
+      {
+         const char *what = NULL;
+
+         if (d1Usable)
+         {
+            run = HLEPatRunLen(sec, i, pat);
+            if (run >= HLE_ALIGN_D1_RUN)
+               what = "D1 sync";
+         }
+         if (!what)
+         {
+            run = HLEPatRunLen(sec, i, atri);
+            if (run >= HLE_ALIGN_ATRI_RUN)
+               what = "'ATRI' header";
+         }
+         if (what)
+         {
+            uint32_t relOff = s * 2352 + i;   /* run start in the stream */
+            uint32_t mis    = (destAddr + relOff) & 3;
+            HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
+                    "(stream off %u, dest misalign %u) — shift %u\n",
+                    what, run, startLBA + s, i, relOff, mis,
+                    (mis == 2) ? 2u : 0u);
+            return (mis == 2) ? 2u : 0u;
+         }
+      }
+   }
+
+   HLE_LOG("align scan: no sync run within %u sectors of LBA %u\n",
+           (unsigned)HLE_ALIGN_SCAN_SECTORS, startLBA);
+   return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -503,6 +622,35 @@ static void HLEHandleCDRead(void)
       goto hle_cd_read_post_scan;
    }
 
+   /* Non-match ISR mode: the game inited with CD_initf ($3066) rather
+    * than CD_initm ($3060).  The real CD_read checks exactly this flag
+    * (btst #7,$3072 at $3670) — with it CLEAR it never arms the BUTCH
+    * match hardware, so capture starts at the seek position and the raw
+    * stream (pregap, 'ATRI' run, header, "0000" run, payload) lands in
+    * the buffer for the game to align itself.  Myst is the only known
+    * user: it scans its buffer at 4-byte stride for 16 consecutive
+    * sync longs and re-issues the read until they land aligned —
+    * deliver the stream phase-aligned so that succeeds first try
+    * (see HLERawStreamAlignOffset).  Sentinel-skip streaming here
+    * would strip the very run the game is looking for.
+    *
+    * D1 == A1 (end address in both, Myst's first load) is caught by
+    * the same gate via the mode flag; keep the explicit check too as
+    * a "clearly not a sentinel" fallback for titles that never call
+    * an ISR setup vector. */
+   if ((jaguarMainRAM[0x3072] & 0x80) == 0 || d1 == a1)
+   {
+      scanLBA = startLBA;
+      scanOff = HLERawStreamAlignOffset(startLBA, destAddr, d1,
+                                        d1 != a1 && (d1 >> 16) != 0);
+      HLE_LOG("CD_read: non-match ISR mode ($3072=$%02X, D1=$%08X A1=$%06X) "
+              "— streaming raw from LBA %u offset %u\n",
+              jaguarMainRAM[0x3072], d1, a1, startLBA, scanOff);
+      foundSentinel = true;  /* short-circuit the scan loop */
+      phase_starts[0] = startLBA;
+      goto hle_cd_read_post_scan;
+   }
+
    phase_starts[0] = startLBA;
    if (sentinelIsAscii) {
       uint32_t n = CDIntfGetSession2TrackCount();
@@ -617,10 +765,13 @@ static void HLEHandleCDRead(void)
          goto hle_cd_read_complete;
       }
       /* Sync block not found: fall back to a raw read from the requested
-       * (possibly redirected) start position. */
-      HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u\n", startLBA);
+       * (possibly redirected) start position, phase-aligned to the Atari
+       * data header (see HLERawStreamAlignOffset). */
       scanLBA = startLBA;
-      scanOff = 0;
+      scanOff = HLERawStreamAlignOffset(startLBA, destAddr, d1,
+                                        d1 != a1 && (d1 >> 16) != 0);
+      HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u "
+              "offset %u\n", startLBA, scanOff);
    }
 
 hle_cd_read_post_scan:
@@ -1053,6 +1204,22 @@ static void HLEHandleWaitResponse(void)
    m68k_set_reg(M68K_REG_D1, 0x0000);
 }
 
+/* Mirror the BIOS DSA wait-for-response side effect (see the
+ * CD_BIOS_DSA_STATUS_ADDR comment): when the caller passed the wait
+ * flag (D0.w != 0), write the status word the real BIOS would derive
+ * from the drive's response class — 0 for an $04xx ack, 1 otherwise.
+ * The class values match what cdrom.c's BUTCH emulation answers in
+ * BIOS mode ($0143 Spun Up for $18xx, $0200 for Stop, $0400 for
+ * Pause/Unpause), so both boot paths present the same contract. */
+static void HLESetDsaStatus(uint8_t respClass)
+{
+   uint32_t d0 = m68k_get_reg(NULL, M68K_REG_D0);
+   if ((d0 & 0xFFFF) == 0)
+      return;   /* no-wait call: BIOS leaves $3E00 untouched */
+   SET16(jaguarMainRAM, CD_BIOS_DSA_STATUS_ADDR,
+         (respClass == 0x04) ? 0 : 1);
+}
+
 /* ------------------------------------------------------------------ */
 /* ISR setup — save GPU data area pointer                              */
 /*                                                                     */
@@ -1221,6 +1388,22 @@ bool JaguarCDHLEBoot(void)
    HLEPopulateTOC(0x2C00);
    HLEPopulateCartBuffer();
 
+   /* DSA status word: JaguarReset() randomizes RAM, so give the BIOS
+    * work-area variable a defined "no response yet" starting value —
+    * games poll it right after their first waited DSA command. */
+   SET16(jaguarMainRAM, CD_BIOS_DSA_STATUS_ADDR, 0);
+
+   /* ISR mode flag ($3072): default to MATCH mode ($FF, bit 7 set) —
+    * the real BIOS boots the stub through its own match-mode load, and
+    * every known boot stub that issues CD_read before calling an ISR
+    * setup vector expects sentinel-located data.  CD_initf ($3066)
+    * clears it; CD_read keys its capture behavior off bit 7 exactly
+    * like the resident BIOS does (btst #7,$3072 at $3670).  Must be
+    * (re)written after HLEInstallJumpTable, whose RTS fill stomps
+    * $3072 with $4E (bit 7 clear = non-match). */
+   jaguarMainRAM[0x3072] = 0xFF;
+   jaguarMainRAM[0x3073] = 0x00;
+
    /* CD-ready flag at $3727C */
    jaguarMainRAM[CD_READY_ADDR + 0] = 0xFF;
    jaguarMainRAM[CD_READY_ADDR + 1] = 0xFF;
@@ -1352,15 +1535,29 @@ bool JaguarCDHLEHook(uint32_t pc)
       return true;
 
    case JT_CD_STOP_DRIVE:
+      CDROMHLESetAudioPlaying(0);
+      HLESetDsaStatus(0x02);   /* drive answers Stopped $02nn */
+      return true;
+
    case JT_CD_PAUSE:
       CDROMHLESetAudioPlaying(0);
+      HLESetDsaStatus(0x04);   /* $04xx ack: status = 0 (no error) */
       return true;
 
    case JT_CD_UNPAUSE:
       CDROMHLESetAudioPlaying(1);
+      HLESetDsaStatus(0x04);   /* $04xx ack: status = 0 (no error) */
       return true;
 
-   /* Remaining CD-control entries (CD_SPIN_UP, CD_SET_VOL_MUTE/MAX,
+   /* CD_spin (goto session): seeks are LBA-absolute in HLE, so the
+    * session goto itself is a no-op — but the caller may wait on the
+    * DSA status word (Myst spins on it), so deliver the Spun Up
+    * response class the emulated drive gives in BIOS mode. */
+   case JT_CD_SPIN_UP:
+      HLESetDsaStatus(0x01);   /* $0143 Spun Up */
+      return true;
+
+   /* Remaining CD-control entries (CD_SET_VOL_MUTE/MAX,
     * CD_FIFO_DISABLE, CD_HW_RESET, CD_SET_DAC_MODE) are not intercepted —
     * the jump table is pre-stubbed with $4E75 (RTS) by
     * HLEInstallJumpTable, so falling through executes a no-op naturally. */
