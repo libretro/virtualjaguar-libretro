@@ -23,6 +23,7 @@
 
 #include "harness/harness.h"
 
+#include <libretro.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +91,8 @@ int main(int argc, char **argv)
     int *height_ptr;
     uint32_t *fb;
     int w, h;
+    void (*av_info_fn)(struct retro_system_av_info *);
+    char geom_detail_buf[128];
     unsigned total_pixels, nonblack_count;
     unsigned i, x, y;
     double nonblack_frac;
@@ -131,6 +134,7 @@ int main(int argc, char **argv)
     fb_ptr = (uint32_t **)harness_dlsym(&cfg, "videoBuffer");
     width_ptr = (int *)harness_dlsym(&cfg, "game_width");
     height_ptr = (int *)harness_dlsym(&cfg, "game_height");
+    *(void **)(&av_info_fn) = harness_dlsym(&cfg, "retro_get_system_av_info");
     if (!fb_ptr || !width_ptr || !height_ptr) {
         fprintf(stderr, "Cannot resolve videoBuffer/game_width/game_height\n");
         harness_shutdown(&cfg);
@@ -163,6 +167,39 @@ int main(int argc, char **argv)
     }
 
     total_pixels = (unsigned)(w * h);
+
+    /* ================================================================
+     * Test 0: the emitted frame must fit inside the advertised geometry
+     *
+     * libretro requires every frame passed to video_cb to be no larger
+     * than the max_width/max_height reported by retro_get_system_av_info;
+     * frontends size their texture from those values, and an oversized
+     * frame gets clipped or dropped.  VDB/VDE are game-programmable, so
+     * this is not hypothetical: yarc programs VDB=25/VDE=507 = 241 lines,
+     * one more than the nominal 240 NTSC active lines.  Runs in whichever
+     * region the harness was given, so the Makefile invokes the test for
+     * both NTSC and PAL.
+     * ================================================================ */
+
+    if (av_info_fn) {
+        struct retro_system_av_info av;
+        memset(&av, 0, sizeof(av));
+        av_info_fn(&av);
+        /* Own buffer, not the shared detail_buf: check() stores the pointer
+         * rather than copying, so a shared buffer would report whatever the
+         * last assertion wrote. */
+        snprintf(geom_detail_buf, sizeof(geom_detail_buf),
+                 "emitted %dx%d must fit advertised max %ux%u",
+                 w, h, av.geometry.max_width, av.geometry.max_height);
+        check((unsigned)w <= av.geometry.max_width
+              && (unsigned)h <= av.geometry.max_height,
+              "frame_within_advertised_geometry", geom_detail_buf,
+              results, &num_results);
+    } else {
+        check(0, "frame_within_advertised_geometry",
+              "could not resolve retro_get_system_av_info",
+              results, &num_results);
+    }
 
     /* ================================================================
      * Test 1: Basic sanity — rendering is happening

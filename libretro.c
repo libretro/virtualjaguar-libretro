@@ -604,7 +604,14 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
    info->geometry.max_width    = 652; // Highest value encountered during testing
-   info->geometry.max_height   = vjs.hardwareTypeNTSC ? 240 : 256;
+   /* Must bound every height the core can emit, not the nominal active
+    * display.  VDB/VDE are game-programmable, so a title can open a window
+    * taller than the nominal 240 NTSC lines (yarc programs VDB=25/VDE=507 =
+    * 241 lines), and TOMGetVideoModeHeight() accepts anything up to 256.
+    * Advertising 240 for NTSC let the core submit frames taller than the
+    * declared maximum, which some video drivers clip or drop.  The nominal
+    * size is carried by base_height above; this is the allocation bound. */
+   info->geometry.max_height   = 256;
    info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 
