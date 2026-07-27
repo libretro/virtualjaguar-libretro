@@ -42,6 +42,7 @@ test/dump_caller
 test/dump_pc
 test/heap_search
 test/*.dSYM/
+test/tools/*.dSYM/
 
 # Test logs
 *.log
