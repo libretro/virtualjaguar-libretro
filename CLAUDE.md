@@ -83,7 +83,7 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 ### Key harnesses
 
-- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build)
+- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build). Baselines are **not committed** — a ROM with no baseline reports `NEW` and prints the `cp` command to create one, so the first run on a fresh clone establishes them locally rather than failing.
 - `test/tools/test_dsp_audio_diag.c` — DSP audio diagnostic (`make dsp-diag DSP_DIAG_ROM=path`); detects PC escape, bank init failures, silent LTXD
 - `test/tools/test_frame_timing.c` — per-frame timing diagnostic (`make frame-timing FRAME_TIMING_ROM=path`); reports halflines/cycles/VBlanks per frame, wall-clock speed ratio, anomaly detection. Use `--csv` for per-frame data, `--json` for machine output
 - `test/test_audio_clipping.c` — detects loud-broken audio (saturation density, run length, sustained loud RMS). Catches the Skyhammer / IS2 "saturated square wave" failure mode.
@@ -94,6 +94,22 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
   Usage: `<core.so|.dylib> <rom> [frames] --load-state <file> [--frame-window F L] [--cmd-filter MASK VAL] [--verbose-dump]` (note: `--load-state`, not `--savestate`).
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
 - `test/sram_test.sh` — SRAM round-trip
+
+### Build-identity guard (stale-binary protection)
+
+Every harness that dlopens the core prints the binary's embedded version
+(`vX.Y.Z <gitrev>[-dirty]`). If `VJ_EXPECT_BUILD` is set, a core whose version
+doesn't token-match fails the load loudly instead of silently testing stale code:
+
+```bash
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/tools/your_harness ...
+```
+
+`scripts/build-id.sh` prints the short git rev plus `-dirty` when tracked files
+are modified; `scripts/gen-version-h.sh` stamps that same string into the core,
+so the two sides always agree. This exists because `make` can skip a rebuild
+when file mtimes are second-identical — the guard catches that class. Manual
+fallback: `nm -gU <dylib> | grep <newsymbol>`.
 
 ### Performance / profiling
 

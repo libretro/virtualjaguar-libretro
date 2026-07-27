@@ -25,7 +25,10 @@ if [ -z "$CORE_BASE_VERSION" ]; then
   exit 1
 fi
 
-GIT_REV=$(cd "$ROOT" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+# Short rev + "-dirty" when tracked files are modified (see build-id.sh).
+# The harness build-identity guard compares VJ_EXPECT_BUILD against this
+# string, so both sides must agree on the dirty suffix.
+GIT_REV=$("$ROOT/scripts/build-id.sh")
 
 mkdir -p "$(dirname "$OUT")"
 TMP="$OUT.tmp"

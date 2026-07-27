@@ -276,6 +276,42 @@ bool harness_load_core(harness_config *cfg)
         return false;
     }
 
+    /* Build-identity guard: always print which binary is under test; if
+     * VJ_EXPECT_BUILD is set, refuse a core whose version string does not
+     * contain it (stale/wrong-branch binary).  `make` can skip a rebuild
+     * when file mtimes are second-identical, which silently tests old code. */
+    {
+        void (*p_sysinfo)(struct retro_system_info *) =
+            (void (*)(struct retro_system_info *))dlsym(cfg->core_handle,
+                                                        "retro_get_system_info");
+        const char *expect = getenv("VJ_EXPECT_BUILD");
+        struct retro_system_info si;
+        memset(&si, 0, sizeof(si));
+        if (p_sysinfo) {
+            p_sysinfo(&si);
+            if (!cfg->quiet)
+                fprintf(stderr, "harness: core %s %s (%s)\n",
+                        si.library_name ? si.library_name : "?",
+                        si.library_version ? si.library_version : "?",
+                        cfg->core_path);
+        }
+        if (expect && expect[0]) {
+            /* Token-boundary match: "91f0804" must not accept a stale
+             * "91f0804-dirty" build (version format: "vX.Y.Z rev[-dirty]"). */
+            const char *hit = si.library_version ? strstr(si.library_version, expect) : NULL;
+            char tail = hit ? hit[strlen(expect)] : '-';
+            if (!hit || (tail != '\0' && tail != ' ')) {
+                fprintf(stderr,
+                        "harness: FATAL build mismatch -- core reports \"%s\" but "
+                        "VJ_EXPECT_BUILD=\"%s\"; rebuild with `make TEST_EXPORTS=1`.\n",
+                        si.library_version ? si.library_version : "(none)", expect);
+                dlclose(cfg->core_handle);
+                cfg->core_handle = NULL;
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
