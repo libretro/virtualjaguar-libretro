@@ -23,6 +23,8 @@
 
 #include "harness/harness.h"
 
+#include "../libretro-common/include/libretro.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +92,9 @@ int main(int argc, char **argv)
     int *height_ptr;
     uint32_t *fb;
     int w, h;
+    void (*av_info_fn)(struct retro_system_av_info *);
+    int max_w, max_h;
+    char geom_detail_buf[128];
     unsigned total_pixels, nonblack_count;
     unsigned i, x, y;
     double nonblack_frac;
@@ -131,6 +136,14 @@ int main(int argc, char **argv)
     fb_ptr = (uint32_t **)harness_dlsym(&cfg, "videoBuffer");
     width_ptr = (int *)harness_dlsym(&cfg, "game_width");
     height_ptr = (int *)harness_dlsym(&cfg, "game_height");
+    /* Object pointer -> function pointer via memcpy: the conversion is not
+     * defined by ISO C in either direction (neither a plain assignment nor a
+     * cast through void **), so copy the representation instead.  This is the
+     * POSIX-recommended idiom for dlsym results. */
+    {
+        void *av_info_sym = harness_dlsym(&cfg, "retro_get_system_av_info");
+        memcpy(&av_info_fn, &av_info_sym, sizeof(av_info_fn));
+    }
     if (!fb_ptr || !width_ptr || !height_ptr) {
         fprintf(stderr, "Cannot resolve videoBuffer/game_width/game_height\n");
         harness_shutdown(&cfg);
@@ -163,6 +176,43 @@ int main(int argc, char **argv)
     }
 
     total_pixels = (unsigned)(w * h);
+
+    /* ================================================================
+     * Test 0: the emitted frame must fit inside the advertised geometry
+     *
+     * libretro requires every frame passed to video_cb to be no larger
+     * than the max_width/max_height reported by retro_get_system_av_info;
+     * frontends size their texture from those values, and an oversized
+     * frame gets clipped or dropped.  VDB/VDE are game-programmable, so
+     * this is not hypothetical: yarc programs VDB=25/VDE=507 = 241 lines,
+     * one more than the nominal 240 NTSC active lines.  Runs in whichever
+     * region the harness was given, so the Makefile invokes the test for
+     * both NTSC and PAL.
+     * ================================================================ */
+
+    if (av_info_fn) {
+        struct retro_system_av_info av;
+        memset(&av, 0, sizeof(av));
+        av_info_fn(&av);
+        /* Own buffer, not the shared detail_buf: check() stores the pointer
+         * rather than copying, so a shared buffer would report whatever the
+         * last assertion wrote. */
+        /* Compare in the signed domain: w/h are ints already validated > 0
+         * above, and the advertised maxima are far below INT_MAX, so this
+         * avoids a sign conversion in the comparison. */
+        max_w = (int)av.geometry.max_width;
+        max_h = (int)av.geometry.max_height;
+        snprintf(geom_detail_buf, sizeof(geom_detail_buf),
+                 "emitted %dx%d must fit advertised max %dx%d",
+                 w, h, max_w, max_h);
+        check(w <= max_w && h <= max_h,
+              "frame_within_advertised_geometry", geom_detail_buf,
+              results, &num_results);
+    } else {
+        check(0, "frame_within_advertised_geometry",
+              "could not resolve retro_get_system_av_info",
+              results, &num_results);
+    }
 
     /* ================================================================
      * Test 1: Basic sanity — rendering is happening
