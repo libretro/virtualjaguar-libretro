@@ -192,6 +192,23 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "hle"
    },
    {
+      "virtualjaguar_cd_read_speed",
+      "CD Read Speed (HLE Boot Mode Only)",
+      NULL,
+      "Data-transfer rate for Jaguar CD reads in HLE boot mode. '2x' matches the real drive (300 KB/s) and is hardware-accurate. Higher speeds shorten load times but may break timing-sensitive titles (some games rely on the drive rate for code overlays, music cues, and load handshakes); 'Instant' completes each read in one tick and is the most likely to cause hangs. BIOS boot mode always uses the accurate rate. Applied per-read: a transfer already in flight keeps the speed it started with.",
+      NULL,
+      NULL,
+      {
+         { "1x",      "1x (150 KB/s)" },
+         { "2x",      "2x (Accurate)" },
+         { "4x",      "4x" },
+         { "8x",      "8x" },
+         { "instant", "Instant" },
+         { NULL, NULL },
+      },
+      "2x"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,

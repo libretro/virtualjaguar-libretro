@@ -395,6 +395,25 @@ static void check_variables(void)
          vjs.cdBootMode = CDBOOT_AUTO;
    }
 
+   var.key = "virtualjaguar_cd_read_speed";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "1x") == 0)
+         vjs.cdReadSpeed = CDSPEED_1X;
+      else if (strcmp(var.value, "4x") == 0)
+         vjs.cdReadSpeed = CDSPEED_4X;
+      else if (strcmp(var.value, "8x") == 0)
+         vjs.cdReadSpeed = CDSPEED_8X;
+      else if (strcmp(var.value, "instant") == 0)
+         vjs.cdReadSpeed = CDSPEED_INSTANT;
+      else
+         vjs.cdReadSpeed = CDSPEED_2X;
+   }
+   else
+      vjs.cdReadSpeed = CDSPEED_2X;
+
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -1035,6 +1054,7 @@ bool retro_load_game(const struct retro_game_info *info)
    vjs.useJaguarBIOS    = false;
    vjs.cdBiosType       = CDBIOS_RETAIL;
    vjs.cdBootMode       = CDBOOT_HLE;
+   vjs.cdReadSpeed      = CDSPEED_2X;
 
    check_variables();
 

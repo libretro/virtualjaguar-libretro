@@ -151,6 +151,12 @@ static struct
                          * status words there shreds the worker's movei
                          * streams at $F0315A-$F03170 and wedges the game. */
    uint32_t sigD0, sigD1, sigA0, sigA1;  /* raw args for duplicate detection */
+   uint32_t speedMult;  /* read-speed multiplier in 1x units (1/2/4/8;
+                         * CDSPEED_INSTANT = whole transfer in one tick),
+                         * LATCHED from vjs.cdReadSpeed at arm time — same
+                         * rationale as statusBase: flipping the core option
+                         * while a transfer is in flight must not change the
+                         * rate the game is already pacing itself against. */
    uint8_t  buf[2352];
 } hleStream;
 
@@ -628,6 +634,7 @@ hle_cd_read_post_scan:
    hleStream.sigD1    = d1;
    hleStream.sigA0    = a0;
    hleStream.sigA1    = a1;
+   hleStream.speedMult = vjs.cdReadSpeed;  /* latch for this transfer */
 
    hle_read_dest     = destAddr;
    hle_read_end_addr = destAddr + byteCount;
@@ -833,14 +840,28 @@ void JaguarCDHLEStreamTick(void)
    if (!hleStream.active)
       return;
 
-   /* Accumulate this halfline's byte budget in 16.16 fixed point:
-    * 352,800 B/s x halfline period (~11.2 bytes per halfline). */
-   hleStream.accFrac += (uint32_t)(HLE_STREAM_BYTES_PER_SEC
-                                   * (vjs.hardwareTypeNTSC ? HLE_NTSC_HALFLINE_US
-                                                           : HLE_PAL_HALFLINE_US)
-                                   / 1.0e6 * 65536.0);
-   budget = hleStream.accFrac >> 16;
-   hleStream.accFrac &= 0xFFFFu;
+   if (hleStream.speedMult == CDSPEED_INSTANT)
+   {
+      /* Instant: deliver the whole remaining transfer this tick.  Still
+       * flows through the normal copy loop + HLEStreamFinish below, so
+       * status-struct writes, done flags and the FF-pad all behave
+       * exactly as for a paced transfer. */
+      budget = hleStream.total - hleStream.written;
+   }
+   else
+   {
+      /* Accumulate this halfline's byte budget in 16.16 fixed point:
+       * 352,800 B/s x halfline period (~11.2 bytes per halfline) at the
+       * hardware-accurate 2x rate, scaled by the latched multiplier
+       * (speedMult is in 1x units, the base constant is 2x). */
+      uint32_t inc = (uint32_t)(HLE_STREAM_BYTES_PER_SEC
+                                * (vjs.hardwareTypeNTSC ? HLE_NTSC_HALFLINE_US
+                                                        : HLE_PAL_HALFLINE_US)
+                                / 1.0e6 * 65536.0);
+      hleStream.accFrac += inc * hleStream.speedMult / 2u;
+      budget = hleStream.accFrac >> 16;
+      hleStream.accFrac &= 0xFFFFu;
+   }
 
    while (budget > 0 && hleStream.written < hleStream.total)
    {

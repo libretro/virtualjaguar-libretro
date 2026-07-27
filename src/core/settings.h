@@ -36,6 +36,12 @@ struct VJSettings
 	uint32_t biosType;
 	uint32_t cdBiosType;
 	uint32_t cdBootMode;
+	/* CD read-speed multiplier for the HLE streamed CD_read path:
+	 * 1/2/4/8 = that many times the 1x CD-ROM rate (hardware is 2x),
+	 * CDSPEED_INSTANT (0) = whole transfer in one tick.  Latched per-read
+	 * at arm time; BIOS-mode FIFO cadence is NOT affected (see
+	 * src/cd/jagcd_hle.c). */
+	uint32_t cdReadSpeed;
 
 	char jagBootPath[MAX_PATH];
 	char CDBootPath[MAX_PATH];
@@ -45,6 +51,8 @@ struct VJSettings
 enum { BT_K_SERIES, BT_M_SERIES, BT_STUBULATOR_1, BT_STUBULATOR_2 };
 enum { CDBIOS_RETAIL, CDBIOS_DEV };
 enum { CDBOOT_AUTO, CDBOOT_HLE, CDBOOT_BIOS };
+enum { CDSPEED_INSTANT = 0, CDSPEED_1X = 1, CDSPEED_2X = 2,
+       CDSPEED_4X = 4, CDSPEED_8X = 8 };
 
 struct BootConfig
 {
