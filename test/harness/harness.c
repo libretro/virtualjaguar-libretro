@@ -2,6 +2,14 @@
  * test/harness/harness.c — Shared libretro core test harness implementation.
  */
 
+/* clock_gettime()/CLOCK_MONOTONIC (used by harness_time_now below) are
+ * POSIX.1-2001, and glibc hides them from a strictly-conforming translation
+ * unit — which is what every harness-linked test is, since they all build
+ * with -std=c99.  Must precede the first system header include. */
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "harness.h"
 
 #include <stdio.h>
@@ -11,6 +19,12 @@
 #include <stdarg.h>
 #include <math.h>
 #include "../../libretro-common/include/libretro.h"
+
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#else
+#include <time.h>
+#endif
 
 #ifdef __APPLE__
 #define DEFAULT_CORE "virtualjaguar_libretro.dylib"
@@ -49,6 +63,9 @@ static void cb_video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
     (void)data; (void)pitch;
     if (!active_cfg) return;
+    if (active_cfg->video.total_frames_rendered > 0 &&
+        (w != active_cfg->video.last_width || h != active_cfg->video.last_height))
+        active_cfg->video.dimension_changes++;
     active_cfg->video.total_frames_rendered++;
     active_cfg->video.last_width = w;
     active_cfg->video.last_height = h;
@@ -152,9 +169,14 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
-    case RETRO_ENVIRONMENT_SET_GEOMETRY:
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+        return true;
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+        if (active_cfg) active_cfg->video.set_geometry_calls++;
+        return true;
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+        if (active_cfg) active_cfg->video.set_av_info_calls++;
         return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
         *(const char **)data = "/tmp";
@@ -437,6 +459,52 @@ void harness_reset_audio(harness_config *cfg)
     cfg->audio.first_audio_frame = -1;
     cfg->audio.first_batch_frame = -1;
 }
+
+void harness_reset_video(harness_config *cfg)
+{
+    /* Zeroing total_frames_rendered also re-arms the dimension-change
+     * detector (see cb_video above): the first frame after a reset
+     * establishes the baseline instead of counting as a change. */
+    memset(&cfg->video, 0, sizeof(cfg->video));
+}
+
+/* ----------------------------------------------------------------
+ * Monotonic wall clock
+ *
+ * Same shape as test/tools/test_benchmark.c and test/harness/timing_probe.c,
+ * lifted here so tests that link only harness.c do not need a third copy.
+ * ---------------------------------------------------------------- */
+
+#ifdef __APPLE__
+static mach_timebase_info_data_t harness_timebase;
+
+uint64_t harness_time_now(void)
+{
+    return mach_absolute_time();
+}
+
+double harness_time_elapsed_sec(uint64_t start, uint64_t end)
+{
+    uint64_t elapsed = end - start;
+    if (harness_timebase.denom == 0)
+        mach_timebase_info(&harness_timebase);
+    /* Convert to nanoseconds, then seconds */
+    return (double)elapsed * (double)harness_timebase.numer /
+           (double)harness_timebase.denom / 1e9;
+}
+#else
+uint64_t harness_time_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+double harness_time_elapsed_sec(uint64_t start, uint64_t end)
+{
+    return (double)(end - start) / 1e9;
+}
+#endif
 
 void harness_report(harness_config *cfg, const harness_result *results, unsigned count)
 {

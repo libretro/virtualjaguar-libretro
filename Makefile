@@ -734,7 +734,7 @@ clean:
 		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
-		test/test_state_compat \
+		test/test_state_compat test/test_frontend_pacing \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
 
@@ -765,6 +765,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
+		test/test_frontend_pacing \
 		test/tools/test_memory_map
 	./test/test_cheat
 	./test/test_event_queue
@@ -833,6 +834,14 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@# committed in-tree, so a missing ROM is a broken checkout and the
 	@# test's exit 77 should stop the suite rather than read as a pass.
 	./test/test_state_compat ./$(TARGET) test/roms/yarc.j64
+	@# Frontend pacing / fast-forward contract: the core must not throttle
+	@# itself, and samples-per-frame must match the advertised fps and
+	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
+	@# bottleneck and fast-forward has nothing to give.  Unguarded for the
+	@# same reason as test_state_compat above: yarc.j64 is committed in-tree,
+	@# so a missing ROM means a broken checkout and should fail the suite
+	@# rather than silently read as a pass.
+	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
@@ -931,21 +940,21 @@ test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_eeprom_lifecycle: test/test_eeprom_lifecycle.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_eeprom_lifecycle.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_framebuffer_integrity: test/test_framebuffer_integrity.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_framebuffer_integrity.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 # Save-state backwards-compatibility regression guard.  Needs DACStateSave
 # from the wide test symbol set (DAC* in exports-test.list / link-test.T).
@@ -954,7 +963,14 @@ test/test_state_compat: test/test_state_compat.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_state_compat.c \
 		test/harness/harness.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/test_frontend_pacing: test/test_frontend_pacing.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_frontend_pacing.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
@@ -1031,7 +1047,7 @@ dsp-diag:
 		-o test/tools/test_dsp_audio_diag \
 		test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/dsp_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_dsp_audio_diag ./$(TARGET) "$(DSP_DIAG_ROM)" $(DSP_DIAG_FLAGS)
 
 # `make frame-timing` -- Per-frame timing diagnostic.  Builds core with
@@ -1051,7 +1067,7 @@ frame-timing:
 		-o test/tools/test_frame_timing \
 		test/tools/test_frame_timing.c \
 		test/harness/harness.c test/harness/timing_probe.c \
-		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
 
 print-%:
