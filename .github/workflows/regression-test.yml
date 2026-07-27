@@ -42,7 +42,7 @@ jobs:
     runs-on: ${{ matrix.config.os }}
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install ImageMagick
       run: |
@@ -54,7 +54,7 @@ jobs:
 
     - name: Cache miniretro
       id: cache-miniretro
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: miniretro-bin
         key: miniretro-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/regression-test.yml') }}

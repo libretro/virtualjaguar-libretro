@@ -135,7 +135,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install multilib
       if: matrix.config.multilib
@@ -285,7 +285,7 @@ jobs:
 
     - name: Cache pinned rcheevos E2E build
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: build/rcheevos-static
         key: rcheevos-e2e-fd57e900-${{ runner.os }}-${{ matrix.config.cc }}-${{ matrix.config.displayTargetName }}
@@ -313,7 +313,7 @@ jobs:
       matrix:
         arch: [x64, x86]
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -338,7 +338,6 @@ jobs:
           src\core\universalhdr.c src\jerry\wavetable.c ^
           src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
-          src\bios\jagstub1bios.c src\bios\jagstub2bios.c ^
           src\m68000\m68kinterface.c ^
           src\tom\blitter_simd_scalar.c ^
           src\tom\blitter_simd_sse2.c
@@ -350,7 +349,7 @@ jobs:
     container:
       image: vitasdk/vitasdk:latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Build
       run: make -j4 platform=vita
@@ -368,7 +367,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Build
       run: make -j4 platform=libnx
@@ -386,7 +385,7 @@ jobs:
     name: EditorConfig compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install editorconfig-checker
       run: |
@@ -406,7 +405,7 @@ jobs:
     # comment automatically.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install gcov + gcovr
@@ -418,7 +417,7 @@ jobs:
           bash scripts/gen-version-h.sh
           make coverage CC="gcc" CXX="g++"
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
@@ -435,7 +434,7 @@ jobs:
     # `false` to make sanitizer findings gate merges.
     continue-on-error: true
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - name: Install clang
       run: sudo apt-get update && sudo apt-get install -y clang
     - name: Build with ASAN + UBSAN
@@ -478,7 +477,7 @@ jobs:
     continue-on-error: true
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install clang-tidy + bear
@@ -509,7 +508,7 @@ jobs:
     name: cppcheck static analysis
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Install cppcheck
       run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -543,7 +542,7 @@ jobs:
     name: C89 compliance check
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Check for declaration-after-statement
       run: |

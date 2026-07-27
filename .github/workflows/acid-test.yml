@@ -34,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Need the full history if we want to inspect the baseline diff
           # against develop later, but shallow is fine for now.
@@ -42,7 +42,7 @@ jobs:
 
       - name: Cache vasm
         id: vasm-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /usr/local/bin/vasmm68k_mot
           # Bust the cache if anyone bumps prb28/vasm SHA.

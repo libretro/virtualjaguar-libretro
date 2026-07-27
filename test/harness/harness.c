@@ -417,7 +417,9 @@ bool harness_load_core(harness_config *cfg)
 
     /* Build-identity guard (mirrors test_framework.h): always print which
      * binary is under test; if VJ_EXPECT_BUILD is set, refuse a core whose
-     * version string does not contain it (stale/wrong-branch binary). */
+     * version string does not contain it (stale/wrong-branch binary).
+     * `make` can skip a rebuild when file mtimes are second-identical,
+     * which silently tests old code. */
     {
         void (*p_sysinfo)(struct retro_system_info *) =
             (void (*)(struct retro_system_info *))dlsym(cfg->core_handle,

@@ -50,8 +50,6 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/bios/jagbios.c \
 	$(CORE_DIR)/src/bios/jagcdbios.c \
 	$(CORE_DIR)/src/bios/jagdevcdbios.c \
-	$(CORE_DIR)/src/bios/jagstub1bios.c \
-	$(CORE_DIR)/src/bios/jagstub2bios.c \
 	$(CORE_DIR)/src/jerry/joystick.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \

@@ -28,7 +28,7 @@ The libretro buildbot uses MSVC on Windows. CI has a `c89-lint` job. Run `bash s
 - **No mid-block declarations.** All vars at top of block, before any statement. Most common violation.
 - `//` comments allowed (GNU89), but prefer `/* */` for new code.
 - No C99: no `for (int i…)`, no compound literals, no designated initializers, no VLAs.
-- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` and `src/bios/jagstub*bios.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
+- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
 
 ## Hardware model
 
@@ -85,7 +85,7 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 ### Key harnesses
 
-- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build)
+- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build). Baselines are **not committed** — a ROM with no baseline reports `NEW` and prints the `cp` command to create one, so the first run on a fresh clone establishes them locally rather than failing.
 - `test/tools/test_dsp_audio_diag.c` — DSP audio diagnostic (`make dsp-diag DSP_DIAG_ROM=path`); detects PC escape, bank init failures, silent LTXD
 - `test/tools/test_frame_timing.c` — per-frame timing diagnostic (`make frame-timing FRAME_TIMING_ROM=path`); reports halflines/cycles/VBlanks per frame, wall-clock speed ratio, anomaly detection. Use `--csv` for per-frame data, `--json` for machine output
 - `test/test_audio_clipping.c` — detects loud-broken audio (saturation density, run length, sustained loud RMS). Catches the Skyhammer / IS2 "saturated square wave" failure mode.
@@ -104,6 +104,22 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 ### Build-identity guard (stale-binary protection)
 
 Every harness that dlopens the core prints the binary's embedded version (`vX.Y.Z <gitrev>[-dirty]`, also logged by the core at `retro_init`). If `VJ_EXPECT_BUILD` is set (as `make test` and `cd_boot_matrix.sh` do automatically, via `scripts/build-id.sh`), a core whose version doesn't token-match fails the load loudly instead of silently testing stale code. When running harnesses by hand after edits, use `VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/...`. Note `make` can skip rebuilds when file mtimes are second-identical — the guard catches that class; `nm -gU <dylib> | grep <newsymbol>` is the manual fallback.
+
+### Build-identity guard (stale-binary protection)
+
+Every harness that dlopens the core prints the binary's embedded version
+(`vX.Y.Z <gitrev>[-dirty]`). If `VJ_EXPECT_BUILD` is set, a core whose version
+doesn't token-match fails the load loudly instead of silently testing stale code:
+
+```bash
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/tools/your_harness ...
+```
+
+`scripts/build-id.sh` prints the short git rev plus `-dirty` when tracked files
+are modified; `scripts/gen-version-h.sh` stamps that same string into the core,
+so the two sides always agree. This exists because `make` can skip a rebuild
+when file mtimes are second-identical — the guard catches that class. Manual
+fallback: `nm -gU <dylib> | grep <newsymbol>`.
 
 ### Performance / profiling
 
