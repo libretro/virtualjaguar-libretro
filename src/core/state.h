@@ -20,6 +20,10 @@ extern "C" {
 /* Save state format identifier and version */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   3
+/* Oldest layout retro_unserialize still accepts.  States between
+ * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
+ * after them (see DACStateLoad); STATE_VERSION is always what we write. */
+#define STATE_MIN_VERSION 2
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
@@ -73,7 +77,9 @@ size_t MTStateSave(uint8_t *buf);
 size_t MTStateLoad(const uint8_t *buf);
 
 size_t DACStateSave(uint8_t *buf);
-size_t DACStateLoad(const uint8_t *buf);
+/* stateVersion is the version read from the state header: fields added in
+ * later versions are skipped for older states (see STATE_MIN_VERSION). */
+size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion);
 
 size_t M68KStateSave(uint8_t *buf);
 size_t M68KStateLoad(const uint8_t *buf);
