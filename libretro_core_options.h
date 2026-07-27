@@ -93,14 +93,14 @@ struct retro_core_option_v2_category option_cats_us[] = {
 struct retro_core_option_v2_definition option_defs_us[] = {
    {
       "virtualjaguar_usefastblitter",
-      "Fast Blitter",
+      "Blitter",
       NULL,
-      "Use the faster blitter, it is older and less compatible, it will break some games.",
+      "Choose which blitter implementation to use. 'Accurate' is SIMD-accelerated (SSE2 on x86, NEON on ARM) and is the most compatible. 'Fast' is the older blitter; it trades accuracy for extra speed on low-end hardware and breaks some games.",
       NULL,
       NULL,
       {
-         { "disabled", NULL },
-         { "enabled",  NULL },
+         { "disabled", "Accurate" },
+         { "enabled",  "Fast" },
          { NULL, NULL },
       },
       "disabled"
@@ -124,12 +124,12 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios",
       "BIOS",
       NULL,
-      "Use the Jaguar BIOS, required for some games.",
+      "Choose which BIOS the core boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot without the real Jaguar BIOS ROM. 'Real' boots the built-in Jaguar BIOS ROM, which some games require. Neither setting needs an external BIOS file.",
       NULL,
       NULL,
       {
-         { "disabled", NULL },
-         { "enabled",  NULL },
+         { "disabled", "HLE" },
+         { "enabled",  "Real" },
          { NULL, NULL },
       },
       "disabled"

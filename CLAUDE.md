@@ -28,7 +28,7 @@ The libretro buildbot uses MSVC on Windows. CI has a `c89-lint` job. Run `bash s
 - **No mid-block declarations.** All vars at top of block, before any statement. Most common violation.
 - `//` comments allowed (GNU89), but prefer `/* */` for new code.
 - No C99: no `for (int i…)`, no compound literals, no designated initializers, no VLAs.
-- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` and `src/bios/jagstub*bios.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
+- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
 
 ## Hardware model
 
@@ -83,15 +83,43 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 
 ### Key harnesses
 
-- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build)
+- `test/regression_test.sh` — screenshot regression vs `test/baselines/` via miniretro (built from source on first run; `MINIRETRO_BIN` env to skip the build). Baselines are **not committed** — a ROM with no baseline reports `NEW` and prints the `cp` command to create one, so the first run on a fresh clone establishes them locally rather than failing.
 - `test/tools/test_dsp_audio_diag.c` — DSP audio diagnostic (`make dsp-diag DSP_DIAG_ROM=path`); detects PC escape, bank init failures, silent LTXD
 - `test/tools/test_frame_timing.c` — per-frame timing diagnostic (`make frame-timing FRAME_TIMING_ROM=path`); reports halflines/cycles/VBlanks per frame, wall-clock speed ratio, anomaly detection. Use `--csv` for per-frame data, `--json` for machine output
 - `test/test_audio_clipping.c` — detects loud-broken audio (saturation density, run length, sustained loud RMS). Catches the Skyhammer / IS2 "saturated square wave" failure mode.
 - `test/test_audio_presence.c` — counterpart to clipping: asserts audio is present in a known-good envelope (RMS within `[floor, ceiling]`, onset reached, no long zero runs). **Required to catch the silencing-regression class** where a "fix" drops RMS to zero — clipping passes but the game has no audio. Iron Soldier 1 baseline: RMS ~1175 on develop.
 - `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS`, `SET_SUPPORT_ACHIEVEMENTS=true`, descriptor layout
-- `test/tools/test_blitter_compare` — fast vs accurate blitter diff
+- `test/tools/test_blitter_compare` — fast vs accurate blitter diff. Not in default `make`; build manually:
+  `cc -O2 -Wall -std=c99 -I./libretro-common/include -o test/tools/test_blitter_compare test/tools/test_blitter_compare.c -ldl`
+  Usage: `<core.so|.dylib> <rom> [frames] --load-state <file> [--frame-window F L] [--cmd-filter MASK VAL] [--verbose-dump]` (note: `--load-state`, not `--savestate`).
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
 - `test/sram_test.sh` — SRAM round-trip
+
+### Test ABI and re-linking
+
+`make` links the production-slim ABI (`retro_*` only); `make test` needs the
+wide test ABI so harnesses can `dlsym` internals. Switching between them
+re-links automatically — the Makefile deletes the library when the mode
+changes, so `make` followed by `make TEST_EXPORTS=1 test` works. (It did not
+before v2.3.2: the library was newer than every object, nothing relinked, and
+the suite failed with `Missing: m68k_execute`.) After `make test`, the library
+in the tree carries the wide exports; plain `make` restores the shipped ABI.
+
+### Build-identity guard (stale-binary protection)
+
+Every harness that dlopens the core prints the binary's embedded version
+(`vX.Y.Z <gitrev>[-dirty]`). If `VJ_EXPECT_BUILD` is set, a core whose version
+doesn't token-match fails the load loudly instead of silently testing stale code:
+
+```bash
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/tools/your_harness ...
+```
+
+`scripts/build-id.sh` prints the short git rev plus `-dirty` when tracked files
+are modified; `scripts/gen-version-h.sh` stamps that same string into the core,
+so the two sides always agree. This exists because `make` can skip a rebuild
+when file mtimes are second-identical — the guard catches that class. Manual
+fallback: `nm -gU <dylib> | grep <newsymbol>`.
 
 ### Performance / profiling
 
@@ -121,6 +149,21 @@ Required runs before declaring an audio change done:
 3. **Verify in RetroArch on a real game.** Headless tests cannot tell "music plays" from "structured noise at the right RMS" or catch BIOS-mode crashes. Memory: PR #170's BIOS crash + HLE silence in Skyhammer were both invisible to the test suite.
 
 Do not relax thresholds in `test_audio_clipping.c` or `test_audio_presence.c` to make a PR pass. If a real fix makes a known-broken title legitimately quieter, that's a separate, deliberate baseline update — call it out in the commit, not as a side effect.
+
+### Acid suite CI gating
+
+The "Acid suite (linux x86_64)" job can show `conclusion: failure` for two unrelated reasons. Read the summary before assuming a real regression:
+
+- `make -C test/acid test` exits non-zero by design (returns FAIL count). The job uses `set +e` and gates on `check-baseline.py` instead. Real regression = `Regressions: N` (N>0) in `acid-summary.txt`.
+- Job conclusion `failure` with `OK: no regressions` in the step output = the artifact-upload step timed out (`Operation could not be completed within the specified time`). Re-run the job; no code action needed.
+
+## GitHub Copilot PR reviews
+
+- List unresolved threads: `gh api graphql -f query='{repository(owner:"libretro",name:"virtualjaguar-libretro"){pullRequest(number:N){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{id author{login} body}}}}}}}'`
+- Inline reply: `gh api -X POST repos/libretro/virtualjaguar-libretro/pulls/N/comments/<REST_ID>/replies -f body="..."` — parent is the REST `id` from `gh api .../comments`, NOT the GraphQL `PRRC_*` id (returns 404).
+- Resolve thread: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_..."}) { thread { isResolved } } }'`.
+- Trigger a Copilot review: `gh pr comment N --body "@copilot review"`. The `requested_reviewers` REST endpoint rejects `copilot-pull-request-reviewer` as "not a collaborator".
+- Always reply AND resolve when addressing feedback — leaving a thread open after a fix is noise for the next reviewer.
 
 ### Headless framebuffer caveat
 

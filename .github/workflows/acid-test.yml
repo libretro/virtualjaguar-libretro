@@ -8,8 +8,15 @@ name: Acid test suite
 # allowed (they document bugs); the baseline is updated alongside.
 
 on:
+  # No 'release/**' here: a release branch always has an open PR to master,
+  # so the pull_request trigger below already covers it.  Listing it in both
+  # ran the suite twice per commit -- the concurrency group keys on
+  # github.ref, which is refs/heads/release/X for the push and
+  # refs/pull/N/merge for the PR, so the duplicate was never deduplicated.
+  # This matches c-cpp.yml and regression-test.yml, which push on the
+  # integration branches only.
   push:
-    branches: [develop, master, 'release/**']
+    branches: [develop, master]
   pull_request:
     branches: [develop, master]
     paths:
@@ -24,7 +31,10 @@ on:
 
 concurrency:
   group: acid-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs, but let pushes to develop/master finish so
+  # there is always a green-or-red acid record on the integration branches
+  # (same rationale as c-cpp.yml).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   acid:
@@ -34,7 +44,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Need the full history if we want to inspect the baseline diff
           # against develop later, but shallow is fine for now.
@@ -42,7 +52,7 @@ jobs:
 
       - name: Cache vasm
         id: vasm-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /usr/local/bin/vasmm68k_mot
           # Bust the cache if anyone bumps prb28/vasm SHA.

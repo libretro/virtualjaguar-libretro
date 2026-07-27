@@ -28,6 +28,16 @@ PRs targeting `master` directly trigger a friendly comment from `.github/workflo
 ### 1. Pre-tag checklist
 
 - `make` (default) builds clean, `make test` is green, `bash scripts/c89-lint.sh` passes.
+- The **audio pair is run by hand against the private ROMs**. `make test` runs
+  `test_audio_clipping` / `test_audio_presence` only if the ROMs are present and
+  prints `SKIP` otherwise — and still exits 0, so on a machine without them a
+  silencing regression passes unnoticed. Iron Soldier 1 presence should sit near
+  RMS 1175 (envelope 200–25000); Skyhammer and Iron Soldier 2 should still be
+  EXPECTED-FAIL on clipping, i.e. loud-broken rather than newly silent.
+- The acid gate is `python3 test/acid/scripts/check-baseline.py <results.log>
+  test/acid/BASELINE.txt` reporting `Regressions: 0`. `make -C test/acid test`
+  exits non-zero by design (it returns the FAIL count), so its exit status is
+  not the gate.
 - CI on the release PR is green except `claude-review` (non-blocking; AI review service refuses diffs > 20k lines).
 - `docs/WHATSNEW` v`X.Y.Z` section is up-to-date.
 - `docs/RELEASE_NOTES_vX.Y.Z.md` exists. (See below for how to generate one.)

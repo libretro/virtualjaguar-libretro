@@ -43,41 +43,48 @@ Source: `src/tom/blitter.c`
 
 | Bits | Name | Description |
 |------|------|-------------|
-| 0-1 | PITCH | Pixel pitch: 0=1 phrase, 1=2 phrases, 2=4, 3=8 |
+| 0-1 | PITCH | Distance between successive phrases of pixel data: 0=contiguous (distance 1), 1=1 phrase gap (distance 2), 2=3 phrase gaps (distance 4), 3=**2** phrase gaps (distance 3 — special case, for double-buffered Z displays / interleaved buffers) |
 | 3-5 | PIXEL | Pixel size: 0=1bpp, 1=2bpp, 2=4bpp, 3=8bpp, 4=16bpp, 5=32bpp |
 | 6-8 | ZOFFS | Z data offset within phrase |
-| 9-14 | WIDTH | Window width in 6-bit floating point |
-| 16-17 | XADDCTL | X add control: 0=phrase, 1=pixel, 2=+0 (no change), 3=+0 |
-| 18 | YADDCTL | Y add control: 0=+0, 1=+1 |
-| 19 | XSIGNSUB | X addition is subtraction (for right-to-left) |
+| 9-14 | WIDTH | Window width in 6-bit floating point (see below) |
+| 16-17 | XADDCTL | X add control: 0=add phrase width, truncate to phrase boundary (sets phrase mode), 1=add pixel size (+1), 2=add zero, 3=add the increment |
+| 18 | YADDCTL | Y add control: 0=+0, 1=+1 (overridden by X control in add-increment mode) |
+| 19 | XSIGNSUB | X addition is subtraction (for right-to-left; only valid with X add-pixel-size mode) |
 | 20 | YSIGNSUB | Y addition is subtraction (for bottom-to-top) |
 
 ### Window Width Encoding (6-bit Floating Point)
 
-The WIDTH field in A1_FLAGS/A2_FLAGS uses a custom 6-bit float:
-- Bits [2:0] = mantissa (3 bits)
-- Bits [5:3] = exponent (3 bits)
-- Implicit leading 1 bit in mantissa
+The WIDTH field in A1_FLAGS/A2_FLAGS is a 6-bit float giving the window
+width in pixels (JTRM v8 pp. 66, 70):
+- Bits 14-11 = exponent E3..E0 (4 bits, unsigned; valid values 0-11)
+- Bits 10-9 = stored mantissa M1 M0 (2 bits)
+- The mantissa is effectively 3 bits: its top bit is implicit 1, with the
+  binary point after it — width = (1.M1M0)₂ × 2^E
 
 ```
-value = (0b1000 | mantissa) << exponent
+width_pixels = ((4 | M) << E) >> 2        (M = 2 stored bits, E = 4-bit exp)
 
-Examples:
-  WIDTH=0b000_000: (8|0)<<0 = 8
-  WIDTH=0b001_000: (8|0)<<1 = 16
-  WIDTH=0b001_100: (8|4)<<1 = 24
-  WIDTH=0b010_000: (8|0)<<2 = 32
-  WIDTH=0b010_100: (8|4)<<2 = 48
-  WIDTH=0b011_000: (8|0)<<3 = 64
-  WIDTH=0b100_000: (8|0)<<4 = 128
-  WIDTH=0b101_000: (8|0)<<5 = 256
-  WIDTH=0b110_000: (8|0)<<6 = 512
-  WIDTH=0b111_000: (8|0)<<7 = 1024
+Field layout (within A1_FLAGS):
+  Bit:  14  13  12  11  10   9
+        E3  E2  E1  E0  M1  M0
+
+Examples (JTRM's own: 640 = 1.01 x 2^9 -> E=1001, M=01 -> 100101):
+  E=3  M=00 (001100):  1.00 x 2^3  = 8
+  E=5  M=00 (010100):  1.00 x 2^5  = 32
+  E=6  M=10 (011010):  1.10 x 2^6  = 96
+  E=8  M=00 (100000):  1.00 x 2^8  = 256
+  E=8  M=01 (100001):  1.01 x 2^8  = 320
+  E=9  M=01 (100101):  1.01 x 2^9  = 640
+  E=10 M=00 (101000):  1.00 x 2^10 = 1024
 ```
 
-Not all widths are representable. Widths must be of the form (8+m)*2^e where m is 0-7.
+Only widths of the form (4+M)×2^(E-2) — i.e. 1, 1.25, 1.5, or 1.75 times a
+power of two — are representable, and the width must give a whole number of
+phrases in the current pixel size.
 
-Source: `src/tom/blitter.c` (search for `blitter_scanline_width`)
+Source: JTRM v8 pp. 66, 70-71 (`docs/atari-jaguar-1999/Technical Reference
+v8.pdf`); implementation `src/tom/blitter.c` (fast path `((0x04|m)<<e)>>2`,
+accurate path `addrgen_ya`).
 
 ## B_CMD Command Register ($F02238)
 

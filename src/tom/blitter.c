@@ -496,8 +496,22 @@ void blitter_generic(uint32_t cmd)
 
                if (!CMPDST)
                {
-                  if (srcdata == 0)
-                     inhibit = 1;//*/
+                  /* DCOMPEN+!CMPDST source transparency: inhibit where the
+                   * source pixel is 0 (pixel transparency) OR equals PATTERNDATA
+                   * (the DATACOMP colour-key).  The fast path historically
+                   * tested only "== 0"; adding the PATD test matches the
+                   * accurate gate-level comparator (dcomp = patd ^ srcd) and the
+                   * MiSTer Jaguar core comp_ctrl.v
+                   * (https://github.com/MiSTer-devel/Jaguar_MiSTer), so blits
+                   * keying transparency on a non-zero colour render correctly.
+                   * BCOMPEN keeps its single-bit "transparent on 0" test. */
+                  if (BCOMPEN)
+                  {
+                     if (srcdata == 0)
+                        inhibit = 1;
+                  }
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
+                     inhibit = 1;
                }
                else
                {
@@ -658,7 +672,14 @@ void blitter_generic(uint32_t cmd)
 
                if (!CMPDST)
                {
-                  if (srcdata == 0)
+                  /* DCOMPEN zero-transparency + PATTERNDATA colour-key (see the
+                   * A1<-A2 branch above); source channel here is A1. */
+                  if (BCOMPEN)
+                  {
+                     if (srcdata == 0)
+                        inhibit = 1;
+                  }
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
                      inhibit = 1;
                }
                else
@@ -1251,11 +1272,25 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
    uint8_t inhibit_all;   /* combined per-byte inhibit before mode gating */
    uint8_t gated;          /* after phrase_mode / winhibit gating */
 
-   /* nowrite and winhibit (pixel-mode write inhibit) */
+   /* nowrite and winhibit (pixel-mode write inhibit)
+    *
+    * Z-comparator lane in pixel-mode 16bpp: the fast blitter reads
+    * source/dest Z via `REG(SRCZINT|DSTZ) & 0xFFFF`, which is bytes 2-3
+    * of the 8-byte register (low 16 of the high 32 half).  In the
+    * GET64-shift lane convention here, that is lane 2 -- so
+    * `zcomp & 0x04` matches fast.  Previously accurate used `zcomp & 0x01`
+    * (lane 0 = bytes 6-7), which produced visibly wrong z-inhibit
+    * decisions in BSG sprite blits (cmd=09900F71 / 09800F41 families:
+    * pixel-mode 16bpp DCOMPEN sprites with constant source Z).
+    *
+    * This is a match-fast pragmatic fix; the JTRM-pure behaviour would
+    * select the lane based on the destination pixel's position within a
+    * phrase, which neither path currently does.  See #189 for the full
+    * divergence writeup. */
    winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
+      || ((zcomp & 0x04) && !phrase_mode && (pixsize == 4));
    *nowrite = winhibit && !bkgwren;
 
    /* 16-bit pixel mode flag */
@@ -1396,6 +1431,56 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
 	*dcomp = blitter_simd_ops.dcomp(*patd, srcd, dstd, cmpdst);
+
+	/* Source-pixel transparency for DCOMPEN+!CMPDST.
+	 *
+	 * The fast blitter's DCOMPEN+!CMPDST path inhibits writes when the
+	 * source pixel is zero (pixel-level transparency, what JTRM calls
+	 * DCOMPEN) OR when it equals PATTERNDATA (the DATACOMP colour-key) --
+	 * see the two !CMPDST branches earlier in blitter_generic.
+	 *
+	 * The gate-level rewrite of dcomp above (scalar_dcomp & SIMD
+	 * variants) only checks byte-equality against PATD, which is the
+	 * documented DATACOMP module behaviour but is missing the pixel
+	 * transparency check the fast path performs.  For sprite blits
+	 * with non-zero PATD and zero source pixels (BSG cmd=0x49802609
+	 * family, ~120 blits / 3.76% residual divergence on develop),
+	 * accurate writes zeros over the existing destination while fast
+	 * preserves it via the source-zero inhibit.
+	 *
+	 * OR the per-byte "source byte == 0" mask into dcomp so the
+	 * existing dcomp_pair (16bpp pair AND) and pixel-mode winhibit
+	 * paths in COMP_CTRL fire when the source pixel is fully zero.
+	 * Augment-only (no replacement) so cases where the original
+	 * byte-equality already matched (PATD-based pattern stamping)
+	 * continue to inhibit identically. */
+	/* Gated to 8bpp (pixsize==3) and 16bpp (pixsize==4) only.  In those
+	 * modes the per-byte zero mask matches fast's per-pixel zero check:
+	 * 8bpp = one byte per pixel (1:1); 16bpp is reconciled by the
+	 * dcomp_pair adjacent-byte AND inside COMP_CTRL.
+	 *
+	 * For 32bpp (pixsize==5) COMP_CTRL has no 4-byte AND, so OR'ing the
+	 * per-byte mask here would inhibit a 32-bit pixel whenever any one
+	 * of its bytes is zero, which differs from fast's "full 32-bit
+	 * srcdata == 0" check.  No failing testcase currently exercises
+	 * 32bpp DCOMPEN; gating out keeps semantics conservative and
+	 * matches fast for the modes BSG and other failing titles use. */
+	if (dcompen && !cmpdst && (pixsize == 3 || pixsize == 4))
+	{
+		/* Per-byte "byte is 0" mask.  Compact loop over the 8 bytes of
+		 * srcd.  (A SWAR byte-zero bit-trick would be tempting but
+		 * `(s - 0x01...01) & ~s & 0x80...80` fails on cross-byte
+		 * borrow -- e.g. s=0x0001_0000 spuriously flags byte 2 as zero
+		 * because the borrow chain propagates the wrong way.  The loop
+		 * is honest and compiles to predictable code on every target.) */
+		uint64_t s = srcd;
+		uint8_t zero_mask = 0;
+		unsigned i;
+		for (i = 0; i < 8; i++)
+			if (((s >> (i * 8)) & 0xFFu) == 0)
+				zero_mask |= (uint8_t)(1u << i);
+		*dcomp |= zero_mask;
+	}
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Zed comparator for Z-buffer operations
@@ -1948,12 +2033,24 @@ void BlitterMidsummer2(void)
          uint64_t srcz = 0;
          bool winhibit;
          uint32_t a1_ya_cached, a2_ya_cached;
+         /* CLIP_A1 must check the a1 position THAT WAS USED for the
+          * sread that loaded srcd, not the post-step a1.  The state
+          * machine steps a1 (via srca_addi) during the same cycle as
+          * sread but BEFORE the dwrite that consumes srcd, so by the
+          * time we evaluate the clip check at dwrite, a1 is one step
+          * ahead.  Cache a1_x/a1_y at sread time and use the cached
+          * values for the clip test below.  Matches fast, which checks
+          * CLIP_A1 against pre-step a1.  Fixes BSG cmd=0x09800F41
+          * family per-pixel divergence at row-edge positions where the
+          * fractional source X drifts across 0 mid-row. */
+         int16_t a1_x_at_sread = a1_x;
+         int16_t a1_y_at_sread = a1_y;
 
          indone = false;
 
          /* Precompute y*width row offsets (invariant when y unchanged) */
          a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
-         a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+         a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
 
          /* Precompute address constants (invariant during inner loop) */
          a1_xconst = 6 - a1_pixsize;
@@ -2236,7 +2333,7 @@ void BlitterMidsummer2(void)
                   if (addq_y != a2_y)
                   {
                      a2_y = addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
 
@@ -2523,7 +2620,7 @@ void BlitterMidsummer2(void)
                   if (fc_addq_y != a2_y)
                   {
                      a2_y = fc_addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
 
@@ -2546,7 +2643,7 @@ void BlitterMidsummer2(void)
                   if (fc_addq_y != a2_y)
                   {
                      a2_y = fc_addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
                else
@@ -2792,6 +2889,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
+               /* Snapshot pre-step a1 for the CLIP_A1 check at dwrite
+                * time -- see a1_x_at_sread declaration. */
+               a1_x_at_sread = a1_x;
+               a1_y_at_sread = a1_y;
                //uint32_t srcAddr, pixAddr;
                //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
                //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
@@ -2830,6 +2931,10 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
+               /* Snapshot pre-step a1 for the CLIP_A1 check at dwrite
+                * time -- see a1_x_at_sread declaration. */
+               a1_x_at_sread = a1_x;
+               a1_y_at_sread = a1_y;
                srcd2 = srcd1;
                srcd1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
@@ -3113,10 +3218,24 @@ A1_xcomp	:= MAG_15 (a1xgr, a1xeq, a1xlt, a1_x{0..14}, a1_win_x{0..14});
 A1_ycomp	:= MAG_15 (a1ygr, a1yeq, a1ylt, a1_y{0..14}, a1_win_y{0..14});
 A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 */
-               //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
-               //      Actually, seems to be related to phrase mode writes...
-               //      Or is it? Could be related to non-15-bit compares as above?
-               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+               /* Check CLIP_A1 against the pre-step a1 position (the one
+                * used for the sread that loaded srcd), not the post-step
+                * a1.  See a1_x_at_sread declaration above for the
+                * rationale.  This matches fast's CLIP_A1 timing.
+                *
+                * When srcen/srcenx are both clear, no sread/sreadx ever
+                * fires to refresh the cache, but a1 can still step each
+                * iteration via dsta_addi (when !dsta2).  Refresh from
+                * live a1_x/a1_y at the top of dwrite -- the step for
+                * this cycle hasn't fired yet, so live a1 == pre-step. */
+               if (!srcen && !srcenx)
+               {
+                  a1_x_at_sread = a1_x;
+                  a1_y_at_sread = a1_y;
+               }
+               if (clip_a1 && ((a1_x_at_sread & 0x8000) || (a1_y_at_sread & 0x8000)
+                            || (a1_x_at_sread >= (int16_t)a1_win_x)
+                            || (a1_y_at_sread >= (int16_t)a1_win_y)))
                   winhibit = true;
 
 
@@ -3233,7 +3352,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                if (addq_y != a2_y)
                {
                   a2_y = addq_y;
-                  a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                }
             }
 #ifdef BENCH_PROFILE
@@ -3285,6 +3404,44 @@ fc_inner_done:
       }
    }
 
+   /* Per JTRM: "the X pointer will be left pointing at the start of the
+    * first phrase not written by the blit."  The fast blitter applies its
+    * outer-loop step unconditionally on every iteration including the
+    * last, leaving the pointer past the last write.  The Midsummer state
+    * machine here only applies the step between inner iterations (a1update
+    * fires when transitioning from one inner to the next), so after
+    * n_lines inner passes it has performed only n_lines-1 steps.  Mirror
+    * fast's "one closing step" so the writeback values match between
+    * modes and chained-blit games (e.g. Battle Sphere Gold sprite
+    * pipeline) see consistent A1_PIXEL/A2_PIXEL between blits. */
+   {
+      uint16_t fcx_carry = 0, fcy_carry = 0;
+      if (upda1f)
+      {
+         uint32_t fxt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
+         uint32_t fyt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
+         fcx_carry = (uint16_t)(fxt >> 16);
+         fcy_carry = (uint16_t)(fyt >> 16);
+         a1_frac_x = (uint16_t)(fxt & 0xFFFF);
+         a1_frac_y = (uint16_t)(fyt & 0xFFFF);
+      }
+      /* Match the in-loop a1update gate at line 1862-1864: the integer
+       * step fires whenever a1fupdate fires OR (upda1 && !upda1f), i.e.,
+       * whenever (upda1 || upda1f).  Gating only on upda1 would diverge
+       * by one a1_step on every iteration in the UPDA1F=1, UPDA1=0 case
+       * (rotated/scaled blits without integer-pixel writeback). */
+      if (upda1 || upda1f)
+      {
+         a1_x += a1_step_x + (int16_t)fcx_carry;
+         a1_y += a1_step_y + (int16_t)fcy_carry;
+      }
+      if (upda2)
+      {
+         a2_x += a2_step_x;
+         a2_y += a2_step_y;
+      }
+   }
+
    // Write values back to registers (in real blitter, these are continuously updated)
    SET16(blitter_ram, A1_PIXEL + 2, a1_x);
    SET16(blitter_ram, A1_PIXEL + 0, a1_y);
@@ -3325,7 +3482,18 @@ static void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset,
 	uint32_t a1_ya_pre, uint32_t a2_ya_pre)
 {
-	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
+	/* A2 texture-wrap mask: when A2_FLAGS bit 15 is set, the A2 source X
+	 * coordinate is wrapped by the A2_MASK X modulo (low 16 bits) for ADDRESS
+	 * generation only -- the raw accumulator a2_x is never altered.  Matches
+	 * the MiSTer Jaguar core address.v (a2_xm = a2_xr & a2_mask_x,
+	 * https://github.com/MiSTer-devel/Jaguar_MiSTer) and the fast blitter's
+	 * integer-part masking.  Gated on bit 15, so channels that do not enable
+	 * wrapping are bit-for-bit unchanged.  Single ternary keeps it C89-clean. */
+	uint16_t x = (gena2
+		? (uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80)
+			? (a2_x & GET16(blitter_ram, A2_MASK + 2))
+			: a2_x)
+		: a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
 	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
 	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
 	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;/*Only upper 21 bits are passed around the bus? Seems like it...*/
