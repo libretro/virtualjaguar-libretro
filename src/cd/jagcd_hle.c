@@ -306,6 +306,16 @@ static void HLEInstallJumpTable(void)
 /* The 'ATRI' header run is 16 longs; 3 is the established sync-block
  * threshold elsewhere in this file. */
 #define HLE_ALIGN_ATRI_RUN 3u
+/* Generic mastered sync marker: the game's buffer scanners ($E980 /
+ * $816A / $6BC0 in Myst) all demand exactly 16 consecutive longs of a
+ * directory-supplied sentinel; require the full 16 when we don't know
+ * the value. */
+#define HLE_ALIGN_GENERIC_RUN 16u
+/* Myst-class directory reads seek to (file start - 8) sectors, so the
+ * marker run that opens the file sits 8 sectors after the requested
+ * LBA (verified on every decoded Myst read: 20426->20434, 20519->20527,
+ * 21110->21118, 21195->21203, 25056->25064). */
+#define HLE_ALIGN_MARKER_SECTOR 8u
 
 /* Count consecutive repeats of pat[0..3] at sec[i..]. */
 static uint32_t HLEPatRunLen(const uint8_t *sec, uint32_t i, const uint8_t *pat)
@@ -372,6 +382,83 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                     what, run, startLBA + s, i, relOff, mis,
                     (mis == 2) ? 2u : 0u);
             return (mis == 2) ? 2u : 0u;
+         }
+      }
+   }
+
+   /* Pass 2 — generic marker hunt for reads whose register D1 is NOT
+    * the sentinel (Myst's movie/JSND loaders leave D1 holding stale
+    * offset math; the real pattern lives only in the game's directory /
+    * chunk tables — '_C00', '_C01', '0003', '))))', '$$$$', ...).  The
+    * mastered marker run opens the file at seek+HLE_ALIGN_MARKER_SECTOR,
+    * so only sectors near there are trusted: payload elsewhere is full
+    * of lookalike byte-fill runs at arbitrary phases (a far decoy run
+    * mis-aligned Myst's 20519 chunk read before this was narrowed).
+    * Two marker shapes are accepted:
+    *   - a run of >=16 identical longwords whose two 16-bit halves
+    *     differ ('_C00'): unambiguous phase at any position;
+    *   - a byte-fill region of >=64 identical bytes ('$$$$', '))))',
+    *     '@@@@'): phase comes from the region START, so the byte before
+    *     it must be visible and different.
+    * All observed markers are ASCII labels written by the mastering
+    * tool; requiring printable bytes rejects the byte-fill runs that
+    * dithered audio payload produces at every phase ($01/$7F/$81 runs
+    * around Myst's LBA 20895 chunk). */
+   {
+      static const int8_t nearby[5] = { 0, -1, 1, -2, 2 };
+      uint32_t n;
+      for (n = 0; n < 5; n++)
+      {
+         uint32_t s2 = HLE_ALIGN_MARKER_SECTOR + (int32_t)nearby[n];
+
+         if (!CDIntfReadBlock(startLBA + s2, sec))
+            continue;
+
+         for (i = 0; i + 1 < 2352; i += 2)
+         {
+            uint8_t tmp = sec[i];
+            sec[i]     = sec[i + 1];
+            sec[i + 1] = tmp;
+         }
+
+         for (i = 1; i + 4 <= 2352; i++)
+         {
+            const char *what = NULL;
+            const uint8_t *gp = sec + i;
+            bool printable = (gp[0] >= 0x20 && gp[0] <= 0x7E &&
+                              gp[1] >= 0x20 && gp[1] <= 0x7E &&
+                              gp[2] >= 0x20 && gp[2] <= 0x7E &&
+                              gp[3] >= 0x20 && gp[3] <= 0x7E);
+            bool byteFill = (gp[0] == gp[1] && gp[1] == gp[2] &&
+                             gp[2] == gp[3]);
+
+            if (!printable)
+               continue;
+            if (byteFill)
+            {
+               if (sec[i - 1] != gp[0])
+               {
+                  run = HLEPatRunLen(sec, i, gp);
+                  if (run >= HLE_ALIGN_GENERIC_RUN)
+                     what = "generic byte-fill marker";
+               }
+            }
+            else if (!(gp[0] == gp[2] && gp[1] == gp[3]))
+            {
+               run = HLEPatRunLen(sec, i, gp);
+               if (run >= HLE_ALIGN_GENERIC_RUN)
+                  what = "generic marker";
+            }
+            if (what)
+            {
+               uint32_t relOff = s2 * 2352 + i;
+               uint32_t mis    = (destAddr + relOff) & 3;
+               HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
+                       "(stream off %u, dest misalign %u) — shift %u\n",
+                       what, run, startLBA + s2, i, relOff, mis,
+                       (mis == 2) ? 2u : 0u);
+               return (mis == 2) ? 2u : 0u;
+            }
          }
       }
    }
@@ -604,24 +691,6 @@ static void HLEHandleCDRead(void)
       }
    }
 
-   /* Streaming-data shortcut: when D1's top 16 bits are zero, the value is
-    * almost certainly a transfer ID / byte counter (e.g. Space Ace passes
-    * D1=$00000001), not a 4-byte sync pattern.  A scan would find millions
-    * of false-positive `\0\0\0\x01` matches across the disc and never accept
-    * a real sync block, then fall back to "read raw" anyway — but with 4 M
-    * log lines of churn first and several seconds of CPU.  Skip the scan and
-    * stream raw from the requested (possibly redirected) startLBA. */
-   if ((d1 >> 16) == 0)
-   {
-      HLE_LOG("CD_read: D1=$%08X is a counter/ID — skipping sentinel scan, "
-              "streaming raw from LBA %u\n", d1, startLBA);
-      scanLBA = startLBA;
-      scanOff = 0;
-      foundSentinel = true;  /* short-circuit the scan loop */
-      phase_starts[0] = startLBA;
-      goto hle_cd_read_post_scan;
-   }
-
    /* Non-match ISR mode: the game inited with CD_initf ($3066) rather
     * than CD_initm ($3060).  The real CD_read checks exactly this flag
     * (btst #7,$3072 at $3670) — with it CLEAR it never arms the BUTCH
@@ -646,6 +715,28 @@ static void HLEHandleCDRead(void)
       HLE_LOG("CD_read: non-match ISR mode ($3072=$%02X, D1=$%08X A1=$%06X) "
               "— streaming raw from LBA %u offset %u\n",
               jaguarMainRAM[0x3072], d1, a1, startLBA, scanOff);
+      foundSentinel = true;  /* short-circuit the scan loop */
+      phase_starts[0] = startLBA;
+      goto hle_cd_read_post_scan;
+   }
+
+   /* Streaming-data shortcut (match mode only): when D1's top 16 bits
+    * are zero, the value is almost certainly a transfer ID / byte
+    * counter (e.g. Space Ace passes D1=$00000001), not a 4-byte sync
+    * pattern.  A scan would find millions of false-positive
+    * `\0\0\0\x01` matches across the disc and never accept a real sync
+    * block, then fall back to "read raw" anyway — but with 4 M log
+    * lines of churn first and several seconds of CPU.  Skip the scan
+    * and stream raw from the requested (possibly redirected) startLBA.
+    * (Non-match ISR mode never gets here: a small D1 there is stale
+    * register noise and the read still needs phase alignment to the
+    * mastered sync run — Myst's movie/JSND loads, handled above.) */
+   if ((d1 >> 16) == 0)
+   {
+      HLE_LOG("CD_read: D1=$%08X is a counter/ID — skipping sentinel scan, "
+              "streaming raw from LBA %u\n", d1, startLBA);
+      scanLBA = startLBA;
+      scanOff = 0;
       foundSentinel = true;  /* short-circuit the scan loop */
       phase_starts[0] = startLBA;
       goto hle_cd_read_post_scan;
