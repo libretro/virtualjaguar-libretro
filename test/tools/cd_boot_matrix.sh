@@ -339,6 +339,19 @@ echo "=== CD boot matrix: $FRAMES frames/title/mode, ${TIMEOUT_SECS}s wall-clock
 # title x mode rows are skipped -- see run_title). CD_MATRIX_MAX_RUNS=N
 # additionally caps how many NEW runs a single invocation performs, so a
 # long sweep can be chunked across several short invocations.
+#
+# STALE-ROW GUARD: each row is stamped with the core build id
+# (`<!-- build:<rev> -->`, hidden in rendered markdown).  On resume, a row
+# is skipped ONLY if its stamp matches the current build; rows recorded by
+# a different build (or unstamped legacy rows) are re-run and replaced in
+# place.  Without this, reusing an OUT file that predates the current build
+# silently resurrects ancient results as if they were fresh -- the exact
+# mechanism behind the phantom "intermittent" Battle Morph bios
+# `? (pc_escape)` rows (a July-era `final_pc=$8FBFB758` FAIL row,
+# byte-identical across "different" sweeps, carried forward by resume while
+# every actual harness run of that title passed).  Row matching is also
+# scoped to the primary results table, so rows quoted in prose notes can
+# never satisfy the resume guard.
 MAX_RUNS="${CD_MATRIX_MAX_RUNS:-0}"   # 0 = unlimited
 RUNS_DONE=0
 
@@ -374,16 +387,20 @@ else
     printf '`CD_MATRIX_LOGDIR` (raw per-run logs, default a fresh `mktemp -d`; pass a\n'
     printf 'fixed dir to keep logs across chunked invocations), and\n'
     printf '`CD_MATRIX_MAX_RUNS` (max NEW runs per invocation, default 0 = unlimited).\n\n'
-    printf 'Rows append incrementally with a resume guard: already-recorded title x mode\n'
-    printf 'combos are skipped, so an interrupted sweep resumes where it left off. For\n'
+    printf 'Rows append incrementally with a resume guard: title x mode combos already\n'
+    printf 'recorded **by the same core build** (each row carries a hidden\n'
+    printf '`<!-- build:<rev> -->` stamp) are skipped, so an interrupted sweep resumes\n'
+    printf 'where it left off; rows recorded by a different build, or unstamped legacy\n'
+    printf 'rows, are re-run and replaced in place rather than silently reused. For\n'
     printf 'long sweeps (or agent sessions with per-command time limits), run chunked:\n\n'
     printf '```bash\n'
     printf '# ~3 runs x <=120s wall each per invocation; repeat until every line\n'
     printf '# reports "already recorded, skipping":\n'
     printf 'CD_MATRIX_MAX_RUNS=3 CD_MATRIX_LOGDIR=/tmp/cdmx_logs bash test/tools/cd_boot_matrix.sh\n'
     printf '```\n\n'
-    printf 'To force a re-run of specific rows, delete those table lines from the output\n'
-    printf 'file first -- the resume guard re-runs only missing title x mode combos.\n\n'
+    printf 'To force a re-run of specific rows on the SAME build, delete those table\n'
+    printf 'lines from the output file first -- the resume guard re-runs missing and\n'
+    printf 'stale-build title x mode combos only.\n\n'
     printf '## Legend\n\n'
     printf '**Stage** (finest level the harness evidence supports; `?` = insufficient\n'
     printf 'evidence to classify further, never fabricated):\n\n'
@@ -408,21 +425,59 @@ else
 } > "$OUT"
 fi
 
+# Locate a title x mode row inside the PRIMARY results table only (the
+# contiguous block of '|' lines following the first '| Title | Mode |'
+# header).  Prints the 1-based line number of the first match, or nothing.
+# Scoping to the primary table keeps rows quoted in prose/notes sections
+# (the committed baseline doc carries several) from satisfying the resume
+# guard.
+find_row_lineno() {
+    # usage: find_row_lineno <title> <mode>
+    awk -v t="$1" -v m="$2" '
+        BEGIN { needle = "| " t " | " m " |"; intab = 0 }
+        !intab && index($0, "| Title | Mode |") == 1 { intab = 1; next }
+        intab && /^\|---/ { next }
+        intab && !/^\|/ { exit }
+        intab && index($0, needle) == 1 { print NR; exit }
+    ' "$OUT" 2>/dev/null
+}
+
 run_title() {
     # usage: run_title <display-title> <mode: hle|bios> <ext: cue|cdi|iso>
     title="$1"; mode="$2"; ext="$3"
 
-    # Resume guard: skip title x mode combos already recorded in $OUT.
-    if grep -qF "| $title | $mode |" "$OUT" 2>/dev/null; then
-        echo "  [$mode] $title -- already recorded, skipping" >&2
-        return 0
+    # Resume guard: skip a title x mode combo already recorded in $OUT --
+    # but ONLY if it was recorded by the core build we are testing now.
+    # A row stamped by a different build (or an unstamped legacy row) is
+    # stale evidence: re-run it and replace the row in place.
+    row_lineno="$(find_row_lineno "$title" "$mode")"
+    if [ -n "$row_lineno" ]; then
+        row_line="$(sed -n "${row_lineno}p" "$OUT")"
+        if [ -z "$VJ_EXPECT_BUILD" ]; then
+            # No build identity available (no git?): can't tell fresh from
+            # stale -- keep legacy skip behavior, but say so.
+            echo "  [$mode] $title -- already recorded, skipping (build id unavailable; provenance unverified)" >&2
+            return 0
+        fi
+        if printf '%s' "$row_line" | grep -qF "<!-- build:$VJ_EXPECT_BUILD -->"; then
+            echo "  [$mode] $title -- already recorded by this build, skipping" >&2
+            return 0
+        fi
+        row_old_build="$(printf '%s' "$row_line" \
+            | grep -oE '<!-- build:[^ ]+ -->' | head -1 \
+            | sed -E 's/<!-- build:([^ ]+) -->/\1/')"
+        [ -z "$row_old_build" ] && row_old_build="unstamped"
     fi
     # Chunk limit: stop starting new runs once CD_MATRIX_MAX_RUNS is reached.
     if [ "$MAX_RUNS" -gt 0 ] && [ "$RUNS_DONE" -ge "$MAX_RUNS" ]; then
         return 0
     fi
     RUNS_DONE=$((RUNS_DONE + 1))
-    echo "  [$mode] $title ..." >&2
+    if [ -n "$row_lineno" ]; then
+        echo "  [$mode] $title -- stale row (recorded by '$row_old_build', current '$VJ_EXPECT_BUILD'); re-running" >&2
+    else
+        echo "  [$mode] $title ..." >&2
+    fi
     run_one "$mode" "$title" "$ext"
     log="$RUN_LOG"; rc="$RUN_RC"
 
@@ -452,10 +507,27 @@ run_title() {
     if grep -aqE '^\s*\[FAIL\]' "$log" 2>/dev/null; then score="0/1"; fi
     if [ "$rc" -eq 124 ] || grep -aq '\[CRASH\]' "$log" 2>/dev/null; then score="0/1"; fi
 
-    printf '| %s | %s | %s | %s | %s | %s |\n' \
+    # Build-id stamp (stale-row guard; see resume comment above).  Lives
+    # inside the last cell as an HTML comment so rendered markdown is
+    # unchanged.
+    stamp=""
+    [ -n "$VJ_EXPECT_BUILD" ] && stamp=" <!-- build:$VJ_EXPECT_BUILD -->"
+    row="$(printf '| %s | %s | %s | %s | %s | %s%s |' \
         "$title" "$mode" "$score" "$stage" \
         "$(printf '%s' "$watchdog" | sed 's/|/\\|/g')" \
-        "$(printf '%s' "$evidence" | sed 's/|/\\|/g')" >> "$OUT"
+        "$(printf '%s' "$evidence" | sed 's/|/\\|/g')" \
+        "$stamp")"
+
+    if [ -n "$row_lineno" ]; then
+        # Replace the stale row in place so the table keeps one row per
+        # title x mode.
+        tmp_row_file="$(mktemp)"
+        NEWROW="$row" awk -v n="$row_lineno" \
+            'NR == n { print ENVIRON["NEWROW"]; next } { print }' \
+            "$OUT" > "$tmp_row_file" && mv "$tmp_row_file" "$OUT"
+    else
+        printf '%s\n' "$row" >> "$OUT"
+    fi
 }
 
 for t in "${CUE_TITLES[@]}"; do
