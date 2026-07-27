@@ -1261,6 +1261,7 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    static uint8_t raw[2352 * 256];
    static uint8_t swapped[sizeof(raw)];
    int64_t bytesRead;
+   int64_t trackFileBase;
    uint32_t loadAddr, length;
 
    if (!disc.loaded || disc.numSessions < 2)
@@ -1279,24 +1280,40 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
          break;
       }
    }
-   if (!foundS2 || !disc.tracks[firstS2Idx].binFilePath[0])
+   if (!foundS2 || (!disc.tracks[firstS2Idx].binFilePath[0] && !disc.binPath[0]))
    {
       LOG_WRN("[CD-BOOTSTUB] No session-2 track found (foundS2=%d, pathEmpty=%d)\n",
               foundS2, foundS2 ? !disc.tracks[firstS2Idx].binFilePath[0] : -1);
       return false;
    }
 
-   LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s\n",
-           disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
-   trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
+   /* Multi-file CUE: the session-2 track has its own BIN starting at the
+    * track region.  Single-file images (CDI, single-BIN CUE) only set
+    * disc.binPath; the track's region starts at tracks[].fileOffset. */
+   if (disc.tracks[firstS2Idx].binFilePath[0])
+   {
+      LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s\n",
+              disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
+      trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
+      trackFileBase = 0;
+   }
+   else
+   {
+      LOG_INF("[CD-BOOTSTUB] Opening track %u in single-file image: %s (offset $%X)\n",
+              disc.tracks[firstS2Idx].number, disc.binPath,
+              disc.tracks[firstS2Idx].fileOffset);
+      trackFile = rfopen(disc.binPath, "rb");
+      trackFileBase = (int64_t)disc.tracks[firstS2Idx].fileOffset;
+   }
    if (!trackFile)
    {
       LOG_ERR("[CD-BOOTSTUB] rfopen failed for %s\n",
-              disc.tracks[firstS2Idx].binFilePath);
+              disc.tracks[firstS2Idx].binFilePath[0] ?
+                 disc.tracks[firstS2Idx].binFilePath : disc.binPath);
       return false;
    }
 
-   rfseek(trackFile, 0, SEEK_SET);
+   rfseek(trackFile, trackFileBase, SEEK_SET);
    bytesRead = rfread(raw, 1, sizeof(raw), trackFile);
    rfclose(trackFile);
    LOG_INF("[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
