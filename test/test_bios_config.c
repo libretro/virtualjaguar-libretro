@@ -140,6 +140,7 @@ struct bios_core {
     void (*retro_set_input_state)(retro_input_state_t);
 
     void (*GPUInit)(void);
+    void (*GPUDone)(void);
     void (*GPUReset)(void);
     void (*TOMInit)(void);
     void (*TOMReset)(void);
@@ -257,6 +258,7 @@ static bool bc_load(struct bios_core *c)
     BC_LOAD_REQ(c, retro_set_input_state);
 
     BC_LOAD_SYM(c, GPUInit);
+    BC_LOAD_SYM(c, GPUDone);
     BC_LOAD_SYM(c, GPUReset);
     BC_LOAD_SYM(c, TOMInit);
     BC_LOAD_SYM(c, TOMReset);
@@ -293,6 +295,10 @@ static void bc_init(struct bios_core *c)
 
 static void bc_unload(struct bios_core *c)
 {
+    /* Setup calls GPUInit() directly with no game loaded, so retro_deinit
+     * never reaches GPUDone -- free the branch-condition LUT here or
+     * LeakSanitizer flags 256 bytes (same fix as test_framework.h). */
+    if (c->GPUDone) c->GPUDone();
     if (c->retro_deinit) c->retro_deinit();
     if (c->handle) dlclose(c->handle);
     memset(c, 0, sizeof(*c));
@@ -570,7 +576,11 @@ int main(int argc, char *argv[])
         SKIP_TEST(real_cd_bios_jerry_accessible, "CD BIOS file not found");
     }
 
-    /* Don't call bc_unload here — individual tests handle init/deinit */
+    /* Don't call bc_unload here — individual tests handle init/deinit.
+     * But the per-test retro_deinit never frees the GPU branch-condition
+     * LUT (no game loaded), so release it before dlclose or
+     * LeakSanitizer flags 256 bytes. */
+    if (core.GPUDone) core.GPUDone();
     if (core.handle) dlclose(core.handle);
     return TEST_REPORT();
 }
