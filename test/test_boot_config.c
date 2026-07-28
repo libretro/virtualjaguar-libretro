@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>  /* strcasecmp (POSIX; not in <string.h> on glibc) */
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>

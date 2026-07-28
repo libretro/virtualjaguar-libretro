@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>  /* strcasecmp (POSIX; not in <string.h> on glibc) */
 #include <stdlib.h>
 #include <ctype.h>
 

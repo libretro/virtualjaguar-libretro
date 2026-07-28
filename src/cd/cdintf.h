@@ -94,7 +94,7 @@ uint32_t CDIntfGetSession2FirstTrackLBA(void);
 /* Number of session-2 tracks. */
 uint32_t CDIntfGetSession2TrackCount(void);
 /* startLBA (or dataLBA when present) of the i-th session-2 track. */
-uint32_t CDIntfGetSession2TrackLBA(uint32_t i);
+uint32_t CDIntfGetSession2TrackLBA(uint32_t which);
 
 // New functions for disc image loading
 bool CDIntfOpenImage(const char *cuePath);
