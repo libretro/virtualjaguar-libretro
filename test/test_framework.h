@@ -154,6 +154,7 @@ struct vj_core {
 
     /* Hardware subsystem functions */
     void (*GPUInit)(void);
+    void (*GPUDone)(void);
     void (*GPUReset)(void);
     void (*GPUExec)(int32_t);
     void (*GPUHandleIRQs)(void);
@@ -361,6 +362,7 @@ static bool vj_core_load(struct vj_core *core)
 
     /* GPU */
     LOAD_SYM(core, GPUInit);
+    LOAD_SYM(core, GPUDone);
     LOAD_SYM(core, GPUReset);
     LOAD_SYM(core, GPUExec);
     LOAD_SYM(core, GPUHandleIRQs);
@@ -458,7 +460,11 @@ static void vj_core_init(struct vj_core *core)
 
 static void vj_core_unload(struct vj_core *core)
 {
+    /* vj_core_init() calls GPUInit() directly (no game load), so
+     * retro_deinit's no-game guard never reaches GPUDone -- release the
+     * branch-condition LUT here or LeakSanitizer flags 256 bytes. */
     if (core->retro_deinit) core->retro_deinit();
+    if (core->GPUDone) core->GPUDone();
     if (core->handle) dlclose(core->handle);
     memset(core, 0, sizeof(*core));
 }
