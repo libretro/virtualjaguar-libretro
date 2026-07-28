@@ -38,6 +38,13 @@ from structured noise at the right level.
   planned as a separate feature off `develop`.
 - **BigPImage (.bpi) support**: closed format, no public spec. CDI is the
   interchange format (see `test/tools/cue2cdi` and its README).
+- **Playable `.iso` support**: a bare 2048-byte-sector ISO cannot represent
+  a Jaguar CD — the format requires the multi-session layout (session 1
+  audio warning, session 2 data recorded as audio-type 2352-byte tracks,
+  byte-swapped) and the track lead-in offsets. Our loader accepts `.iso`
+  as a best-effort single MODE1 track (enough for the BIOS to boot to its
+  intro, useful diagnostically) but no retail game can start from one.
+  BigPEmu declines ISOs for the same reason. Use CUE/BIN, CHD, or CDI.
 - **CD read speeds above 2x on the real-BIOS path**: the
   `virtualjaguar_cd_read_speed` option is HLE-only by design; scaling the
   BIOS path's FIFO/DSA cadence re-opens the DSA-steal and FIFO-storm race
