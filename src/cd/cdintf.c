@@ -47,7 +47,6 @@ static int cdintf_strncasecmp(const char *a, const char *b, size_t n)
 
 // Private function prototypes
 static bool ParseCueSheet(const char *cuePath);
-static bool ParseIso(const char *isoPath);
 static void MSFFromLBA(uint32_t lba, uint8_t *m, uint8_t *s, uint8_t *f);
 static uint32_t LBAFromMSF(uint8_t m, uint8_t s, uint8_t f);
 static char *TrimWhitespace(char *str);
@@ -495,73 +494,6 @@ static bool ParseCueSheet(const char *cuePath)
 // so reads succeed for the data area. That at least keeps `retro_load_game`
 // honest (no false-positive PC-OOB) and lets future tooling read ISO data.
 // ---------------------------------------------------------------------------
-static bool ParseIso(const char *isoPath)
-{
-   RFILE *isoFile;
-   int64_t fileSize;
-   uint32_t totalSectors;
-
-   memset(&disc, 0, sizeof(disc));
-
-   isoFile = rfopen(isoPath, "rb");
-   if (!isoFile)
-   {
-      LOG_ERR("[CD-ISO] Cannot open %s\n", isoPath);
-      return false;
-   }
-   rfseek(isoFile, 0, SEEK_END);
-   fileSize = rftell(isoFile);
-   rfclose(isoFile);
-
-   if (fileSize < 2048)
-   {
-      LOG_ERR("[CD-ISO] %s is too small (%lld bytes)\n", isoPath, (long long)fileSize);
-      return false;
-   }
-
-   // Mode1 sector size is 2048 bytes.
-   totalSectors = (uint32_t)(fileSize / 2048);
-
-   snprintf(disc.binPath, sizeof(disc.binPath), "%s", isoPath);
-
-   disc.numTracks   = 1;
-   disc.numSessions = 1;
-
-   disc.tracks[0].number      = 1;
-   disc.tracks[0].session     = 1;
-   disc.tracks[0].type        = CDINTF_TRACK_MODE1;
-   disc.tracks[0].startLBA    = 0;
-   disc.tracks[0].dataLBA     = 0;
-   disc.tracks[0].lengthLBA   = totalSectors;
-   disc.tracks[0].fileOffset  = 0;
-   disc.tracks[0].sectorSize  = 2048;
-   MSFFromLBA(0, &disc.tracks[0].startM,
-                 &disc.tracks[0].startS,
-                 &disc.tracks[0].startF);
-   snprintf(disc.tracks[0].binFilePath,
-            sizeof(disc.tracks[0].binFilePath),
-            "%s", isoPath);
-
-   disc.sessions[0].number     = 1;
-   disc.sessions[0].firstTrack = 1;
-   disc.sessions[0].lastTrack  = 1;
-   disc.sessions[0].leadOutLBA = totalSectors;
-   MSFFromLBA(totalSectors,
-              &disc.sessions[0].leadOutM,
-              &disc.sessions[0].leadOutS,
-              &disc.sessions[0].leadOutF);
-
-   disc.loaded = true;
-
-   LOG_INF("[CD-ISO] Loaded %s as single-track Mode1 disc (%u sectors)\n",
-           isoPath, totalSectors);
-   LOG_WRN("[CD-ISO] Jaguar boot from .iso is not supported — needs session 2 audio "
-           "pregap + game data. Use BIN/CUE or CDI for bootable images.\n");
-
-   return true;
-}
-
-// ---------------------------------------------------------------------------
 // CDI (DiscJuggler) parser
 //
 // Reference: DreamShell modules/isofs/cdi.c. The trailer at end-of-file gives
@@ -892,8 +824,17 @@ bool CDIntfOpenImage(const char *path)
    if (ext && strcasecmp(ext + 1, "cdi") == 0)
       return ParseCDI(path);
 
+   /* Bare ISO is refused deliberately: a 2048-byte-sector image cannot
+    * carry the multi-session layout a Jaguar CD requires (session 1 audio
+    * warning, session 2 data-as-audio 2352-byte tracks, lead-in offsets),
+    * so no retail title can ever boot from one.  Refuse loudly rather
+    * than raise false hopes with a BIOS screen that goes nowhere. */
    if (ext && strcasecmp(ext + 1, "iso") == 0)
-      return ParseIso(path);
+   {
+      LOG_ERR("[CD-ISO] bare .iso images cannot represent a Jaguar CD "
+              "(no session/track layout) -- use CUE/BIN, CHD, or CDI\n");
+      return false;
+   }
 
    // CUE/BIN path
    if (!ParseCueSheet(path))

@@ -53,7 +53,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
  *                   68k bootstrap (JST_RAW_BINARY)
  * Add `cdi`, `cue`, `iso`, and `chd` here when CD-image support
  * lands on a future PR. */
-#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi|iso"
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
 
 int videoWidth               = 0;
 int videoHeight              = 0;

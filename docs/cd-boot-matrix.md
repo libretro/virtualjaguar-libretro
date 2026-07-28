@@ -80,7 +80,9 @@ fresh dated section; do not retrofit old ones.
   (Battle Morph, `final_pc=$8FBFB758`), 1 HARNESS_HANG (Baldies, video_stall
   watchdog fired at frame 745, GPU wedged at `$F03060`), 1 LOAD_FAIL
   (baldies.cdi), plus the ISO documentation row (BIOS_INTRO,
-  `final_pc=$194D12` = CD BIOS poll loop; `.iso` boot is a permanent,
+  `final_pc=$194D12` = CD BIOS poll loop; `.iso` support has since been
+  removed entirely (load refused with an explanatory error) — historical
+  note only; it was a permanent,
   documented limitation -- no session-2 layout).
 - **No title reaches a verified MENU or IN_GAME headlessly.** Every
   GAME_CODE row still trips `video_stall` or sits in a tight wait loop.
@@ -129,7 +131,6 @@ fresh dated section; do not retrofit old ones.
 | Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=73 final_pc=$00B87A |
 | baldies.cdi | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=384 fb_hash=$97073547 unchanged for 300 frames gpu_pc=$00F0305C gpu_run=1 dsp_pc=$00F1B1AC dsp_run=0 |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=20677B unique_pcs=19 final_pc=$04C3BC |
 | baldies.cdi | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21698B unique_pcs=55 final_pc=$05FE8A |
-| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12; PC-SET game-band: $193040 $196824 $196882 $196A0A $1962CC $194D0C $194D1E $194D30 $194D18 $194D12 $194D06 $194D24 $194D2A $194CF6 |
 
 Raw per-run logs are not committed; re-run the script to regenerate.
 
@@ -760,7 +761,6 @@ $3600) spinning on the stuck status bit.  Post-fix:
 | Space Ace (USA).cue | bios | 1/1 | ? (BIOS service band $0-$3FFF; PC-SET suppressed, unique_pcs>32 -- game handoff undetermined) | [CRASH-DETECT] cd_seek_wedge frame=2496 seek_starts=7 seek_dones=7 fifo_drains=173466 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29025B unique_pcs=63 final_pc=$00392A |
 | baldies.cdi | hle | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
 | baldies.cdi | bios | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
-| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12; PC-SET game-band: $193040 $196824 $196882 $196A0A $1962CC $194D0C $194D1E $194D30 $194D18 $194D12 $194D06 $194D24 $194D2A $194CF6 |
 
 ## Re-run notes -- 2026-07-15, FIFO transfer-rate fix (real 2x drive speed)
 
@@ -801,7 +801,6 @@ deltas vs the I2CNTRL-fix run:
 | Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=75 final_pc=$00B87A |
 | baldies.cdi | hle | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
 | baldies.cdi | bios | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
-| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12; PC-SET game-band: $193040 $196824 $196882 $196A0A $1962CC $194D0C $194D1E $194D30 $194D18 $194D12 $194D06 $194D24 $194D2A $194CF6 |
 
 ## Re-run notes -- 2026-07-16, SCLK synchronous-SSI-IRQ fix (b63fb7d)
 
@@ -871,7 +870,6 @@ is nil outside the rows called out below.
 | Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=75 final_pc=$00B87A |
 | baldies.cdi | hle | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
 | baldies.cdi | bios | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
-| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12; PC-SET game-band: $193040 $196824 $196882 $196A0A $1962CC $194D0C $194D1E $194D30 $194D18 $194D12 $194D06 $194D24 $194D2A $194CF6 |
 
 Raw per-run logs are not committed; re-run the script to regenerate.
 
@@ -943,6 +941,5 @@ Deltas vs the previous table; no regressions:
 | Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=75 final_pc=$00B87A |
 | baldies.cdi | hle | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
 | baldies.cdi | bios | 0/1 | LOAD_FAIL (harness crash) | (none) |     [CRASH] baldies.cdi : child died with signal 11 (Segmentation fault: 11) |
-| Primal Rage (USA).iso | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  Primal Rage (USA).iso : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12; PC-SET game-band: $193040 $196824 $196882 $196A0A $1962CC $194D0C $194D1E $194D30 $194D18 $194D12 $194D06 $194D24 $194D2A $194CF6 |
 
 Raw per-run logs are not committed; re-run the script to regenerate.

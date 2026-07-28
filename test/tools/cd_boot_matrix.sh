@@ -538,12 +538,10 @@ done
 run_title "baldies.cdi" "hle" "cdi"
 run_title "baldies.cdi" "bios" "cdi"
 
-# Loose ISOs are a documented, permanent limitation (no session-2 audio
-# pregap => the real BIOS can never validate the disc as bootable, per
-# test/cd_assertions.h's cd_ext_enabled() comment and Task 2's finding).
-# One representative row, BIOS mode only (HLE mode doesn't touch the real
-# BIOS's disc-validation path at all, so it would tell us nothing new).
-run_title "Primal Rage (USA).iso" "bios" "iso"
+# Loose ISOs: support was removed entirely (CDIntf refuses .iso at load
+# with a LOG_ERR explaining why -- no session/track layout means no retail
+# title can boot; see docs/cd-known-issues.md).  No matrix row: there is
+# nothing to measure.
 
 echo "" >> "$OUT"
 echo "Raw per-run logs: $LOGDIR (not committed; re-run to regenerate)." >> "$OUT"
