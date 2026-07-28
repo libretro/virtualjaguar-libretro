@@ -27,12 +27,15 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 
-/* DSP RAM "CD transfer done" flag.  Per docs/cd-bios-calling-convention.md:
- *   "The BIOS does NOT use CD_poll. It polls DSP RAM flag at [$F1B4C8] —
- *    the GPU ISR writes $FFFFFFFF there when the transfer completes, and
- *    the BIOS loops until negative."
- * Game boot stubs follow the same convention. */
-#define CD_DSP_DONE_FLAG_ADDR  0x00F1B4C8
+/* There is NO DSP-RAM "CD transfer done" flag.  An earlier HLE wrote
+ * $00000000 / $FFFFFFFF to $F1B4C8 around every CD_read, citing a
+ * "BIOS polls DSP RAM flag at [$F1B4C8]" convention from a PR-#109-era
+ * document — the real BIOS GPU CD ISR (ROM $8828, disassembled by
+ * test/tools/disasm_gpu_isr.py) never writes DSP RAM at all.  The
+ * phantom writes corrupted game DSP programs that occupy that address
+ * (Myst's audio driver: in-game scene sounds became full-scale static
+ * because the stomped longword held `SHARQ #9,R21; ADD R20,R26` of the
+ * voice mixer). */
 
 /* file_stream_transforms.h redefines fprintf; restore real stdio. */
 #undef fprintf
@@ -605,10 +608,8 @@ static void HLEHandleCDRead(void)
     * CD_I2S_enable / bit-31 just-seek, as on hardware. */
    CDROMHLEDataReadBegin();
 
-   /* Clear the DSP completion flag so polling code sees a 0 -> $FFFFFFFF
-    * transition once the transfer finishes.  Real hardware: the GPU CD ISR
-    * writes $FFFFFFFF here when its write pointer reaches the end address. */
-   DSPWriteLong(CD_DSP_DONE_FLAG_ADDR, 0x00000000, UNKNOWN);
+   /* No DSP-RAM "completion flag" is cleared here — see the $F1B4C8
+    * note at the top of this file. */
 
    /* Scan for the D1 sentinel sync block in the byte-swapped disc data.
     *
@@ -1063,10 +1064,9 @@ static void HLEStreamFinish(void)
       GPUWriteLong(hleStream.statusBase + 16, d1, 0);
    }
 
-   /* Signal completion to BIOS-style polling code via DSP RAM flag.
-    * Real GPU CD ISR writes $FFFFFFFF here when its write pointer reaches
-    * the end address. */
-   DSPWriteLong(CD_DSP_DONE_FLAG_ADDR, 0xFFFFFFFFu, UNKNOWN);
+   /* No DSP-RAM completion flag: completion is visible through the GPU
+    * data area (CD_poll) alone, matching the real GPU CD ISR — see the
+    * $F1B4C8 note at the top of this file. */
 
    HLE_LOG("CD_read: transfer complete — %u bytes (%u sectors) "
            "to $%06X-$%06X\n",
