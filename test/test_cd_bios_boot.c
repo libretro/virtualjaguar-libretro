@@ -30,6 +30,12 @@
  *   VJ_TEST_CD_BIOS    "retail" (default) or "dev"
  */
 
+/* strsignal is POSIX.1-2008: glibc hides it under -std=c99 unless a
+ * feature-test macro is set.  Must precede every #include. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
+
 #include "cd_assertions.h"
 #include "../libretro-common/include/libretro.h"
 

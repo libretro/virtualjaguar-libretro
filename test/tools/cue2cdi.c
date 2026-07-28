@@ -45,6 +45,12 @@
 
 #define _FILE_OFFSET_BITS 64
 
+/* fseeko/ftello are POSIX: glibc hides them under -std=c99 unless a
+ * feature-test macro is set.  Must precede every #include. */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
