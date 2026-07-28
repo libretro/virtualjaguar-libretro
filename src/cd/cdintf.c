@@ -9,12 +9,14 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>  /* strcasecmp (POSIX; not in <string.h> on glibc) */
 #include <stdlib.h>
 #include <ctype.h>
 
 #include <boolean.h>
 #include <compat/posix_string.h>
+#ifndef _MSC_VER
+#include <strings.h>  /* strcasecmp (POSIX; the compat shim above is MSVC-only) */
+#endif
 #include <streams/file_stream.h>
 #include <streams/file_stream_transforms.h>
 #include "cdintf.h"

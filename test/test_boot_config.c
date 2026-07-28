@@ -18,7 +18,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <strings.h>  /* strcasecmp (POSIX; not in <string.h> on glibc) */
+#ifdef _MSC_VER
+#include <compat/posix_string.h>  /* strcasecmp shim (no <strings.h> on Windows) */
+#else
+#include <strings.h>              /* strcasecmp (POSIX; glibc c99 lacks it in <string.h>) */
+#endif
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
