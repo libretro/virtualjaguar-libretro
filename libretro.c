@@ -20,6 +20,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "crash_detect.h"
 #include "file.h"
 #include "jagbios.h"
+#include "jagcdbios.h"
 #include "jaguar.h"
 #include "cdintf.h"
 #include "cdrom.h"
@@ -908,7 +909,7 @@ static bool try_load_cd_bios_file(const char *path)
       return false;
    }
 
-   LOG_INF("[CD-BIOS] Loaded CD BIOS: %s (run=$%06X)\n",
+   LOG_INF("[CD-BIOS] using external %s (run=$%06X)\n",
            path, (unsigned)run_addr);
    cd_bios_loaded_externally = true;
    return true;
@@ -972,6 +973,21 @@ static bool load_external_cd_bios(void)
 
    LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
    return false;
+}
+
+/* Stage the CD BIOS for the real-BIOS boot path: prefer an external ROM
+ * file from the system directory (users may carry a different BIOS
+ * revision), else fall back to the embedded retail CD BIOS so real-BIOS
+ * boot works with zero files.  A developer CD BIOS is also embedded
+ * (jaguarDevCDBootROM) but is not yet selectable. */
+static void stage_cd_bios(void)
+{
+   if (load_external_cd_bios())
+      return;
+
+   memcpy(external_cd_bios, jaguarCDBootROM, 0x40000);
+   cd_bios_loaded_externally = true;
+   LOG_INF("[CD-BIOS] using embedded CD BIOS\n");
 }
 
 bool retro_load_game(const struct retro_game_info *info)
@@ -1079,8 +1095,9 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;
 
-   /* Detect CD content (CUE/CDI/ISO) and locate an external CD BIOS so
-    * ResolveBootConfig can pick the right boot strategy. */
+   /* Detect CD content (CUE/CDI/ISO) and stage a CD BIOS (external file
+    * if present, embedded otherwise) so ResolveBootConfig can pick the
+    * right boot strategy. */
    jaguar_cd_mode            = false;
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
@@ -1094,7 +1111,7 @@ bool retro_load_game(const struct retro_game_info *info)
       cd_image_path[sizeof(cd_image_path) - 1] = '\0';
 
       if (vjs.cdBootMode != CDBOOT_HLE)
-         load_external_cd_bios();
+         stage_cd_bios();
    }
 
    /* Resolve boot configuration — single source of truth for which

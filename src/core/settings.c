@@ -50,7 +50,7 @@ void ResolveBootConfig(struct BootConfig *cfg,
          if (!userWantsBIOS)
             LOG_INF("[BOOT] CD game, mode=BIOS — boot ROM forced on "
                     "(required by real CD BIOS path)\n");
-         LOG_INF("[BOOT] CD game, mode=BIOS (external BIOS loaded)\n");
+         LOG_INF("[BOOT] CD game, mode=BIOS (BIOS image staged)\n");
       }
       else
       {

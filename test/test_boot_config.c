@@ -445,6 +445,8 @@ TEST(integration_auto_mode_with_bios)
     core_teardown();
 }
 
+/* No external BIOS file: the embedded CD BIOS is staged instead, so AUTO
+ * still resolves to the real-BIOS strategy (zero-file real-BIOS boot). */
 TEST(integration_auto_mode_no_bios)
 {
     bool loaded;
@@ -462,12 +464,14 @@ TEST(integration_auto_mode_no_bios)
             p_bootConfig->cdBiosAvailable);
 
     ASSERT_EQ(p_bootConfig->isCDGame, true);
-    ASSERT_EQ(p_bootConfig->showBootROM, false);
-    ASSERT(IS_HLE(*p_bootConfig));
-    ASSERT_EQ(p_bootConfig->cdBiosAvailable, false);
+    ASSERT_EQ(p_bootConfig->showBootROM, true);
+    ASSERT(IS_BIOS(*p_bootConfig));
+    ASSERT_EQ(p_bootConfig->cdBiosAvailable, true);
     core_teardown();
 }
 
+/* Same for explicit BIOS mode: no external file no longer falls back to
+ * HLE — the embedded CD BIOS backs the real-BIOS path. */
 TEST(integration_bios_mode_no_bios_fallback)
 {
     bool loaded;
@@ -485,8 +489,8 @@ TEST(integration_bios_mode_no_bios_fallback)
             p_bootConfig->cdBiosAvailable);
 
     ASSERT_EQ(p_bootConfig->isCDGame, true);
-    ASSERT_EQ(p_bootConfig->showBootROM, false);
-    ASSERT(IS_HLE(*p_bootConfig));
+    ASSERT_EQ(p_bootConfig->showBootROM, true);
+    ASSERT(IS_BIOS(*p_bootConfig));
     core_teardown();
 }
 
