@@ -17,11 +17,22 @@
  *   destination region therefore changed content on essentially every frame.
  *
  * Invariant checked (golden-free, game-agnostic):
- *   Once a destination byte is populated by a CD_read, its content must
- *   remain STABLE for the rest of the run, because IS2 only ever issues
- *   byte-identical CD_reads in this window.  We count how many times
- *   previously-populated (nonzero) bytes change value after the first
- *   population:
+ *   A CD stream targeting the watched region must never REWRITE a byte
+ *   it (or a previous identical read) already populated — identical
+ *   re-issued CD_reads deliver identical bytes.  Mutations are only
+ *   counted when they are attributable to the CD: a CD_read whose
+ *   destination range overlaps the region was armed recently enough
+ *   that its stream is still landing (arm counter + dest/bytes from the
+ *   JaguarCDHLEStream* accessors, window = stream duration + slack).
+ *   Mutations outside such a window are the game's own writes: since
+ *   the long-rounded delivery fix, IS2's checksum accepts the FIRST
+ *   read, the stub relocates/patches the accepted section and jumps
+ *   into it within this frame window — all legitimate CPU work.  Under
+ *   the guarded drift bug the stub re-issues the identical read forever
+ *   and every re-issued stream rewrites the region with different
+ *   garbage inside its attribution window — the test stays RED for the
+ *   regression class.  We count how many times previously-populated
+ *   (nonzero) bytes change value after the first population:
  *     RED  (heuristic present): dozens/hundreds of transitions (drift loop
  *           streams different garbage over the good first read each call).
  *     GREEN (heuristic removed): zero transitions (idempotent re-reads).
@@ -138,6 +149,12 @@ TEST(cd_read_is_idempotent)
     uint32_t addr, len, maxChanges;
     uint32_t prevHash, changes, firstPopFrame;
     bool firstPopSeen;
+    uint32_t (*p_arm_count)(void);
+    uint32_t (*p_stream_dest)(void);
+    uint32_t (*p_stream_bytes)(void);
+    uint32_t prevArm;
+    unsigned cdWindowEnd;      /* last frame (inclusive) attributable to CD */
+    uint32_t ignoredCpu;       /* mutations outside any CD window (game writes) */
     size_t i;
     const char *env;
 
@@ -198,14 +215,42 @@ TEST(cd_read_is_idempotent)
     snap = (uint8_t *)calloc(len, 1);
     if (!snap) FAIL("out of memory for %u-byte region snapshot", len);
 
+    /* CD-attribution accessors (see header comment).  When absent the
+     * test falls back to attributing every mutation to the CD (the
+     * pre-accessor, stricter behavior). */
+    p_arm_count    = (uint32_t (*)(void))dlsym(C.handle, "JaguarCDHLEStreamArmCount");
+    p_stream_dest  = (uint32_t (*)(void))dlsym(C.handle, "JaguarCDHLEStreamDest");
+    p_stream_bytes = (uint32_t (*)(void))dlsym(C.handle, "JaguarCDHLEStreamBytes");
+
     prevHash      = region_hash(ram, addr, len);   /* all-zero baseline */
     changes       = 0;
     firstPopSeen  = false;
     firstPopFrame = 0;
+    prevArm       = p_arm_count ? p_arm_count() : 0;
+    cdWindowEnd   = 0;
+    ignoredCpu    = 0;
 
     for (f = 0; f < frames; f++) {
         uint32_t h;
+        bool cdAttrib = true;
         p_retro_run();
+        if (p_arm_count && p_stream_dest && p_stream_bytes) {
+            uint32_t arm = p_arm_count();
+            if (arm != prevArm) {
+                uint32_t d = p_stream_dest();
+                uint32_t n = p_stream_bytes();
+                if (d < addr + len && d + n > addr) {
+                    /* CD_read overlapping the watched region armed this
+                     * frame: attribute mutations until its stream has
+                     * fully landed (352,800 B/s ~= 5.9 KB/frame NTSC)
+                     * plus 2 frames of slack. */
+                    unsigned dur = (unsigned)(n / 5900u) + 2u;
+                    if (f + dur > cdWindowEnd) cdWindowEnd = f + dur;
+                }
+                prevArm = arm;
+            }
+            cdAttrib = (f <= cdWindowEnd);
+        }
         h = region_hash(ram, addr, len);
         if (h != prevHash) {
             if (!firstPopSeen && region_nonzero(ram, addr, len)) {
@@ -226,7 +271,7 @@ TEST(cd_read_is_idempotent)
                         break;
                     }
                 }
-                if (mutated) {
+                if (mutated && cdAttrib) {
                     changes++;
                     if (changes <= 8)
                         fprintf(stderr,
@@ -235,6 +280,9 @@ TEST(cd_read_is_idempotent)
                                 "(hash $%08X, change #%u)\n",
                                 f, addr + k, snap[k], ram[addr + k],
                                 h, changes);
+                } else if (mutated) {
+                    /* Outside any CD window: the game's own write. */
+                    ignoredCpu++;
                 }
                 memcpy(snap, &ram[addr], len);
             }
@@ -247,8 +295,10 @@ TEST(cd_read_is_idempotent)
     if (p_retro_unload_game) p_retro_unload_game();
 
     fprintf(stderr,
-            "    first_populated_frame=%u post_population_changes=%u (max allowed %u)\n",
-            firstPopSeen ? firstPopFrame : 0u, changes, maxChanges);
+            "    first_populated_frame=%u post_population_changes=%u (max allowed %u)"
+            " cpu_writes_ignored=%u\n",
+            firstPopSeen ? firstPopFrame : 0u, changes, maxChanges,
+            ignoredCpu);
 
     if (!firstPopSeen)
         FAIL("destination region was never populated by a CD_read");

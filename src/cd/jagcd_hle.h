@@ -37,6 +37,16 @@ void JaguarCDHLEStreamTick(void);
 /* True while a streamed CD_read transfer is in flight. */
 bool JaguarCDHLEStreamActive(void);
 
+/* Test/probe accessors for the most recently armed CD_read stream:
+ * destination base, wire byte count (long-rounded), and a monotonically
+ * increasing arm counter (bumps once per accepted CD_read, including
+ * the instant-completion fallback).  Lets harnesses attribute RAM
+ * mutations to a CD stream targeting a watched region vs the game's
+ * own writes (test_cd_hle_idempotent). */
+uint32_t JaguarCDHLEStreamDest(void);
+uint32_t JaguarCDHLEStreamBytes(void);
+uint32_t JaguarCDHLEStreamArmCount(void);
+
 /* Force HLE active state (for unit testing without a disc image). */
 void JaguarCDHLESetActive(bool active);
 

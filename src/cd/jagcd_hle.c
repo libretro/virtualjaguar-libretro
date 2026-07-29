@@ -152,7 +152,18 @@ static struct
    uint32_t bufOff;     /* next unread byte in buf (first sector: sentinel skip) */
    bool     bufValid;
    uint32_t dest;       /* destination base in main RAM */
-   uint32_t total;      /* bytes requested */
+   uint32_t total;      /* bytes DELIVERED on the wire: the requested
+                         * count (A1-A0) rounded UP to a whole longword.
+                         * The real GPU CD ISR writes 4 bytes at a time
+                         * and only stops once its pointer passes the end
+                         * address, so an odd-sized request still fills
+                         * the tail of its final longword with real disc
+                         * bytes.  Iron Soldier 2's boot stub depends on
+                         * that: it checksums its $14FE-byte load in
+                         * ADD.L steps, summing 2 bytes past its own end
+                         * address ($DFFE-$DFFF) — those must hold the
+                         * next 2 disc bytes, not our pad/ATRI block. */
+   uint32_t reqTotal;   /* bytes requested by the game (A1 - A0) */
    uint32_t written;    /* bytes delivered so far */
    uint32_t accFrac;    /* 16.16 fractional byte budget accumulator */
    uint32_t d1;         /* sentinel word (for the GPU data area) */
@@ -175,6 +186,9 @@ static struct
                          * rate the game is already pacing itself against. */
    uint8_t  buf[2352];
 } hleStream;
+
+/* Monotonic CD_read arm counter (test/probe ABI — jagcd_hle.h). */
+static uint32_t hle_stream_arm_count = 0;
 
 static void HLEStreamFinish(void);
 
@@ -849,7 +863,8 @@ static void HLEHandleCDRead(void)
          HLE_LOG("CD_read: sentinel NOT found after redirect — "
                  "zeroing dest $%06X-$%06X and signalling completion\n",
                  destAddr, destAddr + byteCount - 1);
-         for (i = 0; i < byteCount && (destAddr + i) < 0x200000; i++)
+         for (i = 0; i < ((byteCount + 3u) & ~3u) &&
+                     (destAddr + i) < 0x200000; i++)
             jaguarMainRAM[destAddr + i] = 0;
          scanLBA = lba;
          scanOff = 0;
@@ -877,7 +892,20 @@ hle_cd_read_post_scan:
    hleStream.bufOff   = scanOff;
    hleStream.bufValid = false;
    hleStream.dest     = destAddr;
-   hleStream.total    = byteCount;
+   /* Deliver whole longwords, exactly like the real GPU CD ISR: it
+    * writes 4 bytes per store and stops only when the write pointer
+    * passes the end address, so a request whose size is not a multiple
+    * of 4 still gets the tail of its final longword filled with the
+    * NEXT bytes from the disc stream.  Games checksum through that
+    * tail: IS2's boot stub sums its $14FE-byte section in ADD.L steps,
+    * so the long at end-2 covers 2 bytes past the requested end — the
+    * expected sum ($5C4D0C91, section table at $6B88) only matches
+    * when those hold real disc data.  (Delivering exactly A1-A0 and
+    * placing the FF pad + ATRI block at the odd end address made every
+    * validation fail and the stub re-issue the read forever: the
+    * boot-to-black retry loop at LBA 224851.) */
+   hleStream.total    = (byteCount + 3u) & ~3u;
+   hleStream.reqTotal = byteCount;
    hleStream.written  = 0;
    hleStream.accFrac  = 0;
    hleStream.d1       = d1;
@@ -887,6 +915,7 @@ hle_cd_read_post_scan:
    hleStream.sigA0    = a0;
    hleStream.sigA1    = a1;
    hleStream.speedMult = vjs.cdReadSpeed;  /* latch for this transfer */
+   hle_stream_arm_count++;
 
    hle_read_dest     = destAddr;
    hle_read_end_addr = destAddr + byteCount;
@@ -919,8 +948,10 @@ hle_cd_read_complete:
     * immediately. */
    hleStream.active  = false;
    hleStream.dest    = destAddr;
-   hleStream.total   = byteCount;
-   hleStream.written = byteCount;
+   hleStream.total   = (byteCount + 3u) & ~3u;
+   hleStream.reqTotal = byteCount;
+   hleStream.written = hleStream.total;
+   hle_stream_arm_count++;
    hleStream.d1      = d1;
    hleStream.lba     = lba;
    hleStream.bufOff  = 0;
@@ -935,13 +966,17 @@ hle_cd_read_complete:
 static void HLEStreamFinish(void)
 {
    uint32_t destAddr  = hleStream.dest;
-   uint32_t byteCount = hleStream.total;
+   uint32_t byteCount = hleStream.total;     /* delivered (long-rounded) */
+   uint32_t reqCount  = hleStream.reqTotal;  /* game's A1 - A0 */
    uint32_t d1        = hleStream.d1;
 
    hleStream.active  = false;
 
    hle_read_dest     = destAddr;
-   hle_read_end_addr = destAddr + byteCount;
+   /* Game-ABI end address (the A1 the game passed): CD_poll comparisons
+    * and the synthesized status struct use this, never the long-rounded
+    * wire count. */
+   hle_read_end_addr = destAddr + reqCount;
    hle_read_progress = byteCount;
    hle_read_pending  = true;
 
@@ -1054,11 +1089,14 @@ static void HLEStreamFinish(void)
        * beyond end, never an exact stop AT end. */
       {
          uint32_t ptr0  = destAddr - 4;
-         uint32_t span  = (destAddr + byteCount) - ptr0;
+         uint32_t span  = (destAddr + reqCount) - ptr0;
          uint32_t final = ptr0 + ((span / 32) + 1) * 32;
          GPUWriteLong(hleStream.statusBase + 0, final, 0);
       }
-      GPUWriteLong(hleStream.statusBase + 4,  destAddr + byteCount, 0);
+      /* [+4] = the end address the game passed in A1 (real CD_read
+       * stores A1 verbatim), independent of the long-rounded wire
+       * count. */
+      GPUWriteLong(hleStream.statusBase + 4,  destAddr + reqCount, 0);
       /* [+8] = error status, 0 on success — see the arm-time comment. */
       GPUWriteLong(hleStream.statusBase + 8,  0, 0);
       GPUWriteLong(hleStream.statusBase + 16, d1, 0);
@@ -1081,6 +1119,22 @@ static void HLEStreamFinish(void)
 bool JaguarCDHLEStreamActive(void)
 {
    return hleStream.active;
+}
+
+/* Test/probe accessors — see jagcd_hle.h. */
+uint32_t JaguarCDHLEStreamDest(void)
+{
+   return hleStream.dest;
+}
+
+uint32_t JaguarCDHLEStreamBytes(void)
+{
+   return hleStream.total;
+}
+
+uint32_t JaguarCDHLEStreamArmCount(void)
+{
+   return hle_stream_arm_count;
 }
 
 void JaguarCDHLEStreamTick(void)
@@ -1710,6 +1764,7 @@ static void hle_strategy_reset(void)
    hle_read_dest     = 0;
    hle_read_progress = 0;
    hle_post_read_lba = 0xFFFFFFFFu;
+   hle_stream_arm_count = 0;
    memset(&hleStream, 0, sizeof(hleStream));
 }
 
