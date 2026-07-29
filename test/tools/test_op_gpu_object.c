@@ -53,7 +53,11 @@
 
 static uint8_t *g_tom;
 static uint8_t *g_ram;
-static void (*g_opproc)(int halfline, int render);
+/* Must match OPProcessList's exact prototype (int, bool) — UBSan's
+ * function-type-mismatch check rejects calls through a differently
+ * typed pointer.  boolean.h resolves bool to <stdbool.h>'s _Bool on
+ * every non-ancient-MSVC platform, same as harness.h pulls in here. */
+static void (*g_opproc)(int halfline, bool render);
 static void (*g_gwl)(uint32_t addr, uint32_t data, uint32_t who);
 
 static void put_phrase(uint32_t addr, uint64_t v)
@@ -189,7 +193,7 @@ int main(int argc, char **argv)
         uint8_t **ramp = (uint8_t **)dlsym(cfg.core_handle, "jaguarMainRAM");
         g_ram = ramp ? *ramp : NULL;
     }
-    g_opproc = (void (*)(int, int))dlsym(cfg.core_handle, "OPProcessList");
+    g_opproc = (void (*)(int, bool))dlsym(cfg.core_handle, "OPProcessList");
     g_gwl = (void (*)(uint32_t, uint32_t, uint32_t))
         dlsym(cfg.core_handle, "GPUWriteLong");
     if (!g_tom || !g_ram || !g_opproc || !g_gwl) {
