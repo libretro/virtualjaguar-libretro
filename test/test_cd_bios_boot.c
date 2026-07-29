@@ -83,6 +83,14 @@ static bool cd_environment(unsigned cmd, void *data)
             return true;
         }
         if (strcmp(var->key, "virtualjaguar_cd_boot_mode") == 0)    { var->value = "bios"; return true; }
+        if (strcmp(var->key, "virtualjaguar_bus_contention") == 0)  {
+            /* Opt-in experimental bus-contention sweeps (data runs):
+             * VJ_TEST_CD_BUS_CONTENTION=enabled.  Unset -> core default. */
+            const char *bc = getenv("VJ_TEST_CD_BUS_CONTENTION");
+            if (bc && *bc) { var->value = bc; return true; }
+            var->value = NULL;
+            return false;
+        }
         var->value = NULL;
         return false;
     }
