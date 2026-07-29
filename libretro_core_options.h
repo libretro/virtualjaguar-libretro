@@ -184,9 +184,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       NULL,
       {
-         { "hle",  "HLE (No BIOS Required)" },
-         { "auto", "Auto" },
-         { "bios", "BIOS (Experimental)" },
+         { "hle",  "HLE (Recommended)" },
+         { "auto", "Auto (Real BIOS)" },
+         { "bios", "Real BIOS (Included, Experimental)" },
          { NULL, NULL },
       },
       "hle"
