@@ -26,6 +26,8 @@ if [ -z "$CORE_BASE_VERSION" ]; then
 fi
 
 # Short rev + "-dirty" when tracked files are modified (see build-id.sh).
+# Content-aware output below keeps incremental builds cheap: the file is
+# only rewritten when the rev or dirty state actually changes.
 # The harness build-identity guard compares VJ_EXPECT_BUILD against this
 # string, so both sides must agree on the dirty suffix.
 GIT_REV=$("$ROOT/scripts/build-id.sh")

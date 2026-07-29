@@ -264,6 +264,7 @@ extern void JERRYPIT1Callback(void);
 extern void JERRYPIT2Callback(void);
 extern void JERRYI2SCallback(void);
 extern void DSPSampleCallback(void);
+extern void GPUCPUINTCallback(void);
 
 typedef void (*event_callback_t)(void);
 
@@ -275,6 +276,7 @@ static const event_callback_t callback_registry[] = {
    JERRYPIT2Callback,    /* 4 */
    JERRYI2SCallback,     /* 5 */
    DSPSampleCallback,    /* 6 */
+   GPUCPUINTCallback,    /* 7 */
 };
 #define CALLBACK_REGISTRY_SIZE (sizeof(callback_registry) / sizeof(callback_registry[0]))
 

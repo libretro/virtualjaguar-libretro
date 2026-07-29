@@ -97,6 +97,19 @@ const char *__lsan_default_suppressions(void) {
 #define DAC_I2S_NONZEROCOUNT_OFFSET   17
 #define DAC_I2S_NONZEROCOUNT_SIZE     4
 
+/* Trailing CDROM-block fields a v2/v3 state does not carry (see
+ * STATE_VERSION_CDROM_DSA_QUEUE in src/core/state.h): dsaQueue
+ * (DSA_QUEUE_SIZE=4 x uint16, 8) + dsaQueueHead/Tail/Count +
+ * dsaResponseDelay (4 x uint32, 16) = 24 bytes, verified against the end
+ * of CDROMStateSave() in src/cd/cdrom.c.  If this constant goes stale the
+ * fixture misaligns everything after the CDROM block and
+ * "v2_dac_block_realigned" fails loudly — re-derive it from the field
+ * order there.  The CDROM block's position is computed structurally
+ * (dac_off minus the Joystick and MT block sizes, per the module order in
+ * retro_serialize) because for a cartridge ROM the CDROM block is
+ * zero-heavy and a byte-pattern search would not be unique. */
+#define CDROM_DSA_TAIL_SIZE           24
+
 /* Header field offsets (see retro_serialize in libretro.c) */
 #define STATE_OFF_MAGIC    0
 #define STATE_OFF_VERSION  4
@@ -185,6 +198,7 @@ int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     dac_state_save_fn dac_save;
+    dac_state_save_fn cdrom_save, joy_save, mt_save;
     serialize_size_fn ser_size_fn;
     serialize_fn ser;
     unserialize_fn unser;
@@ -193,6 +207,7 @@ int main(int argc, char **argv)
     uint8_t *state_v3 = NULL, *state_v2 = NULL, *scratch = NULL;
     uint8_t dac_v3[256], dac_now[256], dac_expect[256], dac_post[256];
     size_t state_size, dac_size, dac_size_now, dac_off = 0;
+    size_t cdrom_size, joy_size, mt_size, cdrom_end = 0;
     size_t tail_nonzero = 0, i;
     unsigned matches;
     unsigned frame;
@@ -226,6 +241,9 @@ int main(int argc, char **argv)
     }
 
     dac_save    = (dac_state_save_fn)harness_dlsym(&cfg, "DACStateSave");
+    cdrom_save  = (dac_state_save_fn)harness_dlsym(&cfg, "CDROMStateSave");
+    joy_save    = (dac_state_save_fn)harness_dlsym(&cfg, "JoystickStateSave");
+    mt_save     = (dac_state_save_fn)harness_dlsym(&cfg, "MTStateSave");
     ser_size_fn = (serialize_size_fn)harness_dlsym(&cfg, "retro_serialize_size");
     ser         = (serialize_fn)harness_dlsym(&cfg, "retro_serialize");
     unser       = (unserialize_fn)harness_dlsym(&cfg, "retro_unserialize");
@@ -233,11 +251,14 @@ int main(int argc, char **argv)
     width_ptr   = (int *)harness_dlsym(&cfg, "game_width");
     height_ptr  = (int *)harness_dlsym(&cfg, "game_height");
 
-    if (!dac_save || !ser_size_fn || !ser || !unser
+    if (!dac_save || !cdrom_save || !joy_save || !mt_save
+        || !ser_size_fn || !ser || !unser
         || !fb_ptr || !width_ptr || !height_ptr) {
         fprintf(stderr,
-                "Cannot resolve required symbols (DACStateSave needs DAC* in\n"
-                "exports-test.list / link-test.T and a TEST_EXPORTS=1 build)\n");
+                "Cannot resolve required symbols (DACStateSave/CDROMStateSave/\n"
+                "JoystickStateSave/MTStateSave need DAC*/CDROM*/JoystickState*/\n"
+                "MTState* in exports-test.list / link-test.T and a\n"
+                "TEST_EXPORTS=1 build)\n");
         harness_shutdown(&cfg);
         return 2;
     }
@@ -321,6 +342,30 @@ int main(int argc, char **argv)
         goto report;
     }
 
+    /* ---- 3b. Locate the CDROM block structurally --------------------- */
+    /* Module order in retro_serialize: ... CDROM, Joystick, MT, DAC.  No
+     * frames run between the serialize above and these probes, so the
+     * standalone block dumps are byte-identical to what the state holds. */
+    joy_size   = joy_save(scratch);
+    mt_size    = mt_save(scratch);
+    cdrom_size = cdrom_save(scratch);
+    cdrom_end  = dac_off - mt_size - joy_size;
+    check(cdrom_end > cdrom_size && cdrom_size > CDROM_DSA_TAIL_SIZE
+          && memcmp(state_v3 + cdrom_end - cdrom_size, scratch,
+                    cdrom_size) == 0,
+          "cdrom_block_located",
+          "CDROM block (%lu bytes) ends at %lu (dac_off %lu - joy %lu - "
+          "mt %lu) and matches a standalone CDROMStateSave dump",
+          (unsigned long)cdrom_size, (unsigned long)cdrom_end,
+          (unsigned long)dac_off, (unsigned long)joy_size,
+          (unsigned long)mt_size);
+    if (cdrom_end <= cdrom_size || cdrom_size <= CDROM_DSA_TAIL_SIZE
+        || memcmp(state_v3 + cdrom_end - cdrom_size, scratch,
+                  cdrom_size) != 0) {
+        rc = 1;
+        goto report;
+    }
+
     /* ---- 4. Same-version round trip (positive control) -------------- */
     check(unser(state_v3, state_size), "v3_round_trip",
           "retro_unserialize() of a freshly written v%d state", STATE_VERSION);
@@ -337,12 +382,21 @@ int main(int argc, char **argv)
      * block) so it still satisfies retro_unserialize's size check. */
     memcpy(state_v2, state_v3, state_size);
     {
+        /* Higher-offset cut first so the second cut's offset stays valid. */
         size_t cut = dac_off + DAC_I2S_NONZEROCOUNT_OFFSET;
+        size_t cut2 = cdrom_end - CDROM_DSA_TAIL_SIZE;
         memmove(state_v2 + cut,
                 state_v2 + cut + DAC_I2S_NONZEROCOUNT_SIZE,
                 state_size - cut - DAC_I2S_NONZEROCOUNT_SIZE);
         memset(state_v2 + state_size - DAC_I2S_NONZEROCOUNT_SIZE, 0,
                DAC_I2S_NONZEROCOUNT_SIZE);
+        /* A v2/v3 CDROM block also predates the DSA queue tail (see
+         * STATE_VERSION_CDROM_DSA_QUEUE): splice those bytes out too. */
+        memmove(state_v2 + cut2,
+                state_v2 + cut2 + CDROM_DSA_TAIL_SIZE,
+                state_size - cut2 - CDROM_DSA_TAIL_SIZE);
+        memset(state_v2 + state_size - CDROM_DSA_TAIL_SIZE, 0,
+               CDROM_DSA_TAIL_SIZE);
     }
     put_u32(state_v2, STATE_OFF_VERSION, (uint32_t)STATE_MIN_VERSION);
 

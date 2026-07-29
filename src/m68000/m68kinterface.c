@@ -61,6 +61,21 @@ void m68k_set_irq2(unsigned int intLevel);
 static int32_t initialCycles;
 cpuop_func * cpuFunctionTable[65536];
 
+// Monotonic count of serviced interrupts/exceptions-by-IRQ. Diagnostic only:
+// lets test harnesses distinguish "halted, will be woken" from "halted with a
+// dead wake path" (lost wakeup). Exported via the m68k_* test-ABI wildcard.
+static uint32_t m68kInterruptsServiced = 0;
+
+unsigned int m68k_is_stopped(void)
+{
+	return regs.stopped ? 1 : 0;
+}
+
+unsigned int m68k_diag_interrupt_count(void)
+{
+	return m68kInterruptsServiced;
+}
+
 // By virtue of the fact that m68k_set_irq() can be called asychronously by
 // another thread, we need something along the lines of this:
 static int checkForIRQToHandle = 0;
@@ -108,6 +123,7 @@ void m68k_pulse_reset(void)
 	regs.spcflags = 0;
 	regs.stopped = 0;
 	regs.remainingCycles = 0;
+	m68kInterruptsServiced = 0;
 	
 	regs.intmask = 0x07;
 	regs.s = 1;								// Supervisor mode ON
@@ -218,6 +234,8 @@ static INLINE void m68ki_check_interrupts(void)
 void m68ki_exception_interrupt(uint32_t intLevel)
 {
 	uint32_t vector, sr, newPC;
+
+	m68kInterruptsServiced++;
 
 	// Turn off the stopped state (N.B.: normal 68K behavior!)
 	regs.stopped = 0;

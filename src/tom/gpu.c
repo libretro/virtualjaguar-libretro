@@ -32,6 +32,8 @@
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
 #include "tom.h"
+#include "event.h"
+#include "settings.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -179,6 +181,12 @@ void (*gpu_opcode[64])()=
 
 static uint8_t gpu_ram_8[0x1000];
 uint32_t gpu_pc;
+
+
+/* Diagnostic IRQ counters (see gpu.h). Pure observability — incremented on
+ * GPUSetIRQLine(line, ASSERT_LINE), reset in GPUReset. */
+uint32_t gpu_irq0_count = 0;
+uint32_t gpu_irq3_count = 0;
 static uint32_t gpu_acc;
 static uint32_t gpu_remain;
 static uint32_t gpu_hidata;
@@ -200,6 +208,23 @@ static uint32_t * gpu_alternate_reg;
 static uint32_t gpu_instruction;
 static uint32_t gpu_opcode_first_parameter;
 static uint32_t gpu_opcode_second_parameter;
+
+/* Branch delay-slot IRQ hazard state.  gpu_opcode_jump/jr execute their
+ * delay-slot instruction inline and then apply the branch target to gpu_pc.
+ * If the delay-slot instruction's side effects dispatch a GPU interrupt
+ * synchronously -- the canonical case is the CD BIOS / game streaming-ISR
+ * epilogue `JUMP T,(Rret)` with `STORE Rflags,(G_FLAGS)` in the delay slot,
+ * where the store clears IMASK while a FIFO interrupt is already latched --
+ * then GPUHandleIRQs must push the BRANCH TARGET as the return address
+ * (the delay slot has completed; the next instruction is the target), and
+ * the jump must NOT overwrite gpu_pc afterwards, or the vector jump is
+ * clobbered: IMASK stays set forever, no interrupt is ever delivered again,
+ * and CD transfers wedge (video_stall / cd_seek_wedge with G_FLAGS IMASK
+ * stuck).  Transient within a single opcode's execution -- never live at a
+ * savestate boundary, so deliberately not serialized. */
+static uint32_t gpu_ds_branch_target;
+static uint8_t  gpu_in_delay_slot;
+static uint8_t  gpu_ds_irq_dispatched;
 
 #define GPU_RUNNING	(gpu_control & 0x01)
 
@@ -237,9 +262,41 @@ uint8_t * branch_condition_table = 0;
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
 
+/* Timeslice bookkeeping for GPU-raised 68K interrupts (CPUINT).
+ *
+ * The main loop runs the 68K's timeslice to completion BEFORE the GPU's
+ * (JaguarExecuteNew), so the GPU observes 68K writes "from the future": a
+ * mailbox command written near the END of a 68K slice is visible to the GPU
+ * at the START of its own slice covering the same emulated interval.  If the
+ * GPU responds with a CPUINT and we deliver it synchronously, the 68K can
+ * receive the interrupt BEFORE it has executed the instructions that follow
+ * the mailbox write -- on silicon that ordering is physically impossible,
+ * because the GPU's decode path from mailbox poll to the G_CTRL store takes
+ * thousands of GPU cycles while `move.l -> stop` is ~6 CPU cycles.  Games
+ * built on the standard coprocessor handshake (command; stop; wait for the
+ * one-shot CPUINT) then deadlock on a lost wakeup (BrainDead 13 FMV engine).
+ *
+ * Fix: deliver GPU-raised CPUINT through the event scheduler at
+ *   (slice budget + GPU cycles actually consumed to reach the store) usec,
+ * i.e. the GPU's own measured decode latency replayed into the 68K's next
+ * slice.  That is provably never EARLIER than silicon (write time <= slice
+ * end, decode consumed >= true decode path) and late by at most one slice
+ * (~32 usec), well inside real-world interrupt-latency slack.  No tuned
+ * constants: the offset is whatever the emulated GPU actually executed. */
+static int32_t gpuExecSliceBudget = 0;
+static int32_t gpuExecSliceRemaining = 0;
+
 void GPUReleaseTimeslice(void)
 {
 	gpu_releaseTimeSlice_flag = 1;
+}
+
+/* Event-scheduler callback: deliver a GPU-raised CPUINT to the 68K.
+ * TOMSetPendingGPUInt() latches the pending bit and asserts the 68K IRQ
+ * if the GPU interrupt is still enabled in INT1 (TOMAssertEnabledIRQs). */
+void GPUCPUINTCallback(void)
+{
+	TOMSetPendingGPUInt();
 }
 
 uint32_t GPUGetPC(void)
@@ -513,6 +570,25 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   {
                      //This is the programmer's responsibility, to make sure the handler is valid, not ours!
                      //					if ((TOMIRQEnabled(IRQ_GPU))// && (JaguarInterruptHandlerIsValid(64)))
+                     if (who == GPU && !m68k_is_stopped())
+                     {
+                        /* GPU-raised CPUINT while the 68K is RUNNING: never
+                         * deliver synchronously -- the 68K may still be on
+                         * its way to the `stop` of a command/stop/wait
+                         * handshake, and consuming the one-shot wakeup
+                         * before the halt deadlocks it.  See the
+                         * gpuExecSliceBudget comment block.  (If the 68K is
+                         * already stopped, immediate delivery just wakes it
+                         * -- no race is possible -- so we keep the cheap
+                         * path and avoid fragmenting the timeslice.) */
+                        double riscUSec = (vjs.hardwareTypeNTSC
+                           ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+                        double consumed = (double)(gpuExecSliceBudget - gpuExecSliceRemaining);
+                        SetCallbackTime(GPUCPUINTCallback,
+                           ((double)gpuExecSliceBudget + consumed) * riscUSec, EVENT_MAIN);
+                        GPUReleaseTimeslice();
+                     }
+                     else
                      {
                         TOMSetPendingGPUInt();
                         m68k_set_irq(2);			// Set 68000 IPL 2
@@ -522,6 +598,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   data &= ~0x02;
                }
 
+               /* Apply GO and the other persistent control bits BEFORE
+                * processing the CPU->GPU interrupt request below: a single
+                * write may set GPUGO and INT0 together, and the interrupt
+                * is only captured by a RUNNING GPU (see GPUSetIRQLine) —
+                * so the GO bit must land first.  $06 (the two transient
+                * interrupt-request bits) never persists in gpu_control. */
+               gpu_control = (gpu_control & 0xF7C0) | (data & ~(0xF7C0 | 0x06));
+
                // check for CPU -> GPU interrupt #0
                if (data & 0x04)
                {
@@ -530,8 +614,6 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   DSPReleaseTimeslice();
                   data &= ~0x04;
                }
-
-               gpu_control = (gpu_control & 0xF7C0) | (data & (~0xF7C0));
 
                // if gpu wasn't running but is now running, execute a few cycles
 #ifdef GPU_SINGLE_STEPPING
@@ -582,6 +664,24 @@ void GPUHandleIRQs(void)
 {
    uint32_t bits, mask;
    uint32_t which = 0; //Isn't there a #pragma to disable this warning???
+
+   /* A halted GPU (G_CTRL GPUGO=0) latches interrupts but cannot service
+    * them: the dispatch sequence (push return address via r31, jump to
+    * vector) is executed by the RISC core itself, and a stopped core
+    * executes nothing.  Dispatching here while stopped pushes a return
+    * address through the STOPPED context's r31 — if the 68K halted the
+    * GPU mid-handler (as Hover Strike's CD driver does around seeks),
+    * that push lands inside GPU code/variables and corrupts them.
+    * Pending latches are serviced by GPUExec() when the GPU next runs.
+    *
+    * A single-step-paused GPU (G_CTRL SINGLE_STEP, bit 3) is the same case:
+    * GPUGO is still set but the RISC core is not advancing (it is parked in a
+    * coprocessor barrier — see GPUExec), so it likewise cannot run a dispatch
+    * sequence.  Dispatching would retarget gpu_pc to a vector mid-barrier and
+    * corrupt the handshake; defer until SINGLE_STEP clears and the core runs. */
+   if (!GPU_RUNNING || (gpu_control & 0x08))
+      return;
+
    // Bail out if we're already in an interrupt!
    if (gpu_flags & IMASK)
       return;
@@ -615,7 +715,19 @@ void GPUHandleIRQs(void)
    // move  pc,r30			; address of interrupted code
    // store  r30,(r31)     ; store return address
    gpu_reg[31] -= 4;
-   GPUWriteLong(gpu_reg[31], gpu_pc - 2, GPU);
+   if (gpu_in_delay_slot)
+   {
+      /* Dispatch triggered by the delay-slot instruction itself (e.g. an
+       * IMASK-clearing G_FLAGS store in an ISR epilogue's delay slot).
+       * The delay slot has already executed, so the interrupted-code
+       * address is the pending BRANCH TARGET, not gpu_pc (which still
+       * points just past the delay slot).  Flag the in-flight jump opcode
+       * so it does not overwrite gpu_pc (the vector) afterwards. */
+      GPUWriteLong(gpu_reg[31], gpu_ds_branch_target - 2, GPU);
+      gpu_ds_irq_dispatched = 1;
+   }
+   else
+      GPUWriteLong(gpu_reg[31], gpu_pc - 2, GPU);
 
    // movei  #service_address,r30  ; pointer to ISR entry
    // jump  (r30)					; jump to ISR
@@ -630,6 +742,26 @@ void GPUSetIRQLine(int irqline, int state)
 
    if (state)
    {
+      /* A halted GPU (GPUGO=0) does not capture interrupts: the RISC
+       * core's clock is stopped, so nothing samples the interrupt lines
+       * and no latch accumulates.  Dropping the assert here is what real
+       * silicon does — the source's LEVEL either still holds when the
+       * GPU is restarted (and re-edges once software services it) or the
+       * condition was consumed by the 68K in the meantime (e.g. a polled
+       * DSA response) and no interrupt should be seen at all.  Latching
+       * here instead meant every 68K stop/reprogram/restart of the GPU
+       * could dispatch a stale interrupt into the new program before its
+       * r31 stack init, pushing a return address into GPU code — Hover
+       * Strike's B-skip lockup.  A single-step-paused GPU (SINGLE_STEP, bit 3)
+       * is likewise not sampling — GPUGO is set but the core is parked in a
+       * coprocessor barrier — so drop the assert the same way; the source
+       * re-edges once the 68K clears SINGLE_STEP and the core resumes. */
+      if (!GPU_RUNNING || (gpu_control & 0x08))
+         return;
+      /* Diagnostic counters — see gpu.h */
+      if (irqline == 0) gpu_irq0_count++;
+      else if (irqline == 3) gpu_irq3_count++;
+
       gpu_control |= mask;			// Assert the interrupt latch
       GPUHandleIRQs();				// And handle the interrupt...
    }
@@ -662,6 +794,10 @@ void GPUReset(void)
    gpu_pointer_to_matrix = 0x00000000;
    gpu_data_organization = 0xFFFFFFFF;
    gpu_pc				  = 0x00F03000;
+   gpu_irq0_count       = 0;
+   gpu_irq3_count       = 0;
+   gpuExecSliceBudget   = 0;
+   gpuExecSliceRemaining = 0;
    gpu_control			  = 0x00002800;			// Correctly sets this as TOM Rev. 2
    gpu_hidata			  = 0x00000000;
    gpu_remain			  = 0x00000000;			// These two registers are RO/WO
@@ -669,6 +805,11 @@ void GPUReset(void)
 
    // GPU internal register
    gpu_acc				  = 0x00000000;
+
+   // Delay-slot IRQ hazard state (transient; reset for iOS static-state hygiene)
+   gpu_ds_branch_target  = 0x00000000;
+   gpu_in_delay_slot     = 0;
+   gpu_ds_irq_dispatched = 0;
 
    gpu_reg = gpu_reg_bank_0;
    gpu_alternate_reg = gpu_reg_bank_1;
@@ -701,6 +842,21 @@ int GPUIsRunning(void)
    return GPU_RUNNING ? 1 : 0;
 }
 
+/* See gpu.h: matches the assert-drop condition in GPUSetIRQLine (a
+ * stopped or single-step-parked core samples no interrupt lines). */
+int GPUCanCaptureIRQ(void)
+{
+   return (GPU_RUNNING && !(gpu_control & 0x08)) ? 1 : 0;
+}
+
+/* Is the Object Processor interrupt (IRQ3) enabled in G_FLAGS?  Used by
+ * OPProcessList to decide whether a GPU object's inline release-wait can
+ * ever be serviced — if the game never enabled IRQ3, waiting is futile. */
+int GPUOPInterruptEnabled(void)
+{
+   return (gpu_flags & 0x80) ? 1 : 0;
+}
+
 void GPUDumpState(const char *tag)
 {
    LOG_INF("[GPU %s] PC=%08X ctrl=%08X flags=%08X running=%d\n",
@@ -714,6 +870,14 @@ void GPUExec(int32_t cycles)
    if (!GPU_RUNNING)
       return;
 
+   /* Paused in single-step mode: a running GPU that has set G_CTRL
+    * SINGLE_STEP (bit 3) does not free-run and does not service interrupts
+    * until software clears SINGLE_STEP (or steps it via SINGLE_GO).  See the
+    * barrier note in the exec loop below — this is the resting state of Iron
+    * Soldier 2's match-load coprocessor handshake between 68K acknowledgements. */
+   if (gpu_control & 0x08)
+      return;
+
 #ifdef GPU_SINGLE_STEPPING
    if (gpu_control & 0x18)
    {
@@ -724,11 +888,13 @@ void GPUExec(int32_t cycles)
    GPUHandleIRQs();
    gpu_releaseTimeSlice_flag = 0;
    gpu_in_exec++;
+   gpuExecSliceBudget = cycles;
 
    while (cycles > 0 && GPU_RUNNING)
    {
       uint16_t opcode;
       uint32_t index;
+      gpuExecSliceRemaining = cycles;
       if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
       {
          uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;
@@ -754,6 +920,21 @@ void GPUExec(int32_t cycles)
       //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
 
       cycles -= gpu_opcode_cycles[index];
+
+      /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
+       * that has just set SINGLE_STEP has entered single-step mode and stops
+       * free-running — it now advances only when software clears SINGLE_STEP
+       * or writes SINGLE_GO.  Iron Soldier 2's match-load geometry coprocessor
+       * job (GPU $F03024) uses this as a producer/consumer barrier: after
+       * posting each object's result to a main-RAM mailbox it writes G_CTRL=9
+       * (GPUGO|SINGLE_STEP) to pause, and the 68K consumer resumes it by
+       * writing G_CTRL=$11 (GPUGO|SINGLE_GO, SINGLE_STEP clear) once it has
+       * drained the result.  Without honoring SINGLE_STEP the GPU free-runs the
+       * whole job to its self-halt before the 68K reads a single result, then
+       * the 68K re-kicks the parked GPU and both wedge (JTRM: bit 3 enables
+       * single-step mode). */
+      if (gpu_control & 0x08)
+         break;
    }
 
    gpu_in_exec--;
@@ -1004,8 +1185,16 @@ INLINE static void gpu_opcode_jump(void)
       gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = ds_opcode & 0x1F;
       gpu_pc += 2;
+      gpu_in_delay_slot = 1;
+      gpu_ds_branch_target = delayed_pc;
+      gpu_ds_irq_dispatched = 0;
       executeOpcode(ds_index);
-      gpu_pc = delayed_pc;
+      gpu_in_delay_slot = 0;
+      /* If the delay-slot instruction dispatched an interrupt, gpu_pc is
+       * the ISR vector and the branch target is on the ISR stack as the
+       * return address -- do not clobber the vector. */
+      if (!gpu_ds_irq_dispatched)
+         gpu_pc = delayed_pc;
    }
 }
 
@@ -1034,8 +1223,15 @@ INLINE static void gpu_opcode_jr(void)
       gpu_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
       gpu_opcode_second_parameter = ds_opcode & 0x1F;
       gpu_pc += 2;
+      gpu_in_delay_slot = 1;
+      gpu_ds_branch_target = (uint32_t)delayed_pc;
+      gpu_ds_irq_dispatched = 0;
       executeOpcode(ds_index);
-      gpu_pc = delayed_pc;
+      gpu_in_delay_slot = 0;
+      /* See gpu_opcode_jump: don't clobber a vector jump dispatched by
+       * the delay-slot instruction. */
+      if (!gpu_ds_irq_dispatched)
+         gpu_pc = delayed_pc;
    }
 }
 
@@ -1347,7 +1543,21 @@ INLINE static void gpu_opcode_storep(void)
 INLINE static void gpu_opcode_loadb(void)
 {
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-      RN = GPUReadLong(RM, GPU) & 0xFF;
+   {
+      /* JTRM (Technical Reference v8, "Load Byte"): "The destination
+       * register will have the byte loaded into bits 0-7 ... This applies
+       * to external memory only, internal memory will perform a 32-bit
+       * read."  Internal RAM is one long per row; a byte load returns the
+       * ENTIRE long containing the address -- no byte extraction at all.
+       * Atari's own Cinepak decompressor (JTRM vol. 12) depends on this:
+       * its CRY/RGB clamp tables in GPU local RAM store one entry per
+       * 32-bit long (value in the low byte, upper bytes zero) and index
+       * them with LOADB at arbitrary byte offsets.  The old code returned
+       * `GPUReadLong(RM) & 0xFF` (= the byte at RM+3): every decoded FMV
+       * frame came out as structured garbage (BrainDead 13 / Dragon's
+       * Lair / Space Ace). */
+      RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
+   }
    else
       RN = JaguarReadByte(RM, GPU);
 }
@@ -1355,17 +1565,14 @@ INLINE static void gpu_opcode_loadb(void)
 
 INLINE static void gpu_opcode_loadw(void)
 {
-#ifdef GPU_CORRECT_ALIGNMENT
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-      RN = GPUReadLong(RM & 0xFFFFFFFE, GPU) & 0xFFFF;
+   {
+      /* Same JTRM rule as LOADB: word loads from internal RAM perform a
+       * full 32-bit read of the long containing the address. */
+      RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
+   }
    else
       RN = JaguarReadWord(RM, GPU);
-#else
-   if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-      RN = GPUReadLong(RM, GPU) & 0xFFFF;
-   else
-      RN = JaguarReadWord(RM, GPU);
-#endif
 }
 
 
@@ -1565,6 +1772,10 @@ INLINE static void gpu_opcode_mmult(void)
    int64_t accum = 0;
    uint32_t res;
 
+   /* Per JTRM ("Systolic Matrix Multiplies"), the packed vector operand
+    * lives in the SECONDARY register bank (bank 1) — an absolute bank
+    * reference, not "the bank not currently selected".  See the DSP's
+    * dsp_opcode_mmult for the full story (Baldies clipped-music bug). */
    if (gpu_matrix_control & 0x10)				// Column stepping
    {
       for(i=0; i<count; i++)
@@ -1572,9 +1783,9 @@ INLINE static void gpu_opcode_mmult(void)
          int16_t a;
          int16_t b;
          if (i & 0x01)
-            a = (int16_t)((gpu_alternate_reg[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
+            a = (int16_t)((gpu_reg_bank_1[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
          else
-            a = (int16_t)(gpu_alternate_reg[IMM_1 + (i >> 1)] & 0xFFFF);
+            a = (int16_t)(gpu_reg_bank_1[IMM_1 + (i >> 1)] & 0xFFFF);
 
          b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;
@@ -1588,9 +1799,9 @@ INLINE static void gpu_opcode_mmult(void)
          int16_t a;
          int16_t b;
          if (i & 0x01)
-            a = (int16_t)((gpu_alternate_reg[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
+            a = (int16_t)((gpu_reg_bank_1[IMM_1 + (i >> 1)] >> 16) & 0xFFFF);
          else
-            a = (int16_t)(gpu_alternate_reg[IMM_1 + (i >> 1)] & 0xFFFF);
+            a = (int16_t)(gpu_reg_bank_1[IMM_1 + (i >> 1)] & 0xFFFF);
 
          b = ((int16_t)GPUReadWord(addr + 2, GPU));
          accum += a * b;

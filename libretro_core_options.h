@@ -121,6 +121,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_cd_trace",
+      "CD Trace (Diagnostic)",
+      NULL,
+      "Records DSA command/response traffic and seek/FIFO transitions to a bounded ring buffer, dumped to the RetroArch log when the cd_seek_wedge watchdog fires (or on request by test harnesses). Diagnostic only -- intended for troubleshooting Jaguar CD boot/data-transfer bugs, not for normal play. Can also be forced on headlessly via the VJ_CD_TRACE=1 environment variable.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_bios",
       "BIOS",
       NULL,
@@ -147,6 +161,52 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
+   },
+   {
+      "virtualjaguar_cd_bios_type",
+      "CD BIOS Type (Restart)",
+      NULL,
+      "Select which Jaguar CD BIOS to use when loading CD images. Retail is the standard BIOS. Dev is the developer BIOS with less strict checks.",
+      NULL,
+      NULL,
+      {
+         { "retail", "Retail" },
+         { "dev",    "Developer" },
+         { NULL, NULL },
+      },
+      "retail"
+   },
+   {
+      "virtualjaguar_cd_boot_mode",
+      "CD Boot Mode (Restart)",
+      NULL,
+      "How to boot Jaguar CD games. HLE uses high-level emulation (recommended). BIOS boots through the real CD BIOS (experimental) — an external BIOS ROM file is used if present in the system directory, otherwise the embedded CD BIOS is used, so no files are required. Auto behaves like BIOS.",
+      NULL,
+      NULL,
+      {
+         { "hle",  "HLE (Recommended)" },
+         { "auto", "Auto (Real BIOS)" },
+         { "bios", "Real BIOS (Included, Experimental)" },
+         { NULL, NULL },
+      },
+      "hle"
+   },
+   {
+      "virtualjaguar_cd_read_speed",
+      "CD Read Speed (HLE Boot Mode Only)",
+      NULL,
+      "Data-transfer rate for Jaguar CD reads in HLE boot mode. '2x' matches the real drive (300 KB/s) and is hardware-accurate. Higher speeds shorten load times but may break timing-sensitive titles (some games rely on the drive rate for code overlays, music cues, and load handshakes); 'Instant' completes each read in one tick and is the most likely to cause hangs. BIOS boot mode always uses the accurate rate. Applied per-read: a transfer already in flight keeps the speed it started with.",
+      NULL,
+      NULL,
+      {
+         { "1x",      "1x (150 KB/s)" },
+         { "2x",      "2x (Accurate)" },
+         { "4x",      "4x" },
+         { "8x",      "8x" },
+         { "instant", "Instant" },
+         { NULL, NULL },
+      },
+      "2x"
    },
    {
       "virtualjaguar_alt_inputs",

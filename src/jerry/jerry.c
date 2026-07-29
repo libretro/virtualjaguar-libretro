@@ -289,6 +289,33 @@ void JERRYPIT2Callback(void)
 }
 
 
+/* Restart the I2S interrupt timer chain WITHOUT asserting an interrupt
+ * now.  Called on SCLK writes (src/jerry/dac.c).  On real hardware the
+ * SSI raises its first word-strobe interrupt only after a complete I2S
+ * word has been shifted -- 32 bits x 2 clock phases x (SCLK+1) system
+ * clocks -- never in the same instruction that programmed the clock.
+ * Invoking JERRYI2SCallback() synchronously here vectored the DSP into
+ * its I2S handler in the middle of the store that wrote SCLK, before
+ * the DSP module's init code had set up the handler's pointer
+ * registers; the handler then wrote CD samples through stale pointers
+ * over its own code (Highlander / Dragon's Lair CD crash: dsp_pc
+ * escape to $FFFFCE03 after a module re-upload). */
+void JERRYRescheduleI2S(void)
+{
+   double usecs;
+
+   jerryI2SCycles = 32 * (2 * (*sclk + 1));
+
+   if (*smode & SMODE_INTERNAL)
+      usecs = (double)jerryI2SCycles
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+   else
+      usecs = 22.675737;
+
+   SetCallbackTime(JERRYI2SCallback, usecs, EVENT_JERRY);
+}
+
+
 void JERRYI2SCallback(void)
 {
    // We don't have to divide the RISC clock rate by this--the reason is a bit
@@ -321,6 +348,13 @@ void JERRYI2SCallback(void)
 
       if (ButchIsReadyToSend())//Not sure this is right spot to check...
       {
+         /* CDDA-DIAG: samples/s delivered from BUTCH to LRXD/RRXD in
+          * slave mode; ~44100/s expected while CD audio should play. */
+         static uint32_t ssiDeliveries = 0;
+         ssiDeliveries++;
+         if (ssiDeliveries <= 3 || (ssiDeliveries % 220500) == 0)
+            LOG_INF("[CDDA] BUTCH->SSI delivery #%u (%us of samples)\n",
+                    ssiDeliveries, ssiDeliveries / 44100);
          //	return GetWordFromButchSSI(offset, who);
          SetSSIWordsXmittedFromButch();
          DSPSetIRQLine(DSPIRQ_SSI, ASSERT_LINE);
@@ -611,6 +645,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       uint16_t oldPending = jerryPendingInterrupt;
       jerryInterruptMask = data & 0xFF;
       jerryPendingInterrupt &= ~(data >> 8);
+      /* CDDA-DIAG: JINTCTRL external-int enable edges gate the BUTCH ->
+       * 68K IPL2 delivery (cdrom.c BUTCHExec); rare, log unconditionally. */
+      if ((oldMask ^ jerryInterruptMask) & IRQ2_EXTERNAL)
+         LOG_INF("[CDDA] JINTCTRL ext-int enable %s (J_INT=$%04X who=%u 68kpc=$%06X)\n",
+                 (jerryInterruptMask & IRQ2_EXTERNAL) ? "ON" : "OFF",
+                 data, who, m68k_get_reg(NULL, M68K_REG_PC));
       if (oldMask != jerryInterruptMask || oldPending != jerryPendingInterrupt)
       {
          JERRY_TRACE("J_INT write word data=$%04X who=%u mask $%02X->$%02X pending $%02X->$%02X%s%s\n",

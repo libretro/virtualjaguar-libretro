@@ -31,6 +31,9 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/tom/tom.c  \
 	$(CORE_DIR)/src/cd/cdintf.c \
 	$(CORE_DIR)/src/cd/cdrom.c \
+	$(CORE_DIR)/src/cd/jagcd_bios.c \
+	$(CORE_DIR)/src/cd/jagcd_cart.c \
+	$(CORE_DIR)/src/cd/jagcd_hle.c \
 	$(CORE_DIR)/src/core/cheat.c \
 	$(CORE_DIR)/src/core/crc32.c \
 	$(CORE_DIR)/src/core/perf_counters.c \

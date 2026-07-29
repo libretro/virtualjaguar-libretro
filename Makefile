@@ -749,9 +749,13 @@ clean:
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
 		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
-		test/test_blitter_mmio test/test_eeprom_lifecycle \
+		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
+		test/test_butch_cd test/test_bios_config test/test_boot_config \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
+		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing \
+		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
 
@@ -774,19 +778,38 @@ else ifneq ($(TEST_EXPORTS),1)
 test:
 	@rm -f $(TARGET)
 	@$(MAKE) TEST_EXPORTS=1 test
+
+# The per-binary rules below only exist in the TEST_EXPORTS=1 branch.
+# Without this guard, a bare `make test/<binary>` silently falls through
+# to GNU make's built-in %:%.c rule, which links with the core's
+# -dynamiclib LDFLAGS and produces an UNEXECUTABLE shared library
+# ("cannot execute binary file" at run time -- this broke
+# cd_boot_matrix.sh's harness build).  Fail loudly instead.
+test/test_% test/tools/test_%:
+	@echo "ERROR: test binaries need the TEST_EXPORTS=1 rule set:" >&2
+	@echo "  make TEST_EXPORTS=1 $@" >&2
+	@false
 else
+# Every harness that dlopens the core verifies the binary's embedded git
+# rev (+ -dirty) against this before running -- a stale dylib fails loudly
+# instead of silently testing the wrong code (see scripts/build-id.sh).
+test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
-		test/test_blitter_mmio test/test_eeprom_lifecycle test/test_tom_visible_window \
+		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing \
-		test/tools/test_memory_map
+		test/test_butch_cd test/test_bios_config test/test_boot_config \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
+		test/test_audio_dac test/test_blitter \
+		test/tools/test_memory_map test/tools/test_op_gpu_object
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_blitter_mmio
+	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
 	./test/test_tom_visible_window
 	./test/test_blitter_simd
@@ -808,16 +831,17 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	else \
 		echo "  SKIP: Atari Karts ROM (private) not available"; \
 	fi
-	@# Known-broken titles: --expect-clipping makes the test pass while the
-	@# bug is still there, but flips red the day a DSP-side fix lands and
-	@# clipping disappears — forces this manifest to be updated.
+	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
+	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
+	@# register bank 1, not "the non-current bank").  These now assert
+	@# clean audio so a regression flips them red again.
 	@if [ -f "test/roms/private/Skyhammer_(1999).jag" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --expect-clipping --quiet; \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --quiet; \
 	else \
 		echo "  SKIP: Skyhammer ROM (private) not available"; \
 	fi
 	@if [ -f "test/roms/private/Iron Soldier 2 (World).j64" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --expect-clipping --quiet; \
+		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --quiet; \
 	else \
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi
@@ -832,7 +856,13 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	else \
 		echo "  SKIP: Iron Soldier 1 ROM (private) not available (audio presence)"; \
 	fi
+	./test/test_butch_cd
+	./test/test_cd_hle_idempotent
+	./test/test_bios_config
+	./test/test_boot_config
+	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
 	@# height is not, so a region-specific overflow must not hide.
@@ -863,6 +893,17 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
 		./test/test_eeprom_lifecycle ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	@echo ""
+	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
+	@echo "test/test_cd_toc_contract (needs VJ_TOC_DISC=<image>),"
+	@echo "test/test_cd_fifo_stream, test/test_cd_second_transfer and test/test_cd_lost_wakeup"
+	@echo "(need VJ_FIFO_DISC=<image>),"
+	@echo "test/test_cd_ssi_stream (needs VJ_SSI_DISC=<image with an audio track>),"
+	@echo "and test/test_blitter (register-readback) are built but not run from"
+	@echo "'make test'. The CD sweeps walk every disc in test/roms/private/; the"
+	@echo "blitter readback tests probe register read paths that the emulator"
+	@echo "does not currently expose. Invoke them directly when validating"
+	@echo "regressions in those subsystems."
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -951,6 +992,13 @@ test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
 
+test/tools/test_op_gpu_object: test/tools/test_op_gpu_object.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_op_gpu_object.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 test/tools/test_dsp_audio_diag: test/tools/test_dsp_audio_diag.c \
 		test/harness/harness.c test/harness/harness.h \
 		test/harness/dsp_probe.c test/harness/dsp_probe.h
@@ -988,9 +1036,92 @@ test/test_frontend_pacing: test/test_frontend_pacing.c \
 		-o $@ test/test_frontend_pacing.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Drives blitter_blit() through the MMIO path with varied B_CMD words and
+# checks destination bytes, plus a save-state check on the command field
+# decode (the render-inert half of it) -- see the header comment in the
+# test for why both halves are needed.
+test/test_blitter_cmd: test/test_blitter_cmd.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_blitter_cmd.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# CD-specific test harnesses (imported from PR #109).  Tests SKIP gracefully
+# when no disc images are present in test/roms/private/, so CI without
+# private ROMs still passes.
+test/test_butch_cd: test/test_butch_cd.c test/test_framework.h test/mister_ground_truth.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_butch_cd.c -ldl
+
+test/test_bios_config: test/test_bios_config.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_bios_config.c -ldl
+
+test/test_boot_config: test/test_boot_config.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_boot_config.c -ldl
+
+test/test_cd_boot: test/test_cd_boot.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_boot.c -ldl
+
+test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_hle_boot.c -ldl
+
+test/test_cd_bios_boot: test/test_cd_bios_boot.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_bios_boot.c -ldl
+
+test/test_cd_hle_idempotent: test/test_cd_hle_idempotent.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_hle_idempotent.c -ldl
+
+test/test_cd_toc_contract: test/test_cd_toc_contract.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_toc_contract.c -ldl
+
+test/test_cd_fifo_stream: test/test_cd_fifo_stream.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_fifo_stream.c -ldl
+
+test/test_cd_ssi_stream: test/test_cd_ssi_stream.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_ssi_stream.c -ldl
+
+test/test_cd_second_transfer: test/test_cd_second_transfer.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_second_transfer.c -ldl
+
+test/test_cd_lost_wakeup: test/test_cd_lost_wakeup.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_lost_wakeup.c -ldl
+
+test/test_audio_dac: test/test_audio_dac.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_dac.c -ldl -lm
+
+test/test_blitter: test/test_blitter.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_blitter.c -ldl
+
+# Diagnostic CD harnesses: invoked manually with a CUE/CHD argument.
+test/dump_pc: test/dump_pc.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/dump_pc.c -ldl
+
+test/heap_search: test/heap_search.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/heap_search.c -ldl
+
+# Aggregate target for the manual diagnostic tools.
+.PHONY: tools
+tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
-.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing
+.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi
 endif
 
 lint:
@@ -1090,6 +1221,37 @@ frame-timing:
 		test/harness/harness.c test/harness/timing_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
+
+# Automated visual + audio verification for CD titles: frame-motion timeline,
+# audio RMS, periodic screenshots (PPM).  See the tool header for usage.
+#   make cd-visual CD_VISUAL_DISC="test/roms/private/Title/Title.cue" \
+#        CD_VISUAL_FLAGS="--bios --frames 3000 --outdir /tmp/cdshots"
+CD_VISUAL_DISC  ?=
+CD_VISUAL_FLAGS ?= --bios --frames 3000
+cd-visual:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/cd_visual_verify \
+		test/tools/cd_visual_verify.c test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+	@if [ -n "$(CD_VISUAL_DISC)" ]; then \
+		VJ_EXPECT_BUILD=$$(./scripts/build-id.sh) \
+		./test/tools/cd_visual_verify ./$(TARGET) "$(CD_VISUAL_DISC)" $(CD_VISUAL_FLAGS); \
+	else \
+		echo "built test/tools/cd_visual_verify -- pass CD_VISUAL_DISC=<image> to run"; \
+	fi
+
+# `make cue2cdi` -- build the standalone CUE/BIN -> DiscJuggler CDI
+# converter (host-side tool, libc only; no core, no libretro deps).
+# Not part of the default build or `make test`; build it on demand.
+#
+# Usage:
+#   make cue2cdi
+#   ./test/tools/cue2cdi game.cue --verify
+#   ./test/tools/cue2cdi --batch --verify path/to/dumps/
+.PHONY: cue2cdi
+cue2cdi:
+	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
 
 print-%:
 	@echo '$*=$($*)'

@@ -17,12 +17,14 @@
 extern "C" {
 #endif
 
-/* Save state format identifier and version */
+/* Save state format identifier and version.
+ * v4: CDROM chunk gained the DSA response queue + serial-delay counter. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   3
+#define STATE_VERSION   4
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
- * after them (see DACStateLoad); STATE_VERSION is always what we write. */
+ * after them (see DACStateLoad, CDROMStateLoad); STATE_VERSION is always
+ * what we write. */
 #define STATE_MIN_VERSION 2
 
 /* Per-field version gates.  A module loader that has to skip a field an
@@ -30,6 +32,9 @@ extern "C" {
  * constant naming that field, never a bare literal. */
 /* First version whose DAC block carries i2sNonZeroCount. */
 #define STATE_VERSION_DAC_I2S_NONZEROCOUNT 3
+/* First version whose CDROM block carries the DSA response queue and
+ * serial-delay counter. */
+#define STATE_VERSION_CDROM_DSA_QUEUE 4
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
@@ -74,7 +79,7 @@ size_t TOMStateSave(uint8_t *buf);
 size_t TOMStateLoad(const uint8_t *buf);
 
 size_t CDROMStateSave(uint8_t *buf);
-size_t CDROMStateLoad(const uint8_t *buf);
+size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion);
 
 size_t JoystickStateSave(uint8_t *buf);
 size_t JoystickStateLoad(const uint8_t *buf);

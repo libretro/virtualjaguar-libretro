@@ -1,0 +1,32 @@
+BrainDead 13 (USA) — iOS device, real-BIOS mode, core at HEAD (FIFO-phase fix present).
+Boot stub injected $FA00 bytes at $124000, trampoline at $080000, TOC populated. Game code ran, logo shown, then wedged.
+
+[CRASH-DETECT] heartbeat frame=600 gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0
+[CRASH-DETECT] video_stall frame=739 fb_hash=$4668CD35 unchanged 300f gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B120 dsp_run=0
+[CRASH-DETECT] cd_seek_wedge frame=739 seek_starts=1 seek_dones=1 fifo_drains=95 unchanged 300f gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B120 dsp_run=0
+
+CD-TRACE (201 entries), pre-seek DSA handshake then endless FILL/DRAIN:
+#0 DSA_TX $7001
+#1 DSA_TX $150A
+#2 DSA_RX $170A
+#3 DSA_RX $170A
+#4 DSA_RX $170A
+#5 DSA_TX $1005
+#6 DSA_TX $1104
+#7 DSA_TX $1206
+#8 SEEK_START $1206 block=22656   (goto MSF 05:04:06 -> ((5*60+4)*75+6)-150 = 22656, correct)
+#9 SEEK_DONE  $0100 block=22656
+#10 DSA_RX    $0100 block=22656
+#11 FIFO_DRAIN $0010 block=22656
+#12..#200: FIFO_FILL value=$0000 / FIFO_DRAIN value=$0010 alternate FOREVER (5 ticks/pair).
+   block creeps 22656 -> 22657 across ~150 drain events (entry #11..#157), i.e. ~150 drains per sector.
+   Every FIFO_FILL value is $0000; every FIFO_DRAIN value is $0010 (=FIFO_DRAIN_READS threshold, 16).
+
+After the ring: heartbeats frame=1200/1800/2400 all gpu_pc=$00F03278 gpu_run=1 dsp_pc=$00F1B120 dsp_run=0, fb_hash frozen $4668CD35.
+
+READING:
+- Data IS flowing now (unlike the pre-FIFO-fix wall) — seek completes, FIFO drains continuously.
+- GPU CD-ISR is pinned at $F03276-$F0327A spinning; DSP never runs (dsp_run=0); 68K game loop never regains control (video frozen).
+- The transfer never TERMINATES from the ISR's view: it drains forever. Either (a) the ISR is counting a transfer length that never reaches zero, or (b) the completion signal (a DSA response / IRQ marking "transfer done") that should break the ISR loop never arrives, so it re-arms every half-full window.
+- Suspicious: block advances only ~1 sector per ~150 drains, and every FIFO_FILL reports value=$0000 — the fill may be re-presenting the same buffer position (cdBufPtr not advancing across fills) so the ISR reads the same bytes and its end-condition (byte count / end marker at $F03248 region) is never met.
+- Pre-seek command set to identify: $7001, $150A (TX) / $170A (RX x3). These precede the goto. $15/$17 are not the documented $01/$10-12/$02 set — decode them in cdrom.c's DSA handler; one of them likely sets the transfer LENGTH/mode the ISR counts down.

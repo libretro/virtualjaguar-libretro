@@ -17,9 +17,12 @@
 #include <stdlib.h>
 
 #include "jaguar.h"
+#include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
 #include "perf_counters.h"
+#include "jagcd_boot.h"
+#include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -291,6 +294,20 @@ void M68KInstructionHook(void)
    pcQPtr &= 0x3FF;
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
+      return;
+
+   /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small set
+    * of magic PCs in cart ROM space resolve to BIOS routines emulated in
+    * jagcd_hle.c instead of executing the cart bytes.  Returns true if the
+    * hook handled the call (PC/registers updated). */
+   if (JaguarCDHLEHook(m68kPC))
+      return;
+
+   /* CD boot strategy hook (cart strategy is a no-op for cart games;
+    * HLE/BIOS strategies trap specific PCs to inject boot stubs, patch
+    * auth checks, etc.). */
+   if (bootConfig.strategy && bootConfig.strategy->instruction_hook
+         && bootConfig.strategy->instruction_hook(m68kPC))
       return;
 }
 
@@ -565,12 +582,25 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    offset &= 0xFFFFFF;
 
-   // First 2M is mirrored in the $0 - $7FFFFF range
-   if (offset < 0x800000)
+   /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
+    * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
+    * expansion space).  Writes there fall on no device and vanish.
+    * Mirroring them into the low 2MB (the old behaviour) let a game's
+    * own out-of-range writes corrupt its code: Battle Morph's bottom
+    * scroll-buffer row blits legitimately compute addresses past
+    * $200000 (harmless on hardware) and the write-mirror folded them
+    * onto the game's 68K code at $4400+, shredding it 8 bytes per 24
+    * (the pitch-3 phrase stride) — black screen in both boot modes.
+    * Reads keep the historical mirror for now: real unpopulated DRAM
+    * reads float, and several recovery paths (wild-PC diagnostics)
+    * depend on reads staying harmless. */
+   if (offset < 0x200000)
    {
-      jaguarMainRAM[offset & 0x1FFFFF] = data;
+      jaguarMainRAM[offset] = data;
       return;
    }
+   else if (offset < 0x800000)
+      return;
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
    {
       CDROMWriteByte(offset, data, who);
@@ -595,13 +625,15 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    offset &= 0xFFFFFF;
 
-   // First 2M is mirrored in the $0 - $7FFFFF range
-   if (offset <= 0x7FFFFE)
+   /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
+   if (offset <= 0x1FFFFE)
    {
-      jaguarMainRAM[(offset+0) & 0x1FFFFF] = data >> 8;
-      jaguarMainRAM[(offset+1) & 0x1FFFFF] = data & 0xFF;
+      jaguarMainRAM[offset+0] = data >> 8;
+      jaguarMainRAM[offset+1] = data & 0xFF;
       return;
    }
+   else if (offset <= 0x7FFFFE)
+      return;
    else if (offset >= 0xDFFF00 && offset <= 0xDFFFFE)
    {
       CDROMWriteWord(offset, data, who);
@@ -637,11 +669,23 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
    uint32_t addr = offset & 0xFFFFFF;
-   if (addr < 0x800000)
+   /* CDDA-DIAG (Primal Rage): $F1B274 is the game's DSP command mailbox --
+    * cmd 1 enables the DSP ISR's CD-audio mix (r20), cmd 2 disables.  The
+    * missing "cmd 1" write is the open question in
+    * docs/cd-diagnosis/primal-rage-cdda-diagnosis.md.  Address is game-
+    * specific but the log line is harmless elsewhere (rare false hits at
+    * worst).  Remove with the rest of the CDDA-DIAG layer when resolved. */
+   if (addr == 0xF1B274 && data != 0)
+      LOG_INF("[CDDA] DSP mailbox $F1B274 = %08X who=%u 68kpc=$%06X\n",
+              data, who, m68k_get_reg(NULL, M68K_REG_PC));
+   if (addr < 0x200000)
    {
-      SET32(jaguarMainRAM, addr & 0x1FFFFF, data);
+      SET32(jaguarMainRAM, addr, data);
       return;
    }
+   /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
+   else if (addr < 0x800000)
+      return;
    JaguarWriteWord(offset, data >> 16, who);
    JaguarWriteWord(offset+2, data & 0xFFFF, who);
 }
@@ -741,6 +785,20 @@ void HalflineCallback(void)
       frameDone = true;
    }
 
+   /* Tick BUTCH once per halfline when CD content is loaded.
+    * BUTCHExec advances the seek/FIFO state machine and (when armed)
+    * asserts GPU IRQ1 (the DSP/JERRY-sourced interrupt, vector $F03010
+    * where the CD BIOS installs its CD-data ISR). Halfline cadence
+    * (~32 us) is much coarser than real BUTCH I2S timing, but matches
+    * our existing event-queue resolution.
+    * JaguarCDHLEStreamTick advances any in-flight HLE CD_read transfer
+    * at the real drive rate (no-op when idle / in BIOS mode). */
+   if (bootConfig.isCDGame)
+   {
+      BUTCHExec(0);
+      JaguarCDHLEStreamTick();
+   }
+
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
 }
 
@@ -751,6 +809,12 @@ void JaguarReset(void)
    uint32_t clearEnd = JAGUAR_RAM_SIZE;
    uint32_t preserveStart = jaguarLoadedRAMStart;
    uint32_t preserveEnd = jaguarLoadedRAMEnd;
+
+   /* CD boot strategies (HLE/BIOS) hold per-run state (auth-bypass
+    * installed flag, boot-stub-injected flag, HLE active flag, etc.)
+    * that must be cleared on every reset.  Cart strategy reset is a no-op. */
+   if (bootConfig.strategy && bootConfig.strategy->reset)
+      bootConfig.strategy->reset();
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.

@@ -14,15 +14,18 @@
 // JLH  11/26/2011  Added fixes for LOAD/STORE alignment issues
 //
 
+#include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
 #include "dsp.h"
 #include "dsp_acc40.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "dac.h"
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
@@ -574,6 +577,38 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
    if ((offset >= DSP_WORK_RAM_BASE) && (offset < DSP_WORK_RAM_BASE+0x2000))
    {
+      /* CDDA-DIAG: see DSPWriteLong -- Primal Rage synth mailbox.
+       * Rate-capped: other titles may use this RAM range as data. */
+      if (offset >= 0xF1B270 && offset <= 0xF1B277)
+      {
+         static uint32_t mboxWrites = 0;
+         mboxWrites++;
+         if (mboxWrites <= 40 || (mboxWrites % 10000) == 0)
+            LOG_INF("[CDDA] DSP mailbox write.w $%06X = $%04X who=%u 68kpc=$%06X\n",
+                    offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+         /* One-shot main-RAM snapshot at the mix-ON edge so the transient
+          * music-player overlay around the writer PC can be disassembled.
+          * Enabled only when VJ_CDDA_SNAPDIR is set (diagnostic builds). */
+         if (offset == 0xF1B276 && data == 0x0001)
+         {
+            const char *dir = getenv("VJ_CDDA_SNAPDIR");
+            static int snapped = 0;
+            if (dir && !snapped)
+            {
+               char path[1024];
+               FILE *f;
+               snapped = 1;
+               snprintf(path, sizeof(path), "%s/mixon_mainram.bin", dir);
+               f = fopen(path, "wb");
+               if (f)
+               {
+                  fwrite(jaguarMainRAM, 1, 0x200000, f);
+                  fclose(f);
+                  LOG_INF("[CDDA] snapshot: %s\n", path);
+               }
+            }
+         }
+      }
       offset -= DSP_WORK_RAM_BASE;
       dsp_ram_8[offset] = data >> 8;
       dsp_ram_8[offset+1] = data & 0xFF;
@@ -613,6 +648,18 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 
    if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE + 0x1FFF)
    {
+      /* CDDA-DIAG: Primal Rage's synth-DSP command mailbox lives at
+       * $F1B274 (cmd 1 = CD mix ON, 2 = OFF, 3 = reset, 4 = exit) --
+       * log external writes so we can see who opens the mix gate.
+       * Rate-capped: other titles may use this RAM range as data. */
+      if (offset >= 0xF1B270 && offset <= 0xF1B277)
+      {
+         static uint32_t mboxWritesL = 0;
+         mboxWritesL++;
+         if (mboxWritesL <= 40 || (mboxWritesL % 10000) == 0)
+            LOG_INF("[CDDA] DSP mailbox write $%06X = $%08X who=%u 68kpc=$%06X\n",
+                    offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+      }
       offset -= DSP_WORK_RAM_BASE;
       SET32(dsp_ram_8, offset, data);
       //CC only!
@@ -1382,7 +1429,14 @@ INLINE static void dsp_opcode_store(void)
 INLINE static void dsp_opcode_loadb(void)
 {
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM, DSP) & 0xFF;
+	{
+		/* JTRM (Technical Reference v8, "Load Byte"): byte extraction
+		 * "applies to external memory only, internal memory will perform
+		 * a 32-bit read."  A byte load from DSP local RAM returns the
+		 * ENTIRE long containing the address -- same rule as the GPU
+		 * (see gpu_opcode_loadb). */
+		RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
+	}
 	else
 		RN = JaguarReadByte(RM, DSP);
 }
@@ -1390,14 +1444,16 @@ INLINE static void dsp_opcode_loadb(void)
 
 INLINE static void dsp_opcode_loadw(void)
 {
-#ifdef DSP_CORRECT_ALIGNMENT
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM & 0xFFFFFFFE, DSP) & 0xFFFF;
+	{
+		/* Same JTRM rule as LOADB: word loads from internal RAM perform
+		 * a full 32-bit read of the long containing the address. */
+		RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
+	}
+#ifdef DSP_CORRECT_ALIGNMENT
 	else
 		RN = JaguarReadWord(RM & 0xFFFFFFFE, DSP);
 #else
-	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM, DSP) & 0xFFFF;
 	else
 		RN = JaguarReadWord(RM, DSP);
 #endif
@@ -1566,6 +1622,15 @@ INLINE static void dsp_opcode_mmult(void)
    uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
    int64_t accum = 0;
 
+   /* Per JTRM ("Systolic Matrix Multiplies"), the packed vector operand
+    * lives in the SECONDARY register bank (bank 1) — an absolute bank
+    * reference, not "the bank not currently selected".  With IMASK set
+    * (interrupt service) the current bank is forced to 0, so the old
+    * dsp_alternate_reg happened to be bank 1 and looked correct; but a
+    * mixer running mainline with REGPAGE=1 (e.g. Baldies) loads its
+    * sample vector into bank 1 as its CURRENT bank, and reading the
+    * "alternate" bank 0 multiplies the matrix by the interrupt
+    * handler's pointers instead — rail-to-rail clipped audio. */
    if (!(dsp_matrix_control & 0x10))
    {
       for (i = 0; i < count; i++)
@@ -1574,9 +1639,9 @@ INLINE static void dsp_opcode_mmult(void)
          int16_t b;
 
          if (i&0x01)
-            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+            a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
-            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+            a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4;
@@ -1590,9 +1655,9 @@ INLINE static void dsp_opcode_mmult(void)
          int16_t b;
 
          if (i&0x01)
-            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+            a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
-            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+            a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4 * count;
@@ -2328,21 +2393,27 @@ INLINE static void DSP_load(void)
 INLINE static void DSP_loadb(void)
 {
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM, DSP) & 0xFF;
+	{
+		/* JTRM: internal-RAM byte loads perform a full 32-bit read
+		 * (see dsp_opcode_loadb). */
+		PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
+	}
 	else
 		PRES = JaguarReadByte(PRM, DSP);
 }
 
 INLINE static void DSP_loadw(void)
 {
-#ifdef DSP_CORRECT_ALIGNMENT
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM & 0xFFFFFFFE, DSP) & 0xFFFF;
+	{
+		/* JTRM: internal-RAM word loads perform a full 32-bit read
+		 * (see dsp_opcode_loadw). */
+		PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
+	}
+#ifdef DSP_CORRECT_ALIGNMENT
 	else
 		PRES = JaguarReadWord(PRM & 0xFFFFFFFE, DSP);
 #else
-	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM, DSP) & 0xFFFF;
 	else
 		PRES = JaguarReadWord(PRM, DSP);
 #endif
@@ -2399,6 +2470,8 @@ INLINE static void DSP_mmult(void)
 	uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
 	int64_t accum = 0;
 
+	/* Vector operand comes from the SECONDARY bank (bank 1) per JTRM —
+	 * see dsp_opcode_mmult above. */
 	if (!(dsp_matrix_control & 0x10))
 	{
 		for (i = 0; i < count; i++)
@@ -2407,9 +2480,9 @@ INLINE static void DSP_mmult(void)
          int16_t b;
 
 			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+				a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4;
@@ -2423,9 +2496,9 @@ INLINE static void DSP_mmult(void)
          int16_t b;
 
 			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+				a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4 * count;

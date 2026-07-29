@@ -33,10 +33,13 @@ test/test_blitter_simd
 test/test_blitter_scalar
 test/test_*
 !test/test_*.c
+!test/test_*.h
 !test/test_*.sh
 !test/test_*.py
 test/tools/test_memory_map
+test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
+test/tools/cd_wedge_probe
 test/tools/sram_test
 test/dump_caller
 test/dump_pc
@@ -73,6 +76,8 @@ test/tools/build/
 test/acid/acid_run
 test/acid/tests/**/*.jag
 /test/tools/test_frame_timing
+/test/tools/cd_visual_verify
+/test/tools/cue2cdi
 .link-mode
 
 # gcov instrumentation output (make coverage)

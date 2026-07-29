@@ -1,0 +1,34 @@
+BrainDead 13 (USA) — iOS device, real-BIOS mode, core WITH delay-slot IRQ fix (7c98e16).
+USER-OBSERVED: splash screen cleared, game began loading next screen, a SOUND EFFECT played, then screen went BLACK and stopped.
+
+PROGRESS vs previous trace: seek_starts=2 seek_dones=2 (was 1/1), fifo_drains=38915 (was 95 frozen)
+ -> matches the post-fix headless prediction exactly (transfer #1 completes, 2nd ~1MB FMV stream runs).
+ dsp_run=1 now (was 0) -> DSP/audio engine alive; explains the sound effect.
+
+[CRASH-DETECT] heartbeat frame=600  gpu_pc=$0000409A gpu_run=0 dsp_pc=$00F1B120 dsp_run=0 fb=$4668CD35
+[CRASH-DETECT] video_stall  frame=957  fb=$292A41FD unchanged 300f gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B084 dsp_run=1
+[CRASH-DETECT] heartbeat frame=1200 gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 fb=$292A41FD
+[CRASH-DETECT] cd_seek_wedge frame=1269 seek_starts=2 seek_dones=2 fifo_drains=38915 FROZEN 300f gpu_pc=$00F03278 gpu_run=1 dsp_pc=$00F1B084 dsp_run=1
+[CRASH-DETECT] heartbeat frame=1800 gpu_pc=$00F0327A gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 fb=$292A41FD  (unchanged to end)
+
+CD-TRACE ring (256 entries = the LAST events before the freeze; ticks 507047..507687):
+  Entirely FIFO_FILL value=$0000 / FIFO_DRAIN value=$0010 alternating every 5 ticks.
+  block creeps 23697 -> 23698 across the whole ring (~128 fill/drain pairs per sector).
+  NO DSA_TX/DSA_RX/SEEK/STOP anywhere in the ring — no command traffic at all during the FMV stream.
+  After tick 507687 the drains STOP entirely (watchdog: drains frozen at 38915 for 300 frames).
+
+READING (third distinct wall — NOT the delay-slot clobber, that is fixed):
+- Sequence: seek #2 -> ~1MB streams (38915 drains) -> drains STOP -> GPU keeps spinning $F03270-$F0327A
+  (the game's uploaded streaming-engine foreground loop) -> video frozen black, DSP still running audio.
+- Two candidate mechanisms:
+  (A) FMV needs CONTINUOUS playback streaming: real BUTCH keeps delivering as the disc spins (interleaved
+      audio+video), whereas we stop refilling after the requested transfer length / cdPlaying goes false.
+      The engine then waits forever for the next chunk that never arrives. Fits: no DSA traffic in the ring
+      (game isn't issuing a new seek — it expects the stream to keep coming).
+  (B) The transfer legitimately completed and the engine waits on a different signal (frame-kick / OP int),
+      i.e. the same "$F031F6 OP-wait" class seen on Primal Rage, and the black screen is a presentation gap.
+      Distinguish: does the engine's spin loop poll a FIFO/status word (-> A) or a mailbox/OP flag (-> B)?
+- Note the ~128 drains/sector rate (each drain = 16 reads) — suspiciously slow; worth confirming what each
+  port read advances (cdBufPtr accounting) since it may relate to the refill stopping early.
+- Also: cd_seek_wedge fires here even though transfer #2 may have legitimately completed — the known
+  false-positive (watchdog refinement candidate). Don't treat its presence alone as proof of a hang.

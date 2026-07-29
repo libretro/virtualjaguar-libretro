@@ -260,6 +260,7 @@
 #include "event.h"
 #include "gpu.h"
 #include "jaguar.h"
+#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
 #include "perf_counters.h"
@@ -1244,8 +1245,24 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    }
 
    offset &= 0x3FFF;
+   /* Any write to OBF releases an OP halted on a GPU object (see
+    * OPProcessList OBJECT_TYPE_GPU). */
+   if (offset == OBF || offset == OBF + 1)
+      OPNotifyOBFWrite();
    if (offset == INT1)
       TOMClearPendingIRQs(data);
+   if (offset == INT1 + 1)
+   {
+      /* CDDA-DIAG: INT1 bit 4 (C_JERENA) is the TOM-side gate for
+       * JERRY -> 68K delivery (BUTCH CD IRQs route through it, see
+       * cdrom.c BUTCHExec). Edges are rare; log unconditionally. */
+      static uint8_t tomPrevInt1Ena = 0;
+      if ((tomPrevInt1Ena ^ data) & 0x10)
+         LOG_INF("[CDDA] INT1 C_JERENA %s (INT1=$%02X who=%u 68kpc=$%06X)\n",
+                 (data & 0x10) ? "ON" : "OFF", data, who,
+                 m68k_get_reg(NULL, M68K_REG_PC));
+      tomPrevInt1Ena = data;
+   }
    tomRam8[offset] = data;
    if (offset == INT1 || offset == (INT1 + 1))
       TOMAssertEnabledIRQs();
