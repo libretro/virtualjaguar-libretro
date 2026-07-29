@@ -61,5 +61,7 @@
       DAC*;
       JoystickState*;
       MTState*;
+      busArbiter;
+      bus_arbiter_*;
    local: *;
 };

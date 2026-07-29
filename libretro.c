@@ -383,7 +383,7 @@ static void check_variables(void)
          vjs.useBusContention = false;
    }
    else
-      vjs.useBusContention = true;
+      vjs.useBusContention = false;
 
    contention_scale = 1;
    var.key = "virtualjaguar_bus_contention_scale";
@@ -400,6 +400,8 @@ static void check_variables(void)
 
    busArbiter.enabled = vjs.useBusContention ? 1 : 0;
    busArbiter.contention_scale = (uint8_t)contention_scale;
+   if (!busArbiter.enabled)
+      bus_arbiter_begin_timeslice(); /* drop stale accumulators on disable */
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;

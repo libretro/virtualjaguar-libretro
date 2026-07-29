@@ -35,7 +35,10 @@ void bus_arbiter_init(void)
     memset(&busArbiter, 0, sizeof(busArbiter));
     busArbiter.dram_base_clocks = 5;
     busArbiter.dram_miss_penalty = PAGE_MISS_PENALTY;
-    busArbiter.enabled = 1;
+    /* Default OFF: contention modeling is experimental and must be a
+     * zero-behavior-change opt-in.  check_variables() enables it when
+     * the virtualjaguar_bus_contention core option is set. */
+    busArbiter.enabled = 0;
     busArbiter.contention_scale = 1;
 }
 

@@ -58,3 +58,5 @@ _BlitterCompare*
 _DAC*
 _JoystickState*
 _MTState*
+_busArbiter
+_bus_arbiter_*
