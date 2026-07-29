@@ -14,6 +14,7 @@
 // JLH  11/26/2011  Added fixes for LOAD/STORE alignment issues
 //
 
+#include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
 #include "dsp.h"
 #include "dsp_acc40.h"
 

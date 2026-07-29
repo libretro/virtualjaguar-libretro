@@ -20,17 +20,12 @@
 
 #include <string.h>
 
-/* External CD BIOS data loaded by libretro.c.  Tier 2 will define these in
- * libretro.c; for Tier 1 we provide weak fallback definitions so the .dylib
- * links cleanly even though no path activates this strategy
- * (bootConfig.strategy == NULL until libretro.c populates it). */
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((weak)) uint8_t external_cd_bios[0x40000];
-__attribute__((weak)) bool cd_bios_loaded_externally = false;
-#else
-uint8_t external_cd_bios[0x40000];
-bool cd_bios_loaded_externally = false;
-#endif
+/* External CD BIOS staging buffer and flag.  libretro.c owns the single
+ * strong definition of each (it is always linked into the core); the old
+ * GCC weak-symbol fallback duplicated them as strong definitions on MSVC
+ * and broke the buildbot link (LNK2005). */
+extern uint8_t external_cd_bios[0x40000];
+extern bool cd_bios_loaded_externally;
 
 static bool cdBootStubInjected = false;
 
