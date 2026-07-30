@@ -714,6 +714,12 @@ void GPUHandleIRQs(void)
    // subqt  #4,r31		; pre-decrement stack pointer
    // move  pc,r30			; address of interrupted code
    // store  r30,(r31)     ; store return address
+   /* That "store r30,(r31)" is an ordinary RISC LONG store, so hardware
+    * ignores address bits 1-0 (see the alignment note on gpu_opcode_storep).
+    * A game that takes a GPU interrupt while r31 still holds an unaligned
+    * value pushes the return address into the longword containing r31 -- it
+    * cannot straddle two longwords and corrupt the neighbour, which is what
+    * an unmasked push here would do. */
    gpu_reg[31] -= 4;
    if (gpu_in_delay_slot)
    {
@@ -723,11 +729,11 @@ void GPUHandleIRQs(void)
        * address is the pending BRANCH TARGET, not gpu_pc (which still
        * points just past the delay slot).  Flag the in-flight jump opcode
        * so it does not overwrite gpu_pc (the vector) afterwards. */
-      GPUWriteLong(gpu_reg[31], gpu_ds_branch_target - 2, GPU);
+      GPUWriteLong(gpu_reg[31] & 0xFFFFFFFC, gpu_ds_branch_target - 2, GPU);
       gpu_ds_irq_dispatched = 1;
    }
    else
-      GPUWriteLong(gpu_reg[31], gpu_pc - 2, GPU);
+      GPUWriteLong(gpu_reg[31] & 0xFFFFFFFC, gpu_pc - 2, GPU);
 
    // movei  #service_address,r30  ; pointer to ISR entry
    // jump  (r30)					; jump to ISR
@@ -1521,23 +1527,31 @@ INLINE static void gpu_opcode_store(void)
 }
 
 
+/* STOREP moves a whole phrase, so the memory controller sees a phrase
+ * address: bits 2-0 carry no meaning for a 64-bit transfer and hardware
+ * rounds them away.  The Jaguar bus has no cycle that writes eight bytes
+ * starting at an arbitrary byte offset, so an unaligned STOREP can never
+ * smear the transfer forward into the following phrase.  The address was
+ * already masked for GPU local RAM; external addresses were passed through
+ * raw, which is the bug.
+ *
+ * Pitfall: The Mayan Adventure depends on this.  Its GPU code keeps a
+ * two-longword mailbox at main RAM $0-$7 and reaches it with STOREP through a
+ * register that sometimes holds $7 rather than $0 (the low bits are junk the
+ * hardware discards).  Unmasked, that wrote longwords at $7 and $B; the
+ * second landed on $C-$E and replaced the 68K address-error vector.  The game
+ * installs a deliberate "ADDQ.L #8,A7 ; RTE" address-error recovery stub at
+ * $400 and takes real address errors during play, so a few frames later it
+ * vectored into garbage and the 68K never came back (issue #138).
+ *
+ * The same argument applies to the plain LONG stores (bits 1-0), which still
+ * only mask GPU local RAM.  Masking those too is left alone deliberately: it
+ * is not needed for #138 and it does perturb Ruiner Pinball and Super Burnout,
+ * which needs its own before/after evidence rather than riding along here. */
 INLINE static void gpu_opcode_storep(void)
 {
-#ifdef GPU_CORRECT_ALIGNMENT
-   if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
-   {
-      GPUWriteLong((RM & 0xFFFFFFF8) + 0, gpu_hidata, GPU);
-      GPUWriteLong((RM & 0xFFFFFFF8) + 4, RN, GPU);
-   }
-   else
-   {
-      GPUWriteLong(RM + 0, gpu_hidata, GPU);
-      GPUWriteLong(RM + 4, RN, GPU);
-   }
-#else
-   GPUWriteLong(RM + 0, gpu_hidata, GPU);
-   GPUWriteLong(RM + 4, RN, GPU);
-#endif
+   GPUWriteLong((RM & 0xFFFFFFF8) + 0, gpu_hidata, GPU);
+   GPUWriteLong((RM & 0xFFFFFFF8) + 4, RN, GPU);
 }
 
 INLINE static void gpu_opcode_loadb(void)
