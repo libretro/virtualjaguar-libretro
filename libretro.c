@@ -56,8 +56,10 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
  * lands on a future PR. */
 #define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
 
-/* Framebuffer allocation: the widest/tallest geometry TOM can advertise,
- * not the geometry currently presented. */
+/* Framebuffer allocation, in pixels.  Sized for the widest / tallest video
+ * mode TOM can be programmed into (TOMWriteWord clamps tomWidth to 1024 and
+ * tomHeight to 512), so the buffer never has to be reallocated when the game
+ * changes resolution mid-run. */
 #define VIDEO_BUFFER_WIDTH   1024
 #define VIDEO_BUFFER_HEIGHT  512
 #define VIDEO_BUFFER_PIXELS  (VIDEO_BUFFER_WIDTH * VIDEO_BUFFER_HEIGHT)
@@ -1079,7 +1081,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    videoWidth           = 320;
    videoHeight          = 240;
-   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
+   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), VIDEO_BUFFER_PIXELS);
    sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t));
 
    if (!videoBuffer || !sampleBuffer)
@@ -1162,9 +1164,26 @@ bool retro_load_game(const struct retro_game_info *info)
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
 
-   /* Init video */
-   for (i = 0; i < videoWidth * videoHeight; ++i)
-      videoBuffer[i] = 0xFF00FFFF;
+   /* Initialise the whole framebuffer to opaque black.
+    *
+    * TOM only writes the rows of the presented frame that fall inside its
+    * visible window, and the border-fill path in TOMExecHalfline writes
+    * `tomWidth` pixels -- which is still 0 until the game programs a TOM
+    * video register ($F00028-$F0004F).  Until then, any presented row above
+    * VDB gets no pixels written at all, so whatever this buffer was seeded
+    * with is what the frontend displays.  It has to be a defined value, and
+    * opaque black is the correct one: it is both what a display shows with
+    * no signal and what the border colour resolves to in that window
+    * (TOMReset zeroes BORD1/BORD2, and any write that makes them non-zero
+    * also makes tomWidth non-zero, so the border path is live by then).
+    *
+    * Fill the entire allocation rather than videoWidth * videoHeight: the
+    * geometry can grow to a wider stride later (320x240 -> 326x240), and
+    * rows re-laid-out at the larger pitch reach past the initial 320x240
+    * region.  Seeding all of it keeps every presentable pixel defined and
+    * the X byte consistent no matter which geometry is in force. */
+   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
+      videoBuffer[i] = 0xFF000000;
 
    /* Dispatch through the selected boot strategy (cart / HLE / real BIOS).
     * The cart strategy handles the existing JaguarLoadFile + JaguarReset
