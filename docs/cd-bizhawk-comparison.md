@@ -12,6 +12,34 @@ legitimate).
 
 Nothing in `src/` was changed for this note.
 
+> **RESOLVED 2026-07-29 -- there was no handoff gap.** All three titles do
+> hand off and play in bios mode. The `BIOS_INTRO` labels came from
+> `cd_boot_matrix.sh`'s stage classifier treating all of
+> `$004000`-`$007FFF` as BIOS code; games link code there too. **None of
+> the three ranked candidates in §3 applies** -- do not sweep them for
+> this. What settled it is §3's own prescribed first step ("Do this
+> first"): the per-PC disassembly. Dragon's Lair and BrainDead 13 were
+> sitting in a shared ReadySoft FMV player's wait-for-next-frame loop on a
+> 30 Hz / 24 Hz presentation clock that was **measured still advancing**;
+> Primal Rage was in its joypad scanner. Diagnosis, clock measurements and
+> screenshots: 2026-07-29 re-run notes in `docs/cd-boot-matrix.md`.
+> The §2.3 control pair dissolves too: Space Ace bios (`$00B87A`) vs
+> Dragon's Lair bios (`$004C12`) was "sampled outside the band vs inside
+> it", not "works vs stuck" -- Space Ace runs the same player, linked
+> higher. §4.1 and §4.2 remain genuine bugs on their own merits, but
+> **candidate 2 is separately falsified for these titles**: BrainDead 13
+> and Dragon's Lair emit only `$150A` and never leave double speed, and
+> Primal Rage's `$1501` comes only after its boot read finishes.
+>
+> Correction to this note's §2.2/§4.2 reading of the wire format: the
+> `$15nn` payload is **not** a bit field. The retail BIOS at `$808978`
+> builds a **one-based** speed code -- `and.w #$1,d2 / add.w #$1,d2`
+> (1 = single, 2 = double) -- then `bset #3,d2` for data mode. So `$150A`
+> is double-speed + data, and `$1502` (double + audio) cannot be expressed
+> under a bit-0 reading. The `CD_mode` **API** input in D0 does use bit 0
+> for speed and bit 1 for data (p.10 §2.7.7, quoted in §4.2); the BIOS
+> re-encodes it before it reaches the wire.
+
 ---
 
 ## 1. Does BizHawk have Jaguar CD support?

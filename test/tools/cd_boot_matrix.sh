@@ -216,13 +216,44 @@ run_one() {
 #            $800000-$8FFFFF  CD BIOS running as cart code    -> BIOS_INTRO
 #            $190000-$1AFFFF  CD BIOS code/data relocated to
 #                             RAM (poll loops, data formatter) -> BIOS_INTRO
-#            $004000-$007FFF  BIOS main loop / error handler
-#                             (confirmed via this run's ISO row,
-#                             final_pc=$0059B0, same band)       -> BIOS_INTRO
+#            $004000-$007FFF  AMBIGUOUS -- gated on the handoff marker,
+#                             see "the $4000-$7FFF band" below
 #            $080000-$08FFFF  injected boot-stub ISR/poll loop/
 #                             data (confirmed via test_cd_boot.c
 #                             comments: $0803A0, $080250, $085D00) -> BOOT_STUB
 #            anything else in RAM                                -> GAME_CODE
+#
+#   The $4000-$7FFF band: this range is used by the BIOS *and* by games,
+#   so a bare address test cannot classify it. The real CD BIOS does run
+#   68K code here before handoff (jagcd_bios.c hooks its GPU-auth path at
+#   $005E40), but games also link code here -- Dragon's Lair's boot
+#   executable loads at $004000, Myst's at $005000 (jagcd_bios.c:45), and
+#   BrainDead 13 / Primal Rage load a second-stage player here after
+#   their own exes land at $124000 / $080000.
+#
+#   So the band is gated on the BIOS handoff marker instead. The core logs
+#   "[CD-BOOTSTUB] Injected $<len> bytes at $<addr>" exactly when the BIOS
+#   reaches its handoff point ($050176, where it JSRs to the disc's boot
+#   executable). Before that line the BIOS owns this band; after it, the
+#   game does:
+#            marker absent  -> BIOS_INTRO (BIOS never handed off)
+#            marker present  -> falls through to GAME_CODE
+#
+#   History: the band used to be an unconditional -> BIOS_INTRO, sourced
+#   from a single ISO row (final_pc=$0059B0). ISO loads are now refused
+#   outright as unbootable (docs/cd-known-issues.md), so that provenance is
+#   retired -- and the rule was producing three false BIOS_INTRO rows.
+#   BrainDead 13 ($004FCA), Dragon's Lair ($004C12) and Primal Rage
+#   ($0044CC) were each disassembled from a live RAM snapshot at the
+#   reported PC: the first two sit in the same ReadySoft FMV player's
+#   "wait for the next frame's presentation time" loop (a 30 Hz / 24 Hz
+#   clock that a GPU PIT ISR advances, and that was measured still
+#   advancing), and Primal Rage sits in its joypad-scan routine writing
+#   $817F/$81BF/$81DF/$81EF to $F14000. All three were then confirmed by
+#   cd_visual_verify to be rendering real content in bios mode. The
+#   clincher is Dragon's Lair itself: its hle row reports final_pc=$004814
+#   and its bios row $004C12 -- the same 2 KB of the same player -- and
+#   only the bios path applied the band rule.
 #   MENU vs IN_GAME is NOT distinguished: none of our harnesses read the
 #   composited framebuffer the way RetroArch does (documented headless
 #   framebuffer caveat in CLAUDE.md), so any GAME_CODE row is reported as
@@ -268,7 +299,11 @@ classify_stage() {
     if   [ "$pc_dec" -ge $((16#E00000)) ] && [ "$pc_dec" -le $((16#E1FFFF)) ]; then echo "BIOS_INTRO"
     elif [ "$pc_dec" -ge $((16#800000)) ] && [ "$pc_dec" -le $((16#8FFFFF)) ]; then echo "BIOS_INTRO"
     elif [ "$pc_dec" -ge $((16#190000)) ] && [ "$pc_dec" -le $((16#1AFFFF)) ]; then echo "BIOS_INTRO"
-    elif [ "$pc_dec" -ge $((16#004000)) ] && [ "$pc_dec" -le $((16#007FFF)) ]; then echo "BIOS_INTRO"
+    elif [ "$pc_dec" -ge $((16#004000)) ] && [ "$pc_dec" -le $((16#007FFF)) ] \
+         && ! grep -aq '\[CD-BOOTSTUB\] Injected' "$log" 2>/dev/null; then
+        # Shared BIOS/game band -- only BIOS_INTRO while the BIOS has not yet
+        # reached its handoff point. See the taxonomy note above.
+        echo "BIOS_INTRO"
     elif [ "$pc_dec" -ge $((16#080000)) ] && [ "$pc_dec" -le $((16#08FFFF)) ]; then echo "BOOT_STUB"
     elif [ "$pc_dec" -lt $((16#004000)) ]; then
         # $0000-$3FFF is ambiguous: it holds BIOS service routines (TOC at
@@ -406,7 +441,7 @@ else
     printf 'evidence to classify further, never fabricated):\n\n'
     printf '| Stage | Meaning |\n|---|---|\n'
     printf '| `LOAD_FAIL` | `retro_load_game()` returned false, or the harness child crashed (segfault) before producing a usable PC trace |\n'
-    printf '| `BIOS_INTRO` | Real CD BIOS executing (boot ROM cube animation, BIOS main loop/error handler, or CD-read poll code) -- has not yet handed off to the boot stub or game |\n'
+    printf '| `BIOS_INTRO` | Real CD BIOS executing (boot ROM cube animation, BIOS main loop/error handler, or CD-read poll code) -- has not yet handed off to the boot stub or game. In the shared `$004000`-`$007FFF` band this requires the absence of the `[CD-BOOTSTUB] Injected` handoff marker: games link code there too (Dragon'"'"'s Lair at `$004000`, Myst at `$005000`), so the address alone is not evidence |\n'
     printf '| `BOOT_STUB` | PC parked in the injected boot-stub ISR/poll-loop/data region (`$080000`-`$08FFFF`) |\n'
     printf '| `GAME_CODE` | PC in game-owned RAM outside the BIOS/boot-stub bands (HLE: any stable multi-PC run, since HLE synthesizes past BIOS/boot-stub by design) |\n'
     printf '| `MENU` / `IN_GAME` | Not distinguished by any current harness -- see "Headless framebuffer caveat" in CLAUDE.md. Reported as `GAME_CODE` with a note. |\n'
