@@ -131,6 +131,6 @@ uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
         bus_arbiter_charge(master, cost);
         return scaled_cost;
     }
-    
+
     return 0;
 }
