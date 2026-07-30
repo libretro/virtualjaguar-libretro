@@ -104,6 +104,7 @@ static void (*p_TOMWriteByte)(uint32_t, uint8_t, uint32_t);
 static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
 static void (*p_TOMSetPendingVideoInt)(void);
 static void (*p_TOMSetPendingTimerInt)(void);
+static int  (*p_TOMIRQRequestActive)(void);
 static void (*p_JERRYWriteWord)(uint32_t, uint16_t, uint32_t);
 static void (*p_JERRYWriteByte)(uint32_t, uint8_t, uint32_t);
 static bool (*p_JERRYIRQEnabled)(int);
@@ -2523,20 +2524,36 @@ static void test_tom_ipl2_reassert_after_selective_clear(void)
          FAIL("INT1 pending=$%04X pre-clear (want video+timer bits)", pending);
    }
 
-   /* (3) Clear video pending only via byte write to $F000E0 = $01. The
-    * write triggers TOMAssertEnabledIRQs; timer is still pending+enabled,
-    * so IPL2 must be reasserted. */
+   /* (3) Clear video pending only via byte write to $F000E0 = $01. An
+    * INT1 register write is not an interrupt event, so it must NOT raise
+    * IPL2 on its own -- but TOM's request is still active, because the
+    * timer latch is set and enabled.
+    *
+    * This used to assert intLevel==2 here (TOMAssertEnabledIRQs ran on
+    * every INT1 write).  That is incompatible with holding a request
+    * across the CPU's interrupt mask (#187): NBA Jam TE's level-2 handler
+    * leaves the PIT latch set and rewrites INT1 on each entry, so an
+    * unconditional re-assert re-entered the handler forever.  The request
+    * line is raised by an *event* and dropped on the CPU's acknowledge;
+    * TOMIRQRequestActive() reports whether it is still up. */
    p_regs->intLevel = 0;
    p_TOMWriteByte(0xF000E0, 0x01, WHO_M68K);
-   if (p_regs->intLevel == 2)
-      PASS("clearing video alone keeps IPL2 asserted (timer still pending)");
+   if (p_regs->intLevel == 0)
+      PASS("clearing video does not re-raise IPL2 (register write, not event)");
    else
-      FAIL("after clearing video, intLevel=%d (want 2; timer still pending)",
+      FAIL("after clearing video, intLevel=%d (want 0; write is not an event)",
            p_regs->intLevel);
 
-   /* (4) Clear timer pending via byte write to $F000E0 = $08. Now
-    * nothing is pending+enabled, so TOMAssertEnabledIRQs must NOT call
-    * m68k_set_irq -- intLevel must stay 0. */
+   if (!p_TOMIRQRequestActive)
+      FAIL("TOMIRQRequestActive not exported");
+   else if (p_TOMIRQRequestActive())
+      PASS("TOM still reports its request active (timer pending+enabled)");
+   else
+      FAIL("TOMIRQRequestActive()=0 with timer pending+enabled");
+
+   /* (4) Clear timer pending via byte write to $F000E0 = $08. Now nothing
+    * is pending+enabled: TOM's request must read as inactive so a held
+    * request is not re-presented to the CPU. */
    p_regs->intLevel = 0;
    p_TOMWriteByte(0xF000E0, 0x08, WHO_M68K);
    if (p_regs->intLevel == 0)
@@ -2544,6 +2561,34 @@ static void test_tom_ipl2_reassert_after_selective_clear(void)
    else
       FAIL("after clearing timer (last source), intLevel=%d (want 0)",
            p_regs->intLevel);
+
+   if (p_TOMIRQRequestActive && !p_TOMIRQRequestActive())
+      PASS("TOM reports no active request after all sources cleared");
+   else if (p_TOMIRQRequestActive)
+      FAIL("TOMIRQRequestActive()=1 with nothing pending");
+
+   /* (4b) A source that is already pending and becomes *newly* enabled is
+    * a new request to the 68K, so that write does raise IPL2. */
+   p_TOMWriteByte(0xF000E1, 0x01, WHO_M68K);   /* video only */
+   p_TOMSetPendingTimerInt();                  /* latch, not enabled */
+   p_regs->intLevel = 0;
+   p_TOMWriteByte(0xF000E1, 0x09, WHO_M68K);   /* newly enable timer */
+   if (p_regs->intLevel == 2)
+      PASS("newly enabling an already-pending source raises IPL2");
+   else
+      FAIL("after enabling pending timer, intLevel=%d (want 2)",
+           p_regs->intLevel);
+
+   /* Rewriting the same enables with the source still pending must not
+    * present the request again (the NBA Jam TE storm shape). */
+   p_regs->intLevel = 0;
+   p_TOMWriteByte(0xF000E1, 0x09, WHO_M68K);
+   if (p_regs->intLevel == 0)
+      PASS("redundant INT1 enable write does not re-raise IPL2");
+   else
+      FAIL("redundant INT1 write raised IPL2 (intLevel=%d)", p_regs->intLevel);
+
+   p_TOMWriteByte(0xF000E0, 0x1F, WHO_M68K);   /* clear all pending again */
 
    /* (5) Sanity post-clear: INT1 reports no pending sources. */
    {
@@ -3091,6 +3136,7 @@ int main(int argc, char *argv[])
    LOAD(TOMWriteWord);
    LOAD(TOMSetPendingVideoInt);
    LOAD(TOMSetPendingTimerInt);
+   p_TOMIRQRequestActive = (int (*)(void))dlsym(core_handle, "TOMIRQRequestActive");
    LOAD(GPUReadLong);
    LOAD(GPUWriteLong);
    LOAD(GPUSetIRQLine);

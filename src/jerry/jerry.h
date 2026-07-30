@@ -41,6 +41,7 @@ enum
 };
 
 bool JERRYIRQEnabled(int irq);
+bool JERRYIRQRequestActive(void);
 void JERRYSetPendingIRQ(int irq);
 
 // This should stay inside this file, but it's here for now...

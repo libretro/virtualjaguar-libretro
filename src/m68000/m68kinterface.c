@@ -48,6 +48,11 @@ extern const struct cputbl op_smalltbl_5_ff[];	/* 68000 slow but compatible.  */
 // Externs, supplied by the user...
 //extern int irq_ack_handler(int);
 
+// TOM drives the 68K's only interrupt input (all Jaguar IRQs arrive as a
+// level-2 request through TOM).  Declared here rather than via tom.h to
+// keep the UAE core free of TOM's header dependencies.
+extern int TOMIRQRequestActive(void);
+
 // Function prototypes...
 static INLINE void m68ki_check_interrupts(void);
 void m68ki_exception_interrupt(uint32_t intLevel);
@@ -172,6 +177,25 @@ int m68k_execute(int num_cycles)
 		{
 			checkForIRQToHandle = 0;
 			m68k_set_irq2(IRQLevelToHandle);
+		}
+		else if (regs.intLevel > regs.intmask && TOMIRQRequestActive())
+		{
+			// The 68000 samples IPL0-2 at every instruction boundary, and
+			// on the Jaguar every interrupt reaches the 68K as a level-2
+			// request that TOM holds until the CPU's acknowledge cycle
+			// (irq_ack_handler drops it).  So a request raised while SR's
+			// mask is already >= 2 is not lost: it is taken as soon as an
+			// RTE lowers the mask.
+			//
+			// Sampling only at the instant of assertion (the branch above)
+			// dropped such requests permanently.  Tempest 2000 enables
+			// video + TOM PIT (INT1 = $09); the PIT beats against the frame
+			// rate and fires inside the PIT handler once every 161 frames,
+			// swallowing that frame's vertical interrupt -- the game then
+			// skips its object-list refresh and the OP replays an exhausted
+			// bitmap object, collapsing the playfield into a band at the top
+			// of the screen for exactly one frame (#187).
+			m68ki_exception_interrupt(regs.intLevel);
 		}
 
 #ifdef M68K_HOOK_FUNCTION
