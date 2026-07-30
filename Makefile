@@ -752,6 +752,7 @@ clean:
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
+		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing \
@@ -803,6 +804,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
+		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object
@@ -860,6 +862,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/test_cd_hle_idempotent
 	./test/test_bios_config
 	./test/test_boot_config
+	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
@@ -1062,6 +1065,10 @@ test/test_bios_config: test/test_bios_config.c
 test/test_boot_config: test/test_boot_config.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_boot_config.c -ldl
+
+test/test_cart_format: test/test_cart_format.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cart_format.c -ldl
 
 test/test_cd_boot: test/test_cd_boot.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
