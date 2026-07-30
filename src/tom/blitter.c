@@ -291,23 +291,50 @@ PERF_COUNTER(blitter_phrase_writes);
 // z data write
 #define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
 
+/* Register-sourced pixel data (SRCDATA / DSTDATA / DSTZ / SRCZINT /
+ * PATTERNDATA).  These are 64-bit registers; `p` selects phrase mode.
+ *
+ * PHRASE mode picks the field addressed by the current X position within
+ * the phrase, exactly as the hardware does.
+ *
+ * PIXEL (non-phrase) mode uses one fixed field: the one holding pixel /
+ * Gouraud channel 0.  In the layout this core keeps `blitter_ram` in,
+ * that channel lives in the LOW longword -- see `blitter_mmio.c`, which
+ * maps the Intensity 0 alias ($F0227C, "an alternate view of the
+ * computed intensity integer parts (pattern data)", JTRM rev 8 p.77) to
+ * `PATTERNDATA + 7`, and `blitter_blit`'s Gouraud init, which reads
+ * `gd_c[0]`/`gd_i[0]` from `PATTERNDATA + 6/7`.  The four pattern fields
+ * are the four consecutive pixels of a phrase (JTRM rev 8 p.82, the
+ * Gouraud/Z worked example: Pattern = 00DC00C700B1009C for four
+ * successive pixels), so channel 0 is the field the accurate
+ * (Midsummer2) path also uses in pixel mode -- there, ADDRGEN folds the
+ * byte-within-phrase into the address and the write takes `wdata`'s low
+ * 16/8/32 bits, i.e. the same low-longword field.
+ *
+ * These macros used to read `REG(r)` -- the HIGH longword, i.e. channel
+ * 2 -- for pixel mode, so a program that only ever wrote the low
+ * longword of a 64-bit register (Iron Soldier's wireframe line blits
+ * write $F02268 alone) got zero as its write data and drew nothing.
+ * Reading `REG(r + 4)` puts the fast path on the same field as the
+ * accurate path. */
+
 // 1 bpp r data read
-#define READ_RDATA_1(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 19) & 0x04))) >> (((uint32_t)a##_x >> 16) & 0x1F)) & 0x0001 : (REG(r) & 0x0001))
+#define READ_RDATA_1(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 19) & 0x04))) >> (((uint32_t)a##_x >> 16) & 0x1F)) & 0x0001 : (REG((r)+4) & 0x0001))
 
 // 2 bpp r data read
-#define READ_RDATA_2(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 18) & 0x04))) >> (((uint32_t)a##_x >> 15) & 0x3E)) & 0x0003 : (REG(r) & 0x0003))
+#define READ_RDATA_2(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 18) & 0x04))) >> (((uint32_t)a##_x >> 15) & 0x3E)) & 0x0003 : (REG((r)+4) & 0x0003))
 
 // 4 bpp r data read
-#define READ_RDATA_4(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 17) & 0x04))) >> (((uint32_t)a##_x >> 14) & 0x28)) & 0x000F : (REG(r) & 0x000F))
+#define READ_RDATA_4(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 17) & 0x04))) >> (((uint32_t)a##_x >> 14) & 0x28)) & 0x000F : (REG((r)+4) & 0x000F))
 
 // 8 bpp r data read
-#define READ_RDATA_8(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 16) & 0x04))) >> (((uint32_t)a##_x >> 13) & 0x18)) & 0x00FF : (REG(r) & 0x00FF))
+#define READ_RDATA_8(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 16) & 0x04))) >> (((uint32_t)a##_x >> 13) & 0x18)) & 0x00FF : (REG((r)+4) & 0x00FF))
 
 // 16 bpp r data read
-#define READ_RDATA_16(r,a,p)  ((p) ? ((REG(r+(((uint32_t)a##_x >> 15) & 0x04))) >> (((uint32_t)a##_x >> 12) & 0x10)) & 0xFFFF : (REG(r) & 0xFFFF))
+#define READ_RDATA_16(r,a,p)  ((p) ? ((REG(r+(((uint32_t)a##_x >> 15) & 0x04))) >> (((uint32_t)a##_x >> 12) & 0x10)) & 0xFFFF : (REG((r)+4) & 0xFFFF))
 
 // 32 bpp r data read
-#define READ_RDATA_32(r,a,p)  ((p) ? REG(r+(((uint32_t)a##_x >> 14) & 0x04)) : REG(r))
+#define READ_RDATA_32(r,a,p)  ((p) ? REG(r+(((uint32_t)a##_x >> 14) & 0x04)) : REG((r)+4))
 
 // register data read
 #define READ_RDATA(r,a,f,p) (\

@@ -79,9 +79,13 @@ static void blit_cmp_verbose_dump(uint32_t cmd, int dsta2, uint32_t dst_base,
    /* Local register-decode aliases (offsets match blitter_mmio.c). */
    uint32_t a1_base   = GET32(pre_regs, 0x00);
    uint32_t a1_flags  = GET32(pre_regs, 0x04);
+   uint32_t a1_clip   = GET32(pre_regs, 0x08);
    uint32_t a1_pixel  = GET32(pre_regs, 0x0C);
    uint32_t a1_step   = GET32(pre_regs, 0x10);
    uint32_t a1_fstep  = GET32(pre_regs, 0x14);
+   uint32_t a1_fpixel = GET32(pre_regs, 0x18);
+   uint32_t a1_inc    = GET32(pre_regs, 0x1C);
+   uint32_t a1_finc   = GET32(pre_regs, 0x20);
    uint32_t a2_base   = GET32(pre_regs, 0x24);
    uint32_t a2_flags  = GET32(pre_regs, 0x28);
    uint32_t a2_pixel  = GET32(pre_regs, 0x30);
@@ -119,6 +123,9 @@ static void blit_cmp_verbose_dump(uint32_t cmd, int dsta2, uint32_t dst_base,
    LOG_WRN("[BLIT CMP V]   PRE  A1 BASE=%08X FLAGS=%08X PIXEL=%08X STEP=%08X FSTEP=%08X\n",
       (unsigned)a1_base, (unsigned)a1_flags, (unsigned)a1_pixel,
       (unsigned)a1_step, (unsigned)a1_fstep);
+   LOG_WRN("[BLIT CMP V]   PRE  A1 CLIP=%08X FPIXEL=%08X INC=%08X FINC=%08X xaddctl=%u\n",
+      (unsigned)a1_clip, (unsigned)a1_fpixel, (unsigned)a1_inc,
+      (unsigned)a1_finc, (unsigned)((a1_flags >> 16) & 0x03));
    LOG_WRN("[BLIT CMP V]   PRE  A2 BASE=%08X FLAGS=%08X PIXEL=%08X STEP=%08X\n",
       (unsigned)a2_base, (unsigned)a2_flags, (unsigned)a2_pixel,
       (unsigned)a2_step);
@@ -189,6 +196,35 @@ static void blit_cmp_verbose_dump(uint32_t cmd, int dsta2, uint32_t dst_base,
       (unsigned)(save_start + dump_start), fast_hex);
    LOG_WRN("[BLIT CMP V]   DST @%06X acc:  %s\n",
       (unsigned)(save_start + dump_start), acc_hex);
+
+   /* Decoded per-pixel diff list.  For a 16bpp destination, turn every
+    * differing word into an (x,y) coordinate in the destination bitmap so
+    * line-drawing blits can be read as geometry rather than hex. */
+   {
+      uint32_t dflags = dsta2 ? GET32(pre_regs, 0x28) : a1_flags;
+      uint32_t psz = (dflags >> 3) & 0x07;
+      uint32_t wm  = (dflags >> 9) & 0x03;
+      uint32_t we  = (dflags >> 11) & 0x0F;
+      uint32_t w   = ((0x04 | wm) << we) >> 2;
+      uint32_t shown = 0;
+      uint32_t o;
+      if (psz == 4 && w != 0)
+      {
+         for (o = (uint32_t)first_diff & ~1u;
+              o <= (uint32_t)last_diff && shown < 48; o += 2)
+         {
+            uint16_t fpx = ((uint16_t)fast_region[o] << 8) | fast_region[o + 1];
+            uint16_t apx = ((uint16_t)jaguarMainRAM[save_start + o] << 8)
+                         | jaguarMainRAM[save_start + o + 1];
+            if (fpx == apx)
+               continue;
+            LOG_WRN("[BLIT CMP V]   PX (%3u,%3u) fast=%04X acc=%04X\n",
+               (unsigned)((o >> 1) % w), (unsigned)((o >> 1) / w),
+               (unsigned)fpx, (unsigned)apx);
+            shown++;
+         }
+      }
+   }
 }
 
 void BlitterCompareEnable(int enable)
