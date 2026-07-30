@@ -143,12 +143,16 @@ Line buffer width = HP (horizontal period) worth of pixels. For NTSC at divisor 
 The Jaguar supports two primary colour modes:
 
 ### CRY (Cyan-Red-Yellow)
-16-bit per pixel: C[15:8] (8-bit intensity), R[7:4] (4-bit red-yellow), Y[3:0] (4-bit cyan-green)
-- C component is intensity (0=black, $FF=full brightness)
-- R and Y select a chrominance (hue + saturation) from a 16x16 lookup table
+16-bit per pixel: Cyan[15:12] (4 bits), Red[11:8] (4 bits), intensitY[7:0] (8 bits).
+The name spells the field order: **C**yan, **R**ed, intensit**Y**.
+- The intensity field is the LOW byte (0=black, $FF=full brightness)
+- Cyan and Red select a chrominance (hue + saturation) from a 16x16 lookup table
+- Verified against the implementation: `src/tom/tom.c` (cyan `>>12`, red `>>8`,
+  intensity `& 0x00FF`) and `src/tom/op.c`.  An earlier revision of this file
+  had the layout inverted (intensity in the high byte), which is wrong.
 - The actual RGB values are computed from CRY via lookup tables in hardware
 
-CRY advantages: smooth Gouraud shading (just interpolate C), compact colour space.
+CRY advantages: smooth Gouraud shading (just interpolate intensity/Y), compact colour space.
 
 ### RGB16
 16-bit per pixel: R[15:11] (5-bit), G[10:5] (6-bit?), B[4:0] (5-bit)
