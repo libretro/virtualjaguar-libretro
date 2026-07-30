@@ -144,19 +144,28 @@ void Exception(int nr, uint32_t oldpc, int ExceptionSource)
 		   core computes for exactly this purpose; empirically Pitfall
 		   takes five consecutive address errors, returns to the same
 		   A7 each time and carries on, so the value is one the game
-		   survives.  Only address errors set it, so fall back to the
-		   current PC for a bus error (which nothing in this core
-		   raises today). */
-		uint32_t framePC = (nr == 3 ? last_addr_for_exception_3 : currpc);
+		   survives.
+
+		   The generated core records last_*_for_exception_3 only for
+		   address errors, so every field sourced from them is gated on
+		   nr == 3; a bus error would otherwise push stale metadata
+		   from an earlier address error.  Nothing in this core raises
+		   exception 2 today (see m68kinterface.c:
+		   "EXCEPTION_BUS_ERROR ... This one is not emulated!"), so
+		   that path is unreachable — the gate is there so it stays
+		   correct if bus errors are ever implemented. */
+		uint32_t framePC    = (nr == 3 ? last_addr_for_exception_3 : currpc);
+		uint16_t frameOp    = (nr == 3 ? last_op_for_exception_3   : 0);
+		uint32_t frameFault = (nr == 3 ? last_fault_for_exception_3 : 0);
 
 		m68k_areg(regs, 7) -= 4;			// Push PC on stack
 		m68k_write_memory_32(m68k_areg(regs, 7), framePC);
 		m68k_areg(regs, 7) -= 2;			// Push SR on stack
 		m68k_write_memory_16(m68k_areg(regs, 7), regs.sr);
 		m68k_areg(regs, 7) -= 2;			// Faulting instruction word
-		m68k_write_memory_16(m68k_areg(regs, 7), last_op_for_exception_3);
+		m68k_write_memory_16(m68k_areg(regs, 7), frameOp);
 		m68k_areg(regs, 7) -= 4;			// Faulting access address
-		m68k_write_memory_32(m68k_areg(regs, 7), last_fault_for_exception_3);
+		m68k_write_memory_32(m68k_areg(regs, 7), frameFault);
 		m68k_areg(regs, 7) -= 2;			// Special status word
 		m68k_write_memory_16(m68k_areg(regs, 7), ssw);
 	}
