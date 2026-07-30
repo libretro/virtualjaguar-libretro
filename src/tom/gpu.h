@@ -18,6 +18,14 @@ void GPUInit(void);
 void GPUDone(void);
 void GPUReset(void);
 void GPUExec(int32_t);
+/* Slice bookkeeping for the 68K->GPU-local-RAM sync; see the comment on
+ * gpuSliceBudget in gpu.c.  GPUBeginSlice() declares the RISC cycles the
+ * scheduler will hand the GPU for this slice, GPUSliceRemaining() reports
+ * what is left after any mid-slice syncs, and GPUSyncToM68K() advances the
+ * GPU to the 68000's position when the two processors communicate. */
+void GPUBeginSlice(uint32_t riscCycles);
+int32_t GPUSliceRemaining(void);
+void GPUSyncToM68K(void);
 void GPUUpdateRegisterBanks(void);
 void GPUHandleIRQs(void);
 void GPUSetIRQLine(int irqline, int state);

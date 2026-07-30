@@ -226,6 +226,41 @@ static uint32_t gpu_ds_branch_target;
 static uint8_t  gpu_in_delay_slot;
 static uint8_t  gpu_ds_irq_dispatched;
 
+/* 68K -> GPU-local-RAM communication sync.
+ *
+ * JaguarExecuteNew() runs the 68000 for a whole scheduler slice and only then
+ * gives the GPU the matching number of RISC cycles, so the 68000 can advance
+ * a couple of hundred cycles -- easily a whole interrupt entry -- before the
+ * GPU observes anything the 68000 wrote.  On silicon the two run
+ * concurrently: the GPU is clocked at the full system clock and the 68000 at
+ * system_clock/2 (JTRM clock hierarchy: 26.590906 MHz vs 13.295453 MHz NTSC,
+ * exactly 2:1), and the 68000 is the *lowest* priority bus master (JTRM bus
+ * priority table: CPU is 11 of 11, below GPU normal at 9), so a GPU spinning
+ * on a location in its own local RAM samples a 68000 write within a handful
+ * of RISC cycles.
+ *
+ * Pitfall: The Mayan Adventure depends on that.  Its GPU parks in a 3-word
+ * poll loop on a mailbox at $F03E30, and the 68000 feeds it a parameter block
+ * at $F03E00 followed by the routine address in the mailbox.  With the
+ * coarse-grained interleaving the 68000 got as far as taking an interrupt and
+ * rewriting a parameter before the GPU sampled the mailbox, so the object
+ * list builder ran with the *next* caller's element count (800 instead of
+ * 213) and wrote 587 longwords of colour data past the end of its buffer,
+ * over the game's own data at $43FBC-$448E8 (issue #138: it corrupts the
+ * palette-fade parameter block, whose GPU ISR then loops for ~65000
+ * iterations, never reaches its epilogue, and leaks 4 bytes of GPU stack per
+ * interrupt until r31 walks out of local RAM; it also leaves the odd pointer
+ * that makes the 68000 take the address error fixed in 3ba2f56).
+ *
+ * GPUSyncToM68K() closes the gap without changing anybody's cycle budget: at
+ * a 68000 write into GPU local RAM the GPU is advanced to the position the
+ * 68000 has already reached inside the current slice (68K cycles run x 2),
+ * clamped to the slice budget, and the scheduler's end-of-slice call then
+ * runs only the remainder.  Total RISC cycles per slice are unchanged; only
+ * *when* within the slice they are spent moves. */
+static int32_t gpuSliceBudget;
+static int32_t gpuSliceSpent;
+
 #define GPU_RUNNING	(gpu_control & 0x01)
 
 #define RM		gpu_reg[gpu_opcode_first_parameter]
@@ -817,6 +852,12 @@ void GPUReset(void)
    gpu_in_delay_slot     = 0;
    gpu_ds_irq_dispatched = 0;
 
+   /* Scheduler-slice sync state.  Like the delay-slot hazard flags above this
+    * is transient inside one JaguarExecuteNew() slice and is never live at a
+    * savestate boundary, so it is deliberately not serialized. */
+   gpuSliceBudget        = 0;
+   gpuSliceSpent         = 0;
+
    gpu_reg = gpu_reg_bank_0;
    gpu_alternate_reg = gpu_reg_bank_1;
 
@@ -867,6 +908,55 @@ void GPUDumpState(const char *tag)
 {
    LOG_INF("[GPU %s] PC=%08X ctrl=%08X flags=%08X running=%d\n",
       tag ? tag : "", gpu_pc, gpu_control, gpu_flags, GPU_RUNNING ? 1 : 0);
+}
+
+/* Called by JaguarExecuteNew() before the 68000 runs, with the RISC cycle
+ * count the GPU will be given for this slice.  See the comment on
+ * gpuSliceBudget. */
+void GPUBeginSlice(uint32_t riscCycles)
+{
+   gpuSliceBudget = (int32_t)riscCycles;
+   gpuSliceSpent  = 0;
+}
+
+/* RISC cycles of the current slice that the scheduler still owes the GPU. */
+int32_t GPUSliceRemaining(void)
+{
+   int32_t left = gpuSliceBudget - gpuSliceSpent;
+   return (left > 0 ? left : 0);
+}
+
+/* Advance the GPU to the 68000's position inside the current slice.  Called
+ * once per completed 68000 write access into GPU local RAM (see
+ * m68k_write_memory_* in jaguar.c).
+ *
+ * It has to be the *whole* 68000 access, not each bus half: a 68000 MOVE.L
+ * reaches TOM as two word writes, and running the GPU between them let it
+ * sample a half-written mailbox -- Pitfall's poll loop read $00F00000 and
+ * jumped into the TOM register file during boot.  Our 68000 core executes an
+ * instruction atomically, so the closest available approximation to real
+ * concurrency is to advance the GPU only once the access is complete. */
+void GPUSyncToM68K(void)
+{
+   int32_t target, run;
+
+   /* A halted or single-step-paused GPU is not executing; nothing to sync.
+    * gpu_in_exec guards against re-entering the exec loop (the OP runs the
+    * GPU inline from inside a halfline callback -- see op.c). */
+   if (!GPU_RUNNING || (gpu_control & 0x08) || gpu_in_exec)
+      return;
+
+   /* GPU is clocked at twice the 68000 (JTRM clock hierarchy). */
+   target = (int32_t)m68k_cycles_run() * 2;
+   if (target > gpuSliceBudget)
+      target = gpuSliceBudget;
+
+   run = target - gpuSliceSpent;
+   if (run <= 0)
+      return;
+
+   gpuSliceSpent += run;
+   GPUExec(run);
 }
 
 // Main GPU execution core

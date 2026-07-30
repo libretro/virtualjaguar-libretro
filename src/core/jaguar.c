@@ -430,6 +430,25 @@ unsigned int m68k_read_memory_32(unsigned int address)
 }
 
 
+/* A 68000 write into GPU local RAM is a handshake with a concurrently running
+ * coprocessor, so let the GPU catch up to where the 68000 already is inside
+ * this scheduler slice before the 68000 goes any further.  Full explanation on
+ * gpuSliceBudget in gpu.c (issue #138).
+ *
+ * m68kInLongWrite suppresses the sync for the two halves of a 68000 long
+ * write, which reaches TOM as two word writes: the GPU must never observe a
+ * half-written longword (Pitfall's mailbox poll loop read $00F00000 and jumped
+ * into the TOM register file). */
+static int m68kInLongWrite = 0;
+
+static void M68KGPURAMSync(unsigned int address)
+{
+   if (m68kInLongWrite)
+      return;
+   if (address >= GPU_WORK_RAM_BASE && address < GPU_WORK_RAM_BASE + 0x1000)
+      GPUSyncToM68K();
+}
+
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
 #ifdef ALPINE_FUNCTIONS
@@ -452,6 +471,8 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
       JERRYWriteByte(address, value, M68K);
    else
       jaguar_unknown_writebyte(address, value, M68K);
+
+   M68KGPURAMSync(address);
 }
 
 
@@ -487,6 +508,8 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    {
       jaguar_unknown_writeword(address, value, M68K);
    }
+
+   M68KGPURAMSync(address);
 }
 
 
@@ -506,8 +529,12 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
       SET32(jaguarMainRAM, address, value);
       return;
    }
+   m68kInLongWrite++;
    m68k_write_memory_16(address, value >> 16);
    m68k_write_memory_16(address + 2, value & 0xFFFF);
+   m68kInLongWrite--;
+
+   M68KGPURAMSync(address);
 }
 
 /* Disassemble M68K instructions at the given offset */
@@ -1023,22 +1050,31 @@ void JaguarExecuteNew(void)
       double timeToMainEvent = GetTimeToNextEvent(EVENT_MAIN);
       double timeToJerryEvent = GetTimeToNextEvent(EVENT_JERRY);
       double timeDelta;
+      uint32_t riscCycles;
 
+      /* GPUBeginSlice/GPUSliceRemaining: part of the GPU's slice may already
+       * have been run from GPUSyncToM68K(), so the end-of-slice call runs only
+       * what is left.  The total per slice is unchanged -- see the comment on
+       * gpuSliceBudget in gpu.c. */
       if (timeToJerryEvent < timeToMainEvent)
       {
          timeDelta = timeToJerryEvent;
+         riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
+         GPUBeginSlice(riscCycles);
          m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
-         GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
-         DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
+         GPUExec(GPUSliceRemaining());
+         DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_MAIN);
          HandleNextEvent(EVENT_JERRY);
       }
       else
       {
          timeDelta = timeToMainEvent;
+         riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
+         GPUBeginSlice(riscCycles);
          m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
-         GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
-         DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
+         GPUExec(GPUSliceRemaining());
+         DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }
