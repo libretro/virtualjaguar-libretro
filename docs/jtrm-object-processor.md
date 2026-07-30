@@ -152,7 +152,7 @@ The name spells the field order: **C**yan, **R**ed, intensit**Y**.
   had the layout inverted (intensity in the high byte), which is wrong.
 - The actual RGB values are computed from CRY via lookup tables in hardware
 
-CRY advantages: smooth Gouraud shading (just interpolate C), compact colour space.
+CRY advantages: smooth Gouraud shading (just interpolate intensity/Y), compact colour space.
 
 ### RGB16
 16-bit per pixel: R[15:11] (5-bit), G[10:5] (6-bit?), B[4:0] (5-bit)
