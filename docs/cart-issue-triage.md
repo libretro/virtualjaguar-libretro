@@ -34,7 +34,7 @@ Two classes of evidence are used, and they are **not** equally strong:
 
 | # | Title | Verdict | Basis |
 |---|---|---|---|
-| **138** | Pitfall: The Mayan Adventure — black screen | **STILL REPRODUCES** (worst offender) | deterministic hard wedge ~frame 3550; 68K parked on an `RTE` stub at `$000404`; `video_stall` at 3989; bit-identical under both blitters |
+| **138** | Pitfall: The Mayan Adventure — black screen | **STILL REPRODUCES** (worst offender) | deterministic hard wedge — `video_stall` at **3989** (run+jump script) / **3491** (no-input control, i.e. it dies sooner without input); 68K parked on an `RTE` stub at `$000404`; bit-identical under both blitters |
 | **178** | Alien vs Predator — display issues | **PARTLY REPRODUCES** | cyan boot bar confirmed `rgb(0,255,255)` 320×3 at frame 0 (and it is **not** AvP-specific); in-game brown bottom bar confirmed rows 236–239; green dot / green bar **not** reproduced |
 | **186** | Iron Soldier (cart) — unplayable | **CHANGED (DEMO path fixed; mission-start path untested)** | 3D DEMO mode renders + animates in **all 4** blitter×BIOS combos, no signature; fast-blitter missing wireframe tank still reproduces exactly; `*`+`#` is not a core bug; **mission start was never reached — see caveat** |
 | *180* | BIOS cube top-edge pixels (referenced by #189) | **NO LONGER REPRODUCES** | all 37 BIOS-on frames, including the entire cube animation, are **byte-identical** between fast and accurate blitter |
