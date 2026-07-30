@@ -65,8 +65,65 @@
  * (68K $4C0C deadline-overshoot check).  Device-traced on both titles:
  * FMV segment loops, then the in-game "error reading CD" dialog.
  * The period is error-diffused in hundredths of a tick so the average
- * rate matches hardware without a fractional-time event system. */
+ * rate matches hardware without a fractional-time event system.
+ *
+ * This constant is the DOUBLE-speed period; single speed doubles it (see
+ * cdDriveSpeed / CDROMNextRefillDelay). */
 #define FIFO_REFILL_PERIOD_X100  285
+
+/* Drive speed, latched from the DSA "Set Mode" command ($15nn).
+ *
+ * Ground truth, in order of authority:
+ *
+ * 1. Jaguar CD-ROM manual (docs/atari-jaguar-1999/'06 - Jaguar CD-ROM.pdf'),
+ *    p.10 section 2.7.7 "CD_mode".  Input D0.W, "Speed/mode desired":
+ *      Bit 0 => Speed: 0 = Single, 1 = Double
+ *      Bit 1 => Mode:  0 = Audio,  1 = Data
+ *    Purpose: "This call sets the speed of the CD to either single or
+ *    double-speed and the data mode to either audio or data."
+ *
+ * 2. That layout is the *BIOS API* argument, NOT the DSA payload.  The CD
+ *    BIOS translates it.  Disassembled from the retail CD BIOS ROM (the
+ *    only $15xx emitter in the image; identical code in the embedded
+ *    src/bios/jagcdbios.c and jagdevcdbios.c), at $808978:
+ *
+ *      move.w  d0,d2         ; caller's D0.W
+ *      and.w   #$1,d2        ; keep bit 0 (speed request)
+ *      add.w   #$1,d2        ; -> 1 = single, 2 = double
+ *      btst    #1,d0         ; audio/data
+ *      beq.s   +
+ *      bset    #3,d2         ; data mode -> payload bit 3
+ *   +  or.w    #$1500,d2     ; DSA command $15
+ *      move.w  d2,$DFFF0A    ; transmit
+ *      bsr     ...           ; await response
+ *      bset    #9,d2         ; $15nn -> $17nn  (expected Mode Status echo)
+ *      cmp.w   d1,d2         ; retry the whole command if it does not match
+ *
+ *    So on the wire the speed is a ONE-BASED CODE in the low bits, not a
+ *    bit: 1 = single, 2 = double.  Bit 3 ($08) carries data(1)/audio(0).
+ *    The four reachable payloads are $1501 single/audio, $1502
+ *    double/audio, $1509 single/data, $150A double/data.
+ *
+ *    Reading the payload's bit 0 as "the speed bit" would invert both
+ *    payloads we have actually observed: Baldies sends $150A (double/data,
+ *    bit0=0) and Primal Rage's CDDA hand-off sends $1501 (single/audio,
+ *    bit0=1).  Note BizHawk's HLE is not wrong for BizHawk -- it emulates
+ *    the BIOS *call* and sees D0 directly (cd_mode = D0 & 3, delay >>
+ *    (cd_mode & 1)); it never sees the DSA form.  We are on the DSA side.
+ *
+ * Power-on default: the manual does not state the drive's reset speed.  We
+ * default to DOUBLE, which both preserves the previous fixed-2x behaviour
+ * and matches p.8 section 2.6, which describes double speed as the normal
+ * state a failing read is recovered from ("while running in double-speed
+ * mode").
+ *
+ * Only the speed is acted on.  Bit 3 (audio/data) is decoded for the log
+ * line below but deliberately not modelled: per section 2.7.7 its effect
+ * ("when in audio mode, the CD mechanism may alter data or mute it
+ * entirely to correct for 'spikes' in the data") is drive-internal. */
+#define CD_SPEED_SINGLE 1
+#define CD_SPEED_DOUBLE 2
+static uint32_t cdDriveSpeed = CD_SPEED_DOUBLE;
 
 /*
    BUTCH     equ  $DFFF00		; base of Butch=interrupt control register, R/W
@@ -530,12 +587,29 @@ static void CDTracePush(uint16_t kind, uint16_t value, uint32_t blk)
 }
 
 /* Next FIFO refill delay in whole ticks, error-diffusing the fractional
- * 2.85-tick hardware period (see FIFO_REFILL_PERIOD_X100) so the long-run
- * average matches the real drive's 352,800 B/s. Returns 2 or 3. */
+ * hardware period (see FIFO_REFILL_PERIOD_X100) so the long-run average
+ * matches the real drive: 352,800 B/s at double speed (2.85 ticks per
+ * 32-byte batch, so 2 or 3), 176,400 B/s at single speed (5.70 ticks, so
+ * 5 or 6).
+ *
+ * The speed is read HERE, when an interval is armed -- an already-counting
+ * fifoFillDelay is never retroactively rescaled.  Two reasons: a spindle
+ * speed change physically takes effect for subsequent sectors, not for the
+ * one already in the servo/FIFO pipeline; and it keeps a mid-transfer Set
+ * Mode from disturbing an in-flight transfer, matching the per-read latch
+ * the HLE stream uses (jagcd_hle.c: hleStream.speedMult).  The difference
+ * is at most one ~91us interval, so this is a correctness-of-form choice
+ * rather than a behavioural one -- and section 2.6's read-error recovery
+ * sequence issues its single->double pair BETWEEN reads, so the manual
+ * never requires mid-transfer application.
+ *
+ * Scaling the accumulator input rather than the returned delay keeps the
+ * fractional remainder, and with it the error diffusion. */
 static int32_t CDROMNextRefillDelay(void)
 {
    int32_t d;
-   fifoRefillAccum += FIFO_REFILL_PERIOD_X100;
+   fifoRefillAccum += (int32_t)(FIFO_REFILL_PERIOD_X100 * CD_SPEED_DOUBLE
+                                / cdDriveSpeed);
    d = fifoRefillAccum / 100;
    fifoRefillAccum %= 100;
    return d;
@@ -724,6 +798,7 @@ void CDROMReset(void)
    fifoReadCount = 0;
    fifoFillDelay = 0;
    fifoRefillAccum = 0;
+   cdDriveSpeed = CD_SPEED_DOUBLE;   /* power-on default, see the constant */
    cdPrevShouldIRQ = false;
    dsaQueueHead = 0;
    dsaQueueTail = 0;
@@ -1764,6 +1839,44 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
                    block, min, sec, frm, SEEK_DELAY_TICKS);
          }
       }
+      else if ((data & 0xFF00) == 0x1500)			// Set Mode
+      {
+         /* Latch the drive speed.  The payload's low bits are a one-based
+          * speed CODE (1 = single, 2 = double) and bit 3 selects data(1) /
+          * audio(0) -- see the cdDriveSpeed comment near the top of this
+          * file for the manual citation (p.10 sec 2.7.7) and the CD BIOS
+          * disassembly that establishes the wire format.  The $17nn Mode
+          * Status echo is queued by the response path above; the BIOS
+          * retries the whole command until that echo matches, so the echo
+          * must keep reflecting the payload verbatim.
+          *
+          * An unrecognised code leaves the speed alone rather than
+          * guessing: every code the BIOS can emit is 1 or 2, so anything
+          * else came from a game's own driver and we have no ground truth
+          * for it. */
+         uint32_t code = data & 0x07;
+         const char *why = "unchanged (unknown code)";
+
+         if (code == CD_SPEED_SINGLE || code == CD_SPEED_DOUBLE)
+         {
+            cdDriveSpeed = code;
+            why = (code == CD_SPEED_SINGLE) ? "single (1x)" : "double (2x)";
+         }
+
+         /* Census log: rare command, capped, so it is safe to emit at INFO
+          * unconditionally (same policy as the [CDDA] line above). */
+         {
+            static uint32_t setModeCount = 0;
+            setModeCount++;
+            if (setModeCount <= 40 || (setModeCount % 500) == 0)
+               LOG_INF("[CD-MODE] Set Mode $%04X #%u -> speed=%s mode=%s "
+                       "rate=%lu B/s tick=%u block=%u\n",
+                       data, setModeCount, why,
+                       (data & 0x08) ? "data" : "audio",
+                       (unsigned long)(352800u / CD_SPEED_DOUBLE * cdDriveSpeed),
+                       diag_butchExecCalls, block);
+         }
+      }
       else if ((data & 0xFF00) == 0x1400)			// Read "full" TOC for session
       {
          cdPtr = 0x60;
@@ -2483,6 +2596,7 @@ size_t CDROMStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, dsaQueueTail);
 	STATE_SAVE_VAR(buf, dsaQueueCount);
 	STATE_SAVE_VAR(buf, dsaResponseDelay);
+	STATE_SAVE_VAR(buf, cdDriveSpeed);
 
 	return (size_t)(buf - start);
 }
@@ -2543,6 +2657,22 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 		dsaQueueCount = 0;
 		dsaResponseDelay = 0;
 	}
+
+	/* v4 and older states predate the latched drive speed.  Fall back to
+	 * the power-on default rather than consuming bytes the layout never
+	 * carried; a title that cares re-issues Set Mode before its next read
+	 * (the CD BIOS retries the command until the $17nn echo matches, so it
+	 * never assumes a speed it did not just set). */
+	if (stateVersion >= STATE_VERSION_CDROM_DRIVE_SPEED)
+	{
+		STATE_LOAD_VAR(buf, cdDriveSpeed);
+		/* CDROMNextRefillDelay divides by this, so never trust it blindly
+		 * from a state blob. */
+		if (cdDriveSpeed != CD_SPEED_SINGLE && cdDriveSpeed != CD_SPEED_DOUBLE)
+			cdDriveSpeed = CD_SPEED_DOUBLE;
+	}
+	else
+		cdDriveSpeed = CD_SPEED_DOUBLE;
 
 	return (size_t)(buf - start);
 }
