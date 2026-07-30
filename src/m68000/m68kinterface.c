@@ -295,7 +295,35 @@ static INLINE uint32_t m68ki_init_exception(void)
 
 	MakeSR();
 	sr = regs.sr;					// Save old status register
-	regs.s = 1;								// Set supervisor mode
+
+	/* Switch to the interrupt/supervisor stack BEFORE the frame is
+	   pushed.  The 68000 keeps two stack pointers selected by the S bit,
+	   and its documented exception processing sequence is
+
+	       temp <- SR ; S <- 1 ; T <- 0 ; fetch vector ;
+	       SSP <- SSP-4 ; M(SSP) <- PC ;
+	       SSP <- SSP-2 ; M(SSP) <- temp ; PC <- handler
+
+	   i.e. the frame lands on the SUPERVISOR stack, because setting S
+	   is what makes A7 the SSP (M68000 Programmer's Reference Manual,
+	   "Exception Processing Sequence").  Setting
+	   regs.s without swapping A7 stacked interrupt frames on the USER
+	   stack and left regs.usp stale, so the handler's RTE restored a
+	   bogus user SP and clobbered regs.isp with the user value -- which
+	   then became A7 on the next entry to supervisor mode.
+
+	   This mirrors the two other privilege transitions in this core,
+	   cpuextra.c::Exception() and cpuextra.c::MakeFromSR(); regs.isp is
+	   guaranteed valid here because s can only have become 0 via
+	   MakeFromSR(), which saves A7 into regs.isp on the way out.
+
+	   Ported from BizHawk 1adb2b45 (waterbox Virtual Jaguar). */
+	if (!regs.s)
+	{
+		regs.usp = m68k_areg(regs, 7);
+		m68k_areg(regs, 7) = regs.isp;
+		regs.s = 1;								// Set supervisor mode
+	}
 
 	return sr;
 }
