@@ -111,28 +111,28 @@ fresh dated section; do not retrofit old ones.
 
 | Title | Mode | Score | Stage | Watchdog | PC evidence |
 |---|---|---|---|---|---|
-| Baldies (USA) (Rev 1).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18235B unique_pcs=29 final_pc=$05FE82 <!-- build:5a83d3d-dirty --> |
-| Baldies (USA) (Rev 1).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21698B unique_pcs=55 final_pc=$05FE8A <!-- build:5a83d3d-dirty --> |
-| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=26701B unique_pcs=46 final_pc=$0077A2 <!-- build:5a83d3d-dirty --> |
-| Battle Morph (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=905 seek_starts=1 seek_dones=1 fifo_drains=28672 unchanged for 300 frames gpu_pc=$00F033AC gpu_run=1 dsp_pc=$00F1C0B0 dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=30596B unique_pcs=65 final_pc=$022052 <!-- build:5a83d3d-dirty --> |
-| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1096 fb_hash=$D8CC2B8A unchanged for 300 frames gpu_pc=$00F03278 gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17926B unique_pcs=50 final_pc=$004FCA <!-- build:5a83d3d-dirty --> |
-| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1106 seek_starts=2 seek_dones=2 fifo_drains=38915 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B084 dsp_run=1 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=27663B unique_pcs=62 final_pc=$004FCA <!-- build:5a83d3d-dirty --> |
-| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18477B unique_pcs=69 final_pc=$004C12 <!-- build:5a83d3d-dirty --> |
-| Dragon's Lair (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29348B unique_pcs=70 final_pc=$004C12 <!-- build:5a83d3d-dirty --> |
-| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21117B unique_pcs=42 final_pc=$0088D2 <!-- build:5a83d3d-dirty --> |
-| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1750 seek_starts=4 seek_dones=4 fifo_drains=92617 unchanged for 300 frames gpu_pc=$00F031C2 gpu_run=1 dsp_pc=$00F1B07E dsp_run=1 |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17330B unique_pcs=57 final_pc=$0088DA <!-- build:5a83d3d-dirty --> |
-| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23042B unique_pcs=35 final_pc=$05DAA6 <!-- build:5a83d3d-dirty --> |
-| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17157B unique_pcs=60 final_pc=$05DAA6 <!-- build:5a83d3d-dirty --> |
-| Iron Soldier 2 (USA) (Songbird).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29306B unique_pcs=21 final_pc=$00CD3A <!-- build:5a83d3d-dirty --> |
-| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29870B unique_pcs=39 final_pc=$00B542 <!-- build:5a83d3d-dirty --> |
-| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28237B unique_pcs=100 final_pc=$016514 <!-- build:5a83d3d-dirty --> |
-| Primal Rage (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=884 seek_starts=2 seek_dones=2 fifo_drains=17996 unchanged for 300 frames gpu_pc=$00F031F6 gpu_run=1 dsp_pc=$00F1B12C dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25894B unique_pcs=75 final_pc=$0044CC <!-- build:5a83d3d-dirty --> |
-| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19041B unique_pcs=73 final_pc=$0075C0 <!-- build:5a83d3d-dirty --> |
-| Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=73 final_pc=$00B87A <!-- build:5a83d3d-dirty --> |
-| baldies.cdi | hle | 0/1 | LOAD_FAIL | (none) |     [FAIL]  baldies.cdi : load failed (retro_load_game returned false) <!-- build:5a83d3d-dirty --> |
-| baldies.cdi | bios | 1/1 | BIOS_INTRO | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=24662B unique_pcs=27 final_pc=$194D12; PC-SET game-band: $193040 $196824 $196882 $196A0A $1962CC $194D0C $194D1E $194D30 $194D18 $194D12 $194D06 $194D24 $194D2A $194CF6 <!-- build:5a83d3d-dirty --> |
-| Myst (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1827 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03760 gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10992B unique_pcs=256+ final_pc=$00CA64 <!-- build:5a83d3d-dirty --> |
-| Myst (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2260 seek_starts=11 seek_dones=11 fifo_drains=77635 unchanged for 300 frames gpu_pc=$00F03766 gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17708B unique_pcs=256+ final_pc=$00F1A4 <!-- build:5a83d3d-dirty --> |
+| Baldies (USA) (Rev 1).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18235B unique_pcs=29 final_pc=$05FE82 <!-- build:e34d9e5-dirty --> |
+| Baldies (USA) (Rev 1).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [PASS]  Baldies (USA) (Rev 1).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21698B unique_pcs=55 final_pc=$05FE8A <!-- build:e34d9e5-dirty --> |
+| Battle Morph (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=26701B unique_pcs=46 final_pc=$0077A2 <!-- build:e34d9e5-dirty --> |
+| Battle Morph (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=905 seek_starts=1 seek_dones=1 fifo_drains=28672 unchanged for 300 frames gpu_pc=$00F033AC gpu_run=1 dsp_pc=$00F1C0B0 dsp_run=1 |     [PASS]  Battle Morph (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=30596B unique_pcs=65 final_pc=$022052 <!-- build:e34d9e5-dirty --> |
+| BrainDead 13 (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1096 fb_hash=$D8CC2B8A unchanged for 300 frames gpu_pc=$00F03278 gpu_run=1 dsp_pc=$00F1B082 dsp_run=1 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17926B unique_pcs=50 final_pc=$004FCA <!-- build:e34d9e5-dirty --> |
+| BrainDead 13 (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1106 seek_starts=2 seek_dones=2 fifo_drains=38915 unchanged for 300 frames gpu_pc=$00F03276 gpu_run=1 dsp_pc=$00F1B084 dsp_run=1 |     [PASS]  BrainDead 13 (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=27663B unique_pcs=62 final_pc=$004FCA <!-- build:e34d9e5-dirty --> |
+| Dragon's Lair (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18477B unique_pcs=69 final_pc=$004C12 <!-- build:e34d9e5-dirty --> |
+| Dragon's Lair (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Dragon's Lair (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29348B unique_pcs=70 final_pc=$004C12 <!-- build:e34d9e5-dirty --> |
+| Highlander - The Last of the MacLeods (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21117B unique_pcs=42 final_pc=$0088D2 <!-- build:e34d9e5-dirty --> |
+| Highlander - The Last of the MacLeods (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=1750 seek_starts=4 seek_dones=4 fifo_drains=92617 unchanged for 300 frames gpu_pc=$00F031C2 gpu_run=1 dsp_pc=$00F1B07E dsp_run=1 |     [PASS]  Highlander - The Last of the MacLeods (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17330B unique_pcs=57 final_pc=$0088DA <!-- build:e34d9e5-dirty --> |
+| Hover Strike - Unconquered Lands (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=23042B unique_pcs=35 final_pc=$05DAA6 <!-- build:e34d9e5-dirty --> |
+| Hover Strike - Unconquered Lands (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Hover Strike - Unconquered Lands (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17157B unique_pcs=60 final_pc=$05DAA6 <!-- build:e34d9e5-dirty --> |
+| Iron Soldier 2 (USA) (Songbird).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29306B unique_pcs=21 final_pc=$00CD3A <!-- build:e34d9e5-dirty --> |
+| Iron Soldier 2 (USA) (Songbird).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Iron Soldier 2 (USA) (Songbird).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29870B unique_pcs=39 final_pc=$00B542 <!-- build:e34d9e5-dirty --> |
+| Primal Rage (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=28237B unique_pcs=100 final_pc=$016514 <!-- build:e34d9e5-dirty --> |
+| Primal Rage (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=884 seek_starts=2 seek_dones=2 fifo_drains=17996 unchanged for 300 frames gpu_pc=$00F031F6 gpu_run=1 dsp_pc=$00F1B12C dsp_run=1 |     [PASS]  Primal Rage (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=25894B unique_pcs=75 final_pc=$0044CC <!-- build:e34d9e5-dirty --> |
+| Space Ace (USA).cue | hle | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=19041B unique_pcs=73 final_pc=$0075C0 <!-- build:e34d9e5-dirty --> |
+| Space Ace (USA).cue | bios | 1/1 | GAME_CODE | (none) |     [PASS]  Space Ace (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=29417B unique_pcs=73 final_pc=$00B87A <!-- build:e34d9e5-dirty --> |
+| baldies.cdi | hle | 1/1 | GAME_CODE | (none) |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=18235B unique_pcs=29 final_pc=$05FE82 <!-- build:e34d9e5-dirty --> |
+| baldies.cdi | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=990 seek_starts=2 seek_dones=2 fifo_drains=45895 unchanged for 300 frames gpu_pc=$00F03270 gpu_run=1 dsp_pc=$00F1B088 dsp_run=1 |     [PASS]  baldies.cdi : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=21698B unique_pcs=55 final_pc=$05FE8A <!-- build:e34d9e5-dirty --> |
+| Myst (USA).cue | hle | 1/1 | GAME_CODE | [CRASH-DETECT] video_stall frame=1827 fb_hash=$292A41FD unchanged for 300 frames gpu_pc=$00F03760 gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=10992B unique_pcs=256+ final_pc=$00CA64 <!-- build:e34d9e5-dirty --> |
+| Myst (USA).cue | bios | 1/1 | GAME_CODE | [CRASH-DETECT] cd_seek_wedge frame=2260 seek_starts=11 seek_dones=11 fifo_drains=77635 unchanged for 300 frames gpu_pc=$00F03766 gpu_run=1 dsp_pc=$00F1B8C6 dsp_run=1 |     [PASS]  Myst (USA).cue : pc_in_ram=1 not_loop=1 not_thrash=1 ram_payload=17708B unique_pcs=256+ final_pc=$00F1A4 <!-- build:e34d9e5-dirty --> |
 
 Raw per-run logs are not committed; re-run the script to regenerate.
 
@@ -170,19 +170,35 @@ re-ran on every invocation and appended another duplicate each time. Only
 adding a title to `CUE_TITLES` can trigger it, which is why it survived this
 long.
 
-### `baldies.cdi` rows are NOT comparable to the previous sweep
+### `baldies.cdi` must be regenerated with `cue2cdi`, not taken from the ROM set
 
-Both moved backward (`hle` `GAME_CODE` -> `LOAD_FAIL`, `bios` `GAME_CODE` ->
-`BIOS_INTRO`). This is a **corpus artifact, not an emulator regression**: the
-`test/roms/private` corpus was rebuilt from a separate archive between the two
-sweeps, and the replacement `baldies.cdi` is a different dump. It is
-zero-filled at the track-2 boot-stub offset the loader reads (`$B06490`), so
-the core logs `[CD-BOOTSTUB] Boot stub extraction failed` and refuses the HLE
-load; in bios mode it loads but parks in the relocated-BIOS band
-(`final_pc=$194D12`). The control is decisive: `Baldies (USA) (Rev 1).cue` --
-the same game, from the same rebuilt corpus -- is `GAME_CODE 1/1` in both
-modes. Re-measure these two rows against the original image before reading
-anything into them.
+Recorded because it cost a full sweep to work out, and the next person to
+rebuild the corpus will hit it again.
+
+The corpus's `baldies.cdi` is **not** the `baldies.cdi` that ships with the
+ROM set. It is generated from the CUE/BIN by `test/tools/cue2cdi`, which emits
+the layout `src/cd/cdintf.c :: ParseCDI` walks natively. When
+`test/roms/private` was rebuilt from a separate archive during this work the
+ROM-set download was substituted, and both rows went backward -- `hle`
+`GAME_CODE` -> `LOAD_FAIL`, `bios` `GAME_CODE` -> `BIOS_INTRO`. The two images
+differ in size (61.7 MB generated vs 62.4 MB downloaded) and place track 2 at
+different offsets (`$AB0270` vs `$B06490`); at the download's offset the
+boot-stub reader finds zeros, logs `[CD-BOOTSTUB] Boot stub extraction
+failed`, and the HLE load is refused.
+
+Regenerating restores both rows exactly -- evidence strings identical to the
+previous sweep, down to `ram_payload=18235B unique_pcs=29 final_pc=$05FE82`
+(hle) and the whole of the bios row's `cd_seek_wedge` line:
+
+```bash
+./test/tools/cue2cdi \
+  "$ROMS/Baldies (USA) (Rev 1)/Baldies (USA) (Rev 1)/Baldies (USA) (Rev 1).cue" \
+  "$ROMS/baldies.cdi" --verify
+```
+
+This is **not** evidence that the downloaded image is bad. It is a legitimate
+DiscJuggler image that our `ParseCDI` boot-stub path cannot read -- a real gap,
+independent of every row in this table, and not tracked anywhere yet.
 
 ## Re-run notes -- 2026-07-29, branch fix/cd-fmv-bios-handoff @ 17375c3
 
