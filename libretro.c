@@ -1423,9 +1423,14 @@ void retro_reset(void)
     * pixels.  TOMReset puts tomWidth back to 0, and the border-fill path in
     * TOMExecHalfline writes tomWidth pixels -- so until the game reprograms
     * a TOM video register ($F00028-$F0004F) the rows above VDB get no pixels
-    * written at all and keep what was on screen before the reset.  This is
-    * the same window retro_load_game seeds for on a fresh load; a reset has
-    * to go through it too. */
+    * written at all and keep what was on screen before the reset.
+    *
+    * retro_load_game seeds the buffer for that same window on a fresh load,
+    * so a reset has to cover it too -- but note it currently seeds a cyan
+    * placeholder (0xFF00FFFF), not black.  Blanking to opaque black here is
+    * deliberate and independent of that: black is what a display shows with
+    * no signal, and it is correct whatever the load-time seed turns out to
+    * be.  #218 changes the load path to seed black as well. */
    video_buffer_blank();
 }
 

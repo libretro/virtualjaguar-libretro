@@ -20,7 +20,14 @@
  * Usage:
  *   fb_row_digest <core> <rom> --frames N --out FILE [harness flags...]
  *
- * File format (host byte order, LE in practice):
+ * File format.  Every uint32 is written LITTLE-ENDIAN regardless of host, so
+ * the dump is stable and matches fb_row_diff.py, which unpacks with "<".
+ *
+ * (The row hashes themselves are taken over the raw host framebuffer bytes,
+ * so digests are only meaningful when compared between runs on the same
+ * host -- which is the intended use, two builds on one machine.  The reader's
+ * all-black row constant likewise assumes little-endian XRGB8888 in memory.)
+ *
  *   magic  "VJFBDIG2"                        8 bytes
  *   uint32 video_frame_count
  *   uint32 audio_frame_count
@@ -62,9 +69,17 @@ static uint32_t fnv1a(const void *data, size_t len, uint32_t hash)
     return hash;
 }
 
+/* Write little-endian explicitly rather than dumping the host's uint32.
+ * fb_row_diff.py unpacks with "<", so a big-endian host writing native order
+ * would produce a digest the reader silently misparses. */
 static void put_u32(FILE *f, uint32_t v)
 {
-    fwrite(&v, sizeof(v), 1, f);
+    uint8_t b[4];
+    b[0] = (uint8_t)(v & 0xFF);
+    b[1] = (uint8_t)((v >> 8) & 0xFF);
+    b[2] = (uint8_t)((v >> 16) & 0xFF);
+    b[3] = (uint8_t)((v >> 24) & 0xFF);
+    fwrite(b, 1, sizeof(b), f);
 }
 
 static void on_video(void *userdata, const void *data,
@@ -92,7 +107,8 @@ static void on_video(void *userdata, const void *data,
     put_u32(st->out, rows);
     put_u32(st->out, frame_hash);
     put_u32(st->out, st->get_extent ? st->get_extent() : 0xFFFFFFFFu);
-    fwrite(row_hash, sizeof(uint32_t), rows, st->out);
+    for (row = 0; row < rows; row++)
+        put_u32(st->out, row_hash[row]);
 
     st->frames_written++;
 }
