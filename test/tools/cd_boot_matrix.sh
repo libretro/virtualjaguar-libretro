@@ -122,8 +122,20 @@ fi
 # warn rather than let the sweep silently fail to converge.  (This applies
 # to any re-invocation, chunked or not: an interrupted unlimited sweep
 # resumes through the same guard.)
+#
+# The ignore list is written repo-root-relative, so an absolute $OUT has to
+# be normalised before the comparison.  `git ls-files` resolves an absolute
+# path inside the repo on its own, but the string compare below does not:
+# without this, CD_MATRIX_OUT=/abs/path/to/docs/cd-boot-matrix.md -- a file
+# that IS ignored -- fails the compare and draws a warning stating the exact
+# opposite of the truth.
+OUT_REL=$OUT
+OUT_DIR=$(dirname "$OUT")
+if OUT_PREFIX=$(cd "$OUT_DIR" 2>/dev/null && git rev-parse --show-prefix 2>/dev/null); then
+    OUT_REL="${OUT_PREFIX}$(basename "$OUT")"
+fi
 if git ls-files --error-unmatch "$OUT" >/dev/null 2>&1 \
-   && ! scripts/build-id.sh --ignores 2>/dev/null | grep -qxF "$OUT"; then
+   && ! scripts/build-id.sh --ignores 2>/dev/null | grep -qxF "$OUT_REL"; then
     echo "WARNING: CD_MATRIX_OUT=$OUT is tracked by git but is not in" >&2
     echo "  scripts/build-id.sh's ignore list. Writing rows will flip the build" >&2
     echo "  id to '-dirty', so the next chunked invocation will treat every row" >&2
