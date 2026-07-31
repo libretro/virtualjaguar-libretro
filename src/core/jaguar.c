@@ -441,11 +441,17 @@ unsigned int m68k_read_memory_32(unsigned int address)
  * into the TOM register file). */
 static int m68kInLongWrite = 0;
 
-static void M68KGPURAMSync(unsigned int address)
+/* length is the width of the access in bytes.  Testing the whole written
+ * span rather than just its base address matters at the bottom edge of the
+ * region: a long write starting at GPU_WORK_RAM_BASE - 2 puts its second
+ * word inside GPU local RAM, and a base-address test would miss it and leave
+ * the GPU un-synced for exactly the write that needs it. */
+static void M68KGPURAMSync(unsigned int address, unsigned int length)
 {
    if (m68kInLongWrite)
       return;
-   if (address >= GPU_WORK_RAM_BASE && address < GPU_WORK_RAM_BASE + 0x1000)
+   if (address < GPU_WORK_RAM_BASE + 0x1000
+       && address + length > GPU_WORK_RAM_BASE)
       GPUSyncToM68K();
 }
 
@@ -472,7 +478,7 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    else
       jaguar_unknown_writebyte(address, value, M68K);
 
-   M68KGPURAMSync(address);
+   M68KGPURAMSync(address, 1);
 }
 
 
@@ -509,7 +515,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
       jaguar_unknown_writeword(address, value, M68K);
    }
 
-   M68KGPURAMSync(address);
+   M68KGPURAMSync(address, 2);
 }
 
 
@@ -534,7 +540,7 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
    m68k_write_memory_16(address + 2, value & 0xFFFF);
    m68kInLongWrite--;
 
-   M68KGPURAMSync(address);
+   M68KGPURAMSync(address, 4);
 }
 
 /* Disassemble M68K instructions at the given offset */
