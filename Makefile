@@ -828,9 +828,16 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/test_boot_patterns
 	./test/test_audio_pipeline ./$(TARGET)
 	./test/test_audio_clipping ./$(TARGET) --self-test
+	@# Cartridges live either flat in test/roms/private/ or under its ROMS/
+	@# subdirectory, depending on how the local corpus was laid out.  Each
+	@# lookup below tries both, because checking only one silently turns the
+	@# test into a SKIP -- which still prints and still exits 0, so the suite
+	@# stays green while the check is not running at all.
 	@# Negative control: healthy boot should not trip the clipping detector.
-	@if [ -f "test/roms/private/Atari Karts (1995).jag" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Atari Karts (1995).jag" --label "Atari Karts (negative control)" --quiet; \
+	@rom="test/roms/private/Atari Karts (1995).jag"; \
+	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Atari Karts (1995).jag"; \
+	if [ -f "$$rom" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Atari Karts (negative control)" --quiet; \
 	else \
 		echo "  SKIP: Atari Karts ROM (private) not available"; \
 	fi
@@ -838,13 +845,17 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
 	@# register bank 1, not "the non-current bank").  These now assert
 	@# clean audio so a regression flips them red again.
-	@if [ -f "test/roms/private/Skyhammer_(1999).jag" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Skyhammer_(1999).jag" --label Skyhammer --quiet; \
+	@rom="test/roms/private/Skyhammer_(1999).jag"; \
+	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Skyhammer_(1999).jag"; \
+	if [ -f "$$rom" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "$$rom" --label Skyhammer --quiet; \
 	else \
 		echo "  SKIP: Skyhammer ROM (private) not available"; \
 	fi
-	@if [ -f "test/roms/private/Iron Soldier 2 (World).j64" ]; then \
-		./test/test_audio_clipping ./$(TARGET) "test/roms/private/Iron Soldier 2 (World).j64" --label "Iron Soldier 2" --quiet; \
+	@rom="test/roms/private/Iron Soldier 2 (World).j64"; \
+	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Iron Soldier 2 (World).j64"; \
+	if [ -f "$$rom" ]; then \
+		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Iron Soldier 2" --quiet; \
 	else \
 		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
 	fi
@@ -854,8 +865,10 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	@# Soldier 1 boots straight to a music-on title; envelope was
 	@# measured on develop (RMS ~1175).  Floor 200 catches silence
 	@# regressions; ceiling 25000 catches loud-broken regressions.
-	@if [ -f "test/roms/private/Iron Soldier (1994).jag" ]; then \
-		./test/test_audio_presence ./$(TARGET) "test/roms/private/Iron Soldier (1994).jag" --label "Iron Soldier 1" --rms-floor 200 --rms-ceiling 25000 --quiet; \
+	@rom="test/roms/private/Iron Soldier (1994).jag"; \
+	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Iron Soldier (1994).jag"; \
+	if [ -f "$$rom" ]; then \
+		./test/test_audio_presence ./$(TARGET) "$$rom" --label "Iron Soldier 1" --rms-floor 200 --rms-ceiling 25000 --quiet; \
 	else \
 		echo "  SKIP: Iron Soldier 1 ROM (private) not available (audio presence)"; \
 	fi
