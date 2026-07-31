@@ -779,6 +779,73 @@ done
 
 ---
 
+## Naming known bad dumps at load time
+
+`romList` used to be dead data: `src/core/file.c` included `filedb.h` and the
+comment in `ParseFileType` promised *"We can also check our CRC32 against the
+internal ROM database to be sure"*, but nothing ever queried the table, so the
+core could never say more than *"unsupported or invalid content format"*.
+`FindRomIdentifier()` / `FindVerifiedRomVariant()` (`src/core/filedb.c`) are now
+wired into both load outcomes.
+
+### A bad dump that loads anyway
+
+This is the case that matters. Every `FF_BAD_DUMP` row in the table is
+cart-sized, so `ParseFileType` accepts it as a plain `JST_ROM`, the game runs
+subtly wrong, and the glitch gets attributed to the emulator. Two such images are
+in circulation locally:
+
+| CRC32 | title | local file | verified counterpart |
+|---|---|---|---|
+| `$4A08A2BD` | SuperCross 3D (World) | `Super Cross 3D (1995).jag` (2 MiB) | `$EC22F572` — `Super Cross 3D (1995) [a1].jag` |
+| `$C6C7BA62` | Fight for Life (World) (alt) | `Fight For Your Life (1996) [a1].jag` (4 MiB) | none in the table |
+
+Loading the first now prints:
+
+```
+[WRN] [CART] this is a known bad dump: "SuperCross 3D (World)" (CRC32 $4A08A2BD) -- it will run, but expect glitches
+[WRN] [CART] a verified dump of the same title exists (CRC32 $EC22F572)
+```
+
+The second prints the first line only — no same-named verified row exists, and a
+guessed match would be worse than silence. The verified `[a1]` SuperCross dump,
+Iron Soldier and every other image in the set load silently. `JaguarLoadFile` is
+a thin wrapper so this is reported from one place rather than from each of the
+seven load paths, all of which return directly.
+
+### A rejected image
+
+The same lookup runs on the `JST_NONE` return, so a rejected image that is in the
+table is named and pointed at its verified counterpart, and one that is not still
+carries its size and CRC so a reporter can say exactly what they have:
+
+```
+[ERR] [CART] unrecognized content format: 4000 bytes, CRC32 $E674A98B (no matching row in the ROM database)
+```
+
+Worth being straight about the reach of this half. The only `FF_BAD_DUMP` row
+that ever reached the rejection path was the headered *Brutal Sports Football
+(1994) (Telegames)* image, and #225 makes it load — under the payload's verified
+CRC `$BCB1A4BF`, so it correctly stops tripping the bad-dump warning as well.
+That leaves the named-rejection branch with no known reachable case; it stays as
+cover for a future bad dump whose container is also unloadable. The generic line
+is the half that earns its keep.
+
+### Limits of the table
+
+`jaguarMainROMCRC32` is a whole-file CRC, while `romList` mixes whole-file CRCs
+with CRCs taken over the file minus a universal header (see the comment at the
+top of `src/core/filedb.c`), so a UH-carrying cart misses the table and falls
+through to the generic line — correct behaviour, but it means a miss is **not**
+evidence the image is unknown. `FF_BAD_DUMP` is the whole story for known-problem
+images; the table has no `FF_NON_WORKING` rows.
+
+One known wart: `libretro.c` calls `JaguarLoadFile` twice for RAM-loaded images
+(`.abs`/`.cof`/Jag Server) — once through the boot strategy and again after
+`JaguarReset()` — so such an image would warn twice. Unreachable today, since
+every `FF_BAD_DUMP` row is an `FF_ROM` cart that loads once; the warning carries
+no state, so a duplicate would be cosmetic.
+
 ## Cross-cutting observations
 
 1. **The two blitter paths now agree far more than they used to.** Zero pixel

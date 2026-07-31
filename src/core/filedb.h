@@ -44,6 +44,17 @@ struct RomIdentifier
 
 extern struct RomIdentifier romList[];
 
+/* Look up an image by CRC32. Returns NULL when the CRC is not in the database.
+ * Note that romList mixes whole-file CRCs with CRCs taken over the file minus a
+ * universal header (see the comment at the top of filedb.c), so a miss does not
+ * mean the image is unknown to the wider world -- only that this table has no
+ * row for the CRC it was handed. */
+const struct RomIdentifier * FindRomIdentifier(uint32_t crc32);
+
+/* Look up a verified dump carrying the same title as `entry`. Used to point a
+ * bad dump at its good counterpart. Returns NULL when there is none. */
+const struct RomIdentifier * FindVerifiedRomVariant(const struct RomIdentifier *entry);
+
 #ifdef __cplusplus
 }
 #endif
