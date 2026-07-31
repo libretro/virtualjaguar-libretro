@@ -56,6 +56,24 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
  * lands on a future PR. */
 #define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
 
+/* Framebuffer allocation: the widest/tallest geometry TOM can advertise,
+ * not the geometry currently presented. */
+#define VIDEO_BUFFER_WIDTH   1024
+#define VIDEO_BUFFER_HEIGHT  512
+#define VIDEO_BUFFER_PIXELS  (VIDEO_BUFFER_WIDTH * VIDEO_BUFFER_HEIGHT)
+
+/* Bounds on what counts as a stale TAIL worth blanking, rather than a sign
+ * that TOM and the presented geometry disagree about the video mode.  Both
+ * must hold; see the use site in retro_run() for the measurements these are
+ * drawn from.  MAX_BLANK_TAIL_ROWS caps the shortfall in absolute rows;
+ * MIN_BLANK_COVERAGE_{NUM,DEN} additionally require the frame to be
+ * essentially fully rendered, which is the clause that catches the same
+ * situation in a short video mode (where a small absolute shortfall can
+ * still be most of the screen). */
+#define MAX_BLANK_TAIL_ROWS      32
+#define MIN_BLANK_COVERAGE_NUM   3
+#define MIN_BLANK_COVERAGE_DEN   4
+
 int videoWidth               = 0;
 int videoHeight              = 0;
 uint32_t *videoBuffer        = NULL;
@@ -1380,9 +1398,35 @@ void retro_deinit(void)
    enable_alt_inputs = false;
 }
 
+/* Fill the entire framebuffer allocation with opaque black.
+ *
+ * Not videoWidth * videoHeight: the geometry can grow to a wider stride
+ * later (320x240 -> 326x240), and rows re-laid-out at the larger pitch
+ * reach past the smaller region, so a partial fill leaves presentable
+ * pixels undefined. */
+static void video_buffer_blank(void)
+{
+   int i;
+
+   if (!videoBuffer)
+      return;
+
+   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
+      videoBuffer[i] = 0xFF000000;
+}
+
 void retro_reset(void)
 {
    JaguarReset();
+
+   /* Re-blank the framebuffer, or the reset presents the PREVIOUS session's
+    * pixels.  TOMReset puts tomWidth back to 0, and the border-fill path in
+    * TOMExecHalfline writes tomWidth pixels -- so until the game reprograms
+    * a TOM video register ($F00028-$F0004F) the rows above VDB get no pixels
+    * written at all and keep what was on screen before the reset.  This is
+    * the same window retro_load_game seeds for on a fresh load; a reset has
+    * to go through it too. */
+   video_buffer_blank();
 }
 
 #ifdef DEBUG_PRESENTATION
@@ -1462,6 +1506,71 @@ void retro_run(void)
    JaguarExecuteNew();
    cheat_apply_all();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
+
+   /* Give every presented row defined content.
+    *
+    * TOM renders one row per even halfline in [topVisible, bottomVisible),
+    * but the presented height comes from TOMGetVideoModeHeight(), derived
+    * independently from VDB/VDE.  When the two disagree the tail rows are
+    * never written and keep whatever was last drawn there -- frozen stale
+    * pixels that persist while the rest of the screen animates.  Alien vs
+    * Predator in-game is the reported case (#178): VDB=40, VDE=2047, VP=523
+    * gives 236 rendered rows against a presented height of 240, so rows
+    * 236-239 held a brown bar left over from an earlier VDB=28 frame.
+    *
+    * Opaque black, not the border colour: these rows sit BELOW the visible
+    * field (bottomVisible is the field bottom), so they are blanking lines,
+    * not border lines.  The border branch in TOMExecHalfline already covers
+    * rows that are inside the field but outside the active display window.
+    *
+    * The reverse mismatch also exists -- a narrow window (e.g. VDB=38,
+    * VDE=100 -> 34 rendered rows, presented height 31) writes past the
+    * presented height.  That is harmless here (the allocation is 1024x512
+    * and the extra rows are simply not shown) and is left alone. */
+   {
+      uint32_t written = TOMGetWrittenRowExtent();
+
+      /* Only blank a genuine TAIL.  A large shortfall does not mean "these
+       * rows are stale", it means TOM and the presented geometry disagree
+       * about what mode we are in -- our window model has failed, and
+       * erasing the last good frame is worse than leaving it up.
+       *
+       * The bound is measured, not a guess.  Across the 115-ROM corpus every
+       * SUSTAINED gap is small: 4 rows (Evolution, and Alien vs Predator --
+       * the reported case), 7 (Cannon Fodder, Gorf 2000), 8 (Bubsy), 14
+       * (Pitfall), 15, 17 (Sensible Soccer).  The one pathological case is
+       * DEMO1C (PD) at 102 rows on a single frame as it switches to a
+       * 328x135 mode and then stops rendering entirely -- blanking there
+       * erased a visible colour field and left a black screen.  32 leaves
+       * generous headroom over the observed maximum while excluding that
+       * class by a wide margin.
+       *
+       * The coverage clause is what makes this hold at any frame height: in
+       * a short mode a shortfall well inside 32 rows can still be most of
+       * the screen (height 40 with 8 rows written is the DEMO1C shape at
+       * small scale), and requiring the frame to be >= 3/4 rendered rejects
+       * it.  Measured coverage separates the two classes by a wide margin --
+       * every real tail above is 93-98% rendered, DEMO1C's transition frame
+       * is 24%.
+       *
+       * written == 0 (TOM addressed no rows at all) is the degenerate form
+       * of the same thing; the coverage test already rejects it, but keep it
+       * explicit so the intent survives a future tweak of the bounds. */
+      if (written > 0 && written < (uint32_t)game_height
+          && (uint32_t)game_height - written <= MAX_BLANK_TAIL_ROWS
+          && written * MIN_BLANK_COVERAGE_DEN
+             >= (uint32_t)game_height * MIN_BLANK_COVERAGE_NUM)
+      {
+         uint32_t row;
+         uint32_t col;
+         for (row = written; row < (uint32_t)game_height; row++)
+         {
+            uint32_t *line = videoBuffer + (row * (uint32_t)game_width);
+            for (col = 0; col < (uint32_t)game_width; col++)
+               line[col] = 0xFF000000;
+         }
+      }
+   }
 
    /* Runtime watchdog: looks for GPU/DSP PC escape, GPU/DSP wedge,
     * and video stall. Fires LOG_WRN/LOG_ERR via vj_log_cb so the

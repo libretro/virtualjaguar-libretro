@@ -400,6 +400,22 @@ uint32_t tomTimerPrescaler;
 uint32_t tomTimerDivider;
 int32_t tomTimerCounter;
 static uint16_t tomHCReadPhase;
+
+/* Rows TOMExecHalfline actually wrote, tracked live so a mid-frame VDB/VDE
+ * change cannot make the count disagree with what was drawn.  `Cur`
+ * accumulates the frame in progress; `Prev` and `Last` are latched at the
+ * halfline wrap.
+ *
+ * `Last` is the max of the two most recent frames rather than just the last
+ * one, for interlace: each field writes only every other row, so a single
+ * frame's maximum alternates by one and blanking on it alone would erase and
+ * rewrite the bottom row of the opposite field every frame.  Taking the max
+ * also adds a frame of hysteresis when the window shrinks, which errs towards
+ * blanking less -- the safe direction, since blanking too much is the failure
+ * mode that matters. */
+static uint32_t tomRowsWrittenCur;
+static uint32_t tomRowsWrittenPrev;
+static uint32_t tomRowsWrittenLast;
 uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
          tom_gpu_int_pending, tom_video_int_pending;
 
@@ -888,8 +904,22 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    uint16_t topVisible;
    uint16_t bottomVisible;
    uint16_t hp = GET16(tomRam8, HP);
+   uint32_t writtenRow;
 
    halfline &= 0x07FF;
+
+   /* Halfline 0 is the frame wrap: latch the row count for the frame that
+    * just finished before halfline 0 contributes to the next one.
+    * JaguarExecuteNew ends its frame right after this call, so a caller
+    * reading TOMGetWrittenRowExtent() from retro_run sees the frame it is
+    * about to present. */
+   if (halfline == 0)
+   {
+      tomRowsWrittenLast = (tomRowsWrittenCur > tomRowsWrittenPrev)
+                         ? tomRowsWrittenCur : tomRowsWrittenPrev;
+      tomRowsWrittenPrev = tomRowsWrittenCur;
+      tomRowsWrittenCur  = 0;
+   }
 
    // Update HC to approximate position within the scanline.
    // Bit 10 (0x0400) is the half-line indicator, analogous to VC's
@@ -950,9 +980,21 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    {
       // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
       if (tomRam8[VP + 1] & 0x01)
-         TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);//non-interlace
+      {
+         writtenRow = (halfline - topVisible) / 2;//non-interlace
+         TOMCurrentLine = &(screenBuffer[writtenRow * screenPitch]);
+      }
       else
-         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);//interlace
+      {
+         writtenRow = (((halfline - topVisible) / 2) * 2) + (field2 ? 0 : 1);//interlace
+         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);
+      }
+
+      /* Record the row regardless of which branch below fills it: both the
+       * scanline renderer and the border fill count as TOM having addressed
+       * this row.  See TOMGetWrittenRowExtent(). */
+      if (writtenRow + 1 > tomRowsWrittenCur)
+         tomRowsWrittenCur = writtenRow + 1;
 
       if (inActiveDisplayArea)
          scanline_render[TOMGetVideoMode()](TOMCurrentLine);
@@ -1014,6 +1056,32 @@ uint32_t TOMGetVideoModeWidth(void)
    }
 
    return ((rightHC - leftHC) / pwidth) * pwidth_scale;
+}
+
+/* One past the highest framebuffer row TOMExecHalfline wrote in the frame that
+ * just completed.
+ *
+ * MEASURED, not derived from the registers.  Deriving it from VDB/VDE at the
+ * end of the frame gets the mid-frame reprogramming case wrong: rows are
+ * written across the whole frame, but the registers only describe the window
+ * as of the last halfline.  DEMO1B (PD) reprograms TOM at frame 476 -- the
+ * end-of-frame window computes 8 rows while the frame had actually just been
+ * rendered 240 rows wide, so a register-derived extent would report a
+ * 232-row gap that does not exist.  TOMExecHalfline records each row as it
+ * writes it instead, which cannot disagree with itself.
+ *
+ * This is NOT the same quantity as TOMGetVideoModeHeight(), which is the
+ * presented height and is derived independently from VDB/VDE.  The two
+ * disagree whenever the visible window and the mode height fall back
+ * differently -- e.g. Alien vs Predator in-game programs VDB=40, VDE=2047,
+ * VP=523, so topVisible=VDB=40 but bottomVisible falls back to the field
+ * bottom (511) because VDE > VP, giving 236 written rows against a presented
+ * height of 240 (the NTSC fallback, since (2047-40)/2 > 256).  Callers use
+ * this to give the leftover rows defined content instead of letting them keep
+ * whatever was last drawn there. */
+uint32_t TOMGetWrittenRowExtent(void)
+{
+   return tomRowsWrittenLast;
 }
 
 uint32_t TOMGetVideoModeHeight(void)
@@ -1090,6 +1158,10 @@ void TOMReset(void)
 
    tomWidth = 0;
    tomHeight = 0;
+
+   tomRowsWrittenCur = 0;
+   tomRowsWrittenPrev = 0;
+   tomRowsWrittenLast = 0;
 
    tom_jerry_int_pending = 0;
    tom_timer_int_pending = 0;
