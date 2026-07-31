@@ -415,7 +415,18 @@ unsigned int m68k_is_valid_instruction(unsigned int instruction, unsigned int cp
 
 // Dummy functions, for now, until we prove the concept here. :-)
 
-int m68k_cycles_run(void) { return 0; }              /* Number of cycles run so far */
+/* 68000 cycles executed so far inside the current m68k_execute() call.  Used
+ * by GPUSyncToM68K() to work out how far the GPU has to be advanced when the
+ * 68000 writes into GPU local RAM mid-slice (see gpu.c).  Valid only while
+ * m68k_execute() is on the stack; callers outside it clamp the result.
+ *
+ * NOT monotonic, and not always spent-cycles: m68k_end_timeslice() moves
+ * regs.remainingCycles into initialCycles and zeroes the former, so every
+ * call after an early timeslice end reports the UNSPENT count instead.
+ * GPUSyncToM68K() survives that because it clamps upward to the slice budget
+ * and returns early when the delta is <= 0 -- a caller that needs a true
+ * spent-cycle count must not use this without its own bound. */
+int m68k_cycles_run(void) { return initialCycles - regs.remainingCycles; }
 int m68k_cycles_remaining(void) { return 0; }        /* Number of cycles left */
 
 void m68k_modify_timeslice(int cycles)
