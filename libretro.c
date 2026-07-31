@@ -1010,9 +1010,41 @@ static void stage_cd_bios(void)
    LOG_INF("[CD-BIOS] using embedded CD BIOS\n");
 }
 
+/* Fill the entire framebuffer allocation with opaque black.
+ *
+ * TOM only writes the rows of the presented frame that fall inside its
+ * visible window, and the border-fill path in TOMExecHalfline writes
+ * `tomWidth` pixels -- which is 0 until the game programs a TOM video
+ * register ($F00028-$F0004F).  Until then, any presented row above VDB gets
+ * no pixels written at all, so whatever this buffer holds is what the
+ * frontend displays.  It has to be a defined value, and opaque black is the
+ * correct one: it is both what a display shows with no signal and what the
+ * border colour resolves to in that window (TOMReset zeroes BORD1/BORD2, and
+ * any write that makes them non-zero also makes tomWidth non-zero, so the
+ * border path is live by then).
+ *
+ * Fill the entire allocation rather than videoWidth * videoHeight: the
+ * geometry can grow to a wider stride later (320x240 -> 326x240), and rows
+ * re-laid-out at the larger pitch reach past the smaller region.  Covering
+ * all of it keeps every presentable pixel defined and the X byte consistent
+ * no matter which geometry is in force.
+ *
+ * Both retro_load_game and retro_reset go through here: a reset re-enters
+ * exactly the same window (TOMReset puts tomWidth back to 0), so the two
+ * must agree on the value. */
+static void video_buffer_blank(void)
+{
+   int i;
+
+   if (!videoBuffer)
+      return;
+
+   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
+      videoBuffer[i] = 0xFF000000;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
-   unsigned i;
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
 
    struct retro_input_descriptor desc[] = {
@@ -1164,26 +1196,9 @@ bool retro_load_game(const struct retro_game_info *info)
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
 
-   /* Initialise the whole framebuffer to opaque black.
-    *
-    * TOM only writes the rows of the presented frame that fall inside its
-    * visible window, and the border-fill path in TOMExecHalfline writes
-    * `tomWidth` pixels -- which is still 0 until the game programs a TOM
-    * video register ($F00028-$F0004F).  Until then, any presented row above
-    * VDB gets no pixels written at all, so whatever this buffer was seeded
-    * with is what the frontend displays.  It has to be a defined value, and
-    * opaque black is the correct one: it is both what a display shows with
-    * no signal and what the border colour resolves to in that window
-    * (TOMReset zeroes BORD1/BORD2, and any write that makes them non-zero
-    * also makes tomWidth non-zero, so the border path is live by then).
-    *
-    * Fill the entire allocation rather than videoWidth * videoHeight: the
-    * geometry can grow to a wider stride later (320x240 -> 326x240), and
-    * rows re-laid-out at the larger pitch reach past the initial 320x240
-    * region.  Seeding all of it keeps every presentable pixel defined and
-    * the X byte consistent no matter which geometry is in force. */
-   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
-      videoBuffer[i] = 0xFF000000;
+   /* Seed the framebuffer.  See video_buffer_blank() for why opaque black
+    * and why the whole allocation. */
+   video_buffer_blank();
 
    /* Dispatch through the selected boot strategy (cart / HLE / real BIOS).
     * The cart strategy handles the existing JaguarLoadFile + JaguarReset
@@ -1417,23 +1432,6 @@ void retro_deinit(void)
    enable_alt_inputs = false;
 }
 
-/* Fill the entire framebuffer allocation with opaque black.
- *
- * Not videoWidth * videoHeight: the geometry can grow to a wider stride
- * later (320x240 -> 326x240), and rows re-laid-out at the larger pitch
- * reach past the smaller region, so a partial fill leaves presentable
- * pixels undefined. */
-static void video_buffer_blank(void)
-{
-   int i;
-
-   if (!videoBuffer)
-      return;
-
-   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
-      videoBuffer[i] = 0xFF000000;
-}
-
 void retro_reset(void)
 {
    JaguarReset();
@@ -1442,14 +1440,9 @@ void retro_reset(void)
     * pixels.  TOMReset puts tomWidth back to 0, and the border-fill path in
     * TOMExecHalfline writes tomWidth pixels -- so until the game reprograms
     * a TOM video register ($F00028-$F0004F) the rows above VDB get no pixels
-    * written at all and keep what was on screen before the reset.
-    *
-    * retro_load_game seeds the buffer for that same window on a fresh load,
-    * so a reset has to cover it too -- but note it currently seeds a cyan
-    * placeholder (0xFF00FFFF), not black.  Blanking to opaque black here is
-    * deliberate and independent of that: black is what a display shows with
-    * no signal, and it is correct whatever the load-time seed turns out to
-    * be.  #218 changes the load path to seed black as well. */
+    * written at all and keep what was on screen before the reset.  That is
+    * the same window, and the same seed, retro_load_game establishes on a
+    * fresh load; a reset has to go through it too. */
    video_buffer_blank();
 }
 
