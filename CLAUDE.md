@@ -244,8 +244,12 @@ ROM collection was destroyed — the tree is gitignored, so nothing protected it
 Rules for agents:
 - **Never** run `git clean -xfd` (or any recursive delete) at the repo root; it
   targets exactly the gitignored paths that hold irreplaceable data.
-- To make the ROMs visible in a fresh worktree, symlink the shared location:
-  `ln -sf /Users/jmattiello/Workspace/Provenance/jaguar-roms-private test/roms/private`
+- To make the ROMs visible in a fresh worktree, symlink the shared location —
+  set `JAGUAR_ROMS_PRIVATE` to wherever your collection lives (it sits beside
+  the repo checkouts, not inside any of them):
+  `ln -sfn "${JAGUAR_ROMS_PRIVATE:?set to your private ROM tree}" test/roms/private`
+  The `-n` matters: without it, a second `ln -sf` onto the existing symlink
+  creates the new link *inside* the ROM tree instead of replacing it.
 - Cleanup may remove that symlink (`rm -f test/roms/private`), never its target.
 - `find` does NOT follow symlinks by default — use `find -L test/roms/private`.
 - Disc images from the iCloud restore nest one level deeper than before
