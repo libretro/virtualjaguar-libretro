@@ -35,7 +35,7 @@ Two classes of evidence are used, and they are **not** equally strong:
 | # | Title | Verdict | Basis |
 |---|---|---|---|
 | **138** | Pitfall: The Mayan Adventure — black screen | **STILL REPRODUCES** (worst offender) | deterministic hard wedge — `video_stall` at **3989** (run+jump script) / **3491** (no-input control, i.e. it dies sooner without input); 68K parked on an `RTE` stub at `$000404`; bit-identical under both blitters |
-| **178** | Alien vs Predator — display issues | **PARTLY REPRODUCES** | cyan boot bar confirmed `rgb(0,255,255)` 320×3 at frame 0 (and it is **not** AvP-specific); in-game brown bottom bar confirmed rows 236–239; green dot / green bar **not** reproduced |
+| **178** | Alien vs Predator — display issues | **PARTLY REPRODUCES; brown bar FIXED** | cyan boot bar confirmed `rgb(0,255,255)` 320×3 at frame 0 (and it is **not** AvP-specific); in-game brown bottom bar confirmed rows 236–239 — **root-caused and fixed**, see below; green dot / green bar **not** reproduced |
 | **186** | Iron Soldier (cart) — unplayable | **CHANGED (DEMO path fixed; mission-start path untested)** | 3D DEMO mode renders + animates in **all 4** blitter×BIOS combos, no signature; fast-blitter missing wireframe tank still reproduces exactly; `*`+`#` is not a core bug; **mission start was never reached — see caveat** |
 | *180* | BIOS cube top-edge pixels (referenced by #189) | **NO LONGER REPRODUCES** | all 37 BIOS-on frames, including the entire cube animation, are **byte-identical** between fast and accurate blitter |
 | **187** | Tempest 2000 — graphical glitches | **NOT OBJECTIVELY VERIFIABLE HEADLESS** | no signature over 3600 BIOS-mode frames; 133 656 blits with **0** fast-vs-accurate pixel diffs; stable geometry. Glitch class cannot be distinguished from intended effects without a reference |
@@ -45,9 +45,11 @@ Two classes of evidence are used, and they are **not** equally strong:
 
 * **#138** — keep open, **raise priority**. Now has a deterministic headless repro
   and a captured 68K crash state; this is the most actionable ticket of the five.
-* **#178** — keep open but **split**. Two of four sub-symptoms are confirmed with
-  exact pixel values; the cyan bar is a core-wide boot artefact and deserves its
-  own ticket, not an AvP one. The green dot/bar needs a RetroArch check.
+* **#178** — keep open but **split**. Two of four sub-symptoms were confirmed with
+  exact pixel values, and both now have fixes: the cyan bar is a core-wide boot
+  artefact (its own change — the framebuffer was seeded `0xFF00FFFF`), and the
+  in-game brown bar is a window/height mismatch that left rows 236–239 unwritten
+  (fixed here). The green dot/bar still needs a RetroArch check.
 * **#186** — **edit the ticket, do not close.** The DEMO half of the headline
   claim is fixed in all four combos. The mission-start half was never reached, so
   it is still unverified. What is additionally confirmed is one fast-blitter
@@ -311,12 +313,62 @@ Rows **236–239** carry ~456+ full-width pixels whose channels are consistently
 `R > G > B` (brown/orange) where the letterbox should be black. This matches the
 report, including that it is present in every configuration.
 
-*Lead:* four rows at the very bottom of the visible field, full width — that is
-OP/TOM territory, not the blitter (see below). Check where the active display
-window ends versus where the OP stops emitting objects: the last 4 lines look
-like they are rendering stale line-buffer content instead of the background
-colour. `docs/jtrm-object-processor.md` (display pipeline / STOP object) and
-`docs/jtrm-register-map.md` (`VDB`/`VDE`, `BORD1`/`BORD2`) are the references.
+**RESOLVED** — the lead was right that this is TOM territory, but the mechanism
+is not stale *line-buffer* content: those rows are never written at all.
+
+`TOMExecHalfline` writes one framebuffer row per even halfline in
+`[topVisible, bottomVisible)`, while the presented height comes from
+`TOMGetVideoModeHeight()`, derived independently from `VDB`/`VDE`. AvP boots
+with `VDB=28` and switches to `VDB=40` at frame **2031** (`VDE=2047`,
+`VP=523`). From that point `topVisible=VDB=40`, but `bottomVisible` falls back
+to the field bottom **511** because `VDE > VP` — so 236 rows are rendered
+against a presented height of **240** (the NTSC fallback, since
+`(2047-40)/2 = 1003 > 256`). Rows 236–239 keep whatever was drawn there under
+`VDB=28` and freeze: byte-identical at frames 2200 and 2800 while rows 232–235
+correctly go black. `BGEN` is set with `BG=0x0000`, so the line buffer *is*
+being cleared — this was never a background-colour bug.
+
+Fixed by giving every presented row defined content: `TOMExecHalfline` records
+each framebuffer row as it writes it, `TOMGetWrittenRowExtent()` reports one past
+the highest row written in the frame that just completed, and `retro_run` blanks
+anything past it to opaque black before presenting.
+
+The extent is **measured, not derived from the registers**. A register-derived
+version read at end of frame gets mid-frame reprogramming wrong — rows are
+written across the whole frame, but the registers only describe the window as of
+the last halfline. The A/B sweep caught this on **DEMO1B (PD)**, which
+reprograms TOM at frame 476: the end-of-frame window computed 8 rows for a frame
+that had just been rendered 240 rows wide, so 232 legitimate rows were blanked.
+Recording rows as they are written cannot disagree with itself. The latched value
+is the max over the two most recent frames, which interlace needs (each field
+writes only every other row) and which errs towards blanking less when the window
+shrinks.
+
+The blank is also bounded to a genuine *tail* (shortfall ≤ 32 rows, and never
+when TOM wrote nothing at all). A large shortfall does not mean the rows are
+stale — it means TOM and the presented geometry disagree about the mode, and
+erasing the last good frame is worse than leaving it up. **DEMO1C (PD)** is that
+case: at frame 434 it switches to 328×135 and stops rendering entirely, and an
+unbounded blank turned a visible red colour field into a black screen. The bound
+is measured — across the 115-ROM corpus every *sustained* gap is small (4 rows
+for Evolution and AvP, 7, 8, 14, 15, 17), while DEMO1C's is 102 on a single
+mode-switch frame.
+
+Note this class of collateral is invisible to the row-level classifier — it
+rated DEMO1C `unexpected=0`, because "erased stale content" and "erased live
+content" look identical to a rule that only checks *which* rows changed and that
+they became black. It was caught by looking at the frames.
+
+Black rather than `BORD1`/`BORD2` because
+the gap rows sit *below* the visible field — `bottomVisible` **is** the field
+bottom — so they are blanking lines, not border lines; the border branch in
+`TOMExecHalfline` already covers rows inside the field but outside the active
+window.
+
+Verified with an A/B digest sweep against a stock build
+(`test/tools/fb_ab_sweep.sh` + `fb_row_diff.py`): on the AvP repro every
+differing pixel is in rows 236–239 from frame 2031 onward and becomes opaque
+black, and the audio digest is bit-identical.
 
 ### Not reproduced — green dot / green bar on the title screen
 

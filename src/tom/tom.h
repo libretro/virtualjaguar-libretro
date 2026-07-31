@@ -43,6 +43,7 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 void TOMExecHalfline(uint16_t halfline, bool render);
 uint32_t TOMGetVideoModeWidth(void);
 uint32_t TOMGetVideoModeHeight(void);
+uint32_t TOMGetWrittenRowExtent(void);
 uint8_t TOMGetVideoMode(void);
 uint8_t * TOMGetRamPointer(void);
 uint16_t TOMGetHDB(void);
