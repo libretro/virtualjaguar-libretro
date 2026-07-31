@@ -363,6 +363,7 @@ CUE_TITLES=(
     "Highlander - The Last of the MacLeods (USA).cue"
     "Hover Strike - Unconquered Lands (USA).cue"
     "Iron Soldier 2 (USA) (Songbird).cue"
+    "Myst (USA).cue"
     "Primal Rage (USA).cue"
     "Space Ace (USA).cue"
 )
@@ -477,6 +478,24 @@ find_row_lineno() {
     ' "$OUT" 2>/dev/null
 }
 
+# Last line of the PRIMARY results table (same block find_row_lineno
+# scans).  New rows are inserted here rather than appended to EOF: the
+# committed doc carries several hundred lines of prose notes AFTER the
+# table, so an EOF append puts a new title's row outside the table, where
+# find_row_lineno cannot see it -- the title then re-runs on every
+# invocation and appends another duplicate each time, forever.  (Adding a
+# title to CUE_TITLES is the only way to hit this, which is why it went
+# unnoticed until Myst was added.)
+primary_table_last_lineno() {
+    awk '
+        BEGIN { intab = 0; last = 0 }
+        !intab && index($0, "| Title | Mode |") == 1 { intab = 1; last = NR; next }
+        intab && /^\|/ { last = NR; next }
+        intab { exit }
+        END { if (last) print last }
+    ' "$OUT" 2>/dev/null
+}
+
 run_title() {
     # usage: run_title <display-title> <mode: hle|bios> <ext: cue|cdi|iso>
     title="$1"; mode="$2"; ext="$3"
@@ -561,7 +580,17 @@ run_title() {
             'NR == n { print ENVIRON["NEWROW"]; next } { print }' \
             "$OUT" > "$tmp_row_file" && mv "$tmp_row_file" "$OUT"
     else
-        printf '%s\n' "$row" >> "$OUT"
+        # New title x mode: insert at the end of the primary results table,
+        # never at EOF (see primary_table_last_lineno).
+        ins_lineno="$(primary_table_last_lineno)"
+        if [ -n "$ins_lineno" ]; then
+            tmp_row_file="$(mktemp)"
+            NEWROW="$row" awk -v n="$ins_lineno" \
+                '{ print } NR == n { print ENVIRON["NEWROW"] }' \
+                "$OUT" > "$tmp_row_file" && mv "$tmp_row_file" "$OUT"
+        else
+            printf '%s\n' "$row" >> "$OUT"
+        fi
     fi
 }
 
