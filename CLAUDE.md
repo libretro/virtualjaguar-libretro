@@ -233,3 +233,35 @@ Full details in [`docs/release-process.md`](docs/release-process.md). Quick refe
 - Blitter not fully cycle-accurate (some games need fast mode).
 - No bus contention modeling.
 - VC register behavior not fully accurate.
+
+## Private ROM tree lives OUTSIDE the repo
+
+`test/roms/private` is a **symlink** to `../jaguar-roms-private` (outside every
+git checkout). It used to be a real directory inside the repo, and on
+2026-07-30 several concurrent sessions each created/removed that path and the
+ROM collection was destroyed — the tree is gitignored, so nothing protected it.
+
+Rules for agents:
+- **Never** run `git clean -xfd` (or any recursive delete) at the repo root; it
+  targets exactly the gitignored paths that hold irreplaceable data.
+- To make the ROMs visible in a fresh worktree, symlink the shared location —
+  set `JAGUAR_ROMS_PRIVATE` to wherever your collection lives (it sits beside
+  the repo checkouts, not inside any of them):
+  `ln -sfn "${JAGUAR_ROMS_PRIVATE:?set to your private ROM tree}" test/roms/private`
+  The `-n` matters: without it, a second `ln -sf` onto the existing symlink
+  creates the new link *inside* the ROM tree instead of replacing it.
+- Cleanup may remove that symlink (`rm -f test/roms/private`), never its target.
+- `find` does NOT follow symlinks by default — use `find -L test/roms/private`.
+- Disc images from the iCloud restore nest one level deeper than before
+  (`<Title>/<Title>/*.cue`), so discover cues with `find -L` rather than a
+  hardcoded depth.
+
+## Set DEVELOPER_DIR for host builds
+
+`xcode-select` points at `/Applications/Xcode.app`, so `make`/`cc` resolve to
+binaries *inside an app bundle* — which makes macOS raise an App Management
+("access data from other apps") prompt on every invocation, dozens of times
+across a multi-agent run. Prefix host builds with
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools` (same Apple clang, no
+bundle access, no prompts). Do NOT `xcode-select --switch` globally — full
+Xcode is needed for the iOS cross-builds.
