@@ -1231,23 +1231,52 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       return false;
    }
 
-   /* Multi-file CUE: the session-2 track has its own BIN starting at the
-    * track region.  Single-file images (CDI, single-BIN CUE) only set
-    * disc.binPath; the track's region starts at tracks[].fileOffset. */
-   if (disc.tracks[firstS2Idx].binFilePath[0])
+   /* Both layouts start the track REGION with the track's pregap, and the
+    * Atari boot header sits at the start of the user data (INDEX 01), so the
+    * pregap has to be skipped -- otherwise we read pregap silence and the
+    * magic check below fails.
+    *
+    * dataLBA - startLBA is the pregap length in sectors in BOTH cases:
+    *   - multi-file CUE: the parser stores the track's INDEX 01 offset within
+    *     its own BIN as (dataLBA - startLBA), and fileOffset is 0 because
+    *     startLBA maps to the file start.
+    *   - single-file CDI / single-BIN CUE: ParseCDI sets
+    *     dataLBA = startLBA + pregap, and fileOffset is the region start.
+    * So one expression covers both: fileOffset + pregap * sectorSize.
+    *
+    * This stayed hidden because nothing we had exercised it with a non-zero
+    * skip: test/tools/cue2cdi emits pregap == 0 on the session-2 track, and
+    * every CUE in the test corpus has INDEX 01 00:00:00 on its first
+    * session-2 track.  DiscJuggler does store it (150 sectors on the
+    * session-2 track of the ROM-set Baldies image). */
    {
-      LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s\n",
-              disc.tracks[firstS2Idx].number, disc.tracks[firstS2Idx].binFilePath);
-      trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
-      trackFileBase = 0;
-   }
-   else
-   {
-      LOG_INF("[CD-BOOTSTUB] Opening track %u in single-file image: %s (offset $%X)\n",
-              disc.tracks[firstS2Idx].number, disc.binPath,
-              disc.tracks[firstS2Idx].fileOffset);
-      trackFile = rfopen(disc.binPath, "rb");
-      trackFileBase = (int64_t)disc.tracks[firstS2Idx].fileOffset;
+      uint32_t pregapSectors = 0;
+      if (disc.tracks[firstS2Idx].dataLBA > disc.tracks[firstS2Idx].startLBA)
+         pregapSectors = disc.tracks[firstS2Idx].dataLBA -
+                         disc.tracks[firstS2Idx].startLBA;
+
+      trackFileBase = (int64_t)disc.tracks[firstS2Idx].fileOffset +
+                      (int64_t)pregapSectors *
+                      (int64_t)disc.tracks[firstS2Idx].sectorSize;
+
+      if (disc.tracks[firstS2Idx].binFilePath[0])
+      {
+         LOG_INF("[CD-BOOTSTUB] Opening track %u BIN: %s "
+                 "(+%u pregap sector(s) -> offset $%llX)\n",
+                 disc.tracks[firstS2Idx].number,
+                 disc.tracks[firstS2Idx].binFilePath, (unsigned)pregapSectors,
+                 (unsigned long long)trackFileBase);
+         trackFile = rfopen(disc.tracks[firstS2Idx].binFilePath, "rb");
+      }
+      else
+      {
+         LOG_INF("[CD-BOOTSTUB] Opening track %u in single-file image: %s "
+                 "(region $%X + %u pregap sector(s) -> offset $%llX)\n",
+                 disc.tracks[firstS2Idx].number, disc.binPath,
+                 disc.tracks[firstS2Idx].fileOffset, (unsigned)pregapSectors,
+                 (unsigned long long)trackFileBase);
+         trackFile = rfopen(disc.binPath, "rb");
+      }
    }
    if (!trackFile)
    {
