@@ -18,9 +18,10 @@ extern "C" {
 #endif
 
 /* Save state format identifier and version.
- * v4: CDROM chunk gained the DSA response queue + serial-delay counter. */
+ * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
+ * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   4
+#define STATE_VERSION   5
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
  * after them (see DACStateLoad, CDROMStateLoad); STATE_VERSION is always
@@ -35,6 +36,8 @@ extern "C" {
 /* First version whose CDROM block carries the DSA response queue and
  * serial-delay counter. */
 #define STATE_VERSION_CDROM_DSA_QUEUE 4
+/* First version whose CDROM block carries the latched drive speed. */
+#define STATE_VERSION_CDROM_DRIVE_SPEED 5
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

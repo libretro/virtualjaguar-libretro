@@ -97,18 +97,20 @@ const char *__lsan_default_suppressions(void) {
 #define DAC_I2S_NONZEROCOUNT_OFFSET   17
 #define DAC_I2S_NONZEROCOUNT_SIZE     4
 
-/* Trailing CDROM-block fields a v2/v3 state does not carry (see
- * STATE_VERSION_CDROM_DSA_QUEUE in src/core/state.h): dsaQueue
- * (DSA_QUEUE_SIZE=4 x uint16, 8) + dsaQueueHead/Tail/Count +
- * dsaResponseDelay (4 x uint32, 16) = 24 bytes, verified against the end
- * of CDROMStateSave() in src/cd/cdrom.c.  If this constant goes stale the
- * fixture misaligns everything after the CDROM block and
- * "v2_dac_block_realigned" fails loudly — re-derive it from the field
- * order there.  The CDROM block's position is computed structurally
- * (dac_off minus the Joystick and MT block sizes, per the module order in
- * retro_serialize) because for a cartridge ROM the CDROM block is
- * zero-heavy and a byte-pattern search would not be unique. */
-#define CDROM_DSA_TAIL_SIZE           24
+/* Trailing CDROM-block fields a v2/v3 state does not carry, verified
+ * against the end of CDROMStateSave() in src/cd/cdrom.c:
+ *   - STATE_VERSION_CDROM_DSA_QUEUE (v4): dsaQueue (DSA_QUEUE_SIZE=4 x
+ *     uint16, 8) + dsaQueueHead/Tail/Count + dsaResponseDelay
+ *     (4 x uint32, 16) = 24 bytes
+ *   - STATE_VERSION_CDROM_DRIVE_SPEED (v5): cdDriveSpeed (uint32, 4)
+ * = 28 bytes total.  If this constant goes stale the fixture misaligns
+ * everything after the CDROM block and "v2_dac_block_realigned" fails
+ * loudly — re-derive it from the field order there.  The CDROM block's
+ * position is computed structurally (dac_off minus the Joystick and MT
+ * block sizes, per the module order in retro_serialize) because for a
+ * cartridge ROM the CDROM block is zero-heavy and a byte-pattern search
+ * would not be unique. */
+#define CDROM_DSA_TAIL_SIZE           28
 
 /* Header field offsets (see retro_serialize in libretro.c) */
 #define STATE_OFF_MAGIC    0
