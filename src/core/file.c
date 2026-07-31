@@ -67,6 +67,36 @@ static uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
    return CART_HEADER_SKIP_SIZE;
 }
 
+/* Say what we were handed when ParseFileType came up empty. Several images in
+ * the CRC database are known to be unloadable -- bad dumps, and dumps with a
+ * header glued to the front -- so name the one in front of us instead of
+ * leaving the caller to print a generic "invalid content" line. */
+static void ReportUnrecognizedContent(uint32_t crc, uint32_t size)
+{
+   const struct RomIdentifier *entry = FindRomIdentifier(crc);
+   const struct RomIdentifier *verified;
+
+   if (!entry)
+   {
+      LOG_ERR("[CART] unrecognized content format: %u bytes, CRC32 $%08X (no matching row in the ROM database)\n",
+            (unsigned)size, (unsigned)crc);
+      return;
+   }
+
+   if (entry->flags & FF_BAD_DUMP)
+      LOG_ERR("[CART] known bad dump: \"%s\" -- %u bytes, CRC32 $%08X\n",
+            entry->name, (unsigned)size, (unsigned)crc);
+   else
+      LOG_ERR("[CART] \"%s\" (%u bytes, CRC32 $%08X) is a known image, but this container is not loadable\n",
+            entry->name, (unsigned)size, (unsigned)crc);
+
+   verified = FindVerifiedRomVariant(entry);
+
+   if (verified)
+      LOG_ERR("[CART] a verified dump of the same title exists (CRC32 $%08X) -- re-dump, or strip any header prepended to this image\n",
+            (unsigned)verified->crc32);
+}
+
 static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *loadAddress)
 {
    static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000 };
@@ -281,5 +311,6 @@ bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
    }
 
    // We can assume we have JST_NONE at this point. :-P
+   ReportUnrecognizedContent(jaguarMainROMCRC32, jaguarROMSize);
    return false;
 }
