@@ -52,7 +52,11 @@
 #                         mktemp -d; NOT committed -- path is printed at the end)
 #   CD_MATRIX_MAX_RUNS    max NEW title x mode runs per invocation (default 0 =
 #                         unlimited). Combined with the resume guard this lets
-#                         a long sweep be chunked across short invocations.
+#                         a long sweep be chunked across short invocations:
+#                         each chunk skips the rows earlier chunks recorded,
+#                         because the build stamp does not move when the only
+#                         thing that changed is this script's own output
+#                         (scripts/build-id.sh BUILD_ID_IGNORE).
 set -u
 
 # ---------------------------------------------------------------------------
@@ -68,6 +72,7 @@ FRAMES="${CD_MATRIX_FRAMES:-3000}"
 TIMEOUT_SECS="${CD_MATRIX_TIMEOUT:-120}"
 OUT="${CD_MATRIX_OUT:-docs/cd-boot-matrix.md}"
 LOGDIR="${CD_MATRIX_LOGDIR:-$(mktemp -d "${TMPDIR:-/tmp}/cd_boot_matrix.XXXXXX")}"
+MAX_RUNS="${CD_MATRIX_MAX_RUNS:-0}"   # 0 = unlimited; see the resume guard below
 
 mkdir -p "$LOGDIR"
 
@@ -107,6 +112,25 @@ fi
 # Build-identity guard: every harness invocation below verifies that the
 # core's embedded git rev matches the working tree (scripts/build-id.sh),
 # so matrix rows can never be produced by a stale/wrong-branch binary.
+#
+# The id is computed ONCE per invocation and stamped into every row this
+# invocation writes (see run_title).  Resuming across invocations only
+# works because scripts/build-id.sh excludes the results file from its
+# dirty check -- otherwise writing the first row would flip the id and the
+# next invocation would re-run everything it had just recorded.  The
+# default $OUT is on that ignore list; a custom tracked $OUT is not, so
+# warn rather than let the sweep silently fail to converge.  (This applies
+# to any re-invocation, chunked or not: an interrupted unlimited sweep
+# resumes through the same guard.)
+if git ls-files --error-unmatch "$OUT" >/dev/null 2>&1 \
+   && ! scripts/build-id.sh --ignores 2>/dev/null | grep -qxF "$OUT"; then
+    echo "WARNING: CD_MATRIX_OUT=$OUT is tracked by git but is not in" >&2
+    echo "  scripts/build-id.sh's ignore list. Writing rows will flip the build" >&2
+    echo "  id to '-dirty', so the next chunked invocation will treat every row" >&2
+    echo "  this one records as stale and re-run it. Add the path to" >&2
+    echo "  BUILD_ID_IGNORE, or point CD_MATRIX_OUT at an untracked file." >&2
+fi
+
 VJ_EXPECT_BUILD=$(scripts/build-id.sh 2>/dev/null || true)
 export VJ_EXPECT_BUILD
 if [ -n "$VJ_EXPECT_BUILD" ]; then
@@ -352,7 +376,12 @@ echo "=== CD boot matrix: $FRAMES frames/title/mode, ${TIMEOUT_SECS}s wall-clock
 # every actual harness run of that title passed).  Row matching is also
 # scoped to the primary results table, so rows quoted in prose notes can
 # never satisfy the resume guard.
-MAX_RUNS="${CD_MATRIX_MAX_RUNS:-0}"   # 0 = unlimited
+#
+# The stamp stays stable across the chunks of one sweep because
+# scripts/build-id.sh does not count writes to this results file as a
+# source change (its BUILD_ID_IGNORE list); a real edit to emulator code
+# still flips it to "-dirty" and correctly invalidates earlier rows.
+# MAX_RUNS is set with the other env knobs at the top of the script.
 RUNS_DONE=0
 
 # Write the header only on a fresh file; strip any previous footer so
@@ -391,7 +420,10 @@ else
     printf 'recorded **by the same core build** (each row carries a hidden\n'
     printf '`<!-- build:<rev> -->` stamp) are skipped, so an interrupted sweep resumes\n'
     printf 'where it left off; rows recorded by a different build, or unstamped legacy\n'
-    printf 'rows, are re-run and replaced in place rather than silently reused. For\n'
+    printf 'rows, are re-run and replaced in place rather than silently reused.\n'
+    printf 'Recording rows does not itself move the stamp -- `scripts/build-id.sh`\n'
+    printf 'excludes this results file from its dirty check -- so the chunks of one\n'
+    printf 'sweep share a stamp and each chunk resumes where the last stopped. For\n'
     printf 'long sweeps (or agent sessions with per-command time limits), run chunked:\n\n'
     printf '```bash\n'
     printf '# ~3 runs x <=120s wall each per invocation; repeat until every line\n'
