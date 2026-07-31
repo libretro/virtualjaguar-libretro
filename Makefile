@@ -744,7 +744,7 @@ $(CORE_DIR)/libretro.o: $(VERSION_H)
 clean:
 	rm -f $(TARGET) $(OBJECTS) $(LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
-		test/test_dsp_mac40 test/test_m68k_ops test/test_gpu_ops \
+		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
@@ -796,7 +796,7 @@ else
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
-		$(TARGET) test/test_m68k_ops test/test_gpu_ops test/test_dsp_ops \
+		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
@@ -817,6 +817,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_m68k_ops
+	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
 	./test/test_dsp_ops
 	./test/test_dsp_unit
@@ -946,6 +947,10 @@ test/test_dsp_mac40: test/test_dsp_mac40.c src/jerry/dsp_acc40.h
 test/test_m68k_ops: test/test_m68k_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
 		-o $@ test/test_m68k_ops.c -ldl
+
+test/test_m68k_irq_ssp: test/test_m68k_irq_ssp.c
+	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
+		-o $@ test/test_m68k_irq_ssp.c -ldl
 
 test/test_gpu_ops: test/test_gpu_ops.c
 	$(CC) -O2 -Wall -Wno-unused-function -std=c99 $(INCFLAGS) \
