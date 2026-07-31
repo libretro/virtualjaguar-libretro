@@ -260,6 +260,7 @@
 #include "event.h"
 #include "gpu.h"
 #include "jaguar.h"
+#include "jerry.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
@@ -559,6 +560,36 @@ static void TOMAssertEnabledIRQs(void)
 
    if (pending & tomRam8[INT1 + 1])
       m68k_set_irq(2);
+}
+
+
+/* True while TOM is still driving the 68K's level-2 request, i.e. an
+ * enabled INT1 source has an uncleared pending latch (JTRM: the pending
+ * bits are only cleared by writing 1 to the matching C_*CLR bit in the
+ * high byte of INT1).  JERRY reaches the 68K through TOM's bit 4, so its
+ * own latch counts when C_JERENA is set.
+ *
+ * m68k_execute() consults this before re-presenting a request that had to
+ * wait for the CPU's interrupt mask to drop (#187): a game that polls and
+ * clears INT1 itself -- Pitfall runs at mask 1-2 and does exactly that --
+ * must not be handed an interrupt whose source it already serviced. */
+static uint8_t TOMPendingMask(void)
+{
+   uint8_t pending = (uint8_t)((tom_timer_int_pending << IRQ_TIMER)
+      | (tom_object_int_pending << IRQ_OPFLAG)
+      | (tom_gpu_int_pending << IRQ_GPU)
+      | (tom_video_int_pending << IRQ_VIDEO));
+
+   if (tom_jerry_int_pending || JERRYIRQRequestActive())
+      pending |= (uint8_t)(1 << IRQ_DSP);
+
+   return pending;
+}
+
+
+int TOMIRQRequestActive(void)
+{
+   return (TOMPendingMask() & tomRam8[INT1 + 1]) ? 1 : 0;
 }
 
 static void TOMClearPendingIRQs(uint8_t clear)
@@ -1335,9 +1366,28 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
                  m68k_get_reg(NULL, M68K_REG_PC));
       tomPrevInt1Ena = data;
    }
+   if (offset == INT1 + 1)
+   {
+      /* TOM's 68K request line is raised by an interrupt *event* and
+       * dropped when the 68K acknowledges (see irq_ack_handler); a write
+       * to INT1 does not re-present a request the CPU already took.  The
+       * one case a register write does create a request is a source that
+       * is pending and becomes *newly* enabled.
+       *
+       * Re-asserting on every INT1 write is what made NBA Jam TE storm
+       * once requests survived the CPU's interrupt mask (see #187): its
+       * level-2 handler leaves the TOM PIT pending bit latched and
+       * rewrites INT1 = $0009 on each entry, so an unconditional
+       * re-assert re-entered the handler forever. */
+      uint8_t newlyEnabled = (uint8_t)(data & ~tomRam8[INT1 + 1]);
+
+      tomRam8[offset] = data;
+
+      if (newlyEnabled & TOMPendingMask())
+         m68k_set_irq(2);
+      return;
+   }
    tomRam8[offset] = data;
-   if (offset == INT1 || offset == (INT1 + 1))
-      TOMAssertEnabledIRQs();
 }
 
 // TOM word access (write)

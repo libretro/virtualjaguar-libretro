@@ -419,6 +419,16 @@ bool JERRYIRQEnabled(int irq)
 }
 
 
+/* True while JERRY is driving its interrupt output (DINT) at the TOM
+ * input, i.e. an enabled JERRY source has an uncleared pending latch.
+ * TOM gates this with INT1 bit 4 before it reaches the 68K -- see
+ * TOMIRQRequestActive(). */
+bool JERRYIRQRequestActive(void)
+{
+   return (jerryPendingInterrupt & jerryInterruptMask) ? true : false;
+}
+
+
 void JERRYSetPendingIRQ(int irq)
 {
    // This is the shadow of INT (it's a split RO/WO register)
