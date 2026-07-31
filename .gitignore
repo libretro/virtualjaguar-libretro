@@ -59,7 +59,13 @@ test/*.log
 # Test ROMs (keep source scripts, ignore binaries)
 test/roms/*.jag
 test/roms/*.rom
+# The private ROM/disc tree. Both forms are ignored deliberately: the data
+# lives OUTSIDE every checkout and this path is a symlink to it, so neither
+# the directory nor the link may ever be tracked. A tracked symlink here was
+# self-referential and let a forced checkout replace the real directory,
+# destroying the collection once already (2026-07-30).
 test/roms/private/
+test/roms/private
 
 # Reference docs (large PDFs, not source)
 docs/atari-jaguar-1999/
