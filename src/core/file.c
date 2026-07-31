@@ -22,7 +22,50 @@
 #include "filedb.h"
 #include "eeprom.h"
 #include "jaguar.h"
+#include "log.h"
 #include "vjag_memory.h"
+
+/* Some circulating cartridge dumps carry a copier/dumper header glued to the
+ * front of an otherwise byte-perfect image.  "Brutal Sports Football (1994)
+ * (Telegames).jag" is the known case: 2 MiB + 512 bytes, where the payload's
+ * CRC32 ($BCB1A4BF) matches the FF_VERIFIED row in filedb.c exactly, while the
+ * whole-file CRC ($0FDCEB66) is catalogued as FF_BAD_DUMP.  Nothing about the
+ * image data is wrong, so skip the header instead of refusing the file.
+ *
+ * Detection is deliberately narrow, because the size test alone would start
+ * accepting arbitrary junk.  Both must hold:
+ *
+ *   - the file overhangs a whole number of megabytes by exactly the header
+ *     length, and
+ *   - the cartridge universal-header marker ($04040404, which precedes the run
+ *     address that JaguarLoadFile reads from ROM offset $404) is present at
+ *     that offset measured from the payload rather than from the file.
+ */
+#define CART_HEADER_SKIP_SIZE   512
+#define CART_UNIVERSAL_MARKER_OFFSET   0x400
+#define CART_UNIVERSAL_MARKER          0x04040404
+
+static uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
+{
+   uint32_t payloadSize;
+
+   /* Ordered first so a zero-length or undersized buffer is never read. */
+   if (size <= CART_HEADER_SKIP_SIZE)
+      return 0;
+
+   payloadSize = size - CART_HEADER_SKIP_SIZE;
+
+   if ((payloadSize % 1048576) != 0)
+      return 0;
+
+   /* payloadSize is a non-zero multiple of 1 MiB here, so the marker offset is
+    * comfortably inside the buffer. */
+   if (GET32(buffer, CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET)
+         != CART_UNIVERSAL_MARKER)
+      return 0;
+
+   return CART_HEADER_SKIP_SIZE;
+}
 
 static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *loadAddress)
 {
@@ -119,9 +162,25 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
 {
    int fileType;
-   jaguarROMSize = bufsize;
+   uint32_t headerSize;
+
    jaguarLoadedRAMStart = 0;
    jaguarLoadedRAMEnd = 0;
+
+   /* Taken off before anything else looks at the image: the CRC below, the
+    * EEPROM init, the type detection and every load path must all see the
+    * payload rather than the header. */
+   headerSize = DetectPrependedHeaderSize(buffer, (uint32_t)bufsize);
+
+   if (headerSize != 0)
+   {
+      LOG_INF("[CART] skipping a %u-byte header prepended to a %u-byte cartridge image\n",
+            (unsigned)headerSize, (unsigned)(bufsize - headerSize));
+      buffer  += headerSize;
+      bufsize -= headerSize;
+   }
+
+   jaguarROMSize = bufsize;
 
    if (jaguarROMSize == 0)
       return false;

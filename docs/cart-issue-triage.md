@@ -809,3 +809,72 @@ done
    (`gpu_pc_ring*` unresolved); `flicker_detect.c` swallows core logs and cannot
    set core options; `test_blitter_compare`'s register-diff reporting is capped at
    10 lines with no counter.
+
+## `Brutal Sports Football (1994) (Telegames).jag` rejected at load — prepended copier header
+
+Found incidentally during a 40-title sweep: this dump is refused while every
+other cartridge in the same local set loads.
+
+```
+[CART] JaguarLoadFile rejected the content
+[Virtual Jaguar] unsupported or invalid content format
+```
+
+**Cause: a 512-byte copier/dumper header glued to the front of a byte-perfect
+image.** Not a bad dump, and not a size-gate bug.
+
+| field | value |
+|---|---|
+| file size | 2 097 664 = 2 MiB **+ 512** |
+| header bytes | `00 01 30 00  00 00 00 00  AA BB 04 00`, then zero-fill to `0x200` |
+| whole-file CRC32 | `0x0FDCEB66` → `src/core/filedb.c` *"Brutal Sports Football (World)"*, `FF_ROM \| FF_BAD_DUMP` |
+| payload CRC32 (skip 512) | `0xBCB1A4BF` → same title, `FF_ROM \| FF_VERIFIED` |
+
+The payload is **byte-identical** to the verified dump — only the container is
+wrong — so the loader now skips the header instead of refusing the file.
+
+### Detection
+
+`DetectPrependedHeaderSize` (`src/core/file.c`) requires *both*:
+
+* the file overhangs a whole number of megabytes by exactly 512 bytes, and
+* the cartridge universal-header marker `$04040404` — which precedes the run
+  address `JaguarLoadFile` reads from ROM offset `$404` — appears at that offset
+  measured **from the payload** (file offset `0x600` here, vs `0x400` for a
+  headerless image).
+
+The size test alone would start accepting arbitrary junk, so both must hold.
+Stripping happens before the CRC is taken, before `EepromInit`, and before type
+detection, so the core reports the payload's identity (`0xBCB1A4BF`) rather than
+the file's — a headered image and a `dd`-stripped one are indistinguishable
+downstream.
+
+Across the 139-image local set, this file is the only one with that size shape,
+and it carries the marker.
+
+### Not a power-of-two gate
+
+The size rule is `size % 1 MiB == 0` (plus the 131 072-byte Memory Track size),
+never a power of two: **84 of 87** distinct file sizes in the local set are
+non-power-of-two and load fine via `JST_ALPINE`, the ABS/COFF headers, or the
+raw-binary heuristic. There is no "rejects any cart whose size is not a power of
+two" class of breakage.
+
+### Verified
+
+Same build, headered original vs `dd bs=512 skip=1` payload, 1200 frames each —
+identical on every measure:
+
+| check | headered | stripped |
+|---|---|---|
+| load | OK | OK |
+| `jaguarMainROMCRC32` | `BCB1A4BF` | `BCB1A4BF` |
+| `jaguarROMSize` | 2 097 152 | 2 097 152 |
+| non-black peak | 71 856 / 78 240 (91.8 %) | 71 856 / 78 240 |
+| non-black mean | 37.77 % | 37.77 % |
+| audio | RMS 997.3, onset frame 118 | RMS 997.3, onset frame 118 |
+
+Regression coverage is `test/test_cart_format.c` (in `make test`): synthesises
+images in memory, asserts the headered one loads with the payload's CRC and
+size, and asserts a 512-over-a-MiB image *without* the marker, a 256-byte
+overhang, and a lone 512-byte file all stay rejected.
