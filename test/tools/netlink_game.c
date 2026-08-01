@@ -11,6 +11,7 @@
  * Exit code: 0 if the game ever programmed the UART (ASICLK/ASICTRL
  * write or TX observed), 2 if it never touched it, 1 on setup error.
  */
+#define _DEFAULT_SOURCE 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

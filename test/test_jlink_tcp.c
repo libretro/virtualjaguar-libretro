@@ -1,6 +1,7 @@
 /* test_jlink_tcp.c — unit test for the TCP link backend.  The test acts
    as the remote peer with its own plain sockets, so both endpoints live
    in one process without sharing any jlink state. */
+#define _DEFAULT_SOURCE 1   /* usleep/MSG_DONTWAIT under -std=c99 on glibc */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>

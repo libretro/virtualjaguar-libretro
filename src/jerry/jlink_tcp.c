@@ -36,6 +36,8 @@ typedef SOCKET jlink_sock_t;
 #else
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>   /* select/fd_set: implicit via socket.h on BSD/macOS, NOT on glibc */
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>

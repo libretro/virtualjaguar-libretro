@@ -7,6 +7,7 @@
  * -> jlink -> TCP -> peer process.  Exit 0 on success, 1 on failure.
  * Driven by test/tools/netlink_pair_test.sh.
  */
+#define _DEFAULT_SOURCE 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
