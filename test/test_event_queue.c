@@ -63,6 +63,8 @@ void DSPSampleCallback(void)
 {
 }
 
+void UARTTXCallback(void) {}
+void UARTRXCallback(void) {}
 void GPUCPUINTCallback(void)
 {
 }

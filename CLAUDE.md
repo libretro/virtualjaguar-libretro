@@ -53,7 +53,7 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 
 - `src/core/` — orchestration, memory map, events, settings, files, cheats
 - `src/tom/` — video, GPU, OP, blitter (+ SIMD)
-- `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable
+- `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable, UART/netlink (`uart.c` + `jlink.c`, see `docs/netlink-design.md`)
 - `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA in `cdrom.c`, image loading (CUE/BIN, CHD, CDI) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
 - `src/bios/` — embedded BIOS / boot stubs
 - `src/m68000/` — UAE 68K (machine-generated; treat as opaque)
@@ -206,6 +206,12 @@ When spawning agents for work in this repo, include these rules:
 ## Release process (GitFlow)
 
 Full details in [`docs/release-process.md`](docs/release-process.md). Quick reference:
+
+**Nightlies:** every push to `develop` reruns `release.yml`'s full 16-platform
+matrix and replaces the rolling `nightly` prerelease plus its pinned tracking
+issue. Gated on *compiling*, not on the test suite — don't describe nightlies as
+"CI-verified". The `nightly` tag sits outside the `v*` filter so it can never
+trigger a real release.
 
 ### Cutting a release
 

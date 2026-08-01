@@ -29,6 +29,9 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
+#include "jlink.h"
+#include "jlink_netpacket.h"
+#include "uart.h"
 #include "joystick.h"
 #include "settings.h"
 #include "tom.h"
@@ -304,6 +307,21 @@ static bool update_option_visibility(void)
    return updated;
 }
 
+/* Netpacket interface (env 78): registered unconditionally and inert
+ * until the frontend starts a netplay session; the session then carries
+ * the JagLink byte stream (jlink_netpacket.c), taking over whatever mode
+ * the virtualjaguar_netlink option had configured and restoring it on
+ * stop.  Broadcast TX makes multi-console (CatNet) sessions work too. */
+static const struct retro_netpacket_callback netpacket_cb = {
+   JLinkNPStart,
+   JLinkNPReceive,
+   JLinkNPStop,
+   JLinkNPPoll,
+   NULL,                /* connected */
+   NULL,                /* disconnected */
+   "vjag-netlink-1"     /* protocol_version */
+};
+
 void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
@@ -311,6 +329,8 @@ void retro_set_environment(retro_environment_t cb)
    bool option_categories = false;
    bool achievements = true;
    environ_cb = cb;
+
+   cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, (void *)&netpacket_cb);
 
    {
       struct retro_log_callback log_iface;
@@ -331,6 +351,65 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+}
+
+/* Resolve the TCP endpoint for the network link and apply the mode.
+ * Host (client mode): VJ_NETLINK_HOST env, else first line of
+ * <system_dir>/vj_netlink.txt, else 127.0.0.1.  Port: VJ_NETLINK_PORT
+ * env overrides the virtualjaguar_netlink_port option. */
+static void netlink_apply(int mode)
+{
+   char host[128];
+   int port = 42171;
+   const char *env;
+   struct retro_variable pvar;
+
+   host[0] = '\0';
+
+   pvar.key = "virtualjaguar_netlink_port";
+   pvar.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
+   {
+      int p = atoi(pvar.value);
+      if (p > 0)
+         port = p;
+   }
+   env = getenv("VJ_NETLINK_PORT");
+   if (env && env[0] && atoi(env) > 0)
+      port = atoi(env);
+
+   env = getenv("VJ_NETLINK_HOST");
+   if (env && env[0])
+   {
+      strncpy(host, env, sizeof(host) - 1);
+      host[sizeof(host) - 1] = '\0';
+   }
+   else
+   {
+      const char *system_dir = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
+          && system_dir)
+      {
+         char path[1024];
+         FILE *f;
+         snprintf(path, sizeof(path), "%s/vj_netlink.txt", system_dir);
+         f = fopen(path, "r");
+         if (f)
+         {
+            if (fgets(host, sizeof(host), f))
+            {
+               size_t n = strlen(host);
+               while (n > 0 && (host[n - 1] == '\n' || host[n - 1] == '\r'
+                                || host[n - 1] == ' '))
+                  host[--n] = '\0';
+            }
+            fclose(f);
+         }
+      }
+   }
+
+   JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
+   UARTSetLinkMode(mode);
 }
 
 static void check_variables(void)
@@ -402,6 +481,22 @@ static void check_variables(void)
    busArbiter.contention_scale = (uint8_t)contention_scale;
    if (!busArbiter.enabled)
       bus_arbiter_begin_timeslice(); /* drop stale accumulators on disable */
+
+   var.key = "virtualjaguar_netlink";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      int mode = JLINK_MODE_DISABLED;
+      if (strcmp(var.value, "loopback") == 0)
+         mode = JLINK_MODE_LOOPBACK;
+      else if (strcmp(var.value, "tcp_server") == 0)
+         mode = JLINK_MODE_TCP_SERVER;
+      else if (strcmp(var.value, "tcp_client") == 0)
+         mode = JLINK_MODE_TCP_CLIENT;
+      netlink_apply(mode);
+   }
+   else
+      netlink_apply(JLINK_MODE_DISABLED);
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -803,6 +898,7 @@ bool retro_serialize(void *data, size_t size)
    buf += JoystickStateSave(buf);
    buf += MTStateSave(buf);
    buf += DACStateSave(buf);
+   buf += UARTStateSave(buf);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -863,6 +959,8 @@ bool retro_unserialize(const void *data, size_t size)
    buf += JoystickStateLoad(buf);
    buf += MTStateLoad(buf);
    buf += DACStateLoad(buf, version);
+   if (version >= STATE_VERSION_JERRY_UART)
+      buf += UARTStateLoad(buf, version);
 
    JaguarApplyHLEBIOSState();
 
@@ -1551,6 +1649,12 @@ void retro_run(void)
       retro_get_system_av_info(&g_av_info);
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
+
+   /* Service the network link: progress TCP connect/accept, drain the
+    * socket into the transport ring, then let the UART start an RX
+    * frame for anything that arrived. */
+   JLinkPoll();
+   UARTPoll();
 
    update_input();
 

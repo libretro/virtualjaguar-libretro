@@ -71,6 +71,52 @@ After all platform builds finish, the `release` job:
 4. Reads `docs/RELEASE_NOTES_v<TAG>.md` if present and uses it as the release body, with the artifact list appended. Falls back to GitHub `--generate-notes` if no curated file is found.
 5. Creates the GitHub release with all of `release/*` attached.
 
+### 3b. Nightly builds (develop pushes)
+
+`release.yml` also fires on every push to `develop`. The build matrix is
+identical — the same 16 jobs (14 matrix entries + Vita + Switch), the same split-debug packaging — but the
+publishing step is the `nightly` job instead of `release`:
+
+1. Moves the `nightly` git tag onto the pushed commit.
+2. Updates the single rolling `nightly` prerelease **in place**
+   (`gh release edit` + `gh release upload --clobber`, not delete-and-recreate,
+   so `/releases/tag/nightly` never 404s mid-run and the release keeps its id).
+3. Rewrites `display_version` in the bundled `.info` to
+   `v<X.Y.Z>-nightly-<sha>`, so a nightly `.info` can never be mistaken for the
+   file that gets PR'd to libretro-super.
+4. Creates-or-updates a pinned tracking issue with the current build and
+   install instructions. Located by the `nightly-tracker` label first
+   (server-side, exact, independent of how many issues the repo has) with an
+   exact-title match as fallback — both have to miss before it could duplicate
+   itself.
+
+`workflow_dispatch` is also wired up, but **only to re-publish the nightly** —
+run it with the branch picker set to `develop`. GitHub defaults that picker to
+the repo default (`master`), and both publishing jobs are ref-gated, so a
+dispatch left on the default would build all 16 targets and publish nothing.
+The `guard` job rejects that in seconds instead of burning the matrix. To
+test-build an arbitrary branch, use `c-cpp.yml`, which has its own
+`workflow_dispatch` and runs on PRs.
+
+The two paths can't collide: the `release` job is gated on
+`startsWith(github.ref, 'refs/tags/v')`, the `nightly` job on
+`github.ref == 'refs/heads/develop'`, and the `nightly` tag deliberately sits
+outside the `v*` tag filter so a CI-pushed tag can never re-enter the release
+path.
+
+**What a nightly is gated on:** the 16 builds compiling. It is *not* gated on
+`c-cpp.yml`, the acid suite, or the screenshot regression run — those report
+separately on the same commit. A nightly can build cleanly and still be broken,
+and the release body says so. Upgrading that claim means switching the job to a
+`workflow_run` trigger (see `artifacts.yml` for the idiom in this repo).
+
+Concurrency differs from `c-cpp.yml`/`acid-test.yml` on purpose: develop pushes
+here **do** cancel superseded runs, because only the newest commit's binaries
+matter for a rolling prerelease. Tag pushes always run to completion. If build
+queue contention ever becomes a problem, the lever is a `paths-ignore` for
+docs-only pushes — not a smaller matrix. (Test it carefully: path filters
+interact badly with tag pushes, and this workflow serves both.)
+
 ### 4. Post-tag: update libretro-super
 
 RetroArch ships with a `.info` file per core, sourced from `libretro/libretro-super/dist/info/`. Update is **manual** — there's no automated mirror.

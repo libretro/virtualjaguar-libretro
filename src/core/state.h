@@ -19,9 +19,10 @@ extern "C" {
 
 /* Save state format identifier and version.
  * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
- * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn). */
+ * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
+ * v6: new UART chunk (JERRY async serial + jlink RX ring). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   5
+#define STATE_VERSION   6
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
  * after them (see DACStateLoad, CDROMStateLoad); STATE_VERSION is always
@@ -38,6 +39,8 @@ extern "C" {
 #define STATE_VERSION_CDROM_DSA_QUEUE 4
 /* First version whose CDROM block carries the latched drive speed. */
 #define STATE_VERSION_CDROM_DRIVE_SPEED 5
+/* First version carrying the JERRY UART + jlink chunk. */
+#define STATE_VERSION_JERRY_UART 6
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
@@ -77,6 +80,11 @@ size_t EepromStateLoad(const uint8_t *buf);
 
 size_t JERRYStateSave(uint8_t *buf);
 size_t JERRYStateLoad(const uint8_t *buf);
+
+/* UART chunk is wholly new in v6; the caller gates on
+ * STATE_VERSION_JERRY_UART before invoking the loader. */
+size_t UARTStateSave(uint8_t *buf);
+size_t UARTStateLoad(const uint8_t *buf, uint32_t stateVersion);
 
 size_t TOMStateSave(uint8_t *buf);
 size_t TOMStateLoad(const uint8_t *buf);

@@ -25,6 +25,8 @@ _d0Queue
 _GPU*
 _gpu_*
 _JERRY*
+_UART*
+_JLink*
 _TOM*
 _OP*
 _tomRam8

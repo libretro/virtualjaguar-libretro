@@ -166,6 +166,8 @@
 
 PERF_COUNTER(timing_jerry_irqs);
 #include "joystick.h"
+#include "jlink.h"
+#include "uart.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
 #include "settings.h"
@@ -379,6 +381,7 @@ void JERRYInit(void)
    jerryPendingInterrupt = 0x0000;
 
    DACInit();
+   UARTInit();
 }
 
 
@@ -400,6 +403,7 @@ void JERRYReset(void)
    jerryPendingInterrupt = 0x0000;
 
    DACReset();
+   UARTReset();
 }
 
 
@@ -409,6 +413,7 @@ void JERRYDone(void)
    DACDone();
    EepromDone();
    MTDone();
+   UARTDone();
 }
 
 
@@ -452,6 +457,13 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    // LRXD/RRXD/SSTAT $F1A148/4C/50 (really 16-bit registers...)
    else if (offset >= 0xF1A148 && offset <= 0xF1A153)
       return DACReadByte(offset, who);
+   // ASIDATA/ASISTAT/ASICLK $F10030-35 (16-bit UART registers)
+   else if ((offset >= 0xF10030) && (offset <= 0xF10035))
+   {
+      uint16_t value = UARTReadWord(offset & 0xFFFFFFFE);
+      return (offset & 0x01) ? (uint8_t)(value & 0xFF)
+                             : (uint8_t)(value >> 8);
+   }
    //	F10036          R     xxxxxxxx xxxxxxxx   JPIT1 - timer 1 pre-scaler
    //	F10038          R     xxxxxxxx xxxxxxxx   JPIT2 - timer 1 divider
    //	F1003A          R     xxxxxxxx xxxxxxxx   JPIT3 - timer 2 pre-scaler
@@ -503,6 +515,9 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    // LRXD/RRXD/SSTAT $F1A148/4C/50 (really 16-bit registers...)
    else if (offset >= 0xF1A148 && offset <= 0xF1A153)
       return DACReadWord(offset, who);
+   // ASIDATA/ASISTAT/ASICLK $F10030-35 (16-bit UART registers)
+   else if ((offset >= 0xF10030) && (offset <= 0xF10035))
+      return UARTReadWord(offset & 0xFFFFFFFE);
    //	F10036          R     xxxxxxxx xxxxxxxx   JPIT1 - timer 1 pre-scaler
    //	F10038          R     xxxxxxxx xxxxxxxx   JPIT2 - timer 1 divider
    //	F1003A          R     xxxxxxxx xxxxxxxx   JPIT3 - timer 2 pre-scaler
@@ -571,6 +586,33 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
       /* Unhandled timer write (BYTE) */
       return;
    }
+   // ASIDATA/ASICTRL/ASICLK $F10030-35 (16-bit UART registers).  Byte
+   // writes carry the payload in the low byte for ASIDATA/ASICTRL;
+   // ASICLK merges the touched half into the existing divider.
+   else if (offset >= 0xF10030 && offset <= 0xF10035)
+   {
+      uint32_t base = offset & 0xFFFFFFFE;
+
+      /* ASIDATA/ASICTRL: byte writes are meaningful only to the low byte. */
+      if ((base == 0xF10030 || base == 0xF10032) && !(offset & 0x01))
+         return;
+
+      if (base == 0xF10034)
+      {
+         uint16_t cur = UARTReadWord(base);
+         uint16_t v;
+         if (offset & 0x01)
+            v = (uint16_t)((cur & 0xFF00) | data);
+         else
+            v = (uint16_t)((cur & 0x00FF) | ((uint16_t)data << 8));
+         UARTWriteWord(base, v);
+      }
+      else
+      {
+         UARTWriteWord(base, (uint16_t)data);
+      }
+      return;
+   }
    // JERRY -> 68K interrupt enables/latches (need to be handled!)
    else if (offset >= 0xF10020 && offset <= 0xF10021)//WAS:23)
    {
@@ -622,6 +664,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    else if (offset >= 0xF1A148 && offset <= 0xF1A156)
    {
       DACWriteWord(offset, data, who);
+      return;
+   }
+   // ASIDATA/ASICTRL/ASICLK $F10030-35 (16-bit UART registers)
+   else if (offset >= 0xF10030 && offset <= 0xF10035)
+   {
+      UARTWriteWord(offset & 0xFFFFFFFE, data);
       return;
    }
    else if (offset >= 0xF10000 && offset <= 0xF10007)
