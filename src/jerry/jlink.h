@@ -38,6 +38,11 @@ int  JLinkRxPending(void);
    RX ring (bounded by ring space), flush pending TX.  No-op for
    loopback/disabled. */
 void JLinkPoll(void);
+/* Mid-frame pump for latency-sensitive polling paths: fetch any bytes
+   already available from the transport RIGHT NOW (netpacket: ask the
+   frontend to deliver pending packets; TCP: drain the socket).  Called
+   by the UART when a game polls for link data; callers rate-limit. */
+void JLinkPump(void);
 /* Lifetime traffic counters (diagnostics; reset by JLinkClose). */
 uint32_t JLinkTxTotal(void);
 uint32_t JLinkRxTotal(void);

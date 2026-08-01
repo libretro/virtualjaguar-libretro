@@ -29,6 +29,7 @@ void JLinkNPPoll(void);
 int  JLinkNPActive(void);
 void JLinkNPQueueByte(uint8_t b);
 void JLinkNPFlush(void);
+void JLinkNPPumpReceive(void);
 
 #ifdef __cplusplus
 }
