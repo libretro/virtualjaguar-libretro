@@ -1,9 +1,14 @@
 /* jlink_tcp.c — nonblocking TCP endpoint for the JagLink transport.
  *
- * Deliberately minimal: two Jaguars on a wire, so one listener + one
- * peer socket.  POSIX and winsock share the code behind a thin macro
- * layer; platforms without BSD-style sockets (bare console targets)
- * compile the stub tail of this file instead.
+ * Server mode is a CatNet-style hub: up to JLINK_TCP_MAX_PEERS clients
+ * share the wire.  Local TX goes to every peer; a byte received from
+ * one peer is delivered locally AND forwarded to every other peer, so
+ * all nodes hear all traffic — the electrical semantics of a shared
+ * multi-drop bus.  Client mode is a single connection to the hub.
+ *
+ * POSIX and winsock share the code behind a thin macro layer;
+ * platforms without BSD-style sockets (bare console targets) compile
+ * the stub tail of this file instead.
  */
 #include <string.h>
 #include "jlink_tcp.h"
@@ -46,23 +51,42 @@ typedef int jlink_sock_t;
 #define JLINK_EINPROGRESS   EINPROGRESS
 #endif
 
+#define JLINK_TCP_MAX_PEERS   7
 #define JLINK_TCP_TXPEND_SIZE 1024
 
+typedef struct
+{
+   jlink_sock_t sock;
+   uint8_t txPend[JLINK_TCP_TXPEND_SIZE];
+   uint32_t txHead;
+   uint32_t txCount;
+} jlink_peer_t;
+
 static jlink_sock_t tcpListen = JLINK_INVALID_SOCK;
-static jlink_sock_t tcpPeer = JLINK_INVALID_SOCK;
+static jlink_peer_t tcpPeers[JLINK_TCP_MAX_PEERS];
+static int tcpPeersInit = 0;     /* one-time array init guard */
 static int tcpIsServer = 0;
 static int tcpIsClient = 0;
-static int tcpConnecting = 0;    /* client connect in flight */
+static int tcpConnecting = 0;    /* client connect in flight (slot 0) */
 static int tcpRetryTimer = 0;    /* polls until next client reconnect */
 static char tcpHost[128] = "127.0.0.1";
 static int tcpPort = 0;
-static uint8_t tcpTxPend[JLINK_TCP_TXPEND_SIZE];
-static uint32_t tcpTxHead = 0;
-static uint32_t tcpTxCount = 0;
 
 /* A refused/dropped client connect retries after this many polls
    (one poll per frame => roughly half a second). */
 #define JLINK_TCP_RETRY_POLLS 30
+
+static void jlink_peers_reset(void)
+{
+   int i;
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+   {
+      tcpPeers[i].sock = JLINK_INVALID_SOCK;
+      tcpPeers[i].txHead = 0;
+      tcpPeers[i].txCount = 0;
+   }
+   tcpPeersInit = 1;
+}
 
 static void jlink_set_nonblock(jlink_sock_t s)
 {
@@ -99,6 +123,20 @@ int JLinkTCPAvailable(void)
    return 1;
 }
 
+static void jlink_tcp_drop_peer(int idx)
+{
+   if (jlink_sock_valid(tcpPeers[idx].sock))
+      jlink_closesock(tcpPeers[idx].sock);
+   tcpPeers[idx].sock = JLINK_INVALID_SOCK;
+   tcpPeers[idx].txHead = 0;
+   tcpPeers[idx].txCount = 0;
+   if (tcpIsClient && idx == 0)
+   {
+      tcpConnecting = 0;
+      tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
+   }
+}
+
 /* Kick off (or re-kick) a nonblocking client connect to tcpHost:tcpPort. */
 static void jlink_tcp_start_connect(void)
 {
@@ -110,25 +148,25 @@ static void jlink_tcp_start_connect(void)
    sa.sin_port = htons((unsigned short)tcpPort);
    sa.sin_addr.s_addr = inet_addr(tcpHost);
 
-   tcpPeer = socket(AF_INET, SOCK_STREAM, 0);
-   if (!jlink_sock_valid(tcpPeer))
+   tcpPeers[0].sock = socket(AF_INET, SOCK_STREAM, 0);
+   if (!jlink_sock_valid(tcpPeers[0].sock))
       return;
-   jlink_set_nonblock(tcpPeer);
-   rc = connect(tcpPeer, (struct sockaddr *)&sa, sizeof(sa));
+   jlink_set_nonblock(tcpPeers[0].sock);
+   rc = connect(tcpPeers[0].sock, (struct sockaddr *)&sa, sizeof(sa));
    if (rc != 0)
    {
       int err = jlink_sockerr();
       if (err != JLINK_EINPROGRESS && err != JLINK_EWOULDBLOCK)
       {
-         jlink_closesock(tcpPeer);
-         tcpPeer = JLINK_INVALID_SOCK;
+         jlink_closesock(tcpPeers[0].sock);
+         tcpPeers[0].sock = JLINK_INVALID_SOCK;
          tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
          return;
       }
       tcpConnecting = 1;
    }
    else
-      jlink_set_nodelay(tcpPeer);
+      jlink_set_nodelay(tcpPeers[0].sock);
 }
 
 int JLinkTCPOpen(int is_server, const char *host, int port)
@@ -154,7 +192,7 @@ int JLinkTCPOpen(int is_server, const char *host, int port)
                  (const char *)&one, sizeof(one));
       sa.sin_addr.s_addr = htonl(INADDR_ANY);
       if (bind(tcpListen, (struct sockaddr *)&sa, sizeof(sa)) != 0
-          || listen(tcpListen, 1) != 0)
+          || listen(tcpListen, JLINK_TCP_MAX_PEERS) != 0)
       {
          jlink_closesock(tcpListen);
          tcpListen = JLINK_INVALID_SOCK;
@@ -184,122 +222,158 @@ int JLinkTCPOpen(int is_server, const char *host, int port)
 
 void JLinkTCPClose(void)
 {
-   if (jlink_sock_valid(tcpPeer))
-      jlink_closesock(tcpPeer);
+   int i;
+   if (!tcpPeersInit)
+      jlink_peers_reset();
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+   {
+      if (jlink_sock_valid(tcpPeers[i].sock))
+         jlink_closesock(tcpPeers[i].sock);
+   }
    if (jlink_sock_valid(tcpListen))
       jlink_closesock(tcpListen);
-   tcpPeer = JLINK_INVALID_SOCK;
+   jlink_peers_reset();
    tcpListen = JLINK_INVALID_SOCK;
    tcpIsServer = 0;
    tcpIsClient = 0;
    tcpConnecting = 0;
    tcpRetryTimer = 0;
-   tcpTxHead = 0;
-   tcpTxCount = 0;
 }
 
 int JLinkTCPConnected(void)
 {
-   return jlink_sock_valid(tcpPeer) && !tcpConnecting;
-}
-
-static void jlink_tcp_drop_peer(void)
-{
-   if (jlink_sock_valid(tcpPeer))
-      jlink_closesock(tcpPeer);
-   tcpPeer = JLINK_INVALID_SOCK;
-   tcpConnecting = 0;
-   tcpTxHead = 0;
-   tcpTxCount = 0;
+   int i;
+   if (!tcpPeersInit)
+      return 0;
    if (tcpIsClient)
-      tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
+      return jlink_sock_valid(tcpPeers[0].sock) && !tcpConnecting;
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+      if (jlink_sock_valid(tcpPeers[i].sock))
+         return 1;
+   return 0;
 }
 
-static void jlink_tcp_queue_pending(uint8_t b)
+static void jlink_tcp_queue_pending(jlink_peer_t *p, uint8_t b)
 {
    uint32_t tail;
-   if (tcpTxCount >= JLINK_TCP_TXPEND_SIZE)
+   if (p->txCount >= JLINK_TCP_TXPEND_SIZE)
       return;                    /* full: drop newest */
-   tail = (tcpTxHead + tcpTxCount) % JLINK_TCP_TXPEND_SIZE;
-   tcpTxPend[tail] = b;
-   tcpTxCount++;
+   tail = (p->txHead + p->txCount) % JLINK_TCP_TXPEND_SIZE;
+   p->txPend[tail] = b;
+   p->txCount++;
 }
 
-static void jlink_tcp_flush_pending(void)
+/* Returns 0 if the peer died. */
+static int jlink_tcp_flush_pending(int idx)
 {
-   while (tcpTxCount > 0)
+   jlink_peer_t *p = &tcpPeers[idx];
+   while (p->txCount > 0)
    {
-      char c = (char)tcpTxPend[tcpTxHead];
-      long n = (long)send(tcpPeer, &c, 1, 0);
+      char c = (char)p->txPend[p->txHead];
+      long n = (long)send(p->sock, &c, 1, 0);
       if (n == 1)
       {
-         tcpTxHead = (tcpTxHead + 1) % JLINK_TCP_TXPEND_SIZE;
-         tcpTxCount--;
+         p->txHead = (p->txHead + 1) % JLINK_TCP_TXPEND_SIZE;
+         p->txCount--;
       }
       else
       {
          int err = jlink_sockerr();
          if (n < 0 && err == JLINK_EWOULDBLOCK)
-            break;               /* kernel buffer full; retry next poll */
-         jlink_tcp_drop_peer();
-         break;
+            return 1;            /* kernel buffer full; retry next poll */
+         jlink_tcp_drop_peer(idx);
+         return 0;
       }
+   }
+   return 1;
+}
+
+static void jlink_tcp_send_to_peer(int idx, uint8_t b)
+{
+   jlink_peer_t *p = &tcpPeers[idx];
+   if (!jlink_sock_valid(p->sock))
+      return;
+   if (tcpIsClient && tcpConnecting)
+      return;
+   if (p->txCount > 0)
+   {
+      /* Preserve ordering behind already-pending bytes. */
+      jlink_tcp_queue_pending(p, b);
+      jlink_tcp_flush_pending(idx);
+      return;
+   }
+   {
+      char c = (char)b;
+      long n = (long)send(p->sock, &c, 1, 0);
+      if (n == 1)
+         return;
+      if (n < 0 && jlink_sockerr() == JLINK_EWOULDBLOCK)
+      {
+         jlink_tcp_queue_pending(p, b);
+         return;
+      }
+      jlink_tcp_drop_peer(idx);
    }
 }
 
 void JLinkTCPSend(uint8_t b)
 {
-   if (!JLinkTCPConnected())
+   int i;
+   if (!tcpPeersInit)
       return;
-   if (tcpTxCount > 0)
-   {
-      /* Preserve ordering behind already-pending bytes. */
-      jlink_tcp_queue_pending(b);
-      jlink_tcp_flush_pending();
-      return;
-   }
-   {
-      char c = (char)b;
-      long n = (long)send(tcpPeer, &c, 1, 0);
-      if (n == 1)
-         return;
-      if (n < 0 && jlink_sockerr() == JLINK_EWOULDBLOCK)
-      {
-         jlink_tcp_queue_pending(b);
-         return;
-      }
-      jlink_tcp_drop_peer();
-   }
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+      jlink_tcp_send_to_peer(i, b);
 }
 
 int JLinkTCPRecv(uint8_t *b)
 {
-   char c;
-   long n;
-   if (!JLinkTCPConnected())
+   int i;
+   if (!tcpPeersInit)
       return 0;
-   n = (long)recv(tcpPeer, &c, 1, 0);
-   if (n == 1)
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
    {
-      *b = (uint8_t)c;
-      return 1;
+      jlink_peer_t *p = &tcpPeers[i];
+      char c;
+      long n;
+      if (!jlink_sock_valid(p->sock))
+         continue;
+      if (tcpIsClient && tcpConnecting)
+         continue;
+      n = (long)recv(p->sock, &c, 1, 0);
+      if (n == 1)
+      {
+         int j;
+         *b = (uint8_t)c;
+         /* Shared-bus forward: every other peer hears this byte too. */
+         if (tcpIsServer)
+         {
+            for (j = 0; j < JLINK_TCP_MAX_PEERS; j++)
+               if (j != i)
+                  jlink_tcp_send_to_peer(j, (uint8_t)c);
+         }
+         return 1;
+      }
+      if (n == 0)
+      {
+         /* Orderly shutdown by this peer. */
+         jlink_tcp_drop_peer(i);
+         continue;
+      }
+      if (jlink_sockerr() != JLINK_EWOULDBLOCK)
+         jlink_tcp_drop_peer(i);
    }
-   if (n == 0)
-   {
-      /* Orderly shutdown by the peer. */
-      jlink_tcp_drop_peer();
-      return 0;
-   }
-   if (jlink_sockerr() != JLINK_EWOULDBLOCK)
-      jlink_tcp_drop_peer();
    return 0;
 }
 
 void JLinkTCPPoll(void)
 {
+   int i;
+   if (!tcpPeersInit)
+      jlink_peers_reset();
+
    /* Client: retry a refused or dropped connection — the partner
       instance may not have been listening yet. */
-   if (tcpIsClient && !jlink_sock_valid(tcpPeer))
+   if (tcpIsClient && !jlink_sock_valid(tcpPeers[0].sock))
    {
       if (tcpRetryTimer > 0)
          tcpRetryTimer--;
@@ -307,20 +381,29 @@ void JLinkTCPPoll(void)
          jlink_tcp_start_connect();
    }
 
-   if (tcpIsServer && jlink_sock_valid(tcpListen) && !jlink_sock_valid(tcpPeer))
+   /* Server: accept new peers while slots remain. */
+   if (tcpIsServer && jlink_sock_valid(tcpListen))
    {
-      jlink_sock_t s = accept(tcpListen, NULL, NULL);
-      if (jlink_sock_valid(s))
+      for (;;)
       {
+         jlink_sock_t s;
+         int slot = -1;
+         for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+            if (!jlink_sock_valid(tcpPeers[i].sock)) { slot = i; break; }
+         if (slot < 0)
+            break;
+         s = accept(tcpListen, NULL, NULL);
+         if (!jlink_sock_valid(s))
+            break;
          jlink_set_nonblock(s);
          jlink_set_nodelay(s);
-         tcpPeer = s;
-         tcpTxHead = 0;
-         tcpTxCount = 0;
+         tcpPeers[slot].sock = s;
+         tcpPeers[slot].txHead = 0;
+         tcpPeers[slot].txCount = 0;
       }
    }
 
-   if (tcpConnecting && jlink_sock_valid(tcpPeer))
+   if (tcpConnecting && jlink_sock_valid(tcpPeers[0].sock))
    {
       /* A nonblocking connect has completed when the socket reports
          writability; poll cheaply via getsockopt(SO_ERROR) after a
@@ -329,27 +412,28 @@ void JLinkTCPPoll(void)
       struct timeval tv;
       int rc;
       FD_ZERO(&wfds);
-      FD_SET(tcpPeer, &wfds);
+      FD_SET(tcpPeers[0].sock, &wfds);
       tv.tv_sec = 0;
       tv.tv_usec = 0;
-      rc = select((int)(tcpPeer + 1), NULL, &wfds, NULL, &tv);
+      rc = select((int)(tcpPeers[0].sock + 1), NULL, &wfds, NULL, &tv);
       if (rc > 0)
       {
          int soerr = 0;
          socklen_t slen = (socklen_t)sizeof(soerr);
-         if (getsockopt(tcpPeer, SOL_SOCKET, SO_ERROR,
+         if (getsockopt(tcpPeers[0].sock, SOL_SOCKET, SO_ERROR,
                         (char *)&soerr, &slen) == 0 && soerr == 0)
          {
             tcpConnecting = 0;
-            jlink_set_nodelay(tcpPeer);
+            jlink_set_nodelay(tcpPeers[0].sock);
          }
          else
-            jlink_tcp_drop_peer();
+            jlink_tcp_drop_peer(0);
       }
    }
 
-   if (JLinkTCPConnected() && tcpTxCount > 0)
-      jlink_tcp_flush_pending();
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+      if (jlink_sock_valid(tcpPeers[i].sock) && tcpPeers[i].txCount > 0)
+         jlink_tcp_flush_pending(i);
 }
 
 #else /* !JLINK_HAVE_TCP — socketless console targets get inert stubs */
