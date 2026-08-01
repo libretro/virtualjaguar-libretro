@@ -32,6 +32,16 @@ fi
 
 WORK="${TMPDIR:-/tmp}/vj_ra_matrix.$$"
 mkdir -p "$WORK"
+
+HOST_PID=""
+CLIENT_PID=""
+cleanup() {
+    if [ "$KEEP" != "1" ]; then
+        [ -n "$HOST_PID" ] && kill "$HOST_PID" 2>/dev/null
+        [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
+    fi
+}
+trap cleanup EXIT INT TERM
 APPEND="$WORK/append.cfg"
 cat > "$APPEND" <<EOF
 config_save_on_exit = "false"
