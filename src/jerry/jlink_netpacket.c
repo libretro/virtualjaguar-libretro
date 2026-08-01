@@ -73,12 +73,15 @@ void JLinkNPQueueByte(uint8_t b)
    if (npTxLen >= JLINK_NP_TXBUF_SIZE)
       return;   /* flush unavailable: drop rather than overflow */
    npTxBuf[npTxLen++] = b;
-   /* Flush immediately: link games run request/response tic exchanges
-      and spin for the reply mid-frame.  Batching to frame boundaries
-      turned each exchange into >= 1 frame of latency (Doom deathmatch
-      ran in slow motion); per-byte reliable packets are cheap on the
-      LAN links netplay targets. */
-   JLinkNPFlush();
+   /* No flush here: the UART flushes at burst end (transmit shift
+      register drains with nothing queued), which keeps mid-frame tic
+      exchanges sub-millisecond WITHOUT emitting one reliable packet
+      per byte.  Per-byte packets were fine on localhost but caused
+      visible lag over real Wi-Fi (per-packet overhead on every byte
+      of every tic).  Safety nets: buffer-full flush below, and the
+      per-frame flush in JLinkPoll/JLinkNPPoll. */
+   if (npTxLen >= JLINK_NP_TXBUF_SIZE)
+      JLinkNPFlush();
 }
 
 /* Pump the frontend for incoming packets mid-frame (the receive
