@@ -51,10 +51,18 @@ typedef int jlink_sock_t;
 static jlink_sock_t tcpListen = JLINK_INVALID_SOCK;
 static jlink_sock_t tcpPeer = JLINK_INVALID_SOCK;
 static int tcpIsServer = 0;
+static int tcpIsClient = 0;
 static int tcpConnecting = 0;    /* client connect in flight */
+static int tcpRetryTimer = 0;    /* polls until next client reconnect */
+static char tcpHost[128] = "127.0.0.1";
+static int tcpPort = 0;
 static uint8_t tcpTxPend[JLINK_TCP_TXPEND_SIZE];
 static uint32_t tcpTxHead = 0;
 static uint32_t tcpTxCount = 0;
+
+/* A refused/dropped client connect retries after this many polls
+   (one poll per frame => roughly half a second). */
+#define JLINK_TCP_RETRY_POLLS 30
 
 static void jlink_set_nonblock(jlink_sock_t s)
 {
@@ -91,6 +99,38 @@ int JLinkTCPAvailable(void)
    return 1;
 }
 
+/* Kick off (or re-kick) a nonblocking client connect to tcpHost:tcpPort. */
+static void jlink_tcp_start_connect(void)
+{
+   struct sockaddr_in sa;
+   int rc;
+
+   memset(&sa, 0, sizeof(sa));
+   sa.sin_family = AF_INET;
+   sa.sin_port = htons((unsigned short)tcpPort);
+   sa.sin_addr.s_addr = inet_addr(tcpHost);
+
+   tcpPeer = socket(AF_INET, SOCK_STREAM, 0);
+   if (!jlink_sock_valid(tcpPeer))
+      return;
+   jlink_set_nonblock(tcpPeer);
+   rc = connect(tcpPeer, (struct sockaddr *)&sa, sizeof(sa));
+   if (rc != 0)
+   {
+      int err = jlink_sockerr();
+      if (err != JLINK_EINPROGRESS && err != JLINK_EWOULDBLOCK)
+      {
+         jlink_closesock(tcpPeer);
+         tcpPeer = JLINK_INVALID_SOCK;
+         tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
+         return;
+      }
+      tcpConnecting = 1;
+   }
+   else
+      jlink_set_nodelay(tcpPeer);
+}
+
 int JLinkTCPOpen(int is_server, const char *host, int port)
 {
    struct sockaddr_in sa;
@@ -124,30 +164,18 @@ int JLinkTCPOpen(int is_server, const char *host, int port)
    }
    else
    {
-      int rc;
       if (!host || !host[0])
          host = "127.0.0.1";
       sa.sin_addr.s_addr = inet_addr(host);
       if (sa.sin_addr.s_addr == INADDR_NONE)
          return 0;
-      tcpPeer = socket(AF_INET, SOCK_STREAM, 0);
-      if (!jlink_sock_valid(tcpPeer))
-         return 0;
-      jlink_set_nonblock(tcpPeer);
-      rc = connect(tcpPeer, (struct sockaddr *)&sa, sizeof(sa));
-      if (rc != 0)
-      {
-         int err = jlink_sockerr();
-         if (err != JLINK_EINPROGRESS && err != JLINK_EWOULDBLOCK)
-         {
-            jlink_closesock(tcpPeer);
-            tcpPeer = JLINK_INVALID_SOCK;
-            return 0;
-         }
-         tcpConnecting = 1;
-      }
-      else
-         jlink_set_nodelay(tcpPeer);
+      strncpy(tcpHost, host, sizeof(tcpHost) - 1);
+      tcpHost[sizeof(tcpHost) - 1] = '\0';
+      tcpPort = port;
+      tcpIsClient = 1;
+      /* First attempt now; refusals retry from JLinkTCPPoll (the peer
+         instance may simply not be listening yet). */
+      jlink_tcp_start_connect();
    }
 
    tcpIsServer = is_server;
@@ -163,7 +191,9 @@ void JLinkTCPClose(void)
    tcpPeer = JLINK_INVALID_SOCK;
    tcpListen = JLINK_INVALID_SOCK;
    tcpIsServer = 0;
+   tcpIsClient = 0;
    tcpConnecting = 0;
+   tcpRetryTimer = 0;
    tcpTxHead = 0;
    tcpTxCount = 0;
 }
@@ -181,6 +211,8 @@ static void jlink_tcp_drop_peer(void)
    tcpConnecting = 0;
    tcpTxHead = 0;
    tcpTxCount = 0;
+   if (tcpIsClient)
+      tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
 }
 
 static void jlink_tcp_queue_pending(uint8_t b)
@@ -265,6 +297,16 @@ int JLinkTCPRecv(uint8_t *b)
 
 void JLinkTCPPoll(void)
 {
+   /* Client: retry a refused or dropped connection — the partner
+      instance may not have been listening yet. */
+   if (tcpIsClient && !jlink_sock_valid(tcpPeer))
+   {
+      if (tcpRetryTimer > 0)
+         tcpRetryTimer--;
+      else
+         jlink_tcp_start_connect();
+   }
+
    if (tcpIsServer && jlink_sock_valid(tcpListen) && !jlink_sock_valid(tcpPeer))
    {
       jlink_sock_t s = accept(tcpListen, NULL, NULL);
