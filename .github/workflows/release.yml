@@ -6,6 +6,14 @@ name: Release
 # The build/vita-build/switch-build jobs below are trigger-agnostic; only the
 # final publishing job differs.  The nightly tag is deliberately NOT named
 # v-anything so a CI-pushed tag can never re-enter the release path.
+#
+# workflow_dispatch exists ONLY to re-publish the nightly, so it must be run
+# with the branch set to `develop`.  GitHub defaults the branch picker to the
+# repo default (`master` here), and both publishing jobs are ref-gated, so a
+# dispatch left on the default would build all 16 targets and publish nothing.
+# The `guard` job below fails that case immediately instead of burning the
+# matrix.  To test-build an arbitrary branch, use c-cpp.yml — it has its own
+# workflow_dispatch and runs on PRs.
 on:
   push:
     tags: ['v*']
@@ -27,12 +35,35 @@ concurrency:
 
 jobs:
   # ----------------------------------------------------------------
+  # Fail a pointless dispatch in seconds rather than after 16 builds.
+  # Only reachable via workflow_dispatch: push events always arrive on a
+  # ref one of the two publishing jobs accepts.
+  # ----------------------------------------------------------------
+  guard:
+    name: Check dispatch ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a dispatch that would publish nothing
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' }}
+        run: |
+          # Built up in one variable because a ::error:: annotation has to be a
+          # single line to render as one.
+          MSG="Run this workflow with the branch set to 'develop'."
+          MSG="$MSG Both publishing jobs are ref-gated (tags v* -> release,"
+          MSG="$MSG develop -> nightly), so a dispatch from '${GITHUB_REF_NAME}'"
+          MSG="$MSG would build all 16 targets and publish nothing."
+          MSG="$MSG To test-build a branch, use the C/C++ CI workflow instead."
+          echo "::error::$MSG"
+          exit 1
+
+  # ----------------------------------------------------------------
   # Native + cross builds (Linux/macOS/Windows/iOS/tvOS/Android/WASM)
   # Each job builds with RELEASE_DEBUG_INFO=1 so we keep -g on the
   # optimized binary, then extracts split debug symbols and strips the
   # shipped binary.
   # ----------------------------------------------------------------
   build:
+    needs: [guard]
     strategy:
       fail-fast: false
       matrix:
@@ -302,6 +333,7 @@ jobs:
   # ----------------------------------------------------------------
   vita-build:
     name: build-vita
+    needs: [guard]
     runs-on: ubuntu-latest
     container:
       image: vitasdk/vitasdk:latest
@@ -339,6 +371,7 @@ jobs:
   # ----------------------------------------------------------------
   switch-build:
     name: build-switch
+    needs: [guard]
     runs-on: ubuntu-latest
     container:
       image: devkitpro/devkita64:latest

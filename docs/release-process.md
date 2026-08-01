@@ -90,6 +90,14 @@ publishing step is the `nightly` job instead of `release`:
    exact-title match as fallback — both have to miss before it could duplicate
    itself.
 
+`workflow_dispatch` is also wired up, but **only to re-publish the nightly** —
+run it with the branch picker set to `develop`. GitHub defaults that picker to
+the repo default (`master`), and both publishing jobs are ref-gated, so a
+dispatch left on the default would build all 16 targets and publish nothing.
+The `guard` job rejects that in seconds instead of burning the matrix. To
+test-build an arbitrary branch, use `c-cpp.yml`, which has its own
+`workflow_dispatch` and runs on PRs.
+
 The two paths can't collide: the `release` job is gated on
 `startsWith(github.ref, 'refs/tags/v')`, the `nightly` job on
 `github.ref == 'refs/heads/develop'`, and the `nightly` tag deliberately sits
