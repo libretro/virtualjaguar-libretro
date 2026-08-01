@@ -141,6 +141,18 @@ void JLinkPoll(void)
    }
 }
 
+void JLinkPump(void)
+{
+   if (jlinkMode == JLINK_MODE_NETPACKET)
+   {
+      JLinkNPFlush();
+      JLinkNPPumpReceive();   /* receive() feeds the ring reentrantly */
+      return;
+   }
+   /* TCP: same servicing as the per-frame poll — cheap when idle. */
+   JLinkPoll();
+}
+
 int JLinkRecvByte(uint8_t *b)
 {
    if (jlinkCount == 0)

@@ -12,6 +12,7 @@
 #define JLINK_NP_TXBUF_SIZE 512
 
 static retro_netpacket_send_t npSend = NULL;
+static retro_netpacket_poll_receive_t npPollReceive = NULL;
 static int npActive = 0;
 static int npPrevMode = JLINK_MODE_DISABLED;
 static uint8_t npTxBuf[JLINK_NP_TXBUF_SIZE];
@@ -21,10 +22,10 @@ void JLinkNPStart(uint16_t client_id, retro_netpacket_send_t send_fn,
                   retro_netpacket_poll_receive_t poll_receive_fn)
 {
    (void)client_id;
-   (void)poll_receive_fn;
    npPrevMode = JLinkMode();
    JLinkClose();
    npSend = send_fn;
+   npPollReceive = poll_receive_fn;
    npTxLen = 0;
    npActive = 1;
    JLinkOpen(JLINK_MODE_NETPACKET);
@@ -41,6 +42,7 @@ void JLinkNPStop(void)
 {
    npActive = 0;
    npSend = NULL;
+   npPollReceive = NULL;
    npTxLen = 0;
    JLinkClose();
    if (npPrevMode != JLINK_MODE_DISABLED
@@ -64,8 +66,20 @@ void JLinkNPQueueByte(uint8_t b)
    if (!npActive)
       return;
    npTxBuf[npTxLen++] = b;
-   if (npTxLen >= JLINK_NP_TXBUF_SIZE)
-      JLinkNPFlush();
+   /* Flush immediately: link games run request/response tic exchanges
+      and spin for the reply mid-frame.  Batching to frame boundaries
+      turned each exchange into >= 1 frame of latency (Doom deathmatch
+      ran in slow motion); per-byte reliable packets are cheap on the
+      LAN links netplay targets. */
+   JLinkNPFlush();
+}
+
+/* Pump the frontend for incoming packets mid-frame (the receive
+   callback fires reentrantly and feeds the ring). */
+void JLinkNPPumpReceive(void)
+{
+   if (npActive && npPollReceive)
+      npPollReceive();
 }
 
 void JLinkNPFlush(void)

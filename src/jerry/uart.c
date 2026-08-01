@@ -126,6 +126,21 @@ uint16_t UARTReadWord(uint32_t offset)
          UARTKickRx();
          break;
       case 0xF10032:            /* ASISTAT */
+         /* Link games spin on this register waiting for the partner's
+            reply mid-frame.  If nothing is buffered anywhere, pump the
+            transport so a reply that is already on the network can be
+            delivered THIS frame instead of next (rate-limited: a
+            polling loop iterates every few emulated microseconds). */
+         if (!uartRxFull && !uartRxBusy && JLinkConnected()
+             && !JLinkRxPending())
+         {
+            static unsigned pumpGate = 0;
+            if ((++pumpGate & 15u) == 0)
+            {
+               JLinkPump();
+               UARTKickRx();
+            }
+         }
          v = (uint16_t)(asiCtrl & 0x003F);
          if (uartRxFull)
             v |= ASISTAT_RBF;
