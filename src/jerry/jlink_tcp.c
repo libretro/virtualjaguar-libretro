@@ -164,7 +164,7 @@ int JLinkTCPOpen(int is_server, const char *host, int port)
    }
    else
    {
-      if (!host || !host[0])
+      if (!host || !host[0] || strcmp(host, "localhost") == 0)
          host = "127.0.0.1";
       sa.sin_addr.s_addr = inet_addr(host);
       if (sa.sin_addr.s_addr == INADDR_NONE)
