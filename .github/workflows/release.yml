@@ -605,13 +605,13 @@ jobs:
             echo "| **CI run** | [build log](${RUN_URL}) |"
             echo "| **Branch** | \`develop\` |"
             echo
-            echo "> Automatic build of the \`develop\` tip, replaced on every push."
-            echo "> It compiled on all 16 targets; it has **not** been through the"
-            echo "> test suite or any manual QA. For a stable build use the"
-            echo "> [latest release](${GITHUB_SERVER_URL}/${REPO}/releases/latest)."
+            P="> Automatic build of the \`develop\` tip, replaced on every push."
+            P="$P It compiled on all 16 targets; it has **not** been through the"
+            P="$P test suite or any manual QA. For a stable build use the"
+            P="$P [latest release](${GITHUB_SERVER_URL}/${REPO}/releases/latest)."
+            echo "$P"
             echo
-            echo "The core logs its identity as \`${BASE_VERSION} ${SHORT_SHA}\` at startup —"
-            echo "quote that line when reporting a bug against a nightly."
+            echo "The core logs its identity as \`${BASE_VERSION} ${SHORT_SHA}\` at startup — quote that line when reporting a bug against a nightly."
             echo
             echo "### Changes since the previous nightly"
             echo
@@ -625,14 +625,14 @@ jobs:
             find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
             echo '```'
             echo
-            echo "Each platform ships alongside a \`-debug.tar.gz\` of its split debug"
-            echo "symbols; extract it next to the binary to get symbolised backtraces."
+            echo "Each platform ships alongside a \`-debug.tar.gz\` of its split debug symbols; extract it next to the binary to get symbolised backtraces."
             echo
             echo "### SHA-256 checksums"
             echo
-            echo "Verify with \`sha256sum --check SHA256SUMS.txt\` (Linux) or"
-            echo "\`shasum -a 256 --check SHA256SUMS.txt\` (macOS). See"
-            echo "[SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)."
+            P="Verify with \`sha256sum --check SHA256SUMS.txt\` (Linux) or"
+            P="$P \`shasum -a 256 --check SHA256SUMS.txt\` (macOS). See"
+            P="$P [SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)."
+            echo "$P"
             echo
             echo '```'
             cat release/SHA256SUMS.txt
@@ -695,9 +695,11 @@ jobs:
             echo
             echo "### What these are"
             echo
-            echo "Every push to \`develop\` rebuilds the core for all 16 supported"
-            echo "platforms and replaces the single [\`nightly\`](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)"
-            echo "prerelease. There is only ever one nightly — the current tip."
+            P="Every push to \`develop\` rebuilds the core for all 16 supported platforms"
+            P="$P and replaces the single"
+            P="$P [\`nightly\`](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) prerelease."
+            P="$P There is only ever one nightly — the current tip."
+            echo "$P"
             echo
             echo "| | Stable | Nightly |"
             echo "|---|---|---|"
@@ -706,26 +708,24 @@ jobs:
             echo "| Frequency | periodic | continuous |"
             echo "| Use it for | playing | testing a fix before it ships |"
             echo
-            echo "Nightlies are **not** gated on the test suite, the acid suite, or"
-            echo "the screenshot regression run — those workflows report separately on"
-            echo "the same commit. A nightly can build cleanly and still be broken."
+            P="Nightlies are **not** gated on the test suite, the acid suite, or the"
+            P="$P screenshot regression run — those workflows report separately on the"
+            P="$P same commit. A nightly can build cleanly and still be broken."
+            echo "$P"
             echo
             echo "### Installing"
             echo
-            echo "1. Download \`virtualjaguar_libretro-<platform>.<ext>\` for your system from"
-            echo "   the [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)."
-            echo "2. **Rename it**, dropping the \`-<platform>\` part —"
-            echo "   \`virtualjaguar_libretro-linux-x86_64.so\` becomes"
-            echo "   \`virtualjaguar_libretro.so\`. RetroArch pairs a core with its"
-            echo "   metadata by exact basename, so a core left under the download name"
-            echo "   loads with no name, no version and no core options."
-            echo "3. Drop it into RetroArch's \`cores/\` directory, replacing the existing"
-            echo "   \`virtualjaguar_libretro.<ext>\`."
-            echo "4. Copy \`virtualjaguar_libretro.info\` into RetroArch's \`info/\` directory"
-            echo "   to see the nightly version string in the core list."
+            echo "1. Download \`virtualjaguar_libretro-<platform>.<ext>\` for your system from the [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)."
+            P="2. **Rename it**, dropping the \`-<platform>\` part —"
+            P="$P \`virtualjaguar_libretro-linux-x86_64.so\` becomes"
+            P="$P \`virtualjaguar_libretro.so\`. RetroArch pairs a core with its metadata"
+            P="$P by exact basename, so a core left under the download name loads with"
+            P="$P no name, no version and no core options."
+            echo "$P"
+            echo "3. Drop it into RetroArch's \`cores/\` directory, replacing the existing \`virtualjaguar_libretro.<ext>\`."
+            echo "4. Copy \`virtualjaguar_libretro.info\` into RetroArch's \`info/\` directory to see the nightly version string in the core list."
             echo
-            echo "RetroArch's own Core Updater always serves the **stable** buildbot core."
-            echo "Installing a nightly by hand means the updater may overwrite it later."
+            echo "RetroArch's own Core Updater always serves the **stable** buildbot core. Installing a nightly by hand means the updater may overwrite it later."
             echo
             echo "### Reporting a bug in a nightly"
             echo
@@ -735,17 +735,19 @@ jobs:
             echo "Virtual Jaguar vX.Y.Z <gitrev>"
             echo '```'
             echo
-            echo "Include that line — it is the only way to tell which nightly you ran."
-            echo "A RetroArch log is worth more than a description: the core has a"
-            echo "watchdog that names the failing subsystem (\`gpu_pc_escape\`,"
-            echo "\`cd_seek_wedge\`, \`video_stall\`, …) at the moment it breaks."
+            P="Include that line — it is the only way to tell which nightly you ran."
+            P="$P A RetroArch log is worth more than a description: the core has a"
+            P="$P watchdog that names the failing subsystem (\`gpu_pc_escape\`,"
+            P="$P \`cd_seek_wedge\`, \`video_stall\`, …) at the moment it breaks."
+            echo "$P"
             echo
             echo "### Verifying a download"
             echo
-            echo "Each release lists SHA-256 checksums, and every platform has a"
-            echo "matching \`-debug.tar.gz\` of split debug symbols. See"
-            echo "[SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)"
-            echo "for verification steps and antivirus false-positive guidance."
+            P="Each release lists SHA-256 checksums, and every platform has a matching"
+            P="$P \`-debug.tar.gz\` of split debug symbols. See"
+            P="$P [SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)"
+            P="$P for verification steps and antivirus false-positive guidance."
+            echo "$P"
             echo
             echo "---"
             echo
