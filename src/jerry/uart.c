@@ -177,6 +177,13 @@ void UARTWriteWord(uint32_t offset, uint16_t data)
    }
 }
 
+/* Per-frame service from retro_run, after JLinkPoll has drained the
+   socket: start an RX frame for any newly arrived transport bytes. */
+void UARTPoll(void)
+{
+   UARTKickRx();
+}
+
 void UARTInit(void)
 {
    UARTReset();

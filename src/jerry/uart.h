@@ -13,6 +13,7 @@ void UARTInit(void);
 void UARTReset(void);
 void UARTDone(void);
 void UARTSetLinkMode(int mode);   /* JLINK_MODE_* from jlink.h */
+void UARTPoll(void);              /* per frame, after JLinkPoll */
 
 uint16_t UARTReadWord(uint32_t offset);
 void UARTWriteWord(uint32_t offset, uint16_t data);
