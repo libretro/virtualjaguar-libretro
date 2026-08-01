@@ -154,7 +154,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink",
       "Network Link (JagLink / CatBox)",
       NULL,
-      "Emulates JERRY's serial link port used by networked games (BattleSphere, AirCars, Doom deathmatch). 'Loopback' echoes transmitted bytes back to this console, for testing link-detect menus without a partner. TCP Host listens for a second emulator instance; TCP Client connects to one (host from VJ_NETLINK_HOST env or vj_netlink.txt in the system directory, default 127.0.0.1). Localhost/LAN latency recommended.",
+      "Emulates JERRY's serial link port used by networked games (BattleSphere, AirCars, Doom deathmatch). 'Loopback' echoes transmitted bytes back to this console, for testing link-detect menus without a partner. TCP Host listens for a second emulator instance; TCP Client connects to the address in 'Network Link Host'. Localhost/LAN latency recommended.",
       NULL,
       NULL,
       {
@@ -165,6 +165,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
+   },
+   {
+      "virtualjaguar_netlink_host",
+      "Network Link Host (TCP Client)",
+      NULL,
+      "Address the TCP client connects to. Frontends with free-text option entry may supply any hostname or IP; the core uses whatever string it receives. In stock RetroArch pick 'From file' and put the address on the first line of vj_netlink.txt in the system directory. The VJ_NETLINK_HOST environment variable overrides this option.",
+      NULL,
+      NULL,
+      {
+         { "127.0.0.1",      "127.0.0.1 (localhost)" },
+         { "vj_netlink.txt", "From file (vj_netlink.txt in system dir)" },
+         { NULL, NULL },
+      },
+      "127.0.0.1"
    },
    {
       "virtualjaguar_netlink_port",
@@ -181,6 +195,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "42171"
+   },
+   {
+      "virtualjaguar_netlink_wait",
+      "Network Link Latency Hiding",
+      NULL,
+      "Briefly holds each frame until the link partner's reply arrives, so network latency doesn't round every link exchange up to whole video frames. The wait adapts automatically to the measured connection (a few ms on localhost, more on Wi-Fi) and is capped so audio/video pacing survives. Disable only for troubleshooting or benchmarking.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
    },
    {
       "virtualjaguar_cd_trace",
