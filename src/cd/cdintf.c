@@ -525,6 +525,113 @@ static uint32_t CDISectorSizeFromCode(uint32_t mode, uint32_t code)
    }
 }
 
+/* Measure the undescribed leading data offset of a CDI rip (see the call
+ * site at the end of ParseCDI) and fold it into every track's fileOffset.
+ *
+ * The Jaguar boot header is a fixed 32-byte signature that must sit at
+ * +0x42 of the first session-2 track's user data, stored word-swapped
+ * (I2S order).  That makes it a self-validating landmark: find it, and the
+ * distance from where the descriptors said the payload begins IS the
+ * offset.  No external reference and no per-title table needed.
+ *
+ * The search is bounded to +/-64 KB.  Observed shifts are -48..+4360; a
+ * 32-byte ASCII signature inside that window is not something audio data
+ * produces by accident.  No landmark (or a zero delta) leaves the tracks
+ * exactly as parsed. */
+static void CDIDetectGlobalDataOffset(uint32_t version)
+{
+   /* "ATARI APPROVED DATA HEADER ATRI " with each 16-bit pair byte-swapped,
+    * i.e. how it appears raw in the image.  Matched in full: a 16-byte prefix
+    * collides far too easily inside a 128 KB scan window, and a false match
+    * here would shift *every* track. */
+   static const char NEEDLE[32] = "TARA IPARPVODED TA AEHDAREA RT I";
+   const int32_t  WINDOW  = 65536;
+   uint8_t       *buf;
+   int64_t        base, start, got;
+   uint32_t       i, s2 = 0;
+   bool           found  = false;
+   int64_t        expect = 0, actual = 0;
+
+   if (!cdi_file || disc.numTracks == 0)
+      return;
+
+   /* V2 images are excluded deliberately, not for lack of trying.  Measured
+    * against the redump per-track dumps, their first session-2 track is missing
+    * its leading bytes entirely: the image holds zeros(N) followed by the track
+    * content from byte N on, where N is 112 (ironsoldier2) or 76 (worldtour-
+    * racing).  Those lost bytes are the sync preamble and the boot header magic
+    * itself, so the landmark this function keys on is simply not in the file.
+    * The scan then locks onto a legitimate *second* copy of the header further
+    * into the track and returns a confidently wrong delta -- +22988 for world-
+    * tourracing, whose true displacement is -76.  Applying that would slide all
+    * ten tracks into garbage.  No offset can repair a missing header, so V2 is
+    * left exactly as the descriptors parsed it until the real mechanism is
+    * modelled.  See issue #230. */
+   if (version == CDI_V2_ID)
+      return;
+
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if (disc.tracks[i].session == 2)
+         { s2 = i; found = true; break; }
+   }
+   if (!found)
+      return;
+   found = false;
+
+   expect = (int64_t)disc.tracks[s2].fileOffset;
+   if (disc.tracks[s2].dataLBA > disc.tracks[s2].startLBA)
+      expect += (int64_t)(disc.tracks[s2].dataLBA - disc.tracks[s2].startLBA) *
+                (int64_t)disc.tracks[s2].sectorSize;
+
+   start = expect - WINDOW;
+   if (start < 0)
+      start = 0;
+
+   buf = (uint8_t *)malloc((size_t)WINDOW * 2);
+   if (!buf)
+      return;
+
+   rfseek(cdi_file, start, SEEK_SET);
+   got = rfread(buf, 1, (size_t)WINDOW * 2, cdi_file);
+   if (got <= 0)
+   {
+      /* rfread reports errors as a negative count; casting that straight to an
+       * unsigned length would send the scan off the end of buf. */
+      free(buf);
+      return;
+   }
+
+   /* The header begins on an even boundary (word-swapped pairs). */
+   for (i = 0; (int64_t)i + (int64_t)sizeof(NEEDLE) <= got; i += 2)
+   {
+      if (memcmp(buf + i, NEEDLE, sizeof(NEEDLE)) == 0)
+         { actual = start + (int64_t)i - 0x42; found = true; break; }
+   }
+   free(buf);
+
+   if (!found || actual == expect)
+      return;
+
+   base = actual - expect;
+   /* Guard: a shift larger than the window, or one that would push a track
+    * offset negative, means the landmark was not what we think it was. */
+   if (base <= -(int64_t)WINDOW || base >= (int64_t)WINDOW)
+      return;
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if ((int64_t)disc.tracks[i].fileOffset + base < 0)
+         return;
+   }
+
+   LOG_INF("[CD] CDI data offset: image data is shifted %+lld byte(s) from "
+           "the descriptor layout; applying to all %u track(s)\n",
+           (long long)base, disc.numTracks);
+
+   for (i = 0; i < disc.numTracks; i++)
+      disc.tracks[i].fileOffset = (uint32_t)((int64_t)disc.tracks[i].fileOffset + base);
+}
+
 static bool ParseCDI(const char *cdiPath)
 {
    uint8_t trailer[8];
@@ -748,6 +855,23 @@ static bool ParseCDI(const char *cdiPath)
                     &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
       }
    }
+
+   /* Widely-circulating CDI rips carry a leading byte offset the format does
+    * not describe: the payload is slid forward by N bytes and N bytes are
+    * lost off the tail, so every track's data sits N bytes past where the
+    * descriptors put it.  The images are self-inconsistent -- summing
+    * total_length*sector_size plus the header equals the file size exactly,
+    * leaving no room for the shift -- but they are the rips most people have
+    * (their hashes match the databases), so refusing them helps nobody.
+    * cdirip mislocates them identically, so this is not a parse error on our
+    * side; there is simply nothing in the image that states the offset.
+    *
+    * N is constant across every track of an image, so it is measured once
+    * here and folded into all track offsets.  Doing it globally (rather than
+    * only for the boot-stub read) is what keeps in-game sector reads aligned.
+    * Conformant images measure 0 and are left untouched.  V2 images opt out --
+    * see the note in CDIDetectGlobalDataOffset. */
+   CDIDetectGlobalDataOffset(version);
 
    disc.loaded = true;
    return true;
