@@ -138,9 +138,14 @@ Backends selected by core option:
   registers behave, SERIN reads idle, nothing connects) | `loopback` |
   `tcp_server` | `tcp_client` | `netpacket` (phase 3).
 - `virtualjaguar_netlink_port`: enum of a few ports (default 42171).
-- Host for `tcp_client`: core options cannot take free text, so resolution
-  order is env `VJ_NETLINK_HOST`, then `<system_dir>/vj_netlink.txt`, then
-  `127.0.0.1`. Documented in README.
+- Host for `tcp_client`: `virtualjaguar_netlink_host` option. Stock
+  RetroArch options cannot take free text, so the option ships preset
+  values (`127.0.0.1`, and a `vj_netlink.txt` sentinel meaning "read
+  `<system_dir>/vj_netlink.txt`"), but the core accepts ANY string the
+  frontend returns — frontends with free-text option UIs (Provenance)
+  supply arbitrary addresses directly. Resolution order: env
+  `VJ_NETLINK_HOST`, then the option (sentinel defers to the file), then
+  `<system_dir>/vj_netlink.txt`, then `127.0.0.1`.
 
 ### 4. Testing
 
