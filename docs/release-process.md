@@ -74,7 +74,7 @@ After all platform builds finish, the `release` job:
 ### 3b. Nightly builds (develop pushes)
 
 `release.yml` also fires on every push to `develop`. The build matrix is
-identical — the same 18 jobs, the same split-debug packaging — but the
+identical — the same 16 jobs (14 matrix entries + Vita + Switch), the same split-debug packaging — but the
 publishing step is the `nightly` job instead of `release`:
 
 1. Moves the `nightly` git tag onto the pushed commit.
@@ -84,8 +84,11 @@ publishing step is the `nightly` job instead of `release`:
 3. Rewrites `display_version` in the bundled `.info` to
    `v<X.Y.Z>-nightly-<sha>`, so a nightly `.info` can never be mistaken for the
    file that gets PR'd to libretro-super.
-4. Creates-or-updates a pinned tracking issue (matched by exact title, so it
-   can't duplicate itself) with the current build and install instructions.
+4. Creates-or-updates a pinned tracking issue with the current build and
+   install instructions. Located by the `nightly-tracker` label first
+   (server-side, exact, independent of how many issues the repo has) with an
+   exact-title match as fallback — both have to miss before it could duplicate
+   itself.
 
 The two paths can't collide: the `release` job is gated on
 `startsWith(github.ref, 'refs/tags/v')`, the `nightly` job on
@@ -93,7 +96,7 @@ The two paths can't collide: the `release` job is gated on
 outside the `v*` tag filter so a CI-pushed tag can never re-enter the release
 path.
 
-**What a nightly is gated on:** the 18 builds compiling. It is *not* gated on
+**What a nightly is gated on:** the 16 builds compiling. It is *not* gated on
 `c-cpp.yml`, the acid suite, or the screenshot regression run — those report
 separately on the same commit. A nightly can build cleanly and still be broken,
 and the release body says so. Upgrading that claim means switching the job to a

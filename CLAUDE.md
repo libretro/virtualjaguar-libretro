@@ -207,7 +207,7 @@ When spawning agents for work in this repo, include these rules:
 
 Full details in [`docs/release-process.md`](docs/release-process.md). Quick reference:
 
-**Nightlies:** every push to `develop` reruns `release.yml`'s full 18-platform
+**Nightlies:** every push to `develop` reruns `release.yml`'s full 16-platform
 matrix and replaces the rolling `nightly` prerelease plus its pinned tracking
 issue. Gated on *compiling*, not on the test suite — don't describe nightlies as
 "CI-verified". The `nightly` tag sits outside the `v*` filter so it can never

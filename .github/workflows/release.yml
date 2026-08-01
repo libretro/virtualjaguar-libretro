@@ -483,7 +483,7 @@ jobs:
   # tracking issue that always shows the current build.
   #
   # Gating: `needs` covers the build jobs only, so this publishes a
-  # commit that COMPILES on all 18 targets.  It does NOT wait on
+  # commit that COMPILES on all 16 targets.  It does NOT wait on
   # c-cpp.yml / acid-test.yml / regression-test.yml, which run
   # independently on the same push — a commit that builds but fails a
   # test can still ship a nightly.  The release body says so; do not
@@ -573,7 +573,7 @@ jobs:
             echo "| **Branch** | \`develop\` |"
             echo
             echo "> Automatic build of the \`develop\` tip, replaced on every push."
-            echo "> It compiled on all 18 targets; it has **not** been through the"
+            echo "> It compiled on all 16 targets; it has **not** been through the"
             echo "> test suite or any manual QA. For a stable build use the"
             echo "> [latest release](${GITHUB_SERVER_URL}/${REPO}/releases/latest)."
             echo
@@ -662,14 +662,14 @@ jobs:
             echo
             echo "### What these are"
             echo
-            echo "Every push to \`develop\` rebuilds the core for all 18 supported"
+            echo "Every push to \`develop\` rebuilds the core for all 16 supported"
             echo "platforms and replaces the single [\`nightly\`](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)"
             echo "prerelease. There is only ever one nightly — the current tip."
             echo
             echo "| | Stable | Nightly |"
             echo "|---|---|---|"
             echo "| Source | tagged \`vX.Y.Z\` on \`master\` | every push to \`develop\` |"
-            echo "| Gate | full CI + release checklist | compiles on all 18 targets |"
+            echo "| Gate | full CI + release checklist | compiles on all 16 targets |"
             echo "| Frequency | periodic | continuous |"
             echo "| Use it for | playing | testing a fix before it ships |"
             echo
@@ -679,12 +679,17 @@ jobs:
             echo
             echo "### Installing"
             echo
-            echo "1. Download the archive for your platform from the"
-            echo "   [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)."
-            echo "2. Drop the library into RetroArch's \`cores/\` directory, replacing"
-            echo "   the existing \`virtualjaguar_libretro\` for your platform."
-            echo "3. Copy \`virtualjaguar_libretro.info\` into RetroArch's \`info/\` directory"
-            echo "   if you want the core to show the nightly version string."
+            echo "1. Download \`virtualjaguar_libretro-<platform>.<ext>\` for your system from"
+            echo "   the [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)."
+            echo "2. **Rename it**, dropping the \`-<platform>\` part —"
+            echo "   \`virtualjaguar_libretro-linux-x86_64.so\` becomes"
+            echo "   \`virtualjaguar_libretro.so\`. RetroArch pairs a core with its"
+            echo "   metadata by exact basename, so a core left under the download name"
+            echo "   loads with no name, no version and no core options."
+            echo "3. Drop it into RetroArch's \`cores/\` directory, replacing the existing"
+            echo "   \`virtualjaguar_libretro.<ext>\`."
+            echo "4. Copy \`virtualjaguar_libretro.info\` into RetroArch's \`info/\` directory"
+            echo "   to see the nightly version string in the core list."
             echo
             echo "RetroArch's own Core Updater always serves the **stable** buildbot core."
             echo "Installing a nightly by hand means the updater may overwrite it later."
@@ -714,30 +719,48 @@ jobs:
             echo "> Auto-updated by CI on every nightly build. Edits here are overwritten."
           } > "$BODY_FILE"
 
-          # Exact-title match over the issue list rather than the search API:
-          # search is eventually-consistent, and a miss here would open a
-          # duplicate tracking issue on every run.
-          NUM=$(gh issue list --repo "${REPO}" --state all --limit 200 \
-                  --json number,title \
-                  --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number // empty")
+          # Find the existing tracker without the search API, which is
+          # eventually-consistent — a miss opens a DUPLICATE issue, and then
+          # another on every run after that, so the lookup has to be exact.
+          #
+          # Label first: filtering is server-side and stays exact no matter how
+          # many issues the repo accumulates.  Exact-title match is the fallback
+          # for the very first run (before the label exists) and for the case
+          # where the label was removed by hand.  Both must miss to duplicate.
+          LABEL=nightly-tracker
+          gh label create "$LABEL" --repo "${REPO}" --color 0E8A16 \
+            --description "Auto-updated nightly build tracker" >/dev/null 2>&1 || true
+
+          NUM=$(gh issue list --repo "${REPO}" --state all --label "$LABEL" \
+                  --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ -z "$NUM" ]; then
+            NUM=$(gh issue list --repo "${REPO}" --state all --limit 500 \
+                    --json number,title \
+                    --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number // empty")
+          fi
 
           if [ -n "$NUM" ]; then
-            gh issue edit "$NUM" --repo "${REPO}" --body-file "$BODY_FILE"
+            gh issue edit "$NUM" --repo "${REPO}" --body-file "$BODY_FILE" \
+              --add-label "$LABEL" >/dev/null
           else
             NUM=$(gh issue create --repo "${REPO}" \
                     --title "${ISSUE_TITLE}" \
                     --body-file "$BODY_FILE" \
                     | grep -oE '[0-9]+$')
+            gh issue edit "$NUM" --repo "${REPO}" --add-label "$LABEL" >/dev/null 2>&1 || \
+              echo "::warning::could not label tracking issue #${NUM}; title match is now the only lookup"
             echo "==> Created tracking issue #${NUM}"
           fi
 
           # Pinning has no REST endpoint; pinIssue is GraphQL-only and caps at
-          # 3 pinned issues per repo.  Already-pinned re-pins are a no-op error,
-          # so a failure here is not worth surfacing.
+          # 3 pinned issues per repo.  Re-pinning an already-pinned issue errors
+          # harmlessly, but so does hitting the cap or lacking permission — and
+          # a pinned issue is the whole point, so warn rather than swallow it.
           ID=$(gh api "repos/${REPO}/issues/${NUM}" --jq '.node_id')
           # shellcheck disable=SC2016  # $id is a GraphQL variable; it must NOT
           # be expanded by the shell — gh binds it from the -f id= argument.
           gh api graphql -f query='mutation($id:ID!){pinIssue(input:{issueId:$id}){issue{number}}}' \
-            -f id="$ID" >/dev/null 2>&1 || true
+            -f id="$ID" >/dev/null 2>&1 || \
+            echo "::warning::could not pin issue #${NUM} (already pinned, 3-pin cap, or permission)"
 
           echo "==> Tracking issue: ${GITHUB_SERVER_URL}/${REPO}/issues/${NUM}"
