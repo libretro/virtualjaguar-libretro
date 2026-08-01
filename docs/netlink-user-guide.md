@@ -29,10 +29,13 @@ Notes:
 - Known issue: with some RetroArch builds the `--connect` **command line
   flag** silently does nothing — use the Netplay menu instead.
 
-## Option B: Direct TCP (any frontend — Provenance, RetroArch, etc.)
+## Option B: Direct TCP (any frontend on a platform with sockets)
 
-Works in every frontend, including mixing frontends (e.g. Provenance on
-iPhone vs RetroArch on a Mac). **No auto-discovery** — you wire it up:
+Works in any frontend on desktop and mobile platforms (macOS, Windows,
+Linux, iOS, Android), including mixing frontends (e.g. Provenance on
+iPhone vs RetroArch on a Mac). Console targets without BSD-style sockets
+build an inert stub — the TCP modes silently do nothing there.
+**No auto-discovery** — you wire it up:
 
 1. Pick one device as the hub. Set its core option
    *Network Link = TCP Host (listen)*.
@@ -54,9 +57,9 @@ Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
 
 - **Never mix options A and B** in one session — a netplay host and a TCP
   client are different transports and will never see each other.
-- Cross-device play needs a core build that actually contains networking
-  (2026-08 or later). A frontend bundling an older core has no *Network
-  Link* option at all — that's the tell.
+- Cross-device play needs a core build that actually contains networking.
+  A frontend bundling an older core has no *Network Link* option at all —
+  that's the tell.
 - Both sides sit at their link menu but never connect: verify same
   Wi-Fi/LAN, the hub's IP in `vj_netlink.txt`, matching port, and any
   firewall prompt on the host machine.
