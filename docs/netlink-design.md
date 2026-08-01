@@ -1,7 +1,7 @@
 # Jaguar Link Networking (JERRY UART + Pluggable Transport)
 
 **Date:** 2026-07-31
-**Status:** Phase 1 (UART + loopback) implemented; phases 2–4 pending
+**Status:** Phases 1–2 (UART + loopback + TCP link) implemented; phases 3–4 pending. Integration branch: `feature/netlink` (phases merge there, not develop, until the feature is proven).
 **Branch:** `claude/jaguar-networking-support-0c8a86` (off `libretro/develop`)
 
 ## Overview
@@ -213,6 +213,37 @@ test layers (`test_jlink`, `test_uart_loopback`, `test_uart_core`) in
 `make test`. Baud formula and frame length verified against JTRM Rev 8
 pp. 93–95 (`docs/atari-jaguar-1999/jag_v8.pdf`); JINTCTRL bit 4 assignment
 confirmed on p. 87 (the emulator's `IRQ2_ASI=0x10` was already correct).
+
+## Phase 2 outcome (2026-07-31)
+
+Delivered: `src/jerry/jlink_tcp.c` (compact nonblocking POSIX/winsock layer —
+**deviation from this spec:** libretro-common `net_socket`/`net_compat` was
+NOT vendored; it is a multi-console portability layer far larger than the
+~300 lines actually needed, and socketless console targets compile an inert
+stub instead), TCP server/client modes with client reconnect retry,
+per-frame link polling from `retro_run`, core options
+(`tcp_server`/`tcp_client` values + `virtualjaguar_netlink_port`), host
+resolution (`VJ_NETLINK_HOST` → `<system_dir>/vj_netlink.txt` → 127.0.0.1),
+the two-process `netlink_pair` test in `make test`, and the `netlink_game`
+probe tool (per-frame UART sampling + PPM screenshots + `--realtime` pacing).
+
+**Game validation results (two instances on localhost TCP):**
+
+- **BattleSphere Gold** — programs the UART at ~72.3 kbaud (ASICLK=0x16,
+  ODD parity) on leaving the title screen. Menu path: title → A →
+  Main Menu → down → B ("Network Mode") → B ("Free-For-All"). Loopback
+  control: full scan then explicit "Network Failure / unable to locate any
+  other players" (correct — it only hears its own echo). Over TCP, **both
+  instances passed "Locating Players" and reached the networked Free For
+  All Options screen** — mutual link detection achieved.
+- **Doom** — menu path: title → A → set "Game Mode: Deathmatch" (right) →
+  A to start. Programs ASICLK=0x0D (~118.7 kbaud, JagLink's rate class) and
+  handshakes. Over TCP, **both instances entered the deathmatch level**
+  (frag-counter HUD, distinct spawn views). Playability/lockstep quality
+  over longer sessions is phase-3 validation work.
+
+Both games poll ASISTAT rather than enabling TINTEN/RINTEN, so interrupt
+delivery remains covered by unit tests only so far.
 
 ## Decisions log
 

@@ -957,6 +957,10 @@ test/tools/netlink_pair: test/tools/netlink_pair.c test/harness/harness.c test/h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/tools/netlink_pair.c test/harness/harness.c -ldl -lm
 
+test/tools/netlink_game: test/tools/netlink_game.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/tools/netlink_game.c test/harness/harness.c -ldl -lm
+
 # Regression guard: textually verifies that JERRYResetPIT1/2,
 # TOMResetPIT, and JERRYGetPIT*Frequency schedule using RISC clock
 # constants (full system clock).  Catches the recurring "halve PIT
