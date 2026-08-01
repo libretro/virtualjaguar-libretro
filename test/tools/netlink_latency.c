@@ -19,8 +19,9 @@
  * video frame regardless of actual RTT (the Wi-Fi lag failure mode).
  *
  * probe opts: --measure-sec N (default 3), --min-rate X / --max-rate X
- * (pass/fail bounds on exchanges/sec), --wait-ms N (value for the
- * virtualjaguar_netlink_wait core option; "0" = disabled).
+ * (pass/fail bounds on exchanges/sec), --wait enabled|disabled (the
+ * virtualjaguar_netlink_wait core option; the wait budget itself is
+ * adaptive inside the core, not user-tuned).
  * Exit 0 on pass, 1 on fail/error.  Driven by netlink_latency_test.sh.
  */
 #define _DEFAULT_SOURCE 1
@@ -109,7 +110,7 @@ int main(int argc, char **argv)
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     const char *role = NULL;
     const char *port = "42171";
-    const char *wait_ms = "0";
+    const char *wait_opt = "enabled";
     int measure_sec = 3;
     double min_rate = -1.0, max_rate = -1.0;
     char port_env[64];
@@ -147,9 +148,9 @@ int main(int argc, char **argv)
             max_rate = atof(argv[++i]);
             argv[i - 1] = argv[i] = (char *)"--quiet";
         }
-        else if (!strcmp(argv[i], "--wait-ms") && i + 1 < argc)
+        else if (!strcmp(argv[i], "--wait") && i + 1 < argc)
         {
-            wait_ms = argv[++i];
+            wait_opt = argv[++i];
             argv[i - 1] = argv[i] = (char *)"--quiet";
         }
     }
@@ -157,7 +158,7 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "usage: netlink_latency <core> --role echo|probe "
                         "[--port N] [--measure-sec N] [--min-rate X] "
-                        "[--max-rate X] [--wait-ms N]\n");
+                        "[--max-rate X] [--wait enabled|disabled]\n");
         return 1;
     }
 
@@ -171,7 +172,7 @@ int main(int argc, char **argv)
     cfg.options[1].key = "virtualjaguar_netlink_port";
     cfg.options[1].value = port;
     cfg.options[2].key = "virtualjaguar_netlink_wait";
-    cfg.options[2].value = wait_ms;
+    cfg.options[2].value = wait_opt;
     cfg.num_options = 3;
 
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;
@@ -212,14 +213,18 @@ int main(int argc, char **argv)
 
     if (!strcmp(role, "echo"))
     {
-        /* The 68K does all the work; keep frames paced until the peer
-           tears the link down (plus an idle cap as a safety net). */
+        /* The 68K does all the work.  Deliberately NOT paced at 60 fps:
+           a free-running echo answers within ~2 ms consistently, so the
+           measured rate isolates the PROBE side's frame quantization
+           instead of beating against a second paced loop's drifting
+           phase (which made the metric noisy run-to-run). */
         uint32_t last = rx_total();
         int idle = 0;
-        while (jlink_connected() && idle < 600)   /* ~10 s of silence */
+        while (jlink_connected() && idle < 8000)   /* ~10 s of silence */
         {
             uint32_t now_rx;
-            paced_frame(run_frame);
+            run_frame();
+            usleep(1000);
             now_rx = rx_total();
             idle = (now_rx != last) ? 0 : idle + 1;
             last = now_rx;
@@ -236,7 +241,9 @@ int main(int argc, char **argv)
         double rate, elapsed;
 
         jerry_ww(0xF10030, 0x0040, 0);   /* first byte starts the chain */
-        for (i = 0; i < 30; i++)         /* 0.5 s warmup */
+        for (i = 0; i < 60; i++)         /* 1 s warmup: lets the core's
+                                            adaptive wait budget converge
+                                            before the measured window */
             paced_frame(run_frame);
         if (rx_total() == 0)
         {
@@ -255,7 +262,7 @@ int main(int argc, char **argv)
         elapsed = (double)(t1 - t0) / 1000000.0;
         rate = (double)(rx1 - rx0) / elapsed;
         printf("[probe] %.1f exchanges/sec (%u exchanges in %.2f s, "
-               "wait-ms=%s)\n", rate, rx1 - rx0, elapsed, wait_ms);
+               "wait=%s)\n", rate, rx1 - rx0, elapsed, wait_opt);
 
         harness_shutdown(&cfg);
         if (min_rate >= 0.0 && rate < min_rate)

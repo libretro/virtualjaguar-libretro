@@ -1,6 +1,8 @@
 /* jlink.c — byte-transport seam for the JERRY UART.
    Loopback: bytes sent come back on the receive queue, modeling a
    console whose UARTO is wired to its own UARTI. */
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "jlink.h"
 #include "jlink_tcp.h"
@@ -61,12 +63,31 @@ static uint32_t jlinkRxTotal = 0;
    frame budget in ~1 ms of wall clock, so ANY transport latency slips
    the reply past retro_run and delivery quantizes to whole video frames
    (measured: 445 exchanges/s direct -> 35/s with 6 ms RTT).  While a
-   reply is outstanding, JLinkAwaitReply blocks in wall-clock time —
-   bounded per frame by jlinkWaitMs — so the reply lands in the SAME
-   frame.  Wall-clock only; no emulated state is touched. */
+   reply is outstanding, JLinkAwaitReply blocks in wall-clock time so the
+   reply lands in the SAME frame.  Wall-clock only; no emulated state is
+   touched.
+
+   The per-frame wait budget is ADAPTIVE — no user tuning.  Reply latency
+   is sampled at the transport boundary (burst armed -> first byte back)
+   into an EWMA, and each frame may wait up to twice that (plus margin),
+   clamped to [4, 15] ms.  Localhost converges to the floor (sub-ms cost);
+   a real network converges to what it actually needs.  Same approach as
+   melonDS's local-wireless sync: the emulator stalls for the peer
+   automatically, bounded so A/V pacing survives. */
 static int jlinkAwaitingReply = 0;
-static int jlinkWaitMs = 12;           /* option; 0 = disabled */
-static int jlinkWaitBudgetUsec = 0;    /* per-frame remainder */
+static int jlinkWaitEnabled = 1;         /* option; 0 = disabled */
+static int jlinkWaitBudgetUsec = 0;      /* per-frame remainder */
+/* Latency sampling is decoupled from jlinkAwaitingReply: the wait can
+   time out and disarm, but the late reply must STILL be measured or the
+   adaptive budget can never grow past its floor. */
+static int jlinkSamplePending = 0;
+static long long jlinkLastTxUsec = 0;
+static long long jlinkReplyEwmaUsec = 0; /* smoothed reply latency */
+
+#define JLINK_WAIT_FLOOR_USEC   4000
+#define JLINK_WAIT_CEIL_USEC   15000
+#define JLINK_WAIT_MARGIN_USEC  2000
+#define JLINK_SAMPLE_MAX_USEC  50000   /* slower = not a reply, ignore */
 
 static void JLinkRingPush(uint8_t b)
 {
@@ -76,6 +97,21 @@ static void JLinkRingPush(uint8_t b)
    tail = (jlinkHead + jlinkCount) % JLINK_RING_SIZE;
    jlinkRing[tail] = b;
    jlinkCount++;
+   if (jlinkSamplePending)
+   {
+      /* First byte back after a TX: sample the reply latency for the
+         adaptive wait budget.  Arrival is timestamped here no matter
+         which path pumped it — and regardless of whether the wait
+         already timed out — so a too-small budget measures the
+         quantized latency, grows, and self-corrects within a few
+         exchanges. */
+#ifdef JLINK_HAVE_WAIT
+      long long sample = JLinkNowUsec() - jlinkLastTxUsec;
+      if (sample >= 0 && sample <= JLINK_SAMPLE_MAX_USEC)
+         jlinkReplyEwmaUsec += (sample - jlinkReplyEwmaUsec) / 8;
+#endif
+      jlinkSamplePending = 0;
+   }
    jlinkAwaitingReply = 0;   /* the partner spoke */
    /* Counted on ARRIVAL, not on the game draining the ring.  jlinkTxTotal is
     * incremented in JLinkSendByte(), i.e. at the transport boundary; counting
@@ -135,6 +171,9 @@ void JLinkClose(void)
    jlinkRxTotal = 0;
    jlinkAwaitingReply = 0;
    jlinkWaitBudgetUsec = 0;
+   jlinkSamplePending = 0;
+   jlinkLastTxUsec = 0;
+   jlinkReplyEwmaUsec = 0;
 }
 
 int JLinkMode(void)
@@ -166,15 +205,20 @@ void JLinkSendByte(uint8_t b)
    if (jlinkMode == JLINK_MODE_LOOPBACK)
       JLinkRingPush(b);
    else if (jlinkMode == JLINK_MODE_TCP_SERVER
-            || jlinkMode == JLINK_MODE_TCP_CLIENT)
+            || jlinkMode == JLINK_MODE_TCP_CLIENT
+            || jlinkMode == JLINK_MODE_NETPACKET)
    {
-      JLinkTCPSend(b);
+      if (jlinkMode == JLINK_MODE_NETPACKET)
+         JLinkNPQueueByte(b);
+      else
+         JLinkTCPSend(b);
       jlinkAwaitingReply = 1;
-   }
-   else if (jlinkMode == JLINK_MODE_NETPACKET)
-   {
-      JLinkNPQueueByte(b);
-      jlinkAwaitingReply = 1;
+      jlinkSamplePending = 1;
+#ifdef JLINK_HAVE_WAIT
+      /* Per TX byte, so the sample measures last-byte-out -> first-byte
+         back rather than including our own burst length. */
+      jlinkLastTxUsec = JLinkNowUsec();
+#endif
    }
 }
 
@@ -211,15 +255,43 @@ void JLinkPoll(void)
    }
 }
 
-void JLinkSetWaitMs(int ms)
+void JLinkSetWaitEnabled(int enabled)
 {
-   jlinkWaitMs = (ms < 0) ? 0 : (ms > 50 ? 50 : ms);
+   jlinkWaitEnabled = enabled ? 1 : 0;
 }
 
-/* Called once per video frame from retro_run: refill the wait budget. */
+/* Called once per video frame from retro_run: refill the wait budget
+   from the measured reply latency. */
 void JLinkFrameTick(void)
 {
-   jlinkWaitBudgetUsec = jlinkWaitMs * 1000;
+   long long budget;
+   if (!jlinkWaitEnabled)
+   {
+      jlinkWaitBudgetUsec = 0;
+      return;
+   }
+   budget = jlinkReplyEwmaUsec * 2 + JLINK_WAIT_MARGIN_USEC;
+   if (budget < JLINK_WAIT_FLOOR_USEC)
+      budget = JLINK_WAIT_FLOOR_USEC;
+   if (budget > JLINK_WAIT_CEIL_USEC)
+      budget = JLINK_WAIT_CEIL_USEC;
+   jlinkWaitBudgetUsec = (int)budget;
+#ifdef JLINK_HAVE_WAIT
+   {
+      /* Headless diagnostic: VJ_NETLINK_WAIT_DEBUG=1 logs the adaptive
+         state once a second. */
+      static int dbg = -1;
+      static unsigned dbgFrames = 0;
+      if (dbg < 0)
+      {
+         const char *e = getenv("VJ_NETLINK_WAIT_DEBUG");
+         dbg = (e && e[0] == '1') ? 1 : 0;
+      }
+      if (dbg && (++dbgFrames % 60u) == 0)
+         fprintf(stderr, "jlink-wait: ewma=%dus budget=%dus\n",
+                 (int)jlinkReplyEwmaUsec, jlinkWaitBudgetUsec);
+   }
+#endif
 }
 
 /* Block (bounded) until the partner's reply reaches the RX ring.  Only

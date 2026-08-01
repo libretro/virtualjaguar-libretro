@@ -380,7 +380,7 @@ static void netlink_apply(int mode)
    pvar.key = "virtualjaguar_netlink_wait";
    pvar.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
-      JLinkSetWaitMs(atoi(pvar.value));
+      JLinkSetWaitEnabled(strcmp(pvar.value, "disabled") != 0);
 
    env = getenv("VJ_NETLINK_HOST");
    if (env && env[0])

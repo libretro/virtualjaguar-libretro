@@ -154,20 +154,17 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "virtualjaguar_netlink_wait",
-      "Network Link Reply Wait (ms)",
+      "Network Link Latency Hiding",
       NULL,
-      "How long the core may pause each frame waiting for the link partner's reply. Without it, network latency rounds every link exchange up to whole video frames and games feel laggy even on a fast LAN. 12 ms suits Wi-Fi/LAN play; lower it if the frontend reports missed frame deadlines. 0 disables waiting (pre-v2.4 behavior, fine for same-machine play).",
+      "Briefly holds each frame until the link partner's reply arrives, so network latency doesn't round every link exchange up to whole video frames. The wait adapts automatically to the measured connection (a few ms on localhost, more on Wi-Fi) and is capped so audio/video pacing survives. Disable only for troubleshooting or benchmarking.",
       NULL,
       NULL,
       {
-         { "0",  "0 (disabled)" },
-         { "4",  NULL },
-         { "8",  NULL },
-         { "12", NULL },
-         { "16", NULL },
+         { "enabled",  NULL },
+         { "disabled", NULL },
          { NULL, NULL },
       },
-      "12"
+      "enabled"
    },
    {
       "virtualjaguar_cd_trace",
