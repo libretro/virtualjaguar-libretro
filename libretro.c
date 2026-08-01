@@ -377,6 +377,11 @@ static void netlink_apply(int mode)
    if (env && env[0] && atoi(env) > 0)
       port = atoi(env);
 
+   pvar.key = "virtualjaguar_netlink_wait";
+   pvar.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
+      JLinkSetWaitMs(atoi(pvar.value));
+
    env = getenv("VJ_NETLINK_HOST");
    if (env && env[0])
    {
@@ -1617,7 +1622,9 @@ void retro_run(void)
 
    /* Service the network link: progress TCP connect/accept, drain the
     * socket into the transport ring, then let the UART start an RX
-    * frame for anything that arrived. */
+    * frame for anything that arrived.  FrameTick refills the per-frame
+    * reply-wait budget. */
+   JLinkFrameTick();
    JLinkPoll();
    UARTPoll();
 

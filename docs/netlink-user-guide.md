@@ -68,3 +68,8 @@ Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
   only to check the link menu works.
 - Localhost/LAN latency is the supported envelope; internet play over VPNs
   (Tailscale etc.) may work but is best-effort.
+- Play feels laggy on Wi-Fi even though ping looks fine: make sure
+  *Network Link Reply Wait* is not set to 0. Without it every link
+  exchange rounds up to whole video frames regardless of actual network
+  speed. The default (12 ms) suits Wi-Fi/LAN; try 16 for slower networks,
+  or lower it if the frontend reports missed frame deadlines.

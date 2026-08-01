@@ -142,7 +142,13 @@ uint16_t UARTReadWord(uint32_t offset)
              && !JLinkRxPending())
          {
             static unsigned pumpGate = 0;
-            if ((++pumpGate & 15u) == 0)
+            /* An unanswered TX burst: wait in wall-clock (bounded per
+               frame) so the reply lands THIS frame instead of
+               quantizing to the next retro_run. */
+            JLinkAwaitReply();
+            if (JLinkRxPending())
+               UARTKickRx();
+            else if ((++pumpGate & 15u) == 0)
             {
                JLinkPump();
                UARTKickRx();
