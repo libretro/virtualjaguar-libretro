@@ -564,7 +564,7 @@ else
 	CC ?= gcc
 	CXX ?= g++
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
-	LDFLAGS += -static-libgcc -static-libstdc++ -lwinmm
+	LDFLAGS += -static-libgcc -static-libstdc++ -lwinmm -lws2_32
 
 endif
 
@@ -795,7 +795,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_cheat test/test_event_queue test/test_jlink test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -811,6 +811,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_uart_loopb
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_jlink
+	./test/test_jlink_tcp
 	./test/test_uart_loopback
 	./test/test_uart_core ./$(TARGET)
 	./test/test_blitter_mmio
@@ -934,9 +935,13 @@ test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
 
-test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h
+test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink.c src/jerry/jlink.c
+		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c
+
+test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink.h src/jerry/jlink_tcp.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c
 
 test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/core/event.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

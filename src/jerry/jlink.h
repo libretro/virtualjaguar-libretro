@@ -13,9 +13,15 @@ extern "C" {
 
 enum
 {
-   JLINK_MODE_DISABLED = 0,
-   JLINK_MODE_LOOPBACK = 1
+   JLINK_MODE_DISABLED   = 0,
+   JLINK_MODE_LOOPBACK   = 1,
+   JLINK_MODE_TCP_SERVER = 2,
+   JLINK_MODE_TCP_CLIENT = 3
 };
+
+/* TCP endpoint config; call before JLinkOpen for the TCP modes.
+   host is ignored in server mode (listens on INADDR_ANY). */
+void JLinkSetTCPEndpoint(const char *host, int port);
 
 int  JLinkOpen(int mode);
 void JLinkClose(void);
@@ -24,6 +30,10 @@ int  JLinkConnected(void);
 void JLinkSendByte(uint8_t b);
 int  JLinkRecvByte(uint8_t *b);
 int  JLinkRxPending(void);
+/* Per-frame service: progress TCP connect/accept, drain socket into the
+   RX ring (bounded by ring space), flush pending TX.  No-op for
+   loopback/disabled. */
+void JLinkPoll(void);
 size_t JLinkStateSave(uint8_t *buf);
 size_t JLinkStateLoad(const uint8_t *buf);
 
