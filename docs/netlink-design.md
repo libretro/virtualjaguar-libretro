@@ -1,7 +1,7 @@
 # Jaguar Link Networking (JERRY UART + Pluggable Transport)
 
 **Date:** 2026-07-31
-**Status:** Approved (design), pending implementation plan
+**Status:** Phase 1 (UART + loopback) implemented; phases 2–4 pending
 **Branch:** `claude/jaguar-networking-support-0c8a86` (off `libretro/develop`)
 
 ## Overview
@@ -201,6 +201,18 @@ Each phase is a separately reviewable PR to `develop`.
   playable sessions proven in phase 3 sign-off.
 - **Frontend support matrix.** Netpacket needs RetroArch ≥ 1.16; Provenance
   gets the TCP path. Both are by design, documented in README.
+
+## Phase 1 outcome (2026-07-31)
+
+Delivered: `src/jerry/uart.c` (registers, 11-bit-time frame pacing,
+double-buffered TX/RX, OE latching, TINTEN/RINTEN → JINTCTRL bit 4 → 68K
+IPL2), `src/jerry/jlink.c` (transport seam, loopback backend), core option
+`virtualjaguar_netlink` (disabled/loopback), STATE_VERSION 6 with a
+version-gated UART chunk (event callbacks registered as ids 8/9), and three
+test layers (`test_jlink`, `test_uart_loopback`, `test_uart_core`) in
+`make test`. Baud formula and frame length verified against JTRM Rev 8
+pp. 93–95 (`docs/atari-jaguar-1999/jag_v8.pdf`); JINTCTRL bit 4 assignment
+confirmed on p. 87 (the emulator's `IRQ2_ASI=0x10` was already correct).
 
 ## Decisions log
 
