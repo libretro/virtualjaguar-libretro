@@ -538,20 +538,36 @@ static uint32_t CDISectorSizeFromCode(uint32_t mode, uint32_t code)
  * 32-byte ASCII signature inside that window is not something audio data
  * produces by accident.  No landmark (or a zero delta) leaves the tracks
  * exactly as parsed. */
-static void CDIDetectGlobalDataOffset(void)
+static void CDIDetectGlobalDataOffset(uint32_t version)
 {
    /* "ATARI APPROVED DATA HEADER ATRI " with each 16-bit pair byte-swapped,
-    * i.e. how it appears raw in the image. */
-   static const char NEEDLE[16] = "TARA IPARPVODED ";
+    * i.e. how it appears raw in the image.  Matched in full: a 16-byte prefix
+    * collides far too easily inside a 128 KB scan window, and a false match
+    * here would shift *every* track. */
+   static const char NEEDLE[32] = "TARA IPARPVODED TA AEHDAREA RT I";
    const int32_t  WINDOW  = 65536;
    uint8_t       *buf;
-   int64_t        base, start;
+   int64_t        base, start, got;
    uint32_t       i, s2 = 0;
-   size_t         got;
    bool           found  = false;
    int64_t        expect = 0, actual = 0;
 
    if (!cdi_file || disc.numTracks == 0)
+      return;
+
+   /* V2 images are excluded deliberately, not for lack of trying.  Measured
+    * against the redump per-track dumps, their first session-2 track is missing
+    * its leading bytes entirely: the image holds zeros(N) followed by the track
+    * content from byte N on, where N is 112 (ironsoldier2) or 76 (worldtour-
+    * racing).  Those lost bytes are the sync preamble and the boot header magic
+    * itself, so the landmark this function keys on is simply not in the file.
+    * The scan then locks onto a legitimate *second* copy of the header further
+    * into the track and returns a confidently wrong delta -- +22988 for world-
+    * tourracing, whose true displacement is -76.  Applying that would slide all
+    * ten tracks into garbage.  No offset can repair a missing header, so V2 is
+    * left exactly as the descriptors parsed it until the real mechanism is
+    * modelled.  See issue #230. */
+   if (version == CDI_V2_ID)
       return;
 
    for (i = 0; i < disc.numTracks; i++)
@@ -577,10 +593,17 @@ static void CDIDetectGlobalDataOffset(void)
       return;
 
    rfseek(cdi_file, start, SEEK_SET);
-   got = (size_t)rfread(buf, 1, (size_t)WINDOW * 2, cdi_file);
+   got = rfread(buf, 1, (size_t)WINDOW * 2, cdi_file);
+   if (got <= 0)
+   {
+      /* rfread reports errors as a negative count; casting that straight to an
+       * unsigned length would send the scan off the end of buf. */
+      free(buf);
+      return;
+   }
 
    /* The header begins on an even boundary (word-swapped pairs). */
-   for (i = 0; i + sizeof(NEEDLE) <= got; i += 2)
+   for (i = 0; (int64_t)i + (int64_t)sizeof(NEEDLE) <= got; i += 2)
    {
       if (memcmp(buf + i, NEEDLE, sizeof(NEEDLE)) == 0)
          { actual = start + (int64_t)i - 0x42; found = true; break; }
@@ -846,8 +869,9 @@ static bool ParseCDI(const char *cdiPath)
     * N is constant across every track of an image, so it is measured once
     * here and folded into all track offsets.  Doing it globally (rather than
     * only for the boot-stub read) is what keeps in-game sector reads aligned.
-    * Conformant images measure 0 and are left untouched. */
-   CDIDetectGlobalDataOffset();
+    * Conformant images measure 0 and are left untouched.  V2 images opt out --
+    * see the note in CDIDetectGlobalDataOffset. */
+   CDIDetectGlobalDataOffset(version);
 
    disc.loaded = true;
    return true;
