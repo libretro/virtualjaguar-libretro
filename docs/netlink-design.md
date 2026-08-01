@@ -1,7 +1,13 @@
 # Jaguar Link Networking (JERRY UART + Pluggable Transport)
 
 **Date:** 2026-07-31
-**Status:** Phases 1–2 (UART + loopback + TCP link) implemented; phases 3–4 pending. Integration branch: `feature/netlink` (phases merge there, not develop, until the feature is proven).
+**Status:** COMPLETE — all four phases implemented and play-tested (Doom
+deathmatch confirmed full speed under RetroArch netplay after the sub-frame
+latency fix, PR #244). Known limitations: internet play is best-effort
+(localhost/LAN validated); BattleSphere Gold validated to the networked
+lobby, sustained dogfight play unverified; AirCars under *netpacket* netplay
+untested (its interrupt-driven RX does not hit the ASISTAT pump path — TCP
+mode fully validated); iOS/Provenance TCP mode not yet device-tested.
 **Branch:** `claude/jaguar-networking-support-0c8a86` (off `libretro/develop`)
 
 ## Overview
