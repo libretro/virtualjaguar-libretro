@@ -28,6 +28,8 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
+#include "jlink.h"
+#include "uart.h"
 #include "joystick.h"
 #include "settings.h"
 #include "tom.h"
@@ -369,6 +371,14 @@ static void check_variables(void)
       CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       CDTraceSetEnabled(0);
+
+   var.key = "virtualjaguar_netlink";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+       && strcmp(var.value, "loopback") == 0)
+      UARTSetLinkMode(JLINK_MODE_LOOPBACK);
+   else
+      UARTSetLinkMode(JLINK_MODE_DISABLED);
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;

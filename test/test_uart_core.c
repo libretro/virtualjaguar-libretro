@@ -72,11 +72,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* Task 4 scaffolding (removed in Task 5 when the core option becomes
-       the activation path): force loopback mode directly. */
-    set_mode = (set_mode_t)harness_dlsym(&cfg, "UARTSetLinkMode");
-    if (set_mode)
-        set_mode(1 /* JLINK_MODE_LOOPBACK */);
+    /* Loopback mode arrives via the virtualjaguar_netlink core option
+       (cfg.options above) — no direct mode forcing. */
+    (void)set_mode;
 
     /* J_ASYNENA (bit 4) on; RINTEN on; fastest baud; send a byte. */
     jerry_ww(0xF10020, 0x0010, 0);
