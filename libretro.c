@@ -780,6 +780,7 @@ bool retro_serialize(void *data, size_t size)
    buf += JoystickStateSave(buf);
    buf += MTStateSave(buf);
    buf += DACStateSave(buf);
+   buf += UARTStateSave(buf);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -840,6 +841,8 @@ bool retro_unserialize(const void *data, size_t size)
    buf += JoystickStateLoad(buf);
    buf += MTStateLoad(buf);
    buf += DACStateLoad(buf, version);
+   if (version >= STATE_VERSION_JERRY_UART)
+      buf += UARTStateLoad(buf, version);
 
    JaguarApplyHLEBIOSState();
 

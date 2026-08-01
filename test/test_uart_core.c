@@ -44,7 +44,7 @@ int main(int argc, char **argv)
     jerry_rw_t jerry_rw;
     set_mode_t set_mode;
     uint16_t st, data, jint;
-    int ok_rbf, ok_data, ok_pending;
+    int ok_rbf, ok_data, ok_pending, ok_state;
 
     cfg.frames = 2;
     cfg.options[0].key = "virtualjaguar_netlink";
@@ -104,7 +104,39 @@ int main(int argc, char **argv)
     res[nres].detail = "IRQ2_ASI pending latched in JINTCTRL";
     nres++;
 
+    /* Savestate round-trip: with a byte buffered (RBF set), serialize;
+       consume the byte; restore; the byte and RBF must be back. */
+    {
+        typedef size_t (*rsz_t)(void);
+        typedef int    (*rser_t)(void *, size_t);
+        typedef int    (*runser_t)(const void *, size_t);
+        rsz_t    r_size  = (rsz_t)harness_dlsym(&cfg, "retro_serialize_size");
+        rser_t   r_ser   = (rser_t)harness_dlsym(&cfg, "retro_serialize");
+        runser_t r_unser = (runser_t)harness_dlsym(&cfg, "retro_unserialize");
+        static uint8_t state_buf[0x300000];
+        size_t sz = r_size ? r_size() : 0;
+
+        ok_state = 0;
+        if (r_ser && r_unser && sz > 0 && sz <= sizeof(state_buf))
+        {
+            jerry_ww(0xF10030, 0x0077, 0);
+            harness_run(&cfg);                  /* deliver into RBF */
+            if ((jerry_rw(0xF10032, 0) & 0x0080) && r_ser(state_buf, sz))
+            {
+                (void)jerry_rw(0xF10030, 0);    /* consume: RBF clears */
+                if (!(jerry_rw(0xF10032, 0) & 0x0080)
+                    && r_unser(state_buf, sz))
+                    ok_state = ((jerry_rw(0xF10032, 0) & 0x0080) != 0)
+                        && (jerry_rw(0xF10030, 0) & 0xFF) == 0x77;
+            }
+        }
+        res[nres].status = ok_state ? "PASS" : "FAIL";
+        res[nres].name   = "uart_state_roundtrip";
+        res[nres].detail = "RBF + data survive serialize/unserialize";
+        nres++;
+    }
+
     harness_report(&cfg, res, nres);
     harness_shutdown(&cfg);
-    return (ok_rbf && ok_data && ok_pending) ? 0 : 1;
+    return (ok_rbf && ok_data && ok_pending && ok_state) ? 0 : 1;
 }
