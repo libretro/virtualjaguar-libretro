@@ -8,6 +8,7 @@
         absent (frontend without core-option support);
      D. be overridden by the VJ_NETLINK_HOST environment variable.
    Requires the wide test ABI (TEST_EXPORTS=1) for JLinkGetTCPHost. */
+#define _DEFAULT_SOURCE 1   /* glibc: expose setenv/unsetenv under c99 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
