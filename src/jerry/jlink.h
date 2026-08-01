@@ -27,6 +27,9 @@ void JLinkNPDeliver(const uint8_t *buf, size_t len);
    host is ignored in server mode (listens on INADDR_ANY). */
 void JLinkSetTCPEndpoint(const char *host, int port);
 const char *JLinkGetTCPHost(void);
+void JLinkSetWaitEnabled(int enabled);
+void JLinkFrameTick(void);
+void JLinkAwaitReply(void);
 
 int  JLinkOpen(int mode);
 void JLinkClose(void);

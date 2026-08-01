@@ -167,6 +167,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "42171"
    },
    {
+      "virtualjaguar_netlink_wait",
+      "Network Link Latency Hiding",
+      NULL,
+      "Briefly holds each frame until the link partner's reply arrives, so network latency doesn't round every link exchange up to whole video frames. The wait adapts automatically to the measured connection (a few ms on localhost, more on Wi-Fi) and is capped so audio/video pacing survives. Disable only for troubleshooting or benchmarking.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_cd_trace",
       "CD Trace (Diagnostic)",
       NULL,

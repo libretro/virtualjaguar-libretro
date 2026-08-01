@@ -95,3 +95,5 @@ test/tools/__pycache__/
 *.gcda
 *.gcno
 coverage.xml
+test/tools/netlink_latency
+test/tools/netlink_delay_proxy
