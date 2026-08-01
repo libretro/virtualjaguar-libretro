@@ -557,7 +557,7 @@ jobs:
 
           CHANGES=""
           if [ -n "$PREV_SHA" ] && [ "$PREV_SHA" != "$SHA" ] \
-             && git cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
+            && git cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
             CHANGES=$(git log --oneline --no-merges "${PREV_SHA}..${SHA}" | head -40)
           fi
           [ -n "$CHANGES" ] || CHANGES=$(git log --oneline --no-merges -10)
