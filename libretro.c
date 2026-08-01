@@ -353,7 +353,10 @@ void retro_set_environment(retro_environment_t cb)
 }
 
 /* Resolve the TCP endpoint for the network link and apply the mode.
- * Host (client mode): VJ_NETLINK_HOST env, else first line of
+ * Host (client mode): VJ_NETLINK_HOST env, else the
+ * virtualjaguar_netlink_host option (any string is accepted verbatim so
+ * frontends with free-text option entry can supply arbitrary addresses;
+ * the sentinel "vj_netlink.txt" defers to the file), else first line of
  * <system_dir>/vj_netlink.txt, else 127.0.0.1.  Port: VJ_NETLINK_PORT
  * env overrides the virtualjaguar_netlink_port option. */
 static void netlink_apply(int mode)
@@ -388,7 +391,18 @@ static void netlink_apply(int mode)
       strncpy(host, env, sizeof(host) - 1);
       host[sizeof(host) - 1] = '\0';
    }
-   else
+   if (!host[0])
+   {
+      pvar.key = "virtualjaguar_netlink_host";
+      pvar.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value
+          && pvar.value[0] && strcmp(pvar.value, "vj_netlink.txt") != 0)
+      {
+         strncpy(host, pvar.value, sizeof(host) - 1);
+         host[sizeof(host) - 1] = '\0';
+      }
+   }
+   if (!host[0])
    {
       const char *system_dir = NULL;
       if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)

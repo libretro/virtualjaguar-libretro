@@ -141,6 +141,11 @@ void JLinkSetTCPEndpoint(const char *host, int port)
       jlinkTCPPort = port;
 }
 
+const char *JLinkGetTCPHost(void)
+{
+   return jlinkTCPHost;
+}
+
 int JLinkOpen(int mode)
 {
    JLinkClose();

@@ -130,9 +130,26 @@ static void video_refresh(const void *data, unsigned width, unsigned height, siz
    (void)data; (void)width; (void)height; (void)pitch;
 }
 static void input_poll(void) {}
+
+/* Optional A-press schedule (argv[6]: comma-separated frame numbers,
+   each held 20 frames) — enough to advance title/menu screens into
+   gameplay so in-game audio can be captured. */
+#define MAX_PRESSES 16
+#define PRESS_HOLD  20
+static int g_press_frames[MAX_PRESSES];
+static int g_num_presses = 0;
+static int g_cur_frame = 0;
+
 static int16_t input_state(unsigned port, unsigned device, unsigned index, unsigned id)
 {
-   (void)port; (void)device; (void)index; (void)id;
+   int i;
+   (void)index;
+   if (port != 0 || device != RETRO_DEVICE_JOYPAD || id != RETRO_DEVICE_ID_JOYPAD_A)
+      return 0;
+   for (i = 0; i < g_num_presses; i++)
+      if (g_cur_frame >= g_press_frames[i]
+          && g_cur_frame < g_press_frames[i] + PRESS_HOLD)
+         return 1;
    return 0;
 }
 static void audio_sample_one(int16_t l, int16_t r) { (void)l; (void)r; }
@@ -331,6 +348,7 @@ int main(int argc, char **argv)
          core_path, g_use_bios, g_seconds, g_rom);
 
    for (frame = 0; frame < g_seconds * FRAMES_PER_SEC; frame++) {
+      g_cur_frame = frame;
       retro_run();
       frames_in_sec++;
       if (frames_in_sec >= FRAMES_PER_SEC) {
