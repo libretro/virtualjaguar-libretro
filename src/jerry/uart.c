@@ -87,6 +87,13 @@ void UARTTXCallback(void)
       if (asiCtrl & ASICTRL_TINTEN)
          UARTRaiseIRQ();
    }
+   else
+   {
+      /* Burst finished (shift drained, nothing queued): push the
+         batched transport bytes out NOW so a mid-frame tic exchange
+         gets sub-millisecond latency as one packet per burst. */
+      JLinkPump();
+   }
    UARTKickRx();
 }
 
