@@ -592,13 +592,25 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
    else if (offset >= 0xF10030 && offset <= 0xF10035)
    {
       uint32_t base = offset & 0xFFFFFFFE;
-      uint16_t cur = (base == 0xF10034) ? UARTReadWord(base) : 0;
-      uint16_t v;
-      if (offset & 0x01)
-         v = (uint16_t)((cur & 0xFF00) | data);
+
+      /* ASIDATA/ASICTRL: byte writes are meaningful only to the low byte. */
+      if ((base == 0xF10030 || base == 0xF10032) && !(offset & 0x01))
+         return;
+
+      if (base == 0xF10034)
+      {
+         uint16_t cur = UARTReadWord(base);
+         uint16_t v;
+         if (offset & 0x01)
+            v = (uint16_t)((cur & 0xFF00) | data);
+         else
+            v = (uint16_t)((cur & 0x00FF) | ((uint16_t)data << 8));
+         UARTWriteWord(base, v);
+      }
       else
-         v = (uint16_t)((cur & 0x00FF) | ((uint16_t)data << 8));
-      UARTWriteWord(base, v);
+      {
+         UARTWriteWord(base, (uint16_t)data);
+      }
       return;
    }
    // JERRY -> 68K interrupt enables/latches (need to be handled!)
