@@ -13,6 +13,7 @@ Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) At
 - Optional BIOS boot sequence, plus an HLE BIOS so games can boot without a BIOS image
 - Save state, run-ahead (deterministic serialization), SRAM/EEPROM via the libretro SRAM interface, cheat codes, and a memory map for RetroAchievements
 - Supported ROM formats: `.j64`, `.abs`, `.jag`, `.rom` (including inside ZIP archives), plus conservative headerless raw homebrew loading
+- Network link play (JagLink / CatBox emulation): Doom deathmatch, AirCars, BattleSphere Gold — via RetroArch netplay, or a direct TCP link between frontends on socket-capable platforms ([setup guide](docs/netlink-user-guide.md))
 
 ## Recent improvements (libretro fork)
 
@@ -39,6 +40,7 @@ Output varies by platform: `.so` (Linux), `.dylib` (macOS), `.dll` (Windows).
 
 ## Documentation
 
+- [Network play setup guide](docs/netlink-user-guide.md)
 - [File format details](docs/README)
 - [Source layout](docs/source-layout.md)
 - [Changelog](docs/WHATSNEW)
