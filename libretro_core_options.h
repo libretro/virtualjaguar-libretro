@@ -121,6 +121,38 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_netlink",
+      "Network Link (JagLink / CatBox)",
+      NULL,
+      "Emulates JERRY's serial link port used by networked games (BattleSphere, AirCars, Doom deathmatch). 'Loopback' echoes transmitted bytes back to this console, for testing link-detect menus without a partner. TCP Host listens for a second emulator instance; TCP Client connects to one (host from VJ_NETLINK_HOST env or vj_netlink.txt in the system directory, default 127.0.0.1). Localhost/LAN latency recommended.",
+      NULL,
+      NULL,
+      {
+         { "disabled",   NULL },
+         { "loopback",   "Loopback (echo to self)" },
+         { "tcp_server", "TCP Host (listen)" },
+         { "tcp_client", "TCP Client (connect)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_netlink_port",
+      "Network Link Port",
+      NULL,
+      "TCP port for the network link (both sides must match). Overridable with the VJ_NETLINK_PORT environment variable.",
+      NULL,
+      NULL,
+      {
+         { "42171", NULL },
+         { "42172", NULL },
+         { "42173", NULL },
+         { "42174", NULL },
+         { NULL, NULL },
+      },
+      "42171"
+   },
+   {
       "virtualjaguar_cd_trace",
       "CD Trace (Diagnostic)",
       NULL,

@@ -41,6 +41,8 @@ test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
 test/tools/cd_wedge_probe
 test/tools/sram_test
+test/tools/netlink_pair
+test/tools/netlink_game
 test/dump_caller
 test/dump_pc
 test/heap_search

@@ -1,0 +1,92 @@
+/* jlink_netpacket.c — libretro netpacket transport for the JagLink seam.
+ *
+ * UART TX bytes accumulate in a small per-frame batch and go out as one
+ * RELIABLE broadcast packet (flushed from the frontend's per-frame poll
+ * callback, from retro_run via JLinkPoll, or when the batch fills).
+ * Received packet payloads feed the shared jlink RX ring byte-for-byte.
+ */
+#include <string.h>
+#include "jlink.h"
+#include "jlink_netpacket.h"
+
+#define JLINK_NP_TXBUF_SIZE 512
+
+static retro_netpacket_send_t npSend = NULL;
+static retro_netpacket_poll_receive_t npPollReceive = NULL;
+static int npActive = 0;
+static int npPrevMode = JLINK_MODE_DISABLED;
+static uint8_t npTxBuf[JLINK_NP_TXBUF_SIZE];
+static uint32_t npTxLen = 0;
+
+void JLinkNPStart(uint16_t client_id, retro_netpacket_send_t send_fn,
+                  retro_netpacket_poll_receive_t poll_receive_fn)
+{
+   (void)client_id;
+   npPrevMode = JLinkMode();
+   JLinkClose();
+   npSend = send_fn;
+   npPollReceive = poll_receive_fn;
+   npTxLen = 0;
+   npActive = 1;
+   JLinkOpen(JLINK_MODE_NETPACKET);
+}
+
+void JLinkNPReceive(const void *buf, size_t len, uint16_t client_id)
+{
+   (void)client_id;
+   if (npActive && buf)
+      JLinkNPDeliver((const uint8_t *)buf, len);
+}
+
+void JLinkNPStop(void)
+{
+   npActive = 0;
+   npSend = NULL;
+   npPollReceive = NULL;
+   npTxLen = 0;
+   JLinkClose();
+   if (npPrevMode != JLINK_MODE_DISABLED
+       && npPrevMode != JLINK_MODE_NETPACKET)
+      JLinkOpen(npPrevMode);
+   npPrevMode = JLINK_MODE_DISABLED;
+}
+
+void JLinkNPPoll(void)
+{
+   JLinkNPFlush();
+}
+
+int JLinkNPActive(void)
+{
+   return npActive;
+}
+
+void JLinkNPQueueByte(uint8_t b)
+{
+   if (!npActive)
+      return;
+   npTxBuf[npTxLen++] = b;
+   /* Flush immediately: link games run request/response tic exchanges
+      and spin for the reply mid-frame.  Batching to frame boundaries
+      turned each exchange into >= 1 frame of latency (Doom deathmatch
+      ran in slow motion); per-byte reliable packets are cheap on the
+      LAN links netplay targets. */
+   JLinkNPFlush();
+}
+
+/* Pump the frontend for incoming packets mid-frame (the receive
+   callback fires reentrantly and feeds the ring). */
+void JLinkNPPumpReceive(void)
+{
+   if (npActive && npPollReceive)
+      npPollReceive();
+}
+
+void JLinkNPFlush(void)
+{
+   if (!npActive || !npSend || npTxLen == 0)
+      return;
+   npSend(RETRO_NETPACKET_RELIABLE | RETRO_NETPACKET_FLUSH_HINT,
+          npTxBuf, npTxLen, RETRO_NETPACKET_BROADCAST);
+   npTxLen = 0;
+}
