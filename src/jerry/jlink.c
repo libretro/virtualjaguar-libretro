@@ -1,6 +1,9 @@
 /* jlink.c — byte-transport seam for the JERRY UART.
    Loopback: bytes sent come back on the receive queue, modeling a
    console whose UARTO is wired to its own UARTI. */
+#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1   /* glibc: expose POSIX (nanosleep) under c99 */
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +35,7 @@ static void JLinkSleepUsec(int usec)
 }
 #elif defined(__unix__) || defined(__APPLE__) || defined(__linux__) || \
       defined(__ANDROID__)
-#include <unistd.h>
+#include <time.h>
 #include <sys/time.h>
 #define JLINK_HAVE_WAIT 1
 static long long JLinkNowUsec(void)
@@ -43,7 +46,12 @@ static long long JLinkNowUsec(void)
 }
 static void JLinkSleepUsec(int usec)
 {
-   usleep((useconds_t)usec);
+   /* nanosleep, not usleep: glibc hides usleep/useconds_t under strict
+      -std=c99 (the test builds), and nanosleep is plain POSIX.1-2001. */
+   struct timespec ts;
+   ts.tv_sec = 0;
+   ts.tv_nsec = (long)usec * 1000L;
+   nanosleep(&ts, NULL);
 }
 #endif
 
