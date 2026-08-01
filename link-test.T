@@ -28,6 +28,8 @@
       GPU*;
       gpu_*;
       JERRY*;
+      UART*;
+      JLink*;
       TOM*;
       OP*;
       tomRam8;
