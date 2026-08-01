@@ -24,10 +24,17 @@ static void JLinkRingPush(uint8_t b)
 {
    uint32_t tail;
    if (jlinkCount >= JLINK_RING_SIZE)
-      return;   /* full: drop newest */
+      return;   /* full: drop newest, and don't count it as received */
    tail = (jlinkHead + jlinkCount) % JLINK_RING_SIZE;
    jlinkRing[tail] = b;
    jlinkCount++;
+   /* Counted on ARRIVAL, not on the game draining the ring.  jlinkTxTotal is
+    * incremented in JLinkSendByte(), i.e. at the transport boundary; counting
+    * RX at JLinkRecvByte() instead measured the other side of the ring, so a
+    * peer's traffic stayed invisible until the game got round to reading it
+    * and the two counters were never comparable.  (In loopback the same byte
+    * legitimately increments both: it really does go out and come back.) */
+   jlinkRxTotal++;
 }
 
 void JLinkSetTCPEndpoint(const char *host, int port)
@@ -71,6 +78,12 @@ void JLinkClose(void)
    jlinkMode = JLINK_MODE_DISABLED;
    jlinkHead = 0;
    jlinkCount = 0;
+   /* jlink.h documents these as lifetime-per-session and reset here.  Left
+    * running, they accumulate across independent sessions and across tests
+    * in one process, which makes the diagnostics read as traffic that this
+    * session never carried. */
+   jlinkTxTotal = 0;
+   jlinkRxTotal = 0;
 }
 
 int JLinkMode(void)
@@ -160,7 +173,6 @@ int JLinkRecvByte(uint8_t *b)
    *b = jlinkRing[jlinkHead];
    jlinkHead = (jlinkHead + 1) % JLINK_RING_SIZE;
    jlinkCount--;
-   jlinkRxTotal++;
    return 1;
 }
 

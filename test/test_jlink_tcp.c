@@ -152,11 +152,17 @@ static int hub_connect_peer(int port)
 {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in sa;
+    if (s < 0)
+        return -1;
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = htons((uint16_t)port);
     sa.sin_addr.s_addr = inet_addr("127.0.0.1");
-    if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(s); return -1; }
+    if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) != 0)
+    {
+        close(s);
+        return -1;
+    }
     return s;
 }
 
