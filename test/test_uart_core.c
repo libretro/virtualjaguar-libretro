@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "harness/harness.h"
 
 typedef void     (*jerry_ww_t)(uint32_t, uint16_t, uint32_t);
@@ -108,8 +109,8 @@ int main(int argc, char **argv)
        consume the byte; restore; the byte and RBF must be back. */
     {
         typedef size_t (*rsz_t)(void);
-        typedef int    (*rser_t)(void *, size_t);
-        typedef int    (*runser_t)(const void *, size_t);
+        typedef bool   (*rser_t)(void *, size_t);
+        typedef bool   (*runser_t)(const void *, size_t);
         rsz_t    r_size  = (rsz_t)harness_dlsym(&cfg, "retro_serialize_size");
         rser_t   r_ser   = (rser_t)harness_dlsym(&cfg, "retro_serialize");
         runser_t r_unser = (runser_t)harness_dlsym(&cfg, "retro_unserialize");
