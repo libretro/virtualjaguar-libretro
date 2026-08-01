@@ -26,6 +26,7 @@ void JLinkNPDeliver(const uint8_t *buf, size_t len);
 /* TCP endpoint config; call before JLinkOpen for the TCP modes.
    host is ignored in server mode (listens on INADDR_ANY). */
 void JLinkSetTCPEndpoint(const char *host, int port);
+const char *JLinkGetTCPHost(void);
 
 int  JLinkOpen(int mode);
 void JLinkClose(void);

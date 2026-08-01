@@ -807,7 +807,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap \
 		test/test_audio_dac test/test_blitter \
-		test/tools/test_memory_map test/tools/test_op_gpu_object test/test_uart_core \
+		test/tools/test_memory_map test/tools/test_op_gpu_object test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair
 	./test/test_cheat
 	./test/test_event_queue
@@ -816,6 +816,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 	./test/test_jlink_netpacket ./$(TARGET)
 	./test/test_uart_loopback
 	./test/test_uart_core ./$(TARGET)
+	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
@@ -957,6 +958,10 @@ test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/ua
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_uart_core.c test/harness/harness.c -ldl -lm
+
+test/test_netlink_host: test/test_netlink_host.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/test_netlink_host.c test/harness/harness.c -ldl -lm
 
 test/tools/netlink_pair: test/tools/netlink_pair.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
