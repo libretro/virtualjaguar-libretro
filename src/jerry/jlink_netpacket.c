@@ -22,6 +22,11 @@ void JLinkNPStart(uint16_t client_id, retro_netpacket_send_t send_fn,
                   retro_netpacket_poll_receive_t poll_receive_fn)
 {
    (void)client_id;
+   /* The libretro contract guarantees a valid send_fn, but a NULL here
+      would otherwise leave the link claiming to be connected while
+      JLinkNPFlush can never drain the TX buffer. */
+   if (!send_fn)
+      return;
    npPrevMode = JLinkMode();
    JLinkClose();
    npSend = send_fn;
@@ -65,6 +70,8 @@ void JLinkNPQueueByte(uint8_t b)
 {
    if (!npActive)
       return;
+   if (npTxLen >= JLINK_NP_TXBUF_SIZE)
+      return;   /* flush unavailable: drop rather than overflow */
    npTxBuf[npTxLen++] = b;
    /* Flush immediately: link games run request/response tic exchanges
       and spin for the reply mid-frame.  Batching to frame boundaries
