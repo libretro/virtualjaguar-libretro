@@ -34,6 +34,10 @@ int  JLinkRxPending(void);
    RX ring (bounded by ring space), flush pending TX.  No-op for
    loopback/disabled. */
 void JLinkPoll(void);
+/* Lifetime traffic counters (diagnostics; reset by JLinkClose). */
+uint32_t JLinkTxTotal(void);
+uint32_t JLinkRxTotal(void);
+
 size_t JLinkStateSave(uint8_t *buf);
 size_t JLinkStateLoad(const uint8_t *buf);
 

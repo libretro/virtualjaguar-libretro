@@ -36,6 +36,9 @@ typedef struct {
     jerry_rw_t jerry_rw;
     jlink_int_t jlink_connected;
     jlink_int_t jlink_rx_pending;
+    uint32_t (*jlink_tx_total)(void);
+    uint32_t (*jlink_rx_total)(void);
+    uint32_t last_tx, last_rx;
     uint16_t last_stat, last_clk;
     int last_conn;
     int uart_touched;
@@ -86,8 +89,20 @@ static bool ng_frame_cb(void *ud, unsigned frame)
     uint16_t stat = st->jerry_rw(0xF10032, 0);
     uint16_t clk  = st->jerry_rw(0xF10034, 0);
     int conn = st->jlink_connected ? st->jlink_connected() : 0;
+    uint32_t tx = st->jlink_tx_total ? st->jlink_tx_total() : 0;
+    uint32_t rx = st->jlink_rx_total ? st->jlink_rx_total() : 0;
 
     st->frame_no = frame + 1;
+
+    if (tx != st->last_tx || rx != st->last_rx)
+    {
+        if ((frame % 60) == 0 || tx / 100 != st->last_tx / 100
+            || rx / 100 != st->last_rx / 100)
+            fprintf(stderr, "[link] frame %5u  tx=%u rx=%u\n", frame, tx, rx);
+        st->last_tx = tx;
+        st->last_rx = rx;
+        st->uart_touched = 1;
+    }
 
     if (stat != st->last_stat || clk != st->last_clk || conn != st->last_conn)
     {
@@ -181,6 +196,8 @@ int main(int argc, char **argv)
     st.jerry_rw = (jerry_rw_t)harness_dlsym(&cfg, "JERRYReadWord");
     st.jlink_connected = (jlink_int_t)harness_dlsym(&cfg, "JLinkConnected");
     st.jlink_rx_pending = (jlink_int_t)harness_dlsym(&cfg, "JLinkRxPending");
+    st.jlink_tx_total = (uint32_t (*)(void))harness_dlsym(&cfg, "JLinkTxTotal");
+    st.jlink_rx_total = (uint32_t (*)(void))harness_dlsym(&cfg, "JLinkRxTotal");
     if (!st.jerry_rw)
     {
         fprintf(stderr, "netlink_game: JERRY symbols missing (TEST_EXPORTS=1)\n");
@@ -190,7 +207,7 @@ int main(int argc, char **argv)
     harness_run(&cfg);
     harness_shutdown(&cfg);
 
-    fprintf(stderr, "[uart] summary: touched=%d tbe_drops=%u\n",
-            st.uart_touched, st.tbe_drops);
+    fprintf(stderr, "[uart] summary: touched=%d tbe_drops=%u tx=%u rx=%u\n",
+            st.uart_touched, st.tbe_drops, st.last_tx, st.last_rx);
     return st.uart_touched ? 0 : 2;
 }
