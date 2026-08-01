@@ -795,7 +795,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_cheat test/test_event_queue test/test_jlink test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -810,6 +810,7 @@ test: test/test_cheat test/test_event_queue test/test_blitter_simd test/test_dsp
 		test/tools/test_memory_map test/tools/test_op_gpu_object
 	./test/test_cheat
 	./test/test_event_queue
+	./test/test_jlink
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
@@ -930,6 +931,14 @@ test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
+
+test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_jlink.c src/jerry/jlink.c
+
+test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/core/event.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/core/event.c -lm
 
 # Regression guard: textually verifies that JERRYResetPIT1/2,
 # TOMResetPIT, and JERRYGetPIT*Frequency schedule using RISC clock
