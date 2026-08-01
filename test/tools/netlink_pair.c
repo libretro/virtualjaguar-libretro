@@ -151,6 +151,20 @@ int main(int argc, char **argv)
             got_bytes[ngot++] = (uint8_t)(jerry_rw(0xF10030, 0) & 0xFF);
     }
 
+    /* Grace period: our peer may still be waiting on its second byte
+       (paced at ~27 ms emulated per character).  Exiting immediately
+       tears the socket down under it — seen as a flake on slow CI
+       (i686 runner: server got 1 of 2 bytes).  Keep the link alive a
+       moment after we are satisfied. */
+    if (ngot == 2)
+    {
+        for (i = 0; i < 90; i++)
+        {
+            run_frame();
+            usleep(5000);
+        }
+    }
+
     harness_shutdown(&cfg);
 
     if (!connected)
