@@ -67,12 +67,58 @@ static void test_state_roundtrip(void)
     JLinkClose();
 }
 
+/* jlink.h documents the traffic counters as per-session, reset by
+   JLinkClose().  They used to survive a close and accumulate across
+   sessions, which made the netlink diagnostics report traffic the current
+   session never carried. */
+static void test_counters_reset_on_close(void)
+{
+    JLinkOpen(JLINK_MODE_LOOPBACK);
+    JLinkSendByte(0x5A);
+    JLinkSendByte(0x5B);
+    CHECK(JLinkTxTotal() == 2, "tx counted while open");
+    JLinkClose();
+    CHECK(JLinkTxTotal() == 0, "close resets tx total");
+    CHECK(JLinkRxTotal() == 0, "close resets rx total");
+}
+
+/* RX is counted where the byte ARRIVES, not where the game drains the ring
+   — otherwise a peer's traffic stays invisible in the counters until the
+   game happens to read it, and tx/rx are never comparable. */
+static void test_rx_counted_on_arrival(void)
+{
+    uint8_t b = 0;
+    JLinkOpen(JLINK_MODE_LOOPBACK);
+    JLinkSendByte(0x77);
+    CHECK(JLinkRxTotal() == 1, "rx counted on arrival, before any read");
+    CHECK(JLinkRxPending() == 1, "byte still queued");
+    (void)JLinkRecvByte(&b);
+    CHECK(JLinkRxTotal() == 1, "draining the ring does not re-count it");
+    JLinkClose();
+}
+
+/* A dropped byte never entered the ring, so it must not be counted as
+   received: rx total has to stay consistent with what a reader can see. */
+static void test_dropped_bytes_not_counted(void)
+{
+    int i;
+    JLinkOpen(JLINK_MODE_LOOPBACK);
+    for (i = 0; i < 300; i++)
+        JLinkSendByte((uint8_t)i);
+    CHECK(JLinkTxTotal() == 300, "all 300 sends counted as tx");
+    CHECK(JLinkRxTotal() == 256, "only the 256 that fit counted as rx");
+    JLinkClose();
+}
+
 int main(void)
 {
     test_disabled_mode();
     test_loopback_roundtrip();
     test_overflow_drops_newest();
     test_state_roundtrip();
+    test_counters_reset_on_close();
+    test_rx_counted_on_arrival();
+    test_dropped_bytes_not_counted();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }
