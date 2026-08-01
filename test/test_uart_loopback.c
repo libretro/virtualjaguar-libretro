@@ -166,6 +166,50 @@ static void test_disabled_link(void)
     CHECK((UARTReadWord(ASISTAT) & ST_TBE) != 0, "disabled: TX still drains");
 }
 
+static void test_rx_interrupt(void)
+{
+    fresh();
+    UARTWriteWord(ASICLK, 0);
+    UARTWriteWord(ASICTRL, CT_RINTEN);
+    UARTWriteWord(ASIDATA, 0x99);
+    pump(2);                               /* TX + RX frames */
+    CHECK((stubPending & IRQ2_ASI) != 0, "RINTEN: RX raises IRQ2_ASI");
+    CHECK(stubIpl == 2, "RX interrupt asserts 68K IPL2");
+}
+
+static void test_rx_interrupt_masked(void)
+{
+    fresh();
+    stubIrqMask = 0;                       /* J_ASYNENA off */
+    UARTWriteWord(ASICLK, 0);
+    UARTWriteWord(ASICTRL, CT_RINTEN);
+    UARTWriteWord(ASIDATA, 0x99);
+    pump(2);
+    CHECK(stubPending == 0, "JINTCTRL gate blocks RX IRQ");
+    CHECK(stubIpl == -1, "no IPL2 when masked");
+}
+
+static void test_rx_interrupt_disabled(void)
+{
+    fresh();                               /* mask on, RINTEN off */
+    UARTWriteWord(ASICLK, 0);
+    UARTWriteWord(ASIDATA, 0x99);
+    pump(2);
+    CHECK(stubPending == 0, "RINTEN off: RX raises nothing");
+}
+
+static void test_tx_interrupt_on_holding_drain(void)
+{
+    fresh();
+    UARTWriteWord(ASICLK, 0);
+    UARTWriteWord(ASICTRL, CT_TINTEN);
+    UARTWriteWord(ASIDATA, 0x01);          /* straight to shift: no IRQ */
+    CHECK(stubPending == 0, "straight-to-shift write raises no TX IRQ");
+    UARTWriteWord(ASIDATA, 0x02);          /* parks in holding */
+    pump(1);                               /* holding drains -> TBE edge */
+    CHECK((stubPending & IRQ2_ASI) != 0, "TINTEN: holding drain raises IRQ");
+}
+
 int main(void)
 {
     vjs.hardwareTypeNTSC = true;
@@ -175,6 +219,10 @@ int main(void)
     test_double_buffering();
     test_overrun();
     test_disabled_link();
+    test_rx_interrupt();
+    test_rx_interrupt_masked();
+    test_rx_interrupt_disabled();
+    test_tx_interrupt_on_holding_drain();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }
