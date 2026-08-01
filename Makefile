@@ -795,7 +795,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_cheat test/test_event_queue test/test_jlink test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_cheat test/test_event_queue test/test_jlink test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -811,6 +811,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_blitter_si
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_jlink
+	./test/test_uart_loopback
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
