@@ -275,6 +275,32 @@ counters on the transport (`JLinkTxTotal`/`JLinkRxTotal`, dlsym diagnostics).
   players. Nodes never see their own bytes echoed (the hub forwards to
   *other* peers only) — AirCars is confirmed happy with that topology.
 
+## Phase 3 outcome (2026-07-31)
+
+Delivered: `src/jerry/jlink_netpacket.c` — the libretro netpacket transport
+(env 78). Registered unconditionally in `retro_set_environment` and inert
+until the frontend starts a netplay session; `start()` takes over the link
+(saving the option-configured mode, restored on `stop()`), TX batches go
+out once per frame as `RELIABLE|FLUSH_HINT` broadcasts (multi-console
+CatNet sessions work over netplay for free), received payloads feed the
+shared RX ring. Protocol version pinned as `vjag-netlink-1` so frontends
+refuse cross-incompatible core pairings. **No core option required** —
+stock settings + RetroArch's normal netplay UI just work.
+
+Validation:
+- `test_jlink_netpacket` — a self-contained fake frontend exercising the
+  full contract (registration, start/receive/stop, RELIABLE+broadcast
+  flags, mode handoff and restore); in `make test`.
+- `test/tools/netlink_ra_matrix.sh` under **real RetroArch 1.22.2** on
+  macOS: host + client instances of this core with Doom, netplay session
+  established (`SET_NETPACKET_INTERFACE` accepted, "joined as player 2",
+  ~11–16 ms ping), windows playable by humans. `KEEP=1` leaves the
+  session up for manual play; `RETROARCH_BIN` overrides discovery;
+  missing RetroArch suggests `brew install --cask retroarch`.
+
+Frontend matrix: RetroArch ≥ 1.16 → netpacket netplay; any other frontend
+(Provenance, etc.) → TCP modes; every frontend → loopback/disabled.
+
 ## Decisions log
 
 - TCP before netpacket (user, 2026-07-31) — frontend-agnostic + testable first.
