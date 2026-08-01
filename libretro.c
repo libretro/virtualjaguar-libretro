@@ -389,7 +389,7 @@ static void netlink_apply(int mode)
       }
    }
 
-   JLinkSetTCPEndpoint(host[0] ? host : NULL, port);
+   JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
    UARTSetLinkMode(mode);
 }
 
