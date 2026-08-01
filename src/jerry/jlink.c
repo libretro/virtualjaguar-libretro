@@ -16,8 +16,11 @@ int JLinkOpen(int mode)
 {
    JLinkClose();
    if (mode == JLINK_MODE_LOOPBACK)
+   {
       jlinkMode = mode;
-   return 1;
+      return 1;
+   }
+   return 0;
 }
 
 void JLinkClose(void)
