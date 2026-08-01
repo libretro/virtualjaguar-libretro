@@ -270,6 +270,13 @@ int main(int argc, char **argv)
    g_seconds = atoi(argv[3]);
    if (g_seconds < 1 || g_seconds > 600) g_seconds = 60;
    if (argc >= 5) g_use_bios = atoi(argv[4]) ? 1 : 0;
+   if (argc >= 7) {
+      char *tok = strtok(argv[6], ",");
+      while (tok && g_num_presses < MAX_PRESSES) {
+         g_press_frames[g_num_presses++] = atoi(tok);
+         tok = strtok(NULL, ",");
+      }
+   }
    if (argc >= 6) {
       g_wav_out = argv[5];
       g_wav_fp = fopen(g_wav_out, "wb");
