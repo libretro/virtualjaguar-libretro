@@ -71,17 +71,22 @@ void JLinkNPQueueByte(uint8_t b)
    if (!npActive)
       return;
    if (npTxLen >= JLINK_NP_TXBUF_SIZE)
-      return;   /* flush unavailable: drop rather than overflow */
+   {
+      /* Full: flush to make room — dropping link bytes risks a game
+         desync.  Only drop if the flush couldn't drain (inconsistent
+         state; cannot happen for an active session). */
+      JLinkNPFlush();
+      if (npTxLen >= JLINK_NP_TXBUF_SIZE)
+         return;
+   }
    npTxBuf[npTxLen++] = b;
    /* No flush here: the UART flushes at burst end (transmit shift
       register drains with nothing queued), which keeps mid-frame tic
       exchanges sub-millisecond WITHOUT emitting one reliable packet
       per byte.  Per-byte packets were fine on localhost but caused
       visible lag over real Wi-Fi (per-packet overhead on every byte
-      of every tic).  Safety nets: buffer-full flush below, and the
+      of every tic).  Safety nets: the flush-on-full above and the
       per-frame flush in JLinkPoll/JLinkNPPoll. */
-   if (npTxLen >= JLINK_NP_TXBUF_SIZE)
-      JLinkNPFlush();
 }
 
 /* Pump the frontend for incoming packets mid-frame (the receive
