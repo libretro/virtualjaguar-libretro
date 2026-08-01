@@ -39,9 +39,13 @@ cleanup() {
     if [ "$KEEP" != "1" ]; then
         [ -n "$HOST_PID" ] && kill "$HOST_PID" 2>/dev/null
         [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null
+        wait "$HOST_PID" "$CLIENT_PID" 2>/dev/null
     fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# On signals: clean up, drop the EXIT trap (avoid double cleanup), and
+# actually stop the script instead of continuing the run.
+trap 'cleanup; trap - EXIT; exit 130' INT TERM
 APPEND="$WORK/append.cfg"
 cat > "$APPEND" <<EOF
 config_save_on_exit = "false"
