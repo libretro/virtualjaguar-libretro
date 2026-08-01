@@ -16,6 +16,9 @@ static uint32_t jlinkCount = 0;
 static char jlinkTCPHost[128] = "127.0.0.1";
 static int jlinkTCPPort = 42171;
 
+static uint32_t jlinkTxTotal = 0;
+static uint32_t jlinkRxTotal = 0;
+
 static void JLinkRingPush(uint8_t b)
 {
    uint32_t tail;
@@ -78,11 +81,24 @@ int JLinkConnected(void)
 
 void JLinkSendByte(uint8_t b)
 {
+   if (jlinkMode == JLINK_MODE_DISABLED)
+      return;
+   jlinkTxTotal++;
    if (jlinkMode == JLINK_MODE_LOOPBACK)
       JLinkRingPush(b);
    else if (jlinkMode == JLINK_MODE_TCP_SERVER
             || jlinkMode == JLINK_MODE_TCP_CLIENT)
       JLinkTCPSend(b);
+}
+
+uint32_t JLinkTxTotal(void)
+{
+   return jlinkTxTotal;
+}
+
+uint32_t JLinkRxTotal(void)
+{
+   return jlinkRxTotal;
 }
 
 void JLinkPoll(void)
@@ -108,6 +124,7 @@ int JLinkRecvByte(uint8_t *b)
    *b = jlinkRing[jlinkHead];
    jlinkHead = (jlinkHead + 1) % JLINK_RING_SIZE;
    jlinkCount--;
+   jlinkRxTotal++;
    return 1;
 }
 

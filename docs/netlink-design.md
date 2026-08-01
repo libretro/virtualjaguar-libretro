@@ -245,6 +245,36 @@ probe tool (per-frame UART sampling + PPM screenshots + `--realtime` pacing).
 Both games poll ASISTAT rather than enabling TINTEN/RINTEN, so interrupt
 delivery remains covered by unit tests only so far.
 
+## Phase 4 outcome (2026-07-31)
+
+Delivered: CatNet-style multi-peer hub in the TCP server (up to 7 peers;
+local TX reaches every peer, a byte from one peer is delivered locally and
+forwarded to all others — shared multi-drop bus semantics; unit-tested with
+the test process owning two raw peer sockets), plus lifetime TX/RX byte
+counters on the transport (`JLinkTxTotal`/`JLinkRxTotal`, dlsym diagnostics).
+
+**AirCars validation (the CatNet title):**
+
+- Programs the UART at boot: ASICLK=0x2A (~38.6 kbaud) with **RINTEN** — the
+  only known title using interrupt-driven RX, so its gameplay exercises the
+  UART→JINTCTRL→68K IPL2 path end-to-end (BSG/Doom poll ASISTAT instead).
+- Menu map (discovered headlessly; cursor state is boot-dependent, so paired
+  runs navigate once solo and share a savestate at the seat-select screen):
+  title → A → Game Selection {Set Game Difficulty / Enter Your Name /
+  Single Player / Two Player Direct Serial / Multiple Player Network} →
+  seat select → difficulty → name entry → mission select → play. The
+  standalone "Set Game Difficulty" submenu looks identical to the in-wizard
+  difficulty step; A/B there just applies and returns (a menu-navigation
+  trap that cost several runs).
+- **Two Player Direct Serial over TCP: both consoles enter the mission**
+  (cockpit HUDs, mission clock), sustained symmetric protocol traffic
+  (~2.7 KB each way over the session).
+- **Three-console Multiple Player Network over the hub: all three enter the
+  mission**; per-node traffic shows exact bus math (each tx≈3.26 KB,
+  rx≈6.52 KB = sum of the other two), and a node's radar displays the other
+  players. Nodes never see their own bytes echoed (the hub forwards to
+  *other* peers only) — AirCars is confirmed happy with that topology.
+
 ## Decisions log
 
 - TCP before netpacket (user, 2026-07-31) — frontend-agnostic + testable first.
