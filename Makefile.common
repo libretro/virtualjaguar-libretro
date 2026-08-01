@@ -29,6 +29,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/jerry.c \
 	$(CORE_DIR)/src/jerry/jlink.c \
 	$(CORE_DIR)/src/jerry/jlink_tcp.c \
+	$(CORE_DIR)/src/jerry/jlink_netpacket.c \
 	$(CORE_DIR)/src/jerry/uart.c \
 	$(CORE_DIR)/src/tom/op.c \
 	$(CORE_DIR)/src/tom/tom.c  \

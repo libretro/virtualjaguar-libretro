@@ -795,7 +795,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -813,6 +813,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 	./test/test_event_queue
 	./test/test_jlink
 	./test/test_jlink_tcp
+	./test/test_jlink_netpacket ./$(TARGET)
 	./test/test_uart_loopback
 	./test/test_uart_core ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
@@ -937,17 +938,21 @@ test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
 
-test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c
+test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c
+		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c
 
-test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink.h src/jerry/jlink_tcp.h
+test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink.h src/jerry/jlink_tcp.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c
+		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c
 
-test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/core/event.c
+test/test_jlink_netpacket: test/test_jlink_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/core/event.c -lm
+		-o $@ test/test_jlink_netpacket.c -ldl
+
+test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/core/event.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/core/event.c -lm
 
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \

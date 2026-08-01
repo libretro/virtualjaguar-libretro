@@ -4,6 +4,7 @@
 #include <string.h>
 #include "jlink.h"
 #include "jlink_tcp.h"
+#include "jlink_netpacket.h"
 #include "state.h"
 
 #define JLINK_RING_SIZE 256
@@ -56,6 +57,11 @@ int JLinkOpen(int mode)
       jlinkMode = mode;
       return 1;
    }
+   if (mode == JLINK_MODE_NETPACKET)
+   {
+      jlinkMode = mode;
+      return 1;
+   }
    return 0;
 }
 
@@ -76,7 +82,16 @@ int JLinkConnected(void)
 {
    if (jlinkMode == JLINK_MODE_TCP_SERVER || jlinkMode == JLINK_MODE_TCP_CLIENT)
       return JLinkTCPConnected();
+   if (jlinkMode == JLINK_MODE_NETPACKET)
+      return JLinkNPActive();
    return jlinkMode != JLINK_MODE_DISABLED;
+}
+
+void JLinkNPDeliver(const uint8_t *buf, size_t len)
+{
+   size_t i;
+   for (i = 0; i < len; i++)
+      JLinkRingPush(buf[i]);
 }
 
 void JLinkSendByte(uint8_t b)
@@ -89,6 +104,8 @@ void JLinkSendByte(uint8_t b)
    else if (jlinkMode == JLINK_MODE_TCP_SERVER
             || jlinkMode == JLINK_MODE_TCP_CLIENT)
       JLinkTCPSend(b);
+   else if (jlinkMode == JLINK_MODE_NETPACKET)
+      JLinkNPQueueByte(b);
 }
 
 uint32_t JLinkTxTotal(void)
@@ -103,6 +120,13 @@ uint32_t JLinkRxTotal(void)
 
 void JLinkPoll(void)
 {
+   if (jlinkMode == JLINK_MODE_NETPACKET)
+   {
+      /* Flush the per-frame TX batch; RX arrives via the frontend's
+         receive callback into the ring. */
+      JLinkNPFlush();
+      return;
+   }
    if (jlinkMode != JLINK_MODE_TCP_SERVER && jlinkMode != JLINK_MODE_TCP_CLIENT)
       return;
    JLinkTCPPoll();

@@ -16,8 +16,12 @@ enum
    JLINK_MODE_DISABLED   = 0,
    JLINK_MODE_LOOPBACK   = 1,
    JLINK_MODE_TCP_SERVER = 2,
-   JLINK_MODE_TCP_CLIENT = 3
+   JLINK_MODE_TCP_CLIENT = 3,
+   JLINK_MODE_NETPACKET  = 4   /* frontend netplay session (env 78) */
 };
+
+/* Push transport-received bytes into the RX ring (netpacket backend). */
+void JLinkNPDeliver(const uint8_t *buf, size_t len);
 
 /* TCP endpoint config; call before JLinkOpen for the TCP modes.
    host is ignored in server mode (listens on INADDR_ANY). */

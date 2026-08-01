@@ -29,6 +29,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "dac.h"
 #include "dsp.h"
 #include "jlink.h"
+#include "jlink_netpacket.h"
 #include "uart.h"
 #include "joystick.h"
 #include "settings.h"
@@ -305,6 +306,21 @@ static bool update_option_visibility(void)
    return updated;
 }
 
+/* Netpacket interface (env 78): registered unconditionally and inert
+ * until the frontend starts a netplay session; the session then carries
+ * the JagLink byte stream (jlink_netpacket.c), taking over whatever mode
+ * the virtualjaguar_netlink option had configured and restoring it on
+ * stop.  Broadcast TX makes multi-console (CatNet) sessions work too. */
+static const struct retro_netpacket_callback netpacket_cb = {
+   JLinkNPStart,
+   JLinkNPReceive,
+   JLinkNPStop,
+   JLinkNPPoll,
+   NULL,                /* connected */
+   NULL,                /* disconnected */
+   "vjag-netlink-1"     /* protocol_version */
+};
+
 void retro_set_environment(retro_environment_t cb)
 {
    struct retro_vfs_interface_info vfs_iface_info;
@@ -312,6 +328,8 @@ void retro_set_environment(retro_environment_t cb)
    bool option_categories = false;
    bool achievements = true;
    environ_cb = cb;
+
+   cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, (void *)&netpacket_cb);
 
    {
       struct retro_log_callback log_iface;
