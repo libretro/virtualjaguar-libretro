@@ -16,6 +16,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <stdio.h>
 #include "jaguar.h"
 #include "log.h"  /* CDDA-DIAG */
 
@@ -32,6 +33,7 @@
 #include "joystick.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
+#include "nvmbios.h"
 #include "settings.h"
 #include "tom.h"
 
@@ -324,6 +326,12 @@ void M68KInstructionHook(void)
     * jagcd_hle.c instead of executing the cart bytes.  Returns true if the
     * hook handled the call (PC/registers updated). */
    if (JaguarCDHLEHook(m68kPC))
+      return;
+
+   /* Memory Track NVM BIOS dispatcher ($2404) — active for CD content in
+    * BOTH boot modes; the module is RAM-resident on hardware, independent
+    * of which CD BIOS variant booted the disc. */
+   if (NVMBiosHook(m68kPC))
       return;
 
    /* CD boot strategy hook (cart strategy is a no-op for cart games;

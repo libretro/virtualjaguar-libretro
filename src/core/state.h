@@ -21,7 +21,8 @@ extern "C" {
  * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
  * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
  * v6: new UART chunk (JERRY async serial + jlink RX ring).
- * v7: Memory Track chunk gained the latched $80AAA8 override flag. */
+ * v7: Memory Track chunk gained the latched $80AAA8 override flag and
+ *     the NVM BIOS dispatcher state (nvmbios.c). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   7
 /* Oldest layout retro_unserialize still accepts.  States between
@@ -100,6 +101,8 @@ size_t JoystickStateLoad(const uint8_t *buf);
 
 size_t MTStateSave(uint8_t *buf);
 size_t MTStateLoad(const uint8_t *buf, uint32_t version);
+size_t NVMBiosStateSave(uint8_t *buf);
+size_t NVMBiosStateLoad(const uint8_t *buf);
 
 size_t DACStateSave(uint8_t *buf);
 /* stateVersion is the version read from the state header: fields added in

@@ -63,5 +63,7 @@
       DAC*;
       JoystickState*;
       MTState*;
+      NVMBios*;
+      NVM_*;
    local: *;
 };

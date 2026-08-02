@@ -37,6 +37,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "tom.h"
 #include "eeprom.h"
 #include "memtrack.h"
+#include "nvmbios.h"
 #include "vjag_memory.h"
 #include "state.h"
 #include "log.h"
@@ -125,6 +126,8 @@ static bool save_data_needs_unpack = false;
 /* CD content state. The Tier 1 weak symbols for external_cd_bios[] and
  * cd_bios_loaded_externally are overridden by the strong definitions below. */
 static bool jaguar_cd_mode = false;
+/* Memory Track presence option (CD only); default on. */
+static bool opt_memory_track = true;
 static char cd_image_path[4096] = {0};
 bool cd_bios_loaded_externally = false;
 uint8_t external_cd_bios[0x40000];  /* 256 KB */
@@ -326,6 +329,7 @@ static bool update_option_visibility(void)
          "virtualjaguar_cd_boot_mode",
          "virtualjaguar_cd_read_speed",
          "virtualjaguar_cd_trace",
+         "virtualjaguar_memory_track",
       };
       bool show_cd_prev        = show_cd_options;
       bool show_cart_bios_prev = show_cart_bios_option;
@@ -560,6 +564,12 @@ static void check_variables(void)
       else
          vjs.hardwareTypeNTSC = true;
    }
+
+   var.key = "virtualjaguar_memory_track";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      opt_memory_track = (strcmp(var.value, "disabled") != 0);
 
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
@@ -938,6 +948,7 @@ bool retro_serialize(void *data, size_t size)
    buf += CDROMStateSave(buf);
    buf += JoystickStateSave(buf);
    buf += MTStateSave(buf);
+   buf += NVMBiosStateSave(buf);
    buf += DACStateSave(buf);
    buf += UARTStateSave(buf);
 
@@ -999,6 +1010,10 @@ bool retro_unserialize(const void *data, size_t size)
    buf += CDROMStateLoad(buf, version);
    buf += JoystickStateLoad(buf);
    buf += MTStateLoad(buf, version);
+   if (version >= STATE_VERSION_MEMTRACK_OVERRIDE)
+      buf += NVMBiosStateLoad(buf);
+   else
+      NVMBiosReset();
    buf += DACStateLoad(buf, version);
    if (version >= STATE_VERSION_JERRY_UART)
       buf += UARTStateLoad(buf, version);
@@ -1345,9 +1360,10 @@ bool retro_load_game(const struct retro_game_info *info)
                               || has_extension(info->path, "iso")))
    {
       jaguar_cd_mode = true;
-      /* Hardware has the Memory Track cart in the slot alongside the CD
-       * unit; MEMCON1 ROMWIDTH arbitrates which one answers in cart space. */
-      jaguarMemTrackInserted = true;
+      /* Hardware has the Memory Track cart plugged in alongside the CD
+       * unit (user-selectable; some titles behave differently with one
+       * present). */
+      jaguarMemTrackInserted = opt_memory_track;
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
       cd_image_path[sizeof(cd_image_path) - 1] = '\0';
 
@@ -1457,6 +1473,13 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Content type is now known — refresh which options apply to it. */
    content_loaded = true;
    update_option_visibility();
+
+   /* Memory Track NVM BIOS module: on hardware the CD BIOS boot installs
+    * it in RAM before the game runs; do the same after the boot strategy
+    * has set RAM up. */
+   NVMBiosReset();
+   if (jaguarMemTrackInserted)
+      NVMBiosInstall();
 
    return true;
 }
@@ -1654,6 +1677,12 @@ void retro_deinit(void)
 void retro_reset(void)
 {
    JaguarReset();
+
+   /* Console reset re-runs the CD BIOS boot on hardware, which reinstalls
+    * the Memory Track NVM module. */
+   NVMBiosReset();
+   if (jaguarMemTrackInserted)
+      NVMBiosInstall();
 
    /* Re-blank the framebuffer, or the reset presents the PREVIOUS session's
     * pixels.  TOMReset puts tomWidth back to 0, and the border-fill path in
