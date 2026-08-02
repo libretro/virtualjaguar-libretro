@@ -901,7 +901,12 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 			[ -n "$$VJ_VIS_DISC" ] && break; \
 			VJ_VIS_DISC=$$(ls "$$VJ_VIS_ROOT"/$$VJ_VIS_PAT/*.cue 2>/dev/null | head -1); \
 		done; \
-		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"
+		if [ -f test/roms/jagniccc.j64 ]; then \
+			./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"; \
+		else \
+			echo "=== Core Option Visibility ==="; \
+			echo "  SKIP: test/roms/jagniccc.j64 not present"; \
+		fi
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
