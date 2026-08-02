@@ -1,0 +1,39 @@
+# Uploads source texts and any present translations to Crowdin.
+#
+# RUN THIS ONCE, BY HAND, and only after a Crowdin project manager has
+# provided the CROWDIN_API_KEY secret. Running it again is discouraged
+# upstream -- it can overwrite newer Crowdin-side translations that have
+# not been pulled into the repository yet. After the first successful
+# run, the scheduled "Crowdin Translation Sync" workflow takes over and
+# this file can be deleted.
+
+name: Crowdin Translations Initial Setup
+
+# On manual run only.
+on:
+  workflow_dispatch:
+
+jobs:
+  upload_source_file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 18
+          distribution: zulu
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initial synchronisation
+        shell: bash
+        env:
+          CROWDIN_API_KEY: ${{ secrets.CROWDIN_API_KEY }}
+        run: |
+          python3 intl/initial_sync.py $CROWDIN_API_KEY "virtualjaguar-libretro" "libretro_core_options.h"
