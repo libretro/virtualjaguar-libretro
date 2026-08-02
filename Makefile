@@ -757,7 +757,7 @@ clean:
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing \
 		test/dump_pc test/heap_search \
-		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
+		test/tools/test_memory_map test/tools/test_option_visibility test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
 
 # Self-contained unit tests (parser + list management + simulated
@@ -807,7 +807,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap \
 		test/test_audio_dac test/test_blitter \
-		test/tools/test_memory_map test/tools/test_op_gpu_object test/test_uart_core test/test_netlink_host \
+		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
 	./test/test_cheat
 	./test/test_event_queue
@@ -889,6 +889,10 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	@# Option visibility is content-type dependent; the disc half runs only
+	@# when a private CD image is available (the cart half always runs).
+	@VJ_VIS_DISC=$$(ls "test/roms/private/Jaguar CD/BinCue"/*/*.cue 2>/dev/null | head -1); \
+		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
@@ -1061,6 +1065,10 @@ test/test_audio_presence: test/test_audio_presence.c
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+test/tools/test_option_visibility: test/tools/test_option_visibility.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_option_visibility.c -ldl
 
 test/tools/test_op_gpu_object: test/tools/test_op_gpu_object.c \
 		test/harness/harness.c test/harness/harness.h

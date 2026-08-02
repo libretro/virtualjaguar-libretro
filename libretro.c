@@ -148,6 +148,12 @@ static int jag_retropad[2][RETROPAD_INPUT_COUNT];
 static int jag_numpad[2][12];
 static int numpad_to_kb[2];
 static bool show_input_options = true;
+/* Content-type-dependent option visibility.  Both default to visible so
+ * the options menu is complete before any content is loaded (the type is
+ * unknown then, and the user may be configuring ahead of loading). */
+static bool content_loaded         = false;
+static bool show_cd_options        = true;
+static bool show_cart_bios_option  = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -302,6 +308,48 @@ static bool update_option_visibility(void)
       }
 
       updated = true;
+   }
+
+   /* Show/hide options that only apply to one content type.  Filtering
+    * is deliberately skipped until content is loaded: with nothing
+    * loaded the type is unknown, and hiding either group would make
+    * options unreachable for someone configuring ahead of time. */
+   {
+      static const char * const cd_only_keys[] = {
+         "virtualjaguar_cd_bios_type",
+         "virtualjaguar_cd_boot_mode",
+         "virtualjaguar_cd_read_speed",
+         "virtualjaguar_cd_trace",
+      };
+      bool show_cd_prev        = show_cd_options;
+      bool show_cart_bios_prev = show_cart_bios_option;
+
+      show_cd_options       = (!content_loaded || jaguar_cd_mode);
+      /* The cartridge BIOS setting is ignored for CD content —
+       * ResolveBootConfig() lets CD Boot Mode drive showBootROM — so
+       * showing it there would advertise a control that does nothing. */
+      show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
+
+      if (show_cd_options != show_cd_prev)
+      {
+         option_display.visible = show_cd_options;
+         for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
+         {
+            option_display.key = cd_only_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
+         updated = true;
+      }
+
+      if (show_cart_bios_option != show_cart_bios_prev)
+      {
+         option_display.visible = show_cart_bios_option;
+         option_display.key     = "virtualjaguar_bios";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
    }
 
    return updated;
@@ -1395,6 +1443,10 @@ bool retro_load_game(const struct retro_game_info *info)
     * first retro_run(). We unpack it on the first frame. */
    save_data_needs_unpack = true;
 
+   /* Content type is now known — refresh which options apply to it. */
+   content_loaded = true;
+   update_option_visibility();
+
    return true;
 }
 
@@ -1412,6 +1464,9 @@ void retro_unload_game(void)
    CDIntfCloseImage();
    jaguar_cd_mode    = false;
    cd_image_path[0]  = '\0';
+   /* Content type is unknown again — restore the full option list. */
+   content_loaded    = false;
+   update_option_visibility();
    JaguarDone();
 
    if (videoBuffer)
@@ -1438,6 +1493,9 @@ void retro_unload_game(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   content_loaded = false;
+   show_cd_options = true;
+   show_cart_bios_option = true;
 }
 
 unsigned retro_get_region(void)
@@ -1560,6 +1618,9 @@ void retro_deinit(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   content_loaded = false;
+   show_cd_options = true;
+   show_cart_bios_option = true;
 }
 
 void retro_reset(void)
