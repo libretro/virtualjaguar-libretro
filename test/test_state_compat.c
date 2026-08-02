@@ -112,6 +112,11 @@ const char *__lsan_default_suppressions(void) {
  * would not be unique. */
 #define CDROM_DSA_TAIL_SIZE           28
 
+/* Trailing Memory Track byte a v2..v6 state does not carry: the latched
+ * $80AAA8 override flag added in STATE_VERSION_MEMTRACK_OVERRIDE.  It sits at
+ * the very end of the MT block, i.e. immediately before the DAC block. */
+#define MEMTRACK_OVERRIDE_SIZE        1
+
 /* Header field offsets (see retro_serialize in libretro.c) */
 #define STATE_OFF_MAGIC    0
 #define STATE_OFF_VERSION  4
@@ -384,14 +389,22 @@ int main(int argc, char **argv)
      * block) so it still satisfies retro_unserialize's size check. */
     memcpy(state_v2, state_v3, state_size);
     {
-        /* Higher-offset cut first so the second cut's offset stays valid. */
+        /* Higher-offset cuts first so the later offsets stay valid. */
         size_t cut = dac_off + DAC_I2S_NONZEROCOUNT_OFFSET;
+        size_t cut3 = dac_off - MEMTRACK_OVERRIDE_SIZE;
         size_t cut2 = cdrom_end - CDROM_DSA_TAIL_SIZE;
         memmove(state_v2 + cut,
                 state_v2 + cut + DAC_I2S_NONZEROCOUNT_SIZE,
                 state_size - cut - DAC_I2S_NONZEROCOUNT_SIZE);
         memset(state_v2 + state_size - DAC_I2S_NONZEROCOUNT_SIZE, 0,
                DAC_I2S_NONZEROCOUNT_SIZE);
+        /* A v2..v6 Memory Track block predates the override flag (see
+         * STATE_VERSION_MEMTRACK_OVERRIDE): splice that byte out too. */
+        memmove(state_v2 + cut3,
+                state_v2 + cut3 + MEMTRACK_OVERRIDE_SIZE,
+                state_size - cut3 - MEMTRACK_OVERRIDE_SIZE);
+        memset(state_v2 + state_size - MEMTRACK_OVERRIDE_SIZE, 0,
+               MEMTRACK_OVERRIDE_SIZE);
         /* A v2/v3 CDROM block also predates the DSA queue tail (see
          * STATE_VERSION_CDROM_DSA_QUEUE): splice those bytes out too. */
         memmove(state_v2 + cut2,

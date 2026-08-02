@@ -102,9 +102,15 @@ extern void (*eeprom_dirty_cb)(void);
 #define EEPROM_SAVE_SIZE    128  /* 64 x 16-bit words, big-endian */
 #define CD_EEPROM_SAVE_SIZE 128  /* CD EEPROM: 64 x 16-bit words */
 #define MT_SAVE_SIZE        0x20000  /* 128K Memory Track */
-static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE];
+/* CD content carries the EEPROM pair AND a Memory Track, so its save buffer
+ * is the two EEPROM banks followed by the MT NVRAM.  Keeping the EEPROMs
+ * first means the layout stays a prefix of the cart/CD-EEPROM-only one. */
+#define CD_SAVE_SIZE        (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE)
+static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE];
+#define MT_SAVE_OFFSET      (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE)
 static void eeprom_pack_save_buf(void);
 static void eeprom_unpack_save_buf(void);
+static void mt_pack_save_buf(void);
 
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
@@ -992,7 +998,7 @@ bool retro_unserialize(const void *data, size_t size)
    buf += TOMStateLoad(buf);
    buf += CDROMStateLoad(buf, version);
    buf += JoystickStateLoad(buf);
-   buf += MTStateLoad(buf);
+   buf += MTStateLoad(buf, version);
    buf += DACStateLoad(buf, version);
    if (version >= STATE_VERSION_JERRY_UART)
       buf += UARTStateLoad(buf, version);
@@ -1324,6 +1330,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;
+   mt_dirty_cb     = mt_pack_save_buf;
 
    /* Detect CD content (CUE/CDI/ISO) and stage a CD BIOS (external file
     * if present, embedded otherwise) so ResolveBootConfig can pick the
@@ -1489,6 +1496,7 @@ void retro_unload_game(void)
    game_height = 0;
 
    eeprom_dirty_cb = NULL;
+   mt_dirty_cb     = NULL;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
 
@@ -1531,6 +1539,17 @@ static void eeprom_pack_save_buf(void)
       eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] = cdrom_eeprom_ram[i] >> 8;
       eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1] = cdrom_eeprom_ram[i] & 0xFF;
    }
+   /* Memory Track NVRAM follows both EEPROM banks (CD content only). */
+   if (jaguar_cd_mode)
+      memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
+}
+
+/* Mirror the Memory Track into the save buffer without repacking the EEPROMs
+ * -- MT writes are frequent enough during a save that the full pack would be
+ * wasteful, and the EEPROM banks are unaffected by them. */
+static void mt_pack_save_buf(void)
+{
+   memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
 }
 
 /* Unpack the save buffer back into eeprom_ram[] and cdrom_eeprom_ram[].
@@ -1545,6 +1564,8 @@ static void eeprom_unpack_save_buf(void)
       cdrom_eeprom_ram[i] =
             ((uint16_t)eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] << 8)
           |  eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1];
+   if (jaguar_cd_mode)
+      memcpy(mtMem, eeprom_save_buf + MT_SAVE_OFFSET, MT_SAVE_SIZE);
 }
 
 void *retro_get_memory_data(unsigned type)
@@ -1573,8 +1594,9 @@ size_t retro_get_memory_size(unsigned type)
       /* CD discs share the cart EEPROM with their CD-side EEPROM bank
        * (128 + 128 = 256 bytes).  Cart-only loads expose just the cart
        * EEPROM so existing per-game saves remain compatible. */
+      /* CD: cart EEPROM + CD EEPROM + Memory Track NVRAM. */
       if (jaguar_cd_mode)
-         return EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE;
+         return CD_SAVE_SIZE;
       return EEPROM_SAVE_SIZE;
    }
    return 0;
@@ -1611,6 +1633,7 @@ void retro_deinit(void)
    sampleBuffer = NULL;
 
    eeprom_dirty_cb = NULL;
+   mt_dirty_cb     = NULL;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
    videoWidth = 0;

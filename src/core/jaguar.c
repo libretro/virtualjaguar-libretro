@@ -231,20 +231,21 @@ extern uint8_t jagMemSpace[];
 
 // Internal variables
 
-/* The Memory Track answers in cart space only at MEMCON1 ROMWIDTH 2
- * (32-bit).  Note this is NOT an MT-specific mode -- a plain cartridge sits
- * at ROMWIDTH 2 as its normal width, which is why the CRC test below did all
- * the real work before presence was tracked separately.
+/* Memory Track presence: an explicitly inserted MT cart dump (a cartridge
+ * whose CRC we recognise) or CD content, where hardware would have the MT
+ * plugged into the cartridge slot alongside the CD unit.
  *
- * What makes it safe to enable MT for CD content is measured, not designed:
- * across the 35-disc corpus in both boot modes, CD-mode cart reads only ever
- * occur at ROMWIDTH 0, so the MT branch is never taken and the CD BIOS stays
- * readable at $800000.  (Same sweep found no title touching the MT interface
- * at all -- see #258 before assuming this path is exercised.)
+ * There is deliberately NO MEMCON1/ROMWIDTH test here.  The old code gated on
+ * ROMWIDTH == 2 on the theory that the width switch selected the MT; it does
+ * not -- a plain cartridge sits at ROMWIDTH 2 as its normal width, and CD
+ * content runs at ROMWIDTH 0, so the test only ever made the device
+ * unreachable for discs.  The MiSTer core (the working reference, see
+ * memtrack.c) gates purely on presence.
  *
- * Presence itself is either an explicitly inserted MT cart dump (a cartridge
- * whose CRC we recognise, the historical case) or CD content, where hardware
- * would have the MT plugged in alongside the disc. */
+ * Safety comes instead from MTClaimsRead/MTClaimsWrite, which restrict the
+ * part to the $900000 NVRAM window plus a couple of override-only command
+ * addresses -- everything else in cart space still reads the cartridge ROM or
+ * the CD BIOS. */
 #define MEMTRACK_PRESENT() \
    (jaguarMemTrackInserted || jaguarMainROMCRC32 == 0xFDF37F47)
 
@@ -407,7 +408,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       /* Memory Track reading... */
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && MEMTRACK_PRESENT())
+      if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadWord(address);
       else
          return (jaguarMainROM[address - 0x800000] << 8)
@@ -442,7 +443,7 @@ unsigned int m68k_read_memory_32(unsigned int address)
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && MEMTRACK_PRESENT())
+      if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadLong(address);
 
       return GET32(jaguarMainROM, address - 0x800000);
@@ -520,10 +521,13 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    {
       SET16(jaguarMainRAM, address, value);
    }
-   /* Memory Track device writes.... */
-   else if ((address >= 0x800000) && (address <= 0x87FFFE))
+   /* Memory Track device writes: the flash command addresses live inside the
+    * $8xxxxx ROM window, but the NVRAM itself is a separate window at
+    * $900000 -- both have to be routed here or saves silently go nowhere. */
+   else if (((address >= 0x800000) && (address <= 0x87FFFE))
+            || ((address >= MT_DATA_BASE) && (address < MT_DATA_END)))
    {
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && MEMTRACK_PRESENT())
+      if (MEMTRACK_PRESENT() && MTClaimsWrite(address))
          MTWriteWord(address, value);
    }
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFE))
