@@ -813,32 +813,100 @@ static void HLEHandleCDRead(void)
                continue;  /* stray match — keep searching for a real sync block */
             }
 
-            /* Sync block confirmed.  Scan forward across sector boundaries
-             * to find where the sentinel pattern ends. */
-            scanLBA = scan_base + s;
-            scanOff = j;  /* first non-sentinel byte in current sector */
-
-            /* If the sync block extends to the end of this sector, keep
-             * scanning subsequent sectors. */
-            while (scanOff >= 2352)
+            /* Sync block confirmed.  Walk the run to its end, treating
+             * the disc as a continuous byte stream.
+             *
+             * A sync run can straddle sector boundaries, and when its
+             * start is not longword-aligned the last offset a sector can
+             * test is 2348..2351 — the walk then stops with scanOff
+             * BELOW 2352 while the run continues in the next sector.
+             * The old `while (scanOff >= 2352)` continuation guard only
+             * fired on an exact boundary landing, so those runs ended
+             * early: Vid Grid (USA) (Rev 1) stopped at offset 2350 with
+             * 8 sentinel longwords still to come, prepending 32 stray
+             * 'ATRI' bytes to the payload.  Its loader compares
+             * 'HEADER ATRI!' at dest+20 (`cmpm.b` x12 at $004208) and
+             * re-issues the entire read forever when that misses. */
             {
-               scanLBA++;
-               scanOff = 0;
-               if (!CDIntfReadBlock(scanLBA, sectorBuf))
-                  break;
-               for (i = 0; i + 1 < 2352; i += 2)
+               uint8_t  nextBuf[2352];
+               bool     haveNext = false;
+               bool     readOK   = true;
+
+               scanLBA = scan_base + s;
+               scanOff = j;
+
+               while (readOK)
                {
-                  uint8_t tmp2 = sectorBuf[i];
-                  sectorBuf[i]     = sectorBuf[i + 1];
-                  sectorBuf[i + 1] = tmp2;
-               }
-               /* Advance past continuing sentinel matches */
-               while (scanOff + 3 < 2352 &&
-                      sectorBuf[scanOff]   == pat[0] && sectorBuf[scanOff+1] == pat[1] &&
-                      sectorBuf[scanOff+2] == pat[2] && sectorBuf[scanOff+3] == pat[3])
+                  uint8_t  lw[4];
+                  uint32_t k;
+
+                  /* Normalize to a sector-local offset, loading sectors
+                   * as the run crosses them. */
+                  while (scanOff >= 2352)
+                  {
+                     scanOff -= 2352;
+                     scanLBA++;
+                     haveNext = false;
+                     if (!CDIntfReadBlock(scanLBA, sectorBuf))
+                     {
+                        readOK = false;
+                        break;
+                     }
+                     for (i = 0; i + 1 < 2352; i += 2)
+                     {
+                        uint8_t t        = sectorBuf[i];
+                        sectorBuf[i]     = sectorBuf[i + 1];
+                        sectorBuf[i + 1] = t;
+                     }
+                  }
+                  if (!readOK)
+                     break;
+
+                  /* Fetch the longword at scanOff, spanning into the
+                   * following sector when fewer than 4 bytes remain. */
+                  for (k = 0; k < 4; k++)
+                  {
+                     uint32_t off = scanOff + k;
+
+                     if (off < 2352)
+                     {
+                        lw[k] = sectorBuf[off];
+                        continue;
+                     }
+                     if (!haveNext)
+                     {
+                        if (!CDIntfReadBlock(scanLBA + 1, nextBuf))
+                        {
+                           readOK = false;
+                           break;
+                        }
+                        for (i = 0; i + 1 < 2352; i += 2)
+                        {
+                           uint8_t t      = nextBuf[i];
+                           nextBuf[i]     = nextBuf[i + 1];
+                           nextBuf[i + 1] = t;
+                        }
+                        haveNext = true;
+                     }
+                     lw[k] = nextBuf[off - 2352];
+                  }
+                  if (!readOK)
+                     break;
+
+                  if (lw[0] != pat[0] || lw[1] != pat[1] ||
+                      lw[2] != pat[2] || lw[3] != pat[3])
+                     break;               /* first non-sentinel byte */
+
                   scanOff += 4;
-               if (scanOff < 2352)
-                  break;  /* found non-sentinel data in this sector */
+                  matchCount++;
+               }
+
+               /* Leave (scanLBA, scanOff) sector-local for the streamer. */
+               while (scanOff >= 2352)
+               {
+                  scanOff -= 2352;
+                  scanLBA++;
+               }
             }
             foundSentinel = true;
             HLE_LOG("CD_read: sync block (%u+ matches) ends at "

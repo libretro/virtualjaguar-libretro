@@ -112,6 +112,12 @@ const char *__lsan_default_suppressions(void) {
  * would not be unique. */
 #define CDROM_DSA_TAIL_SIZE           28
 
+/* Trailing v7 additions a v2..v6 state does not carry: the MT block's
+ * latched $80AAA8 override flag (1 byte) plus the entire NVM BIOS block
+ * that follows it (nvm_size, probed at runtime).  Together they sit
+ * immediately before the DAC block. */
+#define MEMTRACK_OVERRIDE_SIZE        1
+
 /* Header field offsets (see retro_serialize in libretro.c) */
 #define STATE_OFF_MAGIC    0
 #define STATE_OFF_VERSION  4
@@ -200,7 +206,7 @@ int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     dac_state_save_fn dac_save;
-    dac_state_save_fn cdrom_save, joy_save, mt_save;
+    dac_state_save_fn cdrom_save, joy_save, mt_save, nvm_save;
     serialize_size_fn ser_size_fn;
     serialize_fn ser;
     unserialize_fn unser;
@@ -209,7 +215,7 @@ int main(int argc, char **argv)
     uint8_t *state_v3 = NULL, *state_v2 = NULL, *scratch = NULL;
     uint8_t dac_v3[256], dac_now[256], dac_expect[256], dac_post[256];
     size_t state_size, dac_size, dac_size_now, dac_off = 0;
-    size_t cdrom_size, joy_size, mt_size, cdrom_end = 0;
+    size_t cdrom_size, joy_size, mt_size, nvm_size, cdrom_end = 0;
     size_t tail_nonzero = 0, i;
     unsigned matches;
     unsigned frame;
@@ -246,6 +252,7 @@ int main(int argc, char **argv)
     cdrom_save  = (dac_state_save_fn)harness_dlsym(&cfg, "CDROMStateSave");
     joy_save    = (dac_state_save_fn)harness_dlsym(&cfg, "JoystickStateSave");
     mt_save     = (dac_state_save_fn)harness_dlsym(&cfg, "MTStateSave");
+    nvm_save    = (dac_state_save_fn)harness_dlsym(&cfg, "NVMBiosStateSave");
     ser_size_fn = (serialize_size_fn)harness_dlsym(&cfg, "retro_serialize_size");
     ser         = (serialize_fn)harness_dlsym(&cfg, "retro_serialize");
     unser       = (unserialize_fn)harness_dlsym(&cfg, "retro_unserialize");
@@ -350,8 +357,9 @@ int main(int argc, char **argv)
      * standalone block dumps are byte-identical to what the state holds. */
     joy_size   = joy_save(scratch);
     mt_size    = mt_save(scratch);
+    nvm_size   = nvm_save(scratch);
     cdrom_size = cdrom_save(scratch);
-    cdrom_end  = dac_off - mt_size - joy_size;
+    cdrom_end  = dac_off - nvm_size - mt_size - joy_size;
     check(cdrom_end > cdrom_size && cdrom_size > CDROM_DSA_TAIL_SIZE
           && memcmp(state_v3 + cdrom_end - cdrom_size, scratch,
                     cdrom_size) == 0,
@@ -384,14 +392,22 @@ int main(int argc, char **argv)
      * block) so it still satisfies retro_unserialize's size check. */
     memcpy(state_v2, state_v3, state_size);
     {
-        /* Higher-offset cut first so the second cut's offset stays valid. */
+        /* Higher-offset cuts first so the later offsets stay valid. */
+        size_t v7_tail = MEMTRACK_OVERRIDE_SIZE + nvm_size;
         size_t cut = dac_off + DAC_I2S_NONZEROCOUNT_OFFSET;
+        size_t cut3 = dac_off - v7_tail;
         size_t cut2 = cdrom_end - CDROM_DSA_TAIL_SIZE;
         memmove(state_v2 + cut,
                 state_v2 + cut + DAC_I2S_NONZEROCOUNT_SIZE,
                 state_size - cut - DAC_I2S_NONZEROCOUNT_SIZE);
         memset(state_v2 + state_size - DAC_I2S_NONZEROCOUNT_SIZE, 0,
                DAC_I2S_NONZEROCOUNT_SIZE);
+        /* A v2..v6 state predates the MT override flag and the NVM BIOS
+         * block (see STATE_VERSION_MEMTRACK_OVERRIDE): splice both out. */
+        memmove(state_v2 + cut3,
+                state_v2 + cut3 + v7_tail,
+                state_size - cut3 - v7_tail);
+        memset(state_v2 + state_size - v7_tail, 0, v7_tail);
         /* A v2/v3 CDROM block also predates the DSA queue tail (see
          * STATE_VERSION_CDROM_DSA_QUEUE): splice those bytes out too. */
         memmove(state_v2 + cut2,

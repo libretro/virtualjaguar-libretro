@@ -36,6 +36,7 @@ void JaguarExecuteNew(void);
 extern int32_t jaguarCPUInExec;
 extern char * jaguarEepromsPath;
 extern bool jaguarCartInserted;
+extern bool jaguarMemTrackInserted;
 extern bool bpmActive;
 extern uint32_t bpmAddress1;
 

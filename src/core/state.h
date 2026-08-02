@@ -21,7 +21,10 @@ extern "C" {
  * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
  * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
  * v6: new UART chunk (JERRY async serial + jlink RX ring).
- * v7: bus-arbiter 68K self-cost carry (symmetric DRAM timing). */
+ * v7: Memory Track chunk gained the latched $80AAA8 override flag and
+ *     the NVM BIOS dispatcher state (nvmbios.c); trailing bus-arbiter
+ *     68K self-cost carry (symmetric DRAM timing).  One shared bump —
+ *     all in-flight changes since the last release use v7. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   7
 /* Oldest layout retro_unserialize still accepts.  States between
@@ -42,7 +45,10 @@ extern "C" {
 #define STATE_VERSION_CDROM_DRIVE_SPEED 5
 /* First version carrying the JERRY UART + jlink chunk. */
 #define STATE_VERSION_JERRY_UART 6
-/* v7 adds the bus-arbiter 68K carry (symmetric DRAM self-cost). */
+/* First version whose Memory Track block carries the $80AAA8 override flag. */
+#define STATE_VERSION_MEMTRACK_OVERRIDE 7
+/* First version carrying the trailing bus-arbiter 68K carry (symmetric
+ * DRAM self-cost). */
 #define STATE_VERSION_BUS_ARBITER 7
 
 /* Header flags */
@@ -99,7 +105,9 @@ size_t JoystickStateSave(uint8_t *buf);
 size_t JoystickStateLoad(const uint8_t *buf);
 
 size_t MTStateSave(uint8_t *buf);
-size_t MTStateLoad(const uint8_t *buf);
+size_t MTStateLoad(const uint8_t *buf, uint32_t version);
+size_t NVMBiosStateSave(uint8_t *buf);
+size_t NVMBiosStateLoad(const uint8_t *buf);
 
 size_t DACStateSave(uint8_t *buf);
 /* stateVersion is the version read from the state header: fields added in
