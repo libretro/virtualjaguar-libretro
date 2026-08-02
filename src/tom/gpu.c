@@ -1803,7 +1803,7 @@ INLINE static void gpu_opcode_load_r14_indexed(void)
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
 
    GPU_EXT_ACCESS(address);
-   if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
+   if ((address >= 0xF03000) && (address <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
       RN = GPUReadLong(address, GPU);
@@ -1823,7 +1823,7 @@ INLINE static void gpu_opcode_load_r15_indexed(void)
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
 
    GPU_EXT_ACCESS(address);
-   if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
+   if ((address >= 0xF03000) && (address <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
       RN = GPUReadLong(address, GPU);
