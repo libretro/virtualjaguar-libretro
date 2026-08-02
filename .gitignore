@@ -36,6 +36,14 @@ test/test_*
 !test/test_*.h
 !test/test_*.sh
 !test/test_*.py
+# Compiled test tools. Enumerating each binary meant every new tool could be
+# committed by an unlucky `git add -A` -- and a Mach-O binary tracked into the
+# tree makes Linux CI skip the rebuild and fail with "Exec format error".
+test/tools/test_*
+!test/tools/test_*.c
+!test/tools/test_*.h
+!test/tools/test_*.sh
+!test/tools/test_*.py
 test/tools/test_memory_map
 test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag

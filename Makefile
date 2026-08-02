@@ -757,7 +757,7 @@ clean:
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing \
 		test/dump_pc test/heap_search \
-		test/tools/test_memory_map test/tools/test_dsp_audio_diag \
+		test/tools/test_memory_map test/tools/test_option_visibility test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing
 
 # Self-contained unit tests (parser + list management + simulated
@@ -807,7 +807,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap \
 		test/test_audio_dac test/test_blitter \
-		test/tools/test_memory_map test/tools/test_op_gpu_object test/test_uart_core test/test_netlink_host \
+		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
 	./test/test_cheat
 	./test/test_event_queue
@@ -889,6 +889,24 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	@# Option visibility is content-type dependent; the disc half runs only
+	@# when a private CD image is available (the cart half always runs).
+	@# Prefer a disc known to load (see docs/cd-boot-matrix.md); fall back to
+	@# whatever is present. A disc that will not load is reported as SKIP.
+	@# Try discs known to load first (see docs/cd-boot-matrix.md), then any
+	@# other. ls sorts all its arguments together, so probe one glob at a
+	@# time. A disc that still will not load is reported as SKIP, not FAIL.
+	@VJ_VIS_ROOT="test/roms/private/Jaguar CD/BinCue"; VJ_VIS_DISC=""; \
+		for VJ_VIS_PAT in "Baldies*" "Myst*" "Hover*" "*"; do \
+			[ -n "$$VJ_VIS_DISC" ] && break; \
+			VJ_VIS_DISC=$$(ls "$$VJ_VIS_ROOT"/$$VJ_VIS_PAT/*.cue 2>/dev/null | head -1); \
+		done; \
+		if [ -f test/roms/jagniccc.j64 ]; then \
+			./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"; \
+		else \
+			echo "=== Core Option Visibility ==="; \
+			echo "  SKIP: test/roms/jagniccc.j64 not present"; \
+		fi
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
@@ -1061,6 +1079,10 @@ test/test_audio_presence: test/test_audio_presence.c
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+test/tools/test_option_visibility: test/tools/test_option_visibility.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_option_visibility.c -ldl
 
 test/tools/test_op_gpu_object: test/tools/test_op_gpu_object.c \
 		test/harness/harness.c test/harness/harness.h

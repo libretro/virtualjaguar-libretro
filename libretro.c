@@ -21,6 +21,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "file.h"
 #include "jagbios.h"
 #include "jagcdbios.h"
+#include "jagdevcdbios.h"
 #include "jaguar.h"
 #include "cdintf.h"
 #include "cdrom.h"
@@ -147,6 +148,12 @@ static int jag_retropad[2][RETROPAD_INPUT_COUNT];
 static int jag_numpad[2][12];
 static int numpad_to_kb[2];
 static bool show_input_options = true;
+/* Content-type-dependent option visibility.  Both default to visible so
+ * the options menu is complete before any content is loaded (the type is
+ * unknown then, and the user may be configuring ahead of loading). */
+static bool content_loaded         = false;
+static bool show_cd_options        = true;
+static bool show_cart_bios_option  = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -301,6 +308,48 @@ static bool update_option_visibility(void)
       }
 
       updated = true;
+   }
+
+   /* Show/hide options that only apply to one content type.  Filtering
+    * is deliberately skipped until content is loaded: with nothing
+    * loaded the type is unknown, and hiding either group would make
+    * options unreachable for someone configuring ahead of time. */
+   {
+      static const char * const cd_only_keys[] = {
+         "virtualjaguar_cd_bios_type",
+         "virtualjaguar_cd_boot_mode",
+         "virtualjaguar_cd_read_speed",
+         "virtualjaguar_cd_trace",
+      };
+      bool show_cd_prev        = show_cd_options;
+      bool show_cart_bios_prev = show_cart_bios_option;
+
+      show_cd_options       = (!content_loaded || jaguar_cd_mode);
+      /* The cartridge BIOS setting is ignored for CD content —
+       * ResolveBootConfig() lets CD Boot Mode drive showBootROM — so
+       * showing it there would advertise a control that does nothing. */
+      show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
+
+      if (show_cd_options != show_cd_prev)
+      {
+         option_display.visible = show_cd_options;
+         for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
+         {
+            option_display.key = cd_only_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
+         updated = true;
+      }
+
+      if (show_cart_bios_option != show_cart_bios_prev)
+      {
+         option_display.visible = show_cart_bios_option;
+         option_display.key     = "virtualjaguar_bios";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
    }
 
    return updated;
@@ -1114,17 +1163,29 @@ static bool load_external_cd_bios(void)
 
 /* Stage the CD BIOS for the real-BIOS boot path: prefer an external ROM
  * file from the system directory (users may carry a different BIOS
- * revision), else fall back to the embedded retail CD BIOS so real-BIOS
- * boot works with zero files.  A developer CD BIOS is also embedded
- * (jaguarDevCDBootROM) but is not yet selectable. */
+ * revision), else fall back to an embedded CD BIOS so real-BIOS boot
+ * works with zero files.  Which embedded image is used follows the
+ * 'CD BIOS Type' option: retail (default) or the developer BIOS, which
+ * skips some of the retail BIOS's disc checks.
+ *
+ * An external file always wins over both — it is the user explicitly
+ * supplying a revision, so the type selection does not override it. */
 static void stage_cd_bios(void)
 {
    if (load_external_cd_bios())
       return;
 
+   if (vjs.cdBiosType == CDBIOS_DEV)
+   {
+      memcpy(external_cd_bios, jaguarDevCDBootROM, 0x40000);
+      cd_bios_loaded_externally = true;
+      LOG_INF("[CD-BIOS] using embedded developer CD BIOS\n");
+      return;
+   }
+
    memcpy(external_cd_bios, jaguarCDBootROM, 0x40000);
    cd_bios_loaded_externally = true;
-   LOG_INF("[CD-BIOS] using embedded CD BIOS\n");
+   LOG_INF("[CD-BIOS] using embedded retail CD BIOS\n");
 }
 
 /* Fill the entire framebuffer allocation with opaque black.
@@ -1382,6 +1443,10 @@ bool retro_load_game(const struct retro_game_info *info)
     * first retro_run(). We unpack it on the first frame. */
    save_data_needs_unpack = true;
 
+   /* Content type is now known — refresh which options apply to it. */
+   content_loaded = true;
+   update_option_visibility();
+
    return true;
 }
 
@@ -1399,6 +1464,9 @@ void retro_unload_game(void)
    CDIntfCloseImage();
    jaguar_cd_mode    = false;
    cd_image_path[0]  = '\0';
+   /* Content type is unknown again — restore the full option list. */
+   content_loaded    = false;
+   update_option_visibility();
    JaguarDone();
 
    if (videoBuffer)
@@ -1425,6 +1493,9 @@ void retro_unload_game(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   content_loaded = false;
+   show_cd_options = true;
+   show_cart_bios_option = true;
 }
 
 unsigned retro_get_region(void)
@@ -1547,6 +1618,9 @@ void retro_deinit(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   content_loaded = false;
+   show_cd_options = true;
+   show_cart_bios_option = true;
 }
 
 void retro_reset(void)
