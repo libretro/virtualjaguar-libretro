@@ -4,7 +4,8 @@
  * share the wire.  Local TX goes to every peer; a byte received from
  * one peer is delivered locally AND forwarded to every other peer, so
  * all nodes hear all traffic — the electrical semantics of a shared
- * multi-drop bus.  Client mode is a single connection to the hub.
+ * multi-drop bus.  Client mode is a single connection to the hub, whose
+ * address may be an IP or a name (DNS or Bonjour ".local").
  *
  * POSIX and winsock share the code behind a thin macro layer;
  * platforms without BSD-style sockets (bare console targets) compile
@@ -21,6 +22,10 @@
 #ifdef JLINK_HAVE_TCP
 
 #ifdef _WIN32
+#if !defined(_WIN32_WINNT) || (_WIN32_WINNT < 0x0501)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0501   /* getaddrinfo/freeaddrinfo live behind this */
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #ifdef _MSC_VER
@@ -41,6 +46,7 @@ typedef SOCKET jlink_sock_t;
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <netdb.h>        /* getaddrinfo */
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -73,10 +79,18 @@ static int tcpConnecting = 0;    /* client connect in flight (slot 0) */
 static int tcpRetryTimer = 0;    /* polls until next client reconnect */
 static char tcpHost[128] = "127.0.0.1";
 static int tcpPort = 0;
+static struct sockaddr_in tcpAddr;   /* tcpHost resolved (client mode) */
+static int tcpAddrValid = 0;
 
 /* A refused/dropped client connect retries after this many polls
    (one poll per frame => roughly half a second). */
 #define JLINK_TCP_RETRY_POLLS 30
+
+/* A *failed name lookup* backs off further than a refused connect: a
+   refusal costs one nonblocking syscall, an unresolvable name can cost
+   the resolver's full timeout, and retrying that every half second
+   would stutter the frame loop. */
+#define JLINK_TCP_RESOLVE_RETRY_POLLS 300
 
 static void jlink_peers_reset(void)
 {
@@ -139,16 +153,82 @@ static void jlink_tcp_drop_peer(int idx)
    }
 }
 
+/* Resolve tcpHost into tcpAddr, once, and cache it.
+ *
+ * Dotted-quad addresses are matched first with AI_NUMERICHOST, which
+ * cannot block, so the common 192.168.x.y path never reaches a
+ * resolver.  Anything else is a name and gets a real lookup — which is
+ * what makes "jaghub.local" (Bonjour/mDNS) and plain DNS names usable
+ * as the hub address.  Only IPv4 results are taken: the listener binds
+ * AF_INET, so an AAAA-only peer could not be talked to anyway.
+ *
+ * Returns 1 when tcpAddr is usable. */
+static int jlink_tcp_resolve(void)
+{
+   struct addrinfo hints;
+   struct addrinfo *res = NULL;
+   struct addrinfo *ai;
+   int rc;
+
+   if (tcpAddrValid)
+      return 1;
+
+   memset(&hints, 0, sizeof(hints));
+   hints.ai_family   = AF_INET;
+   hints.ai_socktype = SOCK_STREAM;
+   hints.ai_flags    = AI_NUMERICHOST;
+
+   rc = getaddrinfo(tcpHost, NULL, &hints, &res);
+   if (rc != 0)
+   {
+      hints.ai_flags = 0;
+      rc = getaddrinfo(tcpHost, NULL, &hints, &res);
+   }
+   if (rc != 0 || !res)
+   {
+      /* "localhost" is the one name whose meaning is fixed even when
+         the resolver cannot answer (no /etc/hosts entry, no DNS on a
+         locked-down box).  Same-machine play must not depend on that. */
+      if (strcmp(tcpHost, "localhost") == 0)
+      {
+         memset(&tcpAddr, 0, sizeof(tcpAddr));
+         tcpAddr.sin_family = AF_INET;
+         tcpAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+         tcpAddrValid = 1;
+         return 1;
+      }
+      return 0;
+   }
+
+   for (ai = res; ai; ai = ai->ai_next)
+   {
+      if (ai->ai_family == AF_INET
+          && (size_t)ai->ai_addrlen >= sizeof(struct sockaddr_in))
+      {
+         memcpy(&tcpAddr, ai->ai_addr, sizeof(struct sockaddr_in));
+         tcpAddrValid = 1;
+         break;
+      }
+   }
+   freeaddrinfo(res);
+   return tcpAddrValid;
+}
+
 /* Kick off (or re-kick) a nonblocking client connect to tcpHost:tcpPort. */
 static void jlink_tcp_start_connect(void)
 {
    struct sockaddr_in sa;
    int rc;
 
-   memset(&sa, 0, sizeof(sa));
+   if (!jlink_tcp_resolve())
+   {
+      tcpRetryTimer = JLINK_TCP_RESOLVE_RETRY_POLLS;
+      return;
+   }
+
+   sa = tcpAddr;
    sa.sin_family = AF_INET;
    sa.sin_port = htons((unsigned short)tcpPort);
-   sa.sin_addr.s_addr = inet_addr(tcpHost);
 
    tcpPeers[0].sock = socket(AF_INET, SOCK_STREAM, 0);
    if (!jlink_sock_valid(tcpPeers[0].sock))
@@ -204,17 +284,17 @@ int JLinkTCPOpen(int is_server, const char *host, int port)
    }
    else
    {
-      if (!host || !host[0] || strcmp(host, "localhost") == 0)
+      if (!host || !host[0])
          host = "127.0.0.1";
-      sa.sin_addr.s_addr = inet_addr(host);
-      if (sa.sin_addr.s_addr == INADDR_NONE)
-         return 0;
       strncpy(tcpHost, host, sizeof(tcpHost) - 1);
       tcpHost[sizeof(tcpHost) - 1] = '\0';
       tcpPort = port;
       tcpIsClient = 1;
-      /* First attempt now; refusals retry from JLinkTCPPoll (the peer
-         instance may simply not be listening yet). */
+      tcpAddrValid = 0;
+      /* First attempt now; refusals AND failed lookups retry from
+         JLinkTCPPoll.  Neither is fatal at open time: the peer instance
+         may not be listening yet, and a ".local" name does not resolve
+         until its owner is actually on the network. */
       jlink_tcp_start_connect();
    }
 
@@ -240,6 +320,7 @@ void JLinkTCPClose(void)
    tcpIsClient = 0;
    tcpConnecting = 0;
    tcpRetryTimer = 0;
+   tcpAddrValid = 0;
 }
 
 int JLinkTCPConnected(void)

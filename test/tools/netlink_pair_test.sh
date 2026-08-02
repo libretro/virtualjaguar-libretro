@@ -3,6 +3,17 @@
 # Launches a server-role and a client-role instance of the core on
 # localhost and requires both to exchange their bytes (see
 # netlink_pair.c).  Usage: netlink_pair_test.sh <core> [port]
+#
+# Round 1 dials the hub by IP (the resolver's AI_NUMERICHOST fast path).
+# Round 2 dials it by *name*, which is the only coverage of the core's
+# getaddrinfo path -- the path that makes "somebox.local" work.
+#
+# Round 2 deliberately uses "localhost" rather than this machine's own
+# LAN name.  Both would prove the resolver, but a LAN address means an
+# *inbound* connection, and a host firewall that allows loopback while
+# dropping inbound LAN (macOS Application Firewall does exactly this to
+# unsigned binaries) fails the round for reasons that have nothing to do
+# with the core.  Loopback keeps the test measuring name resolution.
 set -u
 
 CORE="${1:?usage: netlink_pair_test.sh <core> [port]}"
@@ -14,18 +25,31 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 
-"$BIN" "$CORE" --role server --port "$PORT" &
-SERVER_PID=$!
-# Give the listener a moment before the client connects.
-sleep 0.3
-"$BIN" "$CORE" --role client --port "$PORT"
-CLIENT_RC=$?
-wait "$SERVER_PID"
-SERVER_RC=$?
+# Run one server+client pair against $1 as the client's hub address.
+# Echoes PASS/FAIL; returns the usual 0/1.
+run_pair() {
+    local host="$1" label="$2" port="$3"
+    local server_rc client_rc server_pid
 
-if [ "$SERVER_RC" -eq 0 ] && [ "$CLIENT_RC" -eq 0 ]; then
-    echo "netlink_pair_test: PASS (port $PORT)"
-    exit 0
-fi
-echo "netlink_pair_test: FAIL (server=$SERVER_RC client=$CLIENT_RC)" >&2
-exit 1
+    "$BIN" "$CORE" --role server --port "$port" &
+    server_pid=$!
+    # Give the listener a moment before the client connects.
+    sleep 0.3
+    "$BIN" "$CORE" --role client --port "$port" --host "$host"
+    client_rc=$?
+    wait "$server_pid"
+    server_rc=$?
+
+    if [ "$server_rc" -eq 0 ] && [ "$client_rc" -eq 0 ]; then
+        echo "netlink_pair_test: PASS ($label, host=$host, port $port)"
+        return 0
+    fi
+    echo "netlink_pair_test: FAIL ($label, host=$host, server=$server_rc client=$client_rc)" >&2
+    return 1
+}
+
+run_pair "127.0.0.1" "by IP" "$PORT" || exit 1
+# Second round on the next port: the first server may still be in
+# TIME_WAIT, and SO_REUSEADDR does not cover a listener that raced.
+run_pair "localhost" "by name" "$((PORT + 1))" || exit 1
+exit 0

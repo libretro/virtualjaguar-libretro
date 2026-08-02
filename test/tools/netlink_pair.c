@@ -47,7 +47,9 @@ int main(int argc, char **argv)
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     const char *role = NULL;
     const char *port = "42171";
+    const char *host = "127.0.0.1";
     char port_env[64];
+    char host_env[192];
     jerry_ww_t jerry_ww;
     jerry_rw_t jerry_rw;
     jlink_conn_t jlink_connected;
@@ -70,10 +72,18 @@ int main(int argc, char **argv)
             port = argv[++i];
             argv[i - 1] = argv[i] = (char *)"--quiet";
         }
+        /* Client-side hub address.  A name here (DNS or Bonjour
+           ".local") is the point of the test: it exercises the core's
+           resolver path rather than the dotted-quad fast path. */
+        else if (!strcmp(argv[i], "--host") && i + 1 < argc)
+        {
+            host = argv[++i];
+            argv[i - 1] = argv[i] = (char *)"--quiet";
+        }
     }
     if (!role || (strcmp(role, "server") && strcmp(role, "client")))
     {
-        fprintf(stderr, "usage: netlink_pair <core> --role server|client [--port N]\n");
+        fprintf(stderr, "usage: netlink_pair <core> --role server|client [--port N] [--host ADDR]\n");
         return 1;
     }
 
@@ -90,7 +100,8 @@ int main(int argc, char **argv)
 
     snprintf(port_env, sizeof(port_env), "VJ_NETLINK_PORT=%s", port);
     putenv(port_env);
-    putenv((char *)"VJ_NETLINK_HOST=127.0.0.1");
+    snprintf(host_env, sizeof(host_env), "VJ_NETLINK_HOST=%s", host);
+    putenv(host_env);
 
     cfg.frames = 1;
     cfg.options[0].key = "virtualjaguar_netlink";
