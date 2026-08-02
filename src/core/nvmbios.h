@@ -22,7 +22,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <stdbool.h>
+#include <boolean.h>
 
 #define NVM_COOKIE_ADDR    0x2400
 #define NVM_DISPATCH_ADDR  0x2404

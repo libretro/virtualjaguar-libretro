@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#include <stdbool.h>
+#include <boolean.h>
 
 #define MT_MEM_SIZE 0x20000
 
