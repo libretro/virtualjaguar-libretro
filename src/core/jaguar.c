@@ -782,6 +782,12 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 {
    uint32_t addr = offset & 0xFFFFFF;
+   /* OP bus occupancy: every 32-bit read the object processor makes is
+    * half a phrase; page-mode phrase cost is 2 system clocks (OP
+    * streaming is sequential -> page hits), so charge 1 clock per long.
+    * Row-change overhead is added per rendered object in op.c. */
+   if (busArbiter.enabled && who == OP)
+      bus_arbiter_op_charge(1);
    if (addr < 0x800000)
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
@@ -791,6 +797,12 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
    uint32_t addr = offset & 0xFFFFFF;
+   /* OP bus occupancy: every 32-bit write-back the object processor
+    * makes is half a phrase; page-mode phrase cost is 2 system clocks
+    * (OP streaming is sequential -> page hits), so charge 1 clock per
+    * long. Row-change overhead is added per rendered object in op.c. */
+   if (busArbiter.enabled && who == OP)
+      bus_arbiter_op_charge(1);
    /* CDDA-DIAG (Primal Rage): $F1B274 is the game's DSP command mailbox --
     * cmd 1 enables the DSP ISR's CD-audio mix (r20), cmd 2 disables.  The
     * missing "cmd 1" write is the open question in
@@ -898,6 +910,32 @@ void HalflineCallback(void)
    }
 
    TOMExecHalfline(vc, true);
+
+   /* OP-fetch + DRAM-refresh occupancy: the 68K is the lowest-priority
+    * bus master (JTRM: refresh pri 2, OP pri 6, CPU pri 11), so every
+    * system clock the OP spent fetching this halfline's objects, and
+    * every refresh cycle, is a clock the 68K could not use.  Deducted
+    * from the 68K's next slice(s) by M68KExecuteWithStalls() — one
+    * halfline of charge latency (the 68K ran halfline N unstalled and
+    * pays during N+1), bounded and self-correcting. */
+   if (busArbiter.enabled)
+   {
+      uint32_t halfclks;
+      uint32_t charge;
+      halfclks = (uint32_t)USEC_TO_RISC_CYCLES(
+                    vjs.hardwareTypeNTSC ? 31.777777777 : 32.0);
+      charge = bus_arbiter_op_take() + bus_arbiter_refresh_clocks(halfclks);
+      /* Bus occupancy within a halfline cannot exceed the halfline:
+       * the emulated OP walks its whole list instantly, so a
+       * pathological list could otherwise charge more clocks than
+       * the window contains and grow the stall debt without bound.
+       * When OP traffic alone saturates the window, the refresh share
+       * is absorbed by the clamp (refresh scheduling itself, inside
+       * bus_arbiter_refresh_clocks(), is unaffected). */
+      if (charge > halfclks)
+         charge = halfclks;
+      busArbiter.m68k_pending_stall += charge;
+   }
 
    //Change this to VBB???
    //Doesn't seem to matter (at least for Flip Out & I-War)
@@ -1131,6 +1169,34 @@ uint8_t * GetRamPtr(void)
 }
 
 
+/* Run a 68K slice minus any pending OP-fetch/refresh stall.  pending
+ * is in system clocks; the 68K runs at system/2, so two pending clocks
+ * consume one 68K cycle.  A slice can be fully consumed (the 68K runs
+ * zero cycles) when occupancy exceeds it; the remainder carries into
+ * the next slice, so no time is lost or invented. */
+static void M68KExecuteWithStalls(uint32_t cycles)
+{
+   uint32_t stall;
+   if (busArbiter.enabled && busArbiter.m68k_pending_stall >= 2)
+   {
+      stall = busArbiter.m68k_pending_stall >> 1;
+      if (stall > cycles)
+         stall = cycles;
+      busArbiter.m68k_pending_stall -= stall << 1;
+      cycles -= stall;
+      /* A slice fully consumed by stall must not fall through to
+       * m68k_execute(0): the UAE core's main loop is a do/while, so
+       * even a zero-cycle budget executes exactly one instruction --
+       * which would silently defeat the stall. Off-mode never enters
+       * this branch, so develop's m68k_execute(0) edge-case behavior
+       * (timeDelta rounding to 0 cycles) is unchanged. */
+      if (cycles == 0)
+         return;
+   }
+   m68k_execute(cycles);
+}
+
+
 /* New Jaguar execution stack
  * This executes 1 frame's worth of code.
  * Interleaves EVENT_MAIN (video/halfline) and EVENT_JERRY (DSP/I2S/timers)
@@ -1156,7 +1222,7 @@ void JaguarExecuteNew(void)
          timeDelta = timeToJerryEvent;
          riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
          GPUBeginSlice(riscCycles);
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+         M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          GPUExec(GPUSliceRemaining());
          DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_MAIN);
@@ -1167,7 +1233,7 @@ void JaguarExecuteNew(void)
          timeDelta = timeToMainEvent;
          riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
          GPUBeginSlice(riscCycles);
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
+         M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          GPUExec(GPUSliceRemaining());
          DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_JERRY);

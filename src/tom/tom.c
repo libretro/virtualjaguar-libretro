@@ -704,6 +704,11 @@ uint16_t TOMGetMEMCON1(void)
    return GET16(tomRam8, MEMCON1);
 }
 
+uint16_t TOMGetMEMCON2(void)
+{
+   return GET16(tomRam8, MEMCON2);
+}
+
 #define LEFT_BG_FIX
 
 /* Clamp `width` so the per-pixel loop in a tom_render_*_scanline()
@@ -1142,6 +1147,7 @@ void TOMReset(void)
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
       bus_arbiter_update_memcon(0x1861);
+      bus_arbiter_update_memcon2(0x35CC);
       SET16(tomRam8, HP, 844);			// Horizontal Period (1-based; HP=845)
       SET16(tomRam8, HBB, 1713);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 125);			// Horizontal Blank End
@@ -1169,6 +1175,7 @@ void TOMReset(void)
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
       bus_arbiter_update_memcon(0x1861);
+      bus_arbiter_update_memcon2(0x35CC);
       SET16(tomRam8, HP, 850);			// Horizontal Period
       SET16(tomRam8, HBB, 1711);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 158);			// Horizontal Blank End
@@ -1397,6 +1404,8 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
     * TOMWriteWord). */
    if (offset == MEMCON1 || offset == MEMCON1 + 1)
       bus_arbiter_update_memcon(TOMGetMEMCON1());
+   if (offset == MEMCON2 || offset == MEMCON2 + 1)
+      bus_arbiter_update_memcon2(TOMGetMEMCON2());
 }
 
 // TOM word access (write)
@@ -1472,6 +1481,8 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 
    if (offset == MEMCON1)
       bus_arbiter_update_memcon(data);
+   if (offset == MEMCON2)
+      bus_arbiter_update_memcon2(data);
 
    // detect screen resolution changes
    //This may go away in the future, if we do the virtualized screen thing...
