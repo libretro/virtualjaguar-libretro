@@ -908,6 +908,9 @@ bool retro_serialize(void *data, size_t size)
    buf += DACStateSave(buf);
    buf += UARTStateSave(buf);
 
+   /* v7: 68K DRAM self-cost carry (bus arbiter). */
+   STATE_SAVE_VAR(buf, busArbiter.m68k_sysclk_carry);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -969,6 +972,18 @@ bool retro_unserialize(const void *data, size_t size)
    buf += DACStateLoad(buf, version);
    if (version >= STATE_VERSION_JERRY_UART)
       buf += UARTStateLoad(buf, version);
+
+   if (version >= STATE_VERSION_BUS_ARBITER)
+   {
+      STATE_LOAD_VAR(buf, busArbiter.m68k_sysclk_carry);
+   }
+   else
+   {
+      busArbiter.m68k_sysclk_carry = 0;
+   }
+   /* tomRam8 was restored raw above; recompute the DRAM timing that
+    * bus_arbiter derives from MEMCON1 so it matches the loaded state. */
+   bus_arbiter_update_memcon(TOMGetMEMCON1());
 
    JaguarApplyHLEBIOSState();
 

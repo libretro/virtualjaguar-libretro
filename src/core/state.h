@@ -20,9 +20,10 @@ extern "C" {
 /* Save state format identifier and version.
  * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
  * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
- * v6: new UART chunk (JERRY async serial + jlink RX ring). */
+ * v6: new UART chunk (JERRY async serial + jlink RX ring).
+ * v7: bus-arbiter 68K self-cost carry (symmetric DRAM timing). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   6
+#define STATE_VERSION   7
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
  * after them (see DACStateLoad, CDROMStateLoad); STATE_VERSION is always
@@ -41,6 +42,8 @@ extern "C" {
 #define STATE_VERSION_CDROM_DRIVE_SPEED 5
 /* First version carrying the JERRY UART + jlink chunk. */
 #define STATE_VERSION_JERRY_UART 6
+/* v7 adds the bus-arbiter 68K carry (symmetric DRAM self-cost). */
+#define STATE_VERSION_BUS_ARBITER 7
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
