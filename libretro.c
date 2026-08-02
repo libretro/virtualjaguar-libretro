@@ -1126,21 +1126,37 @@ static bool try_load_cd_bios_file(const char *path)
  * of well-known sub-directories used by Provenance/RetroArch front-ends). */
 static bool load_external_cd_bios(void)
 {
-   static const char *bios_names[] = {
+   /* Filenames conventionally used for each 'CD BIOS Type', plus generic
+    * names that could hold either image.  Selection is by NAME only — the
+    * loader does not inspect the image to confirm which BIOS it actually
+    * is, so a mislabelled file is taken at its filename's word.
+    *
+    * The selected type's names are searched FIRST.  The previous code used
+    * one flat list with the retail names ahead of the developer ones, so a
+    * user with both files installed always got retail no matter what the
+    * option said. */
+   static const char *retail_names[] = {
+      "[BIOS] Atari Jaguar CD (World).j64",
+      "[BIOS] Atari Jaguar CD (World).rom",
+      "[BIOS] Atari Jaguar CD (World).bin",
+      NULL
+   };
+   static const char *dev_names[] = {
+      "[BIOS] Atari Jaguar Developer CD (World).j64",
+      "[BIOS] Atari Jaguar Developer CD (World).rom",
+      "[BIOS] Atari Jaguar Developer CD (World).bin",
+      NULL
+   };
+   static const char *generic_names[] = {
       "jaguarcd_bios.bin",
       "jagcd_bios.bin",
       "jaguarcd.bin",
       "jagcd.bin",
       "Jaguar CD BIOS.rom",
       "Jaguar CD BIOS.bin",
-      "[BIOS] Atari Jaguar CD (World).j64",
-      "[BIOS] Atari Jaguar CD (World).rom",
-      "[BIOS] Atari Jaguar CD (World).bin",
-      "[BIOS] Atari Jaguar Developer CD (World).j64",
-      "[BIOS] Atari Jaguar Developer CD (World).rom",
-      "[BIOS] Atari Jaguar Developer CD (World).bin",
       NULL
    };
+   const char **name_groups[3];
    static const char *sub_dirs[] = {
       "",
       "Atari - Jaguar",
@@ -1150,7 +1166,7 @@ static bool load_external_cd_bios(void)
       NULL
    };
    const char *system_dir = NULL;
-   int s, i;
+   int s, i, g;
 
    if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
        || !system_dir)
@@ -1159,22 +1175,41 @@ static bool load_external_cd_bios(void)
       return false;
    }
 
-   LOG_INF("[CD-BIOS] Searching for CD BIOS in: %s\n", system_dir);
-
-   for (s = 0; sub_dirs[s]; s++)
+   /* Selected type first, generic names second, the other type last (a
+    * lone file of the "wrong" type still beats falling back to embedded —
+    * the user put it there on purpose). */
+   if (vjs.cdBiosType == CDBIOS_DEV)
    {
-      for (i = 0; bios_names[i]; i++)
-      {
-         char path[4096];
-         if (sub_dirs[s][0])
-            snprintf(path, sizeof(path), "%s/%s/%s",
-                     system_dir, sub_dirs[s], bios_names[i]);
-         else
-            snprintf(path, sizeof(path), "%s/%s",
-                     system_dir, bios_names[i]);
+      name_groups[0] = dev_names;
+      name_groups[2] = retail_names;
+   }
+   else
+   {
+      name_groups[0] = retail_names;
+      name_groups[2] = dev_names;
+   }
+   name_groups[1] = generic_names;
 
-         if (try_load_cd_bios_file(path))
-            return true;
+   LOG_INF("[CD-BIOS] Searching for CD BIOS in: %s (preferring %s)\n",
+           system_dir, (vjs.cdBiosType == CDBIOS_DEV) ? "developer" : "retail");
+
+   for (g = 0; g < 3; g++)
+   {
+      for (s = 0; sub_dirs[s]; s++)
+      {
+         for (i = 0; name_groups[g][i]; i++)
+         {
+            char path[4096];
+            if (sub_dirs[s][0])
+               snprintf(path, sizeof(path), "%s/%s/%s",
+                        system_dir, sub_dirs[s], name_groups[g][i]);
+            else
+               snprintf(path, sizeof(path), "%s/%s",
+                        system_dir, name_groups[g][i]);
+
+            if (try_load_cd_bios_file(path))
+               return true;
+         }
       }
    }
 
