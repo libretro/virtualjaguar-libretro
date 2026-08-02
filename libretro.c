@@ -480,6 +480,11 @@ static void check_variables(void)
       busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
    else
       busArbiter.enabled = 0;
+   /* No charging happens while disabled, so a carry left over from a
+    * runtime toggle (or an older savestate) must not leak into the
+    * first charged access when the option is re-enabled. */
+   if (!busArbiter.enabled)
+      busArbiter.m68k_sysclk_carry = 0;
    {
       const char *scale_env = getenv("VJ_DRAM_SCALE");
       int dram_scale = (scale_env && scale_env[0]) ? atoi(scale_env) : 1;

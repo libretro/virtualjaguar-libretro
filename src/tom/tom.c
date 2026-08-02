@@ -1391,6 +1391,12 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
       return;
    }
    tomRam8[offset] = data;
+
+   /* MEMCON1 can be written a byte at a time; keep the bus arbiter's
+    * MEMCON1-derived DRAM/ROM timing in sync (word writes hook in
+    * TOMWriteWord). */
+   if (offset == MEMCON1 || offset == MEMCON1 + 1)
+      bus_arbiter_update_memcon(TOMGetMEMCON1());
 }
 
 // TOM word access (write)
