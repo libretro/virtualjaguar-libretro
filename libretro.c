@@ -1535,6 +1535,11 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
+   /* Reset all bus-arbiter state (iOS cannot dlclose cores, so statics
+    * persist across loads).  Must run before check_variables() applies
+    * the core option — retro_load_game calls that after retro_init. */
+   bus_arbiter_init();
+
    CrashDetectInit();
 }
 
