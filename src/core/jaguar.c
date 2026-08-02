@@ -31,6 +31,8 @@
 #include "jerry.h"
 #include "joystick.h"
 #include "m68000/m68kinterface.h"
+#include "m68000/cpudefs.h"   /* regs.remainingCycles — 68K DRAM self-cost */
+#include "bus_arbiter.h"
 #include "memtrack.h"
 #include "settings.h"
 #include "tom.h"
@@ -334,6 +336,19 @@ int irq_ack_handler(int level)
    return M68K_INT_ACK_AUTOVECTOR;
 }
 
+/* 68K DRAM self-cost (symmetric timing model): every 68K bus cycle
+ * that reaches shared memory pays its DRAM/I-O access time out of the
+ * 68K's own cycle budget.  naccesses = number of 16-bit bus cycles
+ * (a longword = 2).  m68kBusNoCharge exempts disassembler reads so
+ * debug output cannot perturb timing. */
+static int m68kBusNoCharge = 0;
+
+#define M68K_BUS_CHARGE(addr, naccesses) \
+   do { \
+      if (busArbiter.enabled && !m68kBusNoCharge) \
+         regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses)); \
+   } while (0)
+
 unsigned int m68k_read_memory_8(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
@@ -344,6 +359,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
@@ -378,6 +394,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
@@ -416,16 +433,21 @@ unsigned int m68k_read_memory_32(unsigned int address)
    address &= 0x00FFFFFF;
 
    if (address <= 0x1FFFFC)
+   {
+      M68K_BUS_CHARGE(address, 2);
       return GET32(jaguarMainRAM, address);
+   }
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
+      M68K_BUS_CHARGE(address, 2);
       if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
          return MTReadLong(address);
 
       return GET32(jaguarMainROM, address - 0x800000);
    }
 
+   /* Fallthrough recurses into _16 twice — charged there, not here. */
    return (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
 }
 
@@ -465,6 +487,7 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
@@ -492,6 +515,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
@@ -532,6 +556,7 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 
    if (address <= 0x1FFFFC)
    {
+      M68K_BUS_CHARGE(address, 2);
       SET32(jaguarMainRAM, address, value);
       return;
    }
@@ -547,19 +572,31 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 
 unsigned int m68k_read_disassembler_8(unsigned int address)
 {
-   return m68k_read_memory_8(address);
+   unsigned int v;
+   m68kBusNoCharge++;
+   v = m68k_read_memory_8(address);
+   m68kBusNoCharge--;
+   return v;
 }
 
 
 unsigned int m68k_read_disassembler_16(unsigned int address)
 {
-   return m68k_read_memory_16(address);
+   unsigned int v;
+   m68kBusNoCharge++;
+   v = m68k_read_memory_16(address);
+   m68kBusNoCharge--;
+   return v;
 }
 
 
 unsigned int m68k_read_disassembler_32(unsigned int address)
 {
-   return m68k_read_memory_32(address);
+   unsigned int v;
+   m68kBusNoCharge++;
+   v = m68k_read_memory_32(address);
+   m68kBusNoCharge--;
+   return v;
 }
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
