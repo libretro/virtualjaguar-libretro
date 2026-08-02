@@ -21,6 +21,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "file.h"
 #include "jagbios.h"
 #include "jagcdbios.h"
+#include "jagdevcdbios.h"
 #include "jaguar.h"
 #include "cdintf.h"
 #include "cdrom.h"
@@ -1114,17 +1115,29 @@ static bool load_external_cd_bios(void)
 
 /* Stage the CD BIOS for the real-BIOS boot path: prefer an external ROM
  * file from the system directory (users may carry a different BIOS
- * revision), else fall back to the embedded retail CD BIOS so real-BIOS
- * boot works with zero files.  A developer CD BIOS is also embedded
- * (jaguarDevCDBootROM) but is not yet selectable. */
+ * revision), else fall back to an embedded CD BIOS so real-BIOS boot
+ * works with zero files.  Which embedded image is used follows the
+ * 'CD BIOS Type' option: retail (default) or the developer BIOS, which
+ * skips some of the retail BIOS's disc checks.
+ *
+ * An external file always wins over both — it is the user explicitly
+ * supplying a revision, so the type selection does not override it. */
 static void stage_cd_bios(void)
 {
    if (load_external_cd_bios())
       return;
 
+   if (vjs.cdBiosType == CDBIOS_DEV)
+   {
+      memcpy(external_cd_bios, jaguarDevCDBootROM, 0x40000);
+      cd_bios_loaded_externally = true;
+      LOG_INF("[CD-BIOS] using embedded developer CD BIOS\n");
+      return;
+   }
+
    memcpy(external_cd_bios, jaguarCDBootROM, 0x40000);
    cd_bios_loaded_externally = true;
-   LOG_INF("[CD-BIOS] using embedded CD BIOS\n");
+   LOG_INF("[CD-BIOS] using embedded retail CD BIOS\n");
 }
 
 /* Fill the entire framebuffer allocation with opaque black.

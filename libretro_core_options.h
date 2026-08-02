@@ -196,9 +196,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "virtualjaguar_bios",
-      "BIOS",
+      "BIOS (Cartridges)",
       NULL,
-      "Choose which BIOS the core boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot without the real Jaguar BIOS ROM. 'Real' boots the built-in Jaguar BIOS ROM, which some games require. Neither setting needs an external BIOS file.",
+      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot faster and skips the boot animation. 'Real' runs the actual Jaguar boot ROM, which some titles require. The boot ROM is built into the core, so neither setting needs a file in the system directory and no external Jaguar BIOS is looked for. Ignored for CD content: there, 'CD Boot Mode' decides, and it turns the boot ROM on or off to match.",
       NULL,
       NULL,
       {
@@ -226,7 +226,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_bios_type",
       "CD BIOS Type (Restart)",
       NULL,
-      "Select which Jaguar CD BIOS to use when loading CD images. Retail is the standard BIOS. Dev is the developer BIOS with less strict checks.",
+      "Which embedded CD BIOS the real-BIOS boot path uses. 'Retail' is the standard consumer BIOS. 'Developer' is the dev-kit BIOS, which applies less strict disc checks and can boot images the retail BIOS refuses. Both are built into the core. If a CD BIOS ROM file is present in the system directory it is used instead and this setting is ignored. Only has an effect when 'CD Boot Mode' is 'Real BIOS' or 'Auto' — the HLE boot path never runs a CD BIOS.",
       NULL,
       NULL,
       {
@@ -240,7 +240,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_boot_mode",
       "CD Boot Mode (Restart)",
       NULL,
-      "How to boot Jaguar CD games. HLE uses high-level emulation (recommended). BIOS boots through the real CD BIOS (experimental) — an external BIOS ROM file is used if present in the system directory, otherwise the embedded CD BIOS is used, so no files are required. Auto behaves like BIOS.",
+      "How Jaguar CD discs boot. This OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly and runs with the boot ROM off — fastest and the most broadly compatible. 'Real BIOS' runs the actual CD BIOS and forces the boot ROM on, which is more faithful but still experimental; it uses a CD BIOS ROM from the system directory if present, otherwise the embedded one selected by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If a real-BIOS mode is chosen but no CD BIOS can be staged, the core falls back to HLE rather than failing.",
       NULL,
       NULL,
       {
