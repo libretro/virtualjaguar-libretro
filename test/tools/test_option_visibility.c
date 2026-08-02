@@ -192,6 +192,14 @@ int main(int argc, char **argv)
    const char *cart = (argc > 2) ? argv[2] : NULL;
    const char *disc = (argc > 3) ? argv[3] : NULL;
 
+   /* The Makefile always passes a disc argument; it expands to an empty
+    * string when the private CD tree is absent (as on CI).  Treat that as
+    * "no disc" rather than handing retro_load_game an empty path. */
+   if (cart && !*cart)
+      cart = NULL;
+   if (disc && !*disc)
+      disc = NULL;
+
    printf("=== Core Option Visibility ===\n");
 
    if (!cart)
