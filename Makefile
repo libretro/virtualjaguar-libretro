@@ -795,7 +795,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_gpu_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -809,6 +809,7 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
+	./test/test_gpu_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_jlink
@@ -974,6 +975,9 @@ test/tools/netlink_latency: test/tools/netlink_latency.c test/harness/harness.c 
 
 test/tools/netlink_delay_proxy: test/tools/netlink_delay_proxy.c
 	$(CC) -O2 -Wall -o $@ test/tools/netlink_delay_proxy.c
+
+test/test_gpu_dram_timing: test/test_gpu_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
+	$(CC) -O2 -Wall -std=c99 -o $@ test/test_gpu_dram_timing.c src/core/bus_arbiter.c
 
 test/tools/netlink_game: test/tools/netlink_game.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \

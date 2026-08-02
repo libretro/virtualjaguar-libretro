@@ -121,6 +121,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_gpu_dram_timing",
+      "GPU Memory Timing (Experimental)",
+      NULL,
+      "Charge the GPU realistic DRAM access time for loads/stores that leave its local RAM, pacing GPU-rendered games (Doom-class) closer to real hardware. Affects only the GPU's own speed — no other processor is slowed. Experimental: the exact cost model is still being calibrated; leave disabled unless a game visibly runs too fast.",
+      NULL,
+      NULL,
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_netlink",
       "Network Link (JagLink / CatBox)",
       NULL,

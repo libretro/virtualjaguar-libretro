@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
 #include "jagcdbios.h"
@@ -467,6 +468,27 @@ static void check_variables(void)
       CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       CDTraceSetEnabled(0);
+
+   /* GPU DRAM timing: enabled/disabled only.  The calibration scale is
+    * deliberately NOT a core option (manual ms/x knobs proved
+    * untunable on device) — VJ_GPU_DRAM_SCALE overrides it for
+    * headless calibration experiments until the physical cost is
+    * derived properly. */
+   var.key = "virtualjaguar_gpu_dram_timing";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
+   else
+      busArbiter.enabled = 0;
+   {
+      const char *scale_env = getenv("VJ_GPU_DRAM_SCALE");
+      int dram_scale = (scale_env && scale_env[0]) ? atoi(scale_env) : 1;
+      if (dram_scale < 1)
+         dram_scale = 1;
+      if (dram_scale > 16)
+         dram_scale = 16;
+      busArbiter.contention_scale = (uint8_t)dram_scale;
+   }
 
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
