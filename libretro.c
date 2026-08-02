@@ -1105,12 +1105,15 @@ static bool try_load_cd_bios_file(const char *path)
  * of well-known sub-directories used by Provenance/RetroArch front-ends). */
 static bool load_external_cd_bios(void)
 {
-   /* Filenames whose content matches a specific 'CD BIOS Type' selection,
-    * plus generic names that could hold either image.  The selected type's
-    * names are searched FIRST — with both files in the system directory,
-    * picking 'Developer' must actually load the developer BIOS, not
-    * whichever name happens to sort earlier (the old single list always
-    * found retail first and silently ignored the selection). */
+   /* Filenames conventionally used for each 'CD BIOS Type', plus generic
+    * names that could hold either image.  Selection is by NAME only — the
+    * loader does not inspect the image to confirm which BIOS it actually
+    * is, so a mislabelled file is taken at its filename's word.
+    *
+    * The selected type's names are searched FIRST.  The previous code used
+    * one flat list with the retail names ahead of the developer ones, so a
+    * user with both files installed always got retail no matter what the
+    * option said. */
    static const char *retail_names[] = {
       "[BIOS] Atari Jaguar CD (World).j64",
       "[BIOS] Atari Jaguar CD (World).rom",
