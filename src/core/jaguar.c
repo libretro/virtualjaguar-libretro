@@ -231,10 +231,32 @@ extern uint8_t jagMemSpace[];
 
 // Internal variables
 
+/* The Memory Track answers in cart space only at MEMCON1 ROMWIDTH 2
+ * (32-bit).  Note this is NOT an MT-specific mode -- a plain cartridge sits
+ * at ROMWIDTH 2 as its normal width, which is why the CRC test below did all
+ * the real work before presence was tracked separately.
+ *
+ * What makes it safe to enable MT for CD content is measured, not designed:
+ * across the 35-disc corpus in both boot modes, CD-mode cart reads only ever
+ * occur at ROMWIDTH 0, so the MT branch is never taken and the CD BIOS stays
+ * readable at $800000.  (Same sweep found no title touching the MT interface
+ * at all -- see #258 before assuming this path is exercised.)
+ *
+ * Presence itself is either an explicitly inserted MT cart dump (a cartridge
+ * whose CRC we recognise, the historical case) or CD content, where hardware
+ * would have the MT plugged in alongside the disc. */
+#define MEMTRACK_PRESENT() \
+   (jaguarMemTrackInserted || jaguarMainROMCRC32 == 0xFDF37F47)
+
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
 bool jaguarCartInserted = false;
+/* Memory Track cartridge presence.  On hardware the MT cart plugs into the
+ * cartridge slot while the CD unit sits on top, so a disc and an MT cart are
+ * present at the same time -- a combination the old CRC-only gate below could
+ * never express.  Set for CD content; see JaguarReadWord(). */
+bool jaguarMemTrackInserted = false;
 bool lowerField = false;
 
 
@@ -385,7 +407,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       /* Memory Track reading... */
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && MEMTRACK_PRESENT())
          return MTReadWord(address);
       else
          return (jaguarMainROM[address - 0x800000] << 8)
@@ -420,7 +442,7 @@ unsigned int m68k_read_memory_32(unsigned int address)
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && MEMTRACK_PRESENT())
          return MTReadLong(address);
 
       return GET32(jaguarMainROM, address - 0x800000);
@@ -501,7 +523,7 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    /* Memory Track device writes.... */
    else if ((address >= 0x800000) && (address <= 0x87FFFE))
    {
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && MEMTRACK_PRESENT())
          MTWriteWord(address, value);
    }
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFE))

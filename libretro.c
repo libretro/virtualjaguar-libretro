@@ -1329,6 +1329,7 @@ bool retro_load_game(const struct retro_game_info *info)
     * if present, embedded otherwise) so ResolveBootConfig can pick the
     * right boot strategy. */
    jaguar_cd_mode            = false;
+   jaguarMemTrackInserted    = false;
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
 
@@ -1337,6 +1338,9 @@ bool retro_load_game(const struct retro_game_info *info)
                               || has_extension(info->path, "iso")))
    {
       jaguar_cd_mode = true;
+      /* Hardware has the Memory Track cart in the slot alongside the CD
+       * unit; MEMCON1 ROMWIDTH arbitrates which one answers in cart space. */
+      jaguarMemTrackInserted = true;
       strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
       cd_image_path[sizeof(cd_image_path) - 1] = '\0';
 
@@ -1463,6 +1467,7 @@ void retro_unload_game(void)
    retro_cheat_reset();
    CDIntfCloseImage();
    jaguar_cd_mode    = false;
+   jaguarMemTrackInserted = false;
    cd_image_path[0]  = '\0';
    /* Content type is unknown again — restore the full option list. */
    content_loaded    = false;
