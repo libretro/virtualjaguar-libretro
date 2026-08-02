@@ -1,13 +1,16 @@
 /* test_dram_timing.c — unit test for the symmetric DRAM self-cost timing
- * (the GPU self-stall extracted from the full bus arbiter, PR #169).
+ * (the GPU self-stall and 68K self-cost extracted from the full bus arbiter, PR #169).
  *
- * The model: a GPU LOAD/STORE that leaves local GPU RAM pays a DRAM
- * access cost in system clocks (base + page-miss from MEMCON1),
- * multiplied by the configurable scale.  Local GPU RAM costs nothing.
- * Disabled costs nothing anywhere.  There is NO cross-processor
- * penalty: the 68K/blitter halves of the arbiter were measured to slow
- * innocent 68K-paced work (real-BIOS boot logo animation) and are
- * deliberately not part of this.
+ * The model: each master (GPU, 68K) pays DRAM access cost for its own
+ * memory accesses — a LOAD/STORE that leaves local RAM pays system
+ * clocks (base + page-miss from MEMCON1), multiplied by scale.  Local
+ * RISC RAM is free only for the owning processor (internal bus); the
+ * 68K accessing RISC local RAM incurs an I/O-bus transaction (~2
+ * clocks).  The 68K-side cost is carried across calls to handle the
+ * 68K's half-system-clock rate.  Disabled costs nothing anywhere.
+ * There is NO cross-processor penalty: charging the 68K for GPU/blitter
+ * bus traffic was measured to slow innocent 68K-paced work (real-BIOS
+ * boot logo animation) and is deliberately not implemented.
  *
  * Links bus_arbiter.c directly (like test_jlink does jlink.c).
  */
