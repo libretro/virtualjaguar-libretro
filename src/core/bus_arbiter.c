@@ -71,11 +71,28 @@ uint32_t bus_arbiter_dram_cost(uint32_t addr)
 uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
 {
     uint32_t cost;
-    (void)master;
     cost = bus_arbiter_dram_cost(addr);
     if (cost == 0)
-        return 0;
+    {
+        /* GPU/DSP local RAM: internal bus for the owning RISC (free),
+         * but an I/O-bus transaction for the 68K. */
+        if (master != BM_CPU)
+            return 0;
+        cost = 2;
+    }
     if (busArbiter.contention_scale > 1)
         cost *= busArbiter.contention_scale;
     return cost;
+}
+
+uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses)
+{
+    uint32_t sysclks, cycles;
+    sysclks = bus_arbiter_charge_access(BM_CPU, addr) * naccesses;
+    if (sysclks == 0)
+        return 0;
+    busArbiter.m68k_sysclk_carry += sysclks;
+    cycles = busArbiter.m68k_sysclk_carry >> 1;
+    busArbiter.m68k_sysclk_carry &= 1;
+    return cycles;
 }

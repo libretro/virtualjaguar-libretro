@@ -1,4 +1,4 @@
-/* test_gpu_dram_timing.c — unit test for the GPU DRAM-timing charge
+/* test_dram_timing.c — unit test for the symmetric DRAM self-cost timing
  * (the GPU self-stall extracted from the full bus arbiter, PR #169).
  *
  * The model: a GPU LOAD/STORE that leaves local GPU RAM pays a DRAM
@@ -62,6 +62,44 @@ int main(void)
     busArbiter.contention_scale = 1;
     check(bus_arbiter_charge_access(BM_GPU, 0x00080000) == 6,
           "DRAMSPEED 0b00 -> 2+4 clocks");
+
+    /* ---- 68K half (symmetric self-cost) ---- */
+
+    /* Restore power-on timing for the 68K checks. */
+    bus_arbiter_update_memcon(0x1861);
+    busArbiter.contention_scale = 1;
+
+    /* GPU/DSP local RAM is free only for the owning RISC.  For the 68K
+     * it is an I/O-bus transaction (~2 system clocks). */
+    check(bus_arbiter_charge_access(BM_CPU, 0x00F03000) == 2,
+          "68K access to GPU local RAM costs 2 clocks (not free)");
+    check(bus_arbiter_charge_access(BM_CPU, 0x00F1B000) == 2,
+          "68K access to DSP local RAM costs 2 clocks (not free)");
+    check(bus_arbiter_charge_access(BM_GPU, 0x00F03000) == 0,
+          "GPU access to GPU local RAM still free");
+
+    /* bus_arbiter_m68k_access converts system clocks to 68K cycles
+     * (68K runs at system/2) with a carry for the odd clock.
+     * DRAM cost at 0x1861 = 9 sysclks: 4 cycles carry 1, then 5. */
+    busArbiter.m68k_sysclk_carry = 0;
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 4,
+          "9 sysclks -> 4 68K cycles, carry 1");
+    check(busArbiter.m68k_sysclk_carry == 1,
+          "odd system clock carried");
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 5,
+          "carry+9 sysclks -> 5 68K cycles, carry 0");
+    check(busArbiter.m68k_sysclk_carry == 0,
+          "carry drained");
+
+    /* A longword is two 16-bit bus cycles. */
+    check(bus_arbiter_m68k_access(0x00080000, 2) == 9,
+          "2 accesses = 18 sysclks -> 9 68K cycles");
+
+    /* I/O access: 2 sysclks -> 1 cycle, no carry. */
+    check(bus_arbiter_m68k_access(0x00F00050, 1) == 1,
+          "I/O 2 sysclks -> 1 68K cycle");
+    check(busArbiter.m68k_sysclk_carry == 0,
+          "no carry from even cost");
 
     printf("%s: %d failure(s)\n", fails ? "FAIL" : "PASS", fails);
     return fails ? 1 : 0;
