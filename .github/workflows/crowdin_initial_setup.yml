@@ -17,6 +17,19 @@ jobs:
   upload_source_file:
     runs-on: ubuntu-latest
     steps:
+
+      # The vendored intl/ scripts do not propagate subprocess failures
+      # (upstream ships them without check=True), so an absent or empty
+      # secret would otherwise produce a GREEN run that silently did
+      # nothing. Fail here, before any of that runs.
+      - name: Require CROWDIN_API_KEY
+        env:
+          CROWDIN_API_KEY: ${{ secrets.CROWDIN_API_KEY }}
+        run: |
+          if [ -z "$CROWDIN_API_KEY" ]; then
+            echo "::error::CROWDIN_API_KEY secret is not set -- see docs/core-option-translations.md"
+            exit 1
+          fi
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:

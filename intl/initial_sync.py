@@ -31,7 +31,11 @@ if __name__ == '__main__':
    crowdin_config = re.sub(r'"api_token": "_secret_"',
                            f'"api_token": "{API_KEY}"',
                            crowdin_config, 1)
-   crowdin_config = re.sub(r'/_core_name_(?=[/.])]',
+   # Upstream typo: a stray ']' after the lookahead made this regex
+   # unmatchable, so the placeholder survived and the initial upload
+   # went to a Crowdin path literally named '_core_name_'.  Reported
+   # upstream; keep this patched until the sample is fixed.
+   crowdin_config = re.sub(r'/_core_name_(?=[/.])',
                            f'/{CORE_NAME}'
                            , crowdin_config)
    with open(YAML_PATH, 'w') as crowdin_config_file:

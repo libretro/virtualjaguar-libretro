@@ -85,5 +85,26 @@ Three, each deliberate:
   sample's names. The placeholders here are already filled, so the
   script had no remaining use and would only mislead.
 
+Plus two fixes for upstream bugs, both reported upstream and to be
+dropped when the sample catches up:
+
+- **`intl/initial_sync.py` placeholder regex.** The sample has
+  `r'/_core_name_(?=[/.])]'` — a stray `]` after the lookahead, which
+  asserts the next character is both `/`-or-`.` *and* `]`. The regex
+  therefore matches nothing, the `_core_name_` placeholders survive into
+  `crowdin.yaml`, and the initial upload lands in a Crowdin path
+  literally named `_core_name_`. The reset path further down the same
+  file got the identical tightening right, so it is plainly a typo.
+  Older copies (nestopia) use a working `r'/_core_name_'`.
+- **A `CROWDIN_API_KEY` guard was added as the first step of each
+  workflow.** The vendored scripts call `subprocess.run()` without
+  `check=True` throughout, so a failed Crowdin CLI invocation still
+  exits 0 and the workflow step reports success. Without the guard, an
+  unset secret produces a green run that did nothing at all. The guard
+  is deliberately in *our* workflow files rather than as `check=True`
+  edits across five upstream scripts: it covers the failure that
+  actually happens, and it cannot be undone by the sync workflow's own
+  `git add intl/*_workflow.py`.
+
 The rest of `intl/` is upstream as-is; the sync workflow updates
 `intl/*_workflow.py` itself.
