@@ -120,6 +120,33 @@ int main(void)
       MTReadWord(MT_DATA_BASE) == 0x1234 &&
       MTReadWord(MT_DATA_BASE + 0x10000) == 0x0F0F);
 
+   /* --- 3b. byte accessors (the 68K reaches the device with move.b too;
+    * Copilot review on #259 caught these bypassing the device entirely) --- */
+   unlock(0x00A0);
+   MTWriteByte(MT_DATA_BASE + 4, 0xDE);
+   MTWriteByte(MT_DATA_BASE + 5, 0xAD);
+   ok("byte writes land in the NVRAM window",
+      MTReadWord(MT_DATA_BASE + 4) == 0xDEAD);
+   ok("byte reads pick the right half of the word",
+      MTReadByte(MT_DATA_BASE + 4) == 0xDE
+      && MTReadByte(MT_DATA_BASE + 5) == 0xAD);
+   ok("byte write to the last NVRAM byte is in range",
+      (MTWriteByte(MT_DATA_END - 1, 0x77), mtMem[MT_MEM_SIZE - 1] == 0x77));
+
+   /* A byte write without write-enable must be ignored, like the word path. */
+   MTReset();
+   MTWriteByte(MT_DATA_BASE + 4, 0x00);
+   ok("byte write ignored without write-enable",
+      MTReadByte(MT_DATA_BASE + 4) == 0xDE);
+
+   /* Byte writes to the command window must still drive the state machine. */
+   MTWriteByte(MT_CMD_UNLOCK1, 0xAA);
+   MTWriteByte(MT_CMD_UNLOCK2, 0x55);
+   MTWriteByte(MT_CMD_UNLOCK1, 0x90);
+   ok("byte-written unlock reaches ID mode",
+      MTReadWord(MT_ID_MANUF) == 0x001F);
+   unlock(0x00F0);
+
    /* --- 4. reset keeps contents, clears command state --- */
    MTReset();
    ok("soft reset preserves NVRAM contents",

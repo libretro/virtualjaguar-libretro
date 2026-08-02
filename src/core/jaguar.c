@@ -380,7 +380,11 @@ unsigned int m68k_read_memory_8(unsigned int address)
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       return jaguarMainRAM[address];
    else if ((address >= 0x800000) && (address <= 0xDFFEFF))
+   {
+      if (MEMTRACK_PRESENT() && MTClaimsRead(address))
+         return MTReadByte(address);
       return jaguarMainROM[address - 0x800000];
+   }
    else if ((address >= 0xE00000) && (address <= 0xE3FFFF))
       return jagMemSpace[address];
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFF))
@@ -500,6 +504,14 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       jaguarMainRAM[address] = value;
+   /* Memory Track byte writes: cart space is otherwise read-only, so this
+    * branch exists purely for the device (command window + NVRAM). */
+   else if (((address >= 0x800000) && (address <= 0x87FFFF))
+            || ((address >= MT_DATA_BASE) && (address < MT_DATA_END)))
+   {
+      if (MEMTRACK_PRESENT() && MTClaimsWrite(address))
+         MTWriteByte(address, (uint8_t)value);
+   }
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFF))
       CDROMWriteByte(address, value, M68K);
    else if ((address >= 0xF00000) && (address <= 0xF0FFFF))

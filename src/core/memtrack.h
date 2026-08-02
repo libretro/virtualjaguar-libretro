@@ -38,6 +38,8 @@ void MTDone(void);
 bool MTClaimsRead(uint32_t addr);
 bool MTClaimsWrite(uint32_t addr);
 
+uint8_t  MTReadByte(uint32_t addr);
+void     MTWriteByte(uint32_t addr, uint8_t data);
 uint16_t MTReadWord(uint32_t addr);
 uint32_t MTReadLong(uint32_t addr);
 void MTWriteWord(uint32_t addr, uint16_t data);

@@ -149,6 +149,37 @@ uint16_t MTReadWord(uint32_t addr)
 }
 
 
+/* Byte accessors.  The 68K reaches the device with move.b as readily as
+ * move.w -- the original NVM BIOS's Getbyte/Putbyte are byte operations --
+ * so these must exist or byte-granular drivers silently read cart ROM and
+ * write nowhere. */
+uint8_t MTReadByte(uint32_t addr)
+{
+	uint16_t w = MTReadWord(addr & ~1u);
+	return (addr & 1) ? (uint8_t)(w & 0xFF) : (uint8_t)(w >> 8);
+}
+
+
+void MTWriteByte(uint32_t addr, uint8_t data)
+{
+	if (addr >= MT_DATA_BASE && addr < MT_DATA_END)
+	{
+		if (mtCommand == MT_WRITE_ENABLE)
+		{
+			mtMem[(addr - MT_DATA_BASE) & (MT_MEM_SIZE - 1)] = data;
+			if (mt_dirty_cb)
+				mt_dirty_cb();
+		}
+		return;
+	}
+
+	/* A byte write to a command address carries the command in the low
+	 * byte; feed the state machine the same way a word write would. */
+	if (addr == MT_CMD_UNLOCK1 || addr == MT_CMD_UNLOCK2)
+		MTWriteWord(addr & ~1u, (uint16_t)data);
+}
+
+
 uint32_t MTReadLong(uint32_t addr)
 {
 	return ((uint32_t)MTReadWord(addr) << 16) | MTReadWord(addr + 2);
