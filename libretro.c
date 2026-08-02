@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
 #include "jagcdbios.h"
@@ -527,6 +528,32 @@ static void check_variables(void)
    else
       CDTraceSetEnabled(0);
 
+   /* DRAM timing: enabled/disabled only, covering BOTH halves of the
+    * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
+    * in jaguar.c).  The calibration scale is deliberately NOT a core
+    * option (manual knobs proved untunable on device) — VJ_DRAM_SCALE
+    * overrides it for headless calibration experiments only. */
+   var.key = "virtualjaguar_dram_timing";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
+   else
+      busArbiter.enabled = 0;
+   /* No charging happens while disabled, so a carry left over from a
+    * runtime toggle (or an older savestate) must not leak into the
+    * first charged access when the option is re-enabled. */
+   if (!busArbiter.enabled)
+      busArbiter.m68k_sysclk_carry = 0;
+   {
+      const char *scale_env = getenv("VJ_DRAM_SCALE");
+      int dram_scale = (scale_env && scale_env[0]) ? atoi(scale_env) : 1;
+      if (dram_scale < 1)
+         dram_scale = 1;
+      if (dram_scale > 16)
+         dram_scale = 16;
+      busArbiter.contention_scale = (uint8_t)dram_scale;
+   }
+
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -952,6 +979,9 @@ bool retro_serialize(void *data, size_t size)
    buf += DACStateSave(buf);
    buf += UARTStateSave(buf);
 
+   /* v7: 68K DRAM self-cost carry (bus arbiter). */
+   STATE_SAVE_VAR(buf, busArbiter.m68k_sysclk_carry);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -1017,6 +1047,18 @@ bool retro_unserialize(const void *data, size_t size)
    buf += DACStateLoad(buf, version);
    if (version >= STATE_VERSION_JERRY_UART)
       buf += UARTStateLoad(buf, version);
+
+   if (version >= STATE_VERSION_BUS_ARBITER)
+   {
+      STATE_LOAD_VAR(buf, busArbiter.m68k_sysclk_carry);
+   }
+   else
+   {
+      busArbiter.m68k_sysclk_carry = 0;
+   }
+   /* tomRam8 was restored raw above; recompute the DRAM timing that
+    * bus_arbiter derives from MEMCON1 so it matches the loaded state. */
+   bus_arbiter_update_memcon(TOMGetMEMCON1());
 
    JaguarApplyHLEBIOSState();
 
@@ -1668,6 +1710,11 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
+
+   /* Reset all bus-arbiter state (iOS cannot dlclose cores, so statics
+    * persist across loads).  Must run before check_variables() applies
+    * the core option — retro_load_game calls that after retro_init. */
+   bus_arbiter_init();
 
    CrashDetectInit();
 }

@@ -257,6 +257,7 @@
 
 #include <string.h>								// For memset()
 #include "blitter.h"
+#include "bus_arbiter.h"
 #include "event.h"
 #include "gpu.h"
 #include "jaguar.h"
@@ -1140,6 +1141,7 @@ void TOMReset(void)
    {
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
+      bus_arbiter_update_memcon(0x1861);
       SET16(tomRam8, HP, 844);			// Horizontal Period (1-based; HP=845)
       SET16(tomRam8, HBB, 1713);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 125);			// Horizontal Blank End
@@ -1166,6 +1168,7 @@ void TOMReset(void)
    {
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
+      bus_arbiter_update_memcon(0x1861);
       SET16(tomRam8, HP, 850);			// Horizontal Period
       SET16(tomRam8, HBB, 1711);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 158);			// Horizontal Blank End
@@ -1388,6 +1391,12 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
       return;
    }
    tomRam8[offset] = data;
+
+   /* MEMCON1 can be written a byte at a time; keep the bus arbiter's
+    * MEMCON1-derived DRAM/ROM timing in sync (word writes hook in
+    * TOMWriteWord). */
+   if (offset == MEMCON1 || offset == MEMCON1 + 1)
+      bus_arbiter_update_memcon(TOMGetMEMCON1());
 }
 
 // TOM word access (write)
@@ -1460,6 +1469,9 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    // Fix a lockup bug... :-P
    TOMWriteByte(0xF00000 | offset, data >> 8, who);
    TOMWriteByte(0xF00000 | (offset+1), data & 0xFF, who);
+
+   if (offset == MEMCON1)
+      bus_arbiter_update_memcon(data);
 
    // detect screen resolution changes
    //This may go away in the future, if we do the virtualized screen thing...

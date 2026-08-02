@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>								// For memset
+#include "bus_arbiter.h"
 #include "log.h"
 #include "dsp.h"
 #include "jaguar.h"
@@ -38,6 +39,21 @@
 
 // Seems alignment in loads & stores was off...
 #define GPU_CORRECT_ALIGNMENT
+
+/* Bus contention: accumulates stall cycles for GPU external memory
+ * accesses within a single instruction.  Reset before each opcode
+ * in GPUExec(), then added to cycle cost after the opcode completes.
+ * Units: system clocks (same as bus_arbiter charges). */
+static uint32_t gpu_bus_stall;
+
+/* Charge an external memory access and accumulate the stall.
+ * addr is the target address — GPU local RAM (0xF03000-0xF03FFF)
+ * costs nothing; external addresses cost DRAM access time. */
+#define GPU_EXT_ACCESS(addr) \
+   do { \
+      if (busArbiter.enabled) \
+         gpu_bus_stall += bus_arbiter_charge_access(BM_GPU, (addr)); \
+   } while (0)
 
 #define GPU_TRACE_DEBUG 0
 #if GPU_TRACE_DEBUG
@@ -1006,16 +1022,14 @@ void GPUExec(int32_t cycles)
       //$E400 -> 1110 01 -> $39 -> 57
       //GPU #1
       gpu_pc += 2;
+      gpu_bus_stall = 0;
 #if 0
       gpu_opcode[index]();
 #else
        executeOpcode(index);
 #endif
-      // BIOS hacking
-      //GPU: [00F03548] jr      nz,00F03560 (0xd561) (RM=00F03114, RN=00000004) ->     --> JR: Branch taken.
-      //GPU: [00F0354C] jump    nz,(r29) (0xd3a1) (RM=00F03314, RN=00000004) -> (RM=00F03314, RN=00000004)
 
-      cycles -= gpu_opcode_cycles[index];
+      cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall;
 
       /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
        * that has just set SINGLE_STEP has entered single-step mode and stops
@@ -1476,12 +1490,17 @@ INLINE static void gpu_opcode_store_r14_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
 
+   GPU_EXT_ACCESS(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
       GPUWriteLong(address, RN, GPU);
 #else
-   GPUWriteLong(gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2), RN, GPU);
+   {
+      uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
+      GPU_EXT_ACCESS(address);
+      GPUWriteLong(address, RN, GPU);
+   }
 #endif
 }
 
@@ -1491,12 +1510,17 @@ INLINE static void gpu_opcode_store_r15_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
 
+   GPU_EXT_ACCESS(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
       GPUWriteLong(address, RN, GPU);
 #else
-   GPUWriteLong(gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2), RN, GPU);
+   {
+      uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
+      GPU_EXT_ACCESS(address);
+      GPUWriteLong(address, RN, GPU);
+   }
 #endif
 }
 
@@ -1506,12 +1530,17 @@ INLINE static void gpu_opcode_load_r14_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + RM;
 
+   GPU_EXT_ACCESS(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
       RN = GPUReadLong(address, GPU);
 #else
-   RN = GPUReadLong(gpu_reg[14] + RM, GPU);
+   {
+      uint32_t address = gpu_reg[14] + RM;
+      GPU_EXT_ACCESS(address);
+      RN = GPUReadLong(address, GPU);
+   }
 #endif
 }
 
@@ -1521,12 +1550,17 @@ INLINE static void gpu_opcode_load_r15_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + RM;
 
+   GPU_EXT_ACCESS(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
       RN = GPUReadLong(address, GPU);
 #else
-   RN = GPUReadLong(gpu_reg[15] + RM, GPU);
+   {
+      uint32_t address = gpu_reg[15] + RM;
+      GPU_EXT_ACCESS(address);
+      RN = GPUReadLong(address, GPU);
+   }
 #endif
 }
 
@@ -1536,12 +1570,17 @@ INLINE static void gpu_opcode_store_r14_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + RM;
 
+   GPU_EXT_ACCESS(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
       GPUWriteLong(address, RN, GPU);
 #else
-   GPUWriteLong(gpu_reg[14] + RM, RN, GPU);
+   {
+      uint32_t address = gpu_reg[14] + RM;
+      GPU_EXT_ACCESS(address);
+      GPUWriteLong(address, RN, GPU);
+   }
 #endif
 }
 
@@ -1551,12 +1590,17 @@ INLINE static void gpu_opcode_store_r15_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT_STORE
    uint32_t address = gpu_reg[15] + RM;
 
+   GPU_EXT_ACCESS(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
       GPUWriteLong(address, RN, GPU);
 #else
-   GPUWriteLong(gpu_reg[15] + RM, RN, GPU);
+   {
+      uint32_t address = gpu_reg[15] + RM;
+      GPU_EXT_ACCESS(address);
+      GPUWriteLong(address, RN, GPU);
+   }
 #endif
 }
 
@@ -1579,12 +1623,13 @@ INLINE static void gpu_opcode_pack(void)
 
 INLINE static void gpu_opcode_storeb(void)
 {
-   //Is this right???
-   // Would appear to be so...!
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM, RN & 0xFF, GPU);
    else
+   {
+      GPU_EXT_ACCESS(RM);
       JaguarWriteByte(RM, RN, GPU);
+   }
 }
 
 
@@ -1594,12 +1639,18 @@ INLINE static void gpu_opcode_storew(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM & 0xFFFFFFFE, RN & 0xFFFF, GPU);
    else
+   {
+      GPU_EXT_ACCESS(RM);
       JaguarWriteWord(RM, RN, GPU);
+   }
 #else
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM, RN & 0xFFFF, GPU);
    else
+   {
+      GPU_EXT_ACCESS(RM);
       JaguarWriteWord(RM, RN, GPU);
+   }
 #endif
 }
 
@@ -1610,8 +1661,12 @@ INLINE static void gpu_opcode_store(void)
    if ((RM >= 0xF03000) && (RM <= 0xF03FFF))
       GPUWriteLong(RM & 0xFFFFFFFC, RN, GPU);
    else
+   {
+      GPU_EXT_ACCESS(RM);
       GPUWriteLong(RM, RN, GPU);
+   }
 #else
+   GPU_EXT_ACCESS(RM);
    GPUWriteLong(RM, RN, GPU);
 #endif
 }
@@ -1640,6 +1695,9 @@ INLINE static void gpu_opcode_store(void)
  * which needs its own before/after evidence rather than riding along here. */
 INLINE static void gpu_opcode_storep(void)
 {
+   /* One 64-bit phrase = one bus transaction (JTRM: "the memory
+    * controller makes it all look 64 bits wide"), not two 32-bit ones. */
+   GPU_EXT_ACCESS(RM);
    GPUWriteLong((RM & 0xFFFFFFF8) + 0, gpu_hidata, GPU);
    GPUWriteLong((RM & 0xFFFFFFF8) + 4, RN, GPU);
 }
@@ -1663,7 +1721,10 @@ INLINE static void gpu_opcode_loadb(void)
       RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
    }
    else
+   {
+      GPU_EXT_ACCESS(RM);
       RN = JaguarReadByte(RM, GPU);
+   }
 }
 
 
@@ -1676,7 +1737,10 @@ INLINE static void gpu_opcode_loadw(void)
       RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
    }
    else
+   {
+      GPU_EXT_ACCESS(RM);
       RN = JaguarReadWord(RM, GPU);
+   }
 }
 
 
@@ -1700,8 +1764,10 @@ INLINE static void gpu_opcode_loadw(void)
 INLINE static void gpu_opcode_load(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
+   GPU_EXT_ACCESS(RM);
    RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
 #else
+   GPU_EXT_ACCESS(RM);
    RN = GPUReadLong(RM, GPU);
 #endif
 }
@@ -1717,10 +1783,14 @@ INLINE static void gpu_opcode_loadp(void)
    }
    else
    {
+      /* One 64-bit phrase = one bus transaction, not two. */
+      GPU_EXT_ACCESS(RM);
       gpu_hidata = GPUReadLong(RM + 0, GPU);
       RN		   = GPUReadLong(RM + 4, GPU);
    }
 #else
+   /* One 64-bit phrase = one bus transaction, not two. */
+   GPU_EXT_ACCESS(RM);
    gpu_hidata = GPUReadLong(RM + 0, GPU);
    RN		   = GPUReadLong(RM + 4, GPU);
 #endif
@@ -1732,12 +1802,17 @@ INLINE static void gpu_opcode_load_r14_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
 
+   GPU_EXT_ACCESS(address);
    if ((address >= 0xF03000) && (address <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
       RN = GPUReadLong(address, GPU);
 #else
-   RN = GPUReadLong(gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2), GPU);
+   {
+      uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
+      GPU_EXT_ACCESS(address);
+      RN = GPUReadLong(address, GPU);
+   }
 #endif
 }
 
@@ -1747,12 +1822,17 @@ INLINE static void gpu_opcode_load_r15_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
 
+   GPU_EXT_ACCESS(address);
    if ((address >= 0xF03000) && (address <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
       RN = GPUReadLong(address, GPU);
 #else
-   RN = GPUReadLong(gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2), GPU);
+   {
+      uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
+      GPU_EXT_ACCESS(address);
+      RN = GPUReadLong(address, GPU);
+   }
 #endif
 }
 

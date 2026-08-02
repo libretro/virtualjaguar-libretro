@@ -22,7 +22,9 @@ extern "C" {
  * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
  * v6: new UART chunk (JERRY async serial + jlink RX ring).
  * v7: Memory Track chunk gained the latched $80AAA8 override flag and
- *     the NVM BIOS dispatcher state (nvmbios.c). */
+ *     the NVM BIOS dispatcher state (nvmbios.c); trailing bus-arbiter
+ *     68K self-cost carry (symmetric DRAM timing).  One shared bump —
+ *     all in-flight changes since the last release use v7. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   7
 /* Oldest layout retro_unserialize still accepts.  States between
@@ -45,6 +47,9 @@ extern "C" {
 #define STATE_VERSION_JERRY_UART 6
 /* First version whose Memory Track block carries the $80AAA8 override flag. */
 #define STATE_VERSION_MEMTRACK_OVERRIDE 7
+/* First version carrying the trailing bus-arbiter 68K carry (symmetric
+ * DRAM self-cost). */
+#define STATE_VERSION_BUS_ARBITER 7
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

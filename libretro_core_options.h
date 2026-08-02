@@ -117,6 +117,11 @@ struct retro_core_option_v2_category option_cats_us[] = {
       "Diagnostics",
       "Logging and watchdog aids for troubleshooting and bug reports."
    },
+   {
+      "timing",
+      "Timing",
+      "Experimental hardware timing accuracy (bus/DRAM access modeling)."
+   },
    { NULL, NULL, NULL },
 };
 
@@ -149,6 +154,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "enabled"
+   },
+   {
+      "virtualjaguar_dram_timing",
+      "DRAM Timing (Experimental)",
+      NULL,
+      "Charge the GPU and 68000 realistic DRAM access time for memory accesses that leave their local buses, pacing games that rely on hardware timing (Doom-class) closer to real hardware. Symmetric: each processor pays only its own access costs, so relative CPU/GPU timing is preserved. Experimental: the cost model is still being calibrated; leave disabled unless a game visibly runs too fast.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
    },
    {
       "virtualjaguar_netlink",
