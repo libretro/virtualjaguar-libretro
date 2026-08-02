@@ -10,7 +10,13 @@
  * local GPU RAM pays a DRAM access cost in system clocks, derived from
  * MEMCON1, charged to the GPU's OWN cycle budget in gpu.c; the 68K's
  * bus cycles pay their own DRAM cost via bus_arbiter_m68k_access().
- * Neither half can slow any other processor.
+ * Neither half can slow any other processor: costs are only ever
+ * charged to the owning master's own cycle budget.  The 68K's
+ * consumed time IS visible to time-based cross-processor sync points
+ * (GPUSyncToM68K in gpu.c, keyed off m68k_cycles_run()) — that
+ * coupling reads elapsed 68K time, not raw instruction count, so
+ * DRAM wait-states folded into remainingCycles are exactly what it
+ * should see.  That is the intended semantics, not a leak.
  *
  * The file keeps its name so the remaining #169 work (OP bus stealing,
  * blitter busy-time, 68K arbitration done right) can grow back around
