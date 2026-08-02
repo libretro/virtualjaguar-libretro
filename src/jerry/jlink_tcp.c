@@ -11,6 +11,9 @@
  * platforms without BSD-style sockets (bare console targets) compile
  * the stub tail of this file instead.
  */
+#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1   /* glibc: expose POSIX (getaddrinfo) under c99 */
+#endif
 #include <string.h>
 #include "jlink_tcp.h"
 
