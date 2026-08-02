@@ -2,7 +2,10 @@
  * per-second audio fingerprint so two builds can be compared.
  *
  * Usage:
- *   ./test/test_audio_long_capture <core.dylib> <rom.jag> <seconds> [bios=0|1]
+ *   ./test/test_audio_long_capture <core.dylib> <rom.jag> <seconds> \
+ *       [bios=0|1] [out.wav] [press_frames]
+ * press_frames: comma-separated frame numbers; the A button is held 20
+ * frames from each (navigates title/menus into gameplay).
  *
  * Output (one line per second):
  *   sec=NN samples=NN nonsilent=NN peak=NN rms=NN nonzero_runs=NN
@@ -261,7 +264,10 @@ int main(int argc, char **argv)
    void  (*retro_reset)(void);
 
    if (argc < 4) {
-      fprintf(stderr, "Usage: %s <core.dylib> <rom> <seconds> [bios=0|1] [out.wav]\n",
+      fprintf(stderr, "Usage: %s <core.dylib> <rom> <seconds> [bios=0|1] "
+            "[out.wav] [press_frames]\n"
+            "  press_frames: comma-separated frame numbers; the A button "
+            "is held 20 frames from each\n",
             argv[0]);
       return 2;
    }
@@ -271,10 +277,18 @@ int main(int argc, char **argv)
    if (g_seconds < 1 || g_seconds > 600) g_seconds = 60;
    if (argc >= 5) g_use_bios = atoi(argv[4]) ? 1 : 0;
    if (argc >= 7) {
-      char *tok = strtok(argv[6], ",");
-      while (tok && g_num_presses < MAX_PRESSES) {
-         g_press_frames[g_num_presses++] = atoi(tok);
-         tok = strtok(NULL, ",");
+      /* strtol walk, no strtok: argv stays unmodified, and empty or
+       * non-numeric tokens (e.g. "10,,20" or "10,x") are skipped
+       * instead of silently becoming an A-press at frame 0. */
+      const char *p = argv[6];
+      while (*p && g_num_presses < MAX_PRESSES) {
+         char *end;
+         long v = strtol(p, &end, 10);
+         if (end != p && v > 0 && v < 1000000)
+            g_press_frames[g_num_presses++] = (int)v;
+         p = (end != p) ? end : p + 1;
+         while (*p && *p != ',') p++;   /* skip trailing junk in token */
+         if (*p == ',') p++;
       }
    }
    if (argc >= 6) {
