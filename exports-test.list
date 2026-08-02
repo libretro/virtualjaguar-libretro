@@ -60,3 +60,5 @@ _BlitterCompare*
 _DAC*
 _JoystickState*
 _MTState*
+_NVMBios*
+_NVM_*

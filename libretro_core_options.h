@@ -299,6 +299,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "2x"
    },
    {
+      "virtualjaguar_memory_track",
+      "Memory Track (Restart)",
+      NULL,
+      "Emulate the Memory Track save cartridge alongside the CD unit, as on real hardware. CD games detect it and save settings, progress and high scores to its 128 KB NVRAM (stored in the save file). Disable to emulate a console without the cartridge — games will warn that game information cannot be saved.",
+      NULL,
+      "cdrom",
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,
