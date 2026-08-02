@@ -543,7 +543,12 @@ static void check_variables(void)
     * runtime toggle (or an older savestate) must not leak into the
     * first charged access when the option is re-enabled. */
    if (!busArbiter.enabled)
+   {
       busArbiter.m68k_sysclk_carry = 0;
+      busArbiter.refresh_clk_carry = 0;
+      busArbiter.op_clk_accum = 0;
+      busArbiter.m68k_pending_stall = 0;
+   }
    {
       const char *scale_env = getenv("VJ_DRAM_SCALE");
       int dram_scale = (scale_env && scale_env[0]) ? atoi(scale_env) : 1;
@@ -979,8 +984,12 @@ bool retro_serialize(void *data, size_t size)
    buf += DACStateSave(buf);
    buf += UARTStateSave(buf);
 
-   /* v7: 68K DRAM self-cost carry (bus arbiter). */
+   /* v7: bus-arbiter accumulators (68K DRAM self-cost carry, refresh
+    * carry, OP occupancy accumulator, 68K pending-stall deduction). */
    STATE_SAVE_VAR(buf, busArbiter.m68k_sysclk_carry);
+   STATE_SAVE_VAR(buf, busArbiter.refresh_clk_carry);
+   STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
+   STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -1051,14 +1060,24 @@ bool retro_unserialize(const void *data, size_t size)
    if (version >= STATE_VERSION_BUS_ARBITER)
    {
       STATE_LOAD_VAR(buf, busArbiter.m68k_sysclk_carry);
+      STATE_LOAD_VAR(buf, busArbiter.refresh_clk_carry);
+      STATE_LOAD_VAR(buf, busArbiter.op_clk_accum);
+      STATE_LOAD_VAR(buf, busArbiter.m68k_pending_stall);
    }
    else
    {
       busArbiter.m68k_sysclk_carry = 0;
+      busArbiter.refresh_clk_carry = 0;
+      busArbiter.op_clk_accum = 0;
+      busArbiter.m68k_pending_stall = 0;
    }
-   /* tomRam8 was restored raw above; recompute the DRAM timing that
-    * bus_arbiter derives from MEMCON1 so it matches the loaded state. */
+   /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
+    * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
+    * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from
+    * MEMCON1, refrate from MEMCON2 — none of those derived fields are
+    * themselves serialized, see bus_arbiter.h). */
    bus_arbiter_update_memcon(TOMGetMEMCON1());
+   bus_arbiter_update_memcon2(TOMGetMEMCON2());
 
    JaguarApplyHLEBIOSState();
 
