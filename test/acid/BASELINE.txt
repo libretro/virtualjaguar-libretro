@@ -104,6 +104,7 @@
 [PASS tests/op/op_branch_conditional.jag
 [PASS tests/op/op_branch_object.jag
 [PASS tests/op/op_gpu_int_object.jag
+[PASS tests/op/op_gpu_int_object_halted.jag
 [PASS tests/op/op_olp_alignment.jag
 [PASS tests/op/op_palette_8bpp.jag
 [PASS tests/op/op_reflect_modifier.jag

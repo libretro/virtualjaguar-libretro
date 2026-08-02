@@ -716,14 +716,19 @@ void GPUHandleIRQs(void)
    uint32_t bits, mask;
    uint32_t which = 0; //Isn't there a #pragma to disable this warning???
 
-   /* A halted GPU (G_CTRL GPUGO=0) latches interrupts but cannot service
-    * them: the dispatch sequence (push return address via r31, jump to
-    * vector) is executed by the RISC core itself, and a stopped core
-    * executes nothing.  Dispatching here while stopped pushes a return
-    * address through the STOPPED context's r31 — if the 68K halted the
-    * GPU mid-handler (as Hover Strike's CD driver does around seeks),
-    * that push lands inside GPU code/variables and corrupts them.
-    * Pending latches are serviced by GPUExec() when the GPU next runs.
+   /* A halted GPU (G_CTRL GPUGO=0) cannot service interrupts: the dispatch
+    * sequence (push return address via r31, jump to vector) is executed by
+    * the RISC core itself, and a stopped core executes nothing.  Dispatching
+    * here while stopped pushes a return address through the STOPPED
+    * context's r31 — if the 68K halted the GPU mid-handler (as Hover
+    * Strike's CD driver does around seeks), that push lands inside GPU
+    * code/variables and corrupts them.  A latch that was captured while the
+    * GPU was still running is serviced by GPUExec() when it next runs.
+    *
+    * Note this is only about *servicing*.  A halted GPU does not capture new
+    * interrupts at all — GPUSetIRQLine drops the assert rather than latching
+    * it, so nothing accumulates across a stopped window.  The two rules are
+    * pinned by tests/op/op_gpu_int_object{,_halted}.s in the acid suite.
     *
     * A single-step-paused GPU (G_CTRL SINGLE_STEP, bit 3) is the same case:
     * GPUGO is still set but the RISC core is not advancing (it is parked in a
