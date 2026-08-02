@@ -87,11 +87,17 @@ uint32_t bus_arbiter_dram_cost(uint32_t addr)
     if (addr >= 0x800000 && addr < 0xE00000)
         return busArbiter.rom_clocks;
 
+    /* Bootstrap ROM bank ($E00000-$E3FFFF): same ROMSPEED-derived
+     * timing as the cartridge bank (JTRM: both ROM banks share width
+     * and speed). */
+    if (addr >= 0xE00000 && addr <= 0xE3FFFF)
+        return busArbiter.rom_clocks;
+
     /* TOM/JERRY registers: I/O bus. */
     if (addr >= 0xF00000)
         return IO_BUS_CLOCKS_ESTIMATE;
 
-    /* Default for other addresses (0x200000-0x7FFFFF, 0xE00000-0xEFFFFF):
+    /* Default for other addresses (0x200000-0x7FFFFF, 0xE40000-0xEFFFFF):
      * treat as DRAM-equivalent, same approximation as main DRAM above. */
     return DRAM_PAGE_CYCLE + busArbiter.dram_row_miss;
 }

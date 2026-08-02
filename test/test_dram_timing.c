@@ -59,6 +59,8 @@ int main(void)
     /* Cart ROM is ROMSPEED-derived (bits 3-4 = 0 at reset -> 10 clocks). */
     check(bus_arbiter_charge_access(BM_GPU, 0x00800000) == 10,
           "cart ROM access costs ROMSPEED clocks (10 at reset)");
+    check(bus_arbiter_charge_access(BM_GPU, 0x00E00000) == 10,
+          "bootstrap ROM bank uses ROMSPEED timing");
     check(bus_arbiter_charge_access(BM_GPU, 0x00F00050) == 2,
           "TOM/JERRY register access costs 2 clocks");
 
