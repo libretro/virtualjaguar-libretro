@@ -23,8 +23,16 @@
  * it.
  *
  * MEMCON1 default on Jaguar: 0x1861
- *   Bits 5-6 (DRAMSPEED): 0b11 = 5 system clocks per DRAM access
- *   Page miss adds ~4 clocks for RAS precharge + row activation
+ *   Bits 3-4 (ROMSPEED): 0b00 = 10 system clocks per ROM access
+ *     (JTRM: 0=10, 1=8, 2=6, 3=5; bit 7 FASTROM overrides to 2, test-only)
+ *   Bits 5-6 (DRAMSPEED): 0b11 -> row-change (page miss) overhead of
+ *     3 system clocks (precharge 2 + RAS-to-CAS 1, from the JTRM
+ *     MEMCON1 table).  Page-mode (page hit) cycle time is always 2
+ *     clocks, fixed, regardless of DRAMSPEED.  Full row-miss overhead
+ *     table indexed by DRAMSPEED: { 7, 7, 5, 3 }.
+ *   This model uses the row-miss cost as an average DRAM access cost
+ *   (2 + row-miss) since GPU/68K access patterns are not tracked for
+ *   page-hit/page-miss state — see bus_arbiter_dram_cost().
  */
 #ifndef BUS_ARBITER_H
 #define BUS_ARBITER_H
@@ -44,10 +52,18 @@ enum BusMaster {
 };
 
 struct BusArbiter {
-    /* DRAM timing derived from MEMCON1 DRAMSPEED field.
-     * Page hit = base access time; page miss adds RAS precharge. */
-    uint8_t dram_base_clocks;
-    uint8_t dram_miss_penalty;
+    /* DRAM row-change (page miss) overhead in system clocks, derived
+     * from MEMCON1 DRAMSPEED (bits 5-6).  Page-mode (page hit) cycle
+     * time is a fixed 2 clocks and is not stored here (DRAM_PAGE_CYCLE
+     * in bus_arbiter.c).  NOT serialized: recomputed from MEMCON1 via
+     * bus_arbiter_update_memcon() on savestate load. */
+    uint8_t dram_row_miss;
+
+    /* Cartridge ROM cycle time in system clocks, derived from MEMCON1
+     * ROMSPEED (bits 3-4), overridden by FASTROM (bit 7).  NOT
+     * serialized: recomputed from MEMCON1 via bus_arbiter_update_memcon()
+     * on savestate load. */
+    uint8_t rom_clocks;
 
     /* Feature toggle (from core option). */
     uint8_t enabled;

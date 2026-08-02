@@ -11,18 +11,41 @@
 
 struct BusArbiter busArbiter;
 
-/* DRAMSPEED field (MEMCON1 bits 5-6) -> base DRAM clocks per access.
- * JTRM: 00=2, 01=3, 10=4, 11=5 system clocks. */
-static const uint8_t dramspeed_table[4] = { 2, 3, 4, 5 };
+/* DRAMSPEED field (MEMCON1 bits 5-6) -> row-change (page miss) overhead,
+ * in system clocks (precharge + RAS-to-CAS from the JTRM MEMCON1 table):
+ *   DRAMSPEED  precharge  RAS-to-CAS  refresh  row-miss overhead
+ *       0          4          3          5           7
+ *       1          4          3          4           7
+ *       2          3          2          4           5
+ *       3          2          1          3           3
+ * Page-mode (page hit) cycle time is always 2 clocks, fixed -- that is
+ * DRAM_PAGE_CYCLE below, independent of DRAMSPEED. */
+static const uint8_t dram_row_miss_table[4] = { 7, 7, 5, 3 };
 
-/* RAS precharge penalty for page miss (row activation + precharge). */
-#define PAGE_MISS_PENALTY 4
+/* Fixed page-mode (page hit) cycle time, per JTRM: "The page mode cycle
+ * time is always two clock cycles." */
+#define DRAM_PAGE_CYCLE 2
+
+/* ROMSPEED field (MEMCON1 bits 3-4) -> ROM cycle time in system clocks,
+ * per JTRM: 0=10, 1=8, 2=6, 3=5.  FASTROM (bit 7) overrides to 2 clocks
+ * ("for test purposes only"). */
+static const uint8_t rom_speed_table[4] = { 10, 8, 6, 5 };
+#define ROM_FASTROM_CLOCKS 2
+
+/* 68K access to GPU/DSP local RAM (an I/O-bus transaction for the 68K,
+ * free for the owning RISC's internal bus) and to TOM/JERRY registers.
+ * Estimate only: no JTRM figure was found for 68K/RISC-local-RAM access
+ * cost.  IOSPEED (MEMCON1 bits 11-12) governs EXTERNAL peripherals, a
+ * different bus, so it does not source this number. */
+#define IO_BUS_CLOCKS_ESTIMATE 2
 
 void bus_arbiter_init(void)
 {
     memset(&busArbiter, 0, sizeof(busArbiter));
-    busArbiter.dram_base_clocks = 5;
-    busArbiter.dram_miss_penalty = PAGE_MISS_PENALTY;
+    /* Match reset MEMCON1 = 0x1861: DRAMSPEED=3 -> row_miss 3,
+     * ROMSPEED=0, FASTROM=0 -> rom_clocks 10. */
+    busArbiter.dram_row_miss = 3;
+    busArbiter.rom_clocks = 10;
     /* Default OFF: timing modeling is experimental and must be a
      * zero-behavior-change opt-in.  check_variables() enables it when
      * the virtualjaguar_dram_timing core option is set. */
@@ -33,8 +56,12 @@ void bus_arbiter_init(void)
 void bus_arbiter_update_memcon(uint16_t memcon1)
 {
     uint8_t dramspeed;
+    uint8_t romspeed;
     dramspeed = (memcon1 >> 5) & 0x03;
-    busArbiter.dram_base_clocks = dramspeed_table[dramspeed];
+    romspeed = (memcon1 >> 3) & 0x03;
+    busArbiter.dram_row_miss = dram_row_miss_table[dramspeed];
+    busArbiter.rom_clocks = (memcon1 & 0x80) ? ROM_FASTROM_CLOCKS
+                                              : rom_speed_table[romspeed];
 }
 
 uint32_t bus_arbiter_dram_cost(uint32_t addr)
@@ -52,20 +79,21 @@ uint32_t bus_arbiter_dram_cost(uint32_t addr)
      * would get page hits, but without tracking row state, the miss
      * cost is a reasonable average for scattered GPU access patterns. */
     if (addr < 0x200000)
-        return busArbiter.dram_base_clocks + busArbiter.dram_miss_penalty;
+        return DRAM_PAGE_CYCLE + busArbiter.dram_row_miss;
 
-    /* Cartridge ROM (0x800000-0xDFFFFF): similar cost to DRAM.
-     * ROMSPEED from MEMCON1 bits 3-4 controls this, but games rarely
-     * access ROM from GPU at runtime. Use DRAM base cost. */
+    /* Cartridge ROM (0x800000-0xDFFFFF): ROMSPEED-derived cost from
+     * MEMCON1 bits 3-4 (FASTROM override on bit 7).  ROM is the
+     * hottest path here — 68K instruction fetches run out of it. */
     if (addr >= 0x800000 && addr < 0xE00000)
-        return busArbiter.dram_base_clocks;
+        return busArbiter.rom_clocks;
 
-    /* TOM/JERRY registers: ~2 system clocks (I/O bus). */
+    /* TOM/JERRY registers: I/O bus. */
     if (addr >= 0xF00000)
-        return 2;
+        return IO_BUS_CLOCKS_ESTIMATE;
 
-    /* Default for other addresses */
-    return busArbiter.dram_base_clocks;
+    /* Default for other addresses (0x200000-0x7FFFFF, 0xE00000-0xEFFFFF):
+     * treat as DRAM-equivalent, same approximation as main DRAM above. */
+    return DRAM_PAGE_CYCLE + busArbiter.dram_row_miss;
 }
 
 uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
@@ -78,7 +106,7 @@ uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
          * but an I/O-bus transaction for the 68K. */
         if (master != BM_CPU)
             return 0;
-        cost = 2;
+        cost = IO_BUS_CLOCKS_ESTIMATE;
     }
     if (busArbiter.contention_scale > 1)
         cost *= busArbiter.contention_scale;

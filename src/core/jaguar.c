@@ -338,7 +338,7 @@ int irq_ack_handler(int level)
 
 /* 68K DRAM self-cost (symmetric timing model): every 68K bus cycle
  * that leaves the CPU (shared DRAM, and GPU/DSP local RAM, which also
- * costs the 68K 2 clocks) pays its DRAM/I-O access time out of the
+ * costs the 68K 2 system clocks) pays its DRAM/I-O access time out of the
  * 68K's own cycle budget.  naccesses = number of 16-bit bus cycles
  * (a longword = 2).  m68kBusNoCharge exempts disassembler reads so
  * debug output cannot perturb timing.

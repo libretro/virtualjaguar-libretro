@@ -1695,8 +1695,9 @@ INLINE static void gpu_opcode_store(void)
  * which needs its own before/after evidence rather than riding along here. */
 INLINE static void gpu_opcode_storep(void)
 {
+   /* One 64-bit phrase = one bus transaction (JTRM: "the memory
+    * controller makes it all look 64 bits wide"), not two 32-bit ones. */
    GPU_EXT_ACCESS(RM);
-   GPU_EXT_ACCESS(RM + 4);
    GPUWriteLong((RM & 0xFFFFFFF8) + 0, gpu_hidata, GPU);
    GPUWriteLong((RM & 0xFFFFFFF8) + 4, RN, GPU);
 }
@@ -1782,14 +1783,14 @@ INLINE static void gpu_opcode_loadp(void)
    }
    else
    {
+      /* One 64-bit phrase = one bus transaction, not two. */
       GPU_EXT_ACCESS(RM);
-      GPU_EXT_ACCESS(RM + 4);
       gpu_hidata = GPUReadLong(RM + 0, GPU);
       RN		   = GPUReadLong(RM + 4, GPU);
    }
 #else
+   /* One 64-bit phrase = one bus transaction, not two. */
    GPU_EXT_ACCESS(RM);
-   GPU_EXT_ACCESS(RM + 4);
    gpu_hidata = GPUReadLong(RM + 0, GPU);
    RN		   = GPUReadLong(RM + 4, GPU);
 #endif

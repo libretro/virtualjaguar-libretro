@@ -33,8 +33,14 @@ int main(void)
     bus_arbiter_init();
     check(busArbiter.enabled == 0, "init: disabled by default");
     bus_arbiter_update_memcon(0x1861);   /* power-on default */
-    check(busArbiter.dram_base_clocks == 5,
-          "MEMCON1 0x1861 -> DRAMSPEED 0b11 -> 5 clocks");
+    check(busArbiter.dram_row_miss == 3 && busArbiter.rom_clocks == 10,
+          "MEMCON1 0x1861 -> DRAMSPEED 0b11 row_miss=3, ROMSPEED 0b00 rom_clocks=10");
+
+    /* FASTROM (bit 7) overrides ROMSPEED to 2 clocks. Check it, then
+     * restore power-on timing so it doesn't affect what follows. */
+    bus_arbiter_update_memcon(0x1861 | 0x80);
+    check(busArbiter.rom_clocks == 2, "FASTROM overrides rom_clocks to 2");
+    bus_arbiter_update_memcon(0x1861);
 
     busArbiter.enabled = 1;
     busArbiter.contention_scale = 1;
@@ -45,13 +51,14 @@ int main(void)
     check(bus_arbiter_charge_access(BM_GPU, 0x00F1B000) == 0,
           "DSP local RAM costs 0");
 
-    /* Main DRAM costs base + page-miss average (5 + 4 at defaults). */
+    /* Main DRAM costs page cycle + row-miss overhead (2 + 3 at defaults,
+     * per JTRM MEMCON1 DRAMSPEED=0b11 -> precharge 2, RAS-to-CAS 1). */
     ext1 = bus_arbiter_charge_access(BM_GPU, 0x00080000);
-    check(ext1 == 9, "main DRAM access costs base+miss (9 clocks)");
+    check(ext1 == 5, "main DRAM access costs page+row-miss (5 clocks)");
 
-    /* Cart ROM and I/O cost less than DRAM-with-miss but not zero. */
-    check(bus_arbiter_charge_access(BM_GPU, 0x00800000) == 5,
-          "cart ROM access costs base clocks");
+    /* Cart ROM is ROMSPEED-derived (bits 3-4 = 0 at reset -> 10 clocks). */
+    check(bus_arbiter_charge_access(BM_GPU, 0x00800000) == 10,
+          "cart ROM access costs ROMSPEED clocks (10 at reset)");
     check(bus_arbiter_charge_access(BM_GPU, 0x00F00050) == 2,
           "TOM/JERRY register access costs 2 clocks");
 
@@ -61,10 +68,10 @@ int main(void)
     check(scaled == ext1 * 8, "scale 8x multiplies the DRAM cost by 8");
 
     /* Slower DRAMSPEED settings track MEMCON1. */
-    bus_arbiter_update_memcon(0x0000);   /* DRAMSPEED 0b00 = 2 clocks */
+    bus_arbiter_update_memcon(0x0000);   /* DRAMSPEED 0b00 -> row-miss 7 */
     busArbiter.contention_scale = 1;
-    check(bus_arbiter_charge_access(BM_GPU, 0x00080000) == 6,
-          "DRAMSPEED 0b00 -> 2+4 clocks");
+    check(bus_arbiter_charge_access(BM_GPU, 0x00080000) == 9,
+          "DRAMSPEED 0b00 -> 2+7 clocks");
 
     /* ---- 68K half (symmetric self-cost) ---- */
 
@@ -73,30 +80,32 @@ int main(void)
     busArbiter.contention_scale = 1;
 
     /* GPU/DSP local RAM is free only for the owning RISC.  For the 68K
-     * it is an I/O-bus transaction (~2 system clocks). */
+     * it is modeled as an I/O-bus transaction: IO_BUS_CLOCKS_ESTIMATE
+     * (2, unsourced -- no JTRM figure found for 68K access to RISC
+     * local RAM; this is a model assertion, not a hardware fact). */
     check(bus_arbiter_charge_access(BM_CPU, 0x00F03000) == 2,
-          "68K access to GPU local RAM costs 2 clocks (not free)");
+          "68K access to GPU local RAM charged IO_BUS_CLOCKS_ESTIMATE (2, unsourced)");
     check(bus_arbiter_charge_access(BM_CPU, 0x00F1B000) == 2,
-          "68K access to DSP local RAM costs 2 clocks (not free)");
+          "68K access to DSP local RAM charged IO_BUS_CLOCKS_ESTIMATE (2, unsourced)");
     check(bus_arbiter_charge_access(BM_GPU, 0x00F03000) == 0,
           "GPU access to GPU local RAM still free");
 
     /* bus_arbiter_m68k_access converts system clocks to 68K cycles
      * (68K runs at system/2) with a carry for the odd clock.
-     * DRAM cost at 0x1861 = 9 sysclks: 4 cycles carry 1, then 5. */
+     * DRAM cost at 0x1861 = 5 sysclks: 2 cycles carry 1, then 3. */
     busArbiter.m68k_sysclk_carry = 0;
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 4,
-          "9 sysclks -> 4 68K cycles, carry 1");
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 2,
+          "5 sysclks -> 2 68K cycles, carry 1");
     check(busArbiter.m68k_sysclk_carry == 1,
           "odd system clock carried");
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 5,
-          "carry+9 sysclks -> 5 68K cycles, carry 0");
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 3,
+          "carry+5 sysclks -> 3 68K cycles, carry 0");
     check(busArbiter.m68k_sysclk_carry == 0,
           "carry drained");
 
     /* A longword is two 16-bit bus cycles. */
-    check(bus_arbiter_m68k_access(0x00080000, 2) == 9,
-          "2 accesses = 18 sysclks -> 9 68K cycles");
+    check(bus_arbiter_m68k_access(0x00080000, 2) == 5,
+          "2 accesses = 10 sysclks -> 5 68K cycles");
 
     /* I/O access: 2 sysclks -> 1 cycle, no carry. */
     check(bus_arbiter_m68k_access(0x00F00050, 1) == 1,
