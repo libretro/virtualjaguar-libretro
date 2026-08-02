@@ -469,19 +469,19 @@ static void check_variables(void)
    else
       CDTraceSetEnabled(0);
 
-   /* GPU DRAM timing: enabled/disabled only.  The calibration scale is
-    * deliberately NOT a core option (manual ms/x knobs proved
-    * untunable on device) — VJ_GPU_DRAM_SCALE overrides it for
-    * headless calibration experiments until the physical cost is
-    * derived properly. */
-   var.key = "virtualjaguar_gpu_dram_timing";
+   /* DRAM timing: enabled/disabled only, covering BOTH halves of the
+    * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
+    * in jaguar.c).  The calibration scale is deliberately NOT a core
+    * option (manual knobs proved untunable on device) — VJ_DRAM_SCALE
+    * overrides it for headless calibration experiments only. */
+   var.key = "virtualjaguar_dram_timing";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
       busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
    else
       busArbiter.enabled = 0;
    {
-      const char *scale_env = getenv("VJ_GPU_DRAM_SCALE");
+      const char *scale_env = getenv("VJ_DRAM_SCALE");
       int dram_scale = (scale_env && scale_env[0]) ? atoi(scale_env) : 1;
       if (dram_scale < 1)
          dram_scale = 1;

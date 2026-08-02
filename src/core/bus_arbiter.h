@@ -47,7 +47,7 @@ struct BusArbiter {
     uint8_t enabled;
 
     /* Calibration multiplier applied to charged cycles.  NOT a user
-     * option: settable only via the VJ_GPU_DRAM_SCALE env var while the
+     * option: settable only via the VJ_DRAM_SCALE env var while the
      * correct physical cost (OP occupancy, load latency, master
      * handoff) is being pinned down against measured game pace. */
     uint8_t contention_scale;

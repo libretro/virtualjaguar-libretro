@@ -25,7 +25,7 @@ void bus_arbiter_init(void)
     busArbiter.dram_miss_penalty = PAGE_MISS_PENALTY;
     /* Default OFF: timing modeling is experimental and must be a
      * zero-behavior-change opt-in.  check_variables() enables it when
-     * the virtualjaguar_gpu_dram_timing core option is set. */
+     * the virtualjaguar_dram_timing core option is set. */
     busArbiter.enabled = 0;
     busArbiter.contention_scale = 1;
 }

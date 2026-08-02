@@ -121,10 +121,10 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
-      "virtualjaguar_gpu_dram_timing",
-      "GPU Memory Timing (Experimental)",
+      "virtualjaguar_dram_timing",
+      "DRAM Timing (Experimental)",
       NULL,
-      "Charge the GPU realistic DRAM access time for loads/stores that leave its local RAM, pacing GPU-rendered games (Doom-class) closer to real hardware. Affects only the GPU's own speed — no other processor is slowed. Experimental: the exact cost model is still being calibrated; leave disabled unless a game visibly runs too fast.",
+      "Charge the GPU and 68000 realistic DRAM access time for memory accesses that leave their local buses, pacing games that rely on hardware timing (Doom-class) closer to real hardware. Symmetric: each processor pays only its own access costs, so relative CPU/GPU timing is preserved. Experimental: the cost model is still being calibrated; leave disabled unless a game visibly runs too fast.",
       NULL,
       NULL,
       {
