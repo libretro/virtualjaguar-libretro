@@ -115,6 +115,46 @@ int main(void)
     check(busArbiter.m68k_sysclk_carry == 0,
           "no carry from even cost");
 
+    /* --- DRAM refresh model (MEMCON2 REFRATE) --------------------- */
+    bus_arbiter_update_memcon(0x1861);   /* DRAMSPEED=3 */
+    bus_arbiter_update_memcon2(0x35CC);  /* TOM reset value: REFRATE=5 */
+    check(busArbiter.refrate == 5, "MEMCON2 0x35CC -> REFRATE 5");
+    check(busArbiter.dram_refresh_clks == 3,
+          "DRAMSPEED 3 -> refresh cycle costs 3 clocks");
+    busArbiter.refresh_clk_carry = 0;
+    /* One NTSC halfline = 845 system clocks.  REFRATE=5 -> request
+     * period 64*6 = 384 clocks -> 2 refreshes owed, remainder 77,
+     * cost 2 * 3 = 6 clocks. */
+    check(bus_arbiter_refresh_clocks(845) == 6,
+          "845-clock halfline steals 2 refresh cycles (6 clocks)");
+    check(busArbiter.refresh_clk_carry == 77,
+          "refresh remainder carries across halflines");
+    check(bus_arbiter_refresh_clocks(845) == 6,
+          "second halfline: (77+845)/384 = 2 again");
+    check(busArbiter.refresh_clk_carry == 154, "carry accumulates");
+    bus_arbiter_update_memcon2(0x0000);  /* REFRATE=0 */
+    check(bus_arbiter_refresh_clocks(10000) == 0,
+          "REFRATE 0 disables refresh entirely");
+    bus_arbiter_update_memcon2(0x35CC);
+    /* Slower DRAM costs more per refresh: DRAMSPEED=0 -> 5 clocks. */
+    bus_arbiter_update_memcon(0x1861 & ~0x60);
+    check(busArbiter.dram_refresh_clks == 5,
+          "DRAMSPEED 0 -> refresh cycle costs 5 clocks");
+    bus_arbiter_update_memcon(0x1861);
+
+    /* --- OP occupancy accumulator --------------------------------- */
+    busArbiter.contention_scale = 1;
+    check(bus_arbiter_op_take() == 0, "OP accumulator starts empty");
+    bus_arbiter_op_charge(80);   /* e.g. 40 phrases page-mode */
+    bus_arbiter_op_charge(6);    /* row-miss surcharge */
+    check(bus_arbiter_op_take() == 86, "OP accumulator sums charges");
+    check(bus_arbiter_op_take() == 0, "OP accumulator drains on take");
+    /* Calibration scale (dev-only env) multiplies on drain. */
+    busArbiter.contention_scale = 4;
+    bus_arbiter_op_charge(10);
+    check(bus_arbiter_op_take() == 40, "contention_scale applies to OP clocks");
+    busArbiter.contention_scale = 1;
+
     printf("%s: %d failure(s)\n", fails ? "FAIL" : "PASS", fails);
     return fails ? 1 : 0;
 }

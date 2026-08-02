@@ -65,6 +65,16 @@ struct BusArbiter {
      * on savestate load. */
     uint8_t rom_clocks;
 
+    /* Cost of ONE refresh cycle in system clocks, derived from MEMCON1
+     * DRAMSPEED (the "refresh" column of the JTRM MEMCON1 table).  NOT
+     * serialized: recomputed via bus_arbiter_update_memcon(). */
+    uint8_t dram_refresh_clks;
+
+    /* MEMCON2 REFRATE (bits 8-11): refresh requests occur at
+     * CLK / (64 * (REFRATE+1)); 0 = refresh disabled (JTRM).  NOT
+     * serialized: recomputed via bus_arbiter_update_memcon2(). */
+    uint8_t refrate;
+
     /* Feature toggle (from core option). */
     uint8_t enabled;
 
@@ -77,6 +87,22 @@ struct BusArbiter {
     /* 68K self-cost carry: system clocks not yet converted to a whole
      * 68K cycle (68K runs at system/2, so 0 or 1).  Savestate field. */
     uint32_t m68k_sysclk_carry;
+
+    /* Elapsed system clocks not yet folded into a refresh request
+     * (remainder modulo 64*(REFRATE+1)).  Savestate field. */
+    uint32_t refresh_clk_carry;
+
+    /* OP bus occupancy accumulated during the current halfline's
+     * object-list processing, in system clocks.  Fed by
+     * bus_arbiter_op_charge() from the OP's phrase traffic, drained
+     * once per halfline by bus_arbiter_op_take().  Savestate field. */
+    uint32_t op_clk_accum;
+
+    /* OP-fetch + refresh occupancy (system clocks) waiting to be
+     * deducted from the 68K's next execution slice(s) — the 68K is
+     * the lowest-priority bus master (JTRM: refresh pri 2, OP pri 6,
+     * CPU pri 11).  Savestate field. */
+    uint32_t m68k_pending_stall;
 };
 
 extern struct BusArbiter busArbiter;
@@ -85,6 +111,20 @@ void bus_arbiter_init(void);
 
 /* Called when MEMCON1 is written to recompute DRAM timing. */
 void bus_arbiter_update_memcon(uint16_t memcon1);
+
+/* Called when MEMCON2 is written to recompute the refresh rate. */
+void bus_arbiter_update_memcon2(uint16_t memcon2);
+
+/* Accumulate OP bus occupancy (system clocks) for the current halfline. */
+void bus_arbiter_op_charge(uint32_t sysclks);
+
+/* Drain the OP occupancy accumulator (scaled by contention_scale). */
+uint32_t bus_arbiter_op_take(void);
+
+/* Refresh clocks stolen during `elapsed_sysclks` of wall time, per
+ * MEMCON2 REFRATE, carrying the sub-period remainder.  Scaled by
+ * contention_scale. */
+uint32_t bus_arbiter_refresh_clocks(uint32_t elapsed_sysclks);
 
 /* Return DRAM access cost in system clocks for a given address.
  * Local GPU/DSP RAM returns 0 (no bus transaction). */
