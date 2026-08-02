@@ -891,7 +891,16 @@ test: test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp 
 	./test/tools/test_memory_map ./$(TARGET)
 	@# Option visibility is content-type dependent; the disc half runs only
 	@# when a private CD image is available (the cart half always runs).
-	@VJ_VIS_DISC=$$(ls "test/roms/private/Jaguar CD/BinCue"/*/*.cue 2>/dev/null | head -1); \
+	@# Prefer a disc known to load (see docs/cd-boot-matrix.md); fall back to
+	@# whatever is present. A disc that will not load is reported as SKIP.
+	@# Try discs known to load first (see docs/cd-boot-matrix.md), then any
+	@# other. ls sorts all its arguments together, so probe one glob at a
+	@# time. A disc that still will not load is reported as SKIP, not FAIL.
+	@VJ_VIS_ROOT="test/roms/private/Jaguar CD/BinCue"; VJ_VIS_DISC=""; \
+		for VJ_VIS_PAT in "Baldies*" "Myst*" "Hover*" "*"; do \
+			[ -n "$$VJ_VIS_DISC" ] && break; \
+			VJ_VIS_DISC=$$(ls "$$VJ_VIS_ROOT"/$$VJ_VIS_PAT/*.cue 2>/dev/null | head -1); \
+		done; \
 		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
