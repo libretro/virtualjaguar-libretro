@@ -107,6 +107,17 @@ static bool environment_cb(unsigned cmd, void *data)
               * src/core/jaguar.c:JaguarReset HLE path. */
          if (strcmp(var->key, "virtualjaguar_pal") == 0)
             { var->value = "disabled"; return true; }
+         if (strcmp(var->key, "virtualjaguar_dram_timing") == 0)
+         {
+            /* Off unless ACID_DRAM_TIMING says otherwise, so ordinary CI
+             * runs are unaffected.  Without this case the switch fell
+             * through to `return false` and the core used its own
+             * default, making the model unreachable from the suite --
+             * every acid test silently exercised only the untimed path. */
+            const char *v = getenv("ACID_DRAM_TIMING");
+            var->value = (v && *v) ? v : "disabled";
+            return true;
+         }
          if (strcmp(var->key, "virtualjaguar_usefastblitter") == 0)
             { var->value = "disabled"; return true; } /* accurate by default */
          var->value = NULL;

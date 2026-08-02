@@ -92,28 +92,52 @@ int main(void)
     check(bus_arbiter_charge_access(BM_GPU, 0x00F03000) == 0,
           "GPU access to GPU local RAM still free");
 
-    /* bus_arbiter_m68k_access converts system clocks to 68K cycles
-     * (68K runs at system/2) with a carry for the odd clock.
-     * DRAM cost at 0x1861 = 5 sysclks: 2 cycles carry 1, then 3. */
+    /* bus_arbiter_m68k_access charges only WAIT STATES -- the excess of
+     * an access over M68K_BUS_CYCLE_SYSCLKS (8), which is the four CPU
+     * clocks an MC68000 bus cycle already takes and which the datasheet
+     * instruction timings already include.  It then converts system
+     * clocks to 68K cycles (the 68K runs at system/2), carrying an odd
+     * clock.  Charging the absolute access cost instead double-counted
+     * that baseline. */
+
+    /* Main DRAM at MEMCON1 0x1861 costs 5 sysclks -- FASTER than the
+     * CPU's own bus cycle, so the 68K never waits on it. */
     busArbiter.m68k_sysclk_carry = 0;
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 2,
-          "5 sysclks -> 2 68K cycles, carry 1");
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 0,
+          "DRAM (5 sysclks) is faster than a 68K bus cycle: no stall");
+    check(busArbiter.m68k_sysclk_carry == 0,
+          "no carry from a free access");
+    check(bus_arbiter_m68k_access(0x00080000, 2) == 0,
+          "longword to DRAM still free");
+
+    /* I/O bus (2 sysclks) likewise costs the 68K nothing. */
+    check(bus_arbiter_m68k_access(0x00F00050, 1) == 0,
+          "I/O (2 sysclks) does not stall the 68K");
+
+    /* Cart ROM at ROMSPEED=0 costs 10 sysclks: 2 over the baseline,
+     * i.e. 1 68K cycle.  This is the only thing that stalls the CPU at
+     * the reset MEMCON1 -- and it is why 68K code executing from cart
+     * ROM runs measurably slower than its datasheet cycle counts. */
+    check(bus_arbiter_m68k_access(0x00800000, 1) == 1,
+          "cart ROM (10 sysclks) stalls 1 68K cycle per access");
+    check(busArbiter.m68k_sysclk_carry == 0,
+          "even wait leaves no carry");
+    check(bus_arbiter_m68k_access(0x00800000, 2) == 2,
+          "longword from cart ROM stalls 2 68K cycles");
+
+    /* Odd waits carry.  DRAMSPEED=0 gives row-miss 7, so DRAM costs
+     * 2 + 7 = 9 sysclks -- 1 over the baseline, an odd number. */
+    bus_arbiter_update_memcon((uint16_t)(0x1861 & ~0x0060));
+    busArbiter.m68k_sysclk_carry = 0;
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 0,
+          "slow DRAM: 1 sysclk of wait is less than one 68K cycle");
     check(busArbiter.m68k_sysclk_carry == 1,
           "odd system clock carried");
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 3,
-          "carry+5 sysclks -> 3 68K cycles, carry 0");
+    check(bus_arbiter_m68k_access(0x00080000, 1) == 1,
+          "carry + 1 sysclk completes a 68K cycle");
     check(busArbiter.m68k_sysclk_carry == 0,
           "carry drained");
-
-    /* A longword is two 16-bit bus cycles. */
-    check(bus_arbiter_m68k_access(0x00080000, 2) == 5,
-          "2 accesses = 10 sysclks -> 5 68K cycles");
-
-    /* I/O access: 2 sysclks -> 1 cycle, no carry. */
-    check(bus_arbiter_m68k_access(0x00F00050, 1) == 1,
-          "I/O 2 sysclks -> 1 68K cycle");
-    check(busArbiter.m68k_sysclk_carry == 0,
-          "no carry from even cost");
+    bus_arbiter_update_memcon(0x1861);
 
     /* --- DRAM refresh model (MEMCON2 REFRATE) --------------------- */
     bus_arbiter_update_memcon(0x1861);   /* DRAMSPEED=3 */
