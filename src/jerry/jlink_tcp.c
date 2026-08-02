@@ -153,6 +153,16 @@ static void jlink_tcp_drop_peer(int idx)
    {
       tcpConnecting = 0;
       tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
+      /* Drop the cached address too, so the next attempt re-resolves.
+         The whole point of naming the hub is that its address may
+         change -- a new DHCP lease moves the ".local" name to a new IP,
+         and a client that kept dialling the old one would never come
+         back without a core reload.  Re-resolving is cheap where it
+         matters: a dotted quad never leaves AI_NUMERICHOST, and a name
+         whose owner is up answers from the OS resolver cache.  When the
+         name does NOT resolve, the lookup path's own 5 s backoff paces
+         the retries. */
+      tcpAddrValid = 0;
    }
 }
 
@@ -245,6 +255,7 @@ static void jlink_tcp_start_connect(void)
       {
          jlink_closesock(tcpPeers[0].sock);
          tcpPeers[0].sock = JLINK_INVALID_SOCK;
+         tcpAddrValid = 0;        /* re-resolve; the host may have moved */
          tcpRetryTimer = JLINK_TCP_RETRY_POLLS;
          return;
       }

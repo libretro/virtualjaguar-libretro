@@ -98,9 +98,24 @@ int main(int argc, char **argv)
         want_bytes[0] = 0xCA; want_bytes[1] = 0xFE;
     }
 
-    snprintf(port_env, sizeof(port_env), "VJ_NETLINK_PORT=%s", port);
+    /* Fail loudly rather than dial a silently-truncated address: a
+       clipped --host would look like a resolver or connectivity bug in
+       the core, which is exactly the thing this test exists to judge. */
+    if (snprintf(port_env, sizeof(port_env), "VJ_NETLINK_PORT=%s", port)
+        >= (int)sizeof(port_env))
+    {
+        fprintf(stderr, "[%s] FAIL: --port too long (max %u chars)\n",
+                role, (unsigned)(sizeof(port_env) - sizeof("VJ_NETLINK_PORT=")));
+        return 1;
+    }
     putenv(port_env);
-    snprintf(host_env, sizeof(host_env), "VJ_NETLINK_HOST=%s", host);
+    if (snprintf(host_env, sizeof(host_env), "VJ_NETLINK_HOST=%s", host)
+        >= (int)sizeof(host_env))
+    {
+        fprintf(stderr, "[%s] FAIL: --host too long (max %u chars)\n",
+                role, (unsigned)(sizeof(host_env) - sizeof("VJ_NETLINK_HOST=")));
+        return 1;
+    }
     putenv(host_env);
 
     cfg.frames = 1;
