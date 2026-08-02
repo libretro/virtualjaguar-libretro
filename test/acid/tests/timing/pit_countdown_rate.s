@@ -27,6 +27,14 @@
 ; firing), so the effective observed count drops slightly below the
 ; theoretical 406.  We use +/-5% tolerance which absorbs that.
 ;
+; The handler must clear JERRY's own pending latch (JINTCTRL high byte,
+; write-1-to-clear) as well as TOM's INT1 copy.  Acking only TOM left
+; JERRY driving INT1 bit 4, the 68K re-took the level-2 request at every
+; instruction boundary, and the busy loop below never retired a single
+; iteration -- the test wedged without ever writing a signature and read
+; as NOT-RUN-YET on every build.  See docs/jtrm-jerry.md (JINTCTRL) and
+; src/tom/tom.c:TOMPendingMask.
+;
 ; Detail codes:
 ;   1 = IRQ count outside [385, 426] (+/-5%)
 ;       observed = counter, expected = ~406
@@ -120,9 +128,17 @@ entry:
 
 irq_handler:
                 addq.l  #1,IRQ_COUNT.l
-                ;; Re-clear DSP/JERRY pending so the next PIT can fire.
+                ;; Drop JERRY's pending latch FIRST.  JERRY drives TOM
+                ;; INT1 bit 4 for as long as an enabled source has an
+                ;; uncleared latch, and the 68K re-samples that level-2
+                ;; request at every instruction boundary -- so acking only
+                ;; TOM's copy below leaves the line asserted and the CPU
+                ;; re-enters this handler forever without retiring a
+                ;; single busy-loop instruction.  Writing the enable bit
+                ;; alone does NOT clear it: JINTCTRL's low byte is the
+                ;; enable mask, its high byte is write-1-to-clear.
+                move.w  #IRQ2_TIMER1_CLR|IRQ2_TIMER1,JINTCTRL
+                ;; Now ack TOM's side and re-enable.
                 move.w  #$1000,TOM_INT1         ; clear IRQ_DSP pending
                 move.w  #IRQ_DSP_MASK,TOM_INT1  ; re-enable
-                ;; Re-arm JERRY IRQ2_TIMER1 (JINTCTRL low byte = enables).
-                move.w  #IRQ2_TIMER1,JINTCTRL
                 rte
