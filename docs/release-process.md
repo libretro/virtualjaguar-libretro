@@ -81,6 +81,9 @@ publishing step is the `nightly` job instead of `release`:
 2. Updates the single rolling `nightly` prerelease **in place**
    (`gh release edit` + `gh release upload --clobber`, not delete-and-recreate,
    so `/releases/tag/nightly` never 404s mid-run and the release keeps its id).
+   After the upload it briefly toggles draft→published so GitHub rewrites
+   `published_at` — plain `edit` leaves that stamp on the original create
+   date and the Releases page looks abandoned under newer stable tags.
 3. Rewrites `display_version` in the bundled `.info` to
    `v<X.Y.Z>-nightly-<sha>`, so a nightly `.info` can never be mistaken for the
    file that gets PR'd to libretro-super.

@@ -535,7 +535,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       TAG: nightly
-      ISSUE_TITLE: 'Nightly builds — download, install, and what they are'
+      # Must match issue #236's title exactly (including the emoji / [Release]
+      # prefix added by hand). Label lookup is preferred; this is the
+      # fallback if the nightly-tracker label is ever removed.
+      ISSUE_TITLE: '🐈‍⬛  [Release] Nightly builds — download, install, and what they are'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -663,8 +666,19 @@ jobs:
             gh release edit "${TAG}" --repo "${REPO}" \
               --title "${TITLE}" \
               --notes-file "${{ steps.prep_body.outputs.body_file }}" \
+              --target "${GITHUB_SHA}" \
               --prerelease --draft=false
             gh release upload "${TAG}" --repo "${REPO}" release/* --clobber
+            # `gh release edit` leaves published_at at the original create
+            # date, so the Releases list kept showing "Published Aug 1" while
+            # assets/body moved every develop push — looking abandoned under
+            # newer stable tags. Draft→publish is the only API that rewrites
+            # that timestamp; assets stay attached and the id is unchanged.
+            # Window is one round-trip.
+            REL_ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id)
+            gh api -X PATCH "repos/${REPO}/releases/${REL_ID}" -F draft=true >/dev/null
+            gh api -X PATCH "repos/${REPO}/releases/${REL_ID}" \
+              -F draft=false -F prerelease=true >/dev/null
           else
             gh release create "${TAG}" --repo "${REPO}" \
               --title "${TITLE}" \
