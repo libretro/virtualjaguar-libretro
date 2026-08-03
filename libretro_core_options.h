@@ -189,11 +189,12 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink_host",
       "Network Link Host (TCP Client)",
       NULL,
-      "Address the TCP client connects to -- an IP, a DNS name, or a Bonjour/mDNS name such as 'jaghub.local', which saves looking the host's IP up at all. Frontends with free-text option entry accept any of those directly. In stock RetroArch pick 'From file' and put the address on the first line of vj_netlink.txt in the system directory. The VJ_NETLINK_HOST environment variable overrides this option. If you would rather not enter an address anywhere, use RetroArch's own netplay instead -- it finds hosts on the LAN by itself and carries the link with this option left disabled.",
+      "Address the TCP client connects to -- an IP, a DNS name, or a Bonjour/mDNS name. Easiest LAN setup with no typing at all: name the host machine 'jaghub' (its local hostname), then pick the 'jaghub.local' preset here on each client. Frontends with free-text option entry accept any address directly; in stock RetroArch the alternative is 'From file' with the address on the first line of vj_netlink.txt in the system directory. The VJ_NETLINK_HOST environment variable overrides this option. If you would rather not configure anything, use RetroArch's own netplay instead -- it finds hosts on the LAN by itself and carries the link with this option left disabled.",
       NULL,
       "network",
       {
          { "127.0.0.1",      "127.0.0.1 (localhost)" },
+         { "jaghub.local",   "jaghub.local (host machine named 'jaghub' on the LAN)" },
          { "vj_netlink.txt", "From file (vj_netlink.txt in system dir)" },
          { NULL, NULL },
       },
