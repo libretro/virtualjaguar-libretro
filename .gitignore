@@ -33,11 +33,24 @@ test/test_blitter_simd
 test/test_blitter_scalar
 test/test_*
 !test/test_*.c
+!test/test_*.h
 !test/test_*.sh
 !test/test_*.py
+# Compiled test tools. Enumerating each binary meant every new tool could be
+# committed by an unlucky `git add -A` -- and a Mach-O binary tracked into the
+# tree makes Linux CI skip the rebuild and fail with "Exec format error".
+test/tools/test_*
+!test/tools/test_*.c
+!test/tools/test_*.h
+!test/tools/test_*.sh
+!test/tools/test_*.py
 test/tools/test_memory_map
+test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
+test/tools/cd_wedge_probe
 test/tools/sram_test
+test/tools/netlink_pair
+test/tools/netlink_game
 test/dump_caller
 test/dump_pc
 test/heap_search
@@ -56,7 +69,13 @@ test/*.log
 # Test ROMs (keep source scripts, ignore binaries)
 test/roms/*.jag
 test/roms/*.rom
+# The private ROM/disc tree. Both forms are ignored deliberately: the data
+# lives OUTSIDE every checkout and this path is a symlink to it, so neither
+# the directory nor the link may ever be tracked. A tracked symlink here was
+# self-referential and let a forced checkout replace the real directory,
+# destroying the collection once already (2026-07-30).
 test/roms/private/
+test/roms/private
 
 # Reference docs (large PDFs, not source)
 docs/atari-jaguar-1999/
@@ -73,9 +92,16 @@ test/tools/build/
 test/acid/acid_run
 test/acid/tests/**/*.jag
 /test/tools/test_frame_timing
+/test/tools/cd_visual_verify
+/test/tools/cue2cdi
+/test/tools/fb_row_digest
+/test/tools/tom_window_trace
+test/tools/__pycache__/
 .link-mode
 
 # gcov instrumentation output (make coverage)
 *.gcda
 *.gcno
 coverage.xml
+test/tools/netlink_latency
+test/tools/netlink_delay_proxy

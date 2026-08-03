@@ -1,0 +1,76 @@
+# Download translations from Crowdin & recreate libretro_core_options_intl.h
+
+name: Crowdin Translation Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    # A random time & weekday, so every libretro repo does not sync at once.
+    - cron: '35 6 * * 5'  # Fridays at 06:35 UTC
+
+jobs:
+  create_intl_file:
+    permissions:
+      contents: write           # 'write' access to repository contents
+      pull-requests: write      # 'write' access to pull requests
+
+    runs-on: ubuntu-latest
+    steps:
+
+      # The vendored intl/ scripts do not propagate subprocess failures
+      # (upstream ships them without check=True), so an absent or empty
+      # secret would otherwise produce a GREEN run that silently did
+      # nothing. Fail here, before any of that runs.
+      - name: Require CROWDIN_API_KEY
+        env:
+          CROWDIN_API_KEY: ${{ secrets.CROWDIN_API_KEY }}
+        run: |
+          if [ -z "$CROWDIN_API_KEY" ]; then
+            echo "::error::CROWDIN_API_KEY secret is not set -- see docs/core-option-translations.md"
+            exit 1
+          fi
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 18
+          distribution: zulu
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # Explicitly `develop`. A scheduled run defaults to the repository's
+      # default branch, which here is `master` -- and master is release-only
+      # (tagged commits and release/hotfix merges). Generated translations
+      # belong on develop and reach master at the next release.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal access token.
+          fetch-depth: 0 # otherwise, there would be errors pushing refs to the destination repository.
+
+      - name: Create intl file
+        shell: bash
+        env:
+          CROWDIN_API_KEY: ${{ secrets.CROWDIN_API_KEY }}
+        run: |
+          python3 intl/download_workflow.py $CROWDIN_API_KEY "virtualjaguar-libretro" "libretro_core_options_intl.h"
+
+      # A sync that produced no change must not fail the run: the generator
+      # rewrites the file only when a translation actually differs, so a
+      # quiet week legitimately leaves the tree clean.
+      - name: Commit files
+        run: |
+          git config --local user.email "github-actions@github.com"
+          git config --local user.name "github-actions[bot]"
+          git add intl/*_workflow.py libretro_core_options_intl.h
+          git diff --cached --quiet \
+            || git commit -m "Fetch translations & recreate libretro_core_options_intl.h"
+
+      - name: GitHub Push
+        uses: ad-m/github-push-action@v0.8.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: develop

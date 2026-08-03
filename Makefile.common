@@ -27,10 +27,18 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/tom/gpu.c \
 	$(CORE_DIR)/src/core/jaguar.c \
 	$(CORE_DIR)/src/jerry/jerry.c \
+	$(CORE_DIR)/src/jerry/jlink.c \
+	$(CORE_DIR)/src/jerry/jlink_tcp.c \
+	$(CORE_DIR)/src/jerry/jlink_netpacket.c \
+	$(CORE_DIR)/src/jerry/uart.c \
 	$(CORE_DIR)/src/tom/op.c \
 	$(CORE_DIR)/src/tom/tom.c  \
 	$(CORE_DIR)/src/cd/cdintf.c \
 	$(CORE_DIR)/src/cd/cdrom.c \
+	$(CORE_DIR)/src/cd/jagcd_bios.c \
+	$(CORE_DIR)/src/cd/jagcd_cart.c \
+	$(CORE_DIR)/src/cd/jagcd_hle.c \
+	$(CORE_DIR)/src/core/bus_arbiter.c \
 	$(CORE_DIR)/src/core/cheat.c \
 	$(CORE_DIR)/src/core/crc32.c \
 	$(CORE_DIR)/src/core/perf_counters.c \
@@ -50,6 +58,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/joystick.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
+	$(CORE_DIR)/src/core/nvmbios.c \
 	$(CORE_DIR)/src/core/vjag_memory.c \
 	$(CORE_DIR)/src/core/universalhdr.c \
 	$(CORE_DIR)/src/jerry/wavetable.c

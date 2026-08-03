@@ -63,6 +63,12 @@ void DSPSampleCallback(void)
 {
 }
 
+void UARTTXCallback(void) {}
+void UARTRXCallback(void) {}
+void GPUCPUINTCallback(void)
+{
+}
+
 static void reset_counts(void)
 {
    halfline_calls = 0;

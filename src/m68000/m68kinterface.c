@@ -48,6 +48,11 @@ extern const struct cputbl op_smalltbl_5_ff[];	/* 68000 slow but compatible.  */
 // Externs, supplied by the user...
 //extern int irq_ack_handler(int);
 
+// TOM drives the 68K's only interrupt input (all Jaguar IRQs arrive as a
+// level-2 request through TOM).  Declared here rather than via tom.h to
+// keep the UAE core free of TOM's header dependencies.
+extern int TOMIRQRequestActive(void);
+
 // Function prototypes...
 static INLINE void m68ki_check_interrupts(void);
 void m68ki_exception_interrupt(uint32_t intLevel);
@@ -60,6 +65,21 @@ void m68k_set_irq2(unsigned int intLevel);
 // Local "Global" vars
 static int32_t initialCycles;
 cpuop_func * cpuFunctionTable[65536];
+
+// Monotonic count of serviced interrupts/exceptions-by-IRQ. Diagnostic only:
+// lets test harnesses distinguish "halted, will be woken" from "halted with a
+// dead wake path" (lost wakeup). Exported via the m68k_* test-ABI wildcard.
+static uint32_t m68kInterruptsServiced = 0;
+
+unsigned int m68k_is_stopped(void)
+{
+	return regs.stopped ? 1 : 0;
+}
+
+unsigned int m68k_diag_interrupt_count(void)
+{
+	return m68kInterruptsServiced;
+}
 
 // By virtue of the fact that m68k_set_irq() can be called asychronously by
 // another thread, we need something along the lines of this:
@@ -108,6 +128,7 @@ void m68k_pulse_reset(void)
 	regs.spcflags = 0;
 	regs.stopped = 0;
 	regs.remainingCycles = 0;
+	m68kInterruptsServiced = 0;
 	
 	regs.intmask = 0x07;
 	regs.s = 1;								// Supervisor mode ON
@@ -156,6 +177,25 @@ int m68k_execute(int num_cycles)
 		{
 			checkForIRQToHandle = 0;
 			m68k_set_irq2(IRQLevelToHandle);
+		}
+		else if (regs.intLevel > regs.intmask && TOMIRQRequestActive())
+		{
+			// The 68000 samples IPL0-2 at every instruction boundary, and
+			// on the Jaguar every interrupt reaches the 68K as a level-2
+			// request that TOM holds until the CPU's acknowledge cycle
+			// (irq_ack_handler drops it).  So a request raised while SR's
+			// mask is already >= 2 is not lost: it is taken as soon as an
+			// RTE lowers the mask.
+			//
+			// Sampling only at the instant of assertion (the branch above)
+			// dropped such requests permanently.  Tempest 2000 enables
+			// video + TOM PIT (INT1 = $09); the PIT beats against the frame
+			// rate and fires inside the PIT handler once every 161 frames,
+			// swallowing that frame's vertical interrupt -- the game then
+			// skips its object-list refresh and the OP replays an exhausted
+			// bitmap object, collapsing the playfield into a band at the top
+			// of the screen for exactly one frame (#187).
+			m68ki_exception_interrupt(regs.intLevel);
 		}
 
 #ifdef M68K_HOOK_FUNCTION
@@ -219,6 +259,8 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 {
 	uint32_t vector, sr, newPC;
 
+	m68kInterruptsServiced++;
+
 	// Turn off the stopped state (N.B.: normal 68K behavior!)
 	regs.stopped = 0;
 
@@ -277,7 +319,35 @@ static INLINE uint32_t m68ki_init_exception(void)
 
 	MakeSR();
 	sr = regs.sr;					// Save old status register
-	regs.s = 1;								// Set supervisor mode
+
+	/* Switch to the interrupt/supervisor stack BEFORE the frame is
+	   pushed.  The 68000 keeps two stack pointers selected by the S bit,
+	   and its documented exception processing sequence is
+
+	       temp <- SR ; S <- 1 ; T <- 0 ; fetch vector ;
+	       SSP <- SSP-4 ; M(SSP) <- PC ;
+	       SSP <- SSP-2 ; M(SSP) <- temp ; PC <- handler
+
+	   i.e. the frame lands on the SUPERVISOR stack, because setting S
+	   is what makes A7 the SSP (M68000 Programmer's Reference Manual,
+	   "Exception Processing Sequence").  Setting
+	   regs.s without swapping A7 stacked interrupt frames on the USER
+	   stack and left regs.usp stale, so the handler's RTE restored a
+	   bogus user SP and clobbered regs.isp with the user value -- which
+	   then became A7 on the next entry to supervisor mode.
+
+	   This mirrors the two other privilege transitions in this core,
+	   cpuextra.c::Exception() and cpuextra.c::MakeFromSR(); regs.isp is
+	   guaranteed valid here because s can only have become 0 via
+	   MakeFromSR(), which saves A7 into regs.isp on the way out.
+
+	   Ported from BizHawk 1adb2b45 (waterbox Virtual Jaguar). */
+	if (!regs.s)
+	{
+		regs.usp = m68k_areg(regs, 7);
+		m68k_areg(regs, 7) = regs.isp;
+		regs.s = 1;								// Set supervisor mode
+	}
 
 	return sr;
 }
@@ -345,7 +415,18 @@ unsigned int m68k_is_valid_instruction(unsigned int instruction, unsigned int cp
 
 // Dummy functions, for now, until we prove the concept here. :-)
 
-int m68k_cycles_run(void) { return 0; }              /* Number of cycles run so far */
+/* 68000 cycles executed so far inside the current m68k_execute() call.  Used
+ * by GPUSyncToM68K() to work out how far the GPU has to be advanced when the
+ * 68000 writes into GPU local RAM mid-slice (see gpu.c).  Valid only while
+ * m68k_execute() is on the stack; callers outside it clamp the result.
+ *
+ * NOT monotonic, and not always spent-cycles: m68k_end_timeslice() moves
+ * regs.remainingCycles into initialCycles and zeroes the former, so every
+ * call after an early timeslice end reports the UNSPENT count instead.
+ * GPUSyncToM68K() survives that because it clamps upward to the slice budget
+ * and returns early when the delta is <= 0 -- a caller that needs a true
+ * spent-cycle count must not use this without its own bound. */
+int m68k_cycles_run(void) { return initialCycles - regs.remainingCycles; }
 int m68k_cycles_remaining(void) { return 0; }        /* Number of cycles left */
 
 void m68k_modify_timeslice(int cycles)

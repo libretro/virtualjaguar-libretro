@@ -8,18 +8,37 @@
 #include <compat/posix_string.h>
 #include <compat/strl.h>
 
+/* Forward declarations for file stream functions used in CD BIOS loading.
+ * These come from libretro-common/streams/file_stream.c. */
+RFILE* rfopen(const char *path, const char *mode);
+int rfclose(RFILE* stream);
+int64_t rfseek(RFILE* stream, int64_t offset, int origin);
+int64_t rftell(RFILE* stream);
+int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream);
+
 #include "cheat.h"
 #include "crash_detect.h"
+#include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
+#include "jagcdbios.h"
+#include "jagdevcdbios.h"
 #include "jaguar.h"
+#include "cdintf.h"
+#include "cdrom.h"
+#include "jagcd_boot.h"
+#include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
+#include "jlink.h"
+#include "jlink_netpacket.h"
+#include "uart.h"
 #include "joystick.h"
 #include "settings.h"
 #include "tom.h"
 #include "eeprom.h"
 #include "memtrack.h"
+#include "nvmbios.h"
 #include "vjag_memory.h"
 #include "state.h"
 #include "log.h"
@@ -39,9 +58,29 @@
  *   cof           : COFF binaries (also routes through JST_ABS_TYPE1)
  *   bin, prg      : conservative headerless raw-homebrew with valid
  *                   68k bootstrap (JST_RAW_BINARY)
- * Add `cdi`, `cue`, `iso`, and `chd` here when CD-image support
- * lands on a future PR. */
-#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg"
+ *   cue, cdi      : Jaguar CD images (CUE/BIN and CDI).  Bare `iso`
+ *                   images are not bootable -- see docs/cd-known-issues.md. */
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
+
+/* Framebuffer allocation, in pixels.  Sized for the widest / tallest video
+ * mode TOM can be programmed into (TOMWriteWord clamps tomWidth to 1024 and
+ * tomHeight to 512), so the buffer never has to be reallocated when the game
+ * changes resolution mid-run. */
+#define VIDEO_BUFFER_WIDTH   1024
+#define VIDEO_BUFFER_HEIGHT  512
+#define VIDEO_BUFFER_PIXELS  (VIDEO_BUFFER_WIDTH * VIDEO_BUFFER_HEIGHT)
+
+/* Bounds on what counts as a stale TAIL worth blanking, rather than a sign
+ * that TOM and the presented geometry disagree about the video mode.  Both
+ * must hold; see the use site in retro_run() for the measurements these are
+ * drawn from.  MAX_BLANK_TAIL_ROWS caps the shortfall in absolute rows;
+ * MIN_BLANK_COVERAGE_{NUM,DEN} additionally require the frame to be
+ * essentially fully rendered, which is the clause that catches the same
+ * situation in a short video mode (where a small absolute shortfall can
+ * still be most of the screen). */
+#define MAX_BLANK_TAIL_ROWS      32
+#define MIN_BLANK_COVERAGE_NUM   3
+#define MIN_BLANK_COVERAGE_DEN   4
 
 int videoWidth               = 0;
 int videoHeight              = 0;
@@ -49,17 +88,31 @@ uint32_t *videoBuffer        = NULL;
 int game_width               = 0;
 int game_height              = 0;
 
+extern uint16_t eeprom_ram[64];
+extern uint16_t cdrom_eeprom_ram[64];
+extern uint8_t mtMem[0x20000];
+extern uint32_t jaguarMainROMCRC32;
+extern void (*eeprom_dirty_cb)(void);
+
 /* Save buffer for RETRO_MEMORY_SAVE_RAM.
- * Regular carts: 128 bytes (64 x 16-bit EEPROM words, big-endian packed).
+ * Regular carts: 128 bytes (64 x 16-bit EEPROM words, big-endian packed),
+ *                followed by 128 bytes of CD EEPROM (64 x 16-bit words).
  * Memory Track cart (CRC 0xFDF37F47): mtMem is used directly (128K).
  *
  * The save buffer is kept in sync on every EEPROM write via eeprom_dirty_cb,
  * so frontends that cache the pointer always see current data. */
-#define EEPROM_SAVE_SIZE 128  /* 64 x 16-bit words, big-endian */
-#define MT_SAVE_SIZE     0x20000  /* 128K Memory Track */
-static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE];
+#define EEPROM_SAVE_SIZE    128  /* 64 x 16-bit words, big-endian */
+#define CD_EEPROM_SAVE_SIZE 128  /* CD EEPROM: 64 x 16-bit words */
+#define MT_SAVE_SIZE        0x20000  /* 128K Memory Track */
+/* CD content carries the EEPROM pair AND a Memory Track, so its save buffer
+ * is the two EEPROM banks followed by the MT NVRAM.  Keeping the EEPROMs
+ * first means the layout stays a prefix of the cart/CD-EEPROM-only one. */
+#define CD_SAVE_SIZE        (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE)
+static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE];
+#define MT_SAVE_OFFSET      (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE)
 static void eeprom_pack_save_buf(void);
 static void eeprom_unpack_save_buf(void);
+static void mt_pack_save_buf(void);
 
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
@@ -70,6 +123,15 @@ retro_log_printf_t vj_log_cb = NULL;
 
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
+
+/* CD content state. The Tier 1 weak symbols for external_cd_bios[] and
+ * cd_bios_loaded_externally are overridden by the strong definitions below. */
+static bool jaguar_cd_mode = false;
+/* Memory Track presence option (CD only); default on. */
+static bool opt_memory_track = true;
+static char cd_image_path[4096] = {0};
+bool cd_bios_loaded_externally = false;
+uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
 void retro_set_video_refresh(retro_video_refresh_t cb) { video_cb = cb; }
 void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
@@ -96,6 +158,12 @@ static int jag_retropad[2][RETROPAD_INPUT_COUNT];
 static int jag_numpad[2][12];
 static int numpad_to_kb[2];
 static bool show_input_options = true;
+/* Content-type-dependent option visibility.  Both default to visible so
+ * the options menu is complete before any content is loaded (the type is
+ * unknown then, and the user may be configuring ahead of loading). */
+static bool content_loaded         = false;
+static bool show_cd_options        = true;
+static bool show_cart_bios_option  = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -252,8 +320,66 @@ static bool update_option_visibility(void)
       updated = true;
    }
 
+   /* Show/hide options that only apply to one content type.  Filtering
+    * is deliberately skipped until content is loaded: with nothing
+    * loaded the type is unknown, and hiding either group would make
+    * options unreachable for someone configuring ahead of time. */
+   {
+      static const char * const cd_only_keys[] = {
+         "virtualjaguar_cd_bios_type",
+         "virtualjaguar_cd_boot_mode",
+         "virtualjaguar_cd_read_speed",
+         "virtualjaguar_cd_trace",
+         "virtualjaguar_memory_track",
+      };
+      bool show_cd_prev        = show_cd_options;
+      bool show_cart_bios_prev = show_cart_bios_option;
+
+      show_cd_options       = (!content_loaded || jaguar_cd_mode);
+      /* The cartridge BIOS setting is ignored for CD content —
+       * ResolveBootConfig() lets CD Boot Mode drive showBootROM — so
+       * showing it there would advertise a control that does nothing. */
+      show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
+
+      if (show_cd_options != show_cd_prev)
+      {
+         option_display.visible = show_cd_options;
+         for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
+         {
+            option_display.key = cd_only_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
+         updated = true;
+      }
+
+      if (show_cart_bios_option != show_cart_bios_prev)
+      {
+         option_display.visible = show_cart_bios_option;
+         option_display.key     = "virtualjaguar_bios";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
    return updated;
 }
+
+/* Netpacket interface (env 78): registered unconditionally and inert
+ * until the frontend starts a netplay session; the session then carries
+ * the JagLink byte stream (jlink_netpacket.c), taking over whatever mode
+ * the virtualjaguar_netlink option had configured and restoring it on
+ * stop.  Broadcast TX makes multi-console (CatNet) sessions work too. */
+static const struct retro_netpacket_callback netpacket_cb = {
+   JLinkNPStart,
+   JLinkNPReceive,
+   JLinkNPStop,
+   JLinkNPPoll,
+   NULL,                /* connected */
+   NULL,                /* disconnected */
+   "vjag-netlink-1"     /* protocol_version */
+};
 
 void retro_set_environment(retro_environment_t cb)
 {
@@ -262,6 +388,8 @@ void retro_set_environment(retro_environment_t cb)
    bool option_categories = false;
    bool achievements = true;
    environ_cb = cb;
+
+   cb(RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE, (void *)&netpacket_cb);
 
    {
       struct retro_log_callback log_iface;
@@ -282,6 +410,84 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+}
+
+/* Resolve the TCP endpoint for the network link and apply the mode.
+ * Host (client mode): VJ_NETLINK_HOST env, else the
+ * virtualjaguar_netlink_host option (any string is accepted verbatim so
+ * frontends with free-text option entry can supply arbitrary addresses;
+ * the sentinel "vj_netlink.txt" defers to the file), else first line of
+ * <system_dir>/vj_netlink.txt, else 127.0.0.1.  Port: VJ_NETLINK_PORT
+ * env overrides the virtualjaguar_netlink_port option. */
+static void netlink_apply(int mode)
+{
+   char host[128];
+   int port = 42171;
+   const char *env;
+   struct retro_variable pvar;
+
+   host[0] = '\0';
+
+   pvar.key = "virtualjaguar_netlink_port";
+   pvar.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
+   {
+      int p = atoi(pvar.value);
+      if (p > 0)
+         port = p;
+   }
+   env = getenv("VJ_NETLINK_PORT");
+   if (env && env[0] && atoi(env) > 0)
+      port = atoi(env);
+
+   pvar.key = "virtualjaguar_netlink_wait";
+   pvar.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
+      JLinkSetWaitEnabled(strcmp(pvar.value, "disabled") != 0);
+
+   env = getenv("VJ_NETLINK_HOST");
+   if (env && env[0])
+   {
+      strncpy(host, env, sizeof(host) - 1);
+      host[sizeof(host) - 1] = '\0';
+   }
+   if (!host[0])
+   {
+      pvar.key = "virtualjaguar_netlink_host";
+      pvar.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value
+          && pvar.value[0] && strcmp(pvar.value, "vj_netlink.txt") != 0)
+      {
+         strncpy(host, pvar.value, sizeof(host) - 1);
+         host[sizeof(host) - 1] = '\0';
+      }
+   }
+   if (!host[0])
+   {
+      const char *system_dir = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
+          && system_dir)
+      {
+         char path[1024];
+         FILE *f;
+         snprintf(path, sizeof(path), "%s/vj_netlink.txt", system_dir);
+         f = fopen(path, "r");
+         if (f)
+         {
+            if (fgets(host, sizeof(host), f))
+            {
+               size_t n = strlen(host);
+               while (n > 0 && (host[n - 1] == '\n' || host[n - 1] == '\r'
+                                || host[n - 1] == ' '))
+                  host[--n] = '\0';
+            }
+            fclose(f);
+         }
+      }
+   }
+
+   JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
+   UARTSetLinkMode(mode);
 }
 
 static void check_variables(void)
@@ -315,6 +521,60 @@ static void check_variables(void)
       CrashDetectSetMode(CRASH_DETECT_ON);
    }
 
+   var.key = "virtualjaguar_cd_trace";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      CDTraceSetEnabled(0);
+
+   /* DRAM timing: enabled/disabled only, covering BOTH halves of the
+    * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
+    * in jaguar.c).  The calibration scale is deliberately NOT a core
+    * option (manual knobs proved untunable on device) — VJ_DRAM_SCALE
+    * overrides it for headless calibration experiments only. */
+   var.key = "virtualjaguar_dram_timing";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
+   else
+      busArbiter.enabled = 0;
+   /* No charging happens while disabled, so a carry left over from a
+    * runtime toggle (or an older savestate) must not leak into the
+    * first charged access when the option is re-enabled. */
+   if (!busArbiter.enabled)
+   {
+      busArbiter.m68k_sysclk_carry = 0;
+      busArbiter.refresh_clk_carry = 0;
+      busArbiter.op_clk_accum = 0;
+      busArbiter.m68k_pending_stall = 0;
+   }
+   {
+      const char *scale_env = getenv("VJ_DRAM_SCALE");
+      int dram_scale = (scale_env && scale_env[0]) ? atoi(scale_env) : 1;
+      if (dram_scale < 1)
+         dram_scale = 1;
+      if (dram_scale > 16)
+         dram_scale = 16;
+      busArbiter.contention_scale = (uint8_t)dram_scale;
+   }
+
+   var.key = "virtualjaguar_netlink";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      int mode = JLINK_MODE_DISABLED;
+      if (strcmp(var.value, "loopback") == 0)
+         mode = JLINK_MODE_LOOPBACK;
+      else if (strcmp(var.value, "tcp_server") == 0)
+         mode = JLINK_MODE_TCP_SERVER;
+      else if (strcmp(var.value, "tcp_client") == 0)
+         mode = JLINK_MODE_TCP_CLIENT;
+      netlink_apply(mode);
+   }
+   else
+      netlink_apply(JLINK_MODE_DISABLED);
+
    var.key = "virtualjaguar_bios";
    var.value = NULL;
 
@@ -336,6 +596,55 @@ static void check_variables(void)
       else
          vjs.hardwareTypeNTSC = true;
    }
+
+   var.key = "virtualjaguar_memory_track";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      opt_memory_track = (strcmp(var.value, "disabled") != 0);
+
+   var.key = "virtualjaguar_cd_bios_type";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "dev") == 0)
+         vjs.cdBiosType = CDBIOS_DEV;
+      else
+         vjs.cdBiosType = CDBIOS_RETAIL;
+   }
+
+   var.key = "virtualjaguar_cd_boot_mode";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "hle") == 0)
+         vjs.cdBootMode = CDBOOT_HLE;
+      else if (strcmp(var.value, "bios") == 0)
+         vjs.cdBootMode = CDBOOT_BIOS;
+      else
+         vjs.cdBootMode = CDBOOT_AUTO;
+   }
+
+   var.key = "virtualjaguar_cd_read_speed";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "1x") == 0)
+         vjs.cdReadSpeed = CDSPEED_1X;
+      else if (strcmp(var.value, "4x") == 0)
+         vjs.cdReadSpeed = CDSPEED_4X;
+      else if (strcmp(var.value, "8x") == 0)
+         vjs.cdReadSpeed = CDSPEED_8X;
+      else if (strcmp(var.value, "instant") == 0)
+         vjs.cdReadSpeed = CDSPEED_INSTANT;
+      else
+         vjs.cdReadSpeed = CDSPEED_2X;
+   }
+   else
+      vjs.cdReadSpeed = CDSPEED_2X;
 
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
@@ -671,7 +980,16 @@ bool retro_serialize(void *data, size_t size)
    buf += CDROMStateSave(buf);
    buf += JoystickStateSave(buf);
    buf += MTStateSave(buf);
+   buf += NVMBiosStateSave(buf);
    buf += DACStateSave(buf);
+   buf += UARTStateSave(buf);
+
+   /* v7: bus-arbiter accumulators (68K DRAM self-cost carry, refresh
+    * carry, OP occupancy accumulator, 68K pending-stall deduction). */
+   STATE_SAVE_VAR(buf, busArbiter.m68k_sysclk_carry);
+   STATE_SAVE_VAR(buf, busArbiter.refresh_clk_carry);
+   STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
+   STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -728,10 +1046,38 @@ bool retro_unserialize(const void *data, size_t size)
    buf += EepromStateLoad(buf);
    buf += JERRYStateLoad(buf);
    buf += TOMStateLoad(buf);
-   buf += CDROMStateLoad(buf);
+   buf += CDROMStateLoad(buf, version);
    buf += JoystickStateLoad(buf);
-   buf += MTStateLoad(buf);
+   buf += MTStateLoad(buf, version);
+   if (version >= STATE_VERSION_MEMTRACK_OVERRIDE)
+      buf += NVMBiosStateLoad(buf);
+   else
+      NVMBiosReset();
    buf += DACStateLoad(buf, version);
+   if (version >= STATE_VERSION_JERRY_UART)
+      buf += UARTStateLoad(buf, version);
+
+   if (version >= STATE_VERSION_BUS_ARBITER)
+   {
+      STATE_LOAD_VAR(buf, busArbiter.m68k_sysclk_carry);
+      STATE_LOAD_VAR(buf, busArbiter.refresh_clk_carry);
+      STATE_LOAD_VAR(buf, busArbiter.op_clk_accum);
+      STATE_LOAD_VAR(buf, busArbiter.m68k_pending_stall);
+   }
+   else
+   {
+      busArbiter.m68k_sysclk_carry = 0;
+      busArbiter.refresh_clk_carry = 0;
+      busArbiter.op_clk_accum = 0;
+      busArbiter.m68k_pending_stall = 0;
+   }
+   /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
+    * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
+    * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from
+    * MEMCON1, refrate from MEMCON2 — none of those derived fields are
+    * themselves serialized, see bus_arbiter.h). */
+   bus_arbiter_update_memcon(TOMGetMEMCON1());
+   bus_arbiter_update_memcon2(TOMGetMEMCON2());
 
    JaguarApplyHLEBIOSState();
 
@@ -776,9 +1122,224 @@ static void cheat_apply_all(void)
    cheat_list_apply(&cheat_list, cheat_write_jaguar, NULL);
 }
 
+/* Case-insensitive extension test on a path. */
+static bool has_extension(const char *path, const char *ext)
+{
+   const char *dot;
+   if (!path || !ext)
+      return false;
+   dot = strrchr(path, '.');
+   if (!dot)
+      return false;
+   return strcasecmp(dot + 1, ext) == 0;
+}
+
+/* Try to load a 256 KB CD BIOS image from the given path.
+ * Returns true on success and sets cd_bios_loaded_externally. */
+static bool try_load_cd_bios_file(const char *path)
+{
+   RFILE   *f;
+   int64_t  size;
+   uint32_t run_addr;
+
+   f = rfopen(path, "rb");
+   if (!f)
+      return false;
+
+   rfseek(f, 0, SEEK_END);
+   size = rftell(f);
+   rfseek(f, 0, SEEK_SET);
+
+   if (size != 0x40000)
+   {
+      LOG_DBG("[CD-BIOS]   wrong size (%lld, need 262144): %s\n",
+              (long long)size, path);
+      rfclose(f);
+      return false;
+   }
+
+   if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
+   {
+      rfclose(f);
+      return false;
+   }
+   rfclose(f);
+
+   run_addr = ((uint32_t)external_cd_bios[0x404] << 24)
+            | ((uint32_t)external_cd_bios[0x405] << 16)
+            | ((uint32_t)external_cd_bios[0x406] <<  8)
+            |  (uint32_t)external_cd_bios[0x407];
+
+   if (run_addr < 0x800000 || run_addr > 0x840000)
+   {
+      LOG_DBG("[CD-BIOS]   bad run addr $%08X: %s\n",
+              (unsigned)run_addr, path);
+      return false;
+   }
+
+   LOG_INF("[CD-BIOS] using external %s (run=$%06X)\n",
+           path, (unsigned)run_addr);
+   cd_bios_loaded_externally = true;
+   return true;
+}
+
+/* Search common CD BIOS filenames in the system directory (and a handful
+ * of well-known sub-directories used by Provenance/RetroArch front-ends). */
+static bool load_external_cd_bios(void)
+{
+   /* Filenames conventionally used for each 'CD BIOS Type', plus generic
+    * names that could hold either image.  Selection is by NAME only — the
+    * loader does not inspect the image to confirm which BIOS it actually
+    * is, so a mislabelled file is taken at its filename's word.
+    *
+    * The selected type's names are searched FIRST.  The previous code used
+    * one flat list with the retail names ahead of the developer ones, so a
+    * user with both files installed always got retail no matter what the
+    * option said. */
+   static const char *retail_names[] = {
+      "[BIOS] Atari Jaguar CD (World).j64",
+      "[BIOS] Atari Jaguar CD (World).rom",
+      "[BIOS] Atari Jaguar CD (World).bin",
+      NULL
+   };
+   static const char *dev_names[] = {
+      "[BIOS] Atari Jaguar Developer CD (World).j64",
+      "[BIOS] Atari Jaguar Developer CD (World).rom",
+      "[BIOS] Atari Jaguar Developer CD (World).bin",
+      NULL
+   };
+   static const char *generic_names[] = {
+      "jaguarcd_bios.bin",
+      "jagcd_bios.bin",
+      "jaguarcd.bin",
+      "jagcd.bin",
+      "Jaguar CD BIOS.rom",
+      "Jaguar CD BIOS.bin",
+      NULL
+   };
+   const char **name_groups[3];
+   static const char *sub_dirs[] = {
+      "",
+      "Atari - Jaguar",
+      "Atari - Jaguar CD",
+      "jaguar",
+      "jaguarcd",
+      NULL
+   };
+   const char *system_dir = NULL;
+   int s, i, g;
+
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
+       || !system_dir)
+   {
+      LOG_WRN("[CD-BIOS] No system directory available\n");
+      return false;
+   }
+
+   /* Selected type first, generic names second, the other type last (a
+    * lone file of the "wrong" type still beats falling back to embedded —
+    * the user put it there on purpose). */
+   if (vjs.cdBiosType == CDBIOS_DEV)
+   {
+      name_groups[0] = dev_names;
+      name_groups[2] = retail_names;
+   }
+   else
+   {
+      name_groups[0] = retail_names;
+      name_groups[2] = dev_names;
+   }
+   name_groups[1] = generic_names;
+
+   LOG_INF("[CD-BIOS] Searching for CD BIOS in: %s (preferring %s)\n",
+           system_dir, (vjs.cdBiosType == CDBIOS_DEV) ? "developer" : "retail");
+
+   for (g = 0; g < 3; g++)
+   {
+      for (s = 0; sub_dirs[s]; s++)
+      {
+         for (i = 0; name_groups[g][i]; i++)
+         {
+            char path[4096];
+            if (sub_dirs[s][0])
+               snprintf(path, sizeof(path), "%s/%s/%s",
+                        system_dir, sub_dirs[s], name_groups[g][i]);
+            else
+               snprintf(path, sizeof(path), "%s/%s",
+                        system_dir, name_groups[g][i]);
+
+            if (try_load_cd_bios_file(path))
+               return true;
+         }
+      }
+   }
+
+   LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
+   return false;
+}
+
+/* Stage the CD BIOS for the real-BIOS boot path: prefer an external ROM
+ * file from the system directory (users may carry a different BIOS
+ * revision), else fall back to an embedded CD BIOS so real-BIOS boot
+ * works with zero files.  Which embedded image is used follows the
+ * 'CD BIOS Type' option: retail (default) or the developer BIOS, which
+ * skips some of the retail BIOS's disc checks.
+ *
+ * An external file always wins over both — it is the user explicitly
+ * supplying a revision, so the type selection does not override it. */
+static void stage_cd_bios(void)
+{
+   if (load_external_cd_bios())
+      return;
+
+   if (vjs.cdBiosType == CDBIOS_DEV)
+   {
+      memcpy(external_cd_bios, jaguarDevCDBootROM, 0x40000);
+      cd_bios_loaded_externally = true;
+      LOG_INF("[CD-BIOS] using embedded developer CD BIOS\n");
+      return;
+   }
+
+   memcpy(external_cd_bios, jaguarCDBootROM, 0x40000);
+   cd_bios_loaded_externally = true;
+   LOG_INF("[CD-BIOS] using embedded retail CD BIOS\n");
+}
+
+/* Fill the entire framebuffer allocation with opaque black.
+ *
+ * TOM only writes the rows of the presented frame that fall inside its
+ * visible window, and the border-fill path in TOMExecHalfline writes
+ * `tomWidth` pixels -- which is 0 until the game programs a TOM video
+ * register ($F00028-$F0004F).  Until then, any presented row above VDB gets
+ * no pixels written at all, so whatever this buffer holds is what the
+ * frontend displays.  It has to be a defined value, and opaque black is the
+ * correct one: it is both what a display shows with no signal and what the
+ * border colour resolves to in that window (TOMReset zeroes BORD1/BORD2, and
+ * any write that makes them non-zero also makes tomWidth non-zero, so the
+ * border path is live by then).
+ *
+ * Fill the entire allocation rather than videoWidth * videoHeight: the
+ * geometry can grow to a wider stride later (320x240 -> 326x240), and rows
+ * re-laid-out at the larger pitch reach past the smaller region.  Covering
+ * all of it keeps every presentable pixel defined and the X byte consistent
+ * no matter which geometry is in force.
+ *
+ * Both retro_load_game and retro_reset go through here: a reset re-enters
+ * exactly the same window (TOMReset puts tomWidth back to 0), so the two
+ * must agree on the value. */
+static void video_buffer_blank(void)
+{
+   int i;
+
+   if (!videoBuffer)
+      return;
+
+   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
+      videoBuffer[i] = 0xFF000000;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
-   unsigned i;
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
 
    struct retro_input_descriptor desc[] = {
@@ -847,7 +1408,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    videoWidth           = 320;
    videoHeight          = 240;
-   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), 1024 * 512);
+   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), VIDEO_BUFFER_PIXELS);
    sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t));
 
    if (!videoBuffer || !sampleBuffer)
@@ -866,15 +1427,68 @@ bool retro_load_game(const struct retro_game_info *info)
    // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
+   vjs.cdBiosType       = CDBIOS_RETAIL;
+   vjs.cdBootMode       = CDBOOT_HLE;
+   vjs.cdReadSpeed      = CDSPEED_2X;
 
    check_variables();
 
-#ifdef BUILD_TIMESTAMP
+   /* Always identify the exact build in the frontend log: version, short
+    * git rev (+"-dirty" for uncommitted trees), and timestamp for DEBUG
+    * builds.  Answers "which binary is this?" in every bug report and
+    * stops test runs against a stale core from going unnoticed. */
    LOG_INF("[Virtual Jaguar] build: %s\n", CORE_VERSION);
-#endif
 
    /* Register EEPROM dirty callback so the save buffer stays in sync */
    eeprom_dirty_cb = eeprom_pack_save_buf;
+   mt_dirty_cb     = mt_pack_save_buf;
+
+   /* Detect CD content (CUE/CDI/ISO) and stage a CD BIOS (external file
+    * if present, embedded otherwise) so ResolveBootConfig can pick the
+    * right boot strategy. */
+   jaguar_cd_mode            = false;
+   jaguarMemTrackInserted    = false;
+   cd_image_path[0]          = '\0';
+   cd_bios_loaded_externally = false;
+
+   if (info && info->path && (has_extension(info->path, "cue")
+                              || has_extension(info->path, "cdi")
+                              || has_extension(info->path, "iso")))
+   {
+      jaguar_cd_mode = true;
+      /* Hardware has the Memory Track cart plugged in alongside the CD
+       * unit (user-selectable; some titles behave differently with one
+       * present). */
+      jaguarMemTrackInserted = opt_memory_track;
+      strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
+      cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+
+      if (vjs.cdBootMode != CDBOOT_HLE)
+         stage_cd_bios();
+   }
+
+   /* Resolve boot configuration — single source of truth for which
+    * strategy (cart / HLE / real BIOS) we will dispatch to below. */
+   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                     vjs.cdBootMode, vjs.useJaguarBIOS);
+   vjs.useJaguarBIOS = bootConfig.showBootROM;
+
+   /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
+    * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
+   if (jaguar_cd_mode)
+   {
+      LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
+      if (!CDIntfOpenImage(cd_image_path))
+      {
+         LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
+         free(videoBuffer);
+         videoBuffer = NULL;
+         free(sampleBuffer);
+         sampleBuffer = NULL;
+         return false;
+      }
+      LOG_INF("[CD] Disc image opened OK\n");
+   }
 
    JaguarInit();                                             // set up hardware
    CrashDetectReset();                                       // zero per-game watchdog state
@@ -883,14 +1497,18 @@ bool retro_load_game(const struct retro_game_info *info)
    JaguarSetScreenPitch(videoWidth);
    JaguarSetScreenBuffer(videoBuffer);
 
-   /* Init video */
-   for (i = 0; i < videoWidth * videoHeight; ++i)
-      videoBuffer[i] = 0xFF00FFFF;
+   /* Seed the framebuffer.  See video_buffer_blank() for why opaque black
+    * and why the whole allocation. */
+   video_buffer_blank();
 
-   SET32(jaguarMainRAM, 0, 0x00200000);
-   if (!JaguarLoadFile((uint8_t*)info->data, info->size))
+   /* Dispatch through the selected boot strategy (cart / HLE / real BIOS).
+    * The cart strategy handles the existing JaguarLoadFile + JaguarReset
+    * flow; the CD strategies handle their own boot sequencing. */
+   if (!bootConfig.strategy || !bootConfig.strategy->boot(info))
    {
       LOG_ERR("[Virtual Jaguar] unsupported or invalid content format\n");
+      if (jaguar_cd_mode)
+         CDIntfCloseImage();
       JaguarDone();
       free(videoBuffer);
       videoBuffer = NULL;
@@ -898,14 +1516,15 @@ bool retro_load_game(const struct retro_game_info *info)
       sampleBuffer = NULL;
       return false;
    }
-   JaguarReset();
 
-   /* JaguarReset() randomizes RAM contents, which destroys RAM-loaded
-    * executables (ABS, COFF, JAGSERVER formats).  Cart ROMs are safe
-    * because they live at $800000+ which isn't touched by reset.
-    * Re-load the file so the program data is back in place. */
-   if (!jaguarCartInserted)
+   /* For RAM-loaded executables (.abs/.cof/JagServer), JaguarReset()
+    * randomizes RAM and destroys the loaded program.  The cart and CD
+    * boot strategies handle their own JaguarReset() ordering internally
+    * so the post-boot state is preserved.  We only need to do an extra
+    * reset+reload here for the RAM-loaded path. */
+   if (!jaguarCartInserted && !jaguar_cd_mode)
    {
+      JaguarReset();
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
       {
          LOG_ERR("[Virtual Jaguar] failed to reload RAM-loaded content\n");
@@ -947,6 +1566,17 @@ bool retro_load_game(const struct retro_game_info *info)
     * first retro_run(). We unpack it on the first frame. */
    save_data_needs_unpack = true;
 
+   /* Content type is now known — refresh which options apply to it. */
+   content_loaded = true;
+   update_option_visibility();
+
+   /* Memory Track NVM BIOS module: on hardware the CD BIOS boot installs
+    * it in RAM before the game runs; do the same after the boot strategy
+    * has set RAM up. */
+   NVMBiosReset();
+   if (jaguarMemTrackInserted)
+      NVMBiosInstall();
+
    return true;
 }
 
@@ -961,6 +1591,13 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *i
 void retro_unload_game(void)
 {
    retro_cheat_reset();
+   CDIntfCloseImage();
+   jaguar_cd_mode    = false;
+   jaguarMemTrackInserted = false;
+   cd_image_path[0]  = '\0';
+   /* Content type is unknown again — restore the full option list. */
+   content_loaded    = false;
+   update_option_visibility();
    JaguarDone();
 
    if (videoBuffer)
@@ -978,6 +1615,7 @@ void retro_unload_game(void)
    game_height = 0;
 
    eeprom_dirty_cb = NULL;
+   mt_dirty_cb     = NULL;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
 
@@ -987,6 +1625,9 @@ void retro_unload_game(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   content_loaded = false;
+   show_cd_options = true;
+   show_cart_bios_option = true;
 }
 
 unsigned retro_get_region(void)
@@ -999,9 +1640,10 @@ unsigned retro_api_version(void)
    return RETRO_API_VERSION;
 }
 
-/* Pack eeprom_ram[] into the save buffer (big-endian byte order).
- * Called on every EEPROM write via eeprom_dirty_cb so the buffer
- * is always up-to-date for frontends that cache the pointer. */
+/* Pack eeprom_ram[] and cdrom_eeprom_ram[] into the save buffer
+ * (big-endian byte order).  Called on every EEPROM write via
+ * eeprom_dirty_cb so the buffer is always up-to-date for frontends
+ * that cache the pointer. */
 static void eeprom_pack_save_buf(void)
 {
    unsigned i;
@@ -1010,9 +1652,26 @@ static void eeprom_pack_save_buf(void)
       eeprom_save_buf[(i * 2) + 0] = eeprom_ram[i] >> 8;
       eeprom_save_buf[(i * 2) + 1] = eeprom_ram[i] & 0xFF;
    }
+   /* CD EEPROM follows cart EEPROM in the save buffer */
+   for (i = 0; i < 64; i++)
+   {
+      eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] = cdrom_eeprom_ram[i] >> 8;
+      eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1] = cdrom_eeprom_ram[i] & 0xFF;
+   }
+   /* Memory Track NVRAM follows both EEPROM banks (CD content only). */
+   if (jaguar_cd_mode)
+      memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
 }
 
-/* Unpack the save buffer back into eeprom_ram[].
+/* Mirror the Memory Track into the save buffer without repacking the EEPROMs
+ * -- MT writes are frequent enough during a save that the full pack would be
+ * wasteful, and the EEPROM banks are unaffected by them. */
+static void mt_pack_save_buf(void)
+{
+   memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
+}
+
+/* Unpack the save buffer back into eeprom_ram[] and cdrom_eeprom_ram[].
  * Called once after the frontend loads .srm data. */
 static void eeprom_unpack_save_buf(void)
 {
@@ -1020,6 +1679,12 @@ static void eeprom_unpack_save_buf(void)
    for (i = 0; i < 64; i++)
       eeprom_ram[i] = ((uint16_t)eeprom_save_buf[(i * 2) + 0] << 8)
                     | eeprom_save_buf[(i * 2) + 1];
+   for (i = 0; i < 64; i++)
+      cdrom_eeprom_ram[i] =
+            ((uint16_t)eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 0] << 8)
+          |  eeprom_save_buf[EEPROM_SAVE_SIZE + (i * 2) + 1];
+   if (jaguar_cd_mode)
+      memcpy(mtMem, eeprom_save_buf + MT_SAVE_OFFSET, MT_SAVE_SIZE);
 }
 
 void *retro_get_memory_data(unsigned type)
@@ -1045,6 +1710,12 @@ size_t retro_get_memory_size(unsigned type)
    {
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
+      /* CD discs share the cart EEPROM with their CD-side EEPROM bank
+       * (128 + 128 = 256 bytes).  Cart-only loads expose just the cart
+       * EEPROM so existing per-game saves remain compatible. */
+      /* CD: cart EEPROM + CD EEPROM + Memory Track NVRAM. */
+      if (jaguar_cd_mode)
+         return CD_SAVE_SIZE;
       return EEPROM_SAVE_SIZE;
    }
    return 0;
@@ -1058,6 +1729,11 @@ void retro_init(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
+
+   /* Reset all bus-arbiter state (iOS cannot dlclose cores, so statics
+    * persist across loads).  Must run before check_variables() applies
+    * the core option — retro_load_game calls that after retro_init. */
+   bus_arbiter_init();
 
    CrashDetectInit();
 }
@@ -1081,6 +1757,7 @@ void retro_deinit(void)
    sampleBuffer = NULL;
 
    eeprom_dirty_cb = NULL;
+   mt_dirty_cb     = NULL;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
    videoWidth = 0;
@@ -1093,11 +1770,29 @@ void retro_deinit(void)
    numpad_to_kb[1] = 0;
    show_input_options = true;
    enable_alt_inputs = false;
+   content_loaded = false;
+   show_cd_options = true;
+   show_cart_bios_option = true;
 }
 
 void retro_reset(void)
 {
    JaguarReset();
+
+   /* Console reset re-runs the CD BIOS boot on hardware, which reinstalls
+    * the Memory Track NVM module. */
+   NVMBiosReset();
+   if (jaguarMemTrackInserted)
+      NVMBiosInstall();
+
+   /* Re-blank the framebuffer, or the reset presents the PREVIOUS session's
+    * pixels.  TOMReset puts tomWidth back to 0, and the border-fill path in
+    * TOMExecHalfline writes tomWidth pixels -- so until the game reprograms
+    * a TOM video register ($F00028-$F0004F) the rows above VDB get no pixels
+    * written at all and keep what was on screen before the reset.  That is
+    * the same window, and the same seed, retro_load_game establishes on a
+    * fresh load; a reset has to go through it too. */
+   video_buffer_blank();
 }
 
 #ifdef DEBUG_PRESENTATION
@@ -1171,12 +1866,85 @@ void retro_run(void)
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
 
+   /* Service the network link: progress TCP connect/accept, drain the
+    * socket into the transport ring, then let the UART start an RX
+    * frame for anything that arrived.  FrameTick refills the per-frame
+    * reply-wait budget. */
+   JLinkFrameTick();
+   JLinkPoll();
+   UARTPoll();
+
    update_input();
 
    DACPrepareFrame(vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
    JaguarExecuteNew();
    cheat_apply_all();
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
+
+   /* Give every presented row defined content.
+    *
+    * TOM renders one row per even halfline in [topVisible, bottomVisible),
+    * but the presented height comes from TOMGetVideoModeHeight(), derived
+    * independently from VDB/VDE.  When the two disagree the tail rows are
+    * never written and keep whatever was last drawn there -- frozen stale
+    * pixels that persist while the rest of the screen animates.  Alien vs
+    * Predator in-game is the reported case (#178): VDB=40, VDE=2047, VP=523
+    * gives 236 rendered rows against a presented height of 240, so rows
+    * 236-239 held a brown bar left over from an earlier VDB=28 frame.
+    *
+    * Opaque black, not the border colour: these rows sit BELOW the visible
+    * field (bottomVisible is the field bottom), so they are blanking lines,
+    * not border lines.  The border branch in TOMExecHalfline already covers
+    * rows that are inside the field but outside the active display window.
+    *
+    * The reverse mismatch also exists -- a narrow window (e.g. VDB=38,
+    * VDE=100 -> 34 rendered rows, presented height 31) writes past the
+    * presented height.  That is harmless here (the allocation is 1024x512
+    * and the extra rows are simply not shown) and is left alone. */
+   {
+      uint32_t written = TOMGetWrittenRowExtent();
+
+      /* Only blank a genuine TAIL.  A large shortfall does not mean "these
+       * rows are stale", it means TOM and the presented geometry disagree
+       * about what mode we are in -- our window model has failed, and
+       * erasing the last good frame is worse than leaving it up.
+       *
+       * The bound is measured, not a guess.  Across the 115-ROM corpus every
+       * SUSTAINED gap is small: 4 rows (Evolution, and Alien vs Predator --
+       * the reported case), 7 (Cannon Fodder, Gorf 2000), 8 (Bubsy), 14
+       * (Pitfall), 15, 17 (Sensible Soccer).  The one pathological case is
+       * DEMO1C (PD) at 102 rows on a single frame as it switches to a
+       * 328x135 mode and then stops rendering entirely -- blanking there
+       * erased a visible colour field and left a black screen.  32 leaves
+       * generous headroom over the observed maximum while excluding that
+       * class by a wide margin.
+       *
+       * The coverage clause is what makes this hold at any frame height: in
+       * a short mode a shortfall well inside 32 rows can still be most of
+       * the screen (height 40 with 8 rows written is the DEMO1C shape at
+       * small scale), and requiring the frame to be >= 3/4 rendered rejects
+       * it.  Measured coverage separates the two classes by a wide margin --
+       * every real tail above is 93-98% rendered, DEMO1C's transition frame
+       * is 24%.
+       *
+       * written == 0 (TOM addressed no rows at all) is the degenerate form
+       * of the same thing; the coverage test already rejects it, but keep it
+       * explicit so the intent survives a future tweak of the bounds. */
+      if (written > 0 && written < (uint32_t)game_height
+          && (uint32_t)game_height - written <= MAX_BLANK_TAIL_ROWS
+          && written * MIN_BLANK_COVERAGE_DEN
+             >= (uint32_t)game_height * MIN_BLANK_COVERAGE_NUM)
+      {
+         uint32_t row;
+         uint32_t col;
+         for (row = written; row < (uint32_t)game_height; row++)
+         {
+            uint32_t *line = videoBuffer + (row * (uint32_t)game_width);
+            for (col = 0; col < (uint32_t)game_width; col++)
+               line[col] = 0xFF000000;
+         }
+      }
+   }
 
    /* Runtime watchdog: looks for GPU/DSP PC escape, GPU/DSP wedge,
     * and video stall. Fires LOG_WRN/LOG_ERR via vj_log_cb so the

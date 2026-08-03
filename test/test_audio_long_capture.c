@@ -2,7 +2,10 @@
  * per-second audio fingerprint so two builds can be compared.
  *
  * Usage:
- *   ./test/test_audio_long_capture <core.dylib> <rom.jag> <seconds> [bios=0|1]
+ *   ./test/test_audio_long_capture <core.dylib> <rom.jag> <seconds> \
+ *       [bios=0|1] [out.wav] [press_frames]
+ * press_frames: comma-separated frame numbers; the A button is held 20
+ * frames from each (navigates title/menus into gameplay).
  *
  * Output (one line per second):
  *   sec=NN samples=NN nonsilent=NN peak=NN rms=NN nonzero_runs=NN
@@ -130,9 +133,26 @@ static void video_refresh(const void *data, unsigned width, unsigned height, siz
    (void)data; (void)width; (void)height; (void)pitch;
 }
 static void input_poll(void) {}
+
+/* Optional A-press schedule (argv[6]: comma-separated frame numbers,
+   each held 20 frames) — enough to advance title/menu screens into
+   gameplay so in-game audio can be captured. */
+#define MAX_PRESSES 16
+#define PRESS_HOLD  20
+static int g_press_frames[MAX_PRESSES];
+static int g_num_presses = 0;
+static int g_cur_frame = 0;
+
 static int16_t input_state(unsigned port, unsigned device, unsigned index, unsigned id)
 {
-   (void)port; (void)device; (void)index; (void)id;
+   int i;
+   (void)index;
+   if (port != 0 || device != RETRO_DEVICE_JOYPAD || id != RETRO_DEVICE_ID_JOYPAD_A)
+      return 0;
+   for (i = 0; i < g_num_presses; i++)
+      if (g_cur_frame >= g_press_frames[i]
+          && g_cur_frame < g_press_frames[i] + PRESS_HOLD)
+         return 1;
    return 0;
 }
 static void audio_sample_one(int16_t l, int16_t r) { (void)l; (void)r; }
@@ -244,7 +264,10 @@ int main(int argc, char **argv)
    void  (*retro_reset)(void);
 
    if (argc < 4) {
-      fprintf(stderr, "Usage: %s <core.dylib> <rom> <seconds> [bios=0|1] [out.wav]\n",
+      fprintf(stderr, "Usage: %s <core.dylib> <rom> <seconds> [bios=0|1] "
+            "[out.wav] [press_frames]\n"
+            "  press_frames: comma-separated frame numbers; the A button "
+            "is held 20 frames from each\n",
             argv[0]);
       return 2;
    }
@@ -253,6 +276,21 @@ int main(int argc, char **argv)
    g_seconds = atoi(argv[3]);
    if (g_seconds < 1 || g_seconds > 600) g_seconds = 60;
    if (argc >= 5) g_use_bios = atoi(argv[4]) ? 1 : 0;
+   if (argc >= 7) {
+      /* strtol walk, no strtok: argv stays unmodified, and empty or
+       * non-numeric tokens (e.g. "10,,20" or "10,x") are skipped
+       * instead of silently becoming an A-press at frame 0. */
+      const char *p = argv[6];
+      while (*p && g_num_presses < MAX_PRESSES) {
+         char *end;
+         long v = strtol(p, &end, 10);
+         if (end != p && v > 0 && v < 1000000)
+            g_press_frames[g_num_presses++] = (int)v;
+         p = (end != p) ? end : p + 1;
+         while (*p && *p != ',') p++;   /* skip trailing junk in token */
+         if (*p == ',') p++;
+      }
+   }
    if (argc >= 6) {
       g_wav_out = argv[5];
       g_wav_fp = fopen(g_wav_out, "wb");
@@ -331,6 +369,7 @@ int main(int argc, char **argv)
          core_path, g_use_bios, g_seconds, g_rom);
 
    for (frame = 0; frame < g_seconds * FRAMES_PER_SEC; frame++) {
+      g_cur_frame = frame;
       retro_run();
       frames_in_sec++;
       if (frames_in_sec >= FRAMES_PER_SEC) {

@@ -43,6 +43,12 @@
  *     --option K=V     Set core option (e.g. --option virtualjaguar_dsp=enabled)
  *     --quiet          Suppress per-frame output, only show final results
  *     --snapshot-interval N   Probe snapshot every N frames (default: 1)
+ *     --load-state F   Restore a RetroArch .state after the game loads,
+ *                      to start deep inside a title without scripting
+ *                      the whole way in with --press
+ *     --press F:BTN[:HOLD]    Hold button BTN from frame F for HOLD frames
+ *                      (default 10).  BTN: up down left right a b c pause
+ *                      option 0-6, or raw retropad id.  Repeatable.
  *
  * ======================================================================
  * CORE OPTION OVERRIDE TABLE
@@ -82,6 +88,8 @@
 #define HARNESS_MAX_RESULTS  64
 /* Audio capture frames */
 #define HARNESS_MAX_AUDIO_FRAMES 1200
+/* Maximum number of scripted input events */
+#define HARNESS_MAX_INPUT_EVENTS 128
 
 /* ----------------------------------------------------------------
  * Types
@@ -91,6 +99,26 @@ typedef struct {
     const char *key;
     const char *value;
 } harness_option;
+
+/* Scripted input: hold RETRO_DEVICE_ID_JOYPAD_<button> on <port> from
+ * first_frame through last_frame (inclusive).  Populated from repeated
+ *   --press FRAME:BUTTON[:HOLD_FRAMES]      (HOLD_FRAMES default 10)
+ * flags, where BUTTON is one of: up down left right a b c pause option
+ * 0 1 2 3 4 5 6 (Jaguar numpad -> retropad x/l/r/l2/r2/l3/r3), or a raw
+ * retropad id number.  Port 0 only via CLI; tests can fill events for
+ * other ports programmatically. */
+typedef struct {
+    unsigned first_frame;
+    unsigned last_frame;
+    unsigned port;
+    unsigned button;   /* RETRO_DEVICE_ID_JOYPAD_* */
+} harness_input_event;
+
+/* Optional programmatic input hook: return the input_state value for
+ * (port, device, index, id); takes precedence over the event table. */
+typedef int16_t (*harness_input_cb)(void *userdata, unsigned port,
+                                    unsigned device, unsigned index,
+                                    unsigned id);
 
 typedef struct {
     unsigned frame;
@@ -132,6 +160,13 @@ typedef struct {
  * Return false to stop execution early. */
 typedef bool (*harness_frame_cb)(void *userdata, unsigned frame);
 
+/* Video frame callback: called from the core's video refresh with the raw
+ * XRGB8888 framebuffer (data may be NULL on duped frames).  Lets tests
+ * inspect pixels (motion detection, screenshots) without reimplementing
+ * the libretro plumbing. */
+typedef void (*harness_video_cb)(void *userdata, const void *data,
+                                 unsigned width, unsigned height, size_t pitch);
+
 typedef struct {
     /* Configuration (set before init) */
     const char   *core_path;
@@ -147,6 +182,30 @@ typedef struct {
     /* Per-frame hook */
     harness_frame_cb frame_callback;
     void            *frame_callback_data;
+
+    /* Video pixel hook (optional) */
+    harness_video_cb video_callback;
+    void            *video_callback_data;
+
+    /* Scripted input (optional) */
+    harness_input_event input_events[HARNESS_MAX_INPUT_EVENTS];
+    unsigned            num_input_events;
+    harness_input_cb    input_callback;
+    void               *input_callback_data;
+
+    /* Directory returned for GET_SYSTEM_DIRECTORY (CD BIOS discovery).
+     * Default "/tmp"; set to "test/roms/private" for CD titles, or use
+     * --system-dir. */
+    const char   *system_dir;
+
+    /* Optional RetroArch .state to restore right after the game loads,
+     * so a test can start deep inside a title instead of scripting its
+     * way in.  Set via --load-state. */
+    const char   *load_state_path;
+
+    /* Optional path to write the core state to when harness_run()
+     * finishes, for capturing a repro point.  Set via --save-state. */
+    const char   *save_state_path;
 
     /* Runtime state (set by harness) */
     void  *core_handle;
@@ -175,6 +234,15 @@ typedef struct {
     .num_options = 0, \
     .frame_callback = NULL, \
     .frame_callback_data = NULL, \
+    .video_callback = NULL, \
+    .video_callback_data = NULL, \
+    .input_events = {{0}}, \
+    .num_input_events = 0, \
+    .input_callback = NULL, \
+    .input_callback_data = NULL, \
+    .system_dir = "/tmp", \
+    .load_state_path = NULL, \
+    .save_state_path = NULL, \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \
@@ -192,8 +260,15 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv);
 /* Load the core dynamic library.  Called by init_from_args. */
 bool harness_load_core(harness_config *cfg);
 
-/* Load a ROM into the core.  Requires core loaded + rom_path set. */
+/* Load a ROM into the core.  Requires core loaded + rom_path set.
+ * If cfg->load_state_path is set, the state is restored afterwards. */
 bool harness_load_rom(harness_config *cfg);
+
+/* Write the core's current state to `path` (raw core blob). */
+bool harness_save_state(harness_config *cfg, const char *path);
+
+/* Restore a RetroArch .state blob.  Call after harness_load_rom(). */
+bool harness_load_state(harness_config *cfg, const char *path);
 
 /* Run cfg->frames frames, collecting audio/video stats.
  * Calls cfg->frame_callback after each frame if set. */
@@ -213,6 +288,10 @@ void harness_report(harness_config *cfg, const harness_result *results, unsigned
 
 /* Convenience: add a core option override. */
 void harness_set_option(harness_config *cfg, const char *key, const char *value);
+
+/* Convenience: schedule a scripted button press (see harness_input_event). */
+void harness_press(harness_config *cfg, unsigned port, unsigned button,
+                   unsigned first_frame, unsigned hold_frames);
 
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);

@@ -33,47 +33,46 @@ codes; per-test perf-counter delta dumps when built with
 optional -- if absent, the assemble step is skipped with a warning
 and only the runner harness is built.
 
-**67 / 72 tests PASSing across 13 categories.**  Failures are
-intentional documentation of known emulator gaps or deliberate
-follow-up placeholders.
+**140 / 143 tests PASSing across 12 categories** (per `test/acid/BASELINE.txt`,
+2026-08-03).  The `67 / 72` figure that used to live here was stale --
+the suite grew via a 70+-test sub-agent sweep (`553f2bd`) and further
+additions since, and nobody had reconciled the headline count against
+`BASELINE.txt` afterward.  Failures are intentional documentation of
+known emulator gaps.
 
 | Category | Tests | Pass | Open issues surfaced |
 |---|---:|---:|---|
-| smoke      |  1 |  1 | — |
-| memory     |  8 |  8 | — |
-| timing     |  9 |  9 | — |
-| irq        |  9 |  9 | — |
-| blitter    | 17 | 14 | bcompen_basic + copy_simple + pattern_fill: encoding still needs adjustment for those specific modes |
-| gpu        |  2 |  2 | — |
-| dsp        |  3 |  2 | dsp_mac_accumulator is a deliberate FAIL placeholder until the real IMACN/RESMAC sequence lands |
-| op         |  3 |  3 | — |
-| bus        |  2 |  2 | — |
+| memory     | 10 | 10 | — |
+| timing     | 13 | 13 | — |
+| irq        |  7 |  7 | — |
+| blitter    | 35 | 35 | — (includes the smoke test, `blitter/zzz_smoke.jag`) |
+| gpu        | 18 | 18 | — |
+| dsp        | 21 | 21 | — |
+| op         | 11 | 11 | — |
+| bus        |  5 |  2 | 3 tests document the synchronous-blitter / no-bus-contention-model gap (see below) |
 | hle        |  6 |  6 | — |
-| quirks     |  7 |  6 | divl_zero_traps: DIVS.L #0 doesn't trap to vec 5 (real bug -- agent trace shows code path looks correct but trap doesn't reach handler) |
+| quirks     | 11 | 11 | — |
 | stress     |  3 |  3 | — |
 | perf       |  3 |  3 | — |
 
-**Real bugs surfaced as failing tests** (each ready as a regression
-gate for a focused fix-PR):
+The 3 `bus/*` failures are expected and by design, not a regression:
+`bus_refresh_steals`, `bus_cpu_starves_blitter`, and
+`bus_blitter_starves_cpu` each assert that a 68K/blitter access pattern
+measurably steals cycles from the other bus master under contention.
+The blitter still runs as a synchronous, non-interleaved operation
+(`BlitterMidsummer()` completes before the next 68K instruction), so
+there is no cycle-level overlap for these tests to observe -- see the
+per-test header comments in `test/acid/tests/bus/` for the exact
+detail-code contract each one is waiting on.
 
-1. **DIVL zero-divide trap** doesn't fire — tracing suggests the
-   code path is correct but the trap doesn't reach the handler.
-   Real bug worth investigating.
-
-**Test-encoding follow-ups** (not emulator bugs, but unfinished
-test work):
-
-- `blitter/bcompen_basic` — got the source byte sign-extended
-  ($FFFFFFA5) where we expected the pattern foreground colour
-  ($11).  Test setup likely needs DCOMPEN + correct PATD layout.
-- `blitter/copy_simple` — partial copy: detail=3 means the 3rd
-  longword is wrong while the others are correct.  Suggests A1/A2
-  step or an iwidth/dwidth mismatch.
-- `blitter/pattern_fill` — PATDSEL alone doesn't write; the blit
-  needs additional config (UPDA1 / phrase-mode dest) to actually
-  land the pattern in dest.
-- `dsp/dsp_mac_accumulator` — deliberate FAIL placeholder until
-  the real IMACN/RESMAC test lands.
+The bugs this section used to list as open (DIVL zero-divide trap not
+reaching its handler; `blitter/bcompen_basic`, `blitter/copy_simple`,
+`blitter/pattern_fill` encoding gaps; `dsp/dsp_mac_accumulator` as a
+FAIL placeholder) are no longer reproducible -- `BASELINE.txt` records
+all of them PASSing (`dsp_mac_accumulator` itself no longer exists as
+a test, superseded by the current `dsp/*` coverage). They were fixed
+incrementally without this section being updated; the only currently
+-failing tests are the 3 `bus/*` contention tests documented above.
 
 ## How we got from 33% → 93% PASSing in one review round
 

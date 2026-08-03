@@ -78,6 +78,31 @@ extern "C" {
 
 struct retro_core_option_v2_category option_cats_us[] = {
    {
+      "video",
+      "Video",
+      "Blitter implementation and console video standard."
+   },
+   {
+      "bios_boot",
+      "BIOS & Boot",
+      "How cartridges boot: emulated (HLE) BIOS services or the real Jaguar boot ROM."
+   },
+   {
+      "cdrom",
+      "CD-ROM",
+      "Jaguar CD boot path, CD BIOS selection and drive read speed. Only applies to CD content."
+   },
+   {
+      "network",
+      "Network Link",
+      "JagLink / CatBox serial link emulation for networked games."
+   },
+   {
+      "input",
+      "Input",
+      "Controller handling shared by both ports."
+   },
+   {
       "input_p1",
       "Input Port 1",
       "Change input mappings for port 1."
@@ -86,6 +111,16 @@ struct retro_core_option_v2_category option_cats_us[] = {
       "input_p2",
       "Input Port 2",
       "Change input mappings for port 2."
+   },
+   {
+      "diagnostics",
+      "Diagnostics",
+      "Logging and watchdog aids for troubleshooting and bug reports."
+   },
+   {
+      "timing",
+      "Timing",
+      "Experimental hardware timing accuracy (bus/DRAM access modeling)."
    },
    { NULL, NULL, NULL },
 };
@@ -97,7 +132,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Choose which blitter implementation to use. 'Accurate' is SIMD-accelerated (SSE2 on x86, NEON on ARM) and is the most compatible. 'Fast' is the older blitter; it trades accuracy for extra speed on low-end hardware and breaks some games.",
       NULL,
-      NULL,
+      "video",
       {
          { "disabled", "Accurate" },
          { "enabled",  "Fast" },
@@ -111,7 +146,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Lightweight runtime watchdog that logs GPU/DSP PC escape, GPU/DSP wedge, and video stall events to the RetroArch log. Helpful when filing bug reports about games that hang or go to a black screen mid-play. Verbose mode also dumps a state heartbeat every 10 seconds.",
       NULL,
-      NULL,
+      "diagnostics",
       {
          { "enabled",  "Enabled" },
          { "disabled", "Disabled" },
@@ -121,12 +156,101 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_dram_timing",
+      "DRAM Timing (Experimental)",
+      NULL,
+      "Charge the GPU and 68000 realistic DRAM access time for memory accesses that leave their local buses, pacing games that rely on hardware timing (Doom-class) closer to real hardware. Symmetric: each processor pays only its own access costs, so relative CPU/GPU timing is preserved. Experimental: the cost model is still being calibrated; leave disabled unless a game visibly runs too fast.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_netlink",
+      "Network Link (JagLink / CatBox)",
+      NULL,
+      "Emulates JERRY's serial link port used by networked games (BattleSphere, AirCars, Doom deathmatch). 'Loopback' echoes transmitted bytes back to this console, for testing link-detect menus without a partner. TCP Host listens for a second emulator instance; TCP Client connects to the address in 'Network Link Host'. Localhost/LAN latency recommended.",
+      NULL,
+      "network",
+      {
+         { "disabled",   NULL },
+         { "loopback",   "Loopback (echo to self)" },
+         { "tcp_server", "TCP Host (listen)" },
+         { "tcp_client", "TCP Client (connect)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_netlink_host",
+      "Network Link Host (TCP Client)",
+      NULL,
+      "Address the TCP client connects to -- an IP, a DNS name, or a Bonjour/mDNS name. Easiest LAN setup with no typing at all: name the host machine 'jaghub' (its local hostname), then pick the 'jaghub.local' preset here on each client. Frontends with free-text option entry accept any address directly; in stock RetroArch the alternative is 'From file' with the address on the first line of vj_netlink.txt in the system directory. The VJ_NETLINK_HOST environment variable overrides this option. If you would rather not configure anything, use RetroArch's own netplay instead -- it finds hosts on the LAN by itself and carries the link with this option left disabled.",
+      NULL,
+      "network",
+      {
+         { "127.0.0.1",      "127.0.0.1 (localhost)" },
+         { "jaghub.local",   "jaghub.local (host machine named 'jaghub' on the LAN)" },
+         { "vj_netlink.txt", "From file (vj_netlink.txt in system dir)" },
+         { NULL, NULL },
+      },
+      "127.0.0.1"
+   },
+   {
+      "virtualjaguar_netlink_port",
+      "Network Link Port",
+      NULL,
+      "TCP port for the network link (both sides must match). Overridable with the VJ_NETLINK_PORT environment variable.",
+      NULL,
+      "network",
+      {
+         { "42171", NULL },
+         { "42172", NULL },
+         { "42173", NULL },
+         { "42174", NULL },
+         { NULL, NULL },
+      },
+      "42171"
+   },
+   {
+      "virtualjaguar_netlink_wait",
+      "Network Link Latency Hiding",
+      NULL,
+      "Briefly holds each frame until the link partner's reply arrives, so network latency doesn't round every link exchange up to whole video frames. The wait adapts automatically to the measured connection (a few ms on localhost, more on Wi-Fi) and is capped so audio/video pacing survives. Disable only for troubleshooting or benchmarking.",
+      NULL,
+      "network",
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
+      "virtualjaguar_cd_trace",
+      "CD Trace (Diagnostic)",
+      NULL,
+      "Records DSA command/response traffic and seek/FIFO transitions to a bounded ring buffer, dumped to the RetroArch log when the cd_seek_wedge watchdog fires (or on request by test harnesses). Diagnostic only -- intended for troubleshooting Jaguar CD boot/data-transfer bugs, not for normal play. Can also be forced on headlessly via the VJ_CD_TRACE=1 environment variable.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_bios",
-      "BIOS",
+      "BIOS (Cartridges)",
       NULL,
-      "Choose which BIOS the core boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot without the real Jaguar BIOS ROM. 'Real' boots the built-in Jaguar BIOS ROM, which some games require. Neither setting needs an external BIOS file.",
+      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot faster and skips the boot animation. 'Real' runs the actual Jaguar boot ROM, which some titles require. The boot ROM is built into the core, so neither setting needs a file -- unlike the CD BIOS, the console boot ROM is never loaded from the system directory. Ignored for CD content: there, 'CD Boot Mode' decides and turns the boot ROM on or off to match.",
       NULL,
-      NULL,
+      "bios_boot",
       {
          { "disabled", "HLE" },
          { "enabled",  "Real" },
@@ -140,7 +264,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Emulate a PAL Jaguar instead of NTSC.",
       NULL,
-      NULL,
+      "video",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
@@ -149,12 +273,72 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_cd_bios_type",
+      "CD BIOS Type (Restart)",
+      NULL,
+      "Which CD BIOS the real-BIOS boot path uses. 'Retail' is the standard consumer BIOS; 'Developer' is the dev-kit BIOS, which applies less strict disc checks and can boot images the retail BIOS refuses. Both are built into the core, so no files are required. CD BIOS ROM files in the system directory are preferred over the embedded images, and this selection picks which file wins when both types are present. Only has an effect when 'CD Boot Mode' is 'Real BIOS' or 'Auto' -- the HLE boot path never runs a CD BIOS.",
+      NULL,
+      "cdrom",
+      {
+         { "retail", "Retail" },
+         { "dev",    "Developer" },
+         { NULL, NULL },
+      },
+      "retail"
+   },
+   {
+      "virtualjaguar_cd_boot_mode",
+      "CD Boot Mode (Restart)",
+      NULL,
+      "How Jaguar CD discs boot. This OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly and runs with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS and forces the boot ROM on: more faithful, still experimental. It prefers a CD BIOS ROM file from the system directory (searched under several common names, and in Atari - Jaguar / Atari - Jaguar CD / jaguar / jaguarcd sub-folders) and otherwise uses the embedded image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If a real-BIOS mode is chosen but no CD BIOS can be staged at all, the core falls back to HLE rather than failing.",
+      NULL,
+      "cdrom",
+      {
+         { "hle",  "HLE (Recommended)" },
+         { "auto", "Auto (Real BIOS)" },
+         { "bios", "Real BIOS (Included, Experimental)" },
+         { NULL, NULL },
+      },
+      "hle"
+   },
+   {
+      "virtualjaguar_cd_read_speed",
+      "CD Read Speed (HLE Boot Mode Only)",
+      NULL,
+      "Data-transfer rate for Jaguar CD reads in HLE boot mode. '2x' matches the real drive (300 KB/s) and is hardware-accurate. Higher speeds shorten load times but may break timing-sensitive titles (some games rely on the drive rate for code overlays, music cues, and load handshakes); 'Instant' completes each read in one tick and is the most likely to cause hangs. BIOS boot mode always uses the accurate rate. Applied per-read: a transfer already in flight keeps the speed it started with.",
+      NULL,
+      "cdrom",
+      {
+         { "1x",      "1x (150 KB/s)" },
+         { "2x",      "2x (Accurate)" },
+         { "4x",      "4x" },
+         { "8x",      "8x" },
+         { "instant", "Instant" },
+         { NULL, NULL },
+      },
+      "2x"
+   },
+   {
+      "virtualjaguar_memory_track",
+      "Memory Track (Restart)",
+      NULL,
+      "Emulate the Memory Track save cartridge alongside the CD unit, as on real hardware. CD games detect it and save settings, progress and high scores to its 128 KB NVRAM (stored in the save file). Disable to emulate a console without the cartridge -- games will warn that game information cannot be saved.",
+      NULL,
+      "cdrom",
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_alt_inputs",
       "Enable Core Options Remapping",
       NULL,
       "Enabling this option will let you rebind controllers from the core options, removing the 'Controls' menu limitation that makes Numpad 7, 8, 9, * and # impossible to remap.\nNOTE: the 'Controls' menu can still conflict with the core options remapping, if you're using a remap file it is recommended to delete/reset it.",
       NULL,
-      NULL,
+      "input",
       {
          { "disabled", NULL },
          { "enabled",  NULL },

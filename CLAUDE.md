@@ -53,7 +53,7 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 
 - `src/core/` — orchestration, memory map, events, settings, files, cheats
 - `src/tom/` — video, GPU, OP, blitter (+ SIMD)
-- `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable
+- `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable, UART/netlink (`uart.c` + `jlink.c`, see `docs/netlink-design.md`)
 - `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA in `cdrom.c`, image loading (CUE/BIN, CHD, CDI) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
 - `src/bios/` — embedded BIOS / boot stubs
 - `src/m68000/` — UAE 68K (machine-generated; treat as opaque)
@@ -72,6 +72,8 @@ Local-only RetroAchievements validation — no RA account/API/server. `test/tool
 
 New tests should use `test/harness/harness.h` — a shared library that eliminates dlopen/init/run boilerplate. See the header's AGENT QUICK-START comment for a full example. Key features:
 - Common CLI (`--json`, `--frames N`, `--bios`, `--option K=V`, `--quiet`)
+- Scripted input: `--press FRAME:BUTTON[:HOLD]` (repeatable; buttons `up down left right a b c pause option 0-6`) — enough to navigate menus into gameplay headlessly; programmatic tests use `harness_press()` or a `harness_input_cb`
+- Log verbosity env: `VJ_HARNESS_LOG_INFO=1` passes core INFO logs (CD trace dumps), `VJ_HARNESS_LOG_DEBUG=1` additionally passes DEBUG (per-call CD HLE trace)
 - Automatic audio/video stats collection
 - `harness_dlsym()` for probing internal core state
 - JSON output mode for machine-parseable results
@@ -94,6 +96,14 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
   Usage: `<core.so|.dylib> <rom> [frames] --load-state <file> [--frame-window F L] [--cmd-filter MASK VAL] [--verbose-dump]` (note: `--load-state`, not `--savestate`).
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
 - `test/sram_test.sh` — SRAM round-trip
+- `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS mode) vs `docs/cd-boot-matrix.md`; env knobs `CD_MATRIX_FRAMES`, `CD_MATRIX_TIMEOUT`, `CD_MATRIX_MAX_RUNS`, `CD_MATRIX_LOGDIR`, `CD_MATRIX_OUT`, `CD_MATRIX_ROMS_ROOT`; chunked/resumable across invocations. Rows are stamped with the core build id (`<!-- build:<rev> -->`); resume skips only same-build rows and re-runs/replaces rows recorded by any other build. This exists because resuming into an OUT file from an older build used to resurrect ancient rows as "fresh" results — the phantom intermittent Battle Morph bios `? (pc_escape)` (`final_pc=$8FBFB758`) was exactly such a stale row, not a real run.
+- CD trace ring: core option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1` for headless use) records `DSA_TX`/`DSA_RX`, `SEEK_START`/`SEEK_DONE`, `FIFO_FILL`/`FIFO_DRAIN`, `STOP`, `HLE_READ` events; dumped to the log on `cd_seek_wedge` or on request
+- `test/tools/cd_wedge_probe.c` — catches intermittent CD lockups: detects a frozen framebuffer (`--arm N --freeze-frames N`, script the repro with `--press`), then dumps 68K registers, the pcQueue traceback ring, CD counters + trace ring, and a RAM hexdump around the stuck PC; exits 42 when caught so a retry loop can distinguish "caught" from "ran clean". `--ram-dump BASE` writes full 2MB main-RAM + GPU-RAM snapshots at wedge time; `--snap FRAME` (repeatable, with `--snap-prefix BASE`) snapshots mid-run for clean-vs-wedged state diffing. Found the Hover Strike instant-CD_read code-stomp and the B-skip stale-GPU-IRQ-latch corruption. Caveat: a static loading screen can false-positive short freeze windows — confirm real wedges with `--freeze-frames 900`.
+- `test/tools/cd_visual_verify.c` — automated visual+audio verification for CD titles (`make cd-visual CD_VISUAL_DISC=<image.cue>`): per-second frame-motion timeline, non-black coverage, audio RMS, periodic screenshots (PPM; `sips -s format png` to view). Replaces most "boot it on a device and look" checks — an agent can Read the PNGs directly. Headless read-path caveat still applies for final "looks right" sign-off.
+
+### Build-identity guard (stale-binary protection)
+
+Every harness that dlopens the core prints the binary's embedded version (`vX.Y.Z <gitrev>[-dirty]`, also logged by the core at `retro_init`). If `VJ_EXPECT_BUILD` is set (as `make test` and `cd_boot_matrix.sh` do automatically, via `scripts/build-id.sh`), a core whose version doesn't token-match fails the load loudly instead of silently testing stale code. When running harnesses by hand after edits, use `VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/...`. Note `make` can skip rebuilds when file mtimes are second-identical — the guard catches that class; `nm -gU <dylib> | grep <newsymbol>` is the manual fallback.
 
 ### Test ABI and re-linking
 
@@ -133,6 +143,7 @@ fallback: `nm -gU <dylib> | grep <newsymbol>`.
 - `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$E3FFFF]`
 - `gpu_wedge` / `dsp_wedge` — same PC for ≥180 / 600 frames while still flagged running
 - `video_stall` — framebuffer hash unchanged for 300 frames while a processor is running
+- `cd_seek_wedge` — a CD seek was started but FIFO drain progress is frozen for 300 frames while a processor is still running; dumps the CD trace ring (see above, "Key harnesses") to the log. **Known benign case:** a title that goes CD-idle >5s after finishing a transfer fires this too — e.g. Myst (bios) fires it during the intro movie's ~6s all-black pause (drain parked at payload end LBA 21189, movie playing from RAM, clock still ticking); HLE shows the identical black window (fires `video_stall` instead). Corroborate before treating a lone line as a wedge.
 
 Toggled via core option `virtualjaguar_crash_detect = enabled` (default) / `disabled` / `verbose`. Verbose mode adds a state heartbeat every 600 frames. Cost when enabled: one indirect call + ~256-pixel hash per frame; off-mode short-circuits at the first instruction.
 
@@ -196,6 +207,12 @@ When spawning agents for work in this repo, include these rules:
 
 Full details in [`docs/release-process.md`](docs/release-process.md). Quick reference:
 
+**Nightlies:** every push to `develop` reruns `release.yml`'s full 16-platform
+matrix and replaces the rolling `nightly` prerelease plus its pinned tracking
+issue. Gated on *compiling*, not on the test suite — don't describe nightlies as
+"CI-verified". The `nightly` tag sits outside the `v*` filter so it can never
+trigger a real release.
+
 ### Cutting a release
 
 1. **Branch**: `git checkout develop && git checkout -b release/vX.Y.Z`
@@ -222,3 +239,35 @@ Full details in [`docs/release-process.md`](docs/release-process.md). Quick refe
 - Blitter not fully cycle-accurate (some games need fast mode).
 - No bus contention modeling.
 - VC register behavior not fully accurate.
+
+## Private ROM tree lives OUTSIDE the repo
+
+`test/roms/private` is a **symlink** to `../jaguar-roms-private` (outside every
+git checkout). It used to be a real directory inside the repo, and on
+2026-07-30 several concurrent sessions each created/removed that path and the
+ROM collection was destroyed — the tree is gitignored, so nothing protected it.
+
+Rules for agents:
+- **Never** run `git clean -xfd` (or any recursive delete) at the repo root; it
+  targets exactly the gitignored paths that hold irreplaceable data.
+- To make the ROMs visible in a fresh worktree, symlink the shared location —
+  set `JAGUAR_ROMS_PRIVATE` to wherever your collection lives (it sits beside
+  the repo checkouts, not inside any of them):
+  `ln -sfn "${JAGUAR_ROMS_PRIVATE:?set to your private ROM tree}" test/roms/private`
+  The `-n` matters: without it, a second `ln -sf` onto the existing symlink
+  creates the new link *inside* the ROM tree instead of replacing it.
+- Cleanup may remove that symlink (`rm -f test/roms/private`), never its target.
+- `find` does NOT follow symlinks by default — use `find -L test/roms/private`.
+- Disc images from the iCloud restore nest one level deeper than before
+  (`<Title>/<Title>/*.cue`), so discover cues with `find -L` rather than a
+  hardcoded depth.
+
+## Set DEVELOPER_DIR for host builds
+
+`xcode-select` points at `/Applications/Xcode.app`, so `make`/`cc` resolve to
+binaries *inside an app bundle* — which makes macOS raise an App Management
+("access data from other apps") prompt on every invocation, dozens of times
+across a multi-agent run. Prefix host builds with
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools` (same Apple clang, no
+bundle access, no prompts). Do NOT `xcode-select --switch` globally — full
+Xcode is needed for the iOS cross-builds.

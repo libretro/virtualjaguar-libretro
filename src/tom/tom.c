@@ -257,9 +257,12 @@
 
 #include <string.h>								// For memset()
 #include "blitter.h"
+#include "bus_arbiter.h"
 #include "event.h"
 #include "gpu.h"
 #include "jaguar.h"
+#include "jerry.h"
+#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
 #include "perf_counters.h"
@@ -399,6 +402,22 @@ uint32_t tomTimerPrescaler;
 uint32_t tomTimerDivider;
 int32_t tomTimerCounter;
 static uint16_t tomHCReadPhase;
+
+/* Rows TOMExecHalfline actually wrote, tracked live so a mid-frame VDB/VDE
+ * change cannot make the count disagree with what was drawn.  `Cur`
+ * accumulates the frame in progress; `Prev` and `Last` are latched at the
+ * halfline wrap.
+ *
+ * `Last` is the max of the two most recent frames rather than just the last
+ * one, for interlace: each field writes only every other row, so a single
+ * frame's maximum alternates by one and blanking on it alone would erase and
+ * rewrite the bottom row of the opposite field every frame.  Taking the max
+ * also adds a frame of hysteresis when the window shrinks, which errs towards
+ * blanking less -- the safe direction, since blanking too much is the failure
+ * mode that matters. */
+static uint32_t tomRowsWrittenCur;
+static uint32_t tomRowsWrittenPrev;
+static uint32_t tomRowsWrittenLast;
 uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
          tom_gpu_int_pending, tom_video_int_pending;
 
@@ -544,6 +563,36 @@ static void TOMAssertEnabledIRQs(void)
       m68k_set_irq(2);
 }
 
+
+/* True while TOM is still driving the 68K's level-2 request, i.e. an
+ * enabled INT1 source has an uncleared pending latch (JTRM: the pending
+ * bits are only cleared by writing 1 to the matching C_*CLR bit in the
+ * high byte of INT1).  JERRY reaches the 68K through TOM's bit 4, so its
+ * own latch counts when C_JERENA is set.
+ *
+ * m68k_execute() consults this before re-presenting a request that had to
+ * wait for the CPU's interrupt mask to drop (#187): a game that polls and
+ * clears INT1 itself -- Pitfall runs at mask 1-2 and does exactly that --
+ * must not be handed an interrupt whose source it already serviced. */
+static uint8_t TOMPendingMask(void)
+{
+   uint8_t pending = (uint8_t)((tom_timer_int_pending << IRQ_TIMER)
+      | (tom_object_int_pending << IRQ_OPFLAG)
+      | (tom_gpu_int_pending << IRQ_GPU)
+      | (tom_video_int_pending << IRQ_VIDEO));
+
+   if (tom_jerry_int_pending || JERRYIRQRequestActive())
+      pending |= (uint8_t)(1 << IRQ_DSP);
+
+   return pending;
+}
+
+
+int TOMIRQRequestActive(void)
+{
+   return (TOMPendingMask() & tomRam8[INT1 + 1]) ? 1 : 0;
+}
+
 static void TOMClearPendingIRQs(uint8_t clear)
 {
    if (clear & 0x01)
@@ -653,6 +702,11 @@ uint16_t TOMGetVP(void)
 uint16_t TOMGetMEMCON1(void)
 {
    return GET16(tomRam8, MEMCON1);
+}
+
+uint16_t TOMGetMEMCON2(void)
+{
+   return GET16(tomRam8, MEMCON2);
 }
 
 #define LEFT_BG_FIX
@@ -887,8 +941,22 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    uint16_t topVisible;
    uint16_t bottomVisible;
    uint16_t hp = GET16(tomRam8, HP);
+   uint32_t writtenRow;
 
    halfline &= 0x07FF;
+
+   /* Halfline 0 is the frame wrap: latch the row count for the frame that
+    * just finished before halfline 0 contributes to the next one.
+    * JaguarExecuteNew ends its frame right after this call, so a caller
+    * reading TOMGetWrittenRowExtent() from retro_run sees the frame it is
+    * about to present. */
+   if (halfline == 0)
+   {
+      tomRowsWrittenLast = (tomRowsWrittenCur > tomRowsWrittenPrev)
+                         ? tomRowsWrittenCur : tomRowsWrittenPrev;
+      tomRowsWrittenPrev = tomRowsWrittenCur;
+      tomRowsWrittenCur  = 0;
+   }
 
    // Update HC to approximate position within the scanline.
    // Bit 10 (0x0400) is the half-line indicator, analogous to VC's
@@ -949,9 +1017,21 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    {
       // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
       if (tomRam8[VP + 1] & 0x01)
-         TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);//non-interlace
+      {
+         writtenRow = (halfline - topVisible) / 2;//non-interlace
+         TOMCurrentLine = &(screenBuffer[writtenRow * screenPitch]);
+      }
       else
-         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);//interlace
+      {
+         writtenRow = (((halfline - topVisible) / 2) * 2) + (field2 ? 0 : 1);//interlace
+         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);
+      }
+
+      /* Record the row regardless of which branch below fills it: both the
+       * scanline renderer and the border fill count as TOM having addressed
+       * this row.  See TOMGetWrittenRowExtent(). */
+      if (writtenRow + 1 > tomRowsWrittenCur)
+         tomRowsWrittenCur = writtenRow + 1;
 
       if (inActiveDisplayArea)
          scanline_render[TOMGetVideoMode()](TOMCurrentLine);
@@ -1015,6 +1095,32 @@ uint32_t TOMGetVideoModeWidth(void)
    return ((rightHC - leftHC) / pwidth) * pwidth_scale;
 }
 
+/* One past the highest framebuffer row TOMExecHalfline wrote in the frame that
+ * just completed.
+ *
+ * MEASURED, not derived from the registers.  Deriving it from VDB/VDE at the
+ * end of the frame gets the mid-frame reprogramming case wrong: rows are
+ * written across the whole frame, but the registers only describe the window
+ * as of the last halfline.  DEMO1B (PD) reprograms TOM at frame 476 -- the
+ * end-of-frame window computes 8 rows while the frame had actually just been
+ * rendered 240 rows wide, so a register-derived extent would report a
+ * 232-row gap that does not exist.  TOMExecHalfline records each row as it
+ * writes it instead, which cannot disagree with itself.
+ *
+ * This is NOT the same quantity as TOMGetVideoModeHeight(), which is the
+ * presented height and is derived independently from VDB/VDE.  The two
+ * disagree whenever the visible window and the mode height fall back
+ * differently -- e.g. Alien vs Predator in-game programs VDB=40, VDE=2047,
+ * VP=523, so topVisible=VDB=40 but bottomVisible falls back to the field
+ * bottom (511) because VDE > VP, giving 236 written rows against a presented
+ * height of 240 (the NTSC fallback, since (2047-40)/2 > 256).  Callers use
+ * this to give the leftover rows defined content instead of letting them keep
+ * whatever was last drawn there. */
+uint32_t TOMGetWrittenRowExtent(void)
+{
+   return tomRowsWrittenLast;
+}
+
 uint32_t TOMGetVideoModeHeight(void)
 {
    uint16_t vdb = GET16(tomRam8, VDB);
@@ -1040,6 +1146,8 @@ void TOMReset(void)
    {
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
+      bus_arbiter_update_memcon(0x1861);
+      bus_arbiter_update_memcon2(0x35CC);
       SET16(tomRam8, HP, 844);			// Horizontal Period (1-based; HP=845)
       SET16(tomRam8, HBB, 1713);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 125);			// Horizontal Blank End
@@ -1066,6 +1174,8 @@ void TOMReset(void)
    {
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
+      bus_arbiter_update_memcon(0x1861);
+      bus_arbiter_update_memcon2(0x35CC);
       SET16(tomRam8, HP, 850);			// Horizontal Period
       SET16(tomRam8, HBB, 1711);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 158);			// Horizontal Blank End
@@ -1089,6 +1199,10 @@ void TOMReset(void)
 
    tomWidth = 0;
    tomHeight = 0;
+
+   tomRowsWrittenCur = 0;
+   tomRowsWrittenPrev = 0;
+   tomRowsWrittenLast = 0;
 
    tom_jerry_int_pending = 0;
    tom_timer_int_pending = 0;
@@ -1244,11 +1358,54 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    }
 
    offset &= 0x3FFF;
+   /* Any write to OBF releases an OP halted on a GPU object (see
+    * OPProcessList OBJECT_TYPE_GPU). */
+   if (offset == OBF || offset == OBF + 1)
+      OPNotifyOBFWrite();
    if (offset == INT1)
       TOMClearPendingIRQs(data);
+   if (offset == INT1 + 1)
+   {
+      /* CDDA-DIAG: INT1 bit 4 (C_JERENA) is the TOM-side gate for
+       * JERRY -> 68K delivery (BUTCH CD IRQs route through it, see
+       * cdrom.c BUTCHExec). Edges are rare; log unconditionally. */
+      static uint8_t tomPrevInt1Ena = 0;
+      if ((tomPrevInt1Ena ^ data) & 0x10)
+         LOG_DBG("[CDDA] INT1 C_JERENA %s (INT1=$%02X who=%u 68kpc=$%06X)\n",
+                 (data & 0x10) ? "ON" : "OFF", data, who,
+                 m68k_get_reg(NULL, M68K_REG_PC));
+      tomPrevInt1Ena = data;
+   }
+   if (offset == INT1 + 1)
+   {
+      /* TOM's 68K request line is raised by an interrupt *event* and
+       * dropped when the 68K acknowledges (see irq_ack_handler); a write
+       * to INT1 does not re-present a request the CPU already took.  The
+       * one case a register write does create a request is a source that
+       * is pending and becomes *newly* enabled.
+       *
+       * Re-asserting on every INT1 write is what made NBA Jam TE storm
+       * once requests survived the CPU's interrupt mask (see #187): its
+       * level-2 handler leaves the TOM PIT pending bit latched and
+       * rewrites INT1 = $0009 on each entry, so an unconditional
+       * re-assert re-entered the handler forever. */
+      uint8_t newlyEnabled = (uint8_t)(data & ~tomRam8[INT1 + 1]);
+
+      tomRam8[offset] = data;
+
+      if (newlyEnabled & TOMPendingMask())
+         m68k_set_irq(2);
+      return;
+   }
    tomRam8[offset] = data;
-   if (offset == INT1 || offset == (INT1 + 1))
-      TOMAssertEnabledIRQs();
+
+   /* MEMCON1 can be written a byte at a time; keep the bus arbiter's
+    * MEMCON1-derived DRAM/ROM timing in sync (word writes hook in
+    * TOMWriteWord). */
+   if (offset == MEMCON1 || offset == MEMCON1 + 1)
+      bus_arbiter_update_memcon(TOMGetMEMCON1());
+   if (offset == MEMCON2 || offset == MEMCON2 + 1)
+      bus_arbiter_update_memcon2(TOMGetMEMCON2());
 }
 
 // TOM word access (write)
@@ -1321,6 +1478,11 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    // Fix a lockup bug... :-P
    TOMWriteByte(0xF00000 | offset, data >> 8, who);
    TOMWriteByte(0xF00000 | (offset+1), data & 0xFF, who);
+
+   if (offset == MEMCON1)
+      bus_arbiter_update_memcon(data);
+   if (offset == MEMCON2)
+      bus_arbiter_update_memcon2(data);
 
    // detect screen resolution changes
    //This may go away in the future, if we do the virtualized screen thing...

@@ -25,6 +25,7 @@
  * produce the output stream. */
 
 #include "dac.h"
+#include "log.h"  /* CDDA-DIAG */
 
 #include <string.h>
 #include "cdrom.h"
@@ -114,17 +115,34 @@ uint32_t DACGetI2SNonZeroCount(void)
    return i2sNonZeroCount;
 }
 
-/* Update the rate ratio when SCLK changes */
+/* Update the rate ratio when SCLK or SMODE changes */
 static void DACUpdateSCLKRate(void)
 {
    uint32_t sclk_val;
    double i2s_rate;
    double sys_clock;
 
-   sclk_val = (uint32_t)(*sclk);
-   sys_clock = (double)SYSTEM_CLOCK_RATE;
-   /* sample_rate = system_clock / (64 * (SCLK + 1)) */
-   i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
+   if (*smode & SMODE_INTERNAL)
+   {
+      /* Master mode: JERRY generates the bit clock from SCLK. */
+      sclk_val = (uint32_t)(*sclk);
+      sys_clock = (double)SYSTEM_CLOCK_RATE;
+      /* sample_rate = system_clock / (64 * (SCLK + 1)) */
+      i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
+   }
+   else
+   {
+      /* Slave mode: the word clock is external (BUTCH, CD audio).  SCLK
+       * is meaningless here -- JERRYI2SCallback drives the DSP ISR at a
+       * fixed 22.675737 us (44100 Hz), so LTXD/RTXD writes land in the
+       * ring at that rate.  Deriving the ratio from a stale SCLK (games
+       * leave the reset value 19 = 20.8 kHz) made the resampler consume
+       * under half of each frame's samples and discard the rest at the
+       * DACPrepareFrame ring reset -- a 60 Hz chop over ALL slave-mode
+       * DSP output (CD music and synth SFX alike), heard as loud
+       * crunched static on Jaguar CD titles. */
+      i2s_rate = 44100.0;
+   }
    i2sRateRatio = i2s_rate / (double)DAC_AUDIO_RATE;
 
    /* Clamp to a sane range to avoid division by zero or absurd values.
@@ -273,11 +291,21 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       DACUpdateSCLKRate();
       JERRYI2SInterruptTimer = -1;
       RemoveCallback(JERRYI2SCallback);
-      JERRYI2SCallback();
+      /* Restart the timer chain one I2S frame period out; a synchronous
+       * JERRYI2SCallback() here would assert the SSI interrupt inside
+       * the very instruction that wrote SCLK (see jerry.c). */
+      JERRYRescheduleI2S();
    }
    else if (offset == SMODE + 2)
    {
+      /* CDDA-DIAG: SMODE master/slave switches are the CD_jeri fingerprint
+       * (doc 06 p.7: slave $14 = CD data flows to the I2S port). Rare. */
+      if ((*smode ^ data) & 0x01)
+         LOG_DBG("[CDDA] SMODE $%04X -> $%04X (%s)\n", *smode, data,
+                 (data & 0x01) ? "INTERNAL/master" : "slave: CD -> I2S");
       *smode = data;
+      /* The resample ratio depends on master/slave (see DACUpdateSCLKRate) */
+      DACUpdateSCLKRate();
    }
 }
 
@@ -296,7 +324,15 @@ uint16_t DACReadWord(uint32_t offset, uint32_t who)
    if (offset == LRXD || offset == RRXD)
       return 0x0000;
    else if (offset == LRXD + 2)
+   {
+      /* CDDA-DIAG: the CD-audio mix gate opening shows up as a flood of
+       * LRXD reads from the DSP ISR; near-zero reads = gate closed. */
+      static uint32_t lrxdReads = 0;
+      lrxdReads++;
+      if (lrxdReads <= 5 || (lrxdReads % 100000) == 0)
+         LOG_DBG("[CDDA] LRXD read #%u val=$%04X who=%u\n", lrxdReads, lrxd, who);
       return lrxd;
+   }
    else if (offset == RRXD + 2)
       return rrxd;
    else if (offset == SCLK)

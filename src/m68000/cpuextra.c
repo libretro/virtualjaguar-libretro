@@ -97,6 +97,7 @@ NB: Seems that when an address exception occurs, it doesn't get handled properly
 void Exception(int nr, uint32_t oldpc, int ExceptionSource)
 {
 	uint32_t currpc = m68k_getpc(), newpc;
+	int faultWasSuper = regs.s;
 
 	MakeSR();
 
@@ -108,11 +109,74 @@ void Exception(int nr, uint32_t oldpc, int ExceptionSource)
 		regs.s = 1;
 	}
 
-	// Create 68000 style stack frame
-	m68k_areg(regs, 7) -= 4;				// Push PC on stack
-	m68k_write_memory_32(m68k_areg(regs, 7), currpc);
-	m68k_areg(regs, 7) -= 2;				// Push SR on stack
-	m68k_write_memory_16(m68k_areg(regs, 7), regs.sr);
+	if (nr == 2 || nr == 3)
+	{
+		/* Group 0 (bus error / address error): the 68000 pushes a
+		   14-byte frame, not the 6-byte frame used by every other
+		   exception:
+
+		     A7+ 0  special status word
+		     A7+ 2  address that caused the fault (long)
+		     A7+ 6  first word of the faulting instruction
+		     A7+ 8  status register
+		     A7+10  program counter (long)
+
+		   Games install recovery stubs that step over the extra 8
+		   bytes and resume — "ADDQ.L #8,A7 ; RTE" is the standard
+		   idiom, and Pitfall: The Mayan Adventure has exactly that at
+		   vectors 2 and 3.  Pushing a short 6-byte frame here made the
+		   stub's ADDQ overshoot the saved SR/PC, so its RTE loaded
+		   garbage and the 68K fell into a permanent
+		   fault-RTE-refault loop (issue #138).
+
+		   The special status word reports data space at the privilege
+		   level in force when the access faulted.  The R/W bit is
+		   reported as "read" unconditionally because the generated CPU
+		   core does not record the direction of the faulting access;
+		   no known title inspects it — handlers only skip these
+		   8 bytes. */
+		uint16_t ssw = (uint16_t)((faultWasSuper ? 5 : 1) | 0x10);
+		/* Resume PC.  A real 68000 saves a PC "3 to 5 words beyond"
+		   the faulting instruction, i.e. architecturally imprecise, so
+		   there is no single spec-correct value to push here.  Use the
+		   address gencpu recorded for this instruction
+		   (last_addr_for_exception_3), which is what the UAE-derived
+		   core computes for exactly this purpose; empirically Pitfall
+		   takes five consecutive address errors, returns to the same
+		   A7 each time and carries on, so the value is one the game
+		   survives.
+
+		   The generated core records last_*_for_exception_3 only for
+		   address errors, so every field sourced from them is gated on
+		   nr == 3; a bus error would otherwise push stale metadata
+		   from an earlier address error.  Nothing in this core raises
+		   exception 2 today (see m68kinterface.c:
+		   "EXCEPTION_BUS_ERROR ... This one is not emulated!"), so
+		   that path is unreachable — the gate is there so it stays
+		   correct if bus errors are ever implemented. */
+		uint32_t framePC    = (nr == 3 ? last_addr_for_exception_3 : currpc);
+		uint16_t frameOp    = (nr == 3 ? last_op_for_exception_3   : 0);
+		uint32_t frameFault = (nr == 3 ? last_fault_for_exception_3 : 0);
+
+		m68k_areg(regs, 7) -= 4;			// Push PC on stack
+		m68k_write_memory_32(m68k_areg(regs, 7), framePC);
+		m68k_areg(regs, 7) -= 2;			// Push SR on stack
+		m68k_write_memory_16(m68k_areg(regs, 7), regs.sr);
+		m68k_areg(regs, 7) -= 2;			// Faulting instruction word
+		m68k_write_memory_16(m68k_areg(regs, 7), frameOp);
+		m68k_areg(regs, 7) -= 4;			// Faulting access address
+		m68k_write_memory_32(m68k_areg(regs, 7), frameFault);
+		m68k_areg(regs, 7) -= 2;			// Special status word
+		m68k_write_memory_16(m68k_areg(regs, 7), ssw);
+	}
+	else
+	{
+		// Create 68000 style stack frame
+		m68k_areg(regs, 7) -= 4;			// Push PC on stack
+		m68k_write_memory_32(m68k_areg(regs, 7), currpc);
+		m68k_areg(regs, 7) -= 2;			// Push SR on stack
+		m68k_write_memory_16(m68k_areg(regs, 7), regs.sr);
+	}
 
 //	LOG_TRACE(TRACE_CPU_EXCEPTION, "cpu exception %d currpc %x buspc %x newpc %x fault_e3 %x op_e3 %hx addr_e3 %x\n",
 //	nr, currpc, BusErrorPC, get_long(4 * nr), last_fault_for_exception_3, last_op_for_exception_3, last_addr_for_exception_3);

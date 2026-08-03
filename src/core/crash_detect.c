@@ -4,6 +4,8 @@
 #include "log.h"
 #include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
 #include "../tom/gpu.h"     /* GPUIsRunning() */
+#include "../cd/cdrom.h"    /* CDROMDiagGetSeekWedgeState(), CDTraceDump() */
+#include "settings.h"       /* bootConfig.isCDGame */
 #include <boolean.h>        /* project shim; bool / true / false */
 #include <stdint.h>
 #include <stddef.h>
@@ -41,6 +43,28 @@ extern uint32_t dsp_pc;
 #define WEDGE_FRAMES_DSP   600   /* 10 sec for DSP -- many engines idle on a JR loop */
 #define STALL_FRAMES_FB    300   /* 5 sec of identical framebuffer hash */
 
+/* cd_seek_wedge: a CD seek was issued but the FIFO drain counter (see
+ * CDROMDiagGetSeekWedgeState()) hasn't advanced in this many frames while
+ * a processor is still running. SEEK_DELAY_TICKS in cdrom.c is ~100
+ * halfline ticks (~0.2 frames at NTSC's ~524 halflines/frame) even for a
+ * from-scratch seek, so 300 frames (5 sec) is far beyond any legitimate
+ * seek.
+ *
+ * KNOWN BENIGN CASE: a title that legitimately goes CD-idle for >5s
+ * fires this too -- the signature cannot tell "game stopped draining
+ * because it wedged" from "game finished the transfer and doesn't need
+ * the disc right now".  Ground truth: Myst (bios mode) fires
+ * cd_seek_wedge at ~frame 2260 with the drain frozen at the intro
+ * movie's payload end (LBA 21189) while the game plays the movie's
+ * ~6-second all-black dramatic pause (Cyan logo -> black -> match
+ * strike -> burning MYST logo) entirely from RAM; the movie clock
+ * (TOM PIT -> GPU IRQ2 -> $1D58C accumulator) keeps ticking at 12 Hz
+ * throughout and the next asset loads right on schedule.  HLE mode
+ * shows the identical black window (fires video_stall instead).
+ * Corroborate with the trace ring / a longer freeze window before
+ * treating a lone cd_seek_wedge line as a real stall. */
+#define WEDGE_FRAMES_CD_SEEK 300
+
 /* Halfline expectation per frame: 524 NTSC, 624 PAL.  Anomaly band is +/- 4. */
 
 /* Verbose-mode heartbeat: dump current state every N frames. */
@@ -64,6 +88,9 @@ static unsigned dsp_same_pc_frames;
 static uint32_t fb_hash_prev;
 static unsigned fb_same_hash_frames;
 
+static uint32_t last_cd_fifo_drains;
+static unsigned cd_seek_wedge_frames;
+
 static unsigned next_heartbeat_frame;
 
 /* Last frame at which each signature fired -- prevents log spam. */
@@ -72,6 +99,7 @@ static unsigned last_log_dsp_escape;
 static unsigned last_log_gpu_wedge;
 static unsigned last_log_dsp_wedge;
 static unsigned last_log_fb_stall;
+static unsigned last_log_cd_seek_wedge;
 
 /* ---------- helpers ---------- */
 
@@ -136,12 +164,15 @@ void CrashDetectReset(void)
    dsp_same_pc_frames = 0;
    fb_hash_prev = 0;
    fb_same_hash_frames = 0;
+   last_cd_fifo_drains = 0;
+   cd_seek_wedge_frames = 0;
    next_heartbeat_frame = HEARTBEAT_FRAMES;
    last_log_gpu_escape = 0;
    last_log_dsp_escape = 0;
    last_log_gpu_wedge = 0;
    last_log_dsp_wedge = 0;
    last_log_fb_stall = 0;
+   last_log_cd_seek_wedge = 0;
 }
 
 void CrashDetectSetMode(int mode)
@@ -157,6 +188,9 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    int      gpu_running;
    int      dsp_running;
    uint32_t cur_fb_hash;
+   uint32_t cd_seek_starts;
+   uint32_t cd_seek_dones;
+   uint32_t cd_fifo_drains;
 
    if (!cd_initialized) return;
    if (cd_mode == CRASH_DETECT_OFF) return;
@@ -228,6 +262,47 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    else
    {
       fb_same_hash_frames = 0;
+   }
+
+   /* ---- CD seek wedge: a seek was issued (real-BIOS/BUTCHExec path) but
+    * the FIFO drain counter has made no progress for WEDGE_FRAMES_CD_SEEK
+    * frames while a processor is still running. Gated on cd_seek_starts
+    * > 0 so non-CD games (and CD games before their first seek) never
+    * evaluate this at all.
+    *
+    * Deliberately broader than "SEEK_START without SEEK_DONE": comparing
+    * fifoDrains instead of seekDones catches both CD seek-wedge shapes
+    * that need telling apart -- (a) the seek-completion response never
+    * arrives (seekDones stays behind seekStarts, so fifoDrains obviously
+    * never advances either), and (b) the seek completes fine but the
+    * FIFO continuation dies afterward (seekDones catches up, fifoDrains
+    * still never advances). Either way, the ring dump below shows which
+    * one happened. */
+   if (bootConfig.isCDGame)
+   {
+      CDROMDiagGetSeekWedgeState(&cd_seek_starts, &cd_seek_dones, &cd_fifo_drains);
+
+      if (cd_seek_starts > 0 && cd_fifo_drains == last_cd_fifo_drains
+          && (gpu_running || dsp_running))
+      {
+         cd_seek_wedge_frames++;
+         if (cd_seek_wedge_frames == WEDGE_FRAMES_CD_SEEK
+             && may_log(&last_log_cd_seek_wedge))
+         {
+            LOG_WRN("[CRASH-DETECT] cd_seek_wedge frame=%u seek_starts=%u seek_dones=%u "
+                    "fifo_drains=%u unchanged for %u frames gpu_pc=$%08X gpu_run=%d "
+                    "dsp_pc=$%08X dsp_run=%d\n",
+                    frame_no, cd_seek_starts, cd_seek_dones, cd_fifo_drains,
+                    WEDGE_FRAMES_CD_SEEK, cur_gpu_pc, gpu_running, cur_dsp_pc, dsp_running);
+            CDTraceDump();
+         }
+      }
+      else
+      {
+         cd_seek_wedge_frames = 0;
+      }
+
+      last_cd_fifo_drains = cd_fifo_drains;
    }
 
    /* ---- Verbose heartbeat ---- */

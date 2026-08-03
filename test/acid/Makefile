@@ -118,8 +118,16 @@ baseline: all
 	   exit 2; \
 	fi
 	@$(MAKE) -s test CORE=$(CORE) > /tmp/acid_baseline.log 2>&1 || true
+	@# Pull the status and the .jag path by pattern, not by field index.
+	@# `[PASS       ] foo.jag` pads the status so the path is field 3, but
+	@# `[NOT-RUN-YET] foo.jag (signature=...)` does not -- field 3 there is
+	@# part of the trailing message.  Indexing by $$3 therefore wrote a
+	@# pathless line that check-baseline.py could not match, silently
+	@# dropping the test from BASELINE.txt; it then read as "NEW (OK)"
+	@# forever, so a test that stopped booting looked green.
 	@grep -E '^\[(PASS|FAIL|NOT-RUN-YET)' /tmp/acid_baseline.log \
-	   | awk '{print $$1, $$3}' | sort > BASELINE.txt
+	   | sed -E 's/^\[(PASS|FAIL|NOT-RUN-YET)[[:space:]]*\][[:space:]]+([^[:space:]]+\.jag).*/[\1 \2/' \
+	   | grep -E '\.jag$$' | LC_ALL=C sort > BASELINE.txt
 	@wc -l BASELINE.txt
 	@echo "Updated BASELINE.txt -- review the diff before committing."
 

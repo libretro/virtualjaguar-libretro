@@ -104,6 +104,7 @@ static void (*p_TOMWriteByte)(uint32_t, uint8_t, uint32_t);
 static void (*p_TOMWriteWord)(uint32_t, uint16_t, uint32_t);
 static void (*p_TOMSetPendingVideoInt)(void);
 static void (*p_TOMSetPendingTimerInt)(void);
+static int  (*p_TOMIRQRequestActive)(void);
 static void (*p_JERRYWriteWord)(uint32_t, uint16_t, uint32_t);
 static void (*p_JERRYWriteByte)(uint32_t, uint8_t, uint32_t);
 static bool (*p_JERRYIRQEnabled)(int);
@@ -1122,12 +1123,17 @@ static void test_jerry_jintctrl_multi_pending_selective_clear(void)
  * latch lives in gpu_control bits 6..10, mirrored as INT_LAT0..4.
  * GPUSetIRQLine(line, ASSERT_LINE) sets bit (6+line); the latch is
  * sticky until SW writes the matching CINTxFLAG bit (bits 9..13) to
- * gpu_flags via the memory-mapped F02100 path. With GPU off (HLE
- * mode) and INT_ENA cleared, GPUHandleIRQs must NOT advance gpu_pc.
+ * gpu_flags via the memory-mapped F02100 path.
  *
- * We deliberately keep INT_ENA0..4 = 0 so HandleIRQs takes the
- * "!bits" early-out and never dispatches; this lets us inspect the
- * latch directly without perturbing R31/SP or GPU RAM.
+ * A HALTED GPU (GPUGO=0) captures no interrupts at all: the RISC
+ * clock is stopped, so asserts are dropped, not latched (see
+ * GPUSetIRQLine).  Latching a stale interrupt across a 68K
+ * stop/reprogram/restart cycle dispatched it into the new program
+ * before its r31 stack init — Hover Strike's B-skip lockup.  The
+ * latch mechanics below therefore run with GPUGO=1; INT_ENA0..4
+ * stay 0 so HandleIRQs takes the "!bits" early-out and never
+ * dispatches (and the harness never calls GPUExec), which lets us
+ * inspect the latch without perturbing R31/SP, gpu_pc, or GPU RAM.
  *
  * Observables (memory-mapped via GPUReadLong):
  *   $F02100 - gpu_flags (returns gpu_flags & 0xFFFFC1FF)
@@ -1158,6 +1164,20 @@ static void test_gpu_irq_latch_redispatch(void)
    p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* clear all CINTxFLAG */
    p_GPUWriteLong(0xF02100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
    pc_before = p_gpu_pc ? *p_gpu_pc : p_GPUReadLong(0xF02110, WHO_M68K);
+
+   /* --- Sub-assert 0: halted GPU captures no interrupts --- */
+   p_GPUWriteLong(0xF02114, 0x00000000, WHO_M68K); /* GPUGO=0 */
+   p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if (!(ctrl & 0x40))
+      PASS("assert while GPUGO=0 is dropped (halted GPU latches nothing)");
+   else
+      FAIL("ctrl=$%08X (want bit6 clear: halted GPU must not latch)", ctrl);
+
+   /* Latch mechanics below need a running GPU (GPUGO=1).  INT_ENA
+    * stays 0, so nothing can dispatch, and the harness never calls
+    * GPUExec — the "running" GPU executes no instructions. */
+   p_GPUWriteLong(0xF02114, 0x00000001, WHO_M68K);
 
    /* --- Sub-assert 1: latch survives without enable --- */
    p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
@@ -1230,6 +1250,61 @@ static void test_gpu_irq_latch_redispatch(void)
       *p_gpu_pc = saved_pc;
    /* gpu_control low bits writable; latch (F7C0) is masked off on write
     * but we already cleared the latch above, matching saved baseline. */
+   p_GPUWriteLong(0xF02114, saved_control & ~0xF7C0u, WHO_M68K);
+}
+
+/* ================================================================
+ * Test 9d-cd: BUTCH -> GPU IRQ0 (CD ISR) symbol mapping
+ *
+ * Pins the GPUIRQ_CPU/GPUIRQ_DSP enum mapping and verifies the
+ * GPUSetIRQLine(line, ASSERT) -> gpu_control bit (6+line) formula
+ * for the two lines BUTCH could plausibly target. Regression for
+ * the cdrom.c bug where BUTCH was asserting IRQ1 (DSP, vector
+ * $F03010) instead of IRQ0 (EXT1/CPU, vector $F03000) where the
+ * CD BIOS installs its CD-data ISR.
+ *
+ * Pure latch test: INT_ENA all 0 / IMASK 0 so no dispatch happens;
+ * we just inspect gpu_control bits 6 and 7.  GPUGO is set for the
+ * duration — a halted GPU drops asserts instead of latching them
+ * (see Test 9d sub-assert 0).
+ * ================================================================ */
+static void test_butch_gpu_irq_line_mapping(void)
+{
+   uint32_t saved_flags;
+   uint32_t saved_control;
+   uint32_t ctrl;
+
+   printf("\n=== Test 9d-cd: BUTCH -> GPU IRQ0 (CD ISR) Line Mapping ===\n");
+
+   saved_flags = p_GPUReadLong(0xF02100, WHO_M68K);
+   saved_control = p_GPUReadLong(0xF02114, WHO_M68K);
+
+   /* Clear any latch and disable enables so this is a pure-latch test. */
+   p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K); /* CINT0..4FLAG -> clear latch */
+   p_GPUWriteLong(0xF02100, 0x00000000, WHO_M68K); /* INT_ENA=0, IMASK=0 */
+   p_GPUWriteLong(0xF02114, 0x00000001, WHO_M68K); /* GPUGO=1: halted GPU drops asserts */
+
+   /* IRQ line 0 (GPUIRQ_CPU == 0, EXT1, vector $F03000) -> bit 6. */
+   p_GPUSetIRQLine(0, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if ((ctrl & 0x40) && !(ctrl & 0x80))
+      PASS("GPUSetIRQLine(0, ASSERT) sets gpu_control bit 6 (CD ISR line)");
+   else
+      FAIL("ctrl=$%08X (want bit6=1, bit7=0 after IRQ0 assert)", ctrl);
+
+   /* Clear and re-test the other line so the symbol mapping is pinned both ways. */
+   p_GPUSetIRQLine(0, CLEAR_LINE_LOCAL);
+   p_GPUSetIRQLine(1, ASSERT_LINE_LOCAL);
+   ctrl = p_GPUReadLong(0xF02114, WHO_M68K);
+   if (!(ctrl & 0x40) && (ctrl & 0x80))
+      PASS("GPUSetIRQLine(1, ASSERT) sets gpu_control bit 7 (DSP line, NOT CD ISR)");
+   else
+      FAIL("ctrl=$%08X (want bit6=0, bit7=1 after IRQ1 assert)", ctrl);
+
+   /* Restore. */
+   p_GPUSetIRQLine(1, CLEAR_LINE_LOCAL);
+   p_GPUWriteLong(0xF02100, 0x00003E00, WHO_M68K);
+   p_GPUWriteLong(0xF02100, saved_flags & ~0x00003E00u, WHO_M68K);
    p_GPUWriteLong(0xF02114, saved_control & ~0xF7C0u, WHO_M68K);
 }
 
@@ -2449,20 +2524,36 @@ static void test_tom_ipl2_reassert_after_selective_clear(void)
          FAIL("INT1 pending=$%04X pre-clear (want video+timer bits)", pending);
    }
 
-   /* (3) Clear video pending only via byte write to $F000E0 = $01. The
-    * write triggers TOMAssertEnabledIRQs; timer is still pending+enabled,
-    * so IPL2 must be reasserted. */
+   /* (3) Clear video pending only via byte write to $F000E0 = $01. An
+    * INT1 register write is not an interrupt event, so it must NOT raise
+    * IPL2 on its own -- but TOM's request is still active, because the
+    * timer latch is set and enabled.
+    *
+    * This used to assert intLevel==2 here (TOMAssertEnabledIRQs ran on
+    * every INT1 write).  That is incompatible with holding a request
+    * across the CPU's interrupt mask (#187): NBA Jam TE's level-2 handler
+    * leaves the PIT latch set and rewrites INT1 on each entry, so an
+    * unconditional re-assert re-entered the handler forever.  The request
+    * line is raised by an *event* and dropped on the CPU's acknowledge;
+    * TOMIRQRequestActive() reports whether it is still up. */
    p_regs->intLevel = 0;
    p_TOMWriteByte(0xF000E0, 0x01, WHO_M68K);
-   if (p_regs->intLevel == 2)
-      PASS("clearing video alone keeps IPL2 asserted (timer still pending)");
+   if (p_regs->intLevel == 0)
+      PASS("clearing video does not re-raise IPL2 (register write, not event)");
    else
-      FAIL("after clearing video, intLevel=%d (want 2; timer still pending)",
+      FAIL("after clearing video, intLevel=%d (want 0; write is not an event)",
            p_regs->intLevel);
 
-   /* (4) Clear timer pending via byte write to $F000E0 = $08. Now
-    * nothing is pending+enabled, so TOMAssertEnabledIRQs must NOT call
-    * m68k_set_irq -- intLevel must stay 0. */
+   if (!p_TOMIRQRequestActive)
+      FAIL("TOMIRQRequestActive not exported");
+   else if (p_TOMIRQRequestActive())
+      PASS("TOM still reports its request active (timer pending+enabled)");
+   else
+      FAIL("TOMIRQRequestActive()=0 with timer pending+enabled");
+
+   /* (4) Clear timer pending via byte write to $F000E0 = $08. Now nothing
+    * is pending+enabled: TOM's request must read as inactive so a held
+    * request is not re-presented to the CPU. */
    p_regs->intLevel = 0;
    p_TOMWriteByte(0xF000E0, 0x08, WHO_M68K);
    if (p_regs->intLevel == 0)
@@ -2470,6 +2561,34 @@ static void test_tom_ipl2_reassert_after_selective_clear(void)
    else
       FAIL("after clearing timer (last source), intLevel=%d (want 0)",
            p_regs->intLevel);
+
+   if (p_TOMIRQRequestActive && !p_TOMIRQRequestActive())
+      PASS("TOM reports no active request after all sources cleared");
+   else if (p_TOMIRQRequestActive)
+      FAIL("TOMIRQRequestActive()=1 with nothing pending");
+
+   /* (4b) A source that is already pending and becomes *newly* enabled is
+    * a new request to the 68K, so that write does raise IPL2. */
+   p_TOMWriteByte(0xF000E1, 0x01, WHO_M68K);   /* video only */
+   p_TOMSetPendingTimerInt();                  /* latch, not enabled */
+   p_regs->intLevel = 0;
+   p_TOMWriteByte(0xF000E1, 0x09, WHO_M68K);   /* newly enable timer */
+   if (p_regs->intLevel == 2)
+      PASS("newly enabling an already-pending source raises IPL2");
+   else
+      FAIL("after enabling pending timer, intLevel=%d (want 2)",
+           p_regs->intLevel);
+
+   /* Rewriting the same enables with the source still pending must not
+    * present the request again (the NBA Jam TE storm shape). */
+   p_regs->intLevel = 0;
+   p_TOMWriteByte(0xF000E1, 0x09, WHO_M68K);
+   if (p_regs->intLevel == 0)
+      PASS("redundant INT1 enable write does not re-raise IPL2");
+   else
+      FAIL("redundant INT1 write raised IPL2 (intLevel=%d)", p_regs->intLevel);
+
+   p_TOMWriteByte(0xF000E0, 0x1F, WHO_M68K);   /* clear all pending again */
 
    /* (5) Sanity post-clear: INT1 reports no pending sources. */
    {
@@ -3017,6 +3136,7 @@ int main(int argc, char *argv[])
    LOAD(TOMWriteWord);
    LOAD(TOMSetPendingVideoInt);
    LOAD(TOMSetPendingTimerInt);
+   p_TOMIRQRequestActive = (int (*)(void))dlsym(core_handle, "TOMIRQRequestActive");
    LOAD(GPUReadLong);
    LOAD(GPUWriteLong);
    LOAD(GPUSetIRQLine);
@@ -3118,6 +3238,7 @@ int main(int argc, char *argv[])
    test_jerry_jintctrl_word_decode();
    test_jerry_jintctrl_multi_pending_selective_clear();
    test_gpu_irq_latch_redispatch();
+   test_butch_gpu_irq_line_mapping();
    test_dsp_irq_latch_redispatch();
    test_jerry_pit_byte_writes_dropped();
    test_jerry_i2s_defaults();
