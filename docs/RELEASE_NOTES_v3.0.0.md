@@ -1,6 +1,6 @@
 # Virtual Jaguar libretro v3.0.0
 
-Major release — 303 commits (246 non-merge) since v2.3.2. Jaguar CD support matures into a
+Major release — 307 commits (248 non-merge) since v2.3.2. Jaguar CD support matures into a
 full local-corpus boot pass in both BIOS and HLE modes, Jaguar Link
 networking ships (JagLink/CatNet over TCP and RetroArch netplay), core
 options are reorganized into categories with content-aware hiding, and a
@@ -255,10 +255,10 @@ gate that actually blocks.
 
 ## Compared to v2.3.2
 
-181 files changed, +40,390 / -839 lines across 303 commits (246 non-merge;
+181 files changed, +40,392 / -841 lines across 307 commits (248 non-merge;
 the type tally below counts non-merge commits only): 108 fix, 50 docs,
-27 test, 27 feat, 7 perf, 6 chore, 2 ci, 1 refactor, and 18 commits with
-untyped or non-standard subjects.
+27 test, 27 feat, 8 chore, 7 perf, 2 ci, 1 refactor, 1 diag, and 17
+commits with untyped or non-standard subjects.
 
 ## Downloads
 
