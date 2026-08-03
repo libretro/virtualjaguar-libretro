@@ -45,7 +45,7 @@ jobs:
       # (tagged commits and release/hotfix merges). Generated translations
       # belong on develop and reach master at the next release.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: develop
           persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal access token.
