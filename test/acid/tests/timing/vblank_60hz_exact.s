@@ -32,7 +32,7 @@
 ; Must pass with virtualjaguar_dram_timing both enabled and disabled.
 ;
 ; Detail codes:
-;   1 = VBlank counter outside [58, 62] -- emulator timing drift.
+;   1 = VBlank counter outside [59, 61] -- emulator timing drift.
 ;       observed = counter value, expected = 60.
 ;   2 = counter is zero -- IRQ never delivered (regression in IRQ
 ;       wiring, not a timing issue).
@@ -105,7 +105,7 @@ entry:
                 tst.l   d5
                 beq     .never
 
-                ;; Expect 58..62 (60 +/- 2 for boundary fuzz).
+                ;; Expect 59..61 (60 +/- TOLERANCE for boundary fuzz).
                 cmp.l   #EXPECT_VBLANK-TOLERANCE,d5
                 blt     .out_of_range
                 cmp.l   #EXPECT_VBLANK+TOLERANCE,d5
