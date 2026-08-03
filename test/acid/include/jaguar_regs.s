@@ -173,10 +173,28 @@ IRQ_DSP_MASK    equ     $0010
 ;; Section 6: JERRY IRQ2 enum bits (JINTCTRL)
 ;; ================================================================
 
+;; JINTCTRL ($F10020) is a split register: the low byte is the
+;; enable mask, the high byte is write-1-to-clear for the same
+;; source (jerry.c: `jerryPendingInterrupt &= ~(data >> 8)`), so
+;; each _CLR constant is its enable bit shifted left by 8.
+;;
+;; An IRQ handler MUST write the _CLR bit before returning: JERRY
+;; drives TOM INT1 bit 4 for as long as an enabled source has an
+;; uncleared latch, and the 68K re-takes a level-2 request at
+;; every instruction boundary while that line is asserted.
+;; Acknowledging only TOM's INT1 pending bit is not enough.
+
 IRQ2_EXTERNAL   equ     $0001
 IRQ2_DSP        equ     $0002
 IRQ2_TIMER1     equ     $0004
 IRQ2_TIMER2     equ     $0008
 IRQ2_ASI        equ     $0010
 IRQ2_SSI        equ     $0020
+
+IRQ2_EXTERNAL_CLR equ     $0100   ; write to JINTCTRL high byte to clear pending
+IRQ2_DSP_CLR    equ     $0200   ; write to JINTCTRL high byte to clear pending
+IRQ2_TIMER1_CLR equ     $0400   ; write to JINTCTRL high byte to clear pending
+IRQ2_TIMER2_CLR equ     $0800   ; write to JINTCTRL high byte to clear pending
+IRQ2_ASI_CLR    equ     $1000   ; write to JINTCTRL high byte to clear pending
+IRQ2_SSI_CLR    equ     $2000   ; write to JINTCTRL high byte to clear pending
 

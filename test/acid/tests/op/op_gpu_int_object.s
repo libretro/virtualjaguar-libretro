@@ -8,13 +8,28 @@
 ;
 ; The IRQ latches live in `gpu_control` at GPU_BASE + $14 (NOT
 ; gpu_flags at +$00 -- that register holds Z/N/C condition codes).
-; Per src/tom/gpu.c::GPUSetIRQLine, asserting IRQ line N sets bit
-; (0x0040 << N) in gpu_control.  The OP's GPU-INT path calls
-; GPUSetIRQLine(3, ASSERT_LINE) (src/tom/op.c:463), so the bit we
-; expect to see latched is 0x0040 << 3 = 0x00000200 (bit 9).
+; Per JTRM Technical Reference rev 8, G_CTRL bits 6-10 are INT_LAT0-4;
+; asserting IRQ line N sets bit (0x0040 << N).  The OP's GPU-INT path
+; calls GPUSetIRQLine(3, ASSERT_LINE), so the bit we expect to see
+; latched is 0x0040 << 3 = 0x00000200 (bit 9).
 ;
-; Strategy: build OP list with a GPU-INT object, run OP for many
-; halflines, then read gpu_control and check if bit 9 is set.
+; IMPORTANT -- the GPU must be RUNNING for this to be observable.
+; A halted GPU (G_CTRL GPUGO=0) drops the assert instead of latching
+; it; see src/tom/gpu.c:GPUSetIRQLine and the halted-GPU counterpart
+; test, tests/op/op_gpu_int_object_halted.s, which pins that
+; behaviour.  This test used to start no GPU at all and assert the
+; latch anyway -- it had been FAILing since e92b675 (the Hover Strike
+; B-skip fix) landed.
+;
+; So we park the GPU in a two-instruction self-loop first.  Every
+; interrupt enable in G_FLAGS is left clear on purpose: GPUHandleIRQs
+; needs an enable to *dispatch*, but the latch itself is set
+; regardless, so this observes the latch without running an ISR (and
+; without the OP burning its inline OBF-release budget, which is
+; gated on GPUOPInterruptEnabled()).
+;
+; Strategy: park GPU in self-loop, build OP list with a GPU-INT
+; object, run OP for many halflines, then read OB and gpu_control.
 ;
 ; GPU-INT object encoding (type 2, single 64-bit phrase):
 ;   p0 bits 0..2 = TYPE = 2
@@ -23,6 +38,9 @@
 ;
 ; Detail codes:
 ;   1 = GPU IRQ3 latch never asserted (gpu_control bit 9 stayed 0)
+;   2 = OP never reached the object at all (OB does not hold our
+;       marker) -- the list/OLP wiring is broken, not the IRQ path,
+;       so detail=1 would have been misleading
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
@@ -33,16 +51,44 @@ GPU_INT_OBJ     equ     OPLIST + 0
 STOP_OBJ        equ     OPLIST + 8
 SPIN_LIMIT      equ     500000
 
+G_FLAGS         equ     GPU_BASE + $00
+G_PC            equ     GPU_BASE + $10
 G_CTRL          equ     GPU_BASE + $14          ; GPU control / IRQ latches
+GO              equ     $00000001
+
+;; OB (current object) latch, TOM_BASE + $10..$17, big-endian 64-bit.
+;; The OP writes the whole first phrase here before raising IRQ3, so
+;; the high long is the marker we stashed in the object.
+TOM_OB          equ     TOM_BASE + $10
+
+OBJ_MARKER      equ     $0BADF00D
+IRQ3_LATCH      equ     $00000200
 
                 org     $802000
 entry:
                 ACID_INIT
 
+                ;; ---- Park the GPU in a self-loop so it is RUNNING ----
+                ;; `jr T,-1` ($D7E0) + delay-slot `nop` ($E400): a
+                ;; two-instruction infinite loop.  Same idiom as
+                ;; tests/gpu/gpu_op_jump.s.  Using a loop rather than a
+                ;; NOP slab matters -- a slab lets the GPU walk off into
+                ;; the randomised tail of gpu_ram_8, where stray bytes
+                ;; decode as jumps and could clear GPUGO mid-test.
+                lea     GPU_RAM.l,a0
+                move.w  #$D7E0,(a0)+
+                move.w  #$E400,(a0)+
+
+                ;; Interrupt enables stay clear: latch yes, dispatch no.
+                move.l  #0,G_FLAGS
+                move.l  #GPU_RAM,G_PC
+                move.l  #GO,G_CTRL
+
                 ;; ---- GPU_INT object (type 2) ----
-                ;; Just need TYPE = 2 in low 3 bits.  Stash a recognisable
-                ;; value in the upper bits so we can also see OB if we want.
-                move.l  #$0BADF00D,GPU_INT_OBJ
+                ;; Just need TYPE = 2 in low 3 bits.  The upper bits hold
+                ;; a recognisable marker so we can confirm via OB that
+                ;; the OP really reached this object.
+                move.l  #OBJ_MARKER,GPU_INT_OBJ
                 move.l  #$00000002,GPU_INT_OBJ+4
 
                 ;; STOP after (the OP stops on its own at type 2, but for
@@ -59,22 +105,24 @@ entry:
 .spin:          subq.l  #1,d2
                 bne.s   .spin
 
-                ;; Read gpu_control (GPU_BASE+$14).  Per
-                ;; src/tom/op.c:463 the GPU-INT object calls
-                ;; GPUSetIRQLine(3, ASSERT_LINE), and per
-                ;; src/tom/gpu.c::GPUSetIRQLine that sets bit
-                ;; (0x0040 << 3) = $00000200 (bit 9) in gpu_control.
-                ;; That latch is unconditional -- no enable bit gates
-                ;; the latch itself; the enable mask only gates whether
-                ;; the GPU CPU vectors to its ISR.  So reading bit 9
-                ;; from 68K side is a reliable observation.
+                ;; Did the OP reach the object at all?  OPSetCurrentObject
+                ;; runs before GPUSetIRQLine and is not gated on GPU state,
+                ;; so this separates "IRQ path broken" from "OP never got
+                ;; there".
+                move.l  TOM_OB.l,d4
+                cmp.l   #OBJ_MARKER,d4
+                bne     .no_object
+
+                ;; Read gpu_control (GPU_BASE+$14) and check the IRQ3 latch.
                 move.l  G_CTRL.l,d5
                 move.l  d5,d6
-                and.l   #$00000200,d6
+                and.l   #IRQ3_LATCH,d6
                 bne     .saw_irq
 
                 ;; IRQ3 latch never set -- OP did not fire GPU-INT, or
                 ;; the OP->GPU IRQ wiring is broken.
-                ACID_FAIL #1,d5,#$00000200
+                ACID_FAIL #1,d5,#IRQ3_LATCH
+
+.no_object:     ACID_FAIL #2,d4,#OBJ_MARKER
 
 .saw_irq:       ACID_PASS

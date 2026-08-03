@@ -1,21 +1,38 @@
 ;
-; tests/timing/vblank_60hz_exact.s - count VBlank IRQs in a fixed
-; ~1-second 68K busy-loop window.  NTSC must deliver 60 +/- 1.
+; tests/timing/vblank_60hz_exact.s - exactly one VBlank IRQ per video
+; field.  Over a 60-field window NTSC must deliver 60 +/- 1.
 ;
-; Strict version of the existing loose vblank_delivery test:
+; SCOPE CHANGED -- read this before treating a pass as a rate check.
+; This used to time a ~1-second window with a calibrated 68K busy loop
+; (739_130 iterations of a `subq.l/bne.s` pair billed at the datasheet
+; 18 cycles) and assert 60 VBlanks in it, i.e. an absolute 60 Hz check.
+; That window was never trustworthy: these ROMs execute from cart ROM at
+; $802000, which at the reset MEMCON1 ($1861, ROMSPEED=0) costs 10 system
+; clocks per fetch, so an iteration really costs ~20 cycles, not 18.
+; Under the virtualjaguar_dram_timing model the loop ran ~8% long and
+; this test failed at 65 VBlanks -- with nothing wrong with video timing.
+;
+; The window is now 60 VC wraps, which makes this a check that VI fires
+; once and only once per field: no double-fires, no dropped frames. That
+; is a real invariant and it is immune to 68K speed, but it is NOT the
+; absolute-rate check the old test claimed to be -- the video clock is
+; now both the thing measured and the reference. Coverage genuinely
+; narrowed here. The surviving absolute anchor is pit_countdown_rate.s,
+; which measures JERRY's PIT against this same video clock; those two
+; hardware dividers are independent, so together they still pin the
+; video rate.
+;
+; Structure:
 ;   * Installs a vector-64 handler that bumps a counter.
 ;   * Configures TOM VI to fire once per frame (VI = 1 halfline).
 ;   * Enables IRQ_VIDEO via TOM_INT1 low byte.
 ;   * Drops 68K SR mask to allow IPL=2.
-;   * Runs a busy loop sized to ~1 wall-clock second.
-;     The 68K runs at 13.295453 MHz NTSC (M68K_CLOCK_RATE_NTSC).
-;     A `subq.l #1,Dn / bne.s` (taken) pair takes 8 + 10 = 18 cycles
-;     on the UAE 68K timing model.  So 1 second / 18 cycles
-;     ~= 738_636 iterations.  We use 739_130 to land on a
-;     ~1.001 sec wall-clock window.
+;   * Counts VC wraps until the window closes.
+;
+; Must pass with virtualjaguar_dram_timing both enabled and disabled.
 ;
 ; Detail codes:
-;   1 = VBlank counter outside [58, 62] -- emulator timing drift.
+;   1 = VBlank counter outside [59, 61] -- emulator timing drift.
 ;       observed = counter value, expected = 60.
 ;   2 = counter is zero -- IRQ never delivered (regression in IRQ
 ;       wiring, not a timing issue).
@@ -31,14 +48,16 @@ IRQ_COUNT       equ     $00000800
 ;; irq_ack_handler() returns vector 64 ($100) for ALL hardware IRQs.
 HW_IRQ_VECTOR   equ     $00000100
 
-;; Busy-loop iterations sized to ~1 second on a real (or accurate)
-;; NTSC 68K @ 13.295 MHz.  Inner loop is `subq.l #1,Dn / bne.s`
-;; (taken) = 8 + 10 = 18 cycles -- 739_130 iters ~= 13.3 M cycles
-;; ~= 1 sec wall.
-BUSY_ITERS      equ     739130
+;; Window measured in video fields (VC wraps), not 68K instructions.
+WINDOW_FIELDS   equ     60
+;; VC's bit 11 is the field flag (src/tom/tom.c) -- mask it off, or every
+;; field flip reads as a wrap.
+VC_LINE_MASK    equ     $07FF
 
 EXPECT_VBLANK   equ     60
-TOLERANCE       equ     2                       ; +/- accept
+;; One VI per field, so the count should equal the window exactly; allow
+;; +/-1 for landing mid-field at either end.
+TOLERANCE       equ     1                       ; +/- accept
 
                 org     $802000
 entry:
@@ -64,10 +83,18 @@ entry:
                 ;; Allow IPL=2 in 68K SR (supervisor, mask=0).
                 move.w  #$2000,sr
 
-                ;; Busy-loop for ~1 second wall clock.
-                move.l  #BUSY_ITERS,d2
-.busy:          subq.l  #1,d2
-                bne.s   .busy
+                ;; Wait out WINDOW_FIELDS video fields by watching VC wrap.
+                moveq   #0,d3                   ; fields seen
+                move.w  TOM_VC,d1
+                and.w   #VC_LINE_MASK,d1
+.wait:          move.w  TOM_VC,d0
+                and.w   #VC_LINE_MASK,d0
+                cmp.w   d1,d0
+                bcc.s   .nowrap                 ; d0 >= d1: no wrap yet
+                addq.l  #1,d3
+.nowrap:        move.w  d0,d1
+                cmp.l   #WINDOW_FIELDS,d3
+                blt.s   .wait
 
                 ;; Mask interrupts again so the read is stable.
                 move.w  #$2700,sr
@@ -78,7 +105,7 @@ entry:
                 tst.l   d5
                 beq     .never
 
-                ;; Expect 58..62 (60 +/- 2 for boundary fuzz).
+                ;; Expect 59..61 (60 +/- TOLERANCE for boundary fuzz).
                 cmp.l   #EXPECT_VBLANK-TOLERANCE,d5
                 blt     .out_of_range
                 cmp.l   #EXPECT_VBLANK+TOLERANCE,d5

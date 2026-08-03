@@ -43,6 +43,12 @@ static const uint8_t dram_refresh_table[4] = { 5, 4, 4, 3 };
  * different bus, so it does not source this number. */
 #define IO_BUS_CLOCKS_ESTIMATE 2
 
+/* One MC68000 bus cycle with no wait states, expressed in system clocks:
+ * four CPU clocks (S0-S7), and the Jaguar clocks the 68K at half the
+ * system clock.  See bus_arbiter_m68k_access() for why the 68K is charged
+ * only the excess of an access over this. */
+#define M68K_BUS_CYCLE_SYSCLKS 8
+
 void bus_arbiter_init(void)
 {
     memset(&busArbiter, 0, sizeof(busArbiter));
@@ -129,8 +135,39 @@ uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
 
 uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses)
 {
-    uint32_t sysclks, cycles;
-    sysclks = bus_arbiter_charge_access(BM_CPU, addr) * naccesses;
+    uint32_t per_access, sysclks, cycles;
+
+    per_access = bus_arbiter_dram_cost(addr);
+    if (per_access == 0)
+        per_access = IO_BUS_CLOCKS_ESTIMATE;   /* GPU/DSP local RAM: I/O bus for the 68K */
+
+    /* Charge only the WAIT STATES, not the whole access.
+     *
+     * An MC68000 bus cycle is four CPU clocks (states S0-S7) with no wait
+     * states, and the published instruction timings the UAE core returns
+     * already include the fetches an instruction performs.  The Jaguar
+     * clocks the 68K at half the system clock, so those four CPU clocks
+     * are already 8 system clocks of budget.  Charging the absolute
+     * access time on top of the datasheet count bills that baseline
+     * twice: it made a `subq.l/bne.s` pair out of cart ROM cost ~28
+     * cycles instead of 18+2, i.e. 1.49x rather than the correct 1.11x.
+     *
+     * Consequence worth knowing: at the reset MEMCON1 ($1861) cart ROM is
+     * 10 system clocks, so 68K code fetched from ROM pays 2 clocks (one
+     * CPU cycle) per access -- while DRAM (2 + row-miss = 5) and the I/O
+     * bus (2) are both FASTER than the CPU's own bus cycle and cost it
+     * nothing at all.  The 68K is simply not a master that DRAM latency
+     * can stall; only slow ROM stalls it.  The GPU half in gpu.c is
+     * unaffected -- a RISC LOAD/STORE has no comparable built-in bus
+     * cycle to subtract, so it still pays the full access cost. */
+    if (per_access <= M68K_BUS_CYCLE_SYSCLKS)
+        return 0;
+    per_access -= M68K_BUS_CYCLE_SYSCLKS;
+
+    if (busArbiter.contention_scale > 1)
+        per_access *= busArbiter.contention_scale;
+
+    sysclks = per_access * naccesses;
     if (sysclks == 0)
         return 0;
     busArbiter.m68k_sysclk_carry += sysclks;

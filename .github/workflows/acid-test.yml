@@ -108,11 +108,19 @@ jobs:
 
       - name: Compare against baseline (regression gate)
         run: |
+          set -o pipefail
+          # Without pipefail, `$?` after a pipe reflects the LAST command
+          # (tee, which exits 0 almost unconditionally), so a non-zero
+          # exit from check-baseline.py was silently swallowed and this
+          # step -- the actual regression gate -- could never fail the
+          # job.  That let 3 real regressions (unaligned_word,
+          # op_gpu_int_object, pit_countdown_rate) land on develop
+          # unnoticed; see fix/acid-reconciliation for the fixes.
           python3 test/acid/scripts/check-baseline.py \
                   test/acid/results.log \
                   test/acid/BASELINE.txt | tee acid-summary.txt
-          # check-baseline.py exits non-zero on regressions; the `set -e`
-          # at job level propagates it.
+          # check-baseline.py exits non-zero on regressions; pipefail
+          # above makes that propagate through `set -e` at job level.
 
       - name: Post summary to PR (job summary)
         if: always()
