@@ -143,9 +143,10 @@ Consequence: in the demo, *everything* — player included — scales with the
 render rate, and the render rate is pinned at the 2-VBL cap on any host fast
 enough to hit it. Our OFF-mode measurement of **29.97 tics/s is exactly the cap
 (59.94/2)**, i.e. the measurement is *saturated*: it reports 29.97 whether our
-68K is 1x, 2x or 10x too fast. It cannot discriminate. The ON-mode 29.67 is
-~1% below the cap (a few frames occasionally miss the 2-VBL window) — still
-saturated for practical purposes.
+68K is 1x, 2x or 10x too fast. It cannot discriminate. The ON-mode measurement
+is now **also exactly 29.97** (re-measured 2026-08-03 against the wait-state-
+only bus model, `fix/acid-reconciliation`; was 29.67, ~1% below the cap, under
+the old double-counted model) — both saturated for practical purposes.
 
 The only reason the earlier 8x-DRAM-self-cost experiment produced a meaningful
 15.58 tics/s is that it pushed the machine *below* the cap.
@@ -340,6 +341,22 @@ Measured with a scratch harness (`doom_renderrate.c`, appendix; built against
 `virtualjaguar_libretro.dylib` @ `62e8f98-dirty`, ROM
 `test/roms/private/ROMS/Doom - Evil Unleashed (1994).jag`, NTSC, real BIOS.
 
+> **Recalibrated 2026-08-03 @ `9222148`** against `fix/acid-reconciliation`'s
+> wait-state-only 68K bus model (see `src/core/bus_arbiter.c`:
+> `bus_arbiter_m68k_access()` now charges the 68K only the excess of an
+> access over its own 8-sysclk bus cycle, not the absolute access cost —
+> DRAM/IO now cost the 68K ~0, only cart ROM adds 1 cycle/access). The
+> original numbers below (from `62e8f98-dirty`) measured `dram_timing`
+> **on** against the old, double-counted per-access charge in addition to
+> the OP-fetch/DRAM-refresh occupancy this doc is actually about; that
+> extra per-access charge is what produced the +2.0 % / +0.7 % deltas.
+> With it corrected, the ON numbers are reproduced below and the deltas
+> collapse to within run-to-run noise (§3.1). The occupancy-model
+> mechanism itself (OP fetch + refresh, `HalflineCallback`,
+> `src/core/jaguar.c:914-937`) is untouched by this fix and still applies
+> under `dram_timing=on` — it was simply never the dominant term in the
+> old ON measurement.
+
 ### 3.1 Primary: attract-demo duration
 
 Measured by watching `gametic` at `$04080C` go from its first non-zero value to
@@ -348,20 +365,26 @@ own), over a 9000-frame run that covers two full attract cycles:
 
 | demo | tics | dram_timing **off** | dram_timing **on** | delta |
 |---|---|---|---|---|
-| first  | 749 | **27.59 s / 27.69 s** | **28.18 s / 28.13 s** | **+2.0 %** |
-| second | 984 | **34.98 s / 34.97 s** | **35.22 s / 35.24 s** | **+0.7 %** |
+| first  | 749 | **27.59 s / 27.69 s** | **27.69 s / 27.61 s** | **+0.0 %** |
+| second | 984 | **34.98 s / 34.97 s** | **35.05 s / 35.00 s** | **+0.1 %** |
 
 (Two instances of each demo per run; both listed to show run-to-run spread is
-under 0.2 %.) Equivalent render rates: 27.1 → 26.6 renders/s (first demo),
-28.1 → 27.9 (second).
+under 0.2 %.) Equivalent render rates: 27.1 → 27.1 renders/s (first demo,
+within noise), 28.1 → 28.1 (second, within noise).
 
-The +2.0 % / +0.7 % asymmetry is real, not noise — the two runs of each demo
-agree to better than 0.2 %, so a 3x difference between demos is well outside
-the spread. The two demos are different recordings on different levels with
-different geometry, sprite counts and 68K workloads, and the occupancy model
-charges only the 68000; a demo whose frames leave the 68K with more slack
-absorbs more of the charge without lengthening. The asymmetry is therefore
-itself a small confirmation that the 68000 is not the limiter.
+**Superseded finding, kept for record:** under the old, double-counted
+per-access 68K bus model, this row read off `27.59 s / 27.69 s` →
+`28.18 s / 28.13 s` (+2.0 %) and `34.98 s / 34.97 s` → `35.22 s / 35.24 s`
+(+0.7 %), and the write-up argued the asymmetry between the two demos was a
+real signal that a demo leaving the 68K with more slack absorbed more of the
+occupancy charge without lengthening. That reasoning doesn't survive the
+wait-state-only bus fix (`fix/acid-reconciliation`, `src/core/bus_arbiter.c`):
+most of the old ON delta was the absolute-cost double-count on ordinary DRAM
+fetches/stores, which the two demos' differing 68K workloads happened to
+scale differently — not a signal about the OP-fetch/refresh occupancy model,
+which is unaffected by this fix and remains active under `dram_timing=on`.
+With the double-count gone, both demos land within the ~0.2 % run-to-run
+spread of each other, off vs on.
 
 ```
 SHOW_RESETS=1 ANALYZE_FROM=600 VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
@@ -369,9 +392,14 @@ SHOW_RESETS=1 ANALYZE_FROM=600 VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
   --frames 9000 --quiet [--option virtualjaguar_dram_timing=enabled]
 ```
 
-> **Enabling the OP-fetch + DRAM-refresh occupancy model lengthens the attract
-> demo by 2.0 % / 0.7 %.** This is now measured on the load-matched,
-> scene-matched observable, not on the saturated tic rate.
+> **With the 68K bus model corrected to wait-states-only, the OP-fetch +
+> DRAM-refresh occupancy model lengthens the attract demo by only +0.0 % /
+> +0.1 % — within run-to-run noise.** (Previously measured +2.0 % / +0.7 %
+> against the double-counted model; see the superseded-finding note above.)
+> This is measured on the load-matched, scene-matched observable, not on the
+> saturated tic rate, and the conclusion is unchanged from before the fix:
+> **the 68000 was never the frame-time critical path** (§4) — it is now
+> measurably even less of one.
 
 ### 3.2 Corroborating: unique renders/s
 
@@ -381,9 +409,13 @@ framebuffer is not re-encoded, so held frames diff to exactly 0):
 | Scenario | option | gap-2 share | renders/s (first→last new image) |
 |---|---|---|---|
 | **Attract demo** (walks the level, fights) | off | **98.7 %** | 25.5 |
-| **Attract demo** | **on** | **97.9 %** | 24.9 |
+| **Attract demo** | **on** | **98.6 %** | 25.0 |
 | Gameplay, level 1, spinning in the start room | off | 98.2 % | 28.9 |
 | Gameplay, level 1, spinning in the start room | on | 98.2 % | 28.9 |
+
+(Attract-demo row recalibrated 2026-08-03 against the wait-state-only bus
+model; was 97.9 % / 24.9 under the old double-counted model. Gameplay rows
+were already identical off vs on before the fix and were not re-measured.)
 
 Renders/s here is below 29.97 because the demo window includes the level-load
 pause and the title/credits cut, during which nothing renders; the gap-2 share
@@ -401,8 +433,10 @@ silicon's *heavy* scene, which a physically correct model would fail. The
 demo (§3.1) has no such problem: its rendered image sequence is identical on
 both machines by construction (§1.4).
 
-> **We sit on the engine's 2-field hard cap — 97.9–98.7 % of demo frames, 98.2 %
-> of gameplay frames — with and without the occupancy model.**
+> **We sit on the engine's 2-field hard cap — 98.6–98.7 % of demo frames, 98.2 %
+> of gameplay frames — with and without the occupancy model.** (Was
+> 97.9–98.7 % before the wait-state-only bus-model fix narrowed the on/off
+> spread; see §3.1, §3.2.)
 
 ---
 
@@ -413,18 +447,24 @@ observable.**
 
 1. **Demo tic rate is saturated and therefore uninformative.** 29.97 tics/s is
    *exactly* the engine's 2-field cap (§1.2). Both the OFF result (29.97) and
-   the ON result (29.67) are the cap; they would read the same if our machine
-   were 5x too fast. It cannot discriminate and should not be used for
-   calibration again. The replacement is attract-demo **duration** (§1.4, §3.1).
+   the ON result (29.97, re-measured against the wait-state-only bus model —
+   was 29.67) are the cap; they would read the same if our machine were 5x
+   too fast. It cannot discriminate and should not be used for calibration
+   again. The replacement is attract-demo **duration** (§1.4, §3.1).
 2. **The gap is real and large.** Real hardware 19.98 fps (mode) / ~15 fps
-   (heavy) vs our 97.9–98.7 % gap-2. That is **~1.5x too fast typical, 2x in
+   (heavy) vs our 98.2–98.7 % gap-2. That is **~1.5x too fast typical, 2x in
    heavy scenes**, and by §1.3 it lands on monsters, projectiles, walking-turn
    rate and door/lift timing while the player's translation and running turn
    stay correct — exactly the reported symptom.
-3. **The OP-fetch + DRAM-refresh occupancy model closes 2 % of it.** On the
-   load-matched demo it lengthens demo 1 by 2.0 % and demo 2 by 0.7 % (§3.1).
-   It charges only the **68000**, and the 68000 is not the frame-time critical
-   path.
+3. **The OP-fetch + DRAM-refresh occupancy model closes ~0 % of it.** On the
+   load-matched demo it lengthens demo 1 by +0.0 % and demo 2 by +0.1 %
+   (§3.1) — within run-to-run noise, once the 68K bus model correctly
+   charges only wait states instead of double-counting the 68K's own bus
+   cycle (`fix/acid-reconciliation`). (Originally measured +2.0 % / +0.7 %
+   against the double-counted model; that gap was mostly an artifact of the
+   bug, not the occupancy mechanism.) It charges only the **68000**, and the
+   68000 is not the frame-time critical path — now demonstrated even more
+   directly than before.
 
 ### What *is* on the critical path
 
@@ -435,7 +475,7 @@ core**):
 
 | lever | scenario | result |
 |---|---|---|
-| 68K bus occupancy (`dram_timing`) | attract demo | +2.0 % duration |
+| 68K bus occupancy (`dram_timing`) | attract demo | +0.0–0.1 % duration (was +2.0 % under the double-counted 68K bus model; see §3.1) |
 | DSP `all:6` | attract demo | demo 1: 27.61 s → **29.70 s** (+7.6 %), gap-2 89.9 % |
 | DSP `all:12` | attract demo | 13.8 renders/s, gap-4 dominant (41.8 %) |
 | GPU `all:4` | gameplay (light scene) | gap-2 62.3 %, 25.2 renders/s |
@@ -637,9 +677,12 @@ SHOW_RESETS=1 VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
 | | first demo (749 tics) | second demo (984 tics) |
 |---|---|---|
 | today (off) | 27.6 s | 35.0 s |
-| today (on) | 28.2 s | 35.2 s |
+| today (on) | 27.6 s | 35.0 s |
 | **target** | **silicon's measured duration — see below** | |
 | provisional prediction | ~41 s | ~52 s |
+
+(`today (on)` recalibrated 2026-08-03 against the wait-state-only bus model
+-- was 28.2 s / 35.2 s before `fix/acid-reconciliation`; see §3.1.)
 
 The provisional targets are today's durations scaled by 29.97/19.98 = 1.50, the
 ratio of our gap-2 cadence to silicon's measured gap-3 cadence (§2). A second,
@@ -655,7 +698,7 @@ calibrated.
 
 **Secondary — distribution shape, measured on the same attract demo.** Run the
 frame-differ over the demo (the run above already produces it) and require the
-gap histogram to move from today's **98.7 % gap-2 (off) / 97.9 % gap-2 (on)**
+gap histogram to move from today's **98.7 % gap-2 (off) / 98.6 % gap-2 (on)**
 toward a *tight* cluster with gap-3 dominant and the tail in gap-4, matching
 §2. A change that lands the right mean while smeared across gaps 2–5 (as GPU
 `all:6` and DSP `all:12` both do) is a fail. Both halves of the acceptance test
