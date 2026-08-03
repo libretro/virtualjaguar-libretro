@@ -87,7 +87,7 @@ from structured noise at the right level.
   which survive an ISO rip. No retail game can ever start from one
   (BigPEmu declines ISOs for the same reason), so the loader refuses
   `.iso` outright with an explanatory error instead of raising false
-  hopes with a BIOS screen that goes nowhere. Use CUE/BIN, CHD, or CDI.
+  hopes with a BIOS screen that goes nowhere. Use CUE/BIN or CDI.
 - **CD read speeds above 2x on the real-BIOS path**: the
   `virtualjaguar_cd_read_speed` option is HLE-only by design; scaling the
   BIOS path's FIFO/DSA cadence re-opens the DSA-steal and FIFO-storm race

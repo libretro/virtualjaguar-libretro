@@ -58,8 +58,8 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
  *   cof           : COFF binaries (also routes through JST_ABS_TYPE1)
  *   bin, prg      : conservative headerless raw-homebrew with valid
  *                   68k bootstrap (JST_RAW_BINARY)
- * Add `cdi`, `cue`, `iso`, and `chd` here when CD-image support
- * lands on a future PR. */
+ *   cue, cdi      : Jaguar CD images (CUE/BIN and CDI).  Bare `iso`
+ *                   images are not bootable -- see docs/cd-known-issues.md. */
 #define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
 
 /* Framebuffer allocation, in pixels.  Sized for the widest / tallest video

@@ -956,7 +956,7 @@ bool CDIntfOpenImage(const char *path)
    if (ext && strcasecmp(ext + 1, "iso") == 0)
    {
       LOG_ERR("[CD-ISO] bare .iso images cannot represent a Jaguar CD "
-              "(no session/track layout) -- use CUE/BIN, CHD, or CDI\n");
+              "(no session/track layout) -- use CUE/BIN or CDI\n");
       return false;
    }
 

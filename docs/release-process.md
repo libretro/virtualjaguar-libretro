@@ -19,7 +19,7 @@ PRs targeting `master` directly trigger a friendly comment from `.github/workflo
 1. Cut `release/X.Y.Z` from `develop`.  Bump `CORE_BASE_VERSION` in `Makefile` (or use the `Bump Version & Release` workflow).  Update `docs/RELEASE_NOTES_vX.Y.Z.md`.  Open a PR from `release/X.Y.Z` → `master`.
 2. Merge into `master`.
 3. `git tag vX.Y.Z && git push libretro vX.Y.Z` (or via GitHub UI).
-4. Watch [Actions](https://github.com/libretro/virtualjaguar-libretro/actions) — `release.yml` builds 14 platforms, generates `SHA256SUMS.txt`, and publishes the release with `docs/RELEASE_NOTES_vX.Y.Z.md` as the body.
+4. Watch [Actions](https://github.com/libretro/virtualjaguar-libretro/actions) — `release.yml` builds 16 platforms (14 in the build matrix, plus Vita and Switch in their own jobs), generates `SHA256SUMS.txt`, and publishes the release with `docs/RELEASE_NOTES_vX.Y.Z.md` as the body.
 5. **Back-merge `master` → `develop`** so the version bump and any release-branch fixes are in `develop`: `git checkout develop && git merge master && git push libretro develop`.
 6. After the tag publishes, send a small PR to [libretro/libretro-super](https://github.com/libretro/libretro-super) updating `dist/info/virtualjaguar_libretro.info` to match `dist/info/virtualjaguar_libretro.info` from this repo at the tag.
 
@@ -54,7 +54,7 @@ The push triggers `.github/workflows/release.yml` which runs only on `v*` tags.
 
 ### 3. What `release.yml` does on tag push
 
-For each of 14 target platforms (Linux x86_64/aarch64/i686, macOS arm64/x86_64, Windows x86_64/i686, Emscripten WASM, Android arm64-v8a/armeabi-v7a/x86_64/x86, iOS arm64, tvOS arm64), in parallel:
+For each of the 14 matrix platforms (Linux x86_64/aarch64/i686, macOS arm64/x86_64, Windows x86_64/i686, Emscripten WASM, Android arm64-v8a/armeabi-v7a/x86_64/x86, iOS arm64, tvOS arm64), in parallel — PS Vita and Switch build in separate jobs, for 16 targets in total:
 
 1. Build the core with `RELEASE_DEBUG_INFO=1` so the optimized binary keeps `-g` symbols.
 2. Extract split debug info into a `<platform>-debug.tar.gz` archive (`objcopy --only-keep-debug` for ELF, `dsymutil` for Mach-O).

@@ -12,7 +12,7 @@ Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) At
 - Fast and legacy blitter modes (the legacy/accurate path is SIMD-accelerated on SSE2 and NEON)
 - Optional BIOS boot sequence, plus an HLE BIOS so games can boot without a BIOS image
 - Save state, run-ahead (deterministic serialization), SRAM/EEPROM via the libretro SRAM interface, cheat codes, and a memory map for RetroAchievements
-- Supported ROM formats: `.j64`, `.abs`, `.jag`, `.rom` (including inside ZIP archives), plus conservative headerless raw homebrew loading
+- Supported ROM formats: `.j64`, `.jag`, `.rom`, `.abs`, `.cof`, `.bin`, `.prg` (including inside ZIP archives), plus `.cue` and `.cdi` for Jaguar CD images, and conservative headerless raw homebrew loading
 - Network link play (JagLink / CatBox emulation): Doom deathmatch, AirCars, BattleSphere Gold — via RetroArch netplay, or a direct TCP link between frontends on socket-capable platforms ([setup guide](docs/netlink-user-guide.md))
 
 ## Recent improvements (libretro fork)
@@ -20,7 +20,7 @@ Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) At
 This fork has diverged substantially from upstream Virtual Jaguar v2.1.0. See [docs/WHATSNEW](docs/WHATSNEW) for the full v2.2.0 changelog. Highlights:
 
 - **HLE BIOS** now produces hardware-equivalent post-boot state — MEMCON1, clocks, GPU auth magic, OLP, exception vectors, TOM/JERRY timing — and the vast majority of commercial titles boot cleanly without any BIOS image. 200+ pin tests in `test_hle_bios` cover the contract.
-- **Game-specific fixes**: Alien vs Predator red noise (M2 blitter `BKGWREN+BCOMPEN`), Doom resolution (proper `PWIDTH` pixel replication, replaces the legacy hack), and audio dropouts at frame edges across many titles (interleaved JERRY events). Jaguar CD support is in flight on a separate branch (PR forthcoming).
+- **Game-specific fixes**: Alien vs Predator red noise (M2 blitter `BKGWREN+BCOMPEN`), Doom resolution (proper `PWIDTH` pixel replication, replaces the legacy hack), and audio dropouts at frame edges across many titles (interleaved JERRY events). Jaguar CD support shipped in v3.0.0: CUE/BIN and CDI images boot through either an HLE CD BIOS or a real CD BIOS.
 - **CPU accuracy**: DSP 40-bit MAC accumulator semantics, FLAGS-write dispatch, GPU/DSP IMASK preservation and ADDC carry overflow, DIVL exception PC.
 - **Accurate-blitter** accuracy fixes (`daddmode` NAND tree, `daddbsel` bit 3, `ADDARRAY` cinsel carry, `SRCSHADE` color).
 - **Object Processor**: scaled and fixed-bitmap `firstPix` handling, left/right/reflected edge clipping for scaled bitmaps, `firstPix` for 2/4/16/24 BPP fixed bitmaps.
