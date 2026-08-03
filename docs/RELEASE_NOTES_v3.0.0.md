@@ -14,15 +14,15 @@ gate that actually blocks.
   (Baldies, Battle Morph, BrainDead 13, Dragon's Lair, Highlander, Hover
   Strike, Iron Soldier 2, Primal Rage, Space Ace, Myst) boots to game code in
   both HLE and real-BIOS mode. Memory Track NVM is HLE'd so Vid Grid saves
-  again (#258); the core falls back to an embedded CD BIOS when no external
-  BIOS ROM is present; a `virtualjaguar_cd_read_speed` option (1x/2x/4x/8x/
+  again (#258); a `virtualjaguar_cd_read_speed` option (1x/2x/4x/8x/
   instant) is available on the HLE path; the `cue2cdi` CUE/BIN→CDI converter
   tool ships for building interchange images.
 - **Jaguar Link networking.** JagLink/CatBox link-port hardware is emulated
   at the JERRY UART level, with pluggable transports: a direct TCP link
-  (works in every frontend, including Provenance on iOS/macOS), the libretro
-  netpacket interface (real RetroArch netplay), and a CatNet-style multi-peer
-  hub for more than two consoles. Hostname resolution (not just dotted-quad
+  (designed to work in any frontend without netplay support -- validated on
+  macOS; the iOS/Provenance device test is pending, see Known Issues), the
+  libretro netpacket interface (real RetroArch netplay), and a CatNet-style
+  multi-peer hub for more than two consoles. Hostname resolution (not just dotted-quad
   addresses) and a core-option-driven host/port config round out the
   ease-of-use work. Validated over TCP on localhost/LAN: Doom deathmatch
   (host+client join, playable), BattleSphere Gold (to networked-lobby entry),
@@ -33,8 +33,8 @@ gate that actually blocks.
   workflow + `libretro_core_options_intl.h` scaffolding) ready for
   translations.
 - **Compatibility wave.** Wolfenstein 3D missing music (DSP `D_FLAGS`
-  pipeline-stage fix), Pitfall crash-on-boot (68000 group-0 exception frame +
-  GPU STOREP masking, #138), Tempest 2000's one-frame playfield collapse
+  pipeline-stage fix), Pitfall's black screen shortly into gameplay (68000
+  group-0 exception frame + GPU STOREP masking, #138), Tempest 2000's one-frame playfield collapse
   (TOM level-2 IRQ request held across the CPU interrupt mask, #187), Alien
   vs Predator's first-frame cyan bar and in-game brown bottom bar (#178),
   Brutal Sports Football's copier-header carts (skip instead of reject), and
@@ -56,28 +56,31 @@ gate that actually blocks.
   cannot represent a Jaguar CD's multi-session layout (session 1 audio
   warning track, session 2 data recorded as byte-swapped 2352-byte audio-type
   sectors, track lead-in offsets) — no retail disc can boot from one, and
-  BigPEmu declines them for the same reason. The loader now refuses `.iso`
-  at load time with an explanatory error instead of presenting a BIOS screen
-  that goes nowhere. Use CUE/BIN, CHD, or CDI (see `test/tools/cue2cdi` to
+  BigPEmu likewise does not accept bare `.iso` images. The loader now refuses
+  `.iso` at load time with an explanatory error instead of presenting a BIOS
+  screen that goes nowhere. Use CUE/BIN or CDI (see `test/tools/cue2cdi` to
   convert).
-- **Savestate format is now v7 and frozen from this release.** Savestates
-  older than `STATE_MIN_VERSION` are rejected outright; states between the
-  minimum and v7 load with newer fields defaulted. No further savestate
-  layout changes are planned before the next major version — v7 is the
-  stable target going forward.
+- **Savestate format v7 (forward-compatibility note).** Savestates written
+  by v3.0.0 will not load in older cores. In the other direction almost
+  nothing breaks: all states from the v2.x releases (`STATE_VERSION` >= 2)
+  continue to load, with newer fields defaulted; only pre-v2 states from far
+  older cores are rejected. v7 is frozen as the stable format going
+  forward.
 
 ## What's new
 
 ### Jaguar CD
 
-- Full local corpus (10 titles/images) reaches `GAME_CODE` in both HLE and
-  real-BIOS mode — the CD boot-matrix regression gate (`docs/cd-boot-matrix.md`)
-  is green across all active rows, with zero rows moved backward across three
-  re-run sweeps this cycle.
+- Full local corpus (10 titles across 11 images -- 10 CUE/BIN plus 1 CDI)
+  reaches `GAME_CODE` in both HLE and real-BIOS mode — the CD boot-matrix regression gate (`docs/cd-boot-matrix.md`)
+  is green across all active rows, with no genuine regressions across the
+  re-run sweeps this cycle (one apparent backward move was traced to a
+  substituted bad disc image and is documented in the matrix).
 - Memory Track NVM BIOS module HLE'd (`_NVM` at `$2400`) alongside the
   `$900000` flash window — Vid Grid and other Memory-Track-dependent titles
   save correctly (#258).
-- Embedded CD BIOS fallback when no external BIOS ROM file is present.
+- The real-BIOS path falls back to an embedded CD boot ROM when no external
+  BIOS file is configured, so no BIOS file is strictly required.
 - `virtualjaguar_cd_read_speed` core option (1x/2x/4x/8x/instant), HLE-path
   only by design — scaling the real-BIOS path's FIFO/DSA cadence would
   reopen DSA-steal and FIFO-storm race classes those constants encode.
@@ -92,8 +95,8 @@ gate that actually blocks.
 ### Networking (Jaguar Link)
 
 - JERRY asynchronous serial UART emulated at the register level
-  (`ASIDATA`/`ASICTRL`/`ASICLK`, `$F10030`-`$F10035`), verified against the
-  JTRM rather than source comments.
+  (`ASIDATA`/`ASICTRL`/`ASISTAT`/`ASICLK`, `$F10030`-`$F10035`), verified
+  against the JTRM rather than source comments.
 - Pluggable link transport: loopback (default/disabled), direct TCP
   (`tcp_server`/`tcp_client` core-option modes, per-frame link poll), and the
   libretro netpacket interface for real RetroArch netplay integration.
@@ -104,7 +107,7 @@ gate that actually blocks.
   caused by netpacket TX batching (#248).
 - Netlink host configurable as a core option; `vj_netlink.txt` is now a
   fallback rather than the only path. Hostnames (not just dotted-quad
-  addresses) resolve (#253).
+  addresses) resolve (#263).
 - UART + link state serialize in savestates.
 
 ### Options menu
@@ -120,11 +123,12 @@ gate that actually blocks.
 
 - **Wolfenstein 3D**: missing game music fixed (DSP `D_FLAGS` pipeline-stage
   correction).
-- **Pitfall**: crash-on-boot fixed — the 68000 now builds the full 14-byte
-  group-0 bus-error exception frame (it previously pushed only a standard
-  frame), and GPU `STOREP` gained byte-lane masking; GPU-RAM sync
-  correction (#138, 2 of 3 tracked sub-issues; remaining item is a GPU ISR
-  r31 leak, non-blocking).
+- **Pitfall**: the black screen shortly into gameplay is fixed — the 68000
+  now builds the full 14-byte group-0 bus-error exception frame (it
+  previously pushed only a standard frame), and GPU `STOREP` gained
+  byte-lane masking; GPU-RAM sync correction (#138, 2 of 3 tracked
+  sub-issues; the remaining item is a GPU ISR r31 leak, non-blocking, noted
+  in `docs/cart-issue-triage.md`).
 - **Tempest 2000**: one-frame playfield collapse fixed by holding TOM's
   level-2 interrupt request across the CPU interrupt mask instead of
   dropping it (#187).
@@ -149,8 +153,8 @@ gate that actually blocks.
 - **Baldies**: HLE boot progress reporting and CDI third-party-rip loading
   fixed (landmark-scan CDI global-data-offset detection, #233 — also
   resolved #230, see Known Issues).
-- **Blitter**: fixed reading pixel-mode data from channel 0 instead of
-  channel 2.
+- **Blitter**: fixed pixel-mode data reads to use channel 0's data
+  registers (they wrongly read channel 2).
 - **GPU**: indexed-load alignment now tests the effective address rather
   than the raw register mode.
 - **OP**: GPU objects correctly halt the Object Processor until the GPU
@@ -168,9 +172,15 @@ gate that actually blocks.
   physics model, not a game-specific hack — it's disabled by default because
   calibration against real hardware is ongoing. **Honest status on the
   "Doom runs too fast" bug**: this occupancy work closes approximately 0% of
-  the measured gap (real hardware ~20 fps vs. ours ~1.5-2x that on Doom's
-  attract demos, once measured by demo *duration* rather than the saturated
-  tic-rate metric that was used previously). Sensitivity sweeps identify the
+  the measured gap. Real hardware renders Doom at 19.98 fps typical and
+  ~15 fps in heavy scenes, while we sit pinned at the engine's own 29.97 fps
+  two-field cap — **~1.5x too fast typical, 2x in heavy scenes**. Measured by
+  attract-demo *duration* (the tic-rate metric used previously is saturated
+  at that same 29.97 cap and cannot discriminate), the occupancy model
+  lengthens demo 1 by +0.0% and demo 2 by +0.1%, i.e. within run-to-run
+  noise. (An earlier +2.0% / +0.7% figure, quoted in #265, was measured
+  against a bus model that double-counted the 68K's own bus cycle; that bug
+  is fixed in this release.) Sensitivity sweeps identify the
   GPU and DSP per-instruction/per-access timing as the levers actually on
   the critical path — the 68000 is not. That work is scoped as the next step
   and tracked in `docs/doom-pace-calibration.md`; it did not make this
@@ -215,18 +225,27 @@ gate that actually blocks.
   landmark itself is missing, not recoverable by offset correction. V3.5
   images and self-generated (`cue2cdi`) images are unaffected; 10/14 of the
   local CDI corpus pass.
+- **Savestates from cores older than `STATE_MIN_VERSION` are rejected**
+  (#268) — pre-v2 states from far older builds cannot be migrated. States
+  from the v2.x line load normally.
 - **Alien vs Predator**: a green-dot / green title-bar-area artifact is still
-  unreproduced (#266); a related brown-bar-vs-shotgun red background report
-  (#267) is also open. Both are narrower follow-ups split from the original
+  unreproduced (#266); a red-background-behind-the-shotgun report (#267) is
+  also open. Both are narrower follow-ups split from the original
   #178 umbrella, which is otherwise resolved.
 - **FMV scene-jump drift**: Dragon's Lair, Space Ace, and BrainDead 13
   occasionally jump cutscenes early or late in HLE mode — their own
   delivery-clock counters drift relative to our transfer pacing. Reproducible
   and understood; not yet fixed. Real-BIOS mode is unaffected.
-- **Doom** still runs its combat/monster pacing too fast (~1.5-2x); this is
-  a known, understood gap — see "Performance / experimental" above and
-  `docs/doom-pace-calibration.md`. Doom's demo/in-game music silence is
+- **Doom** still runs its combat/monster pacing too fast (~1.5x typical, 2x
+  in heavy scenes); this is a known, understood gap — see "Performance /
+  experimental" above and `docs/doom-pace-calibration.md`. Doom's demo/in-game music silence is
   authentic to the original hardware, not a bug.
+- **Iron Soldier (cart)**: the wireframe tank is still missing under the
+  fast blitter (#186 class); the accurate blitter is unaffected.
+- **Battle Sphere Gold**: menu text renders too dark to read. The glyphs
+  arrive already dark from the game's own pre-shading path — the blitter has
+  been exonerated — and the writer routine is still under investigation.
+  Networked lobby entry is unaffected.
 - **Tempest 2000** (#187) and the AvP items above are not independently
   device-verified this cycle; treat as believed-fixed pending confirmation.
 - The accurate blitter remains notably slower than the fast blitter; some
@@ -248,19 +267,19 @@ Pre-built libretro cores for 16 platforms:
 - Windows: x86_64, i686 (MSYS2/MinGW)
 - iOS: arm64; tvOS: arm64
 - Android: arm64-v8a, armeabi-v7a, x86_64, x86
-- Web: Emscripten WASM
+- Web: Emscripten (bitcode for WASM builds)
 - Consoles: PS Vita, Nintendo Switch
 
-Each binary has a matching `*-debug.tar.gz` with split debug symbols.
-SHA256 checksums in `SHA256SUMS.txt`.
+Each binary has a matching debug artifact (`*-debug.tar.gz`): split debug
+symbols where the toolchain supports it (`.debug` / `.dSYM`); the Emscripten
+target ships its bitcode directly. SHA256 checksums in `SHA256SUMS.txt`.
 
 ## Credits
 
 Thanks to the community members who filed and helped diagnose issues fixed
 this cycle, including reports that led to the Pitfall (#138), Tempest 2000
 (#187), Alien vs Predator (#178), and CD compatibility (#230, #233) fixes,
-and to everyone who ran the Wi-Fi/netplay latency reports that shaped the
-netlink transport fixes (#248, #250).
+and to everyone who reported and re-tested the Wi-Fi netplay lag.
 
 This release builds on the original Virtual Jaguar emulator and its
 contributors, and on hardware documentation cross-referenced against the
