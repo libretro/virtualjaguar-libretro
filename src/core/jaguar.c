@@ -810,7 +810,7 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
     * specific but the log line is harmless elsewhere (rare false hits at
     * worst).  Remove with the rest of the CDDA-DIAG layer when resolved. */
    if (addr == 0xF1B274 && data != 0)
-      LOG_INF("[CDDA] DSP mailbox $F1B274 = %08X who=%u 68kpc=$%06X\n",
+      LOG_DBG("[CDDA] DSP mailbox $F1B274 = %08X who=%u 68kpc=$%06X\n",
               data, who, m68k_get_reg(NULL, M68K_REG_PC));
    if (addr < 0x200000)
    {

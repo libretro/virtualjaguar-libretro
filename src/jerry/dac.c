@@ -301,7 +301,7 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       /* CDDA-DIAG: SMODE master/slave switches are the CD_jeri fingerprint
        * (doc 06 p.7: slave $14 = CD data flows to the I2S port). Rare. */
       if ((*smode ^ data) & 0x01)
-         LOG_INF("[CDDA] SMODE $%04X -> $%04X (%s)\n", *smode, data,
+         LOG_DBG("[CDDA] SMODE $%04X -> $%04X (%s)\n", *smode, data,
                  (data & 0x01) ? "INTERNAL/master" : "slave: CD -> I2S");
       *smode = data;
       /* The resample ratio depends on master/slave (see DACUpdateSCLKRate) */
@@ -330,7 +330,7 @@ uint16_t DACReadWord(uint32_t offset, uint32_t who)
       static uint32_t lrxdReads = 0;
       lrxdReads++;
       if (lrxdReads <= 5 || (lrxdReads % 100000) == 0)
-         LOG_INF("[CDDA] LRXD read #%u val=$%04X who=%u\n", lrxdReads, lrxd, who);
+         LOG_DBG("[CDDA] LRXD read #%u val=$%04X who=%u\n", lrxdReads, lrxd, who);
       return lrxd;
    }
    else if (offset == RRXD + 2)

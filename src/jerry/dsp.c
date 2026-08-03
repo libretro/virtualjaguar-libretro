@@ -596,7 +596,7 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          static uint32_t mboxWrites = 0;
          mboxWrites++;
          if (mboxWrites <= 40 || (mboxWrites % 10000) == 0)
-            LOG_INF("[CDDA] DSP mailbox write.w $%06X = $%04X who=%u 68kpc=$%06X\n",
+            LOG_DBG("[CDDA] DSP mailbox write.w $%06X = $%04X who=%u 68kpc=$%06X\n",
                     offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
          /* One-shot main-RAM snapshot at the mix-ON edge so the transient
           * music-player overlay around the writer PC can be disassembled.
@@ -616,7 +616,7 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
                {
                   fwrite(jaguarMainRAM, 1, 0x200000, f);
                   fclose(f);
-                  LOG_INF("[CDDA] snapshot: %s\n", path);
+                  LOG_DBG("[CDDA] snapshot: %s\n", path);
                }
             }
          }
@@ -669,7 +669,7 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
          static uint32_t mboxWritesL = 0;
          mboxWritesL++;
          if (mboxWritesL <= 40 || (mboxWritesL % 10000) == 0)
-            LOG_INF("[CDDA] DSP mailbox write $%06X = $%08X who=%u 68kpc=$%06X\n",
+            LOG_DBG("[CDDA] DSP mailbox write $%06X = $%08X who=%u 68kpc=$%06X\n",
                     offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
       }
       offset -= DSP_WORK_RAM_BASE;
