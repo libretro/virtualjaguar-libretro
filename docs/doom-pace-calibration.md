@@ -709,9 +709,9 @@ model will legitimately render it faster than 20 fps.
 Guard against overshoot in both directions: demo 1 longer than ~45 s, or a
 gameplay mode of gap-4, means the engine is now slower than silicon.
 
-### Open cross-check to hand to the user
+### Open cross-check for a hardware owner
 
-Neither captured clip contains the attract demo, and the user's device
+Neither captured clip contains the attract demo, and the reported device
 impression was that the *demo* pace looks right while in-game monsters are too
 fast. Under §1.4 the demo's apparent speed is also proportional to render rate,
 so if silicon runs the demo at 20 fps it should look 1.5x fast to us too. One

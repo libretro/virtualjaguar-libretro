@@ -339,8 +339,8 @@ layout produced by the real CD BIOS's own $2C00 TOC builder (disasm ROM
 `byte[1..3]=start MSF`, `byte[4]=0-based session`). The old standalone
 zero-longword marker slot terminated Baldies' `$4E18` scan early (deliberate
 ILLEGAL) and left every `byte[4]` zero so the session-key match was
-impossible; both defects fixed. Full derivation + RED/GREEN contract test in
-`.superpowers/sdd/task-6d-report.md`.
+impossible; both defects fixed. The derivation is captured by the RED/GREEN contract test
+`test/test_cd_toc_contract.c`.
 Boot-mode determination: **outcome (c)** — `$2C00` is PRNG garbage at injection
 time (the BIOS TOC builder never runs under the auth-bypass boot), so the
 injected table must be correct itself.
@@ -582,8 +582,7 @@ two boot stubs), which the 32-byte dump cannot distinguish.
 #### Task 6B update — premise OVERTURNED by instruction-level disasm; this is a MASK, real cause is the $2C00 TOC
 
 The Task-6 REQUIREMENT (disasm before trusting RTE stubs) was carried out.
-It **rejects** the "populate vectors" fix for these two titles. Full trace in
-`.superpowers/sdd/task-6b-report.md`; essentials:
+It **rejects** the "populate vectors" fix for these two titles. Essentials:
 
 - `prev_pc=$8020A2` is a **red herring**: the harness samples PC once per
   frame (`test_cd_bios_boot.c:198,255`), so it only means "the 68K was in
@@ -764,7 +763,7 @@ regressed nor advanced -- the "Baldies shares the heuristic" hypothesis is
 
 Seven rows deleted + re-run after `fix(gpu): don't clobber IRQ dispatch
 raised in a branch delay slot` (3000 frames, same knobs). Root cause and
-byte-level evidence in `.superpowers/sdd/task-8-second-wedge-report.md`:
+byte-level evidence in `docs/cd-diagnosis/braindead13-second-wedge-diagnosis.md`:
 the CD streaming ISR epilogue (`JUMP T,(Rret)` with an IMASK-clearing
 G_FLAGS store in the delay slot) had its interrupt dispatch overwritten by
 `gpu_opcode_jump/jr` applying the branch target after the delay slot ran --

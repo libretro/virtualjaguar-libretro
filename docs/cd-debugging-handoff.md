@@ -171,8 +171,8 @@ PASS in this effort — see the SKIP≠PASS fix in `test/test_framework.h`.
 ### Test material (`test/roms/private/`, gitignored)
 CUE/BIN: Baldies, Battle Morph, BrainDead 13, Dragon's Lair, Highlander, Hover Strike, Iron Soldier 2, Primal Rage, Space Ace. Also `baldies.cdi`, loose ISOs (non-bootable — documented), `Jaguar CD BIOS.rom`, `[BIOS] Atari Jaguar CD (World).j64`, `jagboot.rom`, and ~25 cart ROMs for regression/blast-radius testing.
 
-### Local-only diagnosis writeups
-`.superpowers/sdd/` is **gitignored** (present on this machine only): `task-7-streaming-wall-report.md` (FIFO phase), `task-8-second-wedge-report.md` (delay-slot IRQ + GPU engine disasm), `task-9-fmv-stall-report.md` (**the §4 lost-wakeup diagnosis, 261 lines**), `braindead-device-trace.txt` / `-2.txt` (real iOS traces). Everything load-bearing is distilled above and in `cd-boot-matrix.md`.
+### Diagnosis writeups
+The full per-wall diagnoses live in `docs/cd-diagnosis/`: `cd-streaming-wall-diagnosis.md` (FIFO phase), `braindead13-second-wedge-diagnosis.md` (delay-slot IRQ + GPU engine disasm), `fmv-stall-diagnosis.md` (the §4 lost-wakeup diagnosis), plus `braindead-device-trace.txt` / `-2.txt` (real iOS traces). Everything load-bearing is also distilled above and in `cd-boot-matrix.md`.
 
 ## 7. Working rules (learned the hard way)
 

@@ -101,9 +101,9 @@ audio cues).
    Disassemble the 68K around the storm's Goto sender (BIOS service band;
    the caller retries every ~430 ticks).
 
-## Tooling notes for whoever continues
+## Tooling notes
 
-- DSP RAM dump + disassembler: scratchpad `dlair_wedge.c` probe dumps
+- DSP RAM dump + disassembler: the local `dlair_wedge.c` probe dumps
   `dspram.bin`/`gpuram.bin`/`mainram.bin`; the throwaway RISC disassembler
   used in this diagnosis is a ~40-line python (opcode table order = gpu.c
   `gpu_opcode[64]`; MOVEI imm is low-word-first).

@@ -1,9 +1,7 @@
-# Task 7 report — the streaming wall: FIFO longword grouping phase (+ drain starvation)
+# The CD streaming wall: FIFO longword grouping phase (+ drain starvation)
 
-Branch `feature/jaguar-cd-support`, main checkout.
-Fix commit: `09a62d6 fix(cd): start FIFO word stream one 16-bit word into the sector`
-(committed by the user from my in-flight tree; content verified == intended fix, no stray
-instrumentation). Follow-up commit (this report + refreshed matrix rows): see below.
+Diagnosis written on `feature/jaguar-cd-support`.
+Fix commit: `09a62d6 fix(cd): start FIFO word stream one 16-bit word into the sector`.
 
 ## Outcome
 
@@ -71,7 +69,7 @@ Eliminations, in evidence order:
 Plus a diag accessor `CDROMDiagGetFirstSeekBlock()` (cdrom.c/h; reset in
 `CDROMReset`) used by the new contract test. **No savestate changes.**
 
-## Byte-compare evidence (the definitive test the dispatch asked for)
+## Byte-compare evidence (the definitive test)
 
 Expected: BIN track 31, LBA 117224, post-sync byte 106 (I2S-unswapped):
 `4E F9 00 00 40 18 00 7B …` (JMP $4018 — matches the HLE oracle's $4000 dump exactly).
@@ -113,7 +111,7 @@ bytes appear contiguously in main RAM.
 | Primal Rage | hle | GAME_CODE $00419E | unchanged | control ✓ |
 | Iron Soldier 2 | hle | FAIL $007416 (pre-existing) | unchanged | control ✓ |
 
-## Self-review
+## Evidence review
 
 - Every claim traced to primary evidence: seek math from the trace ring both modes;
   word stream from FIFO pop instrumentation (since reverted); ISR semantics from the
@@ -124,8 +122,8 @@ bytes appear contiguously in main RAM.
   model); HLE path untouched; cart path untouched; no savestate fields.
 - Temp instrumentation (TDIAG stderr taps, exports-test.list `_CDTrace*`) all
   reverted before commit; `git show 09a62d6` reviewed clean.
-- Matrix honest: 2 of 4 targets moved, 2 recorded unchanged with their real
-  (different) blocker named; 3 controls byte-identical.
+- Matrix: 2 of 4 targets moved, 2 recorded unchanged with their real (different)
+  blocker named; 3 controls byte-identical.
 
 ## Concerns / next blockers
 
@@ -133,7 +131,7 @@ bytes appear contiguously in main RAM.
    game code runs, the second CD_read (DDL5, seek 127506) transfer freezes with
    gpu_pc=$F03168 (DSARX-handler region) and fifo_drains frozen. Likely a
    DSA-response / I2S-re-enable state issue on *repeat* reads, not phase (127516's
-   sync is also byte≡2 mod 4). Deserves its own task.
+   sync is also byte≡2 mod 4). Deserves its own investigation.
 2. **Highlander / IS2 (bios)** stall *before* any sentinel scan (drains freeze at
    54/0, gpu_pc $F0307E/$F03068) — a different engine or an earlier handshake;
    unaffected by this fix, needs separate diagnosis.
