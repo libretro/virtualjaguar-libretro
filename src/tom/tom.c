@@ -1371,7 +1371,7 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
        * cdrom.c BUTCHExec). Edges are rare; log unconditionally. */
       static uint8_t tomPrevInt1Ena = 0;
       if ((tomPrevInt1Ena ^ data) & 0x10)
-         LOG_INF("[CDDA] INT1 C_JERENA %s (INT1=$%02X who=%u 68kpc=$%06X)\n",
+         LOG_DBG("[CDDA] INT1 C_JERENA %s (INT1=$%02X who=%u 68kpc=$%06X)\n",
                  (data & 0x10) ? "ON" : "OFF", data, who,
                  m68k_get_reg(NULL, M68K_REG_PC));
       tomPrevInt1Ena = data;

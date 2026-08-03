@@ -1059,7 +1059,7 @@ void BUTCHExec(uint32_t cycles)
             static uint32_t cddaEdgeCount = 0;
             cddaEdgeCount++;
             if (cddaEdgeCount <= 20 || (cddaEdgeCount % 5000) == 0)
-               LOG_INF("[CDDA] BUTCH IRQ edge #%u tom=%d jerryExt=%d "
+               LOG_DBG("[CDDA] BUTCH IRQ edge #%u tom=%d jerryExt=%d "
                        "fifoReady=%d dsaReady=%d butch=$%08X tick=%u%s\n",
                        cddaEdgeCount, tomEna, jerEna,
                        fifoDataReady, dsaResponseReady, butchWrite,
@@ -1611,7 +1611,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             static uint32_t cddaCmdCount = 0;
             cddaCmdCount++;
             if (cddaCmdCount <= 40 || (cddaCmdCount % 500) == 0)
-               LOG_INF("[CDDA] DSA cmd $%04X #%u tick=%u block=%u i2s=$%02X\n",
+               LOG_DBG("[CDDA] DSA cmd $%04X #%u tick=%u block=%u i2s=$%02X\n",
                        data, cddaCmdCount, diag_butchExecCalls, block,
                        cdRam[I2CNTRL + 3]);
          }
@@ -1869,7 +1869,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             static uint32_t setModeCount = 0;
             setModeCount++;
             if (setModeCount <= 40 || (setModeCount % 500) == 0)
-               LOG_INF("[CD-MODE] Set Mode $%04X #%u -> speed=%s mode=%s "
+               LOG_DBG("[CD-MODE] Set Mode $%04X #%u -> speed=%s mode=%s "
                        "rate=%lu B/s tick=%u block=%u\n",
                        data, setModeCount, why,
                        (data & 0x08) ? "data" : "audio",
