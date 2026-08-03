@@ -17,6 +17,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "bus_arbiter.h"
 #include "gpu.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
@@ -374,6 +375,13 @@ void OPProcessList(int halfline, bool render)
                      uint64_t p1 = OPLoadPhrase(oldOPP | 0x08);
                      uint64_t p2 = OPLoadPhrase(oldOPP | 0x10);
                      op_pointer += 16;
+                     /* Streaming this object's pixel data moves the
+                      * DRAM row off the object list and back once per
+                      * rendered object per line; the phrase fetches
+                      * themselves are charged page-mode centrally in
+                      * JaguarReadLong/JaguarWriteLong. */
+                     if (busArbiter.enabled)
+                        bus_arbiter_op_charge(2u * busArbiter.dram_row_miss);
                      OPProcessFixedBitmap(p0, p1, render);
 
                      // OP write-backs
@@ -419,6 +427,13 @@ void OPProcessList(int halfline, bool render)
                      op_pointer += 8;
                      p2 = OPLoadPhrase(op_pointer);
                      op_pointer += 8;
+                     /* Streaming this object's pixel data moves the
+                      * DRAM row off the object list and back once per
+                      * rendered object per line; the phrase fetches
+                      * themselves are charged page-mode centrally in
+                      * JaguarReadLong/JaguarWriteLong. */
+                     if (busArbiter.enabled)
+                        bus_arbiter_op_charge(2u * busArbiter.dram_row_miss);
                      OPProcessScaledBitmap(p0, p1, p2, render);
 
                      // OP write-backs

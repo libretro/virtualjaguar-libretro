@@ -32,6 +32,10 @@ static const uint8_t dram_row_miss_table[4] = { 7, 7, 5, 3 };
 static const uint8_t rom_speed_table[4] = { 10, 8, 6, 5 };
 #define ROM_FASTROM_CLOCKS 2
 
+/* DRAMSPEED field -> cost of one refresh cycle in system clocks (the
+ * "refresh" column of the JTRM MEMCON1 table, transcribed above). */
+static const uint8_t dram_refresh_table[4] = { 5, 4, 4, 3 };
+
 /* 68K access to GPU/DSP local RAM (an I/O-bus transaction for the 68K,
  * free for the owning RISC's internal bus) and to TOM/JERRY registers.
  * Estimate only: no JTRM figure was found for 68K/RISC-local-RAM access
@@ -46,6 +50,9 @@ void bus_arbiter_init(void)
      * ROMSPEED=0, FASTROM=0 -> rom_clocks 10. */
     busArbiter.dram_row_miss = 3;
     busArbiter.rom_clocks = 10;
+    busArbiter.dram_refresh_clks = 3;
+    /* Match TOM reset MEMCON2 = 0x35CC: REFRATE = 5. */
+    busArbiter.refrate = 5;
     /* Default OFF: timing modeling is experimental and must be a
      * zero-behavior-change opt-in.  check_variables() enables it when
      * the virtualjaguar_dram_timing core option is set. */
@@ -62,6 +69,7 @@ void bus_arbiter_update_memcon(uint16_t memcon1)
     busArbiter.dram_row_miss = dram_row_miss_table[dramspeed];
     busArbiter.rom_clocks = (memcon1 & 0x80) ? ROM_FASTROM_CLOCKS
                                               : rom_speed_table[romspeed];
+    busArbiter.dram_refresh_clks = dram_refresh_table[dramspeed];
 }
 
 uint32_t bus_arbiter_dram_cost(uint32_t addr)
@@ -129,4 +137,39 @@ uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses)
     cycles = busArbiter.m68k_sysclk_carry >> 1;
     busArbiter.m68k_sysclk_carry &= 1;
     return cycles;
+}
+
+void bus_arbiter_update_memcon2(uint16_t memcon2)
+{
+    busArbiter.refrate = (memcon2 >> 8) & 0x0F;
+}
+
+void bus_arbiter_op_charge(uint32_t sysclks)
+{
+    busArbiter.op_clk_accum += sysclks;
+}
+
+uint32_t bus_arbiter_op_take(void)
+{
+    uint32_t clks;
+    clks = busArbiter.op_clk_accum;
+    busArbiter.op_clk_accum = 0;
+    if (busArbiter.contention_scale > 1)
+        clks *= busArbiter.contention_scale;
+    return clks;
+}
+
+uint32_t bus_arbiter_refresh_clocks(uint32_t elapsed_sysclks)
+{
+    uint32_t period, nrefresh, clks;
+    if (busArbiter.refrate == 0)
+        return 0;
+    period = 64u * (uint32_t)(busArbiter.refrate + 1);
+    busArbiter.refresh_clk_carry += elapsed_sysclks;
+    nrefresh = busArbiter.refresh_clk_carry / period;
+    busArbiter.refresh_clk_carry -= nrefresh * period;
+    clks = nrefresh * busArbiter.dram_refresh_clks;
+    if (busArbiter.contention_scale > 1)
+        clks *= busArbiter.contention_scale;
+    return clks;
 }
