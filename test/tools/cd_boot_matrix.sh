@@ -99,7 +99,7 @@ fi
 
 # The harnesses dlsym() CDROMDiagGetCounters; a plain `make` (no
 # TEST_EXPORTS=1) relinks against the slim production export list and
-# silently drops it (bit Task 2 of this plan -- see task-2-report.md).
+# silently drops it, and every dlsym-based assertion then reports SKIP.
 if command -v nm >/dev/null 2>&1; then
     if ! nm -gU "$DYLIB" 2>/dev/null | grep -q CDROMDiagGetCounters; then
         echo "$DYLIB is missing test-export symbols -- rebuilding with TEST_EXPORTS=1..." >&2
@@ -384,7 +384,7 @@ pc_summary_of() {
 #
 # The 9 CUE titles are exactly the set test_cd_hle_boot / test_cd_bios_boot
 # already discover by default (VJ_TEST_CD_EXTS defaults to "cue") -- this
-# matches the Task 2 per-title baseline one-for-one. CDI (baldies.cdi) and
+# matches the recorded per-title baseline one-for-one. CDI (baldies.cdi) and
 # one loose ISO (Primal Rage) are opt-in via VJ_TEST_CD_EXTS, per
 # test/cd_assertions.h's own documented rationale (CDI parser has a known
 # crasher; ISO boot is a documented, permanent limitation -- ISO images

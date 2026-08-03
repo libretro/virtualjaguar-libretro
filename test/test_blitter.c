@@ -335,7 +335,7 @@ int main(int argc, char *argv[])
     RUN_TEST(blit_dstd_write_read);
 
     /* Operations — fill hangs in headless (blitter never returns from B_CMD write) */
-    SKIP_TEST(blit_fill_operation, "hangs in headless — blitter execution never completes");
+    SKIP_TEST(blit_fill_operation, "hangs in headless -- blitter execution never completes");
 
     /* Intensity/Z registers */
     RUN_TEST(blit_iinc_write_read);

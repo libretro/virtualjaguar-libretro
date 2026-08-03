@@ -190,7 +190,7 @@ int main(int argc, char **argv)
     run_frame = (retro_run_t)harness_dlsym(&cfg, "retro_run");
     if (!jerry_ww || !jerry_rw || !jlink_connected || !rx_total || !run_frame)
     {
-        fprintf(stderr, "[%s] symbols missing — build with TEST_EXPORTS=1\n",
+        fprintf(stderr, "[%s] symbols missing -- build with TEST_EXPORTS=1\n",
                 role);
         return 1;
     }

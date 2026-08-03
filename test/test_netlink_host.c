@@ -63,7 +63,7 @@ static int run_case(int argc, char **argv, const char *rom,
     get_host = (get_host_t)harness_dlsym(&cfg, "JLinkGetTCPHost");
     if (!get_host)
     {
-        fprintf(stderr, "JLinkGetTCPHost not exported — build with "
+        fprintf(stderr, "JLinkGetTCPHost not exported -- build with "
                         "TEST_EXPORTS=1\n");
         harness_shutdown(&cfg);
         return 0;

@@ -30,7 +30,7 @@ void ResolveBootConfig(struct BootConfig *cfg,
    {
       cfg->showBootROM = userWantsBIOS;
       cfg->strategy    = &cd_boot_strategy_cart;
-      LOG_INF("[BOOT] Cart game — showBootROM=%d\n", cfg->showBootROM);
+      LOG_INF("[BOOT] Cart game -- showBootROM=%d\n", cfg->showBootROM);
       return;
    }
 
@@ -48,7 +48,7 @@ void ResolveBootConfig(struct BootConfig *cfg,
          cfg->showBootROM = true;
          cfg->strategy    = &cd_boot_strategy_bios;
          if (!userWantsBIOS)
-            LOG_INF("[BOOT] CD game, mode=BIOS — boot ROM forced on "
+            LOG_INF("[BOOT] CD game, mode=BIOS -- boot ROM forced on "
                     "(required by real CD BIOS path)\n");
          LOG_INF("[BOOT] CD game, mode=BIOS (BIOS image staged)\n");
       }
@@ -56,7 +56,7 @@ void ResolveBootConfig(struct BootConfig *cfg,
       {
          cfg->showBootROM = false;
          cfg->strategy    = &cd_boot_strategy_hle;
-         LOG_WRN("[BOOT] CD game, mode=BIOS but no BIOS file found — "
+         LOG_WRN("[BOOT] CD game, mode=BIOS but no BIOS file found -- "
                  "falling back to HLE\n");
       }
       break;
@@ -68,15 +68,15 @@ void ResolveBootConfig(struct BootConfig *cfg,
          cfg->showBootROM = true;
          cfg->strategy    = &cd_boot_strategy_bios;
          if (!userWantsBIOS)
-            LOG_INF("[BOOT] CD game, mode=AUTO — boot ROM forced on "
+            LOG_INF("[BOOT] CD game, mode=AUTO -- boot ROM forced on "
                     "(required by real CD BIOS path)\n");
-         LOG_INF("[BOOT] CD game, mode=AUTO — using real BIOS\n");
+         LOG_INF("[BOOT] CD game, mode=AUTO -- using real BIOS\n");
       }
       else
       {
          cfg->showBootROM = false;
          cfg->strategy    = &cd_boot_strategy_hle;
-         LOG_INF("[BOOT] CD game, mode=AUTO — no BIOS, using HLE\n");
+         LOG_INF("[BOOT] CD game, mode=AUTO -- no BIOS, using HLE\n");
       }
       break;
    }

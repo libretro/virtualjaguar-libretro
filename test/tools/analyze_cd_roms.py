@@ -12,7 +12,7 @@ import sys
 import os
 from collections import defaultdict
 
-# ── BIOS Jump Table Addresses ──────────────────────────────────────────────
+# --- BIOS Jump Table Addresses ---
 BIOS_FUNCTIONS = {
     0x3006: "CD_init",
     0x300C: "CD_ack",
@@ -29,7 +29,7 @@ BIOS_FUNCTIONS = {
 # Extend with more known BIOS entry points seen in code
 BIOS_RANGE = range(0x3000, 0x3E00)
 
-# ── 68K Instruction Patterns ──────────────────────────────────────────────
+# --- 68K Instruction Patterns ---
 
 # Register names
 DREGS = ["D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7"]
@@ -78,7 +78,7 @@ class M68KDisassembler:
 
         info = {}
 
-        # ── JSR ────────────────────────────────────────────────────────
+        # --- JSR ---
         # 4E80-4EBF: JSR <ea>
         if (w & 0xFFC0) == 0x4E80:
             mode = (w >> 3) & 7
@@ -116,7 +116,7 @@ class M68KDisassembler:
                 ea = decode_ea_mode(mode, reg)
                 return f"JSR {ea}", 2 if mode < 5 else 4, info
 
-        # ── JMP ────────────────────────────────────────────────────────
+        # --- JMP ---
         if (w & 0xFFC0) == 0x4EC0:
             mode = (w >> 3) & 7
             reg = w & 7
@@ -139,7 +139,7 @@ class M68KDisassembler:
                 ea = decode_ea_mode(mode, reg)
                 return f"JMP {ea}", 2 if mode < 5 else 4, info
 
-        # ── BSR ────────────────────────────────────────────────────────
+        # --- BSR ---
         if (w & 0xFF00) == 0x6100:
             disp = w & 0xFF
             if disp == 0:
@@ -157,7 +157,7 @@ class M68KDisassembler:
                 info = {"type": "BSR", "target": target}
                 return f"BSR.B $%06X" % target, 2, info
 
-        # ── MOVEQ ─────────────────────────────────────────────────────
+        # --- MOVEQ ---
         if (w & 0xF100) == 0x7000:
             dreg = (w >> 9) & 7
             imm = w & 0xFF
@@ -166,7 +166,7 @@ class M68KDisassembler:
             info = {"type": "MOVEQ", "reg": f"D{dreg}", "value": imm & 0xFF}
             return f"MOVEQ #$%02X,D{dreg}" % (imm & 0xFF), 2, info
 
-        # ── MOVE.L #imm,Dn (or An) ────────────────────────────────────
+        # --- MOVE.L #imm,Dn (or An) ---
         # 2x3C = MOVE.L #imm,Dn  (opcode 0010 xxx0 0011 1100)
         if (w & 0xF1FF) == 0x203C:
             dreg = (w >> 9) & 7
@@ -175,7 +175,7 @@ class M68KDisassembler:
                 info = {"type": "MOVE.L_IMM", "reg": f"D{dreg}", "value": imm}
                 return f"MOVE.L #$%08X,D{dreg}" % imm, 6, info
 
-        # ── MOVE.W #imm (to various) ──────────────────────────────────
+        # --- MOVE.W #imm (to various) ---
         # 303C = MOVE.W #imm,D0 (etc)
         if (w & 0xF1FF) == 0x303C:
             dreg = (w >> 9) & 7
@@ -184,7 +184,7 @@ class M68KDisassembler:
                 info = {"type": "MOVE.W_IMM", "reg": f"D{dreg}", "value": imm}
                 return f"MOVE.W #$%04X,D{dreg}" % imm, 4, info
 
-        # ── MOVE.B #imm ───────────────────────────────────────────────
+        # --- MOVE.B #imm ---
         if (w & 0xF1FF) == 0x103C:
             dreg = (w >> 9) & 7
             imm = self.read16(offset + 2)
@@ -192,7 +192,7 @@ class M68KDisassembler:
                 info = {"type": "MOVE.B_IMM", "reg": f"D{dreg}", "value": imm & 0xFF}
                 return f"MOVE.B #$%02X,D{dreg}" % (imm & 0xFF), 4, info
 
-        # ── LEA addr,An ───────────────────────────────────────────────
+        # --- LEA addr,An ---
         # LEA (abs.l),An = 41F9/43F9/45F9/47F9/49F9/4BF9/4DF9/4FF9
         if (w & 0xF1FF) == 0x41F9:
             areg = (w >> 9) & 7
@@ -213,7 +213,7 @@ class M68KDisassembler:
                 info = {"type": "LEA_W", "reg": f"A{areg}", "value": addr32}
                 return f"LEA ($%04X).w,A{areg}" % addr, 4, info
 
-        # ── MOVEA.L ────────────────────────────────────────────────────
+        # --- MOVEA.L ---
         # 207C = MOVEA.L #imm,A0; 227C = A1; etc.
         if (w & 0xF1FF) == 0x207C:
             areg = (w >> 9) & 7
@@ -222,7 +222,7 @@ class M68KDisassembler:
                 info = {"type": "MOVEA.L", "reg": f"A{areg}", "value": imm}
                 return f"MOVEA.L #$%08X,A{areg}" % imm, 6, info
 
-        # ── MOVE.L abs,abs (23FC = MOVE.L #imm,abs.l) ────────────────
+        # --- MOVE.L abs,abs (23FC = MOVE.L #imm,abs.l) ---
         if w == 0x23FC:
             imm = self.read32(offset + 2)
             addr = self.read32(offset + 6)
@@ -230,7 +230,7 @@ class M68KDisassembler:
                 info = {"type": "MOVE.L_ABS", "value": imm, "addr": addr}
                 return f"MOVE.L #$%08X,($%08X).l" % (imm, addr), 10, info
 
-        # ── MOVE.W #imm,abs.l (33FC) ────────────────────────────────
+        # --- MOVE.W #imm,abs.l (33FC) ---
         if w == 0x33FC:
             imm = self.read16(offset + 2)
             addr = self.read32(offset + 4)
@@ -238,7 +238,7 @@ class M68KDisassembler:
                 info = {"type": "MOVE.W_ABS", "value": imm, "addr": addr}
                 return f"MOVE.W #$%04X,($%08X).l" % (imm, addr), 8, info
 
-        # ── ADDA.L #imm,An (D1FC) ────────────────────────────────────
+        # --- ADDA.L #imm,An (D1FC) ---
         if (w & 0xF1FF) == 0xD1FC:
             areg = (w >> 9) & 7
             imm = self.read32(offset + 2)
@@ -246,7 +246,7 @@ class M68KDisassembler:
                 info = {"type": "ADDA.L", "reg": f"A{areg}", "value": imm}
                 return f"ADDA.L #$%08X,A{areg}" % imm, 6, info
 
-        # ── MOVE.L Dn/An,abs (23Cx) ──────────────────────────────────
+        # --- MOVE.L Dn/An,abs (23Cx) ---
         if (w & 0xFFC0) == 0x23C0:
             sreg = w & 0xF
             addr = self.read32(offset + 2)
@@ -255,25 +255,25 @@ class M68KDisassembler:
                 info = {"type": "MOVE_REG_ABS", "reg": rname, "addr": addr}
                 return f"MOVE.L {rname},($%08X).l" % addr, 6, info
 
-        # ── RTS ────────────────────────────────────────────────────────
+        # --- RTS ---
         if w == 0x4E75:
             return "RTS", 2, {"type": "RTS"}
 
-        # ── NOP ────────────────────────────────────────────────────────
+        # --- NOP ---
         if w == 0x4E71:
             return "NOP", 2, {"type": "NOP"}
 
-        # ── RTE ────────────────────────────────────────────────────────
+        # --- RTE ---
         if w == 0x4E73:
             return "RTE", 2, {"type": "RTE"}
 
-        # ── SR manipulation ────────────────────────────────────────────
+        # --- SR manipulation ---
         if w == 0x46FC:
             imm = self.read16(offset + 2)
             if imm is not None:
                 return f"MOVE #$%04X,SR" % imm, 4, {"type": "MOVE_SR"}
 
-        # ── Bcc / BRA ─────────────────────────────────────────────────
+        # --- Bcc / BRA ---
         cond_names = {0:"BRA",1:"BSR",2:"BHI",3:"BLS",4:"BCC",5:"BCS",
                       6:"BNE",7:"BEQ",8:"BVC",9:"BVS",10:"BPL",11:"BMI",
                       12:"BGE",13:"BLT",14:"BGT",15:"BLE"}
@@ -294,7 +294,7 @@ class M68KDisassembler:
                 target = (self.base + offset + 2 + disp) & 0xFFFFFFFF
                 return f"{cname}.B $%06X" % target, 2, {"type": "BCC", "target": target}
 
-        # ── Fallback ──────────────────────────────────────────────────
+        # --- Fallback ---
         return f"DC.W $%04X" % w, 2, {"type": "unknown", "word": w}
 
 
@@ -310,7 +310,7 @@ def analyze_file(filepath):
     print(f"Size: {size} bytes ({size:#x})")
     print(f"{'='*78}")
 
-    # ── Determine load address and file type ──────────────────────────
+    # --- Determine load address and file type ---
     # Check first bytes for header patterns
     first4 = struct.unpack(">I", data[:4])[0] if len(data) >= 4 else 0
     first2 = struct.unpack(">H", data[:2])[0] if len(data) >= 2 else 0
@@ -372,7 +372,7 @@ def analyze_file(filepath):
     if entry_point is not None:
         print(f"Entry point: ${entry_point:08X}")
 
-    # ── Scan for BIOS jump table references ──────────────────────────
+    # --- Scan for BIOS jump table references ---
     disasm = M68KDisassembler(data, load_addr)
     bios_calls = []
     all_instructions = []
@@ -409,7 +409,7 @@ def analyze_file(filepath):
 
         offset += size
 
-    # ── Print BIOS call summary ──────────────────────────────────────
+    # --- Print BIOS call summary ---
     print(f"\nBIOS Jump Table Calls Found: {len(bios_calls)}")
     print("-" * 70)
 
@@ -440,14 +440,14 @@ def analyze_file(filepath):
                 marker = ">>>" if i == idx else "   "
                 print(f"    {marker} ${a:06X}: {t}")
 
-    # ── BUTCH register references ────────────────────────────────────
+    # --- BUTCH register references ---
     if butch_refs:
         print(f"\nBUTCH Register References: {len(butch_refs)}")
         print("-" * 70)
         for o, a, t, info in butch_refs:
             print(f"  ${a:06X}: {t}")
 
-    # ── Scan for raw 16-bit values matching BIOS addresses ───────────
+    # --- Scan for raw 16-bit values matching BIOS addresses ---
     # Also find them as data references (not instructions)
     raw_bios_refs = []
     for off in range(0, len(data) - 1, 2):
@@ -466,7 +466,7 @@ def analyze_file(filepath):
         for off, val, name in raw_bios_refs:
             print(f"  offset ${off:06X} (addr ${load_addr+off:06X}): ${val:04X} = {name}")
 
-    # ── First 32 instructions ────────────────────────────────────────
+    # --- First 32 instructions ---
     print(f"\nFirst 40 Instructions (entry point):")
     print("-" * 70)
     for i, (o, a, t, s, inf) in enumerate(all_instructions[:40]):
@@ -604,7 +604,8 @@ def scan_for_jump_table_at(data, base_addr, offset, name):
 
 
 def main():
-    rom_dir = "/Users/jmattiello/Workspace/Provenance/virtualjaguar-libretro/test/roms/private"
+    rom_dir = (sys.argv[1] if len(sys.argv) > 1
+               else os.environ.get("JAGUAR_ROMS_PRIVATE", "test/roms/private"))
 
     files = [
         "CDBYPASS (Symmetry of TNG 2003).prg",
@@ -628,7 +629,7 @@ def main():
             analyze_cd_read_patterns(bios_calls, instructions, fname)
             analyze_bypass_mechanism(instructions, fname)
 
-    # ── Cross-reference summary ──────────────────────────────────────
+    # --- Cross-reference summary ---
     print(f"\n{'='*78}")
     print("CROSS-REFERENCE SUMMARY: BIOS Function Usage")
     print(f"{'='*78}")
@@ -647,7 +648,7 @@ def main():
         for fname, addr in usages:
             print(f"    {fname} @ ${addr:06X}")
 
-    # ── Final analysis ───────────────────────────────────────────────
+    # --- Final analysis ---
     print(f"\n{'='*78}")
     print("CALLING CONVENTION SUMMARY")
     print(f"{'='*78}")

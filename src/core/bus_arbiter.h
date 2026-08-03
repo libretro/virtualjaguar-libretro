@@ -32,7 +32,8 @@
  *     table indexed by DRAMSPEED: { 7, 7, 5, 3 }.
  *   This model uses the row-miss cost as an average DRAM access cost
  *   (2 + row-miss) since GPU/68K access patterns are not tracked for
- *   page-hit/page-miss state — see bus_arbiter_dram_cost().
+ *   page-hit/page-miss state -- see the DRAM cost model in
+ *   bus_arbiter.c.
  */
 #ifndef BUS_ARBITER_H
 #define BUS_ARBITER_H
@@ -125,10 +126,6 @@ uint32_t bus_arbiter_op_take(void);
  * MEMCON2 REFRATE, carrying the sub-period remainder.  Scaled by
  * contention_scale. */
 uint32_t bus_arbiter_refresh_clocks(uint32_t elapsed_sysclks);
-
-/* Return DRAM access cost in system clocks for a given address.
- * Local GPU/DSP RAM returns 0 (no bus transaction). */
-uint32_t bus_arbiter_dram_cost(uint32_t addr);
 
 /* Cost (in system clocks, scaled) the master pays for one access to
  * `addr`.  0 for local RAM. */

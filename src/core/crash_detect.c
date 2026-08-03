@@ -271,8 +271,8 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
     * evaluate this at all.
     *
     * Deliberately broader than "SEEK_START without SEEK_DONE": comparing
-    * fifoDrains instead of seekDones catches both failure shapes Task 5
-    * needs to tell apart -- (a) the seek-completion response never
+    * fifoDrains instead of seekDones catches both CD seek-wedge shapes
+    * that need telling apart -- (a) the seek-completion response never
     * arrives (seekDones stays behind seekStarts, so fifoDrains obviously
     * never advances either), and (b) the seek completes fine but the
     * FIFO continuation dies afterward (seekDones catches up, fifoDrains

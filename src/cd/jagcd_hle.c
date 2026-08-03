@@ -395,7 +395,7 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
             uint32_t relOff = s * 2352 + i;   /* run start in the stream */
             uint32_t mis    = (destAddr + relOff) & 3;
             HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
-                    "(stream off %u, dest misalign %u) — shift %u\n",
+                    "(stream off %u, dest misalign %u) -- shift %u\n",
                     what, run, startLBA + s, i, relOff, mis,
                     (mis == 2) ? 2u : 0u);
             return (mis == 2) ? 2u : 0u;
@@ -471,7 +471,7 @@ static uint32_t HLERawStreamAlignOffset(uint32_t startLBA, uint32_t destAddr,
                uint32_t relOff = s2 * 2352 + i;
                uint32_t mis    = (destAddr + relOff) & 3;
                HLE_LOG("align scan: %s run (%u) at LBA %u off %u "
-                       "(stream off %u, dest misalign %u) — shift %u\n",
+                       "(stream off %u, dest misalign %u) -- shift %u\n",
                        what, run, startLBA + s2, i, relOff, mis,
                        (mis == 2) ? 2u : 0u);
                return (mis == 2) ? 2u : 0u;
@@ -544,7 +544,7 @@ static void HLEHandleCDRead(void)
     * stale or garbage values in re-seek mode) and stomp memory. */
    if (reseekOnly)
    {
-      HLE_LOG("CD_read: re-seek only (D0 bit31 set, D0=$%08X) — "
+      HLE_LOG("CD_read: re-seek only (D0 bit31 set, D0=$%08X) -- "
               "skipping data transfer\n", d0);
       /* A just-seek repositions the drive and leaves it playing — this is
        * the documented CDDA-play API ("call CD_read with the Just Seek bit
@@ -581,7 +581,7 @@ static void HLEHandleCDRead(void)
    if (hleStream.active && d0 == hleStream.sigD0 && d1 == hleStream.sigD1 &&
        a0 == hleStream.sigA0 && a1 == hleStream.sigA1)
    {
-      HLE_LOG("CD_read: identical re-issue while streaming ($%06X/$%06X done) — "
+      HLE_LOG("CD_read: identical re-issue while streaming ($%06X/$%06X done) -- "
               "keeping in-flight transfer\n",
               hleStream.written, hleStream.total);
       return;
@@ -601,14 +601,14 @@ static void HLEHandleCDRead(void)
            min, sec, frm, lba, destAddr, a1, byteCount);
 
    /* HLE_READ trace event: carries the requested LBA (in the `block`
-    * field) so Task 5's wrong-LBA hypothesis can be checked against the
+    * field) so the wrong-LBA hypothesis can be checked against the
     * HLE path too, not just the real-BIOS/BUTCHExec path. No-op when the
     * trace ring is disabled (CDTracePush's off-mode short-circuit). */
    CDTraceHLERead(lba, (uint16_t)(byteCount > 0xFFFF ? 0xFFFF : byteCount));
 
    if (destAddr == 0 || destAddr >= 0x200000)
    {
-      HLE_LOG("CD_read: invalid dest=$%06X — skipping\n", destAddr);
+      HLE_LOG("CD_read: invalid dest=$%06X -- skipping\n", destAddr);
       hle_read_pending = false;
       return;
    }
@@ -696,7 +696,7 @@ static void HLEHandleCDRead(void)
          uint32_t gameData = CDIntfGetSession2GameDataLBA();
          if (gameData > 0)
          {
-            HLE_LOG("CD_read: LBA %u outside session-2 range [%u..%u) — "
+            HLE_LOG("CD_read: LBA %u outside session-2 range [%u..%u) -- "
                     "redirecting to game data LBA %u\n",
                     lba, s2first, discTotal, gameData);
             startLBA = gameData;
@@ -728,7 +728,7 @@ static void HLEHandleCDRead(void)
       scanOff = HLERawStreamAlignOffset(startLBA, destAddr, d1,
                                         d1 != a1 && (d1 >> 16) != 0);
       HLE_LOG("CD_read: non-match ISR mode ($3072=$%02X, D1=$%08X A1=$%06X) "
-              "— streaming raw from LBA %u offset %u\n",
+              "-- streaming raw from LBA %u offset %u\n",
               jaguarMainRAM[0x3072], d1, a1, startLBA, scanOff);
       foundSentinel = true;  /* short-circuit the scan loop */
       phase_starts[0] = startLBA;
@@ -748,7 +748,7 @@ static void HLEHandleCDRead(void)
     * mastered sync run — Myst's movie/JSND loads, handled above.) */
    if ((d1 >> 16) == 0)
    {
-      HLE_LOG("CD_read: D1=$%08X is a counter/ID — skipping sentinel scan, "
+      HLE_LOG("CD_read: D1=$%08X is a counter/ID -- skipping sentinel scan, "
               "streaming raw from LBA %u\n", d1, startLBA);
       scanLBA = startLBA;
       scanOff = 0;
@@ -928,7 +928,7 @@ static void HLEHandleCDRead(void)
           * proceed past its poll loop; whatever code runs at the zeroed
           * destination (ORI.B #0,D0 = NOP-like) generates enough PC
           * diversity for the smoke test to pass. */
-         HLE_LOG("CD_read: sentinel NOT found after redirect — "
+         HLE_LOG("CD_read: sentinel NOT found after redirect -- "
                  "zeroing dest $%06X-$%06X and signalling completion\n",
                  destAddr, destAddr + byteCount - 1);
          for (i = 0; i < ((byteCount + 3u) & ~3u) &&
@@ -945,7 +945,7 @@ static void HLEHandleCDRead(void)
       scanLBA = startLBA;
       scanOff = HLERawStreamAlignOffset(startLBA, destAddr, d1,
                                         d1 != a1 && (d1 >> 16) != 0);
-      HLE_LOG("CD_read: sentinel NOT found — reading raw from LBA %u "
+      HLE_LOG("CD_read: sentinel NOT found -- reading raw from LBA %u "
               "offset %u\n", startLBA, scanOff);
    }
 
@@ -1174,7 +1174,7 @@ static void HLEStreamFinish(void)
     * data area (CD_poll) alone, matching the real GPU CD ISR — see the
     * $F1B4C8 note at the top of this file. */
 
-   HLE_LOG("CD_read: transfer complete — %u bytes (%u sectors) "
+   HLE_LOG("CD_read: transfer complete -- %u bytes (%u sectors) "
            "to $%06X-$%06X\n",
            byteCount, (byteCount + 2351) / 2352, destAddr,
            hle_read_end_addr - 1);
@@ -1577,7 +1577,7 @@ bool JaguarCDHLEBoot(void)
 
    if (!CDIntfIsImageLoaded())
    {
-      LOG_ERR("[CD-HLE] No disc image loaded — HLE boot aborted\n");
+      LOG_ERR("[CD-HLE] No disc image loaded -- HLE boot aborted\n");
       HLEParkOnHalt();
       return false;
    }
@@ -1671,7 +1671,7 @@ bool JaguarCDHLEBoot(void)
 
    hle_active = true;
 
-   LOG_INF("[CD-HLE] Boot complete — PC=$%06X SP=$%06X\n",
+   LOG_INF("[CD-HLE] Boot complete -- PC=$%06X SP=$%06X\n",
            loadAddr, 0x200000);
    return true;
 }
@@ -1794,7 +1794,7 @@ static bool hle_strategy_boot(const struct retro_game_info *info)
 
    if (!JaguarCDHLEBoot())
    {
-      LOG_ERR("[CD-HLE] HLE boot failed — falling back to diagnostic screen\n");
+      LOG_ERR("[CD-HLE] HLE boot failed -- falling back to diagnostic screen\n");
       return false;
    }
 

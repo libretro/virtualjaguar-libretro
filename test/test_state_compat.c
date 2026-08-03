@@ -302,7 +302,7 @@ int main(int argc, char **argv)
     dac_size = dac_save(dac_v3);
     check(dac_size == EXPECTED_DAC_BLOCK_SIZE, "dac_block_size",
           "DACStateSave wrote %lu bytes, expected %d "
-          "(a DAC field was added/reordered — re-derive the size and the "
+          "(a DAC field was added/reordered -- re-derive the size and the "
           "i2sNonZeroCount offset in this test)",
           (unsigned long)dac_size, EXPECTED_DAC_BLOCK_SIZE);
     if (dac_size != EXPECTED_DAC_BLOCK_SIZE) {
@@ -495,7 +495,7 @@ int main(int argc, char **argv)
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,
                            1u, scratch) == false,
           "v1_state_rejected",
-          "version 1 is below STATE_MIN_VERSION (%d) — the v1->v2 layout "
+          "version 1 is below STATE_MIN_VERSION (%d) -- the v1->v2 layout "
           "change shipped in v2.3.0", STATE_MIN_VERSION);
 
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,

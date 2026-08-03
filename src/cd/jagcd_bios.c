@@ -81,7 +81,7 @@ static bool bios_instruction_hook(uint32_t m68kPC)
 
                 if (loadAddr != 0x080000)
                 {
-                    LOG_INF("[CD-BOOTSTUB] Boot stub loads at $%06X, not $080000 — "
+                    LOG_INF("[CD-BOOTSTUB] Boot stub loads at $%06X, not $080000 -- "
                             "installing trampoline at $080000\n", loadAddr);
                     /* JMP loadAddr (4EF9 xxxx xxxx) */
                     jaguarMainRAM[0x080000] = 0x4E;

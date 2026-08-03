@@ -1,5 +1,5 @@
 /*
- * test_cd_toc_contract.c -- $2C00 TOC table contract test (Task 6D).
+ * test_cd_toc_contract.c -- $2C00 TOC table contract test.
  *
  * After a real-BIOS CD boot reaches the boot-stub / TOC injection point,
  * this reads the actual $2C00 table out of main RAM and runs BOTH game
@@ -8,8 +8,8 @@
  * from real game boot stubs and the CD BIOS's own $2C00 TOC builder — a
  * 68K routine in the BIOS ROM at $808BE8 that polls BUTCH DSA responses
  * directly (not the DSP code the BIOS uploads to $F1B000, which handles
- * drive-level transport); see docs/cd-boot-matrix.md and
- * .superpowers/sdd/task-6d-report.md for the layout derivation.
+ * drive-level transport); see the "$2C00 TOC track-indexed layout" section
+ * of docs/cd-boot-matrix.md for the layout derivation.
  *
  * SCOPE: this is a table-format contract test, not an end-to-end boot test.
  * The Primal Rage MSF assertion below compares the injected table against

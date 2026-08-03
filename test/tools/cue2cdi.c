@@ -975,7 +975,7 @@ static int convert_parsed(Disc *d, const char *inPath, const char *outPath,
    if (d->numSessions > 2)
       WARN("more than 2 sessions: this core's parser clamps numSessions to 2\n");
    if (d->numSessions == 1)
-      INFO("note: single session — a bootable Jaguar CD needs 2 sessions\n");
+      INFO("note: single session -- a bootable Jaguar CD needs 2 sessions\n");
 
    INFO("writing %s\n", outPath);
    if (write_cdi(d, outPath) != 0)

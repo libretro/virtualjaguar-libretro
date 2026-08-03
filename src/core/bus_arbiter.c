@@ -78,7 +78,7 @@ void bus_arbiter_update_memcon(uint16_t memcon1)
     busArbiter.dram_refresh_clks = dram_refresh_table[dramspeed];
 }
 
-uint32_t bus_arbiter_dram_cost(uint32_t addr)
+static uint32_t bus_arbiter_dram_cost(uint32_t addr)
 {
     /* GPU local RAM: 0xF03000-0xF03FFF — no bus transaction */
     if (addr >= 0xF03000 && addr <= 0xF03FFF)

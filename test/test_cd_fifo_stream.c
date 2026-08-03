@@ -1,7 +1,7 @@
 /*
- * test_cd_fifo_stream.c -- CD FIFO stream delivery contract test (Task 7).
+ * test_cd_fifo_stream.c -- CD FIFO stream delivery contract test.
  *
- * Closes the gap the Task 6D report named: the TOC contract test proves the
+ * Closes the gap left by test_cd_toc_contract.c: that test proves the
  * injected table matches CDIntf, but NOT that a seek delivers the right disc
  * BYTES to RAM.  This test does the end-to-end byte-compare:
  *
