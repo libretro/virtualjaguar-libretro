@@ -130,10 +130,14 @@ int main(int argc, char **argv)
         }
         printf("MEDIAN clean_windows=%u/%u median=%.2f tics/s\n",
                clean_count, window_count, median);
+        /* PASS/FAIL and the exit code follow the cleaned measurement,
+         * not the wrap-corruptible raw span: a run that captured no
+         * clean window measured nothing. */
+        rate = median;
     }
     res.status = (rate > 0.0) ? "PASS" : "FAIL";
     res.name   = "doom_ticrate";
-    res.detail = "gametic advance rate measured";
+    res.detail = "gametic advance rate measured (median of clean windows)";
     harness_report(&cfg, &res, 1);
     harness_shutdown(&cfg);
     return (rate > 0.0) ? 0 : 1;
