@@ -7,6 +7,11 @@ players), **BattleSphere Gold** — can play against other emulator instances.
 There are **two completely separate ways** to connect. They cannot talk to
 each other — every player in a session must use the same one.
 
+**If everyone is on RetroArch, use Option A and stop reading there.** It
+needs no IP address from you at all: RetroArch finds hosts on the LAN
+itself. Option B exists for mixed frontends (Provenance on an iPhone
+against RetroArch on a Mac) and for frontends without netplay.
+
 ## Option A: RetroArch netplay (easiest — RetroArch to RetroArch only)
 
 Requires RetroArch 1.16 or newer on every device (desktop, iOS, Android…).
@@ -40,12 +45,22 @@ build an inert stub — the TCP modes silently do nothing there.
 1. Pick one device as the hub. Set its core option
    *Network Link = TCP Host (listen)*.
 2. Every other device: *Network Link = TCP Client (connect)*, and tell it
-   the hub's LAN IP via the *Network Link Host* core option. Frontends
-   with free-text option entry (e.g. Provenance) let you type the address
-   directly; the core accepts any hostname or IP it receives. In stock
-   RetroArch (dropdown-only options) pick *From file* and create a text
-   file **`vj_netlink.txt`** in the frontend's *system/BIOS* directory
-   containing just the IP, e.g.:
+   where the hub is via the *Network Link Host* core option. This takes
+   an IP, a DNS name, **or a Bonjour/mDNS `.local` name** — so on a
+   typical home LAN you can skip looking the IP up and just use the
+   hub's computer name:
+   ```
+   jaghub.local
+   ```
+   A `.local` name survives the hub getting a different DHCP lease
+   tomorrow, which a hard-coded IP does not. Find it in *System Settings
+   → General → About → Name* on macOS, or `hostname` on Linux; Windows
+   hosts need Bonjour installed to answer to one, so use their IP.
+
+   Frontends with free-text option entry (e.g. Provenance) let you type
+   any of these directly. In stock RetroArch (dropdown-only options) pick
+   *From file* and create a text file **`vj_netlink.txt`** in the
+   frontend's *system/BIOS* directory containing just the address, e.g.:
    ```
    192.168.1.20
    ```
@@ -65,8 +80,22 @@ Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
   A frontend bundling an older core has no *Network Link* option at all —
   that's the tell.
 - Both sides sit at their link menu but never connect: verify same
-  Wi-Fi/LAN, the hub's IP in *Network Link Host* (or `vj_netlink.txt`),
-  matching port, and any firewall prompt on the host machine.
+  Wi-Fi/LAN, the hub's address in *Network Link Host* (or
+  `vj_netlink.txt`), matching port, and any firewall prompt on the host
+  machine. A host firewall is the most common cause when the address is
+  definitely right — macOS's Application Firewall, for instance, allows
+  loopback but silently drops inbound LAN connections to an app that has
+  not been allowed, so the client looks connected while the hub never
+  sees anyone arrive.
+- A `.local` name that never connects while the raw IP works: the hub is
+  not answering mDNS. Windows only does after Bonjour is installed, and
+  some Wi-Fi routers block multicast between clients ("AP isolation").
+  Use the IP there.
+- The client retries on its own — a wrong-then-corrected address, a hub
+  started later, or a `.local` name whose owner is not on the network
+  yet all recover without reloading the core. A failed *name lookup*
+  backs off about five seconds between attempts, a refused connection
+  about half a second.
 - *Loopback (echo to self)* is a solo test mode: the console hears its own
   transmissions. Games will correctly report "no players found" — useful
   only to check the link menu works.
