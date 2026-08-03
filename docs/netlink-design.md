@@ -8,7 +8,7 @@ latency fix, PR #244). Known limitations: internet play is best-effort
 lobby, sustained dogfight play unverified; AirCars under *netpacket* netplay
 untested (its interrupt-driven RX does not hit the ASISTAT pump path — TCP
 mode fully validated); iOS/Provenance TCP mode not yet device-tested.
-**Branch:** `claude/jaguar-networking-support-0c8a86` (off `libretro/develop`)
+**Merged:** PR #250 / #263 lineage.
 
 ## Overview
 
@@ -149,8 +149,8 @@ Backends selected by core option:
 
 ### 4. Testing
 
-ROM corpus: `/Users/jmattiello/Workspace/Provenance/jaguar-roms-private`
-(symlinked at `test/roms/private`; discover with `find -L`).
+ROM corpus: the private ROM tree symlinked at `test/roms/private` (see
+CLAUDE.md; discover with `find -L`).
 
 1. **Unit (phase 1):** harness-based (`test/harness/`) loopback test driving
    the real registers via `harness_dlsym` — write ASIDATA, poll ASISTAT for

@@ -68,7 +68,7 @@ int main(int argc, char **argv)
     jerry_rw = (jerry_rw_t)harness_dlsym(&cfg, "JERRYReadWord");
     if (!jerry_ww || !jerry_rw)
     {
-        fprintf(stderr, "JERRY dispatch symbols not exported — "
+        fprintf(stderr, "JERRY dispatch symbols not exported -- "
                         "build with TEST_EXPORTS=1\n");
         return 1;
     }

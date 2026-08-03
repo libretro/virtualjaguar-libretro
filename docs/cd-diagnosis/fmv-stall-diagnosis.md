@@ -1,11 +1,11 @@
-# Task 9 report — the THIRD wall: FMV streaming "stops" mid-playback (BrainDead 13)
+# BrainDead 13: FMV streaming "stops" mid-playback
 
-Branch `feature/jaguar-cd-support`, base `0b88fa0`. Append-only phase log.
+Diagnosis written on `feature/jaguar-cd-support`, base `0b88fa0`.
 
-## Phase 0 — orientation + hypothesis triage (before any code)
+## Orientation and hypothesis triage (before any code)
 
-Read: `braindead-device-trace-2.txt`, `task-8-second-wedge-report.md` (Phases 2/3/4/5),
-`task-7-streaming-wall-report.md`, `src/cd/cdrom.c` BUTCHExec (lines 574-703).
+Inputs: `braindead-device-trace-2.txt`, `braindead13-second-wedge-diagnosis.md`,
+`cd-streaming-wall-diagnosis.md`, `src/cd/cdrom.c` BUTCHExec (lines 574-703).
 
 ### Hypothesis A (continuous streaming not modeled) — REJECTED before testing
 
@@ -18,7 +18,7 @@ Rejected on evidence already in hand, not on a new experiment:
 - Task-8 loose-end #1 already names why drains stop: the game's GPU ISR **clears
   BUTCH bit 0** when `dest >= end` (transfer done). Drains stopping is the
   *completion signal*, not starvation.
-- Task-8 Phase 3 polled the transfer state per-frame: `[$F03B10]` dest climbs
+- The second-wedge diagnosis polled the transfer state per-frame: `[$F03B10]` dest climbs
   `$45FFC -> $146000` (= limit) over frames ~55-368. The transfer **finishes**.
 
 The device trace's "expects data to keep arriving" reading is the trace author's
@@ -26,8 +26,8 @@ inference; the disassembly + dest-pointer telemetry outrank it.
 
 ### Hypothesis B (engine waits on a different signal) — ADOPTED
 
-The dispatch asked to distinguish A/B by disassembling `$F03270-$F0327A`.
-**Task 8 already did this disasm** (report lines 129-138) and it answers B:
+A and B are distinguished by disassembling `$F03270-$F0327A`.
+**The second-wedge diagnosis already did this disassembly** (`braindead13-second-wedge-diagnosis.md`) and it answers B:
 
 ```
 $F03260 movei #$F03A50,r31                            ; set stack
@@ -39,16 +39,16 @@ $F03276 load (r0),r1; or r1,r1; jr z,$F03270          ; wait *($F039DC)!=0
 This polls a **RAM mailbox ($F039DC in GPU RAM), not a FIFO/BUTCH status word**
 -> hypothesis **B**, decisively. The GPU streaming engine is a healthy idle waiter.
 
-### Correction to task-8's sign-off (important)
+### Correction to the second-wedge sign-off (important)
 
-Task 8 closed BrainDead 13 as "next wait is the game's frame-kick mailbox
+That diagnosis closed BrainDead 13 as "next wait is the game's frame-kick mailbox
 (**headless-fb class**)" — i.e. presumed a headless presentation artifact.
 **The device trace falsifies that**: the same wait is a real black-screen wall on
 real iOS hardware. This aftermath is a genuine blocker, not a harness artifact.
 
-### The named gap (what Phase 1 must resolve)
+### The named gap (what the reproduction must resolve)
 
-Task-8 Phase 3 established the post-transfer wedge shape:
+The second-wedge diagnosis established the post-transfer wedge shape:
 - 68K: `$00B2F0 move.l #1,(a1)` (a1=$F039DC, command GPU) -> `$00B2F6 stop #$2000`
   -> `$00B2FA tst.b ($0072CC)` -> `beq.s $00B2F6`. Device trace `final_pc=$00B2FA`
   confirms this exact loop on hardware.
@@ -71,16 +71,16 @@ BUTCH bit 0, and the game's ISR clears bit 0 at completion — if bit 0 is clear
 the wedge, the pending path cannot deliver anyway and cdrom.c is the wrong layer.
 **Do not pre-write the conditional-IRQ2 fix.** Disasm #1 decides.
 
-(Advisor consulted at this checkpoint; concurred A is dead, B is the mechanism,
-and that the layer must be named by disasm #1 before any code.)
+(Checkpoint review concurred: A is dead, B is the mechanism, and the layer must
+be named by disasm #1 before any code is written.)
 
-## Phase 1 — reproduced headlessly + the two missing disasms (EVIDENCE)
+## Reproduced headlessly + the two missing disassemblies (evidence)
 
-Harness: `scratchpad/diag_fmv.c` (BIOS mode via `virtualjaguar_cd_boot_mode=bios`).
+Harness: a local `diag_fmv.c` probe (BIOS mode via `virtualjaguar_cd_boot_mode=bios`).
 **Repro is exact vs the device trace**: `starts=2 dones=2 drains=38915`, GPU pinned
 $F03270-$F0327A, `68k_pc=$00B2FA` for **300/300** frames post-wedge.
 
-### Harness gotcha (cost a cycle; recorded so the next agent doesn't repeat it)
+### Harness gotcha (recorded to avoid repeating it)
 `jaguarMainRAM` is a **`uint8_t *` pointer**, not an array (`src/core/vjag_memory.c:45`).
 `dlsym` returns `&pointer` -> raw indexing reads ARM64 pointer bytes as "RAM"
 (the bogus "vector table" `94 F1 DC 05 01 00 00 00 ...` was literally consecutive
@@ -90,9 +90,9 @@ Also `M68K_REG_PC` = **16**, not 0 (D0..D7=0-7, A0..A7=8-15).
 ### Hypothesis A — REFUTED by direct measurement
 `[$F03B10]` cd dest = **$0014603C** >= `[$F03B14]` limit = **$00146000**.
 The ~1 MB FMV transfer **ran to completion**. Drains stop because the work is done.
-Not starvation. A is dead, as predicted in Phase 0.
+Not starvation. A is dead, as the triage above predicted.
 
-### The 68K wedge site, decoded from the RAM dump (confirms task-8 byte-for-byte)
+### The 68K wedge site, decoded from the RAM dump (confirms the second-wedge diagnosis byte-for-byte)
 ```
 $00B2DC 41F9 000072CC   lea     $000072CC,a0
 $00B2E2 4250            clr.w   (a0)              ; done flag := 0
@@ -142,11 +142,12 @@ byte is `tomRam8[$E1]`:
 
     RAW tomRam8[$E1] = $02  ->  VIDENA=0 GPUENA=1 OPENA=0 PITENA=0 JERENA=0
 
-**The game enables ONLY the GPU interrupt.** So VBLANK/PIT cannot wake it — task-8's
-"the 68K wakes from STOP every frame (VBLANK)" is **false**; video int pends 60x/60
-frames and is masked off every time. The ONLY wake source is the GPU's CPUINT.
-=> This is **not** the `cdrom.c` IRQ2-suppression layer. The advisor's trap is avoided:
-the m68k IRQ2 suppression (`cdrom.c:679-699`) is irrelevant here (JERENA=0 anyway).
+**The game enables ONLY the GPU interrupt.** So VBLANK/PIT cannot wake it — the
+earlier assumption that "the 68K wakes from STOP every frame (VBLANK)" is **false**;
+the video int pends 60x/60 frames and is masked off every time. The ONLY wake source
+is the GPU's CPUINT.
+=> This is **not** the `cdrom.c` IRQ2-suppression layer: the m68k IRQ2 suppression
+(`cdrom.c:679-699`) is irrelevant here (JERENA=0 anyway).
 
 ### IRQ-chain counters at the wedge (temporary core instrumentation, to be reverted)
 ```
@@ -170,7 +171,7 @@ halted waiting for a signal **that already came and went**. This is a lost-wakeu
 **race**, not a missing feature. Next: pin down the ordering (why the one CPUINT
 landed while `stopped=0`), which names the layer.
 
-## Phase 2 — MECHANISM NAMED: lost wakeup on `stop #$2000` (GPU CPUINT consumed pre-STOP)
+## Mechanism named: lost wakeup on `stop #$2000` (GPU CPUINT consumed pre-STOP)
 
 ### The level-2 IRQ handler (DISASM #2) — it is the done-flag writer
 `irq_ack_handler()` (`src/core/jaguar.c:315-334`) returns **64** for level 2
@@ -198,7 +199,7 @@ $0072CC — the **68K IRQ handler** does. Only 3 refs to $000072CC exist in main
 1. 68K `clr.w ($0072CC)`  2. 68K `move.l #1,($F039DC)` (command GPU)
 3. 68K `stop #$2000` (halt)  4. GPU decodes -> `store #3,(G_CTRL)` = GPUGO|CPUINT
 5. 68K wakes -> level-2 IRQ -> $00A12A sets flag=$FFFF, acks, `rte`
-6. 68K resumes past `stop` -> `tst.b` = $FF -> exits. 
+6. 68K resumes past `stop` -> `tst.b` = $FF -> exits.
 On real silicon steps 4-5 CANNOT precede step 3: `move.l`->`stop` is ~6 cycles,
 the GPU decode is thousands.
 
@@ -224,12 +225,12 @@ This is a **lost-wakeup race created by execution-interleaving granularity**, no
 missing CD/BUTCH feature and not FIFO starvation. `m68k_execute` returns immediately
 when `regs.stopped` (m68kinterface.c:124-130), so nothing re-examines the condition.
 
-Verdict on the dispatch's hypotheses: **A refuted** (transfer completes),
+Verdict on the three hypotheses: **A refuted** (transfer completes),
 **B confirmed and now fully mechanised**, **C not implicated** (data is correct and
 complete; drain rate is a red herring — the transfer finished byte-correct).
 
 ---
-## BLAST-RADIUS ANALYSIS (controller, post-diagnosis — gates any fix)
+## Blast-radius analysis (post-diagnosis; gates any fix)
 
 The `stop #$2000`-wait idiom is NOT CD-only. Static scan of the local cart library
 (STOP #$2000 = opcode 4E72 2000):

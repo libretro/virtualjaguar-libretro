@@ -1,7 +1,7 @@
 /*
  * test_cd_hle_idempotent.c -- HLE CD_read idempotency regression test.
  *
- * Encodes the contract established in Task 6C: the BIOS CD_read service is a
+ * Encodes the CD_read idempotency contract: the BIOS CD_read service is a
  * discrete, self-contained read.  D0 (packed MSF) fully specifies the source
  * position; when a boot stub / game re-issues a byte-identical CD_read (same
  * D0/D1/A0/A1), real hardware re-seeks to the SAME position and reproduces the

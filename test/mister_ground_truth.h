@@ -1,7 +1,7 @@
 /*
- * mister_ground_truth.h — Expected hardware values extracted from MiSTer FPGA RTL.
+ * mister_ground_truth.h -- Expected hardware values extracted from MiSTer FPGA RTL.
  *
- * Source: /private/tmp/Jaguar_MiSTer/rtl/
+ * Source: MiSTer-devel/Jaguar_MiSTer repository, rtl/
  * These constants define the correct behavior according to real hardware
  * as implemented in the MiSTer Jaguar FPGA core.
  */

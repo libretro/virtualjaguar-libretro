@@ -803,7 +803,7 @@ int main(int argc, char *argv[])
       printf("  $DFFF12 (I2CNTRL)        = $%04X\n", p_CDROMReadWord(0xDFFF12, 0));
    }
    else
-      printf("  (CDROMReadWord not available — cannot read BUTCH/CD registers)\n");
+      printf("  (CDROMReadWord not available -- cannot read BUTCH/CD registers)\n");
 
    if (p_JERRYReadWord)
    {

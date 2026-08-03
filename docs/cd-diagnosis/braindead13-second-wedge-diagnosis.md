@@ -1,18 +1,17 @@
-# Task 8 report — the SECOND CD-transfer wedge
+# BrainDead 13 / Primal Rage: the second CD-transfer wedge
 
-Branch `feature/jaguar-cd-support`, main checkout. Starting HEAD: `d2cd04b` (task-7 docs)
-on top of `09a62d6` (FIFO word-phase fix). Tree clean at start.
+Diagnosis written on `feature/jaguar-cd-support`, starting from `d2cd04b` on
+top of `09a62d6` (FIFO word-phase fix; see cd-streaming-wall-diagnosis.md).
 
 Goal: diagnose (and if bounded, fix) the wedge that stops CD games AFTER the first
 boot-stub load succeeds — the continuous-FMV-streaming stall. User-confirmed on device:
 BrainDead 13 boots BIOS, runs injected game code, shows logo, then sticks when
 continuous FMV streaming should begin.
 
-## Phase log (append-only)
+## Investigation log
 
-### Phase 0 — orientation
-- Confirmed HEAD d2cd04b, clean tree, branch feature/jaguar-cd-support.
-- Read task-7 report: first wedge (streaming wall / FIFO longword grouping phase) is
+### Orientation
+- Prior work: the first wedge (streaming wall / FIFO longword grouping phase) is
   fixed and byte-exact (test_cd_fifo_stream GREEN, regression floor).
 - Second-wedge signatures per dispatch:
   - Primal Rage (bios): 2 seeks complete, 12,857 fifo_drains, then cd_seek_wedge;
@@ -21,8 +20,8 @@ continuous FMV streaming should begin.
     gpu_pc=$F0327A gpu_run=1, dsp_pc=$F1B120 dsp_run=0.
   - Highlander: cd_seek_wedge fifo_drains=54; IS2: video_stall dsp_run=1.
 
-### Phase 0b — resume after API cutoff (coordinator update absorbed)
-- Read docs/cd-boot-matrix.md current rows + task-7 report. Key supersessions:
+### Re-baselining against the current matrix
+- docs/cd-boot-matrix.md rows + the streaming-wall diagnosis. Key supersessions:
   Baldies bios now GAME_CODE ($060106); Highlander/IS2 bios = different pre-sentinel
   mechanism (drains freeze 54/0), separate branch; FIFO_DRAIN_READS starvation already
   fixed in 09a62d6 (FIFO port reads deliver while cdPlaying even after drain gate).
@@ -30,7 +29,7 @@ continuous FMV streaming should begin.
   region — strengthens W-STOP-RESTART/DSA semantics) and BrainDead 13 bios
   post-logo FMV streaming (video_stall gpu_pc=$F0327A, dsp_run=0).
 
-### Phase 1 — traced Primal Rage bios run + device trace absorbed
+### Primal Rage BIOS-mode trace + BrainDead 13 device trace
 - Rebuilt core TEST_EXPORTS=1 (tree had stale iOS .o files; make clean first).
 - Regression floor confirmed GREEN: test_cd_fifo_stream PASS (ram_hit=$4000).
 - Harness diag_second_wedge (scratchpad): Primal Rage bios, trace ring dumped at
@@ -46,7 +45,7 @@ continuous FMV streaming should begin.
     +12=$32D800F0 +16=$980132E0 — NOT the task-7 layout (dest/end/counter/sentinel);
     the GPU program was REPLACED between transfer 1 and 2 (game/BIOS uploaded a new
     engine; r31=$F03368, r26=$F03E9C — code+stack extend to $F03E9C).
-- BrainDead 13 device trace (.superpowers/sdd/braindead-device-trace.txt):
+- BrainDead 13 device trace (`docs/cd-diagnosis/braindead-device-trace.txt`):
   FIRST game transfer (seek_starts=1): pre-seek $7001, $150A->$170A x3, goto
   MSF 05:04:06 block 22656 correct, SEEK_DONE, then FILL/DRAIN alternate forever,
   ~150 drains/sector, GPU pinned $F03276-$F0327A, dsp_run=0, 68K never resumes.
@@ -54,7 +53,7 @@ continuous FMV streaming should begin.
   (bios+hle), Space Ace(bios+hle), Baldies(bios) — a COMMON post-boot streaming
   loop. Primal Rage wedges at a different loop ($F03168) of its second engine.
 
-### Phase 2 — the replaced engine decoded (Primal Rage dump, live at wedge)
+### The replaced engine decoded (Primal Rage dump, live at wedge)
 GPU RAM disassembly of the SECOND engine (game-uploaded, dumped live at the wedge):
 - Vector $F03010 -> JUMP $F03380 (second-stage CD ISR). Vector $F03000 (IRQ0/CPU)
   -> $F03040: writes OLP ($F00020), then if [$F032E4]!=0: clear it + STOREB 1 ->
@@ -80,7 +79,7 @@ GPU RAM disassembly of the SECOND engine (game-uploaded, dumped live at the wedg
   INT_ENA1/IMASK state, JERRY latch not re-armed. Next: sample BUTCH enables +
   diag counters per-frame across the freeze.
 
-### Phase 3 — ROOT CAUSE (byte-level evidence, two independent titles)
+### Root cause (byte-level evidence, two independent titles)
 **Mechanism: GPU interrupt dispatch clobbered by the branch delay slot.**
 The CD streaming ISR epilogue idiom (both engines, and the retail BIOS ISR) is:
 `JUMP T,(Rret)` with `STORE Rflags,(G_FLAGS)` in the DELAY SLOT — the store
@@ -120,7 +119,7 @@ Fix: make GPUHandleIRQs delay-slot-aware — when dispatch happens during a
 delay slot, push the BRANCH TARGET (-2) as the return address and tell the
 jump opcode NOT to overwrite gpu_pc. Transient flags, no savestate impact.
 
-### Phase 2 — resumed by successor agent; BrainDead 13 wedge fully disassembled
+### BrainDead 13 wedge fully disassembled
 Reproduced the device trace exactly (local, bios mode, BrainDead 13): after the
 first game CD_read (seek block 22656) the FIFO fills/drains forever, GPU pinned
 $F03270-$F0327A, 68K cycling, fb frozen. GPU RAM dumped (scratchpad
@@ -167,8 +166,8 @@ FIFO-port reads to confirm which ISR path runs, then fix at the cdrom.c status
 layer. (2x drains/sector vs the 73.5 expected also points at a status/pathing
 mismatch, not wrong data.)
 
-### Phase 3 — bit-13 hypothesis FALSIFIED; real wedge is POST-transfer signaling
-Advisor caught it: drains prove the ISR FIFO path runs. Per-frame poll of the
+### Bit-13 hypothesis falsified; the real wedge is post-transfer signaling
+Review caught it: drains prove the ISR FIFO path runs. Per-frame poll of the
 transfer state ([$F03B10] dest / [$F03B14] limit) shows the transfer **completes
 normally**: dest climbs $45FFC -> $146000 (limit) over frames ~55-368 (~1 MB),
 data lands. The wedge is AFTER the transfer.
@@ -202,7 +201,7 @@ CD DATA PATH IS CORRECT. Remaining gap = GPU-completion / CD-done interrupt
 delivery to the 68K + the GPU-FMV decode engine's per-frame signaling. Evaluating
 bounded-fix vs structural next.
 
-### Phase 4 — TDD fix, gate, commit
+### The fix, gates and commit
 - Fix committed: 7c98e16 fix(gpu): don't clobber IRQ dispatch raised in a
   branch delay slot. gpu.c: GPUHandleIRQs pushes the branch target (-2) and
   flags the in-flight gpu_opcode_jump/jr to not overwrite gpu_pc when the
@@ -230,7 +229,7 @@ bounded-fix vs structural next.
   commit (harness works without it; ring dumps were session-only). Diag
   harness + disasm wrapper live in scratchpad only.
 
-### Phase 5 — matrix re-run (7 rows, 3000 frames, core at 7c98e16)
+### Matrix re-run (7 rows, 3000 frames, core at 7c98e16)
 | Title/mode | BEFORE (d2cd04b) | AFTER (7c98e16) | verdict |
 |---|---|---|---|
 | BrainDead 13 bios | video_stall f=739 final_pc=$00361E dsp_run=0 (device-confirmed logo wedge) | logo load + SECOND ~1MB FMV read complete (38915 drains), final_pc=$00B2FA, unique 23->43, dsp_run=1 | **ADVANCED** |
@@ -256,11 +255,10 @@ Notes section added to docs/cd-boot-matrix.md ("Task 8 fix").
 
 ### Final status
 - Commits: 7c98e16 (fix + contract test + Makefile wiring), 0b88fa0 (matrix
-  rows + notes). No push. Tree clean. (.superpowers/sdd/* is gitignored by
-  convention — this report lives on disk only, like task-7's.)
+  rows + notes).
 - Gates all green: c89-lint gpu.c, make TEST_EXPORTS=1 test exit 0,
   test_cd_fifo_stream (floor) GREEN, test_cd_second_transfer RED->GREEN,
   audio pair verified (IS1 RMS 1175.7; clipping self-test PASS).
-- REMAINING for the user: verify BrainDead 13 on the iOS device / RetroArch —
+- REMAINING: verify BrainDead 13 on an iOS device / in RetroArch —
   headless says the logo wedge mechanism is dead and FMV streaming completes;
   whether video presents correctly needs a real frontend (headless-fb caveat).

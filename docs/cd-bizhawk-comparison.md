@@ -399,8 +399,8 @@ interrupts, fixes Black ICE"*:
 ```diff
  STATIC_INLINE uint32_t m68ki_init_exception(void)
  {
- 	MakeSR();
- 	uint32_t sr = regs.sr;
+	MakeSR();
+	uint32_t sr = regs.sr;
 -	regs.s = 1;
 +
 +	if (!regs.s)
@@ -409,8 +409,8 @@ interrupts, fixes Black ICE"*:
 +		m68k_areg(regs, 7) = regs.isp;
 +		regs.s = 1;
 +	}
- 
- 	return sr;
+
+	return sr;
  }
 ```
 

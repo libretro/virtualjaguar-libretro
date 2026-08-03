@@ -1,7 +1,7 @@
-/* test/tools/test_audio_gaps.c — detect audio-effect "stutter" (RMS
+/* test/tools/test_audio_gaps.c -- detect audio-effect "stutter" (RMS
  * collapses) during Doom's attract demo, comparing virtualjaguar_dram_timing
- * on vs off (Task 6, user report 2026-08-02: demo sfx stutter with the
- * option enabled, in-game audio fine, no stutter with the option off).
+ * on vs off (user report 2026-08-02: demo sfx stutter with the option
+ * enabled, in-game audio fine, no stutter with the option off).
  *
  * Method: watch gametic ($04080C, same field used by test_doom_ticrate.c)
  * for the first attract-demo start (0 -> nonzero transition), reset the

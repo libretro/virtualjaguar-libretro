@@ -22,8 +22,8 @@ RAM dumper at the live FMV moment (frame ~916, first >26%-nonblack frame).
    → the pixel VALUES in the framebuffer are wrong.
 
 2. **CD data path / byte order — ruled out.**
-   The ~1 MB compressed FMV stream lands at `$46000..$146000` (task-8 dest
-   telemetry). Probes at +0x0/+0x10000/+0x40000/+0x80000/+0xC0000 all match
+   The ~1 MB compressed FMV stream lands at `$46000..$146000` (dest telemetry
+   from braindead13-second-wedge-diagnosis.md). Probes at +0x0/+0x10000/+0x40000/+0x80000/+0xC0000 all match
    Track 4 of the BIN **word-swapped** — and so does the *executing* 68K
    engine code at `$A000`/`$B2DC` (probed vs Track 3). Since that code runs
    correctly, "swapped vs BIN" is the CORRECT in-RAM byte order (the disc is
@@ -50,12 +50,13 @@ and the input data is bit-correct. Pre-fix cores never reached FMV playback
 pre-fix baseline build), so the corruption was previously unreachable, not
 absent.
 
-## Next steps (fresh session)
+## Next steps
 
 1. Dump GPU RAM at the live FMV moment and disassemble the decode loop
    (`python3 test/tools/disasm_gpu_isr.py`; handler entry `$F034EC`, cmd=3
-   dispatch per task-8). Inventory the arithmetic ops used (SAT8/SAT16/
-   SATS? MULT/IMULT/IMACN/RESMAC? MMULT? SH/SHA?) — then unit-test those
+   dispatch, per braindead13-second-wedge-diagnosis.md). Inventory the
+   arithmetic ops used (SAT8/SAT16/SATS? MULT/IMULT/IMACN/RESMAC? MMULT?
+   SH/SHA?) — then unit-test those
    gpu.c opcodes against the JTRM semantics (`docs/jtrm-gpu-dsp.md`).
    Suspects: saturation ops and multiply-accumulate edge cases (the DSP
    needed a 40-bit MAC fix once — `test_dsp_mac40`; the GPU may have an

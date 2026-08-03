@@ -442,7 +442,7 @@ static uint16_t DSAQueuePop(void)
 
 /* --- CD trace ring: records DSA traffic + seek/FIFO state transitions ---
  *
- * Diagnostic-only instrumentation for Task 5's boot-hang triage (see
+ * Diagnostic-only instrumentation for CD boot-hang triage (see
  * docs/cd-boot-matrix.md).  Never touches savestates -- all of this is
  * reset to empty on CDROMReset() the same as the other diag_* counters,
  * never serialized.
@@ -923,7 +923,7 @@ void BUTCHExec(uint32_t cycles)
             }
          }
 
-         CD_LOG("BUTCHExec: seek complete block=%u (MSF %02u:%02u:%02u) — queued $0100, FIFO+playback active\n",
+         CD_LOG("BUTCHExec: seek complete block=%u (MSF %02u:%02u:%02u) -- queued $0100, FIFO+playback active\n",
                 block, min, sec, frm);
       }
    }
@@ -943,7 +943,7 @@ void BUTCHExec(uint32_t cycles)
          fifoDataReady = true;
          fifoReadCount = 0;
          CDTracePush(CD_TRACE_FIFO_FILL, 0, block);
-         CD_LOG("BUTCHExec: FIFO half-full — ready for GPU ISR\n");
+         CD_LOG("BUTCHExec: FIFO half-full -- ready for GPU ISR\n");
       }
       else if (fifoFillDelay == 0 && cdPlaying && (!i2sDataEnabled || !FIFOFeedAllowed()))
       {
@@ -1196,7 +1196,7 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
          cdPlaying = true;
          if (FIFOFeedAllowed())
             fifoDataReady = true;
-         CD_LOG("Play Title response consumed — playback and FIFO now active\n");
+         CD_LOG("Play Title response consumed -- playback and FIFO now active\n");
       }
       else if ((cdCmd & 0xFF00) == 0x0200)			// Stop CD
       {
@@ -1266,7 +1266,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
             fifoDataReady = true;
             fifoReadCount = 0;
          }
-         CD_LOG("Seek response $0100 consumed (direct) — cdPlaying=true\n");
+         CD_LOG("Seek response $0100 consumed (direct) -- cdPlaying=true\n");
       }
       else if ((cdCmd & 0xFF00) == 0x1400)		// Read "full" session TOC
       {
@@ -1474,7 +1474,7 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
       static uint32_t subReads = 0;
       subReads++;
       if (subReads <= 40 || (subReads % 10000) == 0)
-         LOG_INF("[SUBCODE] read %s+%u -> $%04X who=%u 68kpc=$%06X\n",
+         LOG_DBG("[SUBCODE] read %s+%u -> $%04X who=%u 68kpc=$%06X\n",
                  (offset >= SB_TIME) ? "SB_TIME" :
                  (offset >= SUBDATB) ? "SUBDATB" :
                  (offset >= SUBDATA) ? "SUBDATA" : "SBCNTRL",
@@ -1534,7 +1534,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       {
          static uint16_t prevSubEna = 0;
          if ((prevSubEna ^ data) & 0x0C)
-            LOG_INF("[SUBCODE] BUTCH int enables $%02X -> $%02X (frame=%d match=%d) who=%u 68kpc=$%06X\n",
+            LOG_DBG("[SUBCODE] BUTCH int enables $%02X -> $%02X (frame=%d match=%d) who=%u 68kpc=$%06X\n",
                     prevSubEna & 0x7F, data & 0x7F,
                     (data >> 2) & 1, (data >> 3) & 1, who,
                     m68k_get_reg(NULL, M68K_REG_PC));
@@ -1567,7 +1567,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       static uint32_t subWrites = 0;
       subWrites++;
       if (subWrites <= 40 || (subWrites % 10000) == 0)
-         LOG_INF("[SUBCODE] write %s+%u = $%04X who=%u 68kpc=$%06X\n",
+         LOG_DBG("[SUBCODE] write %s+%u = $%04X who=%u 68kpc=$%06X\n",
                  (offset >= SB_TIME) ? "SB_TIME" :
                  (offset >= SUBDATB) ? "SUBDATB" :
                  (offset >= SUBDATA) ? "SUBDATA" : "SBCNTRL",
@@ -1599,8 +1599,9 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    if (offset == DS_DATA)
    {
       CD_LOG("DS_DATA write: cmd=0x%04X\n", data);
-      /* CDDA-DIAG: audio-flow commands, rare -- log unconditionally so
-       * device RetroArch logs show the play sequence without a wedge dump.
+      /* CDDA-DIAG: audio-flow commands, rare -- log the first 40 and
+       * then every 500th so device RetroArch logs show the play sequence
+       * without a wedge dump, while a stuck game cannot flood the log.
        * $01 Play / $02 Stop / $04 Pause / $05 Unpause? / $15 Set Mode /
        * $51 Mute-Unmute / $70 Set DAC Mode. */
       {

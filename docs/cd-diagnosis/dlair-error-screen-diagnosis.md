@@ -31,8 +31,8 @@ Repro: `make cd-visual CD_VISUAL_DISC="<DL cue>" CD_VISUAL_FLAGS="--frames
 
 ## Evidence chain
 
-- Probe: `scratchpad/dlair_wedge.c` (session scratchpad; PC_BAND_LO/HI env,
-  dumps GPU RAM + 2MB main RAM + CD trace at end). Run to `--frames 2820`.
+- Probe: a local `dlair_wedge.c` harness (PC_BAND_LO/HI env, dumps GPU RAM +
+  2MB main RAM + CD trace at end). Run to `--frames 2820`.
 - The failing load: game seeks MSF 3:40:52 → block 16402 → track-3 file
   sector 1309 (layout: T1 3245 sectors, +11400 inter-session gap, T2 448,
   T3 starts at LBA 15093, INDEX 01 at +149 where the byte-swapped
@@ -146,7 +146,7 @@ Supporting instrument for any of these: a control-events-only trace mode
 covers a whole retry cycle; fills/drains currently flood 16K-deep rings in
 ~2 cycles.
 
-## Tooling added this session
+## Tooling added alongside this diagnosis
 
 - CD trace ring `I2S_CTRL` event (data-enable edges) — in `f74ce09`.
 - `VJ_HARNESS_LOG_INFO=1` lets INFO logs (CDTraceDump etc.) through the
@@ -155,6 +155,6 @@ covers a whole retry cycle; fills/drains currently flood 16K-deep rings in
   it; ring dumps only surface via the cd_seek_wedge watchdog. Consider
   adding `_CDTrace*` to the export list.
 - Deep-ring diagnosis builds: temporarily set `CD_TRACE_SIZE` to 8192/16384
-  in cdrom.c (default 256), build, copy dylib to scratchpad, `git checkout`
+  in cdrom.c (default 256), build, copy the dylib aside, `git checkout`
   the file. Never rebuild in-tree while `cd_boot_matrix.sh` is running —
   the build-identity guard kills every subsequent matrix row.

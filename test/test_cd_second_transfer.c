@@ -1,5 +1,5 @@
 /*
- * test_cd_second_transfer.c -- CD second-transfer liveness contract (Task 8).
+ * test_cd_second_transfer.c -- CD second-transfer liveness contract.
  *
  * test_cd_fifo_stream proves the FIRST boot-stub load delivers byte-exact
  * payload.  This test covers the next failure class: the SECOND (and every

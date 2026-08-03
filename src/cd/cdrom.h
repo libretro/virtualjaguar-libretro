@@ -45,7 +45,7 @@ void CDROMDiagGetCounters(uint32_t *butchExec,
                           uint32_t *globalDisabled,
                           uint32_t *hleBytes);
 
-/* --- CD trace ring (Task 4 instrumentation, see cdrom.c) ---
+/* --- CD trace ring (diagnostic instrumentation, see cdrom.c) ---
  * Diagnostic only; never touches savestates. */
 
 /* Enable/disable the trace ring. Called from libretro.c's check_variables()

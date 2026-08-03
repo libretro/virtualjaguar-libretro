@@ -142,7 +142,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "[%s] jlink mode after load = %d\n", role, jlink_mode());
     if (!jerry_ww || !jerry_rw || !jlink_connected || !run_frame)
     {
-        fprintf(stderr, "[%s] symbols missing — build with TEST_EXPORTS=1\n", role);
+        fprintf(stderr, "[%s] symbols missing -- build with TEST_EXPORTS=1\n", role);
         return 1;
     }
 
