@@ -15,7 +15,7 @@ What *is* real is a constant-rate deficit, and it is confined to one path:
 
 | path | sustained rate | vs 352 800 B/s hardware |
 |---|---|---|
-| HLE (`jagcd_hle.c`) | 352 799.911 B/s | **-0.000025 %** — exact |
+| HLE (`jagcd_hle.c`) | 352 799.911 B/s | **-0.000025 %** — effectively exact |
 | real BIOS (`cdrom.c` FIFO) | 348 881 B/s | **-1.11 %** |
 
 Dragon's Lair demands **349 590 B/s** while streaming (§5.1), so the
@@ -202,7 +202,7 @@ read therefore *adds* to the refill period instead of overlapping it. Real
 BUTCH fills the FIFO continuously at the I2S rate, independent of when the
 ISR happens to drain it.
 
-**So: `HLE_STREAM_BYTES_PER_SEC` is exact and is not responsible for
+**So: `HLE_STREAM_BYTES_PER_SEC` is effectively exact (-0.000025 %) and is not responsible for
 anything. `FIFO_REFILL_PERIOD_X100` is also very nearly right (+0.15 %) —
 but the state machine around it gives back 1.26 %, netting -1.11 %, and
 that is below Dragon's Lair's 349 590 B/s demand.** The offending code is

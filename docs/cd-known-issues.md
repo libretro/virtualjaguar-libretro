@@ -74,7 +74,7 @@ note here was wrong on both counts** -- see
   mechanism is structurally impossible.
 
 Measured transfer rates against the 352,800 B/s hardware 2x figure: the
-HLE path is exact (-0.000025%), the real-BIOS FIFO path runs -1.11% slow
+HLE path is effectively exact (-0.000025%), the real-BIOS FIFO path runs -1.11% slow
 (`fifoFillDelay` is re-armed only after a drain completes, so GPU-ISR
 latency adds to the refill period instead of overlapping it). No
 accumulating jitter in either mode -- repeat attract loops are
