@@ -29,6 +29,12 @@ if [ ! -x "$VERIFY" ]; then
   exit 1
 fi
 
+if [ ! -r "$PRESS_FILE" ]; then
+  echo "run_avp_fixture: press fixture not readable: $PRESS_FILE" >&2
+  echo "run_avp_fixture: set PRESS_FILE=<path> to override the default" >&2
+  exit 1
+fi
+
 press_args=()
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
@@ -36,6 +42,11 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
   press_args+=(--press "$line")
 done < "$PRESS_FILE"
+
+if [ ${#press_args[@]} -eq 0 ]; then
+  echo "run_avp_fixture: press fixture has no input lines: $PRESS_FILE" >&2
+  exit 1
+fi
 
 mkdir -p "$OUTDIR"
 log="$OUTDIR/timeline.log"
@@ -49,8 +60,16 @@ set +e
   --system-dir "$SYSTEM_DIR" \
   --quiet \
   "$@" 2>&1 | tee "$log"
-rc=${PIPESTATUS[0]}
+# PIPESTATUS is clobbered by the next command, so copy the whole array at once.
+status=("${PIPESTATUS[@]}")
 set -e
+rc=${status[0]}
+tee_rc=${status[1]}
+
+if [ "$tee_rc" -ne 0 ]; then
+  echo "run_avp_fixture: failed to write log $log (tee exited $tee_rc)" >&2
+  exit 1
+fi
 
 # Gate: in windows covering the last 300 frames, require
 #   sum(moving_frames) >= 40  (AvP first-person tops out ~12/60 per window)
