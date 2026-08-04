@@ -20,14 +20,15 @@ Checks, in order of severity:
 
 Usage:  fb_row_diff.py <stock.bin> <patched.bin> [--label NAME] [--ignore-band]
 Exit:   0 = identical or only expected differences, 1 = unexpected difference,
-        2 = usage/format error.
+        2 = usage/format error (missing, unreadable, truncated or wrong-magic
+        input included).
 """
 
 import struct
 import sys
 
 MAGIC = b"VJFBDIG3"
-HDR = struct.Struct("<4I")          # width, height, frame_hash, written_extent
+HDR = struct.Struct("<4I")          # width, rows, frame_hash, written_extent
 BAND = struct.Struct("<6I")         # x0, width, hash, nonblack, first_x, first_y
 NO_EXTENT = 0xFFFFFFFF
 
@@ -95,6 +96,14 @@ def main():
     try:
         frames_a, audio_a = load(args[0])
         frames_b, audio_b = load(args[1])
+    except OSError as e:
+        print(f"FAIL {label}: cannot read {e.filename or '?'}: "
+              f"{e.strerror or e}", file=sys.stderr)
+        return 2
+    except struct.error as e:
+        print(f"FAIL {label}: truncated or malformed digest: {e}",
+              file=sys.stderr)
+        return 2
     except ValueError as e:
         print(f"FAIL {label}: {e}", file=sys.stderr)
         return 2
