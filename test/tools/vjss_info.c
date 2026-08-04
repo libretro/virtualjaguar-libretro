@@ -13,6 +13,12 @@
  *   vjss_info <statefile>
  *
  * Exit: 0 = magic matched (any verdict), 1 = I/O or bad_magic, 2 = usage.
+ *
+ * Note on `loadable` for versions 1-3: those are the layouts releases
+ * v2.2.0 / v2.3.0 / v2.3.1 / v2.3.2 wrote.  They used to report `too_old`
+ * (or load but silently mis-parse); issue #268 lowered VJSS_MIN_VERSION to
+ * 1 and taught the CDROM and DAC loaders to read the old chunk shapes, so
+ * `loadable` now means what it says.  See docs/savestate-compat.md.
  */
 
 #include <stdio.h>
@@ -21,7 +27,7 @@
 /* Numeric copies of src/core/state.h — keep the tool standalone. */
 #define VJSS_MAGIC       0x564A5353u  /* "VJSS" */
 #define VJSS_VERSION     7u
-#define VJSS_MIN_VERSION 2u
+#define VJSS_MIN_VERSION 1u
 
 static uint32_t rd_le(const uint8_t *p)
 {

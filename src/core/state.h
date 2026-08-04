@@ -18,7 +18,15 @@ extern "C" {
 #endif
 
 /* Save state format identifier and version.
- * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
+ * v1: original layout, written only by release v2.2.0 (savestate support
+ *     first shipped there; the bump to v2 shipped in v2.3.0).
+ * v2: DAC chunk gained the I2S resampler fields (i2sWritePos,
+ *     i2sWriteCount, i2sPhase, i2sRateRatio).
+ * v3: DAC chunk gained i2sNonZeroCount.
+ * v4: CDROM chunk restructured — the two 2628-byte staging buffers
+ *     (cdBuf2/cdBuf3) the pre-CD-support layout carried were dropped and
+ *     replaced by the BUTCH/FIFO/DSA/SSI working set, and the chunk gained
+ *     the DSA response queue + serial-delay counter.
  * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
  * v6: new UART chunk (JERRY async serial + jlink RX ring).
  * v7: Memory Track chunk gained the latched $80AAA8 override flag and
@@ -28,16 +36,29 @@ extern "C" {
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   7
 /* Oldest layout retro_unserialize still accepts.  States between
- * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
- * after them (see DACStateLoad, CDROMStateLoad); STATE_VERSION is always
- * what we write. */
-#define STATE_MIN_VERSION 2
+ * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
+ * layout the header version names (see DACStateLoad, CDROMStateLoad);
+ * STATE_VERSION is always what we write.
+ *
+ * Released cores wrote exactly four versions: 1 (v2.2.0), 2 (v2.3.0 and
+ * v2.3.1), 3 (v2.3.2) and 7 (v3.0.0).  Versions 4-6 existed only on
+ * develop/nightlies.  All four released layouts load (issue #268). */
+#define STATE_MIN_VERSION 1
 
 /* Per-field version gates.  A module loader that has to skip a field an
  * older layout did not carry compares the header version against the
  * constant naming that field, never a bare literal. */
+/* First version whose DAC block carries the I2S resampler fields
+ * (i2sWritePos, i2sWriteCount, i2sPhase, i2sRateRatio). */
+#define STATE_VERSION_DAC_I2S_RESAMPLER 2
 /* First version whose DAC block carries i2sNonZeroCount. */
 #define STATE_VERSION_DAC_I2S_NONZEROCOUNT 3
+/* First version whose CDROM block carries the post-CD-support working set
+ * (cdrom_eeprom_ram, the BUTCH/FIFO/DSA flags and the SSI head) in place
+ * of the two cdBuf2/cdBuf3 staging buffers the original layout carried.
+ * Every released core below this wrote the old shape; see
+ * CDROMStateLoad. */
+#define STATE_VERSION_CDROM_RESTRUCTURE 4
 /* First version whose CDROM block carries the DSA response queue and
  * serial-delay counter. */
 #define STATE_VERSION_CDROM_DSA_QUEUE 4

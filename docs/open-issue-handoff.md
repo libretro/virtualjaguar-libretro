@@ -160,37 +160,44 @@ divergent blits corpus-wide.
 
 ## 3. #268 — AvP savestates rejected (below STATE_MIN_VERSION)
 
-**Status: not a bug. Needs a maintainer decision, plus one cheap tool.**
+**Status: fixed. This section is kept for the history; the earlier "not a
+bug, needs a decision" reading was wrong.** See `docs/savestate-compat.md`.
 
-### What is established
+### What the investigation actually found
 
-- `src/core/state.h`: `STATE_VERSION = 7` (what this build writes),
-  `STATE_MIN_VERSION = 2` (oldest it will load). `retro_unserialize()` refuses
-  anything outside that window and returns false silently.
-- A Battle Sphere Gold state loaded on the same build — so this is version
-  gating, not a general savestate bug and not AvP-specific.
-- **Unconfirmed:** the actual header version in the reporter's two files was
-  never measured; the files were not available. Do not assert they are "v1".
+Two defects, and the second is the bigger one:
 
-### Decision required (this is the ticket)
+- `STATE_MIN_VERSION` was `2`, so v1 states (release v2.2.0) were refused.
+  That is the reported symptom.
+- **v1, v2 and v3 states all mis-parsed from the CDROM chunk onward.** v2
+  (v2.3.0/v2.3.1) and v3 (v2.3.2) were *inside* the accepted window:
+  `retro_unserialize()` returned true, the core kept running, and every chunk
+  after the CD block was read at the wrong offset. The CD-support work
+  restructured the CDROM chunk (−2627 bytes) with only its trailing 28 bytes
+  version-gated. Nothing user-visible flagged it.
 
-- **Recommended:** leave as-is, document that states from sufficiently old
-  Virtual Jaguar versions do not carry forward, close as expected behaviour.
-- Alternative: add a best-effort legacy loader below `STATE_MIN_VERSION`. Only
-  worth it if there is real appetite — the format gap is old and the v3.0.0
-  freeze at v7 means the window is now stable rather than drifting.
+So the release-notes claim that states "from the v2.x line load normally" was
+false as shipped in v3.0.0.
 
-### Automation worth building (small, high leverage)
+### What was done
 
-A savestate header inspector: read the first 8 bytes, print magic (`"VJSS"`) and
-the version field. Turns "what version is this file" from an unanswerable
-support question into a one-line answer, for this and every future report. Ask
-the reporter for those 8 bytes either way.
+`STATE_MIN_VERSION` is `1`, `DACStateLoad` gates the I2S resampler fields, and
+`CDROMStateLoad` forks on `STATE_VERSION_CDROM_RESTRUCTURE` to consume the
+legacy 8004-byte block. Both fixes are exact, not best-effort — the defaulted
+fields are all re-derived before use (DAC) or belong to a CD path those cores
+never had (CDROM). This deliberately reverses the "not adding a legacy loader
+in this pass" call recorded on the issue, on the grounds that the loader turned
+out to be exact.
 
-### Acceptance criteria
+Verified with genuine states written by v2.2.0, v2.3.0 and v2.3.2 cores built
+from their own tags against the real AvP ROM; `test/test_state_compat` guards
+all four released layouts in CI.
 
-A documented, deliberate call recorded on the issue — not an implicit one — plus
-the inspector merged if the team wants triage support.
+### Still open on the ticket
+
+The reporter's two files were never available, so *their* header versions
+remain inferred rather than measured. `test/tools/vjss_info` answers it in one
+line if they turn up.
 
 ---
 

@@ -923,8 +923,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		echo "  SKIP: yarc.j64 ROM not available (framebuffer integrity)"; \
 	fi
-	@# Save-state version gate: a v2-layout state must still load, v1 and
-	@# future versions must be refused.  Deliberately NOT wrapped in an
+	@# Save-state version gate: every layout a released core wrote (v1, v2,
+	@# v3, v7) must still load with its chunks correctly aligned; version 0
+	@# and future versions must be refused.  Deliberately NOT wrapped in an
 	@# `if [ -f ... ]` guard like the framebuffer test above: yarc.j64 is
 	@# committed in-tree, so a missing ROM is a broken checkout and the
 	@# test's exit 77 should stop the suite rather than read as a pass.
