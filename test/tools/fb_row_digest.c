@@ -32,14 +32,22 @@
  *   uint32 video_frame_count
  *   uint32 audio_frame_count
  *   video_frame_count records of:
- *     uint32 width, height, frame_hash, written_extent
+ *     uint32 width, rows, frame_hash, written_extent
+ *       (rows is the stored row count, min(presented height, MAX_ROWS=512),
+ *        not the presented height; readers must size row_hash[] by it)
  *       (written_extent is 0xFFFFFFFF when the core does not export
  *        TOMGetWrittenRowExtent, i.e. for a pre-fix reference build)
- *     uint32 row_hash[height]
+ *     uint32 row_hash[rows]
  *     uint32 band_x0, band_width, band_hash, band_nonblack,
  *            band_first_x, band_first_y
- *       (overscan strip: columns x >= 320. band_width=0 when width<=320;
- *        band_first_* = 0xFFFFFFFF when the band has no non-black pixels)
+ *       (overscan strip: columns x >= 320, hashed over the same stored rows.
+ *        When width > 320: band_x0=320, band_width=width-320, band_hash is
+ *        FNV-1a over the strip, band_nonblack counts pixels whose RGB is not
+ *        zero, and band_first_x/band_first_y are the first such pixel in
+ *        row-major order, or 0xFFFFFFFF each when the band is all black.
+ *        When width <= 320 the band block is skipped and the fields are
+ *        written as band_x0=0, band_width=0, band_hash=0, band_nonblack=0,
+ *        band_first_x=0xFFFFFFFF, band_first_y=0xFFFFFFFF.)
  *   audio_frame_count records of:
  *     uint32 audio_hash   (samples, peaks, non-silent count, RMS L/R)
  */
