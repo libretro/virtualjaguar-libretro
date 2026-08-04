@@ -22,14 +22,14 @@ artefact (red backdrop behind the shotgun HUD icon on the accurate blitter)
 can be reproduced headlessly. The Alien fixture above cannot reach it - the
 shotgun is a Marine weapon.
 
-```bash
-PRESS_FILE=test/fixtures/avp_reach_marine_shotgun.press FRAMES=12000 \
+~~~bash
+PRESS_FILE=test/fixtures/avp_reach_marine_shotgun.press FRAMES=12200 \
   bash test/tools/run_avp_fixture.sh ./virtualjaguar_libretro.dylib
-```
+~~~
 
-Needs **12000 frames**: pickup lands around frame 10520 and the artefact shows
+Needs **~12200 frames**: pickup lands around frame 10520 and the artefact shows
 from ~10560. The route after the briefing is a seeded wander, not a solved
 path, so it depends on the core staying deterministic - re-verify the pickup
-frame if emulation timing changes. A save state taken after the pickup does
+frame if emulation timing changes.
 **not** carry the artefact, so drive it from boot rather than via
 `--load-state`.
