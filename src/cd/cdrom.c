@@ -2555,6 +2555,13 @@ storew	TEMP,(r24)
 
 #include "state.h"
 
+/* Size of the two staging buffers (`static uint8_t cdBuf2[2532 + 96],
+ * cdBuf3[2532 + 96];`) that the pre-STATE_VERSION_CDROM_RESTRUCTURE CDROM
+ * chunk carried after `firstTime`.  The arrays were deleted with the
+ * unfinished BUTCH stub, so the legacy loader has to skip them by an
+ * explicit byte count rather than a sizeof. */
+#define CDROM_LEGACY_STAGING_BYTES ((size_t)((2532 + 96) * 2))
+
 size_t CDROMStateSave(uint8_t *buf)
 {
 	uint8_t *start = buf;
@@ -2627,18 +2634,54 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	STATE_LOAD_VAR(buf, txData);
 	STATE_LOAD_VAR(buf, rxDataBit);
 	STATE_LOAD_VAR(buf, firstTime);
-	STATE_LOAD_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
-	STATE_LOAD_VAR(buf, dsaResponseReady);
-	STATE_LOAD_VAR(buf, isMultiWordResponse);
-	STATE_LOAD_VAR(buf, txBufferEmpty);
-	STATE_LOAD_VAR(buf, cdPlaying);
-	STATE_LOAD_VAR(buf, seekDelay);
-	STATE_LOAD_VAR(buf, fifoDataReady);
-	STATE_LOAD_VAR(buf, fifoReadCount);
-	STATE_LOAD_VAR(buf, fifoFillDelay);
-	STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
-	STATE_LOAD_VAR(buf, ssiBufPtr);
-	STATE_LOAD_VAR(buf, ssiBlock);
+	/* Layout fork.  Everything above is common to every format version;
+	 * from here the pre-CD-support layout (STATE_VERSION_CDROM_RESTRUCTURE)
+	 * diverges completely.  Releases v2.2.0 (v1), v2.3.0/v2.3.1 (v2) and
+	 * v2.3.2 (v3) wrote two staging buffers here — cdBuf2 and cdBuf3, both
+	 * `uint8_t [2532 + 96]` — which the CD-support work removed and
+	 * replaced with the BUTCH/FIFO/DSA/SSI working set below.  Consuming
+	 * the new field list from an old blob would read 5256 bytes of stale
+	 * sector data as flags and then leave the cursor 2627 bytes short,
+	 * desyncing the Joystick, Memory Track and DAC chunks that follow.
+	 * Skip the dead buffers by their byte count (the arrays no longer
+	 * exist, so the size has to be spelled out) and start the drive from
+	 * the same idle state CDROMReset() establishes.  Those cores had no
+	 * working CD path — cdBuf2/cdBuf3 were only ever written by the
+	 * unfinished BUTCH stub — so nothing emulated is lost. */
+	if (stateVersion < STATE_VERSION_CDROM_RESTRUCTURE)
+	{
+		buf += CDROM_LEGACY_STAGING_BYTES;
+		/* cdrom_eeprom_ram is persistent NVM backed by a file on disk,
+		 * not transient drive state: an old blob simply has nothing to
+		 * say about it, so leave whatever the session loaded in place
+		 * rather than zeroing the user's CD memory. */
+		dsaResponseReady    = false;
+		isMultiWordResponse = false;
+		txBufferEmpty       = true;
+		cdPlaying           = false;
+		seekDelay           = 0;
+		fifoDataReady       = false;
+		fifoReadCount       = 0;
+		fifoFillDelay       = 0;
+		memset(ssiBuf, 0x00, sizeof(ssiBuf));
+		ssiBufPtr           = 2352;
+		ssiBlock            = 0;
+	}
+	else
+	{
+		STATE_LOAD_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
+		STATE_LOAD_VAR(buf, dsaResponseReady);
+		STATE_LOAD_VAR(buf, isMultiWordResponse);
+		STATE_LOAD_VAR(buf, txBufferEmpty);
+		STATE_LOAD_VAR(buf, cdPlaying);
+		STATE_LOAD_VAR(buf, seekDelay);
+		STATE_LOAD_VAR(buf, fifoDataReady);
+		STATE_LOAD_VAR(buf, fifoReadCount);
+		STATE_LOAD_VAR(buf, fifoFillDelay);
+		STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
+		STATE_LOAD_VAR(buf, ssiBufPtr);
+		STATE_LOAD_VAR(buf, ssiBlock);
+	}
 	/* v3 and older states predate the DSA response queue (see
 	 * STATE_VERSION_CDROM_DSA_QUEUE): leave those fields at a safe empty
 	 * state instead of consuming bytes the layout never carried. */
