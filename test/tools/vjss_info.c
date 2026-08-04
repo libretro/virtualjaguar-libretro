@@ -16,9 +16,7 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 
 /* Numeric copies of src/core/state.h — keep the tool standalone. */
 #define VJSS_MAGIC       0x564A5353u  /* "VJSS" */
@@ -49,7 +47,6 @@ int main(int argc, char **argv)
    uint32_t magic, version, flags, reserved;
    const char *endian;
    const char *verdict;
-   int exit_code;
 
    if (argc != 2)
    {
@@ -106,6 +103,5 @@ int main(int argc, char **argv)
           (unsigned)magic, endian, (unsigned)version,
           (unsigned)flags, (unsigned)reserved, verdict);
 
-   (void)exit_code;
    return 0;
 }
