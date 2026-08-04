@@ -1463,15 +1463,11 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
                  "this image is an incomplete / bad rip, not an unsupported "
                  "format\n");
       }
-      else if (matched > 0)
-      {
-         LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
-                 "(matched %u/32 bytes)\n", (unsigned)matched);
-      }
       else
       {
          LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
-                 "(matched 0/32 bytes)\n");
+                 "(matched %u/%u bytes)\n",
+                 (unsigned)matched, (unsigned)sizeof(MAGIC));
       }
       return false;
    }
