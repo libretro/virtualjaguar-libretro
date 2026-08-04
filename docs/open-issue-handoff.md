@@ -91,7 +91,9 @@ opening any ticket.
 > since it only surfaces green when nothing precedes it in row-major order — use
 > a colour census instead.
 
-**Status: reported, pixel-verified once, then twice NOT reproduced. Root cause open.**
+**Status: ROOT-CAUSED 2026-08-04.** Not a rendering bug — a real OP object
+AvP parks off-screen, exposed by our 326-column presented window. Open on a
+presentation decision, not on investigation. Details in the block above.
 
 ### What is established
 
@@ -104,10 +106,13 @@ opening any ticket.
 - Present in v2.1.0 (`48096c1`) — **not a regression**.
 - The old "line buffer not cleared because AvP doesn't set BGEN" theory is
   **superseded**: BGEN *is* set for AvP with `BG=0x0000`.
-- Two later full sweeps on develop found no green pixels anywhere in the border
-  rows. In one of those passes the headless title screen also lacked the black
-  letterbox the reporter sees — itself evidence of a capture/composition
-  mismatch rather than of a fix.
+- ~~Two later full sweeps on develop found no green pixels anywhere in the
+  border rows.~~ **Superseded — those sweeps were blind, not clean.** Every
+  check at the time folded columns ≥320 into a row hash, so the band was never
+  actually inspected. A colour census over the band finds the green in both
+  BIOS modes. Related trap: the `VJFBDIG3` digest's `band_first_x/y` also
+  under-reports it, surfacing green only when nothing precedes it in row-major
+  order — use a census, not first-hit.
 
 ### The decisive question
 
@@ -162,7 +167,7 @@ with no signature.
 > from boot), and the fixture's post-briefing route is a seeded wander that
 > assumes the core stays deterministic.
 
-**Status: never reproduced headlessly. May already be fixed.**
+**Status: REPRODUCED headlessly and root-caused 2026-08-04; fix in PR #292.**
 
 ### What is established
 
@@ -172,10 +177,16 @@ with no signature.
   found the only other unconditional `dstd` read (`blitter.c:2872`, inside
   `if (dread)`) cannot fire under AvP's `!dsten && bkgwren` combination — so
   the guard *should* cover the case as understood. That makes **"it is a
-  different blit type"** (SRCSHADE / Gouraud / other inhibit mask) the stronger
-  lead.
-- On current develop, fast vs accurate are **byte-identical across a full
-  900-frame AvP timeline**. The paths agree far more than when this was filed.
+  different blit type"** the stronger lead — **now confirmed**: the blit is
+  `cmd=$49800601` with SRCSHADE set and `BKGWREN`/`DSTEN` both clear, so #166's
+  guard never applied. DCOMPEN was comparing against the *shaded* source, so a
+  transparent pixel shaded to index 1 became opaque.
+- ~~On current develop, fast vs accurate are byte-identical across a full
+  900-frame AvP timeline.~~ **Misleading — that timeline never reached the
+  state.** The Alien fixture cannot pick up a shotgun (a Marine weapon). Driving
+  to the Marine pickup shows exactly 448 differing pixels per frame from 10560
+  onward. Agreement outside that window is real: 31,474 blits over frames
+  11800–11900 diverge on none.
 
 ### Verification plan (strictly ordered — step 1 is the whole unlock)
 
@@ -256,7 +267,7 @@ line if they turn up.
 > 22/32 this section claims below — the "partial magic" premise doesn't hold at
 > the offset the boot stub actually checks.
 
-**Status: root-caused. Needs a product decision, not more investigation.**
+**Status: CLOSED 2026-08-04 — warn-and-refuse shipped.**
 
 ### What is established
 
@@ -265,21 +276,25 @@ Of 14 local CDI images, 4 fail `retro_load_game` — all CDI V2 rips:
 - **ironsoldier2, mystdemo, vidgrid** — the boot-header region is **zero-filled
   in the file itself**. No offset math can recover data that is not present.
   These are bad dumps.
-- **worldtourracing** — carries a **partial 22-of-32-byte** boot magic. Making
-  it boot requires the boot stub to tolerate a truncated match.
+- **worldtourracing** — ~~carries a partial 22-of-32-byte boot magic.~~
+  **Wrong.** It reports `matched 0/32` at `+0x42`, the offset the boot stub
+  actually checks. The 22/32 figure came from a different offset. The
+  "partial magic" premise that motivated the tolerance option does not hold,
+  which made the decision easier, not harder.
 
 The CDI walk itself is correct; this is not an offset bug. (Verified previously:
 the V2 rips are `zeros(N) + content`, N = 112/76.)
 
-### Decision required
+### Decision — made and shipped 2026-08-04
 
-- **Recommended: warn and refuse**, with a message that names the dump problem
-  explicitly ("boot header is zero-filled — this image is a bad dump, not an
-  unsupported format") and a known-bad-dump table so users stop re-filing it.
-- Alternative: tolerate truncated magic for the worldtourracing class. **This
-  carries real false-positive risk** — a 22-byte prefix match against
-  decoy-prone data is a weak predicate, and a wrong accept boots garbage rather
-  than failing cleanly.
+**Warn and refuse.** `CDIntfExtractBootStub()` now names the dump problem: a
+zero-filled region gets an explicit bad-rip message, anything else reports
+`matched N/32 bytes` with the denominator from `sizeof(MAGIC)`. Known-bad dumps
+are tabulated in `docs/cd-known-issues.md`. Corpus unchanged at 10 pass / 4 fail.
+
+Truncated-magic tolerance was **rejected**: a prefix match against decoy-prone
+data is a weak predicate, and a wrong accept boots garbage instead of failing
+cleanly.
 
 ### Verification plan
 
