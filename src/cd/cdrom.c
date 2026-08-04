@@ -2651,10 +2651,16 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	if (stateVersion < STATE_VERSION_CDROM_RESTRUCTURE)
 	{
 		buf += CDROM_LEGACY_STAGING_BYTES;
-		/* cdrom_eeprom_ram is persistent NVM backed by a file on disk,
-		 * not transient drive state: an old blob simply has nothing to
-		 * say about it, so leave whatever the session loaded in place
-		 * rather than zeroing the user's CD memory. */
+		/* Start the drive from the same clean idle state CDROMReset()
+		 * establishes.  The fields loaded above from the blob (cdRam,
+		 * cdBufPtr, etc.) come from cores that had no working CD path,
+		 * so any BIOS_OVRD or data-ready flag they carry is stale noise.
+		 * Overwrite all drive-state fields unconditionally; the one
+		 * exception is cdrom_eeprom_ram — persistent NVM backed by a
+		 * file on disk that an old blob has nothing to say about, so
+		 * leave whatever the session already loaded in place. */
+		memset(cdRam, 0x00, 0x100);
+		cdBufPtr            = 2352;
 		dsaResponseReady    = false;
 		isMultiWordResponse = false;
 		txBufferEmpty       = true;
@@ -2663,9 +2669,12 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 		fifoDataReady       = false;
 		fifoReadCount       = 0;
 		fifoFillDelay       = 0;
+		fifoRefillAccum     = 0;
+		cdPrevShouldIRQ     = false;
 		memset(ssiBuf, 0x00, sizeof(ssiBuf));
 		ssiBufPtr           = 2352;
 		ssiBlock            = 0;
+		cdTraceLastI2SEnable = -1;
 	}
 	else
 	{
