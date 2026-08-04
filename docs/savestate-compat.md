@@ -32,7 +32,7 @@ window is stable rather than drifting.
 
 ## Inspecting a file
 
-Build and run the header inspector (PR #284 / `test/tools/vjss_info.c`):
+Build and run the header inspector (`test/tools/vjss_info.c`, added in PR #284). If the file is not present in your checkout, update to a revision that includes PR #284 first:
 
 ```bash
 cc -O2 -Wall -std=c89 -o test/tools/vjss_info test/tools/vjss_info.c
