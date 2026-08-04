@@ -177,9 +177,6 @@ static void on_video(void *ud, const void *data, unsigned width,
                 p->sentinel_count++;
         }
     }
-
-    if (p->green_count && p->first_green_frame == 0xFFFFFFFFu)
-        p->first_green_frame = p->frame;
 }
 
 /* Display columns 323/324/325 must equal bits 7/6/5 of mainRAM[row * 32]
@@ -252,6 +249,11 @@ static bool on_frame(void *ud, unsigned frame)
 
     p->frame = frame;
 
+    /* Recorded here, not in on_video(): the video callback runs before this
+     * one, so the frame index it would see is the previous frame's. */
+    if (p->green_count && p->first_green_frame == 0xFFFFFFFFu)
+        p->first_green_frame = frame;
+
     if (p->verbose_dump || frame == p->dump_frame
         || (p->green_count && p->first_green_frame == frame))
     {
@@ -276,7 +278,9 @@ static bool on_frame(void *ud, unsigned frame)
      * next frame; if it survives, nothing writes there. */
     if (p->poke_frame != 0xFFFFFFFFu && frame == p->poke_frame
         && p->videoBuffer && *p->videoBuffer
-        && p->game_width && *p->game_width > BAND_X0)
+        && p->game_width && p->game_height
+        && *p->game_width > BAND_X0 && *p->game_width <= MAX_W
+        && *p->game_height > 0 && *p->game_height <= MAX_H)
     {
         unsigned y, x;
         unsigned w = (unsigned)*p->game_width;
@@ -304,10 +308,11 @@ static bool on_frame(void *ud, unsigned frame)
         p->poked = 1;
         printf("frame %u: POKE-TARGET CHECK videoBuffer==presented for %u/%u "
                "band pixels\n", frame, pre_match, pre_total);
-        printf("frame %u: POKED band x=%u..%u y=0..%u with 0x%08X "
-               "(readback[%u][%u]=0x%08X)\n",
-               frame, BAND_X0, w - 1, h - 1, SENTINEL, 32u, 324u,
-               vb[(size_t)32 * w + 324]);
+        printf("frame %u: POKED band x=%u..%u y=0..%u with 0x%08X\n",
+               frame, BAND_X0, w - 1, h - 1, SENTINEL);
+        if (w > 324 && h > 32)
+            printf("frame %u: readback[y=32][x=324]=0x%08X\n",
+                   frame, vb[(size_t)32 * w + 324]);
     }
 
     if (p->poked && frame > p->poke_frame && frame <= p->poke_frame + 5)
