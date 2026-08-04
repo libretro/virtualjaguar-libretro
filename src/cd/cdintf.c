@@ -1440,7 +1440,39 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
 
    if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
    {
-      LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN\n");
+      uint32_t matched;
+      uint32_t all_zero;
+      uint32_t j;
+
+      matched = 0;
+      all_zero = 1;
+      for (j = 0; j < (uint32_t)sizeof(MAGIC); j++)
+      {
+         if (swapped[0x42 + j] == MAGIC[j])
+            matched++;
+         if (swapped[0x42 + j] != 0)
+            all_zero = 0;
+      }
+
+      if (all_zero)
+      {
+         /* Bad CDI V2 rips: boot header region is zeros in the file itself.
+          * No offset fix recovers absent data — refuse with an actionable
+          * message so users stop re-filing this as an unsupported format. */
+         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled at +0x42 — "
+                 "this image is an incomplete / bad rip, not an unsupported "
+                 "format\n");
+      }
+      else if (matched > 0)
+      {
+         LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
+                 "(matched %u/32 bytes)\n", (unsigned)matched);
+      }
+      else
+      {
+         LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
+                 "(matched 0/32 bytes)\n");
+      }
       return false;
    }
 

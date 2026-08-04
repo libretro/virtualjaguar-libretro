@@ -101,3 +101,25 @@ from structured noise at the right level.
 - Boot-matrix rows are build-stamped; a row whose stamp does not match the
   current build is re-run, never trusted (stale-row resurrection produced
   the phantom "Battle Morph bios pc_escape flake").
+
+
+## Known bad CDI dumps
+
+Some DiscJuggler CDI V2 rips in the wild lack a valid
+`ATARI APPROVED DATA HEADER ATRI ` magic at session-2 track `+0x42`
+(after the I2S word-swap). The CDI walk/offset math is correct; the header
+data is simply wrong or absent. Load is **refused** with an actionable
+`[CD-BOOTSTUB]` log line (warn-and-refuse — we do not tolerate truncated
+ATARI magic, which would risk false-positive boots).
+
+Measured against the local 14-CDI corpus (10 load, 4 fail):
+
+| Local image | Defect at `+0x42` (word-swapped) | Log signature |
+|---|---|---|
+| vidgrid | **zero-filled** (32/32 zeros) | `Boot header region is zero-filled` |
+| ironsoldier2 | garbage / title residue (`matched 1/32`) | `matched N/32 bytes` |
+| mystdemo | non-magic garbage (`matched 0/32`) | `matched 0/32 bytes` |
+| worldtourracing | non-magic garbage (`matched 0/32`) | `matched 0/32 bytes` |
+
+Re-dump from a known-good source (or use CUE/BIN) rather than filing this as
+an unsupported-format bug. See issue #269.
