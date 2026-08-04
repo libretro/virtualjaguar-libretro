@@ -13,7 +13,9 @@ Defined in `src/core/state.h`:
 | `STATE_MIN_VERSION` | `1` | Oldest version this build will **load** |
 
 `retro_unserialize()` refuses anything outside `STATE_MIN_VERSION … STATE_VERSION`
-and returns false (no partial load).
+outright, returning false without touching emulator state. Inside the window it
+always loads in full; chunks whose fields an older layout did not carry are
+reconstructed rather than read (see below).
 
 Header fields are stored with host-endian `memcpy` (`STATE_SAVE_VAR`). On a
 little-endian host the on-disk magic bytes are `53 53 4A 56`, not the ASCII
