@@ -10,7 +10,7 @@ Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) At
 - Supports NTSC and PAL video modes
 - 2-player input with configurable numpad mapping
 - Fast and legacy blitter modes (the legacy/accurate path is SIMD-accelerated on SSE2 and NEON)
-- Optional BIOS boot sequence, plus an HLE BIOS so games can boot without a BIOS image
+- No BIOS files required: the Jaguar boot ROM and both Jaguar CD BIOSes are built into the core, with an HLE BIOS as the default boot path (see [BIOS](#bios))
 - Save state, run-ahead (deterministic serialization), SRAM/EEPROM via the libretro SRAM interface, cheat codes, and a memory map for RetroAchievements
 - Supported ROM formats: `.j64`, `.jag`, `.rom`, `.abs`, `.cof`, `.bin`, `.prg` (including inside ZIP archives), plus `.cue` and `.cdi` for Jaguar CD images, and conservative headerless raw homebrew loading
 - Network link play (JagLink / CatBox emulation): Doom deathmatch, AirCars, BattleSphere Gold — via RetroArch netplay, or a direct TCP link between frontends on socket-capable platforms ([setup guide](docs/netlink-user-guide.md))
@@ -37,6 +37,39 @@ make platform=ios-arm64                         # Cross-compile (ios-arm64, osx,
 ```
 
 Output varies by platform: `.so` (Linux), `.dylib` (macOS), `.dll` (Windows).
+
+## BIOS
+
+**No BIOS files are required.** The Jaguar console boot ROM and both Jaguar CD
+BIOSes (retail and developer) are embedded in the core, so every boot mode
+works out of the box:
+
+- **Cartridges** — the `BIOS (Cartridges)` core option chooses between the
+  HLE BIOS (default: the core performs the boot setup itself, skipping the
+  boot animation) and the real boot ROM. The console boot ROM is always the
+  embedded copy; it is never loaded from disk.
+- **CD discs** — the `CD Boot Mode` core option chooses between the HLE CD
+  BIOS (default, recommended) and a real CD BIOS. In real-BIOS mode the
+  `CD BIOS Type` option selects the retail or developer image.
+
+### Optional external CD BIOS override
+
+In real-BIOS CD mode only, a CD BIOS ROM file in the RetroArch `system`
+directory takes precedence over the embedded images — useful if you want to
+run a specific BIOS revision. The file must be exactly 256 KiB and can live
+directly in `system/` or in an `Atari - Jaguar/`, `Atari - Jaguar CD/`,
+`jaguar/`, or `jaguarcd/` sub-folder, under one of these names:
+
+| Type | Accepted filenames |
+| --- | --- |
+| Retail | `[BIOS] Atari Jaguar CD (World).j64` / `.rom` / `.bin` |
+| Developer | `[BIOS] Atari Jaguar Developer CD (World).j64` / `.rom` / `.bin` |
+| Generic | `jaguarcd_bios.bin`, `jagcd_bios.bin`, `jaguarcd.bin`, `jagcd.bin`, `Jaguar CD BIOS.rom`, `Jaguar CD BIOS.bin` |
+
+Selection is by filename only — the core does not verify which BIOS a file
+actually contains, so a mislabelled or corrupt file will boot to a black
+screen. If real-BIOS CD boots misbehave, remove or rename any CD BIOS files
+in `system/` to fall back to the known-good embedded images.
 
 ## Documentation
 
