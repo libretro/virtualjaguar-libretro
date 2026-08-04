@@ -1457,9 +1457,9 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       if (all_zero)
       {
          /* Bad CDI V2 rips: boot header region is zeros in the file itself.
-          * No offset fix recovers absent data — refuse with an actionable
+          * No offset fix recovers absent data - refuse with an actionable
           * message so users stop re-filing this as an unsupported format. */
-         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled at +0x42 — "
+         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled at +0x42 - "
                  "this image is an incomplete / bad rip, not an unsupported "
                  "format\n");
       }
