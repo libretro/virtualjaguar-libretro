@@ -329,6 +329,17 @@ run that changed nothing. Belongs upstream.
 `options_intl[]` is replaced with `&options_xx`. That is upstream behaviour, and
 referencing the symbol before the header defines it would not compile.
 
+**Risk note (dependabot bumps already on `develop`):** PRs #278–#281 all merged
+before any live Crowdin run. #278 is the non-routine one —
+`ad-m/github-push-action` **0.8.0 → 1.3.0** (major), the action that pushes
+regenerated translations in
+`.github/workflows/crowdin_translation_sync.yml`. The other three
+(`setup-python` 4→7, `checkout` 4→7, `setup-java` 4→5) land in the same
+workflows. Until step 4 above succeeds once, a sync failure is ambiguous
+between "bump broke it" and "was never set up". Check the push-action
+changelog for breaking input changes (`github_token`, `branch`) when
+triaging the first live failure.
+
 ---
 
 ## 7. #254 — Standalone SDL frontend
@@ -349,31 +360,26 @@ body are overwritten. Do not open tickets against it.
 
 ---
 
-## 9. Open dependabot PRs — #278, #279, #280, #281
+## 9. Dependabot bumps — merged (history)
 
-Routine CI bumps, but **#278 is not routine**: it bumps
-`ad-m/github-push-action` **0.8.0 → 1.3.0**, a major version, and that action is
-what pushes the regenerated translations in
-`.github/workflows/crowdin_translation_sync.yml`. Check its changelog for
-breaking input changes before merging; the workflow passes `github_token` and
-`branch`. The other three (`setup-python` 4→7, `checkout` 4→7, `setup-java` 4→5)
-are used by the same workflows and are lower risk, but all four touch the
-Crowdin pipeline that has never had a successful live run — so a failure after
-merging will be ambiguous between "bump broke it" and "was never set up".
-Prefer merging these **after** the org-side Crowdin setup has had one green run.
+PRs #278, #279, #280, and #281 all merged to `develop` (#278 as `6249339`;
+#279–#281 as `c4edff9` / `791d292` / `f1e84d8`). There is no open dependabot
+work left. The untested major bump of `ad-m/github-push-action` is now a risk
+note under §6 (#252), not a ticket.
 
 ---
 
 ## Suggested ticket breakdown
 
-Ordered by value-per-effort, not by issue number.
+Ordered by value-per-effort, not by issue number. Cheap-model task files for
+items 1–4 and 6 live under `docs/tasks/`.
 
 | # | Ticket | Depends on | Size |
 |---|---|---|---|
 | 1 | Savestate header inspector CLI (#268) | — | XS |
 | 2 | #268 maintainer decision + document | 1 | XS |
 | 3 | #269 warn-and-refuse + known-bad-dump table + corpus message assertion | — | S |
-| 4 | Scripted-input fixture reaching AvP shotgun (#267 unlock) | — | S–M |
+| 4 | Scripted-input fixture reaching AvP in-game (#267 unlock) | — | S–M |
 | 5 | #267 re-confirm on nightly; isolate B_CMD if it reproduces | 4 | M |
 | 6 | Overscan column-band digest in A/B sweep tooling (#266) | — | S |
 | 7 | #266: request nightly capture; write-side instrumentation if confirmed | 6 | M |
@@ -381,13 +387,12 @@ Ordered by value-per-effort, not by issue number.
 | 9 | VLM: single-session audio-disc support, gated | 8 | L |
 | 10 | `supports_no_game` + CD BIOS standalone boot | 9 | M |
 | 11 | Disk control (audio-CD swap in VLM only) | 10 | M |
-| 12 | Review dependabot #278 major bump | Crowdin green run | XS |
-| 13 | #254 SDL frontend phase 1 | — | L |
+| 12 | #254 SDL frontend phase 1 | — | L |
 
 Items 1–3 are closeable quickly and clear the tracker. Items 4 and 6 are
 infrastructure that make two stuck visual bugs tractable and stay useful
 afterwards — do them before the bugs they unlock. Items 8–11 are the VLM chain
-and are strictly sequential. Item 13 is independent of everything else.
+and are strictly sequential. Item 12 is independent of everything else.
 
 ### What NOT to do
 
