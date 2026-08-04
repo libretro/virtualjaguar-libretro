@@ -49,12 +49,14 @@ works out of the box:
   boot animation) and the real boot ROM. The console boot ROM is always the
   embedded copy; it is never loaded from disk.
 - **CD discs** — the `CD Boot Mode` core option chooses between the HLE CD
-  BIOS (default, recommended) and a real CD BIOS. In real-BIOS mode the
+  BIOS (default, recommended) and a real CD BIOS (`Real BIOS`, or `Auto`,
+  which currently also boots the real BIOS). In the real-BIOS modes the
   `CD BIOS Type` option selects the retail or developer image.
 
 ### Optional external CD BIOS override
 
-In real-BIOS CD mode only, a CD BIOS ROM file in the RetroArch `system`
+In the real-BIOS CD modes only (`CD Boot Mode` set to `Real BIOS` or
+`Auto`), a CD BIOS ROM file in the RetroArch `system`
 directory takes precedence over the embedded images — useful if you want to
 run a specific BIOS revision. The file must be exactly 256 KiB and can live
 directly in `system/` or in an `Atari - Jaguar/`, `Atari - Jaguar CD/`,
