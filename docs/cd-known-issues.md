@@ -61,11 +61,32 @@ expected reply is `$1700 | payload` (`bset #9`), which
 
 ### 2. FMV scene-jump schedule drift (Dragon's Lair / Space Ace / BD13)
 
-FMV titles occasionally jump scenes early/late: the games' own
-delivery-clock counters drift relative to our transfer pacing (root-cause
-notes: DL clock at `$129AD6/$129ADE` advances +7680/s; subcode registers
-exonerated). Reproducible via RAM-snapshot counter comparison. Medium
-effort; HLE-mode only polish.
+FMV titles occasionally jump scenes early/late. **The original root-cause
+note here was wrong on both counts** -- see
+[`fmv-drift-notes.md`](fmv-drift-notes.md) for the measurements:
+
+- `$129AD6/$129ADE` is not a clock. Dragon's Lair's presentation counter
+  lives at `$562E/$5630` (the address its poll loop at `$004C0A` actually
+  reads), with a second accumulator at `$5688/$568A`.
+- That counter is **video-field-locked, not CD-derived**: it advances
+  exactly 32760 per field with zero jitter, and its per-field histogram is
+  identical at 1x/2x/4x read speed. Clock-vs-data drift through that
+  mechanism is structurally impossible.
+
+Measured transfer rates against the 352,800 B/s hardware 2x figure: the
+HLE path is exact (-0.000025%), the real-BIOS FIFO path runs -1.11% slow
+(`fifoFillDelay` is re-armed only after a drain completes, so GPU-ISR
+latency adds to the refill period instead of overlapping it). No
+accumulating jitter in either mode -- repeat attract loops are
+byte-identical.
+
+The symptom itself has **never been reproduced headlessly**. The leading
+un-measured suspect is seek/branch latency: `SEEK_DELAY_TICKS 100`
+(~3.2 ms) is 10-100x shorter than the 30-315 ms its own comment cites, and
+the HLE `CD_read` path has no seek model at all -- the one mechanism whose
+signature matches "jumps scenes *early*". The attract loop never branches,
+so it never seeks, which is why the measurement above cannot see it.
+Subcode registers remain exonerated.
 
 ### 3. Myst BIOS-mode audio parity listen
 
