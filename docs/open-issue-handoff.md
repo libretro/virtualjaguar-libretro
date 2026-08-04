@@ -11,6 +11,32 @@ mechanics that every ticket below depends on.
 
 ---
 
+## STATUS UPDATE — 2026-08-04 (post-merge)
+
+Everything in the ticket table below has landed on `develop`, and two of the
+four bug tickets moved substantially. Read this block before acting on the
+sections underneath it; where they disagree, this block is newer.
+
+| Ticket | State now |
+|---|---|
+| #266 | **Artefact confirmed present** headlessly on `888dfb6` in both BIOS modes. Earlier "no green found" was a blind spot, not an absence. No root cause yet. Open. |
+| #267 | **Root-caused.** SRCSHADE off-by-one in the accurate blitter, blit `cmd=$49800601`. Repro fixture in PR #289. Open (fix not written). |
+| #268 | Decision + inspector merged. Open, blocked on the reporter pasting `vjss_info` output for the two files. |
+| #269 | **Closed.** Warn-and-refuse shipped; truncated-magic tolerance explicitly rejected. |
+
+Merged tooling now available (do not rebuild): `test/tools/vjss_info.c`,
+`VJFBDIG3` band digest in `test/tools/fb_row_digest.c` + `fb_row_diff.py`,
+`test/fixtures/avp_reach_gameplay.press` (Alien) and, in PR #289,
+`avp_reach_marine_shotgun.press` (Marine + shotgun).
+
+**The headless caveat survived contact with reality, in both directions.** #266
+and #267 both turned out to be reproducible headlessly once the right tooling
+existed — so "not reproduced headlessly" really was a tooling gap, exactly as
+the caveat warned. That does not weaken the caveat for the remaining unknowns:
+neither ticket has a RetroArch confirmation of on-screen severity.
+
+---
+
 ## 0. Cross-cutting rules that will bite you
 
 These have each cost real debugging time in this repo. Internalise them before
@@ -55,6 +81,15 @@ opening any ticket.
 ---
 
 ## 1. #266 — AvP green dot / green right-edge (x ≥ 320 overscan)
+
+> **2026-08-04:** Confirmed real. 2000-frame sweeps with the merged band digest
+> find `#00FC38` at exactly `(324,32)` in HLE (1 px/frame, 1679/2000 frames) and
+> at `x=323..325`, `y=1..239` under BIOS (366 px/frame, 1123/2000). That colour
+> never appears at x<320. Sharpest lead: 9 HLE frames have a fully black active
+> area while the green dot persists — the strip is not cleared in step with the
+> active picture. Caveat found the hard way: `band_first_x/y` under-reports this,
+> since it only surfaces green when nothing precedes it in row-major order — use
+> a colour census instead.
 
 **Status: reported, pixel-verified once, then twice NOT reproduced. Root cause open.**
 
@@ -113,6 +148,19 @@ with no signature.
 ---
 
 ## 2. #267 — AvP red background behind shotgun (accurate blitter)
+
+> **2026-08-04:** Reproduced headlessly and root-caused. The artefact is behind
+> the shotgun's **HUD slot-1 icon** (`x[249..298] y[62..79]`), not the in-view
+> weapon sprite as the report reads. Blit `cmd=$49800601` =
+> SRCEN|UPDA1|UPDA2|LFU_AN|LFU_A|DCOMPEN|**SRCSHADE** — `BKGWREN` and `DSTEN` are
+> both clear, so #166's `!bkgwren` guard never applied. With an all-zero source
+> the accurate path writes CLUT index N where fast writes N-1, leaving the
+> backdrop at index 1 (dark red) instead of 0. Fix not written.
+>
+> Two gotchas: a save state taken after the pickup does **not** carry the
+> artefact (so `test_blitter_compare --load-state` can't iterate on it — drive
+> from boot), and the fixture's post-briefing route is a seeded wander that
+> assumes the core stays deterministic.
 
 **Status: never reproduced headlessly. May already be fixed.**
 
@@ -202,6 +250,11 @@ line if they turn up.
 ---
 
 ## 4. #269 — CDI V2 rips with truncated/absent boot headers
+
+> **2026-08-04 — CLOSED.** Warn-and-refuse shipped; truncated-magic tolerance
+> rejected. Note `worldtourracing` reports `matched 0/32` at `+0x42`, not the
+> 22/32 this section claims below — the "partial magic" premise doesn't hold at
+> the offset the boot stub actually checks.
 
 **Status: root-caused. Needs a product decision, not more investigation.**
 

@@ -1,5 +1,10 @@
 # Cheap-model task files
 
+> **All six tasks in this directory are complete and merged as of 2026-08-04.**
+> They are kept as worked examples of the self-contained task format, not as
+> open work. Current status lives in
+> [`docs/open-issue-handoff.md`](../open-issue-handoff.md).
+
 Self-contained prompts for weak models in fresh sessions. Each file inlines
 its own environment block, hard rules, allowlist, steps, acceptance gate,
 STOP conditions, and PR/issue deliverable text. Do not rely on shared
