@@ -7,6 +7,11 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PRESS_FILE=${PRESS_FILE:-"$ROOT/test/fixtures/avp_reach_gameplay.press"}
 VERIFY=${VERIFY:-"$ROOT/test/tools/cd_visual_verify"}
 AVP=${AVP:-"$ROOT/test/roms/private/ROMS/Alien vs Predator (1994).jag"}
+# cd_visual_verify defaults system_dir to the CWD-relative "test/roms/private",
+# so pass an absolute one to keep this script runnable from anywhere.  It is
+# placed before "$@" and the harness takes the last --system-dir it sees, so a
+# caller-supplied --system-dir still wins.
+SYSTEM_DIR=${SYSTEM_DIR:-"$ROOT/test/roms/private"}
 FRAMES=${FRAMES:-3000}
 OUTDIR=${OUTDIR:-/tmp/avp_fixture_$$}
 CORE=${1:?usage: run_avp_fixture.sh <core> [extra args...]}
@@ -41,6 +46,7 @@ set +e
   "${press_args[@]}" \
   --outdir "$OUTDIR" \
   --shot-every "${SHOT_EVERY:-0}" \
+  --system-dir "$SYSTEM_DIR" \
   --quiet \
   "$@" 2>&1 | tee "$log"
 rc=${PIPESTATUS[0]}
