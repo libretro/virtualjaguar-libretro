@@ -28,7 +28,7 @@
  * host -- which is the intended use, two builds on one machine.  The reader's
  * all-black row constant likewise assumes little-endian XRGB8888 in memory.)
  *
- *   magic  "VJFBDIG2"                        8 bytes
+ *   magic  "VJFBDIG3"                        8 bytes
  *   uint32 video_frame_count
  *   uint32 audio_frame_count
  *   video_frame_count records of:
@@ -36,6 +36,10 @@
  *       (written_extent is 0xFFFFFFFF when the core does not export
  *        TOMGetWrittenRowExtent, i.e. for a pre-fix reference build)
  *     uint32 row_hash[height]
+ *     uint32 band_x0, band_width, band_hash, band_nonblack,
+ *            band_first_x, band_first_y
+ *       (overscan strip: columns x >= 320. band_width=0 when width<=320;
+ *        band_first_* = 0xFFFFFFFF when the band has no non-black pixels)
  *   audio_frame_count records of:
  *     uint32 audio_hash   (samples, peaks, non-silent count, RMS L/R)
  */
@@ -90,6 +94,13 @@ static void on_video(void *userdata, const void *data,
     uint32_t frame_hash = FNV_SEED;
     unsigned row;
     unsigned rows = height;
+    uint32_t band_x0 = 0;
+    uint32_t band_width = 0;
+    uint32_t band_hash = 0;
+    uint32_t band_nonblack = 0;
+    uint32_t band_first_x = 0xFFFFFFFFu;
+    uint32_t band_first_y = 0xFFFFFFFFu;
+    unsigned col;
 
     if (!data || !st->out)
         return;
@@ -103,12 +114,46 @@ static void on_video(void *userdata, const void *data,
         frame_hash = fnv1a(&row_hash[row], sizeof(uint32_t), frame_hash);
     }
 
+    /* Overscan / border strip: columns at and past the 320-wide active area.
+     * AvP presents ~326 wide; every prior check folded these into row hashes. */
+    if (width > 320)
+    {
+        band_x0 = 320;
+        band_width = width - 320;
+        band_hash = FNV_SEED;
+        for (row = 0; row < rows; row++)
+        {
+            const uint8_t *line = (const uint8_t *)data + (size_t)row * pitch;
+            const uint32_t *px = (const uint32_t *)line;
+            band_hash = fnv1a(line + (size_t)band_x0 * 4,
+                              (size_t)band_width * 4, band_hash);
+            for (col = band_x0; col < width; col++)
+            {
+                if ((px[col] & 0x00FFFFFFu) != 0)
+                {
+                    band_nonblack++;
+                    if (band_first_x == 0xFFFFFFFFu)
+                    {
+                        band_first_x = col;
+                        band_first_y = row;
+                    }
+                }
+            }
+        }
+    }
+
     put_u32(st->out, width);
     put_u32(st->out, rows);
     put_u32(st->out, frame_hash);
     put_u32(st->out, st->get_extent ? st->get_extent() : 0xFFFFFFFFu);
     for (row = 0; row < rows; row++)
         put_u32(st->out, row_hash[row]);
+    put_u32(st->out, band_x0);
+    put_u32(st->out, band_width);
+    put_u32(st->out, band_hash);
+    put_u32(st->out, band_nonblack);
+    put_u32(st->out, band_first_x);
+    put_u32(st->out, band_first_y);
 
     st->frames_written++;
 }
@@ -158,7 +203,7 @@ int main(int argc, char **argv)
     cfg.video_callback      = on_video;
     cfg.video_callback_data = &st;
 
-    fwrite("VJFBDIG2", 1, 8, st.out);
+    fwrite("VJFBDIG3", 1, 8, st.out);
     put_u32(st.out, 0);   /* video frame count, patched below */
     put_u32(st.out, 0);   /* audio frame count, patched below */
 
