@@ -957,7 +957,7 @@ void BUTCHExec(uint32_t cycles)
    if (dsaResponseDelay > 0)
    {
       dsaResponseDelay--;
-      if (dsaResponseDelay == 0 && dsaQueueCount > 0)
+      if (dsaResponseDelay == 0 && (dsaQueueCount > 0 || isMultiWordResponse))
          dsaResponseReady = true;
    }
 
@@ -1148,8 +1148,15 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
        * after another serial-word delay: the ack clears the interrupt
        * latch, but the drive MCU still has data to hand over, and on real
        * hardware bit 13 (rec buffer full) rises again when the next word
-       * lands in the receive buffer. */
-      if (dsaQueueCount > 0 && dsaResponseDelay <= 0)
+       * lands in the receive buffer.
+       *
+       * isMultiWordResponse ($03nn / $14nn TOC reads) needs the same
+       * re-arm: those words are synthesized on demand from the disc layout
+       * rather than pushed onto dsaQueue, so the queue is empty and the
+       * ack would otherwise leave bit 13 low forever after word 1 -- the
+       * audio-CD stall, with the BIOS re-reading BUTCH+2 forever while the
+       * 68K cycles a tight loop at $050464-$050484. */
+      if ((dsaQueueCount > 0 || isMultiWordResponse) && dsaResponseDelay <= 0)
          dsaResponseDelay = DSA_RESPONSE_DELAY_TICKS;
    }
    else if (offset == I2CNTRL || offset == I2CNTRL + 2)
@@ -1228,12 +1235,22 @@ TOC: 2 10 00  a 00:00:00 00 49:50:06   <-- Track #10
 TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
 */
 
-         /* $0300 short TOC: BIOS polls DS_DATA for $03xx responses
-          * (echoes the command prefix).  Each of the 5 response words has
-          * high byte $03 and low byte = session info value.  The BIOS
-          * checks bit 0 of each word: if set, more data follows; if clear,
-          * TOC transfer is complete.  After all 5 data words, return $0300
-          * as end-of-data marker (bit 0 clear). */
+         /* $03nn Read session TOC: five data words, each TAGGED with its own
+          * response opcode in the high byte -- the drive does NOT echo the
+          * $03 command prefix (MiSTer butch.v DSA table, mirrored in
+          * test/mister_ground_truth.h):
+          *
+          *   $20nn TOC_MIN_TRK   first track of the session
+          *   $21nn TOC_MAX_TRK   last  track of the session
+          *   $22nn TOC_LO_MIN    lead-out absolute minutes
+          *   $23nn TOC_LO_SEC    lead-out absolute seconds
+          *   $24nn TOC_LO_FRM    lead-out absolute frames
+          *
+          * The sixth read yields the $0400 end-of-response terminator, the
+          * same word every other multi-word DSA response ends on.  We used
+          * to answer $03nn for all five and never terminate; the CD BIOS
+          * discarded the lot and spun forever in its DSA read loop, which
+          * is why an audio disc never reached the CD player / VLM. */
          if (cdPtr < 5)
          {
             data = CDIntfGetSessionInfo(cdCmd & 0xFF, cdPtr);
@@ -1243,13 +1260,13 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
                data = 0x0400;
             else
             {
-               data = 0x0300 | (data & 0xFF);
+               data = (uint16_t)(((0x20 + cdPtr) << 8) | (data & 0xFF));
                cdPtr++;
             }
          }
          else
          {
-            data = 0x0300;  /* end-of-data: high byte $03, bit 0 clear */
+            data = 0x0400;  /* end-of-response terminator */
          }
       }
       // Seek: only $12xx (Goto Frame) generates a response ($0100 = Found).
@@ -1361,11 +1378,9 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          dsaResponseReady = false;
          isMultiWordResponse = false;
       }
-      else if ((cdCmd & 0xFF00) == 0x0300 && cdPtr >= 5)
-      {
-         dsaResponseReady = false;  // Session TOC: 5 data words delivered
-         isMultiWordResponse = false;
-      }
+      /* Session TOC ($03nn) needs no explicit end condition: after the five
+       * $20..$24 data words the next read yields the $0400 terminator, which
+       * the branch above clears on. */
       else if ((cdCmd & 0xFF00) == 0x1400 && trackNum > maxTrack)
       {
          dsaResponseReady = false;  // Full TOC: all tracks delivered
