@@ -132,12 +132,19 @@ static void on_video(void *userdata, const void *data,
         for (row = 0; row < rows; row++)
         {
             const uint8_t *line = (const uint8_t *)data + (size_t)row * pitch;
-            const uint32_t *px = (const uint32_t *)line;
+            uint32_t pix;
             band_hash = fnv1a(line + (size_t)band_x0 * 4,
                               (size_t)band_width * 4, band_hash);
             for (col = band_x0; col < width; col++)
             {
-                if ((px[col] & 0x00FFFFFFu) != 0)
+                /* memcpy, not a byte-wise OR: pitch is a byte stride with no
+                 * 4-byte-multiple guarantee, so casting line to uint32_t* and
+                 * indexing it is UB on strict-alignment hosts.  Reassembling
+                 * the pixel by hand would instead pick the wrong three bytes
+                 * on a big-endian host, where XRGB8888-as-uint32 puts RGB at
+                 * bytes 1..3 rather than 0..2. */
+                memcpy(&pix, line + (size_t)col * 4, sizeof(pix));
+                if ((pix & 0x00FFFFFFu) != 0)
                 {
                     band_nonblack++;
                     if (band_first_x == 0xFFFFFFFFu)

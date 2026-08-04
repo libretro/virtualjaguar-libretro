@@ -141,7 +141,9 @@ def main():
             any_band_nonblack = True
 
         if (wa, ha) != (wb, hb):
-            unexpected.append((n, -1, f"geometry {wa}x{ha} -> {wb}x{hb}"))
+            # "rows" is the stored row count (clamped), not presented height.
+            unexpected.append((n, -1, f"geometry w={wa} rows={ha} -> "
+                                      f"w={wb} rows={hb}"))
             continue
 
         if banda[2] != bandb[2]:
