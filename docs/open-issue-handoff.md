@@ -19,8 +19,8 @@ sections underneath it; where they disagree, this block is newer.
 
 | Ticket | State now |
 |---|---|
-| #266 | **Artefact confirmed present** headlessly on `888dfb6` in both BIOS modes. Earlier "no green found" was a blind spot, not an absence. No root cause yet. Open. |
-| #267 | **Root-caused.** SRCSHADE off-by-one in the accurate blitter, blit `cmd=$49800601`. Repro fixture in PR #289. Open (fix not written). |
+| #266 | **Root-caused.** Not a rendering bug: a real 1-bpp OP object AvP parks at XPOS=320, exposed because our presented window is 326 columns wide (`VIRTUAL_SCREEN_WIDTH`, `src/tom/tom.h`) while the picture is 320. Faithful output a CRT hid. Open on a presentation decision (overscan-crop option). |
+| #267 | **Fix in PR #292** — DCOMPEN transparency now keys on the unshaded source. 448 red pixels -> 0, all gates green. Open until confirmed in RetroArch. |
 | #268 | Decision + inspector merged. Open, blocked on the reporter pasting `vjss_info` output for the two files. |
 | #269 | **Closed.** Warn-and-refuse shipped; truncated-magic tolerance explicitly rejected. |
 
@@ -294,33 +294,46 @@ diagnostic naming the dump defect. Zero regressions in the 22-row boot matrix.
 
 ---
 
-## 5. VLM / audio-CD support — **no ticket exists yet; open one**
+## 5. VLM / audio-CD support — tracked as #291
 
-**Status: investigated this session. Verified findings below.**
+**Status: ticket filed as #291 on 2026-08-04.** Findings below were re-verified
+against the tree on that date; three claims in the original writeup were wrong
+and are corrected inline. All behavioural observations come from a *synthetic*
+two-tone CUE, never a real audio CD.
 
 ### What is established (all verified)
 
 - The **Virtual Light Machine ships inside the CD BIOS we already compile in**.
-  `src/bios/jagcdbios.c` and `jagdevcdbios.c` are both 262144 bytes and contain
+  `src/bios/jagcdbios.c` and `jagdevcdbios.c` are both 262144 bytes but declare
+  *different* symbols (`jaguarCDBootROM` and `jaguarDevCDBootROM`). Both contain
   `Virtual Light Machine v0.9 / (c) 1994 Virtual Light Company Ltd. / Jaguar
   CD-ROM version / FFT code by ib2 / Grafix code by Yak`. No BIOS file needed.
 - Booting a synthetic single-session audio CD with
   `virtualjaguar_cd_boot_mode=bios` runs the real BIOS — logo + starfield
   animate for 90 s — but **never hands off to the VLM**.
-- Trace shows only **two** DSA commands ever sent: `$7001` (Set DAC Mode) and
-  `$150A` (Set Mode = double speed + **data**), then nothing. No TOC read
-  (`$03xx`), no seek (`$10/$11/$12`). Button presses change nothing.
-- So the BIOS stalls **before** its "is this a data disc?" decision.
+- Trace shows **three** DSA commands sent, then silence: `$7001` (Set DAC Mode),
+  `$150A` (Set Mode = double speed + **data**), and `$0300` (Read session TOC),
+  answered `$0301` — first TOC word, bit 0 set, "more follows". The BIOS never
+  reads the next word and never sends another command. No seek
+  (`$10/$11/$12`), no Play (`$01`). Source: the unfiltered CD trace ring
+  (`CDTraceDump()`, `VJ_CD_TRACE=1`) — **not** the `[CDDA] DSA cmd` log, which
+  filters to high bytes `$01/$04/$05/$15/$51/$70` (`cdrom.c:1608-1610`) and so
+  cannot show `$03xx` or seeks at all.
+- So the BIOS stops **after** probing the disc, one TOC word in. Why is unknown.
+  (Untested: whether button presses change anything.)
 - HLE rejects the disc outright: `[CD-BOOTSTUB] Early exit: loaded=1
   numSessions=1`, then "unsupported or invalid content format".
 - Root cause is **disc shape**: the CD stack is built for 2-session game discs;
-  `cdintf.c` gates on `numSessions >= 2` (≈ lines 427, 445, 1164).
+  `cdintf.c` gates on `numSessions >= 2` (≈ lines 427, 445, 1164, and **1335**, which is the gate that actually produces the observed failure).
 
 ### Two corrections to natural assumptions
 
 - **"Add an option to always boot the BIOS" is not the fix** — that option
   already exists (`CD Boot Mode = Real BIOS`) and is exactly what was tested.
-- **Every Jaguar CD track is `TRACK AUDIO / FLAGS DCP`, including data tracks.**
+- **Nearly every Jaguar CD track is `TRACK AUDIO`, including data tracks** —
+  433 of 434 across the 35 corpus CUEs; the one exception is
+  `Alice's Mom's Rescue!` (unlicensed homebrew, `MODE2/2352`). `FLAGS DCP` is
+  **not** universal — only 14 of 35 CUEs carry it, so do not gate on `FLAGS`.
   Game discs and music CDs are indistinguishable by track type; the BIOS
   separates them by the `ATARI APPROVED DATA HEADER` magic in session 2.
 
