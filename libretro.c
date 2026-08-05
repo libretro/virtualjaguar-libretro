@@ -578,6 +578,9 @@ static void check_variables(void)
       else if (strcmp(var.value, "3x") == 0)
          m68kClockScalePct = 300;
    }
+   /* Drop any carried sub-cycle remainder when the scale (possibly)
+    * changed, so a new scale starts from a clean accumulator. */
+   M68KClockScaleReset();
 
    var.key = "virtualjaguar_risc_clock_scale";
    var.value = NULL;

@@ -70,6 +70,7 @@ extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
  * (c * 100 / 100) is an exact identity, so 1x is bit-identical to the
  * unscaled build. */
 extern uint32_t m68kClockScalePct;
+void M68KClockScaleReset(void);
 extern uint32_t riscClockScalePct;
 
 #define SCALE_M68K_CYCLES(c)	((uint32_t)(((uint64_t)(c) * m68kClockScalePct) / 100u))

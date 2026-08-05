@@ -261,6 +261,19 @@ uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
  * (or a harness that never sets the options) gets stock timing.  See the
  * block comment in jaguar.h for where these do and do not apply. */
 uint32_t m68kClockScalePct = 100;
+/* Error-diffusion remainder for the M68K scale (hundredths of a cycle,
+ * same pattern as cdrom.c's fifoRefillAccum).  Without it, a sub-1x
+ * scale rounds each small slice down independently -- a 1-cycle slice
+ * at 0.5x scales to 0, and the UAE do/while then executes one full
+ * instruction anyway, quietly defeating underclocking.  Carrying the
+ * remainder makes the scale exact over time and lets zero-budget
+ * slices genuinely skip.  Reset whenever the scale changes. */
+static uint32_t m68kScaleAccum = 0;
+
+void M68KClockScaleReset(void)
+{
+   m68kScaleAccum = 0;
+}
 uint32_t riscClockScalePct = 100;
 
 bool jaguarCartInserted = false;
@@ -1204,8 +1217,26 @@ static void M68KExecuteWithStalls(uint32_t cycles)
     * executes, AFTER the stall deduction: the stall models real bus
     * occupancy (OP fetch, DRAM refresh) in wall time, which an
     * overclocked CPU on modified hardware would still sit out in
-    * full.  At 100 this is an exact identity. */
-   m68k_execute(SCALE_M68K_CYCLES(cycles));
+    * full.  At 100 the else branch is the exact pre-existing path.
+    *
+    * Non-100 uses error diffusion: the remainder in hundredths of a
+    * cycle carries to the next slice, so 0.5x is exact over time and a
+    * slice whose scaled budget is zero genuinely skips -- passing 0 to
+    * m68k_execute() would run one instruction regardless (UAE
+    * do/while), which is precisely the underclock-defeating edge the
+    * review flagged. */
+   if (m68kClockScalePct != 100u)
+   {
+      uint64_t budget = (uint64_t)cycles * m68kClockScalePct
+                      + m68kScaleAccum;
+      uint32_t scaled = (uint32_t)(budget / 100u);
+      m68kScaleAccum  = (uint32_t)(budget % 100u);
+      if (scaled == 0)
+         return;
+      m68k_execute(scaled);
+      return;
+   }
+   m68k_execute(cycles);
 }
 
 

@@ -915,6 +915,17 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Iron Soldier 1 (audio presence)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
 	fi
+	@# Same title at risc=2x (issue #314): real game audio through the DSP
+	@# with the RISC compute budget doubled.  Presence must stay inside the
+	@# measured envelope -- if 2x silences it or blows it out, the scale is
+	@# leaking into the audio path.  Same skip discipline as above.
+	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_presence ./$(TARGET) "$$rom" --label "Iron Soldier 1 (risc=2x)" --rms-floor 200 --rms-ceiling 25000 --quiet \
+			--option virtualjaguar_risc_clock_scale=2x; \
+	else \
+		bash scripts/test-skip.sh record "Iron Soldier 1 (audio presence, risc=2x)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
+	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
@@ -990,6 +1001,29 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# so a missing ROM means a broken checkout and should fail the suite
 	@# rather than silently read as a pass.
 	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Clock-scale (issue #314) audio-pacing contract at non-1x.  The one
+	@# invariant the scale options must never break is sample pacing:
+	@# I2S/DAC event scheduling stays on the unscaled sysclock, so the
+	@# audio_rate_contract (exactly 48000/fps samples per frame, 1:1
+	@# batches) must hold at every scale -- a violation here is a pitch
+	@# shift, the PR #170 regression class.  yarc.j64 is committed
+	@# in-tree, so these run everywhere including CI.  The m68k=0.5x row
+	@# also exercises the underclock error-diffusion path (zero-budget
+	@# slices must skip, not execute).
+	@# --max-fastest-frame-fraction 100 defuses the host-speed check on
+	@# these rows only: at 2x/2x the emulator does ~double the work per
+	@# frame, so "fastest frame < 0.5x period" is a property of the host,
+	@# not of the scale options, and would flake on loaded CI runners
+	@# (observed locally: 11.3 ms vs the 8.3 ms limit under parallel
+	@# builds).  The assertions that matter here -- audio_rate_contract,
+	@# one_batch_per_frame, geometry_stability -- keep full strength.
+	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet \
+		--max-fastest-frame-fraction 100 \
+		--option virtualjaguar_risc_clock_scale=2x \
+		--option virtualjaguar_m68k_clock_scale=2x
+	./test/test_frontend_pacing ./$(TARGET) test/roms/yarc.j64 --quiet \
+		--max-fastest-frame-fraction 100 \
+		--option virtualjaguar_m68k_clock_scale=0.5x
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
 	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
 		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
