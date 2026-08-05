@@ -256,6 +256,26 @@ extern uint8_t jagMemSpace[];
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
+/* Clock-scale enhancement levers (issue #314), percent of stock rate.
+ * Statically 100 so any path that runs the core before check_variables()
+ * (or a harness that never sets the options) gets stock timing.  See the
+ * block comment in jaguar.h for where these do and do not apply. */
+uint32_t m68kClockScalePct = 100;
+/* Error-diffusion remainder for the M68K scale (hundredths of a cycle,
+ * same pattern as cdrom.c's fifoRefillAccum).  Without it, a sub-1x
+ * scale rounds each small slice down independently -- a 1-cycle slice
+ * at 0.5x scales to 0, and the UAE do/while then executes one full
+ * instruction anyway, quietly defeating underclocking.  Carrying the
+ * remainder makes the scale exact over time and lets zero-budget
+ * slices genuinely skip.  Reset whenever the scale changes. */
+static uint32_t m68kScaleAccum = 0;
+
+void M68KClockScaleReset(void)
+{
+   m68kScaleAccum = 0;
+}
+uint32_t riscClockScalePct = 100;
+
 bool jaguarCartInserted = false;
 /* Memory Track cartridge presence.  On hardware the MT cart plugs into the
  * cartridge slot while the CD unit sits on top, so a disc and an MT cart are
@@ -1193,6 +1213,29 @@ static void M68KExecuteWithStalls(uint32_t cycles)
       if (cycles == 0)
          return;
    }
+   /* The M68K clock scale applies to the cycles the CPU actually
+    * executes, AFTER the stall deduction: the stall models real bus
+    * occupancy (OP fetch, DRAM refresh) in wall time, which an
+    * overclocked CPU on modified hardware would still sit out in
+    * full.  At 100 the else branch is the exact pre-existing path.
+    *
+    * Non-100 uses error diffusion: the remainder in hundredths of a
+    * cycle carries to the next slice, so 0.5x is exact over time and a
+    * slice whose scaled budget is zero genuinely skips -- passing 0 to
+    * m68k_execute() would run one instruction regardless (UAE
+    * do/while), which is precisely the underclock-defeating edge the
+    * review flagged. */
+   if (m68kClockScalePct != 100u)
+   {
+      uint64_t budget = (uint64_t)cycles * m68kClockScalePct
+                      + m68kScaleAccum;
+      uint32_t scaled = (uint32_t)(budget / 100u);
+      m68kScaleAccum  = (uint32_t)(budget % 100u);
+      if (scaled == 0)
+         return;
+      m68k_execute(scaled);
+      return;
+   }
    m68k_execute(cycles);
 }
 
@@ -1216,11 +1259,20 @@ void JaguarExecuteNew(void)
       /* GPUBeginSlice/GPUSliceRemaining: part of the GPU's slice may already
        * have been run from GPUSyncToM68K(), so the end-of-slice call runs only
        * what is left.  The total per slice is unchanged -- see the comment on
-       * gpuSliceBudget in gpu.c. */
+       * gpuSliceBudget in gpu.c.
+       *
+       * Clock scales (issue #314) apply here, where the budgets are
+       * handed out: the RISC scale widens the GPU+DSP compute budget per
+       * slice, the M68K scale is applied inside M68KExecuteWithStalls()
+       * after the (unscaled, wall-time) bus-occupancy stall.  Event
+       * scheduling (timeDelta, EVENT_MAIN/EVENT_JERRY) stays on the real
+       * sysclock, so video, PIT/UART timers and I2S sample pacing are
+       * untouched -- more DSP cycles run between I2S interrupts, but the
+       * interrupts (and thus audio pitch) keep their stock rate. */
       if (timeToJerryEvent < timeToMainEvent)
       {
          timeDelta = timeToJerryEvent;
-         riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
+         riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
          GPUBeginSlice(riscCycles);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          GPUExec(GPUSliceRemaining());
@@ -1231,7 +1283,7 @@ void JaguarExecuteNew(void)
       else
       {
          timeDelta = timeToMainEvent;
-         riscCycles = USEC_TO_RISC_CYCLES(timeDelta);
+         riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
          GPUBeginSlice(riscCycles);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          GPUExec(GPUSliceRemaining());
@@ -1239,7 +1291,7 @@ void JaguarExecuteNew(void)
          SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }
-      PERF_ADD(timing_m68k_cycles, (unsigned long long)USEC_TO_M68K_CYCLES(timeDelta));
-      PERF_ADD(timing_risc_cycles, (unsigned long long)USEC_TO_RISC_CYCLES(timeDelta));
+      PERF_ADD(timing_m68k_cycles, (unsigned long long)SCALE_M68K_CYCLES(USEC_TO_M68K_CYCLES(timeDelta)));
+      PERF_ADD(timing_risc_cycles, (unsigned long long)SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta)));
    } while(!frameDone);
 }
