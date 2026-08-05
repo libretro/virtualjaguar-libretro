@@ -61,6 +61,7 @@ static void VideoHook(void *userdata, const void *data, unsigned width,
    char            path[512];
    FILE           *f;
    unsigned        x, y;
+   int             n;
 
    st->curFrame = st->cfg ? st->cfg->current_frame : 0;
 
@@ -71,7 +72,12 @@ static void VideoHook(void *userdata, const void *data, unsigned width,
    if (st->shotEvery && (st->curFrame - st->shotFrom) % st->shotEvery)
       return;
 
-   sprintf(path, "%s/f_%05u.ppm", st->shotDir, st->curFrame);
+   /* FMV_SHOTDIR is environment-controlled, so cap the write rather than
+    * trusting the caller's path length. */
+   n = snprintf(path, sizeof(path), "%s/f_%05u.ppm", st->shotDir,
+                st->curFrame);
+   if (n < 0 || (size_t)n >= sizeof(path))
+      return;
    f = fopen(path, "wb");
    if (!f)
       return;

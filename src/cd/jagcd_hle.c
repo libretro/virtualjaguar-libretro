@@ -960,11 +960,18 @@ hle_cd_read_post_scan:
     * flags).  It is legitimate -- a game abandoning a read to branch does
     * exactly this -- but it is also how any starvation regression would
     * turn into corrupted movie data instead of a visible stall, so make it
-    * greppable rather than invisible (#297, fmv-drift-notes.md §7 lead 4). */
-   if (hleStream.active && hleStream.written < hleStream.reqTotal)
+    * greppable rather than invisible (#297, fmv-drift-notes.md §7 lead 4).
+    *
+    * Compare against hleStream.total, not reqTotal: the stream delivers the
+    * long-rounded size, and games checksum through those extra tail bytes
+    * (see the delivery comment below), so a discard in [reqTotal, total) is
+    * still lost disc data and must not read as a complete transfer. */
+   if (hleStream.active && hleStream.written < hleStream.total)
       LOG_WRN("[CD-HLE] CD_read armed over in-flight stream: "
-              "%u/%u bytes delivered, dest $%06X -- tail discarded\n",
-              hleStream.written, hleStream.reqTotal, hleStream.dest);
+              "%u/%u bytes delivered (%u requested), dest $%06X "
+              "-- tail discarded\n",
+              hleStream.written, hleStream.total, hleStream.reqTotal,
+              hleStream.dest);
 
    hleStream.active   = true;
    hleStream.lba      = scanLBA;
