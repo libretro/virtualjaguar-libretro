@@ -353,9 +353,15 @@ int main(int argc, char **argv)
       zero_run_pct = (unsigned)(frames_in_run / (double)active_window_frames * 100.0);
    }
 
+   /* The banner is printed even under --quiet, matching test_audio_clipping.
+    * --quiet is meant to suppress the core's log spam, not to hide which
+    * check just ran: with it suppressed, `make test` emitted a bare
+    * "PASS: audio is present..." line that named no title, so a reader could
+    * not tell which ROM (or whether any ROM) had been exercised. */
+   printf("\n=== Presence check: %s ===\n", label ? label : rom_path);
+
    if (!log_quiet)
    {
-      printf("\n=== Presence check: %s ===\n", label ? label : rom_path);
       printf("  ROM:    %s\n", rom_path);
       printf("  Frames: %u, Window: [%u, %u)\n",
              total_frames, WINDOW_START_FRAME, total_frames);

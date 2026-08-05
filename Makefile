@@ -758,7 +758,7 @@ clean:
 		test/test_state_compat test/test_frontend_pacing \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
-		test/tools/test_frame_timing
+		test/tools/test_frame_timing test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -809,6 +809,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
+	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
+	@# as fresh skips (the stale-row failure mode documented for
+	@# cd_boot_matrix.sh).  Every optional check below records into it, and
+	@# the summary at the end of this recipe prints the roll-up.
+	@bash scripts/test-skip.sh reset
 	./test/test_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
@@ -836,38 +841,65 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_subsystem_timeline ./$(TARGET)
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
-	./test/test_audio_pipeline ./$(TARGET)
+	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
+	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
+	@# with ROMs, without ROMs, always.  It was invoked bare, so those two
+	@# checks were permanently vacuous.  Feed it the same Iron Soldier 1
+	@# dump the presence check uses (boots straight to a music-on title).
+	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_pipeline ./$(TARGET) "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Audio pipeline (onset + BIOS/HLE cmp)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
+		./test/test_audio_pipeline ./$(TARGET); \
+	fi
 	./test/test_audio_clipping ./$(TARGET) --self-test
-	@# Cartridges live either flat in test/roms/private/ or under its ROMS/
-	@# subdirectory, depending on how the local corpus was laid out.  Each
-	@# lookup below tries both, because checking only one silently turns the
-	@# test into a SKIP -- which still prints and still exits 0, so the suite
-	@# stays green while the check is not running at all.
+	@# ROM lookup goes through scripts/find-rom.sh, which searches the whole
+	@# private corpus case-insensitively and prefers the canonical top-level
+	@# copy over duplicates buried in sub-collections.  It replaced a pair of
+	@# hardcoded literal paths per title: the corpus names titles
+	@# inconsistently ("Iron Soldier 2 (World).j64" vs "Iron Soldier (World)
+	@# (v1.04).j64"), so a literal path that does not match turns the check
+	@# into a SKIP that still exits 0 -- the suite stays green while the
+	@# check is not running at all.  That is exactly how the Skyhammer
+	@# sentinel below went inert.  Every miss is now recorded in the skip
+	@# ledger and reported in the summary at the end of this recipe.
 	@# Negative control: healthy boot should not trip the clipping detector.
-	@rom="test/roms/private/Atari Karts (1995).jag"; \
-	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Atari Karts (1995).jag"; \
-	if [ -f "$$rom" ]; then \
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
 		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Atari Karts (negative control)" --quiet; \
 	else \
-		echo "  SKIP: Atari Karts ROM (private) not available"; \
+		bash scripts/test-skip.sh record "Atari Karts (clipping neg. control)" "no ROM matching 'Atari Karts*' in the private corpus"; \
 	fi
 	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
 	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
 	@# register bank 1, not "the non-current bank").  These now assert
 	@# clean audio so a regression flips them red again.
-	@rom="test/roms/private/Skyhammer_(1999).jag"; \
-	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Skyhammer_(1999).jag"; \
-	if [ -f "$$rom" ]; then \
+	@#
+	@# NOTE: the old literal path here ("Skyhammer_(1999).jag") never matched
+	@# anything -- the corpus holds it as "Skyhammer (World).j64" -- so this
+	@# sentinel silently skipped while the suite still reported exit 0.  The
+	@# lookup below matches it case-insensitively under either spelling.
+	@#
+	@# SETTLED 2026-08-05, measured on "Skyhammer (World).j64": 0.000%
+	@# saturated, longest saturation run 0 samples, window RMS 3079.8, first
+	@# audio at frame 171.  Skyhammer no longer clips -- the MMULT
+	@# secondary-bank fix resolved it -- and it is not silent either, so it is
+	@# not the masked-silence failure mode.  Asserting clean, same as the Iron
+	@# Soldier 2 line below, is therefore correct on evidence rather than by
+	@# default.  CLAUDE.md's "Skyhammer should still fail clipping" was stale
+	@# and has been corrected.  Do NOT add an expected-fail wrapper here.
+	@rom=$$(bash scripts/find-rom.sh 'Skyhammer_(1999).jag' '*skyhammer*.jag' '*skyhammer*.j64' '*skyhammer*.rom' '*sky hammer*.jag' '*sky hammer*.j64'); \
+	if [ -n "$$rom" ]; then \
 		./test/test_audio_clipping ./$(TARGET) "$$rom" --label Skyhammer --quiet; \
 	else \
-		echo "  SKIP: Skyhammer ROM (private) not available"; \
+		bash scripts/test-skip.sh record "Skyhammer (clipping sentinel)" "no ROM matching '*skyhammer*' in the private corpus"; \
 	fi
-	@rom="test/roms/private/Iron Soldier 2 (World).j64"; \
-	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Iron Soldier 2 (World).j64"; \
-	if [ -f "$$rom" ]; then \
+	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier 2 (World).j64' 'Iron Soldier 2*.j64' 'Iron Soldier 2*.jag'); \
+	if [ -n "$$rom" ]; then \
 		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Iron Soldier 2" --quiet; \
 	else \
-		echo "  SKIP: Iron Soldier 2 ROM (private) not available"; \
+		bash scripts/test-skip.sh record "Iron Soldier 2 (clipping)" "no ROM matching 'Iron Soldier 2*' in the private corpus"; \
 	fi
 	@# Presence check: counterpart to the clipping check.  A "fix" that
 	@# silences the game (e.g. PR #170 closed without merge) drops RMS
@@ -875,20 +907,33 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Soldier 1 boots straight to a music-on title; envelope was
 	@# measured on develop (RMS ~1175).  Floor 200 catches silence
 	@# regressions; ceiling 25000 catches loud-broken regressions.
-	@rom="test/roms/private/Iron Soldier (1994).jag"; \
-	[ -f "$$rom" ] || rom="test/roms/private/ROMS/Iron Soldier (1994).jag"; \
-	if [ -f "$$rom" ]; then \
+	@# The exact 1994 dump is tried first: the envelope was measured on it,
+	@# and the [a1]/v1.04 alternates are not guaranteed to share it.
+	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
+	if [ -n "$$rom" ]; then \
 		./test/test_audio_presence ./$(TARGET) "$$rom" --label "Iron Soldier 1" --rms-floor 200 --rms-ceiling 25000 --quiet; \
 	else \
-		echo "  SKIP: Iron Soldier 1 ROM (private) not available (audio presence)"; \
+		bash scripts/test-skip.sh record "Iron Soldier 1 (audio presence)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
 	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
 	./test/test_cd_synth_read
 	./test/test_cd_synth_butch
-	./test/test_bios_config
-	./test/test_boot_config
+	@# VJ_BIOS_DIR: both tests used to hardcode "test/roms/private" as the
+	@# libretro system dir, but the corpus keeps its BIOS dumps one level
+	@# down in ROMS/.  The paths never resolved, so ten real-BIOS assertions
+	@# reported SKIP while the suite exited 0 -- the same silent-skip class
+	@# as the Skyhammer sentinel.  Resolve the directory that actually holds
+	@# the Jaguar BIOS and hand it to both tests; they fall back to the old
+	@# literal when the variable is unset (CI, which has no BIOS dumps).
+	@bios=$$(bash scripts/find-rom.sh '*BIOS* Atari Jaguar (World).j64'); \
+	if [ -n "$$bios" ]; then \
+		VJ_BIOS_DIR=$$(dirname "$$bios"); export VJ_BIOS_DIR; \
+	else \
+		bash scripts/test-skip.sh record "Real-BIOS assertions (bios/boot config)" "no '[BIOS] Atari Jaguar (World).j64' in the private corpus"; \
+	fi; \
+	./test/test_bios_config && ./test/test_boot_config
 	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
@@ -901,30 +946,34 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Try discs known to load first (see docs/cd-boot-matrix.md), then any
 	@# other. ls sorts all its arguments together, so probe one glob at a
 	@# time. A disc that still will not load is reported as SKIP, not FAIL.
+	@# The jagniccc.j64 guard that used to wrap this is gone: that ROM is
+	@# committed in-tree, so its absence means a broken checkout and must
+	@# fail the suite rather than read as a pass -- the same rationale the
+	@# test_state_compat and test_frontend_pacing lines below already state.
+	@# Only the disc half is genuinely optional, and it now records a ledger
+	@# skip so "ran without a disc" is distinguishable from "ran fully".
 	@VJ_VIS_ROOT="test/roms/private/Jaguar CD/BinCue"; VJ_VIS_DISC=""; \
 		for VJ_VIS_PAT in "Baldies*" "Myst*" "Hover*" "*"; do \
 			[ -n "$$VJ_VIS_DISC" ] && break; \
 			VJ_VIS_DISC=$$(ls "$$VJ_VIS_ROOT"/$$VJ_VIS_PAT/*.cue 2>/dev/null | head -1); \
 		done; \
-		if [ -f test/roms/jagniccc.j64 ]; then \
-			./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"; \
-		else \
-			echo "=== Core Option Visibility ==="; \
-			echo "  SKIP: test/roms/jagniccc.j64 not present"; \
-		fi
+		if [ -z "$$VJ_VIS_DISC" ]; then \
+			bash scripts/test-skip.sh record "Core option visibility (disc half)" "no .cue image under test/roms/private/Jaguar CD/BinCue"; \
+		fi; \
+		./test/tools/test_option_visibility ./$(TARGET) test/roms/jagniccc.j64 "$$VJ_VIS_DISC"
 	./test/tools/test_op_gpu_object ./$(TARGET) test/roms/yarc.j64
 	@# Framebuffer integrity: alpha corruption + screen position shift detection.
 	@# Run both regions: max_height is region-independent, but the emitted
 	@# height is not, so a region-specific overflow must not hide.
 	@# Chained with && so an NTSC failure cannot be masked by a passing PAL
 	@# run -- with `;` the block would still exit 0 on the second command.
-	@if [ -f "test/roms/yarc.j64" ]; then \
-		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 && \
-		./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 \
-			--option virtualjaguar_pal=enabled; \
-	else \
-		echo "  SKIP: yarc.j64 ROM not available (framebuffer integrity)"; \
-	fi
+	@# Unguarded on purpose: yarc.j64 is committed in-tree, so a missing file
+	@# is a broken checkout, not an absent optional ROM.  The `[ -f ]` guard
+	@# that used to wrap this printed a SKIP and exited 0, which is the same
+	@# reads-as-a-pass hazard test_state_compat below explicitly refuses.
+	./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64
+	./test/test_framebuffer_integrity ./$(TARGET) test/roms/yarc.j64 \
+		--option virtualjaguar_pal=enabled
 	@# Save-state version gate: every layout a released core wrote (v1, v2,
 	@# v3, v7) must still load with its chunks correctly aligned; version 0
 	@# and future versions must be refused.  Deliberately NOT wrapped in an
@@ -955,6 +1004,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@echo "blitter readback tests probe register read paths that the emulator"
 	@echo "does not currently expose. Invoke them directly when validating"
 	@echo "regressions in those subsystems."
+	@# Skip roll-up.  Every optional check that did not run is listed here by
+	@# name and reason, so an inert sentinel cannot hide behind exit 0 the way
+	@# the Skyhammer clipping check did.  Non-fatal by default (CI has none of
+	@# the private ROMs); VJ_REQUIRE_ROMS=1 makes any skip a hard failure.
+	@bash scripts/test-skip.sh summary
 
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
