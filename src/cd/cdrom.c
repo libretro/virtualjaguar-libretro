@@ -39,13 +39,16 @@
 #endif
 
 // Timing constants for seek and FIFO simulation (in half-line ticks, ~31.8μs each)
-// Per MiSTer FPGA: seek has a multi-tier delay (30-315ms), FIFO fills at I2S rate.
-// These values are shortened for software emulation but preserve the required ordering:
+// SEEK_DELAY_TICKS is a fixed ORDERING delay only; the actual seek-time
+// magnitude is the distance-dependent term below (CDROMSeekDistanceTicks,
+// calibrated to a reference capture -- see that block).  FIFO fills at I2S
+// rate.  The ordering this fixed delay preserves:
 // seek response MUST arrive via interrupt AFTER DSA_tx returns, and FIFO MUST NOT
 // be ready during the DSARX phase (or the 68K handler sends STOP).
 // The BIOS polls BUTCH+2 once after $12xx (no response expected yet), then sends
 // STOP. On real hardware the seek continues internally despite STOP — the drive
-// completes the seek and queues the $0100 response 30-300ms later. The BIOS's
+// completes the seek and queues the $0100 response once the sled arrives
+// (distance-dependent; see CDROMSeekDistanceTicks below). The BIOS's
 // main loop (or DSP) detects the seek completion and initiates data transfer.
 // STOP must NOT cancel the seek delay. Value chosen to be short enough to complete
 // within a few frames but long enough to occur AFTER the BIOS's single poll.
