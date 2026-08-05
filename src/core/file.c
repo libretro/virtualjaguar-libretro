@@ -258,8 +258,13 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
                (unsigned)jaguarROMSize);
          return false;
       }
-      if (flatSize > 0x600000)
-         flatSize = 0x600000;
+      /* Cap the flat copy at the dispatchable cart window ($800000-
+       * $DFFEFF): the final $100 bytes ($DFFF00-$DFFFFF) are the CDROM
+       * overlay and must not receive ROM bytes.  Same constant the
+       * auto-enable threshold uses, so loader and banking agree on
+       * where the flat window ends. */
+      if (flatSize > JGD_AUTO_THRESHOLD)
+         flatSize = JGD_AUTO_THRESHOLD;
 
       jaguarCartInserted = true;
       memcpy(jagMemSpace + 0x800000, buffer, flatSize);
