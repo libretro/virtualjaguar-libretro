@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "crc32.h"
 #include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
@@ -1134,13 +1135,22 @@ static bool has_extension(const char *path, const char *ext)
    return strcasecmp(dot + 1, ext) == 0;
 }
 
+/* CRC32s of known-good 256 KB CD BIOS dumps.  The developer BIOS has
+ * $FFFFFFFF at the $404 run-address slot, so it can only be recognized
+ * by checksum -- a header check alone always rejects it. */
+#define CD_BIOS_CRC_RETAIL 0x687068D5u
+#define CD_BIOS_CRC_DEV    0x55A0669Cu
+
 /* Try to load a 256 KB CD BIOS image from the given path.
- * Returns true on success and sets cd_bios_loaded_externally. */
-static bool try_load_cd_bios_file(const char *path)
+ * Returns true on success and sets cd_bios_loaded_externally.
+ * A file that exists but fails validation bumps *rejected so the
+ * caller's final warning can distinguish "no file" from "bad file". */
+static bool try_load_cd_bios_file(const char *path, int *rejected)
 {
    RFILE   *f;
    int64_t  size;
    uint32_t run_addr;
+   uint32_t crc;
 
    f = rfopen(path, "rb");
    if (!f)
@@ -1155,16 +1165,38 @@ static bool try_load_cd_bios_file(const char *path)
       LOG_DBG("[CD-BIOS]   wrong size (%lld, need 262144): %s\n",
               (long long)size, path);
       rfclose(f);
+      (*rejected)++;
       return false;
    }
 
    if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
    {
+      LOG_DBG("[CD-BIOS]   short read (need 262144): %s\n", path);
       rfclose(f);
+      (*rejected)++;
       return false;
    }
    rfclose(f);
 
+   /* Known dumps are accepted by checksum, no header check needed. */
+   crc = (uint32_t)crc32_calcCheckSum(external_cd_bios, 0x40000);
+   if (crc == CD_BIOS_CRC_RETAIL)
+   {
+      LOG_INF("[CD-BIOS] using external %s (recognized retail CD BIOS, crc32=%08X)\n",
+              path, (unsigned)crc);
+      cd_bios_loaded_externally = true;
+      return true;
+   }
+   if (crc == CD_BIOS_CRC_DEV)
+   {
+      LOG_INF("[CD-BIOS] using external %s (recognized developer CD BIOS, crc32=%08X)\n",
+              path, (unsigned)crc);
+      cd_bios_loaded_externally = true;
+      return true;
+   }
+
+   /* Unknown checksum: fall back to the header sanity check so genuine
+    * revisions/regions we don't have CRCs for still load. */
    run_addr = ((uint32_t)external_cd_bios[0x404] << 24)
             | ((uint32_t)external_cd_bios[0x405] << 16)
             | ((uint32_t)external_cd_bios[0x406] <<  8)
@@ -1172,11 +1204,17 @@ static bool try_load_cd_bios_file(const char *path)
 
    if (run_addr < 0x800000 || run_addr > 0x840000)
    {
-      LOG_DBG("[CD-BIOS]   bad run addr $%08X: %s\n",
-              (unsigned)run_addr, path);
+      LOG_DBG("[CD-BIOS]   bad run addr $%08X (crc32=%08X): %s\n",
+              (unsigned)run_addr, (unsigned)crc, path);
+      (*rejected)++;
       return false;
    }
 
+   LOG_WRN("[CD-BIOS] %s is an unrecognized CD BIOS revision "
+           "(crc32=%08X, plausible run=$%06X) -- accepting it, but if boot "
+           "black-screens right after this line, this file is the prime "
+           "suspect: verify it is a genuine Jaguar CD BIOS dump\n",
+           path, (unsigned)crc, (unsigned)run_addr);
    LOG_INF("[CD-BIOS] using external %s (run=$%06X)\n",
            path, (unsigned)run_addr);
    cd_bios_loaded_externally = true;
@@ -1188,9 +1226,11 @@ static bool try_load_cd_bios_file(const char *path)
 static bool load_external_cd_bios(void)
 {
    /* Filenames conventionally used for each 'CD BIOS Type', plus generic
-    * names that could hold either image.  Selection is by NAME only — the
-    * loader does not inspect the image to confirm which BIOS it actually
-    * is, so a mislabelled file is taken at its filename's word.
+    * names that could hold either image.  The name drives the SEARCH ORDER
+    * only; the contents are validated by try_load_cd_bios_file(), which
+    * checksums the image and logs which revision it actually is.  So a
+    * mislabelled file is still loaded (its name only decided when it was
+    * tried), but the log names the real revision rather than the label.
     *
     * The selected type's names are searched FIRST.  The previous code used
     * one flat list with the retail names ahead of the developer ones, so a
@@ -1228,6 +1268,7 @@ static bool load_external_cd_bios(void)
    };
    const char *system_dir = NULL;
    int s, i, g;
+   int rejected = 0;
 
    if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
        || !system_dir)
@@ -1268,13 +1309,18 @@ static bool load_external_cd_bios(void)
                snprintf(path, sizeof(path), "%s/%s",
                         system_dir, name_groups[g][i]);
 
-            if (try_load_cd_bios_file(path))
+            if (try_load_cd_bios_file(path, &rejected))
                return true;
          }
       }
    }
 
-   LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
+   if (rejected > 0)
+      LOG_WRN("[CD-BIOS] no usable CD BIOS in %s: %d candidate file(s) "
+              "rejected (size or header); using embedded BIOS\n",
+              system_dir, rejected);
+   else
+      LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
    return false;
 }
 
