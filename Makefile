@@ -876,20 +876,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# register bank 1, not "the non-current bank").  These now assert
 	@# clean audio so a regression flips them red again.
 	@#
-	@# NOTE: Skyhammer is NOT present in the maintainer's corpus at all --
-	@# not under any spelling, and not as a CD image either.  The old literal
-	@# path here ("Skyhammer_(1999).jag") therefore never matched anything,
-	@# so this sentinel has been silently skipping.  The lookup below will
-	@# find it under whatever name it is added as; until then the skip is
-	@# reported loudly instead of vanishing into the log.
+	@# NOTE: the old literal path here ("Skyhammer_(1999).jag") never matched
+	@# anything -- the corpus holds it as "Skyhammer (World).j64" -- so this
+	@# sentinel silently skipped while the suite still reported exit 0.  The
+	@# lookup below matches it case-insensitively under either spelling.
 	@#
-	@# CONFLICT TO RESOLVE: CLAUDE.md states Skyhammer must keep FAILING the
-	@# clipping check until genuinely fixed, while the comment above (and the
-	@# MMULT fix notes) say it was resolved and should assert clean.  With no
-	@# ROM available neither claim can be verified, so this is wired the same
-	@# way as the Iron Soldier 2 line -- assert clean -- and the disagreement
-	@# is left for a maintainer with the ROM to settle.  Do not add an
-	@# expected-fail wrapper here on the strength of the stale doc alone.
+	@# SETTLED 2026-08-05, measured on "Skyhammer (World).j64": 0.000%
+	@# saturated, longest saturation run 0 samples, window RMS 3079.8, first
+	@# audio at frame 171.  Skyhammer no longer clips -- the MMULT
+	@# secondary-bank fix resolved it -- and it is not silent either, so it is
+	@# not the masked-silence failure mode.  Asserting clean, same as the Iron
+	@# Soldier 2 line below, is therefore correct on evidence rather than by
+	@# default.  CLAUDE.md's "Skyhammer should still fail clipping" was stale
+	@# and has been corrected.  Do NOT add an expected-fail wrapper here.
 	@rom=$$(bash scripts/find-rom.sh 'Skyhammer_(1999).jag' '*skyhammer*.jag' '*skyhammer*.j64' '*skyhammer*.rom' '*sky hammer*.jag' '*sky hammer*.j64'); \
 	if [ -n "$$rom" ]; then \
 		./test/test_audio_clipping ./$(TARGET) "$$rom" --label Skyhammer --quiet; \
