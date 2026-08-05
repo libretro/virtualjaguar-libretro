@@ -755,7 +755,7 @@ clean:
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda \
 		test/test_audio_dac test/test_blitter \
-		test/test_state_compat test/test_frontend_pacing \
+		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/.skipped-checks
@@ -802,7 +802,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
-		test/test_frontend_pacing \
+		test/test_frontend_pacing test/test_jgd \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda \
@@ -993,6 +993,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# committed in-tree, so a missing ROM is a broken checkout and the
 	@# test's exit 77 should stop the suite rather than read as a pass.
 	./test/test_state_compat ./$(TARGET) test/roms/yarc.j64
+	@# Jaguar GameDrive detection + banking + savestate v8 gate.  Fully
+	@# synthetic (builds its own probe images), so it runs everywhere,
+	@# including checkouts without the private ROM tree.
+	./test/test_jgd ./$(TARGET)
 	@# Frontend pacing / fast-forward contract: the core must not throttle
 	@# itself, and samples-per-frame must match the advertised fps and
 	@# sample_rate, otherwise the frontend's audio driver becomes the pacing
@@ -1226,6 +1230,17 @@ test/test_state_compat: test/test_state_compat.c \
 		test/harness/harness.c test/harness/harness.h src/core/state.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_state_compat.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Jaguar GameDrive (JagGD) detection + banking.  Synthetic-only: builds
+# its own probe cartridge images at runtime, no private ROMs needed.
+# Needs jgd*/JGD* from the wide test symbol set.
+test/test_jgd: test/test_jgd.c \
+		test/harness/harness.c test/harness/harness.h \
+		src/core/state.h src/core/jaggd.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_jgd.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
