@@ -28,6 +28,8 @@ skip_file() {
         test/tools/test_rcheevos_e2e.c) return 0 ;;
         # Diagnostic tools — not part of the libretro core build.
         test/tools/flicker_detect.c) return 0 ;;
+        # Builds against test/harness/, which is outside $INCLUDES; C99 harness.
+        test/tools/fmv_seek_probe.c) return 0 ;;
     esac
     return 1
 }
