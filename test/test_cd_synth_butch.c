@@ -733,10 +733,13 @@ TEST(redundant_seek_is_suppressed_but_still_answered)
     uint32_t dones1;
     uint32_t i;
 
+    if (!load_ground_truth(TARGET_LBA))
+        FAIL("could not read ground truth off the image");
     if (!prime_stream(TARGET_LBA))
         FAIL("could not prime the stream at LBA %u", TARGET_LBA);
 
-    /* Four words in, so the drive is demonstrably mid-stream. */
+    /* Four words in, so the drive is demonstrably mid-stream.  The stream
+     * starts at byte 2 (capture skew), so this leaves it parked at byte 10. */
     for (i = 0; i < 4u; i++)
         (void)fifo_word();
     ASSERT_TRUE((butch_status() & ST_FRAME) != 0);
@@ -761,6 +764,27 @@ TEST(redundant_seek_is_suppressed_but_still_answered)
     if (seek_dones() != dones1)
         FAIL("a redundant seek produced a seek completion -- the state "
              "machine was restarted after all");
+
+    /* Position continuity -- the actual point of suppressing a redundant
+     * seek.  Four words were consumed above, so the stream is parked at byte
+     * 10; the next four must continue at 10/12/14/16, not restart at byte 2.
+     * Before #306 this restarted: the side-effect block's guard could never
+     * match (the response block's DSAQueuePush had made dsaQueueCount
+     * non-zero), so it re-read the sector and rewound cdBufPtr to 2 and the
+     * SSI audio head to 0 -- up to 2352 bytes of replayed CD-DA. */
+    for (i = 0; i < 4u; i++)
+    {
+        uint32_t off  = 10u + (i * 2u);
+        uint16_t got  = fifo_word();
+        uint16_t want = (uint16_t)((sect[0][off + 1u] << 8) | sect[0][off]);
+
+        if (got != want)
+            FAIL("word %u after the redundant seek: got $%04X, expected $%04X "
+                 "(bytes %u..%u of LBA %u).  $%04X would be bytes 2..3 -- the "
+                 "redundant seek re-framed the in-flight stream (#306)",
+                 i, got, want, off, off + 1u, TARGET_LBA,
+                 (uint16_t)((sect[0][3] << 8) | sect[0][2]));
+    }
 }
 
 /* ------------------------------------------------------------------ */
