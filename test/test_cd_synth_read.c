@@ -326,6 +326,18 @@ static void ipcb(void) {}
 static int16_t iscb(unsigned p, unsigned d, unsigned i, unsigned id)
 { (void)p; (void)d; (void)i; (void)id; return 0; }
 
+/* Remove the scratch disc.  Called on every exit path -- an aborted run
+ * must not leave ~94 KB of synthetic BIN behind. */
+static void scrub_scratch(const char *base)
+{
+    char path[1024];
+
+    snprintf(path, sizeof(path), "%s/track01.bin", base); remove(path);
+    snprintf(path, sizeof(path), "%s/track02.bin", base); remove(path);
+    snprintf(path, sizeof(path), "%s/disc.cue",    base); remove(path);
+    rmdir(base);
+}
+
 static bool load_disc(const char *cue)
 {
     struct retro_game_info info;
@@ -775,6 +787,7 @@ int main(int argc, char *argv[])
     if (!make_disc(base, 0, cue, sizeof(cue)))
     {
         fprintf(stderr, "  SKIP  cannot write synthetic disc under %s\n", base);
+        scrub_scratch(base);
         C.retro_deinit();
         dlclose(C.handle);
         return 0;
@@ -782,6 +795,7 @@ int main(int argc, char *argv[])
     if (!load_disc(cue))
     {
         fprintf(stderr, "  FAIL  synthetic disc did not load\n");
+        scrub_scratch(base);
         C.retro_deinit();
         dlclose(C.handle);
         return 1;
@@ -795,6 +809,7 @@ int main(int argc, char *argv[])
     if (!make_disc(base, lba_to_msf(payloadLBA), cue, sizeof(cue)))
     {
         fprintf(stderr, "  FAIL  cannot rewrite synthetic disc\n");
+        scrub_scratch(base);
         C.retro_deinit();
         dlclose(C.handle);
         return 1;
@@ -802,6 +817,7 @@ int main(int argc, char *argv[])
     if (!load_disc(cue))
     {
         fprintf(stderr, "  FAIL  synthetic disc did not reload\n");
+        scrub_scratch(base);
         C.retro_deinit();
         dlclose(C.handle);
         return 1;
@@ -833,14 +849,7 @@ out:
     C.retro_deinit();
     dlclose(C.handle);
 
-    /* Scratch cleanup. */
-    {
-        char path[1024];
-        snprintf(path, sizeof(path), "%s/track01.bin", base); remove(path);
-        snprintf(path, sizeof(path), "%s/track02.bin", base); remove(path);
-        snprintf(path, sizeof(path), "%s/disc.cue", base);    remove(path);
-        rmdir(base);
-    }
+    scrub_scratch(base);
 
     return rc;
 }
