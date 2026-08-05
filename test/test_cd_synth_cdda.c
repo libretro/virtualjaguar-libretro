@@ -101,7 +101,10 @@ static uint16_t *p_rrxd;
 #define ST_RX_FULL       0x2000u
 #define I2S_DATA_ENABLE  0x0001u
 
-#define CALLER 0u                   /* `who` argument -- M68K */
+#define CALLER 0u                   /* `who` argument -- UNKNOWN; the enum in
+                                     * vjag_memory.h is { UNKNOWN, JAGUAR, DSP,
+                                     * GPU, TOM, JERRY, M68K, ... }, so 0 is
+                                     * UNKNOWN and M68K would be 6.           */
 
 /* ------------------------------------------------------------------ */
 /* Synthetic disc geometry                                              */
@@ -722,9 +725,17 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Scratch dir for the synthetic disc (never touches test/roms/private). */
-    snprintf(base, sizeof(base), "/tmp/vj_cd_cdda_XXXXXX");
-    if (!mkdtemp(base))
+    /* Deterministic per-process scratch dir.  Everything below is
+     * synthetic -- this test never touches test/roms/private.
+     *
+     * Deliberately mkdir()+getpid() rather than mkdtemp(): mkdtemp is not
+     * declared under -std=c99 on glibc without a feature-test macro, and
+     * building it that way fails on Linux/Clang and the ASan job with
+     * "call to undeclared function 'mkdtemp'".  A predictable name is fine
+     * here -- this is a scratch dir for a synthetic disc, not a security
+     * boundary, and the pid already makes it per-process unique. */
+    snprintf(base, sizeof(base), "/tmp/vj_cd_cdda_%ld", (long)getpid());
+    if (mkdir(base, 0755) != 0 && errno != EEXIST)
     {
         fprintf(stderr, "  SKIP  cannot create scratch dir %s\n", base);
         vj_core_unload(&C);
