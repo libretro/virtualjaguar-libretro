@@ -72,8 +72,12 @@
 
 typedef size_t (*jgd_state_save_fn)(uint8_t *buf);
 typedef size_t (*serialize_size_fn)(void);
-typedef int    (*serialize_fn)(void *data, size_t size);
-typedef int    (*unserialize_fn)(const void *data, size_t size);
+/* bool, not int: retro_serialize/unserialize return bool, and UBSan's
+ * function-type-mismatch check (Linux CI) rejects calls through a
+ * mistyped pointer even when the ABI happens to coincide.  Matches
+ * test_state_compat.c. */
+typedef bool   (*serialize_fn)(void *data, size_t size);
+typedef bool   (*unserialize_fn)(const void *data, size_t size);
 typedef void   (*reset_fn)(void);
 typedef uint32_t (*read_long_fn)(uint32_t offset, uint32_t who);
 
