@@ -53,6 +53,42 @@
 #define FIFO_FILL_TICKS      8    // ~254μs before FIFO half-full after play starts
 #define FIFO_DRAIN_READS     16   // 16 word-reads = 8 GPU longword loads = 32 bytes
 
+/* Distance-dependent seek term (reference parity, #297).
+ *
+ * On top of the fixed SEEK_DELAY_TICKS ordering delay above, a real seek
+ * costs time proportional to how far the sled travels.  The old "30-315ms
+ * multi-tier" comment was unsourced and its top end is REFUTED by
+ * measurement: a BigPEmu reference capture of Dragon's Lair's death branch
+ * (2026-08-05, issue #297) shows 558 ms ~= 33.4 fields of black for a
+ * near-full-stroke seek where we showed ~30 fields — i.e. the reference
+ * charges roughly +60 ms on ~138k sectors, tens of ms, not hundreds.
+ *
+ * Model: linear in sector distance, one extra halfline tick (31.78 us)
+ * per SEEK_SECTORS_PER_TICK sectors.  Calibration: the measured branch
+ * seek travels 137,936 sectors (head LBA 16125 -> 154061); 137,936 / 72
+ * = 1,915 ticks = 60.9 ms = 3.65 fields, moving our 30-field gap to
+ * ~33.7 — matching the 33.4-field reference within a field.  Short
+ * streaming seeks (339-428 sectors) add 4-5 ticks (~0.15 ms): nothing.
+ * Boot seeks (15k-23k sectors from the parked head at LBA 0) add 7-10 ms,
+ * which real drives also pay.  No tiers — there is no data for tiers.
+ *
+ * This is REFERENCE PARITY against another emulator, not silicon ground
+ * truth: no hardware capture of Jaguar CD seek time exists yet (the JTRM
+ * CD-ROM manual gives landing tolerance, not access time).  See
+ * docs/fmv-drift-notes.md §11.
+ *
+ * Deliberately NOT applied to the redundant-seek path ($12xx to the block
+ * already playing): that path must not disturb the in-flight stream
+ * (#306/#307), and a no-op Goto moves no sled. */
+#define SEEK_SECTORS_PER_TICK 72
+
+uint32_t CDROMSeekDistanceTicks(uint32_t fromLBA, uint32_t toLBA)
+{
+   uint32_t dist = (toLBA >= fromLBA) ? (toLBA - fromLBA)
+                                      : (fromLBA - toLBA);
+   return dist / SEEK_SECTORS_PER_TICK;
+}
+
 /* Refill pacing: the real drive streams data at double-speed CD-DA rate,
  * 150 sectors/s x 2352 bytes = 352,800 B/s (= the 2x I2S rate).  One
  * half-full batch (8 x 32-bit FIFO entries = 32 bytes) therefore arrives
@@ -1692,7 +1728,14 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             CDTracePush(CD_TRACE_SEEK_START, data, newBlock);
             dsaResponseReady = false;
             isMultiWordResponse = false;
-            seekDelay = SEEK_DELAY_TICKS;
+            /* Base ordering delay + distance term (see SEEK_SECTORS_PER_TICK
+             * above).  `block` still holds the current head position here —
+             * the position block below updates it.  (An out-of-range seek
+             * gets redirected there; the distance term then overestimates
+             * by the redirect delta, which only affects a pathological
+             * seek that was already being rewritten.) */
+            seekDelay = SEEK_DELAY_TICKS
+                      + (int32_t)CDROMSeekDistanceTicks(block, newBlock);
          }
       }
       else if ((data & 0xFF00) == 0x1000 || (data & 0xFF00) == 0x1100)
@@ -1869,7 +1912,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             if (diag_firstSeekBlock == 0xFFFFFFFFu)
                diag_firstSeekBlock = block;
             CD_LOG("Seek started: block=%u (MSF %02u:%02u:%02u), delay=%d ticks\n",
-                   block, min, sec, frm, SEEK_DELAY_TICKS);
+                   block, min, sec, frm, seekDelay);
          }
       }
       else if ((data & 0xFF00) == 0x1500)			// Set Mode

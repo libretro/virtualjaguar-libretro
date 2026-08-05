@@ -59,34 +59,43 @@ code (1 = single, 2 = double), then `bset #3,d2` for data mode, then
 expected reply is `$1700 | payload` (`bset #9`), which
 `src/cd/cdrom.c:1641` already synthesizes correctly.
 
-### 2. FMV scene-jump schedule drift (Dragon's Lair / Space Ace / BD13)
+### 2. ~~FMV scene-jump schedule drift (Dragon's Lair / Space Ace / BD13)~~ -- RESOLVED (#297: every lead run to ground; seek model calibrated to reference)
 
-FMV titles occasionally jump scenes early/late. **The original root-cause
-note here was wrong on both counts** -- see
-[`fmv-drift-notes.md`](fmv-drift-notes.md) for the measurements:
+**Closed 2026-08-05.** The investigation is in
+[`fmv-drift-notes.md`](fmv-drift-notes.md) (§2–§11); the summary of where
+each hypothesis ended:
 
-- `$129AD6/$129ADE` is not a clock. Dragon's Lair's presentation counter
-  lives at `$562E/$5630` (the address its poll loop at `$004C0A` actually
-  reads), with a second accumulator at `$5688/$568A`.
-- That counter is **video-field-locked, not CD-derived**: it advances
-  exactly 32760 per field with zero jitter, and its per-field histogram is
-  identical at 1x/2x/4x read speed. Clock-vs-data drift through that
-  mechanism is structurally impossible.
+- **"Schedule drift" is structurally impossible.** Dragon's Lair's
+  presentation counter is at `$562E/$5630` (not the `$129AD6/$129ADE`
+  this note originally cited) and it is **video-field-locked**: +32760
+  per field, zero jitter, identical histogram at 1x/2x/4x read speed
+  (§2).
+- **Transfer rate is exonerated.** Both paths deliver within +0.15% of
+  the 352,800 B/s hardware 2x rate; the earlier "-1.11% slow /
+  `fifoFillDelay` re-arm" claim was refuted by direct measurement — the
+  fill→drain latency it blamed is zero for 99.997% of drains (§9, #305).
+- **A real stream-corruption bug was found and fixed on this path**: a
+  redundant `$12xx` seek re-framed the in-flight FIFO/SSI stream,
+  replaying up to ~13 ms of CD-DA (#306, fixed #307). It may well have
+  been the visible "glitchy transition" in the original report.
+- **Seek latency — the last open lead — is now modeled and calibrated.**
+  A BigPEmu reference capture of Dragon's Lair's death branch (558 ms ≈
+  33.4 fields of black vs our 29–30) showed the missing term is ~60 ms
+  on a near-full-stroke seek — tens of ms, **not** the unsourced
+  "30–315 ms multi-tier" range this file used to cite (its ~300 ms top
+  end would have shown as ~+18 fields; the capture shows +4).
+  `CDROMSeekDistanceTicks()` (src/cd/cdrom.c) now charges 1 halfline
+  tick per 72 sectors of head travel in **both** boot modes; the
+  measured branch gap lands at 33 fields in both, matching the
+  reference within a field (§11).
 
-Measured transfer rates against the 352,800 B/s hardware 2x figure: the
-HLE path is effectively exact (-0.000025%), the real-BIOS FIFO path runs -1.11% slow
-(`fifoFillDelay` is re-armed only after a drain completes, so GPU-ISR
-latency adds to the refill period instead of overlapping it). No
-accumulating jitter in either mode -- repeat attract loops are
-byte-identical.
-
-The symptom itself has **never been reproduced headlessly**. The leading
-un-measured suspect is seek/branch latency: `SEEK_DELAY_TICKS 100`
-(~3.2 ms) is 10-100x shorter than the 30-315 ms its own comment cites, and
-the HLE `CD_read` path has no seek model at all -- the one mechanism whose
-signature matches "jumps scenes *early*". The attract loop never branches,
-so it never seeks, which is why the measurement above cannot see it.
-Subcode registers remain exonerated.
+The reproducible branch fixture (`test/tools/run_dl_branch_fixture.sh`,
+#311) plus long-run cycle checks pin the behaviour: the die/retry loop
+repeats with a constant period and identical LBA sequence over 6+
+consecutive cycles in each mode. Standing caveat: the seek constant is
+**reference parity with BigPEmu, not silicon ground truth** — if a
+hardware capture ever materializes, recalibrate `SEEK_SECTORS_PER_TICK`
+against it (one number, linear model, no tiers).
 
 ### 3. Myst BIOS-mode audio parity listen
 

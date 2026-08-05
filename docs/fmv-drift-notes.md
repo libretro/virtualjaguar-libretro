@@ -988,3 +988,153 @@ so capture both if possible.
   The **first incoming content frame is unambiguous and identical in both modes**
   — prefer it as the comparison anchor against BigPEmu.
 * Measurement only. No emulation behaviour was changed in this pass.
+
+## 11. Seek model shipped (2026-08-05) — calibrated to the BigPEmu reference capture
+
+Status: **the fix pass for #297.** Everything above was measurement; this
+section records the one behavioural change that came out of it, its
+provenance, and the A/B evidence.
+
+### 11.1 The reference capture, and what it killed
+
+The maintainer captured Dragon's Lair's death branch in BigPEmu (macOS/iOS,
+120 Hz screen recording, measured against real PTS timestamps — details in
+the 2026-08-05 comment on #297):
+
+| | black window (last content → first incoming content) |
+|---|---|
+| BigPEmu | **558 ms ≈ 33.4 fields** |
+| ours, pre-change (§10) | 29–30 fields ≈ 500 ms |
+
+Delta ≈ +4 fields ≈ +60–75 ms on a near-full-stroke seek. That number
+settles two things:
+
+* **The "30–315 ms multi-tier" comment in `cdrom.c` is dead.** Its ~300 ms
+  top end on this full-stroke branch would have shown as ~+18 fields; the
+  reference shows +4. Whatever a real drive does, the reference charges
+  **tens of ms, not hundreds** — and no primary source for the tier table
+  was ever found (§8.4). The comment block has been rewritten.
+* **A calibrated linear term is justified.** §8.3 already proved
+  experimentally that seek latency displaces branch boundaries exactly 1:1
+  (a +300 ms probe moved the gap +18.0 fields), so a distance term of X ms
+  moves the gap X ms, no second-order effects.
+
+### 11.2 The model
+
+One constant, linear in head travel, both boot modes
+(`CDROMSeekDistanceTicks()` in `src/cd/cdrom.c`, shared via `cdrom.h`):
+
+```
+extra_ticks = |target_LBA − head_LBA| / 72        (1 tick = 31.78 µs)
+```
+
+* **Real-BIOS path** (`cdrom.c`): added on top of the base
+  `SEEK_DELAY_TICKS 100` ordering delay at `$12xx` (Goto Frame) time.
+  The redundant-seek path (#306/#307) is untouched — a no-op Goto moves
+  no sled and must not disturb the in-flight stream.
+* **HLE path** (`jagcd_hle.c`): a per-arm `startDelay` counted down in
+  `JaguarCDHLEStreamTick()` before the first byte flows; head position =
+  the in-flight stream LBA, else the parked post-read LBA, else 0 (cold
+  drive — matches the real path's reset `block = 0`). HLE gets only the
+  distance term, not the 100-tick base: its zero-latency arm already
+  landed frames on the same field as the BIOS path (§10.4), so adding the
+  same delta to both preserves that parity exactly. Zeroed when
+  `virtualjaguar_cd_read_speed` is `instant` (the user asked for instant).
+
+Calibration: the measured death branch travels 137,936 sectors (head LBA
+16 125 → 154 061). 137 936 / 72 = 1 915 ticks = 60.9 ms = 3.65 fields —
+moving our 30-field gap to ~33.7 against the 33.4-field reference. Sizes
+of everything else this touches:
+
+| seek | distance | extra delay |
+|---|---|---|
+| DL death branch | ~130–138 k sectors | 60.9 ms (3.65 fields) |
+| DL retry branch | ~133.5 k | 58.9 ms |
+| boot seeks (DL 15 236 / SA 15 479 / BD13 22 656) | 15–23 k | 6.7–10.0 ms |
+| streaming reads | 339–428 | 0.15–0.19 ms (4–5 ticks) |
+
+No tiers: there is exactly one calibrated data point, and a line through
+the origin fits it. `FIFO_REFILL_PERIOD_X100`, the 2-tick refill floor
+(§9.5), the `$15nn` drive-speed latch and the DSA response delay are all
+untouched.
+
+Savestates: unchanged format. The BIOS side reuses the already-serialized
+`seekDelay` counter (it just holds larger values); the HLE stream state was
+never serialized, and the new `startDelay` field follows that existing
+policy.
+
+### 11.3 A/B, per-frame, both modes (method identical to §10.3)
+
+Same fixture, same build host, `libretro/develop` @ `f36ae03` vs +model.
+Note the second-cycle death branch measured here reads LBA 153 995 from
+head 23 862 (distance 130 133), not the first cycle's 138 035 — the game
+re-reads the death clip at a slightly different offset per remaining life.
+
+**Branch A — death clip → "LIVES" card:**
+
+| | BIOS before | BIOS after | HLE before | HLE after |
+|---|---|---|---|---|
+| branch seek issued (field) | 2310.5 | 2316.5 | 1871.2 | 1877.6 |
+| `SEEK_DONE` | +0.19 fields | +3.7 fields | — | — (startDelay 1811 ticks) |
+| last outgoing content | 2311 | 2317 | 1871 | 1878 |
+| fully black run | 2312–2340 (**29**) | 2318–2350 (**33**) | 1872–1901 (**30**) | 1879–1911 (**33**) |
+| first incoming content | 2341 | 2351 | 1902 | 1912 |
+| gap last-out → first-in | 30 | **34** | 31 | **34** |
+
+Black window vs the reference: **33 fields (both modes) vs BigPEmu 33.4** —
+inside the capture's own ±35 ms VFR uncertainty. (The branch fields
+themselves sit ~6 fields later than §10 because the *first* death/retry
+branch pair upstream now also pays its ~3.5-field seeks — the whole
+timeline shifts, which is exactly the 1:1 displacement §8.3 predicted.)
+
+**Branch B — "LIVES" card → retry scene** (distance ~133.5 k → +3.54
+fields): black run 105 → **107** (BIOS) / 105 → **108** (HLE); first-in
+2557 (BIOS) vs 2558 (HLE-aligned +439). The 1-field mode skew is the same
+±1 boundary-rounding ambiguity §10.6 documents for branch A's *outgoing*
+edge; branch A's incoming edge stays field-identical in both modes.
+
+### 11.4 Long-run stability (the ticket's own success criterion)
+
+8 600 fields, fixture presses only (nothing after field 1139), both modes,
+with the model:
+
+```
+bios  deaths at 1139.0  2316.5  3494.1  4671.6  5849.2  | 7314.6 (game over)
+      periods:   1177.5  1177.6  1177.5  1177.6  1465.4
+hle   deaths at  700.1  1877.6  3055.1  4232.7  5410.3  | 6875.7 (game over)
+      periods:   1177.5  1177.5  1177.6  1177.6  1465.4
+```
+
+Six branch cycles per mode: five die/retry loops with the period constant
+to **0.1 field** and the LBA sequence stepping deterministically
+(154 061, 153 995, 153 929, 153 863, 153 797 — −66 sectors per remaining
+life), then the sixth transitions to the game-over scene (24 351 →
+154 127) and back to the attract loop (→ 15 236) — the game ran out of
+lives after five retries.
+
+**Control:** the identical 8 600-field run on the same rev *without* the
+model produces the same 12-branch structure with the byte-identical LBA
+sequence, deaths at period 1 171.5–1 171.6, game over on cycle six. So the
+sixth-cycle scene change is DL game logic, not drift, and the model's only
+effect on the long run is the period: 1 171.5 → 1 177.5, **+6.0 fields per
+cycle, identical for every cycle and in both modes** (each cycle contains
+a death seek + a retry seek plus the game's partial re-sync at the
+playback threshold). Mode alignment holds at +438.9–439.0 fields through
+every die/retry cycle. No early transitions, no late transitions, no
+cross-cycle drift. One residual: the final game-over → attract handoff
+lands 1.6 fields further apart between modes than the control (441.0 vs
+439.4) — a threshold-rounding tail on a transition whose two sides both
+reach attract normally.
+
+### 11.5 Caveats
+
+* **This is reference parity, not silicon ground truth.** BigPEmu is
+  another emulator. No hardware capture of Jaguar CD seek time exists in
+  this project (the JTRM CD-ROM manual specifies landing *tolerance*, not
+  access time). One data point calibrates one constant; if a hardware
+  capture ever materializes, recalibrate `SEEK_SECTORS_PER_TICK` — do not
+  add tiers to a model with a single-point calibration.
+* The boot seek now costs ~7–10 ms (real drives pay it too). Verified
+  benign across the full `cd_boot_matrix.sh` battery in both modes.
+* The capture's two edges carry ±35 ms of VFR frame-spacing uncertainty;
+  matching to ±1 field is the honest resolution limit of the comparison.

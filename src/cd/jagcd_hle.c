@@ -184,6 +184,15 @@ static struct
                          * rationale as statusBase: flipping the core option
                          * while a transfer is in flight must not change the
                          * rate the game is already pacing itself against. */
+   uint32_t startDelay; /* halfline ticks the stream sits idle before its
+                         * first byte: the distance-dependent seek term
+                         * (CDROMSeekDistanceTicks, #297).  HLE intercepts
+                         * CD_read above BUTCH, so it never runs cdrom.c's
+                         * seek state machine — without this the head
+                         * teleports and HLE branch gaps run ~60 ms shorter
+                         * than the real-BIOS path on full-stroke seeks.
+                         * Zero when the latched speed is CDSPEED_INSTANT
+                         * (the user asked for instant transfers). */
    uint8_t  buf[2352];
 } hleStream;
 
@@ -527,6 +536,7 @@ static void HLEHandleCDRead(void)
    uint32_t startLBA;
    bool wasRedirected = false;
    uint32_t phase;
+   uint32_t seekFromLBA = 0;
 
    lba = ((uint32_t)min * 60 + sec) * 75 + frm;
    if (lba >= 150)
@@ -973,6 +983,19 @@ hle_cd_read_post_scan:
               hleStream.written, hleStream.total, hleStream.reqTotal,
               hleStream.dest);
 
+   /* Head position BEFORE this read repositions it, for the seek-distance
+    * term latched below (must be sampled before the hleStream fields are
+    * overwritten): a still-streaming read leaves the head at its current
+    * streaming LBA; otherwise the drive parked one sector past the last
+    * read (hle_post_read_lba).  A cold drive (no read yet) sits at the
+    * disc start, matching the real path's reset state (block = 0). */
+   if (hleStream.active && hleStream.written < hleStream.total)
+      seekFromLBA = hleStream.lba;
+   else if (hle_post_read_lba != 0xFFFFFFFFu)
+      seekFromLBA = hle_post_read_lba;
+   else
+      seekFromLBA = 0;
+
    hleStream.active   = true;
    hleStream.lba      = scanLBA;
    hleStream.bufOff   = scanOff;
@@ -1001,6 +1024,16 @@ hle_cd_read_post_scan:
    hleStream.sigA0    = a0;
    hleStream.sigA1    = a1;
    hleStream.speedMult = vjs.cdReadSpeed;  /* latch for this transfer */
+   /* Distance-dependent seek term (#297, reference parity — see
+    * CDROMSeekDistanceTicks in cdrom.c for the model + calibration).
+    * Only the distance term, NOT cdrom.c's fixed SEEK_DELAY_TICKS base:
+    * HLE's zero-latency arm already lands branch frames on the same
+    * field as the real path (fmv-drift-notes.md §10.4 — 100 ticks =
+    * 0.19 fields is sub-resolution), so adding the distance term to
+    * both paths preserves that parity exactly. */
+   hleStream.startDelay = (hleStream.speedMult == CDSPEED_INSTANT)
+      ? 0
+      : CDROMSeekDistanceTicks(seekFromLBA, scanLBA);
    hle_stream_arm_count++;
 
    hle_read_dest     = destAddr;
@@ -1230,6 +1263,16 @@ void JaguarCDHLEStreamTick(void)
 
    if (!hleStream.active)
       return;
+
+   /* Seek in flight: the sled is still traveling (distance term latched
+    * at arm time, zero for CDSPEED_INSTANT).  No bytes flow and no byte
+    * budget accrues until it lands — mirrors cdrom.c, where the FIFO
+    * fill starts only after SEEK_DONE. */
+   if (hleStream.startDelay > 0)
+   {
+      hleStream.startDelay--;
+      return;
+   }
 
    if (hleStream.speedMult == CDSPEED_INSTANT)
    {
