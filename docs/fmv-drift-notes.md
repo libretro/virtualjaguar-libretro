@@ -25,6 +25,14 @@ investigation that points at a defect, it is in the boot mode the reporter
 said also fails, and its mechanism is identified in §3.2. It was **not
 fixed** — see §7 lead 1 for why. Remaining leads are ranked in §7.
 
+> **Update 2026-08-04 — the real-BIOS row above is misleading; see §9.**
+> That -1.11 % is an *average over the read cycle*, not a streaming rate.
+> Measured fill-to-fill, the real-BIOS FIFO streams at 353 332 B/s
+> (**+0.1508 %**, i.e. slightly fast) and does so on Dragon's Lair, Myst
+> and Battle Morph alike. The deficit is entirely inter-read turnaround
+> (~90 % game-side think time, ~10 % `SEEK_DELAY_TICKS`). §3.2's mechanism
+> and §7 lead 1 are closed as refuted.
+
 ---
 
 ## 1. Method
@@ -156,6 +164,16 @@ transfer is 1 047 820 bytes completing in 178–179 fields
 field-sampling granularity.
 
 ### 3.2 Real-BIOS path — `src/cd/cdrom.c`
+
+> **SUPERSEDED by §9 (2026-08-04).** The mechanism this section derives —
+> GPU-ISR latency being charged to the refill period — was implemented and
+> measured, and it does not exist: `FIFO_DRAIN.tick - FIFO_FILL.tick` is
+> **0** for 99.99 % of drains on DL, Myst and Battle Morph alike. The
+> streaming cadence already hits the armed 2.8500 ticks exactly, so the
+> real-BIOS path is 0.1508 % *fast*, not 1.11 % slow; the ~1 % average
+> deficit is inter-read turnaround (§9.3). The "31.968 bytes per drain"
+> figure below is a measurement artifact too (§9.4). Read §9 before acting
+> on anything here.
 
 `FIFO_REFILL_PERIOD_X100 285` paces a 32-byte FIFO batch:
 
@@ -374,7 +392,14 @@ playthrough".
 
 ## 7. Remaining leads, in priority order
 
-1. **Close the real-BIOS -1.11 % (§3.2).** This is the only measured
+1. ~~**Close the real-BIOS -1.11 % (§3.2).**~~ **CLOSED — REFUTED, see §9
+   (2026-08-04).** The fix described below was implemented and measured:
+   the fill->drain latency it targets is zero, the streaming cadence is
+   already exactly the armed 2.85 ticks, and the deficit is inter-read
+   turnaround instead. Do not re-attempt it. Original text kept for
+   context:
+
+   **Close the real-BIOS -1.11 % (§3.2).** This is the only measured
    deficit, it is in a mode the reporter says fails, and it sits 0.20 %
    below Dragon's Lair's demand. The fix is to stop charging GPU-ISR
    latency to the refill period — arm the next `fifoFillDelay` from the
@@ -576,7 +601,155 @@ our handling differs from hardware. It is a lead with numbers, not a bug.
 The reported symptom remains unreproduced as a *defect*: everything
 measured is deterministic and repeatable in both modes, and no reference
 capture exists for what DL's branch timing should be. Ranked leads §7.1
-(real-BIOS -1.11 %), §7.3 (user-side log / frontend pacing) and §7.5 (`VP`)
-are untouched by this pass. What #297 most needs now is **hardware or
+(real-BIOS -1.11 % — since **closed as refuted**, §9), §7.3 (user-side log
+/ frontend pacing) and §7.5 (`VP`) are untouched by this pass. What #297 most needs now is **hardware or
 BigPEmu ground truth for branch-scene timing** — without it, any seek-latency
 value is unfalsifiable.
+
+---
+
+## 9. §7 lead 1 executed (2026-08-04) — §3.2's root cause is REFUTED
+
+Lead 1 said the real-BIOS FIFO path runs 1.11 % slow because `fifoFillDelay`
+is re-armed only *after* a drain completes, so GPU-ISR latency is added to
+the refill period instead of overlapping it. That was implemented, measured,
+and **the mechanism does not exist**. No code change ships from this pass.
+
+Headline: **the real-BIOS streaming rate is not slow, it is 0.1508 % fast.**
+The ~1 % average deficit is read/seek turnaround between transfers — roughly
+90 % game-side think time, 10 % our `SEEK_DELAY_TICKS` — which §7 lead 2
+already flags as blocked on missing ground truth.
+
+### 9.1 Method
+
+`test/tools/fmv_seek_probe` + `VJ_CD_TRACE=1 VJ_CD_TRACE_LIVE=1
+VJ_HARNESS_LOG_INFO=1`, `--option virtualjaguar_cd_boot_mode=bios`
+(`--bios` alone does NOT switch boot mode — a run labelled BIOS without
+this option is byte-identical HLE). Every `FIFO_FILL` and `FIFO_DRAIN`
+carries the `diag_butchExecCalls` halfline tick, so fill->fill and
+fill->drain intervals are directly measurable rather than inferred.
+
+Baseline reproduced on `libretro/develop` @ `9d276bb`, Dragon's Lair,
+real BIOS, fields 1400-2500 (18.3167 s):
+
+```
+199 939 drains  ->  349 301 B/s  (99.008 % of 352 800)
+```
+
+Two independent metrics agree to 0.003 %: drain count x 32 B, and
+`diag_fifoReads` x 2 B / 2352 -> sector advance (349 312 B/s). This
+matches §3.2's 348 881 B/s within run-window variance.
+
+### 9.2 The fill->drain latency §3.2 blames is zero
+
+Histogram of `FIFO_DRAIN.tick - FIFO_FILL.tick`, DL, same window:
+
+```
+elapsed = 0     181 930 drains
+elapsed = 964 / 970 / 989 / 1013 / 1030      1 each
+```
+
+`BUTCHExec()` is a halfline callback and the GPU ISR drains *inside* that
+same halfline, so the ISR's 16 reads are always complete before the next
+tick samples anything. There is no latency to charge. The five outliers
+are not latency either: each is the last fill of a transfer, left sitting
+ready across the inter-read gap and drained when the next read begins.
+
+Not DL-specific — same probe, same option, real BIOS:
+
+| title | fills | elapsed == 0 | streaming mean period | streaming rate |
+|---|---|---|---|---|
+| Dragon's Lair | 181 935 | 99.997 % | 2.8500 ticks | 353 332 B/s (+0.1508 %) |
+| Myst | 75 071 | 99.991 % | 2.8500 ticks | 353 332 B/s (+0.1509 %) |
+| Battle Morph | 86 002 | 99.998 % | 2.8500 ticks | 353 328 B/s (+0.1497 %) |
+
+### 9.3 Where the ~1 % actually goes
+
+Fill->fill gap histogram, DL, fields 1400-2500:
+
+```
+gap = 2 ticks       27 291        gap = 3 ticks    154 638
+gap = 1071 / 1077 / 1096 / 1121 / 1137 ticks        1 each
+                                        (181 934 gaps over 181 935 fills)
+```
+
+Only 2 and 3 — no drift, no jitter. Mean over the 181 929 streaming
+intervals is **2.8500 ticks**, i.e. exactly what `FIFO_REFILL_PERIOD_X100
+285` arms, to five decimals. The state machine gives back *nothing*.
+
+The five long gaps are the game's read cycle:
+
+```
+last FIFO_FILL  1172688      (ISR stops: transfer complete)
+   ... 1029 ticks of game-side processing ...
+I2S_CTRL disable, DSA_TX $1003/$1119/$120B, SEEK_START   1173719
+SEEK_DONE (= SEEK_DELAY_TICKS, 100)                      1173819
+I2S_CTRL enable, DSA_RX $0100                            1173822
+first FIFO_FILL of the next read                         1173825
+```
+
+They total 5 502 ticks = **1.050 % of wall time**, which is the entire
+deficit: the mean period over *all* 181 934 gaps is 2.8802 ticks =
+**349 632 B/s = 99.102 % of hardware** — the measured average, recovered
+from the streaming rate plus these five gaps and nothing else.
+
+Spacing between the gaps is 94 400 / 94 419 / 94 444 / 94 394 ticks =
+**180.15 fields** — §5.1's independently measured 180-field `CD_read` arm
+cadence, arrived at from a completely different instrument. That is the
+strongest single piece of evidence that these are the game's read cycle
+and not a FIFO artifact.
+
+Of each ~1 100-tick gap only ~106 ticks are ours (`SEEK_DELAY_TICKS` plus
+DSA turnaround); the other ~1 000 is the game between reads. Reducing our
+share means touching seek latency, which §7 lead 2 blocks for want of
+ground truth — and the direction is wrong anyway: `cdrom.c:42` cites the
+manual's 30-315 ms real seek, so our 3.18 ms turnaround is already an
+order of magnitude *shorter* than hardware.
+
+### 9.4 §3.2's "31.968 bytes per drain (-0.10 %)" is also spurious
+
+Counted directly, `diag_fifoReads / drains = 8.0002` — and since
+`diag_fifoReads` counts only the `FIFO_DATA` half of the pair
+(`I2SDAT2` reads at `FIFO_DATA+4..7` are not counted), that is exactly
+16 word reads = **32.000 B per drain**. §3.2's 31.968 came from dividing
+sector advance by a drain count whose window included stall periods.
+
+### 9.5 Hard constraint found: the refill floor is 2 ticks
+
+Worth recording because nothing in the source says it. BUTCH's half-full
+IRQ edge is detected once per `BUTCHExec` tick (`cdPrevShouldIRQ`, end of
+`BUTCHExec`). The GPU drains between ticks, so a refill armed for **1**
+tick re-asserts `fifoDataReady` before the tracker ever samples a
+deasserted level: no rising edge, the ISR is never re-entered, and the
+transfer stops dead. Observed exactly once, at `FIFO_DRAIN` #1, block
+15236, on DL real BIOS — total run output 1 drain, 10 FIFO reads, then
+`video_stall` + `cd_seek_wedge`.
+
+Two ticks is the shortest interval the edge detector can represent. Any
+future refill-pacing work must respect that floor (2.85 sits safely
+above it; single speed at 5.70 more so).
+
+### 9.6 Why the +0.1508 % constant is deliberately NOT fixed
+
+`FIFO_REFILL_PERIOD_X100 285` vs the exact 2.8542884 ticks is the one real
+streaming-rate error. Widening the accumulator to `x10000 = 28543` would
+give 352 796 B/s (-0.001 %). **Do not ship it alone.** The composite rate
+is what the game sees:
+
+```
+0.98950 x 352 796 = 349 091 B/s      DL's demand (§5.1) = 349 590 B/s
+```
+
+That moves DL from +0.01 % above its own demand to **-0.14 % below** it —
+straight into the overlap-and-lose-the-tail failure §5.1 describes. The
+streaming term is 0.15 % fast and the turnaround term is ~10x too short;
+they are compensating errors. Making one exact while the other stays
+wrong is not an accuracy win. If hardware-exact streaming is wanted, it
+has to land together with a modelled turnaround — a separate ticket, with
+§7 lead 2's ground-truth problem to solve first.
+
+### 9.7 Status of §3.2 and §7 lead 1
+
+Both are superseded by this section. §7 lead 1 is **closed, refuted** —
+do not re-attempt the fill-to-fill re-arm; it is a measured no-op
+(it fires on 5 of 181 935 drains and saves at most one tick each).
