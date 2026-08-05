@@ -91,7 +91,8 @@ opening any ticket.
 > since it only surfaces green when nothing precedes it in row-major order — use
 > a colour census instead.
 
-**Status: ROOT-CAUSED 2026-08-04.** Not a rendering bug — a real OP object
+**Status: ROOT-CAUSED 2026-08-04; diagnostic probe merged as PR #293.** Still
+open on a presentation decision, not on investigation. Not a rendering bug — a real OP object
 AvP parks off-screen, exposed by our 326-column presented window. Open on a
 presentation decision, not on investigation. Details in the block above.
 
@@ -167,7 +168,11 @@ with no signature.
 > from boot), and the fixture's post-briefing route is a seeded wander that
 > assumes the core stays deterministic.
 
-**Status: REPRODUCED headlessly and root-caused 2026-08-04; fix in PR #292.**
+**Status: FIXED — PR #292 merged to `develop` 2026-08-04.** The fix keeps an
+unshaded copy of the source pixel (`srcd_cmp`) so DCOMPEN transparency compares
+the pixel as read from memory: SRCSHADE's intensity offset belongs to the write
+data only, and shading a transparent (PATD-matching) pixel must not make it
+opaque.
 
 ### What is established
 
@@ -311,7 +316,8 @@ diagnostic naming the dump defect. Zero regressions in the 22-row boot matrix.
 
 ## 5. VLM / audio-CD support — tracked as #291
 
-**Status: ticket filed as #291 on 2026-08-04.** Findings below were re-verified
+**Status: audio-CD support shipped — PR #300 merged to `develop` 2026-08-04;**
+**#291 remains open for the rest of the VLM surface.** Findings below were re-verified
 against the tree on that date; three claims in the original writeup were wrong
 and are corrected inline. All behavioural observations come from a *synthetic*
 two-tone CUE, never a real audio CD.
