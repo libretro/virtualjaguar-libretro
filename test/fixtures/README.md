@@ -33,3 +33,29 @@ path, so it depends on the core staying deterministic - re-verify the pickup
 frame if emulation timing changes.
 **not** carry the artefact, so drive it from boot rather than via
 `--load-state`.
+
+## `dragons_lair_death_branch.press` / `dragons_lair_death_branch_bios.press`
+
+Drives **Dragon's Lair (USA)** (Jaguar CD) out of the attract loop into
+gameplay and kills Dirk, forcing a **scene branch** — a near-full-stroke CD
+read (LBA 16026 → 154061, +138 035 sectors) to the death clip and back. Used
+to measure branch-transition timing for #297; see
+[`docs/fmv-drift-notes.md`](../../docs/fmv-drift-notes.md) §10.
+
+~~~bash
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
+  bash test/tools/run_dl_branch_fixture.sh ./virtualjaguar_libretro.dylib hle
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
+  bash test/tools/run_dl_branch_fixture.sh ./virtualjaguar_libretro.dylib bios
+~~~
+
+Two files because BIOS boot reaches the same state **+439 fields** later, and
+`--bios` does **not** switch CD boot mode — the runner passes
+`--option virtualjaguar_cd_boot_mode=bios` and then verifies the mode from the
+core's own `[BOOT] CD game, mode=…` log line.
+
+Needs `test/tools/fmv_seek_probe` built (build line in the runner's error
+message). The gate is the CD trace ring — a read whose LBA delta exceeds
+100 000 sectors — **not** the `seeks`/`seekstarts` CSV columns, which are
+structurally 0 in HLE mode because HLE never touches the BUTCH `$12xx` path.
+A no-press control run fails the gate, so it is falsifiable.

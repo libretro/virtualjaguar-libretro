@@ -1,0 +1,28 @@
+# Dragon's Lair (USA).cue -- real-BIOS variant of dragons_lair_death_branch.press.
+#
+# REQUIRES --option virtualjaguar_cd_boot_mode=bios.  `--bios` alone does NOT
+# switch CD boot mode; a run labelled "BIOS" without the option is byte-identical
+# HLE.  Confirm from the run's own log: "[BOOT] CD game, mode=BIOS".
+#
+# BIOS boot reaches the same state +439 fields later than HLE, so every frame
+# number here is the HLE number + 439.
+#
+# Verified on libretro/develop @ 674f600 -- see docs/fmv-drift-notes.md §10.
+#
+# Timeline (fields, absolute from boot, BIOS):
+#   ~939/999  pause x2 leaves the attract loop and starts a game
+#   ~1139     `a` is the first QTE input; the branch fires the same field
+#   ~1139     BRANCH: SEEK_START LBA 16026 -> 154061 (+138035 sectors)
+#   ~1268     BRANCH: SEEK_START LBA 154061 -> 20491 (retry scene)
+#   thereafter self-repeating every ~1171 fields: ~2310, ~2439, ~3482, ~3611
+#
+# Success criterion: fmv_seek_probe's `seekstarts` CSV column increments at
+# those fields AND the SEEK_START trace event's LBA delta exceeds 100000
+# sectors.  A no-press control run on the same build produces only 339-428
+# sector streaming seeks plus one -5171 attract restart -- no branch.
+#
+#   bash test/tools/run_dl_branch_fixture.sh ./virtualjaguar_libretro.dylib bios
+
+939:pause
+999:pause
+1139:a
