@@ -722,10 +722,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Deterministic per-process scratch dir.  Everything below is
-     * synthetic -- this test never touches test/roms/private. */
-    snprintf(base, sizeof(base), "/tmp/vj_cd_cdda_%ld", (long)getpid());
-    if (mkdir(base, 0755) != 0 && errno != EEXIST)
+    /* Scratch dir for the synthetic disc (never touches test/roms/private). */
+    snprintf(base, sizeof(base), "/tmp/vj_cd_cdda_XXXXXX");
+    if (!mkdtemp(base))
     {
         fprintf(stderr, "  SKIP  cannot create scratch dir %s\n", base);
         vj_core_unload(&C);
