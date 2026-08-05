@@ -1530,6 +1530,18 @@ void CDROMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 
 void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
+   /* $12xx (Goto Frame) redundancy decision.  A redundant Goto is handled in
+    * two places below -- the response block queues Found, the side-effect
+    * block must leave the stream alone -- and the decision has to be made
+    * ONCE, here, rather than re-tested in each.  Re-testing cannot work: the
+    * response block ends in DSAQueuePush(0x0100) (the Philia fix), which
+    * leaves dsaQueueCount == 1, so an identical guard in the side-effect
+    * block can never match on a redundant seek.  It fell through to the
+    * full-seek path and rewound both heads to the start of the sector being
+    * streamed -- cdBufPtr back to 2 and the SSI audio head to 0, up to 2352
+    * bytes (~13 ms) of replayed CD-DA.  See #306. */
+   bool seekRedundant = false;
+
    offset &= 0xFF;
 
    // BUTCH+2 (low word of ICR): only enable bits (0-6) are writable.
@@ -1654,7 +1666,9 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          // Restarting seekDelay each time would keep dsaResponseReady cycling
          // true, preventing the GPU ISR from ever taking the FIFO data path
          // (bit 13 stays set, masking bit 9).
-         if (cdPlaying && newBlock == block && seekDelay <= 0 && dsaQueueCount == 0)
+         seekRedundant = (cdPlaying && newBlock == block && seekDelay <= 0 &&
+                          dsaQueueCount == 0);
+         if (seekRedundant)
          {
             CD_LOG("Skipping redundant seek to block %u (already playing)\n", block);
             /* The drive still answers a no-op Goto with Found ($0100) —
@@ -1800,8 +1814,11 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          int32_t absBlock = (((min * 60) + sec) * 75) + newFrm;
          uint32_t newBlock = (absBlock >= 150) ? (uint32_t)(absBlock - 150) : 0;
 
-         // Skip redundant seek (same guard as the seekDelay handler above)
-         if (cdPlaying && newBlock == block && seekDelay <= 0 && dsaQueueCount == 0)
+         /* Skip redundant seek.  Consults the decision the response block
+          * already made (see seekRedundant at the top of this function);
+          * re-testing the guard here would always fail, because that block's
+          * DSAQueuePush(0x0100) has since made dsaQueueCount non-zero. */
+         if (seekRedundant)
          {
             frm = newFrm;
             // Don't re-read block, don't reset cdBufPtr — data is already flowing
