@@ -35,6 +35,7 @@
 #include "m68000/cpudefs.h"   /* regs.remainingCycles — 68K DRAM self-cost */
 #include "bus_arbiter.h"
 #include "memtrack.h"
+#include "jaggd.h"
 #include "nvmbios.h"
 #include "settings.h"
 #include "tom.h"
@@ -425,6 +426,8 @@ unsigned int m68k_read_memory_8(unsigned int address)
    {
       if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadByte(address);
+      if (JGD_BANKING())
+         return JGDReadROM8(address - 0x800000);
       return jaguarMainROM[address - 0x800000];
    }
    else if ((address >= 0xE00000) && (address <= 0xE3FFFF))
@@ -465,9 +468,15 @@ unsigned int m68k_read_memory_16(unsigned int address)
       /* Memory Track reading... */
       if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadWord(address);
-      else
-         return (jaguarMainROM[address - 0x800000] << 8)
-            | jaguarMainROM[address - 0x800000 + 1];
+      if (JGD_BANKING())
+      {
+         /* Byte-composed so a read straddling a 1 MB page boundary
+          * pulls each half from its own bank. */
+         uint32_t off = address - 0x800000;
+         return (JGDReadROM8(off) << 8) | JGDReadROM8(off + 1);
+      }
+      return (jaguarMainROM[address - 0x800000] << 8)
+         | jaguarMainROM[address - 0x800000 + 1];
    }
    else if ((address >= 0xE00000) && (address <= 0xE3FFFE))
       return (jagMemSpace[address] << 8) | jagMemSpace[address + 1];
@@ -504,6 +513,16 @@ unsigned int m68k_read_memory_32(unsigned int address)
       M68K_BUS_CHARGE(address, 2);
       if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadLong(address);
+
+      if (JGD_BANKING())
+      {
+         /* Byte-composed: a long can straddle a 1 MB page boundary. */
+         uint32_t off = address - 0x800000;
+         return ((uint32_t)JGDReadROM8(off) << 24)
+            | ((uint32_t)JGDReadROM8(off + 1) << 16)
+            | ((uint32_t)JGDReadROM8(off + 2) << 8)
+            | JGDReadROM8(off + 3);
+      }
 
       return GET32(jaguarMainROM, address - 0x800000);
    }
@@ -553,6 +572,11 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       jaguarMainRAM[address] = value;
+   /* GameDrive: GD_ROMWriteEnable makes the SDRAM-backed "ROM" writable
+    * (the GD menu loads through this; homebrew uses cart space as RAM). */
+   else if (jgdActive && jgdWriteEnabled
+            && (address >= 0x800000) && (address <= 0xDFFEFF))
+      JGDWriteROM8(address - 0x800000, (uint8_t)value);
    /* Memory Track byte writes: cart space is otherwise read-only, so this
     * branch exists purely for the device (command window + NVRAM). */
    else if (((address >= 0x800000) && (address <= 0x87FFFF))
@@ -590,6 +614,13 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
       SET16(jaguarMainRAM, address, value);
+   }
+   /* GameDrive write-enabled cart space (see the byte handler). */
+   else if (jgdActive && jgdWriteEnabled
+            && (address >= 0x800000) && (address <= 0xDFFEFE))
+   {
+      JGDWriteROM8(address - 0x800000, (uint8_t)(value >> 8));
+      JGDWriteROM8(address - 0x800000 + 1, (uint8_t)(value & 0xFF));
    }
    /* Memory Track device writes: the flash command addresses live inside the
     * $8xxxxx ROM window, but the NVRAM itself is a separate window at
@@ -679,7 +710,11 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
    if (offset < 0x800000)
       return jaguarMainRAM[offset & 0x1FFFFF];
    else if ((offset >= 0x800000) && (offset < 0xDFFF00))
+   {
+      if (JGD_BANKING())
+         return JGDReadROM8(offset - 0x800000);
       return jaguarMainROM[offset - 0x800000];
+   }
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
       return CDROMReadByte(offset, who);
    else if ((offset >= 0xE00000) && (offset < 0xE40000))
@@ -704,6 +739,8 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
    else if ((offset >= 0x800000) && (offset < 0xDFFF00))
    {
       offset -= 0x800000;
+      if (JGD_BANKING())
+         return (JGDReadROM8(offset) << 8) | JGDReadROM8(offset + 1);
       return (jaguarMainROM[offset+0] << 8) | jaguarMainROM[offset+1];
    }
    //	else if ((offset >= 0xDFFF00) && (offset < 0xDFFF00))
@@ -743,6 +780,13 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    }
    else if (offset < 0x800000)
       return;
+   /* GameDrive write-enabled cart space (GPU/DSP/blitter writers). */
+   else if (jgdActive && jgdWriteEnabled
+            && (offset >= 0x800000) && (offset < 0xDFFF00))
+   {
+      JGDWriteROM8(offset - 0x800000, data);
+      return;
+   }
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
    {
       CDROMWriteByte(offset, data, who);
@@ -776,6 +820,14 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    }
    else if (offset <= 0x7FFFFE)
       return;
+   /* GameDrive write-enabled cart space (GPU/DSP/blitter writers). */
+   else if (jgdActive && jgdWriteEnabled
+            && offset >= 0x800000 && offset < 0xDFFF00)
+   {
+      JGDWriteROM8(offset - 0x800000, (uint8_t)(data >> 8));
+      JGDWriteROM8(offset - 0x800000 + 1, (uint8_t)(data & 0xFF));
+      return;
+   }
    else if (offset >= 0xDFFF00 && offset <= 0xDFFFFE)
    {
       CDROMWriteWord(offset, data, who);
@@ -879,6 +931,10 @@ void JaguarInit(void)
    JERRYInit();
    CDROMInit();
 
+   /* Fresh content boundary: drop any GameDrive image/state a previous
+    * load in this process left behind (JGDLoadROM re-arms it for JST_ROM
+    * content when the option + image size call for it). */
+   JGDUnload();
 }
 
 /* New timer based code stuffola... */
@@ -995,6 +1051,10 @@ void JaguarReset(void)
     * that must be cleared on every reset.  Cart strategy reset is a no-op. */
    if (bootConfig.strategy && bootConfig.strategy->reset)
       bootConfig.strategy->reset();
+
+   /* GameDrive: console reset returns the ASIC to identity pages,
+    * write-protected, SPI idle; the game re-runs GD_Install itself. */
+   JGDReset();
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
@@ -1180,6 +1240,7 @@ void JaguarDone(void)
    DSPDone();
    TOMDone();
    JERRYDone();
+   JGDDone();
    m68k_done();
 }
 

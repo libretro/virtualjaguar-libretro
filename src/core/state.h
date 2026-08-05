@@ -32,17 +32,20 @@ extern "C" {
  * v7: Memory Track chunk gained the latched $80AAA8 override flag and
  *     the NVM BIOS dispatcher state (nvmbios.c); trailing bus-arbiter
  *     68K self-cost carry (symmetric DRAM timing).  One shared bump —
- *     all in-flight changes since the last release use v7. */
+ *     all in-flight changes since the last release use v7.
+ * v8: trailing Jaguar GameDrive chunk (bank pages + SPI mailbox engine,
+ *     jaggd.c).  One shared bump — all in-flight changes since the
+ *     v3.1.0 release use v8. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   7
+#define STATE_VERSION   8
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
  * STATE_VERSION is always what we write.
  *
  * Released cores wrote exactly four versions: 1 (v2.2.0), 2 (v2.3.0 and
- * v2.3.1), 3 (v2.3.2) and 7 (v3.0.0).  Versions 4-6 existed only on
- * develop/nightlies.  All four released layouts load (issue #268). */
+ * v2.3.1), 3 (v2.3.2) and 7 (v3.0.0, v3.1.0).  Versions 4-6 existed only
+ * on develop/nightlies.  All four released layouts load (issue #268). */
 #define STATE_MIN_VERSION 1
 
 /* Per-field version gates.  A module loader that has to skip a field an
@@ -71,6 +74,10 @@ extern "C" {
 /* First version carrying the trailing bus-arbiter 68K carry (symmetric
  * DRAM self-cost). */
 #define STATE_VERSION_BUS_ARBITER 7
+/* First version carrying the trailing Jaguar GameDrive chunk.  Older
+ * states load with the GD at its reset state (identity pages, write
+ * protect, idle SPI) — see JGDStateLoad / the caller's else branch. */
+#define STATE_VERSION_JAGGD 8
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

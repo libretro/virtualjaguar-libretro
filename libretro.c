@@ -39,6 +39,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "tom.h"
 #include "eeprom.h"
 #include "memtrack.h"
+#include "jaggd.h"
 #include "nvmbios.h"
 #include "vjag_memory.h"
 #include "state.h"
@@ -643,6 +644,23 @@ static void check_variables(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
       opt_memory_track = (strcmp(var.value, "disabled") != 0);
 
+   /* Jaguar GameDrive: mode is latched here; activation happens at
+    * content load (JGDLoadROM), so mid-game toggles apply on restart. */
+   var.key = "virtualjaguar_jgd";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         JGDSetMode(JGD_MODE_ENABLED);
+      else if (strcmp(var.value, "disabled") == 0)
+         JGDSetMode(JGD_MODE_DISABLED);
+      else
+         JGDSetMode(JGD_MODE_AUTO);
+   }
+   else
+      JGDSetMode(JGD_MODE_AUTO);
+
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
 
@@ -1031,6 +1049,10 @@ bool retro_serialize(void *data, size_t size)
    STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
    STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
 
+   /* v8: Jaguar GameDrive chunk (bank pages + SPI engine; all-zero for
+    * non-GD content). */
+   buf += JGDStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -1111,6 +1133,13 @@ bool retro_unserialize(const void *data, size_t size)
       busArbiter.op_clk_accum = 0;
       busArbiter.m68k_pending_stall = 0;
    }
+
+   if (version >= STATE_VERSION_JAGGD)
+      buf += JGDStateLoad(buf);
+   else
+      /* Pre-v8 states carry no GameDrive chunk: reset mapping (identity
+       * pages, write protect, idle SPI) — the game re-installs. */
+      JGDReset();
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
     * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from
