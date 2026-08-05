@@ -101,7 +101,7 @@ static uint16_t *p_rrxd;
 #define ST_RX_FULL       0x2000u
 #define I2S_DATA_ENABLE  0x0001u
 
-#define CALLER 0u                   /* `who` argument -- UNKNOWN            */
+#define CALLER 0u                   /* `who` argument -- M68K */
 
 /* ------------------------------------------------------------------ */
 /* Synthetic disc geometry                                              */
