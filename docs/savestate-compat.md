@@ -9,7 +9,7 @@ Defined in `src/core/state.h`:
 | Constant | Value | Meaning |
 |---|---|---|
 | `STATE_MAGIC` | `0x564A5353` (`"VJSS"`) | Header magic |
-| `STATE_VERSION` | `7` | Version this build **writes** |
+| `STATE_VERSION` | `8` | Version this build **writes** |
 | `STATE_MIN_VERSION` | `1` | Oldest version this build will **load** |
 
 `retro_unserialize()` refuses anything outside `STATE_MIN_VERSION … STATE_VERSION`
@@ -30,10 +30,27 @@ Only four format versions have ever left a release tag:
 | 1 | v2.2.0 (savestate support first shipped here) |
 | 2 | v2.3.0, v2.3.1 |
 | 3 | v2.3.2 |
-| 7 | v3.0.0 |
+| 7 | v3.0.0, v3.1.0 |
+| 8 | develop (unreleased): trailing Jaguar GameDrive chunk, `STATE_VERSION_JAGGD` |
 
 Versions 4, 5 and 6 existed only on `develop` / nightlies. All four released
 layouts load on the current core.
+
+## v8: Jaguar GameDrive chunk
+
+v8 (one shared bump per release policy — all in-flight changes since v3.1.0
+use it) appends a fixed-size 540-byte GameDrive chunk (`JGDStateSave` in
+`src/core/jaggd.c`) after the bus-arbiter accumulators: active/write-enable
+flags, the six 1 MB bank page registers, and the SPI mailbox engine
+(state machine + response FIFO). The chunk is written all-zero for non-GD
+content, which keeps the zero-tail property `test_state_compat`'s
+`dac_block_is_last` structural check relies on. Loading a pre-v8 state
+resets the GameDrive to its power-on mapping (identity pages, write
+protect, idle SPI) — the game re-runs `GD_Install` after a console reset
+anyway, so nothing is lost. The 16 MB SDRAM image itself is NOT serialized
+(same policy as cart ROM); pages modified via `GD_ROMWriteEnable` do not
+survive a load — a deliberate v1 simplification, called out in
+`docs/jgd-interface-notes.md` §9.
 
 ## Two bugs, both fixed (issue #268)
 
