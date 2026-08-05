@@ -955,6 +955,24 @@ hle_cd_read_post_scan:
     * rationale above hleStream.  (Per-CD_read cart-space mirror removed —
     * HLEPopulateCartBuffer already covers BrainDead 13's "ATRI" cart-scan
     * path at boot time.) */
+   /* Arming over a still-running stream silently discards the undelivered
+    * tail of the previous CD_read (no HLEStreamFinish, no completion
+    * flags).  It is legitimate -- a game abandoning a read to branch does
+    * exactly this -- but it is also how any starvation regression would
+    * turn into corrupted movie data instead of a visible stall, so make it
+    * greppable rather than invisible (#297, fmv-drift-notes.md §7 lead 4).
+    *
+    * Compare against hleStream.total, not reqTotal: the stream delivers the
+    * long-rounded size, and games checksum through those extra tail bytes
+    * (see the delivery comment below), so a discard in [reqTotal, total) is
+    * still lost disc data and must not read as a complete transfer. */
+   if (hleStream.active && hleStream.written < hleStream.total)
+      LOG_WRN("[CD-HLE] CD_read armed over in-flight stream: "
+              "%u/%u bytes delivered (%u requested), dest $%06X "
+              "-- tail discarded\n",
+              hleStream.written, hleStream.total, hleStream.reqTotal,
+              hleStream.dest);
+
    hleStream.active   = true;
    hleStream.lba      = scanLBA;
    hleStream.bufOff   = scanOff;

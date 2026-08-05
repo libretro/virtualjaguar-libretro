@@ -454,3 +454,129 @@ VJ_CD_TRACE=1 VJ_CD_TRACE_LIVE=1 VJ_HARNESS_LOG_INFO=1 ./fmv_clock_probe … \
 Note `CDROMDiagGetCounters`'s `hleBytes` output is dead (`cdrom.c:871`
 hard-codes 0 — "HLETransferTick removed"); use the arm counter plus
 `JaguarCDHLEStreamBytes`, or the trace ring, instead.
+
+---
+
+## 8. Branch/seek path measured (2026-08-04) — §6's blind spot closed
+
+§6 named seek/branch latency "the structural blind spot": every earlier
+measurement was of the *sequential* attract loop, which never branches and
+therefore never seeks. That gap is now closed. Tooling:
+`test/tools/fmv_seek_probe.c` (committed) plus a `--press` script that
+drives Dragon's Lair into gameplay and loops its die/retry branch.
+
+### 8.1 The branch script reproduces prior results in BOTH boot modes
+
+```
+HLE   --press 500:pause --press 560:pause --press 700:a
+BIOS  --press 939:pause --press 999:pause --press 1139:a   (BIOS boot is +439 fields)
+```
+
+Both give the same die/retry cycle §6 reported — **849 / 118 / 204 fields**,
+repeating, endclk 423.7 / 58.6 / 101.7. Attract runs still reproduce the
+§4 table exactly (2666f -> 1325.97, 339f -> 94.51; BIOS 2666f -> 1325.97,
+340f -> 94.95), and 1 field = 524.0 halflines as before.
+
+### 8.2 Branch seeks are near-full-stroke, and are served in 3.18 ms
+
+Real-BIOS trace (`VJ_CD_TRACE=1 VJ_CD_TRACE_LIVE=1`), DL branch run.
+`SEEK_DONE` always lands exactly `SEEK_DELAY_TICKS` = 100 ticks = **3.178 ms**
+after `SEEK_START`, regardless of distance:
+
+| context | seek distance (sectors) |
+|---|---|
+| steady-state streaming read | ~340-430 |
+| attract-loop restart | 5 171 |
+| **death/retry branch** | **130 361 - 138 035** |
+
+Each death/retry does two near-full-stroke seeks (out to LBA ~154 000, back
+to 20 491 about 128 fields later) plus a 1 641-sector step. A physical CD
+drive cannot cross ~130 000 sectors in 3.18 ms; `cdrom.c:42` cites
+30-315 ms from MiSTer in the very comment block that then defines 100 ticks.
+The HLE path (`jagcd_hle.c`) still has **no seek model at all** — `seeks=0`
+for the whole run, in attract and at branches alike.
+
+Space Ace and BrainDead 13 (BIOS, attract) show the same shape: a first
+seek from `block=0` of 15 479 / 22 656 sectors, then ~360-600 sector
+sequential steps.
+
+### 8.3 Seek latency displaces branch scenes 1:1 — but only pads a black gap
+
+Experiment: distance-tiered seek delay, `>10 000` sectors -> 9 440 ticks
+(~300 ms), everything else unchanged at 100. DL, BIOS, same branch script:
+
+| scene | flat 100t | tiered | delta | endclk flat | endclk tiered | delta |
+|---|---|---|---|---|---|---|
+| s1 | 255 | 273 | **+18** | 126.87 | 135.87 | +9.00 |
+| s2 | 204 | 222 | **+18** | 101.73 | 110.72 | +9.00 |
+| s3 | 849 | 849 | 0 | 423.70 | 423.70 | 0.00 |
+| s4 | 118 | 136 | **+18** | 58.59 | 67.58 | +8.99 |
+| s5 | 205 | 223 | **+18** | 101.98 | 110.92 | +8.94 |
+
++18 fields = 18 x 16.65 ms = **300 ms — exactly the delay injected**, and
+the field-locked clock advances +9.0 (18 x 0.5/field) to match. So branch
+scene boundaries *are* gated by seek completion, one-for-one. §4's "no
+clock-versus-data drift" verdict concerned sequential playback and is not
+contradicted: this is a branch-only coupling.
+
+**But this is an accounting identity, not a demonstrated fix.** PPM capture
+of the affected window (probe's `FMV_SHOTDIR`/`FMV_SHOT_FROM/TO/EVERY`)
+shows fields 1160 and 1180 are **fully black** and the "LIVES 5" retry card
+appears at 1200: the injected 300 ms lands inside an already-black
+inter-scene load gap. The branch content plays identically, just later.
+Nothing shows a mis-timed scene being corrected.
+
+### 8.4 Why the tiered model was NOT shipped
+
+1. **No hardware reference for the magnitude.** MiSTer's 30-315 ms is a
+   secondhand comment in our own source. `06 - Jaguar CD-ROM.pdf` has no
+   text layer (`pdftotext` -> 39 bytes); read as images, p.7 fn.4 and p.12
+   give landing *uncertainty* (start the read 6 blocks early, the partition
+   marker may be anywhere in the first 31 blocks = 72 912 bytes) — that is
+   positional tolerance, not access time. No JTRM section states a seek time.
+2. **The only visible effect is a longer black pause** (§8.3), with no
+   reference saying how long that pause should be.
+3. **Boot blast radius.** The tier keys on `|target - block|`, and `block`
+   is 0 at reset (`cdrom.c:794`). Space Ace's and BrainDead 13's *first*
+   seeks are 15 479 / 22 656 sectors, so a 10 000-sector threshold fires the
+   long tier on the boot seek of essentially every CD title. DL's first four
+   seek ticks were bit-identical with and without the tier, but that does
+   **not** prove the tier stayed silent there — the gap to the next seek is
+   269 fields, easily wide enough to swallow 9 340 ticks unobserved, and
+   `seekDist` was never logged. Treat DL as untested too. Myst / Hover
+   Strike / IS2 / Primal Rage / Battle Morph likewise. See §7's
+   regression-risk table.
+4. The 10 000-sector threshold is arbitrary, and it classifies the
+   5 171-sector attract-restart seek as "short" — an asymmetry that is
+   itself evidence the calibration is not sourced.
+
+Shipping it would be unfalsifiable in exactly the way §7 lead 1 warns
+about. It stays a lead, now with numbers.
+
+### 8.5 New finding: HLE discards 25-77 % of in-flight reads at branches
+
+§7 lead 4 (instrument the silent `hleStream` overwrite) is **done**
+(`jagcd_hle.c`, `LOG_WRN`, no behaviour change). In a 4 000-field DL
+branch run it fires **8 times**:
+
+```
+237385/1047820 bytes delivered, dest $03E2F4 -- tail discarded   (77 % lost)
+756901/1048576 ... $03E000   (28 %)     554046/1048060 ... $03E204   (47 %)
+695665/1048576 ... $03E000   (34 %)     757406/1048576 ... $03E000   (28 %)
+```
+
+§5.1 saw this 4 times in a 20 000-field *attract* run; under branching it is
+~10x more frequent. Caveat before this becomes a second unfalsifiable
+theory: a game abandoning a read to branch does the same thing on hardware
+(new `CD_read` -> drive reseeks -> old delivery stops). Nothing here shows
+our handling differs from hardware. It is a lead with numbers, not a bug.
+
+### 8.6 Still not answered
+
+The reported symptom remains unreproduced as a *defect*: everything
+measured is deterministic and repeatable in both modes, and no reference
+capture exists for what DL's branch timing should be. Ranked leads §7.1
+(real-BIOS -1.11 %), §7.3 (user-side log / frontend pacing) and §7.5 (`VP`)
+are untouched by this pass. What #297 most needs now is **hardware or
+BigPEmu ground truth for branch-scene timing** — without it, any seek-latency
+value is unfalsifiable.
