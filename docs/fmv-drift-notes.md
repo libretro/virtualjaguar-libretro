@@ -497,6 +497,12 @@ HLE   --press 500:pause --press 560:pause --press 700:a
 BIOS  --press 939:pause --press 999:pause --press 1139:a   (BIOS boot is +439 fields)
 ```
 
+> **Re-verified 2026-08-05 on `libretro/develop` @ `674f600` — both sequences
+> still work, and are now committed as fixtures (§10.1). Do not judge an HLE
+> run by the `seeks`/`seekstarts`/`seekdones` columns: they are structurally
+> 0 in HLE (§8.2), so a real HLE branch reads as "no seek". The HLE witness is
+> the `HLE_READ` trace event's LBA. See §10 for the falsifiable gate.**
+
 Both give the same die/retry cycle §6 reported — **849 / 118 / 204 fields**,
 repeating, endclk 423.7 / 58.6 / 101.7. Attract runs still reproduce the
 §4 table exactly (2666f -> 1325.97, 339f -> 94.51; BIOS 2666f -> 1325.97,
@@ -520,6 +526,15 @@ drive cannot cross ~130 000 sectors in 3.18 ms; `cdrom.c:42` cites
 30-315 ms from MiSTer in the very comment block that then defines 100 ticks.
 The HLE path (`jagcd_hle.c`) still has **no seek model at all** — `seeks=0`
 for the whole run, in attract and at branches alike.
+
+**That zero is a property of the instrument, not of the run.** `cdSeekStartCount`
+is incremented at exactly one site, `src/cd/cdrom.c:1691`, on the BUTCH `$12xx`
+register write path. HLE intercepts `CD_read` above BUTCH, so the counter can
+never move in HLE no matter what the game does. `seeks == 0` in an HLE run is
+therefore evidence of nothing. The equivalent HLE observable is the `HLE_READ`
+trace event, which carries the requested LBA (`cdrom.c` trace enum comment;
+pushed from `jagcd_hle.c:5300`) — and its LBA sequence is **identical** to the
+BIOS `SEEK_START` sequence, field-for-field at the +439 offset (§10.1).
 
 Space Ace and BrainDead 13 (BIOS, attract) show the same shape: a first
 seek from `block=0` of 15 479 / 22 656 sectors, then ~360-600 sector
@@ -753,3 +768,223 @@ has to land together with a modelled turnaround — a separate ticket, with
 Both are superseded by this section. §7 lead 1 is **closed, refuted** —
 do not re-attempt the fill-to-fill re-arm; it is a measured no-op
 (it fires on 5 of 181 935 drains and saves at most one tick each).
+
+---
+
+## 10. Branch gap measured per-frame (2026-08-05) — our number for the BigPEmu comparison
+
+Purpose: #297 is blocked on comparing our scene-transition timing against a
+BigPEmu reference capture. This section is **our** side of that comparison,
+measured per-frame across a reproducible Dragon's Lair scene branch in both
+boot modes, on `libretro/develop` @ `674f600`.
+
+**Headline: the branch gap is transfer-bound, not seek-bound.** Our
+`SEEK_DELAY_TICKS` (3.178 ms) is **0.2 – 0.6 %** of the observed gap, and it
+is smaller than one video field — HLE, which has no seek model at all, produces
+the *same gap to the field*. Any BigPEmu difference smaller than ~17 ms cannot
+be attributed to seek latency, and a difference of a whole field or more is a
+delivered-rate or game-logic difference unless it is ~18 fields (= the 300 ms
+top of the manual's seek range, §8.3).
+
+### 10.1 The press sequence, and the evidence that it branches
+
+Committed as fixtures plus a gate script:
+
+* `test/fixtures/dragons_lair_death_branch.press` — HLE (`500:pause`,
+  `560:pause`, `700:a`)
+* `test/fixtures/dragons_lair_death_branch_bios.press` — real BIOS
+  (`939:pause`, `999:pause`, `1139:a`; BIOS boot is +439 fields)
+* `test/tools/run_dl_branch_fixture.sh` — expands either fixture into
+  `fmv_seek_probe --press` args, **confirms the boot mode from the core's own
+  `[BOOT] CD game, mode=…` log line** (never the flag), and gates on the trace
+  ring.
+
+```bash
+cc -O2 -Wall -std=c99 -I. -I./test -I./libretro-common/include \
+   -o test/tools/fmv_seek_probe test/tools/fmv_seek_probe.c \
+   test/harness/harness.c -ldl -lm
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
+  bash test/tools/run_dl_branch_fixture.sh ./virtualjaguar_libretro.dylib hle
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
+  bash test/tools/run_dl_branch_fixture.sh ./virtualjaguar_libretro.dylib bios
+```
+
+**Gate:** a CD read whose LBA delta from the previous read exceeds 100 000
+sectors (`SEEK_START` in BIOS, `HLE_READ` in HLE). Steady-state streaming reads
+step 339–428 sectors and the attract-loop restart steps 5 171, so the classes are
+~2.5 orders of magnitude apart. Both modes PASS:
+
+```
+hle   BRANCH field= 699.7  LBA 16026 -> 154061 (+138035)
+      BRANCH field= 828.5  LBA 154061 -> 20491 (-133570)
+bios  BRANCH field=1139.0  LBA 16026 -> 154061 (+138035)
+      BRANCH field=1267.9  LBA 154061 -> 20491 (-133570)
+```
+
+The BIOS run's `seekstarts` CSV column steps 10 -> 11 at field 2311 and the HLE
+run's `hlearm` steps 10 -> 11 at field 1872 — the same field at the +439 offset.
+
+**Negative control (falsifiability).** Same build, same disc, *no presses*,
+BIOS, 4 000 fields: seeks are `+15236` (boot), then `+362 +428 +376 +353 +376
++342 +354 +344 +367 +352 +340 +377 +375 +425`, then `-5171` (attract restart),
+then `+362`. **No branch-magnitude read.** `run_dl_branch_fixture.sh` with an
+empty press file exits 1. The presses are causally necessary.
+
+The branch is a **death**: the outgoing frame is the dark falling-into-the-pit
+clip, the incoming one is the gold "LIVES 4" retry card. After the scripted
+input the die/retry loop self-repeats every ~1 171 fields with no further input
+(branches at BIOS 1139 / 1268 / 2310 / 2439 / 3482 / 3611), so a longer run
+gives free repeats of the same measurement.
+
+### 10.2 Why the earlier HLE attempt read as "no branch"
+
+Two instrument errors, both fixed above; neither was a bit-rotted sequence.
+
+1. **`seeks`/`seekstarts`/`seekdones` are structurally 0 in HLE** (§8.2, now
+   annotated). The HLE run *did* branch; the column cannot show it.
+2. **Non-black pixel count cannot detect motion in this game.** Dragon's Lair
+   renders its movie into a fixed OP window: the non-black count is a constant
+   **62 208** for every frame of playback, changing only at scene boundaries
+   (to 0 for the black gap, to 4 648 for the "LIVES" card). A window of
+   "62 208, unchanged" is a *playing movie*, not a frozen one. Motion needs a
+   **changed-pixel count** between consecutive frames — during playback that
+   alternates 0 / 9 000–40 000, because the 24 fps film is presented on
+   alternate fields.
+
+### 10.3 The measurement
+
+`fmv_seek_probe` with `FMV_SHOTDIR` + `FMV_SHOT_FROM/TO/EVERY=1`, one PPM per
+field, then non-black and changed-pixel counts per frame offline. Windows chosen
+around the second (unprompted) branch pair so no button press confounds them.
+
+**Branch A — gameplay clip → "LIVES 4" card** (LBA 16026 → 154061):
+
+| | BIOS | HLE | HLE +439 (aligned) |
+|---|---|---|---|
+| branch issued | field 2310.13 (`SEEK_START`) | field 1871.17 (`HLE_READ`) | 2310.17 |
+| `SEEK_DONE` | field 2310.32 (+100 ticks) | — (no seek model) | — |
+| last frame with outgoing content | 2311 (5 472 px, partial) | 1871 (55 584 px, partial) | 2310 |
+| fully black run | 2312 – 2340 (**29** fields) | 1872 – 1901 (**30** fields) | 2311 – 2340 |
+| first frame with incoming content | 2341 (724 px) | 1902 (4 648 px) | **2341** |
+| **gap, last-out → first-in** | **30 fields** | **31 fields** | — |
+
+**Branch B — "LIVES 4" card → retry scene** (LBA 153995 → 20491):
+
+| | BIOS | HLE | HLE +439 (aligned) |
+|---|---|---|---|
+| branch issued | field 2439.47 (`SEEK_START`) | field 2000.51 (`HLE_READ`) | 2439.51 |
+| last frame with outgoing content | 2439 | 2000 | 2439 |
+| fully black run | 2440 – 2544 (**105** fields) | 2001 – 2105 (**105** fields) | 2440 – 2544 |
+| first frame with incoming content | 2545 (9 424 px) | 2106 (62 208 px) | **2545** |
+| **gap, last-out → first-in** | **106 fields** | **106 fields** | — |
+
+In milliseconds — reported both ways, because the emulated field is 524
+halflines (§1, §5.2) and NTSC is 525:
+
+| | fields | @16.65155 ms (emulated) | @16.68334 ms (59.94 Hz) |
+|---|---|---|---|
+| branch A, BIOS | 30 | 499.5 ms | 500.5 ms |
+| branch A, HLE | 31 | 516.2 ms | 517.2 ms |
+| branch B, both | 106 | 1 765.1 ms | 1 768.4 ms |
+
+**Fields are the primary unit**; the ms columns are a conversion, and which one
+is right depends on §5.2's unresolved `VP` question.
+
+### 10.4 Seek versus game-side: the split
+
+**Seek is 0.2 – 0.6 % of the gap.** `SEEK_DONE` lands exactly 100 ticks =
+**3.178 ms = 0.191 fields** after `SEEK_START` in both branches — 0.64 % of
+branch A, 0.18 % of branch B. The HLE path issues no seek at all and lands its
+first incoming frame on the *same aligned field* (2341 and 2545), which is the
+direct experimental confirmation that 3.178 ms is below the resolution of the
+symptom.
+
+**The remainder is CD data transfer, at a game-chosen buffer threshold.**
+
+**Both branches are transfer-bound at a game-chosen partial threshold**, and in
+both the drain stream is continuous from ~3 ticks after `SEEK_DONE` to the first
+displayed frame — there is no measurable think-time term anywhere in the gap.
+
+*Branch A.* `I2S_CTRL $0005` (enable) at tick 1210813 — 3 ticks after
+`SEEK_DONE` — then `FIFO_DRAIN` runs at a flat **184 drains/field = 5 888 B/field
+= 353 500 B/s** for the whole black window, and `I2S_CTRL $0001` (disable) fires
+at tick 1226548, block 154070. That is **75 sectors = 176 400 bytes**, which at
+the measured 353 332 B/s streaming rate (§9.2) takes **499.4 ms = 29.99 fields**
+— the black window, to within one part in 3 000.
+
+Note that 176 400 bytes is **not** the size of the read. The same game action in
+HLE arms `hleStream.total` = **1 048 576 bytes** (`JaguarCDHLEStreamBytes()`
+returns the *requested* total, `jagcd_hle.c:1216`). So the game requested ~1 MB,
+took 16.8 % of it, and started playback — it does not wait for the read to
+finish.
+
+*Branch B.* Same picture at a different threshold: drains run at 184/field from
+field 2440 continuously through 2545 and past it (still in flight when the scene
+starts). 19 368 drains × 32 B ≈ **619 800 bytes** land before the first displayed
+frame of a 1 047 820-byte read — **59 %**. The start-playback threshold is
+content-dependent, not a fixed latency; branch A's is 17 %, branch B's 59 %.
+
+*Side finding — an HLE/BIOS divergence in what gets written, not when.* At
+branch A the real-BIOS path stops the transfer after 176 400 bytes (the game's
+own `I2S_CTRL` disable). HLE has no such stop: the `jagcd_hle.c` in-flight-arm
+warning (§8.5) reports **756 901 / 1 048 576 bytes delivered** for the same read,
+i.e. HLE streams for the whole 128 fields until the next `CD_read` overwrites it,
+writing ~580 KB more into `$03E000` than the BIOS path does. It does not move any
+timing measured here — both modes land the "LIVES" card at aligned field 2341 and
+the retry scene at 2545 — but it is a real behavioural difference and belongs
+with §8.5's lead. **Not investigated further; measurement pass only.**
+
+**Summary of the split:**
+
+| term | branch A | branch B |
+|---|---|---|
+| our seek (`SEEK_DELAY_TICKS`) | 3.18 ms (0.6 %) | 3.18 ms (0.2 %) |
+| CD transfer at the emulated drive rate | ~496 ms (99.4 %) | ~1 745 ms (98.9 %) |
+| bytes landed before first displayed frame | 176 400 (17 % of the read) | ~619 800 (59 %) |
+| game-side think time | not detectable | not detectable |
+
+This is a different shape from the *inter-read* gaps of §9.3, which were ~90 %
+game-side think time. At a **branch** the game issues its next read immediately
+and then waits on bytes.
+
+### 10.5 What this implies for the BigPEmu capture
+
+Sensitivities, so a measured difference can be attributed rather than guessed:
+
+* **To move branch A by one field** (16.7 ms) needs a **3.3 %** change in
+  delivered byte rate, or +16.7 ms of seek latency.
+* **To move branch B by one field** needs a **0.94 %** change in delivered rate,
+  or +16.7 ms of seek latency.
+* Our streaming rate is within **+0.15 %** of hardware (§9.2), i.e. worth
+  **0.05 fields** on branch A and **0.16 fields** on branch B — invisible.
+* The manual's 30–315 ms seek range (`cdrom.c:42`, secondhand from MiSTer)
+  would add **1.8 – 18.9 fields** to *every* branch. That is the one term big
+  enough to matter, and it is the one with no ground truth.
+
+**So the single question worth putting to the BigPEmu capture is: how many
+fields of black sit between the last frame of the dying-Dirk clip and the first
+frame of the "LIVES" card?** Ours is **30 fields = 500 ms** (BIOS) / **31 fields
+= 517 ms** (HLE); branch B is **106 fields = 1 765 ms** in both. Quote the ms as
+well as the field count when comparing — a BigPEmu capture is a video file at
+its container's framerate (and may dupe or drop frames), so its frame count is
+not directly commensurable with our emulated fields. If BigPEmu is
+also ~30, seek latency is not the #297 mechanism and lead §7.2 can be closed. If
+BigPEmu is ~32–49, the difference maps directly onto a 30–315 ms seek model. If
+BigPEmu is *shorter* than 30, the mechanism is delivered rate or a different
+buffer threshold, not seek — and no seek model can fix it.
+
+Branch B (106 fields) is the more sensitive of the two (0.94 %/field vs 3.3 %),
+so capture both if possible.
+
+### 10.6 Caveats
+
+* Both branches were measured once per mode. Everything in this core is
+  deterministic (§4a) and the die/retry loop repeats the same LBA sequence three
+  times in a 4 000-field run, but the per-frame PPM windows cover one instance
+  each.
+* "Last frame with outgoing content" is ambiguous by one field: the final
+  outgoing frame is a *partial* clear (5 472 px BIOS / 55 584 px HLE), which is
+  why the two modes differ by one field on branch A and not at all on branch B.
+  The **first incoming content frame is unambiguous and identical in both modes**
+  — prefer it as the comparison anchor against BigPEmu.
+* Measurement only. No emulation behaviour was changed in this pass.
