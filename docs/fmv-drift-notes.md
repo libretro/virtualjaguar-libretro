@@ -539,10 +539,13 @@ Nothing shows a mis-timed scene being corrected.
 3. **Boot blast radius.** The tier keys on `|target - block|`, and `block`
    is 0 at reset (`cdrom.c:794`). Space Ace's and BrainDead 13's *first*
    seeks are 15 479 / 22 656 sectors, so a 10 000-sector threshold fires the
-   long tier on the boot seek of essentially every CD title. DL absorbed it
-   (its boot path has slack — first four seek ticks were bit-identical), but
-   Myst / Hover Strike / IS2 / Primal Rage / Battle Morph are untested
-   against it. See §7's regression-risk table.
+   long tier on the boot seek of essentially every CD title. DL's first four
+   seek ticks were bit-identical with and without the tier, but that does
+   **not** prove the tier stayed silent there — the gap to the next seek is
+   269 fields, easily wide enough to swallow 9 340 ticks unobserved, and
+   `seekDist` was never logged. Treat DL as untested too. Myst / Hover
+   Strike / IS2 / Primal Rage / Battle Morph likewise. See §7's
+   regression-risk table.
 4. The 10 000-sector threshold is arbitrary, and it classifies the
    5 171-sector attract-restart seek as "short" — an asymmetry that is
    itself evidence the calibration is not sourced.
