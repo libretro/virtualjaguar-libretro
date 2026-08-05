@@ -753,7 +753,7 @@ clean:
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
@@ -805,7 +805,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_frontend_pacing test/test_jgd \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
@@ -932,6 +932,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cd_synth_read
 	./test/test_cd_synth_butch
 	./test/test_cd_synth_cdda
+	./test/test_cd_synth_subq
 	@# VJ_BIOS_DIR: both tests used to hardcode "test/roms/private" as the
 	@# libretro system dir, but the corpus keeps its BIOS dumps one level
 	@# down in ROMS/.  The paths never resolved, so ten real-BIOS assertions
@@ -1304,6 +1305,10 @@ test/test_cd_synth_butch: test/test_cd_synth_butch.c test/test_framework.h
 test/test_cd_synth_cdda: test/test_cd_synth_cdda.c test/test_framework.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_synth_cdda.c -ldl
+
+test/test_cd_synth_subq: test/test_cd_synth_subq.c test/test_framework.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_synth_subq.c -ldl
 
 test/test_cd_bios_boot: test/test_cd_bios_boot.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \

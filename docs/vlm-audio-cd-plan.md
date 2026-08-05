@@ -677,16 +677,96 @@ Traps, both of which cost time here:
 
 ### 8.7 What is left
 
-1. **Find what clears alt-R13 bit 30** — the one open question. Runtime
-   evidence, not static disassembly: single-step or trap the
-   `$F1BD34..$F1BE04` block and watch what its inputs must be for it to reach
-   `$F1BD92` with bit 30 clear in R25.
-2. **Probably: model BUTCH's subcode Q-channel.** Data-only first — do **not**
-   newly assert `SBCNTRL` bit 2 (frame-time) or bit 3 (time-match) interrupts;
-   those are enables a title may have set speculatively, and firing IRQs that
-   never fired before is the regression path. Needs a wire-format reference we
-   do not currently have locally.
+*(Items 1 and 2 are RESOLVED — see §8.8.  Items 3 and 4 remain.)*
+
+1. ~~**Find what clears alt-R13 bit 30**~~ — answered in §8.8: a CRC-valid
+   Q-subcode frame whose CONTROL nibble says "audio track".
+2. ~~**Probably: model BUTCH's subcode Q-channel.**~~ — implemented, data-only
+   as prescribed (no SBCNTRL bit 2/3 interrupts are asserted).
 3. **Phase 3 (loader/frontend acceptance in `hle` mode)** and **Phase 4
    (transport: `$02` Stop, `$04`/`$05` Pause/Unpause, `$51` Volume, track
    sequencing, repeat modes)** are unchanged from §6.
 4. **RetroArch verification is still owed.** Everything above is headless.
+
+### 8.8 Third pass — RESOLVED: bit 30 is the Q-channel "data track" flag, and the VLM unmutes with real subcode
+
+Investigated and implemented on `feat/291-vlm-subcode` off `develop` @
+`f36ae03` (v3.1.0), 2026-08-05.  The §8.4 hypothesis is **proven**, by
+implementation: serving Q subcode — nothing else changed, no DSP hack —
+clears bit 30 and reproduces the §8.5 oracle numbers.
+
+**Why the static read failed before, in one line:** the bit-30 writer
+`$F1BD92 MOVETA R25, R13` is the **delay slot of the `JUMP T,(R30)` at
+`$F1BD90`** — it belongs to the code path that jumps *to* `$F1BD8E`, not to
+any fall-through — and that path is the tail of the store-a-CRC-valid-Q-frame
+handler at `$F1BD94`.  R25 there holds the **first 4 assembled Q bytes**
+(CONTROL/ADR, track, index, min), so bit 30 of alt-R13 is bit 6 of Q byte 0 =
+**Q CONTROL bit 2, the Red Book "data track" flag**.  The VLM boots with
+alt-R13 = `$40000000` — "assume data track, stay muted" — and unmutes the
+instant a CRC-valid frame with an audio CONTROL nibble arrives.  It is a
+real CD player's data-track mute, working exactly as designed.
+
+**The recovered SUBDATA wire format** (from disassembling the deserializer
+state machine at `$F1BD42..$F1BE02` in a live DSP RAM dump, plus the
+constants its init left in the alternate bank):
+
+- The DSP `LOADW`s **`$DFFF1A`** (SUBDATA low word) and expects
+  `(Q_byte << 8) | $10 | seq`: bit 4 = valid, bits 3..0 = byte sequence
+  0..11 within the 12-byte Q frame.  It polls with a ~1 ms cooldown
+  (40 ISR entries) and dedupes on the sequence tag, so re-reads are free.
+- Bytes are CRC'd as they arrive with table-driven **CRC-16/CCITT, poly
+  `$1021`, init 0** (table at DSP `$F1C400` — verified identical to the
+  standard table), and after byte 11 the running CRC over ALL 12 bytes must
+  equal **`$1D0F`** (alt-R10) — the standard residue when the stored CRC is
+  **inverted** per Red Book.
+- A CRC-valid frame's 12 bytes are stored to **`$F1C000 + ADR*16`**
+  (alt-R09 base; ADR 1 = position frames → `$F1C010`), which is where the
+  68K reads the on-screen track/time readout — the `0  0:01` display was
+  this buffer never being written.
+- The 68K side arms capture by writing **`$00F2` to SBCNTRL's low word**;
+  the individual bits remain undocumented.
+
+**Implemented** (`src/cd/cdrom.c` + a lookup helper in `src/cd/cdintf.c`):
+a data-only Q serializer clocked off the SSI sample stream — 588 samples
+per sector / 12 bytes = one Q byte per 49 samples, so Q position is locked
+to the audio actually playing.  Reads of SUBDATA+2 return the word above
+when armed (nonzero SBCNTRL low-word write) and playing; disarmed, stopped,
+seeking, or paused reads fall through to the RAM-backed zeros exactly as
+before, and **no subcode interrupt is ever asserted** (BUTCH bits 2/3
+untouched, per §8.7's warning).  Frames are mode-1/ADR-1, BCD, CONTROL
+`$01` for audio tracks / `$41` for data tracks, INDEX 00 with countdown in
+pregaps, CRC inverted.  No savestate fields: arming re-derives from the
+serialized SBCNTRL register on load, everything else resyncs within one
+sector because the DSP ignores unexpected sequence numbers.
+
+**Proof, same disc and input script as §8.5, no forced-unmute hack:**
+
+- alt-R13 at the SSI ISR: `$40000000` until Play, then `$01010100`
+  (audio/ADR1, track 01, index 01) — bit 30 clear.  Later `$01020000`
+  (track 2 pregap) and `$01020100` (track 2 program) as playback crosses
+  tracks: the mute bit is being driven by live Q data.
+- `cd_visual_verify`, 2100 frames: **avg RMS 1267** (oracle: 1268),
+  VLM-window motion **60/60**, avg frame change **10.4–16.5%** (oracle
+  9.8–14.8%), non-black up to 26%.  The motion dips land exactly on the
+  disc's two inter-track pregaps — the spectrum collapses during pregap
+  silence and resumes, i.e. the FFT is chewing on the actual CD audio.
+- Screenshots (read, not inferred): full radial spectrum analyser with the
+  `1-4` preset indicator, and the track/time readout now advancing —
+  `1 0:03` → `2 0:03` → `3 0:03` across the run (track-relative time, per
+  Q bytes 3..5).  It was `0  0:01` frozen.
+
+**Regression pinning:** `test/test_cd_synth_subq.c` (in `make test`)
+re-implements the DSP's consumer contract independently and asserts the
+word format, the 49-sample pacing, the `$1D0F` residual, BCD position
+content, pregap INDEX 00, advancement, disarmed-silence and stop-mutes.
+All six tests have run-verified negative controls (gate without the arm
+check, valid bit dropped, CRC not inverted, frame never rebuilt → each
+turns exactly the documented tests red at the same rev with `cdrom.o` and
+the dylib deleted between builds).
+
+**Still open** (unchanged): §8.7 items 3 and 4 — HLE-mode loader acceptance,
+transport polish, and RetroArch (non-headless) verification.  On real
+hardware subcode also flows during data-track streaming and while the VLM
+runs on game-disc session-1 audio; nothing in the boot matrix arms SBCNTRL,
+so game discs take byte-identical paths (gate = the matrix run, not this
+paragraph).

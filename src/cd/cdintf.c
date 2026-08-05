@@ -1173,6 +1173,54 @@ bool CDIntfIsSession2Sector(uint32_t sector)
    return false;
 }
 
+/* Q-channel subcode position lookup — see cdintf.h.  Track containment
+ * uses the same [startLBA, startLBA + lengthLBA) rule as
+ * CDIntfReadBlock() so the Q data always describes the sector actually
+ * being streamed. */
+bool CDIntfGetQPosition(uint32_t lba, uint32_t *trackNum, uint32_t *idx,
+                        uint32_t *relLBA, bool *isData)
+{
+   int i;
+   struct CDIntfTrack *track = NULL;
+
+   if (!disc.loaded)
+      return false;
+
+   for (i = (int)disc.numTracks - 1; i >= 0; i--)
+   {
+      uint32_t tStart = disc.tracks[i].startLBA;
+      uint32_t tEnd = tStart + disc.tracks[i].lengthLBA;
+      if (lba >= tStart && lba < tEnd)
+      {
+         track = &disc.tracks[i];
+         break;
+      }
+   }
+   if (!track)
+      return false;
+
+   if (trackNum)
+      *trackNum = track->number;
+   if (isData)
+      *isData = (track->type != CDINTF_TRACK_AUDIO);
+   if (lba < track->dataLBA)
+   {
+      /* INDEX 00 pregap: relative time counts down to 0 at INDEX 01. */
+      if (idx)
+         *idx = 0;
+      if (relLBA)
+         *relLBA = track->dataLBA - lba;
+   }
+   else
+   {
+      if (idx)
+         *idx = 1;
+      if (relLBA)
+         *relLBA = lba - track->dataLBA;
+   }
+   return true;
+}
+
 // Returns session info for use by cdrom.c
 // Session numbering matches the DSA command operand (per MiSTer FPGA):
 //   Session 0 → disc.sessions[0] (first session, typically audio)
