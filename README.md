@@ -1,6 +1,6 @@
-# Virtual Jaguar libretro
+# Virtual Jaguar libretro — Atari Jaguar & Jaguar CD emulator
 
-Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) Atari Jaguar emulator to the [libretro](https://www.libretro.com/) API.
+This is the actively maintained **Atari Jaguar and Jaguar CD emulator** for [libretro](https://www.libretro.com/) / RetroArch. It continues the Virtual Jaguar project, extensively rewritten and developed here: Jaguar CD support, an HLE BIOS, netplay link cable, RetroAchievements, savestates/run-ahead, and a hardware-accuracy program measured against the Jaguar Technical Reference Manual.
 
 [![C/C++ CI](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml)
 
@@ -96,7 +96,7 @@ This project is built on the work of many contributors. See the [full list on Gi
 - SDL/Linux/Win32 port by Niels Wagenaar & Carwin Jones (SDLEMU).
 - Cleanups, GUI/Qt port, and ongoing upstream maintenance by James Hammons (Shamus).
 - libretro core port by libretro/RetroArch contributors.
-- libretro fork maintenance — Joseph Mattiello ([@JoeMatt](https://github.com/JoeMatt)).
+- Current maintainer — Joseph Mattiello ([@JoeMatt](https://github.com/JoeMatt)). This repository is where Virtual Jaguar development continues today.
 
 ## License
 
