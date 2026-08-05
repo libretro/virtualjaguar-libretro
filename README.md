@@ -1,6 +1,6 @@
 # Virtual Jaguar libretro — Atari Jaguar & Jaguar CD emulator
 
-The actively maintained **Atari Jaguar and Jaguar CD emulator** for [libretro](https://www.libretro.com/) / RetroArch. This is the continuation of the Virtual Jaguar project, extensively rewritten and developed here: Jaguar CD support, an HLE BIOS, netplay link cable, RetroAchievements, savestates/run-ahead, and a hardware-accuracy programme measured against the Jaguar Technical Reference Manual.
+This is the actively maintained **Atari Jaguar and Jaguar CD emulator** for [libretro](https://www.libretro.com/) / RetroArch. It continues the Virtual Jaguar project, extensively rewritten and developed here: Jaguar CD support, an HLE BIOS, netplay link cable, RetroAchievements, savestates/run-ahead, and a hardware-accuracy program measured against the Jaguar Technical Reference Manual.
 
 [![C/C++ CI](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml)
 
