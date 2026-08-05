@@ -11,6 +11,32 @@ mechanics that every ticket below depends on.
 
 ---
 
+## STATUS UPDATE — 2026-08-04 (post-merge)
+
+Everything in the ticket table below has landed on `develop`, and two of the
+four bug tickets moved substantially. Read this block before acting on the
+sections underneath it; where they disagree, this block is newer.
+
+| Ticket | State now |
+|---|---|
+| #266 | **Root-caused.** Not a rendering bug: a real 1-bpp OP object AvP parks at XPOS=320, exposed because our presented window is 326 columns wide (`VIRTUAL_SCREEN_WIDTH`, `src/tom/tom.h`) while the picture is 320. Faithful output a CRT hid. Open on a presentation decision (overscan-crop option). |
+| #267 | **Fix in PR #292** — DCOMPEN transparency now keys on the unshaded source. 448 red pixels -> 0, all gates green. Open until confirmed in RetroArch. |
+| #268 | Decision + inspector merged. Open, blocked on the reporter pasting `vjss_info` output for the two files. |
+| #269 | **Closed.** Warn-and-refuse shipped; truncated-magic tolerance explicitly rejected. |
+
+Merged tooling now available (do not rebuild): `test/tools/vjss_info.c`,
+`VJFBDIG3` band digest in `test/tools/fb_row_digest.c` + `fb_row_diff.py`,
+`test/fixtures/avp_reach_gameplay.press` (Alien) and, in PR #289,
+`avp_reach_marine_shotgun.press` (Marine + shotgun).
+
+**The headless caveat survived contact with reality, in both directions.** #266
+and #267 both turned out to be reproducible headlessly once the right tooling
+existed — so "not reproduced headlessly" really was a tooling gap, exactly as
+the caveat warned. That does not weaken the caveat for the remaining unknowns:
+neither ticket has a RetroArch confirmation of on-screen severity.
+
+---
+
 ## 0. Cross-cutting rules that will bite you
 
 These have each cost real debugging time in this repo. Internalise them before
@@ -56,7 +82,19 @@ opening any ticket.
 
 ## 1. #266 — AvP green dot / green right-edge (x ≥ 320 overscan)
 
-**Status: reported, pixel-verified once, then twice NOT reproduced. Root cause open.**
+> **2026-08-04:** Confirmed real. 2000-frame sweeps with the merged band digest
+> find `#00FC38` at exactly `(324,32)` in HLE (1 px/frame, 1679/2000 frames) and
+> at `x=323..325`, `y=1..239` under BIOS (366 px/frame, 1123/2000). That colour
+> never appears at x<320. Sharpest lead: 9 HLE frames have a fully black active
+> area while the green dot persists — the strip is not cleared in step with the
+> active picture. Caveat found the hard way: `band_first_x/y` under-reports this,
+> since it only surfaces green when nothing precedes it in row-major order — use
+> a colour census instead.
+
+**Status: ROOT-CAUSED 2026-08-04; diagnostic probe merged as PR #293.** Still
+open on a presentation decision, not on investigation. Not a rendering bug — a real OP object
+AvP parks off-screen, exposed by our 326-column presented window. Open on a
+presentation decision, not on investigation. Details in the block above.
 
 ### What is established
 
@@ -69,10 +107,13 @@ opening any ticket.
 - Present in v2.1.0 (`48096c1`) — **not a regression**.
 - The old "line buffer not cleared because AvP doesn't set BGEN" theory is
   **superseded**: BGEN *is* set for AvP with `BG=0x0000`.
-- Two later full sweeps on develop found no green pixels anywhere in the border
-  rows. In one of those passes the headless title screen also lacked the black
-  letterbox the reporter sees — itself evidence of a capture/composition
-  mismatch rather than of a fix.
+- ~~Two later full sweeps on develop found no green pixels anywhere in the
+  border rows.~~ **Superseded — those sweeps were blind, not clean.** Every
+  check at the time folded columns ≥320 into a row hash, so the band was never
+  actually inspected. A colour census over the band finds the green in both
+  BIOS modes. Related trap: the `VJFBDIG3` digest's `band_first_x/y` also
+  under-reports it, surfacing green only when nothing precedes it in row-major
+  order — use a census, not first-hit.
 
 ### The decisive question
 
@@ -114,7 +155,24 @@ with no signature.
 
 ## 2. #267 — AvP red background behind shotgun (accurate blitter)
 
-**Status: never reproduced headlessly. May already be fixed.**
+> **2026-08-04:** Reproduced headlessly and root-caused. The artefact is behind
+> the shotgun's **HUD slot-1 icon** (`x[249..298] y[62..79]`), not the in-view
+> weapon sprite as the report reads. Blit `cmd=$49800601` =
+> SRCEN|UPDA1|UPDA2|LFU_AN|LFU_A|DCOMPEN|**SRCSHADE** — `BKGWREN` and `DSTEN` are
+> both clear, so #166's `!bkgwren` guard never applied. With an all-zero source
+> the accurate path writes CLUT index N where fast writes N-1, leaving the
+> backdrop at index 1 (dark red) instead of 0. Fix not written.
+>
+> Two gotchas: a save state taken after the pickup does **not** carry the
+> artefact (so `test_blitter_compare --load-state` can't iterate on it — drive
+> from boot), and the fixture's post-briefing route is a seeded wander that
+> assumes the core stays deterministic.
+
+**Status: FIXED — PR #292 merged to `develop` 2026-08-04.** The fix keeps an
+unshaded copy of the source pixel (`srcd_cmp`) so DCOMPEN transparency compares
+the pixel as read from memory: SRCSHADE's intensity offset belongs to the write
+data only, and shading a transparent (PATD-matching) pixel must not make it
+opaque.
 
 ### What is established
 
@@ -124,10 +182,16 @@ with no signature.
   found the only other unconditional `dstd` read (`blitter.c:2872`, inside
   `if (dread)`) cannot fire under AvP's `!dsten && bkgwren` combination — so
   the guard *should* cover the case as understood. That makes **"it is a
-  different blit type"** (SRCSHADE / Gouraud / other inhibit mask) the stronger
-  lead.
-- On current develop, fast vs accurate are **byte-identical across a full
-  900-frame AvP timeline**. The paths agree far more than when this was filed.
+  different blit type"** the stronger lead — **now confirmed**: the blit is
+  `cmd=$49800601` with SRCSHADE set and `BKGWREN`/`DSTEN` both clear, so #166's
+  guard never applied. DCOMPEN was comparing against the *shaded* source, so a
+  transparent pixel shaded to index 1 became opaque.
+- ~~On current develop, fast vs accurate are byte-identical across a full
+  900-frame AvP timeline.~~ **Misleading — that timeline never reached the
+  state.** The Alien fixture cannot pick up a shotgun (a Marine weapon). Driving
+  to the Marine pickup shows exactly 448 differing pixels per frame from 10560
+  onward. Agreement outside that window is real: 31,474 blits over frames
+  11800–11900 diverge on none.
 
 ### Verification plan (strictly ordered — step 1 is the whole unlock)
 
@@ -203,7 +267,12 @@ line if they turn up.
 
 ## 4. #269 — CDI V2 rips with truncated/absent boot headers
 
-**Status: root-caused. Needs a product decision, not more investigation.**
+> **2026-08-04 — CLOSED.** Warn-and-refuse shipped; truncated-magic tolerance
+> rejected. Note `worldtourracing` reports `matched 0/32` at `+0x42`, not the
+> 22/32 this section claims below — the "partial magic" premise doesn't hold at
+> the offset the boot stub actually checks.
+
+**Status: CLOSED 2026-08-04 — warn-and-refuse shipped.**
 
 ### What is established
 
@@ -212,21 +281,25 @@ Of 14 local CDI images, 4 fail `retro_load_game` — all CDI V2 rips:
 - **ironsoldier2, mystdemo, vidgrid** — the boot-header region is **zero-filled
   in the file itself**. No offset math can recover data that is not present.
   These are bad dumps.
-- **worldtourracing** — carries a **partial 22-of-32-byte** boot magic. Making
-  it boot requires the boot stub to tolerate a truncated match.
+- **worldtourracing** — ~~carries a partial 22-of-32-byte boot magic.~~
+  **Wrong.** It reports `matched 0/32` at `+0x42`, the offset the boot stub
+  actually checks. The 22/32 figure came from a different offset. The
+  "partial magic" premise that motivated the tolerance option does not hold,
+  which made the decision easier, not harder.
 
 The CDI walk itself is correct; this is not an offset bug. (Verified previously:
 the V2 rips are `zeros(N) + content`, N = 112/76.)
 
-### Decision required
+### Decision — made and shipped 2026-08-04
 
-- **Recommended: warn and refuse**, with a message that names the dump problem
-  explicitly ("boot header is zero-filled — this image is a bad dump, not an
-  unsupported format") and a known-bad-dump table so users stop re-filing it.
-- Alternative: tolerate truncated magic for the worldtourracing class. **This
-  carries real false-positive risk** — a 22-byte prefix match against
-  decoy-prone data is a weak predicate, and a wrong accept boots garbage rather
-  than failing cleanly.
+**Warn and refuse.** `CDIntfExtractBootStub()` now names the dump problem: a
+zero-filled region gets an explicit bad-rip message, anything else reports
+`matched N/32 bytes` with the denominator from `sizeof(MAGIC)`. Known-bad dumps
+are tabulated in `docs/cd-known-issues.md`. Corpus unchanged at 10 pass / 4 fail.
+
+Truncated-magic tolerance was **rejected**: a prefix match against decoy-prone
+data is a weak predicate, and a wrong accept boots garbage instead of failing
+cleanly.
 
 ### Verification plan
 
@@ -241,33 +314,47 @@ diagnostic naming the dump defect. Zero regressions in the 22-row boot matrix.
 
 ---
 
-## 5. VLM / audio-CD support — **no ticket exists yet; open one**
+## 5. VLM / audio-CD support — tracked as #291
 
-**Status: investigated this session. Verified findings below.**
+**Status: audio-CD support shipped — PR #300 merged to `develop` 2026-08-04;**
+**#291 remains open for the rest of the VLM surface.** Findings below were re-verified
+against the tree on that date; three claims in the original writeup were wrong
+and are corrected inline. All behavioural observations come from a *synthetic*
+two-tone CUE, never a real audio CD.
 
 ### What is established (all verified)
 
 - The **Virtual Light Machine ships inside the CD BIOS we already compile in**.
-  `src/bios/jagcdbios.c` and `jagdevcdbios.c` are both 262144 bytes and contain
+  `src/bios/jagcdbios.c` and `jagdevcdbios.c` are both 262144 bytes but declare
+  *different* symbols (`jaguarCDBootROM` and `jaguarDevCDBootROM`). Both contain
   `Virtual Light Machine v0.9 / (c) 1994 Virtual Light Company Ltd. / Jaguar
   CD-ROM version / FFT code by ib2 / Grafix code by Yak`. No BIOS file needed.
 - Booting a synthetic single-session audio CD with
   `virtualjaguar_cd_boot_mode=bios` runs the real BIOS — logo + starfield
   animate for 90 s — but **never hands off to the VLM**.
-- Trace shows only **two** DSA commands ever sent: `$7001` (Set DAC Mode) and
-  `$150A` (Set Mode = double speed + **data**), then nothing. No TOC read
-  (`$03xx`), no seek (`$10/$11/$12`). Button presses change nothing.
-- So the BIOS stalls **before** its "is this a data disc?" decision.
+- Trace shows **three** DSA commands sent, then silence: `$7001` (Set DAC Mode),
+  `$150A` (Set Mode = double speed + **data**), and `$0300` (Read session TOC),
+  answered `$0301` — first TOC word, bit 0 set, "more follows". The BIOS never
+  reads the next word and never sends another command. No seek
+  (`$10/$11/$12`), no Play (`$01`). Source: the unfiltered CD trace ring
+  (`CDTraceDump()`, `VJ_CD_TRACE=1`) — **not** the `[CDDA] DSA cmd` log, which
+  filters to high bytes `$01/$04/$05/$15/$51/$70` (`cdrom.c:1608-1610`) and so
+  cannot show `$03xx` or seeks at all.
+- So the BIOS stops **after** probing the disc, one TOC word in. Why is unknown.
+  (Untested: whether button presses change anything.)
 - HLE rejects the disc outright: `[CD-BOOTSTUB] Early exit: loaded=1
   numSessions=1`, then "unsupported or invalid content format".
 - Root cause is **disc shape**: the CD stack is built for 2-session game discs;
-  `cdintf.c` gates on `numSessions >= 2` (≈ lines 427, 445, 1164).
+  `cdintf.c` gates on `numSessions >= 2` (≈ lines 427, 445, 1164, and **1335**, which is the gate that actually produces the observed failure).
 
 ### Two corrections to natural assumptions
 
 - **"Add an option to always boot the BIOS" is not the fix** — that option
   already exists (`CD Boot Mode = Real BIOS`) and is exactly what was tested.
-- **Every Jaguar CD track is `TRACK AUDIO / FLAGS DCP`, including data tracks.**
+- **Nearly every Jaguar CD track is `TRACK AUDIO`, including data tracks** —
+  433 of 434 across the 35 corpus CUEs; the one exception is
+  `Alice's Mom's Rescue!` (unlicensed homebrew, `MODE2/2352`). `FLAGS DCP` is
+  **not** universal — only 14 of 35 CUEs carry it, so do not gate on `FLAGS`.
   Game discs and music CDs are indistinguishable by track type; the BIOS
   separates them by the `ATARI APPROVED DATA HEADER` magic in session 2.
 
