@@ -21,6 +21,7 @@
 #include "crc32.h"
 #include "filedb.h"
 #include "eeprom.h"
+#include "jaggd.h"
 #include "jaguar.h"
 #include "log.h"
 #include "vjag_memory.h"
@@ -245,8 +246,29 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
 
    if (fileType == JST_ROM)
    {
+      /* The flat cart window holds 6 MB ($800000-$DFFFFF).  Larger
+       * images are Jaguar GameDrive content: the first 6 MB fill the
+       * flat window as the GD's identity page mapping would, and the
+       * full image (up to 16 MB) goes to the banked path. */
+      uint32_t flatSize = jaguarROMSize;
+
+      if (jaguarROMSize > JGD_ROM_SIZE)
+      {
+         LOG_ERR("[CART] image is %u bytes; the largest supported cartridge is the 16 MB Jaguar GameDrive\n",
+               (unsigned)jaguarROMSize);
+         return false;
+      }
+      /* Cap the flat copy at the dispatchable cart window ($800000-
+       * $DFFEFF): the final $100 bytes ($DFFF00-$DFFFFF) are the CDROM
+       * overlay and must not receive ROM bytes.  Same constant the
+       * auto-enable threshold uses, so loader and banking agree on
+       * where the flat window ends. */
+      if (flatSize > JGD_AUTO_THRESHOLD)
+         flatSize = JGD_AUTO_THRESHOLD;
+
       jaguarCartInserted = true;
-      memcpy(jagMemSpace + 0x800000, buffer, jaguarROMSize);
+      memcpy(jagMemSpace + 0x800000, buffer, flatSize);
+      JGDLoadROM(buffer, jaguarROMSize);
       // Checking something...
       jaguarRunAddress = GET32(jagMemSpace, 0x800404);
       return true;

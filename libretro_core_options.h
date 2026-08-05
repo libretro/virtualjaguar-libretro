@@ -292,6 +292,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_jgd",
+      "Jaguar GameDrive (Restart)",
+      NULL,
+      "Emulate the Jaguar GameDrive (JagGD) flash cartridge: its detection/install interface and 1 MB bank switching of up to 16 MB of cart SDRAM. 'Auto' turns it on only for ROM images larger than the 6 MB cartridge window. 'Enabled' forces it on for smaller images too, for GD-locked homebrew that refuses to boot without the cart (equivalent to BigPEmu's Force JGD). Without it, GD-locked titles hang at boot exactly as on a stock console.",
+      NULL,
+      "bios_boot",
+      {
+         { "auto",     "Auto (images over 6 MB)" },
+         { "disabled", NULL },
+         { "enabled",  "Enabled (force, for GD-locked images)" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
       "virtualjaguar_pal",
       "PAL (Restart)",
       NULL,
