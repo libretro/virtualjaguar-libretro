@@ -560,6 +560,42 @@ static void check_variables(void)
       busArbiter.contention_scale = (uint8_t)dram_scale;
    }
 
+   /* Clock-scale enhancement levers (issue #314).  Config, not state:
+    * never serialized.  Stored in percent so 1x is an exact integer
+    * identity (see jaguar.h).  Defaults to 100 whenever the option is
+    * absent so nothing in the test suite ever runs at non-1x. */
+   var.key = "virtualjaguar_m68k_clock_scale";
+   var.value = NULL;
+   m68kClockScalePct = 100;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "0.5x") == 0)
+         m68kClockScalePct = 50;
+      else if (strcmp(var.value, "1.5x") == 0)
+         m68kClockScalePct = 150;
+      else if (strcmp(var.value, "2x") == 0)
+         m68kClockScalePct = 200;
+      else if (strcmp(var.value, "3x") == 0)
+         m68kClockScalePct = 300;
+   }
+
+   var.key = "virtualjaguar_risc_clock_scale";
+   var.value = NULL;
+   riscClockScalePct = 100;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "0.5x") == 0)
+         riscClockScalePct = 50;
+      else if (strcmp(var.value, "1.5x") == 0)
+         riscClockScalePct = 150;
+      else if (strcmp(var.value, "2x") == 0)
+         riscClockScalePct = 200;
+   }
+
+   if (m68kClockScalePct != 100 || riscClockScalePct != 100)
+      LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
+              (unsigned)m68kClockScalePct, (unsigned)riscClockScalePct);
+
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)

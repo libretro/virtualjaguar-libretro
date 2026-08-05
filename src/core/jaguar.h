@@ -59,6 +59,22 @@ extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 #define SYSTEM_CLOCK_RATE		(vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL)
 #define M68K_CLOCK_RATE			(vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL)
 
+/* Clock-scale enhancement levers (issue #314), in percent of the stock
+ * rate (100 = stock).  Config, not state: set from the core options in
+ * libretro.c::check_variables(), never serialized.  Applied ONLY where
+ * execution budgets are handed out (JaguarExecuteNew() timeslices and
+ * the 68K->GPU 2:1 coupling in GPUSyncToM68K()) -- bus costs
+ * (bus_arbiter_m68k_access() DRAM latencies, OP-fetch/refresh occupancy,
+ * blitter occupancy) and all event scheduling (video, PIT, UART, I2S)
+ * stay on the real, unscaled sysclock.  At 100 the integer arithmetic
+ * (c * 100 / 100) is an exact identity, so 1x is bit-identical to the
+ * unscaled build. */
+extern uint32_t m68kClockScalePct;
+extern uint32_t riscClockScalePct;
+
+#define SCALE_M68K_CYCLES(c)	((uint32_t)(((uint64_t)(c) * m68kClockScalePct) / 100u))
+#define SCALE_RISC_CYCLES(c)	((uint32_t)(((uint64_t)(c) * riscClockScalePct) / 100u))
+
 // Stuff for IRQ handling
 
 #define ASSERT_LINE		1
