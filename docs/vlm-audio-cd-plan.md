@@ -429,8 +429,8 @@ audio itself says what is playing and where**:
 - **multi-file CUE, one BIN per track**, `REM SESSION 01` — the exact shape
   every CUE in the corpus uses, so `dataLBA != startLBA` and the loader's
   pregap handling is exercised rather than bypassed;
-- **6 tracks**, each preceded (2..6) by a real **150-sector `INDEX 00`
-  pregap** of digital silence;
+- **6 tracks** (manual repro), each preceded (2..6) by a real **150-sector
+  `INDEX 00` pregap** of digital silence;
 - **track *t* is a square-wave chirp sweeping `882*t` → `882*t + 441` Hz**, so
   a zero-crossing count identifies the track, and the instantaneous frequency
   identifies the position within it;
@@ -440,9 +440,9 @@ audio itself says what is playing and where**:
 - **constant known amplitude** (±20000 L / ±12000 R), never zero, so the pregap
   is the only silence anywhere on the disc.
 
-Generator: §8.6. The identical PCM model is generated in C by
-`test/test_cd_synth_cdda.c`, so the committed test and the manual repro agree.
-
+Generator: §8.6. The waveform/PCM model is shared with
+`test/test_cd_synth_cdda.c`; note that the committed CI test uses **4 tracks**
+(2 s each) to keep runtime and disc size small.
 ### 8.2 What the BIOS does with it — both modes, mode taken from the log
 
 `bios` (`[BOOT] CD game, mode=BIOS -- boot ROM forced on`): the full drive
