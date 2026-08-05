@@ -841,7 +841,18 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_subsystem_timeline ./$(TARGET)
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
-	./test/test_audio_pipeline ./$(TARGET)
+	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
+	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
+	@# with ROMs, without ROMs, always.  It was invoked bare, so those two
+	@# checks were permanently vacuous.  Feed it the same Iron Soldier 1
+	@# dump the presence check uses (boots straight to a music-on title).
+	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_pipeline ./$(TARGET) "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Audio pipeline (onset + BIOS/HLE cmp)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
+		./test/test_audio_pipeline ./$(TARGET); \
+	fi
 	./test/test_audio_clipping ./$(TARGET) --self-test
 	@# ROM lookup goes through scripts/find-rom.sh, which searches the whole
 	@# private corpus case-insensitively and prefers the canonical top-level
@@ -910,8 +921,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cd_pregap
 	./test/test_cd_synth_read
 	./test/test_cd_synth_butch
-	./test/test_bios_config
-	./test/test_boot_config
+	@# VJ_BIOS_DIR: both tests used to hardcode "test/roms/private" as the
+	@# libretro system dir, but the corpus keeps its BIOS dumps one level
+	@# down in ROMS/.  The paths never resolved, so ten real-BIOS assertions
+	@# reported SKIP while the suite exited 0 -- the same silent-skip class
+	@# as the Skyhammer sentinel.  Resolve the directory that actually holds
+	@# the Jaguar BIOS and hand it to both tests; they fall back to the old
+	@# literal when the variable is unset (CI, which has no BIOS dumps).
+	@bios=$$(bash scripts/find-rom.sh '*BIOS* Atari Jaguar (World).j64'); \
+	if [ -n "$$bios" ]; then \
+		VJ_BIOS_DIR=$$(dirname "$$bios"); export VJ_BIOS_DIR; \
+	else \
+		bash scripts/test-skip.sh record "Real-BIOS assertions (bios/boot config)" "no '[BIOS] Atari Jaguar (World).j64' in the private corpus"; \
+	fi; \
+	./test/test_bios_config && ./test/test_boot_config
 	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)

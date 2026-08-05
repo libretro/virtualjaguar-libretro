@@ -265,7 +265,30 @@ TEST(strategy_names)
 
 static const char *env_cd_boot_mode = "auto";
 static const char *env_bios_enabled = "enabled";
-static const char *env_system_dir = "test/roms/private";
+
+/* BIOS directory, resolved at run time.  This used to be the literal
+ * "test/roms/private", but the corpus keeps BIOS dumps in a ROMS/
+ * subdirectory, so CD_BIOS_PATH never resolved and the two
+ * "_with_bios" integration tests always reported SKIP -- with the suite
+ * still exiting 0.  Same silent-skip class as the Skyhammer clipping
+ * sentinel.  `make test` passes the real directory in via VJ_BIOS_DIR;
+ * the old literal remains the fallback. */
+#define BIOS_DIR_DEFAULT "test/roms/private"
+
+static char bios_dir[512];
+static char cd_bios_path[640];
+
+static void init_bios_paths(void)
+{
+    const char *env = getenv("VJ_BIOS_DIR");
+
+    snprintf(bios_dir, sizeof(bios_dir), "%s",
+             (env && *env) ? env : BIOS_DIR_DEFAULT);
+    snprintf(cd_bios_path, sizeof(cd_bios_path),
+             "%s/[BIOS] Atari Jaguar CD (World).j64", bios_dir);
+}
+
+static const char *env_system_dir = BIOS_DIR_DEFAULT;
 
 static void stub_video(const void *d, unsigned w, unsigned h, size_t p)
 { (void)d; (void)w; (void)h; (void)p; }
@@ -376,14 +399,14 @@ static void find_first_cue(const char *dir)
     closedir(dp);
 }
 
-#define CD_BIOS_PATH "test/roms/private/[BIOS] Atari Jaguar CD (World).j64"
+#define CD_BIOS_PATH cd_bios_path
 
 TEST(integration_hle_mode)
 {
     bool loaded;
     env_cd_boot_mode = "hle";
     env_bios_enabled = "enabled";
-    env_system_dir = "test/roms/private";
+    env_system_dir = bios_dir;
 
     core_init();
     loaded = core_load_disc(g_test_cue);
@@ -405,7 +428,7 @@ TEST(integration_bios_mode_with_bios)
     bool loaded;
     env_cd_boot_mode = "bios";
     env_bios_enabled = "enabled";
-    env_system_dir = "test/roms/private";
+    env_system_dir = bios_dir;
 
     core_init();
     loaded = core_load_disc(g_test_cue);
@@ -428,7 +451,7 @@ TEST(integration_auto_mode_with_bios)
     bool loaded;
     env_cd_boot_mode = "auto";
     env_bios_enabled = "enabled";
-    env_system_dir = "test/roms/private";
+    env_system_dir = bios_dir;
 
     core_init();
     loaded = core_load_disc(g_test_cue);
@@ -499,7 +522,7 @@ TEST(integration_hle_bios_setting_off)
     bool loaded;
     env_cd_boot_mode = "hle";
     env_bios_enabled = "disabled";
-    env_system_dir = "test/roms/private";
+    env_system_dir = bios_dir;
 
     core_init();
     loaded = core_load_disc(g_test_cue);
@@ -526,6 +549,9 @@ int main(int argc, char *argv[])
     bool have_cd_bios;
     (void)argc; (void)argv;
     total_fail = 0;
+
+    init_bios_paths();
+    fprintf(stderr, "  [INFO] BIOS dir:  %s\n", bios_dir);
 
     if (!load_core()) return 1;
 
