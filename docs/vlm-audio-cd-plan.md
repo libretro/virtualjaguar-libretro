@@ -14,6 +14,15 @@ synthetic music CD all the way to the BIOS's **CD player front-end and into the
 VLM screen** — no loader change at all. That fix is implemented on this branch;
 what remains is CDDA audio routing.
 
+> **Update, 2026-08-04, `develop` @ `b399eb1`.** §3.2's diagnosis ("Phase 2:
+> CDDA routing on `$01nn` Play Title") is **withdrawn — it was a measurement
+> error, not a bug.** The SSI head is already streaming correct CD-DA at
+> 44.1 kHz before and after Play Title; nothing needs positioning. The real
+> blocker is one bit inside the VLM's own DSP code, and everything downstream
+> of it works: forcing that bit clear makes the Virtual Light Machine render
+> and react to the music. Full evidence, and the new committed regression
+> test, in **§8**. Read §8 before acting on §3.2 or on the Phase 2 row of §6.
+
 ---
 
 ## 1. Confirmation of the prior finding
@@ -231,6 +240,18 @@ written; audio discs simply have no boot stub, and the BIOS handles that itself.
 
 ### 3.2 Still required for a working VLM (not implemented)
 
+> **WITHDRAWN — see §8.** The paragraph below is wrong. It inferred "no CDDA"
+> from the output RMS not moving, and inferred from `cdrom.c:1852` that only a
+> `$12xx` seek can position the head. Direct instrumentation of
+> `SetSSIWordsXmittedFromButch()` shows the head *is* primed and streaming (it
+> refills from `ssiBlock` on its own when `cdPlaying` goes true) and delivers
+> the disc's samples to `lrxd`/`rrxd` at 44.1 kHz, correctly, including the
+> silence of an inter-track pregap at exactly the right offset. The RMS did not
+> move because the DSP never forwards the samples to LTXD/RTXD — for a reason
+> that has nothing to do with head position. **Do not implement this.** The
+> only surviving item from this section is the `$61nn` `LONG_TOC_CA` nit at the
+> end, which remains true and remains non-blocking.
+
 **CDDA routing on `$01nn` Play Title.** The SSI head that feeds JERRY's I2S port
 (`SetSSIWordsXmittedFromButch`, `cdrom.c:2110+`) is positioned **only by a `$12xx`
 Goto-Frame seek** (`ssiBlock = block + 1; memcpy(ssiBuf, cdBuf, ...)` at
@@ -336,7 +357,7 @@ headless framebuffer read path is not proof of what is presented.
 | Phase | Scope | Effort | Gate |
 |---|---|---|---|
 | **1. DSA session-TOC protocol fix** *(implemented on this branch)* | `src/cd/cdrom.c`: `$20..$24` response tags, `$0400` terminator, multi-word RX-full re-arm | ~0.5 day incl. validation | `make TEST_EXPORTS=1 test` green; full `cd_boot_matrix.sh` all-`GAME_CODE`; audio disc reaches the CD player UI |
-| **2. CDDA routing for `$01nn` Play Title** | Position `block`/`cdBuf`/`ssiBuf`/`ssiBlock` from the track table on Play; verify SMODE slave | 1–2 days | Audible CDDA on the synthetic disc; `test_audio_clipping` + `test_audio_presence` both pass; Primal Rage CDDA unchanged |
+| ~~**2. CDDA routing for `$01nn` Play Title**~~ **CANCELLED (§8)** | Nothing to do: the SSI head already streams correct CD-DA on Play Title, verified sample-for-sample against the disc image. Superseded by "unmute the VLM's DSP audio path" — see §8.4 | — | Now pinned by `test/test_cd_synth_cdda.c` |
 | **3. Loader/frontend acceptance for audio discs** | Let `hle` mode stop rejecting audio-only images — either force the real-BIOS path when `numSessions == 1 && no ATRI` (cheap, honest: the VLM is BIOS code and `hle` can never produce it), or fail with a clear message. Touches `libretro.c:1507-1517`, `jagcd_hle.c:1586-1591` | 0.5–1 day | Audio disc boots regardless of the `CD Boot Mode` setting |
 | **4. VLM polish + transport** | Track sequencing, Pause/Unpause/Volume, repeat modes, end-of-disc | 1–2 days | Player transport works end to end; VLM visualisation reacts to the audio |
 | **5. Follow-ons (separate tickets, do not bundle)** | `supports_no_game` (boot BIOS with no disc), libretro disk control — both correctly disabled today and blocked on a disc-status DSA opcode the jump table does not have | — | File only after Phase 4 lands |
@@ -389,3 +410,283 @@ for f in /tmp/vlm_shots/*.ppm; do sips -s format png "$f" --out "${f%.ppm}.png";
 `VJ_CD_TRACE_LIVE=1` is what makes the drive dialogue visible — the `[CDDA] DSA cmd`
 log line filters on command high byte (`cdrom.c:1608-1610`) and can never show
 `$03`, `$14`, `$10`, `$11`, `$12`, `$02` or `$18`. Do not infer absence from it.
+
+---
+
+## 8. Second pass — the VLM works; one bit in its DSP code keeps it muted
+
+Investigated on `develop` @ `b399eb1` (post #300, #305, #307), macOS/clang,
+embedded retail CD BIOS, 2026-08-04. Every number below came from the runs
+described in §8.6.
+
+### 8.1 The disc
+
+Still synthetic — no real audio CD exists in the corpus (`find -L
+test/roms/private -name '*.cue'` returns 35 CUEs, all Jaguar game discs). But a
+much more informative one than §2.1's two-tone pair, built so that **the decoded
+audio itself says what is playing and where**:
+
+- **multi-file CUE, one BIN per track**, `REM SESSION 01` — the exact shape
+  every CUE in the corpus uses, so `dataLBA != startLBA` and the loader's
+  pregap handling is exercised rather than bypassed;
+- **6 tracks** (manual repro), each preceded (2..6) by a real **150-sector
+  `INDEX 00` pregap** of digital silence;
+- **track *t* is a square-wave chirp sweeping `882*t` → `882*t + 441` Hz**, so
+  a zero-crossing count identifies the track, and the instantaneous frequency
+  identifies the position within it;
+- **left ≠ right**: right is the second harmonic at a different amplitude, so a
+  channel swap — invisible on a mono disc, and this repo has SSI channel
+  history — is glaring;
+- **constant known amplitude** (±20000 L / ±12000 R), never zero, so the pregap
+  is the only silence anywhere on the disc.
+
+Generator: §8.6. The waveform/PCM model is shared with
+`test/test_cd_synth_cdda.c`; note that the committed CI test uses **4 tracks**
+(2 s each) to keep runtime and disc size small.
+### 8.2 What the BIOS does with it — both modes, mode taken from the log
+
+`bios` (`[BOOT] CD game, mode=BIOS -- boot ROM forced on`): the full drive
+dialogue completes, including the six-track long TOC —
+
+```
+DSA_TX $7001  $150A  $0300  $1400  $0301  $1501  $0200  $0101
+```
+
+— and the **CD player front-end renders correctly for a 6-track disc**:
+STOP/REW/PLAY/FF/PAUSE transport, `TRK 6`, a `TIME` readout showing the disc's
+lead-out, `NORMAL` / `NO REPEAT` / `VLM`, and a track grid with cells 1–6 lit.
+(The player-UI screenshot was read on an earlier 6-track disc whose lead-out is
+`1:21`; the chirp disc's is `1:00`. Everything else about the screen is
+identical — the readout tracks the disc, which is the point.) Navigating with **B** (right) to
+PLAY and pressing **A** issues `$0101` Play Title and switches to the VLM
+screen. That screen is black apart from a `1-4` preset indicator and a
+track/time readout. RMS 980, 240573 non-silent samples — *byte-identical to a
+run where PLAY is never pressed*. No CD audio reaches the output.
+
+`hle` (`[BOOT] CD game, mode=HLE`): `retro_load_game()` fails —
+`[CD-BOOTSTUB] Early exit: loaded=1 numSessions=1` → "unsupported or invalid
+content format". This is the documented pre-existing state, Phase 3 scope, and
+is **not** a regression from anything here. The VLM is BIOS code; `hle` can
+never produce it (§5 trap). There is therefore no HLE run to compare against
+for an audio disc, and any "both modes" comparison for the VLM itself is
+meaningless by construction.
+
+### 8.3 The SSI head is fine — §3.2 refuted
+
+Instrumenting `SetSSIWordsXmittedFromButch()` (`src/cd/cdrom.c`) directly:
+
+```
+[VLMDIAG] SSI live #1      nonzero=0      lrxd=$0000 rrxd=$0000 ssiBlock=1    ptr=0
+[VLMDIAG] SSI live #44101  nonzero=44094  lrxd=$0378 rrxd=$0378 ssiBlock=76   ptr=0
+[VLMDIAG] SSI live #88201  nonzero=88188  lrxd=$B756 rrxd=$B756 ssiBlock=151  ptr=0
+...
+[VLMDIAG] SSI live #617401 nonzero=617283 ... ssiBlock=1051
+[VLMDIAG] SSI live #661501 nonzero=617283 ... ssiBlock=1126   <- nonzero frozen
+[VLMDIAG] SSI live #705601 nonzero=617283 ... ssiBlock=1201   <- inter-track pregap
+[VLMDIAG] SSI live #749701 nonzero=661376 ... ssiBlock=1276   <- audio resumes
+```
+
+44100 samples/s, `ssiBlock` advancing 75 sectors/s (the drive rate), nearly all
+samples non-zero — and the plateau in `nonzero` lands exactly on the 150-sector
+pregap the disc has between tracks. The head is streaming the right bytes from
+the right place. Positioning it on `$01nn` would fix nothing.
+
+`cdPlaying` is true, `seekDelay` is 0, `ButchIsReadyToSend()` is true (the
+`I2S_CTRL $000F` write sets the I2CNTRL bit), JERRY is in slave mode
+(`[CDDA] SMODE $0015 -> $0014 (slave: CD -> I2S)`), and the DSP takes the SSI
+interrupt 44100 times a second (`ssiAssert` and `ssiDispatch` both advance
+44060 per 60 frames). Every stage up to the DSP is working.
+
+### 8.4 The actual blocker: alt-bank R13 bit 30 in the VLM's DSP code
+
+The output is silent because **the DSP writes nothing to LTXD/RTXD**. Counting
+`DACWriteWord` calls per frame (`i2sWrites`, reset each frame in
+`DACPrepareFrame`):
+
+```
+frame 360: i2sWrites=348 dspRun=1 dspPC=$F1B11E flags=$00004461   <- BIOS boot audio
+frame 420: i2sWrites=348 dspRun=1 dspPC=$F1B120 flags=$00004461
+frame 480: i2sWrites=2   dspRun=0 dspPC=$F1B26E flags=$00000000   <- DSP reloaded: VLM
+frame 540: i2sWrites=2   dspRun=1 dspPC=$F1BA5A flags=$00000420
+...           (2 = the two seed values DACPrepareFrame writes; zero real writes)
+```
+
+Disassembling the DSP RAM at that point: the SSI vector `$F1B010` jumps to
+`$F1BC54`, and the handler opens with
+
+```
+$F1BC54  LOAD   (R26), R27
+$F1BC56  MOVEFA R13, R30
+$F1BC58  BTST   #30, R30
+$F1BC5A  JR     EQ, $00F1BC66      ; bit 30 clear -> pass-through path
+$F1BC5E  LOAD   (R28), R23        ; bit 30 set   -> read LRXD, discard
+$F1BC60  MOVEQ  #0, R30           ;                 zero the FFT input
+$F1BC64  MOVEQ  #0, R29
+$F1BC66  MOVEFA R11, R25          ; pass-through path:
+$F1BC6A  LOAD   (R28), R23        ;   R28 = $F1A148
+$F1BC6E  IMULT  R25, R23          ;   scale by volume
+$F1BC74  STORE  R23, (R28)        ;   R28 += 4 -> write RTXD
+$F1BC80  STORE  R23, (R28)        ;   R28 -= 4 -> write LTXD
+```
+
+so **bit 30 of alternate-bank R13 gates both the audio pass-through and the FFT
+input**. Measured at every ISR entry, it is `$40000000` — set — for the whole
+VLM session. It is set by the VLM's own init:
+
+```
+$F1BA1A  MOVEI  #$40000000, R00
+$F1BA20  MOVETA R00, R13
+```
+
+i.e. **the VLM starts muted by design and something must clear the bit**. The
+only other writer of alt-R13 in the whole 8 KB of DSP RAM is `MOVETA R25, R13`
+at `$F1BD92`, inside the block at `$F1BD34..$F1BE04` — and that block polls
+`$DFFF1A`:
+
+```
+$F1B9CA  MOVEI  #$00DFFF1A, R00
+$F1B9D0  MOVETA R00, R21
+...
+$F1BD44  MOVEFA R21, R30
+$F1BD4C  LOADW  (R30), R29
+$F1BD4E  BTST   #4, R29
+```
+
+`$DFFF1A` is `SUBDATA+2` — **BUTCH's CD subcode data register**, which this core
+does not implement (RAM-backed only; `src/cd/cdrom.c:1486` has had a
+`[SUBCODE] read` diagnostic on it for a while). Confirmed live:
+
+```
+[SUBCODE] write SBCNTRL+0 = $0000 who=6 68kpc=$080082
+[SUBCODE] write SBCNTRL+2 = $00F2 who=6 68kpc=$080082
+[SUBCODE] read  SUBDATA+2 -> $0000 who=2 68kpc=$193040     (who=2 = DSP)
+```
+
+The VLM's 68K side arms subcode capture via `SBCNTRL`, and its DSP side polls
+`SUBDATA` and always reads zero. The `0  0:01` readout on the VLM screen —
+**track 0** with a ticking time — is the same story from the other end.
+
+**Not yet proven:** that supplying valid subcode is what clears bit 30. The
+static read of `$F1BD92` places the writer inside the subcode block, and the
+DSP demonstrably polls the register, but the delay-slot/computed-jump structure
+of that block is not safely readable statically. A crude probe (forcing
+`SUBDATA+2` reads to return `$0010`, `$0011`, `$FFFF`) changed nothing —
+output stayed byte-identical at RMS 980 / 240573 non-silent — so a naive
+bit-4 stub is not enough, and the real Q-channel frame format Butch presents
+has no local ground truth (MiSTer's `butch.v`, our reference for the DSA
+protocol, does not implement subcode either; `test/mister_ground_truth.h`
+has the register addresses and nothing more).
+
+### 8.5 Everything downstream of that bit is correct
+
+Diagnostic hack, **not shipped**: clear bit 30 of `dsp_reg_bank_1[13]` on every
+SSI interrupt. Same disc, same input script, `bios` mode confirmed from the log:
+
+| | muted (as shipped) | bit 30 forced clear |
+|---|---|---|
+| non-silent samples / 1200000 | 240573 | **785123** |
+| average RMS | 980 | **1268** |
+| frame motion, VLM window | 0/60 | **60/60** |
+| avg frame change | 0.00 % | **9.8–14.8 %** |
+| non-black pixels | 0.3 % | **up to 16.5 %** |
+
+and on screen: a full radial spectrum analyser — concentric rings of coloured
+cells pulsing outward, a cyan waveform trace across the middle, the `1-4`
+preset indicator and the track/time readout — visibly changing between
+screenshots as the chirp climbs. **The Virtual Light Machine runs, renders, and
+reacts to the audio.** The one thing between it and working is the mute bit.
+
+That table is the oracle for the eventual fix: a correct implementation must
+reproduce those numbers with no hack in the DSP.
+
+### 8.6 Regression test, and the repro
+
+`test/test_cd_synth_cdda.c` (new, in `make test`) pins the part that works, on
+its own synthetic disc — it never touches `test/roms/private`, so unlike
+`test/test_cd_ssi_stream.c` (which SKIPs without `VJ_SSI_DISC`) it actually
+runs on a fresh clone and in CI:
+
+| assertion | negative control | result |
+|---|---|---|
+| LRXD = left, RRXD = right, sample-aligned from byte 0, across sector boundaries | swap the two reads in `SetSSIWordsXmittedFromButch` | 4 of 5 tests red |
+| measured frequency identifies the seeked track, right = 2× left | `CDIntfGetTrackInfo` uses `startLBA` instead of `dataLBA` | 5 of 5 red |
+| a redundant `$12xx` does not rewind the head; the chirp keeps climbing | restore `ssiBufPtr = 0` on the redundant-seek branch (pre-#307) | exactly that one test red |
+| the pregap is silence and the tone starts at `INDEX 01` | as row 2 | red |
+
+Each control was run at the same git rev with `src/cd/*.o` and the dylib
+deleted first (`make` skips rebuilds on second-identical mtimes, and
+`VJ_EXPECT_BUILD` cannot catch that when both builds are dirty at the same
+rev). Verified green with `test/roms/private` removed, then restored.
+
+Manual repro of §8.2 and §8.5:
+
+```bash
+DEVELOPER_DIR=/Library/Developer/CommandLineTools make TEST_EXPORTS=1 -j8
+DEVELOPER_DIR=/Library/Developer/CommandLineTools cc -O2 -Wall -std=c99 \
+  -I./libretro-common/include -I./src -o test/tools/cd_visual_verify \
+  test/tools/cd_visual_verify.c test/harness/harness.c -lm
+
+# 6-track chirp audio CD, real pregaps, L != R -- same PCM model as
+# test/test_cd_synth_cdda.c
+mkdir -p /tmp/vlmcd && python3 - /tmp/vlmcd <<'EOF'
+import os, struct, sys
+SECTOR, SAMP_SEC, BASE_INC, MASK = 2352, 588, 85899346, 0xFFFFFFFF
+outdir, ntracks, sectors, pregap = sys.argv[1], 6, 600, 150
+def gen(track, sectors):
+    n = sectors * SAMP_SEC; dinc = (BASE_INC // 2) // n
+    ph, inc, buf = 0, track * BASE_INC, bytearray()
+    for _ in range(n):
+        buf += struct.pack('<hh', -20000 if ph & 0x80000000 else 20000,
+                                  -12000 if ph & 0x40000000 else 12000)
+        ph = (ph + inc) & MASK; inc = (inc + dinc) & MASK
+    return bytes(buf)
+cue = ['REM SESSION 01']
+for t in range(1, ntracks + 1):
+    name = 'track%02d.bin' % t; pcm = gen(t, sectors)
+    cue += ['FILE "%s" BINARY' % name, '  TRACK %02d AUDIO' % t]
+    if t > 1:
+        pcm = b'\x00' * (pregap * SECTOR) + pcm
+        cue += ['    INDEX 00 00:00:00', '    INDEX 01 00:02:00']
+    else:
+        cue += ['    INDEX 01 00:00:00']
+    open(os.path.join(outdir, name), 'wb').write(pcm)
+open(os.path.join(outdir, 'musiccd.cue'), 'w').write('\n'.join(cue) + '\n')
+EOF
+
+# Boot the real CD BIOS.  B moves the transport cursor right (STOP -> REW ->
+# PLAY), A activates -- that is what issues $0101 Play Title.  Pressing A
+# from the default cursor position goes straight to the VLM WITHOUT playing.
+mkdir -p /tmp/vlmshots
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) VJ_CD_TRACE=1 VJ_CD_TRACE_LIVE=1 \
+VJ_HARNESS_LOG_INFO=1 VJ_HARNESS_LOG_DEBUG=1 \
+  ./test/tools/cd_visual_verify ./virtualjaguar_libretro.dylib \
+  /tmp/vlmcd/musiccd.cue --option virtualjaguar_cd_boot_mode=bios \
+  --frames 1500 --outdir /tmp/vlmshots --shot-every 300 \
+  --press 700:b --press 760:b --press 820:a
+for f in /tmp/vlmshots/*.ppm; do sips -s format png "$f" --out "${f%.ppm}.png"; done
+```
+
+Traps, both of which cost time here:
+
+- **`--bios` does not select the CD boot mode.** Only
+  `--option virtualjaguar_cd_boot_mode=bios` does. Confirm from the run's own
+  `[BOOT] CD game, mode=...` line, never from the flag.
+- **Pressing A immediately enters the VLM without starting playback** (`$0101`
+  never goes out), which looks exactly like the failure being investigated.
+  Drive PLAY explicitly: `--press N:b --press N+60:b --press N+120:a`.
+
+### 8.7 What is left
+
+1. **Find what clears alt-R13 bit 30** — the one open question. Runtime
+   evidence, not static disassembly: single-step or trap the
+   `$F1BD34..$F1BE04` block and watch what its inputs must be for it to reach
+   `$F1BD92` with bit 30 clear in R25.
+2. **Probably: model BUTCH's subcode Q-channel.** Data-only first — do **not**
+   newly assert `SBCNTRL` bit 2 (frame-time) or bit 3 (time-match) interrupts;
+   those are enables a title may have set speculatively, and firing IRQs that
+   never fired before is the regression path. Needs a wire-format reference we
+   do not currently have locally.
+3. **Phase 3 (loader/frontend acceptance in `hle` mode)** and **Phase 4
+   (transport: `$02` Stop, `$04`/`$05` Pause/Unpause, `$51` Volume, track
+   sequencing, repeat modes)** are unchanged from §6.
+4. **RetroArch verification is still owed.** Everything above is headless.
