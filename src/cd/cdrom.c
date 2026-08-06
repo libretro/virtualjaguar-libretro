@@ -339,6 +339,47 @@ static uint8_t ssiBuf[2352 + 96];
 static uint32_t ssiBufPtr = 2352;
 static uint32_t ssiBlock = 0;
 
+/* --- Q-channel subcode serializer (VLM / audio-CD, issue #291) ---------
+ *
+ * BUTCH deserializes the disc's Q subcode channel and presents it one
+ * byte at a time through SUBDATA.  The consumer contract was recovered
+ * at runtime from the VLM's own DSP handler ($F1BD42..$F1BE02, retail
+ * CD BIOS, docs/vlm-audio-cd-plan.md §8): the DSP polls the low word of
+ * SUBDATA ($DFFF1A, LOADW) every ~1 ms and expects
+ *
+ *      bits 15..8   the current Q-channel byte
+ *      bit  4       "valid" flag
+ *      bits  3..0   byte sequence number 0..11 within the Q frame
+ *
+ * i.e. word = (qbyte << 8) | $10 | seq.  It assembles the 12 bytes of a
+ * frame in sequence order, runs CRC-16/CCITT (poly $1021, table at DSP
+ * $F1C400) across ALL 12 and requires the residual $1D0F — the standard
+ * residue of a Red Book Q frame whose stored CRC is inverted.  On a
+ * CRC-valid frame it copies the packed Q data to $F1C000+ADR*16 (the
+ * 68K reads track/time for the on-screen readout from there) and loads
+ * the first Q word into alternate-bank R13, whose bit 30 — Q CONTROL
+ * bit 2, the "data track" flag — gates the VLM's audio pass-through and
+ * FFT input.  Audio control nibble -> bit 30 clear -> unmuted; the $40000000
+ * the VLM boots with means "assume data track, stay muted".
+ *
+ * The serializer is clocked off the SSI sample stream: 588 stereo
+ * samples per sector / 12 Q bytes = one byte every 49 samples, so Q
+ * position stays exactly in step with the audio actually playing.  Data
+ * only — no BUTCH bit 2/3 (subcode frame / time-match) interrupt is
+ * ever raised, and reads while disarmed/stopped fall through to the old
+ * RAM-backed zeros.
+ *
+ * None of this state is serialized: subQArmed is re-derived from the
+ * saved SBCNTRL register in CDROMStateLoad(), and the rest resyncs
+ * within one sector (~13 ms) because the DSP's collector simply ignores
+ * sequence numbers it is not expecting. */
+#define SUBQ_SAMPLES_PER_BYTE 49
+static uint8_t subQFrame[12];
+static uint32_t subQSeq = 0;         /* current byte within the frame, 0..11 */
+static uint32_t subQSampleCnt = 0;   /* SSI samples since last byte boundary */
+static bool subQArmed = false;       /* nonzero SBCNTRL low-word write seen */
+static bool subQValid = false;       /* subQFrame describes a real position */
+
 // NM93C14 EEPROM: 64 x 16-bit words (128 bytes)
 // Exposed so libretro.c can pack/unpack it into the .srm save buffer.
 uint16_t cdrom_eeprom_ram[64];
@@ -839,6 +880,10 @@ void CDROMReset(void)
    fifoRefillAccum = 0;
    cdDriveSpeed = CD_SPEED_DOUBLE;   /* power-on default, see the constant */
    cdPrevShouldIRQ = false;
+   subQSeq = 0;
+   subQSampleCnt = 0;
+   subQArmed = false;
+   subQValid = false;
    dsaQueueHead = 0;
    dsaQueueTail = 0;
    dsaQueueCount = 0;
@@ -1519,10 +1564,24 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          }
       }
    }
+   else if (offset == SUBDATA + 2 && subQArmed && subQValid &&
+            cdPlaying && seekDelay <= 0)
+   {
+      /* Q-subcode serial window (see the serializer comment block near
+       * subQFrame): current Q byte in the high byte, bit 4 = valid,
+       * low nibble = byte sequence 0..11.  Reads never pop -- the
+       * consumer dedupes on the sequence tag, matching a latch the
+       * hardware refreshes as each byte deserializes.  Disarmed /
+       * stopped / seeking reads keep falling through to the RAM-backed
+       * zeros below, exactly the pre-#291 behavior. */
+      data = (uint16_t)(((uint16_t)subQFrame[subQSeq] << 8) |
+                        0x0010 | (subQSeq & 0x0F));
+   }
    else
       data = GET16(cdRam, offset);
 
-   /* SUBCODE-DIAG: reads of the (unimplemented) subcode registers. */
+   /* SUBCODE-DIAG: subcode register reads (SUBDATA low word is live when
+    * the serializer is armed and playing; everything else is RAM-backed). */
    if (offset >= SBCNTRL && offset < SB_TIME + 4)
    {
       static uint32_t subReads = 0;
@@ -1626,8 +1685,8 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    }
 
    /* SUBCODE-DIAG: any traffic on the subcode registers (SBCNTRL $14,
-    * SUBDATA $18, SUBDATB $1C, SB_TIME $20) -- currently RAM-backed
-    * no-ops in this emulator. */
+    * SUBDATA $18, SUBDATB $1C, SB_TIME $20).  SBCNTRL's low word arms
+    * the Q serializer below; the rest stay RAM-backed no-ops. */
    if (offset >= SBCNTRL && offset < SB_TIME + 4)
    {
       static uint32_t subWrites = 0;
@@ -1638,6 +1697,17 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
                  (offset >= SUBDATB) ? "SUBDATB" :
                  (offset >= SUBDATA) ? "SUBDATA" : "SBCNTRL",
                  offset & 3, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+   }
+
+   /* Any nonzero SBCNTRL low-word write arms Q-subcode capture (the VLM
+    * writes $00F2 there before Play); zero disarms.  The individual bits
+    * are undocumented, so nothing finer is decoded — see the serializer
+    * comment near subQFrame. */
+   if (offset == SBCNTRL + 2)
+   {
+      subQArmed = (data != 0);
+      if (!subQArmed)
+         subQValid = false;
    }
 
    /* I2CNTRL bit 4 (FIFO-not-empty) is read-only status ("When read: b4 -
@@ -1739,6 +1809,13 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
              * seek that was already being rewritten.) */
             seekDelay = SEEK_DELAY_TICKS
                       + (int32_t)CDROMSeekDistanceTicks(block, newBlock);
+            /* Q position moves with the head: restart the frame at the
+             * seek target (rebuilt from the new ssiBlock on the first
+             * streamed sample).  A redundant seek leaves it alone, same
+             * as the stream itself. */
+            subQSeq = 0;
+            subQSampleCnt = 0;
+            subQValid = false;
          }
       }
       else if ((data & 0xFF00) == 0x1000 || (data & 0xFF00) == 0x1100)
@@ -2169,6 +2246,59 @@ bool ButchIsReadyToSend(void)
 //
 static uint32_t ssiXmitCount = 0;
 
+/* CRC-16/CCITT (poly $1021, init 0), bitwise — 10 bytes once per sector
+ * is far too cold to justify a table.  Matches the table-driven update
+ * in the VLM's DSP handler ($F1BD68: crc = (crc<<8) ^ tbl[(crc>>8) ^ b]). */
+static uint16_t SubQCRC16(const uint8_t *data, uint32_t len)
+{
+   uint16_t crc = 0;
+   uint32_t i, b;
+   for (i = 0; i < len; i++)
+   {
+      crc ^= (uint16_t)((uint16_t)data[i] << 8);
+      for (b = 0; b < 8; b++)
+         crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                              : (uint16_t)(crc << 1);
+   }
+   return crc;
+}
+
+static uint8_t SubQBCD(uint32_t v)
+{
+   return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+/* Rebuild subQFrame for the sector the SSI head is currently streaming
+ * (ssiBlock - 1: the head buffers a sector, then pre-increments).  Mode-1
+ * (ADR 1) position frame, all BCD, CRC stored inverted per Red Book. */
+static void CDROMBuildSubQ(void)
+{
+   uint32_t lba, trk, idx, rel, abs_;
+   bool isData;
+   uint16_t crc;
+
+   subQValid = false;
+   lba = (ssiBlock > 0) ? ssiBlock - 1 : 0;
+   if (!CDIntfGetQPosition(lba, &trk, &idx, &rel, &isData))
+      return;
+
+   abs_ = lba + 150;                              /* absolute time offset */
+   subQFrame[0] = (uint8_t)(isData ? 0x41 : 0x01); /* CONTROL/ADR */
+   subQFrame[1] = SubQBCD(trk);
+   subQFrame[2] = SubQBCD(idx);
+   subQFrame[3] = SubQBCD(rel / 4500);            /* MIN (track-relative) */
+   subQFrame[4] = SubQBCD((rel / 75) % 60);       /* SEC */
+   subQFrame[5] = SubQBCD(rel % 75);              /* FRAME */
+   subQFrame[6] = 0;                              /* ZERO */
+   subQFrame[7] = SubQBCD(abs_ / 4500);           /* AMIN */
+   subQFrame[8] = SubQBCD((abs_ / 75) % 60);      /* ASEC */
+   subQFrame[9] = SubQBCD(abs_ % 75);             /* AFRAME */
+   crc = (uint16_t)~SubQCRC16(subQFrame, 10);     /* stored inverted */
+   subQFrame[10] = (uint8_t)(crc >> 8);
+   subQFrame[11] = (uint8_t)(crc & 0xFF);
+   subQValid = true;
+}
+
 void SetSSIWordsXmittedFromButch(void)
 {
    ssiXmitCount++;
@@ -2217,6 +2347,32 @@ void SetSSIWordsXmittedFromButch(void)
       CDIntfReadBlock(ssiBlock, ssiBuf);
       ssiBlock++;
       ssiBufPtr = 0;
+   }
+
+   /* Q-subcode serializer: one Q byte per 49 streamed samples (588/12),
+    * so the Q position advances exactly with the audio.  Only clocked
+    * while real samples move -- pause/stop/seek freezes it with the
+    * stream (the gate above returned already). */
+   if (subQArmed)
+   {
+      /* A build can legitimately fail (LBA in an inter-session gap /
+       * virtual pregap, so CDIntfGetQPosition() declines).  subQSampleCnt
+       * is 0 on the first sample after arming and again at each byte
+       * boundary, so this retries at most once per byte period instead of
+       * re-running the whole frame build at 44.1 kHz. */
+      if (!subQValid && subQSampleCnt == 0)
+         CDROMBuildSubQ();
+      subQSampleCnt++;
+      if (subQSampleCnt >= SUBQ_SAMPLES_PER_BYTE)
+      {
+         subQSampleCnt = 0;
+         subQSeq++;
+         if (subQSeq >= 12)
+         {
+            subQSeq = 0;
+            CDROMBuildSubQ();
+         }
+      }
    }
 }
 
@@ -2804,6 +2960,16 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	}
 	else
 		cdDriveSpeed = CD_SPEED_DOUBLE;
+
+	/* Q-subcode serializer: nothing is serialized on purpose.  Arming is
+	 * re-derived from the SBCNTRL register saved inside cdRam above, and
+	 * the frame/sequence state resyncs within one sector of streaming --
+	 * the DSP-side collector ignores sequence numbers it is not
+	 * expecting, so a restart at seq 0 is invisible beyond ~13 ms. */
+	subQArmed = (GET16(cdRam, SBCNTRL + 2) != 0);
+	subQSeq = 0;
+	subQSampleCnt = 0;
+	subQValid = false;
 
 	return (size_t)(buf - start);
 }

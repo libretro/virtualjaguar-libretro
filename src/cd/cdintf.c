@@ -1173,6 +1173,61 @@ bool CDIntfIsSession2Sector(uint32_t sector)
    return false;
 }
 
+/* Q-channel subcode position lookup — see cdintf.h.  Track containment
+ * uses the same [startLBA, startLBA + lengthLBA) rule as
+ * CDIntfReadBlock() so the Q data always describes the sector actually
+ * being streamed. */
+bool CDIntfGetQPosition(uint32_t lba, uint32_t *trackNum, uint32_t *idx,
+                        uint32_t *relLBA, bool *isData)
+{
+   int i;
+   struct CDIntfTrack *track = NULL;
+
+   if (!disc.loaded)
+      return false;
+
+   for (i = (int)disc.numTracks - 1; i >= 0; i--)
+   {
+      uint32_t tStart = disc.tracks[i].startLBA;
+      uint32_t tEnd = tStart + disc.tracks[i].lengthLBA;
+      if (lba >= tStart && lba < tEnd)
+      {
+         track = &disc.tracks[i];
+         break;
+      }
+   }
+   if (!track)
+      return false;
+
+   if (trackNum)
+      *trackNum = track->number;
+   /* Q CONTROL bit 2 (data track).  track->type alone is not enough:
+    * Jaguar CD CUE sheets routinely mark the session-2 DATA track as
+    * AUDIO (the game data is mastered inside an audio-type track), so
+    * trusting the type would report a data track as audio -- and that
+    * is exactly the bit the CD player's VLM uses as its mute gate.
+    * Treat anything in session 2 as data regardless of declared type,
+    * matching CDIntfIsSession2Sector's reasoning. */
+   if (isData)
+      *isData = (track->type != CDINTF_TRACK_AUDIO) || (track->session == 2);
+   if (lba < track->dataLBA)
+   {
+      /* INDEX 00 pregap: relative time counts down to 0 at INDEX 01. */
+      if (idx)
+         *idx = 0;
+      if (relLBA)
+         *relLBA = track->dataLBA - lba;
+   }
+   else
+   {
+      if (idx)
+         *idx = 1;
+      if (relLBA)
+         *relLBA = lba - track->dataLBA;
+   }
+   return true;
+}
+
 // Returns session info for use by cdrom.c
 // Session numbering matches the DSA command operand (per MiSTer FPGA):
 //   Session 0 → disc.sessions[0] (first session, typically audio)
