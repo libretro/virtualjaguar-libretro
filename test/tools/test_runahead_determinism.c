@@ -54,10 +54,37 @@
  * pass 2 vs pass 3 match completely including frame 0.  So some audio
  * state is re-derived rather than restored by the load path, converges
  * within one frame, and is perfectly repeatable across rollbacks.
- * The I2S ring buffer is NOT the cause: DACPrepareFrame reseeds
- * writePos/writeCount to 2 every frame and DSPSampleCallback clamps its
- * read index to i2sWriteCount, so no sample from a previous frame is
- * ever read.  The culprit is elsewhere in the DSP/DAC path.
+ *
+ * ALREADY RULED OUT — do not spend the time again:
+ *
+ *  - The I2S ring buffer (i2sRingL/R), despite being absent from
+ *    DACStateSave.  DACPrepareFrame reseeds writePos/writeCount to 2 every
+ *    frame and DSPSampleCallback clamps its read index to i2sWriteCount, so
+ *    no sample written before this frame can ever be read.
+ *  - dspFlagsRetireDelay / dspPreStoreBank, which DSPStateLoad explicitly
+ *    retires rather than restoring.  This looked like the answer -- it is
+ *    audio-path state, it is reset on load, and resetting it produces
+ *    exactly the pass-1-differs / pass-2==pass-3 shape.  It was implemented
+ *    (saved as a delay count plus a bank index, gated on a new state
+ *    version) and measured: NO CHANGE on any of the three titles.  The
+ *    retire window is only DSP_FLAGS_RETIRE_DELAY == 2 instruction slots
+ *    wide, so a frame boundary practically never lands inside it.  The
+ *    change was reverted rather than kept, since it altered the save-state
+ *    format for no measurable benefit.
+ *  - The event queue.  All nine scheduled callbacks are present in
+ *    event.c's callback_registry, so none is silently dropped by the
+ *    pointer->id->pointer round trip, and nextEvent/nextEventJERRY/
+ *    numberOfEvents plus both full lists are saved.
+ *  - jaguar_prng_state.  Unsaved, but JaguarRand() is only called from
+ *    reset/init paths (RAM and GPU/DSP RAM randomization), never during
+ *    retro_run.
+ *  - dspgo_poll_count.  Unsaved, but it is a stuck-silent-DSP watchdog that
+ *    is pinned to 0 whenever any non-zero sample is produced, which is the
+ *    case throughout these measurements.
+ *  - m68kInLongWrite / m68kBusNoCharge.  Balanced nesting counters, always
+ *    0 at a frame boundary.  m68kScaleAccum only moves at a non-1x clock
+ *    scale, and these runs are all stock 1x.
+ *
  * This test is therefore NOT yet wired into `make test` — it exits 1 on
  * that known assertion.  Close the gap, then add it to the suite.
  *
