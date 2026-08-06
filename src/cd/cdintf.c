@@ -1483,14 +1483,27 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       swapped[i + 1] = raw[i];
    }
 
-   LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): ");
-   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      LOG_DBG("%02X ", raw[i]);
-   LOG_DBG("\n");
-   LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: ");
-   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      LOG_DBG("%02X ", swapped[i]);
-   LOG_DBG("\n");
+   /* One LOG_DBG per byte produced 48 separate log lines: the frontend's
+    * log callback prefixes and newline-terminates every call, so a
+    * partial-line idiom does not concatenate. Format into a buffer and
+    * emit each dump as a single line. */
+   {
+      char hex[0x30 * 3 + 1];
+      uint32_t n;
+      uint32_t last = (0x70 < (uint32_t)bytesRead) ? 0x70 : (uint32_t)bytesRead;
+
+      n = 0;
+      for (i = 0x40; i < last; i++)
+         n += (uint32_t)sprintf(hex + n, "%02X ", raw[i]);
+      hex[n] = '\0';
+      LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): %s\n", hex);
+
+      n = 0;
+      for (i = 0x40; i < last; i++)
+         n += (uint32_t)sprintf(hex + n, "%02X ", swapped[i]);
+      hex[n] = '\0';
+      LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: %s\n", hex);
+   }
    LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
 
    if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
