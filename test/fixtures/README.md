@@ -31,8 +31,8 @@ Needs **~12200 frames**: pickup lands around frame 10520 and the artefact shows
 from ~10560. The route after the briefing is a seeded wander, not a solved
 path, so it depends on the core staying deterministic - re-verify the pickup
 frame if emulation timing changes.
-**not** carry the artefact, so drive it from boot rather than via
-`--load-state`.
+A savestate captured mid-route does **not** carry the artefact, so drive
+the fixture from boot rather than via `--load-state`.
 
 ## `dragons_lair_death_branch.press` / `dragons_lair_death_branch_bios.press`
 

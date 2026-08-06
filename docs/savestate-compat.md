@@ -127,7 +127,7 @@ cc -O2 -Wall -std=c89 -o test/tools/vjss_info test/tools/vjss_info.c
 Example output from a freshly serialized current-core state:
 
 ```
-magic=0x564A5353 endian=le version=7 flags=0x00000000 reserved=0x00000000 verdict=loadable
+magic=0x564A5353 endian=le version=8 flags=0x00000000 reserved=0x00000000 verdict=loadable
 ```
 
 Verdicts: `loadable`, `too_old`, `too_new`, `bad_magic`.
