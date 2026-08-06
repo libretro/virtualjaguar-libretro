@@ -103,9 +103,11 @@ ifeq ($(platform), unix)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	ifneq ($(findstring SunOS,$(shell uname -a)),)
+		# Solaris ld: no --gc-sections, so GC_STYLE stays unset.
 		SHARED := -shared -z defs -z gnu-version-script-compat
 	else
 		SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+		GC_STYLE := gnu
 	endif
 
 # Classic Platforms ####################
@@ -118,9 +120,12 @@ else ifeq ($(platform), classic_armv7_a7)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	# --gc-sections belongs on the link line, not in CFLAGS; see the
+	# GC_STYLE block below for why this target sets it by hand.
+	LDFLAGS += -Wl,--gc-sections
 	CFLAGS += -Ofast \
 	-flto=4 -fwhole-program -fuse-linker-plugin \
-	-fdata-sections -ffunction-sections -Wl,--gc-sections \
+	-fdata-sections -ffunction-sections \
 	-fno-stack-protector -fno-ident -fomit-frame-pointer \
 	-falign-functions=1 -falign-jumps=1 -falign-loops=1 \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables -fno-unroll-loops \
@@ -145,6 +150,7 @@ else ifeq ($(platform), osx)
 	TARGET := $(TARGET_NAME)_libretro.dylib
 	fpic := -fPIC
 	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
+	GC_STYLE := macho
 	ifeq ($(arch),ppc)
 		FLAGS += -DMSB_FIRST
 		OLD_GCC = 1
@@ -172,6 +178,7 @@ else ifneq (,$(findstring ios,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro_ios.dylib
 	fpic := -fPIC
 	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
+	GC_STYLE := macho
 	MINVERSION :=
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk iphoneos Path)
@@ -196,6 +203,7 @@ else ifeq ($(platform), tvos-arm64)
 	TARGET := $(TARGET_NAME)_libretro_tvos.dylib
 	fpic := -fPIC
 	SHARED := -dynamiclib $(MACHO_EXPORTS_FLAGS)
+	GC_STYLE := macho
 	ifeq ($(IOSSDK),)
 		IOSSDK := $(shell xcodebuild -version -sdk appletvos Path)
 	endif
@@ -220,6 +228,7 @@ else ifeq ($(platform), qnx)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
 	CC = qcc -Vgcc_ntoarmv7le
 	CXX = QCC -Vgcc_ntoarmv7le_cpp
 
@@ -228,6 +237,7 @@ else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
 	ARCH = arm
 
 # Nintendo Switch (libnx)
@@ -564,6 +574,7 @@ else
 	CC ?= gcc
 	CXX ?= g++
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
 	LDFLAGS += -static-libgcc -static-libstdc++ -lwinmm -lws2_32
 
 endif
@@ -649,6 +660,71 @@ endif
 
 ifeq (,$(findstring msvc,$(platform)))
 FLAGS += -ffast-math -fomit-frame-pointer -fno-common
+endif
+
+# ----------------------------------------------------------------
+# Linker dead-code elimination (issue #321).
+#
+# src/m68000/cpustbl.c ships TWO complete 68000 handler tables:
+# op_smalltbl_4_ff (3162 entries, "fast") and op_smalltbl_5_ff (1581,
+# "slow but compatible").  m68kinterface.c binds op_smalltbl_5_ff
+# unconditionally, so table 4 -- and every machine-generated cpuemu.c
+# handler body reachable only through it -- is linked in and never
+# called.  Letting the linker garbage-collect it needs no source
+# change at all; this block is the whole fix.
+#
+# GC_STYLE is opt-in PER PLATFORM, never global.  The release matrix
+# spans 16 toolchains while PR CI covers four, so a globally-applied
+# flag that one exotic linker rejects fails at tag time, not in review.
+# The rule used to set it in the platform blocks above:
+#
+#   gnu   -- the platform's SHARED line already passes GNU-ld-only
+#            options (--version-script / --no-undefined), which proves
+#            the link runs through GNU ld or lld, so --gc-sections is
+#            available too.  Section-per-symbol flags are required
+#            there: without them ELF/PE GC works at section
+#            granularity and one live handler pins the whole object.
+#   macho -- Apple ld64.  It is atom-based, so -dead_strip alone is
+#            sufficient and -ffunction-sections/-fdata-sections are
+#            no-ops; they are deliberately NOT added.
+#   unset -- byte-for-byte unchanged from before.  Covers every
+#            STATIC_LINKING=1 target (vita, switch/libnx, ctr, ps3,
+#            psl1ght, psp1, emscripten -- those emit a .a/.bc and
+#            never run a link, so the flags could not take effect
+#            anyway), every MSVC/Xbox target, Solaris ld, and theos_ios
+#            (Theos drives its own link).
+#
+# classic_armv7_a7 is the one target that opts in by hand rather than
+# via GC_STYLE, because it does NOT want the compile half: its CFLAGS
+# already carry -ffunction-sections -fdata-sections, and GC_STYLE:=gnu
+# would duplicate them.  It used to pass -Wl,--gc-sections in CFLAGS,
+# where it was provably inert -- the link line is $(OBJECTS) $(LDFLAGS)
+# only.  Measured with a Debian bookworm arm-linux-gnueabihf gcc 12
+# cross-link (a proxy for the modmyclassic toolchain, not that
+# toolchain itself), deleting that CFLAGS entry outright produced a
+# byte-identical 1,512,628-byte .so.
+#
+# Do not expect the macOS win here.  This block compiles with
+# -flto=4 -fwhole-program, so cpustbl.o is a slim LTO object and GCC's
+# IPA -- not the linker -- decides what dies: op_smalltbl_4_ff is
+# already absent from the baseline .so.  Moving the flag to LDFLAGS
+# links clean with a byte-identical dynsym list and saves 80 bytes
+# (1,512,628 -> 1,512,548, 0.005%), versus 22.7% on non-LTO ld64.
+# It is kept because a flag that reads as enabled should be enabled,
+# not because the size matters.
+#
+# Android is unaffected either way: ndk-build uses jni/Android.mk,
+# not this Makefile.
+# ----------------------------------------------------------------
+ifneq ($(STATIC_LINKING),1)
+ifneq ($(platform),theos_ios)
+   ifeq ($(GC_STYLE),gnu)
+      FLAGS   += -ffunction-sections -fdata-sections
+      LDFLAGS += -Wl,--gc-sections
+   else ifeq ($(GC_STYLE),macho)
+      LDFLAGS += -Wl,-dead_strip
+   endif
+endif
 endif
 
 LDFLAGS += $(fpic) $(SHARED)
