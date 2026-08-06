@@ -1259,7 +1259,7 @@ void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
    sat = daddmode & 0x03;
    hicinh = ((daddmode & 0x03) == 0x03);
 
-   blitter_simd_ops.add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
+   blitter_simd_add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
 }
 
 static BLITTER_ALWAYS_INLINE
@@ -1424,7 +1424,7 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
 
 /*Lfu		:= LFU (lfu[0..1], srcdlo, srcdhi, dstdlo, dstdhi, lfu_func[0..3]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint64_t lfu = blitter_simd_ops.lfu(srcd, dstd, lfu_func);
+	uint64_t lfu = blitter_simd_lfu(srcd, dstd, lfu_func);
    bool mir_bit, mir_byte;
    uint16_t masku;
    uint8_t e_coarse, e_fine;
@@ -1460,7 +1460,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 	/* srcd_cmp is the source data as read from memory; srcd may carry the
 	 * SRCSHADE intensity offset.  The transparency comparison keys on the
 	 * unshaded pixel -- see the SRCSHADE block in BlitterMidsummer2. */
-	*dcomp = blitter_simd_ops.dcomp(*patd, srcd_cmp, dstd, cmpdst);
+	*dcomp = blitter_simd_dcomp(*patd, srcd_cmp, dstd, cmpdst);
 
 	/* Source-pixel transparency for DCOMPEN+!CMPDST.
 	 *
@@ -1526,7 +1526,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 with srcshift bits 4 & 5 selecting the start position
 */
 //So... basically what we have here is:
-	*zcomp = blitter_simd_ops.zcomp(*srcz, dstz, zmode);
+	*zcomp = blitter_simd_zcomp(*srcz, dstz, zmode);
 
 //TEMP, TO TEST IF ZCOMP IS THE CULPRIT...
 //Nope, this is NOT the problem...
@@ -1781,8 +1781,8 @@ Dat[40-47]	:= MX4 (dat[40-47], dstdhi{8-15},  ddathi{8-15},  dstzhi{8-15},  srcz
 Dat[48-55]	:= MX4 (dat[48-55], dstdhi{16-23}, ddathi{16-23}, dstzhi{16-23}, srczhi{16-23}, mask[13],  zed_selb[1]);
 Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srczhi{24-31}, mask[14],  zed_selb[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*wdata = blitter_simd_ops.byte_merge(ddat, dstd, mask);
-	*srcz = blitter_simd_ops.byte_merge(*srcz, dstz, mask);
+	*wdata = blitter_simd_byte_merge(ddat, dstd, mask);
+	*srcz = blitter_simd_byte_merge(*srcz, dstz, mask);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Data_enab[0-1]	:= BUF8 (data_enab[0-1], data_ena);

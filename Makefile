@@ -1214,7 +1214,8 @@ test/test_tom_visible_window: test/test_tom_visible_window.c src/tom/tom.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_tom_visible_window.c
 
-test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h
+test/test_blitter_simd: test/test_blitter_simd.c $(BLITTER_SIMD_SRC) src/tom/blitter_simd.h \
+	$(BLITTER_SIMD_SRC:.c=.h)
 	$(CC) $(CFLAGS) -o $@ test/test_blitter_simd.c $(BLITTER_SIMD_SRC)
 
 test/test_dsp_mac40: test/test_dsp_mac40.c src/jerry/dsp_acc40.h
