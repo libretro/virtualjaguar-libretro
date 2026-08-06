@@ -78,12 +78,17 @@ check_simd_arch() {
     target="$3"    # extra flags, may be empty
     probe="$4"     # intrinsics header to probe for
 
+    cc="$CC"
+    case "$target" in
+        *--target=*) command -v clang >/dev/null 2>&1 && cc=clang ;;
+    esac
+
     probe_c="${TMPDIR:-/tmp}/c89lint_probe_$$.c"
     echo "#include <$probe>" > "$probe_c"
     echo "int main(void) { return 0; }" >> "$probe_c"
-    if ! $CC $CFLAGS $target "$probe_c" >/dev/null 2>&1; then
+    if ! $cc $CFLAGS $target "$probe_c" >/dev/null 2>&1; then
         rm -f "$probe_c"
-        echo "C89 lint: SKIP $arch — $CC cannot target it here ($probe unavailable)"
+        echo "C89 lint: SKIP $arch — $cc cannot target it here ($probe unavailable)"
         echo "C89 lint:      the $arch header is NOT checked on this host; CI covers it."
         return 0
     fi
@@ -92,7 +97,7 @@ check_simd_arch() {
     arch_failed=0
     for f in src/tom/blitter.c "src/tom/blitter_simd_$arch.c"; do
         [ -f "$f" ] || continue
-        if ! $CC $CFLAGS $target $INCLUDES $DEFINES "-D$define" "$f" 2>&1; then
+        if ! $cc $CFLAGS $target $INCLUDES $DEFINES "-D$define" "$f" 2>&1; then
             echo "C89 lint: $arch pass failed on $f"
             arch_failed=1
             FAILED=1
