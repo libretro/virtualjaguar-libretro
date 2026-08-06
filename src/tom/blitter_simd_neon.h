@@ -95,6 +95,7 @@ uint8_t blitter_simd_zcomp(uint64_t srcz, uint64_t dstz, uint8_t zmode)
    uint16x4_t vs = vreinterpret_u16_u64(vcreate_u64(srcz));
    uint16x4_t vd = vreinterpret_u16_u64(vcreate_u64(dstz));
    uint16x4_t vresult = vdup_n_u16(0);
+   uint8_t result = 0;
 
    if (zmode & 0x01)  /* LT */
       vresult = vorr_u16(vresult, vclt_u16(vs, vd));
@@ -107,7 +108,6 @@ uint8_t blitter_simd_zcomp(uint64_t srcz, uint64_t dstz, uint8_t zmode)
     * vresult lanes are 0xFFFF or 0x0000. Narrow and extract. */
    /* Shift each lane: lane0 >> 0, lane1 >> 1, lane2 >> 2, lane3 >> 3
     * But easier: just read each lane */
-   uint8_t result = 0;
    if (vget_lane_u16(vresult, 0)) result |= 0x01;
    if (vget_lane_u16(vresult, 1)) result |= 0x02;
    if (vget_lane_u16(vresult, 2)) result |= 0x04;
