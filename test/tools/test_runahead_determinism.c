@@ -46,47 +46,45 @@
  * back on every single frame, so it lives entirely in the post-rollback
  * regime that pass 2 vs pass 3 measures.
  *
- * MEASURED STATUS (v3.1.0-dev, Iron Soldier, 240 warmup / 120 window):
- * video, state and repeated-rollback all pass exactly.
- * audio_replay_identical FAILS on exactly one frame — the first frame
- * after the first rollback — by ~0.05% RMS (2079.86 vs 2080.96), with
- * an identical sample count; frames 1..119 match bit for bit, and
- * pass 2 vs pass 3 match completely including frame 0.  So some audio
- * state is re-derived rather than restored by the load path, converges
- * within one frame, and is perfectly repeatable across rollbacks.
+ * ROOT CAUSE THIS TEST FOUND (fixed; kept here as the map of the area):
+ * every one of these assertions passed EXCEPT audio_replay_identical,
+ * which failed on exactly one frame — the first after the first rollback —
+ * by ~0.05% RMS with an identical sample count, on three commercial
+ * titles.  Instrumenting DACPrepareFrame and diffing the two passes field
+ * by field showed every DSP field identical (pc, control, flags, acc,
+ * pipeline pointers, scoreboard, registers) and only LTXD/RTXD differing.
  *
- * ALREADY RULED OUT — do not spend the time again:
+ * Those are the DAC output registers, and they live in jagMemSpace at
+ * $F1A148/$F1A14C — which no STATE_SAVE_BUF covered.  retro_serialize
+ * saves jaguarMainRAM (the low 2 MB of jagMemSpace), tomRam8 and
+ * jerry_ram_8, and jerry_ram_8 is a SEPARATE array in jerry.c, not the
+ * $F10000 window of jagMemSpace.  So the whole DAC register file survived
+ * a load only by accident, as whatever the previous run left behind.
+ * DACPrepareFrame seeds the resampler's interpolation endpoints from
+ * LTXD/RTXD, so the first frame after a rollback started from the wrong
+ * endpoints and then converged.  Fixed by serializing the registers in
+ * DACStateSave/Load behind STATE_VERSION_DAC_REGISTERS.
+ *
+ * Things that looked guilty and were NOT the cause — do not re-spend the
+ * time:
  *
  *  - The I2S ring buffer (i2sRingL/R), despite being absent from
  *    DACStateSave.  DACPrepareFrame reseeds writePos/writeCount to 2 every
  *    frame and DSPSampleCallback clamps its read index to i2sWriteCount, so
  *    no sample written before this frame can ever be read.
  *  - dspFlagsRetireDelay / dspPreStoreBank, which DSPStateLoad explicitly
- *    retires rather than restoring.  This looked like the answer -- it is
- *    audio-path state, it is reset on load, and resetting it produces
- *    exactly the pass-1-differs / pass-2==pass-3 shape.  It was implemented
- *    (saved as a delay count plus a bank index, gated on a new state
- *    version) and measured: NO CHANGE on any of the three titles.  The
- *    retire window is only DSP_FLAGS_RETIRE_DELAY == 2 instruction slots
- *    wide, so a frame boundary practically never lands inside it.  The
- *    change was reverted rather than kept, since it altered the save-state
- *    format for no measurable benefit.
+ *    retires rather than restoring — audio-path state, reset on load,
+ *    producing exactly the observed shape.  Implemented behind a state
+ *    version gate and measured: NO CHANGE on any title.  The retire window
+ *    is DSP_FLAGS_RETIRE_DELAY == 2 instruction slots, so a frame boundary
+ *    practically never lands inside it.  Reverted.
  *  - The event queue.  All nine scheduled callbacks are present in
- *    event.c's callback_registry, so none is silently dropped by the
- *    pointer->id->pointer round trip, and nextEvent/nextEventJERRY/
- *    numberOfEvents plus both full lists are saved.
- *  - jaguar_prng_state.  Unsaved, but JaguarRand() is only called from
- *    reset/init paths (RAM and GPU/DSP RAM randomization), never during
- *    retro_run.
- *  - dspgo_poll_count.  Unsaved, but it is a stuck-silent-DSP watchdog that
- *    is pinned to 0 whenever any non-zero sample is produced, which is the
- *    case throughout these measurements.
- *  - m68kInLongWrite / m68kBusNoCharge.  Balanced nesting counters, always
- *    0 at a frame boundary.  m68kScaleAccum only moves at a non-1x clock
- *    scale, and these runs are all stock 1x.
- *
- * This test is therefore NOT yet wired into `make test` — it exits 1 on
- * that known assertion.  Close the gap, then add it to the suite.
+ *    event.c's callback_registry, so none is dropped by the
+ *    pointer->id->pointer round trip.
+ *  - jaguar_prng_state (JaguarRand() runs only from reset/init paths),
+ *    dspgo_poll_count (pinned to 0 while audio is non-silent), and
+ *    m68kInLongWrite / m68kBusNoCharge / m68kScaleAccum (balanced nesting
+ *    counters, or inert at stock 1x clock scale).
  *
  * Build (see the `runahead-determinism` Makefile target):
  *   cc -O2 -Wall -std=c99 -I./libretro-common/include \
