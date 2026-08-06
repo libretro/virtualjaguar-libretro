@@ -14,6 +14,9 @@ This is the actively maintained **Atari Jaguar and Jaguar CD emulator** for [lib
 - Save state, run-ahead (deterministic serialization), SRAM/EEPROM via the libretro SRAM interface, cheat codes, and a memory map for RetroAchievements
 - Supported ROM formats: `.j64`, `.jag`, `.rom`, `.abs`, `.cof`, `.bin`, `.prg` (including inside ZIP archives), plus `.cue` and `.cdi` for Jaguar CD images, and conservative headerless raw homebrew loading
 - Network link play (JagLink / CatBox emulation): Doom deathmatch, AirCars, BattleSphere Gold — via RetroArch netplay, or a direct TCP link between frontends on socket-capable platforms ([setup guide](docs/netlink-user-guide.md))
+- Jaguar GameDrive (JagGD) cartridges: bank switching for images up to 16 MB, so GD-locked homebrew boots
+- Audio CDs play through the Jaguar CD player and its Virtual Light Machine visualizer (set **CD Boot Mode** to `Auto` or `Real BIOS` — audio-only discs have no session-2 boot stub for the HLE path)
+- Optional M68K / RISC clock-scale (overclock) core options for framerate-limited titles
 
 ## Recent improvements (libretro fork)
 
