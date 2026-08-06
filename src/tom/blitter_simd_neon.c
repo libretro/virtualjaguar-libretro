@@ -7,6 +7,16 @@
  * uses to exercise the very same code the core runs.
  */
 
+/* Select our own arch before blitter_simd.h picks one.  This file IS
+ * the neon implementation, so it must get the neon inline set even when
+ * compiled standalone without the Makefile's -DBLITTER_SIMD_NEON --
+ * as .github/workflows/c-cpp.yml does when it builds
+ * test_blitter_simd by hand.  Without this the header chain pulled in
+ * the scalar set as well and the two collided. */
+#ifndef BLITTER_SIMD_NEON
+#define BLITTER_SIMD_NEON 1
+#endif
+
 #include "blitter_simd.h"
 #include "blitter_simd_neon.h"
 

@@ -7,6 +7,16 @@
  * uses to exercise the very same code the core runs.
  */
 
+/* Select our own arch before blitter_simd.h picks one.  This file IS
+ * the sse2 implementation, so it must get the sse2 inline set even when
+ * compiled standalone without the Makefile's -DBLITTER_SIMD_SSE2 --
+ * as .github/workflows/c-cpp.yml does when it builds
+ * test_blitter_simd by hand.  Without this the header chain pulled in
+ * the scalar set as well and the two collided. */
+#ifndef BLITTER_SIMD_SSE2
+#define BLITTER_SIMD_SSE2 1
+#endif
+
 #include "blitter_simd.h"
 #include "blitter_simd_sse2.h"
 
