@@ -1483,14 +1483,36 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       swapped[i + 1] = raw[i];
    }
 
-   LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): ");
-   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      LOG_DBG("%02X ", raw[i]);
-   LOG_DBG("\n");
-   LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: ");
-   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      LOG_DBG("%02X ", swapped[i]);
-   LOG_DBG("\n");
+   /* One LOG_DBG per byte produced 48 separate log lines: the frontend's
+    * log callback prefixes and newline-terminates every call, so a
+    * partial-line idiom does not concatenate.  Build each dump with
+    * fixed indexing (no sprintf in a loop: the bounds are then obvious
+    * by construction and no format string is involved) and emit it as a
+    * single line. */
+   {
+      static const char hexd[] = "0123456789ABCDEF";
+      char rawhex[0x30 * 3 + 1];
+      char swphex[0x30 * 3 + 1];
+      uint32_t last = (0x70 < (uint32_t)bytesRead) ? 0x70 : (uint32_t)bytesRead;
+      uint32_t n = 0;
+
+      for (i = 0x40; i < last; i++, n += 3)
+      {
+         rawhex[n]     = hexd[(raw[i] >> 4) & 0x0F];
+         rawhex[n + 1] = hexd[raw[i] & 0x0F];
+         rawhex[n + 2] = ' ';
+         swphex[n]     = hexd[(swapped[i] >> 4) & 0x0F];
+         swphex[n + 1] = hexd[swapped[i] & 0x0F];
+         swphex[n + 2] = ' ';
+      }
+      rawhex[n] = '\0';
+      swphex[n] = '\0';
+
+      LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x%02X (pre-swap): %s\n",
+              (unsigned)(last ? last - 1 : 0), rawhex);
+      LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x%02X: %s\n",
+              (unsigned)(last ? last - 1 : 0), swphex);
+   }
    LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
 
    if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
