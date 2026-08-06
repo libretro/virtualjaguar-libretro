@@ -350,7 +350,6 @@ jobs:
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
           src\tom\blitter_simd_scalar.c
-        echo MSVC compilation check passed
 
     # The shape Makefile.common now selects for windows_msvc2015/2017
     # x64 and x86: blitter.c inlines blitter_simd_sse2.h, so cl.exe
@@ -358,6 +357,11 @@ jobs:
     # just inside the lint-exempt blitter_simd_sse2.c. That is the whole
     # risk of enabling SSE2 for MSVC, and this step is what verifies it.
     # Objects go to a subdir so they don't collide with the run above.
+    #
+    # No trailing `echo` in either step: `shell: cmd` has no `set -e`,
+    # so the step's exit code is the LAST command's. A closing echo
+    # would return 0 over any cl.exe failure and make this whole job
+    # green-but-inert. Let cl.exe be the last command.
     - name: Compile blitter with cl.exe (SSE2 blitter SIMD)
       shell: cmd
       run: |
@@ -368,7 +372,6 @@ jobs:
           /Fomsvc-sse2\ ^
           src\tom\blitter.c ^
           src\tom\blitter_simd_sse2.c
-        echo MSVC SSE2 blitter compilation check passed
 
   vita-build:
     name: build-PS Vita
