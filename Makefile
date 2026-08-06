@@ -1355,7 +1355,8 @@ test/heap_search: test/heap_search.c
 tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
-.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi
+.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
+        runahead-determinism
 endif
 
 lint:
@@ -1455,6 +1456,31 @@ frame-timing:
 		test/harness/harness.c test/harness/timing_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
+
+# `make runahead-determinism` -- Save-state determinism check.  Saves a state,
+# replays the same frames after retro_unserialize, and asserts the video and
+# audio come back identical.  This is the evidence behind
+# `savestate_features = 3` in dist/info/, and behind reporting zero
+# serialization quirks: run-ahead, rewind and netplay all assume a state is a
+# complete snapshot.
+#
+# NOT part of `make test`: one assertion (audio_replay_identical) is a known
+# failure — a single frame of ~0.05% RMS drift on the first rollback.  See the
+# tool header for the full measurement and what has already been ruled out.
+#
+# Usage:
+#   make runahead-determinism RUNAHEAD_ROM="path/to/game.j64"
+#   make runahead-determinism RUNAHEAD_ROM="path/to/game.j64" RUNAHEAD_FLAGS="--warmup 600 --frames 300"
+RUNAHEAD_ROM   ?= test/roms/yarc.j64
+RUNAHEAD_FLAGS ?=
+runahead-determinism:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_runahead_determinism \
+		test/tools/test_runahead_determinism.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+	./test/tools/test_runahead_determinism ./$(TARGET) "$(RUNAHEAD_ROM)" $(RUNAHEAD_FLAGS)
 
 # Automated visual + audio verification for CD titles: frame-motion timeline,
 # audio RMS, periodic screenshots (PPM).  See the tool header for usage.
