@@ -120,9 +120,12 @@ else ifeq ($(platform), classic_armv7_a7)
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	# --gc-sections belongs on the link line, not in CFLAGS; see the
+	# GC_STYLE block below for why this target sets it by hand.
+	LDFLAGS += -Wl,--gc-sections
 	CFLAGS += -Ofast \
 	-flto=4 -fwhole-program -fuse-linker-plugin \
-	-fdata-sections -ffunction-sections -Wl,--gc-sections \
+	-fdata-sections -ffunction-sections \
 	-fno-stack-protector -fno-ident -fomit-frame-pointer \
 	-falign-functions=1 -falign-jumps=1 -falign-loops=1 \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables -fno-unroll-loops \
@@ -688,12 +691,27 @@ endif
 #            STATIC_LINKING=1 target (vita, switch/libnx, ctr, ps3,
 #            psl1ght, psp1, emscripten -- those emit a .a/.bc and
 #            never run a link, so the flags could not take effect
-#            anyway), every MSVC/Xbox target, Solaris ld, theos_ios
-#            (Theos drives its own link), and classic_armv7_a7 (which
-#            already carries a -Wl,--gc-sections in its CFLAGS; note
-#            that one is inert, since the link line is $(LDFLAGS)
-#            only -- left alone rather than "fixed" here because that
-#            target cannot be built or tested from this tree).
+#            anyway), every MSVC/Xbox target, Solaris ld, and theos_ios
+#            (Theos drives its own link).
+#
+# classic_armv7_a7 is the one target that opts in by hand rather than
+# via GC_STYLE, because it does NOT want the compile half: its CFLAGS
+# already carry -ffunction-sections -fdata-sections, and GC_STYLE:=gnu
+# would duplicate them.  It used to pass -Wl,--gc-sections in CFLAGS,
+# where it was provably inert -- the link line is $(OBJECTS) $(LDFLAGS)
+# only.  Measured with a Debian bookworm arm-linux-gnueabihf gcc 12
+# cross-link (a proxy for the modmyclassic toolchain, not that
+# toolchain itself), deleting that CFLAGS entry outright produced a
+# byte-identical 1,512,628-byte .so.
+#
+# Do not expect the macOS win here.  This block compiles with
+# -flto=4 -fwhole-program, so cpustbl.o is a slim LTO object and GCC's
+# IPA -- not the linker -- decides what dies: op_smalltbl_4_ff is
+# already absent from the baseline .so.  Moving the flag to LDFLAGS
+# links clean with a byte-identical dynsym list and saves 80 bytes
+# (1,512,628 -> 1,512,548, 0.005%), versus 22.7% on non-LTO ld64.
+# It is kept because a flag that reads as enabled should be enabled,
+# not because the size matters.
 #
 # Android is unaffected either way: ndk-build uses jni/Android.mk,
 # not this Makefile.
