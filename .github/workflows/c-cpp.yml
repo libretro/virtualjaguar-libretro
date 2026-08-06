@@ -323,12 +323,22 @@ jobs:
       shell: bash
       run: bash scripts/gen-version-h.sh
 
-    - name: Compile all sources with cl.exe
+    # Sources are .c, so cl.exe compiles them in C mode -- deliberately.
+    # That is what the buildbot does, and it is what makes this job a
+    # useful C89/MSVC check. Do not "fix" it to /TP. Do not add /Za
+    # either: it breaks <emmintrin.h> and the Windows SDK headers.
+    #
+    # Exactly one BLITTER_SIMD_<ARCH> may be defined per translation
+    # unit -- blitter_simd.h inlines the matching blitter_simd_<arch>.h,
+    # and any arch .c compiled under a different (or absent) define
+    # redefines every op. So the SIMD arches get one cl.exe run each,
+    # mirroring how Makefile.common builds exactly one of them.
+    - name: Compile all sources with cl.exe (scalar blitter SIMD)
       shell: cmd
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
-          /D__LIBRETRO__ /DINLINE="_inline" ^
+          /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
           libretro.c ^
           src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
@@ -339,9 +349,26 @@ jobs:
           src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
-          src\tom\blitter_simd_scalar.c ^
-          src\tom\blitter_simd_sse2.c
+          src\tom\blitter_simd_scalar.c
         echo MSVC compilation check passed
+
+    # The shape Makefile.common now selects for windows_msvc2015/2017
+    # x64 and x86: blitter.c inlines blitter_simd_sse2.h, so cl.exe
+    # compiles <emmintrin.h> intrinsics inside blitter.c itself -- not
+    # just inside the lint-exempt blitter_simd_sse2.c. That is the whole
+    # risk of enabling SSE2 for MSVC, and this step is what verifies it.
+    # Objects go to a subdir so they don't collide with the run above.
+    - name: Compile blitter with cl.exe (SSE2 blitter SIMD)
+      shell: cmd
+      run: |
+        mkdir msvc-sse2
+        cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
+          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SSE2 ^
+          /Fomsvc-sse2\ ^
+          src\tom\blitter.c ^
+          src\tom\blitter_simd_sse2.c
+        echo MSVC SSE2 blitter compilation check passed
 
   vita-build:
     name: build-PS Vita

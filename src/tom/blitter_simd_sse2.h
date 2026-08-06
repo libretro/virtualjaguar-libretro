@@ -25,9 +25,11 @@
 
 
 
-/* _mm_set_epi64x doesn't exist in MSVC 2010 and earlier.
- * Build from two 32-bit halves instead (pure SSE2). */
-#if defined(_MSC_VER) && _MSC_VER < 1700
+/* _mm_set_epi64x doesn't exist in MSVC 2010 and earlier, and its
+ * availability on 32-bit MSVC targets varies by version.  Build from
+ * two 32-bit halves instead (pure SSE2, and what cl.exe lowers the
+ * 64-bit form to on x86 anyway) whenever either applies. */
+#if defined(_MSC_VER) && (_MSC_VER < 1700 || !defined(_M_X64))
 #define SSE2_SET64(hi, lo) \
    _mm_set_epi32((int)((uint64_t)(hi) >> 32), (int)(hi), \
                  (int)((uint64_t)(lo) >> 32), (int)(lo))
