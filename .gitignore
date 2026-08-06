@@ -109,3 +109,9 @@ test/tools/netlink_delay_proxy
 
 # Skip ledger written by `make test` (scripts/test-skip.sh)
 test/.skipped-checks
+
+# Created by `make platform=windows_msvc*` on a non-Windows host:
+# those blocks run `reg query ... 2>nul`, and outside cmd.exe `nul`
+# is a plain file. Committing it makes every Windows checkout fail
+# with "error: invalid path 'nul'".
+/nul

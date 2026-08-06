@@ -209,10 +209,13 @@ jobs:
       run: |
         ARCH=$(uname -m)
         CC="${{ matrix.config.cc }}"
+        # -DBLITTER_SIMD_<ARCH> is not optional: blitter_simd.h inlines
+        # the matching arch header, so an arch .c compiled without its
+        # define pulls in the scalar ops and then redefines every one.
         case "$ARCH" in
-          x86_64|i686|i386)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2" ;;
-          aarch64|arm64)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="" ;;
-          *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="" ;;
+          x86_64|i686|i386)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2 -DBLITTER_SIMD_SSE2" ;;
+          aarch64|arm64)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="-DBLITTER_SIMD_NEON" ;;
+          *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="-DBLITTER_SIMD_SCALAR" ;;
         esac
 
         echo "==> Testing ${SIMD_SRC}..."
@@ -221,7 +224,7 @@ jobs:
         ./test_blitter_simd
 
         echo "==> Cross-checking against scalar..."
-        $CC -O2 -Wall -I src -I src/core -I src/tom \
+        $CC -O2 -Wall -DBLITTER_SIMD_SCALAR -I src -I src/core -I src/tom \
           -o test_blitter_scalar test/test_blitter_simd.c src/tom/blitter_simd_scalar.c
         ./test_blitter_scalar
 
