@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "crc32.h"
 #include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
@@ -38,6 +39,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "tom.h"
 #include "eeprom.h"
 #include "memtrack.h"
+#include "jaggd.h"
 #include "nvmbios.h"
 #include "vjag_memory.h"
 #include "state.h"
@@ -559,6 +561,45 @@ static void check_variables(void)
       busArbiter.contention_scale = (uint8_t)dram_scale;
    }
 
+   /* Clock-scale enhancement levers (issue #314).  Config, not state:
+    * never serialized.  Stored in percent so 1x is an exact integer
+    * identity (see jaguar.h).  Defaults to 100 whenever the option is
+    * absent so nothing in the test suite ever runs at non-1x. */
+   var.key = "virtualjaguar_m68k_clock_scale";
+   var.value = NULL;
+   m68kClockScalePct = 100;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "0.5x") == 0)
+         m68kClockScalePct = 50;
+      else if (strcmp(var.value, "1.5x") == 0)
+         m68kClockScalePct = 150;
+      else if (strcmp(var.value, "2x") == 0)
+         m68kClockScalePct = 200;
+      else if (strcmp(var.value, "3x") == 0)
+         m68kClockScalePct = 300;
+   }
+   /* Drop any carried sub-cycle remainder when the scale (possibly)
+    * changed, so a new scale starts from a clean accumulator. */
+   M68KClockScaleReset();
+
+   var.key = "virtualjaguar_risc_clock_scale";
+   var.value = NULL;
+   riscClockScalePct = 100;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "0.5x") == 0)
+         riscClockScalePct = 50;
+      else if (strcmp(var.value, "1.5x") == 0)
+         riscClockScalePct = 150;
+      else if (strcmp(var.value, "2x") == 0)
+         riscClockScalePct = 200;
+   }
+
+   if (m68kClockScalePct != 100 || riscClockScalePct != 100)
+      LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
+              (unsigned)m68kClockScalePct, (unsigned)riscClockScalePct);
+
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -602,6 +643,23 @@ static void check_variables(void)
 
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
       opt_memory_track = (strcmp(var.value, "disabled") != 0);
+
+   /* Jaguar GameDrive: mode is latched here; activation happens at
+    * content load (JGDLoadROM), so mid-game toggles apply on restart. */
+   var.key = "virtualjaguar_jgd";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         JGDSetMode(JGD_MODE_ENABLED);
+      else if (strcmp(var.value, "disabled") == 0)
+         JGDSetMode(JGD_MODE_DISABLED);
+      else
+         JGDSetMode(JGD_MODE_AUTO);
+   }
+   else
+      JGDSetMode(JGD_MODE_AUTO);
 
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
@@ -991,6 +1049,10 @@ bool retro_serialize(void *data, size_t size)
    STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
    STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
 
+   /* v8: Jaguar GameDrive chunk (bank pages + SPI engine; all-zero for
+    * non-GD content). */
+   buf += JGDStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -1071,6 +1133,13 @@ bool retro_unserialize(const void *data, size_t size)
       busArbiter.op_clk_accum = 0;
       busArbiter.m68k_pending_stall = 0;
    }
+
+   if (version >= STATE_VERSION_JAGGD)
+      buf += JGDStateLoad(buf);
+   else
+      /* Pre-v8 states carry no GameDrive chunk: reset mapping (identity
+       * pages, write protect, idle SPI) — the game re-installs. */
+      JGDReset();
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
     * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from
@@ -1134,13 +1203,22 @@ static bool has_extension(const char *path, const char *ext)
    return strcasecmp(dot + 1, ext) == 0;
 }
 
+/* CRC32s of known-good 256 KB CD BIOS dumps.  The developer BIOS has
+ * $FFFFFFFF at the $404 run-address slot, so it can only be recognized
+ * by checksum -- a header check alone always rejects it. */
+#define CD_BIOS_CRC_RETAIL 0x687068D5u
+#define CD_BIOS_CRC_DEV    0x55A0669Cu
+
 /* Try to load a 256 KB CD BIOS image from the given path.
- * Returns true on success and sets cd_bios_loaded_externally. */
-static bool try_load_cd_bios_file(const char *path)
+ * Returns true on success and sets cd_bios_loaded_externally.
+ * A file that exists but fails validation bumps *rejected so the
+ * caller's final warning can distinguish "no file" from "bad file". */
+static bool try_load_cd_bios_file(const char *path, int *rejected)
 {
    RFILE   *f;
    int64_t  size;
    uint32_t run_addr;
+   uint32_t crc;
 
    f = rfopen(path, "rb");
    if (!f)
@@ -1155,16 +1233,38 @@ static bool try_load_cd_bios_file(const char *path)
       LOG_DBG("[CD-BIOS]   wrong size (%lld, need 262144): %s\n",
               (long long)size, path);
       rfclose(f);
+      (*rejected)++;
       return false;
    }
 
    if (rfread(external_cd_bios, 1, 0x40000, f) != 0x40000)
    {
+      LOG_DBG("[CD-BIOS]   short read (need 262144): %s\n", path);
       rfclose(f);
+      (*rejected)++;
       return false;
    }
    rfclose(f);
 
+   /* Known dumps are accepted by checksum, no header check needed. */
+   crc = (uint32_t)crc32_calcCheckSum(external_cd_bios, 0x40000);
+   if (crc == CD_BIOS_CRC_RETAIL)
+   {
+      LOG_INF("[CD-BIOS] using external %s (recognized retail CD BIOS, crc32=%08X)\n",
+              path, (unsigned)crc);
+      cd_bios_loaded_externally = true;
+      return true;
+   }
+   if (crc == CD_BIOS_CRC_DEV)
+   {
+      LOG_INF("[CD-BIOS] using external %s (recognized developer CD BIOS, crc32=%08X)\n",
+              path, (unsigned)crc);
+      cd_bios_loaded_externally = true;
+      return true;
+   }
+
+   /* Unknown checksum: fall back to the header sanity check so genuine
+    * revisions/regions we don't have CRCs for still load. */
    run_addr = ((uint32_t)external_cd_bios[0x404] << 24)
             | ((uint32_t)external_cd_bios[0x405] << 16)
             | ((uint32_t)external_cd_bios[0x406] <<  8)
@@ -1172,11 +1272,17 @@ static bool try_load_cd_bios_file(const char *path)
 
    if (run_addr < 0x800000 || run_addr > 0x840000)
    {
-      LOG_DBG("[CD-BIOS]   bad run addr $%08X: %s\n",
-              (unsigned)run_addr, path);
+      LOG_DBG("[CD-BIOS]   bad run addr $%08X (crc32=%08X): %s\n",
+              (unsigned)run_addr, (unsigned)crc, path);
+      (*rejected)++;
       return false;
    }
 
+   LOG_WRN("[CD-BIOS] %s is an unrecognized CD BIOS revision "
+           "(crc32=%08X, plausible run=$%06X) -- accepting it, but if boot "
+           "black-screens right after this line, this file is the prime "
+           "suspect: verify it is a genuine Jaguar CD BIOS dump\n",
+           path, (unsigned)crc, (unsigned)run_addr);
    LOG_INF("[CD-BIOS] using external %s (run=$%06X)\n",
            path, (unsigned)run_addr);
    cd_bios_loaded_externally = true;
@@ -1188,9 +1294,11 @@ static bool try_load_cd_bios_file(const char *path)
 static bool load_external_cd_bios(void)
 {
    /* Filenames conventionally used for each 'CD BIOS Type', plus generic
-    * names that could hold either image.  Selection is by NAME only — the
-    * loader does not inspect the image to confirm which BIOS it actually
-    * is, so a mislabelled file is taken at its filename's word.
+    * names that could hold either image.  The name drives the SEARCH ORDER
+    * only; the contents are validated by try_load_cd_bios_file(), which
+    * checksums the image and logs which revision it actually is.  So a
+    * mislabelled file is still loaded (its name only decided when it was
+    * tried), but the log names the real revision rather than the label.
     *
     * The selected type's names are searched FIRST.  The previous code used
     * one flat list with the retail names ahead of the developer ones, so a
@@ -1228,6 +1336,7 @@ static bool load_external_cd_bios(void)
    };
    const char *system_dir = NULL;
    int s, i, g;
+   int rejected = 0;
 
    if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
        || !system_dir)
@@ -1268,13 +1377,18 @@ static bool load_external_cd_bios(void)
                snprintf(path, sizeof(path), "%s/%s",
                         system_dir, name_groups[g][i]);
 
-            if (try_load_cd_bios_file(path))
+            if (try_load_cd_bios_file(path, &rejected))
                return true;
          }
       }
    }
 
-   LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
+   if (rejected > 0)
+      LOG_WRN("[CD-BIOS] no usable CD BIOS in %s: %d candidate file(s) "
+              "rejected (size or header); using embedded BIOS\n",
+              system_dir, rejected);
+   else
+      LOG_WRN("[CD-BIOS] CD BIOS not found in %s\n", system_dir);
    return false;
 }
 

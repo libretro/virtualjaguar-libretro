@@ -2,11 +2,24 @@
  * SIMD-accelerated blitter operations for Virtual Jaguar
  *
  * Provides architecture-specific implementations of the blitter's
- * hottest data-path operations. Only one implementation file is
- * compiled per build (selected in Makefile.common).
+ * hottest data-path operations. Only one implementation is active per
+ * build; the arch is selected in Makefile.common, which compiles the
+ * matching blitter_simd_<arch>.c *and* passes -DBLITTER_SIMD_<ARCH>.
  *
- * Each arch file defines:
- *   const blitter_simd_ops_t blitter_simd_ops = { ... };
+ * The implementations live in blitter_simd_<arch>.h as static inline
+ * functions so BlitterMidsummer2 can inline them.  That matters: these
+ * are a handful of SIMD instructions each, called up to six times per
+ * inner-loop iteration, and Tempest 2000 runs ~99k inner iterations per
+ * frame.  Reaching them through the blitter_simd_ops function-pointer
+ * table (a different translation unit, and no LTO on any desktop
+ * target) cost ~21% of accurate-blitter runtime in indirect-call and
+ * argument-marshalling overhead, and it also defeated the per-call-site
+ * specialisation that ADDARRAY's BLITTER_ALWAYS_INLINE exists to enable
+ * -- sat/eightbit/hicinh are compile-time constants at those sites.
+ *
+ * blitter_simd_ops still exists, and each arch .c file builds it out of
+ * thin wrappers around the very same inline functions, so
+ * test/test_blitter_simd.c validates exactly the code the core runs.
  */
 
 #ifndef BLITTER_SIMD_H
@@ -14,6 +27,16 @@
 
 #include <stdint.h>
 #include <boolean.h>
+
+/* Portable always-inline, spelled to include the inline keyword itself
+ * (MSVC's __forceinline IS the inline keyword for that compiler). */
+#if defined(_MSC_VER)
+#  define BLITTER_SIMD_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define BLITTER_SIMD_INLINE inline __attribute__((always_inline))
+#else
+#  define BLITTER_SIMD_INLINE inline
+#endif
 
 typedef struct
 {
@@ -58,5 +81,21 @@ typedef struct
 } blitter_simd_ops_t;
 
 extern const blitter_simd_ops_t blitter_simd_ops;
+
+/* Pull in the selected implementation as static inline functions:
+ *   blitter_simd_lfu / _dcomp / _zcomp / _byte_merge / _add16sat_x4
+ *
+ * Makefile.common defines exactly one of these to match the .c file it
+ * added to SOURCES_C.  Builds that don't go through it (ndk-build, and
+ * every MSVC target) get scalar, which is what those already selected.
+ * A mismatch between the -D and the compiled .c is a hard compile error
+ * rather than a silent slow path -- see blitter_simd_<arch>.c. */
+#if defined(BLITTER_SIMD_NEON)
+#  include "blitter_simd_neon.h"
+#elif defined(BLITTER_SIMD_SSE2)
+#  include "blitter_simd_sse2.h"
+#else
+#  include "blitter_simd_scalar.h"
+#endif
 
 #endif /* BLITTER_SIMD_H */

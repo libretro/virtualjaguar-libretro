@@ -59,13 +59,43 @@ code (1 = single, 2 = double), then `bset #3,d2` for data mode, then
 expected reply is `$1700 | payload` (`bset #9`), which
 `src/cd/cdrom.c:1641` already synthesizes correctly.
 
-### 2. FMV scene-jump schedule drift (Dragon's Lair / Space Ace / BD13)
+### 2. ~~FMV scene-jump schedule drift (Dragon's Lair / Space Ace / BD13)~~ -- RESOLVED (#297: every lead run to ground; seek model calibrated to reference)
 
-FMV titles occasionally jump scenes early/late: the games' own
-delivery-clock counters drift relative to our transfer pacing (root-cause
-notes: DL clock at `$129AD6/$129ADE` advances +7680/s; subcode registers
-exonerated). Reproducible via RAM-snapshot counter comparison. Medium
-effort; HLE-mode only polish.
+**Closed 2026-08-05.** The investigation is in
+[`fmv-drift-notes.md`](fmv-drift-notes.md) (§2–§11); the summary of where
+each hypothesis ended:
+
+- **"Schedule drift" is structurally impossible.** Dragon's Lair's
+  presentation counter is at `$562E/$5630` (not the `$129AD6/$129ADE`
+  this note originally cited) and it is **video-field-locked**: +32760
+  per field, zero jitter, identical histogram at 1x/2x/4x read speed
+  (§2).
+- **Transfer rate is exonerated.** Both paths deliver within +0.15% of
+  the 352,800 B/s hardware 2x rate; the earlier "-1.11% slow /
+  `fifoFillDelay` re-arm" claim was refuted by direct measurement — the
+  fill→drain latency it blamed is zero for 99.997% of drains (§9, #305).
+- **A real stream-corruption bug was found and fixed on this path**: a
+  redundant `$12xx` seek re-framed the in-flight FIFO/SSI stream,
+  replaying up to ~13 ms of CD-DA (#306, fixed #307). It may well have
+  been the visible "glitchy transition" in the original report.
+- **Seek latency — the last open lead — is now modeled and calibrated.**
+  A BigPEmu reference capture of Dragon's Lair's death branch (558 ms ≈
+  33.4 fields of black vs our 29–30) showed the missing term is ~60 ms
+  on a near-full-stroke seek — tens of ms, **not** the unsourced
+  "30–315 ms multi-tier" range this file used to cite (its ~300 ms top
+  end would have shown as ~+18 fields; the capture shows +4).
+  `CDROMSeekDistanceTicks()` (src/cd/cdrom.c) now charges 1 halfline
+  tick per 72 sectors of head travel in **both** boot modes; the
+  measured branch gap lands at 33 fields in both, matching the
+  reference within a field (§11).
+
+The reproducible branch fixture (`test/tools/run_dl_branch_fixture.sh`,
+#311) plus long-run cycle checks pin the behaviour: the die/retry loop
+repeats with a constant period and identical LBA sequence over 6+
+consecutive cycles in each mode. Standing caveat: the seek constant is
+**reference parity with BigPEmu, not silicon ground truth** — if a
+hardware capture ever materializes, recalibrate `SEEK_SECTORS_PER_TICK`
+against it (one number, linear model, no tiers).
 
 ### 3. Myst BIOS-mode audio parity listen
 
@@ -101,3 +131,25 @@ from structured noise at the right level.
 - Boot-matrix rows are build-stamped; a row whose stamp does not match the
   current build is re-run, never trusted (stale-row resurrection produced
   the phantom "Battle Morph bios pc_escape flake").
+
+
+## Known bad CDI dumps
+
+Some DiscJuggler CDI V2 rips in the wild lack a valid
+`ATARI APPROVED DATA HEADER ATRI ` magic at session-2 track `+0x42`
+(after the I2S word-swap). The CDI walk/offset math is correct; the header
+data is simply wrong or absent. Load is **refused** with an actionable
+`[CD-BOOTSTUB]` log line (warn-and-refuse — we do not tolerate truncated
+ATARI magic, which would risk false-positive boots).
+
+Measured against the local 14-CDI corpus (10 load, 4 fail):
+
+| Local image | Defect at `+0x42` (word-swapped) | Log signature |
+|---|---|---|
+| vidgrid | **zero-filled** (32/32 zeros) | `Boot header region is zero-filled` |
+| ironsoldier2 | garbage / title residue (`matched 1/32`) | `matched N/32 bytes` |
+| mystdemo | non-magic garbage (`matched 0/32`) | `matched 0/32 bytes` |
+| worldtourracing | non-magic garbage (`matched 0/32`) | `matched 0/32 bytes` |
+
+Re-dump from a known-good source (or use CUE/BIN) rather than filing this as
+an unsupported-format bug. See issue #269.

@@ -95,10 +95,40 @@ static bool tf_current_failed = false;
 /* BIOS file paths                                                     */
 /* ------------------------------------------------------------------ */
 
-#define BIOS_DIR "test/roms/private"
-#define JAGUAR_BIOS_PATH      BIOS_DIR "/[BIOS] Atari Jaguar (World).j64"
-#define JAGUAR_CD_BIOS_PATH   BIOS_DIR "/[BIOS] Atari Jaguar CD (World).j64"
-#define JAGUAR_CD_BIOS_ROM    BIOS_DIR "/Jaguar CD BIOS.rom"
+/* These were compile-time literals rooted directly at "test/roms/private".
+ * The corpus keeps its BIOS dumps in a ROMS/ subdirectory, so the paths
+ * never resolved and all eight real-BIOS assertions below reported SKIP --
+ * while the suite still exited 0.  That is the same silent-skip class as
+ * the Skyhammer clipping sentinel: a check that cannot find its input
+ * reads exactly like a check that passed.
+ *
+ * `make test` now locates the directory with scripts/find-rom.sh and passes
+ * it in via VJ_BIOS_DIR.  The old literal stays as the fallback so a bare
+ * invocation of this binary behaves as it always did. */
+#define BIOS_DIR_DEFAULT "test/roms/private"
+
+static char bios_dir[512];
+static char jaguar_bios_path[640];
+static char jaguar_cd_bios_path[640];
+static char jaguar_cd_bios_rom[640];
+
+#define JAGUAR_BIOS_PATH      jaguar_bios_path
+#define JAGUAR_CD_BIOS_PATH   jaguar_cd_bios_path
+#define JAGUAR_CD_BIOS_ROM    jaguar_cd_bios_rom
+
+static void init_bios_paths(void)
+{
+    const char *env = getenv("VJ_BIOS_DIR");
+
+    snprintf(bios_dir, sizeof(bios_dir), "%s",
+             (env && *env) ? env : BIOS_DIR_DEFAULT);
+    snprintf(jaguar_bios_path, sizeof(jaguar_bios_path),
+             "%s/[BIOS] Atari Jaguar (World).j64", bios_dir);
+    snprintf(jaguar_cd_bios_path, sizeof(jaguar_cd_bios_path),
+             "%s/[BIOS] Atari Jaguar CD (World).j64", bios_dir);
+    snprintf(jaguar_cd_bios_rom, sizeof(jaguar_cd_bios_rom),
+             "%s/Jaguar CD BIOS.rom", bios_dir);
+}
 
 static bool file_exists(const char *path)
 {
@@ -401,7 +431,7 @@ TEST(real_bios_init_succeeds)
 {
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_DISABLED;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
     ASSERT_TRUE(core.GetRamPtr != NULL);
     core.retro_deinit();
@@ -415,7 +445,7 @@ TEST(real_bios_boot_rom_space_accessible)
      * Actual BIOS loading requires retro_load_game (not just retro_init). */
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_DISABLED;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
 
     val = core.JaguarReadWord(0xE00000, CALLER_M68K);
@@ -430,7 +460,7 @@ TEST(real_bios_ram_accessible)
     uint16_t val;
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_DISABLED;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
 
     core.JaguarWriteWord(0x6000, 0xBEEF, CALLER_M68K);
@@ -445,7 +475,7 @@ TEST(real_bios_gpu_init_ok)
     uint16_t val;
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_DISABLED;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
 
     /* GPU RAM should be accessible */
@@ -464,7 +494,7 @@ TEST(real_cd_bios_init_succeeds)
 {
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_REAL;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
     ASSERT_TRUE(core.GetRamPtr != NULL);
     core.retro_deinit();
@@ -480,7 +510,7 @@ TEST(real_cd_bios_cart_space_accessible)
      * Verify address decode works without crash. */
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_REAL;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
 
     w0 = core.JaguarReadWord(0x800000, CALLER_M68K);
@@ -496,7 +526,7 @@ TEST(real_cd_bios_butch_accessible)
     uint16_t val;
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_REAL;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
 
     val = core.JaguarReadWord(0xDFFF00, CALLER_M68K);
@@ -511,7 +541,7 @@ TEST(real_cd_bios_jerry_accessible)
     uint16_t val;
     current_bios_mode = BIOS_MODE_REAL;
     current_cd_mode = CD_MODE_REAL;
-    current_system_dir = BIOS_DIR;
+    current_system_dir = bios_dir;
     bc_init(&core);
 
     /* JERRY registers should be accessible with CD BIOS loaded */
@@ -530,6 +560,9 @@ int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     TEST_INIT("BIOS Configuration");
+
+    init_bios_paths();
+    fprintf(stderr, "  [INFO] BIOS dir: %s\n", bios_dir);
 
     /* Check which BIOS files are available */
     have_jaguar_bios = file_exists(JAGUAR_BIOS_PATH);

@@ -8,7 +8,10 @@
  *      DAC i2sNonZeroCount and bumped STATE_VERSION 2 -> 3 while
  *      retro_unserialize still demanded an exact version match, which
  *      silently invalidated every state written by v2.3.0 / v2.3.1.
- *   2. A state OLDER than STATE_MIN_VERSION (v1) must be refused.
+ *      Every version a RELEASED core ever wrote is covered: 1 (v2.2.0),
+ *      2 (v2.3.0 / v2.3.1), 3 (v2.3.2) and the current 7 (v3.0.0).
+ *      Issue #268.
+ *   2. A state OLDER than STATE_MIN_VERSION (v0) must be refused.
  *   3. A state NEWER than STATE_VERSION must be refused — we cannot know
  *      what fields it carries.
  *   4. A bad magic must be refused.
@@ -34,7 +37,16 @@
  * the match trustworthy: the pattern must occur exactly once, and — since
  * DAC is serialized last and retro_serialize zero-fills the tail —
  * everything after the block must be zero.  No 2.4 MB binary fixture is
- * committed; the v2 state is synthesized at runtime from a v3 one.
+ * committed; the v1/v2/v3 states are synthesized at runtime from a current
+ * one by synth_legacy_state().
+ *
+ * That synthesis has to rebuild the CDROM chunk, not just trim fields off
+ * the end of the state.  The CD-support work replaced the old block's two
+ * cdBuf2/cdBuf3 staging buffers with the BUTCH/FIFO/DSA/SSI working set,
+ * shrinking the chunk by 2627 bytes, and only the last 28 of those bytes
+ * were version-gated.  A fixture built by trimming alone is not a v1/v2/v3
+ * state, and a test built on one reports PASS while every released state
+ * silently mis-parses from the CDROM chunk onward.
  *
  * Exit codes: 0 = pass, 1 = fail, 2 = harness error, 77 = skip (ROM absent)
  *
@@ -69,7 +81,7 @@ const char *__lsan_default_suppressions(void) {
 }
 #endif
 
-#define MAX_RESULTS 16
+#define MAX_RESULTS 24
 #define DEFAULT_ROM "test/roms/yarc.j64"
 #define DEFAULT_FRAMES 120
 /* Frames run between capturing the v3 state and loading the v2 fixture,
@@ -89,13 +101,34 @@ const char *__lsan_default_suppressions(void) {
  * i2sNonZeroCount (uint32, 4), i2sPhase (double, 8), i2sRateRatio
  * (double, 8) = 37 bytes, with i2sNonZeroCount at offset 17.
  *
+ * STATE_VERSION_DAC_REGISTERS (v8) appends the I2S hardware registers
+ * themselves: *ltxd (uint16, 2), *rtxd (uint16, 2), *sclk (uint8, 1),
+ * *smode (uint32, 4), lrxd (uint16, 2), rrxd (uint16, 2), sstat (uint8,
+ * 1) = 14 more, for 51.  They live in jagMemSpace at $F1A148-$F1A157,
+ * which no STATE_SAVE_BUF covers, so before v8 they were restored as
+ * whatever the previous run left behind -- see
+ * test/tools/test_runahead_determinism.c.  The v1/v2/v3 fixture offsets
+ * below are unaffected: the new fields are appended, not interleaved.
+ *
  * The size is asserted deliberately: if someone adds or reorders a DAC
  * field, THIS TEST FAILS LOUDLY rather than silently splicing the wrong
  * four bytes out of the fixture and "passing".  To update, re-derive both
  * numbers from DACStateSave's field order and sizes. */
-#define EXPECTED_DAC_BLOCK_SIZE       37
+#define EXPECTED_DAC_BLOCK_SIZE       51
 #define DAC_I2S_NONZEROCOUNT_OFFSET   17
 #define DAC_I2S_NONZEROCOUNT_SIZE     4
+
+/* The v1 DAC block (release v2.2.0) is just bufferIndex + numberOfSamples
+ * + bufferDone = 9 bytes.  In the v2 layout the four resampler fields
+ * (i2sWritePos 4, i2sWriteCount 4, i2sPhase 8, i2sRateRatio 8 = 24 bytes)
+ * sit contiguously right after that prefix (i2sNonZeroCount is v3+). */
+#define DAC_V1_PREFIX_SIZE            9
+#define DAC_I2S_RESAMPLER_SIZE        24
+/* Offsets of the resampler fields inside the CURRENT block, used to build
+ * the expected post-v1-load block.  Offsets, not sizes, so appending the
+ * v8 register tail does not move them. */
+#define DAC_I2S_WRITEPOS_OFFSET       9    /* writePos+writeCount, 8 bytes */
+#define DAC_I2S_PHASE_OFFSET          21   /* phase+ratio, 16 bytes */
 
 /* Trailing CDROM-block fields a v2/v3 state does not carry, verified
  * against the end of CDROMStateSave() in src/cd/cdrom.c:
@@ -111,6 +144,26 @@ const char *__lsan_default_suppressions(void) {
  * cartridge ROM the CDROM block is zero-heavy and a byte-pattern search
  * would not be unique. */
 #define CDROM_DSA_TAIL_SIZE           28
+
+/* The pre-CD-support CDROM block (STATE_VERSION_CDROM_RESTRUCTURE), i.e.
+ * what releases v2.2.0 / v2.3.0 / v2.3.1 / v2.3.2 wrote:
+ *
+ *   cdRam 256 + cdCmd/cdPtr 4 + haveCDGoodness 1 + min/sec/frm/block 16
+ *   + cdBuf 2448 + cdBufPtr 4 + trackNum/minTrack/maxTrack 3
+ *   + currentState 4 + counter 2 + cmdTx 1 + busCmd 2 + rxData/txData 4
+ *   + rxDataBit 2 + firstTime 1                                  = 2748
+ *   + cdBuf2 (2532+96) + cdBuf3 (2532+96)                        = 5256
+ *                                                          total = 8004
+ *
+ * The prefix is byte-identical in every version; everything after it was
+ * replaced wholesale by the BUTCH/FIFO/DSA/SSI working set.  A fixture that
+ * keeps the CURRENT tail is not a v1/v2/v3 state at all — it is 2627 bytes
+ * short — so synthesizing one means swapping the tail, not just trimming
+ * the version-gated fields off the end. */
+#define CDROM_LEGACY_PREFIX_SIZE      2748
+#define CDROM_LEGACY_STAGING_SIZE     5256
+#define CDROM_LEGACY_BLOCK_SIZE       (CDROM_LEGACY_PREFIX_SIZE \
+                                       + CDROM_LEGACY_STAGING_SIZE)
 
 /* Trailing v7 additions a v2..v6 state does not carry: the MT block's
  * latched $80AAA8 override flag (1 byte) plus the entire NVM BIOS block
@@ -192,6 +245,73 @@ static unsigned find_pattern(const uint8_t *hay, size_t hay_len,
     return count;
 }
 
+/* Compose a genuine pre-CD-support fixture (version 1, 2 or 3) from the
+ * current-version state in `src`.
+ *
+ * Rebuilt piecewise rather than spliced in place because the old layout is
+ * both shorter (no MT override flag, no NVM block, no DSA tail, a smaller
+ * DAC block) and LONGER (5256 bytes of cdBuf2/cdBuf3 where the current
+ * block carries 2601 bytes of BUTCH/FIFO/DSA/SSI state) than the current
+ * one.  A run of trim-only memmoves cannot express that.
+ *
+ * Writes the header version, returns the payload length, and reports where
+ * the DAC block landed via *dac_off_out. */
+static size_t synth_legacy_state(uint8_t *dst, const uint8_t *src,
+                                 size_t state_size, size_t cdrom_start,
+                                 size_t cdrom_end, size_t v7_tail,
+                                 size_t dac_off, unsigned version,
+                                 size_t *dac_off_out)
+{
+    size_t pos = 0;
+    size_t n;
+
+    /* Header through the CDROM block's version-invariant prefix. */
+    n = cdrom_start + CDROM_LEGACY_PREFIX_SIZE;
+    memcpy(dst, src, n);
+    pos = n;
+
+    /* cdBuf2 + cdBuf3.  Their contents are irrelevant to the loader (it
+     * skips them by byte count); zeros are what a cartridge title's stub
+     * BUTCH would have held anyway. */
+    memset(dst + pos, 0, CDROM_LEGACY_STAGING_SIZE);
+    pos += CDROM_LEGACY_STAGING_SIZE;
+
+    /* Joystick + Memory Track, minus the v7 MT override flag and the whole
+     * NVM BIOS block that follows it. */
+    n = (dac_off - v7_tail) - cdrom_end;
+    memcpy(dst + pos, src + cdrom_end, n);
+    pos += n;
+
+    if (dac_off_out)
+        *dac_off_out = pos;
+
+    /* DAC, in the layout that version carried. */
+    if (version >= 3) {
+        memcpy(dst + pos, src + dac_off, EXPECTED_DAC_BLOCK_SIZE);
+        pos += EXPECTED_DAC_BLOCK_SIZE;
+    } else if (version == 2) {
+        /* Everything up to i2sNonZeroCount, then phase + rateRatio. */
+        memcpy(dst + pos, src + dac_off, DAC_I2S_NONZEROCOUNT_OFFSET);
+        pos += DAC_I2S_NONZEROCOUNT_OFFSET;
+        memcpy(dst + pos,
+               src + dac_off + DAC_I2S_NONZEROCOUNT_OFFSET
+                   + DAC_I2S_NONZEROCOUNT_SIZE,
+               EXPECTED_DAC_BLOCK_SIZE - DAC_I2S_NONZEROCOUNT_OFFSET
+                   - DAC_I2S_NONZEROCOUNT_SIZE);
+        pos += EXPECTED_DAC_BLOCK_SIZE - DAC_I2S_NONZEROCOUNT_OFFSET
+               - DAC_I2S_NONZEROCOUNT_SIZE;
+    } else {
+        memcpy(dst + pos, src + dac_off, DAC_V1_PREFIX_SIZE);
+        pos += DAC_V1_PREFIX_SIZE;
+    }
+
+    /* retro_unserialize checks size >= STATE_SIZE, so the fixture keeps the
+     * full allocation with a zero tail, exactly like a real one. */
+    memset(dst + pos, 0, state_size - pos);
+    put_u32(dst, STATE_OFF_VERSION, (uint32_t)version);
+    return pos;
+}
+
 /* Patch the header of a copy of `src` and try to load it. */
 static bool try_load_patched(unserialize_fn unser, const uint8_t *src,
                              size_t len, size_t off, uint32_t value,
@@ -212,9 +332,12 @@ int main(int argc, char **argv)
     unserialize_fn unser;
     uint32_t **fb_ptr;
     int *width_ptr, *height_ptr;
-    uint8_t *state_v3 = NULL, *state_v2 = NULL, *scratch = NULL;
+    uint8_t *state_v3 = NULL, *state_v2 = NULL, *state_v1 = NULL,
+            *state_v3l = NULL, *scratch = NULL;
     uint8_t dac_v3[256], dac_now[256], dac_expect[256], dac_post[256];
+    uint8_t dac_expect_v1[256];
     size_t state_size, dac_size, dac_size_now, dac_off = 0;
+    size_t dac_off_v2 = 0;
     size_t cdrom_size, joy_size, mt_size, nvm_size, cdrom_end = 0;
     size_t tail_nonzero = 0, i;
     unsigned matches;
@@ -292,8 +415,10 @@ int main(int argc, char **argv)
 
     state_v3 = (uint8_t *)malloc(state_size);
     state_v2 = (uint8_t *)malloc(state_size);
+    state_v1 = (uint8_t *)malloc(state_size);
+    state_v3l = (uint8_t *)malloc(state_size);
     scratch  = (uint8_t *)malloc(state_size);
-    if (!state_v3 || !state_v2 || !scratch) {
+    if (!state_v3 || !state_v2 || !state_v1 || !state_v3l || !scratch) {
         fprintf(stderr, "Out of memory\n");
         goto done;
     }
@@ -386,37 +511,21 @@ int main(int argc, char **argv)
           "DAC block after same-version load is byte-identical to the saved one");
 
     /* ---- 5. Synthesize a genuine v2-layout state -------------------- */
-    /* Splice out i2sNonZeroCount and shift the rest of the DAC block left,
-     * which is exactly what a v2.3.1 build wrote, then relabel the header.
-     * The buffer stays STATE_SIZE bytes (only zero padding follows the DAC
-     * block) so it still satisfies retro_unserialize's size check. */
-    memcpy(state_v2, state_v3, state_size);
-    {
-        /* Higher-offset cuts first so the later offsets stay valid. */
-        size_t v7_tail = MEMTRACK_OVERRIDE_SIZE + nvm_size;
-        size_t cut = dac_off + DAC_I2S_NONZEROCOUNT_OFFSET;
-        size_t cut3 = dac_off - v7_tail;
-        size_t cut2 = cdrom_end - CDROM_DSA_TAIL_SIZE;
-        memmove(state_v2 + cut,
-                state_v2 + cut + DAC_I2S_NONZEROCOUNT_SIZE,
-                state_size - cut - DAC_I2S_NONZEROCOUNT_SIZE);
-        memset(state_v2 + state_size - DAC_I2S_NONZEROCOUNT_SIZE, 0,
-               DAC_I2S_NONZEROCOUNT_SIZE);
-        /* A v2..v6 state predates the MT override flag and the NVM BIOS
-         * block (see STATE_VERSION_MEMTRACK_OVERRIDE): splice both out. */
-        memmove(state_v2 + cut3,
-                state_v2 + cut3 + v7_tail,
-                state_size - cut3 - v7_tail);
-        memset(state_v2 + state_size - v7_tail, 0, v7_tail);
-        /* A v2/v3 CDROM block also predates the DSA queue tail (see
-         * STATE_VERSION_CDROM_DSA_QUEUE): splice those bytes out too. */
-        memmove(state_v2 + cut2,
-                state_v2 + cut2 + CDROM_DSA_TAIL_SIZE,
-                state_size - cut2 - CDROM_DSA_TAIL_SIZE);
-        memset(state_v2 + state_size - CDROM_DSA_TAIL_SIZE, 0,
-               CDROM_DSA_TAIL_SIZE);
-    }
-    put_u32(state_v2, STATE_OFF_VERSION, (uint32_t)STATE_MIN_VERSION);
+    /* The CDROM prefix constant has to agree with the block the current
+     * core writes, or every fixture below is nonsense.  Assert it rather
+     * than trusting the arithmetic in the comment. */
+    check(cdrom_size > CDROM_LEGACY_PREFIX_SIZE + CDROM_DSA_TAIL_SIZE
+          && CDROM_LEGACY_BLOCK_SIZE > cdrom_size,
+          "cdrom_legacy_constants_sane",
+          "current CDROM block %lu bytes, legacy %d (prefix %d + staging %d)",
+          (unsigned long)cdrom_size, CDROM_LEGACY_BLOCK_SIZE,
+          CDROM_LEGACY_PREFIX_SIZE, CDROM_LEGACY_STAGING_SIZE);
+
+    synth_legacy_state(state_v2, state_v3, state_size,
+                       cdrom_end - cdrom_size, cdrom_end,
+                       MEMTRACK_OVERRIDE_SIZE + nvm_size, dac_off, 2u,
+                       &dac_off_v2);
+    (void)dac_off_v2;
 
     /* What the DAC block must look like after loading that fixture: every
      * field as saved, except i2sNonZeroCount which a v2 state cannot carry
@@ -438,9 +547,9 @@ int main(int argc, char **argv)
 
     /* ---- 6. The v2 state must load (libretro.c half of the fix) ----- */
     check(unser(state_v2, state_size), "v2_state_loads",
-          "retro_unserialize() of a v%d-layout state (pre-fix: refused "
+          "retro_unserialize() of a v2-layout state (pre-fix: refused "
           "because the gate demanded version == %d)",
-          STATE_MIN_VERSION, STATE_VERSION);
+          STATE_VERSION);
 
     /* ---- 7. ...with the DAC block still aligned (dac.c half) -------- */
     /* This is the only assertion that catches an unconditional consume of
@@ -491,12 +600,75 @@ int main(int argc, char **argv)
               MIN_NONBLACK_FRACTION * 100.0);
     }
 
+    /* ---- 8b. Synthesize and load a genuine v1-layout state ---------- */
+    /* v1 is what release v2.2.0 wrote (the only released core that ever
+     * wrote version 1): the v2 layout minus the four DAC resampler fields,
+     * which sit contiguously after the 9-byte DAC prefix (issue #268). */
+    synth_legacy_state(state_v1, state_v3, state_size,
+                       cdrom_end - cdrom_size, cdrom_end,
+                       MEMTRACK_OVERRIDE_SIZE + nvm_size, dac_off, 1u, NULL);
+
+    /* Expected DAC block after the v1 load: the saved prefix, every
+     * resampler field at its DACInit() default (writePos/writeCount/
+     * nonZeroCount 0, phase 0.0, rateRatio 1.0 — DACPrepareFrame
+     * re-derives all of them at the next frame boundary). */
+    memcpy(dac_expect_v1, dac_v3, dac_size);
+    memset(dac_expect_v1 + DAC_I2S_WRITEPOS_OFFSET, 0,
+           DAC_I2S_PHASE_OFFSET + 8 - DAC_I2S_WRITEPOS_OFFSET);
+    {
+        double one = 1.0;
+        memcpy(dac_expect_v1 + DAC_I2S_PHASE_OFFSET + 8, &one, sizeof(one));
+    }
+
+    check(unser(state_v1, state_size), "v1_state_loads",
+          "retro_unserialize() of a v1-layout state (release v2.2.0's "
+          "format; pre-#268 fix: refused because STATE_MIN_VERSION was 2)");
+
+    check((dac_size_now = dac_save(dac_now)) == dac_size
+          && memcmp(dac_now, dac_expect_v1, dac_size) == 0,
+          "v1_dac_block_defaulted",
+          "post-load DAC block matches the saved prefix with the resampler "
+          "fields at their init defaults (fields must not shift)");
+
+    memcpy(dac_post, dac_now, dac_size);
+    for (frame = 0; frame < (unsigned)DRIFT_FRAMES; frame++)
+        harness_step(&cfg);
+    dac_size_now = dac_save(dac_now);
+    check(dac_size_now == dac_size
+          && memcmp(dac_now, dac_post, dac_size) != 0,
+          "core_advances_after_v1_load",
+          "DAC state advanced over %d frames following the v1 load",
+          DRIFT_FRAMES);
+
+    /* ---- 8c. v3 layout (release v2.3.2) ---------------------------- */
+    /* The strictest alignment assertion in the file: a v3 state carries the
+     * DAC block in full, so after the load every one of its bytes must
+     * come back byte-identical.  Any mis-sized chunk anywhere upstream —
+     * the CDROM restructure was exactly that — shifts the DAC read and this
+     * fails, while retro_unserialize still returns true. */
+    synth_legacy_state(state_v3l, state_v3, state_size,
+                       cdrom_end - cdrom_size, cdrom_end,
+                       MEMTRACK_OVERRIDE_SIZE + nvm_size, dac_off, 3u, NULL);
+
+    for (frame = 0; frame < (unsigned)DRIFT_FRAMES; frame++)
+        harness_step(&cfg);
+
+    check(unser(state_v3l, state_size), "v3_state_loads",
+          "retro_unserialize() of a v3-layout state (release v2.3.2's "
+          "format)");
+
+    check((dac_size_now = dac_save(dac_now)) == dac_size
+          && memcmp(dac_now, dac_v3, dac_size) == 0,
+          "v3_dac_block_realigned",
+          "post-load DAC block is byte-identical to the saved one -- proves "
+          "every chunk before it was read in the v3 layout, not the v7 one");
+
     /* ---- 9. Rejections -------------------------------------------- */
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,
-                           1u, scratch) == false,
-          "v1_state_rejected",
-          "version 1 is below STATE_MIN_VERSION (%d) -- the v1->v2 layout "
-          "change shipped in v2.3.0", STATE_MIN_VERSION);
+                           0u, scratch) == false,
+          "v0_state_rejected",
+          "version 0 is below STATE_MIN_VERSION (%d) -- no released core "
+          "ever wrote it", STATE_MIN_VERSION);
 
     check(try_load_patched(unser, state_v3, state_size, STATE_OFF_VERSION,
                            (uint32_t)STATE_VERSION + 1u, scratch) == false,
@@ -521,6 +693,8 @@ report:
 done:
     free(state_v3);
     free(state_v2);
+    free(state_v1);
+    free(state_v3l);
     free(scratch);
     harness_shutdown(&cfg);
     return rc;

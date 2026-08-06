@@ -48,6 +48,7 @@ test/tools/test_memory_map
 test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
 test/tools/cd_wedge_probe
+test/tools/fmv_seek_probe
 test/tools/sram_test
 test/tools/netlink_pair
 test/tools/netlink_game
@@ -105,3 +106,12 @@ test/tools/__pycache__/
 coverage.xml
 test/tools/netlink_latency
 test/tools/netlink_delay_proxy
+
+# Skip ledger written by `make test` (scripts/test-skip.sh)
+test/.skipped-checks
+
+# Created by `make platform=windows_msvc*` on a non-Windows host:
+# those blocks run `reg query ... 2>nul`, and outside cmd.exe `nul`
+# is a plain file. Committing it makes every Windows checkout fail
+# with "error: invalid path 'nul'".
+/nul

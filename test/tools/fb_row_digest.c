@@ -28,14 +28,26 @@
  * host -- which is the intended use, two builds on one machine.  The reader's
  * all-black row constant likewise assumes little-endian XRGB8888 in memory.)
  *
- *   magic  "VJFBDIG2"                        8 bytes
+ *   magic  "VJFBDIG3"                        8 bytes
  *   uint32 video_frame_count
  *   uint32 audio_frame_count
  *   video_frame_count records of:
- *     uint32 width, height, frame_hash, written_extent
+ *     uint32 width, rows, frame_hash, written_extent
+ *       (rows is the stored row count, min(presented height, MAX_ROWS=512),
+ *        not the presented height; readers must size row_hash[] by it)
  *       (written_extent is 0xFFFFFFFF when the core does not export
  *        TOMGetWrittenRowExtent, i.e. for a pre-fix reference build)
- *     uint32 row_hash[height]
+ *     uint32 row_hash[rows]
+ *     uint32 band_x0, band_width, band_hash, band_nonblack,
+ *            band_first_x, band_first_y
+ *       (overscan strip: columns x >= 320, hashed over the same stored rows.
+ *        When width > 320: band_x0=320, band_width=width-320, band_hash is
+ *        FNV-1a over the strip, band_nonblack counts pixels whose RGB is not
+ *        zero, and band_first_x/band_first_y are the first such pixel in
+ *        row-major order, or 0xFFFFFFFF each when the band is all black.
+ *        When width <= 320 the band block is skipped and the fields are
+ *        written as band_x0=0, band_width=0, band_hash=0, band_nonblack=0,
+ *        band_first_x=0xFFFFFFFF, band_first_y=0xFFFFFFFF.)
  *   audio_frame_count records of:
  *     uint32 audio_hash   (samples, peaks, non-silent count, RMS L/R)
  */
@@ -90,6 +102,13 @@ static void on_video(void *userdata, const void *data,
     uint32_t frame_hash = FNV_SEED;
     unsigned row;
     unsigned rows = height;
+    uint32_t band_x0 = 0;
+    uint32_t band_width = 0;
+    uint32_t band_hash = 0;
+    uint32_t band_nonblack = 0;
+    uint32_t band_first_x = 0xFFFFFFFFu;
+    uint32_t band_first_y = 0xFFFFFFFFu;
+    unsigned col;
 
     if (!data || !st->out)
         return;
@@ -103,12 +122,53 @@ static void on_video(void *userdata, const void *data,
         frame_hash = fnv1a(&row_hash[row], sizeof(uint32_t), frame_hash);
     }
 
+    /* Overscan / border strip: columns at and past the 320-wide active area.
+     * AvP presents ~326 wide; every prior check folded these into row hashes. */
+    if (width > 320)
+    {
+        band_x0 = 320;
+        band_width = width - 320;
+        band_hash = FNV_SEED;
+        for (row = 0; row < rows; row++)
+        {
+            const uint8_t *line = (const uint8_t *)data + (size_t)row * pitch;
+            uint32_t pix;
+            band_hash = fnv1a(line + (size_t)band_x0 * 4,
+                              (size_t)band_width * 4, band_hash);
+            for (col = band_x0; col < width; col++)
+            {
+                /* memcpy, not a byte-wise OR: pitch is a byte stride with no
+                 * 4-byte-multiple guarantee, so casting line to uint32_t* and
+                 * indexing it is UB on strict-alignment hosts.  Reassembling
+                 * the pixel by hand would instead pick the wrong three bytes
+                 * on a big-endian host, where XRGB8888-as-uint32 puts RGB at
+                 * bytes 1..3 rather than 0..2. */
+                memcpy(&pix, line + (size_t)col * 4, sizeof(pix));
+                if ((pix & 0x00FFFFFFu) != 0)
+                {
+                    band_nonblack++;
+                    if (band_first_x == 0xFFFFFFFFu)
+                    {
+                        band_first_x = col;
+                        band_first_y = row;
+                    }
+                }
+            }
+        }
+    }
+
     put_u32(st->out, width);
     put_u32(st->out, rows);
     put_u32(st->out, frame_hash);
     put_u32(st->out, st->get_extent ? st->get_extent() : 0xFFFFFFFFu);
     for (row = 0; row < rows; row++)
         put_u32(st->out, row_hash[row]);
+    put_u32(st->out, band_x0);
+    put_u32(st->out, band_width);
+    put_u32(st->out, band_hash);
+    put_u32(st->out, band_nonblack);
+    put_u32(st->out, band_first_x);
+    put_u32(st->out, band_first_y);
 
     st->frames_written++;
 }
@@ -158,7 +218,7 @@ int main(int argc, char **argv)
     cfg.video_callback      = on_video;
     cfg.video_callback_data = &st;
 
-    fwrite("VJFBDIG2", 1, 8, st.out);
+    fwrite("VJFBDIG3", 1, 8, st.out);
     put_u32(st.out, 0);   /* video frame count, patched below */
     put_u32(st.out, 0);   /* audio frame count, patched below */
 

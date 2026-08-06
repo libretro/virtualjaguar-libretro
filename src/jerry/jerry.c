@@ -161,6 +161,7 @@
 #include "dsp.h"
 #include "eeprom.h"
 #include "event.h"
+#include "jaggd.h"
 #include "jaguar.h"
 #include "perf_counters.h"
 
@@ -495,6 +496,12 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       // This is wrong, should only have the lowest bit from $F14001
       return value | EepromReadByte(offset);
    }
+   /* JagGD SPI mailbox (GPIO2).  Must sit above the EEPROM catch-all,
+    * which otherwise swallows these addresses and returns $0000.  When
+    * the GameDrive is not active we deliberately fall through: a $0000
+    * status read reproduces the stock-console "GD absent" hang. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+      return JGDControlReadByte(offset);
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)
       return EepromReadByte(offset);
 
@@ -550,6 +557,9 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       return (JoystickReadWord(offset) & 0xFFFE) | EepromReadWord(offset);
    else if ((offset >= 0xF14002) && (offset < 0xF14003))
       return JoystickReadWord(offset);
+   /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+      return JGDControlReadWord(offset);
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
       return EepromReadWord(offset);
 
@@ -628,6 +638,12 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
    {
       JoystickWriteWord(offset & 0xFE, (uint16_t)data);
       EepromWriteByte(offset, data);
+      return;
+   }
+   /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+   {
+      JGDControlWriteByte(offset, data);
       return;
    }
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
@@ -723,6 +739,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    {
       JoystickWriteWord(offset, data);
       EepromWriteWord(offset, data);
+      return;
+   }
+   /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+   {
+      JGDControlWriteWord(offset, data);
       return;
    }
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)

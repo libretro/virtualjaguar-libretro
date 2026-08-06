@@ -65,5 +65,7 @@
       MTState*;
       NVMBios*;
       NVM_*;
+      JGD*;
+      jgd*;
    local: *;
 };

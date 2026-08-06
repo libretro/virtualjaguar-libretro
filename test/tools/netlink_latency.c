@@ -238,6 +238,7 @@ int main(int argc, char **argv)
     {
         long long t0, t1;
         uint32_t rx0, rx1;
+        long frames = 0;
         double rate, elapsed;
 
         jerry_ww(0xF10030, 0x0040, 0);   /* first byte starts the chain */
@@ -255,7 +256,10 @@ int main(int argc, char **argv)
         rx0 = rx_total();
         t0 = now_usec();
         while (now_usec() - t0 < (long long)measure_sec * 1000000LL)
+        {
             paced_frame(run_frame);
+            frames++;
+        }
         t1 = now_usec();
         rx1 = rx_total();
 
@@ -263,6 +267,15 @@ int main(int argc, char **argv)
         rate = (double)(rx1 - rx0) / elapsed;
         printf("[probe] %.1f exchanges/sec (%u exchanges in %.2f s, "
                "wait=%s)\n", rate, rx1 - rx0, elapsed, wait_opt);
+        /* Pacing telemetry: how close the 60 fps frame slots came to
+           wall clock during the window.  ~60 = the runner kept pace
+           (an under-ceiling exchange rate is then the core's doing);
+           well under 60 = frames overran, the runner itself was the
+           bottleneck.  netlink_latency_test.sh uses this to decide
+           FAIL vs SKIP when the enabled rate lands under the frame
+           ceiling. */
+        printf("[probe] %.1f frames/sec paced (%ld frames)\n",
+               (double)frames / elapsed, frames);
 
         harness_shutdown(&cfg);
         if (min_rate >= 0.0 && rate < min_rate)

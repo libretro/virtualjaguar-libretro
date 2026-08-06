@@ -95,24 +95,28 @@ jobs:
             os: ubuntu-latest
             android: true
             android_abi: 'arm64-v8a'
+            android_simd: 'neon'
 
           - displayTargetName: 'Android armeabi-v7a'
             artifact: 'libs/armeabi-v7a/libretro.so'
             os: ubuntu-latest
             android: true
             android_abi: 'armeabi-v7a'
+            android_simd: 'neon'
 
           - displayTargetName: 'Android x86_64'
             artifact: 'libs/x86_64/libretro.so'
             os: ubuntu-latest
             android: true
             android_abi: 'x86_64'
+            android_simd: 'sse2'
 
           - displayTargetName: 'Android x86'
             artifact: 'libs/x86/libretro.so'
             os: ubuntu-latest
             android: true
             android_abi: 'x86'
+            android_simd: 'sse2'
 
           # iOS / tvOS
           - displayTargetName: 'iOS arm64'
@@ -181,8 +185,39 @@ jobs:
         # ndk-build uses jni/Android.mk (not the project Makefile),
         # so the parse-time version.h regen in Makefile doesn't run.
         bash scripts/gen-version-h.sh
-        ${{ steps.setup-ndk.outputs.ndk-path }}/ndk-build \
-          APP_ABI=${{ matrix.config.android_abi }} -j4
+
+        NDK="${{ steps.setup-ndk.outputs.ndk-path }}"
+        ABI="${{ matrix.config.android_abi }}"
+        SIMD="${{ matrix.config.android_simd }}"
+        UPPER=$(echo "$SIMD" | tr '[:lower:]' '[:upper:]')
+
+        # Dry run first, while nothing is built, so make actually prints
+        # the compile lines. blitter.c MUST carry -DBLITTER_SIMD_<ARCH>:
+        # without it blitter.c inlines the scalar ops and still links
+        # happily against the neon/sse2 vtable, so a missing define is a
+        # silent slow path that no build failure would reveal.
+        "$NDK/ndk-build" APP_ABI="$ABI" -n > ndk-dry.log 2>&1
+        BLIT_LINES=$(grep -c '[/ ]blitter\.c' ndk-dry.log || true)
+        if [ "$BLIT_LINES" = "0" ]; then
+          echo "::error::ndk-build -n printed no compile line for blitter.c; this check needs rework"
+          exit 1
+        fi
+        if ! grep '[/ ]blitter\.c' ndk-dry.log | grep -q -- "-DBLITTER_SIMD_${UPPER}"; then
+          echo "::error::blitter.c is not compiled with -DBLITTER_SIMD_${UPPER} on ${ABI}"
+          grep '[/ ]blitter\.c' ndk-dry.log | head -3
+          exit 1
+        fi
+        echo "==> ${ABI}: blitter.c carries -DBLITTER_SIMD_${UPPER}"
+
+        "$NDK/ndk-build" APP_ABI="$ABI" -j4
+
+        # And the arch .c that define has to agree with.
+        FOUND=$(find "obj/local/$ABI" -name 'blitter_simd_*.o' -exec basename {} \; | sort | tr '\n' ' ')
+        if [ "$FOUND" != "blitter_simd_${SIMD}.o " ]; then
+          echo "::error::expected blitter_simd_${SIMD}.o on ${ABI}, found: ${FOUND:-<none>}"
+          exit 1
+        fi
+        echo "==> ${ABI}: built ${FOUND}"
 
     # Mach-O symbol gating: production builds must export retro_* only.
     # Runs before the test step (which would relink with TEST_EXPORTS=1
@@ -209,10 +244,13 @@ jobs:
       run: |
         ARCH=$(uname -m)
         CC="${{ matrix.config.cc }}"
+        # -DBLITTER_SIMD_<ARCH> is not optional: blitter_simd.h inlines
+        # the matching arch header, so an arch .c compiled without its
+        # define pulls in the scalar ops and then redefines every one.
         case "$ARCH" in
-          x86_64|i686|i386)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2" ;;
-          aarch64|arm64)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="" ;;
-          *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="" ;;
+          x86_64|i686|i386)  SIMD_SRC=src/tom/blitter_simd_sse2.c; EXTRA="-msse2 -DBLITTER_SIMD_SSE2" ;;
+          aarch64|arm64)     SIMD_SRC=src/tom/blitter_simd_neon.c;  EXTRA="-DBLITTER_SIMD_NEON" ;;
+          *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="-DBLITTER_SIMD_SCALAR" ;;
         esac
 
         echo "==> Testing ${SIMD_SRC}..."
@@ -221,7 +259,7 @@ jobs:
         ./test_blitter_simd
 
         echo "==> Cross-checking against scalar..."
-        $CC -O2 -Wall -I src -I src/core -I src/tom \
+        $CC -O2 -Wall -DBLITTER_SIMD_SCALAR -I src -I src/core -I src/tom \
           -o test_blitter_scalar test/test_blitter_simd.c src/tom/blitter_simd_scalar.c
         ./test_blitter_scalar
 
@@ -323,12 +361,22 @@ jobs:
       shell: bash
       run: bash scripts/gen-version-h.sh
 
-    - name: Compile all sources with cl.exe
+    # Sources are .c, so cl.exe compiles them in C mode -- deliberately.
+    # That is what the buildbot does, and it is what makes this job a
+    # useful C89/MSVC check. Do not "fix" it to /TP. Do not add /Za
+    # either: it breaks <emmintrin.h> and the Windows SDK headers.
+    #
+    # Exactly one BLITTER_SIMD_<ARCH> may be defined per translation
+    # unit -- blitter_simd.h inlines the matching blitter_simd_<arch>.h,
+    # and any arch .c compiled under a different (or absent) define
+    # redefines every op. So the SIMD arches get one cl.exe run each,
+    # mirroring how Makefile.common builds exactly one of them.
+    - name: Compile all sources with cl.exe (scalar blitter SIMD)
       shell: cmd
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
-          /D__LIBRETRO__ /DINLINE="_inline" ^
+          /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
           libretro.c ^
           src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
@@ -339,9 +387,29 @@ jobs:
           src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
-          src\tom\blitter_simd_scalar.c ^
+          src\tom\blitter_simd_scalar.c
+
+    # The shape Makefile.common now selects for windows_msvc2015/2017
+    # x64 and x86: blitter.c inlines blitter_simd_sse2.h, so cl.exe
+    # compiles <emmintrin.h> intrinsics inside blitter.c itself -- not
+    # just inside the lint-exempt blitter_simd_sse2.c. That is the whole
+    # risk of enabling SSE2 for MSVC, and this step is what verifies it.
+    # Objects go to a subdir so they don't collide with the run above.
+    #
+    # No trailing `echo` in either step: `shell: cmd` has no `set -e`,
+    # so the step's exit code is the LAST command's. A closing echo
+    # would return 0 over any cl.exe failure and make this whole job
+    # green-but-inert. Let cl.exe be the last command.
+    - name: Compile blitter with cl.exe (SSE2 blitter SIMD)
+      shell: cmd
+      run: |
+        mkdir msvc-sse2
+        cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
+          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SSE2 ^
+          /Fomsvc-sse2\ ^
+          src\tom\blitter.c ^
           src\tom\blitter_simd_sse2.c
-        echo MSVC compilation check passed
 
   vita-build:
     name: build-PS Vita
@@ -496,8 +564,17 @@ jobs:
           # --diff-filter=d drops deleted paths: clang-tidy cannot lint a
           # file that no longer exists and fails the whole job with
           # "no input files" / "expected exactly one compiler job".
+          #
+          # blitter_simd_<arch>.{c,h} are all excluded. Only one arch is
+          # ever built, so the other two .c files aren't in
+          # compile_commands.json; and the .h files are include-only
+          # fragments that refuse to be compiled standalone (they
+          # #error unless blitter_simd.h pulled them in), so linting one
+          # directly is guaranteed to fail. They are covered instead by
+          # c89-lint's per-arch pass, which compiles them the way the
+          # build does.
           FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
-            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2)\.c$)' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2|scalar)\.(c|h)$)' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."

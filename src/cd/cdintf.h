@@ -77,6 +77,16 @@ uint8_t CDIntfGetTrackSession(uint32_t track);
 // (Jaguar CD game data is in session 2; session 1 is audio)
 bool CDIntfIsSession2Sector(uint32_t sector);
 
+/* Q-channel subcode position lookup (VLM / audio-CD, issue #291): for a
+ * disc-image LBA, return the containing track's number, the Red Book
+ * index (0 = INDEX 00 pregap, 1 = program area), the track-relative LBA
+ * (distance to/from INDEX 01: counts DOWN to the index in the pregap,
+ * UP from it in the program area) and whether the track is a data track
+ * (Q CONTROL bit 2).  Returns false when the LBA falls in no track
+ * (inter-session gap / past the last track). */
+bool CDIntfGetQPosition(uint32_t lba, uint32_t *trackNum, uint32_t *idx,
+                        uint32_t *relLBA, bool *isData);
+
 // True if the most recent CDIntfReadBlock() landed in an inter-session gap
 // (typically the BIOS's pregap authentication read).  Consumed by cdrom.c
 // to instrument the auth-fail STOP path and identify the BIOS's auth branch.

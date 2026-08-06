@@ -39,19 +39,58 @@
 #endif
 
 // Timing constants for seek and FIFO simulation (in half-line ticks, ~31.8μs each)
-// Per MiSTer FPGA: seek has a multi-tier delay (30-315ms), FIFO fills at I2S rate.
-// These values are shortened for software emulation but preserve the required ordering:
+// SEEK_DELAY_TICKS is a fixed ORDERING delay only; the actual seek-time
+// magnitude is the distance-dependent term below (CDROMSeekDistanceTicks,
+// calibrated to a reference capture -- see that block).  FIFO fills at I2S
+// rate.  The ordering this fixed delay preserves:
 // seek response MUST arrive via interrupt AFTER DSA_tx returns, and FIFO MUST NOT
 // be ready during the DSARX phase (or the 68K handler sends STOP).
 // The BIOS polls BUTCH+2 once after $12xx (no response expected yet), then sends
 // STOP. On real hardware the seek continues internally despite STOP — the drive
-// completes the seek and queues the $0100 response 30-300ms later. The BIOS's
+// completes the seek and queues the $0100 response once the sled arrives
+// (distance-dependent; see CDROMSeekDistanceTicks below). The BIOS's
 // main loop (or DSP) detects the seek completion and initiates data transfer.
 // STOP must NOT cancel the seek delay. Value chosen to be short enough to complete
 // within a few frames but long enough to occur AFTER the BIOS's single poll.
 #define SEEK_DELAY_TICKS     100  // ~3.2ms — completes after BIOS poll + STOP
 #define FIFO_FILL_TICKS      8    // ~254μs before FIFO half-full after play starts
 #define FIFO_DRAIN_READS     16   // 16 word-reads = 8 GPU longword loads = 32 bytes
+
+/* Distance-dependent seek term (reference parity, #297).
+ *
+ * On top of the fixed SEEK_DELAY_TICKS ordering delay above, a real seek
+ * costs time proportional to how far the sled travels.  The old "30-315ms
+ * multi-tier" comment was unsourced and its top end is REFUTED by
+ * measurement: a BigPEmu reference capture of Dragon's Lair's death branch
+ * (2026-08-05, issue #297) shows 558 ms ~= 33.4 fields of black for a
+ * near-full-stroke seek where we showed ~30 fields — i.e. the reference
+ * charges roughly +60 ms on ~138k sectors, tens of ms, not hundreds.
+ *
+ * Model: linear in sector distance, one extra halfline tick (31.78 us)
+ * per SEEK_SECTORS_PER_TICK sectors.  Calibration: the measured branch
+ * seek travels 137,936 sectors (head LBA 16125 -> 154061); 137,936 / 72
+ * = 1,915 ticks = 60.9 ms = 3.65 fields, moving our 30-field gap to
+ * ~33.7 — matching the 33.4-field reference within a field.  Short
+ * streaming seeks (339-428 sectors) add 4-5 ticks (~0.15 ms): nothing.
+ * Boot seeks (15k-23k sectors from the parked head at LBA 0) add 7-10 ms,
+ * which real drives also pay.  No tiers — there is no data for tiers.
+ *
+ * This is REFERENCE PARITY against another emulator, not silicon ground
+ * truth: no hardware capture of Jaguar CD seek time exists yet (the JTRM
+ * CD-ROM manual gives landing tolerance, not access time).  See
+ * docs/fmv-drift-notes.md §11.
+ *
+ * Deliberately NOT applied to the redundant-seek path ($12xx to the block
+ * already playing): that path must not disturb the in-flight stream
+ * (#306/#307), and a no-op Goto moves no sled. */
+#define SEEK_SECTORS_PER_TICK 72
+
+uint32_t CDROMSeekDistanceTicks(uint32_t fromLBA, uint32_t toLBA)
+{
+   uint32_t dist = (toLBA >= fromLBA) ? (toLBA - fromLBA)
+                                      : (fromLBA - toLBA);
+   return dist / SEEK_SECTORS_PER_TICK;
+}
 
 /* Refill pacing: the real drive streams data at double-speed CD-DA rate,
  * 150 sectors/s x 2352 bytes = 352,800 B/s (= the 2x I2S rate).  One
@@ -299,6 +338,47 @@ static uint32_t cdBufPtr = 2352;
 static uint8_t ssiBuf[2352 + 96];
 static uint32_t ssiBufPtr = 2352;
 static uint32_t ssiBlock = 0;
+
+/* --- Q-channel subcode serializer (VLM / audio-CD, issue #291) ---------
+ *
+ * BUTCH deserializes the disc's Q subcode channel and presents it one
+ * byte at a time through SUBDATA.  The consumer contract was recovered
+ * at runtime from the VLM's own DSP handler ($F1BD42..$F1BE02, retail
+ * CD BIOS, docs/vlm-audio-cd-plan.md §8): the DSP polls the low word of
+ * SUBDATA ($DFFF1A, LOADW) every ~1 ms and expects
+ *
+ *      bits 15..8   the current Q-channel byte
+ *      bit  4       "valid" flag
+ *      bits  3..0   byte sequence number 0..11 within the Q frame
+ *
+ * i.e. word = (qbyte << 8) | $10 | seq.  It assembles the 12 bytes of a
+ * frame in sequence order, runs CRC-16/CCITT (poly $1021, table at DSP
+ * $F1C400) across ALL 12 and requires the residual $1D0F — the standard
+ * residue of a Red Book Q frame whose stored CRC is inverted.  On a
+ * CRC-valid frame it copies the packed Q data to $F1C000+ADR*16 (the
+ * 68K reads track/time for the on-screen readout from there) and loads
+ * the first Q word into alternate-bank R13, whose bit 30 — Q CONTROL
+ * bit 2, the "data track" flag — gates the VLM's audio pass-through and
+ * FFT input.  Audio control nibble -> bit 30 clear -> unmuted; the $40000000
+ * the VLM boots with means "assume data track, stay muted".
+ *
+ * The serializer is clocked off the SSI sample stream: 588 stereo
+ * samples per sector / 12 Q bytes = one byte every 49 samples, so Q
+ * position stays exactly in step with the audio actually playing.  Data
+ * only — no BUTCH bit 2/3 (subcode frame / time-match) interrupt is
+ * ever raised, and reads while disarmed/stopped fall through to the old
+ * RAM-backed zeros.
+ *
+ * None of this state is serialized: subQArmed is re-derived from the
+ * saved SBCNTRL register in CDROMStateLoad(), and the rest resyncs
+ * within one sector (~13 ms) because the DSP's collector simply ignores
+ * sequence numbers it is not expecting. */
+#define SUBQ_SAMPLES_PER_BYTE 49
+static uint8_t subQFrame[12];
+static uint32_t subQSeq = 0;         /* current byte within the frame, 0..11 */
+static uint32_t subQSampleCnt = 0;   /* SSI samples since last byte boundary */
+static bool subQArmed = false;       /* nonzero SBCNTRL low-word write seen */
+static bool subQValid = false;       /* subQFrame describes a real position */
 
 // NM93C14 EEPROM: 64 x 16-bit words (128 bytes)
 // Exposed so libretro.c can pack/unpack it into the .srm save buffer.
@@ -800,6 +880,10 @@ void CDROMReset(void)
    fifoRefillAccum = 0;
    cdDriveSpeed = CD_SPEED_DOUBLE;   /* power-on default, see the constant */
    cdPrevShouldIRQ = false;
+   subQSeq = 0;
+   subQSampleCnt = 0;
+   subQArmed = false;
+   subQValid = false;
    dsaQueueHead = 0;
    dsaQueueTail = 0;
    dsaQueueCount = 0;
@@ -957,7 +1041,7 @@ void BUTCHExec(uint32_t cycles)
    if (dsaResponseDelay > 0)
    {
       dsaResponseDelay--;
-      if (dsaResponseDelay == 0 && dsaQueueCount > 0)
+      if (dsaResponseDelay == 0 && (dsaQueueCount > 0 || isMultiWordResponse))
          dsaResponseReady = true;
    }
 
@@ -1148,8 +1232,15 @@ uint16_t CDROMReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
        * after another serial-word delay: the ack clears the interrupt
        * latch, but the drive MCU still has data to hand over, and on real
        * hardware bit 13 (rec buffer full) rises again when the next word
-       * lands in the receive buffer. */
-      if (dsaQueueCount > 0 && dsaResponseDelay <= 0)
+       * lands in the receive buffer.
+       *
+       * isMultiWordResponse ($03nn / $14nn TOC reads) needs the same
+       * re-arm: those words are synthesized on demand from the disc layout
+       * rather than pushed onto dsaQueue, so the queue is empty and the
+       * ack would otherwise leave bit 13 low forever after word 1 -- the
+       * audio-CD stall, with the BIOS re-reading BUTCH+2 forever while the
+       * 68K cycles a tight loop at $050464-$050484. */
+      if ((dsaQueueCount > 0 || isMultiWordResponse) && dsaResponseDelay <= 0)
          dsaResponseDelay = DSA_RESPONSE_DELAY_TICKS;
    }
    else if (offset == I2CNTRL || offset == I2CNTRL + 2)
@@ -1228,12 +1319,22 @@ TOC: 2 10 00  a 00:00:00 00 49:50:06   <-- Track #10
 TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
 */
 
-         /* $0300 short TOC: BIOS polls DS_DATA for $03xx responses
-          * (echoes the command prefix).  Each of the 5 response words has
-          * high byte $03 and low byte = session info value.  The BIOS
-          * checks bit 0 of each word: if set, more data follows; if clear,
-          * TOC transfer is complete.  After all 5 data words, return $0300
-          * as end-of-data marker (bit 0 clear). */
+         /* $03nn Read session TOC: five data words, each TAGGED with its own
+          * response opcode in the high byte -- the drive does NOT echo the
+          * $03 command prefix (MiSTer butch.v DSA table, mirrored in
+          * test/mister_ground_truth.h):
+          *
+          *   $20nn TOC_MIN_TRK   first track of the session
+          *   $21nn TOC_MAX_TRK   last  track of the session
+          *   $22nn TOC_LO_MIN    lead-out absolute minutes
+          *   $23nn TOC_LO_SEC    lead-out absolute seconds
+          *   $24nn TOC_LO_FRM    lead-out absolute frames
+          *
+          * The sixth read yields the $0400 end-of-response terminator, the
+          * same word every other multi-word DSA response ends on.  We used
+          * to answer $03nn for all five and never terminate; the CD BIOS
+          * discarded the lot and spun forever in its DSA read loop, which
+          * is why an audio disc never reached the CD player / VLM. */
          if (cdPtr < 5)
          {
             data = CDIntfGetSessionInfo(cdCmd & 0xFF, cdPtr);
@@ -1243,13 +1344,13 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
                data = 0x0400;
             else
             {
-               data = 0x0300 | (data & 0xFF);
+               data = (uint16_t)(((0x20 + cdPtr) << 8) | (data & 0xFF));
                cdPtr++;
             }
          }
          else
          {
-            data = 0x0300;  /* end-of-data: high byte $03, bit 0 clear */
+            data = 0x0400;  /* end-of-response terminator */
          }
       }
       // Seek: only $12xx (Goto Frame) generates a response ($0100 = Found).
@@ -1361,11 +1462,9 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          dsaResponseReady = false;
          isMultiWordResponse = false;
       }
-      else if ((cdCmd & 0xFF00) == 0x0300 && cdPtr >= 5)
-      {
-         dsaResponseReady = false;  // Session TOC: 5 data words delivered
-         isMultiWordResponse = false;
-      }
+      /* Session TOC ($03nn) needs no explicit end condition: after the five
+       * $20..$24 data words the next read yields the $0400 terminator, which
+       * the branch above clears on. */
       else if ((cdCmd & 0xFF00) == 0x1400 && trackNum > maxTrack)
       {
          dsaResponseReady = false;  // Full TOC: all tracks delivered
@@ -1465,10 +1564,24 @@ TOC: 2 10 00  b 00:00:00 00 54:26:17   <-- Track #11
          }
       }
    }
+   else if (offset == SUBDATA + 2 && subQArmed && subQValid &&
+            cdPlaying && seekDelay <= 0)
+   {
+      /* Q-subcode serial window (see the serializer comment block near
+       * subQFrame): current Q byte in the high byte, bit 4 = valid,
+       * low nibble = byte sequence 0..11.  Reads never pop -- the
+       * consumer dedupes on the sequence tag, matching a latch the
+       * hardware refreshes as each byte deserializes.  Disarmed /
+       * stopped / seeking reads keep falling through to the RAM-backed
+       * zeros below, exactly the pre-#291 behavior. */
+      data = (uint16_t)(((uint16_t)subQFrame[subQSeq] << 8) |
+                        0x0010 | (subQSeq & 0x0F));
+   }
    else
       data = GET16(cdRam, offset);
 
-   /* SUBCODE-DIAG: reads of the (unimplemented) subcode registers. */
+   /* SUBCODE-DIAG: subcode register reads (SUBDATA low word is live when
+    * the serializer is armed and playing; everything else is RAM-backed). */
    if (offset >= SBCNTRL && offset < SB_TIME + 4)
    {
       static uint32_t subReads = 0;
@@ -1515,6 +1628,18 @@ void CDROMWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
 
 void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 {
+   /* $12xx (Goto Frame) redundancy decision.  A redundant Goto is handled in
+    * two places below -- the response block queues Found, the side-effect
+    * block must leave the stream alone -- and the decision has to be made
+    * ONCE, here, rather than re-tested in each.  Re-testing cannot work: the
+    * response block ends in DSAQueuePush(0x0100) (the Philia fix), which
+    * leaves dsaQueueCount == 1, so an identical guard in the side-effect
+    * block can never match on a redundant seek.  It fell through to the
+    * full-seek path and rewound both heads to the start of the sector being
+    * streamed -- cdBufPtr back to 2 and the SSI audio head to 0, up to 2352
+    * bytes (~13 ms) of replayed CD-DA.  See #306. */
+   bool seekRedundant = false;
+
    offset &= 0xFF;
 
    // BUTCH+2 (low word of ICR): only enable bits (0-6) are writable.
@@ -1560,8 +1685,8 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    }
 
    /* SUBCODE-DIAG: any traffic on the subcode registers (SBCNTRL $14,
-    * SUBDATA $18, SUBDATB $1C, SB_TIME $20) -- currently RAM-backed
-    * no-ops in this emulator. */
+    * SUBDATA $18, SUBDATB $1C, SB_TIME $20).  SBCNTRL's low word arms
+    * the Q serializer below; the rest stay RAM-backed no-ops. */
    if (offset >= SBCNTRL && offset < SB_TIME + 4)
    {
       static uint32_t subWrites = 0;
@@ -1572,6 +1697,17 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
                  (offset >= SUBDATB) ? "SUBDATB" :
                  (offset >= SUBDATA) ? "SUBDATA" : "SBCNTRL",
                  offset & 3, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+   }
+
+   /* Any nonzero SBCNTRL low-word write arms Q-subcode capture (the VLM
+    * writes $00F2 there before Play); zero disarms.  The individual bits
+    * are undocumented, so nothing finer is decoded — see the serializer
+    * comment near subQFrame. */
+   if (offset == SBCNTRL + 2)
+   {
+      subQArmed = (data != 0);
+      if (!subQArmed)
+         subQValid = false;
    }
 
    /* I2CNTRL bit 4 (FIFO-not-empty) is read-only status ("When read: b4 -
@@ -1639,7 +1775,9 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          // Restarting seekDelay each time would keep dsaResponseReady cycling
          // true, preventing the GPU ISR from ever taking the FIFO data path
          // (bit 13 stays set, masking bit 9).
-         if (cdPlaying && newBlock == block && seekDelay <= 0 && dsaQueueCount == 0)
+         seekRedundant = (cdPlaying && newBlock == block && seekDelay <= 0 &&
+                          dsaQueueCount == 0);
+         if (seekRedundant)
          {
             CD_LOG("Skipping redundant seek to block %u (already playing)\n", block);
             /* The drive still answers a no-op Goto with Found ($0100) —
@@ -1663,7 +1801,21 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             CDTracePush(CD_TRACE_SEEK_START, data, newBlock);
             dsaResponseReady = false;
             isMultiWordResponse = false;
-            seekDelay = SEEK_DELAY_TICKS;
+            /* Base ordering delay + distance term (see SEEK_SECTORS_PER_TICK
+             * above).  `block` still holds the current head position here —
+             * the position block below updates it.  (An out-of-range seek
+             * gets redirected there; the distance term then overestimates
+             * by the redirect delta, which only affects a pathological
+             * seek that was already being rewritten.) */
+            seekDelay = SEEK_DELAY_TICKS
+                      + (int32_t)CDROMSeekDistanceTicks(block, newBlock);
+            /* Q position moves with the head: restart the frame at the
+             * seek target (rebuilt from the new ssiBlock on the first
+             * streamed sample).  A redundant seek leaves it alone, same
+             * as the stream itself. */
+            subQSeq = 0;
+            subQSampleCnt = 0;
+            subQValid = false;
          }
       }
       else if ((data & 0xFF00) == 0x1000 || (data & 0xFF00) == 0x1100)
@@ -1785,8 +1937,11 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          int32_t absBlock = (((min * 60) + sec) * 75) + newFrm;
          uint32_t newBlock = (absBlock >= 150) ? (uint32_t)(absBlock - 150) : 0;
 
-         // Skip redundant seek (same guard as the seekDelay handler above)
-         if (cdPlaying && newBlock == block && seekDelay <= 0 && dsaQueueCount == 0)
+         /* Skip redundant seek.  Consults the decision the response block
+          * already made (see seekRedundant at the top of this function);
+          * re-testing the guard here would always fail, because that block's
+          * DSAQueuePush(0x0100) has since made dsaQueueCount non-zero. */
+         if (seekRedundant)
          {
             frm = newFrm;
             // Don't re-read block, don't reset cdBufPtr — data is already flowing
@@ -1837,7 +1992,7 @@ void CDROMWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
             if (diag_firstSeekBlock == 0xFFFFFFFFu)
                diag_firstSeekBlock = block;
             CD_LOG("Seek started: block=%u (MSF %02u:%02u:%02u), delay=%d ticks\n",
-                   block, min, sec, frm, SEEK_DELAY_TICKS);
+                   block, min, sec, frm, seekDelay);
          }
       }
       else if ((data & 0xFF00) == 0x1500)			// Set Mode
@@ -2091,6 +2246,59 @@ bool ButchIsReadyToSend(void)
 //
 static uint32_t ssiXmitCount = 0;
 
+/* CRC-16/CCITT (poly $1021, init 0), bitwise — 10 bytes once per sector
+ * is far too cold to justify a table.  Matches the table-driven update
+ * in the VLM's DSP handler ($F1BD68: crc = (crc<<8) ^ tbl[(crc>>8) ^ b]). */
+static uint16_t SubQCRC16(const uint8_t *data, uint32_t len)
+{
+   uint16_t crc = 0;
+   uint32_t i, b;
+   for (i = 0; i < len; i++)
+   {
+      crc ^= (uint16_t)((uint16_t)data[i] << 8);
+      for (b = 0; b < 8; b++)
+         crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021)
+                              : (uint16_t)(crc << 1);
+   }
+   return crc;
+}
+
+static uint8_t SubQBCD(uint32_t v)
+{
+   return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+/* Rebuild subQFrame for the sector the SSI head is currently streaming
+ * (ssiBlock - 1: the head buffers a sector, then pre-increments).  Mode-1
+ * (ADR 1) position frame, all BCD, CRC stored inverted per Red Book. */
+static void CDROMBuildSubQ(void)
+{
+   uint32_t lba, trk, idx, rel, abs_;
+   bool isData;
+   uint16_t crc;
+
+   subQValid = false;
+   lba = (ssiBlock > 0) ? ssiBlock - 1 : 0;
+   if (!CDIntfGetQPosition(lba, &trk, &idx, &rel, &isData))
+      return;
+
+   abs_ = lba + 150;                              /* absolute time offset */
+   subQFrame[0] = (uint8_t)(isData ? 0x41 : 0x01); /* CONTROL/ADR */
+   subQFrame[1] = SubQBCD(trk);
+   subQFrame[2] = SubQBCD(idx);
+   subQFrame[3] = SubQBCD(rel / 4500);            /* MIN (track-relative) */
+   subQFrame[4] = SubQBCD((rel / 75) % 60);       /* SEC */
+   subQFrame[5] = SubQBCD(rel % 75);              /* FRAME */
+   subQFrame[6] = 0;                              /* ZERO */
+   subQFrame[7] = SubQBCD(abs_ / 4500);           /* AMIN */
+   subQFrame[8] = SubQBCD((abs_ / 75) % 60);      /* ASEC */
+   subQFrame[9] = SubQBCD(abs_ % 75);             /* AFRAME */
+   crc = (uint16_t)~SubQCRC16(subQFrame, 10);     /* stored inverted */
+   subQFrame[10] = (uint8_t)(crc >> 8);
+   subQFrame[11] = (uint8_t)(crc & 0xFF);
+   subQValid = true;
+}
+
 void SetSSIWordsXmittedFromButch(void)
 {
    ssiXmitCount++;
@@ -2139,6 +2347,32 @@ void SetSSIWordsXmittedFromButch(void)
       CDIntfReadBlock(ssiBlock, ssiBuf);
       ssiBlock++;
       ssiBufPtr = 0;
+   }
+
+   /* Q-subcode serializer: one Q byte per 49 streamed samples (588/12),
+    * so the Q position advances exactly with the audio.  Only clocked
+    * while real samples move -- pause/stop/seek freezes it with the
+    * stream (the gate above returned already). */
+   if (subQArmed)
+   {
+      /* A build can legitimately fail (LBA in an inter-session gap /
+       * virtual pregap, so CDIntfGetQPosition() declines).  subQSampleCnt
+       * is 0 on the first sample after arming and again at each byte
+       * boundary, so this retries at most once per byte period instead of
+       * re-running the whole frame build at 44.1 kHz. */
+      if (!subQValid && subQSampleCnt == 0)
+         CDROMBuildSubQ();
+      subQSampleCnt++;
+      if (subQSampleCnt >= SUBQ_SAMPLES_PER_BYTE)
+      {
+         subQSampleCnt = 0;
+         subQSeq++;
+         if (subQSeq >= 12)
+         {
+            subQSeq = 0;
+            CDROMBuildSubQ();
+         }
+      }
    }
 }
 
@@ -2555,6 +2789,13 @@ storew	TEMP,(r24)
 
 #include "state.h"
 
+/* Size of the two staging buffers (`static uint8_t cdBuf2[2532 + 96],
+ * cdBuf3[2532 + 96];`) that the pre-STATE_VERSION_CDROM_RESTRUCTURE CDROM
+ * chunk carried after `firstTime`.  The arrays were deleted with the
+ * unfinished BUTCH stub, so the legacy loader has to skip them by an
+ * explicit byte count rather than a sizeof. */
+#define CDROM_LEGACY_STAGING_BYTES ((size_t)((2532 + 96) * 2))
+
 size_t CDROMStateSave(uint8_t *buf)
 {
 	uint8_t *start = buf;
@@ -2627,18 +2868,63 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	STATE_LOAD_VAR(buf, txData);
 	STATE_LOAD_VAR(buf, rxDataBit);
 	STATE_LOAD_VAR(buf, firstTime);
-	STATE_LOAD_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
-	STATE_LOAD_VAR(buf, dsaResponseReady);
-	STATE_LOAD_VAR(buf, isMultiWordResponse);
-	STATE_LOAD_VAR(buf, txBufferEmpty);
-	STATE_LOAD_VAR(buf, cdPlaying);
-	STATE_LOAD_VAR(buf, seekDelay);
-	STATE_LOAD_VAR(buf, fifoDataReady);
-	STATE_LOAD_VAR(buf, fifoReadCount);
-	STATE_LOAD_VAR(buf, fifoFillDelay);
-	STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
-	STATE_LOAD_VAR(buf, ssiBufPtr);
-	STATE_LOAD_VAR(buf, ssiBlock);
+	/* Layout fork.  Everything above is common to every format version;
+	 * from here the pre-CD-support layout (STATE_VERSION_CDROM_RESTRUCTURE)
+	 * diverges completely.  Releases v2.2.0 (v1), v2.3.0/v2.3.1 (v2) and
+	 * v2.3.2 (v3) wrote two staging buffers here — cdBuf2 and cdBuf3, both
+	 * `uint8_t [2532 + 96]` — which the CD-support work removed and
+	 * replaced with the BUTCH/FIFO/DSA/SSI working set below.  Consuming
+	 * the new field list from an old blob would read 5256 bytes of stale
+	 * sector data as flags and then leave the cursor 2627 bytes short,
+	 * desyncing the Joystick, Memory Track and DAC chunks that follow.
+	 * Skip the dead buffers by their byte count (the arrays no longer
+	 * exist, so the size has to be spelled out) and start the drive from
+	 * the same idle state CDROMReset() establishes.  Those cores had no
+	 * working CD path — cdBuf2/cdBuf3 were only ever written by the
+	 * unfinished BUTCH stub — so nothing emulated is lost. */
+	if (stateVersion < STATE_VERSION_CDROM_RESTRUCTURE)
+	{
+		buf += CDROM_LEGACY_STAGING_BYTES;
+		/* Start the drive from the same clean idle state CDROMReset()
+		 * establishes.  The fields loaded above from the blob (cdRam,
+		 * cdBufPtr, etc.) come from cores that had no working CD path,
+		 * so any BIOS_OVRD or data-ready flag they carry is stale noise.
+		 * Overwrite all drive-state fields unconditionally; the one
+		 * exception is cdrom_eeprom_ram — persistent NVM backed by a
+		 * file on disk that an old blob has nothing to say about, so
+		 * leave whatever the session already loaded in place. */
+		memset(cdRam, 0x00, 0x100);
+		cdBufPtr            = 2352;
+		dsaResponseReady    = false;
+		isMultiWordResponse = false;
+		txBufferEmpty       = true;
+		cdPlaying           = false;
+		seekDelay           = 0;
+		fifoDataReady       = false;
+		fifoReadCount       = 0;
+		fifoFillDelay       = 0;
+		fifoRefillAccum     = 0;
+		cdPrevShouldIRQ     = false;
+		memset(ssiBuf, 0x00, sizeof(ssiBuf));
+		ssiBufPtr           = 2352;
+		ssiBlock            = 0;
+		cdTraceLastI2SEnable = -1;
+	}
+	else
+	{
+		STATE_LOAD_BUF(buf, cdrom_eeprom_ram, sizeof(cdrom_eeprom_ram));
+		STATE_LOAD_VAR(buf, dsaResponseReady);
+		STATE_LOAD_VAR(buf, isMultiWordResponse);
+		STATE_LOAD_VAR(buf, txBufferEmpty);
+		STATE_LOAD_VAR(buf, cdPlaying);
+		STATE_LOAD_VAR(buf, seekDelay);
+		STATE_LOAD_VAR(buf, fifoDataReady);
+		STATE_LOAD_VAR(buf, fifoReadCount);
+		STATE_LOAD_VAR(buf, fifoFillDelay);
+		STATE_LOAD_BUF(buf, ssiBuf, sizeof(ssiBuf));
+		STATE_LOAD_VAR(buf, ssiBufPtr);
+		STATE_LOAD_VAR(buf, ssiBlock);
+	}
 	/* v3 and older states predate the DSA response queue (see
 	 * STATE_VERSION_CDROM_DSA_QUEUE): leave those fields at a safe empty
 	 * state instead of consuming bytes the layout never carried. */
@@ -2674,6 +2960,16 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	}
 	else
 		cdDriveSpeed = CD_SPEED_DOUBLE;
+
+	/* Q-subcode serializer: nothing is serialized on purpose.  Arming is
+	 * re-derived from the SBCNTRL register saved inside cdRam above, and
+	 * the frame/sequence state resyncs within one sector of streaming --
+	 * the DSP-side collector ignores sequence numbers it is not
+	 * expecting, so a restart at seq 0 is invisible beyond ~13 ms. */
+	subQArmed = (GET16(cdRam, SBCNTRL + 2) != 0);
+	subQSeq = 0;
+	subQSampleCnt = 0;
+	subQValid = false;
 
 	return (size_t)(buf - start);
 }

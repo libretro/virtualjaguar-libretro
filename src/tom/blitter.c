@@ -1259,7 +1259,7 @@ void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
    sat = daddmode & 0x03;
    hicinh = ((daddmode & 0x03) == 0x03);
 
-   blitter_simd_ops.add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
+   blitter_simd_add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
 }
 
 static BLITTER_ALWAYS_INLINE
@@ -1376,7 +1376,7 @@ static BLITTER_ALWAYS_INLINE
 void DATA(uint64_t *wdata, uint8_t *dcomp, uint8_t *zcomp, bool *nowrite,
 	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
 	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t *patd, bool patdadd,
-	bool phrase_mode, uint64_t srcd, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
+	bool phrase_mode, uint64_t srcd, uint64_t srcd_cmp, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
 	bool bcompen, bool bkgwren, bool dcompen, uint8_t icount, uint8_t pixsize,
 	uint64_t *srcz, uint64_t dstz, uint32_t zinc)
 {
@@ -1424,7 +1424,7 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
 
 /*Lfu		:= LFU (lfu[0..1], srcdlo, srcdhi, dstdlo, dstdhi, lfu_func[0..3]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint64_t lfu = blitter_simd_ops.lfu(srcd, dstd, lfu_func);
+	uint64_t lfu = blitter_simd_lfu(srcd, dstd, lfu_func);
    bool mir_bit, mir_byte;
    uint16_t masku;
    uint8_t e_coarse, e_fine;
@@ -1457,7 +1457,10 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*dcomp = blitter_simd_ops.dcomp(*patd, srcd, dstd, cmpdst);
+	/* srcd_cmp is the source data as read from memory; srcd may carry the
+	 * SRCSHADE intensity offset.  The transparency comparison keys on the
+	 * unshaded pixel -- see the SRCSHADE block in BlitterMidsummer2. */
+	*dcomp = blitter_simd_dcomp(*patd, srcd_cmp, dstd, cmpdst);
 
 	/* Source-pixel transparency for DCOMPEN+!CMPDST.
 	 *
@@ -1500,7 +1503,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 		 * borrow -- e.g. s=0x0001_0000 spuriously flags byte 2 as zero
 		 * because the borrow chain propagates the wrong way.  The loop
 		 * is honest and compiles to predictable code on every target.) */
-		uint64_t s = srcd;
+		uint64_t s = srcd_cmp;
 		uint8_t zero_mask = 0;
 		unsigned i;
 		for (i = 0; i < 8; i++)
@@ -1523,7 +1526,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 with srcshift bits 4 & 5 selecting the start position
 */
 //So... basically what we have here is:
-	*zcomp = blitter_simd_ops.zcomp(*srcz, dstz, zmode);
+	*zcomp = blitter_simd_zcomp(*srcz, dstz, zmode);
 
 //TEMP, TO TEST IF ZCOMP IS THE CULPRIT...
 //Nope, this is NOT the problem...
@@ -1778,8 +1781,8 @@ Dat[40-47]	:= MX4 (dat[40-47], dstdhi{8-15},  ddathi{8-15},  dstzhi{8-15},  srcz
 Dat[48-55]	:= MX4 (dat[48-55], dstdhi{16-23}, ddathi{16-23}, dstzhi{16-23}, srczhi{16-23}, mask[13],  zed_selb[1]);
 Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srczhi{24-31}, mask[14],  zed_selb[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*wdata = blitter_simd_ops.byte_merge(ddat, dstd, mask);
-	*srcz = blitter_simd_ops.byte_merge(*srcz, dstz, mask);
+	*wdata = blitter_simd_byte_merge(ddat, dstd, mask);
+	*srcz = blitter_simd_byte_merge(*srcz, dstz, mask);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Data_enab[0-1]	:= BUF8 (data_enab[0-1], data_ena);
@@ -2266,7 +2269,7 @@ void BlitterMidsummer2(void)
                      false/*daddq_sel*/,
                      0/*data_sel*/, 0/*dbinh*/, pf_dend, pf_dstart, pf_dstd_local,
                      iinc, lfufunc, &patd, false/*patdadd*/,
-                     phrase_mode, 0/*srcd*/, false/*srcdread*/, false/*srczread*/,
+                     phrase_mode, 0/*srcd*/, 0/*srcd_cmp*/, false/*srcdread*/, false/*srczread*/,
                      false/*srcz2add*/, zmode,
                      bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
                      &srcz, dstz, zinc);
@@ -2585,7 +2588,7 @@ void BlitterMidsummer2(void)
                         false/*daddq_sel*/, 1/*data_sel=LFU*/, 0/*dbinh*/,
                         fc_dend, fc_dstart, dstd, iinc, lfufunc, &patd,
                         false/*patdadd*/,
-                        phrase_mode, fc_srcd, false/*srcdread*/, false/*srczread*/,
+                        phrase_mode, fc_srcd, fc_srcd/*srcd_cmp*/, false/*srcdread*/, false/*srczread*/,
                         false/*srcz2add*/, zmode,
                         false/*bcompen*/, bkgwren, false/*dcompen*/,
                         icount & 0x07, pixsize,
@@ -3034,6 +3037,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                uint16_t oldicount;
                uint8_t dstart = 0;
                uint8_t ppp;
+               uint64_t srcd_cmp;
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -3176,6 +3180,11 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //after the add?
                //Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
                //Let's try this:
+               /* The intensity offset belongs to the write data only.  DCOMPEN
+                * transparency keys on the source pixel as read from memory, so
+                * keep an unshaded copy for the comparator: shading a
+                * transparent (PATD-matching) pixel must not make it opaque. */
+               srcd_cmp = srcd;
                if (srcshade)
                {
                   uint16_t addq[4];
@@ -3223,7 +3232,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                DATA(&wdata, &dcomp, &zcomp, &winhibit,
                      true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
                      dend, dstart, dstd, iinc, lfufunc, &patd, patdadd,
-                     phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
+                     phrase_mode, srcd, srcd_cmp, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
                      bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
                      &srcz, dstz, zinc);
 

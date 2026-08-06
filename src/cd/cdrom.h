@@ -18,6 +18,15 @@ void CDROMReset(void);
 void CDROMSetHeadPosition(uint32_t lba);
 void CDROMDone(void);
 
+/* Distance-dependent seek cost in halfline ticks (31.78 us each): one tick
+ * per 72 sectors of head travel, calibrated against a BigPEmu reference
+ * capture of Dragon's Lair's death branch (#297) — ~138k sectors ~= 60.9 ms.
+ * Pure function, shared by the real-BIOS seek state machine (cdrom.c, on
+ * top of its fixed base delay) and the HLE CD_read stream arm
+ * (jagcd_hle.c, which otherwise has no seek at all) so both boot modes
+ * land the same branch gap. */
+uint32_t CDROMSeekDistanceTicks(uint32_t fromLBA, uint32_t toLBA);
+
 void BUTCHExec(uint32_t cycles);
 
 uint8_t CDROMReadByte(uint32_t offset, uint32_t who);

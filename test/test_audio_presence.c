@@ -120,6 +120,12 @@ static int16_t input_state(unsigned p, unsigned d, unsigned i, unsigned id)
 { (void)p; (void)d; (void)i; (void)id; return 0; }
 
 static int use_bios = 0;
+
+/* --option K=V pairs served through RETRO_ENVIRONMENT_GET_VARIABLE. */
+#define MAX_OPTS 8
+static const char *opt_keys[MAX_OPTS];
+static const char *opt_vals[MAX_OPTS];
+static int opt_count = 0;
 static int log_quiet = 0;
 
 static void log_printf(enum retro_log_level level, const char *fmt, ...)
@@ -158,10 +164,21 @@ static bool environment(unsigned cmd, void *data)
    case RETRO_ENVIRONMENT_GET_VARIABLE:
    {
       struct retro_variable *var = (struct retro_variable *)data;
+      int oi;
       if (var->key && strcmp(var->key, "virtualjaguar_bios") == 0)
       {
          var->value = use_bios ? "enabled" : "disabled";
          return true;
+      }
+      /* Generic --option K=V passthrough (added for the clock-scale
+       * suite rows, issue #314; same contract as the shared harness). */
+      for (oi = 0; oi < opt_count; oi++)
+      {
+         if (var->key && strcmp(var->key, opt_keys[oi]) == 0)
+         {
+            var->value = opt_vals[oi];
+            return true;
+         }
       }
       var->value = NULL;
       return false;
@@ -271,6 +288,20 @@ int main(int argc, char **argv)
       else if (!strcmp(a, "--rms-ceiling") && i + 1 < argc) rms_ceiling = atof(argv[++i]);
       else if (!strcmp(a, "--max-zero-run-pct") && i + 1 < argc) max_zero_run_pct = atof(argv[++i]);
       else if (!strcmp(a, "--label") && i + 1 < argc) label = argv[++i];
+      else if (!strcmp(a, "--option") && i + 1 < argc)
+      {
+         char *kv = argv[++i];
+         char *eq = strchr(kv, '=');
+         if (!eq || opt_count >= MAX_OPTS)
+         {
+            fprintf(stderr, "Bad or excess --option (want K=V): %s\n", kv);
+            return 2;
+         }
+         *eq = '\0';
+         opt_keys[opt_count] = kv;
+         opt_vals[opt_count] = eq + 1;
+         opt_count++;
+      }
       else
       {
          fprintf(stderr, "Unknown arg: %s\n", a);
@@ -353,9 +384,15 @@ int main(int argc, char **argv)
       zero_run_pct = (unsigned)(frames_in_run / (double)active_window_frames * 100.0);
    }
 
+   /* The banner is printed even under --quiet, matching test_audio_clipping.
+    * --quiet is meant to suppress the core's log spam, not to hide which
+    * check just ran: with it suppressed, `make test` emitted a bare
+    * "PASS: audio is present..." line that named no title, so a reader could
+    * not tell which ROM (or whether any ROM) had been exercised. */
+   printf("\n=== Presence check: %s ===\n", label ? label : rom_path);
+
    if (!log_quiet)
    {
-      printf("\n=== Presence check: %s ===\n", label ? label : rom_path);
       printf("  ROM:    %s\n", rom_path);
       printf("  Frames: %u, Window: [%u, %u)\n",
              total_frames, WINDOW_START_FRAME, total_frames);

@@ -58,6 +58,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/joystick.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
+	$(CORE_DIR)/src/core/jaggd.c \
 	$(CORE_DIR)/src/core/nvmbios.c \
 	$(CORE_DIR)/src/core/vjag_memory.c \
 	$(CORE_DIR)/src/core/universalhdr.c \
@@ -108,6 +109,31 @@ ifneq (,$(filter MINGW64% MINGW32%,$(MSYSTEM)))
    BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
 endif
 
+# MSVC.  None of the matches above ever fire for these -- the platform
+# strings are windows_msvc*, ARCH is unset -- so every MSVC core used
+# to fall through to scalar.  x64 has SSE2 in the ABI baseline, and
+# MSVC 2015/2017 x86 already compiles to /arch:SSE2 by default, so
+# neither adds a runtime CPU requirement.
+#
+# Spelled out one platform at a time rather than matched with
+# findstring: several MSVC platform names must NOT land here.
+#   windows_msvc2017_*_arm, *_arm64  -- no x86 intrinsics at all
+#   xbox1_msvc2003                   -- Pentium III: SSE, but no SSE2
+#   windows_msvc2010_*,              -- C89-only C mode plus the
+#   windows_msvc2005_x86,               _MSC_VER < 1700 SSE2_SET64
+#   windows_msvc2003_x86                path; the msvc-check CI job
+#                                       runs VS2022 and cannot verify
+#                                       either, so they stay scalar.
+# No -msse2 for any of these -- cl.exe doesn't take it; see the flag
+# block below.
+MSVC_SSE2_PLATFORMS := \
+   windows_msvc2017_desktop_x64 windows_msvc2017_desktop_x86 \
+   windows_msvc2017_uwp_x64     windows_msvc2017_uwp_x86 \
+   windows_msvc2015_x64         windows_msvc2015_x86
+ifneq (,$(filter $(MSVC_SSE2_PLATFORMS),$(platform)))
+   BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_sse2.c
+endif
+
 # Native build fallback: auto-detect from host architecture, but only for
 # native-build platforms (unix/osx/win). Cross-compile targets (vita, ps3,
 # libnx, etc.) set platform explicitly and should not use host detection.
@@ -133,6 +159,23 @@ ifeq ($(BLITTER_SIMD_SRC),)
 endif
 
 SOURCES_C += $(BLITTER_SIMD_SRC)
+
+# Tell blitter_simd.h which implementation header to inline into
+# blitter.c.  This must agree with the .c file selected above; if it
+# doesn't, that .c fails to compile (duplicate definitions) instead of
+# quietly running one impl while the vtable test validates another.
+#
+# Kept in its own variable because jni/Android.mk builds its own flag
+# set from scratch (COREFLAGS) and never sees $(CFLAGS) -- it needs this
+# define and nothing else from here.
+ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/tom/blitter_simd_sse2.c)
+   BLITTER_SIMD_DEFINE := -DBLITTER_SIMD_SSE2
+else ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/tom/blitter_simd_neon.c)
+   BLITTER_SIMD_DEFINE := -DBLITTER_SIMD_NEON
+else
+   BLITTER_SIMD_DEFINE := -DBLITTER_SIMD_SCALAR
+endif
+CFLAGS += $(BLITTER_SIMD_DEFINE)
 
 # Add -msse2 flag for all GCC/Clang SSE2 builds. No-op on x86_64 (baseline),
 # required on i686 / gcc -m32. Skip for MSVC (uses /arch:SSE2, not -msse2).

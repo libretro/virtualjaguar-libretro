@@ -18,26 +18,50 @@ extern "C" {
 #endif
 
 /* Save state format identifier and version.
- * v4: CDROM chunk gained the DSA response queue + serial-delay counter.
+ * v1: original layout, written only by release v2.2.0 (savestate support
+ *     first shipped there; the bump to v2 shipped in v2.3.0).
+ * v2: DAC chunk gained the I2S resampler fields (i2sWritePos,
+ *     i2sWriteCount, i2sPhase, i2sRateRatio).
+ * v3: DAC chunk gained i2sNonZeroCount.
+ * v4: CDROM chunk restructured — the two 2628-byte staging buffers
+ *     (cdBuf2/cdBuf3) the pre-CD-support layout carried were dropped and
+ *     replaced by the BUTCH/FIFO/DSA/SSI working set, and the chunk gained
+ *     the DSA response queue + serial-delay counter.
  * v5: CDROM chunk gained the latched drive speed (DSA Set Mode $15nn).
  * v6: new UART chunk (JERRY async serial + jlink RX ring).
  * v7: Memory Track chunk gained the latched $80AAA8 override flag and
  *     the NVM BIOS dispatcher state (nvmbios.c); trailing bus-arbiter
  *     68K self-cost carry (symmetric DRAM timing).  One shared bump —
- *     all in-flight changes since the last release use v7. */
+ *     all in-flight changes since the last release use v7.
+ * v8: trailing Jaguar GameDrive chunk (bank pages + SPI mailbox engine,
+ *     jaggd.c).  One shared bump — all in-flight changes since the
+ *     v3.1.0 release use v8. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   7
+#define STATE_VERSION   8
 /* Oldest layout retro_unserialize still accepts.  States between
- * STATE_MIN_VERSION and STATE_VERSION load by skipping the fields added
- * after them (see DACStateLoad, CDROMStateLoad); STATE_VERSION is always
- * what we write. */
-#define STATE_MIN_VERSION 2
+ * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
+ * layout the header version names (see DACStateLoad, CDROMStateLoad);
+ * STATE_VERSION is always what we write.
+ *
+ * Released cores wrote exactly four versions: 1 (v2.2.0), 2 (v2.3.0 and
+ * v2.3.1), 3 (v2.3.2) and 7 (v3.0.0, v3.1.0).  Versions 4-6 existed only
+ * on develop/nightlies.  All four released layouts load (issue #268). */
+#define STATE_MIN_VERSION 1
 
 /* Per-field version gates.  A module loader that has to skip a field an
  * older layout did not carry compares the header version against the
  * constant naming that field, never a bare literal. */
+/* First version whose DAC block carries the I2S resampler fields
+ * (i2sWritePos, i2sWriteCount, i2sPhase, i2sRateRatio). */
+#define STATE_VERSION_DAC_I2S_RESAMPLER 2
 /* First version whose DAC block carries i2sNonZeroCount. */
 #define STATE_VERSION_DAC_I2S_NONZEROCOUNT 3
+/* First version whose CDROM block carries the post-CD-support working set
+ * (cdrom_eeprom_ram, the BUTCH/FIFO/DSA flags and the SSI head) in place
+ * of the two cdBuf2/cdBuf3 staging buffers the original layout carried.
+ * Every released core below this wrote the old shape; see
+ * CDROMStateLoad. */
+#define STATE_VERSION_CDROM_RESTRUCTURE 4
 /* First version whose CDROM block carries the DSA response queue and
  * serial-delay counter. */
 #define STATE_VERSION_CDROM_DSA_QUEUE 4
@@ -50,6 +74,23 @@ extern "C" {
 /* First version carrying the trailing bus-arbiter 68K carry (symmetric
  * DRAM self-cost). */
 #define STATE_VERSION_BUS_ARBITER 7
+/* First version whose DAC block carries the I2S hardware registers
+ * themselves (LTXD/RTXD/SCLK/SMODE at $F1A148-$F1A157, plus the dual
+ * read-side registers LRXD/RRXD/SSTAT).
+ *
+ * These sit in jagMemSpace, which no STATE_SAVE_BUF covers: the state
+ * saves jaguarMainRAM (the low 2 MB of jagMemSpace), tomRam8, and
+ * jerry_ram_8 — and jerry_ram_8 is a separate array in jerry.c, not the
+ * $F10000 window of jagMemSpace.  So every DAC register was restored as
+ * whatever the previous run happened to leave behind.  DACPrepareFrame
+ * seeds the resampler's interpolation endpoints from LTXD/RTXD, which
+ * made the first frame after a rollback differ (see
+ * test/tools/test_runahead_determinism.c). */
+#define STATE_VERSION_DAC_REGISTERS 8
+/* First version carrying the trailing Jaguar GameDrive chunk.  Older
+ * states load with the GD at its reset state (identity pages, write
+ * protect, idle SPI) — see JGDStateLoad / the caller's else branch. */
+#define STATE_VERSION_JAGGD 8
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

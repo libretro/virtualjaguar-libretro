@@ -1,0 +1,138 @@
+# Alien vs Predator (1994).jag -- reach Colonial Marine gameplay with the
+# shotgun equipped, for GitHub issue #267 (red background behind the shotgun
+# HUD icon on the accurate blitter).
+#
+# BIOS off (core default). Frames are absolute from boot.
+#
+# Timeline (measured on investigate/267-shotgun @ 888dfb6):
+#   ~780      main menu, "SELECT CHARACTER" already highlighted
+#   840       FIRE -> character-select carousel (starts on ALIEN)
+#   1140/1260 RIGHT twice -> ALIEN -> PREDATOR -> COLONIAL MARINE
+#   1400      FIRE -> confirm Marine
+#   1520-2000 FIRE through the briefing / "LOADING SIMULATION..."
+#   ~2100     in-game, unarmed
+#   2200+     seeded wander (gen_wander.py, seed 7) through the Security Brig
+#   ~10520    shotgun picked up; HUD slot 1 icon fades in
+#   ~10560+   accurate blitter shows a red backdrop behind that icon
+#             at x[249..298] y[62..79]; fast blitter does not
+#
+# The wander is a fixed script, not a solved route: it depends on the core
+# staying deterministic.  Re-verify the pickup frame if emulation timing
+# changes.  A save state taken after the pickup does NOT carry the artefact,
+# so drive it from boot with this script.
+840:b:10
+1140:right:6
+1260:right:6
+1400:b:10
+1520:b:10
+1640:b:10
+1760:b:10
+1880:b:10
+2000:b:10
+2200:up:120
+2360:left:30
+2410:up:90
+2570:left:20
+2610:up:150
+2770:left:10
+2800:a:8
+2830:up:120
+2990:left:15
+3025:a:8
+3055:up:120
+3215:left:45
+3280:a:8
+3310:up:90
+3470:left:45
+3535:up:90
+3695:left:10
+3725:up:90
+3885:right:30
+3935:a:8
+3965:up:90
+4125:right:45
+4190:up:90
+4350:left:45
+4415:up:90
+4575:right:10
+4605:up:90
+4765:left:45
+4830:a:8
+4860:up:150
+5020:right:20
+5060:up:120
+5220:right:20
+5260:a:8
+5290:up:90
+5450:left:10
+5480:up:150
+5640:right:20
+5680:up:120
+5840:left:10
+5870:up:90
+6030:right:15
+6065:up:120
+6225:left:10
+6255:up:150
+6415:right:20
+6455:up:150
+6615:right:45
+6680:up:90
+6840:left:20
+6880:up:150
+7040:left:10
+7070:up:120
+7230:right:20
+7270:up:150
+7430:right:10
+7460:up:120
+7620:left:45
+7685:a:8
+7715:up:90
+7875:left:20
+7915:a:8
+7945:up:90
+8105:right:30
+8155:up:120
+8315:left:15
+8350:up:150
+8510:right:15
+8545:up:150
+8705:right:30
+8755:up:150
+8915:right:15
+8950:a:8
+8980:up:90
+9140:left:15
+9175:up:90
+9335:right:45
+9400:a:8
+9430:up:120
+9590:left:15
+9625:up:120
+9785:right:15
+9820:up:150
+9980:left:30
+10030:up:150
+10190:right:30
+10240:up:90
+10400:right:30
+10450:a:8
+10480:up:90
+10640:left:30
+10690:a:8
+10720:up:120
+10880:left:10
+10910:a:8
+10940:up:90
+11100:left:20
+11140:up:90
+11300:left:45
+11365:up:150
+11525:right:20
+11565:up:120
+11725:left:10
+11755:up:120
+11915:right:30
+11965:up:90
+12125:left:20

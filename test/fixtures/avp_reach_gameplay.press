@@ -1,0 +1,29 @@
+# Alien vs Predator (1994).jag — reach sustained Alien first-person gameplay.
+# BIOS off (core default). Frames are absolute from boot.
+#
+# Timeline (measured on develop @ 4eab779):
+#   ~240-480  title art animates
+#   ~720      main menu (SELECT CHARACTER)
+#   ~900-1100 character select / confirm
+#   ~1140-1500 briefing ("LOADING SIMULATION... PRESS FIRE")
+#   ~1500+    in-game; hold d-pad for sustained motion
+
+780:b:10
+900:b:10
+1020:b:10
+1140:b:10
+1260:b:15
+1380:b:15
+1500:b:15
+1620:b:15
+1740:b:10
+1860:up:120
+1980:right:120
+2100:down:120
+2220:left:120
+2340:up:120
+2460:right:120
+2580:up:120
+2700:left:120
+2820:right:120
+2940:up:60

@@ -1173,6 +1173,61 @@ bool CDIntfIsSession2Sector(uint32_t sector)
    return false;
 }
 
+/* Q-channel subcode position lookup — see cdintf.h.  Track containment
+ * uses the same [startLBA, startLBA + lengthLBA) rule as
+ * CDIntfReadBlock() so the Q data always describes the sector actually
+ * being streamed. */
+bool CDIntfGetQPosition(uint32_t lba, uint32_t *trackNum, uint32_t *idx,
+                        uint32_t *relLBA, bool *isData)
+{
+   int i;
+   struct CDIntfTrack *track = NULL;
+
+   if (!disc.loaded)
+      return false;
+
+   for (i = (int)disc.numTracks - 1; i >= 0; i--)
+   {
+      uint32_t tStart = disc.tracks[i].startLBA;
+      uint32_t tEnd = tStart + disc.tracks[i].lengthLBA;
+      if (lba >= tStart && lba < tEnd)
+      {
+         track = &disc.tracks[i];
+         break;
+      }
+   }
+   if (!track)
+      return false;
+
+   if (trackNum)
+      *trackNum = track->number;
+   /* Q CONTROL bit 2 (data track).  track->type alone is not enough:
+    * Jaguar CD CUE sheets routinely mark the session-2 DATA track as
+    * AUDIO (the game data is mastered inside an audio-type track), so
+    * trusting the type would report a data track as audio -- and that
+    * is exactly the bit the CD player's VLM uses as its mute gate.
+    * Treat anything in session 2 as data regardless of declared type,
+    * matching CDIntfIsSession2Sector's reasoning. */
+   if (isData)
+      *isData = (track->type != CDINTF_TRACK_AUDIO) || (track->session == 2);
+   if (lba < track->dataLBA)
+   {
+      /* INDEX 00 pregap: relative time counts down to 0 at INDEX 01. */
+      if (idx)
+         *idx = 0;
+      if (relLBA)
+         *relLBA = track->dataLBA - lba;
+   }
+   else
+   {
+      if (idx)
+         *idx = 1;
+      if (relLBA)
+         *relLBA = lba - track->dataLBA;
+   }
+   return true;
+}
+
 // Returns session info for use by cdrom.c
 // Session numbering matches the DSA command operand (per MiSTer FPGA):
 //   Session 0 → disc.sessions[0] (first session, typically audio)
@@ -1428,19 +1483,69 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       swapped[i + 1] = raw[i];
    }
 
-   LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x6F (pre-swap): ");
-   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      LOG_DBG("%02X ", raw[i]);
-   LOG_DBG("\n");
-   LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x6F: ");
-   for (i = 0x40; i < 0x70 && i < (uint32_t)bytesRead; i++)
-      LOG_DBG("%02X ", swapped[i]);
-   LOG_DBG("\n");
+   /* One LOG_DBG per byte produced 48 separate log lines: the frontend's
+    * log callback prefixes and newline-terminates every call, so a
+    * partial-line idiom does not concatenate.  Build each dump with
+    * fixed indexing (no sprintf in a loop: the bounds are then obvious
+    * by construction and no format string is involved) and emit it as a
+    * single line. */
+   {
+      static const char hexd[] = "0123456789ABCDEF";
+      char rawhex[0x30 * 3 + 1];
+      char swphex[0x30 * 3 + 1];
+      uint32_t last = (0x70 < (uint32_t)bytesRead) ? 0x70 : (uint32_t)bytesRead;
+      uint32_t n = 0;
+
+      for (i = 0x40; i < last; i++, n += 3)
+      {
+         rawhex[n]     = hexd[(raw[i] >> 4) & 0x0F];
+         rawhex[n + 1] = hexd[raw[i] & 0x0F];
+         rawhex[n + 2] = ' ';
+         swphex[n]     = hexd[(swapped[i] >> 4) & 0x0F];
+         swphex[n + 1] = hexd[swapped[i] & 0x0F];
+         swphex[n + 2] = ' ';
+      }
+      rawhex[n] = '\0';
+      swphex[n] = '\0';
+
+      LOG_DBG("[CD-BOOTSTUB] Raw bytes 0x40-0x%02X (pre-swap): %s\n",
+              (unsigned)(last ? last - 1 : 0), rawhex);
+      LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x%02X: %s\n",
+              (unsigned)(last ? last - 1 : 0), swphex);
+   }
    LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
 
    if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
    {
-      LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN\n");
+      uint32_t matched;
+      uint32_t all_zero;
+      uint32_t j;
+
+      matched = 0;
+      all_zero = 1;
+      for (j = 0; j < (uint32_t)sizeof(MAGIC); j++)
+      {
+         if (swapped[0x42 + j] == MAGIC[j])
+            matched++;
+         if (swapped[0x42 + j] != 0)
+            all_zero = 0;
+      }
+
+      if (all_zero)
+      {
+         /* Bad CDI V2 rips: boot header region is zeros in the file itself.
+          * No offset fix recovers absent data - refuse with an actionable
+          * message so users stop re-filing this as an unsupported format. */
+         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled at +0x42 - "
+                 "this image is an incomplete / bad rip, not an unsupported "
+                 "format\n");
+      }
+      else
+      {
+         LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
+                 "(matched %u/%u bytes)\n",
+                 (unsigned)matched, (unsigned)sizeof(MAGIC));
+      }
       return false;
    }
 

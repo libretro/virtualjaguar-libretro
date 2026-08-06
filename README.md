@@ -1,6 +1,6 @@
-# Virtual Jaguar libretro
+# Virtual Jaguar libretro — Atari Jaguar & Jaguar CD emulator
 
-Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) Atari Jaguar emulator to the [libretro](https://www.libretro.com/) API.
+This is the actively maintained **Atari Jaguar and Jaguar CD emulator** for [libretro](https://www.libretro.com/) / RetroArch. It continues the Virtual Jaguar project, extensively rewritten and developed here: Jaguar CD support, an HLE BIOS, netplay link cable, RetroAchievements, savestates/run-ahead, and a hardware-accuracy program measured against the Jaguar Technical Reference Manual.
 
 [![C/C++ CI](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml)
 
@@ -10,10 +10,13 @@ Port of the [Virtual Jaguar](http://shamusworld.gotdns.org/git/virtualjaguar) At
 - Supports NTSC and PAL video modes
 - 2-player input with configurable numpad mapping
 - Fast and legacy blitter modes (the legacy/accurate path is SIMD-accelerated on SSE2 and NEON)
-- Optional BIOS boot sequence, plus an HLE BIOS so games can boot without a BIOS image
+- No BIOS files required: the Jaguar boot ROM and both Jaguar CD BIOSes are built into the core, with an HLE BIOS as the default boot path (see [BIOS](#bios))
 - Save state, run-ahead (deterministic serialization), SRAM/EEPROM via the libretro SRAM interface, cheat codes, and a memory map for RetroAchievements
 - Supported ROM formats: `.j64`, `.jag`, `.rom`, `.abs`, `.cof`, `.bin`, `.prg` (including inside ZIP archives), plus `.cue` and `.cdi` for Jaguar CD images, and conservative headerless raw homebrew loading
 - Network link play (JagLink / CatBox emulation): Doom deathmatch, AirCars, BattleSphere Gold — via RetroArch netplay, or a direct TCP link between frontends on socket-capable platforms ([setup guide](docs/netlink-user-guide.md))
+- Jaguar GameDrive (JagGD) cartridges: bank switching for images up to 16 MB, so GD-locked homebrew boots
+- Audio CDs play through the Jaguar CD player and its Virtual Light Machine visualizer (set **CD Boot Mode** to `Auto` or `Real BIOS` — audio-only discs have no session-2 boot stub for the HLE path)
+- Optional M68K / RISC clock-scale (overclock) core options for framerate-limited titles
 
 ## Recent improvements (libretro fork)
 
@@ -38,6 +41,41 @@ make platform=ios-arm64                         # Cross-compile (ios-arm64, osx,
 
 Output varies by platform: `.so` (Linux), `.dylib` (macOS), `.dll` (Windows).
 
+## BIOS
+
+**No BIOS files are required.** The Jaguar console boot ROM and both Jaguar CD
+BIOSes (retail and developer) are embedded in the core, so every boot mode
+works out of the box:
+
+- **Cartridges** — the `BIOS (Cartridges)` core option chooses between the
+  HLE BIOS (default: the core performs the boot setup itself, skipping the
+  boot animation) and the real boot ROM. The console boot ROM is always the
+  embedded copy; it is never loaded from disk.
+- **CD discs** — the `CD Boot Mode` core option chooses between the HLE CD
+  BIOS (default, recommended) and a real CD BIOS (`Real BIOS`, or `Auto`,
+  which currently also boots the real BIOS). In the real-BIOS modes the
+  `CD BIOS Type` option selects the retail or developer image.
+
+### Optional external CD BIOS override
+
+In the real-BIOS CD modes only (`CD Boot Mode` set to `Real BIOS` or
+`Auto`), a CD BIOS ROM file in the RetroArch `system`
+directory takes precedence over the embedded images — useful if you want to
+run a specific BIOS revision. The file must be exactly 256 KiB and can live
+directly in `system/` or in an `Atari - Jaguar/`, `Atari - Jaguar CD/`,
+`jaguar/`, or `jaguarcd/` sub-folder, under one of these names:
+
+| Type | Accepted filenames |
+| --- | --- |
+| Retail | `[BIOS] Atari Jaguar CD (World).j64` / `.rom` / `.bin` |
+| Developer | `[BIOS] Atari Jaguar Developer CD (World).j64` / `.rom` / `.bin` |
+| Generic | `jaguarcd_bios.bin`, `jagcd_bios.bin`, `jaguarcd.bin`, `jagcd.bin`, `Jaguar CD BIOS.rom`, `Jaguar CD BIOS.bin` |
+
+Selection is by filename only — the core does not verify which BIOS a file
+actually contains, so a mislabelled or corrupt file will boot to a black
+screen. If real-BIOS CD boots misbehave, remove or rename any CD BIOS files
+in `system/` to fall back to the known-good embedded images.
+
 ## Documentation
 
 - [Network play setup guide](docs/netlink-user-guide.md)
@@ -61,7 +99,7 @@ This project is built on the work of many contributors. See the [full list on Gi
 - SDL/Linux/Win32 port by Niels Wagenaar & Carwin Jones (SDLEMU).
 - Cleanups, GUI/Qt port, and ongoing upstream maintenance by James Hammons (Shamus).
 - libretro core port by libretro/RetroArch contributors.
-- libretro fork maintenance — Joseph Mattiello ([@JoeMatt](https://github.com/JoeMatt)).
+- Current maintainer — Joseph Mattiello ([@JoeMatt](https://github.com/JoeMatt)). This repository is where Virtual Jaguar development continues today.
 
 ## License
 

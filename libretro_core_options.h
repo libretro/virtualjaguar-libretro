@@ -170,6 +170,39 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_m68k_clock_scale",
+      "M68K Clock Scale (Overclock)",
+      NULL,
+      "Run the 68000 CPU at a multiple of its stock ~13.3 MHz. An enhancement lever, not an accuracy fix: overclocking can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that rely on stock CPU timing, and underclocking is for experimentation only. Bus/DRAM costs and all timers stay at stock speed. Leave at 1x unless a specific game benefits; bug reports are only valid at 1x.",
+      NULL,
+      "timing",
+      {
+         { "0.5x", NULL },
+         { "1x",   "1x (stock)" },
+         { "1.5x", NULL },
+         { "2x",   NULL },
+         { "3x",   NULL },
+         { NULL, NULL },
+      },
+      "1x"
+   },
+   {
+      "virtualjaguar_risc_clock_scale",
+      "RISC (GPU/DSP) Clock Scale (Overclock)",
+      NULL,
+      "Run the GPU and DSP RISC processors at a multiple of their stock ~26.6 MHz. An enhancement lever, not an accuracy fix: extra RISC cycles can lift GPU-bound framerates. Audio sample pacing (I2S/DAC) and all timers stay at stock speed, so audio does not pitch-shift -- the DSP simply gets more compute per sample. May break titles that rely on stock RISC timing. Leave at 1x unless a specific game benefits; bug reports are only valid at 1x.",
+      NULL,
+      "timing",
+      {
+         { "0.5x", NULL },
+         { "1x",   "1x (stock)" },
+         { "1.5x", NULL },
+         { "2x",   NULL },
+         { NULL, NULL },
+      },
+      "1x"
+   },
+   {
       "virtualjaguar_netlink",
       "Network Link (JagLink / CatBox)",
       NULL,
@@ -257,6 +290,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
+   },
+   {
+      "virtualjaguar_jgd",
+      "Jaguar GameDrive (Restart)",
+      NULL,
+      "Emulate the Jaguar GameDrive (JagGD) flash cartridge: its detection/install interface and 1 MB bank switching of up to 16 MB of cart SDRAM. 'Auto' turns it on only for ROM images larger than the 6 MB cartridge window. 'Enabled' forces it on for smaller images too, for GD-locked homebrew that refuses to boot without the cart (equivalent to BigPEmu's Force JGD). Without it, GD-locked titles hang at boot exactly as on a stock console.",
+      NULL,
+      "bios_boot",
+      {
+         { "auto",     "Auto (images over 6 MB)" },
+         { "disabled", NULL },
+         { "enabled",  "Enabled (force, for GD-locked images)" },
+         { NULL, NULL },
+      },
+      "auto"
    },
    {
       "virtualjaguar_pal",

@@ -6,6 +6,9 @@ ever change rows the core previously left unwritten, and must only ever
 change them to opaque black.  This checks that mechanically so a 46-title
 sweep does not depend on reading 46 screenshots.
 
+VJFBDIG3 adds a per-frame overscan column-band digest (columns x >= 320).
+Both inputs must be VJFBDIG3; VJFBDIG2 dumps exit 2 with a clear error.
+
 Checks, in order of severity:
   1. Geometry must match frame for frame.  Any difference is a hard failure.
   2. Per-frame audio digests must match.  A video-window change cannot alter
@@ -13,17 +16,20 @@ Checks, in order of severity:
   3. Every row whose hash differs must be >= the patched build's written-row
      extent for that frame, and its patched hash must equal the all-opaque-
      black hash for that width.  Anything else is a hard failure.
+  4. Overscan band_hash must match frame for frame (unless --ignore-band).
 
-Usage:  fb_row_diff.py <stock.bin> <patched.bin> [--label NAME] [--quiet]
+Usage:  fb_row_diff.py <stock.bin> <patched.bin> [--label NAME] [--ignore-band]
 Exit:   0 = identical or only expected differences, 1 = unexpected difference,
-        2 = usage/format error.
+        2 = usage/format error (missing, unreadable, truncated or wrong-magic
+        input included).
 """
 
 import struct
 import sys
 
-MAGIC = b"VJFBDIG2"
-HDR = struct.Struct("<4I")          # width, height, frame_hash, written_extent
+MAGIC = b"VJFBDIG3"
+HDR = struct.Struct("<4I")          # width, rows, frame_hash, written_extent
+BAND = struct.Struct("<6I")         # x0, width, hash, nonblack, first_x, first_y
 NO_EXTENT = 0xFFFFFFFF
 
 
@@ -49,7 +55,7 @@ def load(path):
     with open(path, "rb") as f:
         blob = f.read()
     if blob[:8] != MAGIC:
-        raise ValueError(f"{path}: bad magic {blob[:8]!r}")
+        raise ValueError(f"{path}: bad magic {blob[:8]!r} (need VJFBDIG3)")
     nvideo, naudio = struct.unpack_from("<2I", blob, 8)
     frames = []
     off = 16
@@ -58,7 +64,9 @@ def load(path):
         off += HDR.size
         rows = struct.unpack_from(f"<{h}I", blob, off)
         off += 4 * h
-        frames.append((w, h, fh, extent, rows))
+        band = BAND.unpack_from(blob, off)
+        off += BAND.size
+        frames.append((w, h, fh, extent, rows, band))
     audio = struct.unpack_from(f"<{naudio}I", blob, off) if naudio else ()
     return frames, list(audio)
 
@@ -66,12 +74,16 @@ def load(path):
 def main():
     argv = sys.argv[1:]
     label = "run"
+    ignore_band = False
     args = []
     i = 0
     while i < len(argv):
         if argv[i] == "--label" and i + 1 < len(argv):
             label = argv[i + 1]
             i += 2
+        elif argv[i] == "--ignore-band":
+            ignore_band = True
+            i += 1
         elif argv[i].startswith("--"):
             i += 1
         else:
@@ -81,28 +93,32 @@ def main():
         print(__doc__)
         return 2
 
-    frames_a, audio_a = load(args[0])
-    frames_b, audio_b = load(args[1])
+    try:
+        frames_a, audio_a = load(args[0])
+        frames_b, audio_b = load(args[1])
+    except OSError as e:
+        print(f"FAIL {label}: cannot read {e.filename or '?'}: "
+              f"{e.strerror or e}", file=sys.stderr)
+        return 2
+    except struct.error as e:
+        print(f"FAIL {label}: truncated or malformed digest: {e}",
+              file=sys.stderr)
+        return 2
+    except ValueError as e:
+        print(f"FAIL {label}: {e}", file=sys.stderr)
+        return 2
 
     unexpected = []
     changed_frames = 0
     changed_rows = set()
     first_changed_frame = None
+    band_changed_frames = 0
+    max_band_nonblack = 0
+    any_band_nonblack = False
 
-    # How many frames actually had a tail gap for the fix to act on, and how
-    # often the written-row extent moved.  Without these, "changed_frames=0"
-    # is ambiguous: it cannot distinguish "this title is unaffected" from
-    # "this run never reached an affected state", so a wall of OKs would
-    # imply coverage the sweep does not have.
-    #
-    # extent_changes also bounds a class the row check cannot see: the extent
-    # is read at end of frame, but rows are written across the frame, so a
-    # title that moves VDB mid-frame could have a legitimately-written row
-    # blanked using the new extent.  A title whose extent barely moves cannot
-    # be hitting that; one that churns every frame deserves a look.
-    gap_frames = sum(1 for (_w, h, _fh, ext, _r) in frames_b
+    gap_frames = sum(1 for (_w, h, _fh, ext, _r, _b) in frames_b
                      if ext != NO_EXTENT and ext < h)
-    extents = [ext for (_w, _h, _fh, ext, _r) in frames_b if ext != NO_EXTENT]
+    extents = [ext for (_w, _h, _fh, ext, _r, _b) in frames_b if ext != NO_EXTENT]
     extent_changes = sum(1 for a_, b_ in zip(extents, extents[1:]) if a_ != b_)
 
     if len(frames_a) != len(frames_b):
@@ -116,12 +132,26 @@ def main():
                                    f"first at audio frame {first}"))
 
     for n, (fa, fb_) in enumerate(zip(frames_a, frames_b)):
-        wa, ha, fha, _exta, rowsa = fa
-        wb, hb, fhb, extb, rowsb = fb_
+        wa, ha, fha, _exta, rowsa, banda = fa
+        wb, hb, fhb, extb, rowsb, bandb = fb_
+
+        if bandb[3] > max_band_nonblack:
+            max_band_nonblack = bandb[3]
+        if bandb[3] > 0:
+            any_band_nonblack = True
 
         if (wa, ha) != (wb, hb):
-            unexpected.append((n, -1, f"geometry {wa}x{ha} -> {wb}x{hb}"))
+            # "rows" is the stored row count (clamped), not presented height.
+            unexpected.append((n, -1, f"geometry w={wa} rows={ha} -> "
+                                      f"w={wb} rows={hb}"))
             continue
+
+        if banda[2] != bandb[2]:
+            band_changed_frames += 1
+            if not ignore_band:
+                unexpected.append((n, -1, f"overscan band_hash differs "
+                                          f"({banda[2]:08X} -> {bandb[2]:08X})"))
+
         if fha == fhb:
             continue
 
@@ -146,6 +176,9 @@ def main():
           f"gap_frames={gap_frames} extent_changes={extent_changes} "
           f"changed_frames={changed_frames} changed_rows={rows_desc} "
           f"first_changed_frame={first_changed_frame} "
+          f"band_changed_frames={band_changed_frames} "
+          f"max_band_nonblack={max_band_nonblack} "
+          f"band_nonblack_any={int(any_band_nonblack)} "
           f"unexpected={len(unexpected)}")
     for frame, row, why in unexpected[:10]:
         print(f"       frame {frame} row {row}: {why}")

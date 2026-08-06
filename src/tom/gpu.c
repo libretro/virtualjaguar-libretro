@@ -967,8 +967,14 @@ void GPUSyncToM68K(void)
    if (!GPU_RUNNING || (gpu_control & 0x08) || gpu_in_exec)
       return;
 
-   /* GPU is clocked at twice the 68000 (JTRM clock hierarchy). */
-   target = (int32_t)m68k_cycles_run() * 2;
+   /* GPU is clocked at twice the 68000 (JTRM clock hierarchy).  With
+    * clock scales (issue #314) both sides run in their own scaled cycle
+    * domain, so map through wall time: 68K cycles run are divided by the
+    * M68K scale to get wall position, then multiplied by 2 and the RISC
+    * scale to get the GPU's scaled position.  At 100/100 this is
+    * (run * 200) / 100 == run * 2, an exact identity. */
+   target = (int32_t)(((int64_t)m68k_cycles_run() * 2 * riscClockScalePct)
+                      / m68kClockScalePct);
    if (target > gpuSliceBudget)
       target = gpuSliceBudget;
 

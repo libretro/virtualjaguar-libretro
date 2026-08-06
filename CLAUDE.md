@@ -54,7 +54,8 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 - `src/core/` — orchestration, memory map, events, settings, files, cheats
 - `src/tom/` — video, GPU, OP, blitter (+ SIMD)
 - `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable, UART/netlink (`uart.c` + `jlink.c`, see `docs/netlink-design.md`)
-- `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA in `cdrom.c`, image loading (CUE/BIN, CHD, CDI) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
+- `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA/Q-subcode in `cdrom.c`, image loading (CUE/BIN, CDI — **no CHD**, removed during the CD overhaul; see issue #322) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
+- `src/core/jaggd.c` — Jaguar GameDrive: SPI mailbox at `$F16000`, embedded GDBIOS blob, 6×1MB page → 16-bank switching for images up to 16 MB (spec: `docs/jgd-interface-notes.md`)
 - `src/bios/` — embedded BIOS / boot stubs
 - `src/m68000/` — UAE 68K (machine-generated; treat as opaque)
 - `libretro-common/` — shared utility lib
@@ -156,7 +157,7 @@ When triaging "X crashes / hangs / goes to a black screen" reports, the user's R
 Required runs before declaring an audio change done:
 
 1. `make TEST_EXPORTS=1 test` — must exit 0. Both `test_audio_clipping` and `test_audio_presence` are part of the suite. The presence check on Iron Soldier 1 uses develop's measured envelope (`--rms-floor 200 --rms-ceiling 25000`). If your change moves IS1's RMS outside that band, you've changed audio behavior — verify it's intentional.
-2. Sanity-check that previously-clipping titles (Skyhammer, IS2) didn't go from "loud broken" to "silent broken". Skyhammer should still fail clipping until it's actually fixed; if it suddenly passes clipping but presence drops to silence, that's the masked-failure pattern.
+2. Sanity-check that previously-clipping titles (Skyhammer, IS2) didn't go from "loud broken" to "silent broken" — if one suddenly passes clipping but presence drops to silence, that's the masked-failure pattern. **Both are fixed as of 2026-08-05 and both assert clean**: the MMULT secondary-bank fix resolved them. Measured on `Skyhammer (World).j64`: 0.000% saturated, window RMS 3079.8, first audio at frame 171 — clean *and* not silent. (An older note here said Skyhammer "should still fail clipping"; that was stale, and it was inert anyway — the Makefile looked for `Skyhammer_(1999).jag`, which matches nothing, so the sentinel silently skipped while the suite reported exit 0.)
 3. **Verify in RetroArch on a real game.** Headless tests cannot tell "music plays" from "structured noise at the right RMS" or catch BIOS-mode crashes. Memory: PR #170's BIOS crash + HLE silence in Skyhammer were both invisible to the test suite.
 
 Do not relax thresholds in `test_audio_clipping.c` or `test_audio_presence.c` to make a PR pass. If a real fix makes a known-broken title legitimately quieter, that's a separate, deliberate baseline update — call it out in the commit, not as a side effect.
