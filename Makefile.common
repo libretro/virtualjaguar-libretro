@@ -135,6 +135,18 @@ endif
 
 SOURCES_C += $(BLITTER_SIMD_SRC)
 
+# Tell blitter_simd.h which implementation header to inline into
+# blitter.c.  This must agree with the .c file selected above; if it
+# doesn't, that .c fails to compile (duplicate definitions) instead of
+# quietly running one impl while the vtable test validates another.
+ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/tom/blitter_simd_sse2.c)
+   CFLAGS += -DBLITTER_SIMD_SSE2
+else ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/tom/blitter_simd_neon.c)
+   CFLAGS += -DBLITTER_SIMD_NEON
+else
+   CFLAGS += -DBLITTER_SIMD_SCALAR
+endif
+
 # Add -msse2 flag for all GCC/Clang SSE2 builds. No-op on x86_64 (baseline),
 # required on i686 / gcc -m32. Skip for MSVC (uses /arch:SSE2, not -msse2).
 ifeq ($(BLITTER_SIMD_SRC),$(CORE_DIR)/src/tom/blitter_simd_sse2.c)
