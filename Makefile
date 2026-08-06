@@ -834,7 +834,8 @@ clean:
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
-		test/tools/test_frame_timing test/.skipped-checks
+		test/tools/test_frame_timing test/tools/test_runahead_determinism \
+		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
 # memory application). Does not require a ROM or a working build of
@@ -879,6 +880,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
+		test/tools/test_runahead_determinism \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
@@ -1001,6 +1003,21 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			--option virtualjaguar_risc_clock_scale=2x; \
 	else \
 		bash scripts/test-skip.sh record "Iron Soldier 1 (audio presence, risc=2x)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
+	fi
+	@# Save-state determinism: replay the same frames after
+	@# retro_unserialize and require identical video AND audio.  This is
+	@# what backs `savestate_features = 3` in dist/info/ and the zero
+	@# serialization quirks reported from retro_load_game -- rewind,
+	@# netplay and run-ahead all assume a state is a complete snapshot.
+	@# It caught the DAC register file at F1A148-F1A157 being outside
+	@# every STATE_SAVE_BUF; yarc.j64 is in-tree so this never skips, and
+	@# a real music-on title is used when the private corpus is present.
+	./test/tools/test_runahead_determinism ./$(TARGET) test/roms/yarc.j64 --quiet
+	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Iron Soldier 1 (savestate determinism)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
 	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
@@ -1321,6 +1338,13 @@ test/test_jgd: test/test_jgd.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
+test/tools/test_runahead_determinism: test/tools/test_runahead_determinism.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_runahead_determinism.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
 test/test_frontend_pacing: test/test_frontend_pacing.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1436,7 +1460,8 @@ test/heap_search: test/heap_search.c
 tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
-.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi
+.PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
+        runahead-determinism
 endif
 
 lint:
@@ -1536,6 +1561,31 @@ frame-timing:
 		test/harness/harness.c test/harness/timing_probe.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 	./test/tools/test_frame_timing ./$(TARGET) "$(FRAME_TIMING_ROM)" $(FRAME_TIMING_FLAGS)
+
+# `make runahead-determinism` -- Save-state determinism check.  Saves a state,
+# replays the same frames after retro_unserialize, and asserts the video and
+# audio come back identical.  This is the evidence behind
+# `savestate_features = 3` in dist/info/, and behind reporting zero
+# serialization quirks: run-ahead, rewind and netplay all assume a state is a
+# complete snapshot.
+#
+# NOT part of `make test`: one assertion (audio_replay_identical) is a known
+# failure — a single frame of ~0.05% RMS drift on the first rollback.  See the
+# tool header for the full measurement and what has already been ruled out.
+#
+# Usage:
+#   make runahead-determinism RUNAHEAD_ROM="path/to/game.j64"
+#   make runahead-determinism RUNAHEAD_ROM="path/to/game.j64" RUNAHEAD_FLAGS="--warmup 600 --frames 300"
+RUNAHEAD_ROM   ?= test/roms/yarc.j64
+RUNAHEAD_FLAGS ?=
+runahead-determinism:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o test/tools/test_runahead_determinism \
+		test/tools/test_runahead_determinism.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+	./test/tools/test_runahead_determinism ./$(TARGET) "$(RUNAHEAD_ROM)" $(RUNAHEAD_FLAGS)
 
 # Automated visual + audio verification for CD titles: frame-motion timeline,
 # audio RMS, periodic screenshots (PPM).  See the tool header for usage.

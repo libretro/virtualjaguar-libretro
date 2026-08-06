@@ -74,6 +74,19 @@ extern "C" {
 /* First version carrying the trailing bus-arbiter 68K carry (symmetric
  * DRAM self-cost). */
 #define STATE_VERSION_BUS_ARBITER 7
+/* First version whose DAC block carries the I2S hardware registers
+ * themselves (LTXD/RTXD/SCLK/SMODE at $F1A148-$F1A157, plus the dual
+ * read-side registers LRXD/RRXD/SSTAT).
+ *
+ * These sit in jagMemSpace, which no STATE_SAVE_BUF covers: the state
+ * saves jaguarMainRAM (the low 2 MB of jagMemSpace), tomRam8, and
+ * jerry_ram_8 — and jerry_ram_8 is a separate array in jerry.c, not the
+ * $F10000 window of jagMemSpace.  So every DAC register was restored as
+ * whatever the previous run happened to leave behind.  DACPrepareFrame
+ * seeds the resampler's interpolation endpoints from LTXD/RTXD, which
+ * made the first frame after a rollback differ (see
+ * test/tools/test_runahead_determinism.c). */
+#define STATE_VERSION_DAC_REGISTERS 8
 /* First version carrying the trailing Jaguar GameDrive chunk.  Older
  * states load with the GD at its reset state (identity pages, write
  * protect, idle SPI) — see JGDStateLoad / the caller's else branch. */

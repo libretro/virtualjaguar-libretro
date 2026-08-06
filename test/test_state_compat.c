@@ -101,11 +101,20 @@ const char *__lsan_default_suppressions(void) {
  * i2sNonZeroCount (uint32, 4), i2sPhase (double, 8), i2sRateRatio
  * (double, 8) = 37 bytes, with i2sNonZeroCount at offset 17.
  *
+ * STATE_VERSION_DAC_REGISTERS (v8) appends the I2S hardware registers
+ * themselves: *ltxd (uint16, 2), *rtxd (uint16, 2), *sclk (uint8, 1),
+ * *smode (uint32, 4), lrxd (uint16, 2), rrxd (uint16, 2), sstat (uint8,
+ * 1) = 14 more, for 51.  They live in jagMemSpace at $F1A148-$F1A157,
+ * which no STATE_SAVE_BUF covers, so before v8 they were restored as
+ * whatever the previous run left behind -- see
+ * test/tools/test_runahead_determinism.c.  The v1/v2/v3 fixture offsets
+ * below are unaffected: the new fields are appended, not interleaved.
+ *
  * The size is asserted deliberately: if someone adds or reorders a DAC
  * field, THIS TEST FAILS LOUDLY rather than silently splicing the wrong
  * four bytes out of the fixture and "passing".  To update, re-derive both
  * numbers from DACStateSave's field order and sizes. */
-#define EXPECTED_DAC_BLOCK_SIZE       37
+#define EXPECTED_DAC_BLOCK_SIZE       51
 #define DAC_I2S_NONZEROCOUNT_OFFSET   17
 #define DAC_I2S_NONZEROCOUNT_SIZE     4
 
@@ -115,8 +124,9 @@ const char *__lsan_default_suppressions(void) {
  * sit contiguously right after that prefix (i2sNonZeroCount is v3+). */
 #define DAC_V1_PREFIX_SIZE            9
 #define DAC_I2S_RESAMPLER_SIZE        24
-/* Offsets of the resampler fields inside the CURRENT (v3+) 37-byte block,
- * used to build the expected post-v1-load block. */
+/* Offsets of the resampler fields inside the CURRENT block, used to build
+ * the expected post-v1-load block.  Offsets, not sizes, so appending the
+ * v8 register tail does not move them. */
 #define DAC_I2S_WRITEPOS_OFFSET       9    /* writePos+writeCount, 8 bytes */
 #define DAC_I2S_PHASE_OFFSET          21   /* phase+ratio, 16 bytes */
 
@@ -632,7 +642,7 @@ int main(int argc, char **argv)
 
     /* ---- 8c. v3 layout (release v2.3.2) ---------------------------- */
     /* The strictest alignment assertion in the file: a v3 state carries the
-     * DAC block in full, so after the load every one of its 37 bytes must
+     * DAC block in full, so after the load every one of its bytes must
      * come back byte-identical.  Any mis-sized chunk anywhere upstream —
      * the CDROM restructure was exactly that — shifts the DAC read and this
      * fails, while retro_unserialize still returns true. */

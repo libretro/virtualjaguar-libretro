@@ -358,6 +358,19 @@ size_t DACStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, i2sPhase);
 	STATE_SAVE_VAR(buf, i2sRateRatio);
 
+	/* v8: the I2S hardware registers themselves.  They live in
+	 * jagMemSpace at $F1A148-$F1A157, which no STATE_SAVE_BUF covers —
+	 * jerry_ram_8 is a separate array, not that window — so before this
+	 * they survived a load only by accident, as whatever the previous
+	 * run left behind.  See STATE_VERSION_DAC_REGISTERS. */
+	STATE_SAVE_VAR(buf, *ltxd);
+	STATE_SAVE_VAR(buf, *rtxd);
+	STATE_SAVE_VAR(buf, *sclk);
+	STATE_SAVE_VAR(buf, *smode);
+	STATE_SAVE_VAR(buf, lrxd);
+	STATE_SAVE_VAR(buf, rrxd);
+	STATE_SAVE_VAR(buf, sstat);
+
 	return (size_t)(buf - start);
 }
 
@@ -404,6 +417,26 @@ size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion)
 	{
 		i2sPhase = 0.0;
 		i2sRateRatio = 1.0;
+	}
+
+	/* The I2S hardware registers (see DACStateSave).  Layouts older than
+	 * STATE_VERSION_DAC_REGISTERS carry no slot for them; consume nothing
+	 * and leave them as they are, which is the behaviour those states were
+	 * written against.  Reading fields the layout does not carry would
+	 * desync every module that follows. */
+	if (stateVersion >= STATE_VERSION_DAC_REGISTERS)
+	{
+		STATE_LOAD_VAR(buf, *ltxd);
+		STATE_LOAD_VAR(buf, *rtxd);
+		STATE_LOAD_VAR(buf, *sclk);
+		STATE_LOAD_VAR(buf, *smode);
+		STATE_LOAD_VAR(buf, lrxd);
+		STATE_LOAD_VAR(buf, rrxd);
+		STATE_LOAD_VAR(buf, sstat);
+		/* The resample ratio is derived from SCLK/SMODE, so re-derive it
+		 * now that they hold the restored values rather than the ones the
+		 * previous run left behind. */
+		DACUpdateSCLKRate();
 	}
 
 	return (size_t)(buf - start);
