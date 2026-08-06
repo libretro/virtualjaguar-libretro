@@ -529,8 +529,17 @@ jobs:
           # --diff-filter=d drops deleted paths: clang-tidy cannot lint a
           # file that no longer exists and fails the whole job with
           # "no input files" / "expected exactly one compiler job".
+          #
+          # blitter_simd_<arch>.{c,h} are all excluded. Only one arch is
+          # ever built, so the other two .c files aren't in
+          # compile_commands.json; and the .h files are include-only
+          # fragments that refuse to be compiled standalone (they
+          # #error unless blitter_simd.h pulled them in), so linting one
+          # directly is guaranteed to fail. They are covered instead by
+          # c89-lint's per-arch pass, which compiles them the way the
+          # build does.
           FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
-            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2)\.c$)' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2|scalar)\.(c|h)$)' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."
