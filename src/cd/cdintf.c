@@ -1201,8 +1201,15 @@ bool CDIntfGetQPosition(uint32_t lba, uint32_t *trackNum, uint32_t *idx,
 
    if (trackNum)
       *trackNum = track->number;
+   /* Q CONTROL bit 2 (data track).  track->type alone is not enough:
+    * Jaguar CD CUE sheets routinely mark the session-2 DATA track as
+    * AUDIO (the game data is mastered inside an audio-type track), so
+    * trusting the type would report a data track as audio -- and that
+    * is exactly the bit the CD player's VLM uses as its mute gate.
+    * Treat anything in session 2 as data regardless of declared type,
+    * matching CDIntfIsSession2Sector's reasoning. */
    if (isData)
-      *isData = (track->type != CDINTF_TRACK_AUDIO);
+      *isData = (track->type != CDINTF_TRACK_AUDIO) || (track->session == 2);
    if (lba < track->dataLBA)
    {
       /* INDEX 00 pregap: relative time counts down to 0 at INDEX 01. */

@@ -2355,7 +2355,12 @@ void SetSSIWordsXmittedFromButch(void)
     * stream (the gate above returned already). */
    if (subQArmed)
    {
-      if (!subQValid)
+      /* A build can legitimately fail (LBA in an inter-session gap /
+       * virtual pregap, so CDIntfGetQPosition() declines).  subQSampleCnt
+       * is 0 on the first sample after arming and again at each byte
+       * boundary, so this retries at most once per byte period instead of
+       * re-running the whole frame build at 44.1 kHz. */
+      if (!subQValid && subQSampleCnt == 0)
          CDROMBuildSubQ();
       subQSampleCnt++;
       if (subQSampleCnt >= SUBQ_SAMPLES_PER_BYTE)
