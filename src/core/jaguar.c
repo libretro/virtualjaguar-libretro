@@ -404,7 +404,7 @@ static int m68kBusNoCharge = 0;
 #define M68K_BUS_CHARGE(addr, naccesses) \
    do { \
       if (busArbiter.enabled && !m68kBusNoCharge) \
-         regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses)); \
+         regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses), m68kClockScalePct); \
    } while (0)
 
 unsigned int m68k_read_memory_8(unsigned int address)

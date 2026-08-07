@@ -18,6 +18,7 @@ _Halfline*
 _jaguarMainRAM
 _jaguarMainROM
 _jagMemSpace
+_busArbiter
 _pcQueue
 _pcQPtr
 _a6Queue

@@ -46,6 +46,13 @@
  * Units: system clocks (same as bus_arbiter charges). */
 static uint32_t gpu_bus_stall;
 
+/* Sub-cycle remainder from converting wall-sysclk bus stalls into the
+ * GPU's scaled cycle domain (cycle-domain contract, bus_arbiter.h).
+ * Units: sysclk-hundredths, remainder modulo 100.  Always 0 at stock
+ * scale.  Not serialized — same precedent as m68kScaleAccum (a bounded
+ * sub-cycle epsilon); reset alongside the scale in GPUClockScaleReset(). */
+static uint32_t gpu_stall_scale_accum;
+
 /* Charge an external memory access and accumulate the stall.
  * addr is the target address — GPU local RAM (0xF03000-0xF03FFF)
  * costs nothing; external addresses cost DRAM access time. */
@@ -846,6 +853,15 @@ void GPUDone(void)
    branch_condition_table = NULL;
 }
 
+/* Drop the sub-cycle bus-stall remainder when the RISC clock scale
+ * (possibly) changed, so a new scale starts from a clean accumulator.
+ * Mirrors M68KClockScaleReset() for m68kScaleAccum. */
+void GPUClockScaleReset(void)
+{
+   gpu_stall_scale_accum = 0;
+}
+
+
 void GPUReset(void)
 {
    unsigned i;
@@ -1040,7 +1056,22 @@ void GPUExec(int32_t cycles)
        executeOpcode(index);
 #endif
 
-      cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall;
+      /* Bus stalls are wall time (sysclks); the slice budget is in the
+       * GPU's scaled cycle domain.  Convert so a DRAM wait costs the
+       * same wall time at any RISC clock scale (bus_arbiter.h contract):
+       * at 2x the budget holds twice the cycles per wall second, so the
+       * same stall must consume twice the cycles.  Stock scale takes
+       * the identity branch — bit-exact pre-#318 behavior. */
+      if (riscClockScalePct != 100u && gpu_bus_stall != 0)
+      {
+         uint32_t stall_scaled;
+         gpu_stall_scale_accum += gpu_bus_stall * riscClockScalePct;
+         stall_scaled = gpu_stall_scale_accum / 100u;
+         gpu_stall_scale_accum %= 100u;
+         cycles -= gpu_opcode_cycles[index] + (int32_t)stall_scaled;
+      }
+      else
+         cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall;
 
       /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
        * that has just set SINGLE_STEP has entered single-step mode and stops

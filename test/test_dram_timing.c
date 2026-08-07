@@ -103,41 +103,67 @@ int main(void)
     /* Main DRAM at MEMCON1 0x1861 costs 5 sysclks -- FASTER than the
      * CPU's own bus cycle, so the 68K never waits on it. */
     busArbiter.m68k_sysclk_carry = 0;
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 0,
+    check(bus_arbiter_m68k_access(0x00080000, 1, 100) == 0,
           "DRAM (5 sysclks) is faster than a 68K bus cycle: no stall");
     check(busArbiter.m68k_sysclk_carry == 0,
           "no carry from a free access");
-    check(bus_arbiter_m68k_access(0x00080000, 2) == 0,
+    check(bus_arbiter_m68k_access(0x00080000, 2, 100) == 0,
           "longword to DRAM still free");
 
     /* I/O bus (2 sysclks) likewise costs the 68K nothing. */
-    check(bus_arbiter_m68k_access(0x00F00050, 1) == 0,
+    check(bus_arbiter_m68k_access(0x00F00050, 1, 100) == 0,
           "I/O (2 sysclks) does not stall the 68K");
 
     /* Cart ROM at ROMSPEED=0 costs 10 sysclks: 2 over the baseline,
      * i.e. 1 68K cycle.  This is the only thing that stalls the CPU at
      * the reset MEMCON1 -- and it is why 68K code executing from cart
      * ROM runs measurably slower than its datasheet cycle counts. */
-    check(bus_arbiter_m68k_access(0x00800000, 1) == 1,
+    check(bus_arbiter_m68k_access(0x00800000, 1, 100) == 1,
           "cart ROM (10 sysclks) stalls 1 68K cycle per access");
     check(busArbiter.m68k_sysclk_carry == 0,
           "even wait leaves no carry");
-    check(bus_arbiter_m68k_access(0x00800000, 2) == 2,
+    check(bus_arbiter_m68k_access(0x00800000, 2, 100) == 2,
           "longword from cart ROM stalls 2 68K cycles");
 
     /* Odd waits carry.  DRAMSPEED=0 gives row-miss 7, so DRAM costs
-     * 2 + 7 = 9 sysclks -- 1 over the baseline, an odd number. */
+     * 2 + 7 = 9 sysclks -- 1 over the baseline, an odd number.  Carry
+     * units are sysclk-hundredths (sysclks x scale_pct, modulo 200), so
+     * the carried odd clock reads as 100, not 1. */
     bus_arbiter_update_memcon((uint16_t)(0x1861 & ~0x0060));
     busArbiter.m68k_sysclk_carry = 0;
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 0,
+    check(bus_arbiter_m68k_access(0x00080000, 1, 100) == 0,
           "slow DRAM: 1 sysclk of wait is less than one 68K cycle");
-    check(busArbiter.m68k_sysclk_carry == 1,
-          "odd system clock carried");
-    check(bus_arbiter_m68k_access(0x00080000, 1) == 1,
+    check(busArbiter.m68k_sysclk_carry == 100,
+          "odd system clock carried (100 hundredths)");
+    check(bus_arbiter_m68k_access(0x00080000, 1, 100) == 1,
           "carry + 1 sysclk completes a 68K cycle");
     check(busArbiter.m68k_sysclk_carry == 0,
           "carry drained");
     bus_arbiter_update_memcon(0x1861);
+
+    /* --- Cycle-domain contract under m68k_clock_scale (#318) --------
+     * Wait states are wall time: an overclocked 68K's budget holds
+     * scale/100 cycles per stock cycle, so the SAME wall wait must
+     * consume scale/100 times the cycles.  cycles = sysclks*pct/200. */
+
+    /* 2x: cart ROM's 2-sysclk wait = 1 stock cycle = 2 scaled cycles. */
+    busArbiter.m68k_sysclk_carry = 0;
+    check(bus_arbiter_m68k_access(0x00800000, 1, 200) == 2,
+          "2x scale: cart ROM wait charges 2 scaled cycles (same wall time)");
+    check(busArbiter.m68k_sysclk_carry == 0,
+          "2x scale: even conversion leaves no carry");
+
+    /* 0.5x: the same wait is half a scaled cycle -- carried, then
+     * completed by the next access. */
+    busArbiter.m68k_sysclk_carry = 0;
+    check(bus_arbiter_m68k_access(0x00800000, 1, 50) == 0,
+          "0.5x scale: one ROM wait is sub-cycle, carried");
+    check(busArbiter.m68k_sysclk_carry == 100,
+          "0.5x scale: half a scaled cycle in the carry");
+    check(bus_arbiter_m68k_access(0x00800000, 1, 50) == 1,
+          "0.5x scale: second ROM wait completes a scaled cycle");
+    check(busArbiter.m68k_sysclk_carry == 0,
+          "0.5x scale: carry drained");
 
     /* --- DRAM refresh model (MEMCON2 REFRATE) --------------------- */
     bus_arbiter_update_memcon(0x1861);   /* DRAMSPEED=3 */

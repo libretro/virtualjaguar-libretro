@@ -133,7 +133,8 @@ uint32_t bus_arbiter_charge_access(int master, uint32_t addr)
     return cost;
 }
 
-uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses)
+uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses,
+                                 uint32_t scale_pct)
 {
     uint32_t per_access, sysclks, cycles;
 
@@ -170,9 +171,16 @@ uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses)
     sysclks = per_access * naccesses;
     if (sysclks == 0)
         return 0;
-    busArbiter.m68k_sysclk_carry += sysclks;
-    cycles = busArbiter.m68k_sysclk_carry >> 1;
-    busArbiter.m68k_sysclk_carry &= 1;
+
+    /* Wall sysclks -> the 68K's scaled cycle domain (cycle-domain
+     * contract, bus_arbiter.h): a stock 68K cycle is 2 sysclks and the
+     * budget holds scale_pct/100 cycles per stock cycle, so
+     * cycles = sysclks * scale_pct / 200, remainder carried.  At
+     * scale_pct == 100 this reduces exactly to the old system/2
+     * conversion (carry 0/100 instead of 0/1). */
+    busArbiter.m68k_sysclk_carry += sysclks * scale_pct;
+    cycles = busArbiter.m68k_sysclk_carry / 200u;
+    busArbiter.m68k_sysclk_carry %= 200u;
     return cycles;
 }
 

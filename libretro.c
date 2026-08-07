@@ -37,6 +37,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "joystick.h"
 #include "settings.h"
 #include "tom.h"
+#include "gpu.h"
 #include "eeprom.h"
 #include "memtrack.h"
 #include "jaggd.h"
@@ -595,6 +596,9 @@ static void check_variables(void)
       else if (strcmp(var.value, "2x") == 0)
          riscClockScalePct = 200;
    }
+   /* Drop the GPU's sub-cycle bus-stall remainder when the RISC scale
+    * (possibly) changed — mirrors M68KClockScaleReset() above. */
+   GPUClockScaleReset();
 
    if (m68kClockScalePct != 100 || riscClockScalePct != 100)
       LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
