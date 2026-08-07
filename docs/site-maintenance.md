@@ -111,15 +111,19 @@ tags into a page fragment** — that is how tags drift apart page to page.
   that way), and descriptive `alt` on every image.
 - Still zero trackers, zero analytics, zero external assets. The only
   `<script>` allowed on a page is `type="application/ld+json"` or a
-  **deferred `<script src>` pointing at a local vendored file under
+  **deferred `<script src>` pointing at a local file under
   `site/assets/js/`** that exists in the output. Inline non-JSON-LD scripts
-  and external `src` remain hard failures. Vendored JS is committed with a
-  provenance header (upstream repo + commit) and its license text alongside
-  (see `site/assets/js/canvas-ui-vhs.js`, ported from Canvas UI's VHS
-  component, MIT + Commons Clause, `LICENSE-canvas-ui.md`). Effects are
-  progressive enhancement only: the page must be complete and readable with
-  JS disabled, and initializers must bail out under
-  `prefers-reduced-motion: reduce`.
+  and external `src` remain hard failures. Site JS must be **original code
+  written for this repository (GPLv3)** — do not vendor third-party effect
+  libraries here: an earlier attempt to vendor a ported Canvas UI component
+  was reverted because its Commons Clause forbids redistributing ported
+  versions, and mixing that license into a GPLv3 tree is a problem on its
+  own (`site/assets/js/crt-fx.js` is the clean-room replacement). Effects
+  are progressive enhancement only: the page must be complete and readable
+  with JS disabled, initializers must bail out under
+  `prefers-reduced-motion: reduce`, and every failure path must leave the
+  real DOM content visible (fail closed — no class flips before a
+  successful init).
 
 `scripts/check_site.py` enforces all of the above against the built output:
 one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local

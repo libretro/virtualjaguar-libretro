@@ -134,9 +134,11 @@ h3 { font-size: 1.1rem; margin-top: 1.6rem; }
 }
 
 /* ---- Hero screenshot / CRT frame ----
- * The <img> is the content; when the vendored Canvas UI VHS effect
- * (assets/js/canvas-ui-vhs.js) initializes, hero-fx.js adds .fx-on and the
- * canvas takes over visually.  Without JS/WebGL2 the plain image shows. */
+ * The <img> is the content; when the CRT effect (assets/js/crt-fx.js)
+ * initializes, hero-fx.js adds .fx-on and the canvas takes over visually.
+ * The img keeps opacity:0 (not visibility/display) so it stays in the
+ * accessibility tree; the canvas is aria-hidden.  Without JS or WebGL the
+ * plain image shows. */
 
 .crt-frame { margin: 0; max-width: 28rem; }
 .crt-screen {
@@ -159,10 +161,10 @@ h3 { font-size: 1.1rem; margin-top: 1.6rem; }
   inset: 0;
   width: 100%;
   height: 100%;
-  display: none;
+  display: block;        /* transparent until the effect actually draws */
+  pointer-events: none;
 }
-.crt-frame.fx-on canvas { display: block; }
-.crt-frame.fx-on img { visibility: hidden; }
+.crt-frame.fx-on img { opacity: 0; }
 .crt-frame figcaption {
   font-size: 0.82rem;
   color: var(--fg-muted);
