@@ -36,6 +36,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "uart.h"
 #include "joystick.h"
 #include "settings.h"
+#include "shadowfb.h"
 #include "tom.h"
 #include "gpu.h"
 #include "eeprom.h"
@@ -507,6 +508,13 @@ static void check_variables(void)
       else
          vjs.useFastBlitter = false;
    }
+
+   var.key = "virtualjaguar_true_color";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      ShadowFBSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      ShadowFBSetEnabled(0);
 
    var.key = "virtualjaguar_crash_detect";
    var.value = NULL;
@@ -1153,6 +1161,11 @@ bool retro_unserialize(const void *data, size_t size)
    bus_arbiter_update_memcon2(TOMGetMEMCON2());
 
    JaguarApplyHLEBIOSState();
+
+   /* The true-color shadow framebuffer is a derived cache over RAM
+    * contents that were just replaced wholesale; drop every entry
+    * (never serialized -- see shadowfb.h). */
+   ShadowFBInvalidate();
 
    return true;
 }
@@ -1873,6 +1886,10 @@ void retro_deinit(void)
    if (sampleBuffer)
       free(sampleBuffer);
    sampleBuffer = NULL;
+
+   /* Free the true-color shadow buffers and reset all module statics
+    * (iOS cannot dlclose cores, so statics persist across loads). */
+   ShadowFBShutdown();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

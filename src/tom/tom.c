@@ -262,6 +262,7 @@
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "shadowfb.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
@@ -807,6 +808,33 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 #endif
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+
+   /* True-color path (see shadowfb.h): substitute the full-precision
+    * RGB888 from the shadow line buffer, but only when the entry's tag
+    * matches the 16-bit value actually in the line buffer -- any other
+    * write path (direct TOM writes, RMW blends, missed sites) then
+    * falls back to the stock LUT.  With the option off this block is
+    * never entered and output is bit-identical to stock. */
+   if (shadowFBActive)
+   {
+      int sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+      while (width >= pwidth_scale)
+      {
+         uint32_t out;
+         uint16_t color = (*current_line_buffer++) << 8;
+         color |= *current_line_buffer++;
+         out = CRY16ToRGB32[color];
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+               && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+            out = 0xFF000000 | shadowLineRGB[sfbIdx];
+         sfbIdx++;
+         for (s = 0; s < pwidth_scale; s++)
+            *backbuffer++ = out;
+         width -= pwidth_scale;
+      }
+      return;
+   }
+
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;

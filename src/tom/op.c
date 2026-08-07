@@ -21,6 +21,7 @@
 #include "gpu.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
+#include "shadowfb.h"
 #include "vjag_memory.h"
 #include "tom.h"
 
@@ -960,6 +961,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       {
          // Fetch phrase...
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+         /* Source phrase address for the true-color shadow lookup;
+          * captured before the pitch advance below. */
+         uint32_t sfbPhrase = data;
          pixels <<= firstPix;
          data += pitch;
 
@@ -979,8 +983,18 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             else
             {
                if (!flagRMW)
-                  *currentLineBuffer = bitsHi,
-                     *(currentLineBuffer + 1) = bitsLo;
+               {
+                  *currentLineBuffer = bitsHi;
+                  *(currentLineBuffer + 1) = bitsLo;
+                  /* True-color: resolve the source RAM word against the
+                   * shadow framebuffer and mirror it into the shadow
+                   * line buffer at the same pixel index (see shadowfb.h). */
+                  if (shadowFBActive)
+                     ShadowFBLineFromRAM(
+                           (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                           sfbPhrase + (((uint32_t)(i - 1)) << 1),
+                           (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+               }
                else
                   *currentLineBuffer =
                      BLEND_CR(*currentLineBuffer, bitsHi),
@@ -1488,8 +1502,19 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
          else
          {
             if (!flagRMW)
-               *currentLineBuffer = bitsHi,
-                  *(currentLineBuffer + 1) = bitsLo;
+            {
+               *currentLineBuffer = bitsHi;
+               *(currentLineBuffer + 1) = bitsLo;
+               /* True-color: resolve the source RAM word against the
+                * shadow framebuffer and mirror it into the shadow line
+                * buffer at the same pixel index (see shadowfb.h).
+                * pixCount is the pixel index within the phrase at data. */
+               if (shadowFBActive)
+                  ShadowFBLineFromRAM(
+                        (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                        data + ((uint32_t)pixCount << 1),
+                        (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+            }
             else
                *currentLineBuffer =
                   BLEND_CR(*currentLineBuffer, bitsHi),
