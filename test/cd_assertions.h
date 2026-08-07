@@ -76,10 +76,12 @@ static inline int cd_disc_priority(const char *ext)
 /* Honors VJ_TEST_CD_EXTS (comma-separated) to filter which extensions to
  * enumerate. Default is "cue" — CDI/ISO are opt-in because:
  *   CDI: V3.5 images (incl. third-party baldies.cdi) parse and boot cleanly
- *        since the global-offset landmark scan (PR #233); the opt-in guards
- *        the 4 known-bad CDI V2 rips (ironsoldier2, mystdemo, vidgrid,
- *        worldtourracing) whose boot headers are damaged in the files
- *        themselves -- see issue #269 for the pending policy decision.
+ *        since the global-offset landmark scan (PR #233).  Of the 4 damaged
+ *        CDI V2 rips, mystdemo and worldtourracing now boot via the V2
+ *        boot-track repair (cdintf.c CDIRepairV2BootTrack); ironsoldier2
+ *        and vidgrid lost title-specific boot bytes the repair cannot
+ *        synthesize and still refuse to load -- see issue #269 for the
+ *        pending policy decision.
  *   ISO: Jaguar boot from ISO is fundamentally degraded (no session 2 audio);
  *        useful for read-only sanity but not boot smoke. */
 static inline bool cd_ext_enabled(const char *ext)

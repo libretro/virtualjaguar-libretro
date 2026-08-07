@@ -525,6 +525,39 @@ static uint32_t CDISectorSizeFromCode(uint32_t mode, uint32_t code)
    }
 }
 
+/* "ATARI APPROVED DATA HEADER ATRI " with each 16-bit pair byte-swapped,
+ * i.e. how it appears raw in the image.  Matched in full: a 16-byte prefix
+ * collides far too easily inside a 128 KB scan window, and a false match
+ * here would shift *every* track. */
+static const char cdi_needle[32] = "TARA IPARPVODED TA AEHDAREA RT I";
+
+/* The constant 98-byte prefix every Jaguar boot track begins with, in raw
+ * file byte order (word-swapped): 2 zero bytes, the sync preamble ("ATRI"
+ * repeated 16 times, stored "TAIR"), then the 32-byte magic above.  The
+ * title-specific load address / length / code follow at +0x62 (logical).
+ * Byte-identical across every reference rip in the corpus (World Tour
+ * Racing, Iron Soldier 2, Vid Grid, Myst demo), as the BIOS demands. */
+#define CDI_CANON_LEN 98
+static const uint8_t cdi_canon_prefix[CDI_CANON_LEN] = {
+   0x00, 0x00,
+   'T','A','I','R','T','A','I','R','T','A','I','R','T','A','I','R',
+   'T','A','I','R','T','A','I','R','T','A','I','R','T','A','I','R',
+   'T','A','I','R','T','A','I','R','T','A','I','R','T','A','I','R',
+   'T','A','I','R','T','A','I','R','T','A','I','R','T','A','I','R',
+   'T','A','R','A',' ','I','P','A','R','P','V','O','D','E','D',' ',
+   'T','A',' ','A','E','H','D','A','R','E','A',' ','R','T',' ','I'
+};
+
+/* Byte offset of the descriptor-declared user-data start (INDEX 01) of a
+ * track within the image file. */
+static int64_t CDITrackDataFileOffset(const struct CDIntfTrack *t)
+{
+   int64_t off = (int64_t)t->fileOffset;
+   if (t->dataLBA > t->startLBA)
+      off += (int64_t)(t->dataLBA - t->startLBA) * (int64_t)t->sectorSize;
+   return off;
+}
+
 /* Measure the undescribed leading data offset of a CDI rip (see the call
  * site at the end of ParseCDI) and fold it into every track's fileOffset.
  *
@@ -537,37 +570,34 @@ static uint32_t CDISectorSizeFromCode(uint32_t mode, uint32_t code)
  * The search is bounded to +/-64 KB.  Observed shifts are -48..+4360; a
  * 32-byte ASCII signature inside that window is not something audio data
  * produces by accident.  No landmark (or a zero delta) leaves the tracks
- * exactly as parsed. */
-static void CDIDetectGlobalDataOffset(uint32_t version)
+ * exactly as parsed.
+ *
+ * Two guards keep a decoy from shifting the disc (issue #230):
+ *   - every candidate must be preceded by the constant preamble
+ *     (cdi_canon_prefix), which a mid-data second copy of the header also
+ *     carries but random payload does not;
+ *   - a POSITIVE delta additionally requires the gap between the declared
+ *     data start and the claimed one to be all zeros -- a true forward
+ *     slide leaves slid pregap silence there, while a second header copy
+ *     deeper in the track leaves real payload, which rejects it.
+ * Candidates are tried nearest-first, since the true landmark is rip
+ * jitter (tens of bytes.. a few KB) and decoys sit sectors away.
+ *
+ * V2 images never reach this function: their damage is per-track, not a
+ * global slide (measured boot-track displacements differ from their other
+ * tracks' by thousands of bytes), so ParseCDI routes them to
+ * CDIRepairV2BootTrack below instead. */
+static void CDIDetectGlobalDataOffset(void)
 {
-   /* "ATARI APPROVED DATA HEADER ATRI " with each 16-bit pair byte-swapped,
-    * i.e. how it appears raw in the image.  Matched in full: a 16-byte prefix
-    * collides far too easily inside a 128 KB scan window, and a false match
-    * here would shift *every* track. */
-   static const char NEEDLE[32] = "TARA IPARPVODED TA AEHDAREA RT I";
    const int32_t  WINDOW  = 65536;
    uint8_t       *buf;
-   int64_t        base, start, got;
+   int64_t        base = 0, start, got;
    uint32_t       i, s2 = 0;
    bool           found  = false;
-   int64_t        expect = 0, actual = 0;
+   int64_t        expect = 0;
+   int64_t        bestAbs = 0;
 
    if (!cdi_file || disc.numTracks == 0)
-      return;
-
-   /* V2 images are excluded deliberately, not for lack of trying.  Measured
-    * against the redump per-track dumps, their first session-2 track is missing
-    * its leading bytes entirely: the image holds zeros(N) followed by the track
-    * content from byte N on, where N is 112 (ironsoldier2) or 76 (worldtour-
-    * racing).  Those lost bytes are the sync preamble and the boot header magic
-    * itself, so the landmark this function keys on is simply not in the file.
-    * The scan then locks onto a legitimate *second* copy of the header further
-    * into the track and returns a confidently wrong delta -- +22988 for world-
-    * tourracing, whose true displacement is -76.  Applying that would slide all
-    * ten tracks into garbage.  No offset can repair a missing header, so V2 is
-    * left exactly as the descriptors parsed it until the real mechanism is
-    * modelled.  See issue #230. */
-   if (version == CDI_V2_ID)
       return;
 
    for (i = 0; i < disc.numTracks; i++)
@@ -579,10 +609,7 @@ static void CDIDetectGlobalDataOffset(uint32_t version)
       return;
    found = false;
 
-   expect = (int64_t)disc.tracks[s2].fileOffset;
-   if (disc.tracks[s2].dataLBA > disc.tracks[s2].startLBA)
-      expect += (int64_t)(disc.tracks[s2].dataLBA - disc.tracks[s2].startLBA) *
-                (int64_t)disc.tracks[s2].sectorSize;
+   expect = CDITrackDataFileOffset(&disc.tracks[s2]);
 
    start = expect - WINDOW;
    if (start < 0)
@@ -603,33 +630,283 @@ static void CDIDetectGlobalDataOffset(uint32_t version)
    }
 
    /* The header begins on an even boundary (word-swapped pairs). */
-   for (i = 0; (int64_t)i + (int64_t)sizeof(NEEDLE) <= got; i += 2)
+   for (i = 0; (int64_t)i + (int64_t)sizeof(cdi_needle) <= got; i += 2)
    {
-      if (memcmp(buf + i, NEEDLE, sizeof(NEEDLE)) == 0)
-         { actual = start + (int64_t)i - 0x42; found = true; break; }
+      int64_t contentStart, delta, gap;
+
+      if (memcmp(buf + i, cdi_needle, sizeof(cdi_needle)) != 0)
+         continue;
+
+      contentStart = start + (int64_t)i - 0x42;
+      delta = contentStart - expect;
+
+      /* Preamble validation: the 0x40 bytes before the magic must be the
+       * sync preamble ("TAIR" x 16).  The 2 bytes before THAT are not
+       * checked -- they are zero on most discs but e.g. Primal Rage
+       * carries $72D7 there, so demanding zeros rejects real landmarks. */
+      if ((int64_t)i < 0x42)
+         continue;
+      if (memcmp(buf + i - 0x40, cdi_canon_prefix + 2, 0x40) != 0)
+         continue;
+
+      /* Positive slide: the vacated gap must read as slid pregap silence. */
+      if (delta > 0)
+      {
+         bool zeros = true;
+         for (gap = expect - start; gap < contentStart - start; gap++)
+         {
+            if (gap >= 0 && gap < got && buf[gap] != 0)
+               { zeros = false; break; }
+         }
+         if (!zeros)
+            continue;
+      }
+
+      if (!found || ((delta < 0 ? -delta : delta) < bestAbs))
+      {
+         base = delta;
+         bestAbs = (delta < 0 ? -delta : delta);
+         found = true;
+      }
    }
    free(buf);
 
-   if (!found || actual == expect)
+   if (!found || base == 0)
       return;
 
-   base = actual - expect;
-   /* Guard: a shift larger than the window, or one that would push a track
-    * offset negative, means the landmark was not what we think it was. */
+   /* Guard: a shift larger than the window means the landmark was not what
+    * we think it was. */
    if (base <= -(int64_t)WINDOW || base >= (int64_t)WINDOW)
       return;
-   for (i = 0; i < disc.numTracks; i++)
-   {
-      if ((int64_t)disc.tracks[i].fileOffset + base < 0)
-         return;
-   }
 
    LOG_INF("[CD] CDI data offset: image data is shifted %+lld byte(s) from "
            "the descriptor layout; applying to all %u track(s)\n",
            (long long)base, disc.numTracks);
 
+   /* Fold into every track, clamping per-track: a negative base can push an
+    * early track's offset below the file start (track 1 sits at offset 0);
+    * clamp that track to 0 instead of abandoning the whole correction --
+    * the affected leading bytes are session-1 audio jitter, not data. */
    for (i = 0; i < disc.numTracks; i++)
-      disc.tracks[i].fileOffset = (uint32_t)((int64_t)disc.tracks[i].fileOffset + base);
+   {
+      int64_t no = (int64_t)disc.tracks[i].fileOffset + base;
+      if (no < 0)
+      {
+         LOG_WRN("[CD] CDI data offset: track %u offset clamped to 0 "
+                 "(would be %lld)\n", disc.tracks[i].number, (long long)no);
+         no = 0;
+      }
+      disc.tracks[i].fileOffset = (uint32_t)no;
+   }
+}
+
+/* Repair the boot track of a damaged CDI V2 rip.
+ *
+ * The four V2 images in circulation (ironsoldier2, mystdemo, vidgrid,
+ * worldtourracing -- trailer version 0x80000004) were written by a ripper
+ * that placed each track's content at a per-track byte displacement from
+ * the descriptor layout, and lost the leading bytes of a track whenever
+ * the displacement was negative (the missing bytes fell before the point
+ * where the drive started returning data).  Measured against redump
+ * references:
+ *
+ *   mystdemo        boot track slid  -1116, nothing lost (the content
+ *                   moved into the stored pregap silence, header intact);
+ *                   its DATA track sits at +1236 -- proof the damage is
+ *                   per-track, so a global fileOffset shift is wrong here.
+ *   worldtourracing boot track content = BIN[76:], i.e. the first 76
+ *                   bytes (preamble + 10 magic bytes) are gone.
+ *   ironsoldier2    boot track content = BIN[112:]: all 98 constant bytes
+ *                   plus the 14 title-specific bytes after them (load
+ *                   address, length, first 6 code bytes) are gone, and no
+ *                   second copy of the header exists anywhere in the file.
+ *   vidgrid         the first sectors of every boot-track copy are ripper
+ *                   filler (0x0DC0E0AD / 0x075CEC71 patterns), destroying
+ *                   the whole boot executable.  Unrecoverable.
+ *
+ * So the repair is scoped to the first session-2 track only (the one the
+ * BIOS boots from), leaving the other tracks' jitter alone -- games
+ * tolerate stream slop on data reads (a real drive cannot seek
+ * byte-exact), but the boot path is strict about the header.
+ *
+ * Three recognized shapes:
+ *   1. conformant: magic at +0x42 of the data start.  No-op.
+ *   2. slide: the full header found nearby, preceded by the constant
+ *      preamble.  Shift this track's reads by the measured delta.
+ *   3. head-loss: the data start holds a proper suffix of the constant
+ *      98-byte prefix (the ripper dropped the first Z bytes).  Shift
+ *      reads by -Z and synthesize the constant prefix over the zeros
+ *      that reads then expose at the data start.  Fully reconstructs any
+ *      Z <= 92; larger losses ate title-specific bytes no heuristic can
+ *      restore (ironsoldier2's Z=112), which is logged and left alone. */
+static void CDIRepairV2BootTrack(void)
+{
+   const int32_t WINDOW = 65536;
+   uint8_t      *buf;
+   int64_t       dataOff, start, got, dzOff;
+   uint32_t      i, s2 = 0, Z;
+   bool          found = false;
+   int64_t       pregapBytes;
+   const uint8_t *dz;
+   int64_t       dzLen;
+
+   if (!cdi_file || disc.numTracks == 0)
+      return;
+
+   for (i = 0; i < disc.numTracks; i++)
+   {
+      if (disc.tracks[i].session == 2)
+         { s2 = i; found = true; break; }
+   }
+   if (!found)
+      return;
+   found = false;
+
+   dataOff = CDITrackDataFileOffset(&disc.tracks[s2]);
+   pregapBytes = dataOff - (int64_t)disc.tracks[s2].fileOffset;
+
+   start = dataOff - WINDOW;
+   if (start < (int64_t)disc.tracks[s2].fileOffset)
+      start = (int64_t)disc.tracks[s2].fileOffset;
+
+   buf = (uint8_t *)malloc((size_t)WINDOW * 2);
+   if (!buf)
+      return;
+
+   rfseek(cdi_file, start, SEEK_SET);
+   got = rfread(buf, 1, (size_t)WINDOW * 2, cdi_file);
+   dzOff = dataOff - start;              /* data start within buf */
+   if (got < dzOff + CDI_CANON_LEN)
+   {
+      free(buf);
+      return;
+   }
+   dz    = buf + dzOff;
+   dzLen = got - dzOff;
+
+   /* Shape 1: conformant. */
+   if (memcmp(dz + 0x42, cdi_needle, sizeof(cdi_needle)) == 0)
+   {
+      free(buf);
+      return;
+   }
+
+   /* Shape 2: intact header at a per-track displacement (mystdemo -1116).
+    * Nearest validated match wins; positive candidates must have a silent
+    * gap (see CDIDetectGlobalDataOffset for the decoy rationale). */
+   {
+      int64_t base = 0, bestAbs = 0;
+
+      for (i = 0; (int64_t)i + (int64_t)sizeof(cdi_needle) <= got; i += 2)
+      {
+         int64_t contentStart, delta, gap;
+
+         if (memcmp(buf + i, cdi_needle, sizeof(cdi_needle)) != 0)
+            continue;
+         if ((int64_t)i < 0x42)
+            continue;
+         /* Sync-preamble check only; the 2 bytes before it vary by title
+          * (see the identical check in CDIDetectGlobalDataOffset). */
+         if (memcmp(buf + i - 0x40, cdi_canon_prefix + 2, 0x40) != 0)
+            continue;
+
+         contentStart = start + (int64_t)i - 0x42;
+         delta = contentStart - dataOff;
+
+         if (delta < 0 && -delta > pregapBytes)
+            continue;              /* would read before the track region */
+
+         if (delta > 0)
+         {
+            bool zeros = true;
+            for (gap = dzOff; gap < contentStart - start; gap++)
+            {
+               if (buf[gap] != 0)
+                  { zeros = false; break; }
+            }
+            if (!zeros)
+               continue;
+         }
+
+         if (!found || ((delta < 0 ? -delta : delta) < bestAbs))
+         {
+            base = delta;
+            bestAbs = (delta < 0 ? -delta : delta);
+            found = true;
+         }
+      }
+
+      if (found && base != 0)
+      {
+         LOG_INF("[CD] CDI V2 repair: boot track %u content displaced "
+                 "%+lld byte(s); shifting its reads to match\n",
+                 disc.tracks[s2].number, (long long)base);
+         disc.tracks[s2].dataShift = (int32_t)base;
+         free(buf);
+         return;
+      }
+      if (found)
+      {
+         free(buf);
+         return;
+      }
+   }
+
+   /* Shape 3: head-loss.  The data start holds cdi_canon_prefix[Z:] --
+    * the ripper dropped the first Z bytes of the track.  The needle part
+    * of the suffix pins Z uniquely (the preamble alone repeats every 4
+    * bytes, but any candidate Z < true Z would demand needle bytes where
+    * the file has none).  Demand at least 6 surviving suffix bytes; a
+    * shorter match no longer identifies the header. */
+   for (Z = 1; Z <= CDI_CANON_LEN - 6; Z++)
+   {
+      if ((int64_t)(CDI_CANON_LEN - Z) <= dzLen &&
+          memcmp(dz, cdi_canon_prefix + Z, CDI_CANON_LEN - Z) == 0)
+      {
+         /* Shifting reads back by Z must stay inside this track's own
+          * stored pregap.  The synthesized prefix overwrites those first
+          * Z bytes anyway (Z <= CDI_CANON_LEN - 6), so a short pregap
+          * would only ever expose bytes the overlay hides -- but refuse
+          * rather than read outside the track's declared extent. */
+         if ((int64_t)Z > pregapBytes)
+         {
+            LOG_ERR("[CD] CDI V2 repair: boot track %u lost %u byte(s) but "
+                    "declares only %lld byte(s) of pregap; refusing to shift "
+                    "reads outside the track\n",
+                    disc.tracks[s2].number, Z, (long long)pregapBytes);
+            break;
+         }
+         LOG_INF("[CD] CDI V2 repair: boot track %u lost its first %u "
+                 "byte(s) (constant header prefix); shifting reads and "
+                 "synthesizing the lost bytes\n",
+                 disc.tracks[s2].number, Z);
+         disc.tracks[s2].dataShift = -(int32_t)Z;
+         disc.tracks[s2].synthBootHeader = true;
+         free(buf);
+         return;
+      }
+   }
+
+   /* Unrecoverable.  Say precisely why so this stops being re-filed as an
+    * unsupported format. */
+   {
+      int64_t r = 0;
+      while (r < dzLen && dz[r] == 0)
+         r++;
+      if (r >= CDI_CANON_LEN)
+         LOG_ERR("[CD] CDI V2 repair: boot track %u data starts with %lld "
+                 "zero byte(s) and no recognizable boot header follows -- "
+                 "the rip lost or corrupted the boot sectors themselves "
+                 "(vidgrid-style damage); this image cannot boot\n",
+                 disc.tracks[s2].number, (long long)r);
+      else
+         LOG_ERR("[CD] CDI V2 repair: boot track %u lost more than the "
+                 "reconstructible %u-byte constant header prefix (load "
+                 "address/length are title-specific and absent from the "
+                 "file); this image cannot boot\n",
+                 disc.tracks[s2].number, (unsigned)CDI_CANON_LEN);
+   }
+   free(buf);
 }
 
 static bool ParseCDI(const char *cdiPath)
@@ -869,9 +1146,15 @@ static bool ParseCDI(const char *cdiPath)
     * N is constant across every track of an image, so it is measured once
     * here and folded into all track offsets.  Doing it globally (rather than
     * only for the boot-stub read) is what keeps in-game sector reads aligned.
-    * Conformant images measure 0 and are left untouched.  V2 images opt out --
-    * see the note in CDIDetectGlobalDataOffset. */
-   CDIDetectGlobalDataOffset(version);
+    * Conformant images measure 0 and are left untouched.
+    *
+    * V2 rips are damaged differently -- per-track displacements plus lost
+    * leading bytes -- and get their own boot-track repair instead (see
+    * CDIRepairV2BootTrack). */
+   if (version == CDI_V2_ID)
+      CDIRepairV2BootTrack();
+   else
+      CDIDetectGlobalDataOffset();
 
    disc.loaded = true;
    return true;
@@ -921,7 +1204,10 @@ static bool CDIntfReadBlockCDI(uint32_t sector, uint8_t *buffer)
    if (sectorSize == 0) sectorSize = 2352;
 
    filePos = (int64_t)disc.tracks[trackIdx].fileOffset
-           + (int64_t)(sector - disc.tracks[trackIdx].startLBA) * sectorSize;
+           + (int64_t)(sector - disc.tracks[trackIdx].startLBA) * sectorSize
+           + (int64_t)disc.tracks[trackIdx].dataShift;
+   if (filePos < 0)
+      filePos = 0;
 
    rfseek(cdi_file, filePos, SEEK_SET);
    bytesRead = rfread(buffer, 1, 2352, cdi_file);
@@ -935,6 +1221,16 @@ static bool CDIntfReadBlockCDI(uint32_t sector, uint8_t *buffer)
          return false;
       }
    }
+
+   /* CDI V2 head-loss repair: the first data sector of a repaired boot
+    * track begins with zeros where the ripper lost the constant header
+    * prefix (dataShift re-aligned everything after it).  Overlay the
+    * prefix so the BIOS finds the header it streams for.  Idempotent:
+    * the bytes past the lost run already equal the constant. */
+   if (disc.tracks[trackIdx].synthBootHeader &&
+       sector == disc.tracks[trackIdx].dataLBA)
+      memcpy(buffer, cdi_canon_prefix, CDI_CANON_LEN);
+
    return true;
 }
 
@@ -1436,7 +1732,10 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
 
       trackFileBase = (int64_t)disc.tracks[firstS2Idx].fileOffset +
                       (int64_t)pregapSectors *
-                      (int64_t)disc.tracks[firstS2Idx].sectorSize;
+                      (int64_t)disc.tracks[firstS2Idx].sectorSize +
+                      (int64_t)disc.tracks[firstS2Idx].dataShift;
+      if (trackFileBase < 0)
+         trackFileBase = 0;
 
       if (disc.tracks[firstS2Idx].binFilePath[0])
       {
@@ -1475,6 +1774,13 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
               (long long)bytesRead, 0x6A + 4);
       return false;
    }
+
+   /* CDI V2 head-loss repair: overlay the constant header prefix over the
+    * zeros the dataShift re-alignment exposes at the data start (see
+    * CDIRepairV2BootTrack; same overlay as CDIntfReadBlockCDI). */
+   if (disc.tracks[firstS2Idx].synthBootHeader &&
+       (uint32_t)bytesRead >= CDI_CANON_LEN)
+      memcpy(raw, cdi_canon_prefix, CDI_CANON_LEN);
 
    /* Word-swap each 16-bit pair (Jaguar I2S byte order). */
    for (i = 0; i + 1 < (uint32_t)bytesRead; i += 2)
