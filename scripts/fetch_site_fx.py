@@ -10,7 +10,7 @@ script runs at DEPLOY TIME, gated behind VJ_SITE_FX_FETCH=1:
 
   1. downloads the vanilla TypeScript sources for the VHS and ParticleReveal
      components from the pinned upstream commit,
-  2. compiles them with esbuild (via `npx --yes esbuild`) into one IIFE
+  2. compiles them with a pinned esbuild (`npx --yes esbuild@0.25.0`) into one IIFE
      bundle exposing window.CanvasUIVHS and window.CanvasUIParticle,
   3. prepends the upstream license text as a comment header (the license
      requires the notice to accompany copies) plus provenance,
@@ -38,6 +38,13 @@ from pathlib import Path
 
 PIN = "880de315dd23d8add253575655ddc57f2160a19d"
 RAW = "https://raw.githubusercontent.com/DavidHDev/canvas-ui/" + PIN + "/"
+SOURCE_SHA256 = {
+    "VHSVanilla.ts":
+        "77e00f182af42e3339c718e9b4eb11e55b88fdc732796fc6a412ede7909623a7",
+    "ParticleRevealVanilla.ts":
+        "c4f9a4dc86789af292ffd8431982cc2325ae305b47beec1bd40a2e8ba2e200e7",
+}
+
 SOURCES = {
     "VHSVanilla.ts": "src/lib/VHS/VHSVanilla.ts",
     "ParticleRevealVanilla.ts": "src/lib/ParticleReveal/ParticleRevealVanilla.ts",
@@ -90,11 +97,18 @@ def main():
         warn("download failed: %s" % exc)
         return 0
 
-    # Sanity: refuse to publish something that is not what we pinned.
-    if "createVHS" not in srcs["VHSVanilla.ts"] or \
-       "createParticleReveal" not in srcs["ParticleRevealVanilla.ts"] or \
-       "Commons Clause" not in license_text:
-        warn("fetched sources do not look like the pinned components")
+    # Refuse to publish anything but the exact pinned bytes: the commit-SHA
+    # URL is immutable, so the component sources hash-pin cleanly.  (The
+    # license file is checked by substring only -- its exact bytes are not
+    # load-bearing, its presence in the header is.)
+    import hashlib
+    for name, want in SOURCE_SHA256.items():
+        got = hashlib.sha256(srcs[name].encode("utf-8")).hexdigest()
+        if got != want:
+            warn("%s hash mismatch (got %s, pinned %s)" % (name, got, want))
+            return 0
+    if "Commons Clause" not in license_text:
+        warn("fetched license does not look like the pinned one")
         return 0
 
     try:
@@ -104,7 +118,7 @@ def main():
                 (tmpp / name).write_text(text, encoding="utf-8")
             (tmpp / "entry.ts").write_text(ENTRY, encoding="utf-8")
             proc = subprocess.run(
-                ["npx", "--yes", "esbuild", str(tmpp / "entry.ts"),
+                ["npx", "--yes", "esbuild@0.25.0", str(tmpp / "entry.ts"),
                  "--bundle", "--format=iife", "--target=es2019",
                  "--log-level=warning"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
