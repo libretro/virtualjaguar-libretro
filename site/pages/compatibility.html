@@ -1,0 +1,120 @@
+<!-- title: Compatibility — Virtual Jaguar libretro -->
+<!-- nav: Compatibility -->
+<!-- description: Jaguar CD boot results per disc image and named cartridge fixes for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
+
+<h1>Compatibility</h1>
+<p class="lede">
+  Numbers over adjectives. The tables below are generated at site build time by
+  parsing the committed test documents in this repository — nothing on this page
+  is typed in by hand.
+</p>
+
+<div class="caveat">
+  <strong>How to read this page.</strong> Three honest states:
+  <span class="badge good">verified</span> the committed test log shows the title
+  reaching the stated stage &middot;
+  <span class="badge bad">known issue</span> a committed doc records a failure &middot;
+  <span class="badge warn">not yet verified</span> nobody has recorded a result.
+  "Verified" here means <em>headlessly verified to boot into game code</em> — it is
+  a regression gate, not a completed-the-game certificate. Rows reflect the local
+  test corpus at the build revision stamped in the matrix ({{COMPAT_BUILD_IDS}}),
+  run on the maintainer's disc images; your dump may differ.
+</div>
+
+<div class="caveat">
+  <strong>Looking for the manual, not the matrix?</strong> Core options, file
+  extensions, controller tables and frontend feature support are documented on
+  the <a href="{{DOCS_URL}}">official libretro documentation page for this
+  core</a> (docs.libretro.com) — the canonical reference manual, maintained in
+  <a href="{{DOCS_SRC_URL}}"><code>libretro/docs</code></a>. Jump straight to the
+  <a href="{{DOCS_OPTIONS_URL}}">core options reference</a> or the
+  <a href="{{DOCS_CONTROLS_URL}}">controller tables</a>.
+  <strong>No BIOS or system files are required</strong> — the boot ROM and both
+  Jaguar CD BIOSes are embedded in the core; the optional external CD BIOS
+  override is described in the <a href="{{REPO}}#bios">README's BIOS section</a>.
+  libretro additionally hosts a community-maintained
+  <a href="{{DOCS_COMPAT_URL}}">Atari Jaguar compatibility list</a>: a separate
+  document from the machine-generated boot matrix below, with different
+  methodology and a different scope (cartridges included).
+</div>
+
+<h2>Jaguar CD boot matrix</h2>
+<p>
+  Parsed from
+  <a href="{{REPO}}/blob/develop/docs/cd-boot-matrix.md"><code>docs/cd-boot-matrix.md</code></a>,
+  which is produced by the repeatable harness
+  <a href="{{REPO}}/blob/develop/test/tools/cd_boot_matrix.sh"><code>cd_boot_matrix.sh</code></a>.
+  Every title is exercised in <em>both</em> CD modes: <strong>HLE</strong>
+  (high-level-emulated CD BIOS) and <strong>BIOS</strong> (the real CD BIOS driving
+  emulated BUTCH/DSA/FIFO hardware). "Reaches game code" means the 68000 was
+  observed executing game-owned code in RAM with a healthy, non-looping PC trace.
+</p>
+
+<div class="stats">
+  <div class="stat"><div class="n">{{COMPAT_N_TITLES}}</div><div class="l">disc images in the corpus</div></div>
+  <div class="stat"><div class="n">{{COMPAT_N_HLE_GOOD}}</div><div class="l">reach game code in HLE mode</div></div>
+  <div class="stat"><div class="n">{{COMPAT_N_BIOS_GOOD}}</div><div class="l">reach game code in real-BIOS mode</div></div>
+</div>
+
+{{COMPAT_TABLE}}
+
+<p class="footnote">
+  Watchdog notes are the runtime
+  <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>'s
+  signatures recorded during the run. A lone <code>cd_seek_wedge</code> or
+  <code>video_stall</code> line alongside a passing PC trace is frequently benign —
+  e.g. Myst fires it during the intro movie's ~6&nbsp;s all-black pause while the
+  movie plays from RAM. The matrix doc discusses each case; the stage column, not
+  the watchdog column, is the regression gate.
+</p>
+
+<h2>Cartridge highlights</h2>
+<p>
+  Cartridge titles don't have an equivalent committed per-title matrix yet, so
+  this section lists <em>named, verified fixes</em> from the release notes and the
+  committed triage document — and is equally honest about what is still broken.
+</p>
+
+<h3>Verified fixed <span class="badge good">shipped in a tagged release</span></h3>
+<div class="table-wrap"><table>
+  <tr><th>Title</th><th>What was fixed</th><th>Source</th></tr>
+  <tr><td>Wolfenstein 3D</td><td>Missing game music (DSP <code>D_FLAGS</code> pipeline-stage correction)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+  <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay — full 14-byte group-0 bus-error frame on the 68000, GPU <code>STOREP</code> byte-lane masking (#138, 2 of 3 sub-issues)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
+  <tr><td>Tempest 2000</td><td>One-frame playfield collapse (TOM level-2 interrupt held across CPU mask) (#187)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+  <tr><td>Alien vs Predator</td><td>First-frame cyan bar, in-game brown bottom bar (#178); red background behind the shotgun with the accurate blitter (#267, #292)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
+  <tr><td>Brutal Sports Football</td><td>512-byte copier-header dumps load instead of being rejected</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+  <tr><td>Doom</td><td>Ran at ~2x speed on a GPU-rendered game; bus-contention modeling brought pacing down (remaining gap tracked honestly below)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration doc</a></td></tr>
+  <tr><td>Skyhammer / Iron Soldier 2 (audio)</td><td>Saturated square-wave audio resolved (DSP MMULT secondary-bank fix); guarded by paired clipping + presence tests in CI</td>
+      <td><a href="{{REPO}}/blob/develop/test/test_audio_clipping.c">clipping test</a> &middot; <a href="{{REPO}}/blob/develop/test/test_audio_presence.c">presence test</a></td></tr>
+</table></div>
+
+<h3>Known issues <span class="badge bad">open and tracked</span></h3>
+<div class="table-wrap"><table>
+  <tr><th>Title / area</th><th>Symptom</th><th>Tracking</th></tr>
+  <tr><td>Doom</td><td>Combat/monster pacing still too fast (~1.5x typical); suspected unmodelled GPU/DSP pipeline hazards</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 known issues</a> &middot; <a href="{{REPO}}/issues/313">#313</a></td></tr>
+  <tr><td>Battle Morph (CD)</td><td>Runs too fast; a reporter with real hardware has offered comparisons</td>
+      <td><a href="{{REPO}}/issues/331">#331</a> &middot; <a href="{{REPO}}/blob/develop/docs/battle-morph-pace-calibration.md">calibration doc</a></td></tr>
+  <tr><td>Battle Sphere</td><td>Menu text renders dark; blitter exonerated, upstream GPU font path suspected</td>
+      <td><a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">cart-issue-triage.md</a></td></tr>
+  <tr><td>Some blitter-heavy titles</td><td>Accurate blitter is not fully cycle-exact; a few games need the fast-blitter core option</td>
+      <td><a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">cart-issue-triage.md</a></td></tr>
+  <tr><td>Jaguar CD backlog</td><td>Remaining CD-path items are tracked in one place, not scattered</td>
+      <td><a href="{{REPO}}/blob/develop/docs/cd-known-issues.md">cd-known-issues.md</a></td></tr>
+</table></div>
+
+<h3>Not yet verified <span class="badge warn">help wanted</span></h3>
+<p>
+  Everything not listed above. The full cartridge library has no committed
+  per-title matrix yet — if a title works (or doesn't) for you, a report in
+  <a href="{{REPO}}/discussions">GitHub Discussions</a> with your platform and the
+  frontend log is genuinely useful: the built-in
+  <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a> writes
+  the failure signature into the log at the moment things break.
+</p>

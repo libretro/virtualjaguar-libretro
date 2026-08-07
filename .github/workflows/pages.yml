@@ -1,0 +1,65 @@
+# Build and deploy the GitHub Pages site (https://www.libretro.com/virtualjaguar-libretro/).
+#
+# The site is generated from committed repo data by scripts/build_site.py
+# (python3 stdlib only). It rebuilds on every push to develop that touches
+# the site sources or the docs the generator parses. The generator fails
+# loudly if docs/cd-boot-matrix.md drifts from the expected format, so a
+# red run here means "fix the data or the parser", never "published garbage".
+
+name: Deploy Pages
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'site/**'
+      - 'scripts/build_site.py'
+      - 'docs/cd-boot-matrix.md'
+      # CORE_BASE_VERSION feeds the JSON-LD softwareVersion, so a version
+      # bump must redeploy or the structured data goes stale.
+      - 'Makefile'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the generator derives each page's sitemap <lastmod>
+      # from `git log -1 -- <source file>`.  On the default shallow clone
+      # (fetch-depth: 1) that reports the checkout commit for every path, so
+      # build_site.py detects the shallow clone and falls back to the build
+      # date instead of publishing four identical, wrong timestamps.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build site
+        run: python3 scripts/build_site.py
+      # build_site.py fails on bad input; this fails on bad output (missing
+      # or mismatched SEO tags, a second <h1>, a dead local link, malformed
+      # JSON-LD or sitemap).  Nothing is deployed if it trips.
+      - name: Check generated site
+        run: python3 scripts/check_site.py _site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

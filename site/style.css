@@ -1,0 +1,272 @@
+/* Virtual Jaguar libretro — site stylesheet.
+ * Self-contained: no external fonts, JS, or trackers. System font stack,
+ * light/dark via prefers-color-scheme. */
+
+:root {
+  --bg: #f7f6f4;
+  --bg-alt: #ffffff;
+  --fg: #1c1c1e;
+  --fg-muted: #5b5b60;
+  --accent: #c8102e;        /* Jaguar red */
+  --accent-soft: #c8102e18;
+  --border: #d9d7d2;
+  --good: #1a7f37;
+  --good-bg: #1a7f3714;
+  --warn: #9a6700;
+  --warn-bg: #9a670014;
+  --bad: #b42318;
+  --bad-bg: #b4231814;
+  --code-bg: #ecebe8;
+  --max-width: 62rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121214;
+    --bg-alt: #1b1b1f;
+    --fg: #e8e8ea;
+    --fg-muted: #a3a3ab;
+    --accent: #ff4d5e;
+    --accent-soft: #ff4d5e1f;
+    --border: #33333a;
+    --good: #4ac26b;
+    --good-bg: #4ac26b1a;
+    --warn: #e3b341;
+    --warn-bg: #e3b3411a;
+    --bad: #ff7b72;
+    --bad-bg: #ff7b721a;
+    --code-bg: #26262c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+
+pre {
+  background: var(--code-bg);
+  padding: 0.9rem 1.1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; }
+
+/* ---- Header / nav ---- */
+
+.site-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+.site-header .inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.8rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.5rem;
+}
+
+.site-title {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--fg);
+  letter-spacing: 0.01em;
+}
+.site-title .jag { color: var(--accent); }
+
+.site-nav { display: flex; flex-wrap: wrap; gap: 1rem; margin-left: auto; }
+.site-nav a { color: var(--fg-muted); font-weight: 500; }
+.site-nav a.active { color: var(--accent); }
+
+/* ---- Layout ---- */
+
+main {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+h1 { font-size: 2rem; line-height: 1.2; margin: 1rem 0 0.5rem; }
+h2 { font-size: 1.4rem; margin-top: 2.2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+h3 { font-size: 1.1rem; margin-top: 1.6rem; }
+
+.lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 46rem; }
+
+.hero {
+  padding: 2.2rem 0 0.5rem;
+}
+.hero .kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* ---- Cards / feature grid ---- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.card {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+}
+.card h3 { margin: 0 0 0.4rem; font-size: 1.02rem; }
+.card p { margin: 0 0 0.5rem; font-size: 0.94rem; color: var(--fg-muted); }
+.card .src { font-size: 0.82rem; }
+.card .src a { white-space: nowrap; }
+
+/* ---- Badges ---- */
+
+.badge {
+  display: inline-block;
+  padding: 0.1em 0.6em;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge.good  { color: var(--good); background: var(--good-bg); }
+.badge.warn  { color: var(--warn); background: var(--warn-bg); }
+.badge.bad   { color: var(--bad);  background: var(--bad-bg); }
+.badge.plain { color: var(--fg-muted); background: var(--code-bg); }
+.badge.review{ color: var(--warn); background: var(--warn-bg); }
+
+/* ---- Tables ---- */
+
+.table-wrap { overflow-x: auto; margin: 1rem 0; border: 1px solid var(--border); border-radius: 8px; }
+
+table { border-collapse: collapse; width: 100%; background: var(--bg-alt); font-size: 0.92rem; }
+th, td { text-align: left; padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--accent-soft); font-weight: 650; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td.num { font-variant-numeric: tabular-nums; }
+
+.footnote, .caveat {
+  font-size: 0.88rem;
+  color: var(--fg-muted);
+}
+
+.caveat {
+  border-left: 3px solid var(--warn);
+  background: var(--warn-bg);
+  color: var(--fg);
+  padding: 0.7rem 1rem;
+  border-radius: 0 8px 8px 0;
+  margin: 1.2rem 0;
+}
+
+.evidence {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 0.7rem 1rem;
+  border-radius: 0 8px 8px 0;
+  margin: 1.2rem 0;
+  font-size: 0.92rem;
+}
+
+/* ---- Stats strip ---- */
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1.4rem 0;
+}
+.stat {
+  flex: 1 1 10rem;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+.stat .n { font-size: 1.7rem; font-weight: 750; line-height: 1.15; color: var(--accent); font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 0.85rem; color: var(--fg-muted); }
+
+/* ---- Images / A-B figures ---- */
+
+figure { margin: 1.4rem 0; }
+figure img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+figure.smooth img { image-rendering: auto; }
+figcaption { font-size: 0.86rem; color: var(--fg-muted); margin-top: 0.45rem; }
+
+.ab-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.ab-pair figure { margin: 0; }
+.ab-pair .label {
+  font-weight: 650;
+  font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+
+/* ---- Footer ---- */
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+.site-footer .inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.2rem 1.25rem 2rem;
+}
+
+/* ---- Buttons ---- */
+
+.btn {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 650;
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  margin: 0.4rem 0.6rem 0.4rem 0;
+}
+.btn:hover { text-decoration: none; filter: brightness(1.08); }
+.btn.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
