@@ -52,12 +52,20 @@ MAKEFILE = ROOT / "Makefile"
 
 REPO_URL = "https://github.com/libretro/virtualjaguar-libretro"
 
-# The org custom domain GitHub Pages reports for this repository.  Every
-# absolute URL the site emits is derived from this one string, and for a given
-# page the <link rel=canonical>, og:url and the sitemap <loc> must come out
+# The canonical base for every absolute URL the site emits; for a given page
+# the <link rel=canonical>, og:url and the sitemap <loc> must come out
 # byte-identical -- a mismatch between those three is the classic own-goal.
-# Keep the trailing slash.
-SITE_BASE = "https://www.libretro.com/virtualjaguar-libretro/"
+#
+# Default: jaguar.provenance-emu.com, GitHub Pages on the Provenance-Emu fork
+# with a verified custom domain.  The libretro org's own Pages routing sends
+# this repo's site to www.libretro.com/virtualjaguar-libretro/, which that
+# host does not serve (404) and only a libretro org owner can fix; if that
+# ever changes, migrate by flipping VJ_SITE_BASE.  Keep the trailing slash.
+import os as _os
+SITE_BASE = _os.environ.get(
+    "VJ_SITE_BASE", "https://jaguar.provenance-emu.com/")
+if not SITE_BASE.endswith("/"):
+    SITE_BASE += "/"
 SITE_NAME = "Virtual Jaguar libretro"
 
 # Official libretro documentation for this core: the canonical reference

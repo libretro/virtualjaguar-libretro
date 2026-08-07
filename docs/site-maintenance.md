@@ -1,8 +1,25 @@
 # Site maintenance
 
-The project website (<https://www.libretro.com/virtualjaguar-libretro/>) is a
-static site generated from **committed repository data** — no CMS, no external
+The project website (<https://jaguar.provenance-emu.com/>) is a static site
+generated from **committed repository data** — no CMS, no external
 dependencies, no hand-maintained compatibility tables.
+
+## Where the site is hosted, and why
+
+The site is GitHub Pages on the **Provenance-Emu fork** with the verified
+custom domain `jaguar.provenance-emu.com` (DNS: a `CNAME` to
+`libretro.github.io`, proxy disabled so GitHub can see it and issue the
+certificate).
+
+It is not served from the `libretro` org repo because that org's Pages
+configuration redirects every project site to
+`www.libretro.com/<repo>/`, a host libretro serves elsewhere and which
+returns 404 for these paths. Only a libretro org owner can change that.
+If it is ever fixed, migrating is one variable: `SITE_BASE` in
+`scripts/build_site.py`, overridable at build time with `VJ_SITE_BASE`.
+Every absolute URL the site emits -- canonical, og:url, sitemap loc,
+robots -- derives from that single string, so they cannot drift apart.
+
 
 ## How the automation works
 
