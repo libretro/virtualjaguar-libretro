@@ -34,6 +34,7 @@ skip_file() {
         test/tools/flicker_detect.c) return 0 ;;
         # Builds against test/harness/, which is outside $INCLUDES; C99 harness.
         test/tools/fmv_seek_probe.c) return 0 ;;
+        test/tools/frame_hash_ab.c) return 0 ;;
     esac
     return 1
 }
