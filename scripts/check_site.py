@@ -14,7 +14,9 @@ Graph / Twitter card set present with an absolute image that exists, JSON-LD
 parses and is the expected @type.  Site-wide: titles and descriptions are
 distinct, sitemap.xml is well-formed and lists exactly the generated pages,
 robots.txt carries an absolute Sitemap: line, and no page references a
-tracker, an external asset, or any <script> other than JSON-LD.
+tracker, an external asset, or any <script> other than JSON-LD blocks and
+deferred <script src> tags pointing at local vendored files under assets/js/
+that exist in the output (inline and external scripts stay hard failures).
 """
 
 import json
@@ -189,9 +191,28 @@ def check_page(out, name):
     for bad in FORBIDDEN:
         check(bad not in text, "%s: references %r -- no trackers or external "
                                "assets are allowed" % (name, bad))
+    # Scripts: JSON-LD blocks, or <script src> pointing at a LOCAL vendored
+    # file that exists in the output (site/assets/js/, committed -- see
+    # docs/site-maintenance.md).  External src and inline non-JSON-LD
+    # scripts remain hard failures: no CDNs, no trackers, no surprises.
     for m in re.finditer(r"<script([^>]*)>", text):
-        check('type="application/ld+json"' in m.group(1),
-              "%s: non-JSON-LD <script%s>" % (name, m.group(1)))
+        attrs = m.group(1)
+        if 'type="application/ld+json"' in attrs:
+            continue
+        srcm = re.search(r'src="([^"]*)"', attrs)
+        if not check(srcm is not None,
+                     "%s: inline non-JSON-LD <script%s>" % (name, attrs)):
+            continue
+        src = srcm.group(1)
+        check(not re.match(r"^(https?:)?//", src),
+              "%s: external script src %r -- vendor it locally" % (name, src))
+        check(re.match(r"^assets/js/[\w.-]+\.js$", src),
+              "%s: script src %r is outside assets/js/" % (name, src))
+        check((out / src).is_file(),
+              "%s: script src %r does not exist in the output" % (name, src))
+        check(re.search(r"\bdefer\b", attrs) is not None,
+              "%s: script src %r must be deferred -- effects are progressive "
+              "enhancement, not render-blocking" % (name, src))
     return pp
 
 
