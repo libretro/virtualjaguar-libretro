@@ -91,6 +91,8 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
 - `test/tools/test_frame_timing.c` — per-frame timing diagnostic (`make frame-timing FRAME_TIMING_ROM=path`); reports halflines/cycles/VBlanks per frame, wall-clock speed ratio, anomaly detection. Use `--csv` for per-frame data, `--json` for machine output
 - `test/test_audio_clipping.c` — detects loud-broken audio (saturation density, run length, sustained loud RMS). Catches the Skyhammer / IS2 "saturated square wave" failure mode.
 - `test/test_audio_presence.c` — counterpart to clipping: asserts audio is present in a known-good envelope (RMS within `[floor, ceiling]`, onset reached, no long zero runs). **Required to catch the silencing-regression class** where a "fix" drops RMS to zero — clipping passes but the game has no audio. Iron Soldier 1 baseline: RMS ~1175 on develop.
+- `test/tools/hires_box_check.c` — internal-resolution (hi-res Stage 1) inertness gate: asserts every 2x frame is the exact 2×2 box replication of a 1x reference run (`frame_hash_ab` CSV). Frames adjacent to a presented-dimension change are excluded (stale-pitch mid-frame geometry scramble, already garbage at 1x — see the tool header).
+- `test/tools/hires_state_digest.c` — savestate FNV digests at frames 300/600/900; diff a 1x run against a `virtualjaguar_internal_resolution=2x` run to prove the emulated machine cannot see the option.
 - `test/tools/test_memory_map.c` — asserts `SET_MEMORY_MAPS`, `SET_SUPPORT_ACHIEVEMENTS=true`, descriptor layout
 - `test/tools/test_blitter_compare` — fast vs accurate blitter diff. Not in default `make`; build manually:
   `cc -O2 -Wall -std=c99 -I./libretro-common/include -o test/tools/test_blitter_compare test/tools/test_blitter_compare.c -ldl`
