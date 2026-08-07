@@ -63,14 +63,23 @@ plausible full-precision pixel — cosmetic, self-healing on the next write.
    into the line buffer at `tomRam8[0x1800 + …]`, also resolve
    `shadow_lookup(srcAddr, value16)` and write the result (hit → shadow
    RGB888; miss → `CRY16ToRGB32[value16]`) into a parallel **shadow line
-   buffer** at the same line-buffer offset. Every other OP write site (CLUT,
-   BLEND_CR/BLEND_Y paths) stores the stock LUT conversion of the 16-bit
-   value it just wrote, so the shadow line buffer is always fully populated.
-   The per-line background fill / line-buffer clear that runs before object
-   processing initializes the shadow line buffer the same way (stock LUT of
-   the background value), so pixels no object touches render correctly.
-3. **Output** (`src/tom/tom.c`): `tom_render_16bpp_cry_scanline` copies the
-   shadow line buffer to the host backbuffer instead of running the LUT.
+   buffer** at the same line-buffer offset, tagged with the 16-bit value
+   written alongside it.
+
+   *Implemented refinement:* the shadow line buffer is **tag-checked at
+   render time** rather than exhaustively populated at every writer. The
+   original plan had each remaining OP write site (CLUT, BLEND_CR/BLEND_Y,
+   the per-line background fill) also store a stock LUT conversion so the
+   buffer would always be fully populated. That enumeration is not closed —
+   the GPU and 68K can write the line buffer directly through TOM memory
+   space — so a missed writer would leave a stale entry that renders as a
+   wrong pixel. Tagging instead makes any unenumerated path fall back to
+   stock rendering automatically: two touch points instead of ~20, and
+   mispopulation is impossible by construction rather than by review.
+3. **Output** (`src/tom/tom.c`): `tom_render_16bpp_cry_scanline` substitutes
+   the shadow line buffer's RGB888 **only where the entry's tag matches the
+   16-bit value actually in the line buffer**, and runs the stock
+   `CRY16ToRGB32` LUT everywhere else.
 4. **Module**: new `src/tom/shadowfb.{c,h}` owns the arrays,
    alloc/free/clear, and the store/lookup inlines. C89, lint-clean.
 5. **Option**: `virtualjaguar_true_color` in `libretro_core_options.h`,
