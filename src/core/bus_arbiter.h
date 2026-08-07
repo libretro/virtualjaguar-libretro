@@ -22,6 +22,37 @@
  * blitter busy-time, 68K arbitration done right) can grow back around
  * it.
  *
+ * CYCLE-DOMAIN CONTRACT (issue #318).  Every charge in this model is a
+ * memory-system latency, and memory-system latencies are WALL TIME:
+ * they come from DRAM/ROM silicon, which does not speed up when a core
+ * option overclocks a processor.  Instruction costs (gpu_opcode_cycles,
+ * the UAE 68K's published timings) are CORE TIME and scale with their
+ * processor's clock.  Concretely, per charge:
+ *
+ *   68K per-access wait states  computed in sysclks here, converted to
+ *     the 68K's SCALED cycle domain by bus_arbiter_m68k_access() (the
+ *     caller passes its clock-scale percent) so the wall time of a wait
+ *     state is invariant under the m68k_clock_scale enhancement.
+ *   GPU per-access self-cost    returned in sysclks by
+ *     bus_arbiter_charge_access(); gpu.c converts to the GPU's scaled
+ *     cycle domain at the point it deducts from the slice budget.
+ *   OP fetch / row-change / DRAM refresh  charged to the 68K as
+ *     m68k_pending_stall and drained by M68KExecuteWithStalls() BEFORE
+ *     the 68K clock scale is applied — already wall time.
+ *   DSP external accesses       currently pay NOTHING (no charge hook
+ *     in dsp.c).  Known asymmetry; the pipeline-hazard work (#313) is
+ *     expected to add the DSP-side hook and must place its charges in
+ *     this same wall-time domain.
+ *
+ * One deliberate simplification: the 68K wait-state THRESHOLD
+ * (M68K_BUS_CYCLE_SYSCLKS, the stock 8-sysclk bus cycle an access must
+ * exceed before it costs anything) stays defined against the STOCK bus
+ * cycle even when the 68K is overclocked.  A hypothetical overclocked
+ * 68000 would have a shorter bus cycle and see more wait states; the
+ * clock scales are enhancement levers documented as "bug reports only
+ * valid at 1x", so the model keeps the stock threshold and only makes
+ * the charged excess wall-time invariant.
+ *
  * MEMCON1 default on Jaguar: 0x1861
  *   Bits 3-4 (ROMSPEED): 0b00 = 10 system clocks per ROM access
  *     (JTRM: 0=10, 1=8, 2=6, 3=5; bit 7 FASTROM overrides to 2, test-only)
@@ -85,8 +116,12 @@ struct BusArbiter {
      * handoff) is being pinned down against measured game pace. */
     uint8_t contention_scale;
 
-    /* 68K self-cost carry: system clocks not yet converted to a whole
-     * 68K cycle (68K runs at system/2, so 0 or 1).  Savestate field. */
+    /* 68K self-cost carry: sub-cycle remainder from converting wall
+     * sysclks into scaled 68K cycles.  Units are sysclk-hundredths
+     * (sysclks x scale_pct), remainder modulo 200 — at stock scale
+     * (100) this is exactly the old odd-sysclk carry with values
+     * 0/100 instead of 0/1.  Savestate field; an old state's 0/1
+     * value loads as a sub-cycle epsilon, which is harmless. */
     uint32_t m68k_sysclk_carry;
 
     /* Elapsed system clocks not yet folded into a refresh request
@@ -132,11 +167,17 @@ uint32_t bus_arbiter_refresh_clocks(uint32_t elapsed_sysclks);
 uint32_t bus_arbiter_charge_access(int master, uint32_t addr);
 
 /* 68K self-cost: whole 68K cycles to charge for `naccesses` 16-bit
- * bus cycles at `addr` (a longword access passes 2).  Converts system
- * clocks to 68K cycles (system/2), carrying the odd clock in
- * busArbiter.m68k_sysclk_carry.  Does not check busArbiter.enabled —
- * call sites gate, same as the GPU half. */
-uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses);
+ * bus cycles at `addr` (a longword access passes 2).  Converts wall
+ * system clocks into the 68K's cycle domain at `scale_pct` (the
+ * m68k_clock_scale percent, 100 = stock): cycles = sysclks x
+ * scale_pct / 200, sub-cycle remainder carried in
+ * busArbiter.m68k_sysclk_carry.  At 100 this is exactly the old
+ * system/2 conversion.  Wall time of a wait state is thus invariant
+ * under the clock scale — see the cycle-domain contract above.  Does
+ * not check busArbiter.enabled — call sites gate, same as the GPU
+ * half. */
+uint32_t bus_arbiter_m68k_access(uint32_t addr, uint32_t naccesses,
+                                 uint32_t scale_pct);
 
 #ifdef __cplusplus
 }

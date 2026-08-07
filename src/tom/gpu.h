@@ -17,6 +17,7 @@ extern "C" {
 void GPUInit(void);
 void GPUDone(void);
 void GPUReset(void);
+void GPUClockScaleReset(void);
 void GPUExec(int32_t);
 /* Slice bookkeeping for the 68K->GPU-local-RAM sync; see the comment on
  * gpuSliceBudget in gpu.c.  GPUBeginSlice() declares the RISC cycles the
