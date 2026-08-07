@@ -116,3 +116,7 @@ test/.skipped-checks
 # is a plain file. Committing it makes every Windows checkout fail
 # with "error: invalid path 'nul'".
 /nul
+
+# Generated static site (scripts/build_site.py output)
+/_site/
+__pycache__/
