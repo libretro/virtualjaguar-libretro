@@ -1,5 +1,6 @@
 <!-- title: Virtual Jaguar libretro — Atari Jaguar, everywhere RetroArch runs -->
 <!-- nav: Home -->
+<!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, JagLink networking, GameDrive, deterministic savestates, 16 platforms. -->
 
 <div class="hero">
   <div class="kicker">libretro core &middot; open source &middot; GPLv3</div>
@@ -16,6 +17,7 @@
     <a class="btn" href="{{REPO}}/releases">Download (GitHub Releases)</a>
     <a class="btn secondary" href="compatibility.html">Compatibility data</a>
     <a class="btn secondary" href="enhancements.html">Enhancements</a>
+    <a class="btn secondary" href="{{DOCS_URL}}">Official libretro docs</a>
   </p>
 </div>
 
@@ -106,6 +108,34 @@
   </div>
 </div>
 
+<h2>Documentation and support</h2>
+<p>
+  The <strong>reference manual</strong> for this core is the
+  <a href="{{DOCS_URL}}">official libretro documentation page</a> on
+  docs.libretro.com: supported file extensions, the
+  <a href="{{DOCS_OPTIONS_URL}}">core options reference</a>, and the
+  <a href="{{DOCS_CONTROLS_URL}}">controller tables</a>. It is maintained in the
+  <a href="{{DOCS_SRC_URL}}"><code>libretro/docs</code></a> repository by the
+  libretro documentation project — separately from this repository, so it can
+  lag the newest releases; this site links back to the commits and PRs for
+  anything newer.
+</p>
+<p>
+  <strong>BIOS and system files:</strong> none are required. The Jaguar boot ROM
+  and both Jaguar CD BIOSes are embedded in the core, with an HLE BIOS as the
+  default boot path; an optional external CD BIOS override is documented in the
+  <a href="{{REPO}}#bios">README's BIOS section</a>.
+</p>
+<p>
+  Questions and compatibility reports belong in
+  <a href="{{REPO}}/discussions">GitHub Discussions</a>; confirmed bugs in
+  <a href="{{REPO}}/issues">Issues</a>. libretro also hosts a
+  community-maintained
+  <a href="{{DOCS_COMPAT_URL}}">Atari Jaguar compatibility list</a>, which is a
+  different document from the generated <a href="compatibility.html">CD boot
+  matrix</a> on this site.
+</p>
+
 <h2>Recent releases</h2>
 <ul>
   <li><strong>v3.1.0</strong> — Jaguar GameDrive, clock-scale (overclock) options,
@@ -124,7 +154,10 @@
 </ul>
 
 <p class="footnote">
-  Nightly builds are published from every push to <code>develop</code>; they are
-  gated on compiling, not on the full test suite — treat them as bleeding edge.
-  See the <a href="{{REPO}}/blob/develop/docs/release-process.md">release process</a>.
+  <a href="{{REPO}}/releases/tag/nightly">Nightly builds</a> are published from
+  every push to <code>develop</code>, which currently carries the version string
+  <code>v{{CORE_VERSION}}</code> (the <code>CORE_BASE_VERSION</code> this site is
+  generated from). They are gated on compiling, not on the full test suite —
+  treat them as bleeding edge. See the
+  <a href="{{REPO}}/blob/develop/docs/release-process.md">release process</a>.
 </p>

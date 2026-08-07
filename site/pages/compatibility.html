@@ -1,5 +1,6 @@
 <!-- title: Compatibility — Virtual Jaguar libretro -->
 <!-- nav: Compatibility -->
+<!-- description: Jaguar CD boot results per disc image and named cartridge fixes for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
 
 <h1>Compatibility</h1>
 <p class="lede">
@@ -18,6 +19,23 @@
   a regression gate, not a completed-the-game certificate. Rows reflect the local
   test corpus at the build revision stamped in the matrix ({{COMPAT_BUILD_IDS}}),
   run on the maintainer's disc images; your dump may differ.
+</div>
+
+<div class="caveat">
+  <strong>Looking for the manual, not the matrix?</strong> Core options, file
+  extensions, controller tables and frontend feature support are documented on
+  the <a href="{{DOCS_URL}}">official libretro documentation page for this
+  core</a> (docs.libretro.com) — the canonical reference manual, maintained in
+  <a href="{{DOCS_SRC_URL}}"><code>libretro/docs</code></a>. Jump straight to the
+  <a href="{{DOCS_OPTIONS_URL}}">core options reference</a> or the
+  <a href="{{DOCS_CONTROLS_URL}}">controller tables</a>.
+  <strong>No BIOS or system files are required</strong> — the boot ROM and both
+  Jaguar CD BIOSes are embedded in the core; the optional external CD BIOS
+  override is described in the <a href="{{REPO}}#bios">README's BIOS section</a>.
+  libretro additionally hosts a community-maintained
+  <a href="{{DOCS_COMPAT_URL}}">Atari Jaguar compatibility list</a>: a separate
+  document from the machine-generated boot matrix below, with different
+  methodology and a different scope (cartridges included).
 </div>
 
 <h2>Jaguar CD boot matrix</h2>

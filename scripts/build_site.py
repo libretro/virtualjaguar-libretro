@@ -4,37 +4,81 @@
 Stdlib only -- no pip, no external JS/CSS/fonts/trackers.
 
 Inputs (committed in this repo):
-  site/pages/*.html        page body fragments (title/nav in leading comments)
+  site/pages/*.html        page body fragments (title/nav/description in
+                           leading comments)
   site/style.css           the one stylesheet
   site/assets/*            images, copied verbatim
   docs/cd-boot-matrix.md   parsed for the CD compatibility table
+  Makefile                 CORE_BASE_VERSION -> JSON-LD softwareVersion
 
 Output:
   _site/                   ready to serve (used by .github/workflows/pages.yml)
+  _site/sitemap.xml        one <url> per page, lastmod from git
+  _site/robots.txt         advisory (see render_robots for the caveat)
 
 Usage:
   python3 scripts/build_site.py            # build into _site/
   python3 scripts/build_site.py --out DIR  # build elsewhere
+  python3 scripts/build_site.py --build-date YYYY-MM-DD   # pin the fallback
 
 The CD-matrix parser is deliberately strict: if docs/cd-boot-matrix.md drifts
 from the expected shape, the build FAILS with a loud message instead of
 publishing garbage.  Tolerated in-format noise: `<!-- build:<rev> -->` stamps
 inside cells (extracted, reported, stripped) and unknown Stage strings (mapped
 to the honest "not yet verified" bucket).
+
+SEO surface (all generated here, never hand-written into a page fragment):
+per-page <title>/description, rel=canonical, Open Graph + Twitter card,
+JSON-LD (SoftwareApplication on the home page, BreadcrumbList on subpages),
+sitemap.xml and robots.txt.  No trackers, no analytics, no external assets --
+that is a hard rule, see docs/site-maintenance.md.
 """
 
 import argparse
+import datetime
 import html
+import json
 import re
 import shutil
+import struct
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE_SRC = ROOT / "site"
 MATRIX_MD = ROOT / "docs" / "cd-boot-matrix.md"
+MAKEFILE = ROOT / "Makefile"
 
 REPO_URL = "https://github.com/libretro/virtualjaguar-libretro"
+
+# The org custom domain GitHub Pages reports for this repository.  Every
+# absolute URL the site emits is derived from this one string, and for a given
+# page the <link rel=canonical>, og:url and the sitemap <loc> must come out
+# byte-identical -- a mismatch between those three is the classic own-goal.
+# Keep the trailing slash.
+SITE_BASE = "https://www.libretro.com/virtualjaguar-libretro/"
+SITE_NAME = "Virtual Jaguar libretro"
+
+# Official libretro documentation for this core: the canonical reference
+# manual, maintained in libretro/docs as docs/library/virtual_jaguar.md.
+# This site is the project showcase; that page is the manual.
+LIBRETRO_DOCS = "https://docs.libretro.com/library/virtual_jaguar/"
+LIBRETRO_DOCS_OPTIONS = LIBRETRO_DOCS + "#core-options"
+LIBRETRO_DOCS_CONTROLS = LIBRETRO_DOCS + "#controllers"
+LIBRETRO_DOCS_SRC = ("https://github.com/libretro/docs/blob/master/"
+                     "docs/library/virtual_jaguar.md")
+# libretro's own community-maintained Jaguar compatibility list -- a different
+# document from our generated CD boot matrix; both are linked, labelled.
+LIBRETRO_DOCS_COMPAT = "https://docs.libretro.com/library/compatibility/jaguar/"
+
+# Default social share image.  Dimensions are read from the file itself
+# (png_size) so og:image:width/height can never drift from reality.
+SHARE_IMAGE = "assets/truecolor_ab_cybermorph.png"
+SHARE_IMAGE_ALT = (
+    "Three-panel comparison of Cybermorph running in the Virtual Jaguar "
+    "libretro core: stock 16-bit CRY output, true-color output, and a "
+    "64x-amplified difference map.")
 
 # Page order defines nav order.
 PAGES = ["index.html", "compatibility.html", "enhancements.html",
@@ -42,12 +86,97 @@ PAGES = ["index.html", "compatibility.html", "enhancements.html",
 
 EXPECTED_HEADER = ["Title", "Mode", "Score", "Stage", "Watchdog", "PC evidence"]
 BUILD_STAMP_RE = re.compile(r"<!--\s*build:([^\s>]+)\s*-->")
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def die(msg):
     sys.stderr.write("\nFATAL: build_site.py: %s\n" % msg)
     sys.stderr.write("Refusing to publish a site with bad or missing data.\n")
     sys.exit(1)
+
+
+# ------------------------------------------------------- repo-derived facts
+
+def read_core_version(makefile):
+    """softwareVersion for the JSON-LD, straight from the Makefile.
+
+    Pulled from the build system rather than typed into the site so a release
+    bump can't leave stale structured data behind.  Fails loudly, like the
+    matrix parser: publishing a wrong version is worse than not publishing.
+    """
+    if not makefile.is_file():
+        die("%s not found -- cannot determine the core version" % makefile)
+    m = re.search(r"^CORE_BASE_VERSION\s*:=\s*v?([0-9][0-9A-Za-z.\-]*)\s*$",
+                  makefile.read_text(encoding="utf-8"), re.M)
+    if not m:
+        die("no 'CORE_BASE_VERSION := vX.Y.Z' line in %s -- structured data "
+            "would publish a stale or missing version" % makefile)
+    return m.group(1)
+
+
+def png_size(path):
+    """(width, height) from a PNG IHDR, so og:image dimensions can't lie."""
+    if not path.is_file():
+        die("share image %s is missing" % path)
+    data = path.read_bytes()[:24]
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
+        die("%s is not a PNG -- refusing to guess og:image dimensions" % path)
+    return struct.unpack(">II", data[16:24])
+
+
+def git_output(args):
+    """Run git at ROOT; stripped stdout, or None on ANY failure.
+
+    Never fatal: a source tarball, a missing git binary and a detached CI
+    checkout must all still produce a site.
+    """
+    try:
+        proc = subprocess.run(["git", "-C", str(ROOT)] + args,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf-8", "replace").strip()
+
+
+def repo_is_shallow():
+    return git_output(["rev-parse", "--is-shallow-repository"]) == "true"
+
+
+def git_commit_date(path):
+    """YYYY-MM-DD of the last commit touching `path`, or None."""
+    out = git_output(["log", "-1", "--format=%cs", "--", str(path)])
+    # `%cs` needs git >= 2.21; an older git echoes the literal format string,
+    # which the regex rejects -- so we degrade to the fallback date instead of
+    # emitting '%cs' as a lastmod.
+    if not out or not ISO_DATE_RE.match(out):
+        return None
+    return out
+
+
+def last_modified(paths, fallback, shallow):
+    """Newest git commit date across `paths`, else `fallback`.
+
+    A page's real lastmod depends on more than its own fragment: every page
+    depends on this generator's template, and the compatibility page is
+    generated from docs/cd-boot-matrix.md.  Callers pass all of them.
+
+    On a SHALLOW clone (`actions/checkout` defaults to fetch-depth: 1) `git
+    log -1 -- <path>` reports the single checkout commit for *every* path, so
+    all pages would get the same wrong date while looking perfect locally.
+    We refuse that data outright; .github/workflows/pages.yml sets
+    fetch-depth: 0 so the real dates are available in CI.
+    """
+    if shallow:
+        return fallback
+    best = None
+    for p in paths:
+        d = git_commit_date(p)
+        if d and (best is None or d > best):
+            best = d
+    return best or fallback
 
 
 # ---------------------------------------------------------------- CD matrix
@@ -198,31 +327,136 @@ def render_cd_table(rows):
 
 # ---------------------------------------------------------------- pages
 
-META_RE = re.compile(r"<!--\s*(title|nav):\s*(.*?)\s*-->")
+META_RE = re.compile(r"<!--\s*(title|nav|description):\s*(.*?)\s*-->")
+REQUIRED_META = ("title", "nav", "description")
 
 
 def read_fragment(path):
     text = path.read_text(encoding="utf-8")
     meta = dict(META_RE.findall(text))
-    if "title" not in meta or "nav" not in meta:
-        die("%s is missing a '<!-- title: ... -->' or '<!-- nav: ... -->' "
-            "comment" % path)
+    for key in REQUIRED_META:
+        if not meta.get(key):
+            die("%s is missing a non-empty '<!-- %s: ... -->' comment"
+                % (path, key))
+    # Search engines truncate around 160 characters; 200 leaves slack while
+    # still catching "someone pasted a paragraph in here".
+    if len(meta["description"]) > 200:
+        die("%s: description is %d characters (max 200) -- it would be "
+            "truncated in results:\n  %r"
+            % (path, len(meta["description"]), meta["description"]))
     body = META_RE.sub("", text).strip()
     return meta, body
 
 
-def layout(page_name, meta, body, nav_items):
+# ------------------------------------------------------------ SEO / metadata
+
+def page_url(page_name):
+    """Absolute, canonical URL for a page.  Single source of truth for
+    rel=canonical, og:url and the sitemap <loc> -- they must not diverge."""
+    if page_name == "index.html":
+        return SITE_BASE
+    return SITE_BASE + page_name
+
+
+def json_ld(obj):
+    """Serialize structured data from a dict, so it is valid JSON by
+    construction.  '<' is escaped: no payload can close the <script>."""
+    return json.dumps(obj, indent=2, ensure_ascii=False).replace("<", "\\u003c")
+
+
+def software_application_ld(version, share_url, description):
+    """Describes the core itself.  Deliberately omits aggregateRating and
+    review: we have no such data, and inventing it is out of the question."""
+    return {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": SITE_NAME,
+        "alternateName": "virtualjaguar_libretro",
+        "description": description,
+        "applicationCategory": "GameApplication",
+        "applicationSubCategory": "Emulator",
+        # Exactly the targets .github/workflows/release.yml builds.
+        "operatingSystem": ["Linux", "macOS", "Windows", "Android", "iOS",
+                            "tvOS", "Web browser (WebAssembly)"],
+        "softwareVersion": version,
+        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "isAccessibleForFree": True,
+        "programmingLanguage": "C",
+        "url": SITE_BASE,
+        "image": share_url,
+        "codeRepository": REPO_URL,
+        "downloadUrl": REPO_URL + "/releases",
+        "softwareHelp": {
+            "@type": "CreativeWork",
+            "name": "Virtual Jaguar core documentation (docs.libretro.com)",
+            "url": LIBRETRO_DOCS,
+        },
+    }
+
+
+def breadcrumb_ld(page_name, label):
+    return {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": SITE_NAME,
+             "item": SITE_BASE},
+            {"@type": "ListItem", "position": 2, "name": label,
+             "item": page_url(page_name)},
+        ],
+    }
+
+
+def head_meta(page_name, meta, ctx):
+    """The whole per-page <head> SEO block, generated -- never hand-written
+    into a fragment, so the tags can't drift apart page to page."""
+    url = page_url(page_name)
+    title = meta["title"]
+    desc = meta["description"]
+    esc = lambda s: html.escape(s, quote=True)
+    out = [
+        '<title>%s</title>' % html.escape(title),
+        '<meta name="description" content="%s">' % esc(desc),
+        '<link rel="canonical" href="%s">' % esc(url),
+        '<meta property="og:type" content="website">',
+        '<meta property="og:site_name" content="%s">' % esc(SITE_NAME),
+        '<meta property="og:locale" content="en_US">',
+        '<meta property="og:title" content="%s">' % esc(title),
+        '<meta property="og:description" content="%s">' % esc(desc),
+        '<meta property="og:url" content="%s">' % esc(url),
+        '<meta property="og:image" content="%s">' % esc(ctx["share_url"]),
+        '<meta property="og:image:width" content="%d">' % ctx["share_w"],
+        '<meta property="og:image:height" content="%d">' % ctx["share_h"],
+        '<meta property="og:image:alt" content="%s">' % esc(SHARE_IMAGE_ALT),
+        '<meta name="twitter:card" content="summary_large_image">',
+        '<meta name="twitter:title" content="%s">' % esc(title),
+        '<meta name="twitter:description" content="%s">' % esc(desc),
+        '<meta name="twitter:image" content="%s">' % esc(ctx["share_url"]),
+        '<meta name="twitter:image:alt" content="%s">' % esc(SHARE_IMAGE_ALT),
+    ]
+    if page_name == "index.html":
+        data = software_application_ld(ctx["version"], ctx["share_url"], desc)
+    else:
+        data = breadcrumb_ld(page_name, meta["nav"])
+    out.append('<script type="application/ld+json">\n%s\n</script>'
+               % json_ld(data))
+    return "\n".join(out)
+
+
+def layout(page_name, meta, body, nav_items, ctx):
     nav = []
     for fname, label in nav_items:
         cls = ' class="active"' if fname == page_name else ""
         nav.append('<a href="%s"%s>%s</a>' % (fname, cls, html.escape(label)))
+    # NOTE: the site title is an <a>, not a heading, on purpose -- every page
+    # must have exactly one <h1> and it belongs to the page content.
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>%(title)s</title>
+%(headmeta)s
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -234,26 +468,81 @@ def layout(page_name, meta, body, nav_items):
 %(body)s
 </main>
 <footer class="site-footer"><div class="inner">
-  Virtual Jaguar libretro &mdash; GPLv3 &mdash;
-  <a href="%(repo)s">source on GitHub</a> &middot;
-  <a href="%(repo)s/discussions">Discussions</a> &middot;
-  <a href="%(repo)s/issues">Issues</a>.
-  This site is generated from committed repository data by
-  <a href="%(repo)s/blob/develop/scripts/build_site.py">scripts/build_site.py</a>;
-  every claim links to its evidence.
+  <p>
+    Virtual Jaguar libretro &mdash; GPLv3 &mdash;
+    <a href="%(repo)s">source on GitHub</a> &middot;
+    <a href="%(repo)s#readme">README</a> &middot;
+    <a href="%(repo)s/releases">releases</a> &middot;
+    <a href="%(repo)s/releases/tag/nightly">nightly build</a> &middot;
+    <a href="%(repo)s/discussions">Discussions</a> &middot;
+    <a href="%(repo)s/issues">Issues</a>.
+  </p>
+  <p>
+    Core options, controls and file extensions are documented in the
+    <a href="%(docs)s">official libretro documentation for this core</a> on
+    docs.libretro.com &mdash; that page is the reference manual; this site is
+    the project showcase.
+  </p>
+  <p>
+    This site is generated from committed repository data by
+    <a href="%(repo)s/blob/develop/scripts/build_site.py">scripts/build_site.py</a>;
+    every claim links to its evidence.
+  </p>
 </div></footer>
 </body>
 </html>
-""" % {"title": html.escape(meta["title"]), "nav": "\n".join(nav),
-       "body": body, "repo": REPO_URL}
+""" % {"headmeta": head_meta(page_name, meta, ctx), "nav": "\n".join(nav),
+       "body": body, "repo": REPO_URL, "docs": LIBRETRO_DOCS}
+
+
+# ------------------------------------------------------ sitemap  /  robots
+
+def render_sitemap(entries):
+    """entries: [(absolute url, YYYY-MM-DD), ...]"""
+    out = ['<?xml version="1.0" encoding="UTF-8"?>',
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for url, lastmod in entries:
+        out.append("  <url>")
+        out.append("    <loc>%s</loc>" % html.escape(url))
+        out.append("    <lastmod>%s</lastmod>" % lastmod)
+        out.append("  </url>")
+    out.append("</urlset>")
+    return "\n".join(out) + "\n"
+
+
+def render_robots():
+    """Honest about its own reach: robots.txt is only obeyed at a domain
+    root, and this file is published under a subdirectory of a domain this
+    repository does not own.  It is emitted anyway because it costs nothing
+    and documents the sitemap location; discovery of the sitemap relies on
+    the absolute Sitemap: line below, not on this file being authoritative.
+    """
+    return (
+        "# Virtual Jaguar libretro -- generated by scripts/build_site.py.\n"
+        "# robots.txt is only honoured at a domain root; this copy lives at\n"
+        "# " + SITE_BASE + "robots.txt, so treat it as documentation of the\n"
+        "# sitemap location rather than as this host's policy file.\n"
+        "User-agent: *\n"
+        "Allow: /\n"
+        "\n"
+        "Sitemap: " + SITE_BASE + "sitemap.xml\n")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(ROOT / "_site"),
                     help="output directory (default: _site/)")
+    ap.add_argument("--build-date", default=None, metavar="YYYY-MM-DD",
+                    help="sitemap lastmod fallback when git history is "
+                         "unavailable (default: today, UTC)")
     args = ap.parse_args()
     out = Path(args.out)
+
+    # Computed at run time, never baked into the source.
+    build_date = args.build_date or datetime.datetime.now(
+        datetime.timezone.utc).strftime("%Y-%m-%d")
+    if not ISO_DATE_RE.match(build_date):
+        die("--build-date must be YYYY-MM-DD, got %r" % build_date)
 
     for p in PAGES:
         if not (SITE_SRC / "pages" / p).is_file():
@@ -265,8 +554,26 @@ def main():
     print("cd-boot-matrix: %d rows, %d disc images, build stamp(s): %s"
           % (len(rows), n_titles, ", ".join(build_ids) or "(none)"))
 
+    version = read_core_version(MAKEFILE)
+    share_path = SITE_SRC / SHARE_IMAGE
+    share_w, share_h = png_size(share_path)
+    shallow = repo_is_shallow()
+    ctx = {"version": version,
+           "share_url": SITE_BASE + SHARE_IMAGE,
+           "share_w": share_w, "share_h": share_h}
+    print("core version: %s | share image: %dx%d | lastmod source: %s"
+          % (version, share_w, share_h,
+             "build date %s (shallow clone or no git)" % build_date
+             if shallow else "git log (fallback %s)" % build_date))
+
     subs = {
         "{{REPO}}": REPO_URL,
+        "{{CORE_VERSION}}": html.escape(version),
+        "{{DOCS_URL}}": LIBRETRO_DOCS,
+        "{{DOCS_OPTIONS_URL}}": LIBRETRO_DOCS_OPTIONS,
+        "{{DOCS_CONTROLS_URL}}": LIBRETRO_DOCS_CONTROLS,
+        "{{DOCS_COMPAT_URL}}": LIBRETRO_DOCS_COMPAT,
+        "{{DOCS_SRC_URL}}": LIBRETRO_DOCS_SRC,
         "{{COMPAT_TABLE}}": table_html,
         "{{COMPAT_BUILD_IDS}}":
             ", ".join("<code>%s</code>" % html.escape(b) for b in build_ids)
@@ -307,6 +614,11 @@ def main():
         nav_items.append((p, meta["nav"]))
         frags[p] = (meta, body)
 
+    # Every page's rendered output depends on the generator's template too,
+    # and the compatibility page additionally on the parsed matrix doc.
+    common_deps = [Path(__file__).resolve(), SITE_SRC / "style.css"]
+    sitemap_entries = []
+
     for p in PAGES:
         meta, body = frags[p]
         for k, v in subs.items():
@@ -315,9 +627,25 @@ def main():
         if leftover:
             die("unresolved placeholder %s in site/pages/%s"
                 % (leftover.group(0), p))
-        (out / p).write_text(layout(p, meta, body, nav_items),
-                             encoding="utf-8")
+        page = layout(p, meta, body, nav_items, ctx)
+        leftover = re.search(r"\{\{[A-Z_]+\}\}", page)
+        if leftover:
+            die("unresolved placeholder %s in the rendered %s (template?)"
+                % (leftover.group(0), p))
+        (out / p).write_text(page, encoding="utf-8")
+
+        deps = [SITE_SRC / "pages" / p] + common_deps
+        if p == "compatibility.html":
+            deps.append(MATRIX_MD)
+        sitemap_entries.append(
+            (page_url(p), last_modified(deps, build_date, shallow)))
         print("wrote %s" % (out / p))
+
+    (out / "sitemap.xml").write_text(render_sitemap(sitemap_entries),
+                                     encoding="utf-8")
+    (out / "robots.txt").write_text(render_robots(), encoding="utf-8")
+    print("wrote %s (%d urls) and %s"
+          % (out / "sitemap.xml", len(sitemap_entries), out / "robots.txt"))
 
     print("site built: %s" % out)
 
