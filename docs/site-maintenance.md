@@ -60,6 +60,11 @@ tags into a page fragment** — that is how tags drift apart page to page.
   `page_url()` so they are byte-identical per page. The home page canonical is
   the directory form (`…/virtualjaguar-libretro/`), subpages are
   `…/virtualjaguar-libretro/<page>.html`.
+- **Link the home page as `./`, never `index.html`.** Pages serves it at both
+  URLs; the canonical is the directory form, so an internal `index.html` link
+  would point crawlers at the duplicate the canonical rejects. `page_href()`
+  handles the header and nav; `check_site.py` fails the build if any `href` in
+  the output is `index.html`.
 - Open Graph + Twitter (`summary_large_image`) tags, with an absolute
   `og:image` pointing at the true-color A/B composite.
 - JSON-LD: `SoftwareApplication` on the home page (version pulled from the

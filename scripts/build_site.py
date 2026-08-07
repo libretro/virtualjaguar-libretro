@@ -358,6 +358,20 @@ def page_url(page_name):
     return SITE_BASE + page_name
 
 
+def page_href(page_name):
+    """Relative link to a page, matching page_url()'s choice of form.
+
+    The home page is reachable both as `.../` and `.../index.html`; the
+    canonical is the directory form, so every internal link must use `./` --
+    otherwise the site's own links tell crawlers the home page is the URL
+    rel=canonical says it isn't.  check_site.py asserts no href is
+    "index.html".
+    """
+    if page_name == "index.html":
+        return "./"
+    return page_name
+
+
 def json_ld(obj):
     """Serialize structured data from a dict, so it is valid JSON by
     construction.  '<' is escaped: no payload can close the <script>."""
@@ -447,7 +461,8 @@ def layout(page_name, meta, body, nav_items, ctx):
     nav = []
     for fname, label in nav_items:
         cls = ' class="active"' if fname == page_name else ""
-        nav.append('<a href="%s"%s>%s</a>' % (fname, cls, html.escape(label)))
+        nav.append('<a href="%s"%s>%s</a>'
+                   % (page_href(fname), cls, html.escape(label)))
     # NOTE: the site title is an <a>, not a heading, on purpose -- every page
     # must have exactly one <h1> and it belongs to the page content.
     return """<!DOCTYPE html>
@@ -461,7 +476,7 @@ def layout(page_name, meta, body, nav_items, ctx):
 </head>
 <body>
 <header class="site-header"><div class="inner">
-  <a class="site-title" href="index.html">Virtual <span class="jag">Jaguar</span> libretro</a>
+  <a class="site-title" href="./">Virtual <span class="jag">Jaguar</span> libretro</a>
   <nav class="site-nav">%(nav)s</nav>
 </div></header>
 <main>

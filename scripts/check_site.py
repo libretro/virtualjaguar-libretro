@@ -127,6 +127,12 @@ def check_page(out, name):
     for href in pp.links + [s for s, _ in pp.imgs]:
         if not href or re.match(r"^(https?:|mailto:|#|data:)", href):
             continue
+        # The home page is canonical as the directory form, so nothing may
+        # link it as index.html -- that would point crawlers at the duplicate
+        # URL rel=canonical explicitly rejects.
+        check(urldefrag(href)[0] != "index.html",
+              "%s: links the home page as %r; use './' to match its canonical "
+              "URL" % (name, href))
         target = urldefrag(href)[0]
         if target:
             check((out / target).exists(),
