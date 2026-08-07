@@ -27,7 +27,7 @@ void (*eeprom_dirty_cb)(void) = NULL;
 
 // Private function prototypes
 static void EEPROMSave(void);
-static void eeprom_set_di(uint32_t state);
+static void eeprom_set_di(uint32_t data);
 static void eeprom_set_cs(uint32_t state);
 static void eeprom_clock(void);
 static uint32_t eeprom_get_do(void);
