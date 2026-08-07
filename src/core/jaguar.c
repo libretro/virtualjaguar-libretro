@@ -218,6 +218,8 @@ extern uint8_t jagMemSpace[];
 #define TOM_OLP_HI              0x22
 #define TOM_BORD1               0x2A
 #define TOM_BORD2               0x2C
+#define TOM_VDE                 0x48
+#define TOM_VI                  0x4E
 #define TOM_INT                 0xF000E0
 #define TOM_INT_CLR_ALL         0x1F00
 
@@ -1188,6 +1190,15 @@ void JaguarReset(void)
       /* --- Clear border color --- */
       SET16(tomRam8, TOM_BORD1, 0x0000);
       SET16(tomRam8, TOM_BORD2, 0x0000);
+
+      /* --- Vertical interrupt line ---
+       * The boot ROM programs VI to the first VBlank halfline (VDE+1,
+       * measured $207 on the retail BIOS) before jumping to the cart.
+       * Carts may enable the INT1 VI bit without ever writing VI
+       * (Raiden does), relying on this value; with VI left 0 the
+       * compare never fires and the game spins waiting for its VBlank
+       * ISR. */
+      SET16(tomRam8, TOM_VI, (uint16_t)(GET16(tomRam8, TOM_VDE) + 1));
 
       /* --- Interrupts: clear all pending, disable all enables --- */
       TOMWriteWord(TOM_INT, TOM_INT_CLR_ALL, M68K);
