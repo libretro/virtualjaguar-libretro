@@ -424,8 +424,9 @@ dimensions **within** the advertised maximum; it cannot grow past it. So:
 The core already changes geometry mid-game (320×240 NTSC / 320×256 PAL, and
 `tomWidth` growth to 326). That path is unaffected in shape: `game_width` and
 `game_height` become `tomWidth * N` / `tomHeight * N`, the pending-geometry
-latch in `retro_run` still applies them before rendering, and the pitch becomes
-`game_width * N << 2`.
+latch in `retro_run` still applies them before rendering, and the pitch is
+derived from the already-scaled width: `game_width << 2` bytes per row
+(XRGB8888).
 
 **Aspect ratio stays 4/3.** Nx changes pixel count, not picture shape.
 
