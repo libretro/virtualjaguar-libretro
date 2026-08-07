@@ -2,7 +2,7 @@
 
 **Virtual Jaguar libretro** is an open-source **Atari Jaguar emulator** — cartridges *and* **Jaguar CD** — packaged as a **libretro core**, so it runs everywhere **RetroArch** runs.
 
-All four Jaguar processors are emulated (68000, GPU, DSP, Object Processor), plus the CD drive's BUTCH controller, the link port, the Memory Track cartridge and the Jaguar GameDrive. CI builds 16 platforms on every release tag. Every claim below links to the commit, pull request, test log or committed document behind it.
+All four Jaguar processors are emulated (68000, GPU, DSP, Object Processor), plus the CD drive's BUTCH controller, the link port, the Memory Track cartridge and the Jaguar GameDrive. CI builds 16 platforms on every release tag. Every accuracy, performance and compatibility claim below links to the commit, pull request, test log or committed document behind it.
 
 [![C/C++ CI](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml)
 [![Latest release](https://img.shields.io/github/v/release/libretro/virtualjaguar-libretro)](https://github.com/libretro/virtualjaguar-libretro/releases)
