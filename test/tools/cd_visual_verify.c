@@ -21,11 +21,22 @@
  *      -o test/tools/cd_visual_verify test/tools/cd_visual_verify.c \
  *      test/harness/harness.c -ldl -lm
  *
- * Run (bios mode, screenshots every 150 frames into ./cdshots):
+ * Run (REAL-BIOS CD boot mode, screenshots every 150 frames):
  *   ./test/tools/cd_visual_verify ./virtualjaguar_libretro.dylib \
  *      "test/roms/private/BrainDead 13 (USA)/.../BrainDead 13 (USA).cue" \
- *      --bios --frames 3000 --outdir /tmp/cdshots --shot-every 150 \
+ *      --option virtualjaguar_cd_boot_mode=bios \
+ *      --frames 3000 --outdir /tmp/cdshots --shot-every 150 \
  *      --system-dir test/roms/private
+ *
+ * CD BOOT MODE GOTCHA: for CD content the boot path is selected by the
+ * core option virtualjaguar_cd_boot_mode (hle / auto / bios, default
+ * hle), NOT by --bios.  --bios only sets virtualjaguar_bios (cart boot
+ * ROM), which the CD boot resolver overrides.  To actually test the real
+ * CD BIOS path you MUST pass:
+ *      --option virtualjaguar_cd_boot_mode=bios
+ * and confirm the run logs "[BOOT] CD game, mode=BIOS" (visible with
+ * VJ_HARNESS_LOG_INFO=1).  --option KEY=VALUE is repeatable and handled
+ * by harness_init_from_args (see test/harness/harness.h).
  *
  * Honors VJ_EXPECT_BUILD (build-identity guard, see scripts/build-id.sh).
  */
@@ -182,14 +193,25 @@ int main(int argc, char **argv)
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;
     if (!cfg.rom_path) {
         fprintf(stderr, "usage: cd_visual_verify [core] <disc.cue> [--bios] "
+                        "[--option KEY=VALUE ...] "
                         "[--frames N] [--outdir DIR] [--shot-every N] "
-                        "[--system-dir DIR] [--json]\n");
+                        "[--system-dir DIR] [--json]\n"
+                        "note: CD boot mode is the core option "
+                        "virtualjaguar_cd_boot_mode (hle/auto/bios, default "
+                        "hle);\n      --bios does NOT switch it -- use "
+                        "--option virtualjaguar_cd_boot_mode=bios\n");
         return 1;
     }
     if (!harness_load_rom(&cfg)) return 1;
 
     fprintf(stderr, "cd_visual_verify: %u frames, screenshots %s (every %u)\n",
             cfg.frames, st.outdir ? st.outdir : "(disabled)", st.shot_every);
+    /* Echo option overrides so a saved log records which CD boot mode was
+     * actually requested (the core's "[BOOT] CD game, mode=..." INFO line
+     * is the authoritative confirmation; VJ_HARNESS_LOG_INFO=1 shows it). */
+    for (i = 0; i < (int)cfg.num_options; i++)
+        fprintf(stderr, "cd_visual_verify: option %s=%s\n",
+                cfg.options[i].key, cfg.options[i].value);
 
     harness_run(&cfg);
 
