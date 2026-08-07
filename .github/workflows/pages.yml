@@ -14,6 +14,7 @@ on:
     paths:
       - 'site/**'
       - 'scripts/build_site.py'
+      - 'scripts/fetch_site_fx.py'
       - 'docs/cd-boot-matrix.md'
       # CORE_BASE_VERSION feeds the JSON-LD softwareVersion, so a version
       # bump must redeploy or the structured data goes stale.
@@ -44,6 +45,13 @@ jobs:
           fetch-depth: 0
       - name: Build site
         run: python3 scripts/build_site.py
+      # Deploy-time hero effects: fetch + compile the Canvas UI components
+      # (license permits use as part of a website; the source is never
+      # committed).  Fail-open by design: ANY failure here leaves the site
+      # on the committed crt-fx.js fallback and the deploy proceeds.
+      # Uses the runner's preinstalled node for `npx --yes esbuild`.
+      - name: Fetch deploy-time hero effects (Canvas UI)
+        run: VJ_SITE_FX_FETCH=1 python3 scripts/fetch_site_fx.py _site
       # build_site.py fails on bad input; this fails on bad output (missing
       # or mismatched SEO tags, a second <h1>, a dead local link, malformed
       # JSON-LD or sitemap).  Nothing is deployed if it trips.

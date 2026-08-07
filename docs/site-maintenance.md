@@ -109,21 +109,31 @@ tags into a page fragment** — that is how tags drift apart page to page.
 - Semantic rules the generator upholds: `lang="en"`, exactly **one `<h1>` per
   page** (the site title in the header is an `<a>`, not a heading — leave it
   that way), and descriptive `alt` on every image.
-- Still zero trackers, zero analytics, zero external assets. The only
-  `<script>` allowed on a page is `type="application/ld+json"` or a
+- Still zero trackers, zero analytics, zero external assets *at runtime*.
+  The only `<script>` allowed on a page is `type="application/ld+json"` or a
   **deferred `<script src>` pointing at a local file under
   `site/assets/js/`** that exists in the output. Inline non-JSON-LD scripts
-  and external `src` remain hard failures. Site JS must be **original code
-  written for this repository (GPLv3)** — do not vendor third-party effect
-  libraries here: an earlier attempt to vendor a ported Canvas UI component
-  was reverted because its Commons Clause forbids redistributing ported
-  versions, and mixing that license into a GPLv3 tree is a problem on its
-  own (`site/assets/js/crt-fx.js` is the clean-room replacement). Effects
-  are progressive enhancement only: the page must be complete and readable
-  with JS disabled, initializers must bail out under
-  `prefers-reduced-motion: reduce`, and every failure path must leave the
-  real DOM content visible (fail closed — no class flips before a
-  successful init).
+  and external `src` remain hard failures.
+- **Committed** site JS must be original code written for this repository
+  (GPLv3) — never vendor third-party effect libraries into the repo: the
+  Canvas UI Commons Clause forbids redistributing ported components, and
+  mixing that license into a GPLv3 tree is a problem on its own
+  (`site/assets/js/crt-fx.js` and `hero-fx.js` are ours).
+- Third-party effects run only via **deploy-time fetch**:
+  `scripts/fetch_site_fx.py`, gated behind `VJ_SITE_FX_FETCH=1`, downloads
+  the pinned Canvas UI components, compiles them with esbuild, embeds the
+  upstream license text as a header (the license permits use "as part of a
+  website" and requires the notice), writes
+  `_site/assets/js/canvas-ui-fx.js` and injects its tag.  The source never
+  enters git; the served file is first-party.  ANY failure of that script
+  (flag unset, network, npx, compile) leaves the site on the committed
+  fallback — local builds stay offline and a broken fetch cannot blank the
+  hero or fail a deploy.
+- Effects are progressive enhancement only: the page must be complete and
+  readable with JS disabled; every failure path must leave the real DOM
+  content visible (fail closed — no class flips before a successful init).
+  `prefers-reduced-motion` gates the *animation* only — engines still render
+  one static styled frame.
 
 `scripts/check_site.py` enforces all of the above against the built output:
 one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local

@@ -18,14 +18,15 @@
   "use strict";
 
   var DEFAULTS = {
-    speed: 1,        /* time multiplier for grain/wobble animation        */
-    curve: 0.055,    /* barrel distortion coefficient k                   */
-    scanline: 0.16,  /* scanline darkening depth (0..1)                   */
-    vignette: 0.4,   /* corner darkening amount (0..1)                    */
-    grain: 0.05,     /* noise amplitude (0..1)                            */
-    chroma: 1.1,     /* RGB offset in output pixels                       */
+    speed: 1,        /* time multiplier for the animated terms            */
+    curve: 0.07,     /* barrel distortion coefficient k                   */
+    scanline: 0.22,  /* scanline darkening depth (0..1)                   */
+    vignette: 0.38,  /* corner darkening amount (0..1)                    */
+    grain: 0.07,     /* noise amplitude (0..1)                            */
+    chroma: 1.6,     /* RGB offset in output pixels                       */
     glow: 0.3,       /* horizontal phosphor-glow mix (0..1)               */
-    wobble: 0.0012,  /* horizontal scan wobble amplitude (uv units)       */
+    wobble: 0.0032,  /* horizontal scan wobble amplitude (uv units)       */
+    beat: 0.08,      /* rolling brightness band amplitude (0..1)          */
     exposure: 1.05,  /* final brightness multiplier                       */
     bezel: [0.063, 0.063, 0.078]  /* tube color outside the curved frame */
   };
@@ -51,6 +52,8 @@
     "uniform float uChroma;\n" +
     "uniform float uGlow;\n" +
     "uniform float uWobble;\n" +
+    "uniform float uBeat;\n" +
+    "uniform float uLines;\n" +
     "uniform float uExposure;\n" +
     "uniform vec3 uBezel;\n" +
     "\n" +
@@ -86,9 +89,15 @@
     "              + texture2D(uTex, uv - vec2(2.5 * px, 0.0)).rgb;\n" +
     "  col = mix(col, (col + spread) / 3.0, uGlow);\n" +
     "\n" +
-    "  /* Scanlines: darken between output rows. */\n" +
-    "  float row = sin(uv.y * uSize.y * 3.14159265);\n" +
+    "  /* Scanlines: uLines dark bands over the height (CSS-pixel scale,\n" +
+    "     so they stay visible however large the hero renders). */\n" +
+    "  float row = sin(uv.y * uLines * 3.14159265);\n" +
     "  col *= 1.0 - uScanline * (0.5 + 0.5 * row);\n" +
+    "\n" +
+    "  /* Rolling brightness band, like a CRT refresh beat. */\n" +
+    "  float roll = fract(uv.y * 1.2 - uTime * 0.18);\n" +
+    "  col *= 1.0 + uBeat * (smoothstep(0.0, 0.25, roll)\n" +
+    "                        * (1.0 - smoothstep(0.25, 0.6, roll)) - 0.3 * uBeat);\n" +
     "\n" +
     "  /* Vignette toward the corners. */\n" +
     "  float dist = length(c);\n" +
@@ -199,7 +208,7 @@
 
     var u = {};
     ["uTex", "uSize", "uTime", "uCurve", "uScanline", "uVignette", "uGrain",
-     "uChroma", "uGlow", "uWobble", "uExposure", "uBezel"
+     "uChroma", "uGlow", "uWobble", "uBeat", "uLines", "uExposure", "uBezel"
     ].forEach(function (name) {
       u[name] = gl.getUniformLocation(program, name);
     });
@@ -224,7 +233,20 @@
 
     var time = 0;
 
+    /* Defensive: re-upload the source texture on the first few frames.  A
+     * texture snapshot taken from a loaded-but-undecoded image uploads as
+     * black; re-uploading once the image is surely decoded self-heals. */
+    var reuploads = 3;
+
     function draw() {
+      if (reuploads > 0) {
+        reuploads -= 1;
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        try {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+                        gl.UNSIGNED_BYTE, image);
+        } catch (err) { /* keep the existing texture */ }
+      }
       gl.useProgram(program);
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.activeTexture(gl.TEXTURE0);
@@ -239,6 +261,10 @@
       gl.uniform1f(u.uChroma, opts.chroma);
       gl.uniform1f(u.uGlow, opts.glow);
       gl.uniform1f(u.uWobble, opts.wobble);
+      gl.uniform1f(u.uBeat, opts.beat);
+      gl.uniform1f(u.uLines,
+                   Math.max((canvas.clientHeight ||
+                             canvas.height / 2) / 2, 60));
       gl.uniform1f(u.uExposure, opts.exposure);
       gl.uniform3f(u.uBezel, opts.bezel[0], opts.bezel[1], opts.bezel[2]);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
