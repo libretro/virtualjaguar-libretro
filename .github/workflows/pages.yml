@@ -1,4 +1,4 @@
-# Build and deploy the GitHub Pages site (https://libretro.github.io/virtualjaguar-libretro/).
+# Build and deploy the GitHub Pages site (https://www.libretro.com/virtualjaguar-libretro/).
 #
 # The site is generated from committed repo data by scripts/build_site.py
 # (python3 stdlib only). It rebuilds on every push to develop that touches

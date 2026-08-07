@@ -1,6 +1,6 @@
 # Site maintenance
 
-The project website (<https://libretro.github.io/virtualjaguar-libretro/>) is a
+The project website (<https://www.libretro.com/virtualjaguar-libretro/>) is a
 static site generated from **committed repository data** — no CMS, no external
 dependencies, no hand-maintained compatibility tables.
 
