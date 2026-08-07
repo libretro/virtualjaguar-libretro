@@ -110,7 +110,16 @@ tags into a page fragment** — that is how tags drift apart page to page.
   page** (the site title in the header is an `<a>`, not a heading — leave it
   that way), and descriptive `alt` on every image.
 - Still zero trackers, zero analytics, zero external assets. The only
-  `<script>` on any page is `type="application/ld+json"`.
+  `<script>` allowed on a page is `type="application/ld+json"` or a
+  **deferred `<script src>` pointing at a local vendored file under
+  `site/assets/js/`** that exists in the output. Inline non-JSON-LD scripts
+  and external `src` remain hard failures. Vendored JS is committed with a
+  provenance header (upstream repo + commit) and its license text alongside
+  (see `site/assets/js/canvas-ui-vhs.js`, ported from Canvas UI's VHS
+  component, MIT + Commons Clause, `LICENSE-canvas-ui.md`). Effects are
+  progressive enhancement only: the page must be complete and readable with
+  JS disabled, and initializers must bail out under
+  `prefers-reduced-motion: reduce`.
 
 `scripts/check_site.py` enforces all of the above against the built output:
 one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local

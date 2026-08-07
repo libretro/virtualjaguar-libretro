@@ -4,117 +4,84 @@
 
 <h1>Enhancements</h1>
 <p class="lede">
-  Beyond faithful emulation: features the original hardware never had, built so
-  that the stock pipeline stays bit-identical when they're off — and measured,
-  not just screenshotted, when they're on.
-</p>
-<p class="footnote">
-  Every option named below is a libretro core option, set in your frontend's
-  core-options menu. The full, canonical list — including the options that
-  predate this page — lives in the
-  <a href="{{DOCS_OPTIONS_URL}}">official libretro documentation for this
-  core</a>.
+  Features the hardware never had. Off by default; off means bit-identical.
+  Full option list: <a href="{{DOCS_OPTIONS_URL}}">libretro docs</a>.
 </p>
 
 <h2>True-color rendering <span class="badge review">merged — PR #341</span></h2>
 <p>
-  The Jaguar's blitter computes Gouraud-shaded intensity with <em>16 fraction
-  bits</em> of precision — and then throws them away when it writes a 16-bit CRY
-  pixel. The true-color shadow framebuffer keeps them: with
-  <code>virtualjaguar_true_color = enabled</code>, shaded pixels are also stored at
-  full precision (CRY chroma &times; 24-bit intensity) in a shadow buffer, and the
-  scanline renderer substitutes them at output time. Game-visible RAM stays
-  bit-identical — the game cannot tell the difference; your eyes can.
+  The blitter computes Gouraud shading with 16 fraction bits, then discards
+  them in the 16-bit CRY write. <code>virtualjaguar_true_color</code> keeps
+  them in a shadow framebuffer. Game-visible RAM stays bit-identical.
 </p>
 
 <div class="ab-pair">
   <figure>
-    <div class="label">Stock 16-bit CRY (option off)</div>
+    <div class="label">Stock 16-bit CRY (off)</div>
     <img src="assets/cyber_off_850.png" alt="Cybermorph terrain, stock 16-bit CRY rendering: visible banding on shaded polygon surfaces" width="326" height="240">
-    <figcaption>Cybermorph, frame 850 &mdash; 304 unique colors on screen.</figcaption>
+    <figcaption>Cybermorph, frame 850 &mdash; 304 unique colors.</figcaption>
   </figure>
   <figure>
-    <div class="label">True-color shadow framebuffer (option on)</div>
+    <div class="label">True-color (on)</div>
     <img src="assets/cyber_on_850.png" alt="Cybermorph terrain, true-color rendering: smooth gradients on shaded polygon surfaces" width="326" height="240">
-    <figcaption>Same frame, same inputs &mdash; 450 unique colors on screen.</figcaption>
+    <figcaption>Same frame, same inputs &mdash; 450 unique colors.</figcaption>
   </figure>
 </div>
 
 <figure class="smooth">
   <img src="assets/truecolor_ab_cybermorph.png" alt="Three-panel comparison: stock frame, true-color frame, and a difference map amplified 64 times showing shading refinement across polygon surfaces">
   <figcaption>
-    Off / on / difference. The difference panel is amplified <strong>64&times;</strong>
-    on purpose: the per-pixel delta is deliberately subtle. 45.9% of pixels are
-    refined, and every changed channel moves by <em>exactly one</em> quantization
-    step &mdash; this is banding removal you can measure, not a filter repainting
-    the image.
+    Off / on / difference (amplified 64&times;). 45.9% of pixels refined;
+    every changed channel moves exactly one quantization step.
   </figcaption>
 </figure>
 
 <div class="evidence">
-  <strong>The numbers</strong> (from the PR's validation record): unique on-screen
-  colors 304&nbsp;&rarr;&nbsp;450 (peak frame 423&nbsp;&rarr;&nbsp;702); both blitter
-  engines (fast and accurate) agree exactly; with the option <em>off</em>, 600
-  frames across three cartridge titles hash bit-identical to develop. CRY 16bpp
-  only, default off, ~8&nbsp;MB allocated only when enabled.
-  Status: <em>merged to develop</em> &mdash;
-  <a href="{{REPO}}/pull/341">PR #341</a>, design doc committed with the PR.
-  Available in nightly builds; not yet in a tagged release.
+  304&nbsp;&rarr;&nbsp;450 unique colors (peak 423&nbsp;&rarr;&nbsp;702). Both
+  blitter engines agree exactly; off, 600 frames hash bit-identical to develop.
+  CRY 16bpp only, ~8&nbsp;MB when enabled. Merged &mdash;
+  <a href="{{REPO}}/pull/341">PR #341</a>; in nightlies, not yet in a tagged
+  release.
 </div>
 
 <h2>Overclocking that doesn't break the game</h2>
 <p>
-  Two independent clock-scale options: the 68000
-  (<code>virtualjaguar_m68k_clock_scale</code>, 0.5&times;&ndash;3&times;) and the RISC
-  GPU/DSP pair (<code>virtualjaguar_risc_clock_scale</code>, 0.5&times;&ndash;2&times;)
-  — for framerate-limited titles that leave silicon on the table.
-</p>
-<p>
-  The part that usually goes wrong elsewhere is pacing: naive overclocks speed up
-  the <em>game</em>, not just the processor. Here, bus and DRAM latencies are
-  charged in wall time under any clock scale — the cycle-domain contract — so the
-  timing model isn't distorted, defaults are bit-identical to previous behavior,
-  and audio pitch is proven unchanged at every scale by CI rows that run at
-  non-1&times; scales.
+  <code>virtualjaguar_m68k_clock_scale</code> (0.5&times;&ndash;3&times;) and
+  <code>virtualjaguar_risc_clock_scale</code> (0.5&times;&ndash;2&times;).
+  Bus latencies stay in wall time at any scale &mdash; pacing and pitch don't
+  drift; CI proves it at non-1&times; scales.
 </p>
 <div class="evidence">
-  Sources: <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a>
+  <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a>
   (#314, #316) &middot; cycle-domain contract
-  <a href="{{REPO}}/issues/318">#318</a> via
+  <a href="{{REPO}}/issues/318">#318</a>,
   <a href="{{REPO}}/pull/337">PR #337</a> (merged).
 </div>
 
 <h2>CD read-speed control</h2>
 <p>
-  <code>virtualjaguar_cd_read_speed</code>: 1&times; (hardware-faithful) through
-  2&times;/4&times;/8&times; up to instant, trimming load screens on the HLE CD path.
-  Implemented with streaming reads so accelerated transfers can't overwrite
-  in-flight game code — the failure mode that instant reads used to cause is
-  documented, fixed, and regression-tested.
+  <code>virtualjaguar_cd_read_speed</code>: 1&times; (hardware-faithful) to
+  instant, on the HLE path. Streaming reads keep fast transfers from stomping
+  in-flight game code &mdash; regression-tested.
 </p>
 <div class="evidence">
-  Sources: <a href="{{REPO}}/blob/develop/docs/cd-read-speed.md">docs/cd-read-speed.md</a>
+  <a href="{{REPO}}/blob/develop/docs/cd-read-speed.md">docs/cd-read-speed.md</a>
   &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a>.
 </div>
 
 <h2>Crash watchdog</h2>
 <p>
-  A runtime watchdog (<code>virtualjaguar_crash_detect</code>, on by default) checks
-  once per frame for known failure signatures — GPU/DSP program counter escaping
-  valid memory, a processor wedged on one PC, a frozen framebuffer, a stalled CD
-  seek — and writes the diagnosis into the frontend log at the moment of failure.
-  A user's log line replaces an hour of triage: it names the subsystem that broke.
+  <code>virtualjaguar_crash_detect</code> (default on) matches known failure
+  signatures each frame. Your frontend log names the broken subsystem.
 </p>
 <div class="evidence">
-  Source: <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">src/core/crash_detect.c</a>
-  (signature list and thresholds in the header comment).
+  <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">src/core/crash_detect.c</a>
+  (signatures and thresholds in the header comment).
 </div>
 
 <h2>Roadmap: internal hi-res upscaling <span class="badge plain">in design</span></h2>
 <p>
-  The true-color shadow framebuffer above is deliberately the 1&times; prototype of
-  a larger architecture: rendering the Jaguar's output above native resolution
-  inside the core. That work — along with the rest of the enhancement suite —
-  is tracked as epic <a href="{{REPO}}/issues/338">#338</a>. It is in design;
-  no dates, no promises beyond what's in the issue.
+  The shadow framebuffer is the 1&times; prototype of in-core hi-res
+  rendering. Epic <a href="{{REPO}}/issues/338">#338</a> &mdash; in design,
+  no dates.
 </p>
