@@ -4,8 +4,7 @@
 
 <h1>Compatibility</h1>
 <p class="lede">
-  Generated from committed test logs at build time. Nothing is typed by
-  hand.
+  Generated from committed test logs. Nothing is typed by hand.
 </p>
 
 <div class="caveat">
@@ -47,45 +46,33 @@
   stage column is the gate.
 </p>
 
-<h2>Cartridge highlights</h2>
+<h2>Cartridge highlights <span class="badge good">shipped in tagged releases</span></h2>
 <p>
-  No per-title cartridge matrix yet; named fixes and named open bugs from the
-  release notes and triage docs.
+  No cartridge matrix yet; named, verified fixes from the release notes.
 </p>
 
-<h3>Verified fixed <span class="badge good">shipped in a tagged release</span></h3>
 <div class="table-wrap"><table>
   <tr><th>Title</th><th>What was fixed</th><th>Source</th></tr>
+  <tr><td>Doom</td><td>~2x speed brought down by bus-contention modeling</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration</a></td></tr>
   <tr><td>Wolfenstein 3D</td><td>Missing game music (DSP <code>D_FLAGS</code> pipeline-stage correction)</td>
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
-  <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay — 14-byte group-0 bus-error frame, GPU <code>STOREP</code> masking (#138)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
   <tr><td>Tempest 2000</td><td>One-frame playfield collapse (#187)</td>
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
   <tr><td>Alien vs Predator</td><td>Cyan/brown bars (#178); red background behind the shotgun (#267, #292)</td>
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
-  <tr><td>Brutal Sports Football</td><td>512-byte copier-header dumps load</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
-  <tr><td>Doom</td><td>~2x speed brought down by bus-contention modeling (remaining gap tracked below)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration</a></td></tr>
-  <tr><td>Skyhammer / Iron Soldier 2</td><td>Saturated square-wave audio (DSP MMULT secondary-bank fix); guarded by paired CI tests</td>
-      <td><a href="{{REPO}}/blob/develop/test/test_audio_clipping.c">clipping test</a> &middot; <a href="{{REPO}}/blob/develop/test/test_audio_presence.c">presence test</a></td></tr>
+  <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay — 14-byte group-0 bus-error frame, GPU <code>STOREP</code> masking (#138)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
 </table></div>
 
-<h3>Known issues <span class="badge bad">open and tracked</span></h3>
-<div class="table-wrap"><table>
-  <tr><th>Title / area</th><th>Symptom</th><th>Tracking</th></tr>
-  <tr><td>Doom</td><td>Combat pacing still too fast (~1.5x); suspected unmodelled GPU/DSP pipeline hazards</td>
-      <td><a href="{{REPO}}/issues/313">#313</a></td></tr>
-  <tr><td>Battle Morph (CD)</td><td>Runs too fast</td>
-      <td><a href="{{REPO}}/issues/331">#331</a> &middot; <a href="{{REPO}}/blob/develop/docs/battle-morph-pace-calibration.md">calibration</a></td></tr>
-  <tr><td>Battle Sphere</td><td>Menu text renders dark; blitter exonerated</td>
-      <td><a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">cart-issue-triage.md</a></td></tr>
-  <tr><td>Some blitter-heavy titles</td><td>Accurate blitter not fully cycle-exact; a few games need the fast-blitter option</td>
-      <td><a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">cart-issue-triage.md</a></td></tr>
-  <tr><td>Jaguar CD backlog</td><td>Remaining CD-path items, in one place</td>
-      <td><a href="{{REPO}}/blob/develop/docs/cd-known-issues.md">cd-known-issues.md</a></td></tr>
-</table></div>
+<p class="footnote">
+  <strong>Tracked:</strong> Doom combat pacing ~1.5x fast
+  (<a href="{{REPO}}/issues/313">#313</a>) &middot; Battle Morph (CD) too fast
+  (<a href="{{REPO}}/issues/331">#331</a>).
+  <strong>Workaround:</strong> the non-default Fast blitter drops Iron
+  Soldier's briefing wireframe; keep Accurate
+  (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).
+</p>
 
 <h3>Not yet verified <span class="badge warn">help wanted</span></h3>
 <p>
