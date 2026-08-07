@@ -25,7 +25,7 @@ This is a libretro core, so the whole frontend feature set applies — and the c
 | --- | --- |
 | **RetroAchievements** | Exposes libretro memory maps and asserts achievement support; a harness checks the rcheevos Atari Jaguar console mapping resolves against this core's RAM ([`test_memory_map.c`](test/tools/test_memory_map.c), [`test_rcheevos_e2e.sh`](test/tools/test_rcheevos_e2e.sh)) |
 | **Run-ahead, rewind, netplay** | Declares deterministic savestates, backed by a harness that reproduces RetroArch's rollback loop and demands byte-identical replay ([PR #327](https://github.com/libretro/virtualjaguar-libretro/pull/327), [`test_runahead_determinism.c`](test/tools/test_runahead_determinism.c)) |
-| **Save states that keep working** | Every savestate format any released version of this core ever wrote still loads — exactly, not best-effort ([`savestate-compat.md`](docs/savestate-compat.md)) |
+| **Save states that keep working** | Every savestate format any released version of this core ever wrote still loads — versions 1 through 8, with the one documented exception that v1 predates four DAC fields and restores them to defaults ([`savestate-compat.md`](docs/savestate-compat.md)) |
 | **Shaders, overrides, remapping, fast-forward, screenshots, streaming** | Clean XRGB8888 video and 48 kHz stereo audio out of [`libretro.c`](libretro.c); RetroArch does the rest |
 | **Cheats** | Native cheat-code decoding, covered by the test suite |
 
