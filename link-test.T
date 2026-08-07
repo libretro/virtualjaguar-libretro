@@ -21,6 +21,7 @@
       jaguarMainRAM;
       jaguarMainROM;
       jagMemSpace;
+      busArbiter;
       pcQueue;
       pcQPtr;
       a6Queue;
