@@ -3,8 +3,9 @@
 **Date:** 2026-08-07
 **Epic:** #338 context; follow-up to `docs/hires-upscaling-design.md` risk **R4**
 (the N² OP/scanline compositing cost, screen-area-driven, worst on handhelds).
-That design is on branch `design/338-hires-upscaling` at the time of writing;
-section/risk references below (§2 census, §5.2, §7.7, R1, R4) point into it.
+That design is committed at `docs/hires-upscaling-design.md` (merged in
+PR #347); section/risk references below (§2 census, §5.2, §7.7, R1, R4)
+point into it.
 **Status:** research only. **No code changes.** This document evaluates whether
 the core could offload rendering stages to GPU compute through libretro's
 hardware-render API, and recommends against building it now.
