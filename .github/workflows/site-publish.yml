@@ -1,0 +1,67 @@
+# Publish the project website to https://jaguar.provenance-emu.com/
+#
+# Why this lives in the Provenance-Emu fork rather than upstream: GitHub
+# Pages serves from the repository that owns the verified custom domain.
+# The libretro org's Pages configuration redirects every project site to
+# www.libretro.com/<repo>/, a host libretro serves elsewhere, which 404s
+# for these paths and only a libretro org owner can change.
+#
+# This fork therefore acts purely as the publisher.  It builds nothing of
+# its own: it checks out the CANONICAL sources from libretro/develop and
+# runs the generator committed there, so the published site always
+# reflects upstream and this branch never needs to carry site content.
+name: Publish site
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Hourly; the generator is deterministic, so a run with no upstream
+    # change republishes byte-identical output.
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check out canonical sources (libretro/develop)
+        uses: actions/checkout@v4
+        with:
+          repository: libretro/virtualjaguar-libretro
+          ref: develop
+          # Full history: the generator derives sitemap <lastmod> from
+          # per-file git dates, and a shallow clone gives every path the
+          # checkout commit's date (it refuses to guess in that case).
+          fetch-depth: 0
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build site
+        run: python3 scripts/build_site.py
+
+      - name: Verify output
+        # Fails the run before anything is published if the generated
+        # site is malformed (canonical/og:url/sitemap disagreement,
+        # broken local links, unparseable JSON-LD, trackers).
+        run: python3 scripts/check_site.py
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
