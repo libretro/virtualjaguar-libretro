@@ -155,6 +155,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_internal_resolution",
+      "Internal Resolution (Restart Required)",
+      NULL,
+      "Render internally at a multiple of the Jaguar's native resolution. Applied when content is loaded; changing it mid-game takes effect on restart. The game-visible framebuffer and all emulation timing are unchanged. Combines with True Color.",
+      NULL,
+      "video",
+      {
+         { "1x", "1x (native)" },
+         { "2x", NULL },
+         { NULL, NULL },
+      },
+      "1x"
+   },
+   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,

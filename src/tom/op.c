@@ -994,6 +994,14 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
                            (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
                            sfbPhrase + (((uint32_t)(i - 1)) << 1),
                            (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+                  /* Hi-res: same resolve against the Nx shadow surface,
+                   * producing all N sub-rows inside this single OP pass
+                   * (see shadowfb.h). */
+                  if (shadowHiresActive)
+                     ShadowHiresLineFromRAM(
+                           (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                           sfbPhrase + (((uint32_t)(i - 1)) << 1),
+                           (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
                }
                else
                   *currentLineBuffer =
@@ -1511,6 +1519,13 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
                 * pixCount is the pixel index within the phrase at data. */
                if (shadowFBActive)
                   ShadowFBLineFromRAM(
+                        (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                        data + ((uint32_t)pixCount << 1),
+                        (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+               /* Hi-res: same resolve against the Nx shadow surface,
+                * inside the OP's single per-scanline pass (shadowfb.h). */
+               if (shadowHiresActive)
+                  ShadowHiresLineFromRAM(
                         (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
                         data + ((uint32_t)pixCount << 1),
                         (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));

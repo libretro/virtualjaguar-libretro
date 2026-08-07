@@ -648,29 +648,41 @@ void blitter_generic(uint32_t cmd)
                 * full-precision intensity for gouraud / intensity-shade
                 * pixels written to a 16bpp destination.  The stock
                 * 16-bit write above is UNCHANGED; this is a parallel
-                * derived cache keyed by value-check at read time. */
-               if (shadowFBActive && !inhibit && (GOURD || SRCSHADE)
+                * derived cache keyed by value-check at read time.
+                *
+                * Hi-res (Stage 1): EVERY 16bpp destination write also
+                * refreshes the Nx shadow block by box replication, so
+                * all blit content reaches the Nx surface (design
+                * section 4). */
+               if ((shadowFBActive || shadowHiresActive)
                      && (((REG(A1_FLAGS) >> 3) & 0x07) == 4))
                {
                   uint16_t sfb_frac = 0;
-                  if (GOURD)
-                     sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
-                  else
+                  if (!inhibit && (GOURD || SRCSHADE))
                   {
-                     /* SRCSHADE: 24-bit intensity = source intensity
-                      * plus the full (fraction-carrying) IINC.  Only
-                      * keep the fraction when the integer part agrees
-                      * with the stock write (clamp edges use 0). */
-                     int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
-                     if (sfb_i24 < 0)
-                        sfb_i24 = 0;
-                     if (sfb_i24 > 0x00FFFFFF)
-                        sfb_i24 = 0x00FFFFFF;
-                     if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
-                        sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                     if (GOURD)
+                        sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
+                     else
+                     {
+                        /* SRCSHADE: 24-bit intensity = source intensity
+                         * plus the full (fraction-carrying) IINC.  Only
+                         * keep the fraction when the integer part agrees
+                         * with the stock write (clamp edges use 0). */
+                        int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
+                        if (sfb_i24 < 0)
+                           sfb_i24 = 0;
+                        if (sfb_i24 > 0x00FFFFFF)
+                           sfb_i24 = 0x00FFFFFF;
+                        if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
+                           sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                     }
                   }
-                  ShadowFBStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
-                        (uint16_t)writedata, sfb_frac);
+                  if (shadowFBActive && !inhibit && (GOURD || SRCSHADE))
+                     ShadowFBStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
+                           (uint16_t)writedata, sfb_frac);
+                  if (shadowHiresActive)
+                     ShadowHiresStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
+                           (uint16_t)writedata, sfb_frac);
                }
             }
          }
@@ -813,26 +825,33 @@ void blitter_generic(uint32_t cmd)
                if (DSTWRZ)
                   WRITE_ZDATA(a2, REG(A2_FLAGS), srczdata);
 
-               /* True-color shadow store, A2-destination twin of the
-                * A1 branch above (see shadowfb.h). */
-               if (shadowFBActive && !inhibit && (GOURD || SRCSHADE)
+               /* True-color + hi-res shadow stores, A2-destination twin
+                * of the A1 branch above (see shadowfb.h). */
+               if ((shadowFBActive || shadowHiresActive)
                      && (((REG(A2_FLAGS) >> 3) & 0x07) == 4))
                {
                   uint16_t sfb_frac = 0;
-                  if (GOURD)
-                     sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
-                  else
+                  if (!inhibit && (GOURD || SRCSHADE))
                   {
-                     int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
-                     if (sfb_i24 < 0)
-                        sfb_i24 = 0;
-                     if (sfb_i24 > 0x00FFFFFF)
-                        sfb_i24 = 0x00FFFFFF;
-                     if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
-                        sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                     if (GOURD)
+                        sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
+                     else
+                     {
+                        int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
+                        if (sfb_i24 < 0)
+                           sfb_i24 = 0;
+                        if (sfb_i24 > 0x00FFFFFF)
+                           sfb_i24 = 0x00FFFFFF;
+                        if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
+                           sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                     }
                   }
-                  ShadowFBStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
-                        (uint16_t)writedata, sfb_frac);
+                  if (shadowFBActive && !inhibit && (GOURD || SRCSHADE))
+                     ShadowFBStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                           (uint16_t)writedata, sfb_frac);
+                  if (shadowHiresActive)
+                     ShadowHiresStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                           (uint16_t)writedata, sfb_frac);
                }
             }
          }
@@ -3355,19 +3374,37 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                    * the same 16-bit value; any fraction yields a color
                    * within one stock quantization step (bounded by
                    * construction, see ShadowFBCryRGB). */
-                  if (shadowFBActive && gourd && pixsize == 4)
+                  /* Hi-res (Stage 1): every 16bpp destination write, not
+                   * just gouraud, also refreshes the Nx shadow block by
+                   * box replication (see shadowfb.h). */
+                  if (pixsize == 4
+                        && (shadowHiresActive || (shadowFBActive && gourd)))
                   {
                      if (phrase_mode)
                      {
                         int sfb_k;
+                        uint16_t sfb_v, sfb_f;
                         for (sfb_k = 0; sfb_k < 4; sfb_k++)
-                           ShadowFBStoreCry(address + ((uint32_t)sfb_k << 1),
-                                 (uint16_t)(wdata >> ((3 - sfb_k) << 4)),
-                                 (uint16_t)(srcd1 >> ((3 - sfb_k) << 4)));
+                        {
+                           sfb_v = (uint16_t)(wdata >> ((3 - sfb_k) << 4));
+                           sfb_f = gourd
+                              ? (uint16_t)(srcd1 >> ((3 - sfb_k) << 4)) : 0;
+                           if (shadowFBActive && gourd)
+                              ShadowFBStoreCry(address + ((uint32_t)sfb_k << 1),
+                                    sfb_v, sfb_f);
+                           if (shadowHiresActive)
+                              ShadowHiresStoreCry(address + ((uint32_t)sfb_k << 1),
+                                    sfb_v, sfb_f);
+                        }
                      }
                      else
-                        ShadowFBStoreCry(address, (uint16_t)wdata,
-                              (uint16_t)srcd1);
+                     {
+                        uint16_t sfb_f = gourd ? (uint16_t)srcd1 : 0;
+                        if (shadowFBActive && gourd)
+                           ShadowFBStoreCry(address, (uint16_t)wdata, sfb_f);
+                        if (shadowHiresActive)
+                           ShadowHiresStoreCry(address, (uint16_t)wdata, sfb_f);
+                     }
                   }
                }
 
