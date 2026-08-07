@@ -51,6 +51,9 @@ jobs:
       - name: Build site
         run: python3 scripts/build_site.py
 
+      - name: Fetch Canvas UI effects (deploy-time, license-gated)
+        run: VJ_SITE_FX_FETCH=1 python3 scripts/fetch_site_fx.py _site
+
       - name: Verify output
         # Fails the run before anything is published if the generated
         # site is malformed (canonical/og:url/sitemap disagreement,
