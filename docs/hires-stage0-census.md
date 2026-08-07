@@ -177,8 +177,11 @@ Notes:
 ## 4. OP scaler census (Stage 3 evidence)
 
 Per object-scanline call of `OPProcessScaledBitmap` with `render` and a
-non-zero `HSCALE`. "non-int" = `HSCALE` or `VSCALE` fraction bits ≠ 0
-(3.5 fixed point, `$20` = 1.0×). "h<1.0" / "h>1.0" split the histogram into
+non-zero `HSCALE`. "non-int" = `HSCALE` **or** `VSCALE` fraction bits ≠ 0
+(3.5 fixed point, `$20` = 1.0×). The "h<1.0" / "h>1.0" buckets are
+**HSCALE-only** — Towers II shows 0 in both because its HSCALE is exactly
+1.0 while its non-integer scaling is entirely in VSCALE. They split the
+histogram into
 minification (source detail exists beyond what 1x keeps — **real recovery**)
 and magnification (only step-placement smoothing).
 
@@ -231,7 +234,7 @@ in main RAM (all STORE variants, via the write funnels).
 |---|---|---|---|---|---|
 | Iron Soldier 1 (mission 1, from state) | 2400 | 11 | 5730 | 74849 | 3.52M |
 | Iron Soldier 2 (CD, city mission) | 12000 | 3688 | 9427 | 51214 | 40.24M |
-| Battlemorph (CD, menus+loadout) | 12000 | 308 | 149 | 59061 | 1.37M |
+| Battle Morph (CD, menus+loadout) | 12000 | 308 | 149 | 59061 | 1.37M |
 | Cybermorph (gameplay) | 2400 | 7 | 8366 | 220765 | 10.33M |
 | Doom (gameplay, contrast) | 2400 | 66 | 80818 | 39095 | 49.38M |
 | Checkered Flag (gameplay, contrast) | 2400 | 530 | 7185 | 86844 | 5.53M |
@@ -340,7 +343,8 @@ effectively nothing, so track 4's per-title enhancement DB remains a
 
 The instrumentation pattern (for re-running or extending):
 
-1. Counter struct + record function at `BlitterWriteWord` offset `0x3A`
+1. Counter struct + record function at `BlitterWriteWord`, firing when
+   `(offset & 0xFF) == 0x3A` (the B_CMD low-word write that launches a blit)
    (before engine dispatch) reading `blitter_ram` directly.
 2. `OPProcessFixedBitmap` / `OPProcessScaledBitmap` hooks after decode
    (`render` only): depth histogram, `HSCALE`/`VSCALE` histograms, 8 KB
