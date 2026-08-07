@@ -3,29 +3,32 @@
 <!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, JagLink networking, GameDrive, deterministic savestates, 16 platforms. -->
 
 <div class="hero">
-  <div class="hero-text">
-    <div class="kicker">libretro core &middot; open source &middot; GPLv3</div>
-    <h1>Atari Jaguar, everywhere RetroArch runs.</h1>
-    <p class="lede">
-      68000, Tom, Jerry, two RISC coprocessors, the Object Processor, the CD
-      drive, the link port. One core,
-      <a href="{{REPO}}/blob/develop/.github/workflows/release.yml">16 CI-built platforms</a>.
-    </p>
-    <p>
-      <a class="btn" href="{{REPO}}/releases">Download</a>
-      <a class="btn secondary" href="compatibility.html">Compatibility</a>
-      <a class="btn secondary" href="enhancements.html">Enhancements</a>
-    </p>
-  </div>
+  <div class="kicker">libretro core &middot; open source &middot; GPLv3</div>
+  <h1 id="hero-title-frame" class="fx-title">
+    <span id="hero-title">Atari Jaguar, everywhere RetroArch runs.</span>
+    <canvas id="hero-title-src" class="fx-capture" aria-hidden="true"></canvas>
+    <canvas id="hero-title-fx" class="fx-out" aria-hidden="true"></canvas>
+  </h1>
+  <p class="lede">
+    68000, Tom, Jerry, two RISC coprocessors, the Object Processor, the CD
+    drive, the link port. One core,
+    <a href="{{REPO}}/blob/develop/.github/workflows/release.yml">16 CI-built platforms</a>.
+  </p>
   <figure class="crt-frame" id="hero-crt-frame">
     <div class="crt-screen">
       <img id="hero-shot" src="assets/cyber_on_850.png"
            alt="Cybermorph gameplay captured in the core: the ship in transit over a dark horizon, cockpit HUD below"
            width="326" height="240">
-      <canvas id="hero-crt" aria-hidden="true"></canvas>
+      <canvas id="hero-src" class="fx-capture" aria-hidden="true"></canvas>
+      <canvas id="hero-crt" class="fx-out" aria-hidden="true"></canvas>
     </div>
     <figcaption>Cybermorph, in-core capture (true-color on).</figcaption>
   </figure>
+  <p class="hero-actions">
+    <a class="btn" href="{{REPO}}/releases">Download</a>
+    <a class="btn secondary" href="compatibility.html">Compatibility</a>
+    <a class="btn secondary" href="enhancements.html">Enhancements</a>
+  </p>
 </div>
 
 <div class="stats">

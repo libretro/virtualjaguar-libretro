@@ -191,10 +191,14 @@ def check_page(out, name):
     for bad in FORBIDDEN:
         check(bad not in text, "%s: references %r -- no trackers or external "
                                "assets are allowed" % (name, bad))
-    # Scripts: JSON-LD blocks, or <script src> pointing at a LOCAL vendored
-    # file that exists in the output (site/assets/js/, committed -- see
-    # docs/site-maintenance.md).  External src and inline non-JSON-LD
-    # scripts remain hard failures: no CDNs, no trackers, no surprises.
+    # Scripts: JSON-LD blocks, or <script src> pointing at a LOCAL file
+    # under assets/js/ that exists in the output.  That covers both the
+    # committed originals (crt-fx.js, hero-fx.js) and the deploy-time
+    # generated canvas-ui-fx.js that scripts/fetch_site_fx.py may have
+    # written into the output under VJ_SITE_FX_FETCH=1 -- served
+    # first-party either way (see docs/site-maintenance.md).  External src
+    # and inline non-JSON-LD scripts remain hard failures: no CDNs, no
+    # trackers, no surprises.
     for m in re.finditer(r"<script([^>]*)>", text):
         attrs = m.group(1)
         if 'type="application/ld+json"' in attrs:
