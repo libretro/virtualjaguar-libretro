@@ -1,0 +1,50 @@
+# Build and deploy the GitHub Pages site (https://libretro.github.io/virtualjaguar-libretro/).
+#
+# The site is generated from committed repo data by scripts/build_site.py
+# (python3 stdlib only). It rebuilds on every push to develop that touches
+# the site sources or the docs the generator parses. The generator fails
+# loudly if docs/cd-boot-matrix.md drifts from the expected format, so a
+# red run here means "fix the data or the parser", never "published garbage".
+
+name: Deploy Pages
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'site/**'
+      - 'scripts/build_site.py'
+      - 'docs/cd-boot-matrix.md'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build site
+        run: python3 scripts/build_site.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
