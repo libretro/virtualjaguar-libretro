@@ -28,10 +28,13 @@ blitter/CPU interleaving makes the synchronization cost structurally fatal in
 a way the N64 RDP's does not. Option (c) (output-stage-only compute) adds
 nothing over frontend shaders and MetalFX; do not build it.
 
-The single most decision-relevant finding is an inversion: **GPU compute is
+The single most decision-relevant finding is an inversion, now softened on
+iOS by a maintainer correction but intact in structure: **GPU compute is
 available and mature on exactly the platforms that do not need it (desktop
-Vulkan), and absent or fragile on exactly the devices R4 worries about**
-(iOS under Provenance: no compute API reachable at all; Android
+Vulkan), and unverified (iOS — wrappers exist, compute-class cores untested)
+or fragile (Android driver matrix) on exactly the devices R4 worries about**
+(iOS under Provenance: per the maintainer, Metal and Vulkan hw-render
+wrappers exist — compute reachability there is testable, not absent; Android
 Retroid-class: fragile drivers; iOS RetroArch: unverified MoltenVK path).
 Meanwhile the Nx composite at N=2 costs roughly 4× a 320×240 lookup+store
 pass per frame — order 300 K subpixel operations, single-digit milliseconds
@@ -199,11 +202,13 @@ Vulkan backend (Granite) and is measured in person-years, not person-weeks.
 | Windows / Linux desktop RetroArch | yes | **mature** (paraLLEl proof) **[verified]** | works; also the platform that least needs it |
 | macOS RetroArch | glcore available; GL deprecated by Apple **[verified]** | **yes via MoltenVK** since RetroArch 1.15.0 (default driver); Mupen64Plus-Next + paraLLEl RDP/RSP listed working on macOS **[verified]** | viable; MoltenVK ≥1.2.3 even has `VK_EXT_external_memory_host` **[verified]** |
 | iOS / tvOS RetroArch | GLES ≤3.0 only (Apple never shipped ES 3.1 → **no GL compute shaders**) **[verified]** | Vulkan driver exists via MoltenVK since 1.15.0, but **paraLLEl-class compute cores on iOS are unconfirmed** — release notes confirm Mupen64Plus-Next availability, not the paraLLEl renderer **[unknown]** | unknown — resolve by testing Mupen64Plus-Next/paraLLEl on an iOS RetroArch build |
-| **Provenance (iOS/tvOS)** | **GLES3 hw-render via IOSurface-backed FBO in PVThinLibretroFrontend** — GLES 3.0, so no compute **[verified]** | **none — no Vulkan/MoltenVK hw-render path** **[verified, absence: no such support in the repo/changelog]** | **a Vulkan-compute core cannot use its hw path in Provenance at all; it would always run the software fallback** |
+| **Provenance (iOS/tvOS)** | GLES3 hw-render via IOSurface-backed FBO (PVThinLibretroFrontend) **[verified in repo]** | **Metal and Vulkan hw-render wrappers exist** per the Provenance maintainer (2026-08-07) — this corrects an earlier draft of this table that inferred absence from the changelog alone. Compute-shader reachability through those wrappers is **untested**, not absent | **testable today in the user's own frontend** — run a Vulkan-compute core through the Provenance Vulkan wrapper and observe which path initializes |
 | Android handhelds (Retroid class, Adreno) | GLES 3.1+ compute nominally present | Vulkan present but **fragile**: stock Adreno drivers missing 8/16-bit storage, Turnip-sideload culture, per-device driver roulette **[verified]** | technically possible if shaders avoid 8/16-bit storage (32-bit packing — our choice to make, at shader-complexity cost **[inference]**), but the support burden is the worst in the matrix |
 
 **Said loudly, as instructed: the R4 devices are the hole in the matrix.**
-R4's worry is handhelds. On iOS the user's own frontend (Provenance) exposes
+R4's worry is handhelds. On iOS the maintainer reports Provenance exposes
+Metal and Vulkan wrappers (untested for compute-class cores), and native
+RetroArch defaults to Vulkan-via-MoltenVK; what remains unverified on both is
 no compute-capable context whatsoever today; iOS RetroArch's
 MoltenVK-compute path is unverified; Android's is driver roulette. A
 Vulkan-compute composite stage would demonstrably help on desktop —
@@ -358,7 +363,7 @@ compute API.**
 ### 7.2 Ranked recommendation
 
 1. **(i) Skip — recommended.** CPU NEON/SIMD for the Nx stage at N=2.
-   Rationale: §7.1 feasibility; §4 inversion (compute unavailable where it
+   Rationale: §7.1 feasibility; §4 inversion (compute unverified/fragile where it
    would matter); the hi-res track's own R1 gate (one measured beneficiary
    title) means we may never build the stage this would accelerate; and the
    engineering cost of the alternative is months-to-a-year plus a permanent
@@ -399,7 +404,9 @@ Any of the following flips the recommendation from (i) toward (iii):
 2. **N≥4 becomes a shipping goal on desktop** (user demand, per-title DB in
    place) — the one regime where compute is both available and clearly
    superior.
-3. **Provenance gains a Vulkan/MoltenVK hw-render path**, or testing
+3. **A compute-class core is confirmed working through Provenance's Vulkan
+   wrapper or native iOS RetroArch** (MoltenVK 1.3/1.4, 2025, brought Vulkan
+   1.3/1.4 — plausibility is up), or testing
    confirms paraLLEl-class compute cores run well under iOS RetroArch's
    MoltenVK driver (the §4 **[unknown]**; the experiment is: run
    Mupen64Plus-Next with paraLLEl RDP on an iOS RetroArch build and measure).
@@ -434,5 +441,5 @@ Verified facts above trace to:
 - [parallel-rdp issue #47 — Snapdragon/Adreno support](https://github.com/Themaister/parallel-rdp/issues/47) — missing 8/16-bit storage on Adreno, Mali/Tegra working, Android perf issues
 - [RetroArch issue #18143 — Turnip driver loading for paraLLEl on Android](https://github.com/libretro/RetroArch/issues/18143)
 - [RetroArch issue #17464 — second-instance runahead failure](https://github.com/libretro/RetroArch/issues/17464)
-- [Provenance repository](https://github.com/Provenance-Emu/Provenance) — PVThinLibretroFrontend GLES3 hw-render via IOSurface-backed FBO (changelog); no Vulkan hw-render path present
+- [Provenance repository](https://github.com/Provenance-Emu/Provenance) — PVThinLibretroFrontend GLES3 hw-render via IOSurface-backed FBO (changelog); Metal + Vulkan hw-render wrappers confirmed by the maintainer 2026-08-07 (earlier draft wrongly inferred absence)
 - In-repo: `docs/hires-upscaling-design.md` (blit census §2, cost table §7.7, write-only shadow argument §5.2, R4), `src/tom/tom.c`, `src/tom/op.c`, `src/tom/blitter.c`, `src/tom/shadowfb.c`, `libretro.c`
