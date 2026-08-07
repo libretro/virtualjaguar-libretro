@@ -863,6 +863,19 @@ static void CDIRepairV2BootTrack(void)
       if ((int64_t)(CDI_CANON_LEN - Z) <= dzLen &&
           memcmp(dz, cdi_canon_prefix + Z, CDI_CANON_LEN - Z) == 0)
       {
+         /* Shifting reads back by Z must stay inside this track's own
+          * stored pregap.  The synthesized prefix overwrites those first
+          * Z bytes anyway (Z <= CDI_CANON_LEN - 6), so a short pregap
+          * would only ever expose bytes the overlay hides -- but refuse
+          * rather than read outside the track's declared extent. */
+         if ((int64_t)Z > pregapBytes)
+         {
+            LOG_ERR("[CD] CDI V2 repair: boot track %u lost %u byte(s) but "
+                    "declares only %lld byte(s) of pregap; refusing to shift "
+                    "reads outside the track\n",
+                    disc.tracks[s2].number, Z, (long long)pregapBytes);
+            break;
+         }
          LOG_INF("[CD] CDI V2 repair: boot track %u lost its first %u "
                  "byte(s) (constant header prefix); shifting reads and "
                  "synthesizing the lost bytes\n",
