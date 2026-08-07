@@ -27,6 +27,7 @@
 #include <string.h>
 #include "jaguar.h"
 #include "perf_counters.h"
+#include "shadowfb.h"
 #include "state.h"
 
 // Various conditional compilation goodies...
@@ -642,6 +643,35 @@ void blitter_generic(uint32_t cmd)
                WRITE_PIXEL(a1, REG(A1_FLAGS), writedata);
                if (DSTWRZ)
                   WRITE_ZDATA(a1, REG(A1_FLAGS), srczdata);
+
+               /* True-color shadow store (see shadowfb.h): record the
+                * full-precision intensity for gouraud / intensity-shade
+                * pixels written to a 16bpp destination.  The stock
+                * 16-bit write above is UNCHANGED; this is a parallel
+                * derived cache keyed by value-check at read time. */
+               if (shadowFBActive && !inhibit && (GOURD || SRCSHADE)
+                     && (((REG(A1_FLAGS) >> 3) & 0x07) == 4))
+               {
+                  uint16_t sfb_frac = 0;
+                  if (GOURD)
+                     sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
+                  else
+                  {
+                     /* SRCSHADE: 24-bit intensity = source intensity
+                      * plus the full (fraction-carrying) IINC.  Only
+                      * keep the fraction when the integer part agrees
+                      * with the stock write (clamp edges use 0). */
+                     int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
+                     if (sfb_i24 < 0)
+                        sfb_i24 = 0;
+                     if (sfb_i24 > 0x00FFFFFF)
+                        sfb_i24 = 0x00FFFFFF;
+                     if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
+                        sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                  }
+                  ShadowFBStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
+                        (uint16_t)writedata, sfb_frac);
+               }
             }
          }
          else	// if (DSTA2) 							// Data movement: A1 -> A2
@@ -782,6 +812,28 @@ void blitter_generic(uint32_t cmd)
 
                if (DSTWRZ)
                   WRITE_ZDATA(a2, REG(A2_FLAGS), srczdata);
+
+               /* True-color shadow store, A2-destination twin of the
+                * A1 branch above (see shadowfb.h). */
+               if (shadowFBActive && !inhibit && (GOURD || SRCSHADE)
+                     && (((REG(A2_FLAGS) >> 3) & 0x07) == 4))
+               {
+                  uint16_t sfb_frac = 0;
+                  if (GOURD)
+                     sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
+                  else
+                  {
+                     int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
+                     if (sfb_i24 < 0)
+                        sfb_i24 = 0;
+                     if (sfb_i24 > 0x00FFFFFF)
+                        sfb_i24 = 0x00FFFFFF;
+                     if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
+                        sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                  }
+                  ShadowFBStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                        (uint16_t)writedata, sfb_frac);
+               }
             }
          }
 
@@ -3290,6 +3342,32 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                         blitter_write_word(address, wdata & 0x0000FFFF);
                      else
                         blitter_write_byte(address, wdata & 0x000000FF);
+                  }
+
+                  /* True-color shadow store for gouraud writes to a
+                   * 16bpp destination (see shadowfb.h).  In GOURD mode
+                   * the srcd1 register lanes carry the per-pixel
+                   * intensity fractions (JTRM: the source data
+                   * registers hold intensity fractions during gouraud).
+                   * Lanes that COMP_CTRL inhibited were byte-merged
+                   * from dstd, so their tag equals current RAM and the
+                   * value-check makes the entry a benign refinement of
+                   * the same 16-bit value; any fraction yields a color
+                   * within one stock quantization step (bounded by
+                   * construction, see ShadowFBCryRGB). */
+                  if (shadowFBActive && gourd && pixsize == 4)
+                  {
+                     if (phrase_mode)
+                     {
+                        int sfb_k;
+                        for (sfb_k = 0; sfb_k < 4; sfb_k++)
+                           ShadowFBStoreCry(address + ((uint32_t)sfb_k << 1),
+                                 (uint16_t)(wdata >> ((3 - sfb_k) << 4)),
+                                 (uint16_t)(srcd1 >> ((3 - sfb_k) << 4)));
+                     }
+                     else
+                        ShadowFBStoreCry(address, (uint16_t)wdata,
+                              (uint16_t)srcd1);
                   }
                }
 
