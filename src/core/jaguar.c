@@ -596,13 +596,16 @@ static void M68KGPURAMSync(unsigned int address, unsigned int length)
  * write (issue #355's own signature) leaves the latch held indefinitely.
  * The reason that holds is that dropping it degrades to "the lone write
  * never landed", which is what the hardware does with an unpaired half.
- * Serialising the pair is the more faithful option if a savestate version
- * bump is being made anyway (see docs/savestate-compat.md for the policy:
- * one bump per release). */
+ * That rationale only works if the latch really is dropped when state is
+ * replaced, so retro_unserialize() calls M68KResetRiscWordLatch() -- else
+ * a pre-load pending low word could commit against a post-load partner
+ * write.  Serialising the pair is the more faithful option if a savestate
+ * version bump is being made anyway (see docs/savestate-compat.md for the
+ * policy: one bump per release). */
 static uint32_t m68kRiscLatchAddr = 0xFFFFFFFF;   /* low address, or ~0 */
 static uint16_t m68kRiscLatchData = 0;
 
-static void M68KResetRiscWordLatch(void)
+void M68KResetRiscWordLatch(void)
 {
    m68kRiscLatchAddr = 0xFFFFFFFF;
    m68kRiscLatchData = 0;

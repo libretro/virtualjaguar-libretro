@@ -1199,6 +1199,12 @@ bool retro_unserialize(const void *data, size_t size)
    ShadowFBInvalidate();
    ShadowHiresInvalidate();
 
+   /* The 68K->RISC-RAM 16-bit-port latch is deliberately not serialized
+    * (see jaguar.c): dropping an unpaired low word is what hardware does.
+    * But it must actually be dropped here, or a pending pre-load word
+    * could commit against a partner write issued after the load. */
+   M68KResetRiscWordLatch();
+
    return true;
 }
 

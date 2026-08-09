@@ -103,11 +103,13 @@ uint8_t EepromReadByte(uint32_t offset)
 	case 0xF14001:
 		return eeprom_get_do();
 	case 0xF14801:
-		/* A read of the GPIO0 strobe ($F14800) is the EEPROM's serial
+		/* A read of the GPIO0 strobe ($F14800 word; this byte-level
+		 * handler sees its low byte, $F14801) is the EEPROM's serial
 		 * clock: the Atari-standard driver does `tst.w $F14800` before
-		 * sampling DO at $F14000 for each of the 16 data bits.  Only
-		 * this strobe advances the output shifter -- sampling DO does
-		 * not (see eeprom_get_do). */
+		 * sampling DO at $F14000 for each of the 16 data bits, and the
+		 * word read reaches us as its constituent bytes.  Only this
+		 * strobe advances the output shifter -- sampling DO does not
+		 * (see eeprom_get_do). */
 		eeprom_clock();
 		break;
 	case 0xF15001:

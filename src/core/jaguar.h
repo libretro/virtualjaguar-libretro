@@ -74,6 +74,10 @@ extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
  * bit-identical to the unscaled build. */
 extern uint32_t m68kClockScalePct;
 void M68KClockScaleReset(void);
+/* Drop any pending 16-bit-port low-word latch (GPU/DSP local RAM writes);
+ * called on reset and on savestate load so post-load execution cannot
+ * depend on pre-load history. */
+void M68KResetRiscWordLatch(void);
 extern uint32_t riscClockScalePct;
 
 #define SCALE_M68K_CYCLES(c)	((uint32_t)(((uint64_t)(c) * m68kClockScalePct) / 100u))
