@@ -266,7 +266,7 @@ Conclusions:
 ## 6. Aggregate answers and recommendation
 
 **A1 — Titles qualifying for Stage 2 as designed (fractional source walk onto
-16bpp CRY, gameplay-verified, ≥ ~25 qualifying blits/frame):**
+16bpp CRY, gameplay-verified; the lowest row here is 24 blits/frame):**
 
 > ⚠ **This table counts blit *shapes*, not supersampled pixels on screen.**
 > Of the nine rows below, four are verified on-screen beneficiaries, three
@@ -416,6 +416,12 @@ Every "scene" below was screenshot-verified (PPM → PNG → eyeballed) at the
 frames measured — **not** inferred from a frame count. The census's own
 IS1 mistake (a "gameplay" row measured on a menu) is the reason.
 
+> **Reading the verdicts.** "Zero on the shipped engine" means 0.00 % on
+> **Accurate**, which is the default. The Fast engine's sub-1 % figures on
+> those rows come from the predicate-parity gap in §9.8 item 2 — it
+> supersamples `SRCSHADE`+`GOURD` and `ADDDSEL` blits that Accurate
+> rejects — and are not a user-visible benefit.
+
 | Title | Scene (screenshot-verified) | Frames | Accurate (shipped default) | Fast | Verdict |
 |---|---|---|---|---|---|
 | **Alien vs Predator (1994)** | Alien, textured corridor, SCORE HUD | 5200 / 6000 | **30.63 / 30.62 %** | 30.63 / 30.62 % | **verified** |
@@ -423,8 +429,8 @@ IS1 mistake (a "gameplay" row measured on a menu) is the reason.
 | **Skyhammer** | attract flight (same renderer + HUD) | 1200 / 1800 / 2400 | 22.68 / 18.05 / 3.67 % | 22.68 / 18.05 / 3.67 % | **verified** |
 | **Doom** | E1M1 gameplay | 900 | **8.68 %** | 8.68 % | **verified** |
 | **Missile Command 3D** | Original 3D gameplay | 1600 / 2000 / 2400 | **5.03 / 5.88 / 5.16 %** | 5.03 / 5.88 / 5.16 % | **verified** |
-| **Hover Strike (cart)** | mission cockpit, terrain + ALERT HUD | 2400 / 3200 / 4000 | **0.00 / 0.00 / 0.00 %** | 0.55 / 0.00 / 0.32 % | **zero** (§9.5) |
-| **I-War** | gameplay, "DAMAGE CRITICAL" | 2800 / 3200 / 3600 | **0.00 / 0.00 / 0.00 %** | 0.39 / 0.26 / 0.41 % | **zero** (§9.6) |
+| **Hover Strike (cart)** | mission cockpit, terrain + ALERT HUD | 2400 / 3200 / 4000 | **0.00 / 0.00 / 0.00 %** | 0.55 / 0.00 / 0.32 % | **zero on the shipped engine** (§9.5) |
+| **I-War** | gameplay, "DAMAGE CRITICAL" | 2800 / 3200 / 3600 | **0.00 / 0.00 / 0.00 %** | 0.39 / 0.26 / 0.41 % | **zero on the shipped engine** (§9.6) |
 | **Towers II** | first-person dungeon | Acc: 12000 / 14800 · Fast: 12000 / 13500 / 14800 | **0.00 / 0.00 %** | 0.00 / 0.00 / 0.00 % | **zero** |
 | **Iron Soldier 2 (CD)** | gameplay not reachable headlessly | — | — | — | **unverified** (§9.7) |
 | **CRZ Demo (homebrew)** | — | — | — | — | **not measured** |
