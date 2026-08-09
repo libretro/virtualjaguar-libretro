@@ -269,10 +269,11 @@ Conclusions:
 16bpp CRY, gameplay-verified, ≥ ~25 qualifying blits/frame):**
 
 > ⚠ **This table counts blit *shapes*, not supersampled pixels on screen.**
-> Three of the nine rows below measured **zero** on-screen benefit from the
-> shipped Stage 2, and a fourth could not be verified. Do not quote this
-> table as a beneficiary list — see **§9, "Stage 2 on-screen
-> verification"**, which measures what actually reaches the display.
+> Of the nine rows below, four are verified on-screen beneficiaries, three
+> measured **zero**, one could not be verified, and one (CRZ Demo,
+> homebrew) was not measured. Do not quote this table as a beneficiary
+> list — see **§9, "Stage 2 on-screen verification"**, which measures what
+> actually reaches the display.
 
 | Title | qualifying blits/frame |
 |---|---|
@@ -424,8 +425,9 @@ IS1 mistake (a "gameplay" row measured on a menu) is the reason.
 | **Missile Command 3D** | Original 3D gameplay | 1600 / 2000 / 2400 | **5.03 / 5.88 / 5.16 %** | 5.03 / 5.88 / 5.16 % | **verified** |
 | **Hover Strike (cart)** | mission cockpit, terrain + ALERT HUD | 2400 / 3200 / 4000 | **0.00 / 0.00 / 0.00 %** | 0.55 / 0.00 / 0.32 % | **zero** (§9.5) |
 | **I-War** | gameplay, "DAMAGE CRITICAL" | 2800 / 3200 / 3600 | **0.00 / 0.00 / 0.00 %** | 0.39 / 0.26 / 0.41 % | **zero** (§9.6) |
-| **Towers II** | first-person dungeon | 12000 / 13500 / 14800 | **0.00 / 0.00 %** | 0.00 / 0.00 / 0.00 % | **zero** |
+| **Towers II** | first-person dungeon | Acc: 12000 / 14800 · Fast: 12000 / 13500 / 14800 | **0.00 / 0.00 %** | 0.00 / 0.00 / 0.00 % | **zero** |
 | **Iron Soldier 2 (CD)** | gameplay not reachable headlessly | — | — | — | **unverified** (§9.7) |
+| **CRZ Demo (homebrew)** | — | — | — | — | **not measured** |
 | Checkered Flag / Cybermorph | gameplay (non-beneficiary controls) | — | 0.0000 % | 0.0000 % | zero, as designed |
 
 Notes on the table:
@@ -444,6 +446,11 @@ Notes on the table:
   full gameplay renderer and HUD; the in-mission row (reached with scripted
   input, screenshot-verified in a mission cockpit) is the authoritative
   one and both are strongly positive.
+- **CRZ Demo** (the homebrew row in §6's A1 table) was not measured here.
+  §2 records that 1.90 M of its 1.96 M blits are gouraud, and both engines
+  exclude `GOURD` — so reason (b) predicts near-zero — but that is a
+  prediction, not a measurement, and the row is left open rather than
+  asserted.
 
 ### 9.4 Correction to a previously reported AvP result
 
@@ -455,7 +462,23 @@ on-screen benefit of any title measured, larger than Doom's. The scene
 verified at both sampled frames on both engines. Instrumentation confirms
 why: 21.2 M of 22.2 M candidate shadow stores are accepted by the Stage 2
 predicate, 9.8 M of those blocks carry differing sub-samples, and 27.8 M
-block lookups at render time return non-uniform blocks.
+block lookups at render time return non-uniform blocks. The earlier zero
+**could not be reproduced, and its cause was not established** — treat it
+as retracted rather than explained.
+
+**Pre-empting the obvious objection:** AvP's variance is near-constant
+across the sampled window (23,964 / 23,960 / 23,960 non-uniform blocks at
+frames 5200 / 5600 / 6000) and the run logs four `video_stall` lines, so
+it is fair to ask whether this is a frozen buffer rather than live
+rendering. It is not, and the shadow's own design proves it: the hi-res
+tag carries a frame epoch and an entry is trusted only if written within
+the last **16 presented frames** (`HIRES_EPOCH_WINDOW`, `shadowfb.c`). A
+framebuffer that stopped being rewritten would have every block fall out
+of the window and the measurement would decay to `0.0000`. A sustained
+30.6 % across 800 frames is only possible if the blitter is re-rendering
+those pixels continuously. The `video_stall` lines are the documented
+benign class — `crash_detect` hashes ~256 pixels per frame, and a
+visually near-static scene trips it.
 
 ### 9.5 Hover Strike — detail is produced, then discarded downstream
 
@@ -512,8 +535,8 @@ smoothing, not minification).
 
 **The rule to carry forward: Stage 2 recovers information only where the
 source walk minifies.** A fractional walk is necessary but not sufficient.
-Doom (43 % of its qualifying walks at ≥ 1 texel/pixel) and AvP benefit;
-I-War and Towers II cannot.
+Doom (44 % of its 4,936,831 qualifying walks at ≥ 1 texel/pixel) and AvP
+benefit; I-War and Towers II cannot.
 
 ### 9.7 Iron Soldier 2 (CD) — not verified
 
