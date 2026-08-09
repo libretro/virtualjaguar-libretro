@@ -684,7 +684,15 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
     * see M68KRiscWordLatch. */
    if (M68KRiscWordLatch(address, value))
+   {
+      /* The half that only latches still occupies the bus, so the GPU
+       * must be run up to this access exactly as it is for a committing
+       * write.  Without this, GPU work that logically falls between the
+       * two halves gets executed after the commit instead of before it,
+       * and would observe the new longword a half-write early. */
+      M68KGPURAMSync(address, 2);
       return;
+   }
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
