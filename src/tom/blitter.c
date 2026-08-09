@@ -447,6 +447,16 @@ static int32_t a1_clip_x, a1_clip_y;
 static int shadow_hires_read_src16_a1(int32_t sub_x, int32_t sub_y,
       uint32_t *out)
 {
+   /* PIXEL_OFFSET_16 token-pastes its argument into <arg>_x/_y/_width/
+    * _pitch, so PIXEL_OFFSET_16(sub) evaluates the STOCK A1 addressing
+    * formula over the explicit 16.16 (sub_x, sub_y) position and the
+    * locals below -- reusing the formula by construction rather than
+    * transcribing it. */
+   /* PIXEL_OFFSET_16 token-pastes its argument into <arg>_x/_y/_width/
+    * _pitch, so PIXEL_OFFSET_16(sub) evaluates the STOCK A1 addressing
+    * formula over the explicit 16.16 (sub_x, sub_y) parameters and the
+    * two locals below -- reusing that formula by construction instead
+    * of transcribing it. */
    int32_t sub_width = a1_width;
    int32_t sub_pitch = a1_pitch;
    uint32_t addr = (a1_addr + (PIXEL_OFFSET_16(sub) << 1)) & 0xFFFFFF;
@@ -485,13 +495,26 @@ static void shadow_hires_sub_fast(shadowfb_sub *out, uint32_t cmd,
    }
    if (ADDDSEL)
    {
-      /* Mirror of the DSTA2 ADDDSEL data path below. */
+      /* Exact mirror of the DSTA2 ADDDSEL data path below: signed
+       * saturated byte add when TOPBEN is clear (source sign-extended,
+       * clamped to [0,0xFF]), then the 12-bit MASK (not saturate) when
+       * TOPNEN is clear. */
       v = (s & 0xFF) + (dstdata & 0xFF);
-      if (!(TOPBEN) && v > 0xFF)
-         v = 0xFF;
+      if (!TOPBEN)
+      {
+         int16_t ss = (int16_t)((s & 0xFF) | ((s & 0x80) ? 0xFF00 : 0x0000));
+         int16_t dd = (int16_t)(dstdata & 0xFF);
+         int16_t sum = (int16_t)(ss + dd);
+         if (sum < 0)
+            v = 0x00;
+         else if (sum > 0xFF)
+            v = 0xFF;
+         else
+            v = (uint32_t)sum;
+      }
       v |= (s & 0xF00) + (dstdata & 0xF00);
-      if (!(TOPNEN) && v > 0xFFF)
-         v = 0xFFF;
+      if (!TOPNEN && v > 0xFFF)
+         v &= 0xFFF;
       v |= (s & 0xF000) + (dstdata & 0xF000);
    }
    else
