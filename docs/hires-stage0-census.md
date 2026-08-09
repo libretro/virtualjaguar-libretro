@@ -416,12 +416,14 @@ Every "scene" below was screenshot-verified (PPM → PNG → eyeballed) at the
 frames measured — **not** inferred from a frame count. The census's own
 IS1 mistake (a "gameplay" row measured on a menu) is the reason.
 
+> **Reading the verdicts.** "Zero on the shipped engine" means 0.00 % on
+> **Accurate**, which is the default. The Fast engine's sub-1 % figures on
+> those rows come from the predicate-parity gap in §9.8 item 2 — it
+> supersamples `SRCSHADE`+`GOURD` and `ADDDSEL` blits that Accurate
+> rejects — and are not a user-visible benefit.
+
 | Title | Scene (screenshot-verified) | Frames | Accurate (shipped default) | Fast | Verdict |
 |---|---|---|---|---|---|
-<!-- "zero on the shipped engine" = 0.00% on Accurate, the default; the
-     Fast engine's sub-1% figures come from the predicate-parity gap in
-     §9.8 item 2 (it supersamples SRCSHADE+GOURD and ADDDSEL blits that
-     Accurate rejects) and are not a user-visible benefit. -->
 | **Alien vs Predator (1994)** | Alien, textured corridor, SCORE HUD | 5200 / 6000 | **30.63 / 30.62 %** | 30.63 / 30.62 % | **verified** |
 | **Skyhammer** | in-mission cockpit, city flight, weapons armed | 2000 / 2600 / 2900 | **10.01 / 17.74 / 3.40 %** | 10.01 / 17.74 / 3.40 % | **verified** |
 | **Skyhammer** | attract flight (same renderer + HUD) | 1200 / 1800 / 2400 | 22.68 / 18.05 / 3.67 % | 22.68 / 18.05 / 3.67 % | **verified** |
