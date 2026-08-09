@@ -13,6 +13,8 @@
 
 #include "filedb.h"
 
+#include <string.h>
+
 // Should have another flag for whether or not it requires DSP, BIOS,
 // whether it's a .rom, it's a BIOS, etc...
 // ... And now we do! :-D
@@ -122,3 +124,41 @@ struct RomIdentifier romList[] = {
 	{ 0xF7756A03, "Tripper Getem (World)", FF_ROM | FF_VERIFIED },
 	{ 0xFFFFFFFF, "***END***", 0 }
 };
+
+/* romList is sentinel-terminated rather than sized, so every scan has to stop on
+ * the sentinel CRC. It is also not fully sorted (0xF7756A03 sits after
+ * 0xFDF37F47), so this is a linear scan, not a bisection. */
+#define ROMLIST_END_CRC32 0xFFFFFFFF
+
+const struct RomIdentifier * FindRomIdentifier(uint32_t crc32)
+{
+	unsigned i;
+
+	for (i = 0; romList[i].crc32 != ROMLIST_END_CRC32; i++)
+	{
+		if (romList[i].crc32 == crc32)
+			return &romList[i];
+	}
+
+	return NULL;
+}
+
+const struct RomIdentifier * FindVerifiedRomVariant(const struct RomIdentifier *entry)
+{
+	unsigned i;
+
+	if (!entry)
+		return NULL;
+
+	for (i = 0; romList[i].crc32 != ROMLIST_END_CRC32; i++)
+	{
+		if (romList[i].crc32 == entry->crc32)
+			continue;
+
+		if ((romList[i].flags & FF_VERIFIED)
+				&& strcmp(romList[i].name, entry->name) == 0)
+			return &romList[i];
+	}
+
+	return NULL;
+}

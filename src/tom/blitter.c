@@ -27,6 +27,7 @@
 #include <string.h>
 #include "jaguar.h"
 #include "perf_counters.h"
+#include "shadowfb.h"
 #include "state.h"
 
 // Various conditional compilation goodies...
@@ -291,23 +292,50 @@ PERF_COUNTER(blitter_phrase_writes);
 // z data write
 #define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
 
+/* Register-sourced pixel data (SRCDATA / DSTDATA / DSTZ / SRCZINT /
+ * PATTERNDATA).  These are 64-bit registers; `p` selects phrase mode.
+ *
+ * PHRASE mode picks the field addressed by the current X position within
+ * the phrase, exactly as the hardware does.
+ *
+ * PIXEL (non-phrase) mode uses one fixed field: the one holding pixel /
+ * Gouraud channel 0.  In the layout this core keeps `blitter_ram` in,
+ * that channel lives in the LOW longword -- see `blitter_mmio.c`, which
+ * maps the Intensity 0 alias ($F0227C, "an alternate view of the
+ * computed intensity integer parts (pattern data)", JTRM rev 8 p.77) to
+ * `PATTERNDATA + 7`, and `blitter_blit`'s Gouraud init, which reads
+ * `gd_c[0]`/`gd_i[0]` from `PATTERNDATA + 6/7`.  The four pattern fields
+ * are the four consecutive pixels of a phrase (JTRM rev 8 p.82, the
+ * Gouraud/Z worked example: Pattern = 00DC00C700B1009C for four
+ * successive pixels), so channel 0 is the field the accurate
+ * (Midsummer2) path also uses in pixel mode -- there, ADDRGEN folds the
+ * byte-within-phrase into the address and the write takes `wdata`'s low
+ * 16/8/32 bits, i.e. the same low-longword field.
+ *
+ * These macros used to read `REG(r)` -- the HIGH longword, i.e. channel
+ * 2 -- for pixel mode, so a program that only ever wrote the low
+ * longword of a 64-bit register (Iron Soldier's wireframe line blits
+ * write $F02268 alone) got zero as its write data and drew nothing.
+ * Reading `REG(r + 4)` puts the fast path on the same field as the
+ * accurate path. */
+
 // 1 bpp r data read
-#define READ_RDATA_1(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 19) & 0x04))) >> (((uint32_t)a##_x >> 16) & 0x1F)) & 0x0001 : (REG(r) & 0x0001))
+#define READ_RDATA_1(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 19) & 0x04))) >> (((uint32_t)a##_x >> 16) & 0x1F)) & 0x0001 : (REG((r)+4) & 0x0001))
 
 // 2 bpp r data read
-#define READ_RDATA_2(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 18) & 0x04))) >> (((uint32_t)a##_x >> 15) & 0x3E)) & 0x0003 : (REG(r) & 0x0003))
+#define READ_RDATA_2(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 18) & 0x04))) >> (((uint32_t)a##_x >> 15) & 0x3E)) & 0x0003 : (REG((r)+4) & 0x0003))
 
 // 4 bpp r data read
-#define READ_RDATA_4(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 17) & 0x04))) >> (((uint32_t)a##_x >> 14) & 0x28)) & 0x000F : (REG(r) & 0x000F))
+#define READ_RDATA_4(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 17) & 0x04))) >> (((uint32_t)a##_x >> 14) & 0x28)) & 0x000F : (REG((r)+4) & 0x000F))
 
 // 8 bpp r data read
-#define READ_RDATA_8(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 16) & 0x04))) >> (((uint32_t)a##_x >> 13) & 0x18)) & 0x00FF : (REG(r) & 0x00FF))
+#define READ_RDATA_8(r,a,p)  ((p) ?  ((REG(r+(((uint32_t)a##_x >> 16) & 0x04))) >> (((uint32_t)a##_x >> 13) & 0x18)) & 0x00FF : (REG((r)+4) & 0x00FF))
 
 // 16 bpp r data read
-#define READ_RDATA_16(r,a,p)  ((p) ? ((REG(r+(((uint32_t)a##_x >> 15) & 0x04))) >> (((uint32_t)a##_x >> 12) & 0x10)) & 0xFFFF : (REG(r) & 0xFFFF))
+#define READ_RDATA_16(r,a,p)  ((p) ? ((REG(r+(((uint32_t)a##_x >> 15) & 0x04))) >> (((uint32_t)a##_x >> 12) & 0x10)) & 0xFFFF : (REG((r)+4) & 0xFFFF))
 
 // 32 bpp r data read
-#define READ_RDATA_32(r,a,p)  ((p) ? REG(r+(((uint32_t)a##_x >> 14) & 0x04)) : REG(r))
+#define READ_RDATA_32(r,a,p)  ((p) ? REG(r+(((uint32_t)a##_x >> 14) & 0x04)) : REG((r)+4))
 
 // register data read
 #define READ_RDATA(r,a,f,p) (\
@@ -397,6 +425,108 @@ static int32_t zadd;
 static uint32_t z_i[4];
 
 static int32_t a1_clip_x, a1_clip_y;
+
+/* ==========================================================================
+ * Hi-res Stage 2 (fast engine): fractional-walk source supersampling.
+ * See docs/hires-upscaling-design.md sections 4/5 and section 8 Stage 2.
+ *
+ * When a DSTA2 blit's A1 source walk consumes a fraction (XADDINC with a
+ * fractional increment, or the XADD0 + fractional-FSTEP column scaler)
+ * onto a 16bpp CRY destination, the source bitmap holds more information
+ * than the single stock sample keeps.  These helpers sample the source
+ * at N*x density for the shadow surface ONLY: the stock walk, the stock
+ * write and every control decision (transparency, colour key, Z, clip,
+ * LFU selection) are untouched and made once at 1x; the shadow block
+ * carries content, never decisions.  All reads are side-effect-free
+ * (RAM mirrors + cart ROM; anything at/above BUTCH is refused).
+ * ========================================================================== */
+
+/* Read the 16bpp A1 source pixel at an explicit 16.16 position.
+ * Returns 0 (leaving *out untouched) when the address could carry a
+ * read side effect (BUTCH/TOM/JERRY space). */
+static int shadow_hires_read_src16_a1(int32_t sub_x, int32_t sub_y,
+      uint32_t *out)
+{
+   /* PIXEL_OFFSET_16 token-pastes its argument into <arg>_x/_y/_width/
+    * _pitch, so PIXEL_OFFSET_16(sub) evaluates the STOCK A1 addressing
+    * formula over the explicit 16.16 (sub_x, sub_y) parameters and the
+    * two locals below -- reusing that formula by construction instead
+    * of transcribing it. */
+   int32_t sub_width = a1_width;
+   int32_t sub_pitch = a1_pitch;
+   uint32_t addr = (a1_addr + (PIXEL_OFFSET_16(sub) << 1)) & 0xFFFFFF;
+   if (addr >= 0xDFFF00)
+      return 0;
+   *out = JaguarReadWord(addr, BLITTER);
+   return 1;
+}
+
+/* Derive one sub-sample {value16, frac16} from the source pixel at
+ * 16.16 position (x,y), applying the same data path the stock pixel
+ * took.  Only called for uninhibited pixels whose data path depends on
+ * the source (SRCSHADE, ADDDSEL or LFU); falls back to *stock when the
+ * source address is unreadable. */
+static void shadow_hires_sub_fast(shadowfb_sub *out, uint32_t cmd,
+      int32_t x, int32_t y, uint32_t dstdata, const shadowfb_sub *stock)
+{
+   uint32_t s;
+   uint32_t v;
+   *out = *stock;
+   if (!shadow_hires_read_src16_a1(x, y, &s))
+      return;
+   if (SRCSHADE)
+   {
+      /* 24-bit intensity = source intensity + full fraction-carrying
+       * IINC; integer part matches the stock formula's
+       * clamp((s & 0xFF) + (gd_ia >> 16), 0, 0xFF) exactly. */
+      int32_t i24 = ((int32_t)(s & 0xFF) << 16) + gd_ia;
+      if (i24 < 0)
+         i24 = 0;
+      if (i24 > 0x00FFFFFF)
+         i24 = 0x00FFFFFF;
+      out->value16 = (uint16_t)((s & 0xFF00) | ((uint32_t)i24 >> 16));
+      out->frac16  = (uint16_t)((uint32_t)i24 & 0xFFFF);
+      return;
+   }
+   if (ADDDSEL)
+   {
+      /* Exact mirror of the DSTA2 ADDDSEL data path below: signed
+       * saturated byte add when TOPBEN is clear (source sign-extended,
+       * clamped to [0,0xFF]), then the 12-bit MASK (not saturate) when
+       * TOPNEN is clear. */
+      v = (s & 0xFF) + (dstdata & 0xFF);
+      if (!TOPBEN)
+      {
+         int16_t ss = (int16_t)((s & 0xFF) | ((s & 0x80) ? 0xFF00 : 0x0000));
+         int16_t dd = (int16_t)(dstdata & 0xFF);
+         int16_t sum = (int16_t)(ss + dd);
+         if (sum < 0)
+            v = 0x00;
+         else if (sum > 0xFF)
+            v = 0xFF;
+         else
+            v = (uint32_t)sum;
+      }
+      v |= (s & 0xF00) + (dstdata & 0xF00);
+      if (!TOPNEN && v > 0xFFF)
+         v &= 0xFFF;
+      v |= (s & 0xF000) + (dstdata & 0xF000);
+   }
+   else
+   {
+      v = 0;
+      if (LFU_NAN)
+         v |= ~s & ~dstdata;
+      if (LFU_NA)
+         v |= ~s & dstdata;
+      if (LFU_AN)
+         v |= s & ~dstdata;
+      if (LFU_A)
+         v |= s & dstdata;
+   }
+   out->value16 = (uint16_t)v;
+   out->frac16  = 0;
+}
 
 // In the spirit of "get it right first, *then* optimize" I've taken the liberty
 // of removing all the unnecessary code caching. If it turns out to be a good way
@@ -496,8 +626,22 @@ void blitter_generic(uint32_t cmd)
 
                if (!CMPDST)
                {
-                  if (srcdata == 0)
-                     inhibit = 1;//*/
+                  /* DCOMPEN+!CMPDST source transparency: inhibit where the
+                   * source pixel is 0 (pixel transparency) OR equals PATTERNDATA
+                   * (the DATACOMP colour-key).  The fast path historically
+                   * tested only "== 0"; adding the PATD test matches the
+                   * accurate gate-level comparator (dcomp = patd ^ srcd) and the
+                   * MiSTer Jaguar core comp_ctrl.v
+                   * (https://github.com/MiSTer-devel/Jaguar_MiSTer), so blits
+                   * keying transparency on a non-zero colour render correctly.
+                   * BCOMPEN keeps its single-bit "transparent on 0" test. */
+                  if (BCOMPEN)
+                  {
+                     if (srcdata == 0)
+                        inhibit = 1;
+                  }
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
+                     inhibit = 1;
                }
                else
                {
@@ -601,6 +745,47 @@ void blitter_generic(uint32_t cmd)
                WRITE_PIXEL(a1, REG(A1_FLAGS), writedata);
                if (DSTWRZ)
                   WRITE_ZDATA(a1, REG(A1_FLAGS), srczdata);
+
+               /* True-color shadow store (see shadowfb.h): record the
+                * full-precision intensity for gouraud / intensity-shade
+                * pixels written to a 16bpp destination.  The stock
+                * 16-bit write above is UNCHANGED; this is a parallel
+                * derived cache keyed by value-check at read time.
+                *
+                * Hi-res (Stage 1): EVERY 16bpp destination write also
+                * refreshes the Nx shadow block by box replication, so
+                * all blit content reaches the Nx surface (design
+                * section 4). */
+               if ((shadowFBActive || shadowHiresActive)
+                     && (((REG(A1_FLAGS) >> 3) & 0x07) == 4))
+               {
+                  uint16_t sfb_frac = 0;
+                  if (!inhibit && (GOURD || SRCSHADE))
+                  {
+                     if (GOURD)
+                        sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
+                     else
+                     {
+                        /* SRCSHADE: 24-bit intensity = source intensity
+                         * plus the full (fraction-carrying) IINC.  Only
+                         * keep the fraction when the integer part agrees
+                         * with the stock write (clamp edges use 0). */
+                        int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
+                        if (sfb_i24 < 0)
+                           sfb_i24 = 0;
+                        if (sfb_i24 > 0x00FFFFFF)
+                           sfb_i24 = 0x00FFFFFF;
+                        if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
+                           sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                     }
+                  }
+                  if (shadowFBActive && !inhibit && (GOURD || SRCSHADE))
+                     ShadowFBStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
+                           (uint16_t)writedata, sfb_frac);
+                  if (shadowHiresActive)
+                     ShadowHiresStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
+                           (uint16_t)writedata, sfb_frac);
+               }
             }
          }
          else	// if (DSTA2) 							// Data movement: A1 -> A2
@@ -658,7 +843,14 @@ void blitter_generic(uint32_t cmd)
 
                if (!CMPDST)
                {
-                  if (srcdata == 0)
+                  /* DCOMPEN zero-transparency + PATTERNDATA colour-key (see the
+                   * A1<-A2 branch above); source channel here is A1. */
+                  if (BCOMPEN)
+                  {
+                     if (srcdata == 0)
+                        inhibit = 1;
+                  }
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
                      inhibit = 1;
                }
                else
@@ -734,6 +926,92 @@ void blitter_generic(uint32_t cmd)
 
                if (DSTWRZ)
                   WRITE_ZDATA(a2, REG(A2_FLAGS), srczdata);
+
+               /* True-color + hi-res shadow stores, A2-destination twin
+                * of the A1 branch above (see shadowfb.h). */
+               if ((shadowFBActive || shadowHiresActive)
+                     && (((REG(A2_FLAGS) >> 3) & 0x07) == 4))
+               {
+                  uint16_t sfb_frac = 0;
+                  if (!inhibit && (GOURD || SRCSHADE))
+                  {
+                     if (GOURD)
+                        sfb_frac = (uint16_t)(gd_i[colour_index] & 0xFFFF);
+                     else
+                     {
+                        int32_t sfb_i24 = ((int32_t)(srcdata & 0xFF) << 16) + gd_ia;
+                        if (sfb_i24 < 0)
+                           sfb_i24 = 0;
+                        if (sfb_i24 > 0x00FFFFFF)
+                           sfb_i24 = 0x00FFFFFF;
+                        if ((uint32_t)(sfb_i24 >> 16) == (writedata & 0xFF))
+                           sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
+                     }
+                  }
+                  if (shadowFBActive && !inhibit && (GOURD || SRCSHADE))
+                     ShadowFBStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                           (uint16_t)writedata, sfb_frac);
+                  if (shadowHiresActive)
+                  {
+                     /* Stage 2: when this blit's A1 source walk consumes
+                      * a fraction and the data path depends on the
+                      * source, fill the block with real sub-samples;
+                      * every other shape keeps Stage 1 replication. */
+                     int sh2 = 0;
+                     shadowfb_sub sblk[4];
+                     if (shadowHiresN == 2 && !inhibit && SRCEN && !BCOMPEN
+                           && (((REG(A1_FLAGS) >> 3) & 0x07) == 4)
+                           && (SRCSHADE || (!GOURD && !PATDSEL)))
+                     {
+                        int32_t hx = 0, hy = 0, vx = 0, vy = 0;
+                        int q_in = (xadd_a1_control == XADDINC
+                              && (((a1_xadd | a1_yadd) & 0xFFFF) != 0));
+                        int q_out = (xadd_a1_control == XADD0
+                              && a1_yadd == 0 && UPDA1F
+                              && (((a1_step_x | a1_step_y) & 0xFFFF) != 0));
+                        if (q_in)
+                        {
+                           hx = a1_xadd >> 1;
+                           hy = a1_yadd >> 1;
+                        }
+                        if (q_out)
+                        {
+                           vx = a1_step_x >> 1;
+                           vy = a1_step_y >> 1;
+                        }
+                        if (q_in || q_out)
+                        {
+                           sblk[0].value16 = (uint16_t)writedata;
+                           sblk[0].frac16  = sfb_frac;
+                           if (q_in)
+                              shadow_hires_sub_fast(&sblk[1], cmd,
+                                    a1_x + hx, a1_y + hy, dstdata, &sblk[0]);
+                           else
+                              sblk[1] = sblk[0];
+                           if (q_out)
+                              shadow_hires_sub_fast(&sblk[2], cmd,
+                                    a1_x + vx, a1_y + vy, dstdata, &sblk[0]);
+                           else
+                              sblk[2] = sblk[0];
+                           if (q_in && q_out)
+                              shadow_hires_sub_fast(&sblk[3], cmd,
+                                    a1_x + hx + vx, a1_y + hy + vy,
+                                    dstdata, &sblk[0]);
+                           else
+                              sblk[3] = (q_in ? sblk[1] : sblk[2]);
+                           sh2 = 1;
+                        }
+                     }
+                     if (sh2)
+                        ShadowHiresStoreCryBlock(
+                              a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                              (uint16_t)writedata, sblk);
+                     else
+                        ShadowHiresStoreCry(
+                              a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                              (uint16_t)writedata, sfb_frac);
+                  }
+               }
             }
          }
 
@@ -1067,6 +1345,76 @@ static uint32_t addrgen_ya(uint16_t y, uint8_t width)
 		+ ((width & 0x01) ? y12 : 0);
 	return (ytm << (width >> 2)) >> 2;
 }
+
+/* ==========================================================================
+ * Hi-res Stage 2 (accurate engine): fractional-walk source supersampling.
+ * See docs/hires-upscaling-design.md sections 4/5 and section 8 Stage 2,
+ * and the fast-engine twin above blitter_generic.  Shadow-only: the
+ * stock pipeline (reads, writes, comparators, ADDARRAY carry state) is
+ * untouched.
+ * ========================================================================== */
+
+/* Replicates lane 0 of the SRCSHADE ADDARRAY call (daddasel=4,
+ * daddbsel=5, daddmode=7, carry-in 0: 8-bit saturated add of the source
+ * intensity byte and the IINC integer byte; the colour byte passes
+ * through unchanged because the broadcast addend's high byte is zero).
+ * A direct ADDARRAY call would clobber its persistent carry-out state
+ * and diverge the stock pipeline, so the lane is reproduced here. */
+static uint16_t shadow_hires_shade16(uint16_t a, uint32_t iinc_masked)
+{
+	uint32_t b    = (iinc_masked >> 16) & 0xFF;
+	uint32_t qt   = (uint32_t)(a & 0xFF) + b;
+	uint32_t ctop = (qt >> 8) & 1;
+	uint32_t btop = (b >> 7) & 1;
+	uint32_t lo   = (btop ^ ctop) ? (ctop ? 0xFFu : 0x00u) : (qt & 0xFF);
+	return (uint16_t)(((uint32_t)a & 0xFF00) | lo);
+}
+
+/* 16-bit LFU, same truth-table convention as blitter_simd_lfu. */
+static uint16_t shadow_hires_lfu16(uint16_t s, uint16_t d, uint8_t lfu_func)
+{
+	uint16_t v = 0;
+	if (lfu_func & 0x01)
+		v |= (uint16_t)(~s & ~d);
+	if (lfu_func & 0x02)
+		v |= (uint16_t)(~s & d);
+	if (lfu_func & 0x04)
+		v |= (uint16_t)(s & ~d);
+	if (lfu_func & 0x08)
+		v |= (uint16_t)(s & d);
+	return v;
+}
+
+/* Derive one sub-sample {value16, frac16} for the accurate engine:
+ * read the 16bpp A1 source at 16.16 position (px, py) through the
+ * engine's own address generator and apply the pixel-mode data path
+ * (SRCSHADE then LFU) the stock pixel took.  Control decisions are NOT
+ * re-made -- the caller only invokes this for pixels that passed all
+ * comparators at 1x.  Falls back to *stock when the source address
+ * could carry a read side effect (BUTCH/TOM/JERRY space). */
+static void shadow_hires_sub_mid(shadowfb_sub *out, int32_t px, int32_t py,
+	uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width,
+	bool srcshade_on, uint32_t iinc_masked, uint8_t lfu_func, uint16_t d16,
+	const shadowfb_sub *stock)
+{
+	uint32_t saddr, spixa;
+	uint16_t s;
+	uint16_t sx = (uint16_t)((uint32_t)px >> 16);
+	uint16_t sy = (uint16_t)((uint32_t)py >> 16);
+	*out = *stock;
+	ADDRGEN(&saddr, &spixa, false, false,
+		sx, sy, a1_base, a1_pitch, a1_pixsize, a1_width, 0,
+		0, 0, 0, 0, 0, 0, 0,
+		addrgen_ya(sy, a1_width), 0);
+	saddr &= 0xFFFFFF;
+	if (saddr >= 0xDFFF00)
+		return;
+	s = blitter_read_word(saddr);
+	if (srcshade_on)
+		s = shadow_hires_shade16(s, iinc_masked);
+	out->value16 = shadow_hires_lfu16(s, d16, lfu_func);
+	out->frac16  = 0;
+}
 /* ADD16SAT / ADDARRAY are defined inline below so the compiler can
  * specialise per call-site (most callers pass compile-time constants
  * for daddasel/daddbsel/daddmode and the sat/eightbit/hicinh flags).
@@ -1211,7 +1559,7 @@ void ADDARRAY(uint16_t *addq, uint8_t daddasel, uint8_t daddbsel,
    sat = daddmode & 0x03;
    hicinh = ((daddmode & 0x03) == 0x03);
 
-   blitter_simd_ops.add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
+   blitter_simd_add16sat_x4(addq, co, adda, addb, cin, sat, eightbit, hicinh);
 }
 
 static BLITTER_ALWAYS_INLINE
@@ -1251,11 +1599,25 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
    uint8_t inhibit_all;   /* combined per-byte inhibit before mode gating */
    uint8_t gated;          /* after phrase_mode / winhibit gating */
 
-   /* nowrite and winhibit (pixel-mode write inhibit) */
+   /* nowrite and winhibit (pixel-mode write inhibit)
+    *
+    * Z-comparator lane in pixel-mode 16bpp: the fast blitter reads
+    * source/dest Z via `REG(SRCZINT|DSTZ) & 0xFFFF`, which is bytes 2-3
+    * of the 8-byte register (low 16 of the high 32 half).  In the
+    * GET64-shift lane convention here, that is lane 2 -- so
+    * `zcomp & 0x04` matches fast.  Previously accurate used `zcomp & 0x01`
+    * (lane 0 = bytes 6-7), which produced visibly wrong z-inhibit
+    * decisions in BSG sprite blits (cmd=09900F71 / 09800F41 families:
+    * pixel-mode 16bpp DCOMPEN sprites with constant source Z).
+    *
+    * This is a match-fast pragmatic fix; the JTRM-pure behaviour would
+    * select the lane based on the destination pixel's position within a
+    * phrase, which neither path currently does.  See #189 for the full
+    * divergence writeup. */
    winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
+      || ((zcomp & 0x04) && !phrase_mode && (pixsize == 4));
    *nowrite = winhibit && !bkgwren;
 
    /* 16-bit pixel mode flag */
@@ -1314,7 +1676,7 @@ static BLITTER_ALWAYS_INLINE
 void DATA(uint64_t *wdata, uint8_t *dcomp, uint8_t *zcomp, bool *nowrite,
 	bool big_pix, bool cmpdst, uint8_t daddasel, uint8_t daddbsel, uint8_t daddmode, bool daddq_sel, uint8_t data_sel,
 	uint8_t dbinh, uint8_t dend, uint8_t dstart, uint64_t dstd, uint32_t iinc, uint8_t lfu_func, uint64_t *patd, bool patdadd,
-	bool phrase_mode, uint64_t srcd, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
+	bool phrase_mode, uint64_t srcd, uint64_t srcd_cmp, bool srcdread, bool srczread, bool srcz2add, uint8_t zmode,
 	bool bcompen, bool bkgwren, bool dcompen, uint8_t icount, uint8_t pixsize,
 	uint64_t *srcz, uint64_t dstz, uint32_t zinc)
 {
@@ -1362,7 +1724,7 @@ Patdhi		:= JOIN (patdhi, patd[32..63]);*/
 
 /*Lfu		:= LFU (lfu[0..1], srcdlo, srcdhi, dstdlo, dstdhi, lfu_func[0..3]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	uint64_t lfu = blitter_simd_ops.lfu(srcd, dstd, lfu_func);
+	uint64_t lfu = blitter_simd_lfu(srcd, dstd, lfu_func);
    bool mir_bit, mir_byte;
    uint16_t masku;
    uint8_t e_coarse, e_fine;
@@ -1395,7 +1757,60 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 
 /*Datacomp	:= DATACOMP (dcomp[0..7], cmpdst, dstdlo, dstdhi, patdlo, patdhi, srcdlo, srcdhi);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*dcomp = blitter_simd_ops.dcomp(*patd, srcd, dstd, cmpdst);
+	/* srcd_cmp is the source data as read from memory; srcd may carry the
+	 * SRCSHADE intensity offset.  The transparency comparison keys on the
+	 * unshaded pixel -- see the SRCSHADE block in BlitterMidsummer2. */
+	*dcomp = blitter_simd_dcomp(*patd, srcd_cmp, dstd, cmpdst);
+
+	/* Source-pixel transparency for DCOMPEN+!CMPDST.
+	 *
+	 * The fast blitter's DCOMPEN+!CMPDST path inhibits writes when the
+	 * source pixel is zero (pixel-level transparency, what JTRM calls
+	 * DCOMPEN) OR when it equals PATTERNDATA (the DATACOMP colour-key) --
+	 * see the two !CMPDST branches earlier in blitter_generic.
+	 *
+	 * The gate-level rewrite of dcomp above (scalar_dcomp & SIMD
+	 * variants) only checks byte-equality against PATD, which is the
+	 * documented DATACOMP module behaviour but is missing the pixel
+	 * transparency check the fast path performs.  For sprite blits
+	 * with non-zero PATD and zero source pixels (BSG cmd=0x49802609
+	 * family, ~120 blits / 3.76% residual divergence on develop),
+	 * accurate writes zeros over the existing destination while fast
+	 * preserves it via the source-zero inhibit.
+	 *
+	 * OR the per-byte "source byte == 0" mask into dcomp so the
+	 * existing dcomp_pair (16bpp pair AND) and pixel-mode winhibit
+	 * paths in COMP_CTRL fire when the source pixel is fully zero.
+	 * Augment-only (no replacement) so cases where the original
+	 * byte-equality already matched (PATD-based pattern stamping)
+	 * continue to inhibit identically. */
+	/* Gated to 8bpp (pixsize==3) and 16bpp (pixsize==4) only.  In those
+	 * modes the per-byte zero mask matches fast's per-pixel zero check:
+	 * 8bpp = one byte per pixel (1:1); 16bpp is reconciled by the
+	 * dcomp_pair adjacent-byte AND inside COMP_CTRL.
+	 *
+	 * For 32bpp (pixsize==5) COMP_CTRL has no 4-byte AND, so OR'ing the
+	 * per-byte mask here would inhibit a 32-bit pixel whenever any one
+	 * of its bytes is zero, which differs from fast's "full 32-bit
+	 * srcdata == 0" check.  No failing testcase currently exercises
+	 * 32bpp DCOMPEN; gating out keeps semantics conservative and
+	 * matches fast for the modes BSG and other failing titles use. */
+	if (dcompen && !cmpdst && (pixsize == 3 || pixsize == 4))
+	{
+		/* Per-byte "byte is 0" mask.  Compact loop over the 8 bytes of
+		 * srcd.  (A SWAR byte-zero bit-trick would be tempting but
+		 * `(s - 0x01...01) & ~s & 0x80...80` fails on cross-byte
+		 * borrow -- e.g. s=0x0001_0000 spuriously flags byte 2 as zero
+		 * because the borrow chain propagates the wrong way.  The loop
+		 * is honest and compiles to predictable code on every target.) */
+		uint64_t s = srcd_cmp;
+		uint8_t zero_mask = 0;
+		unsigned i;
+		for (i = 0; i < 8; i++)
+			if (((s >> (i * 8)) & 0xFFu) == 0)
+				zero_mask |= (uint8_t)(1u << i);
+		*dcomp |= zero_mask;
+	}
 //////////////////////////////////////////////////////////////////////////////////////
 
 // Zed comparator for Z-buffer operations
@@ -1411,7 +1826,7 @@ Zstep		:= JOIN (zstep, zstep[0..31]);*/
 with srcshift bits 4 & 5 selecting the start position
 */
 //So... basically what we have here is:
-	*zcomp = blitter_simd_ops.zcomp(*srcz, dstz, zmode);
+	*zcomp = blitter_simd_zcomp(*srcz, dstz, zmode);
 
 //TEMP, TO TEST IF ZCOMP IS THE CULPRIT...
 //Nope, this is NOT the problem...
@@ -1666,8 +2081,8 @@ Dat[40-47]	:= MX4 (dat[40-47], dstdhi{8-15},  ddathi{8-15},  dstzhi{8-15},  srcz
 Dat[48-55]	:= MX4 (dat[48-55], dstdhi{16-23}, ddathi{16-23}, dstzhi{16-23}, srczhi{16-23}, mask[13],  zed_selb[1]);
 Dat[56-63]	:= MX4 (dat[56-63], dstdhi{24-31}, ddathi{24-31}, dstzhi{24-31}, srczhi{24-31}, mask[14],  zed_selb[1]);*/
 ////////////////////////////////////// C++ CODE //////////////////////////////////////
-	*wdata = blitter_simd_ops.byte_merge(ddat, dstd, mask);
-	*srcz = blitter_simd_ops.byte_merge(*srcz, dstz, mask);
+	*wdata = blitter_simd_byte_merge(ddat, dstd, mask);
+	*srcz = blitter_simd_byte_merge(*srcz, dstz, mask);
 //////////////////////////////////////////////////////////////////////////////////////
 
 /*Data_enab[0-1]	:= BUF8 (data_enab[0-1], data_ena);
@@ -1948,12 +2363,30 @@ void BlitterMidsummer2(void)
          uint64_t srcz = 0;
          bool winhibit;
          uint32_t a1_ya_cached, a2_ya_cached;
+         /* CLIP_A1 must check the a1 position THAT WAS USED for the
+          * sread that loaded srcd, not the post-step a1.  The state
+          * machine steps a1 (via srca_addi) during the same cycle as
+          * sread but BEFORE the dwrite that consumes srcd, so by the
+          * time we evaluate the clip check at dwrite, a1 is one step
+          * ahead.  Cache a1_x/a1_y at sread time and use the cached
+          * values for the clip test below.  Matches fast, which checks
+          * CLIP_A1 against pre-step a1.  Fixes BSG cmd=0x09800F41
+          * family per-pixel divergence at row-edge positions where the
+          * fractional source X drifts across 0 mid-row. */
+         int16_t a1_x_at_sread = a1_x;
+         int16_t a1_y_at_sread = a1_y;
+         /* Fractional-position twins, cached for the same reason: the
+          * hi-res Stage 2 sub-sample walk (see shadow_hires_sub_mid)
+          * needs the full 16.16 source position THAT WAS USED for the
+          * sread that loaded srcd. */
+         uint16_t a1_fx_at_sread = a1_frac_x;
+         uint16_t a1_fy_at_sread = a1_frac_y;
 
          indone = false;
 
          /* Precompute y*width row offsets (invariant when y unchanged) */
          a1_ya_cached = addrgen_ya((uint16_t)a1_y, a1_width);
-         a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+         a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
 
          /* Precompute address constants (invariant during inner loop) */
          a1_xconst = 6 - a1_pixsize;
@@ -2142,7 +2575,7 @@ void BlitterMidsummer2(void)
                      false/*daddq_sel*/,
                      0/*data_sel*/, 0/*dbinh*/, pf_dend, pf_dstart, pf_dstd_local,
                      iinc, lfufunc, &patd, false/*patdadd*/,
-                     phrase_mode, 0/*srcd*/, false/*srcdread*/, false/*srczread*/,
+                     phrase_mode, 0/*srcd*/, 0/*srcd_cmp*/, false/*srcdread*/, false/*srczread*/,
                      false/*srcz2add*/, zmode,
                      bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
                      &srcz, dstz, zinc);
@@ -2236,7 +2669,7 @@ void BlitterMidsummer2(void)
                   if (addq_y != a2_y)
                   {
                      a2_y = addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
 
@@ -2270,7 +2703,14 @@ void BlitterMidsummer2(void)
          if (srcen && !srcenx && !srcenz && !dsten && !dstenz && !dstwrz
                && !bcompen && !dcompen && !gourd && !gourz && !srcshade
                && !adddsel && !patdsel && zmode == 0
-               && a1addx != 3 && a2addx != 3)
+               && a1addx != 3 && a2addx != 3
+               /* Hi-res Stage 2: a DSTA2 copy with a fractional outer
+                * source step qualifies for supersampling, which only the
+                * state-machine dwrite performs.  The collapsed path does
+                * identical stock work, so routing through the state
+                * machine only changes shadow content.  Option-gated:
+                * with hi-res off this term is always false. */
+               && !(shadowHiresActive && shadowHiresN == 2 && dsta2 && upda1f))
          {
             /* Pre-decode values that are invariant across the inner loop.
              * For a simple copy with no fractional increment:
@@ -2461,7 +2901,7 @@ void BlitterMidsummer2(void)
                         false/*daddq_sel*/, 1/*data_sel=LFU*/, 0/*dbinh*/,
                         fc_dend, fc_dstart, dstd, iinc, lfufunc, &patd,
                         false/*patdadd*/,
-                        phrase_mode, fc_srcd, false/*srcdread*/, false/*srczread*/,
+                        phrase_mode, fc_srcd, fc_srcd/*srcd_cmp*/, false/*srcdread*/, false/*srczread*/,
                         false/*srcz2add*/, zmode,
                         false/*bcompen*/, bkgwren, false/*dcompen*/,
                         icount & 0x07, pixsize,
@@ -2523,7 +2963,7 @@ void BlitterMidsummer2(void)
                   if (fc_addq_y != a2_y)
                   {
                      a2_y = fc_addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
 
@@ -2546,7 +2986,7 @@ void BlitterMidsummer2(void)
                   if (fc_addq_y != a2_y)
                   {
                      a2_y = fc_addq_y;
-                     a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                     a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                   }
                }
                else
@@ -2792,6 +3232,12 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
+               /* Snapshot pre-step a1 for the CLIP_A1 check at dwrite
+                * time -- see a1_x_at_sread declaration. */
+               a1_x_at_sread = a1_x;
+               a1_y_at_sread = a1_y;
+               a1_fx_at_sread = a1_frac_x;
+               a1_fy_at_sread = a1_frac_y;
                //uint32_t srcAddr, pixAddr;
                //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
                //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
@@ -2830,6 +3276,12 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
+               /* Snapshot pre-step a1 for the CLIP_A1 check at dwrite
+                * time -- see a1_x_at_sread declaration. */
+               a1_x_at_sread = a1_x;
+               a1_y_at_sread = a1_y;
+               a1_fx_at_sread = a1_frac_x;
+               a1_fy_at_sread = a1_frac_y;
                srcd2 = srcd1;
                srcd1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
@@ -2902,6 +3354,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                uint16_t oldicount;
                uint8_t dstart = 0;
                uint8_t ppp;
+               uint64_t srcd_cmp;
 #ifdef BENCH_PROFILE
                blitter_did_io = 1;
 #endif
@@ -3044,6 +3497,11 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                //after the add?
                //Dest write address/pix address: 0014E83E/0 [dstart=0 dend=10 pwidth=8 srcshift=0][daas=4 dabs=5 dam=7 ds=1 daq=F] [0000000000006505] (icount=003F, inc=1)
                //Let's try this:
+               /* The intensity offset belongs to the write data only.  DCOMPEN
+                * transparency keys on the source pixel as read from memory, so
+                * keep an unshaded copy for the comparator: shading a
+                * transparent (PATD-matching) pixel must not make it opaque. */
+               srcd_cmp = srcd;
                if (srcshade)
                {
                   uint16_t addq[4];
@@ -3091,7 +3549,7 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                DATA(&wdata, &dcomp, &zcomp, &winhibit,
                      true, cmpdst, daddasel, daddbsel, daddmode, daddq_sel, data_sel, 0/*dbinh*/,
                      dend, dstart, dstd, iinc, lfufunc, &patd, patdadd,
-                     phrase_mode, srcd, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
+                     phrase_mode, srcd, srcd_cmp, false/*srcdread*/, false/*srczread*/, srcz2add, zmode,
                      bcompen, bkgwren, dcompen, icount & 0x07, pixsize,
                      &srcz, dstz, zinc);
 
@@ -3113,10 +3571,24 @@ A1_xcomp	:= MAG_15 (a1xgr, a1xeq, a1xlt, a1_x{0..14}, a1_win_x{0..14});
 A1_ycomp	:= MAG_15 (a1ygr, a1yeq, a1ylt, a1_y{0..14}, a1_win_y{0..14});
 A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
 */
-               //NOTE: There seems to be an off-by-one bug here in the clip_a1 section... !!! FIX !!!
-               //      Actually, seems to be related to phrase mode writes...
-               //      Or is it? Could be related to non-15-bit compares as above?
-               if (clip_a1 && ((a1_x & 0x8000) || (a1_y & 0x8000) || (a1_x >= a1_win_x) || (a1_y >= a1_win_y)))
+               /* Check CLIP_A1 against the pre-step a1 position (the one
+                * used for the sread that loaded srcd), not the post-step
+                * a1.  See a1_x_at_sread declaration above for the
+                * rationale.  This matches fast's CLIP_A1 timing.
+                *
+                * When srcen/srcenx are both clear, no sread/sreadx ever
+                * fires to refresh the cache, but a1 can still step each
+                * iteration via dsta_addi (when !dsta2).  Refresh from
+                * live a1_x/a1_y at the top of dwrite -- the step for
+                * this cycle hasn't fired yet, so live a1 == pre-step. */
+               if (!srcen && !srcenx)
+               {
+                  a1_x_at_sread = a1_x;
+                  a1_y_at_sread = a1_y;
+               }
+               if (clip_a1 && ((a1_x_at_sread & 0x8000) || (a1_y_at_sread & 0x8000)
+                            || (a1_x_at_sread >= (int16_t)a1_win_x)
+                            || (a1_y_at_sread >= (int16_t)a1_win_y)))
                   winhibit = true;
 
 
@@ -3135,6 +3607,129 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                         blitter_write_word(address, wdata & 0x0000FFFF);
                      else
                         blitter_write_byte(address, wdata & 0x000000FF);
+                  }
+
+                  /* True-color shadow store for gouraud writes to a
+                   * 16bpp destination (see shadowfb.h).  In GOURD mode
+                   * the srcd1 register lanes carry the per-pixel
+                   * intensity fractions (JTRM: the source data
+                   * registers hold intensity fractions during gouraud).
+                   * Lanes that COMP_CTRL inhibited were byte-merged
+                   * from dstd, so their tag equals current RAM and the
+                   * value-check makes the entry a benign refinement of
+                   * the same 16-bit value; any fraction yields a color
+                   * within one stock quantization step (bounded by
+                   * construction, see ShadowFBCryRGB). */
+                  /* Hi-res (Stage 1): every 16bpp destination write, not
+                   * just gouraud, also refreshes the Nx shadow block by
+                   * box replication (see shadowfb.h). */
+                  if (pixsize == 4
+                        && (shadowHiresActive || (shadowFBActive && gourd)))
+                  {
+                     if (phrase_mode)
+                     {
+                        int sfb_k;
+                        uint16_t sfb_v, sfb_f;
+                        for (sfb_k = 0; sfb_k < 4; sfb_k++)
+                        {
+                           sfb_v = (uint16_t)(wdata >> ((3 - sfb_k) << 4));
+                           sfb_f = gourd
+                              ? (uint16_t)(srcd1 >> ((3 - sfb_k) << 4)) : 0;
+                           if (shadowFBActive && gourd)
+                              ShadowFBStoreCry(address + ((uint32_t)sfb_k << 1),
+                                    sfb_v, sfb_f);
+                           if (shadowHiresActive)
+                              ShadowHiresStoreCry(address + ((uint32_t)sfb_k << 1),
+                                    sfb_v, sfb_f);
+                        }
+                     }
+                     else
+                     {
+                        uint16_t sfb_f = gourd ? (uint16_t)srcd1 : 0;
+                        if (shadowFBActive && gourd)
+                           ShadowFBStoreCry(address, (uint16_t)wdata, sfb_f);
+                        if (shadowHiresActive)
+                        {
+                           /* Stage 2 (see shadow_hires_sub_mid): pixel-
+                            * mode 16bpp write whose A1 source walk
+                            * consumes a fraction and whose data path is
+                            * source-dependent (LFU, optionally shaded).
+                            * Everything else keeps Stage 1 replication.
+                            * The pixel passed all comparators at 1x
+                            * (pixel-mode inhibits set winhibit and skip
+                            * the write entirely), so the block decision
+                            * is uniform by construction. */
+                           int sh2 = 0;
+                           shadowfb_sub sblk[4];
+                           if (shadowHiresN == 2 && !winhibit
+                                 && dsta2 && srcen && !bcompen
+                                 && a1_pixsize == 4 && srcshift == 0
+                                 && !patdsel && !gourd && !adddsel)
+                           {
+                              int32_t hx = 0, hy = 0, vx = 0, vy = 0;
+                              int q_in = (a1addx == 3
+                                    && ((a1_incf_x | a1_incf_y) != 0));
+                              int q_out = (a1addx == 2 && !a1addy && upda1f
+                                    && ((a1_stepf_x | a1_stepf_y) != 0));
+                              if (q_in)
+                              {
+                                 hx = (((int32_t)a1_inc_x << 16)
+                                       | a1_incf_x) >> 1;
+                                 hy = (((int32_t)a1_inc_y << 16)
+                                       | a1_incf_y) >> 1;
+                              }
+                              if (q_out)
+                              {
+                                 vx = (((int32_t)a1_step_x << 16)
+                                       | a1_stepf_x) >> 1;
+                                 vy = (((int32_t)a1_step_y << 16)
+                                       | a1_stepf_y) >> 1;
+                              }
+                              if (q_in || q_out)
+                              {
+                                 int32_t px = ((int32_t)a1_x_at_sread << 16)
+                                            | a1_fx_at_sread;
+                                 int32_t py = ((int32_t)a1_y_at_sread << 16)
+                                            | a1_fy_at_sread;
+                                 uint32_t iim = iinc & 0x00FFFFFF;
+                                 uint16_t d16 = (uint16_t)dstd;
+                                 sblk[0].value16 = (uint16_t)wdata;
+                                 sblk[0].frac16  = sfb_f;
+                                 if (q_in)
+                                    shadow_hires_sub_mid(&sblk[1],
+                                          px + hx, py + hy,
+                                          a1_base, a1_pitch, a1_pixsize,
+                                          a1_width, srcshade, iim,
+                                          lfufunc, d16, &sblk[0]);
+                                 else
+                                    sblk[1] = sblk[0];
+                                 if (q_out)
+                                    shadow_hires_sub_mid(&sblk[2],
+                                          px + vx, py + vy,
+                                          a1_base, a1_pitch, a1_pixsize,
+                                          a1_width, srcshade, iim,
+                                          lfufunc, d16, &sblk[0]);
+                                 else
+                                    sblk[2] = sblk[0];
+                                 if (q_in && q_out)
+                                    shadow_hires_sub_mid(&sblk[3],
+                                          px + hx + vx, py + hy + vy,
+                                          a1_base, a1_pitch, a1_pixsize,
+                                          a1_width, srcshade, iim,
+                                          lfufunc, d16, &sblk[0]);
+                                 else
+                                    sblk[3] = (q_in ? sblk[1] : sblk[2]);
+                                 sh2 = 1;
+                              }
+                           }
+                           if (sh2)
+                              ShadowHiresStoreCryBlock(address,
+                                    (uint16_t)wdata, sblk);
+                           else
+                              ShadowHiresStoreCry(address,
+                                    (uint16_t)wdata, sfb_f);
+                        }
+                     }
                   }
                }
 
@@ -3233,7 +3828,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                if (addq_y != a2_y)
                {
                   a2_y = addq_y;
-                  a2_ya_cached = addrgen_ya((uint16_t)a2_y, a2_width);
+                  a2_ya_cached = addrgen_ya((uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80) ? (a2_y & GET16(blitter_ram, A2_MASK + 0)) : a2_y), a2_width);
                }
             }
 #ifdef BENCH_PROFILE
@@ -3285,6 +3880,44 @@ fc_inner_done:
       }
    }
 
+   /* Per JTRM: "the X pointer will be left pointing at the start of the
+    * first phrase not written by the blit."  The fast blitter applies its
+    * outer-loop step unconditionally on every iteration including the
+    * last, leaving the pointer past the last write.  The Midsummer state
+    * machine here only applies the step between inner iterations (a1update
+    * fires when transitioning from one inner to the next), so after
+    * n_lines inner passes it has performed only n_lines-1 steps.  Mirror
+    * fast's "one closing step" so the writeback values match between
+    * modes and chained-blit games (e.g. Battle Sphere Gold sprite
+    * pipeline) see consistent A1_PIXEL/A2_PIXEL between blits. */
+   {
+      uint16_t fcx_carry = 0, fcy_carry = 0;
+      if (upda1f)
+      {
+         uint32_t fxt = (uint32_t)a1_frac_x + (uint32_t)a1_stepf_x;
+         uint32_t fyt = (uint32_t)a1_frac_y + (uint32_t)a1_stepf_y;
+         fcx_carry = (uint16_t)(fxt >> 16);
+         fcy_carry = (uint16_t)(fyt >> 16);
+         a1_frac_x = (uint16_t)(fxt & 0xFFFF);
+         a1_frac_y = (uint16_t)(fyt & 0xFFFF);
+      }
+      /* Match the in-loop a1update gate at line 1862-1864: the integer
+       * step fires whenever a1fupdate fires OR (upda1 && !upda1f), i.e.,
+       * whenever (upda1 || upda1f).  Gating only on upda1 would diverge
+       * by one a1_step on every iteration in the UPDA1F=1, UPDA1=0 case
+       * (rotated/scaled blits without integer-pixel writeback). */
+      if (upda1 || upda1f)
+      {
+         a1_x += a1_step_x + (int16_t)fcx_carry;
+         a1_y += a1_step_y + (int16_t)fcy_carry;
+      }
+      if (upda2)
+      {
+         a2_x += a2_step_x;
+         a2_y += a2_step_y;
+      }
+   }
+
    // Write values back to registers (in real blitter, these are continuously updated)
    SET16(blitter_ram, A1_PIXEL + 2, a1_x);
    SET16(blitter_ram, A1_PIXEL + 0, a1_y);
@@ -3325,7 +3958,18 @@ static void ADDRGEN(uint32_t *address, uint32_t *pixa, bool gena2, bool zaddr,
 	uint16_t a2_x, uint16_t a2_y, uint32_t a2_base, uint8_t a2_pitch, uint8_t a2_pixsize, uint8_t a2_width, uint8_t a2_zoffset,
 	uint32_t a1_ya_pre, uint32_t a2_ya_pre)
 {
-	uint16_t x = (gena2 ? a2_x : a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
+	/* A2 texture-wrap mask: when A2_FLAGS bit 15 is set, the A2 source X
+	 * coordinate is wrapped by the A2_MASK X modulo (low 16 bits) for ADDRESS
+	 * generation only -- the raw accumulator a2_x is never altered.  Matches
+	 * the MiSTer Jaguar core address.v (a2_xm = a2_xr & a2_mask_x,
+	 * https://github.com/MiSTer-devel/Jaguar_MiSTer) and the fast blitter's
+	 * integer-part masking.  Gated on bit 15, so channels that do not enable
+	 * wrapping are bit-for-bit unchanged.  Single ternary keeps it C89-clean. */
+	uint16_t x = (gena2
+		? (uint16_t)((blitter_ram[A2_FLAGS + 2] & 0x80)
+			? (a2_x & GET16(blitter_ram, A2_MASK + 2))
+			: a2_x)
+		: a1_x) & 0xFFFF;	/* Actually uses all 16 bits to generate address...! */
 	uint8_t pixsize = (gena2 ? a2_pixsize : a1_pixsize);
 	uint8_t pitch = (gena2 ? a2_pitch : a1_pitch);
 	uint32_t base = (gena2 ? a2_base : a1_base) >> 3;/*Only upper 21 bits are passed around the bus? Seems like it...*/

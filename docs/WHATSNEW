@@ -1,3 +1,94 @@
+Virtual Jaguar v3.0.0 libretro
+------------------------------
+
+Major release -- Jaguar CD, link-cable networking, and a wide
+compatibility wave. Full notes: docs/RELEASE_NOTES_v3.0.0.md
+
+== Jaguar CD ==
+* The full local 10-title corpus (Baldies, Battle Morph, BrainDead 13,
+  Dragon's Lair, Highlander, Hover Strike, Iron Soldier 2, Primal Rage,
+  Space Ace, Myst) boots to game code in both HLE and real-BIOS mode.
+* CUE/BIN and CDI images; `test/tools/cue2cdi` converts CUE/BIN to CDI.
+* Memory Track NVM is HLE'd, so Vid Grid and friends save again (#258).
+* HLE-path CD read speed is selectable (1x/2x/4x/8x/instant).
+* Bare .iso images are refused at load with an explanation -- a
+  2048-byte-sector ISO cannot represent a Jaguar disc's two sessions.
+
+== Networking ==
+* JagLink / CatBox link hardware emulated at the JERRY UART level, with
+  a direct TCP transport, the libretro netpacket interface (RetroArch
+  netplay), and a CatNet-style multi-peer hub.
+* Validated over TCP on localhost/LAN: Doom deathmatch, AirCars
+  (2-player and 3-console hub), BattleSphere Gold to lobby entry.
+* Host address is a core option and resolves hostnames, not just
+  dotted quads (#253); vj_netlink.txt is now a fallback.
+
+== Compatibility ==
+* Wolfenstein 3D missing music (DSP D_FLAGS pipeline stage).
+* Pitfall black screen shortly into gameplay (68000 group-0 exception
+  frame + GPU STOREP byte-lane masking) (#138).
+* Tempest 2000 one-frame playfield collapse (TOM level-2 IRQ request
+  held across the CPU interrupt mask) (#187).
+* Alien vs Predator first-frame cyan bar and in-game brown bottom bar
+  (#178).
+* Brutal Sports Football copier-header carts load instead of being
+  rejected.
+
+== Interface ==
+* Core options grouped into 9 categories, with options that do not
+  apply to the loaded content type hidden dynamically (#251).
+* i18n scaffolding (Crowdin workflow + libretro_core_options_intl.h);
+  no languages translated yet.
+
+== Housekeeping ==
+* Savestate format is v7 and frozen from this release. States from the
+  v2.x line still load with newer fields defaulted.
+* Acid test suite reconciled against the JTRM and its CI gate fixed, so
+  the job now actually blocks on regressions.
+* New experimental `virtualjaguar_dram_timing` bus model, default off.
+
+
+Virtual Jaguar v2.3.2 libretro
+------------------------------
+
+Correctness and housekeeping. Full notes: docs/RELEASE_NOTES_v2.3.2.md
+
+== Compatibility ==
+* Battle Sphere Gold now launches with the HLE BIOS (#181).
+* Save states from v2.3.0/v2.3.1 still load -- retro_unserialize now
+  accepts a version range instead of an exact match.
+* Advertised max_height now bounds the frames the core actually emits,
+  so drivers no longer clip or drop 241-line NTSC output.
+
+== Graphics ==
+* Ten blitter accuracy fixes checked against the JTRM: DCOMPEN colour
+  keying, A2 texture-wrap masking, CLIP_A1 caching, accurate-writeback
+  outer-loop step, z-comparator lane in 16bpp pixel mode.
+* BIOS boot-animation artifacts fixed (#180).
+
+== Interface ==
+* Core options reworded: Blitter is now Accurate/Fast and BIOS is now
+  HLE/Real (#184). Stored values are unchanged, so settings carry over.
+
+== Housekeeping ==
+* Dropped two unused 128 KB boot-ROM blobs -- 258 KB smaller binaries.
+* New regression tests: save-state version gate, frontend pacing /
+  fast-forward contract, advertised-geometry bounds, plus a
+  build-identity guard against testing stale binaries.
+
+
+Virtual Jaguar v2.3.1 libretro
+------------------------------
+
+Maintenance release. Full notes: docs/RELEASE_NOTES_v2.3.1.md
+
+
+Virtual Jaguar v2.3.0 libretro
+------------------------------
+
+Full notes: docs/RELEASE_NOTES_v2.3.0.md
+
+
 Virtual Jaguar v2.2.0 libretro
 ------------------------------
 

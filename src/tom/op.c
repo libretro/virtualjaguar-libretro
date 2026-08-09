@@ -17,9 +17,11 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "bus_arbiter.h"
 #include "gpu.h"
 #include "jaguar.h"
 #include "m68000/m68kinterface.h"
+#include "shadowfb.h"
 #include "vjag_memory.h"
 #include "tom.h"
 
@@ -40,6 +42,13 @@
 
 #define OP_RUNAWAY_GUARD_OBJECTS   30000
 
+/* GPU-object release wait: how many GPU cycles to run inline waiting for
+ * the ISR's OBF write, and the step size between checks.  A real halfline
+ * is ~845 GPU cycles; ISRs that take longer would break the display on
+ * hardware too, so ~5 halflines of budget is generous. */
+#define OP_GPU_RELEASE_GUARD_CYCLES   4000
+#define OP_GPU_RELEASE_STEP_CYCLES    16
+
 // Private function prototypes
 
 void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render);
@@ -48,6 +57,10 @@ void OPDiscoverObjects(uint32_t address);
 uint64_t OPLoadPhrase(uint32_t offset);
 
 // Local global variables
+
+/* Set by the TOM write path on any write to OBF ($F00026) — the GPU's
+ * "release the Object Processor" signal after servicing a GPU object. */
+static bool op_obf_written = false;
 
 // Blend tables (64K each)
 static uint8_t op_blend_y[0x10000];
@@ -253,6 +266,15 @@ void OPSetStatusRegister(uint32_t data)
 }
 
 
+/* Called by the TOM write path on any write to OBF ($F00026).  Writing the
+ * object flag is how the GPU releases a halted OP after servicing a GPU
+ * object. */
+void OPNotifyOBFWrite(void)
+{
+   op_obf_written = true;
+}
+
+
 void OPSetCurrentObject(uint64_t object)
 {
    //Not sure this is right... Wouldn't it just be stored 64 bit BE?
@@ -354,6 +376,13 @@ void OPProcessList(int halfline, bool render)
                      uint64_t p1 = OPLoadPhrase(oldOPP | 0x08);
                      uint64_t p2 = OPLoadPhrase(oldOPP | 0x10);
                      op_pointer += 16;
+                     /* Streaming this object's pixel data moves the
+                      * DRAM row off the object list and back once per
+                      * rendered object per line; the phrase fetches
+                      * themselves are charged page-mode centrally in
+                      * JaguarReadLong/JaguarWriteLong. */
+                     if (busArbiter.enabled)
+                        bus_arbiter_op_charge(2u * busArbiter.dram_row_miss);
                      OPProcessFixedBitmap(p0, p1, render);
 
                      // OP write-backs
@@ -399,6 +428,13 @@ void OPProcessList(int halfline, bool render)
                      op_pointer += 8;
                      p2 = OPLoadPhrase(op_pointer);
                      op_pointer += 8;
+                     /* Streaming this object's pixel data moves the
+                      * DRAM row off the object list and back once per
+                      * rendered object per line; the phrase fetches
+                      * themselves are charged page-mode centrally in
+                      * JaguarReadLong/JaguarWriteLong. */
+                     if (busArbiter.enabled)
+                        bus_arbiter_op_charge(2u * busArbiter.dram_row_miss);
                      OPProcessScaledBitmap(p0, p1, p2, render);
 
                      // OP write-backs
@@ -459,12 +495,47 @@ void OPProcessList(int halfline, bool render)
             }
          case OBJECT_TYPE_GPU:
             {
+               /* The GPU object fires whenever the OP reaches it — the
+                * silicon does not honor the YPOS field the JTRM describes
+                * (games gate the object with BRANCH objects instead, and
+                * carry non-matching YPOS values: yarc uses a BRANCH
+                * VC==506 in front of a stale-YPOS object, Primal Rage
+                * gates a YPOS=0 object to halflines >= 352).  The object
+                * is latched into OB, the GPU is interrupted, and the OP
+                * halts until the GPU's ISR writes OBF ($F00026), then
+                * continues with the next sequential phrase (single-phrase
+                * object, no link — MAME resumes at +8 the same way).
+                *
+                * Our OP is synchronous inside the halfline callback, so
+                * "halt until OBF" is modeled by running the GPU inline,
+                * bounded so a title whose ISR never releases the OP keeps
+                * the old stop-for-this-line behavior instead of wedging.
+                * Without the resume, every object after the GPU object
+                * was dropped for the rest of the frame — Primal Rage
+                * rendered the bottom third of fight scenes black. */
+               int32_t guard = OP_GPU_RELEASE_GUARD_CYCLES;
+
                OPSetCurrentObject(p0);
+               op_obf_written = false;
                GPUSetIRQLine(3, ASSERT_LINE);
-               /* The OP must stop here so the GPU sees this object in OB.
-                * Continuing to the next object can overwrite OB before the
-                * GPU services IRQ3. */
-               return;
+
+               /* Waiting is only meaningful if the GPU can actually take
+                * the interrupt — don't burn inline cycles for games that
+                * never enabled IRQ3. */
+               while (!op_obf_written && guard > 0 && GPUIsRunning()
+                      && GPUOPInterruptEnabled())
+               {
+                  GPUExec(OP_GPU_RELEASE_STEP_CYCLES);
+                  guard -= OP_GPU_RELEASE_STEP_CYCLES;
+               }
+
+               if (!op_obf_written)
+               {
+                  /* GPU idle, ISR missing, or no release: stop here so
+                   * the GPU still sees this object in OB. */
+                  return;
+               }
+               break;
             }
          case OBJECT_TYPE_BRANCH:
             {
@@ -890,6 +961,9 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
       {
          // Fetch phrase...
          uint64_t pixels = ((uint64_t)JaguarReadLong(data, OP) << 32) | JaguarReadLong(data + 4, OP);
+         /* Source phrase address for the true-color shadow lookup;
+          * captured before the pitch advance below. */
+         uint32_t sfbPhrase = data;
          pixels <<= firstPix;
          data += pitch;
 
@@ -909,8 +983,26 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             else
             {
                if (!flagRMW)
-                  *currentLineBuffer = bitsHi,
-                     *(currentLineBuffer + 1) = bitsLo;
+               {
+                  *currentLineBuffer = bitsHi;
+                  *(currentLineBuffer + 1) = bitsLo;
+                  /* True-color: resolve the source RAM word against the
+                   * shadow framebuffer and mirror it into the shadow
+                   * line buffer at the same pixel index (see shadowfb.h). */
+                  if (shadowFBActive)
+                     ShadowFBLineFromRAM(
+                           (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                           sfbPhrase + (((uint32_t)(i - 1)) << 1),
+                           (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+                  /* Hi-res: same resolve against the Nx shadow surface,
+                   * producing all N sub-rows inside this single OP pass
+                   * (see shadowfb.h). */
+                  if (shadowHiresActive)
+                     ShadowHiresLineFromRAM(
+                           (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                           sfbPhrase + (((uint32_t)(i - 1)) << 1),
+                           (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+               }
                else
                   *currentLineBuffer =
                      BLEND_CR(*currentLineBuffer, bitsHi),
@@ -1418,8 +1510,26 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
          else
          {
             if (!flagRMW)
-               *currentLineBuffer = bitsHi,
-                  *(currentLineBuffer + 1) = bitsLo;
+            {
+               *currentLineBuffer = bitsHi;
+               *(currentLineBuffer + 1) = bitsLo;
+               /* True-color: resolve the source RAM word against the
+                * shadow framebuffer and mirror it into the shadow line
+                * buffer at the same pixel index (see shadowfb.h).
+                * pixCount is the pixel index within the phrase at data. */
+               if (shadowFBActive)
+                  ShadowFBLineFromRAM(
+                        (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                        data + ((uint32_t)pixCount << 1),
+                        (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+               /* Hi-res: same resolve against the Nx shadow surface,
+                * inside the OP's single per-scanline pass (shadowfb.h). */
+               if (shadowHiresActive)
+                  ShadowHiresLineFromRAM(
+                        (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
+                        data + ((uint32_t)pixCount << 1),
+                        (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+            }
             else
                *currentLineBuffer =
                   BLEND_CR(*currentLineBuffer, bitsHi),

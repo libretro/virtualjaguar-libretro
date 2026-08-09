@@ -161,11 +161,14 @@
 #include "dsp.h"
 #include "eeprom.h"
 #include "event.h"
+#include "jaggd.h"
 #include "jaguar.h"
 #include "perf_counters.h"
 
 PERF_COUNTER(timing_jerry_irqs);
 #include "joystick.h"
+#include "jlink.h"
+#include "uart.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
 #include "settings.h"
@@ -289,6 +292,33 @@ void JERRYPIT2Callback(void)
 }
 
 
+/* Restart the I2S interrupt timer chain WITHOUT asserting an interrupt
+ * now.  Called on SCLK writes (src/jerry/dac.c).  On real hardware the
+ * SSI raises its first word-strobe interrupt only after a complete I2S
+ * word has been shifted -- 32 bits x 2 clock phases x (SCLK+1) system
+ * clocks -- never in the same instruction that programmed the clock.
+ * Invoking JERRYI2SCallback() synchronously here vectored the DSP into
+ * its I2S handler in the middle of the store that wrote SCLK, before
+ * the DSP module's init code had set up the handler's pointer
+ * registers; the handler then wrote CD samples through stale pointers
+ * over its own code (Highlander / Dragon's Lair CD crash: dsp_pc
+ * escape to $FFFFCE03 after a module re-upload). */
+void JERRYRescheduleI2S(void)
+{
+   double usecs;
+
+   jerryI2SCycles = 32 * (2 * (*sclk + 1));
+
+   if (*smode & SMODE_INTERNAL)
+      usecs = (double)jerryI2SCycles
+         * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC : RISC_CYCLE_PAL_IN_USEC);
+   else
+      usecs = 22.675737;
+
+   SetCallbackTime(JERRYI2SCallback, usecs, EVENT_JERRY);
+}
+
+
 void JERRYI2SCallback(void)
 {
    // We don't have to divide the RISC clock rate by this--the reason is a bit
@@ -321,6 +351,13 @@ void JERRYI2SCallback(void)
 
       if (ButchIsReadyToSend())//Not sure this is right spot to check...
       {
+         /* CDDA-DIAG: samples/s delivered from BUTCH to LRXD/RRXD in
+          * slave mode; ~44100/s expected while CD audio should play. */
+         static uint32_t ssiDeliveries = 0;
+         ssiDeliveries++;
+         if (ssiDeliveries <= 3 || (ssiDeliveries % 220500) == 0)
+            LOG_DBG("[CDDA] BUTCH->SSI delivery #%u (%us of samples)\n",
+                    ssiDeliveries, ssiDeliveries / 44100);
          //	return GetWordFromButchSSI(offset, who);
          SetSSIWordsXmittedFromButch();
          DSPSetIRQLine(DSPIRQ_SSI, ASSERT_LINE);
@@ -345,6 +382,7 @@ void JERRYInit(void)
    jerryPendingInterrupt = 0x0000;
 
    DACInit();
+   UARTInit();
 }
 
 
@@ -366,6 +404,7 @@ void JERRYReset(void)
    jerryPendingInterrupt = 0x0000;
 
    DACReset();
+   UARTReset();
 }
 
 
@@ -375,6 +414,7 @@ void JERRYDone(void)
    DACDone();
    EepromDone();
    MTDone();
+   UARTDone();
 }
 
 
@@ -382,6 +422,16 @@ bool JERRYIRQEnabled(int irq)
 {
    // Read the word @ $F10020
    return jerryInterruptMask & irq;
+}
+
+
+/* True while JERRY is driving its interrupt output (DINT) at the TOM
+ * input, i.e. an enabled JERRY source has an uncleared pending latch.
+ * TOM gates this with INT1 bit 4 before it reaches the 68K -- see
+ * TOMIRQRequestActive(). */
+bool JERRYIRQRequestActive(void)
+{
+   return (jerryPendingInterrupt & jerryInterruptMask) ? true : false;
 }
 
 
@@ -408,6 +458,13 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    // LRXD/RRXD/SSTAT $F1A148/4C/50 (really 16-bit registers...)
    else if (offset >= 0xF1A148 && offset <= 0xF1A153)
       return DACReadByte(offset, who);
+   // ASIDATA/ASISTAT/ASICLK $F10030-35 (16-bit UART registers)
+   else if ((offset >= 0xF10030) && (offset <= 0xF10035))
+   {
+      uint16_t value = UARTReadWord(offset & 0xFFFFFFFE);
+      return (offset & 0x01) ? (uint8_t)(value & 0xFF)
+                             : (uint8_t)(value >> 8);
+   }
    //	F10036          R     xxxxxxxx xxxxxxxx   JPIT1 - timer 1 pre-scaler
    //	F10038          R     xxxxxxxx xxxxxxxx   JPIT2 - timer 1 divider
    //	F1003A          R     xxxxxxxx xxxxxxxx   JPIT3 - timer 2 pre-scaler
@@ -439,6 +496,12 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       // This is wrong, should only have the lowest bit from $F14001
       return value | EepromReadByte(offset);
    }
+   /* JagGD SPI mailbox (GPIO2).  Must sit above the EEPROM catch-all,
+    * which otherwise swallows these addresses and returns $0000.  When
+    * the GameDrive is not active we deliberately fall through: a $0000
+    * status read reproduces the stock-console "GD absent" hang. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+      return JGDControlReadByte(offset);
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)
       return EepromReadByte(offset);
 
@@ -459,6 +522,9 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    // LRXD/RRXD/SSTAT $F1A148/4C/50 (really 16-bit registers...)
    else if (offset >= 0xF1A148 && offset <= 0xF1A153)
       return DACReadWord(offset, who);
+   // ASIDATA/ASISTAT/ASICLK $F10030-35 (16-bit UART registers)
+   else if ((offset >= 0xF10030) && (offset <= 0xF10035))
+      return UARTReadWord(offset & 0xFFFFFFFE);
    //	F10036          R     xxxxxxxx xxxxxxxx   JPIT1 - timer 1 pre-scaler
    //	F10038          R     xxxxxxxx xxxxxxxx   JPIT2 - timer 1 divider
    //	F1003A          R     xxxxxxxx xxxxxxxx   JPIT3 - timer 2 pre-scaler
@@ -491,6 +557,9 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
       return (JoystickReadWord(offset) & 0xFFFE) | EepromReadWord(offset);
    else if ((offset >= 0xF14002) && (offset < 0xF14003))
       return JoystickReadWord(offset);
+   /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+      return JGDControlReadWord(offset);
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
       return EepromReadWord(offset);
 
@@ -527,6 +596,33 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
       /* Unhandled timer write (BYTE) */
       return;
    }
+   // ASIDATA/ASICTRL/ASICLK $F10030-35 (16-bit UART registers).  Byte
+   // writes carry the payload in the low byte for ASIDATA/ASICTRL;
+   // ASICLK merges the touched half into the existing divider.
+   else if (offset >= 0xF10030 && offset <= 0xF10035)
+   {
+      uint32_t base = offset & 0xFFFFFFFE;
+
+      /* ASIDATA/ASICTRL: byte writes are meaningful only to the low byte. */
+      if ((base == 0xF10030 || base == 0xF10032) && !(offset & 0x01))
+         return;
+
+      if (base == 0xF10034)
+      {
+         uint16_t cur = UARTReadWord(base);
+         uint16_t v;
+         if (offset & 0x01)
+            v = (uint16_t)((cur & 0xFF00) | data);
+         else
+            v = (uint16_t)((cur & 0x00FF) | ((uint16_t)data << 8));
+         UARTWriteWord(base, v);
+      }
+      else
+      {
+         UARTWriteWord(base, (uint16_t)data);
+      }
+      return;
+   }
    // JERRY -> 68K interrupt enables/latches (need to be handled!)
    else if (offset >= 0xF10020 && offset <= 0xF10021)//WAS:23)
    {
@@ -542,6 +638,12 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
    {
       JoystickWriteWord(offset & 0xFE, (uint16_t)data);
       EepromWriteByte(offset, data);
+      return;
+   }
+   /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+   {
+      JGDControlWriteByte(offset, data);
       return;
    }
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
@@ -580,6 +682,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       DACWriteWord(offset, data, who);
       return;
    }
+   // ASIDATA/ASICTRL/ASICLK $F10030-35 (16-bit UART registers)
+   else if (offset >= 0xF10030 && offset <= 0xF10035)
+   {
+      UARTWriteWord(offset & 0xFFFFFFFE, data);
+      return;
+   }
    else if (offset >= 0xF10000 && offset <= 0xF10007)
    {
       switch(offset & 0x07)
@@ -611,6 +719,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       uint16_t oldPending = jerryPendingInterrupt;
       jerryInterruptMask = data & 0xFF;
       jerryPendingInterrupt &= ~(data >> 8);
+      /* CDDA-DIAG: JINTCTRL external-int enable edges gate the BUTCH ->
+       * 68K IPL2 delivery (cdrom.c BUTCHExec); rare, log unconditionally. */
+      if ((oldMask ^ jerryInterruptMask) & IRQ2_EXTERNAL)
+         LOG_DBG("[CDDA] JINTCTRL ext-int enable %s (J_INT=$%04X who=%u 68kpc=$%06X)\n",
+                 (jerryInterruptMask & IRQ2_EXTERNAL) ? "ON" : "OFF",
+                 data, who, m68k_get_reg(NULL, M68K_REG_PC));
       if (oldMask != jerryInterruptMask || oldPending != jerryPendingInterrupt)
       {
          JERRY_TRACE("J_INT write word data=$%04X who=%u mask $%02X->$%02X pending $%02X->$%02X%s%s\n",
@@ -625,6 +739,12 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
    {
       JoystickWriteWord(offset, data);
       EepromWriteWord(offset, data);
+      return;
+   }
+   /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
+   else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
+   {
+      JGDControlWriteWord(offset, data);
       return;
    }
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)

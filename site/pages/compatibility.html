@@ -1,0 +1,83 @@
+<!-- title: Compatibility — Virtual Jaguar libretro -->
+<!-- nav: Compatibility -->
+<!-- description: Jaguar CD boot results per disc image and named cartridge fixes for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
+
+<h1>Compatibility</h1>
+<p class="lede">
+  Generated from committed test logs. Nothing is typed by hand.
+</p>
+
+<div class="caveat">
+  <span class="badge good">verified</span> in the test log &middot;
+  <span class="badge bad">known issue</span> in a committed doc &middot;
+  <span class="badge warn">not yet verified</span> no recorded result. "Verified" = <em>boots into game code headlessly</em>, on the
+  maintainer's disc images, at build {{COMPAT_BUILD_IDS}} &mdash; not a
+  completed-the-game certificate.
+</div>
+
+<p class="footnote">
+  Manual: <a href="{{DOCS_URL}}">docs.libretro.com</a>. No BIOS files required
+  (<a href="{{REPO}}#bios">README: BIOS</a>). libretro's separate
+  <a href="{{DOCS_COMPAT_URL}}">community compatibility list</a> covers
+  cartridges.
+</p>
+
+<h2>Jaguar CD boot matrix</h2>
+<p>
+  Parsed from
+  <a href="{{REPO}}/blob/develop/docs/cd-boot-matrix.md"><code>docs/cd-boot-matrix.md</code></a>,
+  produced by
+  <a href="{{REPO}}/blob/develop/test/tools/cd_boot_matrix.sh"><code>cd_boot_matrix.sh</code></a>.
+  Each title runs in both modes: HLE and real BIOS.
+</p>
+
+<div class="stats">
+  <div class="stat"><div class="n">{{COMPAT_N_TITLES}}</div><div class="l">disc images in the corpus</div></div>
+  <div class="stat"><div class="n">{{COMPAT_N_HLE_GOOD}}</div><div class="l">reach game code in HLE mode</div></div>
+  <div class="stat"><div class="n">{{COMPAT_N_BIOS_GOOD}}</div><div class="l">reach game code in real-BIOS mode</div></div>
+</div>
+
+{{COMPAT_TABLE}}
+
+<p class="footnote">
+  Notes are <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash
+  watchdog</a> signatures; a lone <code>cd_seek_wedge</code> or
+  <code>video_stall</code> beside a passing PC trace is often benign. The
+  stage column is the gate.
+</p>
+
+<h2>Cartridge highlights <span class="badge good">shipped in tagged releases</span></h2>
+<p>
+  No cartridge matrix yet; named, verified fixes from the release notes.
+</p>
+
+<div class="table-wrap"><table>
+  <tr><th>Title</th><th>What was fixed</th><th>Source</th></tr>
+  <tr><td>Doom</td><td>~2x speed brought down by bus-contention modeling</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration</a></td></tr>
+  <tr><td>Wolfenstein 3D</td><td>Missing game music (DSP <code>D_FLAGS</code> pipeline-stage correction)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+  <tr><td>Tempest 2000</td><td>One-frame playfield collapse (#187)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+  <tr><td>Alien vs Predator</td><td>Cyan/brown bars (#178); red background behind the shotgun (#267, #292)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
+  <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay — 14-byte group-0 bus-error frame, GPU <code>STOREP</code> masking (#138)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
+</table></div>
+
+<p class="footnote">
+  <strong>Tracked:</strong> Doom combat pacing ~1.5x fast
+  (<a href="{{REPO}}/issues/313">#313</a>) &middot; Battle Morph (CD) too fast
+  (<a href="{{REPO}}/issues/331">#331</a>).
+  <strong>Workaround:</strong> the non-default Fast blitter drops Iron
+  Soldier's briefing wireframe; keep Accurate
+  (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).
+</p>
+
+<h3>Not yet verified <span class="badge warn">help wanted</span></h3>
+<p>
+  Everything else. Report in
+  <a href="{{REPO}}/discussions">Discussions</a> with your frontend log &mdash;
+  the <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>
+  writes the failure signature into it.
+</p>

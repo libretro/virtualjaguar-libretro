@@ -1,132 +1,135 @@
 ;
-; tests/timing/halfline_period_us.s - two consecutive HC=0 events
-; should be ~63.5 us apart (NTSC scanline period).
+; tests/timing/halfline_period_us.s - the NTSC scanline period, measured
+; against the JERRY PIT rather than against 68K instruction count.
 ;
 ; HC alternates between 0 and (0x0400 | HP/2) every halfline (per
-; src/tom/tom.c:792-801).  Two consecutive HC==0 samples therefore
-; bracket exactly one full scanline (= two halflines).  The NTSC
-; scanline is 63.5 us.
+; src/tom/tom.c).  A 0 -> non-zero transition therefore marks the start
+; of one full scanline (= two halflines), which on NTSC is 63.5 us.
 ;
-; We count 68K loop iterations between two HC=0 events.  Each
-; iteration is calibrated at ~CYCLES_PER_ITER 68K cycles.
-; Expected cycle count for one scanline:
-;   63.5 us * 13.295 MHz = ~844 68K cycles
-; Tolerance window [60, 70] us = [798, 930] cycles.
+; We arm PIT timer 1 at a known period and count scanline starts across
+; a fixed number of PIT interrupts.  Both sides of that ratio are
+; hardware dividers -- TOM's video clock and JERRY's PIT off the system
+; clock -- so the result does not depend on how fast the 68K retires
+; instructions.
 ;
-; The assertion is necessarily loose because we can't measure
-; cycles directly from inside the 68K -- we sample wall time via
-; HC transitions and count loop iterations.  But it's still
-; strict enough to catch order-of-magnitude drift.
+;   PIT period = 256 * 256 / 26.590906e6      = 2464.6 us
+;   window     = 16 * 2464.6                  = 39434 us
+;   scanlines  = 39434 / 63.5                 = ~621
+;
+; WHY THIS CHANGED.  The old version counted 68K loop iterations between
+; two HC=0 events and multiplied by CYCLES_PER_ITER = 56 -- a constant
+; its own comment described as "Tuned to land observed in the [798, 930]
+; window".  That makes the assertion a statement about 68K instruction
+; cost, not about video timing.  It is not a knowable constant: these
+; ROMs execute from cart ROM at $802000, which at the reset MEMCON1
+; ($1861, ROMSPEED=0) costs 10 system clocks per fetch.  With the
+; virtualjaguar_dram_timing model enabled each iteration got dearer,
+; fewer fitted in a scanline, and the estimate fell to 728 against an
+; expected 844 -- while the scanline period itself never moved.
+;
+; Must pass with virtualjaguar_dram_timing both enabled and disabled.
 ;
 ; Detail codes:
-;   1 = observed cycle estimate outside [798, 930]
-;       observed = estimated cycles, expected = 844
-;   2 = never saw HC = 0 (HC stuck non-zero)
-;   3 = never saw HC transition from 0 to non-zero (HC stuck at 0)
+;   1 = scanline count outside [LO_LINES, HI_LINES]
+;       observed = scanlines counted, expected = ~621
+;   2 = no PIT interrupt ever arrived (PIT/IRQ wiring regression)
+;   3 = HC never transitioned 0 -> non-zero (HC stuck)
 ;
                 include "include/jaguar_header.s"
                 include "include/acid_test.s"
                 include "include/jaguar_regs.s"
 
-;; The inner spin loop body is:
-;;   move.w TOM_HC,d3   ; 16 cycles MMIO read (abs.L addressing)
-;;   tst.w  d3          ; 4 cycles
-;;   beq.s  .scanline_end ; 8 cycles not-taken
-;;   addq.l #1,d2       ; 8 cycles
-;;   subq.l #1,d4       ; 8 cycles
-;;   bne.s  .spin_loop  ; 10 cycles taken
-;; Paper: 16 + 4 + 8 + 8 + 8 + 10 = 54 cycles per iter (taken path).
-;; UAE 68K's MMIO timing for `move.w abs.L,Dn` against TOM_HC
-;; ($F00006) charges a couple extra bus cycles per access, so the
-;; empirical iter cost in this emulator is closer to 56 cycles.
-;; Tuned to land observed in the [798, 930] window.
-CYCLES_PER_ITER equ     56
+JPIT1           equ     JERRY_BASE+$00          ; timer 1 prescaler (W)
+JPIT2           equ     JERRY_BASE+$02          ; timer 1 divider   (W)
+JINTCTRL        equ     JERRY_BASE+$20
 
-;; Expected cycle window for a single NTSC scanline = 63.5 us
-;; at 13.295 MHz = 844 cycles.  Accept [60, 70] us = [798, 930].
-EXPECT_CYCLES   equ     844
-LO_CYCLES       equ     798
-HI_CYCLES       equ     930
+PIT_COUNT       equ     $00000800
+HW_IRQ_VECTOR   equ     $00000100
 
-SPIN_LIMIT      equ     1000000
+PIT_PRESCALER   equ     255
+PIT_DIVIDER     equ     255
+
+;; PIT interrupts to span.  16 * 2464.6 us = 39.4 ms.
+WINDOW_IRQS     equ     16
+
+;; 39434 us / 63.5 us per NTSC scanline.
+EXPECT_LINES    equ     621
+LO_LINES        equ     590                     ; -5%
+HI_LINES        equ     652                     ; +5%
+
+;; Poll budget, so stuck HC fails instead of hanging.
+POLL_BUDGET     equ     8000000
 
                 org     $802000
 entry:
                 ACID_INIT
 
-                ;; -------- step 1: wait for HC == 0 (start of scanline) --------
-                move.l  #SPIN_LIMIT,d4
-.wait_zero1:    move.w  TOM_HC,d3
-                tst.w   d3
-                beq.s   .got_zero1
-                subq.l  #1,d4
-                bne.s   .wait_zero1
-                ACID_FAIL #2,d3,#0
-.got_zero1:
+                moveq   #0,d0
+                move.l  d0,PIT_COUNT.l
 
-                ;; -------- step 2: wait for HC != 0 (mid-scanline) --------
-                move.l  #SPIN_LIMIT,d4
-.wait_nz:       move.w  TOM_HC,d3
-                tst.w   d3
-                bne.s   .got_nz
-                subq.l  #1,d4
-                bne.s   .wait_nz
-                ACID_FAIL #3,d3,#1
-.got_nz:
+                lea     irq_handler(pc),a0
+                move.l  a0,HW_IRQ_VECTOR.l
 
-                ;; -------- step 3: count iterations until next HC == 0 --------
-                ;; Now we're inside a scanline.  Spin counting iterations
-                ;; until HC returns to 0 (next scanline boundary).
-                ;; We must FIRST wait for a non-zero -> non-zero transition
-                ;; to skip the half we're currently in.  Simpler: just
-                ;; wait for the next zero, then start the actual count.
-                move.l  #SPIN_LIMIT,d4
-.wait_zero2:    move.w  TOM_HC,d3
-                tst.w   d3
-                beq.s   .got_zero2
-                subq.l  #1,d4
-                bne.s   .wait_zero2
-                ACID_FAIL #2,d3,#0
-.got_zero2:
+                ;; Clear pending TOM IRQs, then enable IRQ_DSP (JERRY
+                ;; reaches the 68K through TOM's bit 4).
+                move.w  #$1F00,TOM_INT1
+                move.w  #IRQ_DSP_MASK,TOM_INT1
 
-                ;; Now spin counting until we get a *full* scanline (two
-                ;; halflines) -- need to see non-zero AGAIN, then zero AGAIN.
-                ;; First skip past the current zero phase.
-                move.l  #SPIN_LIMIT,d4
-.skip_zero:     move.w  TOM_HC,d3
-                tst.w   d3
-                bne.s   .skip_done
-                subq.l  #1,d4
-                bne.s   .skip_zero
-                ACID_FAIL #3,d3,#1
-.skip_done:
+                ;; Arm PIT1 via the WRITABLE setup regs.
+                move.w  #PIT_PRESCALER,JPIT1
+                move.w  #PIT_DIVIDER,JPIT2
+                move.w  #IRQ2_TIMER1,JINTCTRL
 
-                ;; -------- step 4: counted loop until next HC == 0 --------
-                moveq   #0,d2                   ; iteration counter
-                move.l  #SPIN_LIMIT,d4
-.spin_loop:     move.w  TOM_HC,d3
-                tst.w   d3
-                beq.s   .scanline_end
-                addq.l  #1,d2
-                subq.l  #1,d4
-                bne.s   .spin_loop
-                ;; Spin budget exhausted before HC returned to zero.
-                ACID_FAIL #2,d2,#EXPECT_CYCLES
-.scanline_end:
+                move.w  #$2000,sr               ; allow IPL=2
 
-                ;; d2 = iterations.  Convert to estimated 68K cycles:
-                ;;     cycles = iters * CYCLES_PER_ITER
-                ;; Use mulu.w (16x16 -> 32) since both fit easily.
-                move.l  d2,d5
-                mulu.w  #CYCLES_PER_ITER,d5     ; d5 = estimated cycles
+                ;; Count HC 0 -> non-zero transitions until the PIT has
+                ;; ticked WINDOW_IRQS times.
+                moveq   #0,d5                   ; scanlines seen
+                move.l  #POLL_BUDGET,d6
+                move.w  TOM_HC,d1
+                and.w   #$0400,d1               ; d1 != 0 while mid-halfline
 
-                ;; Assert d5 in [LO_CYCLES, HI_CYCLES].
-                cmp.l   #LO_CYCLES,d5
+.poll:          move.w  TOM_HC,d0
+                and.w   #$0400,d0
+                cmp.w   d1,d0
+                beq.s   .no_edge
+                tst.w   d0
+                beq.s   .store                  ; non-zero -> 0: not our edge
+                addq.l  #1,d5                   ; 0 -> non-zero: scanline start
+.store:         move.w  d0,d1
+
+.no_edge:       move.l  PIT_COUNT.l,d7
+                cmp.l   #WINDOW_IRQS,d7
+                bge.s   .done
+                subq.l  #1,d6
+                bne.s   .poll
+
+                ;; Budget exhausted: say which side stalled.
+                move.w  #$2700,sr
+                move.l  PIT_COUNT.l,d7
+                tst.l   d7
+                beq     .no_pit
+                ACID_FAIL #3,d5,#EXPECT_LINES
+
+.done:          move.w  #$2700,sr               ; stable read
+
+                cmp.l   #LO_LINES,d5
                 blt     .out_of_range
-                cmp.l   #HI_CYCLES,d5
+                cmp.l   #HI_LINES,d5
                 bgt     .out_of_range
 
                 ACID_PASS
 
-.out_of_range:
-                ACID_FAIL #1,d5,#EXPECT_CYCLES
+.out_of_range:  ACID_FAIL #1,d5,#EXPECT_LINES
+.no_pit:        ACID_FAIL #2,d7,#WINDOW_IRQS
+
+irq_handler:
+                addq.l  #1,PIT_COUNT.l
+                ;; Clear JERRY's own latch first (high byte is
+                ;; write-1-to-clear), then ack TOM's copy -- acking only
+                ;; TOM leaves JERRY driving INT1 bit 4 and the 68K
+                ;; re-enters this handler at every instruction boundary.
+                move.w  #IRQ2_TIMER1_CLR|IRQ2_TIMER1,JINTCTRL
+                move.w  #$1000,TOM_INT1
+                move.w  #IRQ_DSP_MASK,TOM_INT1
+                rte

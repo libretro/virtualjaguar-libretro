@@ -16,10 +16,14 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <stdio.h>
 #include "jaguar.h"
+#include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
 #include "perf_counters.h"
+#include "jagcd_boot.h"
+#include "jagcd_hle.h"
 #include "dac.h"
 #include "dsp.h"
 #include "eeprom.h"
@@ -28,7 +32,11 @@
 #include "jerry.h"
 #include "joystick.h"
 #include "m68000/m68kinterface.h"
+#include "m68000/cpudefs.h"   /* regs.remainingCycles — 68K DRAM self-cost */
+#include "bus_arbiter.h"
 #include "memtrack.h"
+#include "jaggd.h"
+#include "nvmbios.h"
 #include "settings.h"
 #include "tom.h"
 
@@ -210,6 +218,8 @@ extern uint8_t jagMemSpace[];
 #define TOM_OLP_HI              0x22
 #define TOM_BORD1               0x2A
 #define TOM_BORD2               0x2C
+#define TOM_VDE                 0x48
+#define TOM_VI                  0x4E
 #define TOM_INT                 0xF000E0
 #define TOM_INT_CLR_ALL         0x1F00
 
@@ -228,10 +238,53 @@ extern uint8_t jagMemSpace[];
 
 // Internal variables
 
+/* Memory Track presence: an explicitly inserted MT cart dump (a cartridge
+ * whose CRC we recognise) or CD content, where hardware would have the MT
+ * plugged into the cartridge slot alongside the CD unit.
+ *
+ * There is deliberately NO MEMCON1/ROMWIDTH test here.  The old code gated on
+ * ROMWIDTH == 2 on the theory that the width switch selected the MT; it does
+ * not -- a plain cartridge sits at ROMWIDTH 2 as its normal width, and CD
+ * content runs at ROMWIDTH 0, so the test only ever made the device
+ * unreachable for discs.  The MiSTer core (the working reference, see
+ * memtrack.c) gates purely on presence.
+ *
+ * Safety comes instead from MTClaimsRead/MTClaimsWrite, which restrict the
+ * part to the $900000 NVRAM window plus a couple of override-only command
+ * addresses -- everything else in cart space still reads the cartridge ROM or
+ * the CD BIOS. */
+#define MEMTRACK_PRESENT() \
+   (jaguarMemTrackInserted || jaguarMainROMCRC32 == 0xFDF37F47)
+
 uint32_t jaguarMainROMCRC32, jaguarROMSize, jaguarRunAddress;
 uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
+/* Clock-scale enhancement levers (issue #314), percent of stock rate.
+ * Statically 100 so any path that runs the core before check_variables()
+ * (or a harness that never sets the options) gets stock timing.  See the
+ * block comment in jaguar.h for where these do and do not apply. */
+uint32_t m68kClockScalePct = 100;
+/* Error-diffusion remainder for the M68K scale (hundredths of a cycle,
+ * same pattern as cdrom.c's fifoRefillAccum).  Without it, a sub-1x
+ * scale rounds each small slice down independently -- a 1-cycle slice
+ * at 0.5x scales to 0, and the UAE do/while then executes one full
+ * instruction anyway, quietly defeating underclocking.  Carrying the
+ * remainder makes the scale exact over time and lets zero-budget
+ * slices genuinely skip.  Reset whenever the scale changes. */
+static uint32_t m68kScaleAccum = 0;
+
+void M68KClockScaleReset(void)
+{
+   m68kScaleAccum = 0;
+}
+uint32_t riscClockScalePct = 100;
+
 bool jaguarCartInserted = false;
+/* Memory Track cartridge presence.  On hardware the MT cart plugs into the
+ * cartridge slot while the CD unit sits on top, so a disc and an MT cart are
+ * present at the same time -- a combination the old CRC-only gate below could
+ * never express.  Set for CD content; see JaguarReadWord(). */
+bool jaguarMemTrackInserted = false;
 bool lowerField = false;
 
 
@@ -292,6 +345,26 @@ void M68KInstructionHook(void)
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
       return;
+
+   /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small set
+    * of magic PCs in cart ROM space resolve to BIOS routines emulated in
+    * jagcd_hle.c instead of executing the cart bytes.  Returns true if the
+    * hook handled the call (PC/registers updated). */
+   if (JaguarCDHLEHook(m68kPC))
+      return;
+
+   /* Memory Track NVM BIOS dispatcher ($2404) — active for CD content in
+    * BOTH boot modes; the module is RAM-resident on hardware, independent
+    * of which CD BIOS variant booted the disc. */
+   if (NVMBiosHook(m68kPC))
+      return;
+
+   /* CD boot strategy hook (cart strategy is a no-op for cart games;
+    * HLE/BIOS strategies trap specific PCs to inject boot stubs, patch
+    * auth checks, etc.). */
+   if (bootConfig.strategy && bootConfig.strategy->instruction_hook
+         && bootConfig.strategy->instruction_hook(m68kPC))
+      return;
 }
 
 /* Custom UAE 68000 read/write/IRQ functions */
@@ -317,6 +390,25 @@ int irq_ack_handler(int level)
    return M68K_INT_ACK_AUTOVECTOR;
 }
 
+/* 68K DRAM self-cost (symmetric timing model): every 68K bus cycle
+ * that leaves the CPU (shared DRAM, and GPU/DSP local RAM, which also
+ * costs the 68K 2 system clocks) pays its DRAM/I-O access time out of the
+ * 68K's own cycle budget.  naccesses = number of 16-bit bus cycles
+ * (a longword = 2).  m68kBusNoCharge exempts disassembler reads so
+ * debug output cannot perturb timing.
+ *
+ * Side effect, intended: remainingCycles now measures time including
+ * wait-states, so m68k_cycles_run()-based coupling (GPUSyncToM68K)
+ * sees the 68K's consumed bus time, not just retired-instruction
+ * cycles. */
+static int m68kBusNoCharge = 0;
+
+#define M68K_BUS_CHARGE(addr, naccesses) \
+   do { \
+      if (busArbiter.enabled && !m68kBusNoCharge) \
+         regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses), m68kClockScalePct); \
+   } while (0)
+
 unsigned int m68k_read_memory_8(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
@@ -327,12 +419,19 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       return jaguarMainRAM[address];
    else if ((address >= 0x800000) && (address <= 0xDFFEFF))
+   {
+      if (MEMTRACK_PRESENT() && MTClaimsRead(address))
+         return MTReadByte(address);
+      if (JGD_BANKING())
+         return JGDReadROM8(address - 0x800000);
       return jaguarMainROM[address - 0x800000];
+   }
    else if ((address >= 0xE00000) && (address <= 0xE3FFFF))
       return jagMemSpace[address];
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFF))
@@ -361,6 +460,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
@@ -368,11 +468,17 @@ unsigned int m68k_read_memory_16(unsigned int address)
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       /* Memory Track reading... */
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+      if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadWord(address);
-      else
-         return (jaguarMainROM[address - 0x800000] << 8)
-            | jaguarMainROM[address - 0x800000 + 1];
+      if (JGD_BANKING())
+      {
+         /* Byte-composed so a read straddling a 1 MB page boundary
+          * pulls each half from its own bank. */
+         uint32_t off = address - 0x800000;
+         return (JGDReadROM8(off) << 8) | JGDReadROM8(off + 1);
+      }
+      return (jaguarMainROM[address - 0x800000] << 8)
+         | jaguarMainROM[address - 0x800000 + 1];
    }
    else if ((address >= 0xE00000) && (address <= 0xE3FFFE))
       return (jagMemSpace[address] << 8) | jagMemSpace[address + 1];
@@ -399,19 +505,139 @@ unsigned int m68k_read_memory_32(unsigned int address)
    address &= 0x00FFFFFF;
 
    if (address <= 0x1FFFFC)
+   {
+      M68K_BUS_CHARGE(address, 2);
       return GET32(jaguarMainRAM, address);
+   }
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+      M68K_BUS_CHARGE(address, 2);
+      if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadLong(address);
+
+      if (JGD_BANKING())
+      {
+         /* Byte-composed: a long can straddle a 1 MB page boundary. */
+         uint32_t off = address - 0x800000;
+         return ((uint32_t)JGDReadROM8(off) << 24)
+            | ((uint32_t)JGDReadROM8(off + 1) << 16)
+            | ((uint32_t)JGDReadROM8(off + 2) << 8)
+            | JGDReadROM8(off + 3);
+      }
 
       return GET32(jaguarMainROM, address - 0x800000);
    }
 
+   /* Fallthrough recurses into _16 twice — charged there, not here. */
    return (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
 }
 
+
+/* A 68000 write into GPU local RAM is a handshake with a concurrently running
+ * coprocessor, so let the GPU catch up to where the 68000 already is inside
+ * this scheduler slice before the 68000 goes any further.  Full explanation on
+ * gpuSliceBudget in gpu.c (issue #138).
+ *
+ * m68kInLongWrite suppresses the sync for the two halves of a 68000 long
+ * write, which reaches TOM as two word writes: the GPU must never observe a
+ * half-written longword (Pitfall's mailbox poll loop read $00F00000 and jumped
+ * into the TOM register file). */
+static int m68kInLongWrite = 0;
+
+/* length is the width of the access in bytes.  Testing the whole written
+ * span rather than just its base address matters at the bottom edge of the
+ * region: a long write starting at GPU_WORK_RAM_BASE - 2 puts its second
+ * word inside GPU local RAM, and a base-address test would miss it and leave
+ * the GPU un-synced for exactly the write that needs it. */
+static void M68KGPURAMSync(unsigned int address, unsigned int length)
+{
+   if (m68kInLongWrite)
+      return;
+   if (address < GPU_WORK_RAM_BASE + 0x1000
+       && address + length > GPU_WORK_RAM_BASE)
+      GPUSyncToM68K();
+}
+
+/* GPU and DSP local RAM are 32-bit memories, but an external bus master sees
+ * them as 16-bit ports that must be written as ordered longword pairs:
+ *
+ *   "Addresses in DSP space are only available as 16-bit memory into which
+ *    32-bit transfers must be performed in the order low address then high
+ *    address."            -- JTRM Technical Reference v8, p.101 (p.44 for TOM)
+ *
+ * So the hardware latches the word written to the low address and commits the
+ * full longword only when its partner at +2 arrives.  That latch is why the
+ * 68000 errata singles out the two instructions that emit the halves in the
+ * wrong order -- clr.l <ea> and move.l <ea>,-(An) "do not work correctly when
+ * writing to Jaguar GPU & DSP hardware registers and internal RAM"
+ * ("Hardware Bugs & Warnings", p.6).  Independent half-longword updates would
+ * be order-insensitive and that erratum could not exist.
+ *
+ * Committing a lone low-address word directly into RAM is therefore more
+ * permissive than the hardware, and it lets a concurrently running RISC read a
+ * longword that was never written as one.  Power Drive Rally does exactly
+ * that: its 68000 sound driver issues a bare `move.w #$14,$F1BE30` into a DSP
+ * voice descriptor.  On hardware that word just sits in the latch; here it
+ * used to land in DSP RAM, so the DSP's voice dispatcher read $00140000 as a
+ * state code, indexed its jump table at $F1BB14 with it, fetched 0 and jumped
+ * to PC 0.  The engine then ran garbage until it left mapped memory, at which
+ * point DSPExec's escape guard parked it for good -- LTXD stopped updating and
+ * the DAC froze on one sample, which is the "sound gets muted" in issue #355.
+ *
+ * A write that is part of a real 68000 long write (m68kInLongWrite) already
+ * arrives as a correctly ordered pair, so it bypasses the latch untouched. */
+#define M68K_RISC_LOCAL_RAM(a) \
+   (((a) >= GPU_WORK_RAM_BASE && (a) < GPU_WORK_RAM_BASE + 0x1000) \
+    || ((a) >= DSP_WORK_RAM_BASE && (a) < DSP_WORK_RAM_BASE + 0x2000))
+
+/* Not serialised into save states, deliberately.  Note the reason is NOT
+ * "a pending latch cannot outlive a frame boundary" -- it can: an unpaired
+ * write (issue #355's own signature) leaves the latch held indefinitely.
+ * The reason that holds is that dropping it degrades to "the lone write
+ * never landed", which is what the hardware does with an unpaired half.
+ * That rationale only works if the latch really is dropped when state is
+ * replaced, so retro_unserialize() calls M68KResetRiscWordLatch() -- else
+ * a pre-load pending low word could commit against a post-load partner
+ * write.  Serialising the pair is the more faithful option if a savestate
+ * version bump is being made anyway (see docs/savestate-compat.md for the
+ * policy: one bump per release). */
+static uint32_t m68kRiscLatchAddr = 0xFFFFFFFF;   /* low address, or ~0 */
+static uint16_t m68kRiscLatchData = 0;
+
+void M68KResetRiscWordLatch(void)
+{
+   m68kRiscLatchAddr = 0xFFFFFFFF;
+   m68kRiscLatchData = 0;
+}
+
+/* Returns true when the caller should stop -- the word was latched and must
+ * not reach RAM yet.  When the partner word arrives this commits the latched
+ * half first, preserving low-then-high order, and lets the caller write the
+ * second half normally. */
+static bool M68KRiscWordLatch(unsigned int address, unsigned int value)
+{
+   if (m68kInLongWrite || !M68K_RISC_LOCAL_RAM(address))
+      return false;
+
+   if (!(address & 2))
+   {
+      m68kRiscLatchAddr = address;
+      m68kRiscLatchData = (uint16_t)value;
+      return true;
+   }
+
+   if (m68kRiscLatchAddr == address - 2)
+   {
+      uint16_t hi = m68kRiscLatchData;
+      m68kRiscLatchAddr = 0xFFFFFFFF;
+      if (address >= 0xF10000)
+         JERRYWriteWord(address - 2, hi, M68K);
+      else
+         TOMWriteWord(address - 2, hi, M68K);
+   }
+   return false;
+}
 
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
@@ -423,10 +649,24 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
       jaguarMainRAM[address] = value;
+   /* GameDrive: GD_ROMWriteEnable makes the SDRAM-backed "ROM" writable
+    * (the GD menu loads through this; homebrew uses cart space as RAM). */
+   else if (jgdActive && jgdWriteEnabled
+            && (address >= 0x800000) && (address <= 0xDFFEFF))
+      JGDWriteROM8(address - 0x800000, (uint8_t)value);
+   /* Memory Track byte writes: cart space is otherwise read-only, so this
+    * branch exists purely for the device (command window + NVRAM). */
+   else if (((address >= 0x800000) && (address <= 0x87FFFF))
+            || ((address >= MT_DATA_BASE) && (address < MT_DATA_END)))
+   {
+      if (MEMTRACK_PRESENT() && MTClaimsWrite(address))
+         MTWriteByte(address, (uint8_t)value);
+   }
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFF))
       CDROMWriteByte(address, value, M68K);
    else if ((address >= 0xF00000) && (address <= 0xF0FFFF))
@@ -435,6 +675,8 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
       JERRYWriteByte(address, value, M68K);
    else
       jaguar_unknown_writebyte(address, value, M68K);
+
+   M68KGPURAMSync(address, 1);
 }
 
 
@@ -448,16 +690,40 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   M68K_BUS_CHARGE(address, 1);
+
+   /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
+    * see M68KRiscWordLatch. */
+   if (M68KRiscWordLatch(address, value))
+   {
+      /* The half that only latches still occupies the bus, so the GPU
+       * must be run up to this access exactly as it is for a committing
+       * write.  Without this, GPU work that logically falls between the
+       * two halves gets executed after the commit instead of before it,
+       * and would observe the new longword a half-write early. */
+      M68KGPURAMSync(address, 2);
+      return;
+   }
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
       SET16(jaguarMainRAM, address, value);
    }
-   /* Memory Track device writes.... */
-   else if ((address >= 0x800000) && (address <= 0x87FFFE))
+   /* GameDrive write-enabled cart space (see the byte handler). */
+   else if (jgdActive && jgdWriteEnabled
+            && (address >= 0x800000) && (address <= 0xDFFEFE))
    {
-      if (((TOMGetMEMCON1() & 0x0006) == (2 << 1)) && (jaguarMainROMCRC32 == 0xFDF37F47))
+      JGDWriteROM8(address - 0x800000, (uint8_t)(value >> 8));
+      JGDWriteROM8(address - 0x800000 + 1, (uint8_t)(value & 0xFF));
+   }
+   /* Memory Track device writes: the flash command addresses live inside the
+    * $8xxxxx ROM window, but the NVRAM itself is a separate window at
+    * $900000 -- both have to be routed here or saves silently go nowhere. */
+   else if (((address >= 0x800000) && (address <= 0x87FFFE))
+            || ((address >= MT_DATA_BASE) && (address < MT_DATA_END)))
+   {
+      if (MEMTRACK_PRESENT() && MTClaimsWrite(address))
          MTWriteWord(address, value);
    }
    else if ((address >= 0xDFFF00) && (address <= 0xDFFFFE))
@@ -470,6 +736,8 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    {
       jaguar_unknown_writeword(address, value, M68K);
    }
+
+   M68KGPURAMSync(address, 2);
 }
 
 
@@ -486,30 +754,47 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 
    if (address <= 0x1FFFFC)
    {
+      M68K_BUS_CHARGE(address, 2);
       SET32(jaguarMainRAM, address, value);
       return;
    }
+   m68kInLongWrite++;
    m68k_write_memory_16(address, value >> 16);
    m68k_write_memory_16(address + 2, value & 0xFFFF);
+   m68kInLongWrite--;
+
+   M68KGPURAMSync(address, 4);
 }
 
 /* Disassemble M68K instructions at the given offset */
 
 unsigned int m68k_read_disassembler_8(unsigned int address)
 {
-   return m68k_read_memory_8(address);
+   unsigned int v;
+   m68kBusNoCharge++;
+   v = m68k_read_memory_8(address);
+   m68kBusNoCharge--;
+   return v;
 }
 
 
 unsigned int m68k_read_disassembler_16(unsigned int address)
 {
-   return m68k_read_memory_16(address);
+   unsigned int v;
+   m68kBusNoCharge++;
+   v = m68k_read_memory_16(address);
+   m68kBusNoCharge--;
+   return v;
 }
 
 
 unsigned int m68k_read_disassembler_32(unsigned int address)
 {
-   return m68k_read_memory_32(address);
+   unsigned int v;
+   m68kBusNoCharge++;
+   v = m68k_read_memory_32(address);
+   m68kBusNoCharge--;
+   return v;
 }
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
@@ -520,7 +805,11 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
    if (offset < 0x800000)
       return jaguarMainRAM[offset & 0x1FFFFF];
    else if ((offset >= 0x800000) && (offset < 0xDFFF00))
+   {
+      if (JGD_BANKING())
+         return JGDReadROM8(offset - 0x800000);
       return jaguarMainROM[offset - 0x800000];
+   }
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
       return CDROMReadByte(offset, who);
    else if ((offset >= 0xE00000) && (offset < 0xE40000))
@@ -545,6 +834,8 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
    else if ((offset >= 0x800000) && (offset < 0xDFFF00))
    {
       offset -= 0x800000;
+      if (JGD_BANKING())
+         return (JGDReadROM8(offset) << 8) | JGDReadROM8(offset + 1);
       return (jaguarMainROM[offset+0] << 8) | jaguarMainROM[offset+1];
    }
    //	else if ((offset >= 0xDFFF00) && (offset < 0xDFFF00))
@@ -565,10 +856,30 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
    offset &= 0xFFFFFF;
 
-   // First 2M is mirrored in the $0 - $7FFFFF range
-   if (offset < 0x800000)
+   /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
+    * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
+    * expansion space).  Writes there fall on no device and vanish.
+    * Mirroring them into the low 2MB (the old behaviour) let a game's
+    * own out-of-range writes corrupt its code: Battle Morph's bottom
+    * scroll-buffer row blits legitimately compute addresses past
+    * $200000 (harmless on hardware) and the write-mirror folded them
+    * onto the game's 68K code at $4400+, shredding it 8 bytes per 24
+    * (the pitch-3 phrase stride) — black screen in both boot modes.
+    * Reads keep the historical mirror for now: real unpopulated DRAM
+    * reads float, and several recovery paths (wild-PC diagnostics)
+    * depend on reads staying harmless. */
+   if (offset < 0x200000)
    {
-      jaguarMainRAM[offset & 0x1FFFFF] = data;
+      jaguarMainRAM[offset] = data;
+      return;
+   }
+   else if (offset < 0x800000)
+      return;
+   /* GameDrive write-enabled cart space (GPU/DSP/blitter writers). */
+   else if (jgdActive && jgdWriteEnabled
+            && (offset >= 0x800000) && (offset < 0xDFFF00))
+   {
+      JGDWriteROM8(offset - 0x800000, data);
       return;
    }
    else if ((offset >= 0xDFFF00) && (offset <= 0xDFFFFF))
@@ -595,11 +906,21 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    offset &= 0xFFFFFF;
 
-   // First 2M is mirrored in the $0 - $7FFFFF range
-   if (offset <= 0x7FFFFE)
+   /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
+   if (offset <= 0x1FFFFE)
    {
-      jaguarMainRAM[(offset+0) & 0x1FFFFF] = data >> 8;
-      jaguarMainRAM[(offset+1) & 0x1FFFFF] = data & 0xFF;
+      jaguarMainRAM[offset+0] = data >> 8;
+      jaguarMainRAM[offset+1] = data & 0xFF;
+      return;
+   }
+   else if (offset <= 0x7FFFFE)
+      return;
+   /* GameDrive write-enabled cart space (GPU/DSP/blitter writers). */
+   else if (jgdActive && jgdWriteEnabled
+            && offset >= 0x800000 && offset < 0xDFFF00)
+   {
+      JGDWriteROM8(offset - 0x800000, (uint8_t)(data >> 8));
+      JGDWriteROM8(offset - 0x800000 + 1, (uint8_t)(data & 0xFF));
       return;
    }
    else if (offset >= 0xDFFF00 && offset <= 0xDFFFFE)
@@ -628,6 +949,12 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 {
    uint32_t addr = offset & 0xFFFFFF;
+   /* OP bus occupancy: every 32-bit read the object processor makes is
+    * half a phrase; page-mode phrase cost is 2 system clocks (OP
+    * streaming is sequential -> page hits), so charge 1 clock per long.
+    * Row-change overhead is added per rendered object in op.c. */
+   if (busArbiter.enabled && who == OP)
+      bus_arbiter_op_charge(1);
    if (addr < 0x800000)
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
@@ -637,11 +964,29 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
 void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
 {
    uint32_t addr = offset & 0xFFFFFF;
-   if (addr < 0x800000)
+   /* OP bus occupancy: every 32-bit write-back the object processor
+    * makes is half a phrase; page-mode phrase cost is 2 system clocks
+    * (OP streaming is sequential -> page hits), so charge 1 clock per
+    * long. Row-change overhead is added per rendered object in op.c. */
+   if (busArbiter.enabled && who == OP)
+      bus_arbiter_op_charge(1);
+   /* CDDA-DIAG (Primal Rage): $F1B274 is the game's DSP command mailbox --
+    * cmd 1 enables the DSP ISR's CD-audio mix (r20), cmd 2 disables.  The
+    * missing "cmd 1" write is the open question in
+    * docs/cd-diagnosis/primal-rage-cdda-diagnosis.md.  Address is game-
+    * specific but the log line is harmless elsewhere (rare false hits at
+    * worst).  Remove with the rest of the CDDA-DIAG layer when resolved. */
+   if (addr == 0xF1B274 && data != 0)
+      LOG_DBG("[CDDA] DSP mailbox $F1B274 = %08X who=%u 68kpc=$%06X\n",
+              data, who, m68k_get_reg(NULL, M68K_REG_PC));
+   if (addr < 0x200000)
    {
-      SET32(jaguarMainRAM, addr & 0x1FFFFF, data);
+      SET32(jaguarMainRAM, addr, data);
       return;
    }
+   /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
+   else if (addr < 0x800000)
+      return;
    JaguarWriteWord(offset, data >> 16, who);
    JaguarWriteWord(offset+2, data & 0xFFFF, who);
 }
@@ -681,6 +1026,10 @@ void JaguarInit(void)
    JERRYInit();
    CDROMInit();
 
+   /* Fresh content boundary: drop any GameDrive image/state a previous
+    * load in this process left behind (JGDLoadROM re-arms it for JST_ROM
+    * content when the option + image size call for it). */
+   JGDUnload();
 }
 
 /* New timer based code stuffola... */
@@ -733,12 +1082,52 @@ void HalflineCallback(void)
 
    TOMExecHalfline(vc, true);
 
+   /* OP-fetch + DRAM-refresh occupancy: the 68K is the lowest-priority
+    * bus master (JTRM: refresh pri 2, OP pri 6, CPU pri 11), so every
+    * system clock the OP spent fetching this halfline's objects, and
+    * every refresh cycle, is a clock the 68K could not use.  Deducted
+    * from the 68K's next slice(s) by M68KExecuteWithStalls() — one
+    * halfline of charge latency (the 68K ran halfline N unstalled and
+    * pays during N+1), bounded and self-correcting. */
+   if (busArbiter.enabled)
+   {
+      uint32_t halfclks;
+      uint32_t charge;
+      halfclks = (uint32_t)USEC_TO_RISC_CYCLES(
+                    vjs.hardwareTypeNTSC ? 31.777777777 : 32.0);
+      charge = bus_arbiter_op_take() + bus_arbiter_refresh_clocks(halfclks);
+      /* Bus occupancy within a halfline cannot exceed the halfline:
+       * the emulated OP walks its whole list instantly, so a
+       * pathological list could otherwise charge more clocks than
+       * the window contains and grow the stall debt without bound.
+       * When OP traffic alone saturates the window, the refresh share
+       * is absorbed by the clamp (refresh scheduling itself, inside
+       * bus_arbiter_refresh_clocks(), is unaffected). */
+      if (charge > halfclks)
+         charge = halfclks;
+      busArbiter.m68k_pending_stall += charge;
+   }
+
    //Change this to VBB???
    //Doesn't seem to matter (at least for Flip Out & I-War)
    if ((vc & 0x7FF) == 0)
    {
       JoystickExec();
       frameDone = true;
+   }
+
+   /* Tick BUTCH once per halfline when CD content is loaded.
+    * BUTCHExec advances the seek/FIFO state machine and (when armed)
+    * asserts GPU IRQ1 (the DSP/JERRY-sourced interrupt, vector $F03010
+    * where the CD BIOS installs its CD-data ISR). Halfline cadence
+    * (~32 us) is much coarser than real BUTCH I2S timing, but matches
+    * our existing event-queue resolution.
+    * JaguarCDHLEStreamTick advances any in-flight HLE CD_read transfer
+    * at the real drive rate (no-op when idle / in BIOS mode). */
+   if (bootConfig.isCDGame)
+   {
+      BUTCHExec(0);
+      JaguarCDHLEStreamTick();
    }
 
    SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
@@ -751,6 +1140,18 @@ void JaguarReset(void)
    uint32_t clearEnd = JAGUAR_RAM_SIZE;
    uint32_t preserveStart = jaguarLoadedRAMStart;
    uint32_t preserveEnd = jaguarLoadedRAMEnd;
+
+   M68KResetRiscWordLatch();
+
+   /* CD boot strategies (HLE/BIOS) hold per-run state (auth-bypass
+    * installed flag, boot-stub-injected flag, HLE active flag, etc.)
+    * that must be cleared on every reset.  Cart strategy reset is a no-op. */
+   if (bootConfig.strategy && bootConfig.strategy->reset)
+      bootConfig.strategy->reset();
+
+   /* GameDrive: console reset returns the ASIC to identity pages,
+    * write-protected, SPI idle; the game re-runs GD_Install itself. */
+   JGDReset();
 
    // Contents of local RAM are quasi-stable; we simulate this by randomizing RAM contents.
    // Skip over any region where a RAM-loaded executable resides so we don't wipe it out.
@@ -885,6 +1286,15 @@ void JaguarReset(void)
       SET16(tomRam8, TOM_BORD1, 0x0000);
       SET16(tomRam8, TOM_BORD2, 0x0000);
 
+      /* --- Vertical interrupt line ---
+       * The boot ROM programs VI to the first VBlank halfline (VDE+1,
+       * measured $207 on the retail BIOS) before jumping to the cart.
+       * Carts may enable the INT1 VI bit without ever writing VI
+       * (Raiden does), relying on this value; with VI left 0 the
+       * compare never fires and the game spins waiting for its VBlank
+       * ISR. */
+      SET16(tomRam8, TOM_VI, (uint16_t)(GET16(tomRam8, TOM_VDE) + 1));
+
       /* --- Interrupts: clear all pending, disable all enables --- */
       TOMWriteWord(TOM_INT, TOM_INT_CLR_ALL, M68K);
 
@@ -936,12 +1346,64 @@ void JaguarDone(void)
    DSPDone();
    TOMDone();
    JERRYDone();
+   JGDDone();
    m68k_done();
 }
 
 uint8_t * GetRamPtr(void)
 {
    return jaguarMainRAM;
+}
+
+
+/* Run a 68K slice minus any pending OP-fetch/refresh stall.  pending
+ * is in system clocks; the 68K runs at system/2, so two pending clocks
+ * consume one 68K cycle.  A slice can be fully consumed (the 68K runs
+ * zero cycles) when occupancy exceeds it; the remainder carries into
+ * the next slice, so no time is lost or invented. */
+static void M68KExecuteWithStalls(uint32_t cycles)
+{
+   uint32_t stall;
+   if (busArbiter.enabled && busArbiter.m68k_pending_stall >= 2)
+   {
+      stall = busArbiter.m68k_pending_stall >> 1;
+      if (stall > cycles)
+         stall = cycles;
+      busArbiter.m68k_pending_stall -= stall << 1;
+      cycles -= stall;
+      /* A slice fully consumed by stall must not fall through to
+       * m68k_execute(0): the UAE core's main loop is a do/while, so
+       * even a zero-cycle budget executes exactly one instruction --
+       * which would silently defeat the stall. Off-mode never enters
+       * this branch, so develop's m68k_execute(0) edge-case behavior
+       * (timeDelta rounding to 0 cycles) is unchanged. */
+      if (cycles == 0)
+         return;
+   }
+   /* The M68K clock scale applies to the cycles the CPU actually
+    * executes, AFTER the stall deduction: the stall models real bus
+    * occupancy (OP fetch, DRAM refresh) in wall time, which an
+    * overclocked CPU on modified hardware would still sit out in
+    * full.  At 100 the else branch is the exact pre-existing path.
+    *
+    * Non-100 uses error diffusion: the remainder in hundredths of a
+    * cycle carries to the next slice, so 0.5x is exact over time and a
+    * slice whose scaled budget is zero genuinely skips -- passing 0 to
+    * m68k_execute() would run one instruction regardless (UAE
+    * do/while), which is precisely the underclock-defeating edge the
+    * review flagged. */
+   if (m68kClockScalePct != 100u)
+   {
+      uint64_t budget = (uint64_t)cycles * m68kClockScalePct
+                      + m68kScaleAccum;
+      uint32_t scaled = (uint32_t)(budget / 100u);
+      m68kScaleAccum  = (uint32_t)(budget % 100u);
+      if (scaled == 0)
+         return;
+      m68k_execute(scaled);
+      return;
+   }
+   m68k_execute(cycles);
 }
 
 
@@ -959,26 +1421,44 @@ void JaguarExecuteNew(void)
       double timeToMainEvent = GetTimeToNextEvent(EVENT_MAIN);
       double timeToJerryEvent = GetTimeToNextEvent(EVENT_JERRY);
       double timeDelta;
+      uint32_t riscCycles;
 
+      /* GPUBeginSlice/GPUSliceRemaining: part of the GPU's slice may already
+       * have been run from GPUSyncToM68K(), so the end-of-slice call runs only
+       * what is left.  The total per slice is unchanged -- see the comment on
+       * gpuSliceBudget in gpu.c.
+       *
+       * Clock scales (issue #314) apply here, where the budgets are
+       * handed out: the RISC scale widens the GPU+DSP compute budget per
+       * slice, the M68K scale is applied inside M68KExecuteWithStalls()
+       * after the (unscaled, wall-time) bus-occupancy stall.  Event
+       * scheduling (timeDelta, EVENT_MAIN/EVENT_JERRY) stays on the real
+       * sysclock, so video, PIT/UART timers and I2S sample pacing are
+       * untouched -- more DSP cycles run between I2S interrupts, but the
+       * interrupts (and thus audio pitch) keep their stock rate. */
       if (timeToJerryEvent < timeToMainEvent)
       {
          timeDelta = timeToJerryEvent;
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
-         GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
-         DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
+         riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
+         GPUBeginSlice(riscCycles);
+         M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
+         GPUExec(GPUSliceRemaining());
+         DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_MAIN);
          HandleNextEvent(EVENT_JERRY);
       }
       else
       {
          timeDelta = timeToMainEvent;
-         m68k_execute(USEC_TO_M68K_CYCLES(timeDelta));
-         GPUExec(USEC_TO_RISC_CYCLES(timeDelta));
-         DSPExec(USEC_TO_RISC_CYCLES(timeDelta));
+         riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
+         GPUBeginSlice(riscCycles);
+         M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
+         GPUExec(GPUSliceRemaining());
+         DSPExec(riscCycles);
          SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }
-      PERF_ADD(timing_m68k_cycles, (unsigned long long)USEC_TO_M68K_CYCLES(timeDelta));
-      PERF_ADD(timing_risc_cycles, (unsigned long long)USEC_TO_RISC_CYCLES(timeDelta));
+      PERF_ADD(timing_m68k_cycles, (unsigned long long)SCALE_M68K_CYCLES(USEC_TO_M68K_CYCLES(timeDelta)));
+      PERF_ADD(timing_risc_cycles, (unsigned long long)SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta)));
    } while(!frameDone);
 }

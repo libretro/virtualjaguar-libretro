@@ -17,7 +17,16 @@ extern "C" {
 void GPUInit(void);
 void GPUDone(void);
 void GPUReset(void);
+void GPUClockScaleReset(void);
 void GPUExec(int32_t);
+/* Slice bookkeeping for the 68K->GPU-local-RAM sync; see the comment on
+ * gpuSliceBudget in gpu.c.  GPUBeginSlice() declares the RISC cycles the
+ * scheduler will hand the GPU for this slice, GPUSliceRemaining() reports
+ * what is left after any mid-slice syncs, and GPUSyncToM68K() advances the
+ * GPU to the 68000's position when the two processors communicate. */
+void GPUBeginSlice(uint32_t riscCycles);
+int32_t GPUSliceRemaining(void);
+void GPUSyncToM68K(void);
 void GPUUpdateRegisterBanks(void);
 void GPUHandleIRQs(void);
 void GPUSetIRQLine(int irqline, int state);
@@ -31,9 +40,16 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 
 uint32_t GPUGetPC(void);
 void GPUReleaseTimeslice(void);
+void GPUCPUINTCallback(void);
 void GPUResetStats(void);
 uint32_t GPUReadPC(void);
 int GPUIsRunning(void);
+/* True when the RISC core cannot capture interrupt asserts: stopped
+ * (GPUGO clear) or parked in the SINGLE_STEP coprocessor barrier.
+ * Mirrors the drop condition in GPUSetIRQLine/GPUHandleIRQs so edge
+ * trackers (BUTCH) don't mark a dropped assert as consumed. */
+int GPUCanCaptureIRQ(void);
+int GPUOPInterruptEnabled(void);
 void GPUDumpState(const char *tag);
 
 // GPU interrupt numbers (from $F00100, bits 4-8)
@@ -43,6 +59,13 @@ enum { GPUIRQ_CPU = 0, GPUIRQ_DSP, GPUIRQ_TIMER, GPUIRQ_OBJECT, GPUIRQ_BLITTER }
 // Exported vars
 
 extern uint32_t gpu_reg_bank_0[], gpu_reg_bank_1[];
+
+/* Diagnostic IRQ counters (incremented in GPUSetIRQLine on ASSERT_LINE,
+ * reset in GPUReset). Pure diagnostics — no behavioural side effects.
+ * gpu_irq0_count = CD ISR (BUTCH external IRQ via EXT1)
+ * gpu_irq3_count = OP IRQ (sanity counter for object-processor activity) */
+extern uint32_t gpu_irq0_count;
+extern uint32_t gpu_irq3_count;
 
 #ifdef __cplusplus
 }

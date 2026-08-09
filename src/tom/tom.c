@@ -257,9 +257,13 @@
 
 #include <string.h>								// For memset()
 #include "blitter.h"
+#include "bus_arbiter.h"
 #include "event.h"
 #include "gpu.h"
 #include "jaguar.h"
+#include "jerry.h"
+#include "shadowfb.h"
+#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
 #include "perf_counters.h"
@@ -399,6 +403,22 @@ uint32_t tomTimerPrescaler;
 uint32_t tomTimerDivider;
 int32_t tomTimerCounter;
 static uint16_t tomHCReadPhase;
+
+/* Rows TOMExecHalfline actually wrote, tracked live so a mid-frame VDB/VDE
+ * change cannot make the count disagree with what was drawn.  `Cur`
+ * accumulates the frame in progress; `Prev` and `Last` are latched at the
+ * halfline wrap.
+ *
+ * `Last` is the max of the two most recent frames rather than just the last
+ * one, for interlace: each field writes only every other row, so a single
+ * frame's maximum alternates by one and blanking on it alone would erase and
+ * rewrite the bottom row of the opposite field every frame.  Taking the max
+ * also adds a frame of hysteresis when the window shrinks, which errs towards
+ * blanking less -- the safe direction, since blanking too much is the failure
+ * mode that matters. */
+static uint32_t tomRowsWrittenCur;
+static uint32_t tomRowsWrittenPrev;
+static uint32_t tomRowsWrittenLast;
 uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
          tom_gpu_int_pending, tom_video_int_pending;
 
@@ -544,6 +564,36 @@ static void TOMAssertEnabledIRQs(void)
       m68k_set_irq(2);
 }
 
+
+/* True while TOM is still driving the 68K's level-2 request, i.e. an
+ * enabled INT1 source has an uncleared pending latch (JTRM: the pending
+ * bits are only cleared by writing 1 to the matching C_*CLR bit in the
+ * high byte of INT1).  JERRY reaches the 68K through TOM's bit 4, so its
+ * own latch counts when C_JERENA is set.
+ *
+ * m68k_execute() consults this before re-presenting a request that had to
+ * wait for the CPU's interrupt mask to drop (#187): a game that polls and
+ * clears INT1 itself -- Pitfall runs at mask 1-2 and does exactly that --
+ * must not be handed an interrupt whose source it already serviced. */
+static uint8_t TOMPendingMask(void)
+{
+   uint8_t pending = (uint8_t)((tom_timer_int_pending << IRQ_TIMER)
+      | (tom_object_int_pending << IRQ_OPFLAG)
+      | (tom_gpu_int_pending << IRQ_GPU)
+      | (tom_video_int_pending << IRQ_VIDEO));
+
+   if (tom_jerry_int_pending || JERRYIRQRequestActive())
+      pending |= (uint8_t)(1 << IRQ_DSP);
+
+   return pending;
+}
+
+
+int TOMIRQRequestActive(void)
+{
+   return (TOMPendingMask() & tomRam8[INT1 + 1]) ? 1 : 0;
+}
+
 static void TOMClearPendingIRQs(uint8_t clear)
 {
    if (clear & 0x01)
@@ -655,6 +705,11 @@ uint16_t TOMGetMEMCON1(void)
    return GET16(tomRam8, MEMCON1);
 }
 
+uint16_t TOMGetMEMCON2(void)
+{
+   return GET16(tomRam8, MEMCON2);
+}
+
 #define LEFT_BG_FIX
 
 /* Clamp `width` so the per-pixel loop in a tom_render_*_scanline()
@@ -753,6 +808,33 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 #endif
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+
+   /* True-color path (see shadowfb.h): substitute the full-precision
+    * RGB888 from the shadow line buffer, but only when the entry's tag
+    * matches the 16-bit value actually in the line buffer -- any other
+    * write path (direct TOM writes, RMW blends, missed sites) then
+    * falls back to the stock LUT.  With the option off this block is
+    * never entered and output is bit-identical to stock. */
+   if (shadowFBActive)
+   {
+      int sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+      while (width >= pwidth_scale)
+      {
+         uint32_t out;
+         uint16_t color = (*current_line_buffer++) << 8;
+         color |= *current_line_buffer++;
+         out = CRY16ToRGB32[color];
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+               && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+            out = 0xFF000000 | shadowLineRGB[sfbIdx];
+         sfbIdx++;
+         for (s = 0; s < pwidth_scale; s++)
+            *backbuffer++ = out;
+         width -= pwidth_scale;
+      }
+      return;
+   }
+
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -760,6 +842,149 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
       for (s = 0; s < pwidth_scale; s++)
          *backbuffer++ = CRY16ToRGB32[color];
       width -= pwidth_scale;
+   }
+}
+
+/* Hi-res (Nx) CRY renderer -- epic #338 track 1, Stage 1.
+ *
+ * Mirrors tom_render_16bpp_cry_scanline exactly, but produces N sub-rows
+ * (screenPitch apart) of N-wide pixels per stock pixel, consuming the Nx
+ * shadow line buffer that ShadowHiresLineFromRAM populated during the
+ * OP's single per-scanline pass.
+ *
+ * Stage 2 output contract: blocks written by non-qualifying blit shapes
+ * still carry box replication (Stage 1 semantics), so their output is
+ * bit-exactly the NxN box replication of the stock pixel.  Blocks
+ * written by qualifying fractional-source-walk blits carry real
+ * per-subpixel content, and the box-replication property no longer
+ * holds there BY DESIGN -- that is the feature.  On a tag miss (stale
+ * entry, unshadowed page, foreign line-buffer writer) every subpixel
+ * falls back to `base`, the exact 1x result including the 1x
+ * true-color substitution. */
+static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
+{
+   unsigned i;
+   uint8_t s;
+   int n = shadowHiresN;
+   int sub, sx;
+   uint16_t width = tomWidth;
+   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+   uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
+   uint16_t startPos_disp;
+   uint32_t *rows[SHADOWFB_HIRES_MAX_N];
+   int sfbIdx;
+   startPos /= pwidth;
+
+   for (sub = 0; sub < n; sub++)
+      rows[sub] = backbuffer + (uint32_t)sub * screenPitch;
+
+   if (startPos < 0)
+      current_line_buffer += 2 * -startPos;
+   else
+   {
+      /* LEFT_BG_FIX border fill, replicated N wide x N sub-rows. */
+      uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+      uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+      startPos_disp = (uint16_t)startPos * pwidth_scale;
+
+      for (sub = 0; sub < n; sub++)
+         for (i = 0; i < (unsigned)startPos_disp * (unsigned)n; i++)
+            *rows[sub]++ = pixel;
+
+      width -= startPos_disp;
+   }
+
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+   sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+
+   while (width >= pwidth_scale)
+   {
+      uint32_t base;
+      const shadowfb_sub *ent;
+      uint16_t color = (*current_line_buffer++) << 8;
+      color |= *current_line_buffer++;
+
+      /* `base` = the exact 1x result for this stock pixel (including
+       * the true-color substitution when that option is on). */
+      base = CRY16ToRGB32[color];
+      if (shadowFBActive && sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+            && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+         base = 0xFF000000 | shadowLineRGB[sfbIdx];
+
+      for (sub = 0; sub < n; sub++)
+      {
+         ent = NULL;
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+               && shadowHiresLineTag[sfbIdx] ==
+                  ((uint32_t)color | SHADOWFB_TAG_VALID))
+            ent = shadowHiresLineSub
+                + ((uint32_t)sub * SHADOWFB_LINE_PIXELS + (uint32_t)sfbIdx)
+                  * (uint32_t)n;
+         for (sx = 0; sx < n; sx++)
+         {
+            /* Stage 2: entries carry real per-subpixel content, so a
+             * hit renders each entry -- with true-color on, through
+             * ShadowFBCryRGB so the entry's own frac16 composes
+             * (design section 3.2); with it off, through the stock
+             * LUT.  A miss falls back to the exact 1x result. */
+            uint32_t out;
+            if (ent)
+               out = shadowFBActive
+                   ? (0xFF000000
+                      | ShadowFBCryRGB(ent[sx].value16, ent[sx].frac16))
+                   : CRY16ToRGB32[ent[sx].value16];
+            else
+               out = base;
+            for (s = 0; s < pwidth_scale; s++)
+               *rows[sub]++ = out;
+         }
+      }
+      sfbIdx++;
+      width -= pwidth_scale;
+   }
+}
+
+/* Hi-res dispatch for one scanline: CRY 16bpp gets the dedicated Nx
+ * renderer above; every other mode renders stock at 1x into a scratch
+ * row and is box-replicated at output (Stage 1 scope fence).
+ *
+ * The scratch is seeded from the existing Nx row (sub-row 0, every Nth
+ * pixel) so pixels the stock renderer leaves untouched -- e.g. the tail
+ * beyond the last full pwidth step -- keep their previous value, exactly
+ * as they would at 1x.  By induction from the black-filled initial
+ * buffer, the Nx frame therefore stays an exact box replication of the
+ * 1x frame for every mode. */
+static uint32_t tomHiresScratch[1024];
+
+static void tom_render_scanline_hires(uint32_t * backbuffer)
+{
+   render_xxx_scanline_fn *fn = scanline_render[TOMGetVideoMode()];
+   unsigned i, s, r;
+   unsigned n = (unsigned)shadowHiresN;
+   unsigned w = (tomWidth < 1024) ? tomWidth : 1024;
+   uint32_t *dst;
+   uint32_t px;
+
+   if (fn == tom_render_16bpp_cry_scanline)
+   {
+      tom_render_16bpp_cry_scanline_hires(backbuffer);
+      return;
+   }
+
+   for (i = 0; i < w; i++)
+      tomHiresScratch[i] = backbuffer[i * n];
+   fn(tomHiresScratch);
+   for (r = 0; r < n; r++)
+   {
+      dst = backbuffer + r * screenPitch;
+      for (i = 0; i < w; i++)
+      {
+         px = tomHiresScratch[i];
+         for (s = 0; s < n; s++)
+            *dst++ = px;
+      }
    }
 }
 
@@ -887,8 +1112,22 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    uint16_t topVisible;
    uint16_t bottomVisible;
    uint16_t hp = GET16(tomRam8, HP);
+   uint32_t writtenRow;
 
    halfline &= 0x07FF;
+
+   /* Halfline 0 is the frame wrap: latch the row count for the frame that
+    * just finished before halfline 0 contributes to the next one.
+    * JaguarExecuteNew ends its frame right after this call, so a caller
+    * reading TOMGetWrittenRowExtent() from retro_run sees the frame it is
+    * about to present. */
+   if (halfline == 0)
+   {
+      tomRowsWrittenLast = (tomRowsWrittenCur > tomRowsWrittenPrev)
+                         ? tomRowsWrittenCur : tomRowsWrittenPrev;
+      tomRowsWrittenPrev = tomRowsWrittenCur;
+      tomRowsWrittenCur  = 0;
+   }
 
    // Update HC to approximate position within the scanline.
    // Bit 10 (0x0400) is the half-line indicator, analogous to VC's
@@ -947,23 +1186,47 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 
    if ((halfline >= topVisible) && (halfline < bottomVisible))
    {
+      /* Hi-res (Nx): the stock row index maps to N consecutive Nx rows at
+       * the Nx pitch.  hiresRowScale is 1 whenever the option is off, so
+       * the stock path is unchanged (see shadowfb.h). */
+      uint32_t hiresRowScale = (uint32_t)shadowHiresN;
+
       // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
       if (tomRam8[VP + 1] & 0x01)
-         TOMCurrentLine = &(screenBuffer[((halfline - topVisible) / 2) * screenPitch]);//non-interlace
+         writtenRow = (halfline - topVisible) / 2;//non-interlace
       else
-         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);//interlace
+         writtenRow = (((halfline - topVisible) / 2) * 2) + (field2 ? 0 : 1);//interlace
+
+      TOMCurrentLine = &(screenBuffer[writtenRow * hiresRowScale * screenPitch]);
+
+      /* Record the row regardless of which branch below fills it: both the
+       * scanline renderer and the border fill count as TOM having addressed
+       * this row.  See TOMGetWrittenRowExtent(). */
+      if (writtenRow + 1 > tomRowsWrittenCur)
+         tomRowsWrittenCur = writtenRow + 1;
 
       if (inActiveDisplayArea)
-         scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+      {
+         if (shadowHiresActive)
+            tom_render_scanline_hires(TOMCurrentLine);
+         else
+            scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+      }
       else
       {
          // If outside of VDB & VDE, then display the border color
-         uint32_t * currentLineBuffer = TOMCurrentLine;
+         // (replicated across the N sub-rows / N-wide pixels at hi-res).
          uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
          uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+         uint32_t hr;
 
-         for(i=0; i<tomWidth; i++)
-            *currentLineBuffer++ = pixel;
+         for (hr = 0; hr < hiresRowScale; hr++)
+         {
+            uint32_t * currentLineBuffer = TOMCurrentLine + hr * screenPitch;
+
+            for(i=0; i<tomWidth * hiresRowScale; i++)
+               *currentLineBuffer++ = pixel;
+         }
       }
    }
 }
@@ -1015,6 +1278,32 @@ uint32_t TOMGetVideoModeWidth(void)
    return ((rightHC - leftHC) / pwidth) * pwidth_scale;
 }
 
+/* One past the highest framebuffer row TOMExecHalfline wrote in the frame that
+ * just completed.
+ *
+ * MEASURED, not derived from the registers.  Deriving it from VDB/VDE at the
+ * end of the frame gets the mid-frame reprogramming case wrong: rows are
+ * written across the whole frame, but the registers only describe the window
+ * as of the last halfline.  DEMO1B (PD) reprograms TOM at frame 476 -- the
+ * end-of-frame window computes 8 rows while the frame had actually just been
+ * rendered 240 rows wide, so a register-derived extent would report a
+ * 232-row gap that does not exist.  TOMExecHalfline records each row as it
+ * writes it instead, which cannot disagree with itself.
+ *
+ * This is NOT the same quantity as TOMGetVideoModeHeight(), which is the
+ * presented height and is derived independently from VDB/VDE.  The two
+ * disagree whenever the visible window and the mode height fall back
+ * differently -- e.g. Alien vs Predator in-game programs VDB=40, VDE=2047,
+ * VP=523, so topVisible=VDB=40 but bottomVisible falls back to the field
+ * bottom (511) because VDE > VP, giving 236 written rows against a presented
+ * height of 240 (the NTSC fallback, since (2047-40)/2 > 256).  Callers use
+ * this to give the leftover rows defined content instead of letting them keep
+ * whatever was last drawn there. */
+uint32_t TOMGetWrittenRowExtent(void)
+{
+   return tomRowsWrittenLast;
+}
+
 uint32_t TOMGetVideoModeHeight(void)
 {
    uint16_t vdb = GET16(tomRam8, VDB);
@@ -1040,6 +1329,8 @@ void TOMReset(void)
    {
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
+      bus_arbiter_update_memcon(0x1861);
+      bus_arbiter_update_memcon2(0x35CC);
       SET16(tomRam8, HP, 844);			// Horizontal Period (1-based; HP=845)
       SET16(tomRam8, HBB, 1713);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 125);			// Horizontal Blank End
@@ -1066,6 +1357,8 @@ void TOMReset(void)
    {
       SET16(tomRam8, MEMCON1, 0x1861);
       SET16(tomRam8, MEMCON2, 0x35CC);
+      bus_arbiter_update_memcon(0x1861);
+      bus_arbiter_update_memcon2(0x35CC);
       SET16(tomRam8, HP, 850);			// Horizontal Period
       SET16(tomRam8, HBB, 1711);		// Horizontal Blank Begin
       SET16(tomRam8, HBE, 158);			// Horizontal Blank End
@@ -1089,6 +1382,10 @@ void TOMReset(void)
 
    tomWidth = 0;
    tomHeight = 0;
+
+   tomRowsWrittenCur = 0;
+   tomRowsWrittenPrev = 0;
+   tomRowsWrittenLast = 0;
 
    tom_jerry_int_pending = 0;
    tom_timer_int_pending = 0;
@@ -1244,11 +1541,54 @@ void TOMWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    }
 
    offset &= 0x3FFF;
+   /* Any write to OBF releases an OP halted on a GPU object (see
+    * OPProcessList OBJECT_TYPE_GPU). */
+   if (offset == OBF || offset == OBF + 1)
+      OPNotifyOBFWrite();
    if (offset == INT1)
       TOMClearPendingIRQs(data);
+   if (offset == INT1 + 1)
+   {
+      /* CDDA-DIAG: INT1 bit 4 (C_JERENA) is the TOM-side gate for
+       * JERRY -> 68K delivery (BUTCH CD IRQs route through it, see
+       * cdrom.c BUTCHExec). Edges are rare; log unconditionally. */
+      static uint8_t tomPrevInt1Ena = 0;
+      if ((tomPrevInt1Ena ^ data) & 0x10)
+         LOG_DBG("[CDDA] INT1 C_JERENA %s (INT1=$%02X who=%u 68kpc=$%06X)\n",
+                 (data & 0x10) ? "ON" : "OFF", data, who,
+                 m68k_get_reg(NULL, M68K_REG_PC));
+      tomPrevInt1Ena = data;
+   }
+   if (offset == INT1 + 1)
+   {
+      /* TOM's 68K request line is raised by an interrupt *event* and
+       * dropped when the 68K acknowledges (see irq_ack_handler); a write
+       * to INT1 does not re-present a request the CPU already took.  The
+       * one case a register write does create a request is a source that
+       * is pending and becomes *newly* enabled.
+       *
+       * Re-asserting on every INT1 write is what made NBA Jam TE storm
+       * once requests survived the CPU's interrupt mask (see #187): its
+       * level-2 handler leaves the TOM PIT pending bit latched and
+       * rewrites INT1 = $0009 on each entry, so an unconditional
+       * re-assert re-entered the handler forever. */
+      uint8_t newlyEnabled = (uint8_t)(data & ~tomRam8[INT1 + 1]);
+
+      tomRam8[offset] = data;
+
+      if (newlyEnabled & TOMPendingMask())
+         m68k_set_irq(2);
+      return;
+   }
    tomRam8[offset] = data;
-   if (offset == INT1 || offset == (INT1 + 1))
-      TOMAssertEnabledIRQs();
+
+   /* MEMCON1 can be written a byte at a time; keep the bus arbiter's
+    * MEMCON1-derived DRAM/ROM timing in sync (word writes hook in
+    * TOMWriteWord). */
+   if (offset == MEMCON1 || offset == MEMCON1 + 1)
+      bus_arbiter_update_memcon(TOMGetMEMCON1());
+   if (offset == MEMCON2 || offset == MEMCON2 + 1)
+      bus_arbiter_update_memcon2(TOMGetMEMCON2());
 }
 
 // TOM word access (write)
@@ -1321,6 +1661,11 @@ void TOMWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    // Fix a lockup bug... :-P
    TOMWriteByte(0xF00000 | offset, data >> 8, who);
    TOMWriteByte(0xF00000 | (offset+1), data & 0xFF, who);
+
+   if (offset == MEMCON1)
+      bus_arbiter_update_memcon(data);
+   if (offset == MEMCON2)
+      bus_arbiter_update_memcon2(data);
 
    // detect screen resolution changes
    //This may go away in the future, if we do the virtualized screen thing...

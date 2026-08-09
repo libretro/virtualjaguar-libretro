@@ -14,15 +14,18 @@
 // JLH  11/26/2011  Added fixes for LOAD/STORE alignment issues
 //
 
+#include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
 #include "dsp.h"
 #include "dsp_acc40.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "dac.h"
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
@@ -303,6 +306,18 @@ static uint32_t dspgo_poll_count;
 static uint32_t dsp_in_exec = 0;
 static uint32_t dsp_releaseTimeSlice_flag = 0;
 
+/* Instruction slots a DSP-issued D_FLAGS store waits out before it
+ * retires: the slot holding the store itself, plus the one instruction
+ * already past Read Operands behind it in the pipeline.  While the delay
+ * is outstanding a cleared IMASK cannot yet let an interrupt in, and a
+ * `jump` still reads its target register from dspPreStoreBank.  See the
+ * D_FLAGS case in DSPWriteLong for the hardware citation. */
+#define DSP_FLAGS_RETIRE_DELAY 2
+static uint32_t dspFlagsRetireDelay = 0;
+static uint32_t * dspPreStoreBank = NULL;
+
+
+
 // Private function prototypes
 
 void FlushDSPPipeline(void);
@@ -492,12 +507,25 @@ uint32_t DSPReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
              * ignoring normal gameplay status checks (~1-10/frame).
              *
              * Exception: if the DSP is actively producing audio
-             * (i2sWriteCount > 2, beyond the DACPrepareFrame seed),
-             * it is running a legitimate audio mixer (e.g. Doom) and
-             * must not be killed. */
+             * (non-zero LTXD/RTXD samples beyond the DACPrepareFrame
+             * seed), it is running a legitimate audio mixer (e.g.
+             * Doom) and must not be killed.  Issue #181 (Battle
+             * Sphere): the silenced/escaped DSP still issues STORE
+             * 0,RTXD per loop iteration, so we gate on non-zero
+             * sample count, not raw write count. */
             if (who == M68K && DSP_RUNNING && !vjs.useJaguarBIOS)
             {
-               if (DACGetI2SWriteCount() > 2)
+               /* "Real audio" gate: a DSP that's mixing for the user
+                * writes non-zero LTXD/RTXD samples.  The non-zero
+                * counter is reset to 0 at every DACPrepareFrame
+                * (unlike i2sWriteCount which is seeded to 2 for the
+                * resampler), so any non-zero sample this frame is
+                * enough to declare the engine alive.  A DSP that
+                * wrote only silence -- Battle Sphere with an escaped
+                * DSP still issuing STORE 0,RTXD per loop iteration --
+                * stays at 0 and the auto-clear correctly fires.
+                * Counter ticks when either channel is non-zero. */
+               if (DACGetI2SNonZeroCount() > 0)
                   dspgo_poll_count = 0;
                else
                {
@@ -561,6 +589,38 @@ void DSPWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
    if ((offset >= DSP_WORK_RAM_BASE) && (offset < DSP_WORK_RAM_BASE+0x2000))
    {
+      /* CDDA-DIAG: see DSPWriteLong -- Primal Rage synth mailbox.
+       * Rate-capped: other titles may use this RAM range as data. */
+      if (offset >= 0xF1B270 && offset <= 0xF1B277)
+      {
+         static uint32_t mboxWrites = 0;
+         mboxWrites++;
+         if (mboxWrites <= 40 || (mboxWrites % 10000) == 0)
+            LOG_DBG("[CDDA] DSP mailbox write.w $%06X = $%04X who=%u 68kpc=$%06X\n",
+                    offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+         /* One-shot main-RAM snapshot at the mix-ON edge so the transient
+          * music-player overlay around the writer PC can be disassembled.
+          * Enabled only when VJ_CDDA_SNAPDIR is set (diagnostic builds). */
+         if (offset == 0xF1B276 && data == 0x0001)
+         {
+            const char *dir = getenv("VJ_CDDA_SNAPDIR");
+            static int snapped = 0;
+            if (dir && !snapped)
+            {
+               char path[1024];
+               FILE *f;
+               snapped = 1;
+               snprintf(path, sizeof(path), "%s/mixon_mainram.bin", dir);
+               f = fopen(path, "wb");
+               if (f)
+               {
+                  fwrite(jaguarMainRAM, 1, 0x200000, f);
+                  fclose(f);
+                  LOG_DBG("[CDDA] snapshot: %s\n", path);
+               }
+            }
+         }
+      }
       offset -= DSP_WORK_RAM_BASE;
       dsp_ram_8[offset] = data >> 8;
       dsp_ram_8[offset+1] = data & 0xFF;
@@ -600,6 +660,18 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
 
    if (offset >= DSP_WORK_RAM_BASE && offset <= DSP_WORK_RAM_BASE + 0x1FFF)
    {
+      /* CDDA-DIAG: Primal Rage's synth-DSP command mailbox lives at
+       * $F1B274 (cmd 1 = CD mix ON, 2 = OFF, 3 = reset, 4 = exit) --
+       * log external writes so we can see who opens the mix gate.
+       * Rate-capped: other titles may use this RAM range as data. */
+      if (offset >= 0xF1B270 && offset <= 0xF1B277)
+      {
+         static uint32_t mboxWritesL = 0;
+         mboxWritesL++;
+         if (mboxWritesL <= 40 || (mboxWritesL % 10000) == 0)
+            LOG_DBG("[CDDA] DSP mailbox write $%06X = $%08X who=%u 68kpc=$%06X\n",
+                    offset, data, who, m68k_get_reg(NULL, M68K_REG_PC));
+      }
       offset -= DSP_WORK_RAM_BASE;
       SET32(dsp_ram_8, offset, data);
       //CC only!
@@ -612,12 +684,70 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
       {
          case 0x00:
             {
+               uint32_t * preWriteBank = dsp_reg;
                IMASKCleared = (dsp_flags & IMASK) && !(data & IMASK);
                dsp_flags = (data & ~IMASK) | ((data & IMASK) ? (dsp_flags & IMASK) : 0);
                dsp_flag_z = dsp_flags & 0x01;
                dsp_flag_c = (dsp_flags >> 1) & 0x01;
                dsp_flag_n = (dsp_flags >> 2) & 0x01;
                DSPUpdateRegisterBanks();
+               /* A D_FLAGS store issued by the DSP itself does not retire
+                * until the instruction behind it is already past Read
+                * Operands.  JTRM (docs/jtrm-gpu-dsp.md, "Pipeline") gives
+                * the RISC core four stages -- Decode, Read Operands,
+                * Compute, Write-back -- so this store's write-back lands
+                * a stage after the next instruction has latched its source
+                * registers, and a whole stage after a branch has latched
+                * the target register it needs to steer the fetch.  Two
+                * consequences the register-bank pointer alone cannot
+                * express, both recorded here and honoured by
+                * dsp_opcode_jump and DSPExec:
+                *
+                *  - A `jump (Rn)` in the slot behind the store reads Rn
+                *    from the PRE-store bank.  This is the ISR epilogue
+                *    Wolfenstein 3D's I2S handler uses at $F1B24E:
+                *        store  r0,(r1)     ; r1 = $F1A100, clears IMASK
+                *        jump   (r3)        ; r3 = bank-0 return address
+                *    with the main loop running in bank 1 (REGPAGE set).
+                *    Swapping banks inside the store made `jump (r3)` read
+                *    bank 1's uninitialised r3 == 0, so the DSP returned to
+                *    PC $000000, left RAM and stopped feeding LTXD/RTXD --
+                *    the game lost all audio from frame 48 on.
+                *
+                *  - IMASK is not really clear until the store retires
+                *    either, so the instruction in that same slot still
+                *    runs masked and cannot be preempted.  Wolf3D's outer
+                *    epilogue at $F1B128-$F1B12A has the same store/jump
+                *    shape; letting an I2S interrupt in between the two
+                *    made the handler push the store's own address as the
+                *    return address, so `jump (r4)` ran a slot later than
+                *    it should have and read the wrong bank anyway.
+                *
+                * The bank pointer itself still swaps immediately, which is
+                * what Doom's epilogue needs: it puts the D_FLAGS store in
+                * the delay slot of `jump (r15)` at $F1B028, so the branch
+                * target at $F1B6B2 -- a `movei` whose write-back follows
+                * the store's -- must land in the NEW bank.
+                *
+                * CAVEAT on the derivation: the four-stage pipeline is
+                * documented, but nothing in docs/jtrm-*.md describes the
+                * taken-branch refill cost that lets a delay-slot store
+                * retire before the branch target reads registers, and this
+                * emulator's own dsp_opcode_cycles[] charges jump/jr only 1
+                * cycle.  The rule above is inferred from behaviour: it is
+                * the only composite that satisfies BOTH shipped epilogue
+                * shapes -- Wolf3D's `store; jump (Rn)` needs the old bank
+                * at the jump, Doom's `jump (Rn); store` needs the new bank
+                * at the target -- with two independent code bases as the
+                * evidence.  Revisit if primary JTRM pipeline timing ever
+                * contradicts it. */
+               if (who == DSP)
+               {
+                  dspPreStoreBank = preWriteBank;
+                  dspFlagsRetireDelay = DSP_FLAGS_RETIRE_DELAY;
+               }
+               else
+                  dspFlagsRetireDelay = 0;
                dsp_control &= ~((dsp_flags & CINT04FLAGS) >> 3);
                dsp_control &= ~((dsp_flags & CINT5FLAG) >> 1);
                break;
@@ -714,6 +844,21 @@ void DSPHandleIRQsNP(void)
 	if (dsp_flags & IMASK) 							// Bail if we're already inside an interrupt
 		return;
 
+	/* IMASK reads clear the moment the D_FLAGS store is decoded, but the
+	 * store has not retired yet -- the instruction behind it is already
+	 * past Read Operands and still runs masked (see DSPWriteLong).  This
+	 * entry point is also reached asynchronously from DSPSetIRQLine, which
+	 * cannot see DSPExec's own hold-off, so re-check here.  Leave the
+	 * latch standing in dsp_control and IMASKCleared unconsumed: DSPExec
+	 * dispatches it once the delay expires, at most two slots later.
+	 *
+	 * Without this, Wolfenstein 3D's I2S handler was re-entered between
+	 * `store r0,(r1)` at $F1B24E and `jump (r3)` at $F1B250, so the nested
+	 * handler returned to $F1B250 a slot late and `jump (r3)` read the
+	 * post-store bank -- PC $000005, DSP off the rails at frame 2553. */
+	if (dspFlagsRetireDelay && IMASKCleared)
+		return;
+
 	// Get the active interrupt bits (latches) & interrupt mask (enables)
 	// INT_LAT5 is at dsp_control bit 16 (non-contiguous with LAT0-4 at bits 6-10)
 	bits = ((dsp_control >> 11) & 0x20) | ((dsp_control >> 6) & 0x1F);
@@ -738,7 +883,12 @@ void DSPHandleIRQsNP(void)
 		which = 5;
 
 	dsp_flags |= IMASK;		// Force Bank #0
+	/* Taking an interrupt flushes the pipeline, so an un-retired D_FLAGS
+	 * store from before the vector fetch has no in-flight successor left
+	 * to shadow -- retire it rather than let it reach into the handler. */
+	dspFlagsRetireDelay = 0;
 	DSPUpdateRegisterBanks();
+	dspPreStoreBank = dsp_reg;
 
 
 	dsp_reg[31] -= 4;
@@ -810,6 +960,8 @@ void DSPReset(void)
 
 	CLR_ZNC;
 	IMASKCleared = false;
+	dspFlagsRetireDelay = 0;
+	dspPreStoreBank = dsp_reg;
 	FlushDSPPipeline();
 	dsp_reset_stats();
 
@@ -853,10 +1005,48 @@ void DSPExec(int32_t cycles)
       uint16_t opcode;
       uint32_t index;
 
-		if (IMASKCleared)						// If IMASK was cleared,
+		/* If IMASK was cleared, see if any other interrupts are pending --
+		 * but not until the D_FLAGS store that cleared it has retired, so
+		 * the instruction still in the pipeline behind it (typically the
+		 * epilogue's `jump` back to the interrupted code) runs first. */
+		if (IMASKCleared && dspFlagsRetireDelay == 0)
 		{
-			DSPHandleIRQsNP();					// See if any other interrupts are pending!
+			DSPHandleIRQsNP();
 			IMASKCleared = false;
+		}
+
+		/* PC escape bail-out.  When the DSP PC has wandered into a
+		 * region that doesn't contain executable code -- register
+		 * space at $F00000-$F1FFFF outside DSP local SRAM, or the
+		 * unmapped territory above $E40000 -- every "fetched opcode"
+		 * is bus-default 0xFFFF garbage that decodes to a near-zero-
+		 * cost opcode.  The inner loop then burns the entire
+		 * timeslice without making progress, hanging the frontend.
+		 *
+		 * Wolf3D headless triage caught this in v2.3.0: the runtime
+		 * watchdog logged `dsp_pc_escape pc=$00FFF004E8` (PC top-byte
+		 * corrupted) and the harness wedged for 12+ minutes per
+		 * frame.  An earlier dsp-diag snapshot showed PC=$0006EE in
+		 * RAM at frame 48 -- that's the upstream bug (separate from
+		 * this bail-out: $0006EE is *valid* RAM and decodes to real
+		 * opcodes; it's where the DSP eventually drifts INTO bad
+		 * territory that triggers the wedge).  Drain cycles here and
+		 * let the runtime watchdog (src/core/crash_detect.c) log the
+		 * actual escape PC.  DSP_RUNNING is left alone so games that
+		 * legitimately stop the DSP via DSPGO=0 are unaffected.
+		 *
+		 * Valid execution regions match JaguarReadX address decoding
+		 * (src/core/jaguar.c): anything <= $E3FFFF (main RAM mirrored
+		 * 4x for the bottom 8MB, cart ROM, boot ROM) plus DSP local
+		 * SRAM.  Earlier versions of this check used `<= 0x1FFFFF`
+		 * and would have false-flagged DSP code running from a RAM
+		 * mirror at $200000-$7FFFFF or from cart ROM at $800000+.
+		 * Caught by Copilot review on PR #182. */
+		if (!((dsp_pc <= 0x00E3FFFF) ||
+		      (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)))
+		{
+			cycles = 0;
+			break;
 		}
 
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
@@ -872,6 +1062,13 @@ void DSPExec(int32_t cycles)
 		dsp_pc += 2;
 		dsp_executeOpcode(index);
 		cycles -= dsp_opcode_cycles[index];
+
+		/* Age out a D_FLAGS store once the instruction that was already
+		 * behind it in the pipeline has run (see DSPWriteLong, D_FLAGS
+		 * case).  Retiring re-opens interrupt recognition and stops
+		 * dsp_opcode_jump reaching for the pre-store bank. */
+		if (dspFlagsRetireDelay)
+			dspFlagsRetireDelay--;
 	}
 
 	dsp_in_exec--;
@@ -1072,7 +1269,14 @@ INLINE static void dsp_opcode_jump(void)
 
 	if (BRANCH_CONDITION(IMM_2))
 	{
-		uint32_t delayed_pc = RM;
+		/* The target register is latched a pipeline stage before a
+		 * D_FLAGS store in the slot ahead of us can retire, so when one
+		 * is still outstanding read it from the bank that was live when
+		 * that store issued -- not from the bank it selected.  See the
+		 * D_FLAGS case in DSPWriteLong. */
+		uint32_t delayed_pc = dspFlagsRetireDelay
+		                      ? dspPreStoreBank[dsp_opcode_first_parameter]
+		                      : RM;
 		uint16_t ds_opcode;
 		uint32_t ds_index;
 		/* Inline delay-slot: fetch-decode-execute one instruction at current
@@ -1092,6 +1296,11 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_pc += 2;
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
+		/* Refilling the pipeline from the branch target costs enough
+		 * cycles that an outstanding D_FLAGS store -- including one the
+		 * delay slot just issued -- reaches Write-back first, so the
+		 * target instruction sees the new bank.  See DSPWriteLong. */
+		dspFlagsRetireDelay = 0;
 	}
 }
 
@@ -1123,6 +1332,8 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_pc += 2;
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
+		/* Same branch-target pipeline refill as dsp_opcode_jump. */
+		dspFlagsRetireDelay = 0;
 	}
 }
 
@@ -1335,7 +1546,14 @@ INLINE static void dsp_opcode_store(void)
 INLINE static void dsp_opcode_loadb(void)
 {
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM, DSP) & 0xFF;
+	{
+		/* JTRM (Technical Reference v8, "Load Byte"): byte extraction
+		 * "applies to external memory only, internal memory will perform
+		 * a 32-bit read."  A byte load from DSP local RAM returns the
+		 * ENTIRE long containing the address -- same rule as the GPU
+		 * (see gpu_opcode_loadb). */
+		RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
+	}
 	else
 		RN = JaguarReadByte(RM, DSP);
 }
@@ -1343,14 +1561,16 @@ INLINE static void dsp_opcode_loadb(void)
 
 INLINE static void dsp_opcode_loadw(void)
 {
-#ifdef DSP_CORRECT_ALIGNMENT
 	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM & 0xFFFFFFFE, DSP) & 0xFFFF;
+	{
+		/* Same JTRM rule as LOADB: word loads from internal RAM perform
+		 * a full 32-bit read of the long containing the address. */
+		RN = DSPReadLong(RM & 0xFFFFFFFC, DSP);
+	}
+#ifdef DSP_CORRECT_ALIGNMENT
 	else
 		RN = JaguarReadWord(RM & 0xFFFFFFFE, DSP);
 #else
-	if (RM >= DSP_WORK_RAM_BASE && RM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		RN = DSPReadLong(RM, DSP) & 0xFFFF;
 	else
 		RN = JaguarReadWord(RM, DSP);
 #endif
@@ -1519,6 +1739,15 @@ INLINE static void dsp_opcode_mmult(void)
    uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
    int64_t accum = 0;
 
+   /* Per JTRM ("Systolic Matrix Multiplies"), the packed vector operand
+    * lives in the SECONDARY register bank (bank 1) — an absolute bank
+    * reference, not "the bank not currently selected".  With IMASK set
+    * (interrupt service) the current bank is forced to 0, so the old
+    * dsp_alternate_reg happened to be bank 1 and looked correct; but a
+    * mixer running mainline with REGPAGE=1 (e.g. Baldies) loads its
+    * sample vector into bank 1 as its CURRENT bank, and reading the
+    * "alternate" bank 0 multiplies the matrix by the interrupt
+    * handler's pointers instead — rail-to-rail clipped audio. */
    if (!(dsp_matrix_control & 0x10))
    {
       for (i = 0; i < count; i++)
@@ -1527,9 +1756,9 @@ INLINE static void dsp_opcode_mmult(void)
          int16_t b;
 
          if (i&0x01)
-            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+            a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
-            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+            a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4;
@@ -1543,9 +1772,9 @@ INLINE static void dsp_opcode_mmult(void)
          int16_t b;
 
          if (i&0x01)
-            a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+            a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
          else
-            a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+            a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
          b=((int16_t)DSPReadWord(addr + 2, DSP));
          accum += a*b;
          addr += 4 * count;
@@ -2281,21 +2510,27 @@ INLINE static void DSP_load(void)
 INLINE static void DSP_loadb(void)
 {
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM, DSP) & 0xFF;
+	{
+		/* JTRM: internal-RAM byte loads perform a full 32-bit read
+		 * (see dsp_opcode_loadb). */
+		PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
+	}
 	else
 		PRES = JaguarReadByte(PRM, DSP);
 }
 
 INLINE static void DSP_loadw(void)
 {
-#ifdef DSP_CORRECT_ALIGNMENT
 	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM & 0xFFFFFFFE, DSP) & 0xFFFF;
+	{
+		/* JTRM: internal-RAM word loads perform a full 32-bit read
+		 * (see dsp_opcode_loadw). */
+		PRES = DSPReadLong(PRM & 0xFFFFFFFC, DSP);
+	}
+#ifdef DSP_CORRECT_ALIGNMENT
 	else
 		PRES = JaguarReadWord(PRM & 0xFFFFFFFE, DSP);
 #else
-	if (PRM >= DSP_WORK_RAM_BASE && PRM <= (DSP_WORK_RAM_BASE + 0x1FFF))
-		PRES = DSPReadLong(PRM, DSP) & 0xFFFF;
 	else
 		PRES = JaguarReadWord(PRM, DSP);
 #endif
@@ -2352,6 +2587,8 @@ INLINE static void DSP_mmult(void)
 	uint32_t addr = dsp_pointer_to_matrix; // in the dsp ram
 	int64_t accum = 0;
 
+	/* Vector operand comes from the SECONDARY bank (bank 1) per JTRM —
+	 * see dsp_opcode_mmult above. */
 	if (!(dsp_matrix_control & 0x10))
 	{
 		for (i = 0; i < count; i++)
@@ -2360,9 +2597,9 @@ INLINE static void DSP_mmult(void)
          int16_t b;
 
 			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+				a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4;
@@ -2376,9 +2613,9 @@ INLINE static void DSP_mmult(void)
          int16_t b;
 
 			if (i&0x01)
-				a=(int16_t)((dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
+				a=(int16_t)((dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]>>16)&0xffff);
 			else
-				a=(int16_t)(dsp_alternate_reg[dsp_opcode_first_parameter + (i>>1)]&0xffff);
+				a=(int16_t)(dsp_reg_bank_1[dsp_opcode_first_parameter + (i>>1)]&0xffff);
 			b=((int16_t)DSPReadWord(addr + 2, DSP));
 			accum += a*b;
 			addr += 4 * count;
@@ -2850,6 +3087,12 @@ size_t DSPStateLoad(const uint8_t *buf)
       dsp_reg = dsp_reg_bank_1;
       dsp_alternate_reg = dsp_reg_bank_0;
    }
+   /* The state format carries no slot for an un-retired D_FLAGS store
+    * (see DSP_FLAGS_RETIRE_DELAY); retire it on load.  The window is two
+    * instruction slots wide, and the register banks themselves are saved
+    * in full either way. */
+   dspFlagsRetireDelay = 0;
+   dspPreStoreBank = dsp_reg;
 
    STATE_LOAD_VAR(buf, dsp_opcode_first_parameter);
    STATE_LOAD_VAR(buf, dsp_opcode_second_parameter);

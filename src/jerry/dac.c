@@ -25,6 +25,7 @@
  * produce the output stream. */
 
 #include "dac.h"
+#include "log.h"  /* CDDA-DIAG */
 
 #include <string.h>
 #include "cdrom.h"
@@ -66,6 +67,7 @@ static int16_t i2sRingL[I2S_RING_SIZE];
 static int16_t i2sRingR[I2S_RING_SIZE];
 static uint32_t i2sWritePos = 0;	/* next write position in ring */
 static uint32_t i2sWriteCount = 0;	/* total samples captured this frame */
+static uint32_t i2sNonZeroCount = 0;	/* samples with non-zero amplitude this frame */
 static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
 
@@ -92,6 +94,7 @@ void DACReset(void)
 
    i2sWritePos = 0;
    i2sWriteCount = 0;
+   i2sNonZeroCount = 0;
    i2sPhase = 0.0;
    i2sRateRatio = 1.0;
    memset(i2sRingL, 0, sizeof(i2sRingL));
@@ -107,17 +110,39 @@ uint32_t DACGetI2SWriteCount(void)
    return i2sWriteCount;
 }
 
-/* Update the rate ratio when SCLK changes */
+uint32_t DACGetI2SNonZeroCount(void)
+{
+   return i2sNonZeroCount;
+}
+
+/* Update the rate ratio when SCLK or SMODE changes */
 static void DACUpdateSCLKRate(void)
 {
    uint32_t sclk_val;
    double i2s_rate;
    double sys_clock;
 
-   sclk_val = (uint32_t)(*sclk);
-   sys_clock = (double)SYSTEM_CLOCK_RATE;
-   /* sample_rate = system_clock / (64 * (SCLK + 1)) */
-   i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
+   if (*smode & SMODE_INTERNAL)
+   {
+      /* Master mode: JERRY generates the bit clock from SCLK. */
+      sclk_val = (uint32_t)(*sclk);
+      sys_clock = (double)SYSTEM_CLOCK_RATE;
+      /* sample_rate = system_clock / (64 * (SCLK + 1)) */
+      i2s_rate = sys_clock / (64.0 * (sclk_val + 1));
+   }
+   else
+   {
+      /* Slave mode: the word clock is external (BUTCH, CD audio).  SCLK
+       * is meaningless here -- JERRYI2SCallback drives the DSP ISR at a
+       * fixed 22.675737 us (44100 Hz), so LTXD/RTXD writes land in the
+       * ring at that rate.  Deriving the ratio from a stale SCLK (games
+       * leave the reset value 19 = 20.8 kHz) made the resampler consume
+       * under half of each frame's samples and discard the rest at the
+       * DACPrepareFrame ring reset -- a 60 Hz chop over ALL slave-mode
+       * DSP output (CD music and synth SFX alike), heard as loud
+       * crunched static on Jaguar CD titles. */
+      i2s_rate = 44100.0;
+   }
    i2sRateRatio = i2s_rate / (double)DAC_AUDIO_RATE;
 
    /* Clamp to a sane range to avoid division by zero or absurd values.
@@ -137,6 +162,8 @@ static void DACCaptureSample(int16_t left, int16_t right)
    i2sRingR[i2sWritePos & I2S_RING_MASK] = right;
    i2sWritePos++;
    i2sWriteCount++;
+   if (left != 0 || right != 0)
+      i2sNonZeroCount++;
 }
 
 void DSPSampleCallback(void)
@@ -208,6 +235,7 @@ void DACPrepareFrame(int length)
    i2sRingR[1] = (int16_t)(*rtxd);
    i2sWritePos = 2;
    i2sWriteCount = 2;
+   i2sNonZeroCount = 0;
    i2sPhase = i2sPhase - (double)(uint32_t)i2sPhase;
 
    /* Refresh rate ratio in case SCLK was written between frames */
@@ -263,11 +291,21 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
       DACUpdateSCLKRate();
       JERRYI2SInterruptTimer = -1;
       RemoveCallback(JERRYI2SCallback);
-      JERRYI2SCallback();
+      /* Restart the timer chain one I2S frame period out; a synchronous
+       * JERRYI2SCallback() here would assert the SSI interrupt inside
+       * the very instruction that wrote SCLK (see jerry.c). */
+      JERRYRescheduleI2S();
    }
    else if (offset == SMODE + 2)
    {
+      /* CDDA-DIAG: SMODE master/slave switches are the CD_jeri fingerprint
+       * (doc 06 p.7: slave $14 = CD data flows to the I2S port). Rare. */
+      if ((*smode ^ data) & 0x01)
+         LOG_DBG("[CDDA] SMODE $%04X -> $%04X (%s)\n", *smode, data,
+                 (data & 0x01) ? "INTERNAL/master" : "slave: CD -> I2S");
       *smode = data;
+      /* The resample ratio depends on master/slave (see DACUpdateSCLKRate) */
+      DACUpdateSCLKRate();
    }
 }
 
@@ -286,7 +324,15 @@ uint16_t DACReadWord(uint32_t offset, uint32_t who)
    if (offset == LRXD || offset == RRXD)
       return 0x0000;
    else if (offset == LRXD + 2)
+   {
+      /* CDDA-DIAG: the CD-audio mix gate opening shows up as a flood of
+       * LRXD reads from the DSP ISR; near-zero reads = gate closed. */
+      static uint32_t lrxdReads = 0;
+      lrxdReads++;
+      if (lrxdReads <= 5 || (lrxdReads % 100000) == 0)
+         LOG_DBG("[CDDA] LRXD read #%u val=$%04X who=%u\n", lrxdReads, lrxd, who);
       return lrxd;
+   }
    else if (offset == RRXD + 2)
       return rrxd;
    else if (offset == SCLK)
@@ -308,23 +354,90 @@ size_t DACStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, bufferDone);
 	STATE_SAVE_VAR(buf, i2sWritePos);
 	STATE_SAVE_VAR(buf, i2sWriteCount);
+	STATE_SAVE_VAR(buf, i2sNonZeroCount);
 	STATE_SAVE_VAR(buf, i2sPhase);
 	STATE_SAVE_VAR(buf, i2sRateRatio);
+
+	/* v8: the I2S hardware registers themselves.  They live in
+	 * jagMemSpace at $F1A148-$F1A157, which no STATE_SAVE_BUF covers —
+	 * jerry_ram_8 is a separate array, not that window — so before this
+	 * they survived a load only by accident, as whatever the previous
+	 * run left behind.  See STATE_VERSION_DAC_REGISTERS. */
+	STATE_SAVE_VAR(buf, *ltxd);
+	STATE_SAVE_VAR(buf, *rtxd);
+	STATE_SAVE_VAR(buf, *sclk);
+	STATE_SAVE_VAR(buf, *smode);
+	STATE_SAVE_VAR(buf, lrxd);
+	STATE_SAVE_VAR(buf, rrxd);
+	STATE_SAVE_VAR(buf, sstat);
 
 	return (size_t)(buf - start);
 }
 
-size_t DACStateLoad(const uint8_t *buf)
+size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion)
 {
 	const uint8_t *start = buf;
 
 	STATE_LOAD_VAR(buf, bufferIndex);
 	STATE_LOAD_VAR(buf, numberOfSamples);
 	STATE_LOAD_VAR(buf, bufferDone);
-	STATE_LOAD_VAR(buf, i2sWritePos);
-	STATE_LOAD_VAR(buf, i2sWriteCount);
-	STATE_LOAD_VAR(buf, i2sPhase);
-	STATE_LOAD_VAR(buf, i2sRateRatio);
+	/* The I2S resampler fields were added in
+	 * STATE_VERSION_DAC_I2S_RESAMPLER; a v1 state (written only by
+	 * release v2.2.0) carries none of them.  Consume nothing and fall
+	 * back to the DACInit() defaults — DACPrepareFrame re-seeds
+	 * writePos/writeCount, truncates the phase, and re-derives the rate
+	 * ratio from the restored SMODE/SCLK registers at the top of the
+	 * next retro_run, before any sample is resampled, so the defaults
+	 * never reach the audio output.  Reading fields the layout does not
+	 * carry would desync every module that follows. */
+	if (stateVersion >= STATE_VERSION_DAC_I2S_RESAMPLER)
+	{
+		STATE_LOAD_VAR(buf, i2sWritePos);
+		STATE_LOAD_VAR(buf, i2sWriteCount);
+	}
+	else
+	{
+		i2sWritePos = 0;
+		i2sWriteCount = 0;
+	}
+	/* i2sNonZeroCount was added in STATE_VERSION_DAC_I2S_NONZEROCOUNT.
+	 * Older states do not carry it, so consume nothing and start from the
+	 * value DACPrepareFrame would establish; reading it would desync every
+	 * module that follows. */
+	if (stateVersion >= STATE_VERSION_DAC_I2S_NONZEROCOUNT)
+		STATE_LOAD_VAR(buf, i2sNonZeroCount);
+	else
+		i2sNonZeroCount = 0;
+	if (stateVersion >= STATE_VERSION_DAC_I2S_RESAMPLER)
+	{
+		STATE_LOAD_VAR(buf, i2sPhase);
+		STATE_LOAD_VAR(buf, i2sRateRatio);
+	}
+	else
+	{
+		i2sPhase = 0.0;
+		i2sRateRatio = 1.0;
+	}
+
+	/* The I2S hardware registers (see DACStateSave).  Layouts older than
+	 * STATE_VERSION_DAC_REGISTERS carry no slot for them; consume nothing
+	 * and leave them as they are, which is the behaviour those states were
+	 * written against.  Reading fields the layout does not carry would
+	 * desync every module that follows. */
+	if (stateVersion >= STATE_VERSION_DAC_REGISTERS)
+	{
+		STATE_LOAD_VAR(buf, *ltxd);
+		STATE_LOAD_VAR(buf, *rtxd);
+		STATE_LOAD_VAR(buf, *sclk);
+		STATE_LOAD_VAR(buf, *smode);
+		STATE_LOAD_VAR(buf, lrxd);
+		STATE_LOAD_VAR(buf, rrxd);
+		STATE_LOAD_VAR(buf, sstat);
+		/* The resample ratio is derived from SCLK/SMODE, so re-derive it
+		 * now that they hold the restored values rather than the ones the
+		 * previous run left behind. */
+		DACUpdateSCLKRate();
+	}
 
 	return (size_t)(buf - start);
 }

@@ -1,0 +1,471 @@
+/* Virtual Jaguar libretro — site stylesheet.
+ * Self-contained: no external fonts, JS, or trackers.
+ *
+ * Design: dark CRT-terminal foundation ("1994 Atari dealer kiosk, restored").
+ * Jaguar red does real work: rules, hovers, glows, table headers.  Display
+ * headings use a condensed system stack (Impact and friends) with
+ * letterspacing; numerics and readouts are monospace.  DARK is the primary
+ * theme; light is a competent fallback via prefers-color-scheme.  The page
+ * texture (scanlines + vignette) is pure CSS gradients, dark theme only. */
+
+:root {
+  --bg: #0a0a0d;
+  --bg-alt: #121218;
+  --fg: #d9d9de;
+  --fg-muted: #9a9aa4;
+  --accent: #e52521;         /* Jaguar red — rules, fills, large text */
+  --accent-bright: #ff5c47;  /* links / small text on dark (AA 6.4:1) */
+  --accent-soft: #e5252120;
+  --accent-glow: rgba(229, 37, 33, 0.45);
+  --border: #26262e;
+  --good: #4ac26b;
+  --good-bg: #4ac26b1a;
+  --warn: #e3b341;
+  --warn-bg: #e3b3411a;
+  --bad: #ff7b72;
+  --bad-bg: #ff7b721a;
+  --code-bg: #1a1a22;
+  --max-width: 62rem;
+  --font-display: "Impact", "Haettenschweiler", "Franklin Gothic Medium",
+    "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f3f0;
+    --bg-alt: #ffffff;
+    --fg: #1c1c1e;
+    --fg-muted: #595960;
+    --accent: #c8102e;
+    --accent-bright: #b3140f;  /* links on light (AA 6.1:1) */
+    --accent-soft: #c8102e17;
+    --accent-glow: rgba(200, 16, 46, 0.18);
+    --border: #d9d7d2;
+    --good: #1a7f37;
+    --good-bg: #1a7f3714;
+    --warn: #9a6700;
+    --warn-bg: #9a670014;
+    --bad: #b42318;
+    --bad-bg: #b4231814;
+    --code-bg: #eceae6;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+/* CRT page texture: faint scanlines + corner shading.  Dark theme only —
+ * disabled in light mode below.  Pure CSS, no images, no requests. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483647;
+  background:
+    repeating-linear-gradient(0deg,
+      rgba(255, 255, 255, 0.016) 0 1px,
+      transparent 1px 3px);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2147483646;
+  background: radial-gradient(ellipse 120% 90% at 50% 10%,
+    transparent 55%, rgba(0, 0, 0, 0.28));
+}
+@media (prefers-color-scheme: light) {
+  body::before, body::after { display: none; }
+}
+
+a { color: var(--accent-bright); text-decoration: none; }
+a:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+code, pre { font-family: var(--font-mono); font-size: 0.9em; }
+
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
+
+pre {
+  background: var(--code-bg);
+  padding: 0.9rem 1.1rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+pre code { background: none; padding: 0; }
+
+/* ---- Header / nav ---- */
+
+.site-header {
+  border-bottom: 2px solid var(--accent);
+  background: var(--bg-alt);
+}
+
+.site-header .inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.8rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.5rem;
+}
+
+.site-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.25rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.site-title .jag { color: var(--accent-bright); }
+.site-title:hover { text-decoration: none; }
+
+.site-nav { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-left: auto; }
+.site-nav a {
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.site-nav a:hover { color: var(--accent-bright); }
+.site-nav a.active { color: var(--accent-bright); }
+
+/* ---- Layout ---- */
+
+main {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: clamp(2.4rem, 6vw, 4rem);
+  line-height: 1.08;
+  margin: 0.8rem 0 0.5rem;
+  text-shadow: 0 0 28px var(--accent-glow);
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 1.45rem;
+  margin-top: 2.4rem;
+  padding-left: 0.6rem;
+  border-left: 5px solid var(--accent);
+}
+
+h3 { font-size: 1.05rem; margin-top: 1.6rem; }
+
+.lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 46rem; }
+
+.hero { padding: 1.6rem 0 0.5rem; }
+
+.hero .kicker {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent-bright);
+}
+
+.hero-actions { margin: 1.4rem 0 0.4rem; }
+
+/* ---- Hero effects scaffolding ----
+ * Real DOM content (the H1 span, the screenshot <img>) is always present and
+ * is the no-JS/no-GL page.  Effect canvases overlay it: .fx-out is the
+ * WebGL output (transparent until an engine draws), .fx-capture is the
+ * hidden capture surface used by the html-in-canvas shim in hero-fx.js.
+ * hero-fx.js adds .fx-on only after an engine successfully attaches; the
+ * content then fades with opacity (kept in the accessibility tree). */
+
+.fx-capture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;   /* keeps layout geometry, never painted */
+}
+
+.fx-out {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;       /* transparent until the effect actually draws */
+  pointer-events: none;
+}
+
+.fx-title { position: relative; }
+/* Block, not inline: the effect engine reads clientWidth off this element,
+ * and inline elements report 0 (which would clamp the effect to a sliver). */
+.fx-title > span { display: block; }
+.fx-title.fx-on > span { opacity: 0; }
+
+.crt-frame { margin: 1.6rem 0 0; max-width: none; }
+.crt-screen {
+  position: relative;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #101014;   /* tube color behind the barrel-distorted corners */
+  box-shadow: 0 0 48px var(--accent-glow),
+              0 0 4px rgba(0, 0, 0, 0.8);
+}
+.crt-screen img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  image-rendering: pixelated;
+}
+.crt-frame.fx-on img { opacity: 0; }
+.crt-frame figcaption {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  margin-top: 0.5rem;
+  text-transform: uppercase;
+}
+
+/* ---- Cards / feature grid ---- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.card {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1rem 1.15rem;
+  transition: border-color 120ms ease;
+}
+.card:hover { border-color: var(--accent); }
+.card h3 { margin: 0 0 0.4rem; font-size: 1.02rem; }
+.card p { margin: 0 0 0.5rem; font-size: 0.94rem; color: var(--fg-muted); }
+.card .src { font-size: 0.8rem; font-family: var(--font-mono); }
+.card .src a { white-space: nowrap; }
+
+/* ---- Badges ---- */
+
+.badge {
+  display: inline-block;
+  padding: 0.15em 0.6em;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge.good  { color: var(--good); background: var(--good-bg); }
+.badge.warn  { color: var(--warn); background: var(--warn-bg); }
+.badge.bad   { color: var(--bad);  background: var(--bad-bg); }
+.badge.plain { color: var(--fg-muted); background: var(--code-bg); }
+.badge.review{ color: var(--warn); background: var(--warn-bg); }
+
+/* ---- Tables: terminal readouts ---- */
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--bg-alt);
+  font-size: 0.9rem;
+}
+th, td {
+  text-align: left;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  background: var(--code-bg);
+  border-bottom: 2px solid var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  white-space: nowrap;
+}
+td { font-variant-numeric: tabular-nums; }
+td code { font-size: 0.85em; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--accent-soft); }
+
+.footnote, .caveat {
+  font-size: 0.88rem;
+  color: var(--fg-muted);
+}
+
+.caveat {
+  border-left: 3px solid var(--warn);
+  background: var(--warn-bg);
+  color: var(--fg);
+  padding: 0.7rem 1rem;
+  border-radius: 0 4px 4px 0;
+  margin: 1.2rem 0;
+}
+
+.evidence {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 0.7rem 1rem;
+  border-radius: 0 4px 4px 0;
+  margin: 1.2rem 0;
+  font-size: 0.92rem;
+}
+
+/* ---- Stats strip: big phosphor numbers ---- */
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1.6rem 0;
+}
+.stat {
+  flex: 1 1 10rem;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.9rem 1rem;
+}
+.stat .n {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 2.6rem;
+  line-height: 1.1;
+  letter-spacing: 0.02em;
+  color: var(--accent-bright);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 10px var(--accent-glow), 0 0 32px var(--accent-glow);
+}
+.stat .l { font-size: 0.85rem; color: var(--fg-muted); }
+
+/* ---- Images / A-B figures ---- */
+
+figure { margin: 1.4rem 0; }
+figure img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  image-rendering: pixelated;
+}
+figure.smooth img { image-rendering: auto; }
+figcaption { font-size: 0.86rem; color: var(--fg-muted); margin-top: 0.45rem; }
+
+.ab-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.ab-pair figure { margin: 0; }
+.ab-pair .label {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  margin-bottom: 0.35rem;
+}
+
+/* ---- Footer ---- */
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+}
+.site-footer .inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 1.2rem 1.25rem 2rem;
+}
+
+/* ---- Buttons: chunky ---- */
+
+.btn {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.88rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.6rem 1.3rem;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  margin: 0.4rem 0.6rem 0.4rem 0;
+  transition: box-shadow 120ms ease, background 120ms ease, color 120ms ease;
+}
+.btn:hover {
+  text-decoration: none;
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+.btn.secondary {
+  background: transparent;
+  color: var(--accent-bright);
+}
+.btn.secondary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn, .card { transition: none; }
+}

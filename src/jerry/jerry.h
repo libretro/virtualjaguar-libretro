@@ -41,11 +41,13 @@ enum
 };
 
 bool JERRYIRQEnabled(int irq);
+bool JERRYIRQRequestActive(void);
 void JERRYSetPendingIRQ(int irq);
 
 // This should stay inside this file, but it's here for now...
 // Need to set up an interface function so that this can go back
 void JERRYI2SCallback(void);
+void JERRYRescheduleI2S(void);
 
 // External variables
 

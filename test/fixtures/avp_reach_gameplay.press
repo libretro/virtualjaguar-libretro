@@ -1,0 +1,67 @@
+# Alien vs Predator (1994).jag — reach sustained Alien first-person gameplay.
+# BIOS off (core default). Frames are absolute from boot.
+#
+# Timeline (measured on develop @ 4eab779):
+#   ~240-480  title art animates
+#   ~720      main menu (SELECT CHARACTER)
+#   ~900-1100 character select / confirm
+#   ~1140-1500 briefing ("LOADING SIMULATION... PRESS FIRE")
+#   ~1500+    in-game; hold d-pad for sustained motion
+#   3000-6300 motion continues (see "keep-alive" below)
+#
+# Keep-alive: the input below runs to frame ~6300 so that runs longer than
+# 3000 frames still land on a *live* scene.  Without it the last press ends
+# at 3000, the player stands still, and every later frame is byte-identical
+# to frame ~3050 (the renderer keeps re-blitting the same view, so the core's
+# crash watchdog logs `video_stall` even though nothing is wrong).  A frozen
+# frame silently invalidates any measurement that assumes motion.  Presses
+# past the run length simply never fire, so a 3000-frame run is unaffected.
+
+780:b:10
+900:b:10
+1020:b:10
+1140:b:10
+1260:b:15
+1380:b:15
+1500:b:15
+1620:b:15
+1740:b:10
+1860:up:120
+1980:right:120
+2100:down:120
+2220:left:120
+2340:up:120
+2460:right:120
+2580:up:120
+2700:left:120
+2820:right:120
+2940:up:60
+
+# keep-alive (see header): sustained motion out to ~frame 6300
+3060:up:120
+3180:right:120
+3300:up:120
+3420:left:120
+3540:up:120
+3660:right:120
+3780:down:120
+3900:left:120
+4020:up:120
+4140:right:120
+4260:up:120
+4380:left:120
+4500:up:120
+4620:right:120
+4740:down:120
+4860:left:120
+4980:up:120
+5100:right:120
+5220:up:120
+5340:left:120
+5460:up:120
+5580:right:120
+5700:down:120
+5820:left:120
+5940:up:120
+6060:right:120
+6180:up:120

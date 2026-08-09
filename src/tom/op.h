@@ -24,6 +24,7 @@ uint32_t OPGetListPointer(void);
 void OPSetStatusRegister(uint32_t data);
 uint32_t OPGetStatusRegister(void);
 void OPSetCurrentObject(uint64_t object);
+void OPNotifyOBFWrite(void);
 
 #define OPFLAG_RELEASE		8					// Bus release bit
 #define OPFLAG_TRANS		4					// Transparency bit

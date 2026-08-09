@@ -1,0 +1,34 @@
+# Dragon's Lair (USA).cue -- drive the attract movie into gameplay and die,
+# forcing a scene BRANCH (a near-full-stroke seek to the death clip and back).
+#
+# HLE boot mode (core default: virtualjaguar_cd_boot_mode=hle).
+# For the real-BIOS path use dragons_lair_death_branch_bios.press -- BIOS boot
+# is +439 fields, and `--bios` alone does NOT switch CD boot mode; that needs
+# --option virtualjaguar_cd_boot_mode=bios.
+#
+# Verified on libretro/develop @ 674f600 -- see docs/fmv-drift-notes.md §10.
+#
+# Timeline (fields, absolute from boot, HLE):
+#   ~500/560  pause x2 leaves the attract loop and starts a game
+#   ~700      `a` is the first QTE input; the branch fires the same field
+#   ~700      BRANCH: CD read jumps LBA 16026 -> 154061 (+138035 sectors)
+#   ~828      BRANCH: LBA 154061 -> 20491 (retry scene)
+#   thereafter the die/retry loop self-repeats every ~1171 fields with no
+#   further input: branches at ~1871, ~2000, ~3043, ~3172, ...
+#
+# Success criterion (objective, not visual): a CD read whose LBA delta from
+# the previous read exceeds 100000 sectors.  Steady-state streaming reads step
+# 339-428 sectors and the attract-loop restart steps 5171, so the separation is
+# ~2.5 orders of magnitude.  A no-press control run produces NO such jump.
+#
+#   bash test/tools/run_dl_branch_fixture.sh ./virtualjaguar_libretro.dylib
+#
+# NOTE for HLE runs: the `seeks`/`seekstarts`/`seekdones` columns of
+# fmv_seek_probe's CSV are incremented only by the BUTCH $12xx register path in
+# src/cd/cdrom.c, which HLE bypasses entirely.  They are structurally 0 in HLE
+# whether or not a branch happened -- do not use them as the HLE gate.  Use the
+# HLE_READ trace event's LBA instead (VJ_CD_TRACE=1 VJ_CD_TRACE_LIVE=1).
+
+500:pause
+560:pause
+700:a

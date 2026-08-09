@@ -27,8 +27,9 @@ void (*eeprom_dirty_cb)(void) = NULL;
 
 // Private function prototypes
 static void EEPROMSave(void);
-static void eeprom_set_di(uint32_t state);
+static void eeprom_set_di(uint32_t data);
 static void eeprom_set_cs(uint32_t state);
+static void eeprom_clock(void);
 static uint32_t eeprom_get_do(void);
 
 enum { EE_STATE_START = 1, EE_STATE_OP_A, EE_STATE_OP_B, EE_STATE_0, EE_STATE_1,
@@ -102,6 +103,14 @@ uint8_t EepromReadByte(uint32_t offset)
 	case 0xF14001:
 		return eeprom_get_do();
 	case 0xF14801:
+		/* A read of the GPIO0 strobe ($F14800 word; this byte-level
+		 * handler sees its low byte, $F14801) is the EEPROM's serial
+		 * clock: the Atari-standard driver does `tst.w $F14800` before
+		 * sampling DO at $F14000 for each of the 16 data bits, and the
+		 * word read reaches us as its constituent bytes.  Only this
+		 * strobe advances the output shifter -- sampling DO does not
+		 * (see eeprom_get_do). */
+		eeprom_clock();
 		break;
 	case 0xF15001:
 		eeprom_set_cs(1);
@@ -319,6 +328,12 @@ static void eeprom_set_di(uint32_t data)
 		}
 
 		break;
+	case EE_STATE_2_0:
+		/* SK edge during the data-out phase of a READ: DI is ignored,
+		 * the edge just shifts the next bit onto DO (some drivers
+		 * clock reads by writing $F14800 instead of reading it). */
+		eeprom_clock();
+		break;
 	default:
 		jerry_ee_state = EE_STATE_OP_A;
 	}
@@ -338,6 +353,18 @@ static void eeprom_set_cs(uint32_t state)
 }
 
 
+/* Sample the DO (data out) line -- a read of $F14000/$F14001.
+ *
+ * Sampling must NOT advance the read shifter.  On the real 93-series
+ * part DO only changes on SK clock edges (the driver's `tst.w $F14800`
+ * strobe, see eeprom_clock); a read of the joystick register merely
+ * observes the pin.  The old model shifted one bit out per DO sample,
+ * so a joystick poll from the game's VBL/timer interrupt landing inside
+ * an in-flight READ transaction stole data bits: the shifter ran dry
+ * early and the mainline driver's remaining samples returned the idle
+ * DO level (1).  Raiden's game-over settings reload read its EEPROM
+ * music-enabled option as $FF that way and silenced the music sequencer
+ * for the rest of the session (SFX unaffected). */
 static uint32_t eeprom_get_do(void)
 {
 	uint16_t data = 1;
@@ -348,19 +375,38 @@ static uint32_t eeprom_get_do(void)
 		data = 1;
 		break;
 	case EE_STATE_BUSY:
+		/* Ready/busy handshake after a write/erase: DO reads busy (0)
+		 * once, then the part reports ready.  No clock involved. */
 		jerry_ee_state = EE_STATE_START;
 		data = 0;
 		break;
 	case EE_STATE_2_0:
-		jerry_ee_data_cnt--;
-		data = (eeprom_ram[jerry_ee_address_data] >> jerry_ee_data_cnt) & 0x01;
-
-		if (!jerry_ee_data_cnt)
-			jerry_ee_state = EE_STATE_START;
+		/* Data-out phase: DO presents a dummy 0 until the first clock
+		 * strobe, then the addressed word MSB-first (93C46 data sheet).
+		 * jerry_ee_data_cnt holds the bits not yet clocked out. */
+		if (jerry_ee_data_cnt >= 16)
+			data = 0;
+		else
+			data = (eeprom_ram[jerry_ee_address_data] >> jerry_ee_data_cnt) & 0x01;
 		break;
 	}
 
 	return data;
+}
+
+
+/* One SK clock edge without meaningful DI -- a read of $F14800.
+ * Advances the output shifter during the data-out phase of a READ
+ * transaction; ignored in every other state. */
+static void eeprom_clock(void)
+{
+	if (jerry_ee_state == EE_STATE_2_0)
+	{
+		if (jerry_ee_data_cnt)
+			jerry_ee_data_cnt--;
+		else
+			jerry_ee_state = EE_STATE_START;
+	}
 }
 
 #include "state.h"

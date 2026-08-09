@@ -36,6 +36,7 @@ void JaguarExecuteNew(void);
 extern int32_t jaguarCPUInExec;
 extern char * jaguarEepromsPath;
 extern bool jaguarCartInserted;
+extern bool jaguarMemTrackInserted;
 extern bool bpmActive;
 extern uint32_t bpmAddress1;
 
@@ -57,6 +58,30 @@ extern uint32_t jaguarLoadedRAMStart, jaguarLoadedRAMEnd;
 
 #define SYSTEM_CLOCK_RATE		(vjs.hardwareTypeNTSC ? RISC_CLOCK_RATE_NTSC : RISC_CLOCK_RATE_PAL)
 #define M68K_CLOCK_RATE			(vjs.hardwareTypeNTSC ? M68K_CLOCK_RATE_NTSC : M68K_CLOCK_RATE_PAL)
+
+/* Clock-scale enhancement levers (issue #314), in percent of the stock
+ * rate (100 = stock).  Config, not state: set from the core options in
+ * libretro.c::check_variables(), never serialized.  Applied ONLY where
+ * execution budgets are handed out (JaguarExecuteNew() timeslices and
+ * the 68K->GPU 2:1 coupling in GPUSyncToM68K()) -- bus costs and all
+ * event scheduling (video, PIT, UART, I2S) stay on the real, unscaled
+ * sysclock.  For the per-access charges that are deducted from a
+ * SCALED budget (bus_arbiter_m68k_access() wait states, the GPU bus
+ * stall in gpu.c) wall-time invariance is enforced by converting the
+ * sysclk charge into the consumer's scaled cycle domain -- see the
+ * cycle-domain contract in bus_arbiter.h (issue #318).  At 100 the
+ * integer arithmetic (c * 100 / 100) is an exact identity, so 1x is
+ * bit-identical to the unscaled build. */
+extern uint32_t m68kClockScalePct;
+void M68KClockScaleReset(void);
+/* Drop any pending 16-bit-port low-word latch (GPU/DSP local RAM writes);
+ * called on reset and on savestate load so post-load execution cannot
+ * depend on pre-load history. */
+void M68KResetRiscWordLatch(void);
+extern uint32_t riscClockScalePct;
+
+#define SCALE_M68K_CYCLES(c)	((uint32_t)(((uint64_t)(c) * m68kClockScalePct) / 100u))
+#define SCALE_RISC_CYCLES(c)	((uint32_t)(((uint64_t)(c) * riscClockScalePct) / 100u))
 
 // Stuff for IRQ handling
 

@@ -100,29 +100,43 @@ pending (WO, write 1 to clear).
 | Bit | Name         | Enum           | Description                      |
 |-----|--------------|----------------|----------------------------------|
 | 0   | J_EXTENA     | `IRQ2_EXTERNAL` (0x01) | External interrupt         |
-| 1   | J_TIM1ENA    | `IRQ2_TIMER1`   (0x04) | Timer 1 (sample)           |
-| 2   | J_TIM2ENA    | `IRQ2_TIMER2`   (0x08) | Timer 2 (tempo)            |
-| 3   | J_ASYNENA    | `IRQ2_ASI`      (0x10) | Async serial (UART)        |
-| 4   | J_SYNENA     | `IRQ2_SSI`      (0x20) | Sync serial (I2S)          |
+| 1   | J_DSPENA     | `IRQ2_DSP`      (0x02) | DSP                        |
+| 2   | J_TIM1ENA    | `IRQ2_TIMER1`   (0x04) | Timer 1 (sample)           |
+| 3   | J_TIM2ENA    | `IRQ2_TIMER2`   (0x08) | Timer 2 (tempo)            |
+| 4   | J_ASYNENA    | `IRQ2_ASI`      (0x10) | Async serial (UART)        |
+| 5   | J_SYNENA     | `IRQ2_SSI`      (0x20) | Sync serial (I2S)          |
 
-NOTE: The register comment in `jerry.c` maps 5 bits (0--4) for enable.
-The `IRQ2_` enum in `jerry.h` defines 6 values including `IRQ2_DSP` (0x02),
-but the register comment does not show a corresponding enable bit for it.
-The actual write handler takes `data & 0xFF` as the mask, so all 8 low bits
-are stored.
+The bit number is always `log2(enum value)` -- the `IRQ2_` values in
+`jerry.h` are the authoritative encoding. The write handler takes
+`data & 0xFF` as the mask, so all 8 low bits are stored.
 
 ### Clear Bits (high byte, WO)
 
-| Bit | Name         | Description                          |
-|-----|--------------|--------------------------------------|
-| 8   | J_EXTCLR     | Clear external interrupt pending     |
-| 9   | J_TIM1CLR    | Clear timer 1 pending                |
-| 10  | J_TIM2CLR    | Clear timer 2 pending                |
-| 11  | J_ASYNCLR    | Clear UART pending                   |
-| 12  | J_SYNCLR     | Clear I2S pending                    |
+Each clear bit sits exactly 8 bits above its enable bit, because the write
+handler is `jerryPendingInterrupt &= ~(data >> 8)`. So the value to write
+is simply the enable value shifted left by 8.
+
+| Bit | Name         | Value  | Description                          |
+|-----|--------------|--------|--------------------------------------|
+| 8   | J_EXTCLR     | 0x0100 | Clear external interrupt pending     |
+| 9   | J_DSPCLR     | 0x0200 | Clear DSP pending                    |
+| 10  | J_TIM1CLR    | 0x0400 | Clear timer 1 pending                |
+| 11  | J_TIM2CLR    | 0x0800 | Clear timer 2 pending                |
+| 12  | J_ASYNCLR    | 0x1000 | Clear UART pending                   |
+| 13  | J_SYNCLR     | 0x2000 | Clear I2S pending                    |
 
 Write pattern: set enable bits in low byte to arm interrupt sources; write 1
-to high-byte bits to acknowledge/clear pending interrupts.
+to high-byte bits to acknowledge/clear pending interrupts. Note that writing
+the *enable* bit does not clear anything -- clearing timer 1 takes `$0400`,
+not `$0004`.
+
+An interrupt handler that omits the clear bit hangs the 68K. JERRY keeps
+driving TOM INT1 bit 4 while an enabled source has an uncleared latch (see
+`TOMPendingMask()` in `src/tom/tom.c`), and `m68k_execute()` re-presents that
+level-2 request at every instruction boundary -- so the CPU re-enters the
+handler forever without retiring a single mainline instruction. Acking only
+TOM's INT1 copy is not enough. `test/acid/tests/timing/pit_countdown_rate.s`
+is the regression guard for this.
 
 ### JERRY-to-TOM Interrupt Routing
 

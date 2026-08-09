@@ -1,13 +1,61 @@
 name: Release
 
+# Two publication paths share one build matrix:
+#   push tag v*        -> the `release` job: a real, permanent GitHub release
+#   push to develop    -> the `nightly` job: the rolling `nightly` prerelease
+# The build/vita-build/switch-build jobs below are trigger-agnostic; only the
+# final publishing job differs.  The nightly tag is deliberately NOT named
+# v-anything so a CI-pushed tag can never re-enter the release path.
+#
+# workflow_dispatch exists ONLY to re-publish the nightly, so it must be run
+# with the branch set to `develop`.  GitHub defaults the branch picker to the
+# repo default (`master` here), and both publishing jobs are ref-gated, so a
+# dispatch left on the default would build all 16 targets and publish nothing.
+# The `guard` job below fails that case immediately instead of burning the
+# matrix.  To test-build an arbitrary branch, use c-cpp.yml — it has its own
+# workflow_dispatch and runs on PRs.
 on:
   push:
     tags: ['v*']
+    branches: [develop]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+# Tag pushes always run to completion — a release build must never be
+# cancelled.  Develop pushes cancel superseded runs, because only the newest
+# commit's binaries matter for a rolling prerelease and an in-flight build of
+# an older tip is pure waste.  This deliberately differs from c-cpp.yml /
+# acid-test.yml, which let develop pushes finish so there is a green-or-red
+# record per commit: that record is their job, not this one's.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/develop' }}
+
 jobs:
+  # ----------------------------------------------------------------
+  # Fail a pointless dispatch in seconds rather than after 16 builds.
+  # Only reachable via workflow_dispatch: push events always arrive on a
+  # ref one of the two publishing jobs accepts.
+  # ----------------------------------------------------------------
+  guard:
+    name: Check dispatch ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a dispatch that would publish nothing
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' }}
+        run: |
+          # Built up in one variable because a ::error:: annotation has to be a
+          # single line to render as one.
+          MSG="Run this workflow with the branch set to 'develop'."
+          MSG="$MSG Both publishing jobs are ref-gated (tags v* -> release,"
+          MSG="$MSG develop -> nightly), so a dispatch from '${GITHUB_REF_NAME}'"
+          MSG="$MSG would build all 16 targets and publish nothing."
+          MSG="$MSG To test-build a branch, use the C/C++ CI workflow instead."
+          echo "::error::$MSG"
+          exit 1
+
   # ----------------------------------------------------------------
   # Native + cross builds (Linux/macOS/Windows/iOS/tvOS/Android/WASM)
   # Each job builds with RELEASE_DEBUG_INFO=1 so we keep -g on the
@@ -15,6 +63,7 @@ jobs:
   # shipped binary.
   # ----------------------------------------------------------------
   build:
+    needs: [guard]
     strategy:
       fail-fast: false
       matrix:
@@ -127,7 +176,7 @@ jobs:
         shell: ${{ matrix.config.shell || 'bash' }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install multilib
         if: matrix.config.multilib
@@ -273,7 +322,7 @@ jobs:
           rm "dist/${DBG}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: virtualjaguar_libretro-${{ matrix.config.platform }}
           path: dist/
@@ -284,11 +333,12 @@ jobs:
   # ----------------------------------------------------------------
   vita-build:
     name: build-vita
+    needs: [guard]
     runs-on: ubuntu-latest
     container:
       image: vitasdk/vitasdk:latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Build
         env:
@@ -310,7 +360,7 @@ jobs:
           rm "dist/${OUT}.debug"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: virtualjaguar_libretro-vita
           path: dist/
@@ -321,11 +371,12 @@ jobs:
   # ----------------------------------------------------------------
   switch-build:
     name: build-switch
+    needs: [guard]
     runs-on: ubuntu-latest
     container:
       image: devkitpro/devkita64:latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Build
         env:
@@ -346,7 +397,7 @@ jobs:
           rm "dist/${OUT}.debug"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: virtualjaguar_libretro-switch
           path: dist/
@@ -360,12 +411,17 @@ jobs:
   # ----------------------------------------------------------------
   release:
     needs: [build, vita-build, switch-build]
+    # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
+    # tag (release-notes lookup, release title, `gh release create <TAG>`), so
+    # this guard is what keeps a develop push from creating a release literally
+    # named "develop".  The nightly job handles that case instead.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
 
@@ -391,7 +447,15 @@ jobs:
           cd release
           # Deterministic ordering, two-space format compatible with
           # `sha256sum -c SHA256SUMS.txt` on Linux + Mac (with coreutils).
-          sha256sum -- *  | sort -k 2 > SHA256SUMS.txt
+          #
+          # Build it OUTSIDE the directory and move it in.  Redirecting straight
+          # to ./SHA256SUMS.txt races: the shell starts both pipeline stages at
+          # once, so `sort`'s redirect can create the (empty) file before
+          # `sha256sum`'s glob expands, leaving the manifest listing itself with
+          # the empty-file hash — which then fails `sha256sum --check` on that
+          # one line.  v2.3.2 happened to win the race; nightlies would not.
+          sha256sum -- * | sort -k 2 > "$RUNNER_TEMP/SHA256SUMS.txt"
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
           echo "==> SHA256SUMS.txt:"
           cat SHA256SUMS.txt
 
@@ -445,3 +509,307 @@ jobs:
             --title "${TAG}" \
             --notes-file "${{ steps.prep_body.outputs.body_file }}" \
             release/*
+
+  # ----------------------------------------------------------------
+  # Nightly: same artifacts, published to a single rolling `nightly`
+  # prerelease that is moved onto each new develop tip, plus a pinned
+  # tracking issue that always shows the current build.
+  #
+  # Gating: `needs` covers the build jobs only, so this publishes a
+  # commit that COMPILES on all 16 targets.  It does NOT wait on
+  # c-cpp.yml / acid-test.yml / regression-test.yml, which run
+  # independently on the same push — a commit that builds but fails a
+  # test can still ship a nightly.  The release body says so; do not
+  # upgrade that wording to "passes all CI" without also switching this
+  # to a `workflow_run` trigger (see artifacts.yml for that idiom).
+  # ----------------------------------------------------------------
+  nightly:
+    name: Update nightly prerelease
+    needs: [build, vita-build, switch-build]
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # move the tag, create/update the release
+      issues: write     # update + pin the tracking issue
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: nightly
+      # Must match issue #236's title exactly (including the emoji / [Release]
+      # prefix added by hand). Label lookup is preferred; this is the
+      # fallback if the nightly-tracker label is ever removed.
+      ISSUE_TITLE: '🐈‍⬛  [Release] Nightly builds — download, install, and what they are'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the release body diffs against the commit the
+          # `nightly` tag pointed at on the previous run.
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+
+      - name: Stage release files
+        run: |
+          set -e
+          mkdir -p release
+          find artifacts/ -mindepth 2 -type f -exec cp {} release/ \;
+          # The .info file's display_version names the last TAGGED release, so
+          # shipping it verbatim would label a nightly "v2.3.2".  Rewrite it to
+          # the build's actual identity — this also makes it obvious that a
+          # nightly .info is not the file to PR to libretro-super.
+          if [ -f dist/info/virtualjaguar_libretro.info ]; then
+            sed "s/^display_version = \".*\"/display_version = \"$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)-nightly-${GITHUB_SHA:0:7}\"/" \
+              dist/info/virtualjaguar_libretro.info > release/virtualjaguar_libretro.info
+          fi
+          echo "==> Staged nightly files:"
+          ls -la release/
+
+      - name: Generate SHA256SUMS
+        run: |
+          set -e
+          cd release
+          # Written outside the directory then moved in — see the release job's
+          # copy of this step for why the obvious redirect races.
+          sha256sum -- * | sort -k 2 > "$RUNNER_TEMP/SHA256SUMS.txt"
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Prepare nightly body
+        id: prep_body
+        run: |
+          set -e
+          SHA="${GITHUB_SHA}"
+          SHORT_SHA="${SHA:0:7}"
+          BODY_FILE="$RUNNER_TEMP/nightly_body.md"
+          RUN_URL="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}"
+          BASE_VERSION=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)
+
+          # Where the nightly tag pointed BEFORE this run — captured here
+          # because the next step moves it.
+          PREV_SHA=$(gh api "repos/${REPO}/git/refs/tags/${TAG}" --jq '.object.sha' 2>/dev/null || echo "")
+
+          CHANGES=""
+          if [ -n "$PREV_SHA" ] && [ "$PREV_SHA" != "$SHA" ] \
+            && git cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
+            CHANGES=$(git log --oneline --no-merges "${PREV_SHA}..${SHA}" | head -40)
+          fi
+          [ -n "$CHANGES" ] || CHANGES=$(git log --oneline --no-merges -10)
+
+          {
+            echo "### Nightly \`${SHORT_SHA}\` — \`${BASE_VERSION}\` development build"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Commit** | [\`${SHORT_SHA}\`](${GITHUB_SERVER_URL}/${REPO}/commit/${SHA}) |"
+            echo "| **Built** | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo "| **CI run** | [build log](${RUN_URL}) |"
+            echo "| **Branch** | \`develop\` |"
+            echo
+            P="> Automatic build of the \`develop\` tip, replaced on every push."
+            P="$P It compiled on all 16 targets; it has **not** been through the"
+            P="$P test suite or any manual QA. For a stable build use the"
+            P="$P [latest release](${GITHUB_SERVER_URL}/${REPO}/releases/latest)."
+            echo "$P"
+            echo
+            echo "The core logs its identity as \`${BASE_VERSION} ${SHORT_SHA}\` at startup — quote that line when reporting a bug against a nightly."
+            echo
+            echo "### Changes since the previous nightly"
+            echo
+            echo '```'
+            echo "${CHANGES}"
+            echo '```'
+            echo
+            echo "### Artifacts"
+            echo
+            echo '```'
+            find release -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort
+            echo '```'
+            echo
+            echo "Each platform ships alongside a \`-debug.tar.gz\` of its split debug symbols; extract it next to the binary to get symbolised backtraces."
+            echo
+            echo "### SHA-256 checksums"
+            echo
+            P="Verify with \`sha256sum --check SHA256SUMS.txt\` (Linux) or"
+            P="$P \`shasum -a 256 --check SHA256SUMS.txt\` (macOS). See"
+            P="$P [SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)."
+            echo "$P"
+            echo
+            echo '```'
+            cat release/SHA256SUMS.txt
+            echo '```'
+          } > "$BODY_FILE"
+          echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Move nightly tag
+        run: |
+          set -e
+          # -F (typed) for force so it serialises as a JSON boolean; -f would
+          # send the string "true", which the refs API rejects with 422.
+          gh api "repos/${REPO}/git/refs/tags/${TAG}" \
+            -X PATCH -f sha="${GITHUB_SHA}" -F force=true >/dev/null 2>&1 || \
+          gh api "repos/${REPO}/git/refs" \
+            -X POST -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" >/dev/null
+
+      - name: Publish nightly prerelease
+        run: |
+          set -e
+          TITLE="Nightly ${{ steps.prep_body.outputs.short_sha }}"
+          # Update in place rather than delete-and-recreate: asset names are
+          # deterministic per platform, so --clobber replaces them without ever
+          # leaving /releases/tag/nightly 404ing mid-run, and the release keeps
+          # its id (so anyone watching it stays subscribed).
+          if gh release view "${TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --repo "${REPO}" \
+              --title "${TITLE}" \
+              --notes-file "${{ steps.prep_body.outputs.body_file }}" \
+              --target "${GITHUB_SHA}" \
+              --prerelease --draft=false
+            gh release upload "${TAG}" --repo "${REPO}" release/* --clobber
+            # `gh release edit` leaves published_at at the original create
+            # date, so the Releases list kept showing "Published Aug 1" while
+            # assets/body moved every develop push — looking abandoned under
+            # newer stable tags. Draft→publish is the only API that rewrites
+            # that timestamp; assets stay attached and the id is unchanged.
+            # Window is one round-trip.
+            REL_ID=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id)
+            gh api -X PATCH "repos/${REPO}/releases/${REL_ID}" -F draft=true >/dev/null
+            gh api -X PATCH "repos/${REPO}/releases/${REL_ID}" \
+              -F draft=false -F prerelease=true >/dev/null
+          else
+            gh release create "${TAG}" --repo "${REPO}" \
+              --title "${TITLE}" \
+              --notes-file "${{ steps.prep_body.outputs.body_file }}" \
+              --prerelease \
+              --target "${GITHUB_SHA}" \
+              release/*
+          fi
+
+      - name: Update pinned tracking issue
+        # Never fail the publish over the issue: the binaries are already out.
+        continue-on-error: true
+        run: |
+          set -e
+          SHORT_SHA="${{ steps.prep_body.outputs.short_sha }}"
+          BODY_FILE="$RUNNER_TEMP/issue_body.md"
+          {
+            echo "## Latest nightly"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Build** | [\`${SHORT_SHA}\`](${GITHUB_SERVER_URL}/${REPO}/commit/${GITHUB_SHA}) |"
+            echo "| **Built** | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo "| **Download** | [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) |"
+            echo "| **CI run** | [build log](${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}) |"
+            echo
+            echo "---"
+            echo
+            echo "### What these are"
+            echo
+            P="Every push to \`develop\` rebuilds the core for all 16 supported platforms"
+            P="$P and replaces the single"
+            P="$P [\`nightly\`](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly) prerelease."
+            P="$P There is only ever one nightly — the current tip."
+            echo "$P"
+            echo
+            echo "| | Stable | Nightly |"
+            echo "|---|---|---|"
+            echo "| Source | tagged \`vX.Y.Z\` on \`master\` | every push to \`develop\` |"
+            echo "| Gate | full CI + release checklist | compiles on all 16 targets |"
+            echo "| Frequency | periodic | continuous |"
+            echo "| Use it for | playing | testing a fix before it ships |"
+            echo
+            P="Nightlies are **not** gated on the test suite, the acid suite, or the"
+            P="$P screenshot regression run — those workflows report separately on the"
+            P="$P same commit. A nightly can build cleanly and still be broken."
+            echo "$P"
+            echo
+            echo "### Installing"
+            echo
+            echo "1. Download \`virtualjaguar_libretro-<platform>.<ext>\` for your system from the [\`nightly\` release](${GITHUB_SERVER_URL}/${REPO}/releases/tag/nightly)."
+            P="2. **Rename it**, dropping the \`-<platform>\` part —"
+            P="$P \`virtualjaguar_libretro-linux-x86_64.so\` becomes"
+            P="$P \`virtualjaguar_libretro.so\`. RetroArch pairs a core with its metadata"
+            P="$P by exact basename, so a core left under the download name loads with"
+            P="$P no name, no version and no core options."
+            echo "$P"
+            echo "3. Drop it into RetroArch's \`cores/\` directory, replacing the existing \`virtualjaguar_libretro.<ext>\`."
+            echo "4. Copy \`virtualjaguar_libretro.info\` into RetroArch's \`info/\` directory to see the nightly version string in the core list."
+            echo
+            echo "RetroArch's own Core Updater always serves the **stable** buildbot core. Installing a nightly by hand means the updater may overwrite it later."
+            echo
+            echo "### Reporting a bug in a nightly"
+            echo
+            echo "The core logs its exact identity at startup:"
+            echo
+            echo '```'
+            echo "Virtual Jaguar vX.Y.Z <gitrev>"
+            echo '```'
+            echo
+            P="Include that line — it is the only way to tell which nightly you ran."
+            P="$P A RetroArch log is worth more than a description: the core has a"
+            P="$P watchdog that names the failing subsystem (\`gpu_pc_escape\`,"
+            P="$P \`cd_seek_wedge\`, \`video_stall\`, …) at the moment it breaks."
+            echo "$P"
+            echo
+            echo "### Verifying a download"
+            echo
+            P="Each release lists SHA-256 checksums, and every platform has a matching"
+            P="$P \`-debug.tar.gz\` of split debug symbols. See"
+            P="$P [SECURITY.md](${GITHUB_SERVER_URL}/${REPO}/blob/${{ github.event.repository.default_branch }}/SECURITY.md)"
+            P="$P for verification steps and antivirus false-positive guidance."
+            echo "$P"
+            echo
+            echo "---"
+            echo
+            echo "> Auto-updated by CI on every nightly build. Edits here are overwritten."
+          } > "$BODY_FILE"
+
+          # Find the existing tracker without the search API, which is
+          # eventually-consistent — a miss opens a DUPLICATE issue, and then
+          # another on every run after that, so the lookup has to be exact.
+          #
+          # Label first: filtering is server-side and stays exact no matter how
+          # many issues the repo accumulates.  Exact-title match is the fallback
+          # for the very first run (before the label exists) and for the case
+          # where the label was removed by hand.  Both must miss to duplicate.
+          LABEL=nightly-tracker
+          gh label create "$LABEL" --repo "${REPO}" --color 0E8A16 \
+            --description "Auto-updated nightly build tracker" >/dev/null 2>&1 || true
+
+          NUM=$(gh issue list --repo "${REPO}" --state all --label "$LABEL" \
+                  --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ -z "$NUM" ]; then
+            NUM=$(gh issue list --repo "${REPO}" --state all --limit 500 \
+                    --json number,title \
+                    --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number // empty")
+          fi
+
+          if [ -n "$NUM" ]; then
+            gh issue edit "$NUM" --repo "${REPO}" --body-file "$BODY_FILE" \
+              --add-label "$LABEL" >/dev/null
+          else
+            NUM=$(gh issue create --repo "${REPO}" \
+                    --title "${ISSUE_TITLE}" \
+                    --body-file "$BODY_FILE" \
+                    | grep -oE '[0-9]+$')
+            gh issue edit "$NUM" --repo "${REPO}" --add-label "$LABEL" >/dev/null 2>&1 || \
+              echo "::warning::could not label tracking issue #${NUM}; title match is now the only lookup"
+            echo "==> Created tracking issue #${NUM}"
+          fi
+
+          # Pinning has no REST endpoint; pinIssue is GraphQL-only and caps at
+          # 3 pinned issues per repo.  Re-pinning an already-pinned issue errors
+          # harmlessly, but so does hitting the cap or lacking permission — and
+          # a pinned issue is the whole point, so warn rather than swallow it.
+          ID=$(gh api "repos/${REPO}/issues/${NUM}" --jq '.node_id')
+          # shellcheck disable=SC2016  # $id is a GraphQL variable; it must NOT
+          # be expanded by the shell — gh binds it from the -f id= argument.
+          gh api graphql -f query='mutation($id:ID!){pinIssue(input:{issueId:$id}){issue{number}}}' \
+            -f id="$ID" >/dev/null 2>&1 || \
+            echo "::warning::could not pin issue #${NUM} (already pinned, 3-pin cap, or permission)"
+
+          echo "==> Tracking issue: ${GITHUB_SERVER_URL}/${REPO}/issues/${NUM}"

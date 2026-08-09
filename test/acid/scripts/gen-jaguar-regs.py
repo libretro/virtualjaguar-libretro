@@ -258,8 +258,23 @@ def main():
         out.write("\n")
 
         emit_section(out, "Section 6: JERRY IRQ2 enum bits (JINTCTRL)")
+        out.write(
+            ";; JINTCTRL ($F10020) is a split register: the low byte is the\n"
+            ";; enable mask, the high byte is write-1-to-clear for the same\n"
+            ";; source (jerry.c: `jerryPendingInterrupt &= ~(data >> 8)`), so\n"
+            ";; each _CLR constant is its enable bit shifted left by 8.\n"
+            ";;\n"
+            ";; An IRQ handler MUST write the _CLR bit before returning: JERRY\n"
+            ";; drives TOM INT1 bit 4 for as long as an enabled source has an\n"
+            ";; uncleared latch, and the 68K re-takes a level-2 request at\n"
+            ";; every instruction boundary while that line is asserted.\n"
+            ";; Acknowledging only TOM's INT1 pending bit is not enough.\n\n")
         for k, v in jerry_irq.items():
             emit_equ(out, k, v)
+        out.write("\n")
+        for k, v in jerry_irq.items():
+            emit_equ(out, k + "_CLR", v << 8,
+                     comment="write to JINTCTRL high byte to clear pending")
         out.write("\n")
 
     print(f"wrote {OUT_PATH}")
