@@ -19,9 +19,13 @@ mid-game sound freeze, and damaged CDI V2 rips now booting.
   supersampled with real sub-pixel content (fractional-walk source sampling,
   the "Stage 2" of the design), so 3D titles gain genuine detail; anything
   that doesn't qualify falls back to exact 2×2 box replication. The emulated
+  machine cannot observe the option: a corpus-wide census (#351), a per-frame
   hash gate, and savestate digests prove the 1x path is bit-identical. Combines
+  with True Color. *(Correction 2026-08-09: this file originally described
   the release as box-replication-only with supersampling "in progress"; the
+  supersampling path in fact shipped in this tag — it landed on develop in
   `104ee5d` when #359 was squash-merged on top of the Stage 2 branch. The
+  GitHub release body carries the same correction.)*
 - **OP shadow-resolve hit/miss counters** (#362) make the supersampled
   path's silent-fallback failure mode diagnosable at a glance (verbose
   crash-detect heartbeat), with misses split by cause.
