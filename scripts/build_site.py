@@ -380,6 +380,15 @@ def parse_cart_matrix(path):
             [c.strip() for c in cells]
         if not title:
             die("row %d in %s: empty Title" % (i + 1, path))
+        for st in (hle_stage, bios_stage):
+            # Infrastructure-invalid rows (build-guard refusal, missing PC
+            # evidence) are sweep failures, not title results -- rendering
+            # them at all would publish "Known issue" for titles that are
+            # fine.  Fail the build so the sweep gets fixed and re-run.
+            if st.startswith("? (build_mismatch") or st.startswith("? (no_reg"):
+                die("row %d in %s has invalid-infrastructure stage %r -- "
+                    "re-run cart_boot_matrix.sh against a matching wide-ABI "
+                    "core (make TEST_EXPORTS=1)" % (i + 1, path, st))
         rows.append({"title": title,
                      "hle_stage": hle_stage, "hle_notes": hle_notes,
                      "bios_stage": bios_stage, "bios_notes": bios_notes})
