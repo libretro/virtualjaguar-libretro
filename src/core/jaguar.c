@@ -591,6 +591,14 @@ static void M68KGPURAMSync(unsigned int address, unsigned int length)
    (((a) >= GPU_WORK_RAM_BASE && (a) < GPU_WORK_RAM_BASE + 0x1000) \
     || ((a) >= DSP_WORK_RAM_BASE && (a) < DSP_WORK_RAM_BASE + 0x2000))
 
+/* Not serialised into save states, deliberately.  Note the reason is NOT
+ * "a pending latch cannot outlive a frame boundary" -- it can: an unpaired
+ * write (issue #355's own signature) leaves the latch held indefinitely.
+ * The reason that holds is that dropping it degrades to "the lone write
+ * never landed", which is what the hardware does with an unpaired half.
+ * Serialising the pair is the more faithful option if a savestate version
+ * bump is being made anyway (see docs/savestate-compat.md for the policy:
+ * one bump per release). */
 static uint32_t m68kRiscLatchAddr = 0xFFFFFFFF;   /* low address, or ~0 */
 static uint16_t m68kRiscLatchData = 0;
 
