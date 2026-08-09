@@ -48,6 +48,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SITE_SRC = ROOT / "site"
 MATRIX_MD = ROOT / "docs" / "cd-boot-matrix.md"
+CART_MATRIX_MD = ROOT / "docs" / "cart-boot-matrix.md"
 MAKEFILE = ROOT / "Makefile"
 
 REPO_URL = "https://github.com/libretro/virtualjaguar-libretro"
@@ -93,6 +94,7 @@ PAGES = ["index.html", "compatibility.html", "enhancements.html",
          "why-this-core.html"]
 
 EXPECTED_HEADER = ["Title", "Mode", "Score", "Stage", "Watchdog", "PC evidence"]
+CART_EXPECTED_HEADER = ["Title", "HLE", "HLE notes", "Real BIOS", "BIOS notes"]
 BUILD_STAMP_RE = re.compile(r"<!--\s*build:([^\s>]+)\s*-->")
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -331,6 +333,105 @@ def render_cd_table(rows):
         out.append("<tr>%s</tr>" % "".join(cells))
     out.append("</table></div>")
     return "\n".join(out), len(order), n_good
+
+
+def parse_cart_matrix(path):
+    """Parse the single table in docs/cart-boot-matrix.md.
+
+    Returns (rows, build_ids) where rows is a list of dicts with keys
+    title/hle_stage/hle_notes/bios_stage/bios_notes.  Deliberately strict,
+    like parse_cd_matrix: if the generator's format drifts, fail the site
+    build rather than render half a table.
+    """
+    if not path.is_file():
+        die("%s not found -- run test/tools/cart_boot_matrix.sh" % path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    hdr_idx = None
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith("|"):
+            hdr_idx = i
+            break
+    if hdr_idx is None:
+        die("no table found in %s" % path)
+    header = split_md_row(lines[hdr_idx])
+    if header != CART_EXPECTED_HEADER:
+        die("cart matrix header changed in %s.\n  expected: %s\n  found:    %s"
+            % (path, CART_EXPECTED_HEADER, header))
+    sep = lines[hdr_idx + 1].strip() if hdr_idx + 1 < len(lines) else ""
+    if not re.fullmatch(r"\|?[\s:|-]+\|?", sep):
+        die("missing separator row after cart matrix header in %s (got %r)"
+            % (path, sep))
+
+    rows = []
+    build_ids = set()
+    for i in range(hdr_idx + 2, len(lines)):
+        s = lines[i].strip()
+        if not s.startswith("|"):
+            break
+        for m in BUILD_STAMP_RE.finditer(lines[i]):
+            build_ids.add(m.group(1))
+        cells = split_md_row(BUILD_STAMP_RE.sub("", lines[i]).strip())
+        if len(cells) != len(CART_EXPECTED_HEADER):
+            die("row %d of %s has %d cells, expected %d:\n  %r"
+                % (i + 1, path, len(cells), len(CART_EXPECTED_HEADER),
+                   lines[i]))
+        title, hle_stage, hle_notes, bios_stage, bios_notes = \
+            [c.strip() for c in cells]
+        if not title:
+            die("row %d in %s: empty Title" % (i + 1, path))
+        rows.append({"title": title,
+                     "hle_stage": hle_stage, "hle_notes": hle_notes,
+                     "bios_stage": bios_stage, "bios_notes": bios_notes})
+    if not rows:
+        die("cart matrix in %s has zero data rows" % path)
+    return rows, sorted(build_ids)
+
+
+def classify_cart_stage(stage, notes):
+    """Map a cart stage + notes to (css_class, human_label).
+
+    Same honest three-state as the CD table.  'GAME_CODE' with a
+    black-video note downgrades to warn: the title executes but headless
+    video evidence is inconclusive (headless read-path caveat)."""
+    s = stage.strip()
+    if s == "GAME_CODE":
+        if "black video" in notes:
+            return ("warn", "Runs; video undetermined headlessly")
+        return ("good", "Boots and runs")
+    if s == "LOAD_FAIL" or s.startswith("? (pc_escape"):
+        return ("bad", "Known issue: " + s)
+    return ("warn", "Not yet verified: " + s)
+
+
+def render_cart_table(rows):
+    """One table row per title; badge per boot mode; merged notes cell."""
+    out = []
+    out.append('<div class="table-wrap"><table>')
+    out.append("<tr><th>Cartridge</th><th>HLE boot</th><th>Real-BIOS boot</th>"
+               "<th>Notes</th></tr>")
+    n_good = {"hle": 0, "bios": 0}
+    for r in rows:
+        cells = ['<td>%s</td>' % html.escape(r["title"])]
+        notes = []
+        for mode, stage_k, notes_k in (("hle", "hle_stage", "hle_notes"),
+                                       ("bios", "bios_stage", "bios_notes")):
+            cls, label = classify_cart_stage(r[stage_k], r[notes_k])
+            if cls == "good":
+                n_good[mode] += 1
+            cells.append('<td><span class="badge %s" title="%s">%s</span></td>'
+                         % (cls, html.escape(r[notes_k], quote=True),
+                            html.escape(label)))
+            wd = summarize_watchdog(r[notes_k])
+            if wd:
+                notes.append('<span title="%s"><code>%s</code> (%s)</span>'
+                             % (html.escape(r[notes_k], quote=True),
+                                html.escape(wd), mode))
+        cells.append("<td>%s</td>" % (" &middot; ".join(notes) if notes
+                                      else "&mdash;"))
+        out.append("<tr>%s</tr>" % "".join(cells))
+    out.append("</table></div>")
+    return "\n".join(out), len(rows), n_good
 
 
 # ---------------------------------------------------------------- pages
@@ -577,6 +678,11 @@ def main():
     print("cd-boot-matrix: %d rows, %d disc images, build stamp(s): %s"
           % (len(rows), n_titles, ", ".join(build_ids) or "(none)"))
 
+    cart_rows, cart_build_ids = parse_cart_matrix(CART_MATRIX_MD)
+    cart_table_html, cart_n_titles, cart_n_good = render_cart_table(cart_rows)
+    print("cart-boot-matrix: %d titles, build stamp(s): %s"
+          % (cart_n_titles, ", ".join(cart_build_ids) or "(none)"))
+
     version = read_core_version(MAKEFILE)
     share_path = SITE_SRC / SHARE_IMAGE
     share_w, share_h = png_size(share_path)
@@ -604,6 +710,13 @@ def main():
         "{{COMPAT_N_TITLES}}": str(n_titles),
         "{{COMPAT_N_HLE_GOOD}}": str(n_good["hle"]),
         "{{COMPAT_N_BIOS_GOOD}}": str(n_good["bios"]),
+        "{{CART_TABLE}}": cart_table_html,
+        "{{CART_BUILD_IDS}}":
+            ", ".join("<code>%s</code>" % html.escape(b)
+                      for b in cart_build_ids) or "no build stamp found",
+        "{{CART_N_TITLES}}": str(cart_n_titles),
+        "{{CART_N_HLE_GOOD}}": str(cart_n_good["hle"]),
+        "{{CART_N_BIOS_GOOD}}": str(cart_n_good["bios"]),
     }
 
     # Fresh output dir.  Only ever recursively delete a directory this

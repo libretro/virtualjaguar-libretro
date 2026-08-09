@@ -1,6 +1,6 @@
 <!-- title: Compatibility — Virtual Jaguar libretro -->
 <!-- nav: Compatibility -->
-<!-- description: Jaguar CD boot results per disc image and named cartridge fixes for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
+<!-- description: Jaguar CD and cartridge boot results per image for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
 
 <h1>Compatibility</h1>
 <p class="lede">
@@ -46,9 +46,30 @@
   stage column is the gate.
 </p>
 
+<h2>Cartridge boot matrix</h2>
+<p>
+  Parsed from
+  <a href="{{REPO}}/blob/develop/docs/cart-boot-matrix.md"><code>docs/cart-boot-matrix.md</code></a>,
+  produced by
+  <a href="{{REPO}}/blob/develop/test/tools/cart_boot_matrix.sh"><code>cart_boot_matrix.sh</code></a>.
+  Each cartridge in the corpus runs headlessly in both boot modes; "boots and
+  runs" = final 68K PC executing game code with video output and no crash-watchdog
+  signature, at build {{CART_BUILD_IDS}}. Menu vs in-game is not distinguished
+  headlessly, and a "video undetermined" badge means the title executes but
+  headless video evidence is inconclusive &mdash; not that it is broken.
+</p>
+
+<div class="stats">
+  <div class="stat"><div class="n">{{CART_N_TITLES}}</div><div class="l">cartridge images in the corpus</div></div>
+  <div class="stat"><div class="n">{{CART_N_HLE_GOOD}}</div><div class="l">boot and run in HLE mode</div></div>
+  <div class="stat"><div class="n">{{CART_N_BIOS_GOOD}}</div><div class="l">boot and run in real-BIOS mode</div></div>
+</div>
+
+{{CART_TABLE}}
+
 <h2>Cartridge highlights <span class="badge good">shipped in tagged releases</span></h2>
 <p>
-  No cartridge matrix yet; named, verified fixes from the release notes.
+  Named, verified fixes from the release notes.
 </p>
 
 <div class="table-wrap"><table>
@@ -63,20 +84,26 @@
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
   <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay — 14-byte group-0 bus-error frame, GPU <code>STOREP</code> masking (#138)</td>
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
+  <tr><td>Raiden</td><td>Music dying after saved-options corruption (EEPROM read race, #344); black screen on HLE fast-boot (#339)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td></tr>
+  <tr><td>Power Drive Rally</td><td>Sound freezing on a constant tone mid-game — GPU/DSP local RAM 16-bit-port latch (#355)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot; <a href="{{REPO}}/pull/363">PR #363</a></td></tr>
 </table></div>
 
 <p class="footnote">
   <strong>Tracked:</strong> Doom combat pacing ~1.5x fast
   (<a href="{{REPO}}/issues/313">#313</a>) &middot; Battle Morph (CD) too fast
-  (<a href="{{REPO}}/issues/331">#331</a>).
+  (<a href="{{REPO}}/issues/331">#331</a>) &middot; Val D'Isere ground visuals
+  (<a href="{{REPO}}/issues/354">#354</a>).
   <strong>Workaround:</strong> the non-default Fast blitter drops Iron
   Soldier's briefing wireframe; keep Accurate
   (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).
 </p>
 
-<h3>Not yet verified <span class="badge warn">help wanted</span></h3>
+<h3>Beyond the headless gate <span class="badge warn">help wanted</span></h3>
 <p>
-  Everything else. Report in
+  The matrices above prove titles boot and execute; they cannot prove a game
+  plays correctly to the end. Report gameplay issues in
   <a href="{{REPO}}/discussions">Discussions</a> with your frontend log &mdash;
   the <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>
   writes the failure signature into it.
