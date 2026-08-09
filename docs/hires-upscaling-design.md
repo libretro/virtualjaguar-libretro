@@ -574,6 +574,56 @@ different entry format (index + palette identity rather than `{value16,
 frac16}`) and a supersampled CLUT resolve in the OP, which §6.5 leaves on the
 stock path. That is its own stage and its own design.
 
+#### Triage rule — check the OP resolve hit rate BEFORE the blit shapes
+
+**Production and delivery are separate failure points, and only delivery fails
+silently.** The blitter can pass every Stage 2 gate and store every
+supersampled block bit-identically, and the OP resolve can then reject 100% of
+them at the value+epoch check in `shadow_hires_block()`
+(`src/tom/shadowfb.c`) — putting **0.0000% supersampled pixels on screen with
+no log line and no other symptom**. Nothing about the blit shapes, the gate
+predicate, or the stored blocks is wrong in that state; the detail is created
+and then thrown away.
+
+The epoch half of that check is the one that fails silently and totally. A
+title whose 3D engine takes more than `HIRES_EPOCH_WINDOW` presented frames
+per rendered view (slow or double-buffered engines) has *every* block rejected
+for age, not merely some. This has now bitten two titles, both diagnosed only
+after a full investigation of the innocent half of the pipeline:
+
+- **Doom** (~10–15 Hz double-buffered engine) — fixed by `404cb11`, window
+  2 → 16.
+- **Alien vs Predator** (its 3D buffer is always older than 2 presented
+  frames) — same root cause, same constant; see
+  `docs/avp-renderer-analysis.md` §6 for the A/B, which shows OP resolve hits
+  going 42,827,520 → 0 while the blitter-side production stays bit-identical.
+
+**So: before investigating blit shapes, the Stage 2 gate, or the census
+predicate, read the resolve hit rate.** It is a permanent counter now, not
+throwaway instrumentation — run with `virtualjaguar_crash_detect=verbose` and
+the heartbeat prints, every 600 frames while hi-res is active:
+
+```
+[CRASH-DETECT] hires_resolve frame=2400 N=2x hits=79588699 misses=68948450 \
+  (epoch=24224010 value=44388198 nopage=336242) rate=53.6% window_rate=98.2%
+```
+
+Read `window_rate` (the last 600 frames), not `rate` — the cumulative figure is
+diluted by menus and boot. Healthy AvP gameplay reads 97–98%. The bucket names
+each point at a different subsystem, so the line localizes the fault as well as
+detecting it:
+
+| Bucket | Meaning | Where to look |
+|---|---|---|
+| `epoch=` dominant, `window_rate` ≈ 0 | Entries match by value and are rejected for age only | **The silent killer.** `HIRES_EPOCH_WINDOW` vs the title's render cadence. Do not raise it reflexively: 16 is measured to saturate the benefit (`404cb11`), and widening it trades against the R3 stale-structure class (§5.4). |
+| `value=` dominant | Entries exist but RAM no longer holds the value they were derived from | Normal coherence miss; also every never-written word inside an allocated page. Suspect a write path that bypasses the store site. |
+| `nopage=` dominant | No shadow page for the address at all | Production never got here: the blitter store site, the Stage 2 gate, or the allocation cap (`SHADOWFB_HIRES_CAP_BYTES`, §3.3). |
+| all zero while `shadowHiresActive` | No resolves attempted | The OP is not reaching the 16bpp resolve site for this title at all (§6.5 leaves several object paths on the stock path). |
+
+The counters (`shadowHiresResolveHits` / `…MissValue` / `…MissEpoch` /
+`…MissNoPage`) are also in the test ABI, so a harness can `harness_dlsym()` them
+and assert on the rate directly rather than parsing the log.
+
 ### Stage 3 — OP scaled-object supersampling (SCBITOBJ)
 
 Sub-sample the source bitmap through a **local** copy of the scaling

@@ -400,6 +400,34 @@ And one condition the census could not see at all:
   value. A fractional walk is necessary but not sufficient — only
   minification carries information the 1x sample threw away.
 
+And one that is not a property of the title at all:
+
+- **(e) the OP resolve has to accept the stored blocks.** Production (the
+  blitter storing supersampled blocks) and delivery (the OP resolving them
+  into the Nx line buffer) are **separate failure points, and only delivery
+  fails silently.** Every block can be stored bit-identically and every one
+  of them rejected at the value+epoch check in `shadow_hires_block()`
+  (`src/tom/shadowfb.c`) — 0.0000% on screen, no log line, nothing else
+  wrong. The **epoch** half is the silent one: a title whose engine takes
+  more than `HIRES_EPOCH_WINDOW` presented frames per rendered view has
+  *every* block rejected for age, not merely some.
+
+**So when a title measures `0.0000` here, check the OP resolve hit rate
+BEFORE investigating blit shapes, the Stage 2 gate, or the census
+predicate.** That check is a permanent counter now, not throwaway
+instrumentation: run with `virtualjaguar_crash_detect=verbose` and the
+watchdog heartbeat prints `hires_resolve … (epoch=… value=… nopage=…)
+rate=… window_rate=…` every 600 frames while hi-res is active. Read
+`window_rate` (last 600 frames), not the cumulative `rate`, which menus and
+boot dilute; healthy AvP gameplay reads 97–98%, and an `epoch`-dominated
+bucket with `window_rate` near zero is the signature. This failure mode has
+bitten **two** titles — Doom (fixed by `404cb11`, window 2 → 16) and Alien
+vs Predator (same constant; A/B in `docs/avp-renderer-analysis.md` §6 shows
+OP resolve hits 42,827,520 → 0 with blitter-side production bit-identical).
+Bucket-by-bucket triage is in `docs/hires-upscaling-design.md` §8, Stage 2.
+Do not widen `HIRES_EPOCH_WINDOW` reflexively: 16 is measured to saturate
+the benefit.
+
 ### 9.2 The metric
 
 `hires_shot` reports, for each dumped 2x frame, the **percentage of 2×2

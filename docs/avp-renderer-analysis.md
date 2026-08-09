@@ -509,10 +509,26 @@ silent and total: full production, zero delivery, 0.0000% on screen and no
 log line *naming* it (a `video_stall` line may well be present, but it is
 unrelated and fires on healthy runs too — see §9). Any future "title X shows
 no supersampling" report should check the
-OP resolve hit rate **before** investigating blit shapes. A cheap permanent
-form of that check — a resolve hit/miss counter behind the existing
-`crash_detect` verbose mode, or simply a note in the Stage 2 documentation —
-would have turned this investigation into a one-line answer.
+OP resolve hit rate **before** investigating blit shapes.
+
+**Implemented.** That check is no longer throwaway instrumentation:
+`src/tom/shadowfb.c` now carries permanent OP resolve counters
+(`shadowHiresResolveHits` and the `MissEpoch` / `MissValue` / `MissNoPage`
+buckets), reported by the existing `crash_detect` verbose heartbeat every 600
+frames while hi-res is active:
+
+```
+[CRASH-DETECT] hires_resolve frame=2400 N=2x hits=79588699 misses=68948450 \
+  (epoch=24224010 value=44388198 nopage=336242) rate=53.6% window_rate=98.2%
+```
+
+Read `window_rate` (last 600 frames) rather than the cumulative `rate`, which
+AvP's ~1500 frames of menus dilute. The same fixture on the same build with
+the epoch window forced back to 2 reads `window_rate=0.0%` with the whole miss
+population in `epoch=` — i.e. the counter would have answered this
+investigation in one line. Bucket-by-bucket triage lives in
+`docs/hires-upscaling-design.md` §8, Stage 2; the counters are exported in the
+test ABI so harnesses can `dlsym` and assert on them.
 
 ---
 
