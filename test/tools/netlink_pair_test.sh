@@ -17,7 +17,13 @@
 set -u
 
 CORE="${1:?usage: netlink_pair_test.sh <core> [port]}"
-PORT="${2:-${VJ_NETLINK_PORT:-42171}}"
+# Default port: PID-spread inside 17000-20999 — BELOW the ephemeral
+# range of every CI OS (Linux 32768+, macOS 49152+).  The old fixed
+# 42171 sat inside Linux's ephemeral range, and a transient outgoing
+# connection on the runner occasionally held it: the server's bind
+# failed and the pair test flaked.  Explicit [port] / VJ_NETLINK_PORT
+# still override.
+PORT="${2:-${VJ_NETLINK_PORT:-$(( 17000 + ($$ % 4000) ))}}"
 BIN="$(dirname "$0")/netlink_pair"
 
 if [ ! -x "$BIN" ]; then
@@ -44,12 +50,31 @@ run_pair() {
         echo "netlink_pair_test: PASS ($label, host=$host, port $port)"
         return 0
     fi
+    # Server exit 2 = bind failed (port held by something else on the
+    # machine): the caller retries on a different port.
+    if [ "$server_rc" -eq 2 ]; then
+        return 2
+    fi
     echo "netlink_pair_test: FAIL ($label, host=$host, server=$server_rc client=$client_rc)" >&2
     return 1
 }
 
-run_pair "127.0.0.1" "by IP" "$PORT" || exit 1
+# run_pair, retrying on a shifted port when the server's bind fails.
+run_pair_retry() {
+    local host="$1" label="$2" port="$3" attempt rc
+    for attempt in 1 2 3; do
+        run_pair "$host" "$label" "$port"
+        rc=$?
+        [ "$rc" -ne 2 ] && return "$rc"
+        port=$((port + 211))
+        echo "netlink_pair_test: port busy, retrying $label on $port" >&2
+    done
+    echo "netlink_pair_test: FAIL ($label — no bindable port after 3 tries)" >&2
+    return 1
+}
+
+run_pair_retry "127.0.0.1" "by IP" "$PORT" || exit 1
 # Second round on the next port: the first server may still be in
 # TIME_WAIT, and SO_REUSEADDR does not cover a listener that raced.
-run_pair "localhost" "by name" "$((PORT + 1))" || exit 1
+run_pair_retry "localhost" "by name" "$((PORT + 1))" || exit 1
 exit 0

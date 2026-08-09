@@ -350,6 +350,20 @@ int JLinkTCPConnected(void)
    return 0;
 }
 
+int JLinkTCPPeerCount(void)
+{
+   int i;
+   int n = 0;
+   if (!tcpPeersInit)
+      return 0;
+   if (tcpIsClient)
+      return (jlink_sock_valid(tcpPeers[0].sock) && !tcpConnecting) ? 1 : 0;
+   for (i = 0; i < JLINK_TCP_MAX_PEERS; i++)
+      if (jlink_sock_valid(tcpPeers[i].sock))
+         n++;
+   return n;
+}
+
 static void jlink_tcp_queue_pending(jlink_peer_t *p, uint8_t b)
 {
    uint32_t tail;
@@ -545,6 +559,7 @@ int JLinkTCPOpen(int is_server, const char *host, int port)
 }
 void JLinkTCPClose(void) {}
 int JLinkTCPConnected(void) { return 0; }
+int JLinkTCPPeerCount(void) { return 0; }
 void JLinkTCPSend(uint8_t b) { (void)b; }
 int JLinkTCPRecv(uint8_t *b) { (void)b; return 0; }
 void JLinkTCPPoll(void) {}
