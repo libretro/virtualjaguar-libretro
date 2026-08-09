@@ -56,8 +56,11 @@
 </p>
 <p>
   The emulated machine never sees it. The stock framebuffer stays bit-identical
-  and savestate digests match between <code>1x</code> and <code>2x</code>; both
-  are gated in CI.
+  and savestate digests match between <code>1x</code> and <code>2x</code> &mdash;
+  both proven per-title by committed tooling
+  (<a href="{{REPO}}/blob/develop/test/tools/hires_box_check.c">hires_box_check</a>,
+  <a href="{{REPO}}/blob/develop/test/tools/hires_state_digest.c">hires_state_digest</a>),
+  not asserted.
 </p>
 
 <figure class="smooth">
@@ -153,7 +156,8 @@
   <a href="{{REPO}}/pull/357">PR #357</a>. Method, per-title input scripts and
   instrumentation:
   <a href="{{REPO}}/blob/develop/docs/avp-renderer-analysis.md">docs/avp-renderer-analysis.md</a>
-  &middot; <a href="{{REPO}}/blob/develop/docs/hires-stage0-census.md">corpus census</a>
+  &middot; <a href="{{REPO}}/blob/feature/338-hires-stage2/docs/hires-stage0-census.md">corpus census &sect;9</a>
+  (lands on <code>develop</code> with PR&nbsp;#357)
   &middot; <a href="{{REPO}}/blob/develop/docs/hires-upscaling-design.md">design</a>
   &middot; epic <a href="{{REPO}}/issues/338">#338</a>. Not in a tagged release.
 </div>
