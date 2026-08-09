@@ -4,12 +4,18 @@
  * Runs a title headlessly (scripted input via the shared harness's
  * --press), dumps requested frames as PPM screenshots, and quantifies
  * the sub-pixel variance of each dumped frame: the percentage of 2x2
- * blocks whose four subpixels are NOT all equal.  At 1x (or on a
- * Stage 1 / non-beneficiary title at 2x) that percentage is 0.000; on a
- * Stage 2 beneficiary at 2x it is nonzero exactly where qualifying
- * fractional-source-walk blits landed -- the box-replication property
- * failing there is the feature (see docs/hires-upscaling-design.md,
- * section 8 Stage 2).
+ * blocks whose four subpixels are NOT all equal.
+ *
+ * This is a 2x-ONLY metric.  At 2x, box replication makes every block
+ * uniform by construction, so a Stage 1 / non-beneficiary title (or a
+ * non-beneficiary scene) reads 0.000 and a Stage 2 beneficiary reads
+ * nonzero exactly where qualifying fractional-source-walk blits landed
+ * -- the box-replication property failing there is the feature (see
+ * docs/hires-upscaling-design.md, section 8 Stage 2).  At 1x the same
+ * walk compares four independent scene pixels and reads 60-90% on
+ * ordinary gameplay, so 1x and 2x percentages are NOT comparable.
+ * docs/avp-renderer-analysis.md section 9 ("Reading the number") lists
+ * the ways a 0.0000 can be an artefact rather than a result.
  *
  * Usage:
  *   ./test/tools/hires_shot [core] <rom> [--frames N] [--option K=V]
@@ -74,7 +80,7 @@ static void hs_video(void *ud, const void *data, unsigned width,
         return;
     if (!st->fb || st->fb_w != width || st->fb_h != height) {
         free(st->fb);
-        st->fb = (uint32_t *)malloc((size_t)width * height * 4);
+        st->fb = (uint32_t *)malloc((size_t)width * height * sizeof(*st->fb));
         st->fb_w = width;
         st->fb_h = height;
     }

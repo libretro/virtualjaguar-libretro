@@ -3,8 +3,17 @@
 **Date:** 2026-08-09
 **Epic:** #338, track 1 ("internal resolution upscaling")
 **Branch measured:** `libretro/feature/338-hires-stage2` @ `836baf6` (Stage 1 + Stage 2)
-**Status:** research report. **No product code.** All instrumentation was a
-throwaway compile-time patch and is not part of this commit.
+**Status:** research report. All instrumentation was a throwaway compile-time
+patch and is not part of this commit.
+
+> **Reading the diff.** This report itself adds **no product code** — the
+> report commit touches only this file, and later commits on the branch add
+> only screenshots plus review fixes. The branch is *stacked on*
+> `feature/338-hires-stage2` (open as PR #357), so a diff taken against
+> `develop` also shows that PR's Stage 2 changes to `src/tom/blitter.c`,
+> `src/tom/tom.c`, `src/tom/shadowfb.*` and `test/tools/hires_shot.c`. Those
+> belong to #357 and disappear from this diff once #357 merges and this
+> branch is rebased. Review them there, not here.
 **Related:** `docs/hires-upscaling-design.md` (design), `docs/hires-stage0-census.md`
 (corpus census)
 
@@ -45,6 +54,45 @@ abundance and Stage 2 already recovers the recoverable half of it.
 **Verdict: no extension needed. AvP is a first-class Stage 2 beneficiary
 today.** The residual unreached fraction is ~3.6% of its 16bpp destination
 writes and is not worth engineering. See §7.
+
+---
+
+## 0.1 What it looks like
+
+Matched captures, same ROM, same input script, same frame — only
+`virtualjaguar_internal_resolution` differs. The 1x frame is magnified with
+nearest-neighbour replication to the 2x geometry, which is exactly what the
+Stage 1 (box-replicating) path presents, so any difference between the panels
+is Stage 2 content and nothing else. Frame 6000 of the §9 reproduction
+command; 2x measures **30.6237%** non-uniform 2×2 blocks here, 1x is
+box-replicated by construction.
+
+![Alien vs Predator frame 6000 side by side: the left panel is the 1x frame
+with every pixel doubled to 652x480, the right panel is the same frame
+rendered at 2x internal resolution with Stage 2 supersampling. Both show an
+Alien's claw in a textured corridor facing a chevron-panelled
+door.](site/pr-avp-hires-fullframe.png)
+
+At full-frame scale the difference is **subtle** — the win is fine texture
+detail, not a change in composition or colour. It reads at magnification:
+
+![Magnified 6x crop of the left wall, floor and ribbed right-hand wall. In the
+1x panel the wall ribs are flat 2x2 blocks of one colour; in the 2x panel the
+same ribs carry intermediate texel values, and the diagonal wall/floor edge
+steps in half-pixel increments instead of whole ones.](site/pr-avp-hires-crop-wall.png)
+
+![Magnified 6x crop of the chevron-panelled door. The 2x panel resolves
+sub-texel shading along the chevron edges and across the panel face that the
+box-replicated 1x panel cannot represent.](site/pr-avp-hires-crop-door.png)
+
+The wall/rib crop is the clearest: those are the vertical-column blits (A2
+`XADD0` + `YADD1`, source **Y** fraction) described in §4, and the extra
+scanline lands on a different source texel roughly half the time (§7's
+honesty check). The door crop shows the same effect along the horizontal
+chevron edges; some of what it adds there is a half-step value between two
+adjacent texels rather than new structure, which at this magnification reads
+as fine stippling. Both are real recovered source content, and neither is a
+filter — nothing is interpolated or invented.
 
 ---
 
@@ -472,10 +520,54 @@ cc -O2 -Wall -std=c99 -I. -I./test/harness -I./libretro-common/include \
 
 # reproduce the reported 0.0000%: set HIRES_EPOCH_WINDOW to 2 in
 # src/tom/shadowfb.c, rebuild, rerun the exact command above.
+
+# the §0.1 screenshots: same command at each resolution, with --out-prefix,
+# then crop/magnify the matched PPM pair (1x nearest-neighbour to the 2x
+# geometry).  1x measures 90.0051% and 2x measures 30.6237% at frame 6000 --
+# those two numbers are NOT comparable, see "Reading the number" below.
+#   ... --option virtualjaguar_internal_resolution=1x ... --out-prefix /tmp/1x/avp
+#   ... --option virtualjaguar_internal_resolution=2x ... --out-prefix /tmp/2x/avp
 ```
 
 Add `--option virtualjaguar_usefastblitter=disabled` to measure the Accurate
 engine (the harness otherwise defaults to Fast — see §1).
+
+### Reading the number
+
+`hires_shot`'s percentage is the share of 2×2 blocks whose four pixels are not
+all equal. It is a **2x-only** metric: at 2x, box replication makes every block
+uniform by construction, so anything above zero is Stage 2 content. At 1x the
+same walk compares four independent scene pixels and reads 60–90% on ordinary
+gameplay (measured: 90.0051% at frame 6000). Never quote a 1x-vs-2x delta in
+this number.
+
+Four ways to get a **0.0000%** that is not "Stage 2 failed to reach this
+title", all measured on this ROM at `836baf6`:
+
+1. **The frame isn't a Stage 2 scene.** AvP's title art, character select and
+   briefing screens read an exact `0.0000%` at 2x (frames 400 / 700 / 1000 /
+   1300) — no qualifying fractional-walk blit lands there. Only the
+   first-person 3D view benefits. Check the PPM before believing the number.
+2. **Nothing was dumped.** `--shot F` with `F` beyond `--frames` dumps nothing
+   and the summary prints `total_blocks=0 ... pct=0.0000`. Check
+   `shots=` and `total_blocks=` on the `VARIANCE` line.
+3. **Wrong build.** A core without Stage 2 (e.g. `develop`, or a stale dylib)
+   box-replicates and reads exactly `0.0000%` at 2x with no error. Run with
+   `VJ_EXPECT_BUILD=$(./scripts/build-id.sh)`.
+4. **Shadow content aged out** — the original failure this report explains,
+   reproducible by setting `HIRES_EPOCH_WINDOW` to 2.
+
+**A `video_stall` line in the log does *not* imply any of these.** AvP keeps
+re-blitting an identical view when the player stands still, so the presented
+framebuffer freezes (the watchdog fires) while the shadow surface stays fresh
+and the metric stays high. Measured on the committed
+`test/fixtures/avp_reach_gameplay.press`: frames 3200 / 4000 / 5000 / 5800 /
+6000 are **byte-identical PPMs** and every one reads 25.0601%. The doc's own
+30.6237% frame likewise sits inside a `video_stall` window. Conversely a
+frozen frame invalidates anything that assumes motion, so the fixture now
+carries keep-alive input out to frame ~6300; with it, the same frames read
+23.59 / 10.94 / 22.46 / 21.13 / 21.05% — non-zero *and varying*, which is the
+signature of a live scene.
 
 The instrumentation pattern, for re-running or extending: counter struct in a
 throwaway header, defined in `blitter_mmio.c`, dumped from an `atexit`

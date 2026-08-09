@@ -449,11 +449,6 @@ static int shadow_hires_read_src16_a1(int32_t sub_x, int32_t sub_y,
 {
    /* PIXEL_OFFSET_16 token-pastes its argument into <arg>_x/_y/_width/
     * _pitch, so PIXEL_OFFSET_16(sub) evaluates the STOCK A1 addressing
-    * formula over the explicit 16.16 (sub_x, sub_y) position and the
-    * locals below -- reusing the formula by construction rather than
-    * transcribing it. */
-   /* PIXEL_OFFSET_16 token-pastes its argument into <arg>_x/_y/_width/
-    * _pitch, so PIXEL_OFFSET_16(sub) evaluates the STOCK A1 addressing
     * formula over the explicit 16.16 (sub_x, sub_y) parameters and the
     * two locals below -- reusing that formula by construction instead
     * of transcribing it. */
