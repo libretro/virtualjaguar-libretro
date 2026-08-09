@@ -103,6 +103,7 @@ test/acid/tests/**/*.jag
 /test/tools/frame_hash_ab
 /test/tools/hires_box_check
 /test/tools/hires_state_digest
+/test/tools/hires_shot
 test/tools/__pycache__/
 .link-mode
 
