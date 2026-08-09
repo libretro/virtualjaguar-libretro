@@ -82,7 +82,7 @@ static bool on_frame(void *userdata, unsigned frame)
 {
     timeline_state *st = (timeline_state *)userdata;
     if (st->have_dsp) dsp_probe_per_frame(st->dsp);
-    if (frame && (frame % st->window) == 0) emit_window(st, frame);
+    if (st->window && (frame % st->window) == 0) emit_window(st, frame);
     return true;
 }
 
