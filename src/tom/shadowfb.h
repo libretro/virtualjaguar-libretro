@@ -86,9 +86,11 @@ void ShadowFBLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
  *
  * Coherence is the same value-check-at-read scheme as the 1x shadow,
  * PLUS a frame-epoch field in the tag (design section 3.4): an entry
- * is only trusted when its epoch is the current or previous frame,
- * which bounds the stale-structure artifact class that the 1x
- * bounded-error argument does not cover at Nx (design section 5.4).
+ * is only trusted when it was written within the last few presented
+ * frames (HIRES_EPOCH_WINDOW in shadowfb.c -- sized for slow
+ * double-buffered engines like Doom's ~15Hz renderer), which bounds
+ * the stale-structure artifact class that the 1x bounded-error
+ * argument does not cover at Nx (design section 5.4).
  *
  * Stage 1 semantics: every writer stores the stock pixel replicated
  * N*N times (box replication), so output is bit-exactly the Nx box
@@ -149,6 +151,15 @@ void ShadowHiresShutdown(void);
  * word's N*N block with {value16, frac16} and stamps the epoch tag.
  * Addresses outside the bottom-8MB RAM mirror window are ignored. */
 void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16);
+
+/* Stage 2: record a 16bpp CRY destination write whose N*N block carries
+ * real per-subpixel content (fractional-walk source supersampling).
+ * `stock16` is the stock 16-bit value the blit wrote (the tag key --
+ * readers value-check against it); `blk` holds N*N entries in
+ * sub-row-major order (sy*N + sx).  Same address rules as
+ * ShadowHiresStoreCry. */
+void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
+                              const shadowfb_sub *blk);
 
 /* OP 16bpp resolve site: copy the RAM shadow block for srcAddr into
  * the Nx line buffer at stock pixel `idx` (tag+epoch checked against

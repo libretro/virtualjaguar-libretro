@@ -15,6 +15,14 @@ bash test/tools/run_avp_fixture.sh ./virtualjaguar_libretro.dylib
 Requires `test/roms/private` → private ROM tree and a `TEST_EXPORTS=1` core
 build. Gate is mechanical (late-window motion + non-black), not visual.
 
+Input runs to frame ~6300 so runs longer than the 3000-frame default still
+land on a **live** scene. Without that keep-alive the player stands still
+after frame 3000 and every later frame is byte-identical (AvP keeps
+re-blitting the same view, so `crash_detect` logs `video_stall` while nothing
+is actually wrong) — a frozen frame silently invalidates any measurement that
+assumes motion. Presses past the run length never fire, so short runs are
+unaffected.
+
 ## `avp_reach_marine_shotgun.press`
 
 Reaches **Colonial Marine** gameplay and picks up the shotgun, so the #267

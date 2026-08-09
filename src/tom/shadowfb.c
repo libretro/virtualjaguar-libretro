@@ -132,9 +132,21 @@ void ShadowFBShutdown(void)
 /* Tag layout (design section 3.4):
  *   bits  0-15  value16 (the stock word the block was derived from)
  *   bit  16     VALID (so zero-init never false-matches RAM zeros)
- *   bits 17-24  frame epoch (entry trusted iff epoch == now or now-1)
+ *   bits 17-24  frame epoch (entry trusted iff written within the last
+ *               HIRES_EPOCH_WINDOW presented frames)
  */
 #define HIRES_TAG_EPOCH_SHIFT 17
+/* Trusted-window size in presented frames (design section 3.4 / R3).
+ * The design's initial now/now-1 guess assumed the 3D view is redrawn
+ * every frame; Doom -- the Stage 2 anchor title -- runs its engine at
+ * ~10-15Hz double-buffered, so the displayed buffer's blocks are
+ * routinely 3-8 presented frames old and a 2-frame window rejected
+ * every one of them (measured: 0.00% supersampled output).  16 frames
+ * (~267ms NTSC) covers slow engines while still bounding the R3
+ * stale-structure class: a false positive needs RAM to coincidentally
+ * equal a dead tag AND the word untouched for 16 frames, and it still
+ * self-heals at the next real write. */
+#define HIRES_EPOCH_WINDOW 16
 
 int shadowHiresActive = 0;
 int shadowHiresN = 1;
@@ -226,6 +238,31 @@ void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
                             | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
 }
 
+void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
+                              const shadowfb_sub *blk)
+{
+   uint32_t idx, page, word, nn, k;
+   shadowfb_sub *sub;
+
+   if (!shadowHiresActive)
+      return;
+   addr &= 0xFFFFFF;
+   if (addr >= 0x800000)
+      return;
+   idx  = (addr & 0x1FFFFE) >> 1;
+   page = idx >> 12;
+   word = idx & 0xFFF;
+   if (!shadow_hires_page(page))
+      return;
+
+   nn  = (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;
+   sub = hiresPageSub[page] + word * nn;
+   for (k = 0; k < nn; k++)
+      sub[k] = blk[k];
+   hiresPageTag[page][word] = (uint32_t)stock16 | SHADOWFB_TAG_VALID
+                            | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
+}
+
 /* Value+epoch-checked block lookup.  Returns the N*N block or NULL. */
 static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16)
 {
@@ -243,7 +280,7 @@ static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16)
    if ((tag & 0x1FFFF) != ((uint32_t)current16 | SHADOWFB_TAG_VALID))
       return NULL;
    ep = (tag >> HIRES_TAG_EPOCH_SHIFT) & 0xFF;
-   if (ep != hiresEpoch && ep != ((hiresEpoch - 1) & 0xFF))
+   if (((hiresEpoch - ep) & 0xFF) >= HIRES_EPOCH_WINDOW)
       return NULL;
    return hiresPageSub[page]
         + word * (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;

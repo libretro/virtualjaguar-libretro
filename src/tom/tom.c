@@ -852,25 +852,15 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
  * shadow line buffer that ShadowHiresLineFromRAM populated during the
  * OP's single per-scanline pass.
  *
- * Stage 1 output contract: every emitted pixel is bit-exactly the NxN
- * box replication of what the stock renderer would emit for the same
- * line-buffer contents.  Two cases:
- *
- *  - true-color OFF: on a shadow line tag match the entry's value16 is
- *    structurally equal to the stock line-buffer value (Stage 1 writers
- *    only ever store the stock value), so LUT[entry.value16] ==
- *    LUT[color]; on a miss we use LUT[color] directly.
- *
- *  - true-color ON: we always emit the 1x true-color result (`base`,
- *    identical logic to the stock renderer's substitution block) and
- *    ignore hi-res entries.  The 1x shadow state evolves identically in
- *    a 1x run and an Nx run, so this is exact by construction; using
- *    ShadowFBCryRGB on hi-res entries instead could diverge from the 1x
- *    run in stale-tag coincidence corners because the two stores have
- *    different write sites and the hi-res tag carries an epoch.  Stage 2
- *    switches the hit path to ShadowFBCryRGB(entry) once entries carry
- *    real sub-pixel content and the box-replication property no longer
- *    holds by design. */
+ * Stage 2 output contract: blocks written by non-qualifying blit shapes
+ * still carry box replication (Stage 1 semantics), so their output is
+ * bit-exactly the NxN box replication of the stock pixel.  Blocks
+ * written by qualifying fractional-source-walk blits carry real
+ * per-subpixel content, and the box-replication property no longer
+ * holds there BY DESIGN -- that is the feature.  On a tag miss (stale
+ * entry, unshadowed page, foreign line-buffer writer) every subpixel
+ * falls back to `base`, the exact 1x result including the 1x
+ * true-color substitution. */
 static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
 {
    unsigned i;
@@ -926,7 +916,7 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
       for (sub = 0; sub < n; sub++)
       {
          ent = NULL;
-         if (!shadowFBActive && sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
                && shadowHiresLineTag[sfbIdx] ==
                   ((uint32_t)color | SHADOWFB_TAG_VALID))
             ent = shadowHiresLineSub
@@ -934,7 +924,19 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
                   * (uint32_t)n;
          for (sx = 0; sx < n; sx++)
          {
-            uint32_t out = ent ? CRY16ToRGB32[ent[sx].value16] : base;
+            /* Stage 2: entries carry real per-subpixel content, so a
+             * hit renders each entry -- with true-color on, through
+             * ShadowFBCryRGB so the entry's own frac16 composes
+             * (design section 3.2); with it off, through the stock
+             * LUT.  A miss falls back to the exact 1x result. */
+            uint32_t out;
+            if (ent)
+               out = shadowFBActive
+                   ? (0xFF000000
+                      | ShadowFBCryRGB(ent[sx].value16, ent[sx].frac16))
+                   : CRY16ToRGB32[ent[sx].value16];
+            else
+               out = base;
             for (s = 0; s < pwidth_scale; s++)
                *rows[sub]++ = out;
          }
