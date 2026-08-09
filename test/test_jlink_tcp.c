@@ -33,12 +33,23 @@ static int failures = 0;
 
 /* 17000-20999: above the well-known/registered services that actually
    run anywhere, below the ephemeral floor of every OS we test on.
-   VJ_TEST_PORT_BASE pins the base for deterministic reproduction. */
+   VJ_TEST_PORT_BASE pins the base for deterministic reproduction; it
+   must leave room for the retry walk (offset 200 + 31 attempts), so
+   out-of-range values fall back to the PID-spread default instead of
+   silently leaving JLinkSetTCPEndpoint on a stale port. */
 static int test_port_base(void)
 {
     const char *e = getenv("VJ_TEST_PORT_BASE");
-    if (e && atoi(e) > 0)
-        return atoi(e);
+    if (e)
+    {
+        int p = atoi(e);
+        if (p >= 1024 && p <= 65535 - 200 - 32)
+            return p;
+        if (p != 0)
+            fprintf(stderr, "note: VJ_TEST_PORT_BASE '%s' out of range "
+                            "(1024..%d), using PID default\n",
+                    e, 65535 - 200 - 32);
+    }
     return 17000 + (int)(getpid() % 4000);
 }
 
@@ -172,6 +183,7 @@ static void test_client_mode(void)
     int i;
 
     lsock = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(lsock >= 0, "client: test listener socket created");
     {
         int one = 1;
         setsockopt(lsock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
@@ -183,7 +195,8 @@ static void test_client_mode(void)
     CHECK(bind(lsock, (struct sockaddr *)&sa, sizeof(sa)) == 0,
           "client: test listener binds");
     salen = (socklen_t)sizeof(sa);
-    getsockname(lsock, (struct sockaddr *)&sa, &salen);
+    CHECK(getsockname(lsock, (struct sockaddr *)&sa, &salen) == 0
+          && ntohs(sa.sin_port) != 0, "client: kernel assigned a port");
     port = (int)ntohs(sa.sin_port);
     listen(lsock, 1);
     fcntl(lsock, F_SETFL, O_NONBLOCK);
