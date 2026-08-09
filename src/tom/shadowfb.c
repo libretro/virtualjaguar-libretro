@@ -151,6 +151,23 @@ void ShadowFBShutdown(void)
 int shadowHiresActive = 0;
 int shadowHiresN = 1;
 
+/* Resolve diagnostics (shadowfb.h).  Production (the blitter storing
+ * supersampled blocks) and delivery (the OP resolving them) are separate
+ * failure points, and only delivery fails silently: a title can pass every
+ * Stage 2 gate, store every block bit-identically, and still put 0.0000%
+ * supersampled pixels on screen because the value+epoch check below rejects
+ * all of them.  That has happened twice (Doom, Alien vs Predator -- both
+ * epoch-expired).  These counters make it a heartbeat line instead of an
+ * investigation; see crash_detect.c and docs/hires-upscaling-design.md
+ * section 8.  Counting is unconditional inside the resolve path, which the
+ * caller only reaches when shadowHiresActive: a uint64 increment is noise
+ * against the N*N work already being done, and a second global test per
+ * pixel to make it verbose-only would cost more than it saves. */
+uint64_t shadowHiresResolveHits       = 0;
+uint64_t shadowHiresResolveMissValue  = 0;
+uint64_t shadowHiresResolveMissEpoch  = 0;
+uint64_t shadowHiresResolveMissNoPage = 0;
+
 shadowfb_sub *shadowHiresLineSub = NULL;
 uint32_t shadowHiresLineTag[SHADOWFB_LINE_PIXELS];
 
@@ -263,25 +280,49 @@ void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
                             | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
 }
 
-/* Value+epoch-checked block lookup.  Returns the N*N block or NULL. */
+/* Value+epoch-checked block lookup.  Returns the N*N block or NULL.
+ * Every exit bumps exactly one resolve counter, so hits + the three miss
+ * buckets always equals the number of resolves attempted, and the bucket
+ * names each point at a different subsystem:
+ *   nopage -- production never reached this page (nothing stored, or the
+ *             allocation cap stopped it): look at the blitter/store side.
+ *   value  -- an entry exists but RAM no longer holds the value it was
+ *             derived from (normal coherence miss; also every word inside
+ *             an allocated page that was never itself written).
+ *   epoch  -- the entry matches by value and was rejected only for age.
+ *             This is the silent-total-failure bucket: a slow or
+ *             double-buffered engine can push 100% of its blocks here. */
 static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16)
 {
    uint32_t idx, page, word, tag, ep;
 
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
+   {
+      shadowHiresResolveMissNoPage++;
       return NULL;
+   }
    idx  = (addr & 0x1FFFFE) >> 1;
    page = idx >> 12;
    if (!hiresPageTag[page])
+   {
+      shadowHiresResolveMissNoPage++;
       return NULL;
+   }
    word = idx & 0xFFF;
    tag  = hiresPageTag[page][word];
    if ((tag & 0x1FFFF) != ((uint32_t)current16 | SHADOWFB_TAG_VALID))
+   {
+      shadowHiresResolveMissValue++;
       return NULL;
+   }
    ep = (tag >> HIRES_TAG_EPOCH_SHIFT) & 0xFF;
    if (((hiresEpoch - ep) & 0xFF) >= HIRES_EPOCH_WINDOW)
+   {
+      shadowHiresResolveMissEpoch++;
       return NULL;
+   }
+   shadowHiresResolveHits++;
    return hiresPageSub[page]
         + word * (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;
 }
@@ -365,6 +406,10 @@ void ShadowHiresShutdown(void)
    hiresAllocStopped = 0;
    shadowHiresActive = 0;
    shadowHiresN = 1;
+   shadowHiresResolveHits       = 0;
+   shadowHiresResolveMissValue  = 0;
+   shadowHiresResolveMissEpoch  = 0;
+   shadowHiresResolveMissNoPage = 0;
 }
 
 void ShadowHiresSetN(int n)

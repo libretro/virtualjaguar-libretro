@@ -68,5 +68,6 @@
       NVM_*;
       JGD*;
       jgd*;
+      shadowHires*;
    local: *;
 };
