@@ -141,6 +141,34 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_true_color",
+      "True Color (Gouraud Precision)",
+      NULL,
+      "Render gouraud-shaded pixels at full precision (chroma x 24-bit intensity) to reduce banding in 3D games. The game-visible 16-bit framebuffer is unchanged. Applies to CRY 16bpp video modes only.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_internal_resolution",
+      "Internal Resolution (Restart Required)",
+      NULL,
+      "Render internally at a multiple of the Jaguar's native resolution. Applied when content is loaded; changing it mid-game takes effect on restart. The game-visible framebuffer and all emulation timing are unchanged. Combines with True Color.",
+      NULL,
+      "video",
+      {
+         { "1x", "1x (native)" },
+         { "2x", NULL },
+         { NULL, NULL },
+      },
+      "1x"
+   },
+   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,

@@ -21,6 +21,7 @@
       jaguarMainRAM;
       jaguarMainROM;
       jagMemSpace;
+      busArbiter;
       pcQueue;
       pcQPtr;
       a6Queue;
@@ -67,5 +68,9 @@
       NVM_*;
       JGD*;
       jgd*;
+      shadowHiresResolveHits;
+      shadowHiresResolveMissValue;
+      shadowHiresResolveMissEpoch;
+      shadowHiresResolveMissNoPage;
    local: *;
 };

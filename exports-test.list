@@ -18,6 +18,7 @@ _Halfline*
 _jaguarMainRAM
 _jaguarMainROM
 _jagMemSpace
+_busArbiter
 _pcQueue
 _pcQPtr
 _a6Queue
@@ -64,3 +65,7 @@ _NVMBios*
 _NVM_*
 _JGD*
 _jgd*
+_shadowHiresResolveHits
+_shadowHiresResolveMissValue
+_shadowHiresResolveMissEpoch
+_shadowHiresResolveMissNoPage

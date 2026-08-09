@@ -262,6 +262,7 @@
 #include "gpu.h"
 #include "jaguar.h"
 #include "jerry.h"
+#include "shadowfb.h"
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
@@ -807,6 +808,33 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
 #endif
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+
+   /* True-color path (see shadowfb.h): substitute the full-precision
+    * RGB888 from the shadow line buffer, but only when the entry's tag
+    * matches the 16-bit value actually in the line buffer -- any other
+    * write path (direct TOM writes, RMW blends, missed sites) then
+    * falls back to the stock LUT.  With the option off this block is
+    * never entered and output is bit-identical to stock. */
+   if (shadowFBActive)
+   {
+      int sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+      while (width >= pwidth_scale)
+      {
+         uint32_t out;
+         uint16_t color = (*current_line_buffer++) << 8;
+         color |= *current_line_buffer++;
+         out = CRY16ToRGB32[color];
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+               && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+            out = 0xFF000000 | shadowLineRGB[sfbIdx];
+         sfbIdx++;
+         for (s = 0; s < pwidth_scale; s++)
+            *backbuffer++ = out;
+         width -= pwidth_scale;
+      }
+      return;
+   }
+
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -814,6 +842,149 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
       for (s = 0; s < pwidth_scale; s++)
          *backbuffer++ = CRY16ToRGB32[color];
       width -= pwidth_scale;
+   }
+}
+
+/* Hi-res (Nx) CRY renderer -- epic #338 track 1, Stage 1.
+ *
+ * Mirrors tom_render_16bpp_cry_scanline exactly, but produces N sub-rows
+ * (screenPitch apart) of N-wide pixels per stock pixel, consuming the Nx
+ * shadow line buffer that ShadowHiresLineFromRAM populated during the
+ * OP's single per-scanline pass.
+ *
+ * Stage 2 output contract: blocks written by non-qualifying blit shapes
+ * still carry box replication (Stage 1 semantics), so their output is
+ * bit-exactly the NxN box replication of the stock pixel.  Blocks
+ * written by qualifying fractional-source-walk blits carry real
+ * per-subpixel content, and the box-replication property no longer
+ * holds there BY DESIGN -- that is the feature.  On a tag miss (stale
+ * entry, unshadowed page, foreign line-buffer writer) every subpixel
+ * falls back to `base`, the exact 1x result including the 1x
+ * true-color substitution. */
+static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
+{
+   unsigned i;
+   uint8_t s;
+   int n = shadowHiresN;
+   int sub, sx;
+   uint16_t width = tomWidth;
+   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+   uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
+   uint16_t startPos_disp;
+   uint32_t *rows[SHADOWFB_HIRES_MAX_N];
+   int sfbIdx;
+   startPos /= pwidth;
+
+   for (sub = 0; sub < n; sub++)
+      rows[sub] = backbuffer + (uint32_t)sub * screenPitch;
+
+   if (startPos < 0)
+      current_line_buffer += 2 * -startPos;
+   else
+   {
+      /* LEFT_BG_FIX border fill, replicated N wide x N sub-rows. */
+      uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+      uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+      startPos_disp = (uint16_t)startPos * pwidth_scale;
+
+      for (sub = 0; sub < n; sub++)
+         for (i = 0; i < (unsigned)startPos_disp * (unsigned)n; i++)
+            *rows[sub]++ = pixel;
+
+      width -= startPos_disp;
+   }
+
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+   sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+
+   while (width >= pwidth_scale)
+   {
+      uint32_t base;
+      const shadowfb_sub *ent;
+      uint16_t color = (*current_line_buffer++) << 8;
+      color |= *current_line_buffer++;
+
+      /* `base` = the exact 1x result for this stock pixel (including
+       * the true-color substitution when that option is on). */
+      base = CRY16ToRGB32[color];
+      if (shadowFBActive && sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+            && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+         base = 0xFF000000 | shadowLineRGB[sfbIdx];
+
+      for (sub = 0; sub < n; sub++)
+      {
+         ent = NULL;
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+               && shadowHiresLineTag[sfbIdx] ==
+                  ((uint32_t)color | SHADOWFB_TAG_VALID))
+            ent = shadowHiresLineSub
+                + ((uint32_t)sub * SHADOWFB_LINE_PIXELS + (uint32_t)sfbIdx)
+                  * (uint32_t)n;
+         for (sx = 0; sx < n; sx++)
+         {
+            /* Stage 2: entries carry real per-subpixel content, so a
+             * hit renders each entry -- with true-color on, through
+             * ShadowFBCryRGB so the entry's own frac16 composes
+             * (design section 3.2); with it off, through the stock
+             * LUT.  A miss falls back to the exact 1x result. */
+            uint32_t out;
+            if (ent)
+               out = shadowFBActive
+                   ? (0xFF000000
+                      | ShadowFBCryRGB(ent[sx].value16, ent[sx].frac16))
+                   : CRY16ToRGB32[ent[sx].value16];
+            else
+               out = base;
+            for (s = 0; s < pwidth_scale; s++)
+               *rows[sub]++ = out;
+         }
+      }
+      sfbIdx++;
+      width -= pwidth_scale;
+   }
+}
+
+/* Hi-res dispatch for one scanline: CRY 16bpp gets the dedicated Nx
+ * renderer above; every other mode renders stock at 1x into a scratch
+ * row and is box-replicated at output (Stage 1 scope fence).
+ *
+ * The scratch is seeded from the existing Nx row (sub-row 0, every Nth
+ * pixel) so pixels the stock renderer leaves untouched -- e.g. the tail
+ * beyond the last full pwidth step -- keep their previous value, exactly
+ * as they would at 1x.  By induction from the black-filled initial
+ * buffer, the Nx frame therefore stays an exact box replication of the
+ * 1x frame for every mode. */
+static uint32_t tomHiresScratch[1024];
+
+static void tom_render_scanline_hires(uint32_t * backbuffer)
+{
+   render_xxx_scanline_fn *fn = scanline_render[TOMGetVideoMode()];
+   unsigned i, s, r;
+   unsigned n = (unsigned)shadowHiresN;
+   unsigned w = (tomWidth < 1024) ? tomWidth : 1024;
+   uint32_t *dst;
+   uint32_t px;
+
+   if (fn == tom_render_16bpp_cry_scanline)
+   {
+      tom_render_16bpp_cry_scanline_hires(backbuffer);
+      return;
+   }
+
+   for (i = 0; i < w; i++)
+      tomHiresScratch[i] = backbuffer[i * n];
+   fn(tomHiresScratch);
+   for (r = 0; r < n; r++)
+   {
+      dst = backbuffer + r * screenPitch;
+      for (i = 0; i < w; i++)
+      {
+         px = tomHiresScratch[i];
+         for (s = 0; s < n; s++)
+            *dst++ = px;
+      }
    }
 }
 
@@ -1015,17 +1186,18 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 
    if ((halfline >= topVisible) && (halfline < bottomVisible))
    {
+      /* Hi-res (Nx): the stock row index maps to N consecutive Nx rows at
+       * the Nx pitch.  hiresRowScale is 1 whenever the option is off, so
+       * the stock path is unchanged (see shadowfb.h). */
+      uint32_t hiresRowScale = (uint32_t)shadowHiresN;
+
       // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
       if (tomRam8[VP + 1] & 0x01)
-      {
          writtenRow = (halfline - topVisible) / 2;//non-interlace
-         TOMCurrentLine = &(screenBuffer[writtenRow * screenPitch]);
-      }
       else
-      {
          writtenRow = (((halfline - topVisible) / 2) * 2) + (field2 ? 0 : 1);//interlace
-         TOMCurrentLine = &(screenBuffer[(((halfline - topVisible) / 2) * screenPitch * 2) + (field2 ? 0 : screenPitch)]);
-      }
+
+      TOMCurrentLine = &(screenBuffer[writtenRow * hiresRowScale * screenPitch]);
 
       /* Record the row regardless of which branch below fills it: both the
        * scanline renderer and the border fill count as TOM having addressed
@@ -1034,16 +1206,27 @@ void TOMExecHalfline(uint16_t halfline, bool render)
          tomRowsWrittenCur = writtenRow + 1;
 
       if (inActiveDisplayArea)
-         scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+      {
+         if (shadowHiresActive)
+            tom_render_scanline_hires(TOMCurrentLine);
+         else
+            scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+      }
       else
       {
          // If outside of VDB & VDE, then display the border color
-         uint32_t * currentLineBuffer = TOMCurrentLine;
+         // (replicated across the N sub-rows / N-wide pixels at hi-res).
          uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
          uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+         uint32_t hr;
 
-         for(i=0; i<tomWidth; i++)
-            *currentLineBuffer++ = pixel;
+         for (hr = 0; hr < hiresRowScale; hr++)
+         {
+            uint32_t * currentLineBuffer = TOMCurrentLine + hr * screenPitch;
+
+            for(i=0; i<tomWidth * hiresRowScale; i++)
+               *currentLineBuffer++ = pixel;
+         }
       }
    }
 }

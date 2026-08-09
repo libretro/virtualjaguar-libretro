@@ -1,0 +1,206 @@
+<!-- title: Enhancements — Virtual Jaguar libretro -->
+<!-- nav: Enhancements -->
+<!-- description: Beyond stock Atari Jaguar hardware: true-color rendering, 2x internal resolution with real supersampled texture detail, overclocking, CD read-speed control and a crash watchdog. -->
+
+<h1>Enhancements</h1>
+<p class="lede">
+  Features the hardware never had. Off by default means bit-identical.
+  Full list: <a href="{{DOCS_OPTIONS_URL}}">libretro docs</a>.
+</p>
+
+<h2>True-color rendering <span class="badge review">merged — PR #341</span></h2>
+<p>
+  The blitter computes Gouraud shading with 16 fraction bits, then discards
+  them in the 16-bit CRY write. <code>virtualjaguar_true_color</code> keeps
+  them in a shadow framebuffer. Game-visible RAM stays bit-identical.
+</p>
+
+<div class="ab-pair">
+  <figure>
+    <div class="label">Stock 16-bit CRY (off)</div>
+    <img src="assets/cyber_off_850.png" alt="Cybermorph terrain, stock 16-bit CRY rendering: visible banding on shaded polygon surfaces" width="326" height="240">
+    <figcaption>Cybermorph, frame 850 &mdash; 304 unique colors.</figcaption>
+  </figure>
+  <figure>
+    <div class="label">True-color (on)</div>
+    <img src="assets/cyber_on_850.png" alt="Cybermorph terrain, true-color rendering: smooth gradients on shaded polygon surfaces" width="326" height="240">
+    <figcaption>Same frame, same inputs &mdash; 450 unique colors.</figcaption>
+  </figure>
+</div>
+
+<figure class="smooth">
+  <img src="assets/truecolor_ab_cybermorph.png" alt="Three-panel comparison: stock frame, true-color frame, and a difference map amplified 64 times showing shading refinement across polygon surfaces">
+  <figcaption>
+    Off / on / difference (amplified 64&times;). 45.9% of pixels refined;
+    every changed channel moves exactly one quantization step.
+  </figcaption>
+</figure>
+
+<div class="evidence">
+  304&nbsp;&rarr;&nbsp;450 unique colors (peak 423&nbsp;&rarr;&nbsp;702). Both
+  blitter engines agree exactly; off, 600 frames hash bit-identical to develop.
+  CRY 16bpp only, ~8&nbsp;MB when enabled. Merged &mdash;
+  <a href="{{REPO}}/pull/341">PR #341</a>; in nightlies, not yet in a tagged
+  release.
+</div>
+
+<h2>Internal resolution 2&times; <span class="badge review">stage&nbsp;1 merged &middot; stage&nbsp;2 in review</span></h2>
+<p>
+  The blitter is the Jaguar's rasterizer, and it walks source textures with
+  16.16 fixed-point steps &mdash; then rounds each output pixel to the nearest
+  texel and throws the rest away. <code>virtualjaguar_internal_resolution</code>
+  (<code>1x</code> default, <code>2x</code>; restart required) re-samples those
+  same walks at double density into a shadow surface. The extra pixels are
+  <strong>source data the hardware sampled past</strong> &mdash; not
+  interpolation, not sharpening, not a neural upscaler.
+</p>
+<p>
+  The emulated machine never sees it. The stock framebuffer stays bit-identical
+  and savestate digests match between <code>1x</code> and <code>2x</code> &mdash;
+  both proven per-title by committed tooling
+  (<a href="{{REPO}}/blob/develop/test/tools/hires_box_check.c">hires_box_check</a>,
+  <a href="{{REPO}}/blob/develop/test/tools/hires_state_digest.c">hires_state_digest</a>),
+  not asserted.
+</p>
+
+<figure class="smooth">
+  <img src="assets/hires_ab_avp_fullframe.png" width="1360" height="574"
+       alt="Alien vs Predator frame 6000, two panels side by side: left is the 1x frame with every pixel doubled, right is the same frame at 2x internal resolution. Both show an Alien's claw in a textured corridor facing a chevron-panelled door; the panels differ only in fine texture detail.">
+  <figcaption>
+    Alien vs Predator, frame 6000, same ROM and same input script &mdash; only
+    the option differs. <strong>At 1:1 the difference is subtle</strong>: this
+    buys fine texture detail, not a change in composition or colour.
+  </figcaption>
+</figure>
+
+<figure class="smooth">
+  <img src="assets/hires_ab_avp_wall.png" width="1016" height="446"
+       alt="Magnified 6x crop of the corridor wall and floor. In the 1x panel the wall ribs are flat 2x2 blocks of a single colour; in the 2x panel the same ribs carry intermediate texel values and the diagonal wall-floor edge steps in half-pixel increments.">
+  <figcaption>
+    Same frame, <strong>magnified 6&times;</strong> from the 1&times; pixel
+    grid. The ribbed wall is where it reads: those columns are minified source
+    walks, so the extra scanline lands on a different texel about half the time.
+  </figcaption>
+</figure>
+
+<figure class="smooth">
+  <img src="assets/hires_ab_avp_door.png" width="776" height="386"
+       alt="Magnified 6x crop of the chevron-panelled door. The 2x panel resolves sub-texel shading along the chevron edges and across the panel face that the box-replicated 1x panel cannot represent.">
+  <figcaption>
+    The door, <strong>magnified 6&times;</strong>. Some of what appears here is
+    an intermediate value between two adjacent texels &mdash; a finer gradient,
+    reading as stippling at this magnification &mdash; rather than new
+    structure. It is still recovered source data, but it is not extra geometry.
+  </figcaption>
+</figure>
+
+<p>
+  <strong>Which titles benefit, measured.</strong> The number is the share of
+  2&times;2 output blocks carrying genuine sub-pixel detail &mdash; a coverage
+  figure, not &ldquo;N% better image&rdquo;. Every scene below was
+  screenshot-verified in real gameplay, and is identical on both blitter
+  engines.
+</p>
+
+<div class="table-wrap"><table>
+  <tr><th>Title</th><th>Scene</th><th>Blocks with real sub-pixel detail</th></tr>
+  <tr><td>Alien vs Predator</td><td>textured corridor, standing still</td><td>30.6%</td></tr>
+  <tr><td>Alien vs Predator</td><td>same level, walking into a door</td><td>13.0%</td></tr>
+  <tr><td>Skyhammer</td><td>in-mission cockpit, city flight</td><td>3.4&ndash;17.7%</td></tr>
+  <tr><td>Doom</td><td>E1M1 gameplay</td><td>8.7%</td></tr>
+  <tr><td>Missile Command 3D</td><td>Original 3D gameplay</td><td>5.0&ndash;5.9%</td></tr>
+</table></div>
+
+<p>
+  The AvP spread is the honest shape of this feature: a corridor viewed down
+  its length is minification-heavy and recovers a lot; a wall pressed against
+  the camera is magnification-heavy and recovers little. Stage&nbsp;2 recovers
+  information <em>only where the source walk minifies</em>.
+</p>
+
+<p>
+  <strong>Which titles it does nothing for, and why.</strong> Three census
+  candidates measured a true 0.0000%, for three different reasons:
+</p>
+<ul>
+  <li><strong>Hover Strike</strong> &mdash; the detail is produced correctly,
+  then discarded. 89% of it lands in an off-screen buffer that the game
+  plain-copies to the display; that copy is an integer 1:1 walk, so it
+  replicates. A known, cheaply fixable follow-on, not a limit.</li>
+  <li><strong>I-War</strong> and <strong>Towers II</strong> &mdash; they
+  magnify their textures (81% of I-War's qualifying walks consume less than one
+  texel per pixel). The half-step sample lands inside the same texel, so there
+  is nothing to recover. Information-theoretic, not a bug.</li>
+  <li><strong>Cybermorph</strong> and <strong>Checkered Flag</strong> &mdash;
+  effectively none of their blits use a fractional source walk (13 and 8
+  qualifying blits out of roughly 1.7&nbsp;M each). Nothing for this feature to
+  hook into.</li>
+</ul>
+<p>
+  Iron Soldier 2 on CD is <em>unverified</em>, not zero &mdash; its gameplay
+  could not be reached headlessly. This helps some games. It does not help all
+  of them.
+</p>
+
+<p>
+  <strong>The cost.</strong> 2&times; scales with screen area, so budget for it
+  on a handheld: Stage&nbsp;1 measured Doom at +13% frame time, and
+  Stage&nbsp;2 adds roughly +1.5% (Doom) to +7.4% (Missile Command 3D) on top
+  of that. At <code>1x</code> the cost is nil and the output is bit-identical.
+</p>
+
+<div class="evidence">
+  Stage&nbsp;1 (the 2&times; pipeline, box replication only) merged &mdash;
+  <a href="{{REPO}}/pull/353">PR #353</a>; Stage&nbsp;2 (the supersampling that
+  recovers the detail above) in review &mdash;
+  <a href="{{REPO}}/pull/357">PR #357</a>. Method, per-title input scripts and
+  instrumentation:
+  <a href="{{REPO}}/blob/develop/docs/avp-renderer-analysis.md">docs/avp-renderer-analysis.md</a>
+  &middot; <a href="{{REPO}}/blob/feature/338-hires-stage2/docs/hires-stage0-census.md">corpus census &sect;9</a>
+  (lands on <code>develop</code> with PR&nbsp;#357)
+  &middot; <a href="{{REPO}}/blob/develop/docs/hires-upscaling-design.md">design</a>
+  &middot; epic <a href="{{REPO}}/issues/338">#338</a>. Not in a tagged release.
+</div>
+
+<h2>Overclocking that doesn't break the game</h2>
+<p>
+  <code>virtualjaguar_m68k_clock_scale</code> (0.5&times;&ndash;3&times;) and
+  <code>virtualjaguar_risc_clock_scale</code> (0.5&times;&ndash;2&times;).
+  Bus latencies stay in wall time at any scale &mdash; pacing and pitch don't
+  drift; CI proves it at non-1&times; scales.
+</p>
+<div class="evidence">
+  <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a>
+  (#314, #316) &middot; cycle-domain contract
+  <a href="{{REPO}}/issues/318">#318</a>,
+  <a href="{{REPO}}/pull/337">PR #337</a> (merged).
+</div>
+
+<h2>CD read-speed control</h2>
+<p>
+  <code>virtualjaguar_cd_read_speed</code>: 1&times; (hardware-faithful) to
+  instant, on the HLE path. Streaming reads keep fast transfers from stomping
+  in-flight game code &mdash; regression-tested.
+</p>
+<div class="evidence">
+  <a href="{{REPO}}/blob/develop/docs/cd-read-speed.md">docs/cd-read-speed.md</a>
+  &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a>.
+</div>
+
+<h2>Crash watchdog</h2>
+<p>
+  <code>virtualjaguar_crash_detect</code> (default on) matches known failure
+  signatures each frame. Your frontend log names the broken subsystem.
+</p>
+<div class="evidence">
+  <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">src/core/crash_detect.c</a>
+  (signatures and thresholds in the header comment).
+</div>
+
+<h2>Roadmap <span class="badge plain">in design</span></h2>
+<p>
+  Stage&nbsp;3 of the internal-resolution track extends supersampling to the
+  Object Processor's scaled sprites, which is the only stage that reaches 2D
+  titles. Epic <a href="{{REPO}}/issues/338">#338</a> &mdash; in design, no
+  dates.
+</p>

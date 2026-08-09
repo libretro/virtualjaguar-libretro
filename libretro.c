@@ -36,7 +36,9 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "uart.h"
 #include "joystick.h"
 #include "settings.h"
+#include "shadowfb.h"
 #include "tom.h"
+#include "gpu.h"
 #include "eeprom.h"
 #include "memtrack.h"
 #include "jaggd.h"
@@ -89,6 +91,14 @@ int videoHeight              = 0;
 uint32_t *videoBuffer        = NULL;
 int game_width               = 0;
 int game_height              = 0;
+
+/* Actual videoBuffer allocation in pixels.  VIDEO_BUFFER_PIXELS scaled by
+ * N*N when the internal-resolution option is active (N fixed at load; see
+ * shadowfb.h).  video_buffer_blank() must cover the real allocation. */
+static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
+/* One-shot latch for the "restart required" notice when the
+ * internal-resolution option changes mid-game. */
+static int hires_restart_notice_logged = 0;
 
 extern uint16_t eeprom_ram[64];
 extern uint16_t cdrom_eeprom_ram[64];
@@ -507,6 +517,32 @@ static void check_variables(void)
          vjs.useFastBlitter = false;
    }
 
+   var.key = "virtualjaguar_true_color";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      ShadowFBSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      ShadowFBSetEnabled(0);
+
+   /* Internal resolution is applied ONCE at content load (retro_load_game)
+    * because the libretro geometry maximum cannot grow mid-session.  Here
+    * we only detect a mid-game change and tell the user it needs a
+    * restart (design section 7.1). */
+   var.key = "virtualjaguar_internal_resolution";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      int hires_want = (strcmp(var.value, "2x") == 0) ? 2 : 1;
+      if (hires_want == shadowHiresN)
+         hires_restart_notice_logged = 0;
+      else if (content_loaded && !hires_restart_notice_logged)
+      {
+         LOG_INF("[HIRES] internal resolution change to %s takes effect on restart\n",
+                 var.value);
+         hires_restart_notice_logged = 1;
+      }
+   }
+
    var.key = "virtualjaguar_crash_detect";
    var.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -595,6 +631,9 @@ static void check_variables(void)
       else if (strcmp(var.value, "2x") == 0)
          riscClockScalePct = 200;
    }
+   /* Drop the GPU's sub-cycle bus-stall remainder when the RISC scale
+    * (possibly) changed — mirrors M68KClockScaleReset() above. */
+   GPUClockScaleReset();
 
    if (m68kClockScalePct != 100 || riscClockScalePct != 100)
       LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
@@ -970,7 +1009,9 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.sample_rate    = SAMPLERATE;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
-   info->geometry.max_width    = 652; // Highest value encountered during testing
+   /* Hi-res: the maxima scale by the (load-time-fixed) internal
+    * resolution factor; shadowHiresN is 1 when the option is off. */
+   info->geometry.max_width    = 652 * shadowHiresN; // Highest value encountered during testing
    /* Must bound every height the core can emit, not the nominal active
     * display.  VDB/VDE are game-programmable, so a title can open a window
     * taller than the nominal 240 NTSC lines (yarc programs VDB=25/VDE=507 =
@@ -978,7 +1019,8 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
     * Advertising 240 for NTSC let the core submit frames taller than the
     * declared maximum, which some video drivers clip or drop.  The nominal
     * size is carried by base_height above; this is the allocation bound. */
-   info->geometry.max_height   = 256;
+   info->geometry.max_height   = 256 * shadowHiresN;
+   /* Aspect ratio stays 4/3: Nx changes pixel count, not picture shape. */
    info->geometry.aspect_ratio = 4.0 / 3.0;
 }
 
@@ -1149,6 +1191,19 @@ bool retro_unserialize(const void *data, size_t size)
    bus_arbiter_update_memcon2(TOMGetMEMCON2());
 
    JaguarApplyHLEBIOSState();
+
+   /* The true-color shadow framebuffer is a derived cache over RAM
+    * contents that were just replaced wholesale; drop every entry
+    * (never serialized -- see shadowfb.h).  Ditto the hi-res shadow
+    * surface: invalidation cost is per stock word, independent of N. */
+   ShadowFBInvalidate();
+   ShadowHiresInvalidate();
+
+   /* The 68K->RISC-RAM 16-bit-port latch is deliberately not serialized
+    * (see jaguar.c): dropping an unpaired low word is what hardware does.
+    * But it must actually be dropped here, or a pending pre-load word
+    * could commit against a partner write issued after the load. */
+   M68KResetRiscWordLatch();
 
    return true;
 }
@@ -1448,7 +1503,7 @@ static void video_buffer_blank(void)
    if (!videoBuffer)
       return;
 
-   for (i = 0; i < VIDEO_BUFFER_PIXELS; ++i)
+   for (i = 0; i < video_buffer_alloc_pixels; ++i)
       videoBuffer[i] = 0xFF000000;
 }
 
@@ -1520,9 +1575,37 @@ bool retro_load_game(const struct retro_game_info *info)
       return false;
    }
 
+   /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
+    * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
+    * so N is fixed for the session and mid-game option changes only apply
+    * on restart (design section 7.1). */
+   {
+      struct retro_variable hires_var;
+      int hires_n = 1;
+      hires_var.key = "virtualjaguar_internal_resolution";
+      hires_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hires_var)
+          && hires_var.value && strcmp(hires_var.value, "2x") == 0)
+         hires_n = 2;
+      ShadowHiresSetN(hires_n);
+      hires_restart_notice_logged = 0;
+   }
+
    videoWidth           = 320;
    videoHeight          = 240;
-   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), VIDEO_BUFFER_PIXELS);
+   video_buffer_alloc_pixels =
+      VIDEO_BUFFER_PIXELS * shadowHiresN * shadowHiresN;
+   videoBuffer  = (uint32_t *)calloc(sizeof(uint32_t), video_buffer_alloc_pixels);
+   if (!videoBuffer && shadowHiresN > 1)
+   {
+      /* Nx framebuffer allocation failed: log and run at 1x (scope
+       * fence: allocation failure -> log + run at 1x). */
+      LOG_WRN("[HIRES] %dx framebuffer allocation failed; running at 1x\n",
+              shadowHiresN);
+      ShadowHiresShutdown();
+      video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
+      videoBuffer = (uint32_t *)calloc(sizeof(uint32_t), video_buffer_alloc_pixels);
+   }
    sampleBuffer = (uint16_t *)malloc(BUFMAX * sizeof(uint16_t));
 
    if (!videoBuffer || !sampleBuffer)
@@ -1535,8 +1618,8 @@ bool retro_load_game(const struct retro_game_info *info)
    }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
 
-   game_width           = 320;
-   game_height          = 240;
+   game_width           = 320 * shadowHiresN;
+   game_height          = 240 * shadowHiresN;
 
    // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
@@ -1608,7 +1691,7 @@ bool retro_load_game(const struct retro_game_info *info)
    CrashDetectReset();                                       // zero per-game watchdog state
    memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000); // Use the stock BIOS
 
-   JaguarSetScreenPitch(videoWidth);
+   JaguarSetScreenPitch(videoWidth * shadowHiresN);
    JaguarSetScreenBuffer(videoBuffer);
 
    /* Seed the framebuffer.  See video_buffer_blank() for why opaque black
@@ -1727,6 +1810,12 @@ void retro_unload_game(void)
    videoHeight = 0;
    game_width = 0;
    game_height = 0;
+
+   /* Hi-res: N is per-load; drop the shadow surface so the next load
+    * re-reads the option from scratch (see shadowfb.h). */
+   ShadowHiresShutdown();
+   video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
+   hires_restart_notice_logged = 0;
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -1870,6 +1959,14 @@ void retro_deinit(void)
       free(sampleBuffer);
    sampleBuffer = NULL;
 
+   /* Free the true-color and hi-res shadow buffers and reset all module
+    * statics (iOS cannot dlclose cores, so statics persist across
+    * loads). */
+   ShadowFBShutdown();
+   ShadowHiresShutdown();
+   video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
+   hires_restart_notice_logged = 0;
+
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
    save_data_needs_unpack = false;
@@ -1971,8 +2068,12 @@ void retro_run(void)
       LOG_INF("[DBG] frame %u: GEOMETRY CHANGE %ux%u -> %ux%u (applied pre-render)\n",
               dbg_frame_counter, videoWidth, videoHeight, tomWidth, tomHeight);
 #endif
+      /* videoWidth/videoHeight track TOM in STOCK units (the change
+       * detector above must keep firing on stock transitions); the
+       * presented geometry and pitch are the stock size scaled by the
+       * load-time internal resolution factor (1 when off). */
       videoWidth = tomWidth, videoHeight = tomHeight;
-      game_width = tomWidth, game_height = tomHeight;
+      game_width = tomWidth * shadowHiresN, game_height = tomHeight * shadowHiresN;
 
       JaguarSetScreenPitch(game_width);
 
@@ -1989,6 +2090,10 @@ void retro_run(void)
    UARTPoll();
 
    update_input();
+
+   /* Hi-res: advance the shadow surface's frame epoch (no-op when off;
+    * see shadowfb.h, design section 3.4). */
+   ShadowHiresFrameTick();
 
    DACPrepareFrame(vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
    JaguarExecuteNew();
@@ -2017,6 +2122,12 @@ void retro_run(void)
     * and the extra rows are simply not shown) and is left alone. */
    {
       uint32_t written = TOMGetWrittenRowExtent();
+      /* Hi-res: TOM reports rows in STOCK units.  The decision below is
+       * made in stock units so it fires on exactly the same frames as a
+       * 1x run (box-replication identity, design section 7.3); only the
+       * blanked row range is scaled to Nx. */
+      uint32_t hires_n = (uint32_t)shadowHiresN;
+      uint32_t stock_height = (uint32_t)game_height / hires_n;
 
       /* Only blank a genuine TAIL.  A large shortfall does not mean "these
        * rows are stale", it means TOM and the presented geometry disagree
@@ -2044,14 +2155,14 @@ void retro_run(void)
        * written == 0 (TOM addressed no rows at all) is the degenerate form
        * of the same thing; the coverage test already rejects it, but keep it
        * explicit so the intent survives a future tweak of the bounds. */
-      if (written > 0 && written < (uint32_t)game_height
-          && (uint32_t)game_height - written <= MAX_BLANK_TAIL_ROWS
+      if (written > 0 && written < stock_height
+          && stock_height - written <= MAX_BLANK_TAIL_ROWS
           && written * MIN_BLANK_COVERAGE_DEN
-             >= (uint32_t)game_height * MIN_BLANK_COVERAGE_NUM)
+             >= stock_height * MIN_BLANK_COVERAGE_NUM)
       {
          uint32_t row;
          uint32_t col;
-         for (row = written; row < (uint32_t)game_height; row++)
+         for (row = written * hires_n; row < (uint32_t)game_height; row++)
          {
             uint32_t *line = videoBuffer + (row * (uint32_t)game_width);
             for (col = 0; col < (uint32_t)game_width; col++)

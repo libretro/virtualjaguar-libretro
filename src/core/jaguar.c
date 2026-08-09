@@ -218,6 +218,8 @@ extern uint8_t jagMemSpace[];
 #define TOM_OLP_HI              0x22
 #define TOM_BORD1               0x2A
 #define TOM_BORD2               0x2C
+#define TOM_VDE                 0x48
+#define TOM_VI                  0x4E
 #define TOM_INT                 0xF000E0
 #define TOM_INT_CLR_ALL         0x1F00
 
@@ -404,7 +406,7 @@ static int m68kBusNoCharge = 0;
 #define M68K_BUS_CHARGE(addr, naccesses) \
    do { \
       if (busArbiter.enabled && !m68kBusNoCharge) \
-         regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses)); \
+         regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses), m68kClockScalePct); \
    } while (0)
 
 unsigned int m68k_read_memory_8(unsigned int address)
@@ -557,6 +559,86 @@ static void M68KGPURAMSync(unsigned int address, unsigned int length)
       GPUSyncToM68K();
 }
 
+/* GPU and DSP local RAM are 32-bit memories, but an external bus master sees
+ * them as 16-bit ports that must be written as ordered longword pairs:
+ *
+ *   "Addresses in DSP space are only available as 16-bit memory into which
+ *    32-bit transfers must be performed in the order low address then high
+ *    address."            -- JTRM Technical Reference v8, p.101 (p.44 for TOM)
+ *
+ * So the hardware latches the word written to the low address and commits the
+ * full longword only when its partner at +2 arrives.  That latch is why the
+ * 68000 errata singles out the two instructions that emit the halves in the
+ * wrong order -- clr.l <ea> and move.l <ea>,-(An) "do not work correctly when
+ * writing to Jaguar GPU & DSP hardware registers and internal RAM"
+ * ("Hardware Bugs & Warnings", p.6).  Independent half-longword updates would
+ * be order-insensitive and that erratum could not exist.
+ *
+ * Committing a lone low-address word directly into RAM is therefore more
+ * permissive than the hardware, and it lets a concurrently running RISC read a
+ * longword that was never written as one.  Power Drive Rally does exactly
+ * that: its 68000 sound driver issues a bare `move.w #$14,$F1BE30` into a DSP
+ * voice descriptor.  On hardware that word just sits in the latch; here it
+ * used to land in DSP RAM, so the DSP's voice dispatcher read $00140000 as a
+ * state code, indexed its jump table at $F1BB14 with it, fetched 0 and jumped
+ * to PC 0.  The engine then ran garbage until it left mapped memory, at which
+ * point DSPExec's escape guard parked it for good -- LTXD stopped updating and
+ * the DAC froze on one sample, which is the "sound gets muted" in issue #355.
+ *
+ * A write that is part of a real 68000 long write (m68kInLongWrite) already
+ * arrives as a correctly ordered pair, so it bypasses the latch untouched. */
+#define M68K_RISC_LOCAL_RAM(a) \
+   (((a) >= GPU_WORK_RAM_BASE && (a) < GPU_WORK_RAM_BASE + 0x1000) \
+    || ((a) >= DSP_WORK_RAM_BASE && (a) < DSP_WORK_RAM_BASE + 0x2000))
+
+/* Not serialised into save states, deliberately.  Note the reason is NOT
+ * "a pending latch cannot outlive a frame boundary" -- it can: an unpaired
+ * write (issue #355's own signature) leaves the latch held indefinitely.
+ * The reason that holds is that dropping it degrades to "the lone write
+ * never landed", which is what the hardware does with an unpaired half.
+ * That rationale only works if the latch really is dropped when state is
+ * replaced, so retro_unserialize() calls M68KResetRiscWordLatch() -- else
+ * a pre-load pending low word could commit against a post-load partner
+ * write.  Serialising the pair is the more faithful option if a savestate
+ * version bump is being made anyway (see docs/savestate-compat.md for the
+ * policy: one bump per release). */
+static uint32_t m68kRiscLatchAddr = 0xFFFFFFFF;   /* low address, or ~0 */
+static uint16_t m68kRiscLatchData = 0;
+
+void M68KResetRiscWordLatch(void)
+{
+   m68kRiscLatchAddr = 0xFFFFFFFF;
+   m68kRiscLatchData = 0;
+}
+
+/* Returns true when the caller should stop -- the word was latched and must
+ * not reach RAM yet.  When the partner word arrives this commits the latched
+ * half first, preserving low-then-high order, and lets the caller write the
+ * second half normally. */
+static bool M68KRiscWordLatch(unsigned int address, unsigned int value)
+{
+   if (m68kInLongWrite || !M68K_RISC_LOCAL_RAM(address))
+      return false;
+
+   if (!(address & 2))
+   {
+      m68kRiscLatchAddr = address;
+      m68kRiscLatchData = (uint16_t)value;
+      return true;
+   }
+
+   if (m68kRiscLatchAddr == address - 2)
+   {
+      uint16_t hi = m68kRiscLatchData;
+      m68kRiscLatchAddr = 0xFFFFFFFF;
+      if (address >= 0xF10000)
+         JERRYWriteWord(address - 2, hi, M68K);
+      else
+         TOMWriteWord(address - 2, hi, M68K);
+   }
+   return false;
+}
+
 void m68k_write_memory_8(unsigned int address, unsigned int value)
 {
 #ifdef ALPINE_FUNCTIONS
@@ -609,6 +691,19 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
    M68K_BUS_CHARGE(address, 1);
+
+   /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
+    * see M68KRiscWordLatch. */
+   if (M68KRiscWordLatch(address, value))
+   {
+      /* The half that only latches still occupies the bus, so the GPU
+       * must be run up to this access exactly as it is for a committing
+       * write.  Without this, GPU work that logically falls between the
+       * two halves gets executed after the commit instead of before it,
+       * and would observe the new longword a half-write early. */
+      M68KGPURAMSync(address, 2);
+      return;
+   }
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
@@ -1046,6 +1141,8 @@ void JaguarReset(void)
    uint32_t preserveStart = jaguarLoadedRAMStart;
    uint32_t preserveEnd = jaguarLoadedRAMEnd;
 
+   M68KResetRiscWordLatch();
+
    /* CD boot strategies (HLE/BIOS) hold per-run state (auth-bypass
     * installed flag, boot-stub-injected flag, HLE active flag, etc.)
     * that must be cleared on every reset.  Cart strategy reset is a no-op. */
@@ -1188,6 +1285,15 @@ void JaguarReset(void)
       /* --- Clear border color --- */
       SET16(tomRam8, TOM_BORD1, 0x0000);
       SET16(tomRam8, TOM_BORD2, 0x0000);
+
+      /* --- Vertical interrupt line ---
+       * The boot ROM programs VI to the first VBlank halfline (VDE+1,
+       * measured $207 on the retail BIOS) before jumping to the cart.
+       * Carts may enable the INT1 VI bit without ever writing VI
+       * (Raiden does), relying on this value; with VI left 0 the
+       * compare never fires and the game spins waiting for its VBlank
+       * ISR. */
+      SET16(tomRam8, TOM_VI, (uint16_t)(GET16(tomRam8, TOM_VDE) + 1));
 
       /* --- Interrupts: clear all pending, disable all enables --- */
       TOMWriteWord(TOM_INT, TOM_INT_CLR_ALL, M68K);

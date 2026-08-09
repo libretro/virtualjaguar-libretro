@@ -37,6 +37,16 @@ struct CDIntfTrack {
    uint32_t fileOffset;          // Byte offset into this track's BIN file
    uint32_t sectorSize;          // Sector size in bytes (usually 2352)
    uint8_t startM, startS, startF; // Start MSF (of INDEX 01 / data start)
+   /* Byte displacement of this track's stored content relative to the
+    * descriptor layout (CDI V2 rip-jitter repair): the byte that belongs at
+    * descriptor position P actually sits at P + dataShift in the file, so
+    * reads add dataShift.  0 for conformant images and for all CUE tracks. */
+   int32_t dataShift;
+   /* CDI V2 head-loss repair: the first bytes of this track's user data were
+    * lost by the ripper and reads of the first data sector must overlay the
+    * constant 98-byte Jaguar boot-header prefix (sync preamble + magic) over
+    * the zeros that dataShift exposes there.  See CDIRepairV2BootTrack. */
+   bool synthBootHeader;
    char binFilePath[4096];       // Path to this track's BIN file (multi-file CUE)
 };
 

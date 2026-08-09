@@ -1698,7 +1698,11 @@ static void test_tom_video_registers(void)
    CHECK_TOM("VDE",  TOM_VDE,  518);
    CHECK_TOM("VEB",  TOM_VEB,  ntsc ? 511 : 613);
    CHECK_TOM("VEE",  TOM_VEE,  6);
-   CHECK_TOM("VI",   TOM_VI,   0);  /* left at 0; (vc>0) guard disables until game sets it */
+   /* The real boot ROM programs VI to the first VBlank halfline (VDE+1)
+    * before jumping to the cart; carts like Raiden enable the INT1 VI
+    * bit without ever writing VI and hang without this (issue class:
+    * "works only with real BIOS"). Measured $207 on the retail BIOS. */
+   CHECK_TOM("VI",   TOM_VI,   519);
    CHECK_TOM("HEQ",  TOM_HEQ,  ntsc ? 784 : 787);
    CHECK_TOM("BG",   TOM_BG,   0);
    CHECK_TOM("VMODE", TOM_VMODE, 0x06C1);
