@@ -86,9 +86,11 @@ void ShadowFBLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
  *
  * Coherence is the same value-check-at-read scheme as the 1x shadow,
  * PLUS a frame-epoch field in the tag (design section 3.4): an entry
- * is only trusted when its epoch is the current or previous frame,
- * which bounds the stale-structure artifact class that the 1x
- * bounded-error argument does not cover at Nx (design section 5.4).
+ * is only trusted when it was written within the last few presented
+ * frames (HIRES_EPOCH_WINDOW in shadowfb.c -- sized for slow
+ * double-buffered engines like Doom's ~15Hz renderer), which bounds
+ * the stale-structure artifact class that the 1x bounded-error
+ * argument does not cover at Nx (design section 5.4).
  *
  * Stage 1 semantics: every writer stores the stock pixel replicated
  * N*N times (box replication), so output is bit-exactly the Nx box
