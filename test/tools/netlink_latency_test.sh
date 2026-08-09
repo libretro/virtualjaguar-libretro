@@ -85,9 +85,15 @@ skip()
     exit 0
 }
 
-out_off="$(run_case "control disabled" 42751 42761 disabled)" || {
+# Ports: PID-spread inside 21000-24999, below every OS's ephemeral
+# floor (Linux 32768, macOS 49152).  Fixed ports in the ephemeral range
+# collide with the runner's own transient connections and flake the
+# suite (see netlink_pair_test.sh / test_jlink_tcp.c).
+PORT_BASE=$(( 21000 + ($$ % 4000) ))
+
+out_off="$(run_case "control disabled" "$PORT_BASE" "$((PORT_BASE + 10))" disabled)" || {
     echo "netlink_latency_test: FAIL (control case errored)"; exit 1; }
-out_on="$(run_case "fixed enabled" 42752 42762 enabled)" || {
+out_on="$(run_case "fixed enabled" "$((PORT_BASE + 1))" "$((PORT_BASE + 11))" enabled)" || {
     echo "netlink_latency_test: FAIL (enabled case errored)"; exit 1; }
 read -r rate_off fps_off <<<"$out_off"
 read -r rate_on  fps_on  <<<"$out_on"

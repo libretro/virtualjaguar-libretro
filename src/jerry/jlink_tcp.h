@@ -19,6 +19,12 @@ int  JLinkTCPOpen(int is_server, const char *host, int port);
 void JLinkTCPClose(void);
 int  JLinkTCPConnected(void);
 
+/* Number of live peer connections: accepted clients in server mode,
+   0/1 in client mode (0 while the connect is still in flight).  Lets a
+   hub caller (tests, future OSD) wait on "N peers present" instead of
+   sleeping a fixed interval and hoping the accept happened. */
+int  JLinkTCPPeerCount(void);
+
 /* Nonblocking send; on partial send / EAGAIN the byte parks in a small
    pending ring flushed by JLinkTCPPoll.  Silently drops when no peer. */
 void JLinkTCPSend(uint8_t b);

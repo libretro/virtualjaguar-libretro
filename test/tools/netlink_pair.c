@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include "../harness/harness.h"
+#include "jlink.h"   /* JLINK_MODE_* values for the fast-fail check */
 
 typedef void     (*jerry_ww_t)(uint32_t, uint16_t, uint32_t);
 typedef uint16_t (*jerry_rw_t)(uint32_t, uint32_t);
@@ -144,6 +145,20 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "[%s] symbols missing -- build with TEST_EXPORTS=1\n", role);
         return 1;
+    }
+
+    /* Server bind failures (EADDRINUSE: something else on the runner
+       holds the port) leave the mode DISABLED after load.  Exit fast
+       with a distinct code so the driver script can retry on another
+       port instead of burning the full 15 s rendezvous and reporting a
+       generic FAIL. */
+    if (!strcmp(role, "server") && jlink_mode
+        && jlink_mode() == JLINK_MODE_DISABLED)
+    {
+        fprintf(stderr, "[%s] FAIL: netlink server did not open "
+                        "(port %s busy?)\n", role, port);
+        harness_shutdown(&cfg);
+        return 2;
     }
 
     /* Slow baud (~27 ms per character frame): this test only reads
