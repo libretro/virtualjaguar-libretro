@@ -68,5 +68,9 @@
       NVM_*;
       JGD*;
       jgd*;
+      shadowHiresResolveHits;
+      shadowHiresResolveMissValue;
+      shadowHiresResolveMissEpoch;
+      shadowHiresResolveMissNoPage;
    local: *;
 };

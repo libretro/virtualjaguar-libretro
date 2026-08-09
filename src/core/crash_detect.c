@@ -5,6 +5,7 @@
 #include "../jerry/dsp.h"   /* DSPIsRunning() returns bool -- match the canonical decl */
 #include "../tom/gpu.h"     /* GPUIsRunning() */
 #include "../cd/cdrom.h"    /* CDROMDiagGetSeekWedgeState(), CDTraceDump() */
+#include "../tom/shadowfb.h" /* shadowHiresActive + resolve counters */
 #include "settings.h"       /* bootConfig.isCDGame */
 #include <boolean.h>        /* project shim; bool / true / false */
 #include <stdint.h>
@@ -93,6 +94,24 @@ static unsigned cd_seek_wedge_frames;
 
 static unsigned next_heartbeat_frame;
 
+/* Previous heartbeat's hi-res resolve counters, so the line can report a
+ * rate for the last window as well as the cumulative one.  Cumulative alone
+ * is misleading on a title whose menus run for a thousand frames before any
+ * supersampled content exists.
+ *
+ * `hb_hires_seeded` says whether those snapshots were actually taken.  They
+ * are only ever taken by a heartbeat that ran, and heartbeats only run under
+ * CRASH_DETECT_VERBOSE -- so if verbose is switched on mid-run the snapshots
+ * are still zero while the counters are not, and a delta against them would
+ * be cumulative-from-boot wearing a window label.  That is precisely the
+ * misreading these counters exist to prevent (AvP: 53.6% cumulative vs 98.2%
+ * live), so the first heartbeat seeds instead of reporting. */
+static uint64_t hb_prev_hires_hits;
+static uint64_t hb_prev_hires_miss_value;
+static uint64_t hb_prev_hires_miss_epoch;
+static uint64_t hb_prev_hires_miss_nopage;
+static int      hb_hires_seeded;
+
 /* Last frame at which each signature fired -- prevents log spam. */
 static unsigned last_log_gpu_escape;
 static unsigned last_log_dsp_escape;
@@ -139,6 +158,98 @@ static uint32_t fb_hash(const uint32_t *fb, unsigned w, unsigned h)
    return h32;
 }
 
+/* Verbose-heartbeat extension: the OP shadow-resolve hit rate.
+ *
+ * Hi-res has one failure mode that produces no other symptom -- the blitter
+ * stores every supersampled block correctly and the OP resolve then discards
+ * all of them, putting 0.0000% supersampled pixels on screen with nothing in
+ * the log.  Production and delivery are separate failure points; only
+ * delivery fails silently.  A low `epoch=` share is the signature, and it has
+ * been the answer twice (Doom, Alien vs Predator).
+ *
+ * Emitted only while hi-res is actually active, so 1x runs stay quiet, and
+ * only under CRASH_DETECT_VERBOSE.  Counters are 64-bit and printed through
+ * double (%.0f): C89 has no %llu, and `unsigned long` is 32-bit under MSVC,
+ * which a long session would overflow. */
+
+/* Everything up to and including the cumulative rate.  The window figure is
+ * appended by one of two callers below -- a real percentage, or the literal
+ * "n/a", never a number that means something else. */
+#define HIRES_RESOLVE_FMT \
+   "[CRASH-DETECT] hires_resolve frame=%u N=%dx hits=%.0f misses=%.0f " \
+   "(epoch=%.0f value=%.0f nopage=%.0f) rate=%.1f%%"
+
+#define HIRES_RESOLVE_ARGS \
+   frame_no, shadowHiresN, (double)hits, (double)misses, \
+   (double)m_epoch, (double)m_value, (double)m_nopage, rate
+
+static void hires_resolve_heartbeat(void)
+{
+   uint64_t hits, m_value, m_epoch, m_nopage, misses, total;
+   uint64_t d_hits, d_misses, d_total;
+   double   rate, window_rate;
+   int      have_window;
+
+   if (!shadowHiresActive)
+      return;
+
+   hits     = shadowHiresResolveHits;
+   m_value  = shadowHiresResolveMissValue;
+   m_epoch  = shadowHiresResolveMissEpoch;
+   m_nopage = shadowHiresResolveMissNoPage;
+   misses   = m_value + m_epoch + m_nopage;
+   total    = hits + misses;
+   rate     = total ? (100.0 * (double)hits / (double)total) : 0.0;
+
+   /* Two ways the baseline can be untrustworthy:
+    *
+    * 1. It was never taken.  Only a heartbeat seeds it and only verbose runs
+    *    heartbeats, so switching verbose on mid-run leaves the snapshots at
+    *    zero while the counters are already in the millions -- the delta
+    *    would then be the cumulative figure under a window label, which is
+    *    the exact misreading this line exists to prevent.
+    * 2. The counters went backwards.  They and these snapshots reset
+    *    independently (ShadowHiresShutdown vs CrashDetectReset).  No live
+    *    path zeroes one without the other today -- every ShadowHiresShutdown
+    *    call site is in load/unload/deinit and the load path resets the
+    *    watchdog afterwards -- but the subtraction below is unsigned, so a
+    *    future reordering would otherwise print a 19-digit window_rate.
+    *
+    * Either way: seed now, say "n/a", and report a true window next time.  A
+    * diagnostic that can lie loudly is worse than one that cannot; one that
+    * lies quietly is worse than both. */
+   have_window = hb_hires_seeded
+              && hits     >= hb_prev_hires_hits
+              && m_value  >= hb_prev_hires_miss_value
+              && m_epoch  >= hb_prev_hires_miss_epoch
+              && m_nopage >= hb_prev_hires_miss_nopage;
+
+   if (have_window)
+   {
+      d_hits   = hits - hb_prev_hires_hits;
+      d_misses = (m_value  - hb_prev_hires_miss_value)
+               + (m_epoch  - hb_prev_hires_miss_epoch)
+               + (m_nopage - hb_prev_hires_miss_nopage);
+      d_total  = d_hits + d_misses;
+
+      window_rate = d_total ? (100.0 * (double)d_hits / (double)d_total) : 0.0;
+
+      LOG_INF(HIRES_RESOLVE_FMT " window_rate=%.1f%%\n",
+              HIRES_RESOLVE_ARGS, window_rate);
+   }
+   else
+   {
+      LOG_INF(HIRES_RESOLVE_FMT " window_rate=n/a (first window)\n",
+              HIRES_RESOLVE_ARGS);
+   }
+
+   hb_prev_hires_hits        = hits;
+   hb_prev_hires_miss_value  = m_value;
+   hb_prev_hires_miss_epoch  = m_epoch;
+   hb_prev_hires_miss_nopage = m_nopage;
+   hb_hires_seeded           = 1;
+}
+
 static int may_log(unsigned *last_frame)
 {
    if (frame_no - *last_frame < LOG_REPEAT_FRAMES && *last_frame != 0)
@@ -167,6 +278,11 @@ void CrashDetectReset(void)
    last_cd_fifo_drains = 0;
    cd_seek_wedge_frames = 0;
    next_heartbeat_frame = HEARTBEAT_FRAMES;
+   hb_prev_hires_hits = 0;
+   hb_prev_hires_miss_value = 0;
+   hb_prev_hires_miss_epoch = 0;
+   hb_prev_hires_miss_nopage = 0;
+   hb_hires_seeded = 0;
    last_log_gpu_escape = 0;
    last_log_dsp_escape = 0;
    last_log_gpu_wedge = 0;
@@ -312,6 +428,7 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
               "dsp_pc=$%08X dsp_run=%d fb_hash=$%08X\n",
               frame_no, cur_gpu_pc, gpu_running,
               cur_dsp_pc, dsp_running, cur_fb_hash);
+      hires_resolve_heartbeat();
       next_heartbeat_frame = frame_no + HEARTBEAT_FRAMES;
    }
 

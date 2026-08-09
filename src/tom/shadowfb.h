@@ -121,6 +121,27 @@ typedef struct
 
 /* Nonzero when the option requested N>1 AND allocation succeeded. */
 extern int shadowHiresActive;
+
+/* OP resolve hit/miss counters -- permanent diagnostics for the one hi-res
+ * failure mode that produces no other symptom.  The blitter can store every
+ * supersampled block correctly while the OP resolve rejects 100% of them at
+ * the value+epoch check, yielding 0.0000% supersampled output with nothing
+ * in the log: production and delivery are separate failure points and only
+ * delivery fails silently (Doom and Alien vs Predator have both hit it, both
+ * epoch-expired).  Monotonic since the last ShadowHiresShutdown; only ever
+ * bumped while shadowHiresActive, so a 1x run leaves them all zero.
+ *
+ * hits + missValue + missEpoch + missNoPage == resolves attempted:
+ *   missNoPage -- no shadow page for the address (production never got here)
+ *   missValue  -- entry exists, RAM value no longer matches its tag
+ *   missEpoch  -- value matched, entry rejected for age only (the silent one)
+ *
+ * Reported by crash_detect.c's verbose heartbeat; also exported in the test
+ * ABI (link-test.T / exports-test.list) so harnesses can dlsym and assert. */
+extern uint64_t shadowHiresResolveHits;
+extern uint64_t shadowHiresResolveMissValue;
+extern uint64_t shadowHiresResolveMissEpoch;
+extern uint64_t shadowHiresResolveMissNoPage;
 /* Replication factor.  1 whenever hi-res is off, so callers may
  * multiply by it unconditionally. */
 extern int shadowHiresN;
