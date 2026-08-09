@@ -67,6 +67,13 @@ is Stage 2 content and nothing else. Frame 6000 of the §9 reproduction
 command; 2x measures **30.6237%** non-uniform 2×2 blocks here, 1x is
 box-replicated by construction.
 
+That claim is verified, not assumed: across the whole frame, all **54,280**
+uniform 2×2 blocks in the 2x capture equal their 1x source pixel *exactly*,
+and so does the top-left sub-pixel of all **23,960** non-uniform ones. The two
+runs are therefore the same machine state at the same frame, and Stage 2 is
+strictly additive — it never alters the stock sample, it only fills in the
+three sub-pixels beside it.
+
 ![Alien vs Predator frame 6000 side by side: the left panel is the 1x frame
 with every pixel doubled to 652x480, the right panel is the same frame
 rendered at 2x internal resolution with Stage 2 supersampling. Both show an
@@ -440,6 +447,10 @@ half-step sub-sample's source texel against the stock sample's:
 | OP resolves carrying non-uniform content | 17,354,655 (39.6%) | 7,018,407 (19.2%) |
 | **On-screen non-uniform 2×2 blocks** | **30.62%** | **13.01%** |
 
+Both figures were re-measured independently when the §0.1 screenshots were
+taken, from a clean rebuild: static **30.6237%** at frame 6000, moving
+**13.0138%** over frames 5650–6100 with `--press 5600:up:400`.
+
 Reading:
 
 - **Roughly a third to a half of AvP's textured pixels are minified** — the
@@ -495,7 +506,9 @@ now measured false):
 **4. Transferable finding.** AvP is the second title (after Doom) whose entire
 Stage 2 benefit was gated by `HIRES_EPOCH_WINDOW`, and the failure mode is
 silent and total: full production, zero delivery, 0.0000% on screen and no
-log line. Any future "title X shows no supersampling" report should check the
+log line *naming* it (a `video_stall` line may well be present, but it is
+unrelated and fires on healthy runs too — see §9). Any future "title X shows
+no supersampling" report should check the
 OP resolve hit rate **before** investigating blit shapes. A cheap permanent
 form of that check — a resolve hit/miss counter behind the existing
 `crash_detect` verbose mode, or simply a note in the Stage 2 documentation —
