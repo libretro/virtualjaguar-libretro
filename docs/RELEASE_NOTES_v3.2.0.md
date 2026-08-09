@@ -13,16 +13,18 @@ mid-game sound freeze, and damaged CDI V2 rips now booting.
   banding in 3D titles. The game-visible 16-bit framebuffer is unchanged —
   savestates, achievements, and emulation behaviour are bit-identical.
   CRY 16bpp video modes only. Default off.
-- **2x internal resolution** (#351, #353). New core option
+- **2x internal resolution** (#351, #353, #359). New core option
   `virtualjaguar_internal_resolution` (`1x`/`2x`, restart required) renders
-  internally at a multiple of native resolution. Stage 1 ships exact 2×2 box
-  replication — proven inert by construction: a corpus-wide census (#351)
-  plus a per-frame hash gate and savestate digests show the emulated machine
-  cannot observe the option. Combines with True Color. Groundwork for real
-  sub-pixel gouraud/blit precision (Stage 2, in progress).
-- **OP shadow-resolve hit/miss counters** (#362) make hi-res Stage 2's
-  silent-fallback failure mode diagnosable at a glance (verbose crash-detect
-  heartbeat), with misses split by cause.
+  internally at a multiple of native resolution — and qualifying blits are
+  supersampled with real sub-pixel content (fractional-walk source sampling,
+  the "Stage 2" of the design), so 3D titles gain genuine detail; anything
+  that doesn't qualify falls back to exact 2×2 box replication. The emulated
+  hash gate, and savestate digests prove the 1x path is bit-identical. Combines
+  the release as box-replication-only with supersampling "in progress"; the
+  `104ee5d` when #359 was squash-merged on top of the Stage 2 branch. The
+- **OP shadow-resolve hit/miss counters** (#362) make the supersampled
+  path's silent-fallback failure mode diagnosable at a glance (verbose
+  crash-detect heartbeat), with misses split by cause.
 
 ## Bug fixes
 
