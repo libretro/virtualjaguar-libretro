@@ -591,6 +591,14 @@ static void M68KGPURAMSync(unsigned int address, unsigned int length)
    (((a) >= GPU_WORK_RAM_BASE && (a) < GPU_WORK_RAM_BASE + 0x1000) \
     || ((a) >= DSP_WORK_RAM_BASE && (a) < DSP_WORK_RAM_BASE + 0x2000))
 
+/* Not serialised into save states, deliberately.  Note the reason is NOT
+ * "a pending latch cannot outlive a frame boundary" -- it can: an unpaired
+ * write (issue #355's own signature) leaves the latch held indefinitely.
+ * The reason that holds is that dropping it degrades to "the lone write
+ * never landed", which is what the hardware does with an unpaired half.
+ * Serialising the pair is the more faithful option if a savestate version
+ * bump is being made anyway (see docs/savestate-compat.md for the policy:
+ * one bump per release). */
 static uint32_t m68kRiscLatchAddr = 0xFFFFFFFF;   /* low address, or ~0 */
 static uint16_t m68kRiscLatchData = 0;
 
@@ -684,7 +692,15 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
     * see M68KRiscWordLatch. */
    if (M68KRiscWordLatch(address, value))
+   {
+      /* The half that only latches still occupies the bus, so the GPU
+       * must be run up to this access exactly as it is for a committing
+       * write.  Without this, GPU work that logically falls between the
+       * two halves gets executed after the commit instead of before it,
+       * and would observe the new longword a half-write early. */
+      M68KGPURAMSync(address, 2);
       return;
+   }
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
