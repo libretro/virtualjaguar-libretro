@@ -873,7 +873,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -910,6 +910,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_tom_visible_window
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
+	./test/test_titledb
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -1150,6 +1151,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cheat.c src/core/cheat.c
+
+test/test_titledb: test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
