@@ -338,7 +338,8 @@ jobs:
           mkdir -p dist
           case "${{ matrix.config.platform }}" in
             linux-x86_64)
-              gcc -O2 -Wall -std=c99 -o dist/cue2cdi-linux-x86_64 test/tools/cue2cdi.c
+              make cue2cdi CC="${{ matrix.config.cc }}"
+              cp test/tools/cue2cdi dist/cue2cdi-linux-x86_64
               strip dist/cue2cdi-linux-x86_64
               ;;
             macos-arm64)
