@@ -399,7 +399,10 @@ def classify_cart_stage(stage, notes):
         if "black video" in notes:
             return ("warn", "Runs; video undetermined headlessly")
         return ("good", "Boots and runs")
-    if s == "LOAD_FAIL" or s.startswith("? (pc_escape"):
+    if (s == "LOAD_FAIL" or s.startswith("? (pc_escape") or
+            s.startswith("? (timeout") or
+            s.startswith("? (build_mismatch") or
+            s.startswith("? (no_reg")):
         return ("bad", "Known issue: " + s)
     return ("warn", "Not yet verified: " + s)
 

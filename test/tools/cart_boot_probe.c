@@ -5,7 +5,8 @@
  * Runs a cartridge headlessly for N frames and emits one machine-parseable
  * line the sweep script classifies:
  *
- *   CARTPROBE rom="<path>" frames=<rendered> w=<W> h=<H> pc=$<FINALPC> \
+ *   CARTPROBE rom="<path>" frames=<rendered> w=<W> h=<H> pc_valid=<0|1> \
+ *       pc=$<FINALPC> \
  *       nonblack_max_pct=<peak %% of any frame lit> lit_frames=<frames >1%% lit> \
  *       motion=<distinct sampled frame hashes> \
  *       audio_nonsilent=<samples> audio_onset=<frame|-1>
@@ -93,6 +94,7 @@ int main(int argc, char **argv)
     probe_video_state vstate;
     unsigned int (*get_reg)(void *, int) = NULL;
     unsigned long final_pc = 0;
+    int pc_valid = 0;
     unsigned total_px;
     double nonblack_pct = 0.0;
     harness_result res;
@@ -117,8 +119,10 @@ int main(int argc, char **argv)
 
     get_reg = (unsigned int (*)(void *, int))
         harness_dlsym(&cfg, "m68k_get_reg");
-    if (get_reg)
+    if (get_reg) {
         final_pc = get_reg(NULL, PROBE_M68K_REG_PC) & 0xFFFFFFu;
+        pc_valid = 1;
+    }
 
     total_px = vstate.last_w * vstate.last_h;
     if (total_px)
@@ -126,11 +130,11 @@ int main(int argc, char **argv)
     if (nonblack_pct > 100.0)
         nonblack_pct = 100.0;
 
-    printf("CARTPROBE rom=\"%s\" frames=%u w=%u h=%u pc=$%06lX "
+    printf("CARTPROBE rom=\"%s\" frames=%u w=%u h=%u pc_valid=%d pc=$%06lX "
            "nonblack_max_pct=%.1f lit_frames=%u motion=%u "
            "audio_nonsilent=%u audio_onset=%d\n",
            cfg.rom_path, cfg.video.total_frames_rendered,
-           vstate.last_w, vstate.last_h, final_pc,
+           vstate.last_w, vstate.last_h, pc_valid, final_pc,
            nonblack_pct, vstate.lit_frames, vstate.distinct_hashes,
            cfg.audio.total_nonsilent, cfg.audio.first_audio_frame);
 

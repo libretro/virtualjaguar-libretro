@@ -120,6 +120,7 @@ classify_mode() {
     fi
 
     frames="$(field frames "$line")"; frames="${frames:-0}"
+    pc_valid="$(field pc_valid "$line")"; pc_valid="${pc_valid:-0}"
     pc_hex="$(printf '%s' "$line" | grep -oE 'pc=\$[0-9A-Fa-f]+' | grep -oE '[0-9A-Fa-f]+$')"
     lit="$(field lit_frames "$line")"; lit="${lit:-0}"
     motion="$(field motion "$line")"; motion="${motion:-0}"
@@ -127,6 +128,10 @@ classify_mode() {
 
     if [ -z "$pc_hex" ] || [ "$frames" -eq 0 ]; then
         echo "LOAD_FAIL|no frames rendered"
+        return
+    fi
+    if [ "$pc_valid" -ne 1 ]; then
+        echo "? (no_reg)|probe missing m68k_get_reg — rebuild core with TEST_EXPORTS=1"
         return
     fi
 
@@ -228,6 +233,12 @@ if [ "$count" -gt 0 ]; then
     if grep -q 'FATAL build mismatch' "$preflight_log"; then
         echo "error: core build does not match VJ_EXPECT_BUILD=$BUILD_ID" >&2
         grep 'FATAL build mismatch' "$preflight_log" >&2
+        echo "rebuild with:  make TEST_EXPORTS=1   (and rebuild the probe if it changed)" >&2
+        exit 1
+    fi
+    if grep -q '^CARTPROBE ' "$preflight_log" &&
+       ! grep -q ' pc_valid=1 ' "$preflight_log"; then
+        echo "error: probe could not read m68k_get_reg from the core" >&2
         echo "rebuild with:  make TEST_EXPORTS=1   (and rebuild the probe if it changed)" >&2
         exit 1
     fi
