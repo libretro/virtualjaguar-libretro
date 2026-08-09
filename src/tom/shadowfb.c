@@ -226,6 +226,31 @@ void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
                             | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
 }
 
+void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
+                              const shadowfb_sub *blk)
+{
+   uint32_t idx, page, word, nn, k;
+   shadowfb_sub *sub;
+
+   if (!shadowHiresActive)
+      return;
+   addr &= 0xFFFFFF;
+   if (addr >= 0x800000)
+      return;
+   idx  = (addr & 0x1FFFFE) >> 1;
+   page = idx >> 12;
+   word = idx & 0xFFF;
+   if (!shadow_hires_page(page))
+      return;
+
+   nn  = (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;
+   sub = hiresPageSub[page] + word * nn;
+   for (k = 0; k < nn; k++)
+      sub[k] = blk[k];
+   hiresPageTag[page][word] = (uint32_t)stock16 | SHADOWFB_TAG_VALID
+                            | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
+}
+
 /* Value+epoch-checked block lookup.  Returns the N*N block or NULL. */
 static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16)
 {

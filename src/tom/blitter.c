@@ -426,6 +426,90 @@ static uint32_t z_i[4];
 
 static int32_t a1_clip_x, a1_clip_y;
 
+/* ==========================================================================
+ * Hi-res Stage 2 (fast engine): fractional-walk source supersampling.
+ * See docs/hires-upscaling-design.md sections 4/5 and section 8 Stage 2.
+ *
+ * When a DSTA2 blit's A1 source walk consumes a fraction (XADDINC with a
+ * fractional increment, or the XADD0 + fractional-FSTEP column scaler)
+ * onto a 16bpp CRY destination, the source bitmap holds more information
+ * than the single stock sample keeps.  These helpers sample the source
+ * at N*x density for the shadow surface ONLY: the stock walk, the stock
+ * write and every control decision (transparency, colour key, Z, clip,
+ * LFU selection) are untouched and made once at 1x; the shadow block
+ * carries content, never decisions.  All reads are side-effect-free
+ * (RAM mirrors + cart ROM; anything at/above BUTCH is refused).
+ * ========================================================================== */
+
+/* Read the 16bpp A1 source pixel at an explicit 16.16 position.
+ * Returns 0 (leaving *out untouched) when the address could carry a
+ * read side effect (BUTCH/TOM/JERRY space). */
+static int shadow_hires_read_src16_a1(int32_t sub_x, int32_t sub_y,
+      uint32_t *out)
+{
+   int32_t sub_width = a1_width;
+   int32_t sub_pitch = a1_pitch;
+   uint32_t addr = (a1_addr + (PIXEL_OFFSET_16(sub) << 1)) & 0xFFFFFF;
+   if (addr >= 0xDFFF00)
+      return 0;
+   *out = JaguarReadWord(addr, BLITTER);
+   return 1;
+}
+
+/* Derive one sub-sample {value16, frac16} from the source pixel at
+ * 16.16 position (x,y), applying the same data path the stock pixel
+ * took.  Only called for uninhibited pixels whose data path depends on
+ * the source (SRCSHADE, ADDDSEL or LFU); falls back to *stock when the
+ * source address is unreadable. */
+static void shadow_hires_sub_fast(shadowfb_sub *out, uint32_t cmd,
+      int32_t x, int32_t y, uint32_t dstdata, const shadowfb_sub *stock)
+{
+   uint32_t s;
+   uint32_t v;
+   *out = *stock;
+   if (!shadow_hires_read_src16_a1(x, y, &s))
+      return;
+   if (SRCSHADE)
+   {
+      /* 24-bit intensity = source intensity + full fraction-carrying
+       * IINC; integer part matches the stock formula's
+       * clamp((s & 0xFF) + (gd_ia >> 16), 0, 0xFF) exactly. */
+      int32_t i24 = ((int32_t)(s & 0xFF) << 16) + gd_ia;
+      if (i24 < 0)
+         i24 = 0;
+      if (i24 > 0x00FFFFFF)
+         i24 = 0x00FFFFFF;
+      out->value16 = (uint16_t)((s & 0xFF00) | ((uint32_t)i24 >> 16));
+      out->frac16  = (uint16_t)((uint32_t)i24 & 0xFFFF);
+      return;
+   }
+   if (ADDDSEL)
+   {
+      /* Mirror of the DSTA2 ADDDSEL data path below. */
+      v = (s & 0xFF) + (dstdata & 0xFF);
+      if (!(TOPBEN) && v > 0xFF)
+         v = 0xFF;
+      v |= (s & 0xF00) + (dstdata & 0xF00);
+      if (!(TOPNEN) && v > 0xFFF)
+         v = 0xFFF;
+      v |= (s & 0xF000) + (dstdata & 0xF000);
+   }
+   else
+   {
+      v = 0;
+      if (LFU_NAN)
+         v |= ~s & ~dstdata;
+      if (LFU_NA)
+         v |= ~s & dstdata;
+      if (LFU_AN)
+         v |= s & ~dstdata;
+      if (LFU_A)
+         v |= s & dstdata;
+   }
+   out->value16 = (uint16_t)v;
+   out->frac16  = 0;
+}
+
 // In the spirit of "get it right first, *then* optimize" I've taken the liberty
 // of removing all the unnecessary code caching. If it turns out to be a good way
 // to optimize the blitter, then we may revisit it in the future...
@@ -850,8 +934,65 @@ void blitter_generic(uint32_t cmd)
                      ShadowFBStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
                            (uint16_t)writedata, sfb_frac);
                   if (shadowHiresActive)
-                     ShadowHiresStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
-                           (uint16_t)writedata, sfb_frac);
+                  {
+                     /* Stage 2: when this blit's A1 source walk consumes
+                      * a fraction and the data path depends on the
+                      * source, fill the block with real sub-samples;
+                      * every other shape keeps Stage 1 replication. */
+                     int sh2 = 0;
+                     shadowfb_sub sblk[4];
+                     if (shadowHiresN == 2 && !inhibit && SRCEN && !BCOMPEN
+                           && (((REG(A1_FLAGS) >> 3) & 0x07) == 4)
+                           && (SRCSHADE || (!GOURD && !PATDSEL)))
+                     {
+                        int32_t hx = 0, hy = 0, vx = 0, vy = 0;
+                        int q_in = (xadd_a1_control == XADDINC
+                              && (((a1_xadd | a1_yadd) & 0xFFFF) != 0));
+                        int q_out = (xadd_a1_control == XADD0
+                              && a1_yadd == 0 && UPDA1F
+                              && (((a1_step_x | a1_step_y) & 0xFFFF) != 0));
+                        if (q_in)
+                        {
+                           hx = a1_xadd >> 1;
+                           hy = a1_yadd >> 1;
+                        }
+                        if (q_out)
+                        {
+                           vx = a1_step_x >> 1;
+                           vy = a1_step_y >> 1;
+                        }
+                        if (q_in || q_out)
+                        {
+                           sblk[0].value16 = (uint16_t)writedata;
+                           sblk[0].frac16  = sfb_frac;
+                           if (q_in)
+                              shadow_hires_sub_fast(&sblk[1], cmd,
+                                    a1_x + hx, a1_y + hy, dstdata, &sblk[0]);
+                           else
+                              sblk[1] = sblk[0];
+                           if (q_out)
+                              shadow_hires_sub_fast(&sblk[2], cmd,
+                                    a1_x + vx, a1_y + vy, dstdata, &sblk[0]);
+                           else
+                              sblk[2] = sblk[0];
+                           if (q_in && q_out)
+                              shadow_hires_sub_fast(&sblk[3], cmd,
+                                    a1_x + hx + vx, a1_y + hy + vy,
+                                    dstdata, &sblk[0]);
+                           else
+                              sblk[3] = (q_in ? sblk[1] : sblk[2]);
+                           sh2 = 1;
+                        }
+                     }
+                     if (sh2)
+                        ShadowHiresStoreCryBlock(
+                              a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                              (uint16_t)writedata, sblk);
+                     else
+                        ShadowHiresStoreCry(
+                              a2_addr + (PIXEL_OFFSET_16(a2) << 1),
+                              (uint16_t)writedata, sfb_frac);
+                  }
                }
             }
          }
@@ -1185,6 +1326,76 @@ static uint32_t addrgen_ya(uint16_t y, uint8_t width)
 		+ ((width & 0x02) ? y12 << 1 : 0)
 		+ ((width & 0x01) ? y12 : 0);
 	return (ytm << (width >> 2)) >> 2;
+}
+
+/* ==========================================================================
+ * Hi-res Stage 2 (accurate engine): fractional-walk source supersampling.
+ * See docs/hires-upscaling-design.md sections 4/5 and section 8 Stage 2,
+ * and the fast-engine twin above blitter_generic.  Shadow-only: the
+ * stock pipeline (reads, writes, comparators, ADDARRAY carry state) is
+ * untouched.
+ * ========================================================================== */
+
+/* Replicates lane 0 of the SRCSHADE ADDARRAY call (daddasel=4,
+ * daddbsel=5, daddmode=7, carry-in 0: 8-bit saturated add of the source
+ * intensity byte and the IINC integer byte; the colour byte passes
+ * through unchanged because the broadcast addend's high byte is zero).
+ * A direct ADDARRAY call would clobber its persistent carry-out state
+ * and diverge the stock pipeline, so the lane is reproduced here. */
+static uint16_t shadow_hires_shade16(uint16_t a, uint32_t iinc_masked)
+{
+	uint32_t b    = (iinc_masked >> 16) & 0xFF;
+	uint32_t qt   = (uint32_t)(a & 0xFF) + b;
+	uint32_t ctop = (qt >> 8) & 1;
+	uint32_t btop = (b >> 7) & 1;
+	uint32_t lo   = (btop ^ ctop) ? (ctop ? 0xFFu : 0x00u) : (qt & 0xFF);
+	return (uint16_t)(((uint32_t)a & 0xFF00) | lo);
+}
+
+/* 16-bit LFU, same truth-table convention as blitter_simd_lfu. */
+static uint16_t shadow_hires_lfu16(uint16_t s, uint16_t d, uint8_t lfu_func)
+{
+	uint16_t v = 0;
+	if (lfu_func & 0x01)
+		v |= (uint16_t)(~s & ~d);
+	if (lfu_func & 0x02)
+		v |= (uint16_t)(~s & d);
+	if (lfu_func & 0x04)
+		v |= (uint16_t)(s & ~d);
+	if (lfu_func & 0x08)
+		v |= (uint16_t)(s & d);
+	return v;
+}
+
+/* Derive one sub-sample {value16, frac16} for the accurate engine:
+ * read the 16bpp A1 source at 16.16 position (px, py) through the
+ * engine's own address generator and apply the pixel-mode data path
+ * (SRCSHADE then LFU) the stock pixel took.  Control decisions are NOT
+ * re-made -- the caller only invokes this for pixels that passed all
+ * comparators at 1x.  Falls back to *stock when the source address
+ * could carry a read side effect (BUTCH/TOM/JERRY space). */
+static void shadow_hires_sub_mid(shadowfb_sub *out, int32_t px, int32_t py,
+	uint32_t a1_base, uint8_t a1_pitch, uint8_t a1_pixsize, uint8_t a1_width,
+	bool srcshade_on, uint32_t iinc_masked, uint8_t lfu_func, uint16_t d16,
+	const shadowfb_sub *stock)
+{
+	uint32_t saddr, spixa;
+	uint16_t s;
+	uint16_t sx = (uint16_t)((uint32_t)px >> 16);
+	uint16_t sy = (uint16_t)((uint32_t)py >> 16);
+	*out = *stock;
+	ADDRGEN(&saddr, &spixa, false, false,
+		sx, sy, a1_base, a1_pitch, a1_pixsize, a1_width, 0,
+		0, 0, 0, 0, 0, 0, 0,
+		addrgen_ya(sy, a1_width), 0);
+	saddr &= 0xFFFFFF;
+	if (saddr >= 0xDFFF00)
+		return;
+	s = blitter_read_word(saddr);
+	if (srcshade_on)
+		s = shadow_hires_shade16(s, iinc_masked);
+	out->value16 = shadow_hires_lfu16(s, d16, lfu_func);
+	out->frac16  = 0;
 }
 /* ADD16SAT / ADDARRAY are defined inline below so the compiler can
  * specialise per call-site (most callers pass compile-time constants
@@ -2146,6 +2357,12 @@ void BlitterMidsummer2(void)
           * fractional source X drifts across 0 mid-row. */
          int16_t a1_x_at_sread = a1_x;
          int16_t a1_y_at_sread = a1_y;
+         /* Fractional-position twins, cached for the same reason: the
+          * hi-res Stage 2 sub-sample walk (see shadow_hires_sub_mid)
+          * needs the full 16.16 source position THAT WAS USED for the
+          * sread that loaded srcd. */
+         uint16_t a1_fx_at_sread = a1_frac_x;
+         uint16_t a1_fy_at_sread = a1_frac_y;
 
          indone = false;
 
@@ -2468,7 +2685,14 @@ void BlitterMidsummer2(void)
          if (srcen && !srcenx && !srcenz && !dsten && !dstenz && !dstwrz
                && !bcompen && !dcompen && !gourd && !gourz && !srcshade
                && !adddsel && !patdsel && zmode == 0
-               && a1addx != 3 && a2addx != 3)
+               && a1addx != 3 && a2addx != 3
+               /* Hi-res Stage 2: a DSTA2 copy with a fractional outer
+                * source step qualifies for supersampling, which only the
+                * state-machine dwrite performs.  The collapsed path does
+                * identical stock work, so routing through the state
+                * machine only changes shadow content.  Option-gated:
+                * with hi-res off this term is always false. */
+               && !(shadowHiresActive && shadowHiresN == 2 && dsta2 && upda1f))
          {
             /* Pre-decode values that are invariant across the inner loop.
              * For a simple copy with no fractional increment:
@@ -2994,6 +3218,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                 * time -- see a1_x_at_sread declaration. */
                a1_x_at_sread = a1_x;
                a1_y_at_sread = a1_y;
+               a1_fx_at_sread = a1_frac_x;
+               a1_fy_at_sread = a1_frac_y;
                //uint32_t srcAddr, pixAddr;
                //ADDRGEN(srcAddr, pixAddr, gena2i, zaddr,
                //	a1_x, a1_y, a1_base, a1_pitch, a1_pixsize, a1_width, a1_zoffset,
@@ -3036,6 +3262,8 @@ A2ptrldi	:= NAN2 (a2ptrldi, a2update\, a2pldt);*/
                 * time -- see a1_x_at_sread declaration. */
                a1_x_at_sread = a1_x;
                a1_y_at_sread = a1_y;
+               a1_fx_at_sread = a1_frac_x;
+               a1_fy_at_sread = a1_frac_y;
                srcd2 = srcd1;
                srcd1 = ((uint64_t)blitter_read_long(address) << 32) | (uint64_t)blitter_read_long(address + 4);
                //Kludge to take pixel size into account...
@@ -3403,7 +3631,86 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                         if (shadowFBActive && gourd)
                            ShadowFBStoreCry(address, (uint16_t)wdata, sfb_f);
                         if (shadowHiresActive)
-                           ShadowHiresStoreCry(address, (uint16_t)wdata, sfb_f);
+                        {
+                           /* Stage 2 (see shadow_hires_sub_mid): pixel-
+                            * mode 16bpp write whose A1 source walk
+                            * consumes a fraction and whose data path is
+                            * source-dependent (LFU, optionally shaded).
+                            * Everything else keeps Stage 1 replication.
+                            * The pixel passed all comparators at 1x
+                            * (pixel-mode inhibits set winhibit and skip
+                            * the write entirely), so the block decision
+                            * is uniform by construction. */
+                           int sh2 = 0;
+                           shadowfb_sub sblk[4];
+                           if (shadowHiresN == 2 && !winhibit
+                                 && dsta2 && srcen && !bcompen
+                                 && a1_pixsize == 4 && srcshift == 0
+                                 && !patdsel && !gourd && !adddsel)
+                           {
+                              int32_t hx = 0, hy = 0, vx = 0, vy = 0;
+                              int q_in = (a1addx == 3
+                                    && ((a1_incf_x | a1_incf_y) != 0));
+                              int q_out = (a1addx == 2 && !a1addy && upda1f
+                                    && ((a1_stepf_x | a1_stepf_y) != 0));
+                              if (q_in)
+                              {
+                                 hx = (((int32_t)a1_inc_x << 16)
+                                       | a1_incf_x) >> 1;
+                                 hy = (((int32_t)a1_inc_y << 16)
+                                       | a1_incf_y) >> 1;
+                              }
+                              if (q_out)
+                              {
+                                 vx = (((int32_t)a1_step_x << 16)
+                                       | a1_stepf_x) >> 1;
+                                 vy = (((int32_t)a1_step_y << 16)
+                                       | a1_stepf_y) >> 1;
+                              }
+                              if (q_in || q_out)
+                              {
+                                 int32_t px = ((int32_t)a1_x_at_sread << 16)
+                                            | a1_fx_at_sread;
+                                 int32_t py = ((int32_t)a1_y_at_sread << 16)
+                                            | a1_fy_at_sread;
+                                 uint32_t iim = iinc & 0x00FFFFFF;
+                                 uint16_t d16 = (uint16_t)dstd;
+                                 sblk[0].value16 = (uint16_t)wdata;
+                                 sblk[0].frac16  = sfb_f;
+                                 if (q_in)
+                                    shadow_hires_sub_mid(&sblk[1],
+                                          px + hx, py + hy,
+                                          a1_base, a1_pitch, a1_pixsize,
+                                          a1_width, srcshade, iim,
+                                          lfufunc, d16, &sblk[0]);
+                                 else
+                                    sblk[1] = sblk[0];
+                                 if (q_out)
+                                    shadow_hires_sub_mid(&sblk[2],
+                                          px + vx, py + vy,
+                                          a1_base, a1_pitch, a1_pixsize,
+                                          a1_width, srcshade, iim,
+                                          lfufunc, d16, &sblk[0]);
+                                 else
+                                    sblk[2] = sblk[0];
+                                 if (q_in && q_out)
+                                    shadow_hires_sub_mid(&sblk[3],
+                                          px + hx + vx, py + hy + vy,
+                                          a1_base, a1_pitch, a1_pixsize,
+                                          a1_width, srcshade, iim,
+                                          lfufunc, d16, &sblk[0]);
+                                 else
+                                    sblk[3] = (q_in ? sblk[1] : sblk[2]);
+                                 sh2 = 1;
+                              }
+                           }
+                           if (sh2)
+                              ShadowHiresStoreCryBlock(address,
+                                    (uint16_t)wdata, sblk);
+                           else
+                              ShadowHiresStoreCry(address,
+                                    (uint16_t)wdata, sfb_f);
+                        }
                      }
                   }
                }

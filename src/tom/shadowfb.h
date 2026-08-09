@@ -150,6 +150,15 @@ void ShadowHiresShutdown(void);
  * Addresses outside the bottom-8MB RAM mirror window are ignored. */
 void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16);
 
+/* Stage 2: record a 16bpp CRY destination write whose N*N block carries
+ * real per-subpixel content (fractional-walk source supersampling).
+ * `stock16` is the stock 16-bit value the blit wrote (the tag key --
+ * readers value-check against it); `blk` holds N*N entries in
+ * sub-row-major order (sy*N + sx).  Same address rules as
+ * ShadowHiresStoreCry. */
+void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
+                              const shadowfb_sub *blk);
+
 /* OP 16bpp resolve site: copy the RAM shadow block for srcAddr into
  * the Nx line buffer at stock pixel `idx` (tag+epoch checked against
  * value16, the word the OP just read); on miss, replicate
