@@ -101,6 +101,8 @@ test/acid/tests/**/*.jag
 /test/tools/fb_row_digest
 /test/tools/tom_window_trace
 /test/tools/frame_hash_ab
+/test/tools/hires_box_check
+/test/tools/hires_state_digest
 test/tools/__pycache__/
 .link-mode
 
