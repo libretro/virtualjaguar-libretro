@@ -63,6 +63,7 @@ typedef struct {
     unsigned  checked;
     unsigned  skipped_transitions;
     unsigned  duped;
+    unsigned  overrun;
 } hb_state;
 
 static void hb_video(void *ud, const void *data, unsigned width,
@@ -76,11 +77,20 @@ static void hb_video(void *ud, const void *data, unsigned width,
     unsigned y, x, k, nonuniform;
 
     if (!data) {
+        /* A NULL (duped) frame would silently desynchronize this run's
+         * frame index from the reference CSV rows, so it fails the gate
+         * loudly instead.  Measured gate runs present every frame. */
         st->duped++;
+        st->frame++;
         return;
     }
-    if (st->frame >= st->nrows)
+    if (st->frame >= st->nrows) {
+        /* More presented frames than reference rows: --frames and the
+         * reference disagree.  Count it so the summary fails loudly. */
+        st->overrun++;
+        st->frame++;
         return;
+    }
     ref = &st->rows[st->frame];
     ref_w = ref->w;
     ref_h = ref->h;
@@ -229,11 +239,11 @@ int main(int argc, char **argv)
     harness_run(&cfg);
 
     ok = (st.checked > 0 && st.bad_dims == 0 && st.bad_blocks == 0
-          && st.bad_hash == 0);
+          && st.bad_hash == 0 && st.duped == 0 && st.overrun == 0);
     printf("HIRES_BOX_CHECK frames_checked=%u dim_transitions_skipped=%u "
-           "bad_dims=%u bad_blocks=%u bad_hash=%u duped=%u -> %s\n",
+           "bad_dims=%u bad_blocks=%u bad_hash=%u duped=%u overrun=%u -> %s\n",
            st.checked, st.skipped_transitions,
-           st.bad_dims, st.bad_blocks, st.bad_hash, st.duped,
+           st.bad_dims, st.bad_blocks, st.bad_hash, st.duped, st.overrun,
            ok ? "PASS" : "FAIL");
     free(st.rows);
 

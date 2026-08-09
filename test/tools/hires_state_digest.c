@@ -53,6 +53,13 @@ static bool sd_frame(void *ud, unsigned frame)
         return true;
 
     sz  = st->ssize();
+    if (sz == 0) {
+        /* Serialization unavailable: a digest of nothing would compare
+         * equal between arms and report a false PASS.  Fail loudly. */
+        fprintf(stderr, "frame %u: retro_serialize_size() == 0\n", frame);
+        st->failures++;
+        return true;
+    }
     buf = (uint8_t *)malloc(sz);
     if (!buf || !st->ser(buf, sz)) {
         fprintf(stderr, "frame %u: retro_serialize failed\n", frame);
