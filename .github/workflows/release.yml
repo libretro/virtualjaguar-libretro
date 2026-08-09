@@ -321,6 +321,38 @@ jobs:
           tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
           rm "dist/${DBG}"
 
+      # ----------------------------------------------------------------
+      # cue2cdi -- standalone CUE/BIN -> DiscJuggler CDI converter
+      # (test/tools/cue2cdi.c, `make cue2cdi`).  Shipped for the three
+      # common desktop platforms only; dropping the binary into dist/
+      # rides the existing artifact -> stage -> release/nightly flow, so
+      # it appears in both tagged releases and the rolling nightly and
+      # lands in SHA256SUMS automatically.  macOS ships one universal
+      # (arm64 + x86_64) binary built from the arm64 job; Windows from
+      # the MINGW64 job.
+      # ----------------------------------------------------------------
+      - name: Build cue2cdi (shipped desktop platforms)
+        if: ${{ matrix.config.platform == 'linux-x86_64' || matrix.config.platform == 'macos-arm64' || matrix.config.platform == 'windows-x86_64' }}
+        run: |
+          set -e
+          mkdir -p dist
+          case "${{ matrix.config.platform }}" in
+            linux-x86_64)
+              make cue2cdi CC="${{ matrix.config.cc }}"
+              cp test/tools/cue2cdi dist/cue2cdi-linux-x86_64
+              strip dist/cue2cdi-linux-x86_64
+              ;;
+            macos-arm64)
+              clang -O2 -Wall -std=c99 -arch arm64 -arch x86_64 \
+                -o dist/cue2cdi-macos-universal test/tools/cue2cdi.c
+              strip -S -x dist/cue2cdi-macos-universal
+              ;;
+            windows-x86_64)
+              gcc -O2 -Wall -std=c99 -o dist/cue2cdi-windows-x86_64.exe test/tools/cue2cdi.c
+              strip dist/cue2cdi-windows-x86_64.exe
+              ;;
+          esac
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
