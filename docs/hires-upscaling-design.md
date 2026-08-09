@@ -609,7 +609,15 @@ the heartbeat prints, every 600 frames while hi-res is active:
 ```
 
 Read `window_rate` (the last 600 frames), not `rate` — the cumulative figure is
-diluted by menus and boot. Healthy AvP gameplay reads 97–98%. The bucket names
+diluted by menus and boot. Healthy AvP gameplay reads 97–98%.
+
+The **first** heartbeat of a run prints `window_rate=n/a (first window)` and
+seeds the baseline instead of reporting one. Only a heartbeat takes that
+baseline and only verbose runs heartbeats, so if verbose is switched on
+mid-run there is nothing to subtract — a number there would be the cumulative
+figure wearing a window label, which is the misreading this line exists to
+prevent. The same `n/a` appears if the counters are ever seen to go backwards.
+Every subsequent line carries a true window. The bucket names
 each point at a different subsystem, so the line localizes the fault as well as
 detecting it:
 

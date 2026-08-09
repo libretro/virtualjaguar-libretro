@@ -65,4 +65,7 @@ _NVMBios*
 _NVM_*
 _JGD*
 _jgd*
-_shadowHires*
+_shadowHiresResolveHits
+_shadowHiresResolveMissValue
+_shadowHiresResolveMissEpoch
+_shadowHiresResolveMissNoPage

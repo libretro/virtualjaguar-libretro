@@ -419,7 +419,9 @@ instrumentation: run with `virtualjaguar_crash_detect=verbose` and the
 watchdog heartbeat prints `hires_resolve … (epoch=… value=… nopage=…)
 rate=… window_rate=…` every 600 frames while hi-res is active. Read
 `window_rate` (last 600 frames), not the cumulative `rate`, which menus and
-boot dilute; healthy AvP gameplay reads 97–98%, and an `epoch`-dominated
+boot dilute; the first line of a run reads `window_rate=n/a (first window)`
+because it is seeding that baseline, not reporting one. Healthy AvP gameplay
+reads 97–98%, and an `epoch`-dominated
 bucket with `window_rate` near zero is the signature. This failure mode has
 bitten **two** titles — Doom (fixed by `404cb11`, window 2 → 16) and Alien
 vs Predator (same constant; A/B in `docs/avp-renderer-analysis.md` §6 shows
