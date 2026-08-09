@@ -23,9 +23,7 @@ mid-game sound freeze, and damaged CDI V2 rips now booting.
   hash gate, and savestate digests prove the 1x path bit-identical. Combines
   with True Color. *(Correction 2026-08-09: this file originally described
   the release as box-replication-only with supersampling "in progress"; the
-  supersampling path in fact shipped in this tag — it landed on develop in
-  104ee5d when #359 was squash-merged on top of the Stage 2 branch. The
-  GitHub release body carries the same correction.)*
+  `104ee5d` when #359 was squash-merged on top of the Stage 2 branch. The
 - **OP shadow-resolve hit/miss counters** (#362) make the supersampled
   path's silent-fallback failure mode diagnosable at a glance (verbose
   crash-detect heartbeat), with misses split by cause.
