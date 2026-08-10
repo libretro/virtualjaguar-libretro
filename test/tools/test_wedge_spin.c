@@ -26,6 +26,13 @@
  *          test/tools/test_wedge_spin.c test/harness/harness.c -ldl -lm
  * Needs the wide test ABI (make TEST_EXPORTS=1).
  */
+
+/* glibc hides mkstemp()/fileno() under strict -std=c99 unless a
+ * feature-test macro is set; macOS exposes them regardless, which is why
+ * this only broke on the Linux CI builders.  Same macro test_pertitle_db.c
+ * uses.  Must precede every #include. */
+#define _DEFAULT_SOURCE 1
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

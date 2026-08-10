@@ -126,7 +126,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
    unsigned minScore;
-   int knownStartup;
+   bool knownStartup;
    unsigned i;
    uint32_t offset;
 
