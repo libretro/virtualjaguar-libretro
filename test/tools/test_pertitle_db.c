@@ -59,21 +59,29 @@ static int  saved_stderr_fd = -1;
 
 static void log_capture_begin(void)
 {
+    FILE *capture;
     int fd = mkstemp(log_path);
+
+    log_path_valid = 0;
     if (fd < 0)
         return;
     close(fd);
-    log_path_valid = 1;
 
     fflush(stderr);
     saved_stderr_fd = dup(fileno(stderr));
-    if (saved_stderr_fd < 0)
+    if (saved_stderr_fd < 0) {
+        unlink(log_path);
         return;
-    if (!freopen(log_path, "w+", stderr)) {
+    }
+    capture = freopen(log_path, "w+", stderr);
+    if (!capture) {
         dup2(saved_stderr_fd, fileno(stderr));
         close(saved_stderr_fd);
         saved_stderr_fd = -1;
+        unlink(log_path);
+        return;
     }
+    log_path_valid = 1;
 }
 
 static void log_capture_end(void)
