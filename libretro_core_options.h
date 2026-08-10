@@ -174,7 +174,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Apply known-safe enhancement presets automatically for recognized games (e.g. internal resolution or true color for titles verified to benefit). A preset only applies to options you have left at their default value -- any option you change yourself always wins. Disable for stock behaviour on every title.",
       NULL,
-      NULL,
+      "video",
       {
          { "enabled",  NULL },
          { "disabled", NULL },
