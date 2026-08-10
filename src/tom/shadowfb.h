@@ -136,6 +136,18 @@ extern int shadowHiresActive;
  *   missValue  -- entry exists, RAM value no longer matches its tag
  *   missEpoch  -- value matched, entry rejected for age only (the silent one)
  *
+ * CAVEAT (Stage 3, design section 6.4): OP scaled-bitmap supersampling
+ * (op_hires_scale_peek / ShadowHiresLineFromScaledSamples in op.c) reads
+ * the source bitmap directly and bypasses this RAM-shadow lookup
+ * entirely -- there is nothing to value/epoch-check, the samples are
+ * freshly read every call. Those writes bump NONE of the four counters
+ * above, so on a title that benefits from Stage 3 but not Stage 1/2's
+ * RAM-shadow path, "all zero while shadowHiresActive" no longer proves
+ * "the OP is not reaching a resolve site" -- it may simply mean every
+ * resolve on screen went through the Stage 3 path instead. Check for
+ * OPProcessScaledBitmap activity (hscale != 0x20, depth==4, CRY video
+ * mode) before reading an all-zero heartbeat as "not working".
+ *
  * Reported by crash_detect.c's verbose heartbeat; also exported in the test
  * ABI (link-test.T / exports-test.list) so harnesses can dlsym and assert. */
 extern uint64_t shadowHiresResolveHits;
