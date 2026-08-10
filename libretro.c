@@ -45,6 +45,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "nvmbios.h"
 #include "vjag_memory.h"
 #include "state.h"
+#include "titledb.h"
 #include "log.h"
 #include "version.h" /* generated; defines CORE_VERSION */
 
@@ -502,14 +503,70 @@ static void netlink_apply(int mode)
    UARTSetLinkMode(mode);
 }
 
+/* Gate for per-title enhancement defaults (issue #368). Read raw (never
+ * through get_variable_pertitle()) at the top of check_variables() and once
+ * in retro_load_game() before the hires read, so it is never itself
+ * substituted by the DB. Defaults to enabled so headless callers/tests that
+ * never read the option still get stock behaviour identical to "enabled"
+ * with no DB match. */
+static bool pertitle_enabled = true;
+
+/* Default value registered for a core option key, from the v2 definitions
+ * in option_defs_us[] (libretro_core_options.h). */
+static const char *core_option_default(const char *key)
+{
+   size_t i;
+   for (i = 0; option_defs_us[i].key; i++)
+      if (!strcmp(option_defs_us[i].key, key))
+         return option_defs_us[i].default_value;
+   return NULL;
+}
+
+/* GET_VARIABLE with per-title defaults (issue #368): when the frontend's
+ * value equals the option's registered default (the user never touched it)
+ * and the loaded title has a DB entry for this key, substitute the DB
+ * value. A user-set non-default value always wins. Logs once per
+ * substitution via LOG_INF. */
+static bool get_variable_pertitle(struct retro_variable *var)
+{
+   bool ok = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value;
+   const char *ovr, *def;
+
+   if (!pertitle_enabled)
+      return ok;
+
+   ovr = TitleDBOverride(var->key);
+   if (!ovr)
+      return ok;
+
+   def = core_option_default(var->key);
+   if (!ok || (def && !strcmp(var->value, def)))
+   {
+      LOG_INF("[titledb] %s: %s=%s (option at default)\n",
+              TitleDBTitleName(), var->key, ovr);
+      var->value = ovr;
+      return true;
+   }
+   return ok;
+}
+
 static void check_variables(void)
 {
    unsigned i;
    struct retro_variable var;
+   struct retro_variable gate_var;
+
+   gate_var.key = "virtualjaguar_pertitle_defaults";
+   gate_var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gate_var) && gate_var.value)
+      pertitle_enabled = (strcmp(gate_var.value, "disabled") != 0);
+   else
+      pertitle_enabled = true;
+
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.useFastBlitter = true;
@@ -519,7 +576,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_true_color";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       ShadowFBSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       ShadowFBSetEnabled(0);
@@ -530,7 +587,7 @@ static void check_variables(void)
     * restart (design section 7.1). */
    var.key = "virtualjaguar_internal_resolution";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       int hires_want = (strcmp(var.value, "2x") == 0) ? 2 : 1;
       if (hires_want == shadowHiresN)
@@ -545,7 +602,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_crash_detect";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "verbose") == 0)
          CrashDetectSetMode(CRASH_DETECT_VERBOSE);
@@ -561,7 +618,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_cd_trace";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       CDTraceSetEnabled(0);
@@ -573,7 +630,7 @@ static void check_variables(void)
     * overrides it for headless calibration experiments only. */
    var.key = "virtualjaguar_dram_timing";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
    else
       busArbiter.enabled = 0;
@@ -604,7 +661,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_m68k_clock_scale";
    var.value = NULL;
    m68kClockScalePct = 100;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "0.5x") == 0)
          m68kClockScalePct = 50;
@@ -622,7 +679,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_risc_clock_scale";
    var.value = NULL;
    riscClockScalePct = 100;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "0.5x") == 0)
          riscClockScalePct = 50;
@@ -641,7 +698,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       int mode = JLINK_MODE_DISABLED;
       if (strcmp(var.value, "loopback") == 0)
@@ -658,7 +715,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_bios";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.useJaguarBIOS = true;
@@ -669,7 +726,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_pal";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.hardwareTypeNTSC = false;
@@ -680,7 +737,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_memory_track";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       opt_memory_track = (strcmp(var.value, "disabled") != 0);
 
    /* Jaguar GameDrive: mode is latched here; activation happens at
@@ -688,7 +745,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_jgd";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          JGDSetMode(JGD_MODE_ENABLED);
@@ -703,7 +760,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "dev") == 0)
          vjs.cdBiosType = CDBIOS_DEV;
@@ -714,7 +771,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_cd_boot_mode";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "hle") == 0)
          vjs.cdBootMode = CDBOOT_HLE;
@@ -727,7 +784,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_cd_read_speed";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "1x") == 0)
          vjs.cdReadSpeed = CDSPEED_1X;
@@ -745,7 +802,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (!strcmp(var.value, "enabled"))
          enable_alt_inputs = true;
@@ -766,7 +823,7 @@ static void check_variables(void)
       build_port_option_key(key, sizeof(key), i, "_numpad_to_kb");
       var.key   = key;
       var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      if (get_variable_pertitle(&var) && var.value)
       {
          if (!strcmp(var.value, "disabled"))
             numpad_to_kb[i] = 0;
@@ -781,7 +838,7 @@ static void check_variables(void)
          build_port_option_key(key, sizeof(key), i, retropad_option_map[j].suffix);
          var.key   = key;
          var.value = NULL;
-         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+         if (get_variable_pertitle(&var) && var.value)
             jag_retropad[i][retropad_option_map[j].id] = get_button_id(var.value);
       }
    }
@@ -1575,6 +1632,29 @@ bool retro_load_game(const struct retro_game_info *info)
       return false;
    }
 
+   /* Feed the per-title DB the loaded content so option reads below (and in
+    * check_variables()) can match by CRC (issue #368). info->data is NULL
+    * for path-loaded content (CD) -- that correctly clears any match, since
+    * v1 only covers cartridge CRCs. */
+   if (info->data)
+      TitleDBSetContent((const uint8_t *)info->data, info->size);
+   else
+      TitleDBSetContent(NULL, 0);
+
+   /* Raw gate read (never through get_variable_pertitle()) so the hires
+    * read just below -- which runs before check_variables() -- is already
+    * gated correctly even on a frontend that hasn't called
+    * check_variables() yet. */
+   {
+      struct retro_variable gate_var;
+      gate_var.key = "virtualjaguar_pertitle_defaults";
+      gate_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gate_var) && gate_var.value)
+         pertitle_enabled = (strcmp(gate_var.value, "disabled") != 0);
+      else
+         pertitle_enabled = true;
+   }
+
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
     * so N is fixed for the session and mid-game option changes only apply
@@ -1584,7 +1664,7 @@ bool retro_load_game(const struct retro_game_info *info)
       int hires_n = 1;
       hires_var.key = "virtualjaguar_internal_resolution";
       hires_var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hires_var)
+      if (get_variable_pertitle(&hires_var)
           && hires_var.value && strcmp(hires_var.value, "2x") == 0)
          hires_n = 2;
       ShadowHiresSetN(hires_n);
@@ -1966,6 +2046,11 @@ void retro_deinit(void)
    ShadowHiresShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
+
+   /* Per-title enhancement defaults DB (#368): clear the cached CRC match
+    * and re-arm the gate for the next load. */
+   TitleDBSetContent(NULL, 0);
+   pertitle_enabled = true;
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

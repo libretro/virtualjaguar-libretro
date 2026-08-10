@@ -169,6 +169,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_pertitle_defaults",
+      "Per-Title Enhancement Defaults",
+      NULL,
+      "Apply known-safe enhancement presets automatically for recognized games (e.g. internal resolution or true color for titles verified to benefit). A preset only applies to options you have left at their default value -- any option you change yourself always wins. Disable for stock behaviour on every title.",
+      NULL,
+      NULL,
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,

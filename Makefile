@@ -835,7 +835,7 @@ clean:
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
-		test/tools/test_frame_timing test/tools/test_runahead_determinism \
+		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -873,7 +873,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -887,7 +887,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -910,6 +910,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_tom_visible_window
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
+	./test/test_titledb
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -1130,6 +1131,39 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# EEPROM read-race test: joystick polls must not steal EEPROM DO bits
 	@# (Raiden background-music death regression).
 	./test/test_eeprom_read_race ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
+	@# user-override contract, driven through the real dlopen'd core.
+	@# shadowHiresN is fixed for the whole session at retro_load_game
+	@# time, so each case is a separate process invocation -- exactly
+	@# like a real frontend restart.  The seed CRC (0xDC187F82) is
+	@# verified against the actual ROM bytes first: a corpus rip that
+	@# does not match the seed would otherwise make the test "pass"
+	@# without ever exercising the DB lookup it claims to test.
+	@avp=$$(bash scripts/find-rom.sh 'Alien vs Predator (1994).jag' '*Alien*Predator*.jag' '*Alien*Predator*.j64'); \
+	if [ -n "$$avp" ]; then \
+		avp_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$avp" 2>/dev/null); \
+		if [ "$$avp_crc" = "0xDC187F82" ]; then \
+			rc=0; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 1 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 2 --quiet \
+				--option virtualjaguar_pertitle_defaults=disabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 3 --quiet \
+				--option virtualjaguar_pertitle_defaults=disabled \
+				--option virtualjaguar_internal_resolution=2x || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
+				--option virtualjaguar_true_color=disabled || rc=1; \
+			exit $$rc; \
+		else \
+			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
+				"AvP ROM CRC $$avp_crc != 0xDC187F82 (seed mismatch)"; \
+		fi; \
+	else \
+		bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
+			"no ROM matching 'Alien vs Predator*' in the private corpus"; \
+	fi
+	@# Non-DB ROM control: no CRC match -> no substitution, no [titledb] log.
+	@# yarc.j64 is committed in-tree so this case never skips.
+	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
 	@echo ""
 	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
 	@echo "test/test_cd_toc_contract (needs VJ_TOC_DISC=<image>),"
@@ -1150,6 +1184,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cheat.c src/core/cheat.c
+
+test/test_titledb: test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1289,6 +1327,17 @@ test/test_nvmbios: test/test_nvmbios.c src/core/nvmbios.c src/core/nvmbios.h \
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+# E2E behaviour test for the per-title enhancement defaults DB (#368):
+# apply / disable / user-override contract, driven through the real core
+# via the shared harness.  Needs shadowHiresN + shadowFBActive from the
+# wide test symbol set (exports-test.list / link-test.T).
+test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_pertitle_db.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

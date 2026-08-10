@@ -46,7 +46,7 @@
 #define CART_UNIVERSAL_MARKER_OFFSET   0x400
 #define CART_UNIVERSAL_MARKER          0x04040404
 
-static uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
+uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
 {
    uint32_t payloadSize;
 
