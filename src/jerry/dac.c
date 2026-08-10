@@ -47,6 +47,15 @@ extern retro_audio_sample_batch_t audio_batch_cb;
 #define I2S_RING_SIZE		16384	/* Power of 2, must be > max samples/frame (PAL SCLK=0 ~8311) */
 #define I2S_RING_MASK		(I2S_RING_SIZE - 1)
 
+/* Steady-state distance the read cursor keeps behind the write cursor,
+ * and the drift beyond which it snaps back instead of free-running.
+ * Capture (word strobe) and consumption (rate ratio) both derive from
+ * SCLK, so in steady state the lag only jitters by a fraction of a
+ * sample; the resync handles discontinuities -- SCLK reprogramming,
+ * savestate loads, a DSP that stops feeding the port. */
+#define I2S_TARGET_LAG		2
+#define I2S_RESYNC_LAG		256
+
 /* Jaguar memory locations */
 
 #define LTXD			0xF1A148
@@ -164,6 +173,18 @@ static void DACCaptureSample(int16_t left, int16_t right)
    i2sWriteCount++;
    if (left != 0 || right != 0)
       i2sNonZeroCount++;
+
+   /* Both cursors run monotonically for the whole session; fold them
+    * back together once per ring lap.  Subtracting a whole ring size
+    * leaves every masked index unchanged, keeps the uint32 write cursor
+    * from wrapping and the double read cursor in a range where adding
+    * a fractional step still resolves exactly. */
+   if (i2sWritePos >= (uint32_t)(2 * I2S_RING_SIZE)
+       && i2sPhase >= (double)I2S_RING_SIZE)
+   {
+      i2sWritePos -= (uint32_t)I2S_RING_SIZE;
+      i2sPhase    -= (double)I2S_RING_SIZE;
+   }
 }
 
 /* One I2S word strobe has elapsed: latch whatever the DSP left in
@@ -194,26 +215,46 @@ void DSPSampleCallback(void)
    double frac;
    int32_t s0L, s1L, s0R, s1R;
 
-   /* Guard: hold current register value if ring is empty (e.g. after reset) */
-   if (i2sWriteCount < 2)
+   /* Guard: hold current register value until the ring has data */
+   if (i2sWritePos < 2)
    {
       outL = (int16_t)(*ltxd);
       outR = (int16_t)(*rtxd);
    }
    else
    {
-      /* Linear interpolation between ring buffer samples.
-       * i2sPhase is our fractional position in the I2S sample stream.
-       * We advance by i2sRateRatio for each 48 kHz output sample. */
+      /* i2sPhase is a monotonic read cursor into the captured I2S
+       * stream; it advances by the rate ratio per 48 kHz output sample
+       * and carries across frames.  Both cursors are rebased together
+       * in DACCaptureSample, which leaves masked indices unchanged.
+       *
+       * Resetting the cursor every frame (the old scheme) discarded the
+       * read position and re-anchored at the newest sample, stepping
+       * the output once per frame at 60 Hz. */
+      double lag = (double)i2sWritePos - i2sPhase;
+
+      /* Resync only on gross drift: a rate change mid-stream (SCLK
+       * write), a savestate load, or a DSP that stopped feeding the
+       * port.  In steady state capture and consumption both derive
+       * from SCLK, so the lag stays put. */
+      if (lag < 0.0 || lag > (double)I2S_RESYNC_LAG)
+      {
+         i2sPhase = (double)i2sWritePos - (double)I2S_TARGET_LAG;
+         if (i2sPhase < 0.0)
+            i2sPhase = 0.0;
+         lag = (double)i2sWritePos - i2sPhase;
+      }
+
       idx0 = (uint32_t)i2sPhase;
       frac = i2sPhase - (double)idx0;
       idx1 = idx0 + 1;
 
-      /* Clamp indices to available data */
-      if (idx0 >= i2sWriteCount)
-         idx0 = i2sWriteCount - 1;
-      if (idx1 >= i2sWriteCount)
-         idx1 = i2sWriteCount - 1;
+      /* Never read at or past the write cursor: those slots hold the
+       * previous lap of the ring. */
+      if (idx0 >= i2sWritePos)
+         idx0 = i2sWritePos - 1;
+      if (idx1 >= i2sWritePos)
+         idx1 = i2sWritePos - 1;
 
       s0L = (int32_t)i2sRingL[idx0 & I2S_RING_MASK];
       s1L = (int32_t)i2sRingL[idx1 & I2S_RING_MASK];
@@ -223,8 +264,10 @@ void DSPSampleCallback(void)
       outL = (int16_t)(s0L + (int32_t)((double)(s1L - s0L) * frac));
       outR = (int16_t)(s0R + (int32_t)((double)(s1R - s0R) * frac));
 
-      /* Advance phase by the rate ratio */
-      i2sPhase += i2sRateRatio;
+      /* Underrun: hold position until the next capture lands rather
+       * than running past the write head. */
+      if (lag > 1.0)
+         i2sPhase += i2sRateRatio;
    }
 
    sampleBuffer[bufferIndex + 0] = (uint16_t)outL;
@@ -242,30 +285,18 @@ void DSPSampleCallback(void)
 
 void DACPrepareFrame(int length)
 {
-   int16_t seedL;
-   int16_t seedR;
-
    RemoveCallback(DSPSampleCallback);
    bufferIndex = 0;
    numberOfSamples = length;
    bufferDone = false;
 
-   /* Seed the ring with the last sample actually transmitted, so the new
-    * frame's interpolation starts where the old one stopped.  Seeding from
-    * LTXD/RTXD instead put a step at every frame boundary: the holding
-    * register already holds the value for the *next* word strobe, one
-    * sample ahead of the ring tail. */
-   seedL = (int16_t)(*ltxd);
-   seedR = (int16_t)(*rtxd);
-
-   i2sRingL[0] = seedL;
-   i2sRingR[0] = seedR;
-   i2sRingL[1] = seedL;
-   i2sRingR[1] = seedR;
-   i2sWritePos = 2;
-   i2sWriteCount = 2;
+   /* Per-frame diagnostic counters only (DACGetI2SWriteCount /
+    * DACGetI2SNonZeroCount consumers).  The ring and both cursors
+    * deliberately survive the frame boundary -- resetting and
+    * re-anchoring them at the newest register value every frame was
+    * the other half of the 60 Hz step. */
+   i2sWriteCount = 0;
    i2sNonZeroCount = 0;
-   i2sPhase = i2sPhase - (double)(uint32_t)i2sPhase;
 
    /* Refresh rate ratio in case SCLK was written between frames */
    DACUpdateSCLKRate();
@@ -275,20 +306,19 @@ void DACPrepareFrame(int length)
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
-   int idx;
-
    RemoveCallback(DSPSampleCallback);
 
-   if (bufferIndex < length)
-   {
-      for (idx = bufferIndex; idx < length; idx += 2)
-      {
-         buffer[idx + 0] = (uint16_t)((int16_t)(*ltxd));
-         buffer[idx + 1] = (uint16_t)((int16_t)(*rtxd));
-      }
-   }
-
-   audio_batch_cb((int16_t *)buffer, length / 2);
+   /* Submit exactly what the 48 kHz sample clock produced this frame.
+    * An NTSC field is 524 halflines = 16651.56 us = 799.27 sample
+    * periods, so a fixed count of 800 is unsatisfiable: the 800th
+    * sample does not exist yet, and fabricating it from a raw LTXD/RTXD
+    * read put a step at the tail of every frame -- a 60 Hz tick over
+    * everything.  libretro batches are variable-length by design;
+    * delivering 799-or-800 lets the frontend's rate control absorb the
+    * 0.27-sample-per-frame remainder, which is its job. */
+   (void)length;
+   if (bufferIndex > 0)
+      audio_batch_cb((int16_t *)buffer, bufferIndex / 2);
 }
 
 /* LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54) */
@@ -400,6 +430,11 @@ size_t DACStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, rrxd);
 	STATE_SAVE_VAR(buf, sstat);
 
+	/* v9: ring contents -- the cursors above index into this data and
+	 * both now survive frame boundaries (STATE_VERSION_DAC_I2S_RING). */
+	STATE_SAVE_BUF(buf, i2sRingL, sizeof(i2sRingL));
+	STATE_SAVE_BUF(buf, i2sRingR, sizeof(i2sRingR));
+
 	return (size_t)(buf - start);
 }
 
@@ -466,6 +501,22 @@ size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion)
 		 * now that they hold the restored values rather than the ones the
 		 * previous run left behind. */
 		DACUpdateSCLKRate();
+	}
+
+	if (stateVersion >= STATE_VERSION_DAC_I2S_RING)
+	{
+		STATE_LOAD_BUF(buf, i2sRingL, sizeof(i2sRingL));
+		STATE_LOAD_BUF(buf, i2sRingR, sizeof(i2sRingR));
+	}
+	else
+	{
+		/* Older states carry no ring data: zero it.  The loaded cursor
+		 * pair is left alone -- a v8 state's phase and writePos are
+		 * mutually consistent (both were frame-local), and the read
+		 * cursor's gross-drift resync covers anything pathological on
+		 * the first sample after load. */
+		memset(i2sRingL, 0, sizeof(i2sRingL));
+		memset(i2sRingR, 0, sizeof(i2sRingR));
 	}
 
 	return (size_t)(buf - start);
