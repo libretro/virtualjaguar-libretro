@@ -72,5 +72,7 @@
       shadowHiresResolveMissValue;
       shadowHiresResolveMissEpoch;
       shadowHiresResolveMissNoPage;
+      shadowHiresN;
+      shadowFBActive;
    local: *;
 };
