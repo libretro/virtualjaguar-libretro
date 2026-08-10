@@ -319,6 +319,15 @@ uint8_t * branch_condition_table = 0;
 
 static uint32_t gpu_in_exec = 0;
 static uint32_t gpu_releaseTimeSlice_flag = 0;
+/* GPU execution LIVENESS counter -- not an exact executed-opcode count:
+ * delay-slot instructions run inline inside jump/jr without incrementing
+ * it.  That cannot produce a frozen counter on a live core (the jump/jr
+ * that owns the delay slot is itself counted), which is all the consumer
+ * needs: the crash watchdog (src/core/crash_detect.c) asks "is the GPU
+ * actually executing?" -- the sampled PC alone aliases on wait/spin loops
+ * under deterministic slice budgets (the Super Burnout false positive,
+ * issue #378 pilot).  Wraparound is fine: consumers compare deltas. */
+uint32_t gpu_exec_opcode_count = 0;
 
 /* Timeslice bookkeeping for GPU-raised 68K interrupts (CPUINT).
  *
@@ -1050,6 +1059,7 @@ void GPUExec(int32_t cycles)
       //GPU #1
       gpu_pc += 2;
       gpu_bus_stall = 0;
+      gpu_exec_opcode_count++;
 #if 0
       gpu_opcode[index]();
 #else
