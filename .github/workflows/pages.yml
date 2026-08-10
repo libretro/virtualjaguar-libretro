@@ -40,7 +40,7 @@ jobs:
       # (fetch-depth: 1) that reports the checkout commit for every path, so
       # build_site.py detects the shallow clone and falls back to the build
       # date instead of publishing four identical, wrong timestamps.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Build site
