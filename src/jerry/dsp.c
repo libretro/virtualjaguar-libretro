@@ -305,9 +305,10 @@ static uint32_t dspgo_poll_count;
 
 static uint32_t dsp_in_exec = 0;
 static uint32_t dsp_releaseTimeSlice_flag = 0;
-/* Executed-opcode counter for the crash watchdog's wedge predicate --
- * see gpu.c gpu_exec_opcode_count for rationale (PC sampling aliases on
- * idle JR/wait loops, which DSP audio engines sit in constantly). */
+/* DSP execution liveness counter for the crash watchdog's wedge
+ * predicate -- see gpu.c gpu_exec_opcode_count for rationale and the
+ * delay-slot caveat (PC sampling aliases on idle JR/wait loops, which
+ * DSP audio engines sit in constantly). */
 uint32_t dsp_exec_opcode_count = 0;
 
 /* Instruction slots a DSP-issued D_FLAGS store waits out before it

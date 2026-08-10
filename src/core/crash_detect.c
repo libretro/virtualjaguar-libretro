@@ -91,10 +91,8 @@ static int  cd_initialized = 0;
 
 static unsigned frame_no;
 
-static uint32_t last_gpu_pc;
 static unsigned gpu_same_pc_frames;
 static uint32_t last_gpu_opcount;
-static uint32_t last_dsp_pc;
 static unsigned dsp_same_pc_frames;
 static uint32_t last_dsp_opcount;
 
@@ -281,10 +279,8 @@ void CrashDetectInit(void)
 void CrashDetectReset(void)
 {
    frame_no = 0;
-   last_gpu_pc = 0;
    gpu_same_pc_frames = 0;
    last_gpu_opcount = 0;
-   last_dsp_pc = 0;
    dsp_same_pc_frames = 0;
    last_dsp_opcount = 0;
    fb_hash_prev = 0;
@@ -349,13 +345,13 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
                  frame_no, cur_dsp_pc);
    }
 
-   /* ---- GPU wedge: same PC, still running, executing NOTHING ----
-    * A stable sampled PC alone is spin-aliasing (see the extern block at
-    * the top of this file); the opcode delta is the actual liveness
-    * signal.  An executing spin loop resets the window like a moving PC
-    * does. */
-   if (gpu_running && cur_gpu_pc == last_gpu_pc
-       && gpu_exec_opcode_count == last_gpu_opcount)
+   /* ---- GPU wedge: still running, executing NOTHING ----
+    * The opcode delta is the whole predicate.  A stable sampled PC is NOT
+    * required: it aliases on healthy spin loops (see the extern block at
+    * the top of this file), and requiring it can mask a real zero-opcode
+    * wedge whose PC moves anyway (e.g. an external G_PC write while the
+    * core executes nothing). */
+   if (gpu_running && gpu_exec_opcode_count == last_gpu_opcount)
    {
       gpu_same_pc_frames++;
       if (gpu_same_pc_frames == WEDGE_FRAMES_GPU
@@ -373,8 +369,7 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
     * predicate is also why WEDGE_FRAMES_DSP grew to 600: audio engines
     * idle in JR loops that alias exactly like Super Burnout's GPU wait.
     * The threshold stays conservative anyway.) ---- */
-   if (dsp_running && cur_dsp_pc == last_dsp_pc
-       && dsp_exec_opcode_count == last_dsp_opcount)
+   if (dsp_running && dsp_exec_opcode_count == last_dsp_opcount)
    {
       dsp_same_pc_frames++;
       if (dsp_same_pc_frames == WEDGE_FRAMES_DSP
@@ -457,7 +452,5 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
       next_heartbeat_frame = frame_no + HEARTBEAT_FRAMES;
    }
 
-   last_gpu_pc = cur_gpu_pc;
-   last_dsp_pc = cur_dsp_pc;
    fb_hash_prev = cur_fb_hash;
 }
