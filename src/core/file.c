@@ -125,16 +125,29 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000 };
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
+   unsigned minScore;
+   int knownStartup;
    unsigned i;
    uint32_t offset;
 
    if (size < 16 || !loadAddress)
       return false;
 
-   /* Known raw homebrew startup writes big-endian mode before touching TOM. */
-   if (GET16(buffer, 0) != 0x23FC || GET32(buffer, 2) != 0x00070007
-         || GET32(buffer, 6) != 0x00F0210C)
-      return false;
+   /* One known homebrew startup idiom writes big-endian mode before
+    * touching TOM.  It used to be a hard REQUIREMENT, which rejected any
+    * raw binary that opens differently -- the majority of the PD/BJL
+    * corpus.  Measured over the local homebrew set: 56 images that this
+    * gate refused score 17-56 on the absolute-reference test below (i.e.
+    * overwhelmingly consistent with one candidate base), while genuine
+    * non-binaries -- .zip files, headered dev images like the AvP alpha --
+    * score 0-1.  So the idiom is now a confidence hint, not an entry
+    * requirement: recognised startup keeps the permissive threshold, and
+    * anything else has to clear a much higher bar of self-consistent
+    * absolute references before we will claim to know its load address. */
+   knownStartup = (GET16(buffer, 0) == 0x23FC
+         && GET32(buffer, 2) == 0x00070007
+         && GET32(buffer, 6) == 0x00F0210C);
+   minScore = knownStartup ? 2 : 8;
 
    for (i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
    {
@@ -162,7 +175,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
       }
    }
 
-   if (bestScore < 2)
+   if (bestScore < minScore)
       return false;
 
    *loadAddress = candidates[bestCandidate];
