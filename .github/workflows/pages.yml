@@ -57,7 +57,7 @@ jobs:
       # JSON-LD or sitemap).  Nothing is deployed if it trips.
       - name: Check generated site
         run: python3 scripts/check_site.py _site
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
