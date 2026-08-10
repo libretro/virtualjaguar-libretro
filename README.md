@@ -80,6 +80,10 @@ Two independent clock-scale options — the 68000 (`virtualjaguar_m68k_clock_sca
 
 `virtualjaguar_crash_detect` (on by default) checks once per frame for known failure signatures and writes the diagnosis into the frontend log. Cost when enabled: one indirect call plus a ~256-pixel hash per frame. ([`src/core/crash_detect.c`](src/core/crash_detect.c))
 
+### Per-title enhancement defaults
+
+`virtualjaguar_pertitle_defaults` (on by default) applies known-safe enhancement presets automatically for recognized games — only for options you've left at their default value. Any option you've changed yourself always wins, and disabling this option restores stock behaviour for every title. Seeded titles: **Alien vs Predator** (2x internal resolution + true color) and **Cybermorph** (true color). New entries require committed evidence — propose candidates via [issue #368](https://github.com/libretro/virtualjaguar-libretro/issues/368).
+
 ### Roadmap: internal hi-res upscaling — *in design*
 
 The true-color shadow framebuffer is deliberately the 1× prototype of a larger architecture: rendering above native resolution inside the core. That work, and the rest of the enhancement suite, is tracked as epic [#338](https://github.com/libretro/virtualjaguar-libretro/issues/338). It is **in design** — no dates, no promises beyond what's in the issue.
