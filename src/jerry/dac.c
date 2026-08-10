@@ -42,6 +42,8 @@ extern retro_audio_sample_batch_t audio_batch_cb;
 
 #define BUFFER_SIZE		0x10000	/* Make the DAC buffers 64K x 16 bits */
 #define DAC_AUDIO_RATE		48000	/* Set the audio rate to 48 KHz */
+/* Must match BUFMAX in libretro.c, which allocates sampleBuffer. */
+#define DAC_BUFFER_MAX		2048
 
 /* Ring buffer for I2S samples produced by the DSP at hardware rate */
 #define I2S_RING_SIZE		16384	/* Power of 2, must be > max samples/frame (PAL SCLK=0 ~8311) */
@@ -79,6 +81,9 @@ static uint32_t i2sWriteCount = 0;	/* total samples captured this frame */
 static uint32_t i2sNonZeroCount = 0;	/* samples with non-zero amplitude this frame */
 static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
+/* The 48 kHz sample clock free-runs across frame boundaries; this just
+ * records whether the self-rescheduling chain has been kicked off. */
+static bool sampleClockRunning = false;
 
 /* Private function prototypes */
 static void DACUpdateSCLKRate(void);
@@ -106,6 +111,7 @@ void DACReset(void)
    i2sNonZeroCount = 0;
    i2sPhase = 0.0;
    i2sRateRatio = 1.0;
+   sampleClockRunning = false;
    memset(i2sRingL, 0, sizeof(i2sRingL));
    memset(i2sRingR, 0, sizeof(i2sRingR));
 }
@@ -270,22 +276,26 @@ void DSPSampleCallback(void)
          i2sPhase += i2sRateRatio;
    }
 
-   sampleBuffer[bufferIndex + 0] = (uint16_t)outL;
-   sampleBuffer[bufferIndex + 1] = (uint16_t)outR;
-   bufferIndex += 2;
-
-   if (bufferIndex >= numberOfSamples)
+   /* BUFMAX guard only.  The chain must NOT stop at numberOfSamples:
+    * an NTSC field is 799.27 sample periods, so stopping at a fixed
+    * count and restarting from zero next frame discarded the 0.27
+    * remainder every frame.  That is 108 samples/sec against the
+    * advertised 48 kHz -- the frontend's buffer drained and underran,
+    * heard as periodic pops in every title. */
+   if (bufferIndex + 1 < DAC_BUFFER_MAX)
    {
-      bufferDone = true;
-      return;
+      sampleBuffer[bufferIndex + 0] = (uint16_t)outL;
+      sampleBuffer[bufferIndex + 1] = (uint16_t)outR;
+      bufferIndex += 2;
    }
+   if (bufferIndex >= numberOfSamples)
+      bufferDone = true;
 
    SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 }
 
 void DACPrepareFrame(int length)
 {
-   RemoveCallback(DSPSampleCallback);
    bufferIndex = 0;
    numberOfSamples = length;
    bufferDone = false;
@@ -301,12 +311,18 @@ void DACPrepareFrame(int length)
    /* Refresh rate ratio in case SCLK was written between frames */
    DACUpdateSCLKRate();
 
-   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+   /* Kick the free-running sample clock once; afterwards it reschedules
+    * itself and carries its sub-period phase across frame boundaries. */
+   if (!sampleClockRunning)
+   {
+      sampleClockRunning = true;
+      SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE,
+                      EVENT_JERRY);
+   }
 }
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
-   RemoveCallback(DSPSampleCallback);
 
    /* Submit exactly what the 48 kHz sample clock produced this frame.
     * An NTSC field is 524 halflines = 16651.56 us = 799.27 sample

@@ -1062,7 +1062,17 @@ void retro_get_system_info(struct retro_system_info *info)
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
    memset(info, 0, sizeof(*info));
-   info->timing.fps            = vjs.hardwareTypeNTSC ? 60 : 50;
+   /* Report the frame rate the emulator actually runs at, not a
+    * rounded nominal one.  A field is VP+1 halflines (524 NTSC / 626
+    * PAL) of 31.777778 us / 32.0 us, so the true rates are 60.0544 and
+    * 49.9201 Hz.  Claiming 60/50 while the DAC's free-running 48 kHz
+    * sample clock delivers 799.27 / 961.54 samples per frame left the
+    * frontend expecting ~92 more samples per second than it received;
+    * its audio buffer drained and underran, heard as periodic pops in
+    * every title.  fps and sample_rate must describe the same machine. */
+   info->timing.fps            = vjs.hardwareTypeNTSC
+      ? 1000000.0 / (524.0 * 31.777777777)
+      : 1000000.0 / (626.0 * 32.0);
    info->timing.sample_rate    = SAMPLERATE;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;

@@ -824,7 +824,7 @@ clean:
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
-		test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_pit_clock_rate \
+		test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_eeprom_read_race \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
@@ -970,6 +970,17 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/test_audio_boundary ./$(TARGET) "$$rom" --label "Atari Karts (boundary)" --quiet; \
 	else \
 		bash scripts/test-skip.sh record "Atari Karts (audio boundary)" "no ROM matching 'Atari Karts*' in the private corpus"; \
+	fi
+	@# Delivered-vs-advertised sample rate.  A steady deficit drains the
+	@# frontend's audio buffer until it underruns -- a pop every few
+	@# seconds in every title.  Orthogonal to the boundary check: the
+	@# pre-2026-08 core passed this and failed that; the first fix
+	@# inverted it.  Both must hold.
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_rate ./$(TARGET) "$$rom" --label "Atari Karts (rate)" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Atari Karts (audio rate)" "no ROM matching 'Atari Karts*' in the private corpus"; \
 	fi
 	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
 	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
@@ -1338,6 +1349,10 @@ test/test_audio_presence: test/test_audio_presence.c
 test/test_audio_boundary: test/test_audio_boundary.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_audio_boundary.c -ldl -lm
+
+test/test_audio_rate: test/test_audio_rate.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_rate.c -ldl -lm
 
 test/test_memtrack: test/test_memtrack.c src/core/memtrack.c src/core/memtrack.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
