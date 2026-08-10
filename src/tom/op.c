@@ -112,6 +112,72 @@ static void OPSkipScaledDestinationPixels(uint32_t destPixels, uint16_t hscale,
 }
 
 
+/* Hi-res Stage 3 (epic #338, docs/hires-upscaling-design.md section 6.4):
+ * peek one HSCALE sub-step (0x20 / SHADOWFB_HIRES_MAX_N) beyond a caller-
+ * supplied LOCAL snapshot of the scaling accumulator, to recover the
+ * fractional source detail a non-1.0x HSCALE has that the 1x destination
+ * throws away.  `data`/`pixCount`/`horizontalRemainder`/`iwidthRemaining`
+ * are copies taken by the caller at the point it is about to write the
+ * *current* stock pixel -- this function never touches the real
+ * variables, which still drive the stock write and (via the caller in
+ * the OBJECT_TYPE_SCALE dispatch in this file) the VSCALE REMAINDER
+ * writeback to RAM.  Both must stay byte-identical; only reading a local
+ * copy makes that guarantee structural rather than reviewed, the same
+ * argument the blitter's shadow_hires_sub_mid (blitter.c) uses for its
+ * own local ADDRGEN walk.
+ *
+ * Reads via JaguarReadWord, never JaguarReadLong: JaguarReadLong charges
+ * bus_arbiter_op_charge() whenever `who == OP` (see jaguar.c), which
+ * would make this shadow-only peek observable in emulated 68K/GPU
+ * timing -- exactly the invisibility hires_state_digest gates on.
+ * JaguarReadWord never charges bus arbiter for any `who`, so the extra
+ * read is free of side effects on stock state.
+ *
+ * Falls back to `stockValue16` (the sample already computed for the
+ * pixel this peek is refining) when: the local walk would need an
+ * implausible run of source pixels (malformed/pathological HSCALE,
+ * bounded rather than trusted); it would read past the object's
+ * remaining phrase budget (`iwidthRemaining`, the same bound the stock
+ * walk itself is guarded by); or the resolved address could carry a
+ * read side effect (CD/TOM/JERRY register space -- object pixel data is
+ * never legitimately there on real hardware, but bail rather than
+ * assume). */
+static uint16_t op_hires_scale_peek(uint32_t data, int pixCount,
+      uint16_t horizontalRemainder, uint16_t hscale, uint32_t pitchBytes,
+      int phrasePixels, uint32_t iwidthRemaining, uint16_t stockValue16)
+{
+   uint16_t rem;
+   int count;
+   int steps;
+   uint32_t phrasesNeeded;
+   uint32_t addr;
+
+   rem = (uint16_t)(horizontalRemainder + (0x20 / SHADOWFB_HIRES_MAX_N));
+   count = pixCount;
+   steps = 0;
+
+   while (rem >= hscale)
+   {
+      rem -= hscale;
+      count++;
+
+      if (++steps > 64)			// pathological hscale: bail, don't spin
+         return stockValue16;
+   }
+
+   phrasesNeeded = (uint32_t)count / (uint32_t)phrasePixels;
+   if (phrasesNeeded >= iwidthRemaining)
+      return stockValue16;
+
+   addr = (data + phrasesNeeded * pitchBytes
+         + (uint32_t)(count % phrasePixels) * 2) & 0xFFFFFF;
+   if (addr >= 0xDFFF00)		// CD/TOM/JERRY window: possible read side effect
+      return stockValue16;
+
+   return JaguarReadWord(addr, OP);
+}
+
+
 //
 // Object Processor initialization
 //
@@ -1523,12 +1589,68 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
                         data + ((uint32_t)pixCount << 1),
                         (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
                /* Hi-res: same resolve against the Nx shadow surface,
-                * inside the OP's single per-scanline pass (shadowfb.h). */
+                * inside the OP's single per-scanline pass (shadowfb.h).
+                *
+                * Stage 3 (design section 6.4): a non-1.0x HSCALE means
+                * this one stock pixel was sampled from a source bitmap
+                * that has more horizontal detail than the destination
+                * kept.  Peek one local HSCALE sub-step ahead
+                * (op_hires_scale_peek, N=2 only -- the Stage 1 scope
+                * fence) and place the two point samples in output
+                * column order: source consumption is always forward
+                * regardless of REFLECT (only the destination step
+                * direction flips, see lbufDelta above), so under
+                * REFLECT the physically-left sub-column holds the
+                * *later* source sample to keep the block's own
+                * left/right consistent with the mirrored image.
+                * hscale==0x20 (no scaling -- nothing to recover) keeps
+                * the existing RAM-shadow resolve, which also covers the
+                * case where this source address was itself a prior
+                * blit's supersampled write (Stage 1/2 semantics,
+                * unchanged).  Sub-rows are not supersampled here (only
+                * one source row is ever visible inside one
+                * OPProcessScaledBitmap call -- VSCALE's row selection
+                * lives in the OBJECT_TYPE_SCALE dispatch outside this
+                * function, and its REMAINDER writeback must stay
+                * untouched), so all N sub-rows repeat the same N
+                * columns. */
                if (shadowHiresActive)
-                  ShadowHiresLineFromRAM(
-                        (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
-                        data + ((uint32_t)pixCount << 1),
-                        (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+               {
+                  uint16_t stockVal;
+                  int lbIdx;
+
+                  stockVal = (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo);
+                  lbIdx = (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1);
+
+                  if (shadowHiresN == 2 && hscale != 0x20)
+                  {
+                     shadowfb_sub cols[SHADOWFB_HIRES_MAX_N];
+                     shadowfb_sub s0, s1;
+
+                     s0.value16 = stockVal;
+                     s0.frac16 = 0;
+                     s1.value16 = op_hires_scale_peek(data, pixCount,
+                           horizontalRemainder, hscale,
+                           (uint32_t)(pitch << 3), 4, iwidth, stockVal);
+                     s1.frac16 = 0;
+
+                     if (flagREFLECT)
+                     {
+                        cols[0] = s1;
+                        cols[1] = s0;
+                     }
+                     else
+                     {
+                        cols[0] = s0;
+                        cols[1] = s1;
+                     }
+
+                     ShadowHiresLineFromScaledSamples(lbIdx, cols, stockVal);
+                  }
+                  else
+                     ShadowHiresLineFromRAM(lbIdx,
+                           data + ((uint32_t)pixCount << 1), stockVal);
+               }
             }
             else
                *currentLineBuffer =

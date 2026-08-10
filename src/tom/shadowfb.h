@@ -189,6 +189,21 @@ void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
  * pass, producing all N sub-rows at once (design section 6.1). */
 void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
 
+/* Stage 3 (design section 6.4): OP scaled-bitmap resolve site.  Unlike
+ * ShadowHiresLineFromRAM, the content here does not come from the RAM
+ * shadow (the OP's source bitmap is static image data, never itself a
+ * shadow-tracked destination write) -- it is N freshly point-sampled
+ * source pixels, one per horizontal sub-column, already resolved by
+ * the caller via a LOCAL copy of the HSCALE walk (op_hires_scale_peek
+ * in op.c).  `cols[N]` is in output column order (sx = 0..N-1,
+ * left-to-right in the Nx line buffer); `value16` is the stock pixel
+ * this destination write produced (the tag key, unchanged semantics).
+ * Fills every sub-row identically -- Stage 3 as shipped supersamples
+ * HSCALE only, not VSCALE, so all N sub-rows repeat the same N
+ * columns (see the design section 6.4 note in op.c for why). */
+void ShadowHiresLineFromScaledSamples(int idx, const shadowfb_sub *cols,
+                                       uint16_t value16);
+
 #ifdef __cplusplus
 }
 #endif

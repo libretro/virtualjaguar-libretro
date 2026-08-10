@@ -358,6 +358,28 @@ void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
    shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
 }
 
+void ShadowHiresLineFromScaledSamples(int idx, const shadowfb_sub *cols,
+                                       uint16_t value16)
+{
+   shadowfb_sub *dst;
+   int n, sy, sx;
+
+   if (!shadowHiresActive)
+      return;
+   if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
+      return;
+
+   n = shadowHiresN;
+   for (sy = 0; sy < n; sy++)
+   {
+      dst = shadowHiresLineSub
+          + ((uint32_t)sy * SHADOWFB_LINE_PIXELS + (uint32_t)idx) * (uint32_t)n;
+      for (sx = 0; sx < n; sx++)
+         dst[sx] = cols[sx];
+   }
+   shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
+}
+
 /* Clear every allocated page tag (VALID bit off).  Cost is per stock
  * word, independent of N. */
 static void shadow_hires_clear_tags(void)
