@@ -287,18 +287,20 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
        * ignores jaguarRunAddress entirely (JaguarReset() only consults it
        * for the non-BIOS path).
        *
-       * A masked value outside every executable band (main RAM mirror,
-       * cart ROM, boot ROM) can never be a genuine vector, so treat it as
-       * evidence the header/vector-table convention isn't followed and
-       * fall back to the cart base -- the other common convention, and
-       * where this demo's real startup code (VMODE/VI register writes)
-       * actually lives. */
+       * A masked value outside every executable band (main RAM $000000-
+       * $1FFFFF, cart ROM $800000-$DFFEFF, boot ROM $E00000-$E1FFFF) can
+       * never be a genuine vector, so treat it as evidence the
+       * header/vector-table convention isn't followed and fall back to the
+       * cart base -- the other common convention, and where this demo's
+       * real startup code (VMODE/VI register writes) actually lives.
+       * Note: $DFFF00-$DFFFFF is the CDROM overlay, not cart ROM; the
+       * cart window ends at $DFFEFF. */
       {
-         uint32_t candidate = GET32(jagMemSpace, 0x800404);
-         uint32_t masked = candidate & 0x00FFFFFF;
-         bool validVector = (masked < 0x200000)
-               || (masked >= 0x800000 && masked <= 0xDFFFFF)
-               || (masked >= 0xE00000 && masked <= 0xE1FFFF);
+        uint32_t candidate = GET32(jagMemSpace, 0x800404);
+        uint32_t masked = candidate & 0x00FFFFFF;
+        bool validVector = (masked < 0x200000)
+              || (masked >= 0x800000 && masked <= 0xDFFEFF)
+              || (masked >= 0xE00000 && masked <= 0xE1FFFF);
 
          if (validVector)
             jaguarRunAddress = candidate;
