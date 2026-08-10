@@ -145,7 +145,7 @@ fallback: `nm -gU <dylib> | grep <newsymbol>`.
 
 - `gpu_pc_escape` — GPU running with PC outside `[$F03000,$F03FFF]` ∪ `[$0,$E3FFFF]` (matches the JaguarReadX address decoding: main RAM mirrors at the bottom 8MB, cart ROM, boot ROM)
 - `dsp_pc_escape` — DSP running with PC outside `[$F1B000,$F1CFFF]` ∪ `[$0,$E3FFFF]`
-- `gpu_wedge` / `dsp_wedge` — same PC for ≥180 / 600 frames while still flagged running
+- `gpu_wedge` / `dsp_wedge` — flagged running but **zero opcodes executed** for ≥180 / 600 frames (tracked via `gpu_exec_opcode_count` / `dsp_exec_opcode_count`). A stable sampled PC alone is NOT a wedge: deterministic slice budgets land the per-frame PC sample on the same instruction of a healthy wait/spin loop every frame (Super Burnout spins ~446k GPU ops/frame at one sampled PC — the #378 pilot false positive; regression: `test/tools/test_wedge_spin`)
 - `video_stall` — framebuffer hash unchanged for 300 frames while a processor is running
 - `cd_seek_wedge` — a CD seek was started but FIFO drain progress is frozen for 300 frames while a processor is still running; dumps the CD trace ring (see above, "Key harnesses") to the log. **Known benign case:** a title that goes CD-idle >5s after finishing a transfer fires this too — e.g. Myst (bios) fires it during the intro movie's ~6s all-black pause (drain parked at payload end LBA 21189, movie playing from RAM, clock still ticking); HLE shows the identical black window (fires `video_stall` instead). Corroborate before treating a lone line as a wedge.
 

@@ -305,6 +305,10 @@ static uint32_t dspgo_poll_count;
 
 static uint32_t dsp_in_exec = 0;
 static uint32_t dsp_releaseTimeSlice_flag = 0;
+/* Executed-opcode counter for the crash watchdog's wedge predicate --
+ * see gpu.c gpu_exec_opcode_count for rationale (PC sampling aliases on
+ * idle JR/wait loops, which DSP audio engines sit in constantly). */
+uint32_t dsp_exec_opcode_count = 0;
 
 /* Instruction slots a DSP-issued D_FLAGS store waits out before it
  * retires: the slot holding the store itself, plus the one instruction
@@ -1060,6 +1064,7 @@ void DSPExec(int32_t cycles)
 		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
+		dsp_exec_opcode_count++;
 		dsp_executeOpcode(index);
 		cycles -= dsp_opcode_cycles[index];
 
@@ -1294,6 +1299,7 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
+		dsp_exec_opcode_count++;
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Refilling the pipeline from the branch target costs enough
@@ -1330,6 +1336,7 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
+		dsp_exec_opcode_count++;
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Same branch-target pipeline refill as dsp_opcode_jump. */
@@ -2412,6 +2419,7 @@ INLINE static void DSP_jr(void)
          pipeline[plPtrExec].writebackRegister = pipeline[plPtrExec].operand2;	// Set it to RN
       }//*/
       dsp_pc += 2;	// For DSP_DIS_* accuracy
+      dsp_exec_opcode_count++;
       DSPOpcode[pipeline[plPtrExec].opcode]();
       pipeline[plPtrWrite] = pipeline[plPtrExec];
 

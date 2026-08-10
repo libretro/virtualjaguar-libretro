@@ -836,6 +836,7 @@ clean:
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/tools/test_wedge_spin \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -934,6 +935,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/test_audio_pipeline ./$(TARGET); \
 	fi
 	./test/test_audio_clipping ./$(TARGET) --self-test
+	@# Wedge-detector spin-aliasing regression (#378 pilot finding): a
+	@# healthy GPU wait/spin loop must not log gpu_wedge.  Super Burnout
+	@# spins ~446k GPU opcodes/frame at one sampled PC during attract.
+	@rom=$$(bash scripts/find-rom.sh 'Super Burnout (1995).jag' 'Super Burnout*.jag' 'Super Burnout*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_wedge_spin ./$(TARGET) "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Wedge spin-aliasing (Super Burnout)" "no ROM matching 'Super Burnout*' in the private corpus"; \
+	fi
 	@# ROM lookup goes through scripts/find-rom.sh, which searches the whole
 	@# private corpus case-insensitively and prefers the canonical top-level
 	@# copy over duplicates buried in sub-collections.  It replaced a pair of
@@ -1403,6 +1413,13 @@ test/tools/test_runahead_determinism: test/tools/test_runahead_determinism.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_runahead_determinism.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_wedge_spin.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
