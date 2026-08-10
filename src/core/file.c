@@ -294,13 +294,20 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
        * cart base -- the other common convention, and where this demo's
        * real startup code (VMODE/VI register writes) actually lives.
        * Note: $DFFF00-$DFFFFF is the CDROM overlay, not cart ROM; the
-       * cart window ends at $DFFEFF. */
+       * cart window ends at $DFFEFF.
+       *
+       * An odd candidate is rejected for the same reason: the 68000 cannot
+       * fetch an instruction from an odd PC, and JaguarExecute() bails out
+       * immediately whenever (m68kPC & 1), so an in-range but misaligned
+       * vector (say $800001 out of a raw byte stream) would leave the CPU
+       * parked instead of running the game.  Those take the fallback too. */
       {
-        uint32_t candidate = GET32(jagMemSpace, 0x800404);
-        uint32_t masked = candidate & 0x00FFFFFF;
-        bool validVector = (masked < 0x200000)
-              || (masked >= 0x800000 && masked <= 0xDFFEFF)
-              || (masked >= 0xE00000 && masked <= 0xE1FFFF);
+         uint32_t candidate = GET32(jagMemSpace, 0x800404);
+         uint32_t masked = candidate & 0x00FFFFFF;
+         bool validVector = ((masked & 1) == 0)
+               && ((masked < 0x200000)
+                  || (masked >= 0x800000 && masked <= 0xDFFEFF)
+                  || (masked >= 0xE00000 && masked <= 0xE1FFFF));
 
          if (validVector)
             jaguarRunAddress = candidate;
