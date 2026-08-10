@@ -82,7 +82,7 @@ Two independent clock-scale options — the 68000 (`virtualjaguar_m68k_clock_sca
 
 ### Per-title enhancement defaults
 
-`virtualjaguar_pertitle_defaults` (on by default) applies known-safe enhancement presets automatically for recognized games — only for options you've left at their default value. Any option you've changed yourself always wins, and disabling this option restores stock behaviour for every title. Seeded titles: **Alien vs Predator** (2x internal resolution + true color) and **Cybermorph** (true color). New entries require committed evidence — propose candidates via [issue #368](https://github.com/libretro/virtualjaguar-libretro/issues/368).
+`virtualjaguar_pertitle_defaults` (on by default) applies known-safe enhancement presets automatically for recognized games — only for options you've left at their default value. Any option you've changed yourself always wins, and disabling this option restores stock behaviour for every title. 12 entries covering 11 titles, derived from the blit census in [`docs/hires-stage0-census.md`](docs/hires-stage0-census.md), including **Alien vs Predator** (2x internal resolution + true color), **Doom** (2x + true color), **Missile Command 3D** (2x + true color), **Hover Strike** (2x), and **Cybermorph** (true color). New entries require committed evidence — propose candidates via [issue #368](https://github.com/libretro/virtualjaguar-libretro/issues/368).
 
 ### Roadmap: internal hi-res upscaling — *in design*
 
