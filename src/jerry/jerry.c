@@ -334,6 +334,10 @@ void JERRYI2SCallback(void)
    {
       double usecs;
 
+      /* Latch the pair the DSP left from the previous strobe before
+       * asking it for the next one -- one sample per word clock. */
+      DACWordStrobe();
+
       // This does the 'IRQ enabled' checking...
       DSPSetIRQLine(DSPIRQ_SSI, ASSERT_LINE);
       //		double usecs = (float)jerryI2SCycles * RISC_CYCLE_IN_USEC;
@@ -348,6 +352,12 @@ void JERRYI2SCallback(void)
       //Note that 44100 Hz requires samples every 22.675737 usec.
       //When JERRY is slave to the word clock, we need to do interrupts either at 44.1K
       //sample rate or at a 88.2K sample rate (11.332... usec).
+
+      /* The external word clock runs whether or not BUTCH has data, and
+       * the DAC re-transmits the holding register when the DSP does not
+       * refresh it.  Latch unconditionally so the ring fills at the same
+       * 44.1 kHz DACUpdateSCLKRate() resamples from. */
+      DACWordStrobe();
 
       if (ButchIsReadyToSend())//Not sure this is right spot to check...
       {

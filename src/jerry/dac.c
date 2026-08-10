@@ -166,6 +166,27 @@ static void DACCaptureSample(int16_t left, int16_t right)
       i2sNonZeroCount++;
 }
 
+/* One I2S word strobe has elapsed: latch whatever the DSP left in
+ * LTXD/RTXD into the resample ring.
+ *
+ * The I2S port is a holding register, not a queue.  Hardware serialises
+ * exactly one sample pair per word strobe and simply overwrites the
+ * holding register on any write in between -- those intermediate values
+ * never reach the DAC.  Capturing on every RTXD write instead fabricated
+ * samples that were never transmitted: Atari Karts (master mode, SCLK=19)
+ * writes 417 pairs per frame against 346 word strobes, so the ring grew
+ * 20% faster than DSPSampleCallback consumed it and DACPrepareFrame threw
+ * the surplus away on the next frame.  That reset yanked the output phase
+ * forward once per frame -- a 60 Hz step of mean amplitude ~2959 (peak
+ * 21881) in an otherwise ~110-amplitude signal, heard as constant
+ * crackle on cartridge titles.  It is the master-mode twin of the
+ * slave-mode chop described in DACUpdateSCLKRate().
+ */
+void DACWordStrobe(void)
+{
+   DACCaptureSample((int16_t)(*ltxd), (int16_t)(*rtxd));
+}
+
 void DSPSampleCallback(void)
 {
    int16_t outL, outR;
@@ -221,18 +242,26 @@ void DSPSampleCallback(void)
 
 void DACPrepareFrame(int length)
 {
+   int16_t seedL;
+   int16_t seedR;
+
    RemoveCallback(DSPSampleCallback);
    bufferIndex = 0;
    numberOfSamples = length;
    bufferDone = false;
 
-   /* Seed ring with current DAC register values so interpolation has valid
-    * endpoints before the first real DSP write arrives.  Two copies give
-    * both idx0 and idx1 valid data for the interpolator. */
-   i2sRingL[0] = (int16_t)(*ltxd);
-   i2sRingR[0] = (int16_t)(*rtxd);
-   i2sRingL[1] = (int16_t)(*ltxd);
-   i2sRingR[1] = (int16_t)(*rtxd);
+   /* Seed the ring with the last sample actually transmitted, so the new
+    * frame's interpolation starts where the old one stopped.  Seeding from
+    * LTXD/RTXD instead put a step at every frame boundary: the holding
+    * register already holds the value for the *next* word strobe, one
+    * sample ahead of the ring tail. */
+   seedL = (int16_t)(*ltxd);
+   seedR = (int16_t)(*rtxd);
+
+   i2sRingL[0] = seedL;
+   i2sRingR[0] = seedR;
+   i2sRingL[1] = seedL;
+   i2sRingR[1] = seedR;
    i2sWritePos = 2;
    i2sWriteCount = 2;
    i2sNonZeroCount = 0;
@@ -276,14 +305,14 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    if (offset == LTXD + 2)
    {
+      /* Holding register only.  The pair is latched into the resample
+       * ring by DACWordStrobe() when the I2S word clock ticks, not here
+       * -- see the comment on DACWordStrobe(). */
       *ltxd = data;
-      /* Capture left sample; pair completes when RTXD is written */
    }
    else if (offset == RTXD + 2)
    {
       *rtxd = data;
-      /* Both channels written — capture the stereo pair */
-      DACCaptureSample((int16_t)(*ltxd), (int16_t)data);
    }
    else if (offset == SCLK + 2)					/* Sample rate */
    {
