@@ -702,7 +702,8 @@ int main(int argc, char **argv)
              * current version, whatever that has grown to since. */
             check(hdr_ver == (uint32_t)STATE_VERSION
                   && STATE_VERSION >= STATE_VERSION_JAGGD,
-                  "v8_header", "state header version=%u (expect %u, >= %u)",
+                  "header_is_current_version",
+                  "state header version=%u (expect %u, >= %u for the JGD chunk)",
                   hdr_ver, (uint32_t)STATE_VERSION,
                   (uint32_t)STATE_VERSION_JAGGD);
         }

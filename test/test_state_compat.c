@@ -341,9 +341,12 @@ int main(int argc, char **argv)
     int *width_ptr, *height_ptr;
     uint8_t *state_v3 = NULL, *state_v2 = NULL, *state_v1 = NULL,
             *state_v3l = NULL, *scratch = NULL;
-    /* Static: the v9 DAC block is ~64 KB (ring contents) -- five of
-     * them on the stack was a segfault, and did in fact segfault when
-     * the ring landed and these were 256-byte automatics. */
+    /* Static, not automatic: the v9 DAC block carries the 64 KB
+     * resample ring, so each of these buffers is ~64 KB and five of
+     * them overflow the default stack.  (They were 256-byte automatics,
+     * which was fine for the 51-byte v8 block; the crash appeared when
+     * the ring joined the block and the size assert below grew with
+     * it.) */
     static uint8_t dac_v3[EXPECTED_DAC_BLOCK_SIZE + 16];
     static uint8_t dac_now[EXPECTED_DAC_BLOCK_SIZE + 16];
     static uint8_t dac_expect[EXPECTED_DAC_BLOCK_SIZE + 16];
