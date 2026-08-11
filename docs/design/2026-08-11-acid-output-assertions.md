@@ -186,6 +186,20 @@ State it plainly so nobody over-trusts the suite:
   That is the argument for keeping *some* Tier 2 capacity available even when
   the current quarantine list is empty.
 
+## Future: private ROM repo for CI (not in this increment)
+
+Tier 2 could run in CI rather than only locally: host the commercial corpus in
+a separate **private** repository and give CI a read-only token to fetch it.
+Forks could point at their own private corpus via a repo variable, so
+contributors test against ROMs they own without anyone shipping copyrighted
+data.
+
+That would close the "coverage that exists is not coverage that runs" gap for
+Tier 2 as well. It does not change the case for Tier 1: synthetic ROMs stay
+the permanent tier because they need no secret, work on a fresh clone, and
+give attributable failures. Treat this as a bonus, sequenced after the
+observers land.
+
 ## Success criteria
 
 - The three PR #391 bugs each fail a Tier 1 test on the pre-fix core and pass
