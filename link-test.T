@@ -22,6 +22,9 @@
       jaguarMainROM;
       jagMemSpace;
       busArbiter;
+      gpuPCSample;
+      m68kPCSample;
+      m68kPCSampleIdx;
       pcQueue;
       pcQPtr;
       a6Queue;

@@ -19,6 +19,9 @@ _jaguarMainRAM
 _jaguarMainROM
 _jagMemSpace
 _busArbiter
+_gpuPCSample
+_m68kPCSample
+_m68kPCSampleIdx
 _pcQueue
 _pcQPtr
 _a6Queue

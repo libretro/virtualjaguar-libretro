@@ -309,6 +309,17 @@ uint32_t d7Queue[0x400];
 uint32_t pcQPtr = 0;
 bool startM68KTracing = false;
 
+/* Halfline-rate 68K PC sampler (BENCH_PROFILE only).  524 samples per
+ * field is enough to tell WHICH wait a title's frame loop is parked in
+ * without the cost of a per-instruction hook -- the question "is this
+ * loop GPU-bound, DSP-handshake-bound, or field-synchronised?" is
+ * answered by a PC histogram, and answering it by reasoning about the
+ * source has produced two wrong root causes for #401 already.
+ * Diagnostic only: the emulated machine never reads this. */
+uint32_t m68kPCSample[0x2000];
+uint32_t gpuPCSample[0x2000];
+uint32_t m68kPCSampleIdx = 0;
+
 // Breakpoint on memory access vars (exported)
 bool bpmActive = false;
 uint32_t bpmAddress1;
@@ -1059,6 +1070,12 @@ void HalflineCallback(void)
 {
    uint16_t vc           = (PERF_INC(timing_halfline_callbacks),
                             TOMReadWord(0xF00006, JAGUAR));
+#ifdef BENCH_PROFILE
+   m68kPCSample[m68kPCSampleIdx & 0x1FFF] =
+      (uint32_t)m68k_get_reg(NULL, M68K_REG_PC);
+   gpuPCSample[m68kPCSampleIdx & 0x1FFF] = GPUGetPC();
+   m68kPCSampleIdx++;
+#endif
    uint16_t vp           = TOMReadWord(0xF0003E, JAGUAR) + 1;
    uint16_t vi           = TOMReadWord(0xF0004E, JAGUAR);
 
