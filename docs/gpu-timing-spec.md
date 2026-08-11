@@ -476,3 +476,29 @@ Needs simulation (all bounded above, exact constants wanted):
   synchronization for the FPGA's external RAM — MEM.NET:286-288,364-369 —
   which slightly ALTERS MiSTer's DRAM pacing vs. real silicon; do not treat
   MiSTer DRAM cycle counts as authentic, use the §8 state machine).
+
+---
+
+## 14. Verilator-pinned results (2026-08-11, jag_sim netlist GPU)
+
+Micro-kernels driven through the verilated GPU island; full method and
+raw counts in the calibration session's VERILATOR-RESULTS.md.
+
+- **R9 resolved — external LOAD latency: `L = 7 + D` sysclks** (slope
+  exactly 1 across D=1..8; identical for use-distance k=0..5, latency
+  `max(k+1, L)`).  DRAM page hit (D=2) => **9**; at this model's
+  page-miss-average D=5 => **12**.  The §4 bound of 6-9 resolves to its
+  top end and slightly beyond at miss.
+- **§9 resolved — fetch starvation is ~zero for load-dense code**
+  (+0.016 cyc/instr vs pure ALU).  The exact rule: a run of `g`
+  consecutive local-RAM loads costs `g - 1` extra clocks — first load
+  free (2-deep prefetch queue), each additional back-to-back load +1.
+- **NEW RULE (was not in §3): write-back port conflict dominates real
+  IPC.**  Every register-writing instruction in a disjoint-register
+  stream retires at 2.00 ticks/instr (NOP streams: exactly 1.00; a
+  following NOP does not conceal it).  This is the JTRM "Register
+  Write-Back" dual-port-RAM rule firing on essentially every
+  back-to-back ALU pair: concealment requires the next instruction to
+  read the write-back target or read fewer than two registers.  Real
+  compiled GPU code therefore sits near **0.5 IPC**, and §2's 1/tick
+  is only reachable by non-register-writing streams.

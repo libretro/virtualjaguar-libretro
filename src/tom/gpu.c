@@ -128,9 +128,14 @@ void GPUChargeBusStall(uint32_t sysclks)
  * MOVEI 3 ticks; indexed load +2 / indexed store +1; taken JUMP +2 /
  * JR +3 dead ticks (delay slot then executes).  Bus grant latency
  * under load (blitter/OP running) is the remaining sim-pinned item. */
+/* External LOAD end-to-end latency, pinned by Verilator against the
+ * jag_sim netlist GPU: L = 7 + D sysclks, where D is the memory
+ * controller's occupancy (9 with a DRAM page hit, 12 at the page-miss
+ * average this model's bus_arbiter uses).  The three constants below
+ * decompose the fixed 7: issue 2 + grant 2 + return 3. */
 #define GPU_PIPE_GRANT_CLKS   2u   /* request->grant, idle bus (ARB.NET) */
 #define GPU_PIPE_EXT_ISSUE    2u   /* gateway address/issue phase */
-#define GPU_PIPE_EXT_RETURN   2u   /* load data return + scoreboard write */
+#define GPU_PIPE_EXT_RETURN   3u   /* load data return + scoreboard write */
 #define GPU_PIPE_IO_CLKS      4u   /* externals bus_arbiter prices at 0 (I/O) */
 #define GPU_PIPE_LOCAL_LOAD   3u   /* local-RAM load latency (SBOARD.NET) */
 #define GPU_PIPE_LOCAL_REPEAT 2u   /* local load engine: one op per 2 ticks */
@@ -262,11 +267,23 @@ static void GPUPipeCheckUse(uint32_t index)
       }
    }
    wait = (uint32_t)(ready - gpu_pipe_clock);
-   if (wait < 1
-      && gpu_pipe_prev_dest != 0xFF
-      && (((f & 1) && gpu_opcode_first_parameter == gpu_pipe_prev_dest)
-       || ((f & 2) && gpu_opcode_second_parameter == gpu_pipe_prev_dest)))
-      wait = 1;                             /* ALU RAW interlock */
+   if (wait < 1 && gpu_pipe_prev_dest != 0xFF)
+   {
+      if (((f & 1) && gpu_opcode_first_parameter == gpu_pipe_prev_dest)
+       || ((f & 2) && gpu_opcode_second_parameter == gpu_pipe_prev_dest))
+         wait = 1;                          /* ALU RAW interlock */
+      else if ((f & 1) && (f & 2))
+         /* Write-back port conflict (JTRM "Register Write-Back"): the
+          * register bank is dual-port, so the previous instruction's
+          * write-back can only be concealed if this instruction reads
+          * its target or reads fewer than two registers.  Two reads,
+          * neither the write-back target => one wait state.  Verilator
+          * (jag_sim netlist GPU): every register-writing op in a
+          * disjoint-register stream retires at 2.00 ticks, NOP streams
+          * at 1.00 -- so this fires on essentially every back-to-back
+          * ALU pair in compiled code and roughly halves real IPC. */
+         wait = 1;
+   }
    if (wait < 1 && gpu_pipe_prev_flags)
    {
       /* addc(1)/subc(5) always read carry; jump(52)/jr(53) read the
