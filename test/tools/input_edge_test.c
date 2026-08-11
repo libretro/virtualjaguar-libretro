@@ -95,9 +95,10 @@ int main(int argc, char **argv)
         unsigned n = holds[h];
         const char *verdict;
 
-        /* Must outlast the ROM's own WINDOW_FIELDS (600) or it never
-         * publishes and the run proves nothing. */
-        cfg.frames = PRESS_START + n + 620;
+        /* Must outlast the ROM's own WINDOW_FIELDS (300, see
+         * input_edge_per_field.s) or it never publishes and the run
+         * proves nothing. */
+        cfg.frames = PRESS_START + n + 320;
         cfg.quiet = 1;
         if (!harness_init_from_args(&cfg, argc, argv)) return 1;
         /* Synthetic ROMs need the HLE BIOS: the real BIOS authenticates
@@ -134,19 +135,25 @@ int main(int argc, char **argv)
             verdict = "INCONCLUSIVE: ROM did not publish";
             inconclusive++;
             edges = held = 0;
-        } else if (held == 0) {
-            /* Not an input-multiplication result: the ROM ran but never
-             * observed the button at all.  Says nothing about edges. */
-            verdict = "INCONCLUSIVE: ROM never saw the button";
+        } else if (held == 0 || edges == 0) {
+            /* The ROM ran but never observed the press.  That is a rig
+             * or press-timing problem, not evidence about
+             * over-sampling -- it must never feed the "manufactures
+             * press events" verdict. */
+            verdict = "INCONCLUSIVE: ROM never saw the press";
             inconclusive++;
-        } else if (edges == 0) {
-            verdict = "FAIL: press never seen";
-            failures++;
         } else if (edges > 1) {
             verdict = "FAIL: one press read as many";
             failures++;
+        } else if (held != n) {
+            /* One edge but the wrong duration: the core dropped or
+             * stretched input frames.  A real input-path defect (a
+             * held button must be visible for exactly the fields it
+             * was held), distinct from edge multiplication. */
+            verdict = "FAIL: held-duration mismatch";
+            failures++;
         } else {
-            verdict = "ok (1 press = 1 edge)";
+            verdict = "ok (1 press = 1 edge, held == N)";
         }
 
         printf("%12u  %5u  %4u  %s\n", n, edges, held, verdict);
@@ -162,10 +169,11 @@ int main(int argc, char **argv)
         return 2;
     }
     if (failures) {
-        printf("VERDICT: core manufactures press events -- an input bug.\n"
-               "  A single continuous press produced more than one edge.\n"
-               "  Titles that edge-detect (Doom menu, Hover Strike) will\n"
-               "  see phantom repeats regardless of their own repeat logic.\n");
+        printf("VERDICT: input-path defect -- a press was multiplied or its\n"
+               "  held duration was distorted (see FAIL rows above).  Titles\n"
+               "  that edge-detect or time held input (Doom menu, Hover\n"
+               "  Strike) will misbehave regardless of their own repeat\n"
+               "  logic.\n");
         return 1;
     }
     printf("VERDICT: input is clean -- every press read as exactly one edge.\n"
