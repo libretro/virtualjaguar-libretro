@@ -29,6 +29,7 @@ struct VJSettings
 	bool hardwareTypeNTSC;
 	bool useJaguarBIOS;
 	bool useFastBlitter;
+	bool blitterTiming;
 
 	int32_t joyport;
 	bool hardwareTypeAlpine;
