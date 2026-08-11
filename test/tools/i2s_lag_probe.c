@@ -35,6 +35,7 @@ typedef struct {
     u32_fn   get_writes;
     unsigned window;
     double   last_lag;
+    double   peak_lag;
     unsigned last_frame;
     unsigned last_resync;
 } probe_state;
@@ -44,8 +45,10 @@ static probe_state st;
 static bool on_frame(void *userdata, unsigned frame)
 {
     probe_state *p = (probe_state *)userdata;
+    double lag = p->get_lag();
+    if (lag > p->peak_lag)
+        p->peak_lag = lag;
     if ((frame + 1) % p->window == 0) {
-        double lag = p->get_lag();
         unsigned rs = p->get_resync();
         unsigned wr = p->get_writes ? p->get_writes() : 0;
         double slope = (frame + 1 > p->last_frame)
@@ -62,9 +65,8 @@ int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     unsigned window = 60;
-    double max_lag = -1.0;      /* --max-lag N: fail if lag ever exceeds N */
+    double max_lag = -1.0;      /* --max-lag N: fail if peak lag ever exceeds N */
     int max_resyncs = -1;       /* --max-resyncs N: fail if resyncs exceed N */
-    double peak_lag = 0.0;
     int failed = 0;
     int i;
 
@@ -102,10 +104,9 @@ int main(int argc, char **argv)
            cfg.rom_path ? cfg.rom_path : "?");
     harness_run(&cfg);
 
-    peak_lag = st.get_lag();
-    if (max_lag >= 0.0 && peak_lag > max_lag) {
-        printf("FAIL i2s_lag: final lag %.2f exceeds --max-lag %.2f "
-               "(read cursor drifting; #393 skip class)\n", peak_lag, max_lag);
+    if (max_lag >= 0.0 && st.peak_lag > max_lag) {
+        printf("FAIL i2s_lag: peak lag %.2f exceeds --max-lag %.2f "
+               "(read cursor drifting; #393 skip class)\n", st.peak_lag, max_lag);
         failed = 1;
     }
     if (max_resyncs >= 0 && (int)st.get_resync() > max_resyncs) {
@@ -115,8 +116,8 @@ int main(int argc, char **argv)
         failed = 1;
     }
     if ((max_lag >= 0.0 || max_resyncs >= 0) && !failed)
-        printf("PASS i2s_lag: lag %.2f, resyncs %u\n",
-               peak_lag, st.get_resync());
+        printf("PASS i2s_lag: peak lag %.2f, resyncs %u\n",
+               st.peak_lag, st.get_resync());
 
     harness_shutdown(&cfg);
     return failed;
