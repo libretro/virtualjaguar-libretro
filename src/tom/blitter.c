@@ -964,9 +964,21 @@ void blitter_generic(uint32_t cmd)
                            && (SRCSHADE || (!GOURD && !PATDSEL)))
                      {
                         int32_t hx = 0, hy = 0, vx = 0, vy = 0;
-                        int q_in = (xadd_a1_control == XADDINC
+                        /* The half-step sub-sample lies between this
+                         * pixel's stock sample and the NEXT one, so it is
+                         * inside the source region iff that next sample
+                         * exists.  On the last inner pixel / outer line
+                         * the walk ends here and the forward half-step
+                         * can read past the source's edge (issue #396:
+                         * Doom span blits end flush with the 64x64 flat,
+                         * and the overrun reads the next texture in the
+                         * lump -- isolated wrong-chroma speckles), so
+                         * those subpixels keep stock replication. */
+                        int q_in = (inner_loop != 0
+                              && xadd_a1_control == XADDINC
                               && (((a1_xadd | a1_yadd) & 0xFFFF) != 0));
-                        int q_out = (xadd_a1_control == XADD0
+                        int q_out = (outer_loop != 0
+                              && xadd_a1_control == XADD0
                               && a1_yadd == 0 && UPDA1F
                               && (((a1_step_x | a1_step_y) & 0xFFFF) != 0));
                         if (q_in)
@@ -3667,9 +3679,21 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                                  && !patdsel && !gourd && !adddsel)
                            {
                               int32_t hx = 0, hy = 0, vx = 0, vy = 0;
-                              int q_in = (a1addx == 3
+                              /* The half-step sub-sample lies between
+                               * this pixel's stock sample and the NEXT
+                               * one, so it is inside the source region
+                               * iff that next sample exists.  On the
+                               * last inner pixel (inner0, set by the
+                               * icount decrement above) / last outer
+                               * line (ocount == 1 here; it decrements
+                               * only after the inner loop finishes) the
+                               * forward half-step can read past the
+                               * source's edge (issue #396 speckles), so
+                               * those subpixels keep stock replication. */
+                              int q_in = (!inner0 && a1addx == 3
                                     && ((a1_incf_x | a1_incf_y) != 0));
-                              int q_out = (a1addx == 2 && !a1addy && upda1f
+                              int q_out = (ocount != 1
+                                    && a1addx == 2 && !a1addy && upda1f
                                     && ((a1_stepf_x | a1_stepf_y) != 0));
                               if (q_in)
                               {
