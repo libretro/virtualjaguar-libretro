@@ -34,6 +34,10 @@ void TitleDBSetContent(const uint8_t *data, size_t size);
 /* Internal: set the CRC directly (used by TitleDBSetContent and by tests). */
 void TitleDBSetCRC(uint32_t crc);
 
+/* CRC32 (header-normalized) of the currently loaded content, as last set by
+ * TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded. */
+uint32_t TitleDBContentCRC(void);
+
 /* Lookup: return the preset value for a key in the loaded content, or NULL. */
 const char *TitleDBOverride(const char *key);
 

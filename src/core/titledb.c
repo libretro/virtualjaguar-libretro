@@ -202,6 +202,9 @@ static const int titledb_count =
 /* Current loaded title match; NULL if no content is loaded or CRC doesn't match. */
 static const TitleDBEntry *current = NULL;
 
+/* Kept even on a miss so the caller can name the CRC it looked up. */
+static uint32_t content_crc = 0;
+
 /*
  * Internal: set the CRC directly.
  * Linear-scan the table to find a match.
@@ -210,6 +213,7 @@ void TitleDBSetCRC(uint32_t crc)
 {
    int i;
 
+   content_crc = crc;
    current = NULL;
    for (i = 0; i < titledb_count; i++)
    {
@@ -219,6 +223,15 @@ void TitleDBSetCRC(uint32_t crc)
          return;
       }
    }
+}
+
+/*
+ * Return the CRC32 (header-normalized) of the currently loaded content,
+ * as last set by TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded.
+ */
+uint32_t TitleDBContentCRC(void)
+{
+   return content_crc;
 }
 
 /*

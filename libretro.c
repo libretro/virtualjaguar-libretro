@@ -1677,7 +1677,16 @@ bool retro_load_game(const struct retro_game_info *info)
     * for path-loaded content (CD) -- that correctly clears any match, since
     * v1 only covers cartridge CRCs. */
    if (info->data)
+   {
       TitleDBSetContent((const uint8_t *)info->data, info->size);
+      /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
+       * hashes differently from its retail base, so it matches no row and
+       * silently loses that title's enhancement defaults.  Say so (#409). */
+      if (!TitleDBTitleName())
+         LOG_INF("[titledb] no per-title entry for CRC32 $%08X -- patched or "
+                 "unlisted content; enhancement defaults not applied (see "
+                 "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
+   }
    else
       TitleDBSetContent(NULL, 0);
 
