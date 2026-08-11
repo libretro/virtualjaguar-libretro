@@ -698,9 +698,14 @@ int main(int argc, char **argv)
         {
             uint32_t hdr_ver;
             memcpy(&hdr_ver, state + STATE_OFF_VERSION, 4);
+            /* The JGD chunk arrived in v8; the header must carry the
+             * current version, whatever that has grown to since. */
             check(hdr_ver == (uint32_t)STATE_VERSION
-                  && STATE_VERSION == 8,
-                  "v8_header", "state header version=%u (expect 8)", hdr_ver);
+                  && STATE_VERSION >= STATE_VERSION_JAGGD,
+                  "header_is_current_version",
+                  "state header version=%u (expect %u, >= %u for the JGD chunk)",
+                  hdr_ver, (uint32_t)STATE_VERSION,
+                  (uint32_t)STATE_VERSION_JAGGD);
         }
 
         /* Console reset returns the mapping to identity... */

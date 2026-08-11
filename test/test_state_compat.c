@@ -114,7 +114,14 @@ const char *__lsan_default_suppressions(void) {
  * field, THIS TEST FAILS LOUDLY rather than silently splicing the wrong
  * four bytes out of the fixture and "passing".  To update, re-derive both
  * numbers from DACStateSave's field order and sizes. */
-#define EXPECTED_DAC_BLOCK_SIZE       51
+/* STATE_VERSION_DAC_I2S_RING (v9) appends the resample ring contents:
+ * i2sRingL + i2sRingR, 16384 entries x int16 each = 65536 bytes, for
+ * 65587.  The ring and its read/write cursors persist across frames
+ * since the 60 Hz-step fix, so replay determinism needs the data
+ * itself in the state.  Appended after sstat: every pre-v9 offset
+ * below is unaffected. */
+#define EXPECTED_DAC_BLOCK_SIZE       65587
+#define EXPECTED_DAC_BLOCK_SIZE_V8    51
 #define DAC_I2S_NONZEROCOUNT_OFFSET   17
 #define DAC_I2S_NONZEROCOUNT_SIZE     4
 
@@ -334,8 +341,17 @@ int main(int argc, char **argv)
     int *width_ptr, *height_ptr;
     uint8_t *state_v3 = NULL, *state_v2 = NULL, *state_v1 = NULL,
             *state_v3l = NULL, *scratch = NULL;
-    uint8_t dac_v3[256], dac_now[256], dac_expect[256], dac_post[256];
-    uint8_t dac_expect_v1[256];
+    /* Static, not automatic: the v9 DAC block carries the 64 KB
+     * resample ring, so each of these buffers is ~64 KB and five of
+     * them overflow the default stack.  (They were 256-byte automatics,
+     * which was fine for the 51-byte v8 block; the crash appeared when
+     * the ring joined the block and the size assert below grew with
+     * it.) */
+    static uint8_t dac_v3[EXPECTED_DAC_BLOCK_SIZE + 16];
+    static uint8_t dac_now[EXPECTED_DAC_BLOCK_SIZE + 16];
+    static uint8_t dac_expect[EXPECTED_DAC_BLOCK_SIZE + 16];
+    static uint8_t dac_post[EXPECTED_DAC_BLOCK_SIZE + 16];
+    static uint8_t dac_expect_v1[EXPECTED_DAC_BLOCK_SIZE + 16];
     size_t state_size, dac_size, dac_size_now, dac_off = 0;
     size_t dac_off_v2 = 0;
     size_t cdrom_size, joy_size, mt_size, nvm_size, cdrom_end = 0;

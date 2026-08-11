@@ -1170,7 +1170,11 @@ bool retro_unserialize(const void *data, size_t size)
    extern uint8_t jerry_ram_8[];
    extern bool lowerField;
 
-   if (!data || size < STATE_SIZE)
+   /* Floor at the smallest layout any accepted version can occupy; the
+    * exact floor for the declared version is enforced below, once the
+    * header has been read.  A flat `size < STATE_SIZE` here would
+    * reject every state written before the v9 size increase. */
+   if (!data || size < STATE_SIZE_V8)
       return false;
 
    buf = (const uint8_t *)data;
@@ -1187,6 +1191,9 @@ bool retro_unserialize(const void *data, size_t size)
     * STATE_VERSION, and states newer than we understand are refused. */
    if (magic != STATE_MAGIC
        || version < STATE_MIN_VERSION || version > STATE_VERSION)
+      return false;
+
+   if (version >= STATE_VERSION_DAC_I2S_RING && size < STATE_SIZE)
       return false;
 
    /* Large memory blocks */

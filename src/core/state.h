@@ -37,7 +37,7 @@ extern "C" {
  *     jaggd.c).  One shared bump — all in-flight changes since the
  *     v3.1.0 release use v8. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   8
+#define STATE_VERSION   9
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -92,13 +92,25 @@ extern "C" {
  * protect, idle SPI) — see JGDStateLoad / the caller's else branch. */
 #define STATE_VERSION_JAGGD 8
 
+/* v9: the I2S resample ring contents.  The ring and its cursors now
+ * persist across frames (the per-frame reset was half of the 60 Hz
+ * audio step), so replay determinism requires the ring data itself in
+ * the state -- the cursors alone reference content the load cannot
+ * reconstruct. */
+#define STATE_VERSION_DAC_I2S_RING 9
+
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
 #define STATE_FLAG_CDROM     0x02
 
 /* Fixed save state size (~2.4 MB).
  * Must never increase between retro_load_game() and retro_unload_game(). */
-#define STATE_SIZE  0x260000  /* 2,490,368 bytes */
+/* v9 grew the payload by the 64 KB I2S resample ring
+ * (STATE_VERSION_DAC_I2S_RING).  States written by v8-and-older cores
+ * are STATE_SIZE_V8 bytes; retro_unserialize sizes its floor check by
+ * the version the state itself declares, so those still load. */
+#define STATE_SIZE     0x280000  /* 2,621,440 bytes */
+#define STATE_SIZE_V8  0x260000  /* 2,490,368 bytes -- all pre-v9 layouts */
 
 /* Helper macros for sequential buffer writes/reads.
  * These advance the buffer pointer automatically. */
