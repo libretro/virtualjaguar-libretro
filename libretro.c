@@ -637,6 +637,21 @@ static void check_variables(void)
    if (get_variable_pertitle(&var) && var.value)
       vjs.blitterTiming = (strcmp(var.value, "enabled") == 0);
 
+   /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
+    * state must not survive a toggle: a stale gateway timestamp from
+    * an earlier enabled period would charge phantom stalls on
+    * re-enable. */
+   var.key = "virtualjaguar_gpu_pipeline_timing";
+   var.value = NULL;
+   {
+      bool pipeWas = vjs.gpuPipelineTiming;
+      vjs.gpuPipelineTiming = false;
+      if (get_variable_pertitle(&var) && var.value)
+         vjs.gpuPipelineTiming = (strcmp(var.value, "enabled") == 0);
+      if (pipeWas != vjs.gpuPipelineTiming)
+         GPUPipeTimingReset();
+   }
+
    /* DRAM timing: enabled/disabled only, covering BOTH halves of the
     * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
     * in jaguar.c).  The calibration scale is deliberately NOT a core

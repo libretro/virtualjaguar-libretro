@@ -229,6 +229,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_gpu_pipeline_timing",
+      "GPU Pipeline Timing",
+      NULL,
+      "EXPERIMENTAL, mid-calibration. Model the GPU's real instruction-level costs from the Jaguar Technical Reference Manual: the single external-memory gateway (back-to-back loads/stores to main RAM serialize at bus speed), the register score-board (using a loaded value stalls until the transfer completes), and ALU result-use interlocks. The emulated GPU otherwise finishes render kernels 2-4x faster than silicon, which makes titles that pace an ungated loop on render completion (Doom's menus and demo, Hover Strike) run too fast. Slows GPU-bound games toward hardware speed. Leave disabled unless testing.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_blitter_timing",
       "Blitter Bus Timing",
       NULL,

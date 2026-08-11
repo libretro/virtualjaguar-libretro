@@ -67,6 +67,259 @@ void GPUChargeBusStall(uint32_t sysclks)
    gpu_bus_stall += sysclks;
 }
 
+/* ------------------------------------------------------------------ *
+ * GPU pipeline / external-gateway timing model (issue #401 / #313,
+ * core option virtualjaguar_gpu_pipeline_timing, default off).
+ *
+ * The emulated GPU historically executed most instructions in one
+ * cycle with memory free, finishing real render kernels 2-4x faster
+ * than silicon.  Titles that pace an UNGATED loop on render
+ * completion (Jaguar Doom's menu and demo MiniLoop, Hover Strike)
+ * therefore run measurably fast (#401).  The machine timing itself
+ * (VBL rate, field length) is correct -- the missing time is
+ * instruction-level.  This model implements the three mechanisms the
+ * JTRM (rev 8, "Register Score-Boarding" / "Memory Interface" /
+ * "Load and Store Operations") actually describes:
+ *
+ * 1. SINGLE EXTERNAL GATEWAY.  "The gateway between the GPU local bus
+ *    and the external co-processor bus contains a control block for
+ *    generating external memory transfers. ... If there is another
+ *    load or store instruction in the program before the gateway has
+ *    completed its transfer, then it will be held up until the
+ *    gateway is idle."  One outstanding external transfer; the
+ *    transfer itself runs in the BACKGROUND (the issuing load costs
+ *    its normal tick), and the NEXT load/store stalls for whatever
+ *    remains.  Back-to-back external ops therefore serialize at bus
+ *    speed -- the dominant cost of a texel loop.
+ *
+ * 2. LOAD SCORE-BOARD.  "For load operations, the data is not loaded
+ *    into the target register until the external transfer has taken
+ *    place.  The score-board mechanism prevents use of this data
+ *    before it has been loaded, but other computation may take
+ *    place."  Reading a register with a pending load stalls to the
+ *    transfer's completion.
+ *
+ * 3. ALU RAW INTERLOCK.  Reading a register "still in the process of
+ *    being computed by the ALU" inserts a wait state; the JTRM's own
+ *    advice is to interleave two calculation streams so consecutive
+ *    instructions don't share registers.  Modeled as one wait state
+ *    when an instruction reads the register written by the
+ *    immediately-preceding instruction.
+ *
+ * Time base: gpu_pipe_clock counts executed GPU cycles (== sysclks at
+ * stock clock scale).  Stall cycles feed the existing gpu_bus_stall
+ * per-instruction accumulator, so slice accounting and the
+ * risc_clock_scale conversion path are unchanged.  All state here is
+ * transient micro-state (bounded by one external transfer, tens of
+ * cycles): never serialized, zeroed on GPUReset and IRQ dispatch
+ * (bank switch), so a savestate load diverges by at most one
+ * in-flight transfer's worth of stall.
+ *
+ * Rule constants below are from the Flare design sources shipped in
+ * jag_sim/netlists (the ORIGINAL commented netlists: SBOARD.NET,
+ * INS_EXEC.NET, EXECON.NET, ARB.NET, MEM.NET) -- see
+ * GPU-TIMING-SPEC.md from the #401 calibration session.  Pinned
+ * there: ALU 1/tick; +1 result-use interlock (one-deep window); +1
+ * flags interlock (CMP;JRcc and ADDC/SUBC after a flag-setter);
+ * local LOAD 3-tick non-blocking latency, engine takes a new op
+ * every 2 ticks; external loads are split-transaction with TWO
+ * pending slots, best-case ~7-9 sysclks end-to-end; a store drains
+ * pending loads first; DIV runs 16 background ticks (2 bits/tick);
+ * MOVEI 3 ticks; indexed load +2 / indexed store +1; taken JUMP +2 /
+ * JR +3 dead ticks (delay slot then executes).  Bus grant latency
+ * under load (blitter/OP running) is the remaining sim-pinned item. */
+#define GPU_PIPE_GRANT_CLKS   2u   /* request->grant, idle bus (ARB.NET) */
+#define GPU_PIPE_EXT_ISSUE    2u   /* gateway address/issue phase */
+#define GPU_PIPE_EXT_RETURN   2u   /* load data return + scoreboard write */
+#define GPU_PIPE_IO_CLKS      4u   /* externals bus_arbiter prices at 0 (I/O) */
+#define GPU_PIPE_LOCAL_LOAD   3u   /* local-RAM load latency (SBOARD.NET) */
+#define GPU_PIPE_LOCAL_REPEAT 2u   /* local load engine: one op per 2 ticks */
+#define GPU_PIPE_DIV_TICKS    16u  /* 32-bit quotient at 2 bits/tick */
+
+static uint64_t gpu_pipe_clock;        /* cycles executed since reset */
+static uint64_t gpu_ext_done[2];       /* split-transaction load/store slots */
+static uint64_t gpu_gate_issue_free;   /* gateway issue-phase serialization */
+static uint64_t gpu_local_busy_until;  /* local load engine */
+static uint64_t gpu_reg_ready[32];     /* pending load/div result per reg */
+static uint8_t  gpu_pipe_prev_dest = 0xFF; /* prev instr's ALU dest, 0xFF none */
+static uint8_t  gpu_pipe_prev_flags = 0;   /* prev instr set the flags */
+
+/* Diagnostics (test ABI): total stall cycles charged and external
+ * transfers issued by the pipeline model since reset.  Not serialized. */
+uint64_t gpu_pipe_stall_total = 0;
+uint64_t gpu_pipe_ext_total   = 0;
+
+/* Defined further down with the rest of the decode state; needed here
+ * because the pipeline helpers read the current opcode's operand
+ * fields. */
+static uint32_t gpu_opcode_first_parameter;
+static uint32_t gpu_opcode_second_parameter;
+
+/* Per-opcode operand classification, indexed by opcode (gpu_dispatch
+ * order).  Bit 0: field 1 (IMM_1) names a register this op READS.
+ * Bit 1: field 2 (IMM_2) names a register this op READS.  Bit 2: this
+ * op WRITES the field-2 register.  Ops whose field 1 is an immediate
+ * (addq, btst, moveq...) do not set bit 0.  moveta/movefa touch the
+ * alternate bank, which this model does not track. */
+static const uint8_t gpu_pipe_flags[64] = {
+   7, 7, 6, 6, 7, 7, 6, 6,   /* add addc addq addqt sub subc subq subqt */
+   6, 7, 7, 7, 6, 2, 6, 6,   /* neg and or xor not btst bset bclr */
+   7, 7, 3, 4, 3, 7, 6, 7,   /* mult imult imultn resmac imacn div abs sh */
+   6, 6, 7, 6, 7, 6, 3, 2,   /* shlq shrq sha sharq ror rorq cmp cmpq */
+   6, 6, 5, 4, 1, 4, 4, 5,   /* sat8 sat16 move moveq moveta movefa movei loadb */
+   5, 5, 5, 4, 4, 3, 3, 3,   /* loadw load loadp load_r14_ix load_r15_ix storeb storew store */
+   3, 2, 2, 4, 1, 0, 6, 5,   /* storep store_r14_ix store_r15_ix move_pc jump jr mmult mtoi */
+   5, 0, 5, 5, 3, 3, 6, 6    /* normi nop load_r14_ri load_r15_ri store_r14_ri store_r15_ri sat24 pack */
+};
+
+void GPUPipeTimingReset(void)
+{
+   unsigned i;
+   gpu_pipe_clock       = 0;
+   gpu_ext_done[0]      = 0;
+   gpu_ext_done[1]      = 0;
+   gpu_gate_issue_free  = 0;
+   gpu_local_busy_until = 0;
+   gpu_pipe_prev_dest   = 0xFF;
+   gpu_pipe_prev_flags  = 0;
+   for (i = 0; i < 32; i++)
+      gpu_reg_ready[i] = 0;
+}
+
+/* Flag-setting opcodes (JTRM ISA): the transparent variants (addqt,
+ * subqt) and the pure moves/loads/stores/jumps do not touch flags. */
+static const uint8_t gpu_pipe_sets_flags[64] = {
+   1,1,1,0,1,1,1,0, 1,1,1,1,1,1,1,1,       /* add..bclr (addqt/subqt no) */
+   1,1,0,0,0,1,1,1, 1,1,1,1,1,1,1,1,       /* mult..cmpq (imultn/imacn/resmac no) */
+   1,1,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,       /* sat8,sat16; moves/loads no */
+   0,0,0,0,0,0,0,0, 0,0,0,0,0,0,1,0       /* ...sat24 yes, pack no */
+};
+
+/* Score-board check before dispatch.  Wait sources overlap on
+ * hardware, so the charge is the MAX of: pending load/div result on a
+ * register this opcode reads (R5/R15), the one-deep ALU result-use
+ * interlock (R2), and the flags interlock (R3: conditional JR/JUMP or
+ * ADDC/SUBC immediately after a flag-setter).  Fixed per-opcode extras
+ * (MOVEI +2, indexed load +2, indexed store +1) are added on top --
+ * they are issue cost, not a wait. */
+static void GPUPipeCheckUse(uint32_t index)
+{
+   uint8_t f = gpu_pipe_flags[index];
+   uint64_t ready = gpu_pipe_clock;
+   uint32_t wait, extra;
+   if (f & 1)
+   {
+      uint64_t r = gpu_reg_ready[gpu_opcode_first_parameter];
+      if (r > ready) ready = r;
+   }
+   if (f & 2)
+   {
+      uint64_t r = gpu_reg_ready[gpu_opcode_second_parameter];
+      if (r > ready) ready = r;
+   }
+   wait = (uint32_t)(ready - gpu_pipe_clock);
+   if (wait < 1
+      && gpu_pipe_prev_dest != 0xFF
+      && (((f & 1) && gpu_opcode_first_parameter == gpu_pipe_prev_dest)
+       || ((f & 2) && gpu_opcode_second_parameter == gpu_pipe_prev_dest)))
+      wait = 1;                             /* ALU RAW interlock */
+   if (wait < 1 && gpu_pipe_prev_flags)
+   {
+      /* addc(1)/subc(5) always read carry; jump(52)/jr(53) read the
+       * flags only for a real condition (cc field != 0 == "T"). */
+      if (index == 1 || index == 5
+         || ((index == 52 || index == 53) && gpu_opcode_second_parameter != 0))
+         wait = 1;                          /* flags interlock */
+   }
+   extra = 0;
+   if (index == 38)                          extra = 2;  /* movei: 3 ticks */
+   else if (index == 43 || index == 44
+         || index == 58 || index == 59)      extra = 2;  /* indexed load */
+   else if (index == 49 || index == 50
+         || index == 60 || index == 61)      extra = 1;  /* indexed store */
+   if (wait + extra)
+   {
+      gpu_bus_stall += wait + extra;
+      gpu_pipe_stall_total += wait + extra;
+   }
+}
+
+/* A load/store opcode touched `addr`.  Local space (GPU regs, blitter
+ * regs, local RAM: $F02000-$F03FFF) never uses the gateway: a local
+ * load arms the 3-tick use-block and the local engine accepts one op
+ * per 2 ticks.  Anything else is a split-transaction external
+ * transfer: TWO pending slots, a store first drains pending loads
+ * (EXECON.NET), the issue phase serializes back-to-back memops, and
+ * only USE of the result (or slot exhaustion) blocks. */
+static void GPUPipeMemAccess(uint32_t addr, int isLoad)
+{
+   uint64_t t, t0, done;
+   uint32_t cost;
+   int slot;
+   addr &= 0xFFFFFF;
+   t0 = gpu_pipe_clock + gpu_bus_stall;
+   t  = t0;
+   if (addr >= 0xF02000 && addr <= 0xF03FFF)
+   {
+      if (gpu_local_busy_until > t)
+         t = gpu_local_busy_until;
+      gpu_local_busy_until = t + GPU_PIPE_LOCAL_REPEAT;
+      if (isLoad)
+         gpu_reg_ready[gpu_opcode_second_parameter] = t + GPU_PIPE_LOCAL_LOAD;
+      if (t > t0)
+      {
+         gpu_bus_stall += (uint32_t)(t - t0);
+         gpu_pipe_stall_total += t - t0;
+      }
+      return;
+   }
+   gpu_pipe_ext_total++;
+   if (!isLoad)
+   {
+      /* Store: wait out every pending load first. */
+      if (gpu_ext_done[0] > t) t = gpu_ext_done[0];
+      if (gpu_ext_done[1] > t) t = gpu_ext_done[1];
+   }
+   else if (gpu_ext_done[0] > t && gpu_ext_done[1] > t)
+   {
+      /* Both slots pending: third load waits for the earlier one. */
+      t = (gpu_ext_done[0] < gpu_ext_done[1]) ? gpu_ext_done[0]
+                                              : gpu_ext_done[1];
+   }
+   if (gpu_gate_issue_free > t)
+      t = gpu_gate_issue_free;
+   if (t > t0)
+   {
+      gpu_bus_stall += (uint32_t)(t - t0);
+      gpu_pipe_stall_total += t - t0;
+   }
+   cost = bus_arbiter_charge_access(BM_GPU, addr);
+   if (cost == 0)
+      cost = GPU_PIPE_IO_CLKS;
+   done = t + GPU_PIPE_EXT_ISSUE + GPU_PIPE_GRANT_CLKS + cost
+        + (isLoad ? GPU_PIPE_EXT_RETURN : 0);
+   gpu_gate_issue_free = t + GPU_PIPE_EXT_ISSUE;
+   slot = (gpu_ext_done[0] <= gpu_ext_done[1]) ? 0 : 1;
+   gpu_ext_done[slot] = done;
+   if (isLoad)
+      gpu_reg_ready[gpu_opcode_second_parameter] = done;
+}
+
+/* Hook for the load/store opcode bodies.  Pipeline model on: gateway +
+ * scoreboard semantics above (the access itself is then NOT charged as
+ * an immediate stall -- it runs in the background).  Off: the legacy
+ * dram_timing immediate self-cost, exactly as before. */
+#define GPU_PIPE_LOAD(addr) \
+   do { \
+      if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 1); \
+      else GPU_EXT_ACCESS(addr); \
+   } while (0)
+#define GPU_PIPE_STORE(addr) \
+   do { \
+      if (vjs.gpuPipelineTiming) GPUPipeMemAccess((addr), 0); \
+      else GPU_EXT_ACCESS(addr); \
+   } while (0)
+
 #define GPU_TRACE_DEBUG 0
 #if GPU_TRACE_DEBUG
 #define GPU_TRACE(...) LOG_DBG("[GPU-TRACE] " __VA_ARGS__)
@@ -788,6 +1041,13 @@ void GPUHandleIRQs(void)
    gpu_flags |= IMASK;
    GPUUpdateRegisterBanks();
 
+   /* Bank switch: the pipeline model's pending-load tracking is
+    * per-register-number in the CURRENT bank; dispatching into the
+    * other bank invalidates it.  Dropping the (tens of cycles of)
+    * outstanding state is bounded and safe -- see the model header. */
+   if (vjs.gpuPipelineTiming)
+      GPUPipeTimingReset();
+
    // subqt  #4,r31		; pre-decrement stack pointer
    // move  pc,r30			; address of interrupted code
    // store  r30,(r31)     ; store return address
@@ -879,6 +1139,8 @@ void GPUClockScaleReset(void)
 void GPUReset(void)
 {
    unsigned i;
+
+   GPUPipeTimingReset();
 
    // GPU registers (directly visible)
    gpu_flags			  = 0x00000000;
@@ -1061,15 +1323,32 @@ void GPUExec(int32_t cycles)
       gpu_opcode_second_parameter = opcode & 0x1F;
 
       //$E400 -> 1110 01 -> $39 -> 57
-      //GPU #1
       gpu_pc += 2;
       gpu_bus_stall = 0;
       gpu_exec_opcode_count++;
+      /* Pipeline model: stall for pending load results / RAW interlock
+       * BEFORE the opcode runs (results are unchanged; only time is
+       * charged, via the same gpu_bus_stall channel as DRAM costs). */
+      if (vjs.gpuPipelineTiming)
+         GPUPipeCheckUse(index);
 #if 0
       gpu_opcode[index]();
 #else
        executeOpcode(index);
 #endif
+      if (vjs.gpuPipelineTiming)
+      {
+         gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall;
+         gpu_pipe_prev_dest =
+            (gpu_pipe_flags[index] & 4) ? (uint8_t)gpu_opcode_second_parameter
+                                        : (uint8_t)0xFF;
+         gpu_pipe_prev_flags = gpu_pipe_sets_flags[index];
+         /* DIV runs 16 background ticks (2 bits/tick); only USE of the
+          * quotient blocks (R15). */
+         if (index == 21)
+            gpu_reg_ready[gpu_opcode_second_parameter] =
+               gpu_pipe_clock + GPU_PIPE_DIV_TICKS;
+      }
 
       /* Bus stalls are wall time (sysclks); the slice budget is in the
        * GPU's scaled cycle domain.  Convert so a DRAM wait costs the
@@ -1355,7 +1634,18 @@ INLINE static void gpu_opcode_jump(void)
       gpu_in_delay_slot = 1;
       gpu_ds_branch_target = delayed_pc;
       gpu_ds_irq_dispatched = 0;
+      if (vjs.gpuPipelineTiming)
+         GPUPipeCheckUse(ds_index);
       executeOpcode(ds_index);
+      if (vjs.gpuPipelineTiming)
+      {
+         /* The inlined delay slot is never charged by the outer exec
+          * loop, and a taken JUMP costs ~2 dead refill ticks on top
+          * (INS_EXEC.NET, R12).  Both only under the option so the
+          * default path stays byte-identical. */
+         gpu_bus_stall += (uint32_t)gpu_opcode_cycles[ds_index] + 2u;
+         gpu_pipe_stall_total += (uint64_t)gpu_opcode_cycles[ds_index] + 2u;
+      }
       gpu_in_delay_slot = 0;
       /* If the delay-slot instruction dispatched an interrupt, gpu_pc is
        * the ISR vector and the branch target is on the ISR stack as the
@@ -1393,7 +1683,16 @@ INLINE static void gpu_opcode_jr(void)
       gpu_in_delay_slot = 1;
       gpu_ds_branch_target = (uint32_t)delayed_pc;
       gpu_ds_irq_dispatched = 0;
+      if (vjs.gpuPipelineTiming)
+         GPUPipeCheckUse(ds_index);
       executeOpcode(ds_index);
+      if (vjs.gpuPipelineTiming)
+      {
+         /* Delay-slot charge + taken-JR refill (~3 dead ticks, R13):
+          * the JR target is computed a tick later than JUMP's. */
+         gpu_bus_stall += (uint32_t)gpu_opcode_cycles[ds_index] + 3u;
+         gpu_pipe_stall_total += (uint64_t)gpu_opcode_cycles[ds_index] + 3u;
+      }
       gpu_in_delay_slot = 0;
       /* See gpu_opcode_jump: don't clobber a vector jump dispatched by
        * the delay-slot instruction. */
@@ -1547,7 +1846,7 @@ INLINE static void gpu_opcode_store_r14_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_STORE(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
@@ -1555,7 +1854,7 @@ INLINE static void gpu_opcode_store_r14_indexed(void)
 #else
    {
       uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_STORE(address);
       GPUWriteLong(address, RN, GPU);
    }
 #endif
@@ -1567,7 +1866,7 @@ INLINE static void gpu_opcode_store_r15_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_STORE(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
@@ -1575,7 +1874,7 @@ INLINE static void gpu_opcode_store_r15_indexed(void)
 #else
    {
       uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_STORE(address);
       GPUWriteLong(address, RN, GPU);
    }
 #endif
@@ -1587,7 +1886,7 @@ INLINE static void gpu_opcode_load_r14_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + RM;
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_LOAD(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
@@ -1595,7 +1894,7 @@ INLINE static void gpu_opcode_load_r14_ri(void)
 #else
    {
       uint32_t address = gpu_reg[14] + RM;
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_LOAD(address);
       RN = GPUReadLong(address, GPU);
    }
 #endif
@@ -1607,7 +1906,7 @@ INLINE static void gpu_opcode_load_r15_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + RM;
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_LOAD(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
@@ -1615,7 +1914,7 @@ INLINE static void gpu_opcode_load_r15_ri(void)
 #else
    {
       uint32_t address = gpu_reg[15] + RM;
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_LOAD(address);
       RN = GPUReadLong(address, GPU);
    }
 #endif
@@ -1627,7 +1926,7 @@ INLINE static void gpu_opcode_store_r14_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + RM;
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_STORE(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
@@ -1635,7 +1934,7 @@ INLINE static void gpu_opcode_store_r14_ri(void)
 #else
    {
       uint32_t address = gpu_reg[14] + RM;
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_STORE(address);
       GPUWriteLong(address, RN, GPU);
    }
 #endif
@@ -1647,7 +1946,7 @@ INLINE static void gpu_opcode_store_r15_ri(void)
 #ifdef GPU_CORRECT_ALIGNMENT_STORE
    uint32_t address = gpu_reg[15] + RM;
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_STORE(address);
    if (address >= 0xF03000 && address <= 0xF03FFF)
       GPUWriteLong(address & 0xFFFFFFFC, RN, GPU);
    else
@@ -1655,7 +1954,7 @@ INLINE static void gpu_opcode_store_r15_ri(void)
 #else
    {
       uint32_t address = gpu_reg[15] + RM;
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_STORE(address);
       GPUWriteLong(address, RN, GPU);
    }
 #endif
@@ -1684,7 +1983,7 @@ INLINE static void gpu_opcode_storeb(void)
       GPUWriteLong(RM, RN & 0xFF, GPU);
    else
    {
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_STORE(RM);
       JaguarWriteByte(RM, RN, GPU);
    }
 }
@@ -1697,7 +1996,7 @@ INLINE static void gpu_opcode_storew(void)
       GPUWriteLong(RM & 0xFFFFFFFE, RN & 0xFFFF, GPU);
    else
    {
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_STORE(RM);
       JaguarWriteWord(RM, RN, GPU);
    }
 #else
@@ -1705,7 +2004,7 @@ INLINE static void gpu_opcode_storew(void)
       GPUWriteLong(RM, RN & 0xFFFF, GPU);
    else
    {
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_STORE(RM);
       JaguarWriteWord(RM, RN, GPU);
    }
 #endif
@@ -1719,11 +2018,11 @@ INLINE static void gpu_opcode_store(void)
       GPUWriteLong(RM & 0xFFFFFFFC, RN, GPU);
    else
    {
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_STORE(RM);
       GPUWriteLong(RM, RN, GPU);
    }
 #else
-   GPU_EXT_ACCESS(RM);
+   GPU_PIPE_STORE(RM);
    GPUWriteLong(RM, RN, GPU);
 #endif
 }
@@ -1754,7 +2053,7 @@ INLINE static void gpu_opcode_storep(void)
 {
    /* One 64-bit phrase = one bus transaction (JTRM: "the memory
     * controller makes it all look 64 bits wide"), not two 32-bit ones. */
-   GPU_EXT_ACCESS(RM);
+   GPU_PIPE_STORE(RM);
    GPUWriteLong((RM & 0xFFFFFFF8) + 0, gpu_hidata, GPU);
    GPUWriteLong((RM & 0xFFFFFFF8) + 4, RN, GPU);
 }
@@ -1779,7 +2078,7 @@ INLINE static void gpu_opcode_loadb(void)
    }
    else
    {
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_LOAD(RM);
       RN = JaguarReadByte(RM, GPU);
    }
 }
@@ -1795,7 +2094,7 @@ INLINE static void gpu_opcode_loadw(void)
    }
    else
    {
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_LOAD(RM);
       RN = JaguarReadWord(RM, GPU);
    }
 }
@@ -1821,10 +2120,10 @@ INLINE static void gpu_opcode_loadw(void)
 INLINE static void gpu_opcode_load(void)
 {
 #ifdef GPU_CORRECT_ALIGNMENT
-   GPU_EXT_ACCESS(RM);
+   GPU_PIPE_LOAD(RM);
    RN = GPUReadLong(RM & 0xFFFFFFFC, GPU);
 #else
-   GPU_EXT_ACCESS(RM);
+   GPU_PIPE_LOAD(RM);
    RN = GPUReadLong(RM, GPU);
 #endif
 }
@@ -1841,13 +2140,13 @@ INLINE static void gpu_opcode_loadp(void)
    else
    {
       /* One 64-bit phrase = one bus transaction, not two. */
-      GPU_EXT_ACCESS(RM);
+      GPU_PIPE_LOAD(RM);
       gpu_hidata = GPUReadLong(RM + 0, GPU);
       RN		   = GPUReadLong(RM + 4, GPU);
    }
 #else
    /* One 64-bit phrase = one bus transaction, not two. */
-   GPU_EXT_ACCESS(RM);
+   GPU_PIPE_LOAD(RM);
    gpu_hidata = GPUReadLong(RM + 0, GPU);
    RN		   = GPUReadLong(RM + 4, GPU);
 #endif
@@ -1859,7 +2158,7 @@ INLINE static void gpu_opcode_load_r14_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_LOAD(address);
    if ((address >= 0xF03000) && (address <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
@@ -1867,7 +2166,7 @@ INLINE static void gpu_opcode_load_r14_indexed(void)
 #else
    {
       uint32_t address = gpu_reg[14] + (gpu_convert_zero[IMM_1] << 2);
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_LOAD(address);
       RN = GPUReadLong(address, GPU);
    }
 #endif
@@ -1879,7 +2178,7 @@ INLINE static void gpu_opcode_load_r15_indexed(void)
 #ifdef GPU_CORRECT_ALIGNMENT
    uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
 
-   GPU_EXT_ACCESS(address);
+   GPU_PIPE_LOAD(address);
    if ((address >= 0xF03000) && (address <= 0xF03FFF))
       RN = GPUReadLong(address & 0xFFFFFFFC, GPU);
    else
@@ -1887,7 +2186,7 @@ INLINE static void gpu_opcode_load_r15_indexed(void)
 #else
    {
       uint32_t address = gpu_reg[15] + (gpu_convert_zero[IMM_1] << 2);
-      GPU_EXT_ACCESS(address);
+      GPU_PIPE_LOAD(address);
       RN = GPUReadLong(address, GPU);
    }
 #endif
