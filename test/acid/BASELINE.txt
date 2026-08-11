@@ -133,6 +133,7 @@
 [PASS tests/timing/halfline_period_us.jag
 [PASS tests/timing/hc_advance.jag
 [PASS tests/timing/hc_within_scanline_range.jag
+[PASS tests/timing/input_edge_per_field.jag
 [PASS tests/timing/jerry_pit_setup.jag
 [PASS tests/timing/pit_countdown_rate.jag
 [PASS tests/timing/vblank_60hz_exact.jag
