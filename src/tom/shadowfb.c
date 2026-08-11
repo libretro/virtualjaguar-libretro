@@ -327,16 +327,16 @@ static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16)
         + word * (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;
 }
 
-void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
+int ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
 {
    const shadowfb_sub *blk;
    shadowfb_sub *dst;
    int n, sy, sx;
 
    if (!shadowHiresActive)
-      return;
+      return 0;
    if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
-      return;
+      return 0;
 
    n   = shadowHiresN;
    blk = shadow_hires_block(srcAddr, value16);
@@ -354,6 +354,29 @@ void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
             dst[sx].frac16  = 0;
          }
       }
+   }
+   shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
+   return blk != NULL;
+}
+
+void ShadowHiresLineFromScaledSamples(int idx, const shadowfb_sub *cols,
+                                       uint16_t value16)
+{
+   shadowfb_sub *dst;
+   int n, sy, sx;
+
+   if (!shadowHiresActive)
+      return;
+   if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
+      return;
+
+   n = shadowHiresN;
+   for (sy = 0; sy < n; sy++)
+   {
+      dst = shadowHiresLineSub
+          + ((uint32_t)sy * SHADOWFB_LINE_PIXELS + (uint32_t)idx) * (uint32_t)n;
+      for (sx = 0; sx < n; sx++)
+         dst[sx] = cols[sx];
    }
    shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
 }
