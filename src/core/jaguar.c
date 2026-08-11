@@ -1386,8 +1386,11 @@ static void M68KExecuteWithStalls(uint32_t cycles)
        * freeze starves IRQ delivery: the VI handler that latches the
        * joypad stops running, a released button reads as held for the
        * whole debt, and one tap multiplies into many menu steps (the
-       * exact symptom this model exists to fix, amplified). */
-      uint32_t keep = cycles >> 3;
+       * exact symptom this model exists to fix, amplified).  Rounded
+       * UP so even a sub-8-cycle slice keeps at least one cycle --
+       * a floor of cycles>>3 would be 0 there and let a run of tiny
+       * event-bounded slices fully freeze the 68K after all. */
+      uint32_t keep = (cycles + 7) >> 3;
       stall = busArbiter.m68k_pending_stall >> 1;
       if (stall > cycles - keep)
          stall = cycles - keep;

@@ -99,7 +99,12 @@ static uint32_t BlitDurationSysclks(void)
 
    /* Garbage counts (uninitialised B_COUNT) must not freeze a master
     * for seconds: cap at two fields' worth of bus time (a real
-    * fullscreen interleaved copy legitimately exceeds one field). */
+    * fullscreen interleaved copy legitimately exceeds one field).
+    * Deliberately LARGER than the one-field 68K debt cap in
+    * BlitterTimingChargeAccess(): this window models how long the
+    * hardware blit actually occupies the bus (and is what a GPU
+    * accessor pays in full), while the 68K debt cap separately bounds
+    * pad-latch staleness -- see the comment at that clamp. */
    if (clks > 885560u)
       clks = 885560u;
    return (uint32_t)clks;
