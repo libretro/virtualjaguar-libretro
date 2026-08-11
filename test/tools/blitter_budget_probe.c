@@ -125,10 +125,10 @@ int main(int argc, char **argv)
     st.window = 60; st.miss_rate = 0.10;
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--csv")) st.csv = 1;
-        else if (i + 1 < argc && !strcmp(argv[i], "--window"))
-            st.window = (unsigned)atoi(argv[i + 1]);
-        else if (i + 1 < argc && !strcmp(argv[i], "--miss-rate"))
-            st.miss_rate = atof(argv[i + 1]);
+        else if (!strcmp(argv[i], "--window") && i + 1 < argc)
+            st.window = (unsigned)strtoul(argv[++i], NULL, 10);
+        else if (!strcmp(argv[i], "--miss-rate") && i + 1 < argc)
+            st.miss_rate = strtod(argv[++i], NULL);
     }
 
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;
