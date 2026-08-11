@@ -329,6 +329,7 @@ void DSPSampleCallback(void)
 void DACPrepareFrame(int length)
 {
    uint32_t vp1;
+   int out_pairs;
    double halfline_us, frame_us, pairs;
 
    RemoveCallback(DSPSampleCallback);
@@ -345,7 +346,8 @@ void DACPrepareFrame(int length)
       vp1 = vjs.hardwareTypeNTSC ? 524 : 626;
    halfline_us = vjs.hardwareTypeNTSC ? 31.777777777 : 32.0;
    frame_us = (double)vp1 * halfline_us;
-   pairs = (double)(length / 2);
+   out_pairs = length / 2;
+   pairs = (double)out_pairs;
    i2sSamplePeriodUs = frame_us / pairs;
    i2sStepScale = (frame_us * ((double)DAC_AUDIO_RATE / 1000000.0)) / pairs;
 
