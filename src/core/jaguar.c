@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include "jaguar.h"
+#include "blitter.h"
 #include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
@@ -1108,6 +1109,11 @@ void HalflineCallback(void)
       busArbiter.m68k_pending_stall += charge;
    }
 
+   /* Blitter bus-time window decays with real time: a blit finishes on
+    * its own whether or not anyone is watching (blitter_mmio.c). */
+   BlitterTimingTick(USEC_TO_RISC_CYCLES(
+                        vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
+
    //Change this to VBB???
    //Doesn't seem to matter (at least for Flip Out & I-War)
    if ((vc & 0x7FF) == 0)
@@ -1364,11 +1370,30 @@ uint8_t * GetRamPtr(void)
 static void M68KExecuteWithStalls(uint32_t cycles)
 {
    uint32_t stall;
-   if (busArbiter.enabled && busArbiter.m68k_pending_stall >= 2)
+   /* The drain is deliberately NOT gated on busArbiter.enabled: the
+    * pending-stall channel is shared by the dram_timing model (whose
+    * charge sites gate on the option) and blitter bus-time charges
+    * (gated on vjs.blitterTiming at the charge site in
+    * blitter_mmio.c).  With every charge site off the field stays
+    * zero and this branch never runs, so pure-default behavior is
+    * unchanged. */
+   if (busArbiter.m68k_pending_stall >= 2)
    {
+      /* Leave the 68K an eighth of every slice even under maximum
+       * debt.  The blitter is the top-priority master but not a
+       * perfect bus hog -- refresh slots and inter-op gaps still grant
+       * the 68K occasional cycles (JTRM bus priority) -- and a full
+       * freeze starves IRQ delivery: the VI handler that latches the
+       * joypad stops running, a released button reads as held for the
+       * whole debt, and one tap multiplies into many menu steps (the
+       * exact symptom this model exists to fix, amplified).  Rounded
+       * UP so even a sub-8-cycle slice keeps at least one cycle --
+       * a floor of cycles>>3 would be 0 there and let a run of tiny
+       * event-bounded slices fully freeze the 68K after all. */
+      uint32_t keep = (cycles + 7) >> 3;
       stall = busArbiter.m68k_pending_stall >> 1;
-      if (stall > cycles)
-         stall = cycles;
+      if (stall > cycles - keep)
+         stall = cycles - keep;
       busArbiter.m68k_pending_stall -= stall << 1;
       cycles -= stall;
       /* A slice fully consumed by stall must not fall through to

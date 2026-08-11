@@ -229,6 +229,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_blitter_timing",
+      "Blitter Bus Timing",
+      NULL,
+      "EXPERIMENTAL, mid-calibration. Charge the 68000 the bus time each blit it starts would really take: the blitter is the highest-priority bus master, so on hardware the cacheless 68000 is frozen while a blit runs. Emulated blits complete in zero time, which lets games that pace themselves on blit completion (Doom's menus, Hover Strike) run loops faster than a real Jaguar. GPU-started blits are also tracked; the remaining uncorrected term is the DSP-handshake wait that overlaps the blit stall. Leave disabled unless testing.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_risc_clock_scale",
       "RISC (GPU/DSP) Clock Scale (Overclock)",
       NULL,

@@ -12,6 +12,10 @@ extern "C" {
 #endif
 
 void BlitterInit(void);
+/* Blitter bus-time model (virtualjaguar_blitter_timing) */
+void BlitterTimingTick(uint32_t sysclks);
+uint32_t BlitterTimingGetBusy(void);
+void BlitterTimingSetBusy(uint32_t clks);
 void BlitterReset(void);
 void BlitterDone(void);
 

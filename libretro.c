@@ -38,6 +38,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "settings.h"
 #include "shadowfb.h"
 #include "tom.h"
+#include "blitter.h"
 #include "gpu.h"
 #include "eeprom.h"
 #include "memtrack.h"
@@ -623,6 +624,19 @@ static void check_variables(void)
    else
       CDTraceSetEnabled(0);
 
+   /* Blitter bus time: a blit kicked by the 68K charges the 68K the
+    * blit's whole bus duration through the pending-stall channel (the
+    * blitter is the top-priority bus master and the cacheless 68K is
+    * frozen while it runs).  Fixes render-bound loops pacing faster
+    * than hardware — Doom's menu auto-repeat landing inside a normal
+    * button tap (#399/#401).  See BlitDurationSysclks() in
+    * src/tom/blitter_mmio.c for the model and its deliberate floor. */
+   var.key = "virtualjaguar_blitter_timing";
+   var.value = NULL;
+   vjs.blitterTiming = false;
+   if (get_variable_pertitle(&var) && var.value)
+      vjs.blitterTiming = (strcmp(var.value, "enabled") == 0);
+
    /* DRAM timing: enabled/disabled only, covering BOTH halves of the
     * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
     * in jaguar.c).  The calibration scale is deliberately NOT a core
@@ -636,13 +650,18 @@ static void check_variables(void)
       busArbiter.enabled = 0;
    /* No charging happens while disabled, so a carry left over from a
     * runtime toggle (or an older savestate) must not leak into the
-    * first charged access when the option is re-enabled. */
+    * first charged access when the option is re-enabled.  The
+    * pending-stall channel is shared with the blitter bus-time model,
+    * so it is only cleared when BOTH chargers are off — otherwise this
+    * (default) branch would wipe live blitter charges at every option
+    * read. */
    if (!busArbiter.enabled)
    {
       busArbiter.m68k_sysclk_carry = 0;
       busArbiter.refresh_clk_carry = 0;
       busArbiter.op_clk_accum = 0;
-      busArbiter.m68k_pending_stall = 0;
+      if (!vjs.blitterTiming)
+         busArbiter.m68k_pending_stall = 0;
    }
    {
       const char *scale_env = getenv("VJ_DRAM_SCALE");
@@ -1147,6 +1166,10 @@ bool retro_serialize(void *data, size_t size)
    STATE_SAVE_VAR(buf, busArbiter.refresh_clk_carry);
    STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
    STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
+   {
+      uint32_t blitterBusy = BlitterTimingGetBusy();
+      STATE_SAVE_VAR(buf, blitterBusy);
+   }
 
    /* v8: Jaguar GameDrive chunk (bank pages + SPI engine; all-zero for
     * non-GD content). */
@@ -1231,6 +1254,15 @@ bool retro_unserialize(const void *data, size_t size)
       STATE_LOAD_VAR(buf, busArbiter.refresh_clk_carry);
       STATE_LOAD_VAR(buf, busArbiter.op_clk_accum);
       STATE_LOAD_VAR(buf, busArbiter.m68k_pending_stall);
+
+      if (version >= STATE_VERSION_BLITTER_TIMING)
+      {
+         uint32_t blitterBusy;
+         STATE_LOAD_VAR(buf, blitterBusy);
+         BlitterTimingSetBusy(blitterBusy);
+      }
+      else
+         BlitterTimingSetBusy(0);
    }
    else
    {
@@ -1238,6 +1270,7 @@ bool retro_unserialize(const void *data, size_t size)
       busArbiter.refresh_clk_carry = 0;
       busArbiter.op_clk_accum = 0;
       busArbiter.m68k_pending_stall = 0;
+      BlitterTimingSetBusy(0);
    }
 
    if (version >= STATE_VERSION_JAGGD)
