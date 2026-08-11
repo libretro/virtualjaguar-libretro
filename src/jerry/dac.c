@@ -42,8 +42,6 @@ extern retro_audio_sample_batch_t audio_batch_cb;
 
 #define BUFFER_SIZE		0x10000	/* Make the DAC buffers 64K x 16 bits */
 #define DAC_AUDIO_RATE		48000	/* Set the audio rate to 48 KHz */
-/* Must match BUFMAX in libretro.c, which allocates sampleBuffer. */
-#define DAC_BUFFER_MAX		2048
 
 /* Ring buffer for I2S samples produced by the DSP at hardware rate */
 #define I2S_RING_SIZE		16384	/* Power of 2, must be > max samples/frame (PAL SCLK=0 ~8311) */
@@ -81,9 +79,6 @@ static uint32_t i2sWriteCount = 0;	/* total samples captured this frame */
 static uint32_t i2sNonZeroCount = 0;	/* samples with non-zero amplitude this frame */
 static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
-/* The 48 kHz sample clock free-runs across frame boundaries; this just
- * records whether the self-rescheduling chain has been kicked off. */
-static bool sampleClockRunning = false;
 
 /* Private function prototypes */
 static void DACUpdateSCLKRate(void);
@@ -111,7 +106,6 @@ void DACReset(void)
    i2sNonZeroCount = 0;
    i2sPhase = 0.0;
    i2sRateRatio = 1.0;
-   sampleClockRunning = false;
    memset(i2sRingL, 0, sizeof(i2sRingL));
    memset(i2sRingR, 0, sizeof(i2sRingR));
 }
@@ -276,26 +270,22 @@ void DSPSampleCallback(void)
          i2sPhase += i2sRateRatio;
    }
 
-   /* BUFMAX guard only.  The chain must NOT stop at numberOfSamples:
-    * an NTSC field is 799.27 sample periods, so stopping at a fixed
-    * count and restarting from zero next frame discarded the 0.27
-    * remainder every frame.  That is 108 samples/sec against the
-    * advertised 48 kHz -- the frontend's buffer drained and underran,
-    * heard as periodic pops in every title. */
-   if (bufferIndex + 1 < DAC_BUFFER_MAX)
-   {
-      sampleBuffer[bufferIndex + 0] = (uint16_t)outL;
-      sampleBuffer[bufferIndex + 1] = (uint16_t)outR;
-      bufferIndex += 2;
-   }
+   sampleBuffer[bufferIndex + 0] = (uint16_t)outL;
+   sampleBuffer[bufferIndex + 1] = (uint16_t)outR;
+   bufferIndex += 2;
+
    if (bufferIndex >= numberOfSamples)
+   {
       bufferDone = true;
+      return;
+   }
 
    SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
 }
 
 void DACPrepareFrame(int length)
 {
+   RemoveCallback(DSPSampleCallback);
    bufferIndex = 0;
    numberOfSamples = length;
    bufferDone = false;
@@ -311,30 +301,49 @@ void DACPrepareFrame(int length)
    /* Refresh rate ratio in case SCLK was written between frames */
    DACUpdateSCLKRate();
 
-   /* Kick the free-running sample clock once; afterwards it reschedules
-    * itself and carries its sub-period phase across frame boundaries. */
-   if (!sampleClockRunning)
-   {
-      sampleClockRunning = true;
-      SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE,
-                      EVENT_JERRY);
-   }
+   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE,
+                   EVENT_JERRY);
 }
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
 
-   /* Submit exactly what the 48 kHz sample clock produced this frame.
-    * An NTSC field is 524 halflines = 16651.56 us = 799.27 sample
-    * periods, so a fixed count of 800 is unsatisfiable: the 800th
-    * sample does not exist yet, and fabricating it from a raw LTXD/RTXD
-    * read put a step at the tail of every frame -- a 60 Hz tick over
-    * everything.  libretro batches are variable-length by design;
-    * delivering 799-or-800 lets the frontend's rate control absorb the
-    * 0.27-sample-per-frame remainder, which is its job. */
-   (void)length;
-   if (bufferIndex > 0)
-      audio_batch_cb((int16_t *)buffer, bufferIndex / 2);
+   /* An NTSC field is 524 halflines = 16651.56 us = 799.27 periods of
+    * the 48 kHz sample clock, so the event chain lands 799 pairs and
+    * the 800th does not exist yet.  Pad it by HOLDING the last pair the
+    * resampler produced: a DAC starved of new data keeps transmitting
+    * what it last received.
+    *
+    * The batch stays a fixed `length`, which is what keeps the
+    * delivered rate exactly on the advertised 48 kHz (800 x 60 fps).
+    * Submitting the short count instead lost the 0.27 remainder every
+    * frame -- 108 samples/sec of deficit that drained the frontend's
+    * buffer until it underran, a pop every few seconds in every title.
+    *
+    * Holding only works because the resample cursors now persist across
+    * the frame boundary: the held pair is continuous with the next
+    * frame's first output.  Before that change the cursor was
+    * re-anchored at the newest sample each frame, so holding merely
+    * moved the step from the tail of one frame to the head of the next. */
+   if (bufferIndex < length)
+   {
+      uint16_t holdL;
+      uint16_t holdR;
+      int idx;
+
+      holdL = (bufferIndex >= 2)
+         ? buffer[bufferIndex - 2] : (uint16_t)((int16_t)(*ltxd));
+      holdR = (bufferIndex >= 2)
+         ? buffer[bufferIndex - 1] : (uint16_t)((int16_t)(*rtxd));
+
+      for (idx = bufferIndex; idx < length; idx += 2)
+      {
+         buffer[idx + 0] = holdL;
+         buffer[idx + 1] = holdR;
+      }
+   }
+
+   audio_batch_cb((int16_t *)buffer, length / 2);
 }
 
 /* LTXD/RTXD/SCLK/SMODE ($F1A148/4C/50/54) */
