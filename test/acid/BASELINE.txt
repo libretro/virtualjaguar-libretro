@@ -128,6 +128,7 @@
 [PASS tests/stress/deep_call_chain.jag
 [PASS tests/stress/many_blits.jag
 [PASS tests/stress/rapid_irq_pump.jag
+[PASS tests/timing/doom_update_gate_rate.jag
 [PASS tests/timing/halfline_count_per_frame.jag
 [PASS tests/timing/halfline_period_us.jag
 [PASS tests/timing/hc_advance.jag
