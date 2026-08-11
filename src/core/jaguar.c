@@ -40,6 +40,7 @@
 #include "nvmbios.h"
 #include "settings.h"
 #include "tom.h"
+#include "vjtrace.h"
 
 static bool frameDone;
 
@@ -811,6 +812,7 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
+   VJT_WATCH_RD(offset, 0, who);
    offset &= 0xFFFFFF;
 
    // First 2M is mirrored in the $0 - $7FFFFF range
@@ -838,6 +840,7 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 
 uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 {
+   VJT_WATCH_RD(offset, 0, who);
    offset &= 0xFFFFFF;
 
    // First 2M is mirrored in the $0 - $7FFFFF range
@@ -866,6 +869,7 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 
 void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
+   VJT_WATCH_WR(offset, data, who);
    offset &= 0xFFFFFF;
 
    /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
@@ -916,6 +920,7 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 
 void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
+   VJT_WATCH_WR(offset, data, who);
    offset &= 0xFFFFFF;
 
    /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
@@ -968,7 +973,12 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
    if (busArbiter.enabled && who == OP)
       bus_arbiter_op_charge(1);
    if (addr < 0x800000)
+   {
+      /* Fast path: bypasses JaguarReadWord, so the watch check there
+       * never sees this access -- check it here instead. */
+      VJT_WATCH_RD(offset, 0, who);
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
+   }
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
 }
 
@@ -993,6 +1003,9 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
               data, who, m68k_get_reg(NULL, M68K_REG_PC));
    if (addr < 0x200000)
    {
+      /* Fast path: bypasses JaguarWriteWord, so the watch check there
+       * never sees this access -- check it here instead. */
+      VJT_WATCH_WR(offset, data, who);
       SET32(jaguarMainRAM, addr, data);
       return;
    }

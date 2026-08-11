@@ -35,6 +35,7 @@
 #include "tom.h"
 #include "event.h"
 #include "settings.h"
+#include "../core/vjtrace.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -975,6 +976,8 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x14:
             {
+               int wasRunning = GPU_RUNNING;
+
                data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
 
                // check for GPU -> CPU interrupt
@@ -1019,6 +1022,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                 * so the GO bit must land first.  $06 (the two transient
                 * interrupt-request bits) never persists in gpu_control. */
                gpu_control = (gpu_control & 0xF7C0) | (data & ~(0xF7C0 | 0x06));
+
+               // GO/STOP transition trace: covers both host-issued G_CTRL
+               // writes and GPU self-writes (STORE opcodes route through
+               // this same GPUWriteLong path with who == GPU).
+               if (!wasRunning && GPU_RUNNING)
+                  VJT_EMIT(VJT_EV_GPU_GO, GPU, 0, gpu_pc);
+               else if (wasRunning && !GPU_RUNNING)
+                  VJT_EMIT(VJT_EV_GPU_STOP, GPU, 0, gpu_pc);
 
                // check for CPU -> GPU interrupt #0
                if (data & 0x04)
