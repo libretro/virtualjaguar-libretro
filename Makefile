@@ -836,7 +836,7 @@ clean:
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
-		test/tools/test_wedge_spin \
+		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -878,7 +878,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
-		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
+		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
@@ -888,7 +888,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
+		test/tools/i2s_lag_probe
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -981,6 +982,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/test_audio_rate ./$(TARGET) "$$rom" --label "Atari Karts (rate)" --quiet; \
 	else \
 		bash scripts/test-skip.sh record "Atari Karts (audio rate)" "no ROM matching 'Atari Karts*' in the private corpus"; \
+	fi
+	@# Resample-cursor drift (periodic-skip class, #393).  Boundary, rate,
+	@# clipping and presence are all blind to this one: the read cursor
+	@# lags the write cursor a fraction of a sample per frame until the
+	@# gross-drift resync discards ~254 ring samples (~12 ms) in one hop
+	@# -- an audible skip every ~36 s NTSC / ~8 s PAL.  Asserts the lag
+	@# stays bounded and no resync ever fires during steady-state play.
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/i2s_lag_probe ./$(TARGET) "$$rom" --frames 2400 --window 2400 --max-lag 64 --max-resyncs 0 --quiet && \
+		./test/tools/i2s_lag_probe ./$(TARGET) "$$rom" --frames 2400 --window 2400 --max-lag 64 --max-resyncs 0 --quiet --option virtualjaguar_pal=enabled; \
+	else \
+		bash scripts/test-skip.sh record "Atari Karts (i2s lag drift)" "no ROM matching 'Atari Karts*' in the private corpus"; \
 	fi
 	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
 	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
@@ -1353,6 +1367,10 @@ test/test_audio_boundary: test/test_audio_boundary.c
 test/test_audio_rate: test/test_audio_rate.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_audio_rate.c -ldl -lm
+
+test/tools/i2s_lag_probe: test/tools/i2s_lag_probe.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/i2s_lag_probe.c test/harness/harness.c -ldl -lm
 
 test/test_memtrack: test/test_memtrack.c src/core/memtrack.c src/core/memtrack.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

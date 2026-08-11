@@ -20,6 +20,8 @@ void DACPrepareFrame(int length);
 void DACWordStrobe(void);
 uint32_t DACGetI2SWriteCount(void);
 uint32_t DACGetI2SNonZeroCount(void);
+double DACGetI2SLag(void);
+uint32_t DACGetI2SResyncCount(void);
 
 // DAC memory access
 
