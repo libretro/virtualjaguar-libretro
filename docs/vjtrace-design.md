@@ -29,7 +29,9 @@ Fixed-capacity binary event ring (default 1M records, overridable via env
 
 ```
 typedef struct {
-    uint64_t cycle;      /* core cycle domain timestamp */
+    uint64_t seq;        /* monotonic emit counter; ordering key is
+                             (frame, halfline, seq); cycle-domain
+                             timestamps deferred */
     uint32_t frame;      /* harness frame counter */
     uint16_t halfline;   /* TOM VC at emit time */
     uint8_t  type;       /* VJT_EV_* */

@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "vjtrace.h"
 #include "crc32.h"
 #include "bus_arbiter.h"
 #include "file.h"
@@ -2074,6 +2075,10 @@ void retro_init(void)
    bus_arbiter_init();
 
    CrashDetectInit();
+
+#ifdef VJ_TRACE
+   vjtrace_init();
+#endif
 }
 
 void retro_deinit(void)
@@ -2330,5 +2335,12 @@ void retro_run(void)
        || (dbg_frame_counter % 120) == 0)
       dbg_dump_frame();
    dbg_frame_counter++;
+#endif
+
+#ifdef VJ_TRACE
+   {
+      static uint32_t vjt_frame = 0;
+      vjtrace_frame_tick(++vjt_frame);
+   }
 #endif
 }

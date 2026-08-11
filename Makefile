@@ -87,6 +87,7 @@ endif
 ifeq ($(TEST_EXPORTS),1)
 LINK_SCRIPT := link-test.T
 MACHO_EXPORTS := exports-test.list
+CFLAGS += -DVJ_TRACE
 else
 LINK_SCRIPT := link.T
 MACHO_EXPORTS := exports.list
@@ -793,17 +794,25 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
-# Force a re-link when the exported ABI changes.  The objects are identical
-# either way, so a plain `make` followed by `make TEST_EXPORTS=1 test` would
-# otherwise reuse the production-slim library -- it is newer than every
-# object, so nothing relinks -- and the white-box tests fail with
-# "Missing: m68k_execute".  Delete the library outright rather than relying
-# on a stamp file's mtime: the stamp and the library can land in the same
-# second, which is exactly the timestamp-granularity trap this is meant to
-# close.  Runs at parse time, once TARGET is known.
+# Force a re-link when the exported ABI changes.  Almost every object is
+# identical either way, so a plain `make` followed by `make TEST_EXPORTS=1
+# test` would otherwise reuse the production-slim library -- it is newer
+# than every object, so nothing relinks -- and the white-box tests fail
+# with "Missing: m68k_execute".  Delete the library outright rather than
+# relying on a stamp file's mtime: the stamp and the library can land in
+# the same second, which is exactly the timestamp-granularity trap this is
+# meant to close.  Runs at parse time, once TARGET is known.
+#
+# vjtrace.o is the one object whose *content* (not just the export list)
+# depends on TEST_EXPORTS -- it compiles under -DVJ_TRACE only in that
+# branch (see the CFLAGS += -DVJ_TRACE line above) -- so it must be
+# deleted alongside the library on every mode transition, or the stale
+# no-op object silently survives the relink and vjtrace_* symbols go
+# missing from a `make TEST_EXPORTS=1` build that started from a plain
+# `make`.
 $(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
         || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET); })
+             rm -f $(TARGET) $(filter %vjtrace.o,$(OBJECTS)); })
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
