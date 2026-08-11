@@ -14,11 +14,12 @@
  */
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
 #include "../harness/harness.h"
 
-#define WINDOW 300u
+static unsigned WINDOW = 300u;
 
 static uint64_t last_hash;
 static unsigned flips_window, window_no, cur_frame;
@@ -69,7 +70,11 @@ static bool on_frame(void *ud, unsigned frame)
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
+    int a;
     cfg.frames = 1500;
+    for (a = 1; a < argc; a++)
+        if (!strcmp(argv[a], "--window") && a + 1 < argc)
+            WINDOW = (unsigned)strtoul(argv[++a], NULL, 10);
     if (!harness_init_from_args(&cfg, argc, argv))
         return 1;
     cfg.frame_callback = on_frame;

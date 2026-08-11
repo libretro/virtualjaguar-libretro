@@ -707,6 +707,17 @@ uint32_t GPUGetPC(void)
 	return gpu_pc;
 }
 
+/* Diagnostic-only accessor (issue #406 investigation): expose the active
+ * register bank so test harnesses can inspect GPU register state without
+ * a full savestate. Not part of the shipped ABI (production link uses
+ * exports.list, which does not have the _GPU* wildcard). */
+uint32_t GPUGetReg(int n)
+{
+	if (n < 0 || n > 31)
+		return 0;
+	return gpu_reg[n];
+}
+
 void build_branch_condition_table(void)
 {
    unsigned i, j;
