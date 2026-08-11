@@ -37,7 +37,7 @@ extern "C" {
  *     jaggd.c).  One shared bump — all in-flight changes since the
  *     v3.1.0 release use v8. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   9
+#define STATE_VERSION   10
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -98,6 +98,12 @@ extern "C" {
  * the state -- the cursors alone reference content the load cannot
  * reconstruct. */
 #define STATE_VERSION_DAC_I2S_RING 9
+
+/* v10: blitter bus-time busy window (virtualjaguar_blitter_timing).
+ * One uint32 appended after the bus-arbiter fields.  Older states load
+ * with the window closed -- at most one pending blit's stall is lost,
+ * self-corrects within a field. */
+#define STATE_VERSION_BLITTER_TIMING 10
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

@@ -28,6 +28,13 @@ void BlitterRunComparison(void) {}
 void blitter_blit(uint32_t cmd) { (void)cmd; }
 void BlitterMidsummer2(void) {}
 
+/* Blitter bus-time model dependencies (vjs.blitterTiming stays 0 in the
+ * stub settings above, so the timing path short-circuits; these only
+ * need to link). */
+#include "bus_arbiter.h"
+struct BusArbiter busArbiter;
+void GPUChargeBusStall(uint32_t sysclks) { (void)sysclks; }
+
 static int failures = 0;
 
 #define CHECK(cond, fmt, ...) do { \

@@ -38,6 +38,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "settings.h"
 #include "shadowfb.h"
 #include "tom.h"
+#include "blitter.h"
 #include "gpu.h"
 #include "eeprom.h"
 #include "memtrack.h"
@@ -1165,6 +1166,10 @@ bool retro_serialize(void *data, size_t size)
    STATE_SAVE_VAR(buf, busArbiter.refresh_clk_carry);
    STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
    STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
+   {
+      uint32_t blitterBusy = BlitterTimingGetBusy();
+      STATE_SAVE_VAR(buf, blitterBusy);
+   }
 
    /* v8: Jaguar GameDrive chunk (bank pages + SPI engine; all-zero for
     * non-GD content). */
@@ -1249,6 +1254,15 @@ bool retro_unserialize(const void *data, size_t size)
       STATE_LOAD_VAR(buf, busArbiter.refresh_clk_carry);
       STATE_LOAD_VAR(buf, busArbiter.op_clk_accum);
       STATE_LOAD_VAR(buf, busArbiter.m68k_pending_stall);
+
+      if (version >= STATE_VERSION_BLITTER_TIMING)
+      {
+         uint32_t blitterBusy;
+         STATE_LOAD_VAR(buf, blitterBusy);
+         BlitterTimingSetBusy(blitterBusy);
+      }
+      else
+         BlitterTimingSetBusy(0);
    }
    else
    {
@@ -1256,6 +1270,7 @@ bool retro_unserialize(const void *data, size_t size)
       busArbiter.refresh_clk_carry = 0;
       busArbiter.op_clk_accum = 0;
       busArbiter.m68k_pending_stall = 0;
+      BlitterTimingSetBusy(0);
    }
 
    if (version >= STATE_VERSION_JAGGD)

@@ -62,6 +62,11 @@ static uint32_t gpu_stall_scale_accum;
          gpu_bus_stall += bus_arbiter_charge_access(BM_GPU, (addr)); \
    } while (0)
 
+void GPUChargeBusStall(uint32_t sysclks)
+{
+   gpu_bus_stall += sysclks;
+}
+
 #define GPU_TRACE_DEBUG 0
 #if GPU_TRACE_DEBUG
 #define GPU_TRACE(...) LOG_DBG("[GPU-TRACE] " __VA_ARGS__)

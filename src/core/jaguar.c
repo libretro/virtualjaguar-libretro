@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include "jaguar.h"
+#include "blitter.h"
 #include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
@@ -1107,6 +1108,11 @@ void HalflineCallback(void)
          charge = halfclks;
       busArbiter.m68k_pending_stall += charge;
    }
+
+   /* Blitter bus-time window decays with real time: a blit finishes on
+    * its own whether or not anyone is watching (blitter_mmio.c). */
+   BlitterTimingTick(USEC_TO_RISC_CYCLES(
+                        vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
 
    //Change this to VBB???
    //Doesn't seem to matter (at least for Flip Out & I-War)
