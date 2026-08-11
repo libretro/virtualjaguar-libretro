@@ -946,9 +946,137 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
    }
 }
 
-/* Hi-res dispatch for one scanline: CRY 16bpp gets the dedicated Nx
- * renderer above; every other mode renders stock at 1x into a scratch
- * row and is box-replicated at output (Stage 1 scope fence).
+/* Hi-res (Nx) RGB16-direct renderer -- issue #382.
+ *
+ * Mirrors tom_render_16bpp_cry_scanline_hires above, but backs
+ * tom_render_16bpp_rgb_scanline (video mode 3, TOMGetVideoMode()==3;
+ * scanline_render[3] and the identical [7] duplicate slot).
+ *
+ * Scope-check for #382 established that the Nx shadow STORE side
+ * (ShadowHiresStoreCry/Block in blitter.c, ShadowHiresLineFromRAM in
+ * op.c) is not gated on video mode or CRY-vs-RGB pixel interpretation at
+ * all -- it is gated purely on blit/OP PIXEL SIZE == 16bpp (see the
+ * "Hi-res (Stage 1): every 16bpp destination write, not just gouraud"
+ * comment on the accurate blitter engine's store call).  TOM's video
+ * mode register only decides how a raw 16-bit RAM word gets
+ * *interpreted* at scanout time; the shadow store captures the raw word
+ * itself, so the same Nx shadow line buffer that already feeds the CRY
+ * hires renderer above already carries genuine content for RGB16
+ * destinations wherever the blitter/OP produced it -- this renderer is
+ * the missing consumer, not a new producer.  Confirmed empirically
+ * (dylib probe, video_mode==3 titles): shadow pages get allocated and
+ * resolved for RGB16-mode content exactly like CRY (e.g. Alien vs
+ * Predator's menu screens, Club Drive), independent of format.
+ *
+ * {value16, frac16} reconstruction is NOT the same as CRY's, though:
+ *   - CRY's value16 packs an 8-bit chroma/intensity pair, and frac16
+ *     supplies the sub-8-bit intensity fraction that GOURD/SRCSHADE
+ *     compute at higher precision internally but must truncate to write
+ *     to RAM; ShadowFBCryRGB recombines the pair through the chroma
+ *     tables for a smoother in-between shade.
+ *   - RGB16 has no chroma/intensity decomposition: value16 IS already a
+ *     complete, self-contained RGB pixel (whatever bit layout
+ *     RGB16ToRGB32 decodes), so there is no sub-quantization component
+ *     for a fraction to compose with.  frac16 is only ever nonzero out
+ *     of the CRY-shaped GOURD/SRCSHADE store sites (shadow_hires_sub_fast
+ *     / shadow_hires_sub_mid in blitter.c), which compute a source
+ *     *intensity* increment -- a concept RGB16 does not have anywhere in
+ *     this codebase, and the 1x RGB path (tom_render_16bpp_rgb_scanline)
+ *     never reads a fraction at all.  The correct, safe reconstruction is
+ *     therefore RGB16ToRGB32[value16], ignoring frac16 outright: a Stage
+ *     2 hit on a shading blit then degrades to exactly the truncated
+ *     value RAM actually holds (the same information a stock 1x RGB16
+ *     read would show), never to invented color.  The real benefit comes
+ *     from the plain-copy / LFU fractional-source-walk case, where
+ *     frac16 is always 0 and value16 alone already differs per subpixel
+ *     -- genuine spatial supersampling, no reconstruction needed.
+ *
+ * Also deliberately NOT wired in: true-color (shadowFBActive /
+ * shadowLineTag) substitution.  tom_render_16bpp_rgb_scanline (the 1x
+ * RGB renderer) has no true-color hookup either -- track 3 is CRY-only --
+ * so adding one here at 2x would make the 2x frame differ from the 1x
+ * frame by something that is not supersampling, breaking the
+ * box-replication identity this renderer must uphold on every miss. */
+static void tom_render_16bpp_rgb_scanline_hires(uint32_t * backbuffer)
+{
+   unsigned i;
+   uint8_t s;
+   int n = shadowHiresN;
+   int sub, sx;
+   uint16_t width = tomWidth;
+   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
+   uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
+   int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
+   uint16_t startPos_disp;
+   uint32_t *rows[SHADOWFB_HIRES_MAX_N];
+   int sfbIdx;
+   startPos /= pwidth;
+
+   for (sub = 0; sub < n; sub++)
+      rows[sub] = backbuffer + (uint32_t)sub * screenPitch;
+
+   if (startPos < 0)
+      current_line_buffer += 2 * -startPos;
+   else
+   {
+      /* LEFT_BG_FIX border fill, replicated N wide x N sub-rows. */
+      uint8_t g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+      uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+      startPos_disp = (uint16_t)startPos * pwidth_scale;
+
+      for (sub = 0; sub < n; sub++)
+         for (i = 0; i < (unsigned)startPos_disp * (unsigned)n; i++)
+            *rows[sub]++ = pixel;
+
+      width -= startPos_disp;
+   }
+
+   width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+   sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+
+   while (width >= pwidth_scale)
+   {
+      uint32_t base;
+      const shadowfb_sub *ent;
+      uint16_t color = (*current_line_buffer++) << 8;
+      color |= *current_line_buffer++;
+
+      /* `base` = the exact 1x result for this stock pixel: a plain
+       * RGB16ToRGB32 lookup, same as tom_render_16bpp_rgb_scanline --
+       * no true-color substitution (see comment above). */
+      base = RGB16ToRGB32[color];
+
+      for (sub = 0; sub < n; sub++)
+      {
+         ent = NULL;
+         if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
+               && shadowHiresLineTag[sfbIdx] ==
+                  ((uint32_t)color | SHADOWFB_TAG_VALID))
+            ent = shadowHiresLineSub
+                + ((uint32_t)sub * SHADOWFB_LINE_PIXELS + (uint32_t)sfbIdx)
+                  * (uint32_t)n;
+         for (sx = 0; sx < n; sx++)
+         {
+            /* A hit renders each entry's raw value16 through the stock
+             * RGB16 LUT (frac16 ignored -- see comment above); a miss
+             * falls back to `base`, the exact 1x result. */
+            uint32_t out = ent ? RGB16ToRGB32[ent[sx].value16] : base;
+            for (s = 0; s < pwidth_scale; s++)
+               *rows[sub]++ = out;
+         }
+      }
+      sfbIdx++;
+      width -= pwidth_scale;
+   }
+}
+
+/* Hi-res dispatch for one scanline: CRY 16bpp and RGB16-direct 16bpp each
+ * get a dedicated Nx renderer above; every other mode (CLUT, 24bpp,
+ * CRY/RGB mix) renders stock at 1x into a scratch row and is
+ * box-replicated at output (Stage 1 scope fence; issue #382 assessed
+ * those on the same CRY-vs-RGB evidence basis and found no shadow-store
+ * coverage worth extending yet).
  *
  * The scratch is seeded from the existing Nx row (sub-row 0, every Nth
  * pixel) so pixels the stock renderer leaves untouched -- e.g. the tail
@@ -970,6 +1098,12 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
    if (fn == tom_render_16bpp_cry_scanline)
    {
       tom_render_16bpp_cry_scanline_hires(backbuffer);
+      return;
+   }
+
+   if (fn == tom_render_16bpp_rgb_scanline)
+   {
+      tom_render_16bpp_rgb_scanline_hires(backbuffer);
       return;
    }
 
