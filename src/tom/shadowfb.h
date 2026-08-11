@@ -136,17 +136,16 @@ extern int shadowHiresActive;
  *   missValue  -- entry exists, RAM value no longer matches its tag
  *   missEpoch  -- value matched, entry rejected for age only (the silent one)
  *
- * CAVEAT (Stage 3, design section 6.4): OP scaled-bitmap supersampling
- * (op_hires_scale_peek / ShadowHiresLineFromScaledSamples in op.c) reads
- * the source bitmap directly and bypasses this RAM-shadow lookup
- * entirely -- there is nothing to value/epoch-check, the samples are
- * freshly read every call. Those writes bump NONE of the four counters
- * above, so on a title that benefits from Stage 3 but not Stage 1/2's
- * RAM-shadow path, "all zero while shadowHiresActive" no longer proves
- * "the OP is not reaching a resolve site" -- it may simply mean every
- * resolve on screen went through the Stage 3 path instead. Check for
- * OPProcessScaledBitmap activity (hscale != 0x20, depth==4, CRY video
- * mode) before reading an all-zero heartbeat as "not working".
+ * Stage 3 (design section 6.4) note: OP scaled-bitmap pixels resolve
+ * against the RAM shadow FIRST (ShadowHiresLineFromRAM, counted here
+ * like any other resolve) and only fall back to the freshly-read
+ * half-step point samples (op_hires_scale_peek /
+ * ShadowHiresLineFromScaledSamples in op.c) when that resolve misses.
+ * So every scaled pixel still bumps exactly one counter and the
+ * "all zero while shadowHiresActive" heartbeat diagnostic stays valid;
+ * a scaled-object title that never blits its source bitmap simply
+ * shows its scaled pixels in the miss buckets (normal, expected --
+ * static image data was never a shadow-tracked destination).
  *
  * Reported by crash_detect.c's verbose heartbeat; also exported in the test
  * ABI (link-test.T / exports-test.list) so harnesses can dlsym and assert. */
@@ -198,21 +197,25 @@ void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
  * the Nx line buffer at stock pixel `idx` (tag+epoch checked against
  * value16, the word the OP just read); on miss, replicate
  * {value16, 0} N*N times.  Runs inside the OP's single per-scanline
- * pass, producing all N sub-rows at once (design section 6.1). */
-void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
+ * pass, producing all N sub-rows at once (design section 6.1).
+ * Returns nonzero on a shadow-block hit, 0 on any miss (the Stage 3
+ * caller in op.c uses this to fall back to point samples ONLY when no
+ * real supersampled content exists for the word). */
+int ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
 
-/* Stage 3 (design section 6.4): OP scaled-bitmap resolve site.  Unlike
- * ShadowHiresLineFromRAM, the content here does not come from the RAM
- * shadow (the OP's source bitmap is static image data, never itself a
- * shadow-tracked destination write) -- it is N freshly point-sampled
- * source pixels, one per horizontal sub-column, already resolved by
- * the caller via a LOCAL copy of the HSCALE walk (op_hires_scale_peek
- * in op.c).  `cols[N]` is in output column order (sx = 0..N-1,
- * left-to-right in the Nx line buffer); `value16` is the stock pixel
- * this destination write produced (the tag key, unchanged semantics).
- * Fills every sub-row identically -- Stage 3 as shipped supersamples
- * HSCALE only, not VSCALE, so all N sub-rows repeat the same N
- * columns (see the design section 6.4 note in op.c for why). */
+/* Stage 3 (design section 6.4): OP scaled-bitmap miss fallback.  Used
+ * only after ShadowHiresLineFromRAM reported a miss for this word --
+ * a RAM-shadow hit (the source bitmap was itself a supersampled blit
+ * destination, a normal Jaguar idiom) carries strictly more
+ * information and always wins.  The content here is N freshly
+ * point-sampled source pixels, one per horizontal sub-column, already
+ * resolved by the caller via a LOCAL copy of the HSCALE walk
+ * (op_hires_scale_peek in op.c).  `cols[N]` is in output column order
+ * (sx = 0..N-1, left-to-right in the Nx line buffer); `value16` is the
+ * stock pixel this destination write produced (the tag key, unchanged
+ * semantics).  Fills every sub-row identically -- Stage 3 as shipped
+ * supersamples HSCALE only, not VSCALE, so all N sub-rows repeat the
+ * same N columns (see the design section 6.4 note in op.c for why). */
 void ShadowHiresLineFromScaledSamples(int idx, const shadowfb_sub *cols,
                                        uint16_t value16);
 

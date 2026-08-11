@@ -1603,11 +1603,13 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
                 * REFLECT the physically-left sub-column holds the
                 * *later* source sample to keep the block's own
                 * left/right consistent with the mirrored image.
-                * hscale==0x20 (no scaling -- nothing to recover) keeps
-                * the existing RAM-shadow resolve, which also covers the
-                * case where this source address was itself a prior
-                * blit's supersampled write (Stage 1/2 semantics,
-                * unchanged).  Sub-rows are not supersampled here (only
+                * Every pixel -- scaled or not -- still tries the
+                * RAM-shadow resolve first (a hit means this source
+                * address was itself a prior blit's supersampled write;
+                * Stage 1/2 semantics, unchanged); the peek is only the
+                * miss fallback.  hscale==0x20 (no scaling -- nothing
+                * to recover) never peeks.  Sub-rows are not
+                * supersampled here (only
                 * one source row is ever visible inside one
                 * OPProcessScaledBitmap call -- VSCALE's row selection
                 * lives in the OBJECT_TYPE_SCALE dispatch outside this
@@ -1624,28 +1626,48 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
 
                   if (shadowHiresN == 2 && hscale != 0x20)
                   {
-                     shadowfb_sub cols[SHADOWFB_HIRES_MAX_N];
-                     shadowfb_sub s0, s1;
-
-                     s0.value16 = stockVal;
-                     s0.frac16 = 0;
-                     s1.value16 = op_hires_scale_peek(data, pixCount,
-                           horizontalRemainder, hscale,
-                           (uint32_t)(pitch << 3), 4, iwidth, stockVal);
-                     s1.frac16 = 0;
-
-                     if (flagREFLECT)
+                     /* A RAM-shadow hit (this source word was itself a
+                      * supersampled blit destination -- render-to-
+                      * texture is a normal Jaguar idiom) carries real
+                      * Stage 1/2 per-subpixel content and always beats
+                      * two point samples: resolve it FIRST, and peek
+                      * only on a miss.  This also keeps the resolve
+                      * counters (shadowfb.h) counting every scaled
+                      * pixel exactly once. */
+                     if (!ShadowHiresLineFromRAM(lbIdx,
+                              data + ((uint32_t)pixCount << 1), stockVal))
                      {
-                        cols[0] = s1;
-                        cols[1] = s0;
-                     }
-                     else
-                     {
-                        cols[0] = s0;
-                        cols[1] = s1;
-                     }
+                        shadowfb_sub cols[SHADOWFB_HIRES_MAX_N];
+                        shadowfb_sub s0, s1;
 
-                     ShadowHiresLineFromScaledSamples(lbIdx, cols, stockVal);
+                        s0.value16 = stockVal;
+                        s0.frac16 = 0;
+                        s1.value16 = op_hires_scale_peek(data, pixCount,
+                              horizontalRemainder, hscale,
+                              (uint32_t)(pitch << 3), 4, iwidth, stockVal);
+                        /* The stock pixel above already passed the TRANS
+                         * test; the peeked word never did.  A zero word
+                         * one half-step ahead on a TRANS object is
+                         * transparent padding the stock walk would draw
+                         * nothing for -- degrade that sub-column to the
+                         * stock sample, never to encoded-black CRY 0. */
+                        if (flagTRANS && s1.value16 == 0)
+                           s1.value16 = stockVal;
+                        s1.frac16 = 0;
+
+                        if (flagREFLECT)
+                        {
+                           cols[0] = s1;
+                           cols[1] = s0;
+                        }
+                        else
+                        {
+                           cols[0] = s0;
+                           cols[1] = s1;
+                        }
+
+                        ShadowHiresLineFromScaledSamples(lbIdx, cols, stockVal);
+                     }
                   }
                   else
                      ShadowHiresLineFromRAM(lbIdx,
