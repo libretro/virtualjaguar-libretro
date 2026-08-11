@@ -27,8 +27,11 @@ the 68000 runs at sysclk/2). Evidence tags:
 - `[inference — needs simulation]` — bounded but exact count should be
   confirmed with a Verilator run of jag_sim (recipe in §9).
 
-Paths below are relative to
-`/private/tmp/claude-501/.../scratchpad/fpga-truth/` (this directory).
+Source citations below are relative to the root of a checkout of
+[ElectronAsh/jag_sim](https://github.com/ElectronAsh/jag_sim) (the
+`netlists/tom/*.NET` and `netlists/jerry/*.NET` files are the original
+Flare design sources, comments intact). Clone it anywhere to follow
+along; nothing in this repository depends on its location.
 
 ---
 

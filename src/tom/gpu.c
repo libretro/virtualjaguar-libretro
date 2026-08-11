@@ -136,16 +136,47 @@ void GPUChargeBusStall(uint32_t sysclks)
 #define GPU_PIPE_LOCAL_REPEAT 2u   /* local load engine: one op per 2 ticks */
 #define GPU_PIPE_DIV_TICKS    16u  /* 32-bit quotient at 2 bits/tick */
 
+/* CYCLE DOMAIN (bus_arbiter.h contract).  Two accumulators, because
+ * the model produces costs in BOTH domains and they must not be
+ * converted alike under the risc_clock_scale enhancement:
+ *
+ *   gpu_bus_stall       WALL time (sysclks).  External memory latency:
+ *                       gateway waits, DRAM/ROM access.  Silicon does
+ *                       not speed up when the RISC is overclocked, so
+ *                       GPUExec rescales these into the scaled cycle
+ *                       domain.
+ *   gpu_pipe_core_stall CORE time (GPU cycles).  Everything internal
+ *                       to the RISC: scoreboard/RAW/flags interlocks,
+ *                       MOVEI and indexed-address extra ticks, jump
+ *                       refill, the delay-slot instruction's own
+ *                       cycles, local-RAM load latency (local RAM is
+ *                       clocked at the GPU clock -- JTRM: "It can be
+ *                       cycled at the graphics processor clock rate").
+ *                       These scale WITH the processor, i.e. they are
+ *                       already in the right domain and must be
+ *                       deducted from the slice budget unscaled.
+ *
+ * Charging a pipeline interlock through gpu_bus_stall would make one
+ * interlock cycle cost two at 2x clock, which is backwards. */
+static uint32_t gpu_pipe_core_stall;
+
 static uint64_t gpu_pipe_clock;        /* cycles executed since reset */
 static uint64_t gpu_ext_done[2];       /* split-transaction load/store slots */
 static uint64_t gpu_gate_issue_free;   /* gateway issue-phase serialization */
 static uint64_t gpu_local_busy_until;  /* local load engine */
 static uint64_t gpu_reg_ready[32];     /* pending load/div result per reg */
+/* Domain of each pending result: nonzero = the wait is external
+ * (wall time), zero = internal (core time). */
+static uint8_t  gpu_reg_ready_ext[32];
 static uint8_t  gpu_pipe_prev_dest = 0xFF; /* prev instr's ALU dest, 0xFF none */
 static uint8_t  gpu_pipe_prev_flags = 0;   /* prev instr set the flags */
 
-/* Diagnostics (test ABI): total stall cycles charged and external
- * transfers issued by the pipeline model since reset.  Not serialized. */
+/* Diagnostics (test ABI): stall cycles charged and external transfers
+ * issued by the pipeline model.  MONOTONIC since the last GPUReset --
+ * deliberately NOT cleared by GPUPipeTimingReset(), which also runs on
+ * every interrupt bank switch and would blank these many times a frame,
+ * leaving probes to difference against a moving zero.  Same convention
+ * as the shadowHiresResolve* counters.  Not serialized. */
 uint64_t gpu_pipe_stall_total = 0;
 uint64_t gpu_pipe_ext_total   = 0;
 
@@ -176,6 +207,7 @@ void GPUPipeTimingReset(void)
 {
    unsigned i;
    gpu_pipe_clock       = 0;
+   gpu_pipe_core_stall  = 0;
    gpu_ext_done[0]      = 0;
    gpu_ext_done[1]      = 0;
    gpu_gate_issue_free  = 0;
@@ -183,7 +215,10 @@ void GPUPipeTimingReset(void)
    gpu_pipe_prev_dest   = 0xFF;
    gpu_pipe_prev_flags  = 0;
    for (i = 0; i < 32; i++)
-      gpu_reg_ready[i] = 0;
+   {
+      gpu_reg_ready[i]     = 0;
+      gpu_reg_ready_ext[i] = 0;
+   }
 }
 
 /* Flag-setting opcodes (JTRM ISA): the transparent variants (addqt,
@@ -207,15 +242,24 @@ static void GPUPipeCheckUse(uint32_t index)
    uint8_t f = gpu_pipe_flags[index];
    uint64_t ready = gpu_pipe_clock;
    uint32_t wait, extra;
+   int wait_is_ext = 0;
    if (f & 1)
    {
       uint64_t r = gpu_reg_ready[gpu_opcode_first_parameter];
-      if (r > ready) ready = r;
+      if (r > ready)
+      {
+         ready = r;
+         wait_is_ext = gpu_reg_ready_ext[gpu_opcode_first_parameter];
+      }
    }
    if (f & 2)
    {
       uint64_t r = gpu_reg_ready[gpu_opcode_second_parameter];
-      if (r > ready) ready = r;
+      if (r > ready)
+      {
+         ready = r;
+         wait_is_ext = gpu_reg_ready_ext[gpu_opcode_second_parameter];
+      }
    }
    wait = (uint32_t)(ready - gpu_pipe_clock);
    if (wait < 1
@@ -237,10 +281,20 @@ static void GPUPipeCheckUse(uint32_t index)
          || index == 58 || index == 59)      extra = 2;  /* indexed load */
    else if (index == 49 || index == 50
          || index == 60 || index == 61)      extra = 1;  /* indexed store */
-   if (wait + extra)
+   /* A wait on a pending EXTERNAL load is wall time (the transfer is
+    * running in DRAM); every other cost here is internal RISC time. */
+   if (wait)
    {
-      gpu_bus_stall += wait + extra;
-      gpu_pipe_stall_total += wait + extra;
+      if (wait_is_ext)
+         gpu_bus_stall += wait;
+      else
+         gpu_pipe_core_stall += wait;
+      gpu_pipe_stall_total += wait;
+   }
+   if (extra)
+   {
+      gpu_pipe_core_stall += extra;
+      gpu_pipe_stall_total += extra;
    }
 }
 
@@ -257,7 +311,7 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
    uint32_t cost;
    int slot;
    addr &= 0xFFFFFF;
-   t0 = gpu_pipe_clock + gpu_bus_stall;
+   t0 = gpu_pipe_clock + gpu_bus_stall + gpu_pipe_core_stall;
    t  = t0;
    if (addr >= 0xF02000 && addr <= 0xF03FFF)
    {
@@ -265,10 +319,14 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
          t = gpu_local_busy_until;
       gpu_local_busy_until = t + GPU_PIPE_LOCAL_REPEAT;
       if (isLoad)
+      {
          gpu_reg_ready[gpu_opcode_second_parameter] = t + GPU_PIPE_LOCAL_LOAD;
+         gpu_reg_ready_ext[gpu_opcode_second_parameter] = 0;
+      }
+      /* Local RAM is clocked at the GPU clock: core time. */
       if (t > t0)
       {
-         gpu_bus_stall += (uint32_t)(t - t0);
+         gpu_pipe_core_stall += (uint32_t)(t - t0);
          gpu_pipe_stall_total += t - t0;
       }
       return;
@@ -302,7 +360,10 @@ static void GPUPipeMemAccess(uint32_t addr, int isLoad)
    slot = (gpu_ext_done[0] <= gpu_ext_done[1]) ? 0 : 1;
    gpu_ext_done[slot] = done;
    if (isLoad)
+   {
       gpu_reg_ready[gpu_opcode_second_parameter] = done;
+      gpu_reg_ready_ext[gpu_opcode_second_parameter] = 1;
+   }
 }
 
 /* Hook for the load/store opcode bodies.  Pipeline model on: gateway +
@@ -1141,6 +1202,9 @@ void GPUReset(void)
    unsigned i;
 
    GPUPipeTimingReset();
+   /* Machine reset is the diagnostics' epoch (see their declaration). */
+   gpu_pipe_stall_total = 0;
+   gpu_pipe_ext_total   = 0;
 
    // GPU registers (directly visible)
    gpu_flags			  = 0x00000000;
@@ -1325,6 +1389,7 @@ void GPUExec(int32_t cycles)
       //$E400 -> 1110 01 -> $39 -> 57
       gpu_pc += 2;
       gpu_bus_stall = 0;
+      gpu_pipe_core_stall = 0;
       gpu_exec_opcode_count++;
       /* Pipeline model: stall for pending load results / RAW interlock
        * BEFORE the opcode runs (results are unchanged; only time is
@@ -1338,7 +1403,8 @@ void GPUExec(int32_t cycles)
 #endif
       if (vjs.gpuPipelineTiming)
       {
-         gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall;
+         gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall
+                         + gpu_pipe_core_stall;
          gpu_pipe_prev_dest =
             (gpu_pipe_flags[index] & 4) ? (uint8_t)gpu_opcode_second_parameter
                                         : (uint8_t)0xFF;
@@ -1346,8 +1412,11 @@ void GPUExec(int32_t cycles)
          /* DIV runs 16 background ticks (2 bits/tick); only USE of the
           * quotient blocks (R15). */
          if (index == 21)
+         {
             gpu_reg_ready[gpu_opcode_second_parameter] =
                gpu_pipe_clock + GPU_PIPE_DIV_TICKS;
+            gpu_reg_ready_ext[gpu_opcode_second_parameter] = 0;
+         }
       }
 
       /* Bus stalls are wall time (sysclks); the slice budget is in the
@@ -1356,16 +1425,22 @@ void GPUExec(int32_t cycles)
        * at 2x the budget holds twice the cycles per wall second, so the
        * same stall must consume twice the cycles.  Stock scale takes
        * the identity branch — bit-exact pre-#318 behavior. */
+      /* gpu_pipe_core_stall is already in the GPU's own cycle domain
+       * (see the domain note at its declaration): deduct it unscaled
+       * in both branches.  Only gpu_bus_stall -- wall-time memory
+       * latency -- goes through the scale conversion. */
       if (riscClockScalePct != 100u && gpu_bus_stall != 0)
       {
          uint32_t stall_scaled;
          gpu_stall_scale_accum += gpu_bus_stall * riscClockScalePct;
          stall_scaled = gpu_stall_scale_accum / 100u;
          gpu_stall_scale_accum %= 100u;
-         cycles -= gpu_opcode_cycles[index] + (int32_t)stall_scaled;
+         cycles -= gpu_opcode_cycles[index] + (int32_t)stall_scaled
+                 + (int32_t)gpu_pipe_core_stall;
       }
       else
-         cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall;
+         cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall
+                 + (int32_t)gpu_pipe_core_stall;
 
       /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
        * that has just set SINGLE_STEP has entered single-step mode and stops
@@ -1643,7 +1718,7 @@ INLINE static void gpu_opcode_jump(void)
           * loop, and a taken JUMP costs ~2 dead refill ticks on top
           * (INS_EXEC.NET, R12).  Both only under the option so the
           * default path stays byte-identical. */
-         gpu_bus_stall += (uint32_t)gpu_opcode_cycles[ds_index] + 2u;
+         gpu_pipe_core_stall += (uint32_t)gpu_opcode_cycles[ds_index] + 2u;
          gpu_pipe_stall_total += (uint64_t)gpu_opcode_cycles[ds_index] + 2u;
       }
       gpu_in_delay_slot = 0;
@@ -1690,7 +1765,7 @@ INLINE static void gpu_opcode_jr(void)
       {
          /* Delay-slot charge + taken-JR refill (~3 dead ticks, R13):
           * the JR target is computed a tick later than JUMP's. */
-         gpu_bus_stall += (uint32_t)gpu_opcode_cycles[ds_index] + 3u;
+         gpu_pipe_core_stall += (uint32_t)gpu_opcode_cycles[ds_index] + 3u;
          gpu_pipe_stall_total += (uint64_t)gpu_opcode_cycles[ds_index] + 3u;
       }
       gpu_in_delay_slot = 0;
