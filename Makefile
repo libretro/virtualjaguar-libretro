@@ -895,6 +895,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
 	@# the summary at the end of this recipe prints the roll-up.
 	@bash scripts/test-skip.sh reset
+	@# The wide test ABI is spelled twice -- link-test.T for GNU ld, and
+	@# exports-test.list for Mach-O -- and a symbol added to only one is
+	@# hidden on the other platform, where harness_dlsym silently returns
+	@# NULL.  Cheap, so it runs before anything links against that ABI.
+	@python3 scripts/check-export-lists.py
 	./test/test_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
