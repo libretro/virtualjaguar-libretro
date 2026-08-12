@@ -77,6 +77,7 @@
       shadowHiresResolveMissNoPage;
       shadowHiresN;
       shadowFBActive;
+      TitleDB*;
       vjtrace_*;
    local: *;
 };

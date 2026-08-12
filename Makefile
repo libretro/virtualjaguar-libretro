@@ -910,6 +910,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
 	@# the summary at the end of this recipe prints the roll-up.
 	@bash scripts/test-skip.sh reset
+	@# The wide test ABI is spelled twice -- link-test.T for GNU ld, and
+	@# exports-test.list for Mach-O -- and a symbol added to only one is
+	@# hidden on the other platform, where harness_dlsym silently returns
+	@# NULL.  Cheap, so it runs before anything links against that ABI.
+	@python3 scripts/check-export-lists.py
 	./test/test_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
@@ -1218,6 +1223,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 				--option virtualjaguar_internal_resolution=2x || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
 				--option virtualjaguar_true_color=disabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 6 --quiet || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
@@ -1227,7 +1233,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
 			"no ROM matching 'Alien vs Predator*' in the private corpus"; \
 	fi
-	@# Non-DB ROM control: no CRC match -> no substitution, no [titledb] log.
+	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
 	@echo ""
@@ -1766,4 +1772,3 @@ cue2cdi:
 
 print-%:
 	@echo '$*=$($*)'
-
