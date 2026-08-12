@@ -22,30 +22,89 @@
 #
 #       For who=M68K specifically, "nonzero pc" alone is not a real test (a
 #       constant wrong value would still be nonzero), so this check also
-#       asserts two properties a wrong-PC bug is unlikely to satisfy by
-#       accident: the pc is EVEN (68K instructions are always fetched from
-#       even addresses; a value that landed mid-operand or came from
-#       uninitialized/garbage state has no reason to be) and at least two
-#       distinct WATCH_WR/M68K records share an IDENTICAL pc at ADJACENT
-#       addresses (addr and addr+-2) -- the signature of a single multi-word
-#       store (e.g. a MOVEM.L push) correctly attributed to one instruction
-#       start, which is exactly the class of bug Task 7.5's post-review fix
-#       corrected (see the PC ATTRIBUTION note in src/core/vjtrace.h and
-#       vjt_pc_of() in src/core/vjtrace.c): m68k_get_reg(M68K_REG_PC) at
-#       access time names the NEXT instruction in the vast majority of
-#       opcodes (regs.pc already advanced past instruction-start before the
-#       opcode handler's own memory access runs), so the OLD code recorded a
-#       pc that undercounts real per-instruction correlation just as
-#       willingly as a correct one would -- checking evenness/adjacent-pc-
-#       sharing here is a regression guard on top of that fix, not a
-#       from-scratch re-proof of it. The semantic argument for WHY
-#       pcQueue[(pcQPtr-1)&(VJT_PCHIST_CAP-1)] is the instruction-start PC
-#       rests on the call-site ordering in src/m68000/m68kinterface.c (the
-#       M68K_HOOK_FUNCTION call precedes `opcode = get_iword(0)` and the
-#       opcode dispatch, so M68KInstructionHook() always latches pcQueue for
-#       the CURRENT instruction before that instruction's own memory access
-#       can run) -- established by code inspection, not re-derived by this
-#       black-box test on every run.
+#       asserts two cheap sanity properties: the pc is EVEN (68K
+#       instructions are always fetched from even addresses) and at least
+#       two distinct WATCH_WR/M68K records share an IDENTICAL pc at
+#       ADJACENT addresses (addr and addr+-2) -- the signature of a single
+#       multi-word store (e.g. a MOVEM.L push) attributed to one
+#       instruction. NEITHER of these discriminates the specific bug Task
+#       7.5's post-review fix corrected -- a re-review caught this:
+#       m68k_incpc() for a MOVEM handler runs ONCE, before its whole write
+#       loop (src/m68000/cpuemu.c, op_4890_5 and friends), so every word of
+#       one MOVEM.L push shares ONE constant regs.pc value under BOTH the
+#       OLD buggy code (m68k_get_reg(M68K_REG_PC) at access time) and the
+#       NEW fixed code (pcQueue[(pcQPtr-1)&(VJT_PCHIST_CAP-1)]) -- evenness
+#       and adjacent-pc-pairing pass identically either way. They are kept
+#       as cheap, generically-useful sanity checks (they DO catch e.g. an
+#       uninitialized/garbage pc, or one processor's writes misattributed
+#       to another), but are NOT the regression guard for this specific bug.
+#
+#       THE ACTUAL DISCRIMINATOR runs a second, short (30-frame) smoke pass
+#       with TWO simultaneous watches: the usual RAM range for writes, PLUS
+#       the cart ROM code range (0x800000:0xDFFEFF) for READS -- which
+#       means every 68K instruction fetch (get_iword() in
+#       src/m68000/inlines.h, called from the M68K_HOOK_FUNCTION call site
+#       in src/m68000/m68kinterface.c right before each opcode dispatch)
+#       now also produces a WATCH_RD/M68K record. That read hook exists for
+#       exactly this reason (see the read-side hooks in
+#       m68k_read_memory_8/16/32, src/core/jaguar.c) -- it is what makes a
+#       black-box, no-new-C-tool discriminator possible at all: it lets
+#       this script observe the REAL 68K fetch stream, not just the
+#       ring's own pc metadata.
+#
+#       The discriminating fact: the address of the FIRST code-region READ
+#       that follows a given WATCH_WR in seq order reflects a REAL 68K
+#       fetch -- that fetch happens in the actual UAE core regardless of
+#       what our own pc bookkeeping claims, so it is an INDEPENDENT ground
+#       truth the recorded pc can be checked against. When execution falls
+#       straight through from the writing instruction to the next one (no
+#       intervening branch/JSR/interrupt), that next fetch address is
+#       exactly pc+len of the writing instruction:
+#         - Under the OLD buggy code, the recorded pc for a write IS
+#           regs.pc read at access time, which m68k_incpc() has already
+#           advanced to pc+len -- so for a straight-through write,
+#           `write.pc == next_read.addr` holds by construction, not by
+#           coincidence.
+#         - Under the NEW fixed code, the recorded pc is the CURRENT
+#           instruction's start address, which cannot equal pc+len (68K
+#           instructions are at least 2 bytes; the MOVEM.L this ROM
+#           exercises is 4) -- so `write.pc == next_read.addr` should not
+#           hold for a straight-through write, and for a write whose very
+#           next fetch is instead redirected by a branch/JSR/interrupt (this
+#           ROM has plenty -- IRQ_DISPATCH events interleave with these
+#           writes in the captured stream) it holds even less: the buggy
+#           pc+len guess is now wrong too, since real execution didn't go
+#           there either, so `write.pc == next_read.addr` cannot hold under
+#           EITHER source in that case, straight-through or not, matching
+#           is possible only under the bug.
+#       Net effect: `write.pc == next_read.addr` is not expected to hold
+#       for every resolved write even under the bug (control-flow
+#       redirection is common in this ROM and defeats it exactly as it
+#       would defeat the buggy pc), but it is a POSITIVE, purely
+#       bug-driven signal whenever it does hold, and it must NEVER hold
+#       under the fix.
+#
+#       As a companion positive-evidence check (not the discriminator, but
+#       corroboration that pc names a real, already-fetched address rather
+#       than nothing at all): pc must also equal the addr of SOME earlier
+#       code-region read within a short lookback window -- true whenever
+#       the recorded pc is a real 68K instruction-start address that this
+#       run actually executed, which holds under both old and new code (an
+#       address that was fetched "one instruction late" is still a real,
+#       previously-fetched address), so this alone would not catch the
+#       regression -- it is included only to guard against a DIFFERENT
+#       failure mode (pc resolving to something that was never fetched at
+#       all, e.g. garbage or a wrong array).
+#
+#       Verified empirically (not just by this argument) during Task 7.5's
+#       second re-review round: temporarily reverting vjt_pc_of() to
+#       `return m68k_get_reg(NULL, M68K_REG_PC);` and rebuilding made this
+#       exact check FAIL (write.pc == next_read.addr held for 256 of 1200
+#       resolved writes -- 0 is required); restoring the fix and rebuilding
+#       made it PASS again (0 of 1200, same ROM, same watch config, same
+#       1200-sample denominator -- only the pc source changed). Both raw
+#       outputs are in
+#       task-7.5-report.md.
 #
 #       NOTE ON who=M68K (Task 7.5, closing the Task 7 gap): watch hooks
 #       live in JaguarReadByte/Word/Long and JaguarWriteByte/Word/Long
@@ -300,6 +359,72 @@ else
         fi
     fi
 
+    # THE ACTUAL DISCRIMINATOR (see the long comment at the top of this
+    # check): a second, short smoke pass with a code-region READ watch
+    # added, so the real 68K fetch stream is observable and can be
+    # checked against the recorded pc as independent ground truth.
+    DIR_W2="$WORK_DIR/watch_pc_discrim"
+    mkdir -p "$DIR_W2"
+    PC_DISCRIM_OK=0
+    PC_DISCRIM_DETAIL=""
+    RUN_W2_OK=1
+    "$SMOKE" "$CORE" "$ROM" --frames 30 \
+        --watch 0x0:0x200000:w --watch 0x800000:0xDFFEFF:r \
+        --trace-out "$DIR_W2/trace.vjtr" \
+        >"$DIR_W2/log.txt" 2>&1 || RUN_W2_OK=0
+
+    if [ "$RUN_W2_OK" -eq 0 ]; then
+        PC_DISCRIM_DETAIL="smoke run failed -- see $DIR_W2/log.txt"
+        cat "$DIR_W2/log.txt" >&2 || true
+    else
+        "$TRACE_DUMP" "$DIR_W2/trace.vjtr" --who M68K >"$DIR_W2/m68k_all.txt"
+        DISCRIM_RESULT=$(awk '
+            {
+                type = $4
+                if (type != "WATCH_RD" && type != "WATCH_WR") next
+                pc = ""; addr = ""
+                for (i = 1; i <= NF; i++) {
+                    if ($i ~ /^pc=/)   { split($i, a, "="); pc = a[2] }
+                    if ($i ~ /^addr=/) { split($i, a, "="); addr = a[2] }
+                }
+                if (pc == "" || addr == "") next
+                if (type == "WATCH_WR") {
+                    pending_pc = pc
+                    have_pending = 1
+                } else {
+                    if (have_pending) {
+                        resolved++
+                        if (addr == pending_pc) {
+                            fwd_eq++
+                            if (fwd_eq == 1) { ex_pc = pending_pc; ex_addr = addr }
+                        }
+                        have_pending = 0
+                    }
+                }
+            }
+            END {
+                print "RESOLVED=" (resolved + 0)
+                print "FWD_EQ=" (fwd_eq + 0)
+                print "EX_PC=" ex_pc
+                print "EX_ADDR=" ex_addr
+            }
+        ' "$DIR_W2/m68k_all.txt")
+
+        DISCRIM_RESOLVED=$(echo "$DISCRIM_RESULT" | awk -F= '/^RESOLVED=/{print $2}')
+        DISCRIM_FWD_EQ=$(echo "$DISCRIM_RESULT" | awk -F= '/^FWD_EQ=/{print $2}')
+
+        # A near-zero resolved count means the discriminator watch config
+        # itself didn't produce enough M68K read/write traffic to mean
+        # anything -- that is a setup failure, not evidence of correctness,
+        # so require a real sample size before trusting FWD_EQ==0.
+        if [ "${DISCRIM_RESOLVED:-0}" -ge 100 ] && [ "${DISCRIM_FWD_EQ:-1}" -eq 0 ]; then
+            PC_DISCRIM_OK=1
+            PC_DISCRIM_DETAIL="resolved=$DISCRIM_RESOLVED, write.pc==next_read.addr count=$DISCRIM_FWD_EQ (want 0)"
+        else
+            PC_DISCRIM_DETAIL="resolved=$DISCRIM_RESOLVED (want >=100), write.pc==next_read.addr count=$DISCRIM_FWD_EQ (want 0 -- nonzero means the pc source regressed to m68k_get_reg(M68K_REG_PC))"
+        fi
+    fi
+
     # GPU/DSP: at least one of the two RISC processors must also show a
     # nonzero-pc record, proving the pre-existing JaguarWrite*-routed
     # attribution path (GPU/DSP local-store writes still bypass it -- see
@@ -317,10 +442,11 @@ else
         fi
     done
 
-    if [ "$WATCH_WR_SUM" -gt 0 ] && [ "$M68K_OK" -eq 1 ] && [ "$PC_ATTR_OK" -eq 1 ] && [ "$RISC_OK" -eq 1 ]; then
-        pass watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM, who=M68K nonzero pc ($M68K_LINE), $PC_ATTR_DETAIL, who=$RISC_WHO nonzero pc ($RISC_LINE)"
+    if [ "$WATCH_WR_SUM" -gt 0 ] && [ "$M68K_OK" -eq 1 ] && [ "$PC_ATTR_OK" -eq 1 ] \
+        && [ "$PC_DISCRIM_OK" -eq 1 ] && [ "$RISC_OK" -eq 1 ]; then
+        pass watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM, who=M68K nonzero pc ($M68K_LINE), $PC_ATTR_DETAIL, pc-discriminator: $PC_DISCRIM_DETAIL, who=$RISC_WHO nonzero pc ($RISC_LINE)"
     else
-        fail watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM (want >0), who=M68K pc-bearing record found=$M68K_OK, pc-attribution check=$PC_ATTR_OK ($PC_ATTR_DETAIL), who=GPU/DSP pc-bearing record found=$RISC_OK"
+        fail watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM (want >0), who=M68K pc-bearing record found=$M68K_OK, pc-attribution check=$PC_ATTR_OK ($PC_ATTR_DETAIL), pc-discriminator check=$PC_DISCRIM_OK ($PC_DISCRIM_DETAIL), who=GPU/DSP pc-bearing record found=$RISC_OK"
     fi
 fi
 
