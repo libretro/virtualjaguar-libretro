@@ -127,12 +127,12 @@ the gate, same as the audio tests and the CD boot matrix.
 
 ## Sweep status
 
-**Retail sweep complete — 62 commercial cartridges, 0 divergences.**
+**Retail sweep complete — 64 commercial cartridges, 0 divergences.**
 
 | verdict | count | meaning |
 |---|---|---|
 | clean | 19 | **2,546,482 verifications, 0 divergences** |
-| thin | 41 | no verdict — never repeated a stream in the window |
+| thin | 43 | no verdict — never repeated a stream in the window |
 | noload | 2 | core refuses the dump (prototype/alpha format) |
 
 Clean, with check counts: Kasumi Ninja (648,213 — two dumps), Towers II
