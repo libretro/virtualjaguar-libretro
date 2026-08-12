@@ -74,5 +74,6 @@
       shadowHiresResolveMissNoPage;
       shadowHiresN;
       shadowFBActive;
+      TitleDB*;
    local: *;
 };
