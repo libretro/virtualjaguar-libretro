@@ -1753,6 +1753,7 @@ bool retro_load_game(const struct retro_game_info *info)
       free(sampleBuffer);
       videoBuffer = NULL;
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
@@ -1819,6 +1820,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
       LOG_INF("[CD] Disc image opened OK\n");
@@ -1848,6 +1850,7 @@ bool retro_load_game(const struct retro_game_info *info)
       videoBuffer = NULL;
       free(sampleBuffer);
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
 
@@ -1867,6 +1870,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
    }
@@ -1953,6 +1957,9 @@ void retro_unload_game(void)
    ShadowHiresShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
+
+   /* The next option read must not see the previous title's CRC/match. */
+   TitleDBSetContent(NULL, 0);
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

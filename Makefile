@@ -1197,6 +1197,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 				--option virtualjaguar_internal_resolution=2x || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
 				--option virtualjaguar_true_color=disabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 6 --quiet || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
@@ -1745,4 +1746,3 @@ cue2cdi:
 
 print-%:
 	@echo '$*=$($*)'
-

@@ -32,6 +32,10 @@
  *      SUBSTITUTION line is logged (no "(option at default)" marker), but
  *      the [titledb] MISS line ("no per-title entry for CRC32 ...") is
  *      logged instead; shadowHiresN == 1.
+ *   6  AvP, then retro_unload_game() in the same process -- the titledb
+ *      cache clears immediately: TitleDBTitleName() is non-NULL after load
+ *      and NULL after unload, so a later option read cannot see stale
+ *      per-title overrides from the previous content.
  *
  * The [titledb] line is logged at RETRO_LOG_INFO via LOG_INF(), which the
  * harness's cb_log filters out below RETRO_LOG_WARN unless
@@ -139,9 +143,12 @@ int main(int argc, char **argv)
     int i;
     int *hires_n_ptr;
     int *shadow_active_ptr;
+    const char *(*title_name_fn)(void);
+    void (*retro_unload_game_fn)(void);
     harness_result results[4];
     unsigned nres = 0;
     int pass;
+    int did_manual_unload = 0;
 
     /* Pre-parse --case: harness_init_from_args skips unknown flags one
      * token at a time (see its comment "Unknown flag -- skip"), and the
@@ -154,9 +161,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
             case_num = atoi(argv[i + 1]);
     }
-    if (case_num < 1 || case_num > 5) {
+    if (case_num < 1 || case_num > 6) {
         fprintf(stderr,
-                "usage: test_pertitle_db [core] <rom> --case N[1-5] "
+                "usage: test_pertitle_db [core] <rom> --case N[1-6] "
                 "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -195,6 +202,8 @@ int main(int argc, char **argv)
         harness_shutdown(&cfg);
         return 1;
     }
+    title_name_fn = (const char *(*)(void))harness_dlsym(&cfg, "TitleDBTitleName");
+    retro_unload_game_fn = (void (*)(void))harness_dlsym(&cfg, "retro_unload_game");
 
     switch (case_num) {
     case 1: {
@@ -269,13 +278,34 @@ int main(int argc, char **argv)
         pass = hires_ok && no_sub_log && miss_logged;
         break;
     }
+    case 6: {
+        const char *title_before = title_name_fn ? title_name_fn() : NULL;
+        int had_title = (title_before != NULL);
+        if (retro_unload_game_fn) {
+            retro_unload_game_fn();
+            did_manual_unload = 1;
+        }
+        results[nres++] = mkres(had_title, "case6_title_cached_after_load",
+            had_title ? "TitleDBTitleName() non-NULL after matched load"
+                      : "TitleDBTitleName() was NULL after matched load");
+        results[nres++] = mkres(title_name_fn && retro_unload_game_fn
+                                && title_name_fn() == NULL,
+            "case6_unload_clears_titledb",
+            (title_name_fn && retro_unload_game_fn && title_name_fn() == NULL)
+                ? "retro_unload_game() cleared titledb state"
+                : "retro_unload_game() left stale titledb state");
+        pass = had_title && title_name_fn && retro_unload_game_fn
+            && title_name_fn() == NULL;
+        break;
+    }
     default:
         pass = 0;
         break;
     }
 
     harness_report(&cfg, results, nres);
-    harness_shutdown(&cfg);
+    if (!did_manual_unload)
+        harness_shutdown(&cfg);
     if (log_path_valid)
         unlink(log_path);
 
