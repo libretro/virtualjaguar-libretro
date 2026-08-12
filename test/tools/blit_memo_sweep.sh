@@ -35,6 +35,13 @@
 #   JOBS       parallel titles           (default cores/2)
 #   OUT        result CSV                (default /tmp/blit_memo_sweep.csv)
 #   FILTER     grep -i pattern to select titles
+#   EXTRA_OPTS extra harness args applied to every title, e.g.
+#              "--option virtualjaguar_internal_resolution=2x
+#               --option virtualjaguar_true_color=enabled
+#               --option virtualjaguar_pertitle_defaults=disabled"
+#              Sweeping with the shadow surfaces ON matters: the memo
+#              replays shadow stores for skipped blits, and a sweep with
+#              them off never exercises that path at all.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -46,6 +53,7 @@ MIN_RUNS=${MIN_RUNS:-1000}
 JOBS=${JOBS:-$(( $(getconf _NPROCESSORS_ONLN) / 2 ))}
 OUT=${OUT:-/tmp/blit_memo_sweep.csv}
 FILTER=${FILTER:-}
+EXTRA_OPTS=${EXTRA_OPTS:-}
 VERIFY="$ROOT/test/tools/blit_memo_verify"
 
 [ "$JOBS" -lt 1 ] && JOBS=1
@@ -79,6 +87,11 @@ i=0
 for f in $(seq 1300 100 "$FRAMES"); do
   PRESSES+=(--press "$f:${d[$((i % 4))]}:90")
   i=$((i + 1))
+done
+
+# Word-split EXTRA_OPTS deliberately (it is a flag list, not a path).
+for o in $EXTRA_OPTS; do
+  PRESSES+=("$o")
 done
 
 export CORE VERIFY FRAMES MIN_RUNS
