@@ -268,6 +268,7 @@
 #include "op.h"
 #include "perf_counters.h"
 #include "settings.h"
+#include "../core/vjtrace.h"
 
 PERF_COUNTER(timing_gpu_irqs_to_68k);
 PERF_COUNTER(timing_int1_video);
@@ -646,6 +647,7 @@ void TOMSetPendingJERRYInt(void)
 {
    PERF_INC(timing_int1_jerry);
    tom_jerry_int_pending = 1;
+   VJT_EMIT(VJT_EV_IRQ_ASSERT, TOM, 4, 0);
    TOMAssertEnabledIRQs();
 }
 
@@ -654,6 +656,7 @@ void TOMSetPendingTimerInt(void)
 {
    PERF_INC(timing_int1_timer);
    tom_timer_int_pending = 1;
+   VJT_EMIT(VJT_EV_IRQ_ASSERT, TOM, 3, 0);
    TOMAssertEnabledIRQs();
 }
 
@@ -662,6 +665,7 @@ void TOMSetPendingObjectInt(void)
 {
    PERF_INC(timing_int1_object);
    tom_object_int_pending = 1;
+   VJT_EMIT(VJT_EV_IRQ_ASSERT, TOM, 2, 0);
    TOMAssertEnabledIRQs();
 }
 
@@ -670,6 +674,7 @@ void TOMSetPendingGPUInt(void)
 {
    PERF_INC(timing_int1_gpu);
    tom_gpu_int_pending = 1;
+   VJT_EMIT(VJT_EV_IRQ_ASSERT, TOM, 1, 0);
    TOMAssertEnabledIRQs();
 }
 
@@ -678,6 +683,7 @@ void TOMSetPendingVideoInt(void)
 {
    PERF_INC(timing_int1_video);
    tom_video_int_pending = 1;
+   VJT_EMIT(VJT_EV_IRQ_ASSERT, TOM, 0, 0);
    TOMAssertEnabledIRQs();
 }
 

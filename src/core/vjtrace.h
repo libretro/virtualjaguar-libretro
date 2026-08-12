@@ -1,0 +1,289 @@
+/* vjtrace.h -- core-side flight-recorder trace facility.
+ *
+ * Dev-build only (compiled when VJ_TRACE is defined, which the Makefile
+ * sets automatically inside the TEST_EXPORTS=1 branch).  In shipped
+ * builds every VJT_* macro below compiles to nothing and vjtrace.c's
+ * body is entirely #ifdef'd out, so there is zero cost and zero
+ * exported symbols (see docs/vjtrace-design.md).
+ *
+ * The event enum, vjtrace_ev, and vjtrace_counters_t are declared
+ * OUTSIDE the VJ_TRACE guard so that offline analyzer tools (which are
+ * never built with VJ_TRACE) can still include this header for the
+ * types used by the binary dump format.
+ *
+ * PERFORMANCE NOTE (VJ_TRACE is coupled 1:1 to TEST_EXPORTS=1, so this
+ * taxes every test-mode build, not just callers that use vjtrace
+ * directly): the GPU/DSP per-instruction PC-history hooks in GPUExec()/
+ * DSPExec() (see vjtrace_pchist_gpu()/vjtrace_pchist_dsp() below)
+ * measured a ~6-8% wall-clock throughput regression on `make
+ * BENCH_PROFILE=1 benchmark` versus a build with no vjtrace hooks at
+ * all (task-3-report.md has the full before/after numbers). A plain
+ * function call and an inlined macro that writes the ring arrays
+ * directly were both measured -- 11 paired, interleaved samples put
+ * them within 0.02% of each other, i.e. statistically indistinguishable
+ * on this hardware -- so the cost is the per-instruction ring write
+ * itself, not call overhead, and the simpler function-call form was
+ * kept. Any wall-clock-derived assertion is measurably tighter in a
+ * VJ_TRACE build than in production: `test/test_frontend_pacing.c`'s
+ * default invocation (no `--max-fastest-frame-fraction` override, see
+ * Makefile:1163) asserts the fastest observed frame beats 0.5x the
+ * frame period (8.333 ms at 60 fps) -- a real, load-sensitive margin
+ * (the Makefile's own comment at line 1173-1178 notes it "would flake
+ * on loaded CI runners: observed locally 11.3 ms vs the 8.3 ms limit
+ * under parallel builds", which is why the *other* two invocations
+ * defuse it with `--max-fastest-frame-fraction 100`). Measured passing
+ * with room at commit 2b5d132 (fastest frame 4.326 ms, 52% of the
+ * 8.333 ms limit) -- not a confirmed regression -- but the margin is
+ * real and shared with every other per-instruction VJ_TRACE hook added
+ * in the future; re-check this assertion specifically (not just `make
+ * test`'s overall exit code) after adding another one. */
+#ifndef __VJTRACE_H__
+#define __VJTRACE_H__
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Event types.  addr/value meaning is documented per-type. */
+enum
+{
+   VJT_EV_NONE = 0,
+   VJT_EV_IRQ_ASSERT,     /* addr = src: 0 video,1 gpu,2 obj,3 timer,4 jerry */
+   VJT_EV_IRQ_DISPATCH,   /* 68K autovector entry */
+   VJT_EV_GPU_GO,         /* value = G_PC at start */
+   VJT_EV_GPU_STOP,       /* value = PC at stop */
+   VJT_EV_OP_LIST_START,  /* addr = OLP, value = halfline */
+   VJT_EV_OP_OBJECT,      /* addr = object phrase addr, value = type 0-7 */
+   VJT_EV_OP_GPU_OBJ,
+   VJT_EV_OP_BRANCH,      /* value = branch target */
+   VJT_EV_BLIT_CMD,       /* addr = B_CMD value, value = A1_BASE */
+   VJT_EV_INPUT_EDGE,     /* host-injected: addr = pad, value = bits */
+   VJT_EV_WATCH_RD,
+   VJT_EV_WATCH_WR,
+   VJT_EV_SNAPSHOT,
+   VJT_EV_MARK,
+   VJT_EV__COUNT
+};
+
+/* 32 bytes with alignment. */
+typedef struct
+{
+   uint64_t seq;
+   uint32_t frame;
+   uint16_t halfline;
+   uint8_t type;
+   uint8_t who;
+   uint32_t pc;
+   uint32_t addr;
+   uint32_t value;
+} vjtrace_ev;
+
+typedef struct
+{
+   uint64_t ev[VJT_EV__COUNT];   /* one cumulative counter per event type */
+} vjtrace_counters_t;
+
+#ifdef VJ_TRACE
+
+/* alloc ring; cap from env VJ_TRACE_RING (parsed strictly -- non-numeric,
+ * zero, negative, or overflowing values fall back to the default),
+ * default 1<<20, hard ceiling 1<<25 */
+void vjtrace_init(void);
+/* Counterpart to vjtrace_init(): frees the ring and resets every module
+ * static (ring/cap/head/seq/frame, watches, counters, GPU/DSP PC
+ * history) so a subsequent vjtrace_init() call re-allocates cleanly.
+ * Call from the core's shutdown path (retro_deinit(), libretro.c) --
+ * iOS cannot dlclose cores, so that is the paired call to retro_init()'s
+ * vjtrace_init(), same lifecycle symmetry every other per-session vjtrace
+ * static already has via retro_unload_game()/retro_deinit().  Idempotent:
+ * safe to call when the ring was never allocated or already freed. */
+void vjtrace_shutdown(void);
+/* Sets the frame number stamped onto every subsequently emitted event.
+ * Called from the TOP of retro_run (libretro.c) with a 1-based counter,
+ * so events emitted while frame N is being run -- by the machine and by
+ * a harness's post-run frame hook alike -- all carry N, and no consumer
+ * needs a per-event-source correction.  Events emitted before the first
+ * retro_run (retro_init / retro_load_game) carry 0. */
+void vjtrace_frame_tick(uint32_t frame);
+void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value);
+/* rw: 1=r 2=w 3=rw; ret idx or -1.  Sanitizes its inputs: an inverted
+ * range (hi < lo) is swapped, and rw is masked to its low 2 bits and
+ * defaulted to 2 (writes) if that leaves 0 -- so a bad range or mode
+ * from any caller installs a working watch instead of one that can
+ * never fire. */
+int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw);
+void vjtrace_watch_clear(void);
+void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_write);
+/* WATCH COVERAGE (updated by Task 7.5 -- see docs/vjtrace-design.md
+ * section 2 for the original design): VJT_WATCH_RD/WR sites live in
+ * JaguarReadByte, JaguarReadWord, JaguarReadLong, JaguarWriteByte,
+ * JaguarWriteWord and JaguarWriteLong (src/core/jaguar.c), which every
+ * GPU/DSP/OP/blitter/CDROM access to the shared memory map routes
+ * through, AND directly in the 68K's own bus-access fast path --
+ * m68k_read_memory_8/16/32 and m68k_write_memory_8/16/32 (also
+ * jaguar.c) -- which UAE calls for every 68K instruction fetch and
+ * data access and which never routes through the Jaguar dispatch above
+ * (it writes/reads jaguarMainRAM[] directly and dispatches TOM/JERRY/
+ * CDROM itself). Only the non-decomposing entry points of that fast
+ * path are hooked (e.g. m68k_write_memory_32's direct-RAM branch, not
+ * its two-half TOM/JERRY/CDROM fallback, which already gets two
+ * records from the two m68k_write_memory_16 calls it makes) so a
+ * single 68K bus access yields the natural record(s), never a
+ * double-count. who=M68K therefore now appears in WATCH_RD/WATCH_WR
+ * records with a real originating PC (who=OP and who=BLITTER do NOT --
+ * vjt_pc_of() only resolves a PC for M68K/JAGUAR/GPU/DSP; OP and
+ * BLITTER records always carry pc=0, same as before this task).
+ *
+ * PC ATTRIBUTION is the instruction-START PC, not whatever regs.pc
+ * happens to hold at the moment of the access: m68k_incpc() (or a
+ * handler's own equivalent) advances regs.pc at or near the top of
+ * nearly every opcode handler, before that handler's memory access
+ * runs, so reading M68K_REG_PC at access time names the NEXT
+ * instruction's fetch in the overwhelming majority of cases (859 of
+ * 861 opcode handlers, measured). vjt_pc_of() (src/core/vjtrace.c)
+ * instead reads the most recent entry of pcQueue/pcQPtr
+ * (src/core/jaguar.c), which M68KInstructionHook() latches BEFORE each
+ * instruction's opcode handler runs -- see the comment on vjt_pc_of()
+ * for the full argument.
+ *
+ * RECORD VALUE for a 68K write is masked to the access width (8/16/32
+ * bits) at each m68k_write_memory_* hook site, matching what
+ * JaguarWriteByte/Word/Long already carry -- UAE's `value` argument to
+ * the byte/word bus functions is not itself masked (e.g. a byte store
+ * of $AA can arrive as $FFFFFFAA), so the hook masks explicitly rather
+ * than forwarding the raw argument. A 68K read's `value` field is
+ * always 0 (the read hasn't happened yet at hook time), same as
+ * JaguarReadByte/Word/Long.
+ *
+ * RECORD SHAPE IS REGION-DEPENDENT for 32-bit 68K accesses, both
+ * m68k_read_memory_32 and m68k_write_memory_32: a 32-bit access to main
+ * RAM or cart ROM is terminal and produces ONE record covering the
+ * whole 4-byte span at its base address; a 32-bit access to anything
+ * else (TOM/JERRY/CDROM/unknown) decomposes into two 16-bit accesses
+ * and so produces TWO 2-byte records, at addr and addr+2. vjtrace_ev
+ * has no width/size field, so a consumer cannot tell which shape a
+ * given record came from except by knowing the target region. See the
+ * WATCH RECORD SHAPE note in test/harness/trace_probe.h (where
+ * `--watch` is documented) for the concrete failure mode this causes
+ * for a watch window that starts mid-longword.
+ *
+ * STILL OUT OF SCOPE: GPU/DSP local-store writes -- a GPU/DSP
+ * instruction writing its own local RAM ($F03000-$F03FFF /
+ * $F1B000-$F1CFFF) does not go through the Jaguar dispatch either, so
+ * those writes are not watch-visible. (GPU/DSP writes reaching main RAM
+ * or the other processor's local RAM DO route through it and are
+ * covered.) */
+/* binary ring dump; see docs/vjtrace-design.md for the format */
+int vjtrace_dump(const char *path);
+
+/* Live ring readback, for a consumer that wants to drain events as they
+ * are produced instead of waiting for vjtrace_dump() at exit (the
+ * harness-side trace_probe tallies VJT_EV_IRQ_ASSERT per source this
+ * way -- vjtrace_counters carries one counter per event *type*, so the
+ * per-source split in the event's addr field is only available from the
+ * events themselves).
+ *
+ * vjtrace_ring_head() returns the total number of events ever emitted,
+ * i.e. one past the index of the newest event; it is NOT reduced by
+ * eviction, so it is a stable monotonic cursor.  A caller drains
+ * [last_head, vjtrace_ring_head()) and remembers the new head.
+ *
+ * vjtrace_ring_read() copies event `idx` into *out and returns 1, or
+ * returns 0 without touching *out when the index is unreadable: ring
+ * not initialized, out NULL, idx not yet written (idx >= head), or idx
+ * already overwritten by wraparound (head - idx > capacity).  A caller
+ * that drains less often than the ring fills therefore sees 0 for the
+ * evicted prefix of its window and can report the undercount rather
+ * than silently mis-tallying. */
+uint64_t vjtrace_ring_head(void);
+int vjtrace_ring_read(uint64_t idx, vjtrace_ev *out);
+
+/* Multi-section emulator state dump ("VJSN" v1 format; see
+ * docs/vjtrace-design.md). Writes host-endian, native-struct-layout
+ * data (the reader runs on the same host as the writer -- no byte-swap
+ * or wire-format packing is done). Header: { char magic[4]="VJSN";
+ * uint32_t version=1; uint32_t nsections=8; } followed by nsections of
+ * { char name[8] (NUL-padded, NOT required to be NUL-terminated --
+ * "JERRYREG" fills all 8 bytes with no terminator); uint32_t base;
+ * uint32_t len; } + len raw bytes, in this fixed order: MAINRAM (base
+ * 0, 2 MB), GPURAM (base $F03000, 4 KB), DSPRAM (base $F1B000, 8 KB),
+ * TOMREG (base $F00000, 16 KB), JERRYREG (base $F10000, 64 KB),
+ * REGS68K (base 0, 18 uint32: D0-D7,A0-A7,PC,SR), REGSGPU (base 0, 34
+ * uint32: 32 regs of the CURRENT bank + PC + GPU_FLAGS), REGSDSP (base
+ * 0, 34 uint32: 32 regs of the CURRENT bank + PC + DSP_FLAGS). Slot 33
+ * of REGSGPU/REGSDSP is the flags register (GPUGetFlags()/
+ * DSPGetFlags()), NOT the control register -- G_CTRL/D_CTRL are a
+ * different register at a different address and are not captured by
+ * this format.
+ * Only the currently-selected GPU/DSP register bank is captured -- the
+ * alternate bank is not dumped.
+ *
+ * Emits a VJT_EV_SNAPSHOT event on success (who=JAGUAR, addr=0,
+ * value=ordinal), ordinal counting from 0 for the first snapshot
+ * written by this process, so ring events can be correlated back to a
+ * specific snapshot file by index.
+ *
+ * Returns -1 (no event emitted, no partial file left open) if the
+ * vjtrace ring is not initialized (vjtrace_init() not yet called) or
+ * if the output file can't be opened; never crashes. */
+int vjtrace_snapshot(const char *path);
+
+/* GPU/DSP PC history rings (0x400 entries each), fed from the per-
+ * instruction top of GPUExec()/DSPExec() via a plain function call.
+ * Read back via vjtrace_backtrace(). An inlined-macro form that writes
+ * the ring arrays directly (no call) was measured against this and
+ * found statistically indistinguishable -- see the PERFORMANCE NOTE
+ * above -- so this is the simpler of the two working designs, kept per
+ * that measurement rather than assumed. */
+#define VJT_PCHIST_CAP 0x400
+
+void vjtrace_pchist_gpu(uint32_t pc);
+void vjtrace_pchist_dsp(uint32_t pc);
+
+/* Fills out[] with up to maxn PCs from the requested processor's PC
+ * history ring, oldest first / newest last, and sets *count to the
+ * number of entries actually written.  who is one of the vjag_memory.h
+ * enum values (M68K, GPU, DSP); any other value yields *count = 0.
+ *
+ * GPU/DSP are fill-tracked: *count is min(maxn, VJT_PCHIST_CAP, entries
+ * actually pushed since the ring was last cleared/emulation start), so
+ * a backtrace requested before either processor has executed
+ * VJT_PCHIST_CAP instructions returns only real entries -- never
+ * zero-filled or stale fabricated history.
+ *
+ * M68K reads the existing pcQueue/pcQPtr ring in src/core/jaguar.c
+ * rather than a duplicate (see M68KInstructionHook(), jaguar.c:332).
+ * KNOWN LIMITATION: that ring has no fill counter of its own, and
+ * adding one means touching jaguar.c's per-instruction hot path, which
+ * is out of scope for this module. vjtrace_backtrace() therefore
+ * assumes it is full and can return zero/stale-placeholder entries for
+ * the first VJT_PCHIST_CAP 68K instructions of emulation (pcQueue is a
+ * plain BSS array, so unwritten slots read as PC=0). In practice
+ * M68KInstructionHook() runs unconditionally every 68K instruction from
+ * the very first one executed (it is not gated by VJ_TRACE), so this
+ * window closes within roughly VJT_PCHIST_CAP instructions of core
+ * boot -- a few dozen microseconds -- and does not recur afterward. */
+void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count);
+
+extern vjtrace_counters_t vjtrace_counters;
+extern uint32_t vjtrace_nwatch;
+
+#define VJT_EMIT(t, w, a, v)   vjtrace_emit((uint8_t)(t), (uint8_t)(w), (a), (v))
+#define VJT_WATCH_WR(a, v, w)  do { if (vjtrace_nwatch) vjtrace_watch_check((a), (v), (w), 1); } while (0)
+#define VJT_WATCH_RD(a, v, w)  do { if (vjtrace_nwatch) vjtrace_watch_check((a), (v), (w), 0); } while (0)
+
+#else /* !VJ_TRACE */
+
+#define VJT_EMIT(t, w, a, v)   do { } while (0)
+#define VJT_WATCH_WR(a, v, w)  do { } while (0)
+#define VJT_WATCH_RD(a, v, w)  do { } while (0)
+
+#endif /* VJ_TRACE */
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __VJTRACE_H__ */

@@ -63,6 +63,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/core/jaggd.c \
 	$(CORE_DIR)/src/core/nvmbios.c \
 	$(CORE_DIR)/src/core/vjag_memory.c \
+	$(CORE_DIR)/src/core/vjtrace.c \
 	$(CORE_DIR)/src/core/universalhdr.c \
 	$(CORE_DIR)/src/jerry/wavetable.c
 

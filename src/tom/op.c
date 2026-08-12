@@ -24,6 +24,7 @@
 #include "shadowfb.h"
 #include "vjag_memory.h"
 #include "tom.h"
+#include "../core/vjtrace.h"
 
 #define BLEND_Y(dst, src)	op_blend_y[(((uint16_t)dst<<8)) | ((uint16_t)(src))]
 #define BLEND_CR(dst, src)	op_blend_cr[(((uint16_t)dst)<<8) | ((uint16_t)(src))]
@@ -400,6 +401,7 @@ void OPProcessList(int halfline, bool render)
    halfline &= 0x7FF;
 
    op_pointer = OPGetListPointer();
+   VJT_EMIT(VJT_EV_OP_LIST_START, OP, op_pointer, (uint32_t)halfline);
 
    // *** BEGIN OP PROCESSOR TESTING ONLY ***
    // *** END OP PROCESSOR TESTING ONLY ***
@@ -413,6 +415,8 @@ void OPProcessList(int halfline, bool render)
 
       p0          = OPLoadPhrase(op_pointer);
       op_pointer += 8;
+
+      VJT_EMIT(VJT_EV_OP_OBJECT, OP, op_pointer - 8, (uint32_t)((uint8_t)p0 & 0x07));
 
       switch ((uint8_t)p0 & 0x07)
       {
@@ -581,6 +585,8 @@ void OPProcessList(int halfline, bool render)
                 * rendered the bottom third of fight scenes black. */
                int32_t guard = OP_GPU_RELEASE_GUARD_CYCLES;
 
+               VJT_EMIT(VJT_EV_OP_GPU_OBJ, OP, op_pointer - 8, 0);
+
                OPSetCurrentObject(p0);
                op_obf_written = false;
                GPUSetIRQLine(3, ASSERT_LINE);
@@ -609,29 +615,45 @@ void OPProcessList(int halfline, bool render)
                // JTRM is wrong: CC is bits 14-16 (3 bits, *not* 2)
                uint8_t  cc   = (p0 >> 14) & 0x07;
                uint32_t link = (p0 >> 21) & 0x3FFFF8;
+               uint32_t branchObjAddr = op_pointer - 8;
 
                switch (cc)
                {
                   case CONDITION_EQUAL:
                      if (halfline == ypos || ypos == 0x7FF)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_LESS_THAN:
                      if (halfline < ypos)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_GREATER_THAN:
                      if (halfline > ypos)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_OP_FLAG_SET:
                      if (OPGetStatusRegister() & 0x01)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_SECOND_HALF_LINE:
                      // Branch if bit 10 of HC is set...
                      if (TOMGetHC() & 0x0400)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   default:
                      // Basically, if you do this, the OP does nothing. :-)

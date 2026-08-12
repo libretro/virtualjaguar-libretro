@@ -28,6 +28,7 @@
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
+#include "../core/vjtrace.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -934,6 +935,24 @@ uint32_t DSPGetFlags(void)
 	return dsp_flags;
 }
 
+/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
+ * VJ_TRACE; DSPGetReg is new-for-vjtrace surface (unlike GPU's
+ * pre-existing #406 GPUGetReg, left unguarded elsewhere), so it
+ * compiles out entirely in shipped/non-test builds rather than relying
+ * solely on exports.list to hide it. */
+#ifdef VJ_TRACE
+/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose a DSP
+ * register by index from the CURRENT bank, mirroring GPUGetReg in
+ * src/tom/gpu.c. Not part of the shipped ABI (production link uses
+ * exports.list, which does not have the _DSP* wildcard). */
+uint32_t DSPGetReg(int n)
+{
+	if (n < 0 || n > 31)
+		return 0;
+	return dsp_reg[n];
+}
+#endif /* VJ_TRACE */
+
 void DSPInit(void)
 {
 	dsp_build_branch_condition_table();
@@ -1009,6 +1028,9 @@ void DSPExec(int32_t cycles)
 	{
       uint16_t opcode;
       uint32_t index;
+#ifdef VJ_TRACE
+      vjtrace_pchist_dsp(dsp_pc);
+#endif
 
 		/* If IMASK was cleared, see if any other interrupts are pending --
 		 * but not until the D_FLAGS store that cleared it has retired, so

@@ -87,6 +87,7 @@ endif
 ifeq ($(TEST_EXPORTS),1)
 LINK_SCRIPT := link-test.T
 MACHO_EXPORTS := exports-test.list
+CFLAGS += -DVJ_TRACE
 else
 LINK_SCRIPT := link.T
 MACHO_EXPORTS := exports.list
@@ -793,17 +794,31 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
-# Force a re-link when the exported ABI changes.  The objects are identical
-# either way, so a plain `make` followed by `make TEST_EXPORTS=1 test` would
-# otherwise reuse the production-slim library -- it is newer than every
-# object, so nothing relinks -- and the white-box tests fail with
-# "Missing: m68k_execute".  Delete the library outright rather than relying
-# on a stamp file's mtime: the stamp and the library can land in the same
-# second, which is exactly the timestamp-granularity trap this is meant to
-# close.  Runs at parse time, once TARGET is known.
+# Force a re-link when the exported ABI changes.  Almost every object is
+# identical either way, so a plain `make` followed by `make TEST_EXPORTS=1
+# test` would otherwise reuse the production-slim library -- it is newer
+# than every object, so nothing relinks -- and the white-box tests fail
+# with "Missing: m68k_execute".  Delete the library outright rather than
+# relying on a stamp file's mtime: the stamp and the library can land in
+# the same second, which is exactly the timestamp-granularity trap this is
+# meant to close.  Runs at parse time, once TARGET is known.
+#
+# vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
+# site or a vjtrace_pchist_*() call (including libretro.o's
+# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
+# *content* (not just the export list) that depends on TEST_EXPORTS --
+# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
+# -DVJ_TRACE line above), so those objects must be deleted alongside the
+# library on every mode transition, or a stale object compiled in the
+# other mode silently survives the relink: either vjtrace_* symbols go
+# missing from a `make TEST_EXPORTS=1` build that started from a plain
+# `make` (undefined symbols at link time), or the reverse transition
+# silently keeps the no-op macro expansion, so the ring never receives
+# events despite vjtrace_* being exported.
+VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
 $(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
         || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET); })
+             rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
@@ -911,6 +926,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# vjtrace flight-recorder selftest: determinism (field_diff +
+	@# trace_memdiff on two identical runs), watch attribution, and
+	@# VJ_TRACE_RING wrap correctness. Builds its own analyzer/smoke tools
+	@# into test/tools/ on first run (see the script header); needs only
+	@# the in-tree test/roms/yarc.j64, never test/roms/private.
+	bash test/tools/vjtrace_selftest.sh ./$(TARGET)
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate

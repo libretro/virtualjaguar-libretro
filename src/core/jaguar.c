@@ -40,6 +40,7 @@
 #include "nvmbios.h"
 #include "settings.h"
 #include "tom.h"
+#include "vjtrace.h"
 
 static bool frameDone;
 
@@ -431,6 +432,12 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* This bus fast path never routes through JaguarReadByte (see the
+    * comment above M68K_BUS_CHARGE), so hook the watch check here.
+    * m68kBusNoCharge is also true for disassembler reads (Task 7.5):
+    * those aren't real bus traffic and must not appear as watch hits. */
+   if (!m68kBusNoCharge)
+      VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -472,6 +479,9 @@ unsigned int m68k_read_memory_16(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- see m68k_read_memory_8. */
+   if (!m68kBusNoCharge)
+      VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -518,12 +528,21 @@ unsigned int m68k_read_memory_32(unsigned int address)
 
    if (address <= 0x1FFFFC)
    {
+      /* Terminal branch (no decomposition) -- hook here.  The
+       * CDROM/TOM/JERRY/unknown fallthrough below recurses into
+       * m68k_read_memory_16() twice instead, which is already hooked;
+       * hooking it again here would double-count that case. */
+      if (!m68kBusNoCharge)
+         VJT_WATCH_RD(address, 0, M68K);
       M68K_BUS_CHARGE(address, 2);
       return GET32(jaguarMainRAM, address);
    }
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
+      /* Also terminal -- see the note above. */
+      if (!m68kBusNoCharge)
+         VJT_WATCH_RD(address, 0, M68K);
       M68K_BUS_CHARGE(address, 2);
       if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadLong(address);
@@ -661,6 +680,15 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- never routes through
+    * JaguarWriteByte (see the comment above M68K_BUS_CHARGE).  No
+    * disassembler variant exists for writes, so unlike the read side
+    * there is no m68kBusNoCharge guard to apply here.  UAE's `value`
+    * argument is not masked to the access width (byte stores can
+    * arrive sign-extended into the upper 24 bits), unlike
+    * JaguarWriteByte's uint8_t parameter, so mask here to match its
+    * record shape. */
+   VJT_WATCH_WR(address, value & 0xFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -702,6 +730,13 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- terminal (never recurses into
+    * another m68k_write_memory_* function), so one call here is exactly
+    * one 68K bus write, including the half that only reaches the
+    * GPU/DSP RISC-local latch below and not memory yet.  Masked to 16
+    * bits to match JaguarWriteWord's record shape -- see the mask note
+    * in m68k_write_memory_8. */
+   VJT_WATCH_WR(address, value & 0xFFFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
@@ -766,6 +801,15 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 
    if (address <= 0x1FFFFC)
    {
+      /* Terminal branch (no decomposition) -- hook here.  Everything
+       * else below recurses into m68k_write_memory_16() twice instead,
+       * which is already hooked; hooking it again here would
+       * double-count that case (three overlapping records for one
+       * 32-bit access instead of the natural two).  No width mask
+       * needed here (unlike the 8/16-bit sites) -- this is itself a
+       * 32-bit access and `unsigned int` is exactly 32 bits, so
+       * `value` already matches JaguarWriteLong's record shape. */
+      VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
       SET32(jaguarMainRAM, address, value);
       return;
@@ -811,7 +855,11 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
+   /* Mask BEFORE the watch check -- a caller passing an address with
+    * upper bits set must still compare against the real 24-bit bus
+    * address a watch range was defined against. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_RD(offset, 0, who);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -838,7 +886,9 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 
 uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 {
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_RD(offset, 0, who);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -866,7 +916,9 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 
 void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_WR(offset, data, who);
 
    /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
     * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
@@ -916,7 +968,9 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 
 void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_WR(offset, data, who);
 
    /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
    if (offset <= 0x1FFFFE)
@@ -968,7 +1022,15 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
    if (busArbiter.enabled && who == OP)
       bus_arbiter_op_charge(1);
    if (addr < 0x800000)
+   {
+      /* Fast path: bypasses JaguarReadWord, so the watch check there
+       * never sees this access -- check it here instead.  Use addr
+       * (already masked to 24 bits above), not offset, so a caller
+       * passing upper bits set still compares against the real bus
+       * address a watch range was defined against. */
+      VJT_WATCH_RD(addr, 0, who);
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
+   }
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
 }
 
@@ -993,6 +1055,10 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
               data, who, m68k_get_reg(NULL, M68K_REG_PC));
    if (addr < 0x200000)
    {
+      /* Fast path: bypasses JaguarWriteWord, so the watch check there
+       * never sees this access -- check it here instead.  Use addr
+       * (already masked to 24 bits above) -- see JaguarReadLong. */
+      VJT_WATCH_WR(addr, data, who);
       SET32(jaguarMainRAM, addr, data);
       return;
    }

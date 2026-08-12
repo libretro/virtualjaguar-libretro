@@ -78,5 +78,6 @@
       shadowHiresN;
       shadowFBActive;
       TitleDB*;
+      vjtrace_*;
    local: *;
 };

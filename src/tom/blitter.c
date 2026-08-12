@@ -29,6 +29,7 @@
 #include "perf_counters.h"
 #include "shadowfb.h"
 #include "state.h"
+#include "../core/vjtrace.h"
 
 // Various conditional compilation goodies...
 
@@ -1143,6 +1144,9 @@ void blitter_blit(uint32_t cmd)
 {
    uint32_t m, e;
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
+
+   VJT_EMIT(VJT_EV_BLIT_CMD, BLITTER, cmd, REG(A1_BASE));
+
    colour_index = 0;
    src = cmd & 0x07;
    dst = (cmd >> 3) & 0x07;
@@ -2224,6 +2228,8 @@ void BlitterMidsummer2(void)
    uint16_t a1FracCInX = 0, a1FracCInY = 0;
 
    // Bugs in Jaguar I
+
+   VJT_EMIT(VJT_EV_BLIT_CMD, BLITTER, cmd, a1_base);
 
    a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
 

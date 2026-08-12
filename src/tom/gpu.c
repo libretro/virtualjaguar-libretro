@@ -35,6 +35,7 @@
 #include "tom.h"
 #include "event.h"
 #include "settings.h"
+#include "../core/vjtrace.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -718,6 +719,33 @@ uint32_t GPUGetReg(int n)
 	return gpu_reg[n];
 }
 
+/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
+ * VJ_TRACE, so its two supporting accessors below are guarded the same
+ * way -- unlike GPUGetReg above (pre-existing, #406, left as-is), these
+ * are new-for-vjtrace surface and the project convention is that all
+ * new vjtrace-only code compiles out entirely in shipped/non-test
+ * builds rather than relying solely on exports.list to hide it. */
+#ifdef VJ_TRACE
+/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose GPU
+ * local work RAM (the REGSGPU/GPURAM sections of vjtrace_snapshot()).
+ * Same not-in-shipped-ABI caveat as GPUGetReg above. */
+uint8_t * GPUGetRAM(void)
+{
+	return gpu_ram_8;
+}
+
+/* Diagnostic-only accessor: raw GPU_FLAGS/control register value. Like
+ * dsp_flags read by DSPGetFlags() in dsp.c, the live N/C/Z bits (kept
+ * separately in gpu_flag_n/c/z for cheap RMW) are merged into gpu_flags
+ * only on the $F02100 register-read path (see the case 0x00 block
+ * above), so this can read one flag update stale mid-instruction --
+ * snapshot-quality only, not for cycle-exact NCZ probes. */
+uint32_t GPUGetFlags(void)
+{
+	return gpu_flags;
+}
+#endif /* VJ_TRACE */
+
 void build_branch_condition_table(void)
 {
    unsigned i, j;
@@ -975,6 +1003,8 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             break;
          case 0x14:
             {
+               int wasRunning = GPU_RUNNING;
+
                data &= ~0xF7C0;		// Disable writes to INT_LAT0-4 & TOM version number
 
                // check for GPU -> CPU interrupt
@@ -1019,6 +1049,14 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                 * so the GO bit must land first.  $06 (the two transient
                 * interrupt-request bits) never persists in gpu_control. */
                gpu_control = (gpu_control & 0xF7C0) | (data & ~(0xF7C0 | 0x06));
+
+               // GO/STOP transition trace: covers both host-issued G_CTRL
+               // writes and GPU self-writes (STORE opcodes route through
+               // this same GPUWriteLong path with who == GPU).
+               if (!wasRunning && GPU_RUNNING)
+                  VJT_EMIT(VJT_EV_GPU_GO, GPU, 0, gpu_pc);
+               else if (wasRunning && !GPU_RUNNING)
+                  VJT_EMIT(VJT_EV_GPU_STOP, GPU, 0, gpu_pc);
 
                // check for CPU -> GPU interrupt #0
                if (data & 0x04)
@@ -1402,6 +1440,9 @@ void GPUExec(int32_t cycles)
       uint16_t opcode;
       uint32_t index;
       gpuExecSliceRemaining = cycles;
+#ifdef VJ_TRACE
+      vjtrace_pchist_gpu(gpu_pc);
+#endif
       if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
       {
          uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;

@@ -24,7 +24,9 @@ src/core/version.h
 .build
 
 # IDE / editor
-/.claude
+/.claude/*
+# ... but repo-checked-in agent skills are source, not local IDE state
+!/.claude/skills
 /.cursor
 /.vscode
 
@@ -55,6 +57,14 @@ test/tools/fmv_seek_probe
 test/tools/sram_test
 test/tools/netlink_pair
 test/tools/netlink_game
+# vjtrace flight-recorder analyzer/smoke tools -- built on demand by
+# test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
+# comment); never tracked, same Mach-O-on-Linux-CI hazard as above.
+test/tools/vjtrace_smoke
+test/tools/trace_dump
+test/tools/trace_diff
+test/tools/field_diff
+test/tools/trace_memdiff
 test/dump_caller
 test/dump_pc
 test/heap_search

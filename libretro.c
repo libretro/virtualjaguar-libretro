@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "vjtrace.h"
 #include "crc32.h"
 #include "bus_arbiter.h"
 #include "file.h"
@@ -101,6 +102,15 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
 /* One-shot latch for the "restart required" notice when the
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
+
+#ifdef VJ_TRACE
+/* vjtrace per-session frame counter (see the use site in retro_run()).
+ * File-scope, not a retro_run()-local static, so retro_unload_game()/
+ * retro_deinit() can reset it: iOS cannot dlclose cores, so a
+ * function-local static would keep counting from a previous title
+ * instead of restarting the documented frame==1 invariant. */
+static uint32_t vjt_frame = 0;
+#endif
 
 extern uint16_t eeprom_ram[64];
 extern uint16_t cdrom_eeprom_ram[64];
@@ -1985,6 +1995,12 @@ void retro_unload_game(void)
    update_option_visibility();
    JaguarDone();
 
+#ifdef VJ_TRACE
+   /* Next title's frame 1 must be ring/field-CSV frame 1, not a
+    * continuation of this session's count (see vjt_frame's decl). */
+   vjt_frame = 0;
+#endif
+
    if (videoBuffer)
       free(videoBuffer);
    videoBuffer = NULL;
@@ -2130,6 +2146,10 @@ void retro_init(void)
    bus_arbiter_init();
 
    CrashDetectInit();
+
+#ifdef VJ_TRACE
+   vjtrace_init();
+#endif
 }
 
 void retro_deinit(void)
@@ -2180,6 +2200,21 @@ void retro_deinit(void)
    content_loaded = false;
    show_cd_options = true;
    show_cart_bios_option = true;
+#ifdef VJ_TRACE
+   /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
+    * decl. */
+   vjt_frame = 0;
+   /* Paired with vjtrace_init() in retro_init(): frees the ring (fixes a
+    * leak the sanitizer job caught -- 33,554,432 bytes = the default
+    * 1<<20-record ring, calloc'd once and never freed) and resets every
+    * other vjtrace static, so a later retro_init() on the same process
+    * (iOS cannot dlclose cores) re-allocates cleanly instead of hitting
+    * vjtrace_init()'s "if (ring) return" early-out with a dangling cap.
+    * Any harness's own ring dump (trace_probe_finish() and friends) has
+    * already run by this point -- see harness_shutdown(), which calls
+    * retro_unload_game() then retro_deinit() last. */
+   vjtrace_shutdown();
+#endif
 }
 
 void retro_reset(void)
@@ -2235,6 +2270,20 @@ static void dbg_dump_frame(void)
 void retro_run(void)
 {
    bool updated = false;
+
+#ifdef VJ_TRACE
+   /* Stamp the frame number BEFORE the machine runs, so every event
+    * emitted during this retro_run carries the number of the frame it
+    * belongs to.  Ticking at the END instead (where this used to live)
+    * left machine events stamped with the PREVIOUS frame while events a
+    * harness emits from its post-run frame hook carried the current
+    * one -- two different corrections needed to align one ring.  The
+    * first retro_run is frame 1, matching the harness frame counter;
+    * events emitted during retro_load_game/retro_init, before any
+    * retro_run, carry frame 0.  retro_run has no early return, so this
+    * runs exactly once per frame. */
+   vjtrace_frame_tick(++vjt_frame);
+#endif
 
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */
