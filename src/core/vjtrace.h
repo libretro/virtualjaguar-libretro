@@ -11,32 +11,65 @@
  * never built with VJ_TRACE) can still include this header for the
  * types used by the binary dump format.
  *
- * PERFORMANCE NOTE (VJ_TRACE is coupled 1:1 to TEST_EXPORTS=1, so this
- * taxes every test-mode build, not just callers that use vjtrace
- * directly): the GPU/DSP per-instruction PC-history hooks in GPUExec()/
- * DSPExec() (see vjtrace_pchist_gpu()/vjtrace_pchist_dsp() below)
+ * PERFORMANCE NOTE (VJ_TRACE is coupled 1:1 to TEST_EXPORTS=1, so any
+ * always-on cost here taxes every test-mode build, not just callers
+ * that use vjtrace directly -- roughly 40 harnesses link a VJ_TRACE
+ * core and never trace at all): the GPU/DSP per-instruction PC-history
+ * hooks in GPUExec()/DSPExec() (see vjtrace_pchist_gpu()/
+ * vjtrace_pchist_dsp() below), unconditionally writing every recorded
+ * event through vjtrace_emit() (tom.c/op.c/blitter.c/gpu.c/
+ * m68kinterface.c fire ~15 VJT_EMIT sites, some -- OP_OBJECT/
+ * OP_LIST_START -- multiple thousand times a frame), originally
  * measured a ~6-8% wall-clock throughput regression on `make
  * BENCH_PROFILE=1 benchmark` versus a build with no vjtrace hooks at
  * all (task-3-report.md has the full before/after numbers). A plain
  * function call and an inlined macro that writes the ring arrays
  * directly were both measured -- 11 paired, interleaved samples put
  * them within 0.02% of each other, i.e. statistically indistinguishable
- * on this hardware -- so the cost is the per-instruction ring write
- * itself, not call overhead, and the simpler function-call form was
- * kept. Any wall-clock-derived assertion is measurably tighter in a
- * VJ_TRACE build than in production: `test/test_frontend_pacing.c`'s
- * default invocation (no `--max-fastest-frame-fraction` override, see
- * Makefile:1163) asserts the fastest observed frame beats 0.5x the
- * frame period (8.333 ms at 60 fps) -- a real, load-sensitive margin
- * (the Makefile's own comment at line 1173-1178 notes it "would flake
- * on loaded CI runners: observed locally 11.3 ms vs the 8.3 ms limit
- * under parallel builds", which is why the *other* two invocations
- * defuse it with `--max-fastest-frame-fraction 100`). Measured passing
- * with room at commit 2b5d132 (fastest frame 4.326 ms, 52% of the
- * 8.333 ms limit) -- not a confirmed regression -- but the margin is
- * real and shared with every other per-instruction VJ_TRACE hook added
- * in the future; re-check this assertion specifically (not just `make
- * test`'s overall exit code) after adding another one. */
+ * on this hardware -- so the cost was the per-instruction ring write
+ * itself, not call overhead.
+ *
+ * That regression was real and visible outside synthetic benchmarks:
+ * `test/test_frontend_pacing.c`'s strict 1x row (no
+ * `--max-fastest-frame-fraction` override, Makefile:1163) asserts the
+ * fastest observed frame beats 0.5x the frame period (8.333 ms at
+ * 60 fps) -- already load-sensitive on its own (the Makefile's own
+ * comment near line 1173 notes it "would flake on loaded CI runners:
+ * observed locally 11.3 ms vs the 8.3 ms limit under parallel builds",
+ * which is why the *other* two invocations defuse it with
+ * `--max-fastest-frame-fraction 100`) -- and flaked for real on a
+ * loaded 32-bit CI runner once the vjtrace hot-path hooks were always
+ * compiled in (9.4-14.0 ms observed, vs 4.3 ms on the same job before
+ * vjtrace existed).
+ *
+ * FIX: every hot-path recording site now checks a module-private
+ * "armed" flag (vjtrace_armed, default OFF) FIRST and returns
+ * immediately when clear -- vjtrace_emit() centrally (covering all
+ * ~15 VJT_EMIT call sites in one place) and vjtrace_pchist_gpu()/
+ * vjtrace_pchist_dsp() individually (they're called directly from
+ * GPUExec()/DSPExec(), not through vjtrace_emit()). A disarmed VJ_TRACE
+ * build now pays one predictable, well-branch-predicted comparison per
+ * site instead of doing real ring/history work, which should put its
+ * throughput within noise of a plain (non-VJ_TRACE) build -- see the
+ * paired-sampling numbers in the commit that introduced vjtrace_arm()/
+ * vjtrace_disarm() for the actual before/after measurement.
+ *
+ * vjtrace_arm() is called from trace_probe_attach()
+ * (test/harness/trace_probe.c) the moment a tool actually requests
+ * tracing (--watch/--trace-out/--field-csv/--snap/--mark), so every
+ * existing tracing consumer is unaffected -- backtraces and the ring
+ * are complete from the attach point forward, same as before. Callers
+ * that want tracing without going through trace_probe's CLI can call
+ * vjtrace_arm()/vjtrace_disarm() directly. If a tool asks trace_probe
+ * for tracing but the resolved core doesn't export vjtrace_arm (an
+ * older core, built before this fix), that is a hard, loud failure
+ * (exit 2) via the same missing-symbol check every other required
+ * vjtrace export already goes through -- never a silently-empty ring.
+ *
+ * Any wall-clock-derived assertion in a DISARMED VJ_TRACE build should
+ * now behave the same as a plain build; re-verify that specifically
+ * (not just `make test`'s overall exit code) if a new always-on
+ * (unarmed-reachable) vjtrace hook is ever added. */
 #ifndef __VJTRACE_H__
 #define __VJTRACE_H__
 
@@ -100,6 +133,20 @@ void vjtrace_init(void);
  * static already has via retro_unload_game()/retro_deinit().  Idempotent:
  * safe to call when the ring was never allocated or already freed. */
 void vjtrace_shutdown(void);
+/* Arms/disarms recording. Default OFF (see the PERFORMANCE NOTE above):
+ * every hot-path recording site (vjtrace_emit(), vjtrace_pchist_gpu(),
+ * vjtrace_pchist_dsp()) checks this first and is a cheap no-op while
+ * disarmed. trace_probe_attach() (test/harness/trace_probe.c) calls
+ * vjtrace_arm() the moment a tool actually requests tracing, so this
+ * is transparent to every existing tracing consumer; call directly for
+ * programmatic control without the CLI flags. vjtrace_shutdown() resets
+ * back to disarmed. Backtraces/ring contents are only guaranteed
+ * complete from the moment vjtrace_arm() was called, not from core
+ * boot -- matches the existing "events before the first retro_run carry
+ * frame 0" caveat below: nothing is recorded before someone asks for
+ * it. */
+void vjtrace_arm(void);
+void vjtrace_disarm(void);
 /* Sets the frame number stamped onto every subsequently emitted event.
  * Called from the TOP of retro_run (libretro.c) with a 1-based counter,
  * so events emitted while frame N is being run -- by the machine and by
@@ -269,16 +316,32 @@ void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count);
 
 extern vjtrace_counters_t vjtrace_counters;
 extern uint32_t vjtrace_nwatch;
+extern int vjtrace_armed;
 
 #define VJT_EMIT(t, w, a, v)   vjtrace_emit((uint8_t)(t), (uint8_t)(w), (a), (v))
 #define VJT_WATCH_WR(a, v, w)  do { if (vjtrace_nwatch) vjtrace_watch_check((a), (v), (w), 1); } while (0)
 #define VJT_WATCH_RD(a, v, w)  do { if (vjtrace_nwatch) vjtrace_watch_check((a), (v), (w), 0); } while (0)
+
+/* Per-instruction PC-history hooks.  These sit in GPUExec()/DSPExec(),
+ * the two hottest loops in the emulator (a busy title runs ~450k GPU
+ * instructions per frame), so the armed test happens HERE at the call
+ * site -- same shape as VJT_WATCH_* above -- and not only inside the
+ * callee.  Gating in the callee alone still costs a cross-TU call per
+ * instruction in a disarmed build, which is exactly the wall-clock tax
+ * the armed gate exists to remove (it pushed the 32-bit CI runner's
+ * test_frontend_pacing over its 8.333 ms fastest-frame limit).  The
+ * callee keeps its own check as well, so a direct caller cannot bypass
+ * the gate. */
+#define VJT_PCHIST_GPU(pc)     do { if (vjtrace_armed) vjtrace_pchist_gpu(pc); } while (0)
+#define VJT_PCHIST_DSP(pc)     do { if (vjtrace_armed) vjtrace_pchist_dsp(pc); } while (0)
 
 #else /* !VJ_TRACE */
 
 #define VJT_EMIT(t, w, a, v)   do { } while (0)
 #define VJT_WATCH_WR(a, v, w)  do { } while (0)
 #define VJT_WATCH_RD(a, v, w)  do { } while (0)
+#define VJT_PCHIST_GPU(pc)     do { } while (0)
+#define VJT_PCHIST_DSP(pc)     do { } while (0)
 
 #endif /* VJ_TRACE */
 

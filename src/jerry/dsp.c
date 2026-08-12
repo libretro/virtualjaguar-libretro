@@ -1029,7 +1029,7 @@ void DSPExec(int32_t cycles)
       uint16_t opcode;
       uint32_t index;
 #ifdef VJ_TRACE
-      vjtrace_pchist_dsp(dsp_pc);
+      VJT_PCHIST_DSP(dsp_pc);
 #endif
 
 		/* If IMASK was cleared, see if any other interrupts are pending --

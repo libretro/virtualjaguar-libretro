@@ -48,6 +48,17 @@ static uint64_t ring_cap = 0;     /* power of two not required; use modulo */
 static uint64_t ring_head = 0;    /* total events ever emitted */
 static uint64_t seq_ctr = 0;
 static uint32_t cur_frame = 0;
+/* Default OFF: every hot-path recording site (vjtrace_emit() and the
+ * GPU/DSP per-instruction PC-history hooks below) checks this first and
+ * returns immediately when clear, so a VJ_TRACE build that never traces
+ * pays one predictable, well-predicted branch per site instead of doing
+ * real ring/history work -- see the PERFORMANCE NOTE in vjtrace.h. */
+/* Non-static: the VJT_PCHIST_* macros in vjtrace.h test this at the
+ * call site inside GPUExec()/DSPExec(), so it must be linkable. */
+int vjtrace_armed = 0;
+
+void vjtrace_arm(void)    { vjtrace_armed = 1; }
+void vjtrace_disarm(void) { vjtrace_armed = 0; }
 
 void vjtrace_init(void)
 {
@@ -148,7 +159,11 @@ static uint32_t vjt_pc_of(uint32_t who)
 void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value)
 {
    vjtrace_ev *e;
-   if (!ring)
+   /* Gated centrally here rather than at each of the ~15 VJT_EMIT call
+    * sites (tom.c, op.c, blitter.c, gpu.c, m68kinterface.c): one check
+    * covers all of them, including IRQ/OP/blitter events that fire every
+    * frame regardless of whether anyone is recording. */
+   if (!vjtrace_armed || !ring)
       return;
    e = &ring[ring_head % ring_cap];
    e->seq = seq_ctr++;
@@ -247,6 +262,12 @@ static uint32_t dsp_pchist_fill = 0;
 
 void vjtrace_pchist_gpu(uint32_t pc)
 {
+   /* Called from GPUExec() on EVERY GPU instruction, armed or not -- the
+    * armed check must be the very first thing this function does (see
+    * the PERFORMANCE NOTE in vjtrace.h: this was the ~6-8% wall-clock
+    * regression before the armed gate existed). */
+   if (!vjtrace_armed)
+      return;
    gpu_pchist[gpu_pchist_head] = pc;
    gpu_pchist_head = (gpu_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
    if (gpu_pchist_fill < VJT_PCHIST_CAP)
@@ -255,6 +276,10 @@ void vjtrace_pchist_gpu(uint32_t pc)
 
 void vjtrace_pchist_dsp(uint32_t pc)
 {
+   /* Called from DSPExec() on EVERY DSP instruction -- see the note on
+    * vjtrace_pchist_gpu() above. */
+   if (!vjtrace_armed)
+      return;
    dsp_pchist[dsp_pchist_head] = pc;
    dsp_pchist_head = (dsp_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
    if (dsp_pchist_fill < VJT_PCHIST_CAP)
@@ -557,6 +582,7 @@ void vjtrace_shutdown(void)
    ring_head = 0;
    seq_ctr = 0;
    cur_frame = 0;
+   vjtrace_armed = 0;   /* back to the documented default-OFF state */
    vjtrace_nwatch = 0;
    memset(watches, 0, sizeof(watches));
    memset(&vjtrace_counters, 0, sizeof(vjtrace_counters));

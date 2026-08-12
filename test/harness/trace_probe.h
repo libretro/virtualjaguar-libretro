@@ -23,7 +23,13 @@
  * that case call trace_probe_frame() from your own hook instead.
  *
  * Attach is a no-op success when none of the flight-recorder flags were
- * given, so a tool may call it unconditionally.
+ * given, so a tool may call it unconditionally. When a flag WAS given,
+ * attach also arms vjtrace's recording (vjtrace_arm(), see the
+ * PERFORMANCE NOTE in src/core/vjtrace.h) -- every hot-path recording
+ * site defaults to disarmed so a VJ_TRACE build that never traces pays
+ * no per-instruction cost, and this call is what turns it on. Ring
+ * contents and GPU/DSP PC-history backtraces are only guaranteed
+ * complete from this attach point forward, not from core boot.
  *
  * ======================================================================
  * FLAGS (parsed by harness.c into cfg, acted on here)

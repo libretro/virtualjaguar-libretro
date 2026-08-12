@@ -1441,7 +1441,7 @@ void GPUExec(int32_t cycles)
       uint32_t index;
       gpuExecSliceRemaining = cycles;
 #ifdef VJ_TRACE
-      vjtrace_pchist_gpu(gpu_pc);
+      VJT_PCHIST_GPU(gpu_pc);
 #endif
       if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
       {
