@@ -32,6 +32,7 @@ struct trace_probe {
     int  attached;
 
     /* Resolved core exports */
+    void     (*p_arm)(void);
     void     (*p_emit)(uint8_t, uint8_t, uint32_t, uint32_t);
     int      (*p_watch_add)(uint32_t, uint32_t, unsigned);
     int      (*p_dump)(const char *);
@@ -222,7 +223,13 @@ int trace_probe_attach(harness_config *cfg)
 
     /* All of these ship together under the vjtrace_* export wildcard, so
      * resolve the whole set and fail on any gap: a partial set means the
-     * core under test is not the one this probe was written against. */
+     * core under test is not the one this probe was written against.
+     * vjtrace_arm is part of this required set -- an older core that
+     * predates the armed gate would otherwise leave every hot-path
+     * recording site permanently disarmed, silently producing an empty
+     * ring instead of the trace this call is being asked for. */
+    tp->p_arm       = (void (*)(void))
+                      tp_need(cfg, "vjtrace_arm", &missing);
     tp->p_emit      = (void (*)(uint8_t, uint8_t, uint32_t, uint32_t))
                       tp_need(cfg, "vjtrace_emit", &missing);
     tp->p_watch_add = (int (*)(uint32_t, uint32_t, unsigned))
@@ -245,6 +252,14 @@ int trace_probe_attach(harness_config *cfg)
                 missing, cfg->core_path ? cfg->core_path : "(core)");
         exit(2);
     }
+
+    /* Arm before anything else can run: every hot-path recording site
+     * defaults to disarmed (see vjtrace.h's PERFORMANCE NOTE), and this
+     * call is the ONLY place that arms it for a CLI-driven tool -- so it
+     * must happen before the frame loop starts, and before the watch
+     * specs below install anything a disarmed vjtrace_emit() would
+     * otherwise drop. */
+    tp->p_arm();
 
     for (i = 0; i < cfg->num_watch_specs; i++)
         if (!tp_parse_watch(tp, cfg->watch_specs[i]))
