@@ -58,7 +58,7 @@ exists).
 
 | Patch | Format | Patched CRC32 | Boot-verified | Author / source |
 |---|---|---|---|---|
-| JagDoomEX | IPS | 754096DB | yes | ChillyWilly ("Joe") — [JagDoomEX](https://github.com/ChillyWillyGuru/JagDoomEX) (Linux/original build); companion Windows build by Aaron/Tolbat, [JagdoomE](https://github.com/Tolbat/JagdoomE) |
+| JagDoomEX | IPS | 754096DB | yes | ChillyWillyGuru — [JagDoomEX](https://github.com/ChillyWillyGuru/JagDoomEX) (Linux/original build); companion Windows build [JagdoomE](https://github.com/Tolbat/JagdoomE), whose README credits Tolbat and ChillyWillyGuru as its primary developers |
 | JagDoomEX 2 | IPS | 4643E9DB | yes | unknown |
 | JagDoomEX 3 | IPS | 35743B9C | yes | unknown |
 | JagDoomEX 4 | IPS | AD6B68BA | yes | unknown |
@@ -75,8 +75,8 @@ exists).
 | Checkered Flag steering fix | Checkered Flag | IPS | unknown (no CRC32 published in any source found) | Cyrano Jones (AtariAge) — [Reboot-Games writeup](https://www.reboot-games.com/rebootnews/checkered-flag-steering-patch/), discussed on [AtariAge](https://forums.atariage.com/topic/358509-checkered-flag-just-got-awesome/) |
 | Super Cross 3D – No Stadium | Super Cross 3D | IPS | Super Cross 3D (1995).jag — CRC32 4A08A2BD | Sporadic (AtariAge) — [AtariAge thread](https://forums.atariage.com/topic/379109-supercross-3d-rom-hacking-for-performance-there-is-none/), posted 2025-01-29 |
 | Super Cross 3D – No Stadium or Rails | Super Cross 3D | IPS | Super Cross 3D (1995).jag — CRC32 4A08A2BD | Sporadic (AtariAge) — [AtariAge thread](https://forums.atariage.com/topic/379109-supercross-3d-rom-hacking-for-performance-there-is-none/), posted 2025-01-29 |
-| Flashback jingle restore | Flashback | IPS | unknown (source states the patch applies to "any Jaguar ROM extension (*.rom, *.j64, *.jag, etc), provided it passes the CRC check" but does not publish the CRC32 itself) | unknown — [romhacking.net hack #6135](https://www.romhacking.net/hacks/6135/) (page is Cloudflare-gated to automated fetches; author not visible in indexed search results) |
-| Wolf3dJagPatch | Wolfenstein 3D | xdelta | unknown — an indexed (not directly readable) romhacking.net listing shows a "file" SHA-1 EE553176F0A32683B517B84B12C6FAE13C15C3D0 / CRC32 E91BD644, but whether that identifies the required base dump or the patch file itself is not stated on the page as indexed | unknown — [romhacking.net hack #5650](https://www.romhacking.net/hacks/5650/) (page is Cloudflare-gated to automated fetches; author not visible in indexed search results) |
+| Flashback jingle restore | Flashback | IPS | unknown (a search engine's summary of the unreadable romhacking.net listing states the patch applies to any Jaguar ROM extension — `*.rom`, `*.j64`, `*.jag`, etc. — provided it passes the CRC check, but no CRC32 value appears in that summary) | unknown — [romhacking.net hack #6135](https://www.romhacking.net/hacks/6135/) (page is Cloudflare-gated to automated fetches; author not visible in indexed search results) |
+| Wolf3dJagPatch | Wolfenstein 3D | xdelta | unknown — a search engine's summary of the (unreadable) romhacking.net listing states a "file" SHA-1 EE553176F0A32683B517B84B12C6FAE13C15C3D0 / CRC32 E91BD644, but whether that identifies the required base dump or the patch file itself is not stated in that summary | unknown — [romhacking.net hack #5650](https://www.romhacking.net/hacks/5650/) (page is Cloudflare-gated to automated fetches; author not visible in indexed search results) |
 
 Additions welcome: PR a row with the patch's source link, its target dump
 CRC, and (ideally) a note that the patched build boots in this core.
