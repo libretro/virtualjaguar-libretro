@@ -12,8 +12,11 @@
  * Cases (see the Makefile `test:` target for the exact invocations):
  *
  *   1  AvP (CRC 0xDC187F82), default options -- the DB applies:
- *      shadowHiresN == 2, and the core logs a [titledb] line (proves the
- *      substitution actually happened, not just that both options
+ *      shadowHiresN == 2, and the core logs a [titledb] SUBSTITUTION line
+ *      (keyed on the "(option at default)" marker, not the bare [titledb]
+ *      tag -- the per-title-DB-miss line added for CRC-unlisted content
+ *      also carries the [titledb] prefix, so the marker is what actually
+ *      proves the substitution happened, not just that both options
  *      independently defaulted to the DB's values).
  *   2  AvP, virtualjaguar_pertitle_defaults=disabled -- stock: shadowHiresN
  *      == 1 (disabling the gate must restore stock behaviour exactly).
@@ -25,8 +28,10 @@
  *      indistinguishable from an untouched one by design (see CLAUDE.md's
  *      "Known limitation to document, not fix"), so the DB still
  *      substitutes "enabled": shadowHiresN == 2 AND shadowFBActive != 0.
- *   5  Non-DB ROM (test/roms/yarc.j64) -- no CRC match, so no
- *      substitution and no [titledb] log line; shadowHiresN == 1.
+ *   5  Non-DB ROM (test/roms/yarc.j64) -- no CRC match, so no [titledb]
+ *      SUBSTITUTION line is logged (no "(option at default)" marker), but
+ *      the [titledb] MISS line ("no per-title entry for CRC32 ...") is
+ *      logged instead; shadowHiresN == 1.
  *
  * The [titledb] line is logged at RETRO_LOG_INFO via LOG_INF(), which the
  * harness's cb_log filters out below RETRO_LOG_WARN unless
@@ -194,13 +199,19 @@ int main(int argc, char **argv)
     switch (case_num) {
     case 1: {
         int hires_ok  = (*hires_n_ptr == 2);
-        int logged_ok = log_contains("[titledb]");
+        /* Key on the substitution marker, not the bare [titledb] tag --
+         * the per-title-DB-miss line (added for CRC-unlisted content) also
+         * carries the [titledb] prefix, so the bare tag no longer
+         * distinguishes "a substitution happened" from "a miss was
+         * logged". */
+        int logged_ok = log_contains("(option at default)");
         results[nres++] = mkres(hires_ok, "case1_hires_db_applied",
             hires_ok ? "shadowHiresN == 2 (DB applied at default)"
                      : "shadowHiresN != 2");
         results[nres++] = mkres(logged_ok, "case1_titledb_log_present",
-            logged_ok ? "[titledb] substitution logged"
-                      : "no [titledb] log line found");
+            logged_ok ? "[titledb] substitution logged "
+                        "(option at default)"
+                      : "no [titledb] substitution log line found");
         pass = hires_ok && logged_ok;
         break;
     }
@@ -237,15 +248,25 @@ int main(int argc, char **argv)
         break;
     }
     case 5: {
-        int hires_ok = (*hires_n_ptr == 1);
-        int no_log   = !log_contains("[titledb]");
+        int hires_ok    = (*hires_n_ptr == 1);
+        /* No substitution should have been logged for this CRC. */
+        int no_sub_log  = !log_contains("(option at default)");
+        /* The Task 2 miss line SHOULD be logged -- it also carries the
+         * [titledb] prefix, which is exactly why case1/case5 can no longer
+         * key on the bare tag. */
+        int miss_logged = log_contains("no per-title entry");
         results[nres++] = mkres(hires_ok, "case5_nondb_rom_stock",
             hires_ok ? "shadowHiresN == 1 (no DB entry for this CRC)"
                      : "shadowHiresN != 1");
-        results[nres++] = mkres(no_log, "case5_no_titledb_log",
-            no_log ? "no [titledb] log line (correctly no match)"
-                   : "unexpected [titledb] log line for a non-DB ROM");
-        pass = hires_ok && no_log;
+        results[nres++] = mkres(no_sub_log, "case5_no_substitution_log",
+            no_sub_log ? "no [titledb] substitution log line "
+                         "(correctly no match)"
+                       : "unexpected [titledb] substitution log line for "
+                         "a non-DB ROM");
+        results[nres++] = mkres(miss_logged, "case5_miss_logged",
+            miss_logged ? "[titledb] miss line logged for unlisted CRC"
+                        : "no [titledb] miss line found for unlisted CRC");
+        pass = hires_ok && no_sub_log && miss_logged;
         break;
     }
     default:
