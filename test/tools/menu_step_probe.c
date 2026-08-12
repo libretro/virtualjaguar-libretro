@@ -13,14 +13,32 @@
  *                     small-valued words that advanced by 1-3.
  *   --addr HEX        measure steps-per-tap at that address for each
  *                     --hold value.
+ *   --dwell N         reach the menu, then idle there for N fields with
+ *                     no input at all and exit.  This is the window for
+ *                     structural-event measurement (see below): it needs
+ *                     --addr so the state machine runs, but performs no
+ *                     taps.  The printed "dwell window" frame range is
+ *                     the ONLY part of a --field-csv / --trace-out
+ *                     capture that is in-menu-and-idle; the demo is a
+ *                     different code path and says nothing about the
+ *                     menu.  If Doom's attract timeout restarts the demo
+ *                     mid-window, gametic starts advancing again -- the
+ *                     probe counts those fields and reports them as
+ *                     "polluted", so a window is only usable at 0.
  *
  * Doom reaches the menu by pressing A/B/C during the attract demo
  * (d_main.c: buttons & (BT_A|BT_B|BT_C) -> ga_exitdemo).
  *
+ * The probe attaches the vjtrace flight recorder (test/harness/
+ * trace_probe.h), so it also accepts --field-csv, --trace-out, --watch,
+ * --snap and --mark.  Use --field-csv for per-field event rates (its
+ * counter columns are eviction-proof) and a separate short --trace-out
+ * run with a large VJ_TRACE_RING for per-event halfline attribution.
+ *
  * Build:
- *   cc -O2 -Wall -std=c99 -I./libretro-common/include \
+ *   cc -O2 -Wall -std=c99 -I. -I./libretro-common/include \
  *      -o test/tools/menu_step_probe test/tools/menu_step_probe.c \
- *      test/harness/harness.c -ldl -lm
+ *      test/harness/harness.c test/harness/trace_probe.c -ldl -lm
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -28,6 +46,7 @@
 #include <string.h>
 #include <libretro.h>
 #include "../harness/harness.h"
+#include "../harness/trace_probe.h"
 
 #define RAMSZ 0x200000u
 
@@ -52,12 +71,14 @@ static unsigned steps_total, taps_done;
  * the menu is up, so: confirm demo -> press A -> wait for gametic to go
  * quiet -> only then tap. */
 #define GAMETIC_ADDR 0x04080CU
-enum { PH_WAIT_DEMO, PH_PRESS_A, PH_WAIT_MENU, PH_TAP, PH_DONE };
+enum { PH_WAIT_DEMO, PH_PRESS_A, PH_WAIT_MENU, PH_TAP, PH_DWELL, PH_DONE };
 static int phase = PH_WAIT_DEMO;
 static unsigned phase_frame, quiet_frames, tap_i, next_tap_frame;
 static uint32_t last_tic;
 static int press_a, press_down;
 static int loop_rate;
+static unsigned dwell;             /* --dwell N: idle fields in the menu */
+static unsigned dwell_start, dwell_polluted;
 
 static uint32_t rd32(const uint8_t *m, uint32_t a)
 {
@@ -121,11 +142,21 @@ static bool on_frame(void *ud, unsigned frame)
         quiet_frames = (tic == last_tic) ? quiet_frames + 1 : 0;
         if (quiet_frames >= 45)
         {
-            phase = PH_TAP;
             prev_val = rd32(ram, addr);
             next_tap_frame = frame + 60;   /* let the menu settle + A release */
             tap_i = 0;
             printf("  [menu reached at frame %u, cursor=%u]\n", frame, prev_val);
+            if (dwell)
+            {
+                /* No input at all from here on; the window starts on the
+                 * NEXT field so the A-release field is excluded. */
+                phase = PH_DWELL;
+                dwell_start = frame + 1;
+                printf("  [dwell window frames %u..%u (%u fields)]\n",
+                       dwell_start, dwell_start + dwell - 1, dwell);
+            }
+            else
+                phase = PH_TAP;
         }
         break;
     case PH_TAP:
@@ -176,6 +207,23 @@ static bool on_frame(void *ud, unsigned frame)
                 phase = PH_DONE;
         }
         break;
+    case PH_DWELL:
+        /* Idle in the menu.  gametic must stay frozen for the whole
+         * window: if the attract demo restarts we are measuring the
+         * wrong code path, and that has to be visible, not silent. */
+        if (tic != last_tic)
+            dwell_polluted++;
+        if (frame + 1 - dwell_start >= dwell)
+        {
+            printf("DWELL frames %u..%u (%u fields), gametic %u -> %u, "
+                   "polluted %u\n",
+                   dwell_start, frame, dwell, last_tic, tic, dwell_polluted);
+            if (dwell_polluted)
+                printf("  WARNING: gametic advanced during the window -- the "
+                       "demo restarted, measurement is NOT menu-only\n");
+            return false;
+        }
+        break;
     default:
         return false;
     }
@@ -211,6 +259,8 @@ int main(int argc, char **argv)
             taps = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--loop-rate"))
             loop_rate = 1;
+        else if (!strcmp(argv[i], "--dwell") && i + 1 < argc)
+            dwell = (unsigned)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--menu-frame") && i + 1 < argc)
             menu_frame = (unsigned)strtoul(argv[++i], NULL, 10);
     }
@@ -225,6 +275,12 @@ int main(int argc, char **argv)
     }
     if (!ram) { fprintf(stderr, "jaguarMainRAM not exported\n"); return 1; }
 
+    /* After load_rom and after our own frame hook is installed: attach
+     * chains to on_frame rather than displacing it.  No-op success when
+     * no flight-recorder flag was given. */
+    if (!trace_probe_attach(&cfg))
+        return 1;
+
     cfg.input_callback = input_cb;
     cfg.frames = 4000;   /* state machine ends the run itself */
 
@@ -232,6 +288,7 @@ int main(int argc, char **argv)
     if (addr && taps_done)
         printf("RESULT hold=%u frames: %.2f items per tap (%u taps)\n",
                hold, (double)steps_total / taps_done, taps_done);
+    trace_probe_finish(&cfg);   /* before shutdown: the ring lives in the core */
     harness_shutdown(&cfg);
     return 0;
 }
