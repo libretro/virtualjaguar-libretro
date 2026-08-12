@@ -24,7 +24,9 @@ src/core/version.h
 .build
 
 # IDE / editor
-/.claude
+/.claude/*
+# ... but repo-checked-in agent skills are source, not local IDE state
+!/.claude/skills
 /.cursor
 /.vscode
 
