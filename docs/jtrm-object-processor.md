@@ -70,16 +70,35 @@ Same as BITOBJ but adds a third phrase for scaling parameters:
 ### Third Phrase (scaling, bits 63-0):
 | Bits | Name | Description |
 |------|------|-------------|
-| 0-7 | HSCALE | Horizontal scale factor (3.5 fixed point: integer[7:5], fraction[4:0]) |
-| 8-15 | VSCALE | Vertical scale factor (3.5 fixed point) |
-| 16-31 | REMAINDER | Vertical remainder (fractional accumulator for Y scaling) |
+| 0-7 | HSCALE | Horizontal scale (3.5 fixed point). **Pixels written into the line buffer per _source_ pixel.** |
+| 8-15 | VSCALE | Vertical scale (3.5 fixed point). **Display lines drawn per _source_ line.** Equals HSCALE for an object to keep its aspect ratio. |
+| 16-23 | REMAINDER | Vertical remainder (3.5 fixed point, **8 bits**) |
+| 24-63 | -- | Unused, write zeroes |
 
 Scale factor encoding (3.5 fixed point):
 - $20 (0b001_00000) = 1.0x (no scaling)
 - $40 (0b010_00000) = 2.0x (double size)
 - $10 (0b000_10000) = 0.5x (half size)
 
-For vertical scaling, the OP uses REMAINDER to accumulate fractional lines. When REMAINDER overflows, the same DATA line is repeated (for scaling > 1x) or a line is skipped (for scaling < 1x).
+**Direction matters and is easy to get backwards.** HSCALE/VSCALE are *destination
+per source*, so a value below $20 SHRINKS the object and a value above $20 magnifies
+it. An object with IWIDTH=40 phrases at 8bpp (320 source pixels) and HSCALE=$10
+renders 320 x 0.5 = **160** pixels wide, not 640. `OPProcessScaledBitmap()` in
+`src/tom/op.c` implements this as `scaledWidthInPixels = (iwidth *
+phraseWidthToPixels[depth] * hscale) >> 5`, which is correct.
+
+REMAINDER algorithm (JTRM, verbatim intent): after each display line is drawn REMAINDER
+is decremented by one (i.e. $20). If it becomes negative, VSCALE is added until it is
+positive again, and HEIGHT is decremented every time VSCALE is added. The new REMAINDER
+is written back to the object. So the source line advances `ceil($20 / VSCALE)` times
+per display line -- VSCALE < 1.0 shrinks. The horizontal loop in `op.c` is the exact
+analogue of this, which is the cross-check that pins the HSCALE direction.
+
+> Sourced verbatim from the Jaguar Technical Reference Manual Revision 8,
+> "Scaled Bit Mapped Object" (Software Reference, p.20). An earlier version of this
+> file listed REMAINDER as bits 16-31; that was wrong -- it is 8 bits at 16-23, and
+> `op.c`'s `(p2 >> 16) & 0xFF` was right all along. Verified 2026-08-12 while
+> investigating issue #354; the incorrect entry actively misled that investigation.
 
 ## GPUOBJ (Type 2) -- GPU Interrupt Object
 

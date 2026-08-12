@@ -194,6 +194,27 @@ the current directory when omitted.
 
 ### Pixels wrong
 
+- **What is the OP actually drawing?** `test/tools/op_list_dump` — decodes the
+  live Object Processor display list into JTRM fields (TYPE, YPOS, HEIGHT,
+  XPOS, IWIDTH, DWIDTH, DEPTH, PITCH, HSCALE, VSCALE, REMAINDER, DATA + raw
+  phrases + BRANCH link/cc).
+  ```
+  cc -O2 -Wall -std=c99 -I. -I./test/harness -I./libretro-common/include -o test/tools/op_list_dump \
+     test/tools/op_list_dump.c test/harness/harness.c -ldl -lm
+  # find the list base first: OP_OBJECT events carry the object phrase address
+  /tmp/vjt_smoke ./virtualjaguar_libretro.dylib rom.jag --frames 900 --trace-out /tmp/t.vjtr
+  ./test/tools/trace_dump /tmp/t.vjtr --type OP_OBJECT --frame 880:881
+  OPLIST_BASE=13BA00 OPLIST_COUNT=26 ./test/tools/op_list_dump ./virtualjaguar_libretro.dylib rom.jag --frames 900 --quiet
+  ```
+  Reach for this **first** on any "wrong size / wrong position / missing plane"
+  bug, before reading `src/tom/op.c`. It separates "the OP is misbehaving" from
+  "the OP is faithfully drawing bad data the game wrote" — which are opposite
+  fixes. On issue #354 it showed the suspect object's own HSCALE=$10 fully
+  explains the render, exonerating the OP.
+  **Do not read HSCALE/VSCALE backwards**: JTRM Rev 8 defines them as
+  *destination per source*, so below $20 SHRINKS. Two separate sessions have now
+  lost time to the inverted reading; `docs/jtrm-object-processor.md` carries the
+  verbatim wording.
 - `test/tools/frame_hash_ab` — per-frame framebuffer-hash CSV; compares WHEN
   a distinct image state first appears across two arms (see "Two
   configs/builds behave differently" above for the build/run lines).
