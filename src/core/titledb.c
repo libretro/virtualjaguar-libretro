@@ -178,7 +178,7 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
    {
-      0xEA12E234, "Doom 2 EX (JagDoom2EX)",
+      0xEA12E234, "Doom EX (JagDoom2EX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
          { "virtualjaguar_true_color",          "enabled" },

@@ -18,8 +18,14 @@ Place the patch next to the content, named after it:
     Doom (World).ips        <- applied automatically
 
 - Multiple patches chain in order: `rom.ips`, `rom.ips1`, `rom.ips2`.
-- For zipped content the patch sits beside the **archive** and takes the
-  archive's basename (`game.zip` + `game.ips`), not the inner file's.
+- For zipped content, where the patch goes depends on how the content path
+  names the archive. If the frontend passed a bare archive path (`game.zip`,
+  no inner-file delimiter), the patch sits beside it and takes the
+  **archive's** basename: `game.zip` + `game.ips`. If the path names an entry
+  inside the archive (`comp.zip#inner.j64`), RetroArch's basename resolution
+  cuts at the `#` delimiter and the patch instead takes the **inner file's**
+  basename, in the archive's directory: `comp.zip#inner.j64` + `inner.ips`.
+  Both shapes occur in practice depending on how the content was scanned.
 - `--no-patch` on the RetroArch command line disables patching; `--ips`,
   `--bps`, `--ups`, `--xdelta` name a patch explicitly.
 - Other libretro frontends may support fewer formats or none.
@@ -28,7 +34,9 @@ Place the patch next to the content, named after it:
 
 **An IPS patch carries no source checksum.**  Applied to the wrong dump it
 silently produces a corrupt ROM — no error, just glitches or a black screen.
-BPS and xdelta patches do carry source hashes and will refuse a wrong base.
+BPS and UPS patches carry and verify a source CRC32 and will refuse a wrong
+base; RetroArch's xdelta decoder (`vcdiff_decode`) does not verify one
+either, so a wrong base under xdelta fails the same silent way IPS does.
 Every row below names the dump its patch is known to target; verify your
 file's CRC32 first (`crc32 <file>`, or check the core log, which prints it).
 

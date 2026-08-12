@@ -1206,7 +1206,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
 			"no ROM matching 'Alien vs Predator*' in the private corpus"; \
 	fi
-	@# Non-DB ROM control: no CRC match -> no substitution, no [titledb] log.
+	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
 	@echo ""
