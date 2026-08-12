@@ -424,6 +424,36 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+
+   /* CD extensions are declared path-loaded (env 65).  DELIBERATELY the
+    * inverse of the usual pattern: hybrid cart+disc cores (Genesis Plus GX,
+    * PicoDrive, Geargrafx) set need_fullpath=true globally and override
+    * their cartridge extensions to false, because that fails safe for THEM
+    * on a frontend without this callback.  For this core the safe failure
+    * is the other way around: global false + CD-only true degrades, on a
+    * frontend without env 65, to exactly the old behavior (the frontend
+    * loads the disc image into RAM and we ignore it -- ~400 MB wasted on a
+    * .cdi, nothing else lost).  The standard direction would instead cost
+    * cartridge soft patching and the per-title DB feed, and break the
+    * RAM-loaded (.abs/.cof) reload in retro_load_game, on any frontend
+    * below RetroArch 1.9.6.  Measured effect (hover_strike.cdi, 396 MB):
+    * RetroArch peak RSS 557 MB -> ~165-180 MB depending on frontend
+    * buffering (164 MB and 181 MB both observed across runs).
+    * NOTE: no 'iso' entry here -- libretro.h's struct documentation limits
+    * override extensions to those in retro_system_info::valid_extensions
+    * (JAGUAR_VALID_EXTENSIONS, above) and that list does not include 'iso'.
+    * It needs none anyway: is_cd_content in retro_load_game still matches
+    * a bare .iso by path, and CDIntfOpenImage (src/cd/cdintf.c) refuses to
+    * open one regardless of how it arrived. */
+   {
+      static const struct retro_system_content_info_override
+         content_overrides[] = {
+         { "cue|cdi", true /* need_fullpath */, false /* persistent_data */ },
+         { NULL, false, false }
+      };
+      environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
+                 (void *)content_overrides);
+   }
 }
 
 /* Resolve the TCP endpoint for the network link and apply the mode.
@@ -1678,13 +1708,15 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    /* Feed the per-title DB the loaded content so option reads below (and in
-    * check_variables()) can match by CRC (issue #368). need_fullpath=false
-    * covers every valid extension, including CD images, so info->data is
-    * non-NULL there too -- but it holds the disc image, not ROM data, so a
-    * CRC computed from it identifies nothing this table knows about. v1
-    * only covers cartridge CRCs, so CD content takes the clear path below
-    * rather than being hashed and matched: it skips a CRC32 pass over the
-    * whole image (1.6 s for a 644 MiB CDI) and removes any chance of a
+    * check_variables()) can match by CRC (issue #368). On a frontend that
+    * honours the env-65 content-info override set up in retro_set_environment,
+    * CD content (.cue/.cdi) arrives here with info->data == NULL -- it is
+    * path-loaded, not read into memory -- so the info->data guard below
+    * already excludes it. On a frontend without env 65, CD content instead
+    * arrives with info->data holding the whole disc image; the explicit
+    * !is_cd_content guard covers that fallback so the CRC is never computed
+    * over disc bytes either way. v1 only covers cartridge CRCs, and hashing
+    * a disc image would find nothing this table knows about while risking a
     * collision handing a CD title some cartridge's per-title overrides. */
    if (info->data && !is_cd_content)
    {
