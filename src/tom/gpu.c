@@ -719,6 +719,13 @@ uint32_t GPUGetReg(int n)
 	return gpu_reg[n];
 }
 
+/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
+ * VJ_TRACE, so its two supporting accessors below are guarded the same
+ * way -- unlike GPUGetReg above (pre-existing, #406, left as-is), these
+ * are new-for-vjtrace surface and the project convention is that all
+ * new vjtrace-only code compiles out entirely in shipped/non-test
+ * builds rather than relying solely on exports.list to hide it. */
+#ifdef VJ_TRACE
 /* Diagnostic-only accessor (vjtrace #408 snapshot export): expose GPU
  * local work RAM (the REGSGPU/GPURAM sections of vjtrace_snapshot()).
  * Same not-in-shipped-ABI caveat as GPUGetReg above. */
@@ -737,6 +744,7 @@ uint32_t GPUGetFlags(void)
 {
 	return gpu_flags;
 }
+#endif /* VJ_TRACE */
 
 void build_branch_condition_table(void)
 {

@@ -242,15 +242,26 @@ int vjtrace_dump(const char *path)
    return 0;
 }
 
+/* fwrite() wrapper that collapses the short-item-count failure mode
+ * (disk full, I/O error) to a single boolean so every call site in
+ * vjtrace_snapshot() below can be checked -- a VJSN file that exists
+ * on disk must be complete; a truncated write must never look like
+ * success. */
+static int vjt_write(FILE *f, const void *buf, size_t size, size_t n)
+{
+   return (fwrite(buf, size, n, f) == n) ? 1 : 0;
+}
+
 /* Writes one VJSN section header: an 8-byte name field (NUL-padded, not
  * required to be NUL-terminated -- an 8-character name like "JERRYREG"
  * fills the field with no terminator), then base/len as individual
  * uint32_t writes (no struct-layout fwrite, so there is no compiler
  * padding to reason about -- see vjtrace_snapshot()'s header comment
  * in vjtrace.h). Caller writes the len bytes of section data itself
- * immediately after this call. */
-static void vjt_snap_section_header(FILE *f, const char *name,
-                                     uint32_t base, uint32_t len)
+ * immediately after this call. Returns 1 on success, 0 on any short
+ * write (see vjt_write() above). */
+static int vjt_snap_section_header(FILE *f, const char *name,
+                                    uint32_t base, uint32_t len)
 {
    char namebuf[8];
    size_t namelen;
@@ -259,9 +270,13 @@ static void vjt_snap_section_header(FILE *f, const char *name,
    if (namelen > sizeof(namebuf))
       namelen = sizeof(namebuf);
    memcpy(namebuf, name, namelen);
-   fwrite(namebuf, 1, sizeof(namebuf), f);
-   fwrite(&base, sizeof(uint32_t), 1, f);
-   fwrite(&len, sizeof(uint32_t), 1, f);
+   if (!vjt_write(f, namebuf, 1, sizeof(namebuf)))
+      return 0;
+   if (!vjt_write(f, &base, sizeof(uint32_t), 1))
+      return 0;
+   if (!vjt_write(f, &len, sizeof(uint32_t), 1))
+      return 0;
+   return 1;
 }
 
 int vjtrace_snapshot(const char *path)
@@ -272,6 +287,7 @@ int vjtrace_snapshot(const char *path)
    uint32_t regsgpu[34];
    uint32_t regsdsp[34];
    int i;
+   int ok;
    static uint32_t snapshot_ordinal = 0;
 
    if (!ring)
@@ -282,9 +298,13 @@ int vjtrace_snapshot(const char *path)
 
    version = 1;
    nsections = 8;
-   fwrite("VJSN", 1, 4, f);
-   fwrite(&version, sizeof(uint32_t), 1, f);
-   fwrite(&nsections, sizeof(uint32_t), 1, f);
+   ok = 1;
+   if (ok && !vjt_write(f, "VJSN", 1, 4))
+      ok = 0;
+   if (ok && !vjt_write(f, &version, sizeof(uint32_t), 1))
+      ok = 0;
+   if (ok && !vjt_write(f, &nsections, sizeof(uint32_t), 1))
+      ok = 0;
 
    /* MAINRAM: low 2 MB of the Jaguar address space (jaguarMainRAM points
     * into jagMemSpace; see src/core/vjag_memory.c). NOTE: vjag_memory.c
@@ -294,27 +314,40 @@ int vjtrace_snapshot(const char *path)
     * statics in gpu.c/dsp.c, read/written by every GPU/DSP memory
     * access instead); GPURAM/DSPRAM below go through GPUGetRAM() /
     * DSPGetRAM() specifically to avoid that trap. */
-   vjt_snap_section_header(f, "MAINRAM", 0x00000000, 0x00200000);
-   fwrite(jaguarMainRAM, 1, 0x00200000, f);
+   if (ok && !vjt_snap_section_header(f, "MAINRAM", 0x00000000, 0x00200000))
+      ok = 0;
+   if (ok && !vjt_write(f, jaguarMainRAM, 1, 0x00200000))
+      ok = 0;
 
    /* GPURAM: GPU local work RAM (gpu_ram_8, private static in gpu.c). */
-   vjt_snap_section_header(f, "GPURAM", 0x00F03000, 0x1000);
-   fwrite(GPUGetRAM(), 1, 0x1000, f);
+   if (ok && !vjt_snap_section_header(f, "GPURAM", 0x00F03000, 0x1000))
+      ok = 0;
+   if (ok && !vjt_write(f, GPUGetRAM(), 1, 0x1000))
+      ok = 0;
 
    /* DSPRAM: DSP local work RAM (dsp_ram_8, private static in dsp.c). */
-   vjt_snap_section_header(f, "DSPRAM", 0x00F1B000, 0x2000);
-   fwrite(DSPGetRAM(), 1, 0x2000, f);
+   if (ok && !vjt_snap_section_header(f, "DSPRAM", 0x00F1B000, 0x2000))
+      ok = 0;
+   if (ok && !vjt_write(f, DSPGetRAM(), 1, 0x2000))
+      ok = 0;
 
    /* TOMREG: full TOM register/RAM window (tomRam8, extern in tom.h). */
-   vjt_snap_section_header(f, "TOMREG", 0x00F00000, 0x4000);
-   fwrite(tomRam8, 1, 0x4000, f);
+   if (ok && !vjt_snap_section_header(f, "TOMREG", 0x00F00000, 0x4000))
+      ok = 0;
+   if (ok && !vjt_write(f, tomRam8, 1, 0x4000))
+      ok = 0;
 
    /* JERRYREG: full JERRY register/RAM window, incl. DSP control regs
     * and wavetable ROM (jerry_ram_8, plain global in jerry.c). */
-   vjt_snap_section_header(f, "JERRYREG", 0x00F10000, 0x10000);
-   fwrite(jerry_ram_8, 1, 0x10000, f);
+   if (ok && !vjt_snap_section_header(f, "JERRYREG", 0x00F10000, 0x10000))
+      ok = 0;
+   if (ok && !vjt_write(f, jerry_ram_8, 1, 0x10000))
+      ok = 0;
 
-   /* REGS68K: D0-D7, A0-A7, PC, SR -- 18 uint32, via m68k_get_reg(). */
+   /* REGS68K: D0-D7, A0-A7, PC, SR -- 18 uint32, via m68k_get_reg().
+    * Plain register reads, no I/O -- always safe to compute even if an
+    * earlier section already failed; the ok-guarded writes below just
+    * skip emitting them. */
    regs68k[0] = m68k_get_reg(NULL, M68K_REG_D0);
    regs68k[1] = m68k_get_reg(NULL, M68K_REG_D1);
    regs68k[2] = m68k_get_reg(NULL, M68K_REG_D2);
@@ -333,8 +366,10 @@ int vjtrace_snapshot(const char *path)
    regs68k[15] = m68k_get_reg(NULL, M68K_REG_A7);
    regs68k[16] = m68k_get_reg(NULL, M68K_REG_PC);
    regs68k[17] = m68k_get_reg(NULL, M68K_REG_SR);
-   vjt_snap_section_header(f, "REGS68K", 0, (uint32_t)sizeof(regs68k));
-   fwrite(regs68k, sizeof(uint32_t), 18, f);
+   if (ok && !vjt_snap_section_header(f, "REGS68K", 0, (uint32_t)sizeof(regs68k)))
+      ok = 0;
+   if (ok && !vjt_write(f, regs68k, sizeof(uint32_t), 18))
+      ok = 0;
 
    /* REGSGPU: 32 regs of the CURRENT bank (GPUGetReg), then PC
     * (gpu_pc), then GPU_FLAGS (GPUGetFlags). Alternate bank not
@@ -343,8 +378,10 @@ int vjtrace_snapshot(const char *path)
       regsgpu[i] = GPUGetReg(i);
    regsgpu[32] = gpu_pc;
    regsgpu[33] = GPUGetFlags();
-   vjt_snap_section_header(f, "REGSGPU", 0, (uint32_t)sizeof(regsgpu));
-   fwrite(regsgpu, sizeof(uint32_t), 34, f);
+   if (ok && !vjt_snap_section_header(f, "REGSGPU", 0, (uint32_t)sizeof(regsgpu)))
+      ok = 0;
+   if (ok && !vjt_write(f, regsgpu, sizeof(uint32_t), 34))
+      ok = 0;
 
    /* REGSDSP: 32 regs of the CURRENT bank (DSPGetReg), then PC
     * (dsp_pc), then the DSP flags/control register (DSPGetFlags).
@@ -353,10 +390,22 @@ int vjtrace_snapshot(const char *path)
       regsdsp[i] = DSPGetReg(i);
    regsdsp[32] = dsp_pc;
    regsdsp[33] = DSPGetFlags();
-   vjt_snap_section_header(f, "REGSDSP", 0, (uint32_t)sizeof(regsdsp));
-   fwrite(regsdsp, sizeof(uint32_t), 34, f);
+   if (ok && !vjt_snap_section_header(f, "REGSDSP", 0, (uint32_t)sizeof(regsdsp)))
+      ok = 0;
+   if (ok && !vjt_write(f, regsdsp, sizeof(uint32_t), 34))
+      ok = 0;
 
    fclose(f);
+
+   if (!ok)
+   {
+      /* Invariant: a VJSN file that exists on disk is complete, and a
+       * VJT_EV_SNAPSHOT event implies a complete file. A mid-write
+       * failure (disk full, I/O error) must leave neither a truncated
+       * file nor a ring event claiming success. */
+      remove(path);
+      return -1;
+   }
 
    vjtrace_emit(VJT_EV_SNAPSHOT, (uint8_t)JAGUAR, 0, snapshot_ordinal);
    snapshot_ordinal++;

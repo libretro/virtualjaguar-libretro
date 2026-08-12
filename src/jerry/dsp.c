@@ -935,6 +935,12 @@ uint32_t DSPGetFlags(void)
 	return dsp_flags;
 }
 
+/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
+ * VJ_TRACE; DSPGetReg is new-for-vjtrace surface (unlike GPU's
+ * pre-existing #406 GPUGetReg, left unguarded elsewhere), so it
+ * compiles out entirely in shipped/non-test builds rather than relying
+ * solely on exports.list to hide it. */
+#ifdef VJ_TRACE
 /* Diagnostic-only accessor (vjtrace #408 snapshot export): expose a DSP
  * register by index from the CURRENT bank, mirroring GPUGetReg in
  * src/tom/gpu.c. Not part of the shipped ABI (production link uses
@@ -945,6 +951,7 @@ uint32_t DSPGetReg(int n)
 		return 0;
 	return dsp_reg[n];
 }
+#endif /* VJ_TRACE */
 
 void DSPInit(void)
 {
