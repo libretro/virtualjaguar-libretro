@@ -42,6 +42,15 @@
  *
  * Requires a BENCH_PROFILE=1 core (perf counters) with test exports:
  *   make clean && make BENCH_PROFILE=1 TEST_EXPORTS=1
+ * (`make` does not track CFLAGS changes, so `make clean` is load-bearing --
+ * a plain rebuild leaves the old objects and the counters stay absent.)
+ *
+ * ALSO REQUIRES THE ACCURATE BLITTER.  PERF_INC(blitter_calls) exists only
+ * in blitter_generic(); blitter_blit() -- the default "fast" blitter -- has
+ * no counters, so a default run reports 0 blits and the verdict reads
+ * "blitter is not a factor".  Always pass:
+ *   --option virtualjaguar_usefastblitter=disabled
+ * The tool now exits 2 rather than printing that false negative.
  * Build:
  *   cc -O2 -Wall -std=c99 -I. -I./libretro-common/include \
  *      -o test/tools/blitter_budget_probe test/tools/blitter_budget_probe.c \
@@ -164,6 +173,22 @@ int main(int argc, char **argv)
 
     printf("\nPEAK: frame %u at %.1f%% of one field; %u/%u frames exceed 100%%\n",
            st.peak_frame, st.peak_field_pct, st.over100, cfg.frames);
+    /* Zero blits is almost never the truth -- it is the fast blitter.
+     * PERF_INC(blitter_calls) lives only in the accurate blitter path
+     * (blitter_generic), not in blitter_blit(), and fast is the default,
+     * so a fast-blitter run silently reports 0 and the verdict below
+     * reads as "blitter is not a factor".  That false negative is how
+     * "Doom performs zero blitter traffic" got into #401; Doom in fact
+     * issues ~400 blits/field (docs/doom-render-cost-census.md §4.1). */
+    if (st.peak_field_pct <= 0.0)
+    {
+        printf("=> NO blitter traffic counted.  The perf counters only exist in the\n"
+               "   ACCURATE blitter; re-run with\n"
+               "     --option virtualjaguar_usefastblitter=disabled\n"
+               "   before concluding this title does not use the blitter.\n");
+        harness_shutdown(&cfg);
+        return 2;
+    }
     printf("%s\n", st.peak_field_pct > 100.0
         ? "=> blitter work alone cannot fit in one field: hardware needs >=2 VBLs\n"
           "   for those frames while we deliver them in one, so render-bound game\n"

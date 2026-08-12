@@ -66,7 +66,7 @@ int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     uint32_t order[NBUCKET];
-    unsigned i, shown = 0;
+    unsigned i, shown = 0, topn = 24;
     cfg.frames = 900;
     if (!harness_init_from_args(&cfg, argc, argv))
         return 1;
@@ -84,7 +84,16 @@ int main(int argc, char **argv)
     for (i = 0; i < NBUCKET; i++) order[i] = i;
     qsort(order, NBUCKET, sizeof(order[0]), cmp);
     printf("total samples=%u\n", total);
-    for (i = 0; i < NBUCKET && shown < 24; i++)
+    {
+        /* Guard the parse: PC_TOP=0 or a non-numeric value would print no
+         * rows at all, which reads exactly like "no samples were taken" --
+         * a confusing zero this tool can already produce for a real reason
+         * (a core built without BENCH_PROFILE).  One such failure mode is
+         * enough. */
+        const char *e = getenv("PC_TOP");
+        if (e && atoi(e) > 0) topn = (unsigned)atoi(e);
+    }
+    for (i = 0; i < NBUCKET && shown < topn; i++)
         if (hcount[order[i]])
         {
             printf("  $%06X  %7u  %5.1f%%\n", hpc[order[i]],
