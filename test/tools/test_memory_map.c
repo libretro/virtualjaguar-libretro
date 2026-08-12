@@ -37,6 +37,7 @@ typedef void   (*retro_set_audio_sample_t)(retro_audio_sample_t);
 typedef void   (*retro_set_audio_sample_batch_t)(retro_audio_sample_batch_t);
 typedef void   (*retro_set_input_poll_t)(retro_input_poll_t);
 typedef void   (*retro_set_input_state_t)(retro_input_state_t);
+typedef void   (*retro_get_system_info_t)(struct retro_system_info *);
 typedef bool   (*retro_load_game_t)(const struct retro_game_info *);
 typedef void   (*retro_unload_game_t)(void);
 typedef void  *(*retro_get_memory_data_t)(unsigned);
@@ -198,6 +199,27 @@ int main(int argc, char **argv)
     {
         printf("FAIL (expected true, got false)\n");
         failures++;
+    }
+
+    /* Test 1b: need_fullpath must stay false.  RetroArch soft patching
+     * (IPS/BPS/UPS/xdelta) only applies when the frontend loads content
+     * into memory itself, which requires need_fullpath == false.  If this
+     * flips, soft patching silently dies for every cartridge and nothing
+     * else notices (issue #409). */
+    {
+        struct retro_system_info sysinfo;
+        retro_get_system_info_t core_get_system_info =
+            (retro_get_system_info_t)load_sym(handle, "retro_get_system_info");
+        memset(&sysinfo, 0, sizeof(sysinfo));
+        core_get_system_info(&sysinfo);
+        printf("Test 1b: need_fullpath == false (soft patching) ... ");
+        if (!sysinfo.need_fullpath)
+            printf("PASS\n");
+        else
+        {
+            printf("FAIL (need_fullpath is true; frontend soft patching disabled)\n");
+            failures++;
+        }
     }
 
     core_set_video(video_cb);

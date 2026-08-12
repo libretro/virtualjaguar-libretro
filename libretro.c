@@ -1607,6 +1607,7 @@ static void video_buffer_blank(void)
 bool retro_load_game(const struct retro_game_info *info)
 {
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+   bool is_cd_content;
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -1657,6 +1658,10 @@ bool retro_load_game(const struct retro_game_info *info)
    if (!info)
       return false;
 
+   is_cd_content = info->path && (has_extension(info->path, "cue")
+                                  || has_extension(info->path, "cdi")
+                                  || has_extension(info->path, "iso"));
+
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
 
    /* Report that save states are deterministic (no quirks).
@@ -1673,11 +1678,25 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    /* Feed the per-title DB the loaded content so option reads below (and in
-    * check_variables()) can match by CRC (issue #368). info->data is NULL
-    * for path-loaded content (CD) -- that correctly clears any match, since
-    * v1 only covers cartridge CRCs. */
-   if (info->data)
+    * check_variables()) can match by CRC (issue #368). need_fullpath=false
+    * covers every valid extension, including CD images, so info->data is
+    * non-NULL there too -- but it holds the disc image, not ROM data, so a
+    * CRC computed from it identifies nothing this table knows about. v1
+    * only covers cartridge CRCs, so CD content takes the clear path below
+    * rather than being hashed and matched: it skips a CRC32 pass over the
+    * whole image (1.6 s for a 644 MiB CDI) and removes any chance of a
+    * collision handing a CD title some cartridge's per-title overrides. */
+   if (info->data && !is_cd_content)
+   {
       TitleDBSetContent((const uint8_t *)info->data, info->size);
+      /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
+       * hashes differently from its retail base, so it matches no row and
+       * silently loses that title's enhancement defaults.  Say so (#409). */
+      if (!TitleDBTitleName())
+         LOG_INF("[titledb] no per-title entry for CRC32 $%08X -- patched or "
+                 "unlisted content; enhancement defaults not applied (see "
+                 "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
+   }
    else
       TitleDBSetContent(NULL, 0);
 
@@ -1734,6 +1753,7 @@ bool retro_load_game(const struct retro_game_info *info)
       free(sampleBuffer);
       videoBuffer = NULL;
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
@@ -1768,9 +1788,7 @@ bool retro_load_game(const struct retro_game_info *info)
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
 
-   if (info && info->path && (has_extension(info->path, "cue")
-                              || has_extension(info->path, "cdi")
-                              || has_extension(info->path, "iso")))
+   if (is_cd_content)
    {
       jaguar_cd_mode = true;
       /* Hardware has the Memory Track cart plugged in alongside the CD
@@ -1802,6 +1820,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
       LOG_INF("[CD] Disc image opened OK\n");
@@ -1831,6 +1850,7 @@ bool retro_load_game(const struct retro_game_info *info)
       videoBuffer = NULL;
       free(sampleBuffer);
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
 
@@ -1850,6 +1870,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
    }
@@ -1936,6 +1957,9 @@ void retro_unload_game(void)
    ShadowHiresShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
+
+   /* The next option read must not see the previous title's CRC/match. */
+   TitleDBSetContent(NULL, 0);
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

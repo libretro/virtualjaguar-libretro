@@ -66,6 +66,26 @@ int main(void)
    CHECK(TitleDBOverride("virtualjaguar_true_color") == NULL,
          "unknown content -> no override");
 
+   /* TitleDBContentCRC mirrors the last SetCRC / SetContent (issue #409:
+    * the miss log line in libretro.c prints it). */
+   TitleDBSetCRC(0xDEADBEEF);
+   CHECK(TitleDBContentCRC() == 0xDEADBEEFu, "content CRC getter mirrors SetCRC");
+   {
+      static const uint8_t crcbuf[4] = { 0x01, 0x02, 0x03, 0x04 };
+      TitleDBSetContent(crcbuf, 4);
+      CHECK(TitleDBContentCRC() == 0xB63CFBCDu, "content CRC getter after SetContent");
+   }
+   TitleDBSetCRC(0);
+   CHECK(TitleDBContentCRC() == 0, "content CRC getter clears with SetCRC(0)");
+
+   /* Alias rows: Doom EX romhack builds inherit Doom's enhancement pairs
+    * (issue #409).  One representative CRC; the table-integrity loop above
+    * already covers the rest (non-zero CRC, no duplicates, valid pairs). */
+   TitleDBSetCRC(0x754096DB);
+   CHECK(TitleDBOverride("virtualjaguar_internal_resolution") != NULL,
+         "Doom EX alias row present and carries internal_resolution");
+   TitleDBSetCRC(0);
+
    printf("%s (%d failures)\n", fails ? "FAILED" : "OK", fails);
    return fails ? 1 : 0;
 }
