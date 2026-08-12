@@ -68,26 +68,21 @@
  *   op_branch,blit_cmd,watch_rd,watch_wr,fb_hash
  *
  * - `frame` is the HARNESS frame counter (1-based, cfg->current_frame).
+ *   The FIRST emulated frame is 1, not 0.
  *
- *   CORRELATING A CSV ROW WITH RING EVENTS — there is a one-field skew,
- *   measured, not assumed (yarc.j64, 300 frames: CSV rows run 1..300,
- *   ring `frame` values run 0..299).  libretro.c calls
- *   vjtrace_frame_tick(++counter) at the END of retro_run, so events the
- *   MACHINE emits during the retro_run that produces CSV row N are still
- *   stamped with the value set by the previous run:
+ *   CORRELATING A CSV ROW WITH RING EVENTS — no correction needed, in
+ *   either direction:
  *
- *       ring.frame == csv.frame - 1     (machine events)
+ *       ring.frame == csv.frame      (machine AND host-injected events)
  *
- *   Events this probe emits itself — INPUT_EDGE, MARK, and the SNAPSHOT
- *   event from --snap — are emitted from the frame hook, i.e. after that
- *   retro_run and therefore after the tick, so they carry:
- *
- *       ring.frame == csv.frame         (host-injected events)
- *
- *   Both are deterministic.  Task 7's trace_dump / field_diff must apply
- *   the -1 when aligning machine events to CSV rows.  If the tick is
- *   ever moved to the top of retro_run both skews collapse to zero and
- *   this note (and those tools) should be revisited.
+ *   libretro.c ticks vjtrace_frame_tick(++counter) at the TOP of
+ *   retro_run, so events the machine emits while frame N runs carry N,
+ *   and the events this probe emits from the post-run frame hook —
+ *   INPUT_EDGE, MARK, and the SNAPSHOT event from --snap — carry N too
+ *   (the next tick has not happened yet).  Row N's counts are therefore
+ *   exactly the ring events stamped N.  Frame 0 exists but holds only
+ *   what was emitted during retro_init / retro_load_game, before the
+ *   first retro_run; it has no CSV row.
  * - `pad0` is the joypad bitmask the harness injected on port 0 that
  *   frame (bit N = RETRO_DEVICE_ID_JOYPAD id N).  On a change the probe
  *   also emits VJT_EV_INPUT_EDGE (who = DEBUG, addr = pad index, value =

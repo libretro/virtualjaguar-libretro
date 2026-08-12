@@ -32,7 +32,13 @@ typedef struct {
     uint64_t seq;        /* monotonic emit counter; ordering key is
                              (frame, halfline, seq); cycle-domain
                              timestamps deferred */
-    uint32_t frame;      /* harness frame counter */
+    uint32_t frame;      /* frame counter, ticked at the TOP of
+                             retro_run: the first emulated frame is 1
+                             and matches the harness frame counter, so
+                             machine events and events a harness emits
+                             from its post-run frame hook both carry the
+                             frame they belong to.  0 = emitted before
+                             the first retro_run (init / load_game). */
     uint16_t halfline;   /* TOM VC at emit time */
     uint8_t  type;       /* VJT_EV_* */
     uint8_t  who;        /* existing who-code (68K, GPU, DSP, OP, blitter, host) */

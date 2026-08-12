@@ -89,7 +89,12 @@ typedef struct
 
 /* alloc ring; cap from env VJ_TRACE_RING, default 1<<20 */
 void vjtrace_init(void);
-/* sets current frame for emit stamping */
+/* Sets the frame number stamped onto every subsequently emitted event.
+ * Called from the TOP of retro_run (libretro.c) with a 1-based counter,
+ * so events emitted while frame N is being run -- by the machine and by
+ * a harness's post-run frame hook alike -- all carry N, and no consumer
+ * needs a per-event-source correction.  Events emitted before the first
+ * retro_run (retro_init / retro_load_game) carry 0. */
 void vjtrace_frame_tick(uint32_t frame);
 void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value);
 /* rw: 1=r 2=w 3=rw; ret idx or -1 */

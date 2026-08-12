@@ -2185,6 +2185,23 @@ void retro_run(void)
 {
    bool updated = false;
 
+#ifdef VJ_TRACE
+   /* Stamp the frame number BEFORE the machine runs, so every event
+    * emitted during this retro_run carries the number of the frame it
+    * belongs to.  Ticking at the END instead (where this used to live)
+    * left machine events stamped with the PREVIOUS frame while events a
+    * harness emits from its post-run frame hook carried the current
+    * one -- two different corrections needed to align one ring.  The
+    * first retro_run is frame 1, matching the harness frame counter;
+    * events emitted during retro_load_game/retro_init, before any
+    * retro_run, carry frame 0.  retro_run has no early return, so this
+    * runs exactly once per frame. */
+   {
+      static uint32_t vjt_frame = 0;
+      vjtrace_frame_tick(++vjt_frame);
+   }
+#endif
+
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */
    if (save_data_needs_unpack)
@@ -2335,12 +2352,5 @@ void retro_run(void)
        || (dbg_frame_counter % 120) == 0)
       dbg_dump_frame();
    dbg_frame_counter++;
-#endif
-
-#ifdef VJ_TRACE
-   {
-      static uint32_t vjt_frame = 0;
-      vjtrace_frame_tick(++vjt_frame);
-   }
 #endif
 }
