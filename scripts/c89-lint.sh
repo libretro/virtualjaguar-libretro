@@ -38,6 +38,7 @@ skip_file() {
         test/tools/hires_box_check.c) return 0 ;;
         test/tools/hires_state_digest.c) return 0 ;;
         test/tools/hires_shot.c) return 0 ;;
+        test/tools/blit_memo_verify.c) return 0 ;;
     esac
     return 1
 }

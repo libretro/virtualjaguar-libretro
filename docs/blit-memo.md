@@ -1,0 +1,166 @@
+# Blit memoization
+
+**Status:** merged as machinery, **off by default and tagged to no title.**
+Issue [#411](https://github.com/libretro/virtualjaguar-libretro/issues/411).
+
+Some titles re-render an identical scene every engine cycle while the
+player is idle. Measured on Alien vs Predator: a fixed 5-field cycle
+(one 1,446-blit heavy frame, one 4-blit HUD frame, three empty fields)
+runs at the same cost whether the player moves or stands still, and
+every idle heavy frame issues **one bit-identical blit stream**, while
+the presented image cycles among 21 distinct frames. The measurements
+are in #411.
+
+This module skips such a blit when it can prove the destination already
+holds the bytes the blit would produce. It is memoization, not a
+heuristic: the skip condition makes output bit-identical by
+construction. It knows nothing about any game's state.
+
+## The skip condition
+
+A blit is skipped when **both** hold:
+
+1. Its full pre-launch state equals a recorded entry's, and
+2. every main-RAM page that entry read or wrote is unchanged since.
+
+Entries chain by successor, so a repeated stream matches as a
+prefix-matched run rather than being defeated by writes on shared
+destination pages.
+
+## Four things that are load-bearing
+
+Each was found by A/B against the memo-off run, and each had produced a
+visibly divergent framebuffer first. They are the non-obvious part of
+the design; do not "simplify" any of them without re-running the A/B.
+
+**1. Identity is the whole blitter state, not `blitter_ram`.**
+The engines carry decode/iterator state in file-scope variables across
+launches, so equal registers do not imply equal behaviour. Identity is
+the canonical `BlitterStateSave` blob. Matching on `blitter_ram` alone
+produced 1,967 unsound would-be skips on AvP's texture blits.
+
+**2. A skipped chain's writes are replayed, not dropped.**
+Skipping a *prefix* of a stream leaves the previous pass's **final**
+bytes in RAM where a live run would have had intermediates. Each entry
+therefore carries a write log (addr, len, value), materialized before
+any live engine execution and at the frame boundary. Replaying bytes
+that are already present is idempotent, so this is always sound; it
+costs memcpy-class time, not blit time.
+
+**3. Write generations need two domains.**
+Writes made *by chain members* must invalidate READ footprints (a
+member rewriting a page someone sources from changes that blit's input)
+but **not** WRITE footprints — their ordering relative to skipped
+entries is already preserved by the log replay. Foreign writes (68K,
+GPU, DSP, OP, cheats) invalidate both. Without the split, one live
+full-buffer clear re-dirties the whole stream every cycle: dirty count
+1,058,653 with one domain versus 62 with two.
+
+**4. Every path that writes main RAM must be hooked.**
+`m68k_write_memory_32` stores to `jaguarMainRAM` directly and bypasses
+`JaguarWrite*` and every other funnel. It was invisible to the memo
+until hooked explicitly, and page generations silently lied. Any future
+RAM-touching path needs the same treatment.
+
+## Boundaries
+
+- **Blits touching anything outside main RAM re-execute live**
+  ("exec-through"): device space, mutable cart, the unpopulated
+  `$200000-$7FFFFF` hole. Also anything whose write log overflows
+  256 records (full-buffer clears).
+- **CD content is refused.** The CD HLE writes main RAM without passing
+  the write hooks, so page generations would be wrong.
+- **Intermediate states are not reproduced.** While a chain is skipped,
+  RAM holds the stream's final bytes. A title whose 68K/GPU reads the
+  destination buffer *mid-stream* could observe the difference. No
+  tracked title does — and `verify` mode exists to falsify exactly this
+  before any title is tagged.
+- **Timing is unaffected.** The bus-occupancy model
+  (`BlitDurationSysclks`) is computed analytically from the pre-launch
+  registers at the launch site, before this module runs.
+
+## Measured effect
+
+AvP idle, host wall-clock normalized to zero-blit frames within each run
+(this cancels machine-wide noise, which otherwise swamps the effect),
+3 reps per config, spread ±0.5%:
+
+| config | render overhead, memo off | memo on | change |
+|---|---|---|---|
+| 2x + true colour | 0.888 × zero-frame | 0.584 | **-34%** |
+| 1x | 1.117 × zero-frame | 1.003 | **-10%** |
+
+The 1x win is small because the log replay still performs every store —
+only the per-pixel computation is saved. The 2x win is larger because
+each redundant blit also drives Stage 2 shadow work.
+
+## Verifying a title before tagging it
+
+`virtualjaguar_blit_memo=verify` never skips. It runs every would-be
+skip live and compares the write log and post-launch state against what
+the memo would have replayed, so any divergence means enabling the memo
+on that title would change emulation.
+
+```bash
+cc -O2 -Wall -std=c99 -I. -I./test/harness -I./libretro-common/include \
+   -o test/tools/blit_memo_verify test/tools/blit_memo_verify.c \
+   test/harness/harness.c -ldl -lm
+
+VJ_EXPECT_BUILD=$(./scripts/build-id.sh) ./test/tools/blit_memo_verify \
+  ./virtualjaguar_libretro.dylib "test/roms/private/ROMS/<title>" --frames 4800
+```
+
+**A zero-divergence result only counts when the checker actually ran.**
+The tool exits 3 ("thin") when fewer than `--min-runs` checks happened —
+a title that sits in attract and never repeats a stream is *unverified*,
+not clean. Drive it into gameplay with `--press` or a fixture.
+
+Corpus sweep over every cartridge:
+
+```bash
+FRAMES=3000 JOBS=6 bash test/tools/blit_memo_sweep.sh
+```
+
+Neither in-repo public ROM (`yarc`, `jagniccc`) ever repeats a blit
+stream, so there is no CI gate for this — the private-corpus sweep is
+the gate, same as the audio tests and the CD boot matrix.
+
+## Sweep status — incomplete
+
+Partial run, 58 of 159 cartridges scored before it was stopped:
+
+| verdict | count | meaning |
+|---|---|---|
+| clean | 7 | 292,495 verifications total, **0 divergences** |
+| thin | 41 | no verdict — never repeated a stream in the window |
+| noload/error | 10 | core refuses the dump (alpha/prototype formats) |
+
+Clean so far: Aircars (two dumps), Alien vs Predator, Atari Karts,
+Bubsy, plus PD demos. **No divergence has been observed anywhere**, but
+the majority of the corpus is unscored and most of what was scored is
+`thin`.
+
+`thin` is the sweep's main weakness: the generic attract-buster input
+does not reach gameplay in many titles, and several retail games
+(Attack of the Mutant Penguins, Brutal Sports Football, Cannon Fodder,
+Checkered Flag) came out thin with `exec_through` dominating — their
+blits never even become memo candidates.
+
+## Open items
+
+1. **Finish the sweep** (~2 h wall-clock) and give thin retail titles
+   real input fixtures.
+2. **Tag titles.** AvP is the obvious first candidate and is already
+   the best-evidenced (710,433 checks, 0 divergences, bit-identical A/B
+   over 8,000 frames) — one line in `src/core/titledb.c` once the sweep
+   and a device check are done.
+3. **Shrink the pool.** 4096 entries × 3,744 B = **14.6 MB**, too much
+   for iOS. Most of an entry is two 768-byte state blobs and a 2 KB
+   write log.
+4. **Measure the disabled path.** The hooks sit on every write path for
+   every title; `make benchmark` A/B has not been run.
+5. **Widen coverage.** Represent large writes as page-range descriptors
+   instead of per-write records, so full-buffer fills stop falling back
+   to exec-through.
+6. **Re-run runahead/rollback determinism tests with the memo on** —
+   they currently exercise it off, since it is default-disabled.

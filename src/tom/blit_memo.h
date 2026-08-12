@@ -102,6 +102,9 @@ extern uint32_t blitMemoHits;         /* blits skipped */
 extern uint32_t blitMemoMisses;       /* no matching entry; recorded */
 extern uint32_t blitMemoDirty;        /* entry matched, pages dirty */
 extern uint32_t blitMemoExecThrough;  /* matched but untracked I/O */
+extern uint32_t blitMemoVerifyRuns;   /* verify-mode checks performed --
+                                       * a zero-divergence result is only
+                                       * meaningful when this is large */
 extern uint32_t blitMemoVerifyFails;  /* verify-mode divergences */
 
 #ifdef __cplusplus

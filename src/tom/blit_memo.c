@@ -97,6 +97,7 @@ uint32_t blitMemoHits = 0;
 uint32_t blitMemoMisses = 0;
 uint32_t blitMemoDirty = 0;
 uint32_t blitMemoExecThrough = 0;
+uint32_t blitMemoVerifyRuns = 0;
 uint32_t blitMemoVerifyFails = 0;
 
 static bm_entry *bmPool = NULL;
@@ -398,6 +399,7 @@ static bm_entry bmScratch;
 static void bm_verify(bm_entry *e)
 {
    uint8_t poststate[BM_STATE_MAX];
+   blitMemoVerifyRuns++;
    bmScratch.logN = 0;
    bmScratch.flags = 0;
    bmRec = &bmScratch;
@@ -659,5 +661,5 @@ void BlitMemoShutdown(void)
    bmPendingN = 0;
    bmSkipRunN = 0;
    blitMemoHits = blitMemoMisses = blitMemoDirty = 0;
-   blitMemoExecThrough = blitMemoVerifyFails = 0;
+   blitMemoExecThrough = blitMemoVerifyRuns = blitMemoVerifyFails = 0;
 }

@@ -48,10 +48,13 @@ static const TitleDBEntry titledb_table[] = {
       {
          { "virtualjaguar_internal_resolution", "2x" },
          { "virtualjaguar_true_color",          "enabled" },
-         /* #411: AvP re-issues one bit-identical blit stream per
-          * 5-field engine cycle while the player idles; verified with
-          * blit_memo verify mode (0 divergences) before tagging. */
-         { "virtualjaguar_blit_memo",           "enabled" },
+         /* NOT tagged with virtualjaguar_blit_memo yet -- see
+          * docs/blit-memo.md.  AvP is the memo's best-evidenced title
+          * (710,433 verify checks, 0 divergences, bit-identical A/B
+          * over 8,000 frames) but that covers the scenes one fixture
+          * reaches, and the corpus sweep is unfinished.  Tagging here
+          * turns the memo ON by default for every AvP user, so it
+          * waits for the full sweep plus a device check. */
          { NULL, NULL }
       }
    },
