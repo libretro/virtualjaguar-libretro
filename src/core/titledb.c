@@ -31,6 +31,12 @@
  *    every plain retail CRC of that title in src/core/filedb.c (Alpha/
  *    beta/proto/demo/bad-dump rows excluded; each distinct retail CRC
  *    gets its own table row).
+ *  - Romhack alias rows (issue #409): a patched build inherits the
+ *    enhancement defaults of the retail title it patches — same engine,
+ *    same rendering — keyed by the patched image's CRC.  Each row is
+ *    boot-verified before inclusion.  Coverage is exactly the enumerated
+ *    builds; new patch releases hash differently and fall through to the
+ *    miss log in retro_load_game.
  *
  * Seed entries (AvP, Cybermorph x2) predate this policy pass but were
  * verified to fall out of it unchanged: AvP shaded 544.3k/4800f=113/f,
@@ -104,6 +110,82 @@ static const TitleDBEntry titledb_table[] = {
     * CRC: Doom (World) from src/core/filedb.c line 62. */
    {
       0x5E2CDBC0, "Doom",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Doom EX romhack family — alias rows inheriting Doom (0x5E2CDBC0)'s
+    * pairs.  CRC = IPS patch applied to the verified retail dump;
+    * boot-verified via cart_boot_probe (issue #409). */
+   {
+      0x754096DB, "Doom EX (JagDoomEX)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0x4643E9DB, "Doom EX (JagDoomEX 2)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0x35743B9C, "Doom EX (JagDoomEX 3)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0xAD6B68BA, "Doom EX (JagDoomEX 4)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0xC4F4CACF, "Doom EX (JagDoomEX 5)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0x1F4EE4A5, "Doom EX (JagDoomEX 6)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0x013A5359, "Doom EX (spectral)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0xB92D1CA3, "Doom EX (transparent)",
+      {
+         { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_true_color",          "enabled" },
+         { NULL, NULL }
+      }
+   },
+   {
+      0xEA12E234, "Doom EX (JagDoom2EX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
          { "virtualjaguar_true_color",          "enabled" },
@@ -209,6 +291,9 @@ static const int titledb_count =
 /* Current loaded title match; NULL if no content is loaded or CRC doesn't match. */
 static const TitleDBEntry *current = NULL;
 
+/* Kept even on a miss so the caller can name the CRC it looked up. */
+static uint32_t content_crc = 0;
+
 /*
  * Internal: set the CRC directly.
  * Linear-scan the table to find a match.
@@ -217,6 +302,7 @@ void TitleDBSetCRC(uint32_t crc)
 {
    int i;
 
+   content_crc = crc;
    current = NULL;
    for (i = 0; i < titledb_count; i++)
    {
@@ -226,6 +312,15 @@ void TitleDBSetCRC(uint32_t crc)
          return;
       }
    }
+}
+
+/*
+ * Return the CRC32 (header-normalized) of the currently loaded content,
+ * as last set by TitleDBSetContent/TitleDBSetCRC; 0 when no content is loaded.
+ */
+uint32_t TitleDBContentCRC(void)
+{
+   return content_crc;
 }
 
 /*

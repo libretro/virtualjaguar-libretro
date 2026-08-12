@@ -7,6 +7,7 @@
  */
 #ifdef VJ_TRACE
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,13 +52,44 @@ static uint32_t cur_frame = 0;
 void vjtrace_init(void)
 {
    const char *env;
-   uint64_t cap = (uint64_t)1 << 20;
+   uint64_t cap = (uint64_t)1 << 20;   /* default: 1M records (~32 MiB) */
+   /* Hard ceiling on the record count: keeps calloc()'s byte count
+    * representable in size_t on every host (32-bit included) and stops
+    * a huge or typo'd VJ_TRACE_RING from demanding an unreasonable
+    * allocation.  1<<25 (33.5M records, ~1 GiB at 32 bytes/record) sits
+    * comfortably above any run this project has needed so far (see the
+    * vjtrace flight recorder ring-sizing note in CLAUDE.md: a 1800-frame
+    * yarc.j64 run needed VJ_TRACE_RING=6000000). */
+   const uint64_t cap_max = (uint64_t)1 << 25;
    if (ring)
       return;
    env = getenv("VJ_TRACE_RING");
-   if (env && atol(env) > 0)
-      cap = (uint64_t)atol(env);
+   if (env && env[0] != '\0' && env[0] != '-')
+   {
+      char *endptr = NULL;
+      unsigned long parsed;
+      errno = 0;
+      parsed = strtoul(env, &endptr, 10);
+      /* Accept only a fully-numeric, in-range, positive value: reject
+       * "abc" (endptr == env, nothing consumed), trailing garbage
+       * (*endptr != '\0'), and overflow (errno == ERANGE, e.g.
+       * VJ_TRACE_RING=99999999999999999999).  Anything rejected falls
+       * through and keeps the default cap above. */
+      if (endptr != env && *endptr == '\0' && errno == 0 && parsed > 0)
+         cap = (uint64_t)parsed;
+   }
+   if (cap > cap_max)
+      cap = cap_max;
+   if (cap < 1)
+      cap = 1;
    ring = (vjtrace_ev *)calloc((size_t)cap, sizeof(vjtrace_ev));
+   if (!ring && cap != ((uint64_t)1 << 20))
+   {
+      /* Requested cap couldn't be allocated -- fall back to the default
+       * instead of leaving tracing silently disabled for the whole run. */
+      cap = (uint64_t)1 << 20;
+      ring = (vjtrace_ev *)calloc((size_t)cap, sizeof(vjtrace_ev));
+   }
    ring_cap = ring ? cap : 0;
 }
 
@@ -66,7 +98,46 @@ void vjtrace_frame_tick(uint32_t frame) { cur_frame = frame; }
 static uint32_t vjt_pc_of(uint32_t who)
 {
    if (who == M68K || who == JAGUAR)
-      return m68k_get_reg(NULL, M68K_REG_PC);
+   {
+      /* m68k_get_reg(M68K_REG_PC) is regs.pc AT THE INSTANT OF THIS
+       * CALL, which is almost never the PC of the instruction that
+       * made the access being recorded: m68ki_incpc() (or the
+       * per-handler equivalent) advances regs.pc at or near the TOP of
+       * nearly every opcode handler (859 of 861, measured empirically),
+       * before that handler's own memory access runs, so by the time
+       * a read/write hook fires regs.pc already names the START of the
+       * *next* instruction's fetch.
+       *
+       * pcQueue/pcQPtr (src/core/jaguar.c) is the fix, and is already
+       * exactly what vjtrace_backtrace() below relies on for the same
+       * reason: M68KInstructionHook() latches regs.pc into
+       * pcQueue[pcQPtr] and only then increments pcQPtr, once per
+       * instruction, called from src/m68000/m68kinterface.c
+       * immediately before that instruction's opcode dispatch -- i.e.
+       * strictly before any memory access the instruction makes. So
+       * the most recently queued entry, at
+       * pcQueue[(pcQPtr - 1) & (VJT_PCHIST_CAP - 1)], is always the
+       * start PC of whichever instruction is CURRENTLY executing: the
+       * one actually responsible for the access, regardless of how far
+       * its handler has since advanced regs.pc.
+       *
+       * pcQPtr can only index a possibly-unwritten slot before the
+       * very first 68K instruction of the whole session has executed
+       * (pcQueue is a plain BSS array; an unwritten slot reads back as
+       * PC=0 rather than crashing or returning garbage -- the same
+       * KNOWN LIMITATION already documented on vjtrace_backtrace() in
+       * vjtrace.h). M68KInstructionHook() runs unconditionally from
+       * that first instruction on and always runs before any memory
+       * access that instruction makes, so by the time this function is
+       * reachable from a real M68K-attributed bus access, pcQPtr is
+       * already >= 1 and that pre-first-instruction case cannot
+       * actually occur for who == M68K; it remains possible in
+       * principle for who == JAGUAR (host/init-time direct pokes
+       * before the 68K core has run at all). */
+      extern uint32_t pcQueue[];
+      extern uint32_t pcQPtr;
+      return pcQueue[(pcQPtr - 1) & (VJT_PCHIST_CAP - 1)];
+   }
    if (who == GPU)
       return gpu_pc;
    if (who == DSP)
@@ -118,6 +189,20 @@ int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw)
 {
    if (vjtrace_nwatch >= 16)
       return -1;
+   /* Defense at the core boundary: trace_probe.c already rejects an
+    * inverted/overflowing range at parse time (tp_parse_watch(), fixed
+    * in 7df363a), but this function has other callers too, and an
+    * inverted range or an out-of-{1,2,3} rw value would otherwise
+    * silently install a watch that can never fire. */
+   if (hi < lo)
+   {
+      uint32_t tmp = lo;
+      lo = hi;
+      hi = tmp;
+   }
+   rw &= 3u;
+   if (rw == 0)
+      rw = 2u;   /* default to writes, matching tp_parse_watch()'s default */
    watches[vjtrace_nwatch].lo = lo;
    watches[vjtrace_nwatch].hi = hi;
    watches[vjtrace_nwatch].rw = rw;
@@ -241,11 +326,23 @@ void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count)
    }
 }
 
+/* fwrite() wrapper that collapses the short-item-count failure mode
+ * (disk full, I/O error) to a single boolean so every call site in
+ * vjtrace_dump() and vjtrace_snapshot() below can be checked -- a VJTR
+ * or VJSN file that exists on disk must be complete; a truncated write
+ * must never look like success. */
+static int vjt_write(FILE *f, const void *buf, size_t size, size_t n)
+{
+   return (fwrite(buf, size, n, f) == n) ? 1 : 0;
+}
+
 int vjtrace_dump(const char *path)
 {
    FILE *f;
    uint64_t n, start, i;
    struct { char magic[4]; uint32_t version, ev_size, pad; uint64_t count; } hdr;
+   int ok;
+
    if (!ring)
       return -1;
    f = fopen(path, "wb");
@@ -256,21 +353,24 @@ int vjtrace_dump(const char *path)
    memcpy(hdr.magic, "VJTR", 4);
    hdr.version = 1; hdr.ev_size = (uint32_t)sizeof(vjtrace_ev); hdr.pad = 0;
    hdr.count = n;
-   fwrite(&hdr, sizeof(hdr), 1, f);
-   for (i = 0; i < n; i++)
-      fwrite(&ring[(start + i) % ring_cap], sizeof(vjtrace_ev), 1, f);
-   fclose(f);
-   return 0;
-}
 
-/* fwrite() wrapper that collapses the short-item-count failure mode
- * (disk full, I/O error) to a single boolean so every call site in
- * vjtrace_snapshot() below can be checked -- a VJSN file that exists
- * on disk must be complete; a truncated write must never look like
- * success. */
-static int vjt_write(FILE *f, const void *buf, size_t size, size_t n)
-{
-   return (fwrite(buf, size, n, f) == n) ? 1 : 0;
+   ok = vjt_write(f, &hdr, sizeof(hdr), 1);
+   for (i = 0; ok && i < n; i++)
+      ok = vjt_write(f, &ring[(start + i) % ring_cap], sizeof(vjtrace_ev), 1);
+
+   if (fclose(f) != 0)
+      ok = 0;
+
+   if (!ok)
+   {
+      /* Invariant: a VJTR file that exists on disk is complete -- mirrors
+       * vjtrace_snapshot()'s VJSN invariant below. A mid-write failure
+       * (disk full, I/O error) must leave neither a truncated file on
+       * disk nor a caller believing the dump succeeded. */
+      remove(path);
+      return -1;
+   }
+   return 0;
 }
 
 /* Writes one VJSN section header: an 8-byte name field (NUL-padded, not
@@ -431,6 +531,45 @@ int vjtrace_snapshot(const char *path)
    vjtrace_emit(VJT_EV_SNAPSHOT, (uint8_t)JAGUAR, 0, snapshot_ordinal);
    snapshot_ordinal++;
    return 0;
+}
+
+/* Counterpart to vjtrace_init(): frees the ring and resets every module
+ * static to its pre-init state, so a later vjtrace_init() call (the
+ * reload path -- iOS cannot dlclose cores, so retro_init()/retro_deinit()
+ * can both run again in the same process for a later title) allocates a
+ * fresh ring instead of hitting the "if (ring) return" early-out with a
+ * freed pointer.  Idempotent and safe to call when vjtrace_init() was
+ * never called (ring already NULL -- free(NULL) is a no-op) or already
+ * shut down.
+ *
+ * Ordering: callers must not still be reading the ring afterward.  The
+ * flight-recorder's own consumers (trace_probe_finish() and friends,
+ * test/harness/trace_probe.c) run BEFORE the core's shutdown call in
+ * every caller in this tree (see harness_shutdown(), which calls
+ * retro_unload_game() then retro_deinit() last), so a call from
+ * retro_deinit() is always after any ring dump has already happened. */
+void vjtrace_shutdown(void)
+{
+   if (ring)
+      free(ring);
+   ring = NULL;
+   ring_cap = 0;
+   ring_head = 0;
+   seq_ctr = 0;
+   cur_frame = 0;
+   vjtrace_nwatch = 0;
+   memset(watches, 0, sizeof(watches));
+   memset(&vjtrace_counters, 0, sizeof(vjtrace_counters));
+   memset(gpu_pchist, 0, sizeof(gpu_pchist));
+   gpu_pchist_head = 0;
+   gpu_pchist_fill = 0;
+   memset(dsp_pchist, 0, sizeof(dsp_pchist));
+   dsp_pchist_head = 0;
+   dsp_pchist_fill = 0;
+   /* vjtrace_snapshot()'s snapshot_ordinal is a function-local static
+    * (monotonic filename counter, not part of the leak or the ring
+    * state) -- deliberately left alone here; it just continues counting
+    * across a reload in the same process, which is cosmetic only. */
 }
 
 #else /* !VJ_TRACE */

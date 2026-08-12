@@ -2,7 +2,7 @@
  * test/harness/trace_probe.h — shared vjtrace flight-recorder probe.
  *
  * ======================================================================
- * USAGE
+ * AGENT QUICK-START
  * ======================================================================
  *
  *   #include "harness/harness.h"
@@ -58,6 +58,76 @@
  * nothing interprets them unless a tool attaches.  Adding
  * trace_probe_attach() to either tool would make one invocation do both
  * things at once — rename the flag on one side first.
+ *
+ * WATCH RECORD SHAPE IS REGION-DEPENDENT for 32-bit 68K accesses (both
+ * m68k_read_memory_32 and m68k_write_memory_32, src/core/jaguar.c) --
+ * see the WATCH COVERAGE block in src/core/vjtrace.h for the full
+ * explanation of why. Short version: a 32-bit 68K access to main RAM or
+ * cart ROM produces ONE WATCH_RD/WATCH_WR record covering the whole
+ * 4-byte span; a 32-bit access to anything else (TOM/JERRY/CDROM/
+ * unknown) produces TWO records, each covering 2 bytes, at addr and
+ * addr+2. There is no width/size field on vjtrace_ev to tell these
+ * apart from the record alone.
+ *
+ * CONCRETE FAILURE MODE: matching is exact-address (vjtrace_watch_check,
+ * src/core/vjtrace.c: `addr >= lo && addr <= hi`), so it only ever sees
+ * the specific addresses a record was stamped with -- addr for a RAM/ROM
+ * access, {addr, addr+2} for a TOM/JERRY/CDROM/unknown access -- never
+ * the bytes in between. A window whose low bound `window_lo` falls
+ * strictly inside a 4-byte access (`addr < window_lo <= addr+3`) always
+ * misses the RAM/ROM case (its only record is stamped at `addr`, which
+ * is now below `window_lo`), even though the real 68K write touched
+ * bytes inside the window. The TOM/JERRY/CDROM case is caught only for
+ * `window_lo` in {addr+1, addr+2} (its addr+2 half-record still
+ * satisfies `addr+2 >= window_lo`) -- for `window_lo == addr+3` BOTH
+ * region shapes miss, since neither {addr, addr+2} (TOM/JERRY) nor
+ * {addr} (RAM) is >= addr+3. Always set a watch window's low bound to
+ * an address at or before every 4-byte-aligned access you care about
+ * (round down to a multiple of 4), not to the specific byte you want to
+ * catch.
+ *
+ * ======================================================================
+ * WORKED EXAMPLE — who wrote address A, and when?
+ * ======================================================================
+ *
+ * The single most useful vjtrace workflow: watch an address, run, then
+ * ask the ring who touched it.  Any harness tool that calls
+ * trace_probe_attach() works; test/tools/vjtrace_smoke.c is the
+ * generic "just record this ROM" driver when you don't need a
+ * purpose-built tool.
+ *
+ *   1. Build the generic driver + the offline reader (not part of
+ *      `make test` — build both by hand):
+ *
+ *        cc -O2 -Wall -std=c99 -I. -I./libretro-common/include \
+ *           -o /tmp/vjt_smoke test/tools/vjtrace_smoke.c \
+ *           test/harness/harness.c test/harness/trace_probe.c -ldl -lm
+ *        cc -O2 -Wall -std=c99 -I. -o /tmp/trace_dump test/tools/trace_dump.c
+ *
+ *   2. Reproduce with a watch on the address (low bound rounded down to
+ *      a multiple of 4 — see WATCH RECORD SHAPE above).  The default 1M
+ *      ring wraps well before 1800 frames complete: OP_OBJECT/OP_LIST_START
+ *      emit unconditionally and measured ~2,578 events/frame on
+ *      test/roms/yarc.j64 (rate is ROM-dependent — a busier scene emits
+ *      more), so 1800 frames needs ~4.6M records.  Size the ring for the
+ *      run, not the default:
+ *
+ *        VJ_EXPECT_BUILD=$(./scripts/build-id.sh) VJ_TRACE_RING=6000000 \
+ *           /tmp/vjt_smoke \
+ *           ./virtualjaguar_libretro.dylib rom.jag --frames 1800 \
+ *           --watch 0x0A0000:4:w --trace-out /tmp/watch.vjtr
+ *
+ *   3. Ask the ring who wrote it:
+ *
+ *        /tmp/trace_dump /tmp/watch.vjtr --type WATCH_WR
+ *
+ *      Each printed record carries `pc` (the writer's instruction-start
+ *      PC — see the PC ATTRIBUTION note in vjtrace.h; always 0 for
+ *      OP/BLITTER records, which never resolve a PC), `who`
+ *      (M68K/GPU/DSP/OP/BLITTER/...), `f`+`hl` (frame/halfline, i.e.
+ *      when), and `val` (the write value, masked to the access width).
+ *      Add `--frame A:B` to narrow to one window once you know roughly
+ *      when it happens, or `--who NAME` to isolate one source.
  *
  * ======================================================================
  * PER-FIELD CSV

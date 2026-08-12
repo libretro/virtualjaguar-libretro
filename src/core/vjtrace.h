@@ -87,8 +87,19 @@ typedef struct
 
 #ifdef VJ_TRACE
 
-/* alloc ring; cap from env VJ_TRACE_RING, default 1<<20 */
+/* alloc ring; cap from env VJ_TRACE_RING (parsed strictly -- non-numeric,
+ * zero, negative, or overflowing values fall back to the default),
+ * default 1<<20, hard ceiling 1<<25 */
 void vjtrace_init(void);
+/* Counterpart to vjtrace_init(): frees the ring and resets every module
+ * static (ring/cap/head/seq/frame, watches, counters, GPU/DSP PC
+ * history) so a subsequent vjtrace_init() call re-allocates cleanly.
+ * Call from the core's shutdown path (retro_deinit(), libretro.c) --
+ * iOS cannot dlclose cores, so that is the paired call to retro_init()'s
+ * vjtrace_init(), same lifecycle symmetry every other per-session vjtrace
+ * static already has via retro_unload_game()/retro_deinit().  Idempotent:
+ * safe to call when the ring was never allocated or already freed. */
+void vjtrace_shutdown(void);
 /* Sets the frame number stamped onto every subsequently emitted event.
  * Called from the TOP of retro_run (libretro.c) with a 1-based counter,
  * so events emitted while frame N is being run -- by the machine and by
@@ -97,10 +108,73 @@ void vjtrace_init(void);
  * retro_run (retro_init / retro_load_game) carry 0. */
 void vjtrace_frame_tick(uint32_t frame);
 void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value);
-/* rw: 1=r 2=w 3=rw; ret idx or -1 */
+/* rw: 1=r 2=w 3=rw; ret idx or -1.  Sanitizes its inputs: an inverted
+ * range (hi < lo) is swapped, and rw is masked to its low 2 bits and
+ * defaulted to 2 (writes) if that leaves 0 -- so a bad range or mode
+ * from any caller installs a working watch instead of one that can
+ * never fire. */
 int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw);
 void vjtrace_watch_clear(void);
 void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_write);
+/* WATCH COVERAGE (updated by Task 7.5 -- see docs/vjtrace-design.md
+ * section 2 for the original design): VJT_WATCH_RD/WR sites live in
+ * JaguarReadByte, JaguarReadWord, JaguarReadLong, JaguarWriteByte,
+ * JaguarWriteWord and JaguarWriteLong (src/core/jaguar.c), which every
+ * GPU/DSP/OP/blitter/CDROM access to the shared memory map routes
+ * through, AND directly in the 68K's own bus-access fast path --
+ * m68k_read_memory_8/16/32 and m68k_write_memory_8/16/32 (also
+ * jaguar.c) -- which UAE calls for every 68K instruction fetch and
+ * data access and which never routes through the Jaguar dispatch above
+ * (it writes/reads jaguarMainRAM[] directly and dispatches TOM/JERRY/
+ * CDROM itself). Only the non-decomposing entry points of that fast
+ * path are hooked (e.g. m68k_write_memory_32's direct-RAM branch, not
+ * its two-half TOM/JERRY/CDROM fallback, which already gets two
+ * records from the two m68k_write_memory_16 calls it makes) so a
+ * single 68K bus access yields the natural record(s), never a
+ * double-count. who=M68K therefore now appears in WATCH_RD/WATCH_WR
+ * records with a real originating PC (who=OP and who=BLITTER do NOT --
+ * vjt_pc_of() only resolves a PC for M68K/JAGUAR/GPU/DSP; OP and
+ * BLITTER records always carry pc=0, same as before this task).
+ *
+ * PC ATTRIBUTION is the instruction-START PC, not whatever regs.pc
+ * happens to hold at the moment of the access: m68k_incpc() (or a
+ * handler's own equivalent) advances regs.pc at or near the top of
+ * nearly every opcode handler, before that handler's memory access
+ * runs, so reading M68K_REG_PC at access time names the NEXT
+ * instruction's fetch in the overwhelming majority of cases (859 of
+ * 861 opcode handlers, measured). vjt_pc_of() (src/core/vjtrace.c)
+ * instead reads the most recent entry of pcQueue/pcQPtr
+ * (src/core/jaguar.c), which M68KInstructionHook() latches BEFORE each
+ * instruction's opcode handler runs -- see the comment on vjt_pc_of()
+ * for the full argument.
+ *
+ * RECORD VALUE for a 68K write is masked to the access width (8/16/32
+ * bits) at each m68k_write_memory_* hook site, matching what
+ * JaguarWriteByte/Word/Long already carry -- UAE's `value` argument to
+ * the byte/word bus functions is not itself masked (e.g. a byte store
+ * of $AA can arrive as $FFFFFFAA), so the hook masks explicitly rather
+ * than forwarding the raw argument. A 68K read's `value` field is
+ * always 0 (the read hasn't happened yet at hook time), same as
+ * JaguarReadByte/Word/Long.
+ *
+ * RECORD SHAPE IS REGION-DEPENDENT for 32-bit 68K accesses, both
+ * m68k_read_memory_32 and m68k_write_memory_32: a 32-bit access to main
+ * RAM or cart ROM is terminal and produces ONE record covering the
+ * whole 4-byte span at its base address; a 32-bit access to anything
+ * else (TOM/JERRY/CDROM/unknown) decomposes into two 16-bit accesses
+ * and so produces TWO 2-byte records, at addr and addr+2. vjtrace_ev
+ * has no width/size field, so a consumer cannot tell which shape a
+ * given record came from except by knowing the target region. See the
+ * WATCH RECORD SHAPE note in test/harness/trace_probe.h (where
+ * `--watch` is documented) for the concrete failure mode this causes
+ * for a watch window that starts mid-longword.
+ *
+ * STILL OUT OF SCOPE: GPU/DSP local-store writes -- a GPU/DSP
+ * instruction writing its own local RAM ($F03000-$F03FFF /
+ * $F1B000-$F1CFFF) does not go through the Jaguar dispatch either, so
+ * those writes are not watch-visible. (GPU/DSP writes reaching main RAM
+ * or the other processor's local RAM DO route through it and are
+ * covered.) */
 /* binary ring dump; see docs/vjtrace-design.md for the format */
 int vjtrace_dump(const char *path);
 
@@ -138,7 +212,11 @@ int vjtrace_ring_read(uint64_t idx, vjtrace_ev *out);
  * TOMREG (base $F00000, 16 KB), JERRYREG (base $F10000, 64 KB),
  * REGS68K (base 0, 18 uint32: D0-D7,A0-A7,PC,SR), REGSGPU (base 0, 34
  * uint32: 32 regs of the CURRENT bank + PC + GPU_FLAGS), REGSDSP (base
- * 0, 34 uint32: 32 regs of the CURRENT bank + PC + DSP flags/control).
+ * 0, 34 uint32: 32 regs of the CURRENT bank + PC + DSP_FLAGS). Slot 33
+ * of REGSGPU/REGSDSP is the flags register (GPUGetFlags()/
+ * DSPGetFlags()), NOT the control register -- G_CTRL/D_CTRL are a
+ * different register at a different address and are not captured by
+ * this format.
  * Only the currently-selected GPU/DSP register bank is captured -- the
  * alternate bank is not dumped.
  *

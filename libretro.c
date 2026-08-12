@@ -104,6 +104,15 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
 
+#ifdef VJ_TRACE
+/* vjtrace per-session frame counter (see the use site in retro_run()).
+ * File-scope, not a retro_run()-local static, so retro_unload_game()/
+ * retro_deinit() can reset it: iOS cannot dlclose cores, so a
+ * function-local static would keep counting from a previous title
+ * instead of restarting the documented frame==1 invariant. */
+static uint32_t vjt_frame = 0;
+#endif
+
 extern uint16_t eeprom_ram[64];
 extern uint16_t cdrom_eeprom_ram[64];
 extern uint8_t mtMem[0x20000];
@@ -426,6 +435,36 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+
+   /* CD extensions are declared path-loaded (env 65).  DELIBERATELY the
+    * inverse of the usual pattern: hybrid cart+disc cores (Genesis Plus GX,
+    * PicoDrive, Geargrafx) set need_fullpath=true globally and override
+    * their cartridge extensions to false, because that fails safe for THEM
+    * on a frontend without this callback.  For this core the safe failure
+    * is the other way around: global false + CD-only true degrades, on a
+    * frontend without env 65, to exactly the old behavior (the frontend
+    * loads the disc image into RAM and we ignore it -- ~400 MB wasted on a
+    * .cdi, nothing else lost).  The standard direction would instead cost
+    * cartridge soft patching and the per-title DB feed, and break the
+    * RAM-loaded (.abs/.cof) reload in retro_load_game, on any frontend
+    * below RetroArch 1.9.6.  Measured effect (hover_strike.cdi, 396 MB):
+    * RetroArch peak RSS 557 MB -> ~165-180 MB depending on frontend
+    * buffering (164 MB and 181 MB both observed across runs).
+    * NOTE: no 'iso' entry here -- libretro.h's struct documentation limits
+    * override extensions to those in retro_system_info::valid_extensions
+    * (JAGUAR_VALID_EXTENSIONS, above) and that list does not include 'iso'.
+    * It needs none anyway: is_cd_content in retro_load_game still matches
+    * a bare .iso by path, and CDIntfOpenImage (src/cd/cdintf.c) refuses to
+    * open one regardless of how it arrived. */
+   {
+      static const struct retro_system_content_info_override
+         content_overrides[] = {
+         { "cue|cdi", true /* need_fullpath */, false /* persistent_data */ },
+         { NULL, false, false }
+      };
+      environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
+                 (void *)content_overrides);
+   }
 }
 
 /* Resolve the TCP endpoint for the network link and apply the mode.
@@ -1658,6 +1697,7 @@ static void video_buffer_blank(void)
 bool retro_load_game(const struct retro_game_info *info)
 {
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+   bool is_cd_content;
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -1708,6 +1748,10 @@ bool retro_load_game(const struct retro_game_info *info)
    if (!info)
       return false;
 
+   is_cd_content = info->path && (has_extension(info->path, "cue")
+                                  || has_extension(info->path, "cdi")
+                                  || has_extension(info->path, "iso"));
+
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
 
    /* Report that save states are deterministic (no quirks).
@@ -1724,11 +1768,27 @@ bool retro_load_game(const struct retro_game_info *info)
    }
 
    /* Feed the per-title DB the loaded content so option reads below (and in
-    * check_variables()) can match by CRC (issue #368). info->data is NULL
-    * for path-loaded content (CD) -- that correctly clears any match, since
-    * v1 only covers cartridge CRCs. */
-   if (info->data)
+    * check_variables()) can match by CRC (issue #368). On a frontend that
+    * honours the env-65 content-info override set up in retro_set_environment,
+    * CD content (.cue/.cdi) arrives here with info->data == NULL -- it is
+    * path-loaded, not read into memory -- so the info->data guard below
+    * already excludes it. On a frontend without env 65, CD content instead
+    * arrives with info->data holding the whole disc image; the explicit
+    * !is_cd_content guard covers that fallback so the CRC is never computed
+    * over disc bytes either way. v1 only covers cartridge CRCs, and hashing
+    * a disc image would find nothing this table knows about while risking a
+    * collision handing a CD title some cartridge's per-title overrides. */
+   if (info->data && !is_cd_content)
+   {
       TitleDBSetContent((const uint8_t *)info->data, info->size);
+      /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
+       * hashes differently from its retail base, so it matches no row and
+       * silently loses that title's enhancement defaults.  Say so (#409). */
+      if (!TitleDBTitleName())
+         LOG_INF("[titledb] no per-title entry for CRC32 $%08X -- patched or "
+                 "unlisted content; enhancement defaults not applied (see "
+                 "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
+   }
    else
       TitleDBSetContent(NULL, 0);
 
@@ -1785,6 +1845,7 @@ bool retro_load_game(const struct retro_game_info *info)
       free(sampleBuffer);
       videoBuffer = NULL;
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
@@ -1819,9 +1880,7 @@ bool retro_load_game(const struct retro_game_info *info)
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
 
-   if (info && info->path && (has_extension(info->path, "cue")
-                              || has_extension(info->path, "cdi")
-                              || has_extension(info->path, "iso")))
+   if (is_cd_content)
    {
       jaguar_cd_mode = true;
       /* Hardware has the Memory Track cart plugged in alongside the CD
@@ -1861,6 +1920,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
       LOG_INF("[CD] Disc image opened OK\n");
@@ -1890,6 +1950,7 @@ bool retro_load_game(const struct retro_game_info *info)
       videoBuffer = NULL;
       free(sampleBuffer);
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
 
@@ -1909,6 +1970,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
    }
@@ -1976,6 +2038,12 @@ void retro_unload_game(void)
    update_option_visibility();
    JaguarDone();
 
+#ifdef VJ_TRACE
+   /* Next title's frame 1 must be ring/field-CSV frame 1, not a
+    * continuation of this session's count (see vjt_frame's decl). */
+   vjt_frame = 0;
+#endif
+
    if (videoBuffer)
       free(videoBuffer);
    videoBuffer = NULL;
@@ -1995,6 +2063,9 @@ void retro_unload_game(void)
    ShadowHiresShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
+
+   /* The next option read must not see the previous title's CRC/match. */
+   TitleDBSetContent(NULL, 0);
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -2174,6 +2245,21 @@ void retro_deinit(void)
    content_loaded = false;
    show_cd_options = true;
    show_cart_bios_option = true;
+#ifdef VJ_TRACE
+   /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
+    * decl. */
+   vjt_frame = 0;
+   /* Paired with vjtrace_init() in retro_init(): frees the ring (fixes a
+    * leak the sanitizer job caught -- 33,554,432 bytes = the default
+    * 1<<20-record ring, calloc'd once and never freed) and resets every
+    * other vjtrace static, so a later retro_init() on the same process
+    * (iOS cannot dlclose cores) re-allocates cleanly instead of hitting
+    * vjtrace_init()'s "if (ring) return" early-out with a dangling cap.
+    * Any harness's own ring dump (trace_probe_finish() and friends) has
+    * already run by this point -- see harness_shutdown(), which calls
+    * retro_unload_game() then retro_deinit() last. */
+   vjtrace_shutdown();
+#endif
 }
 
 void retro_reset(void)
@@ -2242,10 +2328,7 @@ void retro_run(void)
     * events emitted during retro_load_game/retro_init, before any
     * retro_run, carry frame 0.  retro_run has no early return, so this
     * runs exactly once per frame. */
-   {
-      static uint32_t vjt_frame = 0;
-      vjtrace_frame_tick(++vjt_frame);
-   }
+   vjtrace_frame_tick(++vjt_frame);
 #endif
 
    /* Blit memo: advance the shadow-restamp dedupe epoch. */

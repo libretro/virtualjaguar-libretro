@@ -78,6 +78,7 @@
       shadowHiresN;
       shadowFBActive;
       blitMemo*;
+      TitleDB*;
       vjtrace_*;
    local: *;
 };

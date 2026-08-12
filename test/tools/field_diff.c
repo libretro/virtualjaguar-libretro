@@ -135,7 +135,7 @@ int main(int argc, char **argv)
     for (;;) {
         char *gotA = fgets(lineA, sizeof(lineA), fa);
         char *gotB = fgets(lineB, sizeof(lineB), fb);
-        int nA, nB;
+        int nA, nB, k;
 
         if (!gotA && !gotB)
             break;
@@ -150,8 +150,30 @@ int main(int argc, char **argv)
             fclose(fa); fclose(fb);
             return 2;
         }
-        if (nA == 0 || nB == 0)
-            continue; /* tolerate a trailing blank line at EOF */
+        if (nA == 0 && nB == 0) {
+            /* Blank line at the same position on both sides -- most
+             * commonly a trailing blank at EOF. Both cursors already
+             * advanced together this iteration, so tolerating this
+             * never desyncs row alignment; just don't count it as a
+             * compared data row. */
+            row--;
+            continue;
+        }
+        /* Exactly one side blank: NOT a skip. Skipping here was the
+         * bug -- it silently swallowed a row where one file has real
+         * content and the other doesn't, which is a genuine
+         * difference, not noise. Compare it like any other row by
+         * treating the blank side as all-empty-string fields, so a
+         * blank-vs-real-data row surfaces as a normal per-column
+         * mismatch instead of vanishing. */
+        if (nA == 0) {
+            for (k = 0; k < ncols; k++) fieldsA[k] = (char *)"";
+            nA = ncols;
+        }
+        if (nB == 0) {
+            for (k = 0; k < ncols; k++) fieldsB[k] = (char *)"";
+            nB = ncols;
+        }
         if (nA != ncols || nB != ncols) {
             fprintf(stderr,
                     "field_diff: row %ld is ragged ('%s' has %d fields, '%s' has "
