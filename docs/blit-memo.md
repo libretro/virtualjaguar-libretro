@@ -165,6 +165,13 @@ Corpus sweep over every cartridge:
 
 ```bash
 FRAMES=3000 JOBS=6 bash test/tools/blit_memo_sweep.sh
+
+# ...and with the shadow surfaces on, which is what exercises the
+# shadow-store replay.  A sweep without this never touches that path.
+EXTRA_OPTS="--option virtualjaguar_internal_resolution=2x \
+            --option virtualjaguar_true_color=enabled \
+            --option virtualjaguar_pertitle_defaults=disabled" \
+  bash test/tools/blit_memo_sweep.sh
 ```
 
 Neither in-repo public ROM (`yarc`, `jagniccc`) ever repeats a blit
@@ -174,12 +181,19 @@ the gate, same as the audio tests and the CD boot matrix.
 ## Sweep status
 
 **Retail sweep complete — 64 commercial cartridges, 0 divergences.**
+Run twice: once at stock 1x, and once at **2x + true colour**, which is
+the configuration that exercises shadow-store replay. Both runs produce
+the **same 19 clean titles**; enabling the surfaces demoted nothing.
 
-| verdict | count | meaning |
-|---|---|---|
-| clean | 19 | **2,546,482 verifications, 0 divergences** |
-| thin | 43 | no verdict — never repeated a stream in the window |
-| noload | 2 | core refuses the dump (prototype/alpha format) |
+| verdict | 1x | 2x + true colour | meaning |
+|---|---|---|---|
+| clean | 19 (2,546,482 checks) | 19 (**2,134,856 checks**) | 0 divergences in both |
+| thin | 43 | 43 | no verdict — never repeated a stream in the window |
+| noload | 2 | 2 | core refuses the dump (prototype/alpha format) |
+
+The 2x run's checks compare shadow content as well as the write log and
+blitter state, so it covers the class that the original sweep was blind
+to.
 
 Clean, with check counts: Kasumi Ninja (648,213 — two dumps), Towers II
 (311,317), Missile Command 3D (226,853), Doom EX (170,303), Doom
@@ -205,11 +219,7 @@ matching stream — Club Drive (394,581 misses) and Checkered Flag
 
 ## Open items
 
-0. **Re-run the corpus sweep.** The 64-title result below predates
-   shadow-store replay and was taken with `verify` blind to the
-   surfaces, so it needs redoing — ideally with true colour and hi-res
-   on, which is where the interesting failures live.
-0b. **Re-measure on a quiet host** (see "Measured effect") and check
+0. **Re-measure on a quiet host** (see "Measured effect") and check
    the memory cost: the shadow arena adds ~9.6MB on top of the 14.6MB
    entry pool whenever a surface is active.
 1. **Give thin titles real input fixtures**, especially Club Drive and
