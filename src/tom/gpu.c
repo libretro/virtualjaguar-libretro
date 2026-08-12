@@ -719,6 +719,25 @@ uint32_t GPUGetReg(int n)
 	return gpu_reg[n];
 }
 
+/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose GPU
+ * local work RAM (the REGSGPU/GPURAM sections of vjtrace_snapshot()).
+ * Same not-in-shipped-ABI caveat as GPUGetReg above. */
+uint8_t * GPUGetRAM(void)
+{
+	return gpu_ram_8;
+}
+
+/* Diagnostic-only accessor: raw GPU_FLAGS/control register value. Like
+ * dsp_flags read by DSPGetFlags() in dsp.c, the live N/C/Z bits (kept
+ * separately in gpu_flag_n/c/z for cheap RMW) are merged into gpu_flags
+ * only on the $F02100 register-read path (see the case 0x00 block
+ * above), so this can read one flag update stale mid-instruction --
+ * snapshot-quality only, not for cycle-exact NCZ probes. */
+uint32_t GPUGetFlags(void)
+{
+	return gpu_flags;
+}
+
 void build_branch_condition_table(void)
 {
    unsigned i, j;

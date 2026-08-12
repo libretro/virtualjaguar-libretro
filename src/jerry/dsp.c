@@ -935,6 +935,17 @@ uint32_t DSPGetFlags(void)
 	return dsp_flags;
 }
 
+/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose a DSP
+ * register by index from the CURRENT bank, mirroring GPUGetReg in
+ * src/tom/gpu.c. Not part of the shipped ABI (production link uses
+ * exports.list, which does not have the _DSP* wildcard). */
+uint32_t DSPGetReg(int n)
+{
+	if (n < 0 || n > 31)
+		return 0;
+	return dsp_reg[n];
+}
+
 void DSPInit(void)
 {
 	dsp_build_branch_condition_table();

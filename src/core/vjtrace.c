@@ -11,16 +11,31 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vjtrace.h"
-#include "vjag_memory.h"             /* who enum: JAGUAR, DSP, GPU, ... */
+#include "vjag_memory.h"             /* who enum: JAGUAR, DSP, GPU, ...; jaguarMainRAM */
 #include "../m68000/m68kinterface.h" /* m68k_get_reg */
-#include "../tom/tom.h"              /* tomRam8 for halfline (VC) */
-#include "../jerry/dsp.h"            /* DSP declarations */
+#include "../tom/tom.h"              /* tomRam8 for halfline (VC) and TOMREG snapshot section */
+#include "../jerry/dsp.h"            /* DSP declarations: DSPGetRAM, DSPGetFlags */
 
 /* gpu_pc and dsp_pc are plain globals defined in src/tom/gpu.c and
  * src/jerry/dsp.c respectively; neither is declared extern in gpu.h /
  * dsp.h, so declare them locally here (types match the definitions). */
 extern uint32_t gpu_pc;
 extern uint32_t dsp_pc;
+
+/* GPU register/RAM diagnostic accessors (src/tom/gpu.c) and the JERRY
+ * RAM window (src/jerry/jerry.c) are, like gpu_pc/dsp_pc above, not
+ * declared in any header -- GPUGetReg predates vjtrace (issue #406);
+ * GPUGetRAM/GPUGetFlags were added alongside vjtrace_snapshot() below
+ * for the same not-in-shipped-ABI reason (see the comments at their
+ * definitions). Prototype/extern them locally here rather than growing
+ * gpu.h/jerry.h's public surface for a diagnostic-only consumer.
+ * jerry_ram_8 is a plain (non-static) global array in jerry.c sized to
+ * cover the full $F10000-$F1FFFF JERRY register/RAM window. */
+extern uint32_t GPUGetReg(int n);
+extern uint8_t *GPUGetRAM(void);
+extern uint32_t GPUGetFlags(void);
+extern uint32_t DSPGetReg(int n);
+extern uint8_t jerry_ram_8[0x10000];
 
 typedef struct { uint32_t lo, hi; unsigned rw; } vjt_watch;
 
@@ -224,6 +239,127 @@ int vjtrace_dump(const char *path)
    for (i = 0; i < n; i++)
       fwrite(&ring[(start + i) % ring_cap], sizeof(vjtrace_ev), 1, f);
    fclose(f);
+   return 0;
+}
+
+/* Writes one VJSN section header: an 8-byte name field (NUL-padded, not
+ * required to be NUL-terminated -- an 8-character name like "JERRYREG"
+ * fills the field with no terminator), then base/len as individual
+ * uint32_t writes (no struct-layout fwrite, so there is no compiler
+ * padding to reason about -- see vjtrace_snapshot()'s header comment
+ * in vjtrace.h). Caller writes the len bytes of section data itself
+ * immediately after this call. */
+static void vjt_snap_section_header(FILE *f, const char *name,
+                                     uint32_t base, uint32_t len)
+{
+   char namebuf[8];
+   size_t namelen;
+   memset(namebuf, 0, sizeof(namebuf));
+   namelen = strlen(name);
+   if (namelen > sizeof(namebuf))
+      namelen = sizeof(namebuf);
+   memcpy(namebuf, name, namelen);
+   fwrite(namebuf, 1, sizeof(namebuf), f);
+   fwrite(&base, sizeof(uint32_t), 1, f);
+   fwrite(&len, sizeof(uint32_t), 1, f);
+}
+
+int vjtrace_snapshot(const char *path)
+{
+   FILE *f;
+   uint32_t version, nsections;
+   uint32_t regs68k[18];
+   uint32_t regsgpu[34];
+   uint32_t regsdsp[34];
+   int i;
+   static uint32_t snapshot_ordinal = 0;
+
+   if (!ring)
+      return -1;
+   f = fopen(path, "wb");
+   if (!f)
+      return -1;
+
+   version = 1;
+   nsections = 8;
+   fwrite("VJSN", 1, 4, f);
+   fwrite(&version, sizeof(uint32_t), 1, f);
+   fwrite(&nsections, sizeof(uint32_t), 1, f);
+
+   /* MAINRAM: low 2 MB of the Jaguar address space (jaguarMainRAM points
+    * into jagMemSpace; see src/core/vjag_memory.c). NOTE: vjag_memory.c
+    * also exports dead `gpuRAM`/`dspRAM` pointers into that same
+    * jagMemSpace array at $F03000/$F1B000 -- those are NOT where the
+    * live GPU/DSP work RAM actually lives (gpu_ram_8/dsp_ram_8, private
+    * statics in gpu.c/dsp.c, read/written by every GPU/DSP memory
+    * access instead); GPURAM/DSPRAM below go through GPUGetRAM() /
+    * DSPGetRAM() specifically to avoid that trap. */
+   vjt_snap_section_header(f, "MAINRAM", 0x00000000, 0x00200000);
+   fwrite(jaguarMainRAM, 1, 0x00200000, f);
+
+   /* GPURAM: GPU local work RAM (gpu_ram_8, private static in gpu.c). */
+   vjt_snap_section_header(f, "GPURAM", 0x00F03000, 0x1000);
+   fwrite(GPUGetRAM(), 1, 0x1000, f);
+
+   /* DSPRAM: DSP local work RAM (dsp_ram_8, private static in dsp.c). */
+   vjt_snap_section_header(f, "DSPRAM", 0x00F1B000, 0x2000);
+   fwrite(DSPGetRAM(), 1, 0x2000, f);
+
+   /* TOMREG: full TOM register/RAM window (tomRam8, extern in tom.h). */
+   vjt_snap_section_header(f, "TOMREG", 0x00F00000, 0x4000);
+   fwrite(tomRam8, 1, 0x4000, f);
+
+   /* JERRYREG: full JERRY register/RAM window, incl. DSP control regs
+    * and wavetable ROM (jerry_ram_8, plain global in jerry.c). */
+   vjt_snap_section_header(f, "JERRYREG", 0x00F10000, 0x10000);
+   fwrite(jerry_ram_8, 1, 0x10000, f);
+
+   /* REGS68K: D0-D7, A0-A7, PC, SR -- 18 uint32, via m68k_get_reg(). */
+   regs68k[0] = m68k_get_reg(NULL, M68K_REG_D0);
+   regs68k[1] = m68k_get_reg(NULL, M68K_REG_D1);
+   regs68k[2] = m68k_get_reg(NULL, M68K_REG_D2);
+   regs68k[3] = m68k_get_reg(NULL, M68K_REG_D3);
+   regs68k[4] = m68k_get_reg(NULL, M68K_REG_D4);
+   regs68k[5] = m68k_get_reg(NULL, M68K_REG_D5);
+   regs68k[6] = m68k_get_reg(NULL, M68K_REG_D6);
+   regs68k[7] = m68k_get_reg(NULL, M68K_REG_D7);
+   regs68k[8] = m68k_get_reg(NULL, M68K_REG_A0);
+   regs68k[9] = m68k_get_reg(NULL, M68K_REG_A1);
+   regs68k[10] = m68k_get_reg(NULL, M68K_REG_A2);
+   regs68k[11] = m68k_get_reg(NULL, M68K_REG_A3);
+   regs68k[12] = m68k_get_reg(NULL, M68K_REG_A4);
+   regs68k[13] = m68k_get_reg(NULL, M68K_REG_A5);
+   regs68k[14] = m68k_get_reg(NULL, M68K_REG_A6);
+   regs68k[15] = m68k_get_reg(NULL, M68K_REG_A7);
+   regs68k[16] = m68k_get_reg(NULL, M68K_REG_PC);
+   regs68k[17] = m68k_get_reg(NULL, M68K_REG_SR);
+   vjt_snap_section_header(f, "REGS68K", 0, (uint32_t)sizeof(regs68k));
+   fwrite(regs68k, sizeof(uint32_t), 18, f);
+
+   /* REGSGPU: 32 regs of the CURRENT bank (GPUGetReg), then PC
+    * (gpu_pc), then GPU_FLAGS (GPUGetFlags). Alternate bank not
+    * captured -- see vjtrace_snapshot()'s header comment in vjtrace.h. */
+   for (i = 0; i < 32; i++)
+      regsgpu[i] = GPUGetReg(i);
+   regsgpu[32] = gpu_pc;
+   regsgpu[33] = GPUGetFlags();
+   vjt_snap_section_header(f, "REGSGPU", 0, (uint32_t)sizeof(regsgpu));
+   fwrite(regsgpu, sizeof(uint32_t), 34, f);
+
+   /* REGSDSP: 32 regs of the CURRENT bank (DSPGetReg), then PC
+    * (dsp_pc), then the DSP flags/control register (DSPGetFlags).
+    * Alternate bank not captured. */
+   for (i = 0; i < 32; i++)
+      regsdsp[i] = DSPGetReg(i);
+   regsdsp[32] = dsp_pc;
+   regsdsp[33] = DSPGetFlags();
+   vjt_snap_section_header(f, "REGSDSP", 0, (uint32_t)sizeof(regsdsp));
+   fwrite(regsdsp, sizeof(uint32_t), 34, f);
+
+   fclose(f);
+
+   vjtrace_emit(VJT_EV_SNAPSHOT, (uint8_t)JAGUAR, 0, snapshot_ordinal);
+   snapshot_ordinal++;
    return 0;
 }
 

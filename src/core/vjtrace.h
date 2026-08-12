@@ -99,6 +99,32 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
 /* binary ring dump; see docs/vjtrace-design.md for the format */
 int vjtrace_dump(const char *path);
 
+/* Multi-section emulator state dump ("VJSN" v1 format; see
+ * docs/vjtrace-design.md). Writes host-endian, native-struct-layout
+ * data (the reader runs on the same host as the writer -- no byte-swap
+ * or wire-format packing is done). Header: { char magic[4]="VJSN";
+ * uint32_t version=1; uint32_t nsections=8; } followed by nsections of
+ * { char name[8] (NUL-padded, NOT required to be NUL-terminated --
+ * "JERRYREG" fills all 8 bytes with no terminator); uint32_t base;
+ * uint32_t len; } + len raw bytes, in this fixed order: MAINRAM (base
+ * 0, 2 MB), GPURAM (base $F03000, 4 KB), DSPRAM (base $F1B000, 8 KB),
+ * TOMREG (base $F00000, 16 KB), JERRYREG (base $F10000, 64 KB),
+ * REGS68K (base 0, 18 uint32: D0-D7,A0-A7,PC,SR), REGSGPU (base 0, 34
+ * uint32: 32 regs of the CURRENT bank + PC + GPU_FLAGS), REGSDSP (base
+ * 0, 34 uint32: 32 regs of the CURRENT bank + PC + DSP flags/control).
+ * Only the currently-selected GPU/DSP register bank is captured -- the
+ * alternate bank is not dumped.
+ *
+ * Emits a VJT_EV_SNAPSHOT event on success (who=JAGUAR, addr=0,
+ * value=ordinal), ordinal counting from 0 for the first snapshot
+ * written by this process, so ring events can be correlated back to a
+ * specific snapshot file by index.
+ *
+ * Returns -1 (no event emitted, no partial file left open) if the
+ * vjtrace ring is not initialized (vjtrace_init() not yet called) or
+ * if the output file can't be opened; never crashes. */
+int vjtrace_snapshot(const char *path);
+
 /* GPU/DSP PC history rings (0x400 entries each), fed from the per-
  * instruction top of GPUExec()/DSPExec() via a plain function call.
  * Read back via vjtrace_backtrace(). An inlined-macro form that writes
