@@ -142,6 +142,11 @@ static int tp_parse_watch(struct trace_probe *tp, const char *spec)
         }
     }
 
+    if (len - 1 > 0xFFFFFFFFu - addr) {
+        fprintf(stderr, "trace_probe: --watch '%s' wraps past $FFFFFFFF\n", spec);
+        return 0;
+    }
+
     if (tp->p_watch_add(addr, addr + len - 1, rw) < 0) {
         fprintf(stderr, "trace_probe: core refused watch '%s' (max 16)\n", spec);
         return 0;

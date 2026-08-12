@@ -105,9 +105,15 @@
  *        cc -O2 -Wall -std=c99 -I. -o /tmp/trace_dump test/tools/trace_dump.c
  *
  *   2. Reproduce with a watch on the address (low bound rounded down to
- *      a multiple of 4 — see WATCH RECORD SHAPE above):
+ *      a multiple of 4 — see WATCH RECORD SHAPE above).  The default 1M
+ *      ring wraps well before 1800 frames complete: OP_OBJECT/OP_LIST_START
+ *      emit unconditionally and measured ~2,578 events/frame on
+ *      test/roms/yarc.j64 (rate is ROM-dependent — a busier scene emits
+ *      more), so 1800 frames needs ~4.6M records.  Size the ring for the
+ *      run, not the default:
  *
- *        VJ_EXPECT_BUILD=$(./scripts/build-id.sh) /tmp/vjt_smoke \
+ *        VJ_EXPECT_BUILD=$(./scripts/build-id.sh) VJ_TRACE_RING=6000000 \
+ *           /tmp/vjt_smoke \
  *           ./virtualjaguar_libretro.dylib rom.jag --frames 1800 \
  *           --watch 0x0A0000:4:w --trace-out /tmp/watch.vjtr
  *

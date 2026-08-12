@@ -228,6 +228,14 @@ static vjtrace_ev *load_filtered(const char *path, const int *keep_mask,
             fclose(f);
             return NULL;
         }
+        if (idx == 0 && ev.seq != 0) {
+            fprintf(stderr,
+                    "WARNING: '%s': ring wrapped -- the first %llu events "
+                    "(seq 0..%llu) were evicted before the dump. Raise "
+                    "VJ_TRACE_RING and re-run.\n",
+                    path, (unsigned long long)ev.seq,
+                    (unsigned long long)(ev.seq - 1));
+        }
         if (ev.type < VJT_EV__COUNT && !keep_mask[ev.type])
             continue;
         buf[n++] = ev;

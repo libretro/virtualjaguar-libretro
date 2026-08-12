@@ -280,11 +280,23 @@ void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count)
    }
 }
 
+/* fwrite() wrapper that collapses the short-item-count failure mode
+ * (disk full, I/O error) to a single boolean so every call site in
+ * vjtrace_dump() and vjtrace_snapshot() below can be checked -- a VJTR
+ * or VJSN file that exists on disk must be complete; a truncated write
+ * must never look like success. */
+static int vjt_write(FILE *f, const void *buf, size_t size, size_t n)
+{
+   return (fwrite(buf, size, n, f) == n) ? 1 : 0;
+}
+
 int vjtrace_dump(const char *path)
 {
    FILE *f;
    uint64_t n, start, i;
    struct { char magic[4]; uint32_t version, ev_size, pad; uint64_t count; } hdr;
+   int ok;
+
    if (!ring)
       return -1;
    f = fopen(path, "wb");
@@ -295,21 +307,24 @@ int vjtrace_dump(const char *path)
    memcpy(hdr.magic, "VJTR", 4);
    hdr.version = 1; hdr.ev_size = (uint32_t)sizeof(vjtrace_ev); hdr.pad = 0;
    hdr.count = n;
-   fwrite(&hdr, sizeof(hdr), 1, f);
-   for (i = 0; i < n; i++)
-      fwrite(&ring[(start + i) % ring_cap], sizeof(vjtrace_ev), 1, f);
-   fclose(f);
-   return 0;
-}
 
-/* fwrite() wrapper that collapses the short-item-count failure mode
- * (disk full, I/O error) to a single boolean so every call site in
- * vjtrace_snapshot() below can be checked -- a VJSN file that exists
- * on disk must be complete; a truncated write must never look like
- * success. */
-static int vjt_write(FILE *f, const void *buf, size_t size, size_t n)
-{
-   return (fwrite(buf, size, n, f) == n) ? 1 : 0;
+   ok = vjt_write(f, &hdr, sizeof(hdr), 1);
+   for (i = 0; ok && i < n; i++)
+      ok = vjt_write(f, &ring[(start + i) % ring_cap], sizeof(vjtrace_ev), 1);
+
+   if (fclose(f) != 0)
+      ok = 0;
+
+   if (!ok)
+   {
+      /* Invariant: a VJTR file that exists on disk is complete -- mirrors
+       * vjtrace_snapshot()'s VJSN invariant below. A mid-write failure
+       * (disk full, I/O error) must leave neither a truncated file on
+       * disk nor a caller believing the dump succeeded. */
+      remove(path);
+      return -1;
+   }
+   return 0;
 }
 
 /* Writes one VJSN section header: an 8-byte name field (NUL-padded, not

@@ -42,7 +42,7 @@ the current directory when omitted.
   tap moves, and the underlying loop's passes-per-field.
   ```
   cc -O2 -Wall -std=c99 -I./libretro-common/include -o test/tools/menu_step_probe \
-     test/tools/menu_step_probe.c test/harness/harness.c -ldl -lm
+     test/tools/menu_step_probe.c test/harness/harness.c test/harness/trace_probe.c -ldl -lm
   ./test/tools/menu_step_probe ./virtualjaguar_libretro.dylib rom.jag --addr 05170C --hold 4 --loop-rate
   ```
   Reach for this when the bug is specifically in a MENU (not gameplay) — menu loops often have no tick gate and pace at renderer speed, which a gameplay-timing fix will not touch (#399). `--scan` (no `--addr`) locates the cursor variable empirically if you don't know it yet.
@@ -64,10 +64,16 @@ the current directory when omitted.
      test/tools/vjtrace_smoke.c test/harness/harness.c test/harness/trace_probe.c -ldl -lm
   cc -O2 -Wall -std=c99 -I. -o /tmp/trace_dump test/tools/trace_dump.c
 
-  /tmp/vjt_smoke ./virtualjaguar_libretro.dylib rom.jag --frames 1800 \
+  VJ_TRACE_RING=6000000 /tmp/vjt_smoke ./virtualjaguar_libretro.dylib rom.jag --frames 1800 \
      --watch 0x0A0000:4:w --trace-out /tmp/watch.vjtr
   /tmp/trace_dump /tmp/watch.vjtr --type WATCH_WR    # add --who NAME or --frame A:B to narrow
   ```
+  The default 1M-record ring wraps well before 1800 frames — measured
+  ~2,578 events/frame on `test/roms/yarc.j64` (ROM-dependent; scale from
+  your own measurement), so 1800 frames needs ~4.6M records; the
+  `VJ_TRACE_RING=6000000` above gives headroom. If a dump you're reading
+  DID wrap, `trace_dump`/`trace_diff` print `WARNING: ring wrapped` to
+  stderr — never ignore it.
   Each record shows `pc` (writer's instruction-start PC — 0 for OP/BLITTER, which never resolve one), `who` (M68K/GPU/DSP/OP/BLITTER/...), `f`/`hl` (frame/halfline), `val`.
   **Coverage caveat**: GPU/DSP writes to their OWN local RAM ($F03000-$F03FFF / $F1B000-$F1CFFF) never route through the watched dispatch and are invisible here — only accesses through the Jaguar memory dispatch and the 68K's own bus fast path are covered. A 32-bit 68K access produces ONE record for main RAM/cart ROM but TWO for TOM/JERRY/CDROM/unknown, so always round a watch's low bound DOWN to a multiple of 4 or you can silently miss the RAM case. Full details: the WATCH COVERAGE block in `src/core/vjtrace.h` and the WORKED EXAMPLE in `test/harness/trace_probe.h`.
   Reach for this when you need to name the exact instruction that last touched a byte, not just "something changed it".

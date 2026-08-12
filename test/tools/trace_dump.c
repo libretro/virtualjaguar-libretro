@@ -276,6 +276,14 @@ int main(int argc, char **argv)
             fclose(f);
             return 2;
         }
+        if (idx == 0 && ev.seq != 0) {
+            fprintf(stderr,
+                    "WARNING: '%s': ring wrapped -- the first %llu events "
+                    "(seq 0..%llu) were evicted before the dump. Raise "
+                    "VJ_TRACE_RING and re-run.\n",
+                    path, (unsigned long long)ev.seq,
+                    (unsigned long long)(ev.seq - 1));
+        }
         if (have_type && ev.type != (uint8_t)want_type) continue;
         if (have_who && ev.who != (uint8_t)want_who) continue;
         if (have_frame && (ev.frame < frame_lo || ev.frame > frame_hi)) continue;
