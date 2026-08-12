@@ -124,6 +124,8 @@ static int bmCartMutable = 0;
 static uint32_t bmFrame = 1;
 static uint32_t bmRestampFrame[BM_PAGES];
 static int bmVerifyLogged = 0;
+static int blitMemoCDNoticeLogged = 0;
+static int bmShadowNoticeLogged = 0;
 
 /* Entries recorded (or verified) since the last finalize; their
  * wrStamp is assigned at the frame boundary so a pass's own
@@ -326,30 +328,6 @@ static int bm_alloc_pool(void)
    return 1;
 }
 
-/* FNV over the RAM bytes of every page in a bitmap (verify mode). */
-static uint32_t bm_hash_pages(const uint64_t *bm)
-{
-   uint32_t h = 2166136261u;
-   uint32_t w, b, i;
-   const uint8_t *page;
-   for (w = 0; w < BM_BMWORDS; w++)
-   {
-      uint64_t m = bm[w];
-      for (b = 0; m; b++, m >>= 1)
-      {
-         if (!(m & 1))
-            continue;
-         page = jaguarMainRAM + ((w * 64 + b) << BM_PAGE_SHIFT);
-         for (i = 0; i < (1u << BM_PAGE_SHIFT); i++)
-         {
-            h ^= page[i];
-            h *= 16777619u;
-         }
-      }
-   }
-   return h;
-}
-
 /* Re-stamp the hi-res shadow epoch for the pages a skipped blit wrote,
  * once per page per frame.  Without this, skipping the re-blit for
  * longer than HIRES_EPOCH_WINDOW would silently age Stage 2 content
@@ -466,6 +444,32 @@ int BlitMemoLaunch(void)
     * first read. */
    if (bootConfig.isCDGame)
       return 0;
+
+   /* A shadow surface is active (true colour and/or hi-res).  Both are
+    * populated from inside the blitter engines, at the pixel-write
+    * sites -- so a skipped blit never stores its shadow content, and
+    * the write-log replay puts bytes straight into main RAM without
+    * passing those stores.  The shadow surface then disagrees with RAM
+    * and the presented frame differs from a live run.  Measured on AvP:
+    * memo vs memo-off is bit-identical at 1x with true colour off, and
+    * diverges from frame 1544 with either surface enabled.
+    *
+    * Tested at launch rather than in BlitMemoSetMode() because
+    * true colour is a runtime-toggleable option.  Fixing this properly
+    * means recording the shadow stores in the write log and replaying
+    * them through ShadowFBStoreCry/ShadowHiresStoreCryBlock; until then
+    * the memo simply does not run in these configurations. */
+   if (shadowHiresActive || shadowFBActive)
+   {
+      if (!bmShadowNoticeLogged)
+      {
+         LOG_INF("[BLITMEMO] shadow surface active (true colour / hi-res): "
+                 "memoization not supported, staying off\n");
+         bmShadowNoticeLogged = 1;
+      }
+      return 0;
+   }
+
    if (!bmPool && !bm_alloc_pool())
       return 0;
 
@@ -639,16 +643,49 @@ void BlitMemoFrame(void)
 
 void BlitMemoSetMode(int mode)
 {
+   /* CD content cannot be memoized (the CD HLE writes main RAM without
+    * passing the write hooks), and leaving the mode on would charge
+    * every CD title the write-hook cost for a memo that can never hit.
+    * Refuse here rather than only at the launch site, so `blitMemoMode`
+    * stays 0 and the hooks short-circuit.
+    *
+    * bootConfig is resolved AFTER the first check_variables() of a
+    * load, so libretro.c re-applies the requested mode once boot config
+    * is known -- this test is only meaningful on that second call. */
+   if (mode != BLIT_MEMO_OFF && bootConfig.isCDGame)
+   {
+      if (blitMemoCDNoticeLogged != 1)
+      {
+         LOG_INF("[BLITMEMO] CD content: memoization unavailable, staying off\n");
+         blitMemoCDNoticeLogged = 1;
+      }
+      mode = BLIT_MEMO_OFF;
+   }
+
    if (mode == blitMemoMode)
       return;
    blitMemoMode = mode;
    BlitMemoFlush();
-   if (mode != BLIT_MEMO_OFF)
+
+   if (mode == BLIT_MEMO_OFF)
    {
-      bm_alloc_pool();
-      LOG_INF("[BLITMEMO] mode=%s\n",
-              mode == BLIT_MEMO_VERIFY ? "verify" : "enabled");
+      /* Hand the pool back: 14.6MB is too much to hold for a feature
+       * the user just switched off. */
+      if (bmPool)
+      {
+         free(bmPool);
+         bmPool = NULL;
+         bmPoolNext = 0;
+      }
+      return;
    }
+
+   /* The pool is allocated lazily at the first blit launch, not here, so
+    * content that never reaches BlitMemoLaunch() -- CD titles, anything
+    * running with a shadow surface, anything that never blits -- pays
+    * nothing. */
+   LOG_INF("[BLITMEMO] mode=%s\n",
+           mode == BLIT_MEMO_VERIFY ? "verify" : "enabled");
 }
 
 void BlitMemoShutdown(void)
@@ -670,6 +707,8 @@ void BlitMemoShutdown(void)
    bmCartMutable = 0;
    bmFrame = 1;
    bmVerifyLogged = 0;
+   blitMemoCDNoticeLogged = 0;
+   bmShadowNoticeLogged = 0;
    bmPendingN = 0;
    bmSkipRunN = 0;
    blitMemoHits = blitMemoMisses = blitMemoDirty = 0;

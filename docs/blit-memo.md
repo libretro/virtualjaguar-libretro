@@ -1,6 +1,8 @@
 # Blit memoization
 
-**Status:** merged as machinery, **off by default and tagged to no title.**
+**Status:** prototype, **off by default and tagged to no title.** Currently
+refuses to run when a shadow surface is active -- see the limitation
+section below, which is the blocker before this is worth enabling.
 Issue [#411](https://github.com/libretro/virtualjaguar-libretro/issues/411).
 
 Some titles re-render an identical scene every engine cycle while the
@@ -62,6 +64,46 @@ full-buffer clear re-dirties the whole stream every cycle: dirty count
 until hooked explicitly, and page generations silently lied. Any future
 RAM-touching path needs the same treatment.
 
+## The shadow-surface limitation — read this first
+
+**The memo does not run when a shadow surface is active** (true colour
+and/or hi-res). That is most of what makes the feature interesting, so
+it is the first thing to fix.
+
+Both shadow surfaces are populated from *inside* the blitter engines, at
+the pixel-write sites (`ShadowFBStoreCry`, `ShadowHiresStoreCry` in
+`blitter.c`). A skipped blit therefore never stores its shadow content,
+and the write-log replay puts bytes straight into main RAM without
+passing through those stores. The shadow surface then disagrees with
+RAM and the presented frame differs from a live run.
+
+Measured on AvP, memo versus memo-off over 2,000 frames:
+
+| config | result |
+|---|---|
+| 1x, true colour off | **bit-identical** |
+| 1x, true colour on | diverges from frame 1544 |
+| 2x (either true-colour setting) | diverges from frame 1544 |
+
+`BlitMemoLaunch()` therefore refuses to run whenever
+`shadowHiresActive || shadowFBActive`. The epoch re-stamp described
+below is necessary but **not sufficient** — it refreshes the age of
+shadow entries that already exist; it cannot create the entries a
+skipped blit would have stored.
+
+Fixing it properly means recording the shadow stores in the write log
+alongside the RAM writes and replaying them through
+`ShadowFBStoreCry` / `ShadowHiresStoreCryBlock`. Until then the memo's
+reach is 1x with true colour off — which is *not* AvP's shipped
+configuration, so the headline 2x number below is currently
+unreachable.
+
+**`verify` mode does not catch this.** It compares the write log and
+the blitter post-state, neither of which covers the shadow surfaces, so
+the corpus sweep's clean result says nothing about this interaction.
+Any fix must extend verify to compare shadow content too, or the sweep
+will keep passing a broken configuration.
+
 ## Boundaries
 
 - **Blits touching anything outside main RAM re-execute live**
@@ -85,14 +127,17 @@ AvP idle, host wall-clock normalized to zero-blit frames within each run
 (this cancels machine-wide noise, which otherwise swamps the effect),
 3 reps per config, spread ±0.5%:
 
-| config | render overhead, memo off | memo on | change |
-|---|---|---|---|
-| 2x + true colour | 0.888 × zero-frame | 0.584 | **-34%** |
-| 1x | 1.117 × zero-frame | 1.003 | **-10%** |
+| config | render overhead, memo off | memo on | change | reachable? |
+|---|---|---|---|---|
+| 1x, true colour off | 1.117 × zero-frame | 1.003 | **-10%** | yes |
+| 2x + true colour | 0.888 × zero-frame | 0.584 | -34% | **no — see above** |
 
 The 1x win is small because the log replay still performs every store —
-only the per-pixel computation is saved. The 2x win is larger because
-each redundant blit also drives Stage 2 shadow work.
+only the per-pixel computation is saved. The 2x figure is larger because
+each redundant blit also drives Stage 2 shadow work, but it was measured
+in a configuration that produces **incorrect output** and that the memo
+now refuses to run. Treat it as the prize for fixing the shadow-store
+gap, not as a current result.
 
 ## Verifying a title before tagging it
 
@@ -159,6 +204,12 @@ matching stream — Club Drive (394,581 misses) and Checkered Flag
 
 ## Open items
 
+0. **Replay shadow stores for skipped blits** — the blocker described
+   at the top. Without it the memo cannot run in any configuration
+   users actually want, and `verify` mode cannot see the failure.
+   Extend the write log to carry shadow content, replay it through the
+   store functions, and extend `blit_memo_verify` to compare shadow
+   surfaces so the sweep can detect this class.
 1. **Give thin titles real input fixtures**, especially Club Drive and
    Checkered Flag, which blit heavily but never repeated a stream under
    generic input. Also sweep the PD/homebrew remainder.

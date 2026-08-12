@@ -121,10 +121,23 @@ export -f run_one
 
 echo "verdict,verify_runs,verify_fails,misses,dirty,exec_through,title" > "$OUT"
 
-mapfile -t ROMS < <(find -L "$ROMS_DIR" -maxdepth 1 -type f \
+# Plain read loop rather than mapfile: macOS ships bash 3.2 as /bin/bash
+# and mapfile is a bash 4 builtin, so this script has to stay 3.2-clean or
+# it breaks on a default macOS setup (it only worked here because
+# /usr/bin/env bash found a Homebrew bash 5).
+ROMS=()
+while IFS= read -r rom; do
+  [ -n "$rom" ] || continue
+  if [ -n "$FILTER" ]; then
+    printf '%s\n' "$rom" | grep -qi -- "$FILTER" || continue
+  fi
+  ROMS+=("$rom")
+done < <(find -L "$ROMS_DIR" -maxdepth 1 -type f \
   \( -iname '*.j64' -o -iname '*.jag' -o -iname '*.rom' \) | sort)
-if [ -n "$FILTER" ]; then
-  mapfile -t ROMS < <(printf '%s\n' "${ROMS[@]}" | grep -i -- "$FILTER" || true)
+
+if [ ${#ROMS[@]} -eq 0 ]; then
+  echo "blit_memo_sweep: no ROMs matched in $ROMS_DIR${FILTER:+ (filter: $FILTER)}" >&2
+  exit 2
 fi
 
 echo "blit_memo_sweep: ${#ROMS[@]} titles, ${FRAMES} frames, ${JOBS} jobs -> $OUT"
