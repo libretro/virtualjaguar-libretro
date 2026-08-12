@@ -121,6 +121,9 @@ static vjtrace_ev *load_filtered(const char *path, const int *keep_mask,
     vjtrace_ev *buf;
     long n = 0;
     uint64_t idx;
+    long header_bytes, filesize, data_bytes;
+    uint64_t actual_count;
+    size_t alloc_count;
 
     *out_n = -1;
     f = fopen(path, "rb");
@@ -153,19 +156,65 @@ static vjtrace_ev *load_filtered(const char *path, const int *keep_mask,
         return NULL;
     }
 
-    if (hdr.count > 0) {
-        buf = (vjtrace_ev *)malloc((size_t)hdr.count * sizeof(vjtrace_ev));
-        if (!buf) {
-            fprintf(stderr, "trace_diff: out of memory reading '%s'\n", path);
-            fclose(f);
-            return NULL;
-        }
-    } else {
-        buf = (vjtrace_ev *)malloc(sizeof(vjtrace_ev)); /* placeholder, n stays 0 */
-        if (!buf) {
-            fclose(f);
-            return NULL;
-        }
+    /* hdr.count is attacker/corruption-controlled: a crafted file can
+     * claim ~2^59 records while containing none, which would wrap
+     * `count * sizeof(vjtrace_ev)` in a plain size_t multiply into a
+     * tiny allocation that the read loop below then overruns (task-6
+     * review Critical #1). Don't trust it -- derive the real record
+     * count from the file's actual length and require it to match
+     * exactly before allocating anything sized by it. */
+    header_bytes = ftell(f);
+    if (header_bytes < 0) {
+        fprintf(stderr, "trace_diff: '%s': ftell failed after header\n", path);
+        fclose(f);
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fprintf(stderr, "trace_diff: '%s': seek to end failed\n", path);
+        fclose(f);
+        return NULL;
+    }
+    filesize = ftell(f);
+    if (filesize < 0) {
+        fprintf(stderr, "trace_diff: '%s': ftell failed at end\n", path);
+        fclose(f);
+        return NULL;
+    }
+    if (fseek(f, header_bytes, SEEK_SET) != 0) {
+        fprintf(stderr, "trace_diff: '%s': seek back to records failed\n", path);
+        fclose(f);
+        return NULL;
+    }
+    data_bytes = filesize - header_bytes;
+    if (data_bytes < 0 || (uint64_t)data_bytes % hdr.ev_size != 0) {
+        fprintf(stderr,
+                "trace_diff: '%s': file length (%ld bytes of record data) is "
+                "not a whole number of %u-byte records -- truncated or corrupt\n",
+                path, data_bytes < 0 ? 0L : data_bytes, (unsigned)hdr.ev_size);
+        fclose(f);
+        return NULL;
+    }
+    actual_count = (uint64_t)data_bytes / hdr.ev_size;
+    if (actual_count != hdr.count) {
+        fprintf(stderr,
+                "trace_diff: '%s': header claims %llu records but the file "
+                "actually contains %llu -- truncated or corrupt\n",
+                path, (unsigned long long)hdr.count, (unsigned long long)actual_count);
+        fclose(f);
+        return NULL;
+    }
+    if (actual_count > SIZE_MAX / sizeof(vjtrace_ev)) {
+        fprintf(stderr, "trace_diff: '%s': record count too large to allocate\n", path);
+        fclose(f);
+        return NULL;
+    }
+
+    alloc_count = (actual_count > 0) ? (size_t)actual_count : 1; /* n=0 placeholder */
+    buf = (vjtrace_ev *)malloc(alloc_count * sizeof(vjtrace_ev));
+    if (!buf) {
+        fprintf(stderr, "trace_diff: out of memory reading '%s'\n", path);
+        fclose(f);
+        return NULL;
     }
 
     for (idx = 0; idx < hdr.count; idx++) {

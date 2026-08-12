@@ -54,9 +54,16 @@ static const char *regs68k_names[18] = {
     "PC", "SR"
 };
 
-/* R0..R31, PC, CTRL -- per task-6 ambiguity resolution (the raw dump
- * puts the flags/control word in slot 33; labeled CTRL here as
- * directed rather than FLAGS to match the brief's naming). */
+/* R0..R31, PC, FLAGS. Slot 33 is GPUGetFlags()/DSPGetFlags() (see
+ * vjtrace_snapshot() in vjtrace.c and the REGSGPU/REGSDSP section
+ * comment in vjtrace.h) -- the GPU/DSP flags register (G_FLAGS
+ * $F02100 / D_FLAGS $F1A100 conceptually), NOT the control register
+ * (G_CTRL $F02114 / D_CTRL $F1A114), which is a different register at
+ * a different address and isn't captured by this snapshot format at
+ * all. An earlier draft of this tool labeled the slot CTRL per a
+ * literal reading of the task brief's ambiguity-resolution text; a
+ * task-6 review (Critical #2) caught the mismatch against the writer
+ * and vjtrace.h's own format comment and this was corrected. */
 static char gpu_dsp_reg_names_buf[34][8];
 static const char **gpu_dsp_reg_names(void)
 {
@@ -69,7 +76,7 @@ static const char **gpu_dsp_reg_names(void)
             ptrs[i] = gpu_dsp_reg_names_buf[i];
         }
         ptrs[32] = "PC";
-        ptrs[33] = "CTRL";
+        ptrs[33] = "FLAGS";
         built = 1;
     }
     return ptrs;

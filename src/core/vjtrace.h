@@ -138,7 +138,11 @@ int vjtrace_ring_read(uint64_t idx, vjtrace_ev *out);
  * TOMREG (base $F00000, 16 KB), JERRYREG (base $F10000, 64 KB),
  * REGS68K (base 0, 18 uint32: D0-D7,A0-A7,PC,SR), REGSGPU (base 0, 34
  * uint32: 32 regs of the CURRENT bank + PC + GPU_FLAGS), REGSDSP (base
- * 0, 34 uint32: 32 regs of the CURRENT bank + PC + DSP flags/control).
+ * 0, 34 uint32: 32 regs of the CURRENT bank + PC + DSP_FLAGS). Slot 33
+ * of REGSGPU/REGSDSP is the flags register (GPUGetFlags()/
+ * DSPGetFlags()), NOT the control register -- G_CTRL/D_CTRL are a
+ * different register at a different address and are not captured by
+ * this format.
  * Only the currently-selected GPU/DSP register bank is captured -- the
  * alternate bank is not dumped.
  *
