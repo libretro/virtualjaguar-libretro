@@ -103,6 +103,15 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
 
+#ifdef VJ_TRACE
+/* vjtrace per-session frame counter (see the use site in retro_run()).
+ * File-scope, not a retro_run()-local static, so retro_unload_game()/
+ * retro_deinit() can reset it: iOS cannot dlclose cores, so a
+ * function-local static would keep counting from a previous title
+ * instead of restarting the documented frame==1 invariant. */
+static uint32_t vjt_frame = 0;
+#endif
+
 extern uint16_t eeprom_ram[64];
 extern uint16_t cdrom_eeprom_ram[64];
 extern uint8_t mtMem[0x20000];
@@ -1986,6 +1995,12 @@ void retro_unload_game(void)
    update_option_visibility();
    JaguarDone();
 
+#ifdef VJ_TRACE
+   /* Next title's frame 1 must be ring/field-CSV frame 1, not a
+    * continuation of this session's count (see vjt_frame's decl). */
+   vjt_frame = 0;
+#endif
+
    if (videoBuffer)
       free(videoBuffer);
    videoBuffer = NULL;
@@ -2185,6 +2200,11 @@ void retro_deinit(void)
    content_loaded = false;
    show_cd_options = true;
    show_cart_bios_option = true;
+#ifdef VJ_TRACE
+   /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
+    * decl. */
+   vjt_frame = 0;
+#endif
 }
 
 void retro_reset(void)
@@ -2252,10 +2272,7 @@ void retro_run(void)
     * events emitted during retro_load_game/retro_init, before any
     * retro_run, carry frame 0.  retro_run has no early return, so this
     * runs exactly once per frame. */
-   {
-      static uint32_t vjt_frame = 0;
-      vjtrace_frame_tick(++vjt_frame);
-   }
+   vjtrace_frame_tick(++vjt_frame);
 #endif
 
    /* On the first frame, unpack save data that the frontend loaded

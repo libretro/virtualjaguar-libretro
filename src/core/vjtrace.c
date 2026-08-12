@@ -7,6 +7,7 @@
  */
 #ifdef VJ_TRACE
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,13 +52,44 @@ static uint32_t cur_frame = 0;
 void vjtrace_init(void)
 {
    const char *env;
-   uint64_t cap = (uint64_t)1 << 20;
+   uint64_t cap = (uint64_t)1 << 20;   /* default: 1M records (~32 MiB) */
+   /* Hard ceiling on the record count: keeps calloc()'s byte count
+    * representable in size_t on every host (32-bit included) and stops
+    * a huge or typo'd VJ_TRACE_RING from demanding an unreasonable
+    * allocation.  1<<25 (33.5M records, ~1 GiB at 32 bytes/record) sits
+    * comfortably above any run this project has needed so far (see the
+    * vjtrace flight recorder ring-sizing note in CLAUDE.md: a 1800-frame
+    * yarc.j64 run needed VJ_TRACE_RING=6000000). */
+   const uint64_t cap_max = (uint64_t)1 << 25;
    if (ring)
       return;
    env = getenv("VJ_TRACE_RING");
-   if (env && atol(env) > 0)
-      cap = (uint64_t)atol(env);
+   if (env && env[0] != '\0' && env[0] != '-')
+   {
+      char *endptr = NULL;
+      unsigned long parsed;
+      errno = 0;
+      parsed = strtoul(env, &endptr, 10);
+      /* Accept only a fully-numeric, in-range, positive value: reject
+       * "abc" (endptr == env, nothing consumed), trailing garbage
+       * (*endptr != '\0'), and overflow (errno == ERANGE, e.g.
+       * VJ_TRACE_RING=99999999999999999999).  Anything rejected falls
+       * through and keeps the default cap above. */
+      if (endptr != env && *endptr == '\0' && errno == 0 && parsed > 0)
+         cap = (uint64_t)parsed;
+   }
+   if (cap > cap_max)
+      cap = cap_max;
+   if (cap < 1)
+      cap = 1;
    ring = (vjtrace_ev *)calloc((size_t)cap, sizeof(vjtrace_ev));
+   if (!ring && cap != ((uint64_t)1 << 20))
+   {
+      /* Requested cap couldn't be allocated -- fall back to the default
+       * instead of leaving tracing silently disabled for the whole run. */
+      cap = (uint64_t)1 << 20;
+      ring = (vjtrace_ev *)calloc((size_t)cap, sizeof(vjtrace_ev));
+   }
    ring_cap = ring ? cap : 0;
 }
 
@@ -157,6 +189,20 @@ int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw)
 {
    if (vjtrace_nwatch >= 16)
       return -1;
+   /* Defense at the core boundary: trace_probe.c already rejects an
+    * inverted/overflowing range at parse time (tp_parse_watch(), fixed
+    * in 7df363a), but this function has other callers too, and an
+    * inverted range or an out-of-{1,2,3} rw value would otherwise
+    * silently install a watch that can never fire. */
+   if (hi < lo)
+   {
+      uint32_t tmp = lo;
+      lo = hi;
+      hi = tmp;
+   }
+   rw &= 3u;
+   if (rw == 0)
+      rw = 2u;   /* default to writes, matching tp_parse_watch()'s default */
    watches[vjtrace_nwatch].lo = lo;
    watches[vjtrace_nwatch].hi = hi;
    watches[vjtrace_nwatch].rw = rw;

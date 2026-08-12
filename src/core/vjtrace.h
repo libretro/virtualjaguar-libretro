@@ -87,7 +87,9 @@ typedef struct
 
 #ifdef VJ_TRACE
 
-/* alloc ring; cap from env VJ_TRACE_RING, default 1<<20 */
+/* alloc ring; cap from env VJ_TRACE_RING (parsed strictly -- non-numeric,
+ * zero, negative, or overflowing values fall back to the default),
+ * default 1<<20, hard ceiling 1<<25 */
 void vjtrace_init(void);
 /* Sets the frame number stamped onto every subsequently emitted event.
  * Called from the TOP of retro_run (libretro.c) with a 1-based counter,
@@ -97,7 +99,11 @@ void vjtrace_init(void);
  * retro_run (retro_init / retro_load_game) carry 0. */
 void vjtrace_frame_tick(uint32_t frame);
 void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value);
-/* rw: 1=r 2=w 3=rw; ret idx or -1 */
+/* rw: 1=r 2=w 3=rw; ret idx or -1.  Sanitizes its inputs: an inverted
+ * range (hi < lo) is swapped, and rw is masked to its low 2 bits and
+ * defaulted to 2 (writes) if that leaves 0 -- so a bad range or mode
+ * from any caller installs a working watch instead of one that can
+ * never fire. */
 int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw);
 void vjtrace_watch_clear(void);
 void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_write);

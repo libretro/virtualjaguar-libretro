@@ -855,8 +855,11 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
-   VJT_WATCH_RD(offset, 0, who);
+   /* Mask BEFORE the watch check -- a caller passing an address with
+    * upper bits set must still compare against the real 24-bit bus
+    * address a watch range was defined against. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_RD(offset, 0, who);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -883,8 +886,9 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 
 uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 {
-   VJT_WATCH_RD(offset, 0, who);
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_RD(offset, 0, who);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -912,8 +916,9 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 
 void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
-   VJT_WATCH_WR(offset, data, who);
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_WR(offset, data, who);
 
    /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
     * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
@@ -963,8 +968,9 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 
 void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
-   VJT_WATCH_WR(offset, data, who);
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_WR(offset, data, who);
 
    /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
    if (offset <= 0x1FFFFE)
@@ -1018,8 +1024,11 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
    if (addr < 0x800000)
    {
       /* Fast path: bypasses JaguarReadWord, so the watch check there
-       * never sees this access -- check it here instead. */
-      VJT_WATCH_RD(offset, 0, who);
+       * never sees this access -- check it here instead.  Use addr
+       * (already masked to 24 bits above), not offset, so a caller
+       * passing upper bits set still compares against the real bus
+       * address a watch range was defined against. */
+      VJT_WATCH_RD(addr, 0, who);
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
    }
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
@@ -1047,8 +1056,9 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
    if (addr < 0x200000)
    {
       /* Fast path: bypasses JaguarWriteWord, so the watch check there
-       * never sees this access -- check it here instead. */
-      VJT_WATCH_WR(offset, data, who);
+       * never sees this access -- check it here instead.  Use addr
+       * (already masked to 24 bits above) -- see JaguarReadLong. */
+      VJT_WATCH_WR(addr, data, who);
       SET32(jaguarMainRAM, addr, data);
       return;
    }
