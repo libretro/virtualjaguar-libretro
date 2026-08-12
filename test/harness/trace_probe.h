@@ -2,7 +2,7 @@
  * test/harness/trace_probe.h — shared vjtrace flight-recorder probe.
  *
  * ======================================================================
- * USAGE
+ * AGENT QUICK-START
  * ======================================================================
  *
  *   #include "harness/harness.h"
@@ -85,6 +85,43 @@
  * an address at or before every 4-byte-aligned access you care about
  * (round down to a multiple of 4), not to the specific byte you want to
  * catch.
+ *
+ * ======================================================================
+ * WORKED EXAMPLE — who wrote address A, and when?
+ * ======================================================================
+ *
+ * The single most useful vjtrace workflow: watch an address, run, then
+ * ask the ring who touched it.  Any harness tool that calls
+ * trace_probe_attach() works; test/tools/vjtrace_smoke.c is the
+ * generic "just record this ROM" driver when you don't need a
+ * purpose-built tool.
+ *
+ *   1. Build the generic driver + the offline reader (not part of
+ *      `make test` — build both by hand):
+ *
+ *        cc -O2 -Wall -std=c99 -I. -I./libretro-common/include \
+ *           -o /tmp/vjt_smoke test/tools/vjtrace_smoke.c \
+ *           test/harness/harness.c test/harness/trace_probe.c -ldl -lm
+ *        cc -O2 -Wall -std=c99 -I. -o /tmp/trace_dump test/tools/trace_dump.c
+ *
+ *   2. Reproduce with a watch on the address (low bound rounded down to
+ *      a multiple of 4 — see WATCH RECORD SHAPE above):
+ *
+ *        VJ_EXPECT_BUILD=$(./scripts/build-id.sh) /tmp/vjt_smoke \
+ *           ./virtualjaguar_libretro.dylib rom.jag --frames 1800 \
+ *           --watch 0x0A0000:4:w --trace-out /tmp/watch.vjtr
+ *
+ *   3. Ask the ring who wrote it:
+ *
+ *        /tmp/trace_dump /tmp/watch.vjtr --type WATCH_WR
+ *
+ *      Each printed record carries `pc` (the writer's instruction-start
+ *      PC — see the PC ATTRIBUTION note in vjtrace.h; always 0 for
+ *      OP/BLITTER records, which never resolve a PC), `who`
+ *      (M68K/GPU/DSP/OP/BLITTER/...), `f`+`hl` (frame/halfline, i.e.
+ *      when), and `val` (the write value, masked to the access width).
+ *      Add `--frame A:B` to narrow to one window once you know roughly
+ *      when it happens, or `--who NAME` to isolate one source.
  *
  * ======================================================================
  * PER-FIELD CSV
