@@ -291,8 +291,29 @@ static int32_t bm_lookup(uint32_t h)
 
 static int bm_alloc_pool(void)
 {
+   /* Probe the state blob's size into a scratch far larger than any
+    * plausible blitter state BEFORE anything writes into a bm_entry.
+    * BlitterStateSave() reports its length only by returning it, so
+    * calling it straight into a BM_STATE_MAX buffer would already have
+    * overflowed by the time the length could be checked -- and the
+    * blob grows whenever someone adds a field to BlitterStateSave. */
+   uint8_t probe[4096];
+   size_t len;
+
    if (bmPool)
       return 1;
+
+   len = BlitterStateSave(probe);
+   if (len > BM_STATE_MAX)
+   {
+      LOG_WRN("[BLITMEMO] blitter state blob is %u bytes, cap is %u; "
+              "memo disabled (raise BM_STATE_MAX)\n",
+              (unsigned)len, (unsigned)BM_STATE_MAX);
+      blitMemoMode = BLIT_MEMO_OFF;
+      return 0;
+   }
+   bmStateLen = (uint32_t)len;
+
    bmPool = (bm_entry *)malloc(sizeof(bm_entry) * BM_ENTRIES);
    if (!bmPool)
    {
@@ -450,17 +471,8 @@ int BlitMemoLaunch(void)
 
    bmCartMutable = BM_CART_MUTABLE();
 
-   {
-      size_t len = BlitterStateSave(bmCur);
-      if (len > BM_STATE_MAX)
-      {
-         LOG_WRN("[BLITMEMO] state blob %u > %u; memo disabled\n",
-                 (unsigned)len, (unsigned)BM_STATE_MAX);
-         blitMemoMode = BLIT_MEMO_OFF;
-         return 0;
-      }
-      bmStateLen = (uint32_t)len;
-   }
+   /* Size was established and capped in bm_alloc_pool(). */
+   BlitterStateSave(bmCur);
 
    h = bm_hash_mem(bmCur, bmStateLen);
    if (bmCursor >= 0)
