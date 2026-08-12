@@ -59,6 +59,37 @@
  * (full-buffer clears) are marked exec-through instead. */
 #define BM_LOG_RECS  256
 
+/* Shadow-store log.  Records live in one shared arena rather than in
+ * the entry, because a per-entry worst-case array would multiply the
+ * pool by an order of magnitude for a payload most blits never use.
+ * Each recorded blit takes a contiguous slice; re-recording an entry
+ * orphans its old slice, and the arena is reclaimed wholesale by a
+ * flush when it fills (self-healing, same policy as the entry pool).
+ *
+ * The arena is allocated only when a shadow surface is active, so the
+ * common no-shadow configuration pays nothing. */
+#define BM_SH_ARENA_RECS  400000u   /* ~9.6MB at 24 bytes/record */
+#define BM_SH_PER_BLIT    1024u     /* cap per blit; over -> exec-through */
+#define BM_SH_MAX_NN      4         /* N*N for the largest supported N (2) */
+#define BM_SH_SCRATCH     2048u     /* verify-mode capture, static */
+
+/* `kind` rides in the top byte of addr: Jaguar addresses are 24-bit, and
+ * the arena is the one structure here big enough for four bytes to
+ * matter.  Both surfaces store the same value for a given pixel, so one
+ * record carries both (see the coalescing in BlitMemoNoteShadow) --
+ * without that, 2x with true colour emits two records per pixel and a
+ * single heavy AvP frame overruns any sane arena. */
+#define BM_SH_ADDR_MASK 0x00FFFFFFu
+#define BM_SH_KIND_SHIFT 24
+
+typedef struct
+{
+   uint32_t addr_kind;
+   uint16_t val;                    /* writedata16 / stock16 */
+   uint16_t frac;                   /* sfb_frac (unused for BLOCK) */
+   shadowfb_sub blk[BM_SH_MAX_NN];  /* only when kind & BLIT_MEMO_SH_BLOCK */
+} bm_shadow_rec;
+
 #define BM_F_EXEC_THROUGH 0x01
 
 typedef struct
@@ -87,6 +118,8 @@ typedef struct
    int32_t  next;                    /* successor entry, -1 = none */
    uint32_t log[BM_LOG_RECS * 2];    /* (addr|len<<28, value) pairs */
    uint32_t logN;                    /* record count */
+   uint32_t shOff;                   /* slice base in the shadow arena */
+   uint32_t shN;                     /* shadow records in the slice */
    uint8_t  flags;
 } bm_entry;
 
@@ -125,7 +158,21 @@ static uint32_t bmFrame = 1;
 static uint32_t bmRestampFrame[BM_PAGES];
 static int bmVerifyLogged = 0;
 static int blitMemoCDNoticeLogged = 0;
-static int bmShadowNoticeLogged = 0;
+
+/* Shadow-store arena (see BM_SH_ARENA_RECS). */
+static bm_shadow_rec *bmShArena = NULL;
+static uint32_t bmShUsed = 0;
+static int bmShFull = 0;            /* reclaim at the next frame boundary */
+static bm_shadow_rec bmScratchSh[BM_SH_SCRATCH];  /* verify-mode capture */
+static uint32_t bmScratchShN = 0;
+
+/* Scratch entry the verify path records a live re-run into. */
+static bm_entry bmScratch;
+
+static int bm_shadow_active(void)
+{
+   return shadowHiresActive || shadowFBActive;
+}
 
 /* Entries recorded (or verified) since the last finalize; their
  * wrStamp is assigned at the frame boundary so a pass's own
@@ -159,6 +206,110 @@ static uint32_t bmSkipRunN = 0;
  * page-generation bumps: the bytes are identical to what the skipped
  * blit would have written, so content is unchanged for cleanliness
  * purposes. */
+void BlitMemoNoteShadow(unsigned kind, uint32_t addr, uint16_t val,
+                        uint16_t frac, const shadowfb_sub *blk)
+{
+   bm_shadow_rec *r = NULL;
+   bm_shadow_rec *prev;
+   uint32_t *countp;
+   int k, nn;
+
+   if (!bmRec)
+      return;
+
+   addr &= BM_SH_ADDR_MASK;
+
+   /* Verify mode captures into a static scratch so a check never
+    * consumes arena that recorded entries are using. */
+   if (bmRec == &bmScratch)
+   {
+      countp = &bmScratchShN;
+      prev = (*countp) ? &bmScratchSh[*countp - 1] : NULL;
+   }
+   else
+   {
+      countp = &bmShUsed;
+      prev = bmRec->shN ? &bmShArena[bmShUsed - 1] : NULL;
+   }
+
+   /* Both surfaces store the same pixel back to back; fold the second
+    * into the first so one pixel costs one record. */
+   if (prev && (prev->addr_kind & BM_SH_ADDR_MASK) == addr
+       && !((prev->addr_kind >> BM_SH_KIND_SHIFT) & kind))
+      r = prev;
+
+   if (!r)
+   {
+      if (bmRec == &bmScratch)
+      {
+         if (*countp >= BM_SH_SCRATCH)
+         {
+            bmRec->flags |= BM_F_EXEC_THROUGH;
+            return;
+         }
+         r = &bmScratchSh[(*countp)++];
+      }
+      else
+      {
+         if (!bmShArena || bmShFull
+             || bmRec->shN >= BM_SH_PER_BLIT
+             || *countp >= BM_SH_ARENA_RECS)
+         {
+            /* No room to record this blit's shadow effects, so it could
+             * never be replayed faithfully -- never skip it. */
+            if (*countp >= BM_SH_ARENA_RECS)
+               bmShFull = 1;
+            bmRec->flags |= BM_F_EXEC_THROUGH;
+            return;
+         }
+         r = &bmShArena[(*countp)++];
+         bmRec->shN++;
+      }
+      r->addr_kind = addr;
+      r->val  = val;
+      r->frac = frac;
+      memset(r->blk, 0, sizeof(r->blk));
+   }
+
+   r->addr_kind |= (uint32_t)kind << BM_SH_KIND_SHIFT;
+   if (kind & BLIT_MEMO_SH_BLOCK)
+   {
+      nn = shadowHiresN * shadowHiresN;
+      if (nn > BM_SH_MAX_NN || !blk)
+      {
+         bmRec->flags |= BM_F_EXEC_THROUGH;
+         return;
+      }
+      for (k = 0; k < nn; k++)
+         r->blk[k] = blk[k];
+   }
+}
+
+/* Replay one entry's shadow stores.  Called with the RAM writes so the
+ * surface and RAM always agree on who wrote each word last. */
+static void bm_apply_shadow(const bm_entry *e)
+{
+   const bm_shadow_rec *r;
+   uint32_t i;
+
+   if (!bmShArena || !e->shN)
+      return;
+   for (i = 0; i < e->shN; i++)
+   {
+      uint32_t addr, kind;
+      r    = &bmShArena[e->shOff + i];
+      addr = r->addr_kind & BM_SH_ADDR_MASK;
+      kind = r->addr_kind >> BM_SH_KIND_SHIFT;
+      /* A coalesced record can carry both surfaces; apply each. */
+      if (kind & BLIT_MEMO_SH_FB)
+         ShadowFBStoreCry(addr, r->val, r->frac);
+      if (kind & BLIT_MEMO_SH_BLOCK)
+         ShadowHiresStoreCryBlock(addr, r->val, r->blk);
+      else if (kind & BLIT_MEMO_SH_HIRES)
+         ShadowHiresStoreCry(addr, r->val, r->frac);
+   }
+}
+
 static void bm_apply_log(const bm_entry *e)
 {
    uint32_t i, rec, addr, len, val;
@@ -191,7 +342,10 @@ static void bm_repair(void)
 {
    uint32_t i;
    for (i = 0; i < bmSkipRunN; i++)
+   {
       bm_apply_log(&bmPool[bmSkipRun[i]]);
+      bm_apply_shadow(&bmPool[bmSkipRun[i]]);
+   }
    bmSkipRunN = 0;
 }
 
@@ -291,6 +445,25 @@ static int32_t bm_lookup(uint32_t h)
    return -1;
 }
 
+static int bm_alloc_shadow_arena(void)
+{
+   if (bmShArena)
+      return 1;
+   bmShArena = (bm_shadow_rec *)malloc(sizeof(bm_shadow_rec)
+                                       * BM_SH_ARENA_RECS);
+   if (!bmShArena)
+   {
+      LOG_WRN("[BLITMEMO] shadow arena allocation failed (%u bytes); "
+              "memo disabled\n",
+              (unsigned)(sizeof(bm_shadow_rec) * BM_SH_ARENA_RECS));
+      blitMemoMode = BLIT_MEMO_OFF;
+      return 0;
+   }
+   bmShUsed = 0;
+   bmShFull = 0;
+   return 1;
+}
+
 static int bm_alloc_pool(void)
 {
    /* Probe the state blob's size into a scratch far larger than any
@@ -370,6 +543,9 @@ static void bm_record(int32_t idx, uint32_t h, int keep_next)
    memset(e->rd, 0, sizeof(e->rd));
    memset(e->wr, 0, sizeof(e->wr));
    e->logN = 0;
+   /* Fresh shadow slice: bump-allocated as the blit records. */
+   e->shOff = bmShUsed;
+   e->shN   = 0;
    bm_hash_insert(h, idx);
    if (bmCursor >= 0 && bmCursor != idx)
       bmPool[bmCursor].next = idx;
@@ -393,21 +569,34 @@ static void bm_record(int32_t idx, uint32_t h, int keep_next)
  * its write log into a scratch entry, then require both the log and
  * the post-state to be identical to what the memo would have
  * replayed. */
-static bm_entry bmScratch;
 
 static void bm_verify(bm_entry *e)
 {
    uint8_t poststate[BM_STATE_MAX];
+   int shadow_differs = 0;
    blitMemoVerifyRuns++;
    bmScratch.logN = 0;
    bmScratch.flags = 0;
+   bmScratchShN = 0;
    bmRec = &bmScratch;
    blitMemoRecording = 1;
    bm_run_engine();
    blitMemoRecording = 0;
    bmRec = NULL;
    BlitterStateSave(poststate);
-   if (bmScratch.logN != e->logN
+
+   /* Compare the shadow stores too.  Without this the checker is blind
+    * to the surfaces entirely -- which is exactly how a divergence that
+    * only shows with true colour or hi-res enabled survived a clean
+    * 2.5M-check corpus sweep. */
+   if (bmScratchShN != e->shN)
+      shadow_differs = 1;
+   else if (bmShArena && e->shN)
+      shadow_differs = (memcmp(bmScratchSh, bmShArena + e->shOff,
+                               e->shN * sizeof(bm_shadow_rec)) != 0);
+
+   if (shadow_differs
+       || bmScratch.logN != e->logN
        || memcmp(bmScratch.log, e->log, e->logN * 2 * sizeof(uint32_t)) != 0
        || memcmp(e->post, poststate, bmStateLen) != 0)
    {
@@ -445,32 +634,14 @@ int BlitMemoLaunch(void)
    if (bootConfig.isCDGame)
       return 0;
 
-   /* A shadow surface is active (true colour and/or hi-res).  Both are
-    * populated from inside the blitter engines, at the pixel-write
-    * sites -- so a skipped blit never stores its shadow content, and
-    * the write-log replay puts bytes straight into main RAM without
-    * passing those stores.  The shadow surface then disagrees with RAM
-    * and the presented frame differs from a live run.  Measured on AvP:
-    * memo vs memo-off is bit-identical at 1x with true colour off, and
-    * diverges from frame 1544 with either surface enabled.
-    *
-    * Tested at launch rather than in BlitMemoSetMode() because
-    * true colour is a runtime-toggleable option.  Fixing this properly
-    * means recording the shadow stores in the write log and replaying
-    * them through ShadowFBStoreCry/ShadowHiresStoreCryBlock; until then
-    * the memo simply does not run in these configurations. */
-   if (shadowHiresActive || shadowFBActive)
-   {
-      if (!bmShadowNoticeLogged)
-      {
-         LOG_INF("[BLITMEMO] shadow surface active (true colour / hi-res): "
-                 "memoization not supported, staying off\n");
-         bmShadowNoticeLogged = 1;
-      }
-      return 0;
-   }
-
    if (!bmPool && !bm_alloc_pool())
+      return 0;
+
+   /* A shadow surface needs its store log; without the arena a skipped
+    * blit could not reproduce its shadow effects and the surface would
+    * drift out of step with RAM.  Allocated on demand, so the
+    * no-shadow configuration never pays for it. */
+   if (bm_shadow_active() && !bmShArena && !bm_alloc_shadow_arena())
       return 0;
 
    bmCartMutable = BM_CART_MUTABLE();
@@ -615,6 +786,9 @@ void BlitMemoFlush(void)
    bmCursor = -1;
    bmPendingN = 0;
    bmSkipRunN = 0;
+   /* Every entry is invalid now, so their arena slices are too. */
+   bmShUsed = 0;
+   bmShFull = 0;
 }
 
 void BlitMemoNotifyEngine(int useFast)
@@ -638,6 +812,14 @@ void BlitMemoFrame(void)
        * the pass did complete is a no-op). */
       bm_repair();
       bm_finalize_pending();
+      /* Arena exhausted at some point this frame: entries recorded
+       * since then carry no shadow log and were marked exec-through.
+       * Reclaim wholesale now that no skip run is outstanding. */
+      if (bmShFull)
+      {
+         LOG_INF("[BLITMEMO] shadow arena full; flushing memo\n");
+         BlitMemoFlush();
+      }
    }
 }
 
@@ -693,6 +875,12 @@ void BlitMemoShutdown(void)
    if (bmPool)
       free(bmPool);
    bmPool = NULL;
+   if (bmShArena)
+      free(bmShArena);
+   bmShArena = NULL;
+   bmShUsed = 0;
+   bmShFull = 0;
+   bmScratchShN = 0;
    blitMemoMode = BLIT_MEMO_OFF;
    blitMemoRecording = 0;
    bmPoolNext = 0;
@@ -708,7 +896,6 @@ void BlitMemoShutdown(void)
    bmFrame = 1;
    bmVerifyLogged = 0;
    blitMemoCDNoticeLogged = 0;
-   bmShadowNoticeLogged = 0;
    bmPendingN = 0;
    bmSkipRunN = 0;
    blitMemoHits = blitMemoMisses = blitMemoDirty = 0;

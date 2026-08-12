@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "shadowfb.h"
+#include "blit_memo.h"   /* blit-memo shadow-store logging (issue #411) */
 #include "log.h"
 
 /* CRY chroma tables + stock LUT live in tom.c */
@@ -47,6 +48,8 @@ void ShadowFBStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
    uint32_t idx;
    if (!shadowFBActive)
       return;
+   if (blitMemoRecording)
+      BlitMemoNoteShadow(BLIT_MEMO_SH_FB, addr, value16, frac16, NULL);
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return;
@@ -232,6 +235,8 @@ void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
 
    if (!shadowHiresActive)
       return;
+   if (blitMemoRecording)
+      BlitMemoNoteShadow(BLIT_MEMO_SH_HIRES, addr, value16, frac16, NULL);
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return;
@@ -263,6 +268,9 @@ void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
 
    if (!shadowHiresActive)
       return;
+   if (blitMemoRecording)
+      BlitMemoNoteShadow(BLIT_MEMO_SH_HIRES | BLIT_MEMO_SH_BLOCK,
+                         addr, stock16, 0, blk);
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return;

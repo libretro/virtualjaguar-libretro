@@ -1,8 +1,8 @@
 # Blit memoization
 
-**Status:** prototype, **off by default and tagged to no title.** Currently
-refuses to run when a shadow surface is active -- see the limitation
-section below, which is the blocker before this is worth enabling.
+**Status:** prototype, **off by default and tagged to no title.**
+Output-identical in every configuration measured (1x/2x x true colour
+on/off); see "Measured effect" for what it currently buys.
 Issue [#411](https://github.com/libretro/virtualjaguar-libretro/issues/411).
 
 Some titles re-render an identical scene every engine cycle while the
@@ -29,7 +29,7 @@ Entries chain by successor, so a repeated stream matches as a
 prefix-matched run rather than being defeated by writes on shared
 destination pages.
 
-## Four things that are load-bearing
+## Five things that are load-bearing
 
 Each was found by A/B against the memo-off run, and each had produced a
 visibly divergent framebuffer first. They are the non-obvious part of
@@ -64,45 +64,39 @@ full-buffer clear re-dirties the whole stream every cycle: dirty count
 until hooked explicitly, and page generations silently lied. Any future
 RAM-touching path needs the same treatment.
 
-## The shadow-surface limitation — read this first
+**5. Shadow stores are replayed too, or nothing works with true colour
+or hi-res.**
+Both shadow surfaces are populated from *inside* the blitter engines
+(`ShadowFBStoreCry`, `ShadowHiresStoreCry`, `ShadowHiresStoreCryBlock`).
+A skipped blit never runs them, while its RAM bytes *are* replayed from
+the write log — so the surface and RAM disagree about who wrote each
+word last, and the presented frame differs from a live run. Before this
+was fixed, the memo was bit-identical only at 1x with true colour off,
+and diverged from frame 1544 in every other configuration.
 
-**The memo does not run when a shadow surface is active** (true colour
-and/or hi-res). That is most of what makes the feature interesting, so
-it is the first thing to fix.
+Each recorded blit therefore logs its shadow stores as well, replayed
+beside the RAM writes. Three things make that affordable and safe:
 
-Both shadow surfaces are populated from *inside* the blitter engines, at
-the pixel-write sites (`ShadowFBStoreCry`, `ShadowHiresStoreCry` in
-`blitter.c`). A skipped blit therefore never stores its shadow content,
-and the write-log replay puts bytes straight into main RAM without
-passing through those stores. The shadow surface then disagrees with
-RAM and the presented frame differs from a live run.
+- **Hooked in `shadowfb.c`, not at the ten `blitter.c` call sites.**
+  One funnel cannot be half-covered; a missed site fails silently,
+  which is exactly the trap `m68k_write_memory_32` set on the RAM side.
+- **One shared arena, not a per-entry array.** A worst-case per-entry
+  buffer would multiply the pool by an order of magnitude for a payload
+  most blits never use. Entries take contiguous slices; the arena is
+  reclaimed wholesale by a flush when it fills, and any blit whose log
+  does not fit is marked exec-through so it is never skipped.
+- **One record per pixel, not two.** Both surfaces store the same pixel
+  back to back, so records coalesce. Without that, 2x with true colour
+  emitted two records per pixel and a single heavy AvP frame overran
+  the arena — measured: 94 arena flushes and **zero** skips, versus 13
+  flushes and 99,618 skips after coalescing.
 
-Measured on AvP, memo versus memo-off over 2,000 frames:
+The hi-res epoch re-stamp is still required on top of this: it refreshes
+the *age* of entries whose content is already correct.
 
-| config | result |
-|---|---|
-| 1x, true colour off | **bit-identical** |
-| 1x, true colour on | diverges from frame 1544 |
-| 2x (either true-colour setting) | diverges from frame 1544 |
-
-`BlitMemoLaunch()` therefore refuses to run whenever
-`shadowHiresActive || shadowFBActive`. The epoch re-stamp described
-below is necessary but **not sufficient** — it refreshes the age of
-shadow entries that already exist; it cannot create the entries a
-skipped blit would have stored.
-
-Fixing it properly means recording the shadow stores in the write log
-alongside the RAM writes and replaying them through
-`ShadowFBStoreCry` / `ShadowHiresStoreCryBlock`. Until then the memo's
-reach is 1x with true colour off — which is *not* AvP's shipped
-configuration, so the headline 2x number below is currently
-unreachable.
-
-**`verify` mode does not catch this.** It compares the write log and
-the blitter post-state, neither of which covers the shadow surfaces, so
-the corpus sweep's clean result says nothing about this interaction.
-Any fix must extend verify to compare shadow content too, or the sweep
-will keep passing a broken configuration.
+`verify` mode compares the shadow log too. It did not before, which is
+precisely how a divergence that only appears with true colour or hi-res
+survived a clean 2.5-million-check corpus sweep.
 
 ## Boundaries
 
@@ -125,19 +119,26 @@ will keep passing a broken configuration.
 
 AvP idle, host wall-clock normalized to zero-blit frames within each run
 (this cancels machine-wide noise, which otherwise swamps the effect),
-3 reps per config, spread ±0.5%:
+3 reps per config:
 
-| config | render overhead, memo off | memo on | change | reachable? |
-|---|---|---|---|---|
-| 1x, true colour off | 1.117 × zero-frame | 1.003 | **-10%** | yes |
-| 2x + true colour | 0.888 × zero-frame | 0.584 | -34% | **no — see above** |
+| config | heavy/zero frame ratio, memo off | memo on |
+|---|---|---|
+| 2x + true colour | 1.945 (3 reps: 1.954 / 1.908 / 1.972) | 1.802 (1.900 / 1.800 / 1.706) |
 
-The 1x win is small because the log replay still performs every store —
-only the per-pixel computation is saved. The 2x figure is larger because
-each redundant blit also drives Stage 2 shadow work, but it was measured
-in a configuration that produces **incorrect output** and that the memo
-now refuses to run. Treat it as the prize for fixing the shadow-store
-gap, not as a current result.
+Render overhead is `ratio - 1`, so that is roughly **-15%** of the
+redundant render cost at 2x.
+
+**These numbers were taken on a contended machine** (per-frame wall
+times swung 17-35ms between reps, and the memo-on spread is wide:
+1.71-1.90). Treat -15% as indicative and re-measure on a quiet host
+before quoting it.
+
+An earlier revision of this document claimed **-34%** at 2x. That was
+measured before shadow stores were replayed -- i.e. while the memo was
+skipping work it was not entitled to skip, and producing a different
+frame. The replay is real work (a store per pixel per surface), so the
+correct figure is necessarily smaller. The 1x-with-true-colour-off
+figure of -10% predates the shadow work and is unaffected by it.
 
 ## Verifying a title before tagging it
 
@@ -204,12 +205,13 @@ matching stream — Club Drive (394,581 misses) and Checkered Flag
 
 ## Open items
 
-0. **Replay shadow stores for skipped blits** — the blocker described
-   at the top. Without it the memo cannot run in any configuration
-   users actually want, and `verify` mode cannot see the failure.
-   Extend the write log to carry shadow content, replay it through the
-   store functions, and extend `blit_memo_verify` to compare shadow
-   surfaces so the sweep can detect this class.
+0. **Re-run the corpus sweep.** The 64-title result below predates
+   shadow-store replay and was taken with `verify` blind to the
+   surfaces, so it needs redoing — ideally with true colour and hi-res
+   on, which is where the interesting failures live.
+0b. **Re-measure on a quiet host** (see "Measured effect") and check
+   the memory cost: the shadow arena adds ~9.6MB on top of the 14.6MB
+   entry pool whenever a surface is active.
 1. **Give thin titles real input fixtures**, especially Club Drive and
    Checkered Flag, which blit heavily but never repeated a stream under
    generic input. Also sweep the PD/homebrew remainder.

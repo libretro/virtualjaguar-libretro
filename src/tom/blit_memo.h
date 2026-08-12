@@ -45,6 +45,7 @@
 #define __BLIT_MEMO_H__
 
 #include <stdint.h>
+#include "shadowfb.h"   /* shadowfb_sub */
 
 #ifdef __cplusplus
 extern "C" {
@@ -96,6 +97,26 @@ void BlitMemoWriteHook(uint32_t addr, uint32_t len, uint32_t data);
  * Only meaningful while recording; call guarded:
  *   if (blitMemoRecording) BlitMemoNoteRead(addr, len); */
 void BlitMemoNoteRead(uint32_t addr, uint32_t len);
+
+/* Shadow-surface store hook.
+ *
+ * Both shadow surfaces are written from inside the blitter engines, so
+ * a skipped blit would never store its shadow content while its RAM
+ * bytes were replayed from the write log -- leaving the surface and RAM
+ * disagreeing, and the presented frame different from a live run.  The
+ * memo therefore logs every shadow store a recorded blit makes and
+ * replays them alongside the RAM writes.
+ *
+ * Hooked inside shadowfb.c's store functions rather than at their ten
+ * blitter.c call sites: one funnel cannot be half-covered, and a missed
+ * site fails silently (the same trap m68k_write_memory_32 set on the
+ * RAM side).  Only meaningful while recording; call guarded:
+ *   if (blitMemoRecording) BlitMemoNoteShadow(...); */
+#define BLIT_MEMO_SH_FB     1u   /* ShadowFBStoreCry        */
+#define BLIT_MEMO_SH_HIRES  2u   /* ShadowHiresStoreCry     */
+#define BLIT_MEMO_SH_BLOCK  4u   /* ShadowHiresStoreCryBlock (blk valid) */
+void BlitMemoNoteShadow(unsigned kind, uint32_t addr, uint16_t val,
+                        uint16_t frac, const shadowfb_sub *blk);
 
 /* Stats (test ABI; cumulative since load). */
 extern uint32_t blitMemoHits;         /* blits skipped */
