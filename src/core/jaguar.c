@@ -683,8 +683,12 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
    /* Bus fast path, hooked directly -- never routes through
     * JaguarWriteByte (see the comment above M68K_BUS_CHARGE).  No
     * disassembler variant exists for writes, so unlike the read side
-    * there is no m68kBusNoCharge guard to apply here. */
-   VJT_WATCH_WR(address, value, M68K);
+    * there is no m68kBusNoCharge guard to apply here.  UAE's `value`
+    * argument is not masked to the access width (byte stores can
+    * arrive sign-extended into the upper 24 bits), unlike
+    * JaguarWriteByte's uint8_t parameter, so mask here to match its
+    * record shape. */
+   VJT_WATCH_WR(address, value & 0xFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -729,8 +733,10 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    /* Bus fast path, hooked directly -- terminal (never recurses into
     * another m68k_write_memory_* function), so one call here is exactly
     * one 68K bus write, including the half that only reaches the
-    * GPU/DSP RISC-local latch below and not memory yet. */
-   VJT_WATCH_WR(address, value, M68K);
+    * GPU/DSP RISC-local latch below and not memory yet.  Masked to 16
+    * bits to match JaguarWriteWord's record shape -- see the mask note
+    * in m68k_write_memory_8. */
+   VJT_WATCH_WR(address, value & 0xFFFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
@@ -799,7 +805,10 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
        * else below recurses into m68k_write_memory_16() twice instead,
        * which is already hooked; hooking it again here would
        * double-count that case (three overlapping records for one
-       * 32-bit access instead of the natural two). */
+       * 32-bit access instead of the natural two).  No width mask
+       * needed here (unlike the 8/16-bit sites) -- this is itself a
+       * 32-bit access and `unsigned int` is exactly 32 bits, so
+       * `value` already matches JaguarWriteLong's record shape. */
       VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
       SET32(jaguarMainRAM, address, value);

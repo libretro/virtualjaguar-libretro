@@ -59,6 +59,33 @@
  * trace_probe_attach() to either tool would make one invocation do both
  * things at once — rename the flag on one side first.
  *
+ * WATCH RECORD SHAPE IS REGION-DEPENDENT for 32-bit 68K accesses (both
+ * m68k_read_memory_32 and m68k_write_memory_32, src/core/jaguar.c) --
+ * see the WATCH COVERAGE block in src/core/vjtrace.h for the full
+ * explanation of why. Short version: a 32-bit 68K access to main RAM or
+ * cart ROM produces ONE WATCH_RD/WATCH_WR record covering the whole
+ * 4-byte span; a 32-bit access to anything else (TOM/JERRY/CDROM/
+ * unknown) produces TWO records, each covering 2 bytes, at addr and
+ * addr+2. There is no width/size field on vjtrace_ev to tell these
+ * apart from the record alone.
+ *
+ * CONCRETE FAILURE MODE: matching is exact-address (vjtrace_watch_check,
+ * src/core/vjtrace.c: `addr >= lo && addr <= hi`), so it only ever sees
+ * the specific addresses a record was stamped with -- addr for a RAM/ROM
+ * access, {addr, addr+2} for a TOM/JERRY/CDROM/unknown access -- never
+ * the bytes in between. A window whose low bound `window_lo` falls
+ * strictly inside a 4-byte access (`addr < window_lo <= addr+3`) always
+ * misses the RAM/ROM case (its only record is stamped at `addr`, which
+ * is now below `window_lo`), even though the real 68K write touched
+ * bytes inside the window. The TOM/JERRY/CDROM case is caught only for
+ * `window_lo` in {addr+1, addr+2} (its addr+2 half-record still
+ * satisfies `addr+2 >= window_lo`) -- for `window_lo == addr+3` BOTH
+ * region shapes miss, since neither {addr, addr+2} (TOM/JERRY) nor
+ * {addr} (RAM) is >= addr+3. Always set a watch window's low bound to
+ * an address at or before every 4-byte-aligned access you care about
+ * (round down to a multiple of 4), not to the specific byte you want to
+ * catch.
+ *
  * ======================================================================
  * PER-FIELD CSV
  * ======================================================================

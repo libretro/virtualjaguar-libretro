@@ -66,7 +66,46 @@ void vjtrace_frame_tick(uint32_t frame) { cur_frame = frame; }
 static uint32_t vjt_pc_of(uint32_t who)
 {
    if (who == M68K || who == JAGUAR)
-      return m68k_get_reg(NULL, M68K_REG_PC);
+   {
+      /* m68k_get_reg(M68K_REG_PC) is regs.pc AT THE INSTANT OF THIS
+       * CALL, which is almost never the PC of the instruction that
+       * made the access being recorded: m68ki_incpc() (or the
+       * per-handler equivalent) advances regs.pc at or near the TOP of
+       * nearly every opcode handler (859 of 861, measured empirically),
+       * before that handler's own memory access runs, so by the time
+       * a read/write hook fires regs.pc already names the START of the
+       * *next* instruction's fetch.
+       *
+       * pcQueue/pcQPtr (src/core/jaguar.c) is the fix, and is already
+       * exactly what vjtrace_backtrace() below relies on for the same
+       * reason: M68KInstructionHook() latches regs.pc into
+       * pcQueue[pcQPtr] and only then increments pcQPtr, once per
+       * instruction, called from src/m68000/m68kinterface.c
+       * immediately before that instruction's opcode dispatch -- i.e.
+       * strictly before any memory access the instruction makes. So
+       * the most recently queued entry, at
+       * pcQueue[(pcQPtr - 1) & (VJT_PCHIST_CAP - 1)], is always the
+       * start PC of whichever instruction is CURRENTLY executing: the
+       * one actually responsible for the access, regardless of how far
+       * its handler has since advanced regs.pc.
+       *
+       * pcQPtr can only index a possibly-unwritten slot before the
+       * very first 68K instruction of the whole session has executed
+       * (pcQueue is a plain BSS array; an unwritten slot reads back as
+       * PC=0 rather than crashing or returning garbage -- the same
+       * KNOWN LIMITATION already documented on vjtrace_backtrace() in
+       * vjtrace.h). M68KInstructionHook() runs unconditionally from
+       * that first instruction on and always runs before any memory
+       * access that instruction makes, so by the time this function is
+       * reachable from a real M68K-attributed bus access, pcQPtr is
+       * already >= 1 and that pre-first-instruction case cannot
+       * actually occur for who == M68K; it remains possible in
+       * principle for who == JAGUAR (host/init-time direct pokes
+       * before the 68K core has run at all). */
+      extern uint32_t pcQueue[];
+      extern uint32_t pcQPtr;
+      return pcQueue[(pcQPtr - 1) & (VJT_PCHIST_CAP - 1)];
+   }
    if (who == GPU)
       return gpu_pc;
    if (who == DSP)

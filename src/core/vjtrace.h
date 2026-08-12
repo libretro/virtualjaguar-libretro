@@ -117,7 +117,42 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
  * records from the two m68k_write_memory_16 calls it makes) so a
  * single 68K bus access yields the natural record(s), never a
  * double-count. who=M68K therefore now appears in WATCH_RD/WATCH_WR
- * records with a real originating PC, same as who=GPU/DSP/OP/BLITTER.
+ * records with a real originating PC (who=OP and who=BLITTER do NOT --
+ * vjt_pc_of() only resolves a PC for M68K/JAGUAR/GPU/DSP; OP and
+ * BLITTER records always carry pc=0, same as before this task).
+ *
+ * PC ATTRIBUTION is the instruction-START PC, not whatever regs.pc
+ * happens to hold at the moment of the access: m68k_incpc() (or a
+ * handler's own equivalent) advances regs.pc at or near the top of
+ * nearly every opcode handler, before that handler's memory access
+ * runs, so reading M68K_REG_PC at access time names the NEXT
+ * instruction's fetch in the overwhelming majority of cases (859 of
+ * 861 opcode handlers, measured). vjt_pc_of() (src/core/vjtrace.c)
+ * instead reads the most recent entry of pcQueue/pcQPtr
+ * (src/core/jaguar.c), which M68KInstructionHook() latches BEFORE each
+ * instruction's opcode handler runs -- see the comment on vjt_pc_of()
+ * for the full argument.
+ *
+ * RECORD VALUE for a 68K write is masked to the access width (8/16/32
+ * bits) at each m68k_write_memory_* hook site, matching what
+ * JaguarWriteByte/Word/Long already carry -- UAE's `value` argument to
+ * the byte/word bus functions is not itself masked (e.g. a byte store
+ * of $AA can arrive as $FFFFFFAA), so the hook masks explicitly rather
+ * than forwarding the raw argument. A 68K read's `value` field is
+ * always 0 (the read hasn't happened yet at hook time), same as
+ * JaguarReadByte/Word/Long.
+ *
+ * RECORD SHAPE IS REGION-DEPENDENT for 32-bit 68K accesses, both
+ * m68k_read_memory_32 and m68k_write_memory_32: a 32-bit access to main
+ * RAM or cart ROM is terminal and produces ONE record covering the
+ * whole 4-byte span at its base address; a 32-bit access to anything
+ * else (TOM/JERRY/CDROM/unknown) decomposes into two 16-bit accesses
+ * and so produces TWO 2-byte records, at addr and addr+2. vjtrace_ev
+ * has no width/size field, so a consumer cannot tell which shape a
+ * given record came from except by knowing the target region. See the
+ * WATCH RECORD SHAPE note in test/harness/trace_probe.h (where
+ * `--watch` is documented) for the concrete failure mode this causes
+ * for a watch window that starts mid-longword.
  *
  * STILL OUT OF SCOPE: GPU/DSP local-store writes -- a GPU/DSP
  * instruction writing its own local RAM ($F03000-$F03FFF /

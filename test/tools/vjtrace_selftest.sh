@@ -20,6 +20,33 @@
 #       records, BOTH a who=M68K record AND a who=GPU or who=DSP record, each
 #       carrying a genuine (nonzero) originating PC.
 #
+#       For who=M68K specifically, "nonzero pc" alone is not a real test (a
+#       constant wrong value would still be nonzero), so this check also
+#       asserts two properties a wrong-PC bug is unlikely to satisfy by
+#       accident: the pc is EVEN (68K instructions are always fetched from
+#       even addresses; a value that landed mid-operand or came from
+#       uninitialized/garbage state has no reason to be) and at least two
+#       distinct WATCH_WR/M68K records share an IDENTICAL pc at ADJACENT
+#       addresses (addr and addr+-2) -- the signature of a single multi-word
+#       store (e.g. a MOVEM.L push) correctly attributed to one instruction
+#       start, which is exactly the class of bug Task 7.5's post-review fix
+#       corrected (see the PC ATTRIBUTION note in src/core/vjtrace.h and
+#       vjt_pc_of() in src/core/vjtrace.c): m68k_get_reg(M68K_REG_PC) at
+#       access time names the NEXT instruction in the vast majority of
+#       opcodes (regs.pc already advanced past instruction-start before the
+#       opcode handler's own memory access runs), so the OLD code recorded a
+#       pc that undercounts real per-instruction correlation just as
+#       willingly as a correct one would -- checking evenness/adjacent-pc-
+#       sharing here is a regression guard on top of that fix, not a
+#       from-scratch re-proof of it. The semantic argument for WHY
+#       pcQueue[(pcQPtr-1)&(VJT_PCHIST_CAP-1)] is the instruction-start PC
+#       rests on the call-site ordering in src/m68000/m68kinterface.c (the
+#       M68K_HOOK_FUNCTION call precedes `opcode = get_iword(0)` and the
+#       opcode dispatch, so M68KInstructionHook() always latches pcQueue for
+#       the CURRENT instruction before that instruction's own memory access
+#       can run) -- established by code inspection, not re-derived by this
+#       black-box test on every run.
+#
 #       NOTE ON who=M68K (Task 7.5, closing the Task 7 gap): watch hooks
 #       live in JaguarReadByte/Word/Long and JaguarWriteByte/Word/Long
 #       (src/core/jaguar.c) for GPU/DSP/OP/blitter/CDROM callers, AND, as of
@@ -198,10 +225,80 @@ else
     }
 
     # M68K: must be present since Task 7.5 hooked the 68K bus fast path
-    # directly (see the NOTE ON who=M68K above).
+    # directly (see the NOTE ON who=M68K above). find_nonzero_pc() also
+    # leaves the FULL who=M68K WATCH_WR dump at $WORK_DIR/watch_M68K.txt,
+    # which the stronger PC-attribution checks below reuse.
     M68K_LINE=$(find_nonzero_pc M68K)
     M68K_OK=0
     [ -n "$M68K_LINE" ] && M68K_OK=1
+
+    # Stronger PC-attribution checks (post-review, see the long comment
+    # on this check above): (1) every recorded pc must be EVEN -- 68K
+    # instructions only ever start at even addresses, so an odd pc is
+    # unambiguous evidence of a wrong-PC bug; (2) at least one pair of
+    # CONSECUTIVE who=M68K WATCH_WR records (filtering to who=M68K
+    # guarantees "consecutive in this file" also means "consecutive in
+    # time for the 68K", since no other processor's record can appear
+    # between two writes made by one atomic 68K instruction) must share
+    # an identical pc with addr values 2 apart -- the multi-word-store
+    # signature (e.g. MOVEM.L) that a correct instruction-start PC
+    # produces.
+    PC_ATTR_OK=0
+    PC_ATTR_DETAIL=""
+    if [ "$M68K_OK" -eq 1 ]; then
+        PC_ATTR_RESULT=$(awk '
+            function hex2dec(h,    i,c,v,idx) {
+                v = 0
+                for (i = 1; i <= length(h); i++) {
+                    c = toupper(substr(h, i, 1))
+                    idx = index("0123456789ABCDEF", c) - 1
+                    v = v * 16 + idx
+                }
+                return v
+            }
+            {
+                pc = ""; addr = ""
+                for (i = 1; i <= NF; i++) {
+                    if ($i ~ /^pc=/)   { split($i, a, "="); pc = a[2] }
+                    if ($i ~ /^addr=/) { split($i, a, "="); addr = a[2] }
+                }
+                if (pc == "" || addr == "") next
+                last = substr(pc, length(pc), 1)
+                if (last !~ /[02468ACEace]/) {
+                    oddcount++
+                }
+                d = hex2dec(addr)
+                if (pc == prev_pc) {
+                    diff = d - prev_addr
+                    if (diff < 0) diff = -diff
+                    if (diff == 2 && !found) {
+                        found = 1
+                        line1 = prevline
+                        line2 = $0
+                    }
+                }
+                prev_pc = pc; prev_addr = d; prevline = $0
+            }
+            END {
+                print "ODD_COUNT=" (oddcount + 0)
+                print "ADJPAIR_FOUND=" (found + 0)
+                print "LINE1=" line1
+                print "LINE2=" line2
+            }
+        ' "$WORK_DIR/watch_M68K.txt")
+
+        ODD_COUNT=$(echo "$PC_ATTR_RESULT" | awk -F= '/^ODD_COUNT=/{print $2}')
+        ADJPAIR_FOUND=$(echo "$PC_ATTR_RESULT" | awk -F= '/^ADJPAIR_FOUND=/{print $2}')
+        ADJ_LINE1=$(echo "$PC_ATTR_RESULT" | grep '^LINE1=' | cut -d= -f2-)
+        ADJ_LINE2=$(echo "$PC_ATTR_RESULT" | grep '^LINE2=' | cut -d= -f2-)
+
+        if [ "${ODD_COUNT:-1}" -eq 0 ] && [ "${ADJPAIR_FOUND:-0}" -eq 1 ]; then
+            PC_ATTR_OK=1
+            PC_ATTR_DETAIL="all pc even, adjacent-pc pair: [$ADJ_LINE1] / [$ADJ_LINE2]"
+        else
+            PC_ATTR_DETAIL="odd-pc records=$ODD_COUNT (want 0), adjacent-pc pair found=$ADJPAIR_FOUND (want 1)"
+        fi
+    fi
 
     # GPU/DSP: at least one of the two RISC processors must also show a
     # nonzero-pc record, proving the pre-existing JaguarWrite*-routed
@@ -220,10 +317,10 @@ else
         fi
     done
 
-    if [ "$WATCH_WR_SUM" -gt 0 ] && [ "$M68K_OK" -eq 1 ] && [ "$RISC_OK" -eq 1 ]; then
-        pass watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM, who=M68K nonzero pc ($M68K_LINE), who=$RISC_WHO nonzero pc ($RISC_LINE)"
+    if [ "$WATCH_WR_SUM" -gt 0 ] && [ "$M68K_OK" -eq 1 ] && [ "$PC_ATTR_OK" -eq 1 ] && [ "$RISC_OK" -eq 1 ]; then
+        pass watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM, who=M68K nonzero pc ($M68K_LINE), $PC_ATTR_DETAIL, who=$RISC_WHO nonzero pc ($RISC_LINE)"
     else
-        fail watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM (want >0), who=M68K pc-bearing record found=$M68K_OK, who=GPU/DSP pc-bearing record found=$RISC_OK"
+        fail watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM (want >0), who=M68K pc-bearing record found=$M68K_OK, pc-attribution check=$PC_ATTR_OK ($PC_ATTR_DETAIL), who=GPU/DSP pc-bearing record found=$RISC_OK"
     fi
 fi
 
