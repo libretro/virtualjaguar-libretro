@@ -1680,20 +1680,19 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Feed the per-title DB the loaded content so option reads below (and in
     * check_variables()) can match by CRC (issue #368). need_fullpath=false
     * covers every valid extension, including CD images, so info->data is
-    * non-NULL there too -- but it holds the cue-sheet TEXT bytes, not ROM
-    * data, so a CRC computed from it is meaningless. v1 only covers
-    * cartridge CRCs, so skip both the DB feed's log and its match attempt
-    * for CD content. */
-   if (info->data)
+    * non-NULL there too -- but it holds the disc image, not ROM data, so a
+    * CRC computed from it identifies nothing this table knows about. v1
+    * only covers cartridge CRCs, so CD content takes the clear path below
+    * rather than being hashed and matched: it skips a CRC32 pass over the
+    * whole image (1.6 s for a 644 MiB CDI) and removes any chance of a
+    * collision handing a CD title some cartridge's per-title overrides. */
+   if (info->data && !is_cd_content)
    {
       TitleDBSetContent((const uint8_t *)info->data, info->size);
       /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
        * hashes differently from its retail base, so it matches no row and
-       * silently loses that title's enhancement defaults.  Say so (#409).
-       * CD content is excluded: its "CRC" is over cue-sheet text, not a
-       * meaningful content identifier, and docs/rom-patches.md explains
-       * CD images cannot be soft patched anyway. */
-      if (!is_cd_content && !TitleDBTitleName())
+       * silently loses that title's enhancement defaults.  Say so (#409). */
+      if (!TitleDBTitleName())
          LOG_INF("[titledb] no per-title entry for CRC32 $%08X -- patched or "
                  "unlisted content; enhancement defaults not applied (see "
                  "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
