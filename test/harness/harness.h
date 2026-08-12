@@ -50,6 +50,17 @@
  *                      (default 10).  BTN: up down left right a b c pause
  *                      option 0-6, or raw retropad id.  Repeatable.
  *
+ *   Flight-recorder flags (only acted on by tools that call
+ *   trace_probe_attach(); harness.c merely records the raw strings, so
+ *   tools with their own same-named flags are unaffected -- see
+ *   test/harness/trace_probe.h):
+ *     --trace-out FILE        Dump the vjtrace event ring at exit
+ *     --field-csv FILE        One CSV row per emulated frame
+ *     --watch A[:LEN][:r|w|rw]  Memory watch (repeatable, max 16)
+ *     --snap FRAME            VJSN state snapshot at FRAME (repeatable)
+ *     --snap-prefix BASE      Snapshot filename base (default vjt_snap)
+ *     --mark FRAME:TAG        Inject a MARK event at FRAME (repeatable)
+ *
  * ======================================================================
  * CORE OPTION OVERRIDE TABLE
  * ======================================================================
@@ -90,6 +101,11 @@
 #define HARNESS_MAX_AUDIO_FRAMES 1200
 /* Maximum number of scripted input events */
 #define HARNESS_MAX_INPUT_EVENTS 128
+/* Flight-recorder flag capacities (see trace_probe.h).  The watch limit
+ * mirrors the core's own hard limit of 16 in vjtrace_watch_add(). */
+#define HARNESS_MAX_WATCH_SPECS  16
+#define HARNESS_MAX_SNAP_FRAMES  32
+#define HARNESS_MAX_MARK_SPECS   32
 
 /* ----------------------------------------------------------------
  * Types
@@ -207,6 +223,35 @@ typedef struct {
      * finishes, for capturing a repro point.  Set via --save-state. */
     const char   *save_state_path;
 
+    /* --- Flight-recorder (vjtrace) flags ---------------------------
+     * Recorded here as RAW, UNPARSED strings: harness.c never
+     * interprets them and never touches the core, so a tool that does
+     * not call trace_probe_attach() behaves exactly as it did before
+     * these existed.  That matters because two in-tree tools already
+     * define their own --watch / --snap / --snap-prefix with different
+     * meanings (test/tools/irq_rate_probe.c, test/tools/cd_wedge_probe.c);
+     * both pre-parse argv themselves and neither attaches the probe.
+     * trace_probe.c does the parsing (and the erroring) at attach time. */
+    const char   *trace_out_path;   /* --trace-out */
+    const char   *field_csv_path;   /* --field-csv */
+    const char   *snap_prefix;      /* --snap-prefix, default "vjt_snap" */
+    const char   *watch_specs[HARNESS_MAX_WATCH_SPECS];
+    unsigned      num_watch_specs;
+    const char   *snap_specs[HARNESS_MAX_SNAP_FRAMES];
+    unsigned      num_snap_specs;
+    const char   *mark_specs[HARNESS_MAX_MARK_SPECS];
+    unsigned      num_mark_specs;
+
+    /* Set by trace_probe_attach() when it needs a per-frame framebuffer
+     * hash; when 0 (every tool that does not attach) cb_video does no
+     * extra work at all.  last_fb_hash holds the FNV-1a of the most
+     * recent NON-duped frame -- a duped frame (data == NULL) presents
+     * the previous image, so the previous hash stays correct.  Kept in
+     * the config rather than in harness_video_stats deliberately:
+     * harness_reset_video() memsets that struct. */
+    int           want_fb_hash;
+    uint32_t      last_fb_hash;
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -243,6 +288,17 @@ typedef struct {
     .system_dir = "/tmp", \
     .load_state_path = NULL, \
     .save_state_path = NULL, \
+    .trace_out_path = NULL, \
+    .field_csv_path = NULL, \
+    .snap_prefix = "vjt_snap", \
+    .watch_specs = {NULL}, \
+    .num_watch_specs = 0, \
+    .snap_specs = {NULL}, \
+    .num_snap_specs = 0, \
+    .mark_specs = {NULL}, \
+    .num_mark_specs = 0, \
+    .want_fb_hash = 0, \
+    .last_fb_hash = 0, \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \
@@ -292,6 +348,20 @@ void harness_set_option(harness_config *cfg, const char *key, const char *value)
 /* Convenience: schedule a scripted button press (see harness_input_event). */
 void harness_press(harness_config *cfg, unsigned port, unsigned button,
                    unsigned first_frame, unsigned hold_frames);
+
+/* Bitmask of the joypad buttons the harness would report as pressed on
+ * `port` for the CURRENT frame: bit N is set when the harness answers 1
+ * for RETRO_DEVICE_ID_JOYPAD id N.  This is what the harness injects,
+ * not what the core happened to poll -- the core is free to read only
+ * the ids it cares about.
+ *
+ * Evaluates the same logic as the input_state callback (programmatic
+ * input_callback first, else the --press event table).  NOTE: when a
+ * tool has installed an input_callback, this calls it 16 extra times
+ * per invocation, so it assumes that callback is side-effect free.
+ * Only trace_probe calls this, and only when a flight-recorder flag was
+ * given, so tools that do not attach never trigger those extra calls. */
+uint32_t harness_input_mask(harness_config *cfg, unsigned port);
 
 /* Reset audio stats (useful between test phases). */
 void harness_reset_audio(harness_config *cfg);

@@ -93,6 +93,27 @@ void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value)
       vjtrace_counters.ev[type]++;
 }
 
+/* Live ring readback -- see the contract on the declarations in
+ * vjtrace.h.  ring != NULL implies ring_cap > 0 (vjtrace_init() only
+ * publishes a capacity when the allocation succeeded), which is the
+ * same invariant vjtrace_emit() relies on for its modulo. */
+uint64_t vjtrace_ring_head(void)
+{
+   return ring_head;
+}
+
+int vjtrace_ring_read(uint64_t idx, vjtrace_ev *out)
+{
+   if (!ring || !out)
+      return 0;
+   if (idx >= ring_head)          /* not written yet */
+      return 0;
+   if (ring_head - idx > ring_cap) /* already overwritten */
+      return 0;
+   *out = ring[idx % ring_cap];
+   return 1;
+}
+
 int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw)
 {
    if (vjtrace_nwatch >= 16)

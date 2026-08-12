@@ -99,6 +99,28 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
 /* binary ring dump; see docs/vjtrace-design.md for the format */
 int vjtrace_dump(const char *path);
 
+/* Live ring readback, for a consumer that wants to drain events as they
+ * are produced instead of waiting for vjtrace_dump() at exit (the
+ * harness-side trace_probe tallies VJT_EV_IRQ_ASSERT per source this
+ * way -- vjtrace_counters carries one counter per event *type*, so the
+ * per-source split in the event's addr field is only available from the
+ * events themselves).
+ *
+ * vjtrace_ring_head() returns the total number of events ever emitted,
+ * i.e. one past the index of the newest event; it is NOT reduced by
+ * eviction, so it is a stable monotonic cursor.  A caller drains
+ * [last_head, vjtrace_ring_head()) and remembers the new head.
+ *
+ * vjtrace_ring_read() copies event `idx` into *out and returns 1, or
+ * returns 0 without touching *out when the index is unreadable: ring
+ * not initialized, out NULL, idx not yet written (idx >= head), or idx
+ * already overwritten by wraparound (head - idx > capacity).  A caller
+ * that drains less often than the ring fills therefore sees 0 for the
+ * evicted prefix of its window and can report the undercount rather
+ * than silently mis-tallying. */
+uint64_t vjtrace_ring_head(void);
+int vjtrace_ring_read(uint64_t idx, vjtrace_ev *out);
+
 /* Multi-section emulator state dump ("VJSN" v1 format; see
  * docs/vjtrace-design.md). Writes host-endian, native-struct-layout
  * data (the reader runs on the same host as the writer -- no byte-swap

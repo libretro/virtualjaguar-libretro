@@ -76,6 +76,26 @@ static void cb_video(const void *data, unsigned w, unsigned h, size_t pitch)
     active_cfg->video.total_frames_rendered++;
     active_cfg->video.last_width = w;
     active_cfg->video.last_height = h;
+    /* Framebuffer hash, only for tools that asked for one (trace_probe's
+     * --field-csv).  Hashed HERE, while the core's buffer is provably
+     * live, rather than by retaining the pointer for the frame hook to
+     * read after retro_run has returned.  data == NULL is a duped frame:
+     * the previous image is re-presented, so the previous hash stands. */
+    if (active_cfg->want_fb_hash && data) {
+        const uint8_t *base = (const uint8_t *)data;
+        uint32_t hash = 2166136261u;   /* FNV-1a 32-bit offset basis */
+        size_t row_bytes = (size_t)w * 4;   /* XRGB8888 */
+        unsigned y;
+        size_t x;
+        for (y = 0; y < h; y++) {
+            const uint8_t *row = base + (size_t)y * pitch;
+            for (x = 0; x < row_bytes; x++) {
+                hash ^= row[x];
+                hash *= 16777619u;
+            }
+        }
+        active_cfg->last_fb_hash = hash;
+    }
     if (active_cfg->video_callback)
         active_cfg->video_callback(active_cfg->video_callback_data,
                                    data, w, h, pitch);
@@ -169,6 +189,34 @@ static int16_t cb_input_state(unsigned p, unsigned d, unsigned i, unsigned id)
             return 1;
     }
     return 0;
+}
+
+uint32_t harness_input_mask(harness_config *cfg, unsigned port)
+{
+    uint32_t mask = 0;
+    unsigned id;
+
+    if (!cfg) return 0;
+    for (id = 0; id < 16; id++) {
+        int16_t v = 0;
+        if (cfg->input_callback) {
+            v = cfg->input_callback(cfg->input_callback_data, port,
+                                    RETRO_DEVICE_JOYPAD, 0, id);
+        } else {
+            unsigned e;
+            for (e = 0; e < cfg->num_input_events; e++) {
+                const harness_input_event *ev = &cfg->input_events[e];
+                if (ev->port == port && ev->button == id &&
+                    cfg->current_frame >= ev->first_frame &&
+                    cfg->current_frame <= ev->last_frame) {
+                    v = 1;
+                    break;
+                }
+            }
+        }
+        if (v) mask |= (1u << id);
+    }
+    return mask;
 }
 
 /* Map a --press button token to a RETRO_DEVICE_ID_JOYPAD_* id, following
@@ -375,6 +423,28 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
         } else if (strcmp(argv[i], "--press") == 0 && i + 1 < argc) {
             if (!harness_parse_press(cfg, argv[++i]))
                 return false;
+        } else if (strcmp(argv[i], "--trace-out") == 0 && i + 1 < argc) {
+            cfg->trace_out_path = argv[++i];
+        } else if (strcmp(argv[i], "--field-csv") == 0 && i + 1 < argc) {
+            cfg->field_csv_path = argv[++i];
+        } else if (strcmp(argv[i], "--snap-prefix") == 0 && i + 1 < argc) {
+            cfg->snap_prefix = argv[++i];
+        } else if (strcmp(argv[i], "--watch") == 0 && i + 1 < argc) {
+            /* Stored raw; trace_probe parses and validates.  Silently
+             * capped rather than fatal: a tool with its own --watch
+             * (irq_rate_probe) must not start failing because it passed
+             * more than the flight recorder's 16. */
+            if (cfg->num_watch_specs < HARNESS_MAX_WATCH_SPECS)
+                cfg->watch_specs[cfg->num_watch_specs++] = argv[i + 1];
+            i++;
+        } else if (strcmp(argv[i], "--snap") == 0 && i + 1 < argc) {
+            if (cfg->num_snap_specs < HARNESS_MAX_SNAP_FRAMES)
+                cfg->snap_specs[cfg->num_snap_specs++] = argv[i + 1];
+            i++;
+        } else if (strcmp(argv[i], "--mark") == 0 && i + 1 < argc) {
+            if (cfg->num_mark_specs < HARNESS_MAX_MARK_SPECS)
+                cfg->mark_specs[cfg->num_mark_specs++] = argv[i + 1];
+            i++;
         } else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc) {
             char *eq;
             i++;
