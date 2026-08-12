@@ -10,7 +10,33 @@
  * OUTSIDE the VJ_TRACE guard so that offline analyzer tools (which are
  * never built with VJ_TRACE) can still include this header for the
  * types used by the binary dump format.
- */
+ *
+ * PERFORMANCE NOTE (VJ_TRACE is coupled 1:1 to TEST_EXPORTS=1, so this
+ * taxes every test-mode build, not just callers that use vjtrace
+ * directly): the GPU/DSP per-instruction PC-history hooks in GPUExec()/
+ * DSPExec() (see vjtrace_pchist_gpu()/vjtrace_pchist_dsp() below)
+ * measured a ~6-8% wall-clock throughput regression on `make
+ * BENCH_PROFILE=1 benchmark` versus a build with no vjtrace hooks at
+ * all (task-3-report.md has the full before/after numbers). A plain
+ * function call and an inlined macro that writes the ring arrays
+ * directly were both measured -- 11 paired, interleaved samples put
+ * them within 0.02% of each other, i.e. statistically indistinguishable
+ * on this hardware -- so the cost is the per-instruction ring write
+ * itself, not call overhead, and the simpler function-call form was
+ * kept. Any wall-clock-derived assertion is measurably tighter in a
+ * VJ_TRACE build than in production: `test/test_frontend_pacing.c`'s
+ * default invocation (no `--max-fastest-frame-fraction` override, see
+ * Makefile:1163) asserts the fastest observed frame beats 0.5x the
+ * frame period (8.333 ms at 60 fps) -- a real, load-sensitive margin
+ * (the Makefile's own comment at line 1173-1178 notes it "would flake
+ * on loaded CI runners: observed locally 11.3 ms vs the 8.3 ms limit
+ * under parallel builds", which is why the *other* two invocations
+ * defuse it with `--max-fastest-frame-fraction 100`). Measured passing
+ * with room at commit 2b5d132 (fastest frame 4.326 ms, 52% of the
+ * 8.333 ms limit) -- not a confirmed regression -- but the margin is
+ * real and shared with every other per-instruction VJ_TRACE hook added
+ * in the future; re-check this assertion specifically (not just `make
+ * test`'s overall exit code) after adding another one. */
 #ifndef __VJTRACE_H__
 #define __VJTRACE_H__
 
@@ -74,8 +100,14 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
 int vjtrace_dump(const char *path);
 
 /* GPU/DSP PC history rings (0x400 entries each), fed from the per-
- * instruction top of GPUExec()/DSPExec().  Read back via
- * vjtrace_backtrace(). */
+ * instruction top of GPUExec()/DSPExec() via a plain function call.
+ * Read back via vjtrace_backtrace(). An inlined-macro form that writes
+ * the ring arrays directly (no call) was measured against this and
+ * found statistically indistinguishable -- see the PERFORMANCE NOTE
+ * above -- so this is the simpler of the two working designs, kept per
+ * that measurement rather than assumed. */
+#define VJT_PCHIST_CAP 0x400
+
 void vjtrace_pchist_gpu(uint32_t pc);
 void vjtrace_pchist_dsp(uint32_t pc);
 
@@ -83,8 +115,25 @@ void vjtrace_pchist_dsp(uint32_t pc);
  * history ring, oldest first / newest last, and sets *count to the
  * number of entries actually written.  who is one of the vjag_memory.h
  * enum values (M68K, GPU, DSP); any other value yields *count = 0.
+ *
+ * GPU/DSP are fill-tracked: *count is min(maxn, VJT_PCHIST_CAP, entries
+ * actually pushed since the ring was last cleared/emulation start), so
+ * a backtrace requested before either processor has executed
+ * VJT_PCHIST_CAP instructions returns only real entries -- never
+ * zero-filled or stale fabricated history.
+ *
  * M68K reads the existing pcQueue/pcQPtr ring in src/core/jaguar.c
- * rather than a duplicate. */
+ * rather than a duplicate (see M68KInstructionHook(), jaguar.c:332).
+ * KNOWN LIMITATION: that ring has no fill counter of its own, and
+ * adding one means touching jaguar.c's per-instruction hot path, which
+ * is out of scope for this module. vjtrace_backtrace() therefore
+ * assumes it is full and can return zero/stale-placeholder entries for
+ * the first VJT_PCHIST_CAP 68K instructions of emulation (pcQueue is a
+ * plain BSS array, so unwritten slots read as PC=0). In practice
+ * M68KInstructionHook() runs unconditionally every 68K instruction from
+ * the very first one executed (it is not gated by VJ_TRACE), so this
+ * window closes within roughly VJT_PCHIST_CAP instructions of core
+ * boot -- a few dozen microseconds -- and does not recur afterward. */
 void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count);
 
 extern vjtrace_counters_t vjtrace_counters;

@@ -109,34 +109,54 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
  * in src/core/jaguar.c); mirror its convention exactly so a single
  * helper can service all three: the head index always points at the
  * NEXT slot to write, so the most recently written entry sits at
- * (head - 1) & (cap - 1). */
-#define VJT_PCHIST_CAP 0x400
+ * (head - 1) & (cap - 1).  _fill counts entries actually pushed,
+ * capped at VJT_PCHIST_CAP, so vjtrace_backtrace() can tell "ring not
+ * full yet" from "ring full" and never hand back a zero-filled
+ * placeholder as if it were real history (see the fill-tracked note on
+ * vjtrace_backtrace() in vjtrace.h). Static: called only through the
+ * two functions below (a plain function call measured the same as an
+ * inlined direct-write macro here -- see vjtrace.h's PERFORMANCE
+ * NOTE -- so there is no hot-path reason to expose these). */
 static uint32_t gpu_pchist[VJT_PCHIST_CAP];
 static uint32_t gpu_pchist_head = 0;
+static uint32_t gpu_pchist_fill = 0;
 static uint32_t dsp_pchist[VJT_PCHIST_CAP];
 static uint32_t dsp_pchist_head = 0;
+static uint32_t dsp_pchist_fill = 0;
 
 void vjtrace_pchist_gpu(uint32_t pc)
 {
    gpu_pchist[gpu_pchist_head] = pc;
    gpu_pchist_head = (gpu_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
+   if (gpu_pchist_fill < VJT_PCHIST_CAP)
+      gpu_pchist_fill++;
 }
 
 void vjtrace_pchist_dsp(uint32_t pc)
 {
    dsp_pchist[dsp_pchist_head] = pc;
    dsp_pchist_head = (dsp_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
+   if (dsp_pchist_fill < VJT_PCHIST_CAP)
+      dsp_pchist_fill++;
 }
 
 /* Copies up to maxn entries from a head-is-next-write-slot ring of the
- * given power-of-two capacity into out[], oldest first / newest last. */
+ * given power-of-two capacity into out[], oldest first / newest last.
+ * fill bounds how many of the cap slots actually hold real (pushed)
+ * data -- pass cap itself for a ring with no fill tracking (M68K's
+ * pcQueue; see the KNOWN LIMITATION note on vjtrace_backtrace() in
+ * vjtrace.h) or the true running push count for a fill-tracked ring
+ * (GPU/DSP), so a request made before the ring has filled returns only
+ * genuinely-written entries instead of zero-filled placeholders. */
 static void vjt_backtrace_ring(const uint32_t *ring_buf, uint32_t head,
-                                uint32_t cap, uint32_t *out, int maxn,
-                                int *count)
+                                uint32_t fill, uint32_t cap, uint32_t *out,
+                                int maxn, int *count)
 {
    int n;
    int i;
    n = maxn;
+   if (n > (int)fill)
+      n = (int)fill;
    if (n > (int)cap)
       n = (int)cap;
    if (n < 0)
@@ -164,17 +184,20 @@ void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count)
    {
       extern uint32_t pcQueue[];
       extern uint32_t pcQPtr;
-      vjt_backtrace_ring(pcQueue, pcQPtr, VJT_PCHIST_CAP, out, maxn, count);
+      /* pcQueue has no fill counter (see the KNOWN LIMITATION note on
+       * vjtrace_backtrace() in vjtrace.h) -- assume full (fill = cap). */
+      vjt_backtrace_ring(pcQueue, pcQPtr, VJT_PCHIST_CAP, VJT_PCHIST_CAP,
+                          out, maxn, count);
    }
    else if (who == GPU)
    {
-      vjt_backtrace_ring(gpu_pchist, gpu_pchist_head, VJT_PCHIST_CAP, out,
-                          maxn, count);
+      vjt_backtrace_ring(gpu_pchist, gpu_pchist_head, gpu_pchist_fill,
+                          VJT_PCHIST_CAP, out, maxn, count);
    }
    else if (who == DSP)
    {
-      vjt_backtrace_ring(dsp_pchist, dsp_pchist_head, VJT_PCHIST_CAP, out,
-                          maxn, count);
+      vjt_backtrace_ring(dsp_pchist, dsp_pchist_head, dsp_pchist_fill,
+                          VJT_PCHIST_CAP, out, maxn, count);
    }
    else
    {
