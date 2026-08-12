@@ -804,17 +804,18 @@ else
 # meant to close.  Runs at parse time, once TARGET is known.
 #
 # vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
-# site (including libretro.o's retro_init/retro_run vjtrace_init /
-# vjtrace_frame_tick calls), has *content* (not just the export list)
-# that depends on TEST_EXPORTS -- it compiles under -DVJ_TRACE only in
-# that branch (see the CFLAGS += -DVJ_TRACE line above), so those objects
-# must be deleted alongside the library on every mode transition, or a
-# stale object compiled in the other mode silently survives the relink:
-# either vjtrace_* symbols go missing from a `make TEST_EXPORTS=1` build
-# that started from a plain `make` (undefined symbols at link time), or
-# the reverse transition silently keeps the no-op macro expansion, so the
-# ring never receives events despite vjtrace_* being exported.
-VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o
+# site or a vjtrace_pchist_*() call (including libretro.o's
+# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
+# *content* (not just the export list) that depends on TEST_EXPORTS --
+# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
+# -DVJ_TRACE line above), so those objects must be deleted alongside the
+# library on every mode transition, or a stale object compiled in the
+# other mode silently survives the relink: either vjtrace_* symbols go
+# missing from a `make TEST_EXPORTS=1` build that started from a plain
+# `make` (undefined symbols at link time), or the reverse transition
+# silently keeps the no-op macro expansion, so the ring never receives
+# events despite vjtrace_* being exported.
+VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
 $(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
         || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
              rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })

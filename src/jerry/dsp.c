@@ -28,6 +28,7 @@
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
+#include "../core/vjtrace.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -1009,6 +1010,9 @@ void DSPExec(int32_t cycles)
 	{
       uint16_t opcode;
       uint32_t index;
+#ifdef VJ_TRACE
+      vjtrace_pchist_dsp(dsp_pc);
+#endif
 
 		/* If IMASK was cleared, see if any other interrupts are pending --
 		 * but not until the D_FLAGS store that cleared it has retired, so

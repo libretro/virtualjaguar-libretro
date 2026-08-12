@@ -73,6 +73,20 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
 /* binary ring dump; see docs/vjtrace-design.md for the format */
 int vjtrace_dump(const char *path);
 
+/* GPU/DSP PC history rings (0x400 entries each), fed from the per-
+ * instruction top of GPUExec()/DSPExec().  Read back via
+ * vjtrace_backtrace(). */
+void vjtrace_pchist_gpu(uint32_t pc);
+void vjtrace_pchist_dsp(uint32_t pc);
+
+/* Fills out[] with up to maxn PCs from the requested processor's PC
+ * history ring, oldest first / newest last, and sets *count to the
+ * number of entries actually written.  who is one of the vjag_memory.h
+ * enum values (M68K, GPU, DSP); any other value yields *count = 0.
+ * M68K reads the existing pcQueue/pcQPtr ring in src/core/jaguar.c
+ * rather than a duplicate. */
+void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count);
+
 extern vjtrace_counters_t vjtrace_counters;
 extern uint32_t vjtrace_nwatch;
 

@@ -105,6 +105,83 @@ void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_wri
    }
 }
 
+/* PC history rings for GPU/DSP -- 68K already has one (pcQueue/pcQPtr
+ * in src/core/jaguar.c); mirror its convention exactly so a single
+ * helper can service all three: the head index always points at the
+ * NEXT slot to write, so the most recently written entry sits at
+ * (head - 1) & (cap - 1). */
+#define VJT_PCHIST_CAP 0x400
+static uint32_t gpu_pchist[VJT_PCHIST_CAP];
+static uint32_t gpu_pchist_head = 0;
+static uint32_t dsp_pchist[VJT_PCHIST_CAP];
+static uint32_t dsp_pchist_head = 0;
+
+void vjtrace_pchist_gpu(uint32_t pc)
+{
+   gpu_pchist[gpu_pchist_head] = pc;
+   gpu_pchist_head = (gpu_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
+}
+
+void vjtrace_pchist_dsp(uint32_t pc)
+{
+   dsp_pchist[dsp_pchist_head] = pc;
+   dsp_pchist_head = (dsp_pchist_head + 1) & (VJT_PCHIST_CAP - 1);
+}
+
+/* Copies up to maxn entries from a head-is-next-write-slot ring of the
+ * given power-of-two capacity into out[], oldest first / newest last. */
+static void vjt_backtrace_ring(const uint32_t *ring_buf, uint32_t head,
+                                uint32_t cap, uint32_t *out, int maxn,
+                                int *count)
+{
+   int n;
+   int i;
+   n = maxn;
+   if (n > (int)cap)
+      n = (int)cap;
+   if (n < 0)
+      n = 0;
+   for (i = 0; i < n; i++)
+   {
+      uint32_t age = (uint32_t)(n - 1 - i);
+      uint32_t idx = (head - 1 - age) & (cap - 1);
+      out[i] = ring_buf[idx];
+   }
+   *count = n;
+}
+
+void vjtrace_backtrace(int who, uint32_t *out, int maxn, int *count)
+{
+   if (!count)
+      return;
+   if (!out || maxn <= 0)
+   {
+      *count = 0;
+      return;
+   }
+
+   if (who == M68K)
+   {
+      extern uint32_t pcQueue[];
+      extern uint32_t pcQPtr;
+      vjt_backtrace_ring(pcQueue, pcQPtr, VJT_PCHIST_CAP, out, maxn, count);
+   }
+   else if (who == GPU)
+   {
+      vjt_backtrace_ring(gpu_pchist, gpu_pchist_head, VJT_PCHIST_CAP, out,
+                          maxn, count);
+   }
+   else if (who == DSP)
+   {
+      vjt_backtrace_ring(dsp_pchist, dsp_pchist_head, VJT_PCHIST_CAP, out,
+                          maxn, count);
+   }
+   else
+   {
+      *count = 0;
+   }
+}
+
 int vjtrace_dump(const char *path)
 {
    FILE *f;
