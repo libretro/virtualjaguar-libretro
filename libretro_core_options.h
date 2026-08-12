@@ -183,6 +183,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_blit_memo",
+      "Blit Memoization (Per-Title)",
+      NULL,
+      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render an identical scene every engine cycle while the player is idle). Output is bit-identical by construction; enabled per title via the enhancement database. Verify mode never skips - it executes every would-be skip and logs any divergence (for validating new titles). Not available for CD content.",
+      NULL,
+      "video",
+      {
+         { "disabled", "Disabled" },
+         { "enabled",  "Enabled" },
+         { "verify",   "Verify (debug, no speedup)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,

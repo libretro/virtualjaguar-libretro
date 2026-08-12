@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include "jaguar.h"
 #include "blitter.h"
+#include "blit_memo.h"
 #include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
@@ -693,7 +694,11 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
+   {
+      if (blitMemoMode)
+         BlitMemoWriteHook(address, 1, value);
       jaguarMainRAM[address] = value;
+   }
    /* GameDrive: GD_ROMWriteEnable makes the SDRAM-backed "ROM" writable
     * (the GD menu loads through this; homebrew uses cart space as RAM). */
    else if (jgdActive && jgdWriteEnabled
@@ -755,6 +760,8 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(address, 2, value);
       SET16(jaguarMainRAM, address, value);
    }
    /* GameDrive write-enabled cart space (see the byte handler). */
@@ -811,6 +818,8 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
        * `value` already matches JaguarWriteLong's record shape. */
       VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
+      if (blitMemoMode)
+         BlitMemoWriteHook(address, 4, value);
       SET32(jaguarMainRAM, address, value);
       return;
    }
@@ -857,9 +866,12 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
    /* Mask BEFORE the watch check -- a caller passing an address with
     * upper bits set must still compare against the real 24-bit bus
-    * address a watch range was defined against. */
+    * address a watch range was defined against.  The memo hook sits
+    * after the mask for the same reason. */
    offset &= 0xFFFFFF;
    VJT_WATCH_RD(offset, 0, who);
+   if (blitMemoRecording)
+      BlitMemoNoteRead(offset, 1);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -889,6 +901,8 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
    /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
    VJT_WATCH_RD(offset, 0, who);
+   if (blitMemoRecording)
+      BlitMemoNoteRead(offset, 2);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -919,6 +933,8 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
    /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
    VJT_WATCH_WR(offset, data, who);
+   if (blitMemoMode)
+      BlitMemoWriteHook(offset, 1, data);
 
    /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
     * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
@@ -971,6 +987,8 @@ void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
    /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
    VJT_WATCH_WR(offset, data, who);
+   if (blitMemoMode)
+      BlitMemoWriteHook(offset, 2, data);
 
    /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
    if (offset <= 0x1FFFFE)
@@ -1029,6 +1047,8 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
        * passing upper bits set still compares against the real bus
        * address a watch range was defined against. */
       VJT_WATCH_RD(addr, 0, who);
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 4);
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
    }
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
@@ -1059,6 +1079,8 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
        * never sees this access -- check it here instead.  Use addr
        * (already masked to 24 bits above) -- see JaguarReadLong. */
       VJT_WATCH_WR(addr, data, who);
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 4, data);
       SET32(jaguarMainRAM, addr, data);
       return;
    }

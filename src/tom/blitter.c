@@ -29,6 +29,7 @@
 #include "perf_counters.h"
 #include "shadowfb.h"
 #include "state.h"
+#include "blit_memo.h"
 #include "../core/vjtrace.h"
 
 // Various conditional compilation goodies...
@@ -58,7 +59,11 @@
 static BLITTER_ALWAYS_INLINE uint8_t blitter_read_byte(uint32_t addr)
 {
    if (addr < 0x200000)
+   {
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 1);
       return jaguarMainRAM[addr & 0x1FFFFF];
+   }
    return JaguarReadByte(addr, BLITTER);
 }
 
@@ -67,6 +72,8 @@ static BLITTER_ALWAYS_INLINE uint16_t blitter_read_word(uint32_t addr)
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 2);
       a = addr & 0x1FFFFF;
       return ((uint16_t)jaguarMainRAM[a] << 8) | jaguarMainRAM[(a + 1) & 0x1FFFFF];
    }
@@ -78,6 +85,8 @@ static BLITTER_ALWAYS_INLINE uint32_t blitter_read_long(uint32_t addr)
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 4);
       a = addr & 0x1FFFFF;
       return ((uint32_t)jaguarMainRAM[a] << 24)
            | ((uint32_t)jaguarMainRAM[(a + 1) & 0x1FFFFF] << 16)
@@ -91,6 +100,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data
 {
    if (addr < 0x200000)
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 1, data);
       jaguarMainRAM[addr & 0x1FFFFF] = data;
       return;
    }
@@ -102,6 +113,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t dat
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 2, data);
       a = addr & 0x1FFFFF;
       jaguarMainRAM[a]                   = (uint8_t)(data >> 8);
       jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)(data & 0xFF);
@@ -115,6 +128,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t dat
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 4, data);
       a = addr & 0x1FFFFF;
       jaguarMainRAM[a]                   = (uint8_t)((data >> 24) & 0xFF);
       jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)((data >> 16) & 0xFF);

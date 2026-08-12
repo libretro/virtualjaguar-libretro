@@ -38,6 +38,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "joystick.h"
 #include "settings.h"
 #include "shadowfb.h"
+#include "blit_memo.h"
 #include "tom.h"
 #include "blitter.h"
 #include "gpu.h"
@@ -552,6 +553,11 @@ static void netlink_apply(int mode)
  * with no DB match. */
 static bool pertitle_enabled = true;
 
+/* Blit-memo mode the option asked for, remembered because check_variables()
+ * runs before ResolveBootConfig() on the load path and so cannot yet tell
+ * cartridge from CD content (BlitMemoSetMode refuses the latter). */
+static int blit_memo_requested = BLIT_MEMO_OFF;
+
 /* Default value registered for a core option key, from the v2 definitions
  * in option_defs_us[] (libretro_core_options.h). */
 static const char *core_option_default(const char *key)
@@ -614,6 +620,9 @@ static void check_variables(void)
       else
          vjs.useFastBlitter = false;
    }
+   /* Recorded blit-memo post-states belong to one engine; flush the
+    * memo whenever the engine identity flips. */
+   BlitMemoNotifyEngine(vjs.useFastBlitter ? 1 : 0);
 
    var.key = "virtualjaguar_true_color";
    var.value = NULL;
@@ -639,6 +648,28 @@ static void check_variables(void)
                  var.value);
          hires_restart_notice_logged = 1;
       }
+   }
+
+   /* Blit memoization (issue #411): off by default, tagged per title in
+    * the DB.  BlitMemoSetMode() refuses CD content -- but on the
+    * retro_load_game path this call happens BEFORE ResolveBootConfig,
+    * so the requested mode is remembered and re-applied there, once
+    * cartridge-vs-CD is actually known. */
+   var.key = "virtualjaguar_blit_memo";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         blit_memo_requested = BLIT_MEMO_ON;
+      else if (strcmp(var.value, "verify") == 0)
+         blit_memo_requested = BLIT_MEMO_VERIFY;
+      else
+         blit_memo_requested = BLIT_MEMO_OFF;
+      /* On the load path bootConfig does not exist yet, so applying the
+       * mode here would log a mode that the CD check then overrides.
+       * retro_load_game applies it after ResolveBootConfig instead. */
+      if (content_loaded)
+         BlitMemoSetMode(blit_memo_requested);
    }
 
    var.key = "virtualjaguar_crash_detect";
@@ -1351,6 +1382,10 @@ bool retro_unserialize(const void *data, size_t size)
    ShadowFBInvalidate();
    ShadowHiresInvalidate();
 
+   /* The blit memo is likewise a derived cache over RAM that was just
+    * replaced wholesale (never serialized). */
+   BlitMemoFlush();
+
    /* The 68K->RISC-RAM 16-bit-port latch is deliberately not serialized
     * (see jaguar.c): dropping an unpaired low word is what hardware does.
     * But it must actually be dropped here, or a pending pre-load word
@@ -1865,6 +1900,14 @@ bool retro_load_game(const struct retro_game_info *info)
                      vjs.cdBootMode, vjs.useJaguarBIOS);
    vjs.useJaguarBIOS = bootConfig.showBootROM;
 
+   /* check_variables() ran above, before bootConfig existed, so the blit
+    * memo could not tell cartridge from CD content then.  Re-apply the
+    * requested mode now that it can: BlitMemoSetMode() forces CD content
+    * back to OFF, which keeps blitMemoMode zero and short-circuits the
+    * write hooks instead of charging CD titles for a memo that can never
+    * hit. */
+   BlitMemoSetMode(blit_memo_requested);
+
    /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
     * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
    if (jaguar_cd_mode)
@@ -2175,6 +2218,7 @@ void retro_deinit(void)
     * loads). */
    ShadowFBShutdown();
    ShadowHiresShutdown();
+   BlitMemoShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -2182,6 +2226,7 @@ void retro_deinit(void)
     * and re-arm the gate for the next load. */
    TitleDBSetContent(NULL, 0);
    pertitle_enabled = true;
+   blit_memo_requested = BLIT_MEMO_OFF;
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -2220,6 +2265,7 @@ void retro_deinit(void)
 void retro_reset(void)
 {
    JaguarReset();
+   BlitMemoFlush();
 
    /* Console reset re-runs the CD BIOS boot on hardware, which reinstalls
     * the Memory Track NVM module. */
@@ -2284,6 +2330,10 @@ void retro_run(void)
     * runs exactly once per frame. */
    vjtrace_frame_tick(++vjt_frame);
 #endif
+
+   /* Blit memo: advance the shadow-restamp dedupe epoch. */
+   if (blitMemoMode)
+      BlitMemoFrame();
 
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */

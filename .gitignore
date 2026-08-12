@@ -49,6 +49,9 @@ test/tools/test_*
 !test/tools/test_*.h
 !test/tools/test_*.sh
 !test/tools/test_*.py
+# Hand-built tool binaries that don't match the test_* prefix.
+test/tools/blit_memo_verify
+test/tools/i2s_lag_probe
 test/tools/test_memory_map
 test/tools/test_op_gpu_object
 test/tools/test_dsp_audio_diag
