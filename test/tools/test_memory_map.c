@@ -93,8 +93,8 @@ static bool env_cb(unsigned cmd, void *data)
             (const struct retro_system_content_info_override *)data;
         captured_override_count = 0;
         if (ov)
-            for (; ov[captured_override_count].extensions &&
-                   captured_override_count < MAX_OVERRIDES;
+            for (; captured_override_count < MAX_OVERRIDES &&
+                   ov[captured_override_count].extensions;
                  captured_override_count++)
                 captured_overrides[captured_override_count] =
                     ov[captured_override_count];
@@ -302,6 +302,49 @@ int main(int argc, char **argv)
             }
         }
         if (missing)
+        {
+            printf("FAIL\n");
+            failures++;
+        }
+        else
+            printf("PASS\n");
+    }
+
+    /* Test 1d: every extension named in an override entry must also appear
+     * in retro_get_system_info's valid_extensions -- libretro.h's struct
+     * documentation limits override extensions to that list, and this is
+     * exactly the contract issue #409's final review found violated (an
+     * 'iso' override entry with no matching valid_extensions entry). */
+    {
+        struct retro_system_info sysinfo_1d;
+        retro_get_system_info_t core_get_system_info_1d =
+            (retro_get_system_info_t)load_sym(handle, "retro_get_system_info");
+        unsigned i;
+        int bad = 0;
+        memset(&sysinfo_1d, 0, sizeof(sysinfo_1d));
+        core_get_system_info_1d(&sysinfo_1d);
+        printf("Test 1d: override extensions subset of valid_extensions ... ");
+        for (i = 0; i < captured_override_count; i++)
+        {
+            const char *p = captured_overrides[i].extensions;
+            while (p && *p)
+            {
+                const char *bar = strchr(p, '|');
+                size_t len = bar ? (size_t)(bar - p) : strlen(p);
+                char token[64];
+                if (len >= sizeof(token))
+                    len = sizeof(token) - 1;
+                memcpy(token, p, len);
+                token[len] = '\0';
+                if (!ext_in_list(sysinfo_1d.valid_extensions, token))
+                {
+                    printf("[extension '%s' not in valid_extensions] ", token);
+                    bad = 1;
+                }
+                p = bar ? bar + 1 : NULL;
+            }
+        }
+        if (bad)
         {
             printf("FAIL\n");
             failures++;

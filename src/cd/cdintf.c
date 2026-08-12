@@ -30,11 +30,24 @@ static bool ParseCDI(const char *cdiPath);
 /* Multi-file CUE sector reads used to rfopen/rfseek/rfread/rfclose the
  * track's BIN on EVERY 2352-byte sector (measured 18.3 us vs 0.4 us per
  * sector on APFS; the gap is syscall latency, so it is far worse on SD
- * cards and network mounts).  Cache one open handle and the track it
- * serves.  CDIntfCloseImage owns the teardown, which also covers the iOS
- * no-dlclose static-reset rule via the retro_deinit module-reset path. */
+ * cards and network mounts).  Cache one open handle and the resolved path
+ * it serves, keyed by path rather than by track pointer: ParseCueSheet
+ * writes binFilePath for every track, including single-file CUEs, where
+ * all tracks share one file, so keying on the track pointer closed and
+ * reopened the same file on every alternation between two tracks in it
+ * (cdrom.c keeps two independent read cursors -- ssiBlock audio and block
+ * data -- so that alternation is routine, not a corner case).  Keying on
+ * the path instead means same-file track switches are cache hits.  A
+ * handle shared across tracks is safe to reuse because every read below
+ * does an absolute rfseek() computed from the CURRENT track's startLBA
+ * and fileOffset before reading, so no stale file position can leak from
+ * one track to the next.
+ * CDIntfCloseImage owns the teardown: it is called both from
+ * retro_unload_game (normal per-content close, and the iOS no-dlclose
+ * static-reset path) and as the first statement of CDIntfOpenImage, so no
+ * handle from a previous disc can ever survive into a new one's parse. */
 static RFILE *track_file = NULL;
-static const struct CDIntfTrack *track_file_track = NULL;
+static char track_file_path[sizeof(((struct CDIntfTrack *)0)->binFilePath)];
 
 #ifndef strncasecmp
 static int cdintf_strncasecmp(const char *a, const char *b, size_t n)
@@ -1307,7 +1320,7 @@ void CDIntfCloseImage(void)
    {
       rfclose(track_file);
       track_file = NULL;
-      track_file_track = NULL;
+      track_file_path[0] = '\0';
    }
    memset(&disc, 0, sizeof(disc));
 }
@@ -1384,11 +1397,11 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
    // Sector offset within the track is (sector - startLBA).
    if (track->binFilePath[0])
    {
-      if (track_file && track_file_track != track)
+      if (track_file && strcmp(track->binFilePath, track_file_path) != 0)
       {
          rfclose(track_file);
          track_file = NULL;
-         track_file_track = NULL;
+         track_file_path[0] = '\0';
       }
       if (!track_file)
       {
@@ -1398,7 +1411,8 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
             memset(buffer, 0, 2352);
             return false;
          }
-         track_file_track = track;
+         snprintf(track_file_path, sizeof(track_file_path), "%s",
+                  track->binFilePath);
       }
 
       filePos = (int64_t)(sector - track->startLBA) * sectorSize + track->fileOffset;
@@ -1415,7 +1429,7 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
              * reopens fresh instead of retrying a dead stream. */
             rfclose(track_file);
             track_file = NULL;
-            track_file_track = NULL;
+            track_file_path[0] = '\0';
             memset(buffer, 0, 2352);
             return false;
          }

@@ -53,8 +53,11 @@ options by hand.
 
 ## Jaguar CD content cannot be soft patched
 
-For CD images (`.cue`/`.cdi`) the core opens the file by path, so the
-frontend's patched buffer is discarded.  Workaround: patch the `.bin`
+For CD images (`.cue`/`.cdi`) the core declares itself path-loaded for
+those extensions (a libretro content-info override), so on RetroArch the
+frontend never reads the disc image into memory at all — its patching
+step (`content_file_load_into_memory`) is skipped entirely, and there is
+no buffer to patch in the first place.  Workaround: patch the `.bin`
 offline (e.g. with Flips or `xdelta3`) and load the patched image.
 
 ## Known patches
