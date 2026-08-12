@@ -921,6 +921,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# vjtrace flight-recorder selftest: determinism (field_diff +
+	@# trace_memdiff on two identical runs), watch attribution, and
+	@# VJ_TRACE_RING wrap correctness. Builds its own analyzer/smoke tools
+	@# into test/tools/ on first run (see the script header); needs only
+	@# the in-tree test/roms/yarc.j64, never test/roms/private.
+	bash test/tools/vjtrace_selftest.sh ./$(TARGET)
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
