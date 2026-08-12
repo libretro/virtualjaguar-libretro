@@ -48,6 +48,10 @@ static const TitleDBEntry titledb_table[] = {
       {
          { "virtualjaguar_internal_resolution", "2x" },
          { "virtualjaguar_true_color",          "enabled" },
+         /* #411: AvP re-issues one bit-identical blit stream per
+          * 5-field engine cycle while the player idles; verified with
+          * blit_memo verify mode (0 divergences) before tagging. */
+         { "virtualjaguar_blit_memo",           "enabled" },
          { NULL, NULL }
       }
    },

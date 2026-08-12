@@ -38,6 +38,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "joystick.h"
 #include "settings.h"
 #include "shadowfb.h"
+#include "blit_memo.h"
 #include "tom.h"
 #include "blitter.h"
 #include "gpu.h"
@@ -575,6 +576,9 @@ static void check_variables(void)
       else
          vjs.useFastBlitter = false;
    }
+   /* Recorded blit-memo post-states belong to one engine; flush the
+    * memo whenever the engine identity flips. */
+   BlitMemoNotifyEngine(vjs.useFastBlitter ? 1 : 0);
 
    var.key = "virtualjaguar_true_color";
    var.value = NULL;
@@ -600,6 +604,21 @@ static void check_variables(void)
                  var.value);
          hires_restart_notice_logged = 1;
       }
+   }
+
+   /* Blit memoization (issue #411): off by default, tagged per title
+    * in the DB.  CD content is refused inside BlitMemoLaunch (the CD
+    * HLE writes RAM without passing the write hooks). */
+   var.key = "virtualjaguar_blit_memo";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         BlitMemoSetMode(BLIT_MEMO_ON);
+      else if (strcmp(var.value, "verify") == 0)
+         BlitMemoSetMode(BLIT_MEMO_VERIFY);
+      else
+         BlitMemoSetMode(BLIT_MEMO_OFF);
    }
 
    var.key = "virtualjaguar_crash_detect";
@@ -1311,6 +1330,10 @@ bool retro_unserialize(const void *data, size_t size)
     * surface: invalidation cost is per stock word, independent of N. */
    ShadowFBInvalidate();
    ShadowHiresInvalidate();
+
+   /* The blit memo is likewise a derived cache over RAM that was just
+    * replaced wholesale (never serialized). */
+   BlitMemoFlush();
 
    /* The 68K->RISC-RAM 16-bit-port latch is deliberately not serialized
     * (see jaguar.c): dropping an unpaired low word is what hardware does.
@@ -2104,6 +2127,7 @@ void retro_deinit(void)
     * loads). */
    ShadowFBShutdown();
    ShadowHiresShutdown();
+   BlitMemoShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -2134,6 +2158,7 @@ void retro_deinit(void)
 void retro_reset(void)
 {
    JaguarReset();
+   BlitMemoFlush();
 
    /* Console reset re-runs the CD BIOS boot on hardware, which reinstalls
     * the Memory Track NVM module. */
@@ -2201,6 +2226,10 @@ void retro_run(void)
       vjtrace_frame_tick(++vjt_frame);
    }
 #endif
+
+   /* Blit memo: advance the shadow-restamp dedupe epoch. */
+   if (blitMemoMode)
+      BlitMemoFrame();
 
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */

@@ -77,6 +77,7 @@
       shadowHiresResolveMissNoPage;
       shadowHiresN;
       shadowFBActive;
+      blitMemo*;
       vjtrace_*;
    local: *;
 };

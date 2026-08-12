@@ -404,6 +404,35 @@ void ShadowHiresFrameTick(void)
       shadow_hires_clear_tags();
 }
 
+/* Blit-memo support (shadowfb.h): refresh the epoch of every VALID
+ * entry covering one 4KB RAM page.  The caller guarantees the page's
+ * RAM bytes are untouched since the entries were stored, so this
+ * freezes the live cycle's resolve outcome rather than widening the
+ * stale-structure window HIRES_EPOCH_WINDOW bounds. */
+void ShadowHiresRestampRamPage(uint32_t ramPage4k)
+{
+   uint32_t idx0, page, w0, w, tag;
+   uint32_t *tags;
+
+   if (!shadowHiresActive)
+      return;
+   idx0 = ramPage4k << 11;                /* 2048 stock words per 4KB */
+   page = idx0 >> 12;
+   if (page >= SHADOWFB_HIRES_PAGES)
+      return;
+   tags = hiresPageTag[page];
+   if (!tags)
+      return;
+   w0 = idx0 & 0xFFF;
+   for (w = w0; w < w0 + 2048; w++)
+   {
+      tag = tags[w];
+      if (tag & SHADOWFB_TAG_VALID)
+         tags[w] = (tag & 0x1FFFF)
+                 | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
+   }
+}
+
 void ShadowHiresInvalidate(void)
 {
    shadow_hires_clear_tags();

@@ -175,6 +175,16 @@ void ShadowHiresFrameTick(void);
  * independent of N. */
 void ShadowHiresInvalidate(void);
 
+/* Re-stamp the epoch of every VALID entry covering one 4KB main-RAM
+ * page (page index = RAM address >> 12).  For the blit memo
+ * (blit_memo.c): a skipped blit leaves its destination bytes -- and
+ * therefore its shadow content -- bit-frozen, so refreshing the epoch
+ * preserves exactly the resolve outcome of the live cycle instead of
+ * letting HIRES_EPOCH_WINDOW silently age the content out.  Callers
+ * must only use this on pages verified untouched since the content
+ * was stored. */
+void ShadowHiresRestampRamPage(uint32_t ramPage4k);
+
 /* Free pages + line buffer and reset ALL statics (retro_deinit /
  * retro_unload_game / iOS reload). */
 void ShadowHiresShutdown(void);

@@ -1,5 +1,6 @@
 #include "blitter.h"
 #include "blitter_internal.h"
+#include "blit_memo.h"
 
 #include <string.h>
 #include "bus_arbiter.h"
@@ -316,10 +317,14 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
 
       if (BlitterCompareIsEnabled())
          BlitterRunComparison();
-      else if (vjs.useFastBlitter)
-         blitter_blit(GET32(blitter_ram, COMMAND));
-      else
-         BlitterMidsummer2();
+      else if (!BlitMemoLaunch())
+      {
+         /* Memo off: dispatch as before. */
+         if (vjs.useFastBlitter)
+            blitter_blit(GET32(blitter_ram, COMMAND));
+         else
+            BlitterMidsummer2();
+      }
 
       /* The blit's results are complete (memory is final, as before);
        * only the TIME is owed.  The window is paid by the next
