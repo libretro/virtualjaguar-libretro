@@ -84,17 +84,23 @@
 #       bug-driven signal whenever it does hold, and it must NEVER hold
 #       under the fix.
 #
-#       As a companion positive-evidence check (not the discriminator, but
-#       corroboration that pc names a real, already-fetched address rather
-#       than nothing at all): pc must also equal the addr of SOME earlier
-#       code-region read within a short lookback window -- true whenever
-#       the recorded pc is a real 68K instruction-start address that this
-#       run actually executed, which holds under both old and new code (an
-#       address that was fetched "one instruction late" is still a real,
-#       previously-fetched address), so this alone would not catch the
-#       regression -- it is included only to guard against a DIFFERENT
-#       failure mode (pc resolving to something that was never fetched at
-#       all, e.g. garbage or a wrong array).
+#       A companion check (implemented, same awk pass over the same
+#       $DIR_W2/m68k_all.txt dump) asserts positive evidence on top of the
+#       forward discriminator: for each WATCH_WR, its pc must equal the
+#       addr of at least one of the 8 most recent code-region READs seen
+#       so far ("lookback match" in the PASS/FAIL detail). This is NOT the
+#       bug discriminator -- it holds under BOTH the old buggy code and
+#       the new fixed code equally (an address fetched "one instruction
+#       late" is still a real, previously-fetched address, so a
+#       regression back to m68k_get_reg(M68K_REG_PC) would not move this
+#       count to zero) -- it exists to catch a DIFFERENT failure class the
+#       forward check cannot see: a pc that is garbage or pulled from the
+#       wrong array entirely would essentially never coincidentally equal
+#       a genuinely-fetched code address, so it would also never
+#       coincidentally equal a future fetch address either -- the forward
+#       check would show FWD_EQ=0 (looking identical to a correct run) for
+#       that failure class, silently missing it. Requiring at least one
+#       lookback match (BW_MATCH > 0) closes that gap.
 #
 #       Verified empirically (not just by this argument) during Task 7.5's
 #       second re-review round: temporarily reverting vjt_pc_of() to
@@ -391,6 +397,19 @@ else
                 if (type == "WATCH_WR") {
                     pending_pc = pc
                     have_pending = 1
+                    wr_seen++
+                    # Lookback companion check: was this pc the addr of one
+                    # of the last 8 code-region reads? Membership in a
+                    # small recently-fetched-addresses window is real,
+                    # independent-of-the-bug evidence that pc names
+                    # something the CPU actually fetched, not garbage or a
+                    # wrong array -- see the long comment above for why
+                    # this does NOT discriminate old-vs-new pc source
+                    # (both name real fetched addresses, just one
+                    # instruction apart), only a different failure class.
+                    bw_hit = 0
+                    for (k = 0; k < 8; k++) if (recent[k] == pc) bw_hit = 1
+                    if (bw_hit) bw_match++
                 } else {
                     if (have_pending) {
                         resolved++
@@ -400,6 +419,8 @@ else
                         }
                         have_pending = 0
                     }
+                    nrecent++
+                    recent[nrecent % 8] = addr
                 }
             }
             END {
@@ -407,21 +428,40 @@ else
                 print "FWD_EQ=" (fwd_eq + 0)
                 print "EX_PC=" ex_pc
                 print "EX_ADDR=" ex_addr
+                print "WR_SEEN=" (wr_seen + 0)
+                print "BW_MATCH=" (bw_match + 0)
             }
         ' "$DIR_W2/m68k_all.txt")
 
         DISCRIM_RESOLVED=$(echo "$DISCRIM_RESULT" | awk -F= '/^RESOLVED=/{print $2}')
         DISCRIM_FWD_EQ=$(echo "$DISCRIM_RESULT" | awk -F= '/^FWD_EQ=/{print $2}')
+        DISCRIM_BW_MATCH=$(echo "$DISCRIM_RESULT" | awk -F= '/^BW_MATCH=/{print $2}')
+        DISCRIM_WR_SEEN=$(echo "$DISCRIM_RESULT" | awk -F= '/^WR_SEEN=/{print $2}')
 
         # A near-zero resolved count means the discriminator watch config
         # itself didn't produce enough M68K read/write traffic to mean
         # anything -- that is a setup failure, not evidence of correctness,
         # so require a real sample size before trusting FWD_EQ==0.
-        if [ "${DISCRIM_RESOLVED:-0}" -ge 100 ] && [ "${DISCRIM_FWD_EQ:-1}" -eq 0 ]; then
+        #
+        # FWD_EQ==0's soundness also depends on a fact this script cannot
+        # see: no 68K exception in this core restarts at the SAME pc
+        # rather than continuing at pc-after. EXCEPTION_BUS_ERROR (never
+        # raised -- see src/m68000/m68kinterface.c:24, "This one is not
+        # emulated!") and EXCEPTION_ADDRESS_ERROR (src/m68000/
+        # m68kinterface.c:25, "partially emulated") are the only 68K
+        # exception classes with same-pc-restart semantics on real
+        # hardware; confirmed zero dispatch call sites for either in this
+        # core as of Task 7.5. If that ever changes, a legitimate
+        # same-address refetch after one of these becomes possible and
+        # this exact-zero gate could see a real (not buggy) match and go
+        # flaky -- whoever implements those exceptions should revisit this
+        # threshold.
+        if [ "${DISCRIM_RESOLVED:-0}" -ge 100 ] && [ "${DISCRIM_FWD_EQ:-1}" -eq 0 ] \
+            && [ "${DISCRIM_BW_MATCH:-0}" -gt 0 ]; then
             PC_DISCRIM_OK=1
-            PC_DISCRIM_DETAIL="resolved=$DISCRIM_RESOLVED, write.pc==next_read.addr count=$DISCRIM_FWD_EQ (want 0)"
+            PC_DISCRIM_DETAIL="resolved=$DISCRIM_RESOLVED, write.pc==next_read.addr count=$DISCRIM_FWD_EQ (want 0), lookback match=$DISCRIM_BW_MATCH/$DISCRIM_WR_SEEN (want >0)"
         else
-            PC_DISCRIM_DETAIL="resolved=$DISCRIM_RESOLVED (want >=100), write.pc==next_read.addr count=$DISCRIM_FWD_EQ (want 0 -- nonzero means the pc source regressed to m68k_get_reg(M68K_REG_PC))"
+            PC_DISCRIM_DETAIL="resolved=$DISCRIM_RESOLVED (want >=100), write.pc==next_read.addr count=$DISCRIM_FWD_EQ (want 0 -- nonzero means the pc source regressed to m68k_get_reg(M68K_REG_PC)), lookback match=$DISCRIM_BW_MATCH (want >0 -- zero means pc never matches a genuinely-fetched address, e.g. garbage or a wrong array)"
         fi
     fi
 
