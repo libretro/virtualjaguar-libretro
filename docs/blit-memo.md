@@ -125,35 +125,49 @@ Neither in-repo public ROM (`yarc`, `jagniccc`) ever repeats a blit
 stream, so there is no CI gate for this — the private-corpus sweep is
 the gate, same as the audio tests and the CD boot matrix.
 
-## Sweep status — incomplete
+## Sweep status
 
-Partial run, 58 of 159 cartridges scored before it was stopped:
+**Retail sweep complete — 62 commercial cartridges, 0 divergences.**
 
 | verdict | count | meaning |
 |---|---|---|
-| clean | 7 | 292,495 verifications total, **0 divergences** |
+| clean | 19 | **2,546,482 verifications, 0 divergences** |
 | thin | 41 | no verdict — never repeated a stream in the window |
-| noload/error | 10 | core refuses the dump (alpha/prototype formats) |
+| noload | 2 | core refuses the dump (prototype/alpha format) |
 
-Clean so far: Aircars (two dumps), Alien vs Predator, Atari Karts,
-Bubsy, plus PD demos. **No divergence has been observed anywhere**, but
-the majority of the corpus is unscored and most of what was scored is
-`thin`.
+Clean, with check counts: Kasumi Ninja (648,213 — two dumps), Towers II
+(311,317), Missile Command 3D (226,853), Doom EX (170,303), Doom
+(144,658), Atari Karts (134,216), Alien vs Predator (121,455), Trevor
+McFur (69,836), Wolfenstein 3D (26,474), Cybermorph (8,722 — two
+dumps), Zool 2, Tempest 2000, Pitfall, Bubsy, Aircars, Skyhammer,
+Syndicate.
 
-`thin` is the sweep's main weakness: the generic attract-buster input
-does not reach gameplay in many titles, and several retail games
-(Attack of the Mutant Penguins, Brutal Sports Football, Cannon Fodder,
-Checkered Flag) came out thin with `exec_through` dominating — their
-blits never even become memo candidates.
+That spans span-rasterizers (Doom, AvP, Wolf3D), polygon engines
+(Cybermorph, Towers II), sprite/scroller titles and a fighter — the
+skip condition held on every one.
+
+A separate partial run over the full 159-cartridge tree (including PD
+demos) scored 58 titles with the same result: 18 clean, 2,241,276
+verifications, 0 divergences.
+
+`thin` is the sweep's remaining weakness, not a warning sign: the
+generic attract-buster input never reaches gameplay in those titles, so
+most show almost no blit activity at all (Double Dragon V: 4 blits,
+Fever Pitch Soccer: 0). Two exceptions blit heavily but never repeat a
+matching stream — Club Drive (394,581 misses) and Checkered Flag
+(94,792). Those want real input fixtures before they can be tagged.
 
 ## Open items
 
-1. **Finish the sweep** (~2 h wall-clock) and give thin retail titles
-   real input fixtures.
-2. **Tag titles.** AvP is the obvious first candidate and is already
-   the best-evidenced (710,433 checks, 0 divergences, bit-identical A/B
-   over 8,000 frames) — one line in `src/core/titledb.c` once the sweep
-   and a device check are done.
+1. **Give thin titles real input fixtures**, especially Club Drive and
+   Checkered Flag, which blit heavily but never repeated a stream under
+   generic input. Also sweep the PD/homebrew remainder.
+2. **Tag titles.** AvP is the obvious first candidate — best-evidenced
+   of any title (710,433 checks, 0 divergences, bit-identical A/B over
+   8,000 frames) — and Doom, Kasumi Ninja, Towers II and Missile
+   Command 3D now have six-figure clean check counts too. One line each
+   in `src/core/titledb.c` once a device check is done. Tagging is what
+   makes the feature do anything, so it should not sit undone for long.
 3. **Shrink the pool.** 4096 entries × 3,744 B = **14.6 MB**, too much
    for iOS. Most of an entry is two 768-byte state blobs and a 2 KB
    write log.
