@@ -432,6 +432,12 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* This bus fast path never routes through JaguarReadByte (see the
+    * comment above M68K_BUS_CHARGE), so hook the watch check here.
+    * m68kBusNoCharge is also true for disassembler reads (Task 7.5):
+    * those aren't real bus traffic and must not appear as watch hits. */
+   if (!m68kBusNoCharge)
+      VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -473,6 +479,9 @@ unsigned int m68k_read_memory_16(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- see m68k_read_memory_8. */
+   if (!m68kBusNoCharge)
+      VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -519,12 +528,21 @@ unsigned int m68k_read_memory_32(unsigned int address)
 
    if (address <= 0x1FFFFC)
    {
+      /* Terminal branch (no decomposition) -- hook here.  The
+       * CDROM/TOM/JERRY/unknown fallthrough below recurses into
+       * m68k_read_memory_16() twice instead, which is already hooked;
+       * hooking it again here would double-count that case. */
+      if (!m68kBusNoCharge)
+         VJT_WATCH_RD(address, 0, M68K);
       M68K_BUS_CHARGE(address, 2);
       return GET32(jaguarMainRAM, address);
    }
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
+      /* Also terminal -- see the note above. */
+      if (!m68kBusNoCharge)
+         VJT_WATCH_RD(address, 0, M68K);
       M68K_BUS_CHARGE(address, 2);
       if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadLong(address);
@@ -662,6 +680,11 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- never routes through
+    * JaguarWriteByte (see the comment above M68K_BUS_CHARGE).  No
+    * disassembler variant exists for writes, so unlike the read side
+    * there is no m68kBusNoCharge guard to apply here. */
+   VJT_WATCH_WR(address, value, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -703,6 +726,11 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- terminal (never recurses into
+    * another m68k_write_memory_* function), so one call here is exactly
+    * one 68K bus write, including the half that only reaches the
+    * GPU/DSP RISC-local latch below and not memory yet. */
+   VJT_WATCH_WR(address, value, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
@@ -767,6 +795,12 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 
    if (address <= 0x1FFFFC)
    {
+      /* Terminal branch (no decomposition) -- hook here.  Everything
+       * else below recurses into m68k_write_memory_16() twice instead,
+       * which is already hooked; hooking it again here would
+       * double-count that case (three overlapping records for one
+       * 32-bit access instead of the natural two). */
+      VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
       SET32(jaguarMainRAM, address, value);
       return;

@@ -16,28 +16,31 @@
 #       not to relax the check.
 #
 #   (b) WATCH ATTRIBUTION -- a --watch 0x0:0x200000:w run (main RAM writes)
-#       must produce watch_wr hits in the field CSV AND at least one
-#       WATCH_WR ring record carrying a genuine originating PC.
+#       must produce watch_wr hits in the field CSV AND, in the WATCH_WR ring
+#       records, BOTH a who=M68K record AND a who=GPU or who=DSP record, each
+#       carrying a genuine (nonzero) originating PC.
 #
-#       NOTE ON who=M68K: per docs/vjtrace-design.md section 2, watch hooks
-#       live only in JaguarReadByte/Word/Long and JaguarWriteByte/Word/Long
-#       (src/core/jaguar.c, VJT_WATCH_RD/WR at lines 815/843/872/923/979/
-#       1008). The 68K's own bus-access fast path --
-#       m68k_write_memory_8/16/32 (jaguar.c:655-780ish) and
-#       m68k_read_memory_8/16/32 (jaguar.c:425-560ish) -- writes/reads
-#       jaguarMainRAM[] directly and dispatches TOM/JERRY/CDROM without ever
-#       calling JaguarWrite*/JaguarRead*, so who=M68K structurally cannot
-#       appear in a WATCH_RD/WATCH_WR record today. Confirmed empirically
-#       during Task 7 development: a VJ_TRACE_RING=25000000 run (larger than
-#       the ~19.5M events a 300-frame yarc.j64 run emits, so nothing is
-#       evicted) still shows zero who=M68K WATCH_WR records. This is a real
-#       gap in the recorder's CPU-write coverage, not a selftest bug or an
-#       eviction artifact -- but it is out of scope for Task 7 (selftest +
-#       Makefile wiring, not touching the hottest functions in jaguar.c) and
-#       is flagged separately for a follow-up task. This check therefore
-#       attributes against GPU (falling back to DSP), the other two
-#       PC-bearing `who` values -- see vjt_pc_of() in src/core/vjtrace.c --
-#       which DO route through JaguarWrite* and DO carry a real PC.
+#       NOTE ON who=M68K (Task 7.5, closing the Task 7 gap): watch hooks
+#       live in JaguarReadByte/Word/Long and JaguarWriteByte/Word/Long
+#       (src/core/jaguar.c) for GPU/DSP/OP/blitter/CDROM callers, AND, as of
+#       Task 7.5, directly in the 68K's own bus-access fast path --
+#       m68k_read_memory_8/16/32 and m68k_write_memory_8/16/32 (jaguar.c,
+#       ~425-810) -- which never routes through JaguarRead*/JaguarWrite* (it
+#       writes/reads jaguarMainRAM[] directly and dispatches TOM/JERRY/CDROM
+#       itself). Task 7 confirmed the gap empirically (a VJ_TRACE_RING=
+#       25000000 run, large enough that nothing is evicted, showed zero
+#       who=M68K WATCH_WR records); Task 7.5 hooked only the non-decomposing
+#       entry points of that fast path (see the "Terminal branch" comments
+#       at each hook site in jaguar.c) so a single 68K access produces the
+#       natural record(s) and never double-counts. GPU/DSP-attributed watch
+#       counts are unchanged by this change (verified with a run large
+#       enough to avoid the default ring's wraparound -- the default 1M-slot
+#       ring wraps many times over during a 300-frame run, so a naive
+#       before/after diff of the *default-ring* tail window looks like it
+#       shifts BLITTER counts; that is a ring-eviction artifact of adding a
+#       new event type into a shared fixed-size ring, not a behavior change
+#       -- see task-7.5-report.md for the full before/after comparison with
+#       VJ_TRACE_RING set high enough to hold the whole run).
 #
 #   (c) RING WRAP -- a VJ_TRACE_RING=1024 run of 300 frames must produce
 #       EXACTLY 1024 dumped records (proving vjtrace_dump()'s
@@ -179,32 +182,48 @@ else
         NR==1 { for (i=1;i<=NF;i++) if ($i=="watch_wr") col=i; next }
         { s += $col } END { print s+0 }' "$DIR_W/field.csv")
 
-    ATTR_OK=0
-    ATTR_WHO=""
-    ATTR_LINE=""
-    for who in GPU DSP; do
-        "$TRACE_DUMP" "$DIR_W/trace.vjtr" --type WATCH_WR --who "$who" \
-            >"$WORK_DIR/watch_${who}.txt" 2>"$WORK_DIR/watch_${who}.err" || true
-        LINE=$(awk '{
+    find_nonzero_pc() {
+        # $1 = who; prints the first nonzero-pc WATCH_WR line for it, or
+        # nothing.
+        "$TRACE_DUMP" "$DIR_W/trace.vjtr" --type WATCH_WR --who "$1" \
+            >"$WORK_DIR/watch_${1}.txt" 2>"$WORK_DIR/watch_${1}.err" || true
+        awk '{
             for (i=1;i<=NF;i++) {
                 if ($i ~ /^pc=/) {
                     split($i,a,"=")
                     if (a[2] != "0") { print; exit }
                 }
             }
-        }' "$WORK_DIR/watch_${who}.txt")
+        }' "$WORK_DIR/watch_${1}.txt"
+    }
+
+    # M68K: must be present since Task 7.5 hooked the 68K bus fast path
+    # directly (see the NOTE ON who=M68K above).
+    M68K_LINE=$(find_nonzero_pc M68K)
+    M68K_OK=0
+    [ -n "$M68K_LINE" ] && M68K_OK=1
+
+    # GPU/DSP: at least one of the two RISC processors must also show a
+    # nonzero-pc record, proving the pre-existing JaguarWrite*-routed
+    # attribution path (GPU/DSP local-store writes still bypass it -- see
+    # the coverage note in src/core/vjtrace.h) still works.
+    RISC_OK=0
+    RISC_WHO=""
+    RISC_LINE=""
+    for who in GPU DSP; do
+        LINE=$(find_nonzero_pc "$who")
         if [ -n "$LINE" ]; then
-            ATTR_OK=1
-            ATTR_WHO="$who"
-            ATTR_LINE="$LINE"
+            RISC_OK=1
+            RISC_WHO="$who"
+            RISC_LINE="$LINE"
             break
         fi
     done
 
-    if [ "$WATCH_WR_SUM" -gt 0 ] && [ "$ATTR_OK" -eq 1 ]; then
-        pass watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM, WATCH_WR who=$ATTR_WHO nonzero pc ($ATTR_LINE)"
+    if [ "$WATCH_WR_SUM" -gt 0 ] && [ "$M68K_OK" -eq 1 ] && [ "$RISC_OK" -eq 1 ]; then
+        pass watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM, who=M68K nonzero pc ($M68K_LINE), who=$RISC_WHO nonzero pc ($RISC_LINE)"
     else
-        fail watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM (want >0), pc-bearing WATCH_WR record found=$ATTR_OK (who=M68K is structurally excluded from watch coverage today -- see the NOTE ON who=M68K at the top of this script)"
+        fail watch-attribution "watch_wr CSV sum=$WATCH_WR_SUM (want >0), who=M68K pc-bearing record found=$M68K_OK, who=GPU/DSP pc-bearing record found=$RISC_OK"
     fi
 fi
 

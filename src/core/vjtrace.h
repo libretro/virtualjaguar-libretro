@@ -101,6 +101,30 @@ void vjtrace_emit(uint8_t type, uint8_t who, uint32_t addr, uint32_t value);
 int vjtrace_watch_add(uint32_t lo, uint32_t hi, unsigned rw);
 void vjtrace_watch_clear(void);
 void vjtrace_watch_check(uint32_t addr, uint32_t value, uint32_t who, int is_write);
+/* WATCH COVERAGE (updated by Task 7.5 -- see docs/vjtrace-design.md
+ * section 2 for the original design): VJT_WATCH_RD/WR sites live in
+ * JaguarReadByte, JaguarReadWord, JaguarReadLong, JaguarWriteByte,
+ * JaguarWriteWord and JaguarWriteLong (src/core/jaguar.c), which every
+ * GPU/DSP/OP/blitter/CDROM access to the shared memory map routes
+ * through, AND directly in the 68K's own bus-access fast path --
+ * m68k_read_memory_8/16/32 and m68k_write_memory_8/16/32 (also
+ * jaguar.c) -- which UAE calls for every 68K instruction fetch and
+ * data access and which never routes through the Jaguar dispatch above
+ * (it writes/reads jaguarMainRAM[] directly and dispatches TOM/JERRY/
+ * CDROM itself). Only the non-decomposing entry points of that fast
+ * path are hooked (e.g. m68k_write_memory_32's direct-RAM branch, not
+ * its two-half TOM/JERRY/CDROM fallback, which already gets two
+ * records from the two m68k_write_memory_16 calls it makes) so a
+ * single 68K bus access yields the natural record(s), never a
+ * double-count. who=M68K therefore now appears in WATCH_RD/WATCH_WR
+ * records with a real originating PC, same as who=GPU/DSP/OP/BLITTER.
+ *
+ * STILL OUT OF SCOPE: GPU/DSP local-store writes -- a GPU/DSP
+ * instruction writing its own local RAM ($F03000-$F03FFF /
+ * $F1B000-$F1CFFF) does not go through the Jaguar dispatch either, so
+ * those writes are not watch-visible. (GPU/DSP writes reaching main RAM
+ * or the other processor's local RAM DO route through it and are
+ * covered.) */
 /* binary ring dump; see docs/vjtrace-design.md for the format */
 int vjtrace_dump(const char *path);
 
