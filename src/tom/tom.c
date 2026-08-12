@@ -270,6 +270,11 @@
 #include "settings.h"
 
 PERF_COUNTER(timing_gpu_irqs_to_68k);
+PERF_COUNTER(timing_int1_video);
+PERF_COUNTER(timing_int1_gpu);
+PERF_COUNTER(timing_int1_object);
+PERF_COUNTER(timing_int1_timer);
+PERF_COUNTER(timing_int1_jerry);
 
 // Red Color Values for CrY<->RGB Color Conversion
 uint8_t redcv[16][16] = {
@@ -639,6 +644,7 @@ void TOMFillLookupTables(void)
 
 void TOMSetPendingJERRYInt(void)
 {
+   PERF_INC(timing_int1_jerry);
    tom_jerry_int_pending = 1;
    TOMAssertEnabledIRQs();
 }
@@ -646,6 +652,7 @@ void TOMSetPendingJERRYInt(void)
 
 void TOMSetPendingTimerInt(void)
 {
+   PERF_INC(timing_int1_timer);
    tom_timer_int_pending = 1;
    TOMAssertEnabledIRQs();
 }
@@ -653,6 +660,7 @@ void TOMSetPendingTimerInt(void)
 
 void TOMSetPendingObjectInt(void)
 {
+   PERF_INC(timing_int1_object);
    tom_object_int_pending = 1;
    TOMAssertEnabledIRQs();
 }
@@ -660,6 +668,7 @@ void TOMSetPendingObjectInt(void)
 
 void TOMSetPendingGPUInt(void)
 {
+   PERF_INC(timing_int1_gpu);
    tom_gpu_int_pending = 1;
    TOMAssertEnabledIRQs();
 }
@@ -667,6 +676,7 @@ void TOMSetPendingGPUInt(void)
 
 void TOMSetPendingVideoInt(void)
 {
+   PERF_INC(timing_int1_video);
    tom_video_int_pending = 1;
    TOMAssertEnabledIRQs();
 }

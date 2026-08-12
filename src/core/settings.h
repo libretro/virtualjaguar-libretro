@@ -30,6 +30,7 @@ struct VJSettings
 	bool useJaguarBIOS;
 	bool useFastBlitter;
 	bool blitterTiming;
+	bool gpuPipelineTiming;
 
 	int32_t joyport;
 	bool hardwareTypeAlpine;
