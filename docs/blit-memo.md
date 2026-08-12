@@ -128,10 +128,11 @@ AvP idle, host wall-clock normalized to zero-blit frames within each run
 Render overhead is `ratio - 1`, so that is roughly **-15%** of the
 redundant render cost at 2x.
 
-**These numbers were taken on a contended machine** (per-frame wall
-times swung 17-35ms between reps, and the memo-on spread is wide:
-1.71-1.90). Treat -15% as indicative and re-measure on a quiet host
-before quoting it.
+Re-measured on a quieter host (load 5-6 rather than 70): ratios 1.929 /
+1.920 / 2.006 memo-off against 1.755 / 1.899 / 1.778 memo-on, i.e.
+overhead 0.952 -> 0.811, **-14.8%** — the same answer the loaded run
+gave, so -15% is reproducible. Absolute per-frame times remain noisy on
+this box (10-41ms across reps); the ratio is the stable metric.
 
 An earlier revision of this document claimed **-34%** at 2x. That was
 measured before shadow stores were replayed -- i.e. while the memo was
