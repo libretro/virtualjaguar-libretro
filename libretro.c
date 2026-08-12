@@ -424,6 +424,32 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+
+   /* CD extensions are declared path-loaded (env 65).  DELIBERATELY the
+    * inverse of the usual pattern: hybrid cart+disc cores (Genesis Plus GX,
+    * PicoDrive, Geargrafx) set need_fullpath=true globally and override
+    * their cartridge extensions to false, because that fails safe for THEM
+    * on a frontend without this callback.  For this core the safe failure
+    * is the other way around: global false + CD-only true degrades, on a
+    * frontend without env 65, to exactly the old behavior (the frontend
+    * loads the disc image into RAM and we ignore it -- ~400 MB wasted on a
+    * .cdi, nothing else lost).  The standard direction would instead cost
+    * cartridge soft patching and the per-title DB feed, and break the
+    * RAM-loaded (.abs/.cof) reload in retro_load_game, on any frontend
+    * below RetroArch 1.9.6.  Measured effect (hover_strike.cdi, 396 MB):
+    * RetroArch peak RSS 557 MB -> 164 MB.
+    * NOTE: RetroArch only honours entries whose extension also appears in
+    * valid_extensions; 'iso' rides along for completeness but is dropped
+    * there (bare ISO is refused in cdintf.c anyway). */
+   {
+      static const struct retro_system_content_info_override
+         content_overrides[] = {
+         { "cue|cdi|iso", true /* need_fullpath */, false /* persistent_data */ },
+         { NULL, false, false }
+      };
+      environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
+                 (void *)content_overrides);
+   }
 }
 
 /* Resolve the TCP endpoint for the network link and apply the mode.

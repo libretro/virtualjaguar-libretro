@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -48,6 +49,10 @@ static bool got_achievements;
 static bool achievements_data_ok;
 static bool achievements_enabled_true;
 static const struct retro_memory_map *captured_memmap;
+
+#define MAX_OVERRIDES 8
+static struct retro_system_content_info_override captured_overrides[MAX_OVERRIDES];
+static unsigned captured_override_count;
 
 static bool env_cb(unsigned cmd, void *data)
 {
@@ -82,6 +87,19 @@ static bool env_cb(unsigned cmd, void *data)
         return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
         return true;
+    case RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE:
+    {
+        const struct retro_system_content_info_override *ov =
+            (const struct retro_system_content_info_override *)data;
+        captured_override_count = 0;
+        if (ov)
+            for (; ov[captured_override_count].extensions &&
+                   captured_override_count < MAX_OVERRIDES;
+                 captured_override_count++)
+                captured_overrides[captured_override_count] =
+                    ov[captured_override_count];
+        return true;
+    }
     default:
         return false;
     }
@@ -106,6 +124,21 @@ static void *load_sym(void *handle, const char *name)
         exit(1);
     }
     return sym;
+}
+
+static bool ext_in_list(const char *list, const char *ext)
+{
+    size_t elen = strlen(ext);
+    const char *p = list;
+    while (p && *p)
+    {
+        const char *bar = strchr(p, '|');
+        size_t len = bar ? (size_t)(bar - p) : strlen(p);
+        if (len == elen && strncasecmp(p, ext, elen) == 0)
+            return true;
+        p = bar ? bar + 1 : NULL;
+    }
+    return false;
 }
 
 /*
@@ -178,6 +211,7 @@ int main(int argc, char **argv)
     achievements_data_ok = false;
     achievements_enabled_true = false;
     captured_memmap = NULL;
+    captured_override_count = 0;
 
     core_set_env(env_cb);
 
@@ -201,25 +235,79 @@ int main(int argc, char **argv)
         failures++;
     }
 
-    /* Test 1b: need_fullpath must stay false.  RetroArch soft patching
-     * (IPS/BPS/UPS/xdelta) only applies when the frontend loads content
-     * into memory itself, which requires need_fullpath == false.  If this
-     * flips, soft patching silently dies for every cartridge and nothing
-     * else notices (issue #409). */
+    /* Test 1b: cartridge extensions must stay memory-loaded.  RetroArch
+     * soft patching (IPS/BPS/UPS/xdelta) only applies when the frontend
+     * loads content into memory itself: the global need_fullpath must be
+     * false AND no SET_CONTENT_INFO_OVERRIDE entry may flip a cartridge
+     * extension to need_fullpath=true.  Guarding only the global flag
+     * left exactly that hole (issue #409 final-review finding M5). */
     {
+        static const char *cart_exts[] =
+            { "j64", "jag", "rom", "abs", "cof", "bin", "prg" };
         struct retro_system_info sysinfo;
+        unsigned i, j;
+        int bad = 0;
         retro_get_system_info_t core_get_system_info =
             (retro_get_system_info_t)load_sym(handle, "retro_get_system_info");
         memset(&sysinfo, 0, sizeof(sysinfo));
         core_get_system_info(&sysinfo);
-        printf("Test 1b: need_fullpath == false (soft patching) ... ");
-        if (!sysinfo.need_fullpath)
-            printf("PASS\n");
-        else
+        printf("Test 1b: cartridge content memory-loaded (soft patching) ... ");
+        if (sysinfo.need_fullpath)
         {
-            printf("FAIL (need_fullpath is true; frontend soft patching disabled)\n");
+            printf("FAIL (global need_fullpath is true; frontend soft patching disabled)\n");
             failures++;
         }
+        else
+        {
+            for (i = 0; i < captured_override_count; i++)
+                if (captured_overrides[i].need_fullpath)
+                    for (j = 0; j < sizeof(cart_exts) / sizeof(cart_exts[0]); j++)
+                        if (ext_in_list(captured_overrides[i].extensions,
+                                        cart_exts[j]))
+                        {
+                            printf("FAIL (override declares '%s' need_fullpath=true) ",
+                                   cart_exts[j]);
+                            bad = 1;
+                        }
+            if (bad)
+            {
+                printf("\n");
+                failures++;
+            }
+            else
+                printf("PASS\n");
+        }
+    }
+
+    /* Test 1c: CD extensions must be declared path-loaded via
+     * SET_CONTENT_INFO_OVERRIDE.  Without it the frontend reads a whole
+     * .cdi image into RAM (measured: 557 MB peak RSS for a 396 MB image)
+     * only for the core to reopen it by path and never touch the buffer. */
+    {
+        static const char *cd_exts[] = { "cue", "cdi" };
+        unsigned i, j;
+        int missing = 0;
+        printf("Test 1c: CD extensions declared path-loaded (override) ... ");
+        for (j = 0; j < sizeof(cd_exts) / sizeof(cd_exts[0]); j++)
+        {
+            int found = 0;
+            for (i = 0; i < captured_override_count; i++)
+                if (captured_overrides[i].need_fullpath &&
+                    ext_in_list(captured_overrides[i].extensions, cd_exts[j]))
+                    found = 1;
+            if (!found)
+            {
+                printf("[missing '%s'] ", cd_exts[j]);
+                missing = 1;
+            }
+        }
+        if (missing)
+        {
+            printf("FAIL\n");
+            failures++;
+        }
+        else
+            printf("PASS\n");
     }
 
     core_set_video(video_cb);
