@@ -2204,6 +2204,16 @@ void retro_deinit(void)
    /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
     * decl. */
    vjt_frame = 0;
+   /* Paired with vjtrace_init() in retro_init(): frees the ring (fixes a
+    * leak the sanitizer job caught -- 33,554,432 bytes = the default
+    * 1<<20-record ring, calloc'd once and never freed) and resets every
+    * other vjtrace static, so a later retro_init() on the same process
+    * (iOS cannot dlclose cores) re-allocates cleanly instead of hitting
+    * vjtrace_init()'s "if (ring) return" early-out with a dangling cap.
+    * Any harness's own ring dump (trace_probe_finish() and friends) has
+    * already run by this point -- see harness_shutdown(), which calls
+    * retro_unload_game() then retro_deinit() last. */
+   vjtrace_shutdown();
 #endif
 }
 

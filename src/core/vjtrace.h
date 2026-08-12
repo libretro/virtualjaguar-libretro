@@ -91,6 +91,15 @@ typedef struct
  * zero, negative, or overflowing values fall back to the default),
  * default 1<<20, hard ceiling 1<<25 */
 void vjtrace_init(void);
+/* Counterpart to vjtrace_init(): frees the ring and resets every module
+ * static (ring/cap/head/seq/frame, watches, counters, GPU/DSP PC
+ * history) so a subsequent vjtrace_init() call re-allocates cleanly.
+ * Call from the core's shutdown path (retro_deinit(), libretro.c) --
+ * iOS cannot dlclose cores, so that is the paired call to retro_init()'s
+ * vjtrace_init(), same lifecycle symmetry every other per-session vjtrace
+ * static already has via retro_unload_game()/retro_deinit().  Idempotent:
+ * safe to call when the ring was never allocated or already freed. */
+void vjtrace_shutdown(void);
 /* Sets the frame number stamped onto every subsequently emitted event.
  * Called from the TOP of retro_run (libretro.c) with a 1-based counter,
  * so events emitted while frame N is being run -- by the machine and by

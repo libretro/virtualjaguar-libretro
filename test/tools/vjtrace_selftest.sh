@@ -192,7 +192,15 @@ build_if_missing() {
     local bin="$1"; shift
     if [ ! -x "$TOOLS_DIR/$bin" ]; then
         echo "vjtrace_selftest: building $bin"
-        "$BUILD_CC" -O2 -Wall -std=c99 "$@" -o "$TOOLS_DIR/$bin"
+        # $BUILD_CC deliberately unquoted: CC can be multi-word (CI's
+        # 32-bit job uses "gcc -m32"), and quoting it makes the shell look
+        # for a binary literally named "gcc -m32" (this broke the
+        # build-Linux-i686 job -- "gcc -m32: command not found", exit 127).
+        # Word-splitting on the default IFS is exactly what's needed here,
+        # matching the same $CC/$BUILD_CC pattern already used unquoted in
+        # test/sram_test.sh, test/tools/build_rcheevos_static.sh and
+        # scripts/c89-lint.sh.
+        $BUILD_CC -O2 -Wall -std=c99 "$@" -o "$TOOLS_DIR/$bin"
     fi
 }
 

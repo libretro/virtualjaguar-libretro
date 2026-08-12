@@ -533,6 +533,45 @@ int vjtrace_snapshot(const char *path)
    return 0;
 }
 
+/* Counterpart to vjtrace_init(): frees the ring and resets every module
+ * static to its pre-init state, so a later vjtrace_init() call (the
+ * reload path -- iOS cannot dlclose cores, so retro_init()/retro_deinit()
+ * can both run again in the same process for a later title) allocates a
+ * fresh ring instead of hitting the "if (ring) return" early-out with a
+ * freed pointer.  Idempotent and safe to call when vjtrace_init() was
+ * never called (ring already NULL -- free(NULL) is a no-op) or already
+ * shut down.
+ *
+ * Ordering: callers must not still be reading the ring afterward.  The
+ * flight-recorder's own consumers (trace_probe_finish() and friends,
+ * test/harness/trace_probe.c) run BEFORE the core's shutdown call in
+ * every caller in this tree (see harness_shutdown(), which calls
+ * retro_unload_game() then retro_deinit() last), so a call from
+ * retro_deinit() is always after any ring dump has already happened. */
+void vjtrace_shutdown(void)
+{
+   if (ring)
+      free(ring);
+   ring = NULL;
+   ring_cap = 0;
+   ring_head = 0;
+   seq_ctr = 0;
+   cur_frame = 0;
+   vjtrace_nwatch = 0;
+   memset(watches, 0, sizeof(watches));
+   memset(&vjtrace_counters, 0, sizeof(vjtrace_counters));
+   memset(gpu_pchist, 0, sizeof(gpu_pchist));
+   gpu_pchist_head = 0;
+   gpu_pchist_fill = 0;
+   memset(dsp_pchist, 0, sizeof(dsp_pchist));
+   dsp_pchist_head = 0;
+   dsp_pchist_fill = 0;
+   /* vjtrace_snapshot()'s snapshot_ordinal is a function-local static
+    * (monotonic filename counter, not part of the leak or the ring
+    * state) -- deliberately left alone here; it just continues counting
+    * across a reload in the same process, which is cosmetic only. */
+}
+
 #else /* !VJ_TRACE */
 
 typedef int vjtrace_not_built;
