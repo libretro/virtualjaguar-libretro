@@ -182,6 +182,12 @@ const char *__lsan_default_suppressions(void) {
 #define STATE_OFF_MAGIC    0
 #define STATE_OFF_VERSION  4
 
+/* Size of the trailing window checked for retro_serialize's zero fill.  Must
+ * stay comfortably larger than the sum of every trailing chunk written after
+ * the DAC block (UART, bus-arbiter accumulators, blitterBusy, the GameDrive
+ * chunk, the v11 hi-res epoch) so the check measures padding, not payload. */
+#define STATE_TAIL_PAD_CHECK 65536
+
 typedef size_t (*dac_state_save_fn)(uint8_t *buf);
 typedef size_t (*serialize_size_fn)(void);
 typedef bool   (*serialize_fn)(void *data, size_t size);
@@ -475,18 +481,33 @@ int main(int argc, char **argv)
         goto report;
     }
 
-    /* DAC is serialized last and retro_serialize zero-fills the tail, so a
-     * correct offset implies nothing but padding follows.  This corroborates
-     * the pattern match structurally. */
-    for (i = dac_off + dac_size; i < state_size; i++) {
+    /* This used to assert that EVERY byte after the DAC block is zero, on
+     * the stated premise that "DAC is serialized last".  That premise was
+     * already false: retro_serialize writes UARTStateSave, the v7
+     * bus-arbiter accumulators, blitterBusy, the v8 GameDrive chunk and the
+     * v11 hi-res epoch after it.  The check passed only because all of those
+     * happened to be zero in this scenario -- an accidental pass that turned
+     * into a false failure the moment one of them legitimately wasn't (the
+     * v11 epoch, which counts presented frames and so is non-zero by frame
+     * 120).
+     *
+     * What is actually guaranteed is the zero-FILL: retro_serialize pads
+     * from the end of the written data to STATE_SIZE.  Assert that instead,
+     * over a tail window comfortably larger than any trailing chunk, so the
+     * check keeps catching a runaway/oversized write without encoding a
+     * layout claim that is not true.  The DAC block's location is already
+     * pinned by the exactly-one-match test above. */
+    for (i = state_size > STATE_TAIL_PAD_CHECK
+                ? state_size - STATE_TAIL_PAD_CHECK : 0;
+         i < state_size; i++) {
         if (state_v3[i] != 0)
             tail_nonzero++;
     }
-    check(tail_nonzero == 0, "dac_block_is_last",
-          "offset %lu + %lu bytes, then %lu non-zero tail byte(s) "
-          "(expected pure zero padding)",
+    check(tail_nonzero == 0, "state_tail_is_zero_padded",
+          "DAC at offset %lu + %lu bytes; last %d bytes of the state have "
+          "%lu non-zero byte(s) (expected zero padding)",
           (unsigned long)dac_off, (unsigned long)dac_size,
-          (unsigned long)tail_nonzero);
+          (int)STATE_TAIL_PAD_CHECK, (unsigned long)tail_nonzero);
     if (tail_nonzero != 0) {
         rc = 1;
         goto report;

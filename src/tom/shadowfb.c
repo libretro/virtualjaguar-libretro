@@ -402,13 +402,28 @@ static void shadow_hires_clear_tags(void)
 
 void ShadowHiresFrameTick(void)
 {
-   if (!shadowHiresActive)
-      return;
+   /* The epoch advances on EVERY presented frame, whether or not the hi-res
+    * surface is active.
+    *
+    * It used to early-return when inactive, which was free until the epoch
+    * became part of the savestate (issue #400).  From that point a 1x blob
+    * carried 0 and a 2x blob carried a live counter, so the two differed by
+    * construction from the first frame -- breaking the epic #338 guarantee
+    * that the emulated machine cannot observe the option, as measured by
+    * hires_state_digest.  (Verified: identical before that commit, differing
+    * after.)
+    *
+    * Advancing unconditionally makes the field a pure frame-phase counter
+    * that is identical between a 1x and a 2x run of the same length, which
+    * restores the guarantee at its source rather than teaching the gate to
+    * ignore the field.  At 1x it costs one increment per frame and changes
+    * nothing else: no pages are allocated, so there are no tags to clear,
+    * and nothing reads the epoch. */
    hiresEpoch = (hiresEpoch + 1) & 0xFF;
    /* On epoch wrap, entries stamped 256/257 frames ago would re-enter
     * the trusted window; clearing all tags at the wrap closes that
     * hole for ~4MB of memset every 256 frames, worst case. */
-   if (hiresEpoch == 0)
+   if (hiresEpoch == 0 && shadowHiresActive)
       shadow_hires_clear_tags();
 }
 
