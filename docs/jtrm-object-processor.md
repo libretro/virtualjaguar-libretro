@@ -107,13 +107,41 @@ Single phrase. When the OP encounters this object during scanline processing, it
 | Bits | Name | Description |
 |------|------|-------------|
 | 0-2 | TYPE | Object type = 2 |
-| 3-13 | YPOS | Line at which to trigger |
-| 14-42 | -- | Unused |
-| 43-63 | LINK | Next object address (NOT a data pointer) |
+| 3-13 | YPOS | Active when VC matches YPOS, unless YPOS = $7FF (active for all VC) |
+| 14-63 | DATA | Free for the GPU ISR. Memory-mapped as OB0-3, so the ISR can use it as data or as a pointer to further parameters. |
+
+**There is no LINK field.** Execution continues with the object in the
+*next phrase*; the object is a single phrase with no link. (An earlier
+revision of this file listed bits 14-42 as unused and 43-63 as LINK --
+both wrong. JTRM Rev 8, "Graphics Processor Object".)
 
 Used for: mid-frame effects, palette changes, display list modifications during vblank.
 
 Note: Despite the name, GPUOBJ doesn't run GPU code directly. It fires an interrupt; the GPU ISR at vector offset $30 (interrupt 3) does the actual work.
+
+### Reading DATA back through OB ($F00010-$F00017)
+
+The OP latches the whole phrase into OB before raising IRQ3. **The low
+long is at `$F00010` and the high long at `$F00014`** -- so `$F00014`
+returns pure DATA, while `$F00010` carries TYPE and YPOS in its low bits.
+
+Rev 8 pins that bits 0-13 are control and bits 14-63 are DATA "memory
+mapped as the object code registers OB0-3"; it does *not* say which
+32-bit window holds which half of DATA. What it does constrain is that
+the control fields must not appear in the window an ISR reads for DATA.
+
+Storing the phrase straight big-endian (high long at `$F00010`) puts
+TYPE/YPOS at `$F00014` and breaks any ISR that reads DATA there. Val
+d'Isere Skiing (issue #354) is the title that shows it: its handler does
+`load ($F00014)` / `cmpq #0` and only runs its perspective-floor renderer
+when that reads zero, which is exactly DATA==0 for its object phrase
+`$8EA` (TYPE=2, YPOS=285, DATA=0). Implemented in
+`OPSetCurrentObject()`, `src/tom/op.c`; pinned by
+`test/acid/tests/op/op_gpu_int_object{,_halted}.s`.
+
+Every commercial GPU-object phrase in the test corpus carries DATA == 0
+(Doom `$CD2`, Atari Karts `$2`, Attack of the Mutant Penguins `$2`,
+Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`).
 
 ## BRANCHOBJ (Type 3) -- Branch Object
 
@@ -123,9 +151,22 @@ Single phrase. Conditionally follows an alternate link based on a comparison.
 |------|------|-------------|
 | 0-2 | TYPE | Object type = 3 |
 | 3-13 | YPOS | Y position for comparison |
-| 14-15 | CC | Condition code: 0=YPOS > VC, 1=YPOS = VC, 2=YPOS < VC, 3=flag set |
-| 16-23 | -- | Unused |
+| 14-16 | CC | Condition code (see below) |
+| 17-23 | -- | Unused |
 | 24-42 | LINK | Branch target address (taken if condition true) |
+
+| CC | Branch taken if |
+|----|-----------------|
+| 0 | YPOS == VC, **or** YPOS == $7FF |
+| 1 | YPOS > VC |
+| 2 | YPOS < VC |
+| 3 | Object Processor flag (OBF bit 0) is set |
+| 4 | On the second half of the display line (HC10 = 1) |
+
+(An earlier revision of this file swapped CC 0 and 1 and omitted CC 4.
+Verbatim from JTRM Rev 8, "Branch Object". Rev 8's own field table
+prints CC as bits 14-15, which cannot hold five values; the OP decodes
+three bits -- `(p0 >> 14) & 0x07` in `OPProcessList()`, `src/tom/op.c`.)
 
 If the condition is false, the OP falls through to the next phrase in memory (i.e., LINK is only followed on branch-taken).
 
@@ -186,7 +227,7 @@ Lower bit depths use a CLUT (colour lookup table) in TOM. The INDEX field in BIT
 |---------|------|-----|-------------|
 | $F00020 | OLP | WO | Object list pointer (24-bit, phrase-aligned) |
 | $F00026 | OBF | WO | Object flag (for BRANCHOBJ CC=3) |
-| $F00010-$F0001E | OB[0-3] | WO | Current object data (debug, 4 x 16-bit) |
+| $F00010-$F00017 | OB[0-3] | **RO** | Current object phrase, latched by the OP. **Low long at $F00010, high long at $F00014**; for a GPUOBJ the DATA field reads back at $F00014. See "Reading DATA back through OB" above. |
 
 ## Known Emulation Gotchas
 
