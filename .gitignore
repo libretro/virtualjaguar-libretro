@@ -140,3 +140,12 @@ test/.skipped-checks
 # Generated static site (scripts/build_site.py output)
 /_site/
 __pycache__/
+/test/tools/cart_boot_probe
+/test/tools/counter_rate_scan
+/test/tools/gpu_bench_read
+/test/tools/gpu_disasm_dump
+/test/tools/gpu_pipe_probe
+/test/tools/irq_rate_probe
+/test/tools/m68k_pc_histogram
+/test/tools/menu_step_probe
+/test/tools/present_rate_probe
