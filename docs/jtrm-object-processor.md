@@ -119,11 +119,25 @@ Used for: mid-frame effects, palette changes, display list modifications during 
 
 Note: Despite the name, GPUOBJ doesn't run GPU code directly. It fires an interrupt; the GPU ISR at vector offset $30 (interrupt 3) does the actual work.
 
-### Reading DATA back through OB ($F00010-$F00017) -- UNRESOLVED
+### Reading DATA back through OB ($F00010-$F00017)
 
-The OP latches the whole phrase into OB before raising IRQ3. **Which
-phrase bits land at which OB address is not specified by the JTRM**, and
-this is currently an open question -- see issue #354.
+The OP latches the whole phrase into OB before raising IRQ3, **straight
+big-endian: bit 63 at `$F00010`, bit 0 at `$F00017`.** A 32-bit read at
+`$F00010` returns the phrase's high long, and at `$F00014` its low long.
+This is what `OPSetCurrentObject()` (`src/tom/op.c`) implements.
+
+The JTRM does not state this directly (see below), so the confirming
+source is MAME's independent implementation, which names the four
+registers in address order (`src/mame/atari/jaguar_v.cpp`):
+
+```
+OB_HH(0x10),  OB_HL(0x12),  OB_LH(0x14),  OB_LL(0x16)
+```
+
+high-high at `$F00010` through low-low at `$F00016` -- straight
+big-endian, agreeing with our code. **Do not "fix" issue #354 by
+flipping this order** (attempted and reverted in PR #424); it is not the
+bug, and four in-tree tests correctly assert the current layout.
 
 Rev 8's complete set of statements about OB is:
 
@@ -139,43 +153,52 @@ Rev 8's complete set of statements about OB is:
 
 That is all of it. **Rev 8 never says whether OB0 (`$F00010`) holds
 phrase bits 63-48 or bits 15-0**, and its sample GPU ISR does not read
-OB. Rev 10 repeats only the table row.
+OB. Rev 10 repeats only the table row. The nearest thing to a statement
+is the general convention (p.131, "Data Organisation - Big and Little
+Endian"): the document "adopts the big-endian convention", a big-endian
+system "will see the high word of long-word at the low address", and for
+phrase data the left-most pixel "always includes bit 63... in byte
+address terms this is stored in byte 0". That is about operands in
+memory rather than about mapping a register group, so it is an inference
+-- but it points the same way MAME does.
 
-What Rev 8 *does* establish generally (p.131, "Data Organisation - Big
-and Little Endian") is that the document "adopts the big-endian
-convention", that a big-endian system "will see the high word of
-long-word at the low address", and that for phrase data the left-most
-pixel "always includes bit 63... in byte address terms this is stored in
-byte 0". Applying that to OB gives straight big-endian -- bit 63 at
-`$F00010`, bit 0 at `$F00017` -- which is what `OPSetCurrentObject()`
-implements today. But that passage is about **operands in memory and
-pixels within a phrase**, not about how a four-register group is mapped,
-so applying it to OB is an inference rather than a quote.
+### Open question: Val d'Isere's IRQ3 gate (issue #354)
 
-**The unresolved conflict (issue #354).** Val d'Isere Skiing's IRQ3
-handler does `load ($F00014)` / `cmpq #0` and only runs its
-perspective-floor renderer (`$F03150`, which writes the per-scanline
-scaled-bitmap objects into the display list at `[$F03094]`) when that
-read returns zero. Under straight big-endian, `$F00014` returns the
-phrase's **low** long -- which necessarily contains TYPE in bits 2-0, so
-it can *never* be zero for a valid object. Measured: the handler reads
-`$87A` and the floor is never drawn. For the shipping game to have
-worked on hardware, `$F00014` must expose DATA (which is 0 for its
-object), not the low long.
+With the layout above confirmed, the following is **unexplained** and is
+the live lead on #354.
 
-Do not "fix" this by flipping the order to match the game without
-resolving it properly: three in-tree tests
-(`test/test_op_gpu_object.c`, `test/acid/tests/op/op_gpu_int_object.s`
-and `..._halted.s`, plus `op_short_branch.s`) assert straight
-big-endian, and they were written against the implementation on a point
-the manual does not settle. Settling this needs hardware or an
-independent implementation, not a vote between our own tests and one
-game.
+Val d'Isere Skiing's IRQ3 handler (vector `$F03030` -> `$F030C2`) does:
+
+```
+movei #$00F00014, r0
+load  (r0), r0          ; low long of the latched object
+cmpq  #0, r0            ; signed 5-bit imm -- field 0 means 0, not 32
+jump  Z, ($F03150)      ; -> per-scanline ground generator
+```
+
+`$F03150` reads VC and the table at `$001368E0`, does the per-line
+perspective maths, and writes the per-scanline scaled-bitmap objects
+into the display list at `[$F03094]` -- i.e. it *generates* the objects
+`OPProcessScaledBitmap` then draws, which is consistent with the
+measurement on #354 that the ground comes from the OP scaled-bitmap path
+and barely touches the blitter.
+
+But `$F00014` returns the phrase's low long, which necessarily contains
+TYPE in bits 2-0, so it can **never** be zero for a valid object.
+Measured: the handler reads `$87A`, the compare never matches, and every
+IRQ3 (~72.8k per run) falls through to a do-nothing epilogue. Something
+in that chain is mismodelled -- candidates worth checking are the phrase
+the OP latches, whether the object should be firing at all on those
+lines (`OBJECT_TYPE_GPU` deliberately ignores YPOS), and the
+`OPProcessScaledBitmap` vertical-stepping hypothesis raised on the
+issue. Note `$F03098`, tested a few instructions later, is **not** the
+floor gate -- it guards a line-buffer capture (`loadp` from `$F01800`,
+`storep` to `$001417A8`) that the game legitimately leaves disabled;
+nothing ever writes it non-zero and that is correct.
 
 Every commercial GPU-object phrase in the test corpus carries DATA == 0
 (Doom `$CD2`, Atari Karts `$2`, Attack of the Mutant Penguins `$2`,
-Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`), so no other title in
-the corpus can discriminate the orderings.
+Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`).
 
 ## BRANCHOBJ (Type 3) -- Branch Object
 
