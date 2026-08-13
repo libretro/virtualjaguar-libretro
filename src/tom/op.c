@@ -342,29 +342,53 @@ void OPNotifyOBFWrite(void)
 }
 
 
+/* Latch the current object phrase into the read-only OB registers
+ * ($F00010-$F00017), which the GPU's IRQ3 handler reads to find out which
+ * object interrupted it.
+ *
+ * The phrase's LEAST significant word sits at the LOWEST address; each 16-bit
+ * register is itself big-endian:
+ *
+ *   OB0 $F00010 = phrase[15:0]     OB2 $F00014 = phrase[47:32]
+ *   OB1 $F00012 = phrase[31:16]    OB3 $F00016 = phrase[63:48]
+ *
+ * This is NOT a straight big-endian store of the phrase, and it is not
+ * documented in the JTRM (Rev 8 gives only the register row "OB[0-3] Object
+ * Code F00010-16 RO" and never says which phrase bits land where). It is read
+ * directly off the original Flare/Atari TOM design source, netlists/tom/OB.NET
+ * lines 55-67, under the comment "the first phrase can be read as four words":
+ *
+ *   Ob0rd[0-2]   := TS (dr[0-2],  type[0-2],      ob0r);
+ *   Ob0rd[3-13]  := TS (dr[3-13], ypos[0-10],     ob0r);
+ *   Ob0rd[14-15] := TS (dr[14-15],newheight[0-1], ob0r);
+ *   Ob1rd[0-7]   := TS (dr[0-7],  newheight[2-9], ob1r);
+ *   Ob1rd[8-15]  := TS (dr[8-15], link[0-7],      ob1r);
+ *   Ob2rd[0-10]  := TS (dr[0-10], link[8-18],     ob2r);
+ *   Ob2rd[11-15] := TS (dr[11-15],data[0-4],      ob2r);
+ *   Ob3rd[0-15]  := TS (dr[0-15], data[5-20],     ob3r);
+ *
+ * TYPE (phrase bits 0-2) is driven onto dr[0-2] under ob0r, and IODEC.NET
+ * lines 85-88 decode ob0r at offset $0 through ob3r at offset $6 — so the
+ * phrase's low word is at $F00010.  See docs/jtrm-object-processor.md for the
+ * full derivation, including the checks that pin dr[0] as D0.
+ *
+ * Consequence (issue #354): a 32-bit read at $F00014 returns
+ * (phrase[47:32] << 16) | phrase[63:48] — all DATA for a GPU object, never
+ * TYPE.  Under a straight big-endian store that read returned the low long,
+ * which always carries TYPE in bits 2-0 and so could never read zero. */
 void OPSetCurrentObject(uint64_t object)
 {
-   //Not sure this is right... Wouldn't it just be stored 64 bit BE?
-   // Stored as least significant 32 bits first, ms32 last in big endian
-   /*	objectp_ram[0x13] = object & 0xFF; object >>= 8;
-      objectp_ram[0x12] = object & 0xFF; object >>= 8;
-      objectp_ram[0x11] = object & 0xFF; object >>= 8;
-      objectp_ram[0x10] = object & 0xFF; object >>= 8;
+   tomRam8[0x10] = (uint8_t)(object >>  8);
+   tomRam8[0x11] = (uint8_t)(object      );
 
-      objectp_ram[0x17] = object & 0xFF; object >>= 8;
-      objectp_ram[0x16] = object & 0xFF; object >>= 8;
-      objectp_ram[0x15] = object & 0xFF; object >>= 8;
-      objectp_ram[0x14] = object & 0xFF;*/
-   // Let's try regular good old big endian...
-   tomRam8[0x17] = object & 0xFF; object >>= 8;
-   tomRam8[0x16] = object & 0xFF; object >>= 8;
-   tomRam8[0x15] = object & 0xFF; object >>= 8;
-   tomRam8[0x14] = object & 0xFF; object >>= 8;
+   tomRam8[0x12] = (uint8_t)(object >> 24);
+   tomRam8[0x13] = (uint8_t)(object >> 16);
 
-   tomRam8[0x13] = object & 0xFF; object >>= 8;
-   tomRam8[0x12] = object & 0xFF; object >>= 8;
-   tomRam8[0x11] = object & 0xFF; object >>= 8;
-   tomRam8[0x10] = object & 0xFF;
+   tomRam8[0x14] = (uint8_t)(object >> 40);
+   tomRam8[0x15] = (uint8_t)(object >> 32);
+
+   tomRam8[0x16] = (uint8_t)(object >> 56);
+   tomRam8[0x17] = (uint8_t)(object >> 48);
 }
 
 

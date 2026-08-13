@@ -87,11 +87,15 @@ entry:
 .spin:          subq.l  #1,d2
                 bne.s   .spin
 
-                ;; Read OB lower long ($F00014..$F00017) and check the
-                ;; low 3 bits == 4 (STOP type).  OPSetCurrentObject
-                ;; stores the 8 bytes of p0 at $F00010..$F00017 in
-                ;; big-endian: high 32 at +$10, low 32 at +$14.
-                move.l  TOM_OB+4.l,d5
+                ;; TYPE lives in phrase bits 0-2, and OB exposes the
+                ;; phrase least-significant-word-first: OB0 ($F00010) =
+                ;; phrase[15:0], OB1 = [31:16], OB2 = [47:32], OB3 =
+                ;; [63:48] (jag_sim netlists/tom/OB.NET:55-67, which
+                ;; drives type[0-2] onto dr[0-2] under the ob0r strobe;
+                ;; IODEC.NET:85-88 decodes ob0r at offset $0).  So TYPE
+                ;; is the low 3 bits of the WORD at $F00010.
+                moveq   #0,d5
+                move.w  TOM_OB.l,d5
                 move.l  d5,d6
                 and.l   #$00000007,d6
                 cmp.l   #$00000004,d6

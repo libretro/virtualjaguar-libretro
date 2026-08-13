@@ -121,23 +121,75 @@ Note: Despite the name, GPUOBJ doesn't run GPU code directly. It fires an interr
 
 ### Reading DATA back through OB ($F00010-$F00017)
 
-The OP latches the whole phrase into OB before raising IRQ3, **straight
-big-endian: bit 63 at `$F00010`, bit 0 at `$F00017`.** A 32-bit read at
-`$F00010` returns the phrase's high long, and at `$F00014` its low long.
-This is what `OPSetCurrentObject()` (`src/tom/op.c`) implements.
+The OP latches the whole phrase into OB before raising IRQ3, exposed as
+**four 16-bit registers with the phrase's least significant word at the
+lowest address**, each register big-endian internally:
 
-The JTRM does not state this directly (see below), so the confirming
-source is MAME's independent implementation, which names the four
-registers in address order (`src/mame/atari/jaguar_v.cpp`):
+| Register | Address   | Phrase bits |
+|----------|-----------|-------------|
+| OB0      | `$F00010` | `[15:0]`    |
+| OB1      | `$F00012` | `[31:16]`   |
+| OB2      | `$F00014` | `[47:32]`   |
+| OB3      | `$F00016` | `[63:48]`   |
+
+So TYPE and YPOS (phrase bits 0-13) read back at **`$F00010`**, and a
+32-bit read at `$F00014` returns `(phrase[47:32] << 16) | phrase[63:48]`
+-- entirely within the GPUOBJ DATA range, never TYPE. This is what
+`OPSetCurrentObject()` (`src/tom/op.c`) implements.
+
+**Source: the original Flare/Atari TOM design netlists**
+(`jag_sim/netlists/tom/OB.NET:55-67`), under the comment *"the first
+phrase can be read as four words"*:
 
 ```
-OB_HH(0x10),  OB_HL(0x12),  OB_LH(0x14),  OB_LL(0x16)
+Ob0rd[0-2]   := TS (dr[0-2],  type[0-2],      ob0r);
+Ob0rd[3-13]  := TS (dr[3-13], ypos[0-10],     ob0r);
+Ob0rd[14-15] := TS (dr[14-15],newheight[0-1], ob0r);
+Ob1rd[0-7]   := TS (dr[0-7],  newheight[2-9], ob1r);
+Ob1rd[8-15]  := TS (dr[8-15], link[0-7],      ob1r);
+Ob2rd[0-10]  := TS (dr[0-10], link[8-18],     ob2r);
+Ob2rd[11-15] := TS (dr[11-15],data[0-4],      ob2r);
+Ob3rd[0-15]  := TS (dr[0-15], data[5-20],     ob3r);
 ```
 
-high-high at `$F00010` through low-low at `$F00016` -- straight
-big-endian, agreeing with our code. **Do not "fix" issue #354 by
-flipping this order** (attempted and reverted in PR #424); it is not the
-bug, and four in-tree tests correctly assert the current layout.
+Three checks pin the reading, none of them circular:
+
+1. **Which strobe is which address.** `IODEC.NET:85-88` gives
+   `ob0r..ob3r` at `axxx0/axxx2/axxx4/axxx6`, and those terms decode
+   from the inverted address lines as low-nibble `0/2/4/6`
+   (`Axxx0 := !ND3(al[3],al[2],al[1])`, etc.). The same decode file
+   places `Hcr_` at `$F00004`, `Vcr_` at `$F00006` and `Obfw_` at
+   `$F00026` -- all matching the JTRM register map exactly.
+2. **Which end of a bus is bit 0.** `dr[0]` is D0, not D15:
+   `Vc[0] := UPCNTS(vc[0],vco[0],...)` with the carry chain `vco[0-9]`
+   feeding `Vc[1-10]` makes `vc[0]` the counter LSB, and
+   `Vcd[0-11] := TS(dr[0-11],vc[0-11],vcrd)` puts that LSB on `dr[0]`.
+   The JTRM has VC occupying bits 0-10 of `$F00006`. Same argument for
+   HC.
+3. **Which phrase bit is `type[0]`.** The write-back block a few lines
+   down (`OB.NET:71-75`) drives `type[0-2] -> wd[0-2]`,
+   `ypos[0-10] -> wd[3-13]`, `newheight[0-9] -> wd[14-23]`,
+   `link[0-18] -> wd[24-42]`, `newdata[0-20] -> wd[43-63]` -- exactly
+   the JTRM phrase layout, so `type[n]` is phrase bit `n`.
+
+**Prior claim retracted.** This section previously asserted straight
+big-endian (bit 63 at `$F00010`) on the strength of MAME's register
+*naming* in `src/mame/atari/jaguar_v.cpp`
+(`OB_HH(0x10) ... OB_LL(0x16)`). That is an enum label in a
+reimplementation, not a hardware observation, and the design source
+above contradicts it. The warning that formerly stood here -- "do not
+flip this order" -- is withdrawn; the flip is correct, and the four
+in-tree tests that asserted the old layout have been rederived from
+`OB.NET` (see `test/acid/tests/op/op_gpu_int_object{,_halted}.s`,
+`op_short_branch.s`, `test/tools/test_op_gpu_object.c`).
+
+**Known divergence from hardware.** Real OB returns latched control
+fields mixed with *live* counters: `data[0-20]` is a `UPCNT` that
+advances as the object is drawn, and `newheight` comes from the
+write-back path rather than the original phrase. We latch the verbatim
+phrase instead. No title in the corpus can observe the difference --
+every commercial GPU-object phrase carries DATA == 0 -- and modelling
+the counters is a much larger change than this.
 
 Rev 8's complete set of statements about OB is:
 
@@ -153,25 +205,21 @@ Rev 8's complete set of statements about OB is:
 
 That is all of it. **Rev 8 never says whether OB0 (`$F00010`) holds
 phrase bits 63-48 or bits 15-0**, and its sample GPU ISR does not read
-OB. Rev 10 repeats only the table row. The nearest thing to a statement
-is the general convention (p.131, "Data Organisation - Big and Little
-Endian"): the document "adopts the big-endian convention", a big-endian
-system "will see the high word of long-word at the low address", and for
-phrase data the left-most pixel "always includes bit 63... in byte
-address terms this is stored in byte 0". That is about operands in
-memory rather than about mapping a register group, so it is an inference
--- but it points the same way MAME does.
+OB. Rev 10 repeats only the table row. Its general convention (p.131,
+"Data Organisation - Big and Little Endian") -- the document "adopts the
+big-endian convention", a big-endian system "will see the high word of
+long-word at the low address" -- is about operands in memory, not about
+how a four-register group is mapped, and the netlist shows it does not
+carry over to OB. This is why the byte order had to be settled against
+the design source rather than against the manual.
 
-### Open question: Val d'Isere's IRQ3 gate (issue #354)
-
-With the layout above confirmed, the following is **unexplained** and is
-the live lead on #354.
+### Why this matters: Val d'Isere's IRQ3 gate (issue #354)
 
 Val d'Isere Skiing's IRQ3 handler (vector `$F03030` -> `$F030C2`) does:
 
 ```
 movei #$00F00014, r0
-load  (r0), r0          ; low long of the latched object
+load  (r0), r0          ; OB2:OB3 -- DATA, per OB.NET
 cmpq  #0, r0            ; signed 5-bit imm -- field 0 means 0, not 32
 jump  Z, ($F03150)      ; -> per-scanline ground generator
 ```
@@ -183,22 +231,24 @@ into the display list at `[$F03094]` -- i.e. it *generates* the objects
 measurement on #354 that the ground comes from the OP scaled-bitmap path
 and barely touches the blitter.
 
-But `$F00014` returns the phrase's low long, which necessarily contains
-TYPE in bits 2-0, so it can **never** be zero for a valid object.
-Measured: the handler reads `$87A`, the compare never matches, and every
-IRQ3 (~72.8k per run) falls through to a do-nothing epilogue. Something
-in that chain is mismodelled -- candidates worth checking are the phrase
-the OP latches, whether the object should be firing at all on those
-lines (`OBJECT_TYPE_GPU` deliberately ignores YPOS), and the
-`OPProcessScaledBitmap` vertical-stepping hypothesis raised on the
-issue. Note `$F03098`, tested a few instructions later, is **not** the
-floor gate -- it guards a line-buffer capture (`loadp` from `$F01800`,
+The game's GPU object phrase is `$00000000000008EA` (TYPE = 2,
+YPOS = 285, DATA = 0), so under the netlist mapping `$F00014` reads
+**0** and the gate opens. Under the old straight-big-endian store it
+returned the phrase's low long, which necessarily carries TYPE in bits
+2-0 and so could never be zero: the handler read `$8EA`, the compare
+never matched, and every IRQ3 (~72.8k per run) fell through to a
+do-nothing epilogue.
+
+Note `$F03098`, tested a few instructions later, is **not** the floor
+gate -- it guards a line-buffer capture (`loadp` from `$F01800`,
 `storep` to `$001417A8`) that the game legitimately leaves disabled;
 nothing ever writes it non-zero and that is correct.
 
 Every commercial GPU-object phrase in the test corpus carries DATA == 0
 (Doom `$CD2`, Atari Karts `$2`, Attack of the Mutant Penguins `$2`,
-Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`).
+Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`), so no other title
+can discriminate the two orderings -- which is why the netlist, not a
+corpus sweep, is the deciding evidence.
 
 ## BRANCHOBJ (Type 3) -- Branch Object
 
@@ -284,7 +334,7 @@ Lower bit depths use a CLUT (colour lookup table) in TOM. The INDEX field in BIT
 |---------|------|-----|-------------|
 | $F00020 | OLP | WO | Object list pointer (24-bit, phrase-aligned) |
 | $F00026 | OBF | WO | Object flag (for BRANCHOBJ CC=3) |
-| $F00010-$F00017 | OB[0-3] | **RO** | Current object phrase, latched by the OP. **Low long at $F00010, high long at $F00014**; for a GPUOBJ the DATA field reads back at $F00014. See "Reading DATA back through OB" above. |
+| $F00010-$F00017 | OB[0-3] | **RO** | Current object phrase, latched by the OP. Four 16-bit registers, **phrase LSW at the lowest address**: OB0 `$F00010` = phrase[15:0] (TYPE/YPOS), OB1 = [31:16], OB2 `$F00014` = [47:32], OB3 = [63:48]. For a GPUOBJ, DATA reads back at `$F00014`. Sourced from `OB.NET:55-67` -- see "Reading DATA back through OB" above. |
 
 ## Known Emulation Gotchas
 
