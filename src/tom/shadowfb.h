@@ -175,6 +175,21 @@ void ShadowHiresFrameTick(void);
  * independent of N. */
 void ShadowHiresInvalidate(void);
 
+/* Savestate access to the frame epoch (issue #400).
+ *
+ * The epoch is not emulated-machine state, but it IS presented-frame
+ * state: ShadowHiresFrameTick() drops every cached block when the
+ * modulo-256 counter wraps, and that clear changes the picture on the
+ * frame it happens.  A state restored without the epoch replays the wrap
+ * at a different frame, so the same rollback renders differently -- the
+ * failure behind savestate_features = 3 not actually holding.
+ *
+ * Restoring it is enough on its own: the cached blocks themselves are
+ * rebuilt by the blits that re-execute after the rollback, so only the
+ * wrap phase has to be carried across. */
+uint32_t ShadowHiresGetEpoch(void);
+void     ShadowHiresSetEpoch(uint32_t epoch);
+
 /* Re-stamp the epoch of every VALID entry covering one 4KB main-RAM
  * page (page index = RAM address >> 12).  For the blit memo
  * (blit_memo.c): a skipped blit leaves its destination bytes -- and

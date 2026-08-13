@@ -1092,6 +1092,18 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	else \
 		bash scripts/test-skip.sh record "Iron Soldier 1 (savestate determinism)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
 	fi
+	@# Issue #400: the two ROMs above are both stock-path titles, so nothing
+	@# here exercised a title carrying per-title enhancement defaults — and
+	@# the hi-res shadow surface's frame epoch was outside the state blob for
+	@# exactly that reason.  Doom takes internal_resolution=2x + true_color
+	@# from titledb, so this row is the one that fails if a cache-coherence
+	@# counter escapes serialization again.  Keep a DB-tagged title here.
+	@rom=$$(bash scripts/find-rom.sh 'Doom - Evil Unleashed (1994).jag' 'Doom (World)*.j64' 'Doom.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Doom (savestate determinism, enhancement path)" "no ROM matching 'Doom*' in the private corpus"; \
+	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap

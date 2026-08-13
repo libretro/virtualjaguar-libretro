@@ -146,6 +146,9 @@ typedef struct {
      * can be reported instead of passing vacuously. */
     unsigned audio_cursor;
     unsigned audio_start;
+    /* Set when this pass filled the harness's audio ring, so a truncated
+     * capture is reported as such instead of read as divergence. */
+    int      audio_ring_full;
 } capture;
 
 static capture cap;
@@ -276,24 +279,38 @@ static uint8_t *read_file(const char *path, size_t *len_out)
 
 /* Runs `n` frames with capture enabled, filling cap.
  *
- * The audio cursor starts at whatever the harness has already recorded,
- * not at 0: cfg->audio.frames[] accumulates across the whole run and is
- * never rewound by retro_unserialize, so pass 2 must only look at the
- * entries its own frames appended. */
+ * cfg->audio.frames[] is a FIXED ring of HARNESS_MAX_AUDIO_FRAMES entries
+ * that the harness only appends to — retro_unserialize does not rewind it.
+ * Letting three passes share it made the ring run out partway through the
+ * run: harness_audio_stats.frame_count stopped growing, later passes saw
+ * no new entries, and their digests compared "0 samples" against pass 1's
+ * real audio.  That read as divergence at a suspiciously round frame and
+ * had nothing to do with the emulator (issue #400, secondary report: every
+ * ROM including known-good ones "failed" above ~300 frames).
+ *
+ * So rewind the ring per pass.  Each pass then gets the whole ring to
+ * itself and the frame count is bounded by HARNESS_MAX_AUDIO_FRAMES rather
+ * than a third of it.  The harness's cumulative totals (total_samples,
+ * total_batch_calls, onset...) are separate fields and are unaffected, so
+ * the end-of-run summary still covers the whole run. */
 static void run_window(harness_config *cfg, unsigned n)
 {
     unsigned i;
 
     memset(&cap, 0, sizeof(cap));
-    cap.pending_video = FNV_OFFSET;
-    cap.audio_cursor  = cfg->audio.frame_count;
-    cap.audio_start   = cfg->audio.frame_count;
+    cap.pending_video      = FNV_OFFSET;
+    cfg->audio.frame_count = 0;
+    cap.audio_cursor       = 0;
+    cap.audio_start        = 0;
     capturing = 1;
     for (i = 0; i < n; i++) {
         harness_step(cfg);
         capture_frame(cfg);
     }
     capturing = 0;
+    /* A single pass can still outrun the ring; say so rather than letting
+     * the truncation masquerade as a result. */
+    cap.audio_ring_full = (cfg->audio.frame_count >= HARNESS_MAX_AUDIO_FRAMES);
 }
 
 int main(int argc, char **argv)
@@ -318,6 +335,7 @@ int main(int argc, char **argv)
     unsigned       pass1_audio_entries = 0;
     unsigned       pass2_audio_entries = 0;
     int            audio_measurable;
+    int            ring_full_any = 0;
     char           state_a[] = "/tmp/vj_runahead_a.state";
     char           state_b[] = "/tmp/vj_runahead_b.state";
     char           state_c[] = "/tmp/vj_runahead_c.state";
@@ -372,6 +390,7 @@ int main(int argc, char **argv)
 
     /* 3. Pass 1. */
     run_window(&cfg, window_frames);
+    ring_full_any |= cap.audio_ring_full;
     memcpy(pass1_video, cap.video, sizeof(pass1_video));
     memcpy(pass1_audio, cap.audio, sizeof(pass1_audio));
     memcpy(pass1_samples, cap.samples, sizeof(pass1_samples));
@@ -395,6 +414,7 @@ int main(int argc, char **argv)
 
     /* 6. Pass 2 — identical input, so identical output is required. */
     run_window(&cfg, window_frames);
+    ring_full_any |= cap.audio_ring_full;
     pass2_audio_entries = cap.audio_cursor - cap.audio_start;
 
     if (getenv("VJ_RUNAHEAD_DUMP")) {
@@ -428,6 +448,7 @@ int main(int argc, char **argv)
         return 1;
     }
     run_window(&cfg, window_frames);
+    ring_full_any |= cap.audio_ring_full;
 
     for (i = 0; i < pass1_count && i < cap.count; i++) {
         if (cap.video[i] != pass2_video[i] || cap.audio[i] != pass2_audio[i]) {
@@ -512,11 +533,23 @@ int main(int argc, char **argv)
     if (first_video_diff >= 0) failed = 1;
     nres++;
 
-    results[nres].status = !audio_measurable ? "FAIL"
-                         : (first_audio_diff < 0) ? "PASS" : "FAIL";
+    /* A pass that filled the harness ring captured only its first
+     * HARNESS_MAX_AUDIO_FRAMES batches; every frame past that digests as
+     * "no audio" in EVERY pass, so a comparison would pass vacuously.
+     * Report that we cannot answer rather than claiming either verdict. */
+    if (ring_full_any) {
+        snprintf(detail_a, sizeof(detail_a),
+                 "audio capture exhausted: a pass filled the harness ring "
+                 "(HARNESS_MAX_AUDIO_FRAMES = %d batches); rerun with fewer "
+                 "--frames to compare audio", (int)HARNESS_MAX_AUDIO_FRAMES);
+        results[nres].status = "SKIP";
+    } else {
+        results[nres].status = !audio_measurable ? "FAIL"
+                             : (first_audio_diff < 0) ? "PASS" : "FAIL";
+        if (!audio_measurable || first_audio_diff >= 0) failed = 1;
+    }
     results[nres].name   = "audio_replay_identical";
     results[nres].detail = detail_a;
-    if (!audio_measurable || first_audio_diff >= 0) failed = 1;
     nres++;
 
     results[nres].status = state_stable ? "PASS" : "FAIL";

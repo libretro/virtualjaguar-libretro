@@ -1261,6 +1261,14 @@ bool retro_serialize(void *data, size_t size)
     * non-GD content). */
    buf += JGDStateSave(buf);
 
+   /* v11: hi-res shadow-surface epoch (issue #400).  Its wrap clears
+    * every cached supersampled block, which is visible in the presented
+    * frame, so the wrap phase has to survive a rollback. */
+   {
+      uint32_t hiresEpoch = ShadowHiresGetEpoch();
+      STATE_SAVE_VAR(buf, hiresEpoch);
+   }
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -1365,6 +1373,21 @@ bool retro_unserialize(const void *data, size_t size)
       /* Pre-v8 states carry no GameDrive chunk: reset mapping (identity
        * pages, write protect, idle SPI) — the game re-installs. */
       JGDReset();
+
+   /* v11: hi-res shadow-surface epoch (issue #400).  Applied here rather
+    * than after ShadowHiresInvalidate() below only for locality — the
+    * invalidate drops cache entries and deliberately leaves the epoch
+    * alone, so the order of the two does not matter.  Pre-v11 states
+    * carry no epoch: start from a fixed phase so an old state at least
+    * replays the same way every time it is loaded. */
+   if (version >= STATE_VERSION_HIRES_EPOCH)
+   {
+      uint32_t hiresEpoch;
+      STATE_LOAD_VAR(buf, hiresEpoch);
+      ShadowHiresSetEpoch(hiresEpoch);
+   }
+   else
+      ShadowHiresSetEpoch(0);
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
     * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from

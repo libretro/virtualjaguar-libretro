@@ -35,9 +35,19 @@ extern "C" {
  *     all in-flight changes since the last release use v7.
  * v8: trailing Jaguar GameDrive chunk (bank pages + SPI mailbox engine,
  *     jaggd.c).  One shared bump — all in-flight changes since the
- *     v3.1.0 release use v8. */
+ *     v3.1.0 release use v8.  This is the newest RELEASED layout (v3.2.0).
+ * v9: DAC block gained the I2S ring (dac.c).  develop only.
+ * v10: trailing blitter busy-window counter (blitter timing model).
+ *     develop only.
+ * v11: trailing hi-res shadow-surface epoch (shadowfb.c).  The epoch is a
+ *     modulo-256 age stamp that gates which supersampled blocks resolve,
+ *     and ShadowHiresFrameTick() drops every cached block when it wraps.
+ *     That clear is visible in the presented frame, so a state restored
+ *     without it replays the wrap at a different frame and diverges —
+ *     which is exactly the determinism we advertise as
+ *     savestate_features = 3.  See issue #400. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   10
+#define STATE_VERSION   11
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -104,6 +114,10 @@ extern "C" {
  * with the window closed -- at most one pending blit's stall is lost,
  * self-corrects within a field. */
 #define STATE_VERSION_BLITTER_TIMING 10
+/* First version whose trailer carries the hi-res shadow-surface epoch
+ * (shadowfb.c).  Issue #400: without it, the epoch wrap's cache clear
+ * replays at a different frame after a rollback and the picture diverges. */
+#define STATE_VERSION_HIRES_EPOCH 11
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01

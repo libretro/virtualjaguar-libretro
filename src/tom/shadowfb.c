@@ -447,6 +447,20 @@ void ShadowHiresInvalidate(void)
    memset(shadowHiresLineTag, 0, sizeof(shadowHiresLineTag));
 }
 
+/* Deliberately NOT reset by ShadowHiresInvalidate(): the epoch is carried
+ * across a savestate load by the caller (see shadowfb.h and issue #400),
+ * and clearing it there would defeat that.  Invalidate drops entries;
+ * the epoch says which frame we are on. */
+uint32_t ShadowHiresGetEpoch(void)
+{
+   return hiresEpoch;
+}
+
+void ShadowHiresSetEpoch(uint32_t epoch)
+{
+   hiresEpoch = epoch & 0xFF;
+}
+
 void ShadowHiresShutdown(void)
 {
    unsigned p;
