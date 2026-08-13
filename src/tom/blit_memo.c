@@ -163,6 +163,12 @@ static int blitMemoCDNoticeLogged = 0;
 static bm_shadow_rec *bmShArena = NULL;
 static uint32_t bmShUsed = 0;
 static int bmShFull = 0;            /* reclaim at the next frame boundary */
+/* Arena-exhaustion flushes since the memo was armed.  A busy title can
+ * exhaust the arena on most frames, so the notice is rate-limited (see
+ * BlitMemoFrame) -- an unconditional line here reached the log at frame
+ * rate.  Reset only on arm/teardown, never in BlitMemoFlush, so the
+ * "first" notice stays first for the whole session. */
+static uint32_t bmShFullFlushes = 0;
 static bm_shadow_rec bmScratchSh[BM_SH_SCRATCH];  /* verify-mode capture */
 static uint32_t bmScratchShN = 0;
 
@@ -461,6 +467,7 @@ static int bm_alloc_shadow_arena(void)
    }
    bmShUsed = 0;
    bmShFull = 0;
+   bmShFullFlushes = 0;
    return 1;
 }
 
@@ -817,7 +824,20 @@ void BlitMemoFrame(void)
        * Reclaim wholesale now that no skip run is outstanding. */
       if (bmShFull)
       {
-         LOG_INF("[BLITMEMO] shadow arena full; flushing memo\n");
+         /* Rate-limited: a title whose blit stream outruns the arena
+          * hits this on most frames, and an unconditional notice put a
+          * line in the host log at frame rate (reported on AvP with the
+          * memo enabled by hand).  Announce the first one, then only
+          * every 256th, carrying the running total so the frequency is
+          * still visible. */
+         bmShFullFlushes++;
+         if (bmShFullFlushes == 1)
+            LOG_INF("[BLITMEMO] shadow arena full (%u records); flushing "
+                    "memo. Further occurrences are logged every 256th.\n",
+                    (unsigned)BM_SH_ARENA_RECS);
+         else if ((bmShFullFlushes & 0xFF) == 0)
+            LOG_INF("[BLITMEMO] shadow arena full; flushing memo "
+                    "(%u flushes so far)\n", (unsigned)bmShFullFlushes);
          BlitMemoFlush();
       }
    }
@@ -880,6 +900,7 @@ void BlitMemoShutdown(void)
    bmShArena = NULL;
    bmShUsed = 0;
    bmShFull = 0;
+   bmShFullFlushes = 0;
    bmScratchShN = 0;
    blitMemoMode = BLIT_MEMO_OFF;
    blitMemoRecording = 0;
