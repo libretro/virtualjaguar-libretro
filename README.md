@@ -66,7 +66,7 @@ Measured on Cybermorph, both blitter engines agreeing exactly ([PR #341](https:/
 
 Honest caveat: **Checkered Flag shows no change** — it turns out to be flat-shaded and never uses blitter Gouraud at all. This is banding removal on shaded geometry, not a filter repainting the image, so titles that don't shade don't move.
 
-Design doc: [`docs/true-color-shadowfb-design.md`](docs/true-color-shadowfb-design.md). Status: **merged to `develop`** (PR #341, after the v3.1.0 tag) — available in [nightly builds](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly) today, ships in the next tagged release.
+Design doc: [`docs/true-color-shadowfb-design.md`](docs/true-color-shadowfb-design.md). Status: **shipped in [v3.2.0](docs/RELEASE_NOTES_v3.2.0.md)** (PR #341).
 
 ### Overclocking that doesn't distort pacing
 
@@ -82,11 +82,30 @@ Two independent clock-scale options — the 68000 (`virtualjaguar_m68k_clock_sca
 
 ### Per-title enhancement defaults
 
-`virtualjaguar_pertitle_defaults` (on by default) applies known-safe enhancement presets automatically for recognized games — only for options you've left at their default value. Any option you've changed yourself always wins, and disabling this option restores stock behaviour for every title. 12 entries covering 11 titles, derived from the blit census in [`docs/hires-stage0-census.md`](docs/hires-stage0-census.md), including **Alien vs Predator** (2x internal resolution + true color), **Doom** (2x + true color), **Missile Command 3D** (2x + true color), **Hover Strike** (2x), and **Cybermorph** (true color). New entries require committed evidence — propose candidates via [issue #368](https://github.com/libretro/virtualjaguar-libretro/issues/368).
+`virtualjaguar_pertitle_defaults` (on by default) applies known-safe enhancement presets automatically for recognized games — only for options you've left at their default value. Any option you've changed yourself always wins, and disabling this option restores stock behaviour for every title. 21 entries (romhack aliases included — **JagDoomEX** is recognized by both patched CRCs and enhanced identically to retail Doom), derived from committed census evidence, including **Alien vs Predator** (2x internal resolution + true color), **Doom** (2x + true color), **Missile Command 3D** (2x + true color), **Hover Strike** (2x), and **Cybermorph** (true color). New entries require committed evidence — propose candidates via [issue #368](https://github.com/libretro/virtualjaguar-libretro/issues/368).
 
-### Roadmap: internal hi-res upscaling — *in design*
+### Internal resolution 2× — real supersampling, complete as of v3.3.0
 
-The true-color shadow framebuffer is deliberately the 1× prototype of a larger architecture: rendering above native resolution inside the core. That work, and the rest of the enhancement suite, is tracked as epic [#338](https://github.com/libretro/virtualjaguar-libretro/issues/338). It is **in design** — no dates, no promises beyond what's in the issue.
+`virtualjaguar_internal_resolution` (`1x` default, `2x`; restart required) renders above native resolution *inside the core* — and the extra pixels are **source data the hardware sampled past**, not interpolation or a filter. The blitter walks textures with 16.16 fixed-point steps and rounds each output pixel to one texel; at 2× those same walks are re-sampled at double density into a shadow surface. The emulated machine never sees it: the stock framebuffer stays bit-identical and 1×-vs-2× savestate digests match, both proven per-title by committed tooling ([`hires_state_digest`](test/tools/hires_state_digest.c)).
+
+As of [v3.3.0](docs/RELEASE_NOTES_v3.3.0.md) the pipeline is complete across every path that carries recoverable detail:
+
+| Piece | What it supersamples | Shipped |
+| --- | --- | --- |
+| Stage 2 | fractional-walk **blits** (3D texture walks) | v3.2.0 |
+| Stage 3 | Object Processor **scaled sprites** (SCBITOBJ) | v3.3.0 |
+| Stage 3 CLUT | scaled **8bpp CLUT** objects — 76–81% of scaled pixels in 2D titles | v3.3.0 |
+| RGB16 renderer | delivery for **RGB16 direct** video mode (previously CRY-only) | v3.3.0 |
+
+![Magnified wall crop from the JagDoomEX demo: 1x, 2x, and the difference amplified 8 times, showing dense runs of recovered texels across the wall texture.](site/assets/hires_diff_doomex_wall.png)
+
+<sub>JagDoomEX (the per-title database recognizes both patched CRCs and applies Doom's 2×+true-color preset), demo frame machine-selected for peak sub-pixel density: 1× / 2× / difference **amplified 8×**. 14.7% of the frame's pixels change; the diagonal mortar seam resolves continuously at 2×.</sub>
+
+Measured coverage in real scenes: Alien vs Predator 13–31%, Doom 8.7–13.9%, Val d'Isère Skiing **0% → 2.5–7.2%** (its content is scaled 8bpp CLUT in RGB16 mode — both v3.3.0 pieces are load-bearing), Missile Command 3D 5–6%. Titles that magnify their textures (Towers II, I-War) measure a true zero — there is nothing to recover, and the page says so. Full evidence with A/B figures: [jaguar.provenance-emu.com/enhancements](https://jaguar.provenance-emu.com/enhancements.html). Epic [#338](https://github.com/libretro/virtualjaguar-libretro/issues/338).
+
+### Blit memoization
+
+`virtualjaguar_blit_memo` (default off, per-title via the enhancement database) skips blits whose *entire* input state provably matches an earlier identical blit — some titles re-render an identical scene every engine cycle while idle. Output is bit-identical by construction; a verify mode executes every would-be skip and checks it. 2,546,482 corpus verifications, zero divergences. ([`docs/blit-memo.md`](docs/blit-memo.md) · [#411](https://github.com/libretro/virtualjaguar-libretro/issues/411))
 
 ---
 
@@ -166,7 +185,16 @@ Selection is by filename only — the core does not verify which BIOS a file act
 
 ## What's new
 
-### Since the v3.1.0 tag — merged to `develop`, in nightlies, not yet in a tagged release
+### v3.3.0
+
+Hi-res completion and correctness: the internal-resolution track now adds real detail on **every** video mode and on **scaled sprites** (RGB16 renderer, Stage 3 SCBITOBJ supersampling, the 8bpp CLUT extension that reaches 2D titles). Val d'Isère's ground renders correctly — root-caused to the OB register byte order, settled from the **original Flare/Atari TOM netlists** after the JTRM proved silent. Doom savestate rollback is deterministic again (run-ahead safe, savestate v11, older states still load). Plus soft patching for cartridges, blit memoization, and the Cybermorph projectile fix under the accurate blitter. [Full notes](docs/RELEASE_NOTES_v3.3.0.md).
+
+### v3.2.0
+
+True-color Gouraud rendering and 2× internal resolution with blit supersampling shipped; Raiden's two long-standing bugs and Power Drive Rally's mid-game sound freeze fixed; damaged CDI V2 rips boot. [Full notes](docs/RELEASE_NOTES_v3.2.0.md).
+
+<details>
+<summary>Older release-cycle details</summary>
 
 - **True-color shadow framebuffer** — full-precision Gouraud rendering, the opener of the [#338](https://github.com/libretro/virtualjaguar-libretro/issues/338) enhancement suite. ([PR #341](https://github.com/libretro/virtualjaguar-libretro/pull/341))
 - **Damaged CDI V2 rips boot** — per-track boot-header repair. World Tour Racing reaches an in-game race and the Myst demo plays through the Cyan intro, in both CD modes; images whose bytes are provably gone get a precise logged diagnosis instead of a silent failure. ([PR #342](https://github.com/libretro/virtualjaguar-libretro/pull/342))
@@ -174,6 +202,8 @@ Selection is by filename only — the core does not verify which BIOS a file act
   *If you were hit by this, re-enable music in Raiden's options menu — the bad value may be sitting in your `.srm`.*
 - **Raiden boots in HLE mode** — the HLE fast-boot path never programmed TOM's video-interrupt compare register, which Raiden inherits from the boot ROM rather than setting itself, so its VBlank ISR never fired. Black screen since [#20](https://github.com/libretro/virtualjaguar-libretro/issues/20)/[#70](https://github.com/libretro/virtualjaguar-libretro/issues/70). ([PR #339](https://github.com/libretro/virtualjaguar-libretro/pull/339))
 - **CD FMV verification** — a real-BIOS evidence table plus a documented CD boot-mode gotcha in the visual-verification harness. ([PR #340](https://github.com/libretro/virtualjaguar-libretro/pull/340))
+
+</details>
 
 ### v3.1.0
 
