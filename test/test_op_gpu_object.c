@@ -133,16 +133,25 @@ static void write64(uint8_t *ram, uint32_t offset, uint64_t value)
    ram[offset + 7] = (uint8_t)value;
 }
 
-static uint64_t read64(const uint8_t *ram, uint32_t offset)
+/* Reassemble the object phrase from the OB registers ($F00010-$F00017).
+ *
+ * OB is NOT a straight big-endian image of the phrase.  It is four 16-bit
+ * registers holding the phrase least-significant-word first, each register
+ * big-endian internally (original Flare/Atari TOM design source,
+ * jag_sim netlists/tom/OB.NET:55-67 + IODEC.NET:85-88):
+ *
+ *   OB0 $F00010 = phrase[15:0]     OB2 $F00014 = phrase[47:32]
+ *   OB1 $F00012 = phrase[31:16]    OB3 $F00016 = phrase[63:48]
+ *
+ * In byte terms each address pair is swapped, so TOM byte $10+n carries
+ * phrase byte (n ^ 1).  See docs/jtrm-object-processor.md. */
+static uint64_t read_ob64(const uint8_t *tom_ram)
 {
-   return ((uint64_t)ram[offset + 0] << 56)
-      | ((uint64_t)ram[offset + 1] << 48)
-      | ((uint64_t)ram[offset + 2] << 40)
-      | ((uint64_t)ram[offset + 3] << 32)
-      | ((uint64_t)ram[offset + 4] << 24)
-      | ((uint64_t)ram[offset + 5] << 16)
-      | ((uint64_t)ram[offset + 6] << 8)
-      | (uint64_t)ram[offset + 7];
+   uint64_t phrase = 0;
+   int n;
+   for (n = 0; n < 8; n++)
+      phrase |= (uint64_t)tom_ram[0x10 + n] << (8 * (n ^ 1));
+   return phrase;
 }
 
 static void set_olp(uint8_t *tom_ram, uint32_t address)
@@ -233,7 +242,7 @@ int main(int argc, char **argv)
    set_olp(p_tomRam8, 0x1000);
 
    p_OPProcessList(0, false);
-   ob_object = read64(p_tomRam8, 0x10);
+   ob_object = read_ob64(p_tomRam8);
 
    p_retro_unload_game();
    p_retro_deinit();

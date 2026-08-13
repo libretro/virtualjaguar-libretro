@@ -18,6 +18,8 @@
 
 #include <stdio.h>
 #include "jaguar.h"
+#include "blitter.h"
+#include "blit_memo.h"
 #include "log.h"  /* CDDA-DIAG */
 
 #include "cdrom.h"
@@ -39,6 +41,7 @@
 #include "nvmbios.h"
 #include "settings.h"
 #include "tom.h"
+#include "vjtrace.h"
 
 static bool frameDone;
 
@@ -308,6 +311,17 @@ uint32_t d7Queue[0x400];
 uint32_t pcQPtr = 0;
 bool startM68KTracing = false;
 
+/* Halfline-rate 68K PC sampler (BENCH_PROFILE only).  524 samples per
+ * field is enough to tell WHICH wait a title's frame loop is parked in
+ * without the cost of a per-instruction hook -- the question "is this
+ * loop GPU-bound, DSP-handshake-bound, or field-synchronised?" is
+ * answered by a PC histogram, and answering it by reasoning about the
+ * source has produced two wrong root causes for #401 already.
+ * Diagnostic only: the emulated machine never reads this. */
+uint32_t m68kPCSample[0x2000];
+uint32_t gpuPCSample[0x2000];
+uint32_t m68kPCSampleIdx = 0;
+
 // Breakpoint on memory access vars (exported)
 bool bpmActive = false;
 uint32_t bpmAddress1;
@@ -419,6 +433,12 @@ unsigned int m68k_read_memory_8(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* This bus fast path never routes through JaguarReadByte (see the
+    * comment above M68K_BUS_CHARGE), so hook the watch check here.
+    * m68kBusNoCharge is also true for disassembler reads (Task 7.5):
+    * those aren't real bus traffic and must not appear as watch hits. */
+   if (!m68kBusNoCharge)
+      VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -460,6 +480,9 @@ unsigned int m68k_read_memory_16(unsigned int address)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- see m68k_read_memory_8. */
+   if (!m68kBusNoCharge)
+      VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
@@ -506,12 +529,21 @@ unsigned int m68k_read_memory_32(unsigned int address)
 
    if (address <= 0x1FFFFC)
    {
+      /* Terminal branch (no decomposition) -- hook here.  The
+       * CDROM/TOM/JERRY/unknown fallthrough below recurses into
+       * m68k_read_memory_16() twice instead, which is already hooked;
+       * hooking it again here would double-count that case. */
+      if (!m68kBusNoCharge)
+         VJT_WATCH_RD(address, 0, M68K);
       M68K_BUS_CHARGE(address, 2);
       return GET32(jaguarMainRAM, address);
    }
    else if ((address >= 0x800000) && (address <= 0xDFFEFE))
    {
       // Memory Track reading...
+      /* Also terminal -- see the note above. */
+      if (!m68kBusNoCharge)
+         VJT_WATCH_RD(address, 0, M68K);
       M68K_BUS_CHARGE(address, 2);
       if (MEMTRACK_PRESENT() && MTClaimsRead(address))
          return MTReadLong(address);
@@ -649,11 +681,24 @@ void m68k_write_memory_8(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- never routes through
+    * JaguarWriteByte (see the comment above M68K_BUS_CHARGE).  No
+    * disassembler variant exists for writes, so unlike the read side
+    * there is no m68kBusNoCharge guard to apply here.  UAE's `value`
+    * argument is not masked to the access width (byte stores can
+    * arrive sign-extended into the upper 24 bits), unlike
+    * JaguarWriteByte's uint8_t parameter, so mask here to match its
+    * record shape. */
+   VJT_WATCH_WR(address, value & 0xFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
+   {
+      if (blitMemoMode)
+         BlitMemoWriteHook(address, 1, value);
       jaguarMainRAM[address] = value;
+   }
    /* GameDrive: GD_ROMWriteEnable makes the SDRAM-backed "ROM" writable
     * (the GD menu loads through this; homebrew uses cart space as RAM). */
    else if (jgdActive && jgdWriteEnabled
@@ -690,6 +735,13 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
 
    // Musashi does this automagically for you, UAE core does not :-P
    address &= 0x00FFFFFF;
+   /* Bus fast path, hooked directly -- terminal (never recurses into
+    * another m68k_write_memory_* function), so one call here is exactly
+    * one 68K bus write, including the half that only reaches the
+    * GPU/DSP RISC-local latch below and not memory yet.  Masked to 16
+    * bits to match JaguarWriteWord's record shape -- see the mask note
+    * in m68k_write_memory_8. */
+   VJT_WATCH_WR(address, value & 0xFFFFu, M68K);
    M68K_BUS_CHARGE(address, 1);
 
    /* GPU/DSP local RAM is a 16-bit port with a commit-on-partner latch --
@@ -708,6 +760,8 @@ void m68k_write_memory_16(unsigned int address, unsigned int value)
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(address, 2, value);
       SET16(jaguarMainRAM, address, value);
    }
    /* GameDrive write-enabled cart space (see the byte handler). */
@@ -754,7 +808,18 @@ void m68k_write_memory_32(unsigned int address, unsigned int value)
 
    if (address <= 0x1FFFFC)
    {
+      /* Terminal branch (no decomposition) -- hook here.  Everything
+       * else below recurses into m68k_write_memory_16() twice instead,
+       * which is already hooked; hooking it again here would
+       * double-count that case (three overlapping records for one
+       * 32-bit access instead of the natural two).  No width mask
+       * needed here (unlike the 8/16-bit sites) -- this is itself a
+       * 32-bit access and `unsigned int` is exactly 32 bits, so
+       * `value` already matches JaguarWriteLong's record shape. */
+      VJT_WATCH_WR(address, value, M68K);
       M68K_BUS_CHARGE(address, 2);
+      if (blitMemoMode)
+         BlitMemoWriteHook(address, 4, value);
       SET32(jaguarMainRAM, address, value);
       return;
    }
@@ -799,7 +864,14 @@ unsigned int m68k_read_disassembler_32(unsigned int address)
 
 uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 {
+   /* Mask BEFORE the watch check -- a caller passing an address with
+    * upper bits set must still compare against the real 24-bit bus
+    * address a watch range was defined against.  The memo hook sits
+    * after the mask for the same reason. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_RD(offset, 0, who);
+   if (blitMemoRecording)
+      BlitMemoNoteRead(offset, 1);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -826,7 +898,11 @@ uint8_t JaguarReadByte(uint32_t offset, uint32_t who)
 
 uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 {
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_RD(offset, 0, who);
+   if (blitMemoRecording)
+      BlitMemoNoteRead(offset, 2);
 
    // First 2M is mirrored in the $0 - $7FFFFF range
    if (offset < 0x800000)
@@ -854,7 +930,11 @@ uint16_t JaguarReadWord(uint32_t offset, uint32_t who)
 
 void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 {
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_WR(offset, data, who);
+   if (blitMemoMode)
+      BlitMemoWriteHook(offset, 1, data);
 
    /* Only 2MB of DRAM is populated ($0-$1FFFFF; JTRM memory map and the
     * MiSTer core's address decode agree — $200000-$7FFFFF is unpopulated
@@ -904,7 +984,11 @@ void JaguarWriteByte(uint32_t offset, uint8_t data, uint32_t who)
 
 void JaguarWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
+   /* Mask before the watch check -- see JaguarReadByte. */
    offset &= 0xFFFFFF;
+   VJT_WATCH_WR(offset, data, who);
+   if (blitMemoMode)
+      BlitMemoWriteHook(offset, 2, data);
 
    /* Unpopulated $200000-$7FFFFF: discard (see JaguarWriteByte). */
    if (offset <= 0x1FFFFE)
@@ -956,7 +1040,17 @@ uint32_t JaguarReadLong(uint32_t offset, uint32_t who)
    if (busArbiter.enabled && who == OP)
       bus_arbiter_op_charge(1);
    if (addr < 0x800000)
+   {
+      /* Fast path: bypasses JaguarReadWord, so the watch check there
+       * never sees this access -- check it here instead.  Use addr
+       * (already masked to 24 bits above), not offset, so a caller
+       * passing upper bits set still compares against the real bus
+       * address a watch range was defined against. */
+      VJT_WATCH_RD(addr, 0, who);
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 4);
       return GET32(jaguarMainRAM, addr & 0x1FFFFF);
+   }
    return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset+2, who);
 }
 
@@ -981,6 +1075,12 @@ void JaguarWriteLong(uint32_t offset, uint32_t data, uint32_t who)
               data, who, m68k_get_reg(NULL, M68K_REG_PC));
    if (addr < 0x200000)
    {
+      /* Fast path: bypasses JaguarWriteWord, so the watch check there
+       * never sees this access -- check it here instead.  Use addr
+       * (already masked to 24 bits above) -- see JaguarReadLong. */
+      VJT_WATCH_WR(addr, data, who);
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 4, data);
       SET32(jaguarMainRAM, addr, data);
       return;
    }
@@ -1058,6 +1158,12 @@ void HalflineCallback(void)
 {
    uint16_t vc           = (PERF_INC(timing_halfline_callbacks),
                             TOMReadWord(0xF00006, JAGUAR));
+#ifdef BENCH_PROFILE
+   m68kPCSample[m68kPCSampleIdx & 0x1FFF] =
+      (uint32_t)m68k_get_reg(NULL, M68K_REG_PC);
+   gpuPCSample[m68kPCSampleIdx & 0x1FFF] = GPUGetPC();
+   m68kPCSampleIdx++;
+#endif
    uint16_t vp           = TOMReadWord(0xF0003E, JAGUAR) + 1;
    uint16_t vi           = TOMReadWord(0xF0004E, JAGUAR);
 
@@ -1107,6 +1213,11 @@ void HalflineCallback(void)
          charge = halfclks;
       busArbiter.m68k_pending_stall += charge;
    }
+
+   /* Blitter bus-time window decays with real time: a blit finishes on
+    * its own whether or not anyone is watching (blitter_mmio.c). */
+   BlitterTimingTick(USEC_TO_RISC_CYCLES(
+                        vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
 
    //Change this to VBB???
    //Doesn't seem to matter (at least for Flip Out & I-War)
@@ -1364,11 +1475,30 @@ uint8_t * GetRamPtr(void)
 static void M68KExecuteWithStalls(uint32_t cycles)
 {
    uint32_t stall;
-   if (busArbiter.enabled && busArbiter.m68k_pending_stall >= 2)
+   /* The drain is deliberately NOT gated on busArbiter.enabled: the
+    * pending-stall channel is shared by the dram_timing model (whose
+    * charge sites gate on the option) and blitter bus-time charges
+    * (gated on vjs.blitterTiming at the charge site in
+    * blitter_mmio.c).  With every charge site off the field stays
+    * zero and this branch never runs, so pure-default behavior is
+    * unchanged. */
+   if (busArbiter.m68k_pending_stall >= 2)
    {
+      /* Leave the 68K an eighth of every slice even under maximum
+       * debt.  The blitter is the top-priority master but not a
+       * perfect bus hog -- refresh slots and inter-op gaps still grant
+       * the 68K occasional cycles (JTRM bus priority) -- and a full
+       * freeze starves IRQ delivery: the VI handler that latches the
+       * joypad stops running, a released button reads as held for the
+       * whole debt, and one tap multiplies into many menu steps (the
+       * exact symptom this model exists to fix, amplified).  Rounded
+       * UP so even a sub-8-cycle slice keeps at least one cycle --
+       * a floor of cycles>>3 would be 0 there and let a run of tiny
+       * event-bounded slices fully freeze the 68K after all. */
+      uint32_t keep = (cycles + 7) >> 3;
       stall = busArbiter.m68k_pending_stall >> 1;
-      if (stall > cycles)
-         stall = cycles;
+      if (stall > cycles - keep)
+         stall = cycles - keep;
       busArbiter.m68k_pending_stall -= stall << 1;
       cycles -= stall;
       /* A slice fully consumed by stall must not fall through to

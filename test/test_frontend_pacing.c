@@ -20,6 +20,31 @@
  *      (measured 0.59x realtime on this machine at load average 250).
  *      The mean/effective fps is reported as INFO alongside.
  *
+ *      THRESHOLD CALIBRATION (do not tighten without re-measuring).  The
+ *      fraction has to separate two populations: a self-throttling core,
+ *      whose fastest frame sits at ~1.00 x the frame period, and a healthy
+ *      core, whose fastest frame is whatever the host can manage.  It is
+ *      therefore bounded below by the SLOWEST CI runner's honest throughput,
+ *      not by how fast a dev machine happens to be.  Measured fastest-frame
+ *      times against the 16.667 ms NTSC period:
+ *
+ *          arm64 macOS (quiet)      4.35 ms   0.26 x
+ *          CI Linux x86_64          7.73 ms   0.46 x
+ *          CI Linux i686         8.41-9.60 ms 0.50-0.58 x
+ *
+ *      The original 0.5 default landed inside the i686 spread, so that job
+ *      failed on roughly half of all develop pushes — on commits that could
+ *      not affect pacing at all (a core-options text change, a vjtrace perf
+ *      gate, a blitter fix).  A ~50% flake on an unrelated gate is worse
+ *      than no gate: it trains everyone to ignore a red run.
+ *
+ *      0.75 keeps the two populations well separated — a throttling core at
+ *      16.67 ms still misses the 12.5 ms bar by 33%, while the slowest
+ *      observed honest runner clears it by 30%.  The check still catches the
+ *      bug class it exists for; it just no longer doubles as a benchmark of
+ *      the runner.  If a future core change makes even a fast host approach
+ *      12.5 ms, that is a real performance regression worth failing on.
+ *
  *   2. audio_rate_contract
  *      Sample-frames handed to retro_audio_sample_batch over N frames must
  *      equal N * sample_rate / fps (within 1%).  A mismatch between the
@@ -45,7 +70,7 @@
  *
  * Usage:
  *   ./test/test_frontend_pacing [core] [rom] [--frames N]
- *       [--max-fastest-frame-fraction F]   (default 0.5 of one frame period)
+ *       [--max-fastest-frame-fraction F]   (default 0.75 of one frame period)
  *       [--max-geometry-calls N]           (default 8)
  *       [--force-fail-{throttle,audio,geometry}]  self-test of the asserts
  *
@@ -136,7 +161,8 @@ int main(int argc, char **argv)
     harness_result results[8];
     frame_timer ft;
     unsigned nres = 0;
-    double max_fastest_fraction = 0.5;
+    /* 0.75, not 0.5 -- see THRESHOLD CALIBRATION at the top of this file. */
+    double max_fastest_fraction = 0.75;
     unsigned max_geometry_calls = 8;
     int force_fail_throttle = 0, force_fail_audio = 0, force_fail_geometry = 0;
     uint64_t t0;

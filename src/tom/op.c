@@ -24,6 +24,7 @@
 #include "shadowfb.h"
 #include "vjag_memory.h"
 #include "tom.h"
+#include "../core/vjtrace.h"
 
 #define BLEND_Y(dst, src)	op_blend_y[(((uint16_t)dst<<8)) | ((uint16_t)(src))]
 #define BLEND_CR(dst, src)	op_blend_cr[(((uint16_t)dst)<<8) | ((uint16_t)(src))]
@@ -109,6 +110,136 @@ static void OPSkipScaledDestinationPixels(uint32_t destPixels, uint16_t hscale,
          *pixCount = (int)pixelShift;
       }
    }
+}
+
+
+/* Hi-res Stage 3 (epic #338, docs/hires-upscaling-design.md section 6.4):
+ * peek one HSCALE sub-step (0x20 / SHADOWFB_HIRES_MAX_N) beyond a caller-
+ * supplied LOCAL snapshot of the scaling accumulator, to recover the
+ * fractional source detail a non-1.0x HSCALE has that the 1x destination
+ * throws away.  `data`/`pixCount`/`horizontalRemainder`/`iwidthRemaining`
+ * are copies taken by the caller at the point it is about to write the
+ * *current* stock pixel -- this function never touches the real
+ * variables, which still drive the stock write and (via the caller in
+ * the OBJECT_TYPE_SCALE dispatch in this file) the VSCALE REMAINDER
+ * writeback to RAM.  Both must stay byte-identical; only reading a local
+ * copy makes that guarantee structural rather than reviewed, the same
+ * argument the blitter's shadow_hires_sub_mid (blitter.c) uses for its
+ * own local ADDRGEN walk.
+ *
+ * Reads via JaguarReadWord, never JaguarReadLong: JaguarReadLong charges
+ * bus_arbiter_op_charge() whenever `who == OP` (see jaguar.c), which
+ * would make this shadow-only peek observable in emulated 68K/GPU
+ * timing -- exactly the invisibility hires_state_digest gates on.
+ * JaguarReadWord never charges bus arbiter for any `who`, so the extra
+ * read is free of side effects on stock state.
+ *
+ * Falls back to `stockValue16` (the sample already computed for the
+ * pixel this peek is refining) when: the local walk would need an
+ * implausible run of source pixels (malformed/pathological HSCALE,
+ * bounded rather than trusted); it would read past the object's
+ * remaining phrase budget (`iwidthRemaining`, the same bound the stock
+ * walk itself is guarded by); or the resolved address could carry a
+ * read side effect (CD/TOM/JERRY register space -- object pixel data is
+ * never legitimately there on real hardware, but bail rather than
+ * assume). */
+static uint16_t op_hires_scale_peek(uint32_t data, int pixCount,
+      uint16_t horizontalRemainder, uint16_t hscale, uint32_t pitchBytes,
+      int phrasePixels, uint32_t iwidthRemaining, uint16_t stockValue16)
+{
+   uint16_t rem;
+   int count;
+   int steps;
+   uint32_t phrasesNeeded;
+   uint32_t addr;
+
+   rem = (uint16_t)(horizontalRemainder + (0x20 / SHADOWFB_HIRES_MAX_N));
+   count = pixCount;
+   steps = 0;
+
+   while (rem >= hscale)
+   {
+      rem -= hscale;
+      count++;
+
+      if (++steps > 64)			// pathological hscale: bail, don't spin
+         return stockValue16;
+   }
+
+   phrasesNeeded = (uint32_t)count / (uint32_t)phrasePixels;
+   if (phrasesNeeded >= iwidthRemaining)
+      return stockValue16;
+
+   addr = (data + phrasesNeeded * pitchBytes
+         + (uint32_t)(count % phrasePixels) * 2) & 0xFFFFFF;
+   if (addr >= 0xDFFF00)		// CD/TOM/JERRY window: possible read side effect
+      return stockValue16;
+
+   return JaguarReadWord(addr, OP);
+}
+
+/* CLUT counterpart of op_hires_scale_peek (issue #367, design section 6.5).
+ *
+ * Section 6.5 left the CLUT depths on the stock box-replicated path in v1 on
+ * the grounds that "a CLUT index carries no sub-pixel information anyway; the
+ * only gain would come from scaled CLUT objects, which is a Stage-3+
+ * extension".  Stage 3 shipped, so that condition is met -- and a corpus
+ * census found scaled CLUT objects are the DOMINANT scaled traffic in exactly
+ * the 2D titles Stage 3 targets: 81.1% of truly-scaled destination pixels in
+ * International Sensible Soccer and 75.7% in Val d'Isere, against 0% in the
+ * 3D titles (AvP, Atari Karts).  Almost all of it is 8bpp.
+ *
+ * Returns the palette INDEX one hi-res sub-step ahead, not a colour: the
+ * caller owns the CLUT offset (`index |` for 1-4bpp) and the palette lookup,
+ * because those differ per depth.  Falls back to stockIndex on every bail-out
+ * path, so a peek can only ever degrade to the stock sample.
+ *
+ * Written generically over bpp (1/2/4/8).  Only 8bpp is wired up today --
+ * 2bpp and 4bpp together are 0.5% of Val d'Isere's scaled CLUT pixels and
+ * 1bpp never occurs, so the remaining depths are deliberately left unwired
+ * rather than carrying untested bit-extraction paths. */
+static int op_hires_scale_peek_clut(uint32_t data, int pixCount,
+      uint16_t horizontalRemainder, uint16_t hscale, uint32_t pitchBytes,
+      int bpp, uint32_t iwidthRemaining, int stockIndex)
+{
+   uint16_t rem;
+   int count;
+   int steps;
+   int pixelsPerPhrase;
+   int bitOff;
+   int shift;
+   uint32_t phrasesNeeded;
+   uint32_t addr;
+   uint8_t byte;
+
+   rem = (uint16_t)(horizontalRemainder + (0x20 / SHADOWFB_HIRES_MAX_N));
+   count = pixCount;
+   steps = 0;
+
+   while (rem >= hscale)
+   {
+      rem -= hscale;
+      count++;
+
+      if (++steps > 64)			/* pathological hscale: bail, don't spin */
+         return stockIndex;
+   }
+
+   pixelsPerPhrase = 64 / bpp;
+   phrasesNeeded = (uint32_t)count / (uint32_t)pixelsPerPhrase;
+   if (phrasesNeeded >= iwidthRemaining)
+      return stockIndex;
+
+   /* Pixels are packed MSB-first within the phrase, so the first pixel of a
+    * byte occupies its high bits. */
+   bitOff = (count % pixelsPerPhrase) * bpp;
+   addr = (data + phrasesNeeded * pitchBytes + (uint32_t)(bitOff >> 3)) & 0xFFFFFF;
+   if (addr >= 0xDFFF00)		/* CD/TOM/JERRY window: possible read side effect */
+      return stockIndex;
+
+   byte = JaguarReadByte(addr, OP);
+   shift = 8 - bpp - (bitOff & 7);
+   return (int)((byte >> shift) & ((1 << bpp) - 1));
 }
 
 
@@ -275,29 +406,53 @@ void OPNotifyOBFWrite(void)
 }
 
 
+/* Latch the current object phrase into the read-only OB registers
+ * ($F00010-$F00017), which the GPU's IRQ3 handler reads to find out which
+ * object interrupted it.
+ *
+ * The phrase's LEAST significant word sits at the LOWEST address; each 16-bit
+ * register is itself big-endian:
+ *
+ *   OB0 $F00010 = phrase[15:0]     OB2 $F00014 = phrase[47:32]
+ *   OB1 $F00012 = phrase[31:16]    OB3 $F00016 = phrase[63:48]
+ *
+ * This is NOT a straight big-endian store of the phrase, and it is not
+ * documented in the JTRM (Rev 8 gives only the register row "OB[0-3] Object
+ * Code F00010-16 RO" and never says which phrase bits land where). It is read
+ * directly off the original Flare/Atari TOM design source, netlists/tom/OB.NET
+ * lines 55-67, under the comment "the first phrase can be read as four words":
+ *
+ *   Ob0rd[0-2]   := TS (dr[0-2],  type[0-2],      ob0r);
+ *   Ob0rd[3-13]  := TS (dr[3-13], ypos[0-10],     ob0r);
+ *   Ob0rd[14-15] := TS (dr[14-15],newheight[0-1], ob0r);
+ *   Ob1rd[0-7]   := TS (dr[0-7],  newheight[2-9], ob1r);
+ *   Ob1rd[8-15]  := TS (dr[8-15], link[0-7],      ob1r);
+ *   Ob2rd[0-10]  := TS (dr[0-10], link[8-18],     ob2r);
+ *   Ob2rd[11-15] := TS (dr[11-15],data[0-4],      ob2r);
+ *   Ob3rd[0-15]  := TS (dr[0-15], data[5-20],     ob3r);
+ *
+ * TYPE (phrase bits 0-2) is driven onto dr[0-2] under ob0r, and IODEC.NET
+ * lines 85-88 decode ob0r at offset $0 through ob3r at offset $6 — so the
+ * phrase's low word is at $F00010.  See docs/jtrm-object-processor.md for the
+ * full derivation, including the checks that pin dr[0] as D0.
+ *
+ * Consequence (issue #354): a 32-bit read at $F00014 returns
+ * (phrase[47:32] << 16) | phrase[63:48] — all DATA for a GPU object, never
+ * TYPE.  Under a straight big-endian store that read returned the low long,
+ * which always carries TYPE in bits 2-0 and so could never read zero. */
 void OPSetCurrentObject(uint64_t object)
 {
-   //Not sure this is right... Wouldn't it just be stored 64 bit BE?
-   // Stored as least significant 32 bits first, ms32 last in big endian
-   /*	objectp_ram[0x13] = object & 0xFF; object >>= 8;
-      objectp_ram[0x12] = object & 0xFF; object >>= 8;
-      objectp_ram[0x11] = object & 0xFF; object >>= 8;
-      objectp_ram[0x10] = object & 0xFF; object >>= 8;
+   tomRam8[0x10] = (uint8_t)(object >>  8);
+   tomRam8[0x11] = (uint8_t)(object      );
 
-      objectp_ram[0x17] = object & 0xFF; object >>= 8;
-      objectp_ram[0x16] = object & 0xFF; object >>= 8;
-      objectp_ram[0x15] = object & 0xFF; object >>= 8;
-      objectp_ram[0x14] = object & 0xFF;*/
-   // Let's try regular good old big endian...
-   tomRam8[0x17] = object & 0xFF; object >>= 8;
-   tomRam8[0x16] = object & 0xFF; object >>= 8;
-   tomRam8[0x15] = object & 0xFF; object >>= 8;
-   tomRam8[0x14] = object & 0xFF; object >>= 8;
+   tomRam8[0x12] = (uint8_t)(object >> 24);
+   tomRam8[0x13] = (uint8_t)(object >> 16);
 
-   tomRam8[0x13] = object & 0xFF; object >>= 8;
-   tomRam8[0x12] = object & 0xFF; object >>= 8;
-   tomRam8[0x11] = object & 0xFF; object >>= 8;
-   tomRam8[0x10] = object & 0xFF;
+   tomRam8[0x14] = (uint8_t)(object >> 40);
+   tomRam8[0x15] = (uint8_t)(object >> 32);
+
+   tomRam8[0x16] = (uint8_t)(object >> 56);
+   tomRam8[0x17] = (uint8_t)(object >> 48);
 }
 
 
@@ -334,6 +489,7 @@ void OPProcessList(int halfline, bool render)
    halfline &= 0x7FF;
 
    op_pointer = OPGetListPointer();
+   VJT_EMIT(VJT_EV_OP_LIST_START, OP, op_pointer, (uint32_t)halfline);
 
    // *** BEGIN OP PROCESSOR TESTING ONLY ***
    // *** END OP PROCESSOR TESTING ONLY ***
@@ -347,6 +503,8 @@ void OPProcessList(int halfline, bool render)
 
       p0          = OPLoadPhrase(op_pointer);
       op_pointer += 8;
+
+      VJT_EMIT(VJT_EV_OP_OBJECT, OP, op_pointer - 8, (uint32_t)((uint8_t)p0 & 0x07));
 
       switch ((uint8_t)p0 & 0x07)
       {
@@ -515,6 +673,8 @@ void OPProcessList(int halfline, bool render)
                 * rendered the bottom third of fight scenes black. */
                int32_t guard = OP_GPU_RELEASE_GUARD_CYCLES;
 
+               VJT_EMIT(VJT_EV_OP_GPU_OBJ, OP, op_pointer - 8, 0);
+
                OPSetCurrentObject(p0);
                op_obf_written = false;
                GPUSetIRQLine(3, ASSERT_LINE);
@@ -543,29 +703,45 @@ void OPProcessList(int halfline, bool render)
                // JTRM is wrong: CC is bits 14-16 (3 bits, *not* 2)
                uint8_t  cc   = (p0 >> 14) & 0x07;
                uint32_t link = (p0 >> 21) & 0x3FFFF8;
+               uint32_t branchObjAddr = op_pointer - 8;
 
                switch (cc)
                {
                   case CONDITION_EQUAL:
                      if (halfline == ypos || ypos == 0x7FF)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_LESS_THAN:
                      if (halfline < ypos)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_GREATER_THAN:
                      if (halfline > ypos)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_OP_FLAG_SET:
                      if (OPGetStatusRegister() & 0x01)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   case CONDITION_SECOND_HALF_LINE:
                      // Branch if bit 10 of HC is set...
                      if (TOMGetHC() & 0x0400)
+                     {
+                        VJT_EMIT(VJT_EV_OP_BRANCH, OP, branchObjAddr, link);
                         op_pointer = link;
+                     }
                      break;
                   default:
                      // Basically, if you do this, the OP does nothing. :-)
@@ -1459,6 +1635,76 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
                   // This is the *only* correct use of endian-dependent code
                   // (i.e., mem-to-mem direct copying)!
                   *(uint16_t *)currentLineBuffer = paletteRAM16[bits];
+
+                  /* Hi-res Stage 3 for scaled CLUT objects (issue #367,
+                   * promoting design section 6.5's CLUT deferral on corpus
+                   * evidence -- see op_hires_scale_peek_clut).  Same shape as
+                   * the 16bpp branch below: a non-1.0x HSCALE means this one
+                   * stock pixel was sampled from a source with more
+                   * horizontal detail than the destination kept, so peek one
+                   * sub-step ahead and place the two point samples in output
+                   * column order (REFLECT flips only the destination step, so
+                   * the physically-left sub-column holds the later source
+                   * sample).
+                   *
+                   * No RAM-shadow resolve here, unlike 16bpp: the source word
+                   * holds packed palette INDICES, not colour, so a shadow
+                   * lookup keyed on the stock 16-bit value would be
+                   * meaningless.  The peek is the only path.
+                   *
+                   * Colours are composed from the palette BYTE array rather
+                   * than paletteRAM16: the uint16 read above is deliberately
+                   * host-endian for the mem-to-mem copy, whereas the shadow
+                   * surface stores values in the same (hi << 8) | lo form the
+                   * 16bpp branch uses.  Reusing paletteRAM16 here would
+                   * byte-swap every sub-sample on a little-endian host. */
+                  if (shadowHiresActive && shadowHiresN == 2 && hscale != 0x20)
+                  {
+                     shadowfb_sub cols[SHADOWFB_HIRES_MAX_N];
+                     shadowfb_sub s0, s1;
+                     uint16_t stockVal;
+                     int lbIdx;
+                     int peekIdx;
+
+                     stockVal = ((uint16_t)paletteRAM[bits << 1] << 8)
+                              | paletteRAM[(bits << 1) + 1];
+                     lbIdx = (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1);
+
+                     peekIdx = op_hires_scale_peek_clut(data, pixCount,
+                           horizontalRemainder, hscale, (uint32_t)(pitch << 3),
+                           8, iwidth, (int)bits);
+
+                     s0.value16 = stockVal;
+                     s0.frac16  = 0;
+                     /* The stock pixel already passed the TRANS test; the
+                      * peeked index never did.  A transparent peek is padding
+                      * the stock walk would draw nothing for -- degrade that
+                      * sub-column to the stock sample rather than to whatever
+                      * palette entry 0 happens to hold. */
+#ifndef OP_USES_PALETTE_ZERO
+                     if (flagTRANS && peekIdx == 0)
+#else
+                     if (flagTRANS && paletteRAM16[peekIdx] == 0)
+#endif
+                        s1.value16 = stockVal;
+                     else
+                        s1.value16 = ((uint16_t)paletteRAM[peekIdx << 1] << 8)
+                                   | paletteRAM[(peekIdx << 1) + 1];
+                     s1.frac16 = 0;
+
+                     if (flagREFLECT)
+                     {
+                        cols[0] = s1;
+                        cols[1] = s0;
+                     }
+                     else
+                     {
+                        cols[0] = s0;
+                        cols[1] = s1;
+                     }
+
+                     ShadowHiresLineFromScaledSamples(lbIdx, cols, stockVal);
+                  }
                }
                else
                {
@@ -1523,12 +1769,90 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
                         data + ((uint32_t)pixCount << 1),
                         (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
                /* Hi-res: same resolve against the Nx shadow surface,
-                * inside the OP's single per-scanline pass (shadowfb.h). */
+                * inside the OP's single per-scanline pass (shadowfb.h).
+                *
+                * Stage 3 (design section 6.4): a non-1.0x HSCALE means
+                * this one stock pixel was sampled from a source bitmap
+                * that has more horizontal detail than the destination
+                * kept.  Peek one local HSCALE sub-step ahead
+                * (op_hires_scale_peek, N=2 only -- the Stage 1 scope
+                * fence) and place the two point samples in output
+                * column order: source consumption is always forward
+                * regardless of REFLECT (only the destination step
+                * direction flips, see lbufDelta above), so under
+                * REFLECT the physically-left sub-column holds the
+                * *later* source sample to keep the block's own
+                * left/right consistent with the mirrored image.
+                * Every pixel -- scaled or not -- still tries the
+                * RAM-shadow resolve first (a hit means this source
+                * address was itself a prior blit's supersampled write;
+                * Stage 1/2 semantics, unchanged); the peek is only the
+                * miss fallback.  hscale==0x20 (no scaling -- nothing
+                * to recover) never peeks.  Sub-rows are not
+                * supersampled here (only
+                * one source row is ever visible inside one
+                * OPProcessScaledBitmap call -- VSCALE's row selection
+                * lives in the OBJECT_TYPE_SCALE dispatch outside this
+                * function, and its REMAINDER writeback must stay
+                * untouched), so all N sub-rows repeat the same N
+                * columns. */
                if (shadowHiresActive)
-                  ShadowHiresLineFromRAM(
-                        (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1),
-                        data + ((uint32_t)pixCount << 1),
-                        (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo));
+               {
+                  uint16_t stockVal;
+                  int lbIdx;
+
+                  stockVal = (uint16_t)(((uint16_t)bitsHi << 8) | bitsLo);
+                  lbIdx = (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1);
+
+                  if (shadowHiresN == 2 && hscale != 0x20)
+                  {
+                     /* A RAM-shadow hit (this source word was itself a
+                      * supersampled blit destination -- render-to-
+                      * texture is a normal Jaguar idiom) carries real
+                      * Stage 1/2 per-subpixel content and always beats
+                      * two point samples: resolve it FIRST, and peek
+                      * only on a miss.  This also keeps the resolve
+                      * counters (shadowfb.h) counting every scaled
+                      * pixel exactly once. */
+                     if (!ShadowHiresLineFromRAM(lbIdx,
+                              data + ((uint32_t)pixCount << 1), stockVal))
+                     {
+                        shadowfb_sub cols[SHADOWFB_HIRES_MAX_N];
+                        shadowfb_sub s0, s1;
+
+                        s0.value16 = stockVal;
+                        s0.frac16 = 0;
+                        s1.value16 = op_hires_scale_peek(data, pixCount,
+                              horizontalRemainder, hscale,
+                              (uint32_t)(pitch << 3), 4, iwidth, stockVal);
+                        /* The stock pixel above already passed the TRANS
+                         * test; the peeked word never did.  A zero word
+                         * one half-step ahead on a TRANS object is
+                         * transparent padding the stock walk would draw
+                         * nothing for -- degrade that sub-column to the
+                         * stock sample, never to encoded-black CRY 0. */
+                        if (flagTRANS && s1.value16 == 0)
+                           s1.value16 = stockVal;
+                        s1.frac16 = 0;
+
+                        if (flagREFLECT)
+                        {
+                           cols[0] = s1;
+                           cols[1] = s0;
+                        }
+                        else
+                        {
+                           cols[0] = s0;
+                           cols[1] = s1;
+                        }
+
+                        ShadowHiresLineFromScaledSamples(lbIdx, cols, stockVal);
+                     }
+                  }
+                  else
+                     ShadowHiresLineFromRAM(lbIdx,
+                           data + ((uint32_t)pixCount << 1), stockVal);
+               }
             }
             else
                *currentLineBuffer =

@@ -47,7 +47,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.2.0
+CORE_BASE_VERSION := v3.3.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -87,6 +87,7 @@ endif
 ifeq ($(TEST_EXPORTS),1)
 LINK_SCRIPT := link-test.T
 MACHO_EXPORTS := exports-test.list
+CFLAGS += -DVJ_TRACE
 else
 LINK_SCRIPT := link.T
 MACHO_EXPORTS := exports.list
@@ -793,17 +794,31 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
-# Force a re-link when the exported ABI changes.  The objects are identical
-# either way, so a plain `make` followed by `make TEST_EXPORTS=1 test` would
-# otherwise reuse the production-slim library -- it is newer than every
-# object, so nothing relinks -- and the white-box tests fail with
-# "Missing: m68k_execute".  Delete the library outright rather than relying
-# on a stamp file's mtime: the stamp and the library can land in the same
-# second, which is exactly the timestamp-granularity trap this is meant to
-# close.  Runs at parse time, once TARGET is known.
+# Force a re-link when the exported ABI changes.  Almost every object is
+# identical either way, so a plain `make` followed by `make TEST_EXPORTS=1
+# test` would otherwise reuse the production-slim library -- it is newer
+# than every object, so nothing relinks -- and the white-box tests fail
+# with "Missing: m68k_execute".  Delete the library outright rather than
+# relying on a stamp file's mtime: the stamp and the library can land in
+# the same second, which is exactly the timestamp-granularity trap this is
+# meant to close.  Runs at parse time, once TARGET is known.
+#
+# vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
+# site or a vjtrace_pchist_*() call (including libretro.o's
+# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
+# *content* (not just the export list) that depends on TEST_EXPORTS --
+# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
+# -DVJ_TRACE line above), so those objects must be deleted alongside the
+# library on every mode transition, or a stale object compiled in the
+# other mode silently survives the relink: either vjtrace_* symbols go
+# missing from a `make TEST_EXPORTS=1` build that started from a plain
+# `make` (undefined symbols at link time), or the reverse transition
+# silently keeps the no-op macro expansion, so the ring never receives
+# events despite vjtrace_* being exported.
+VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
 $(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
         || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET); })
+             rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
@@ -824,7 +839,7 @@ clean:
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
 		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
-		test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
+		test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_eeprom_read_race \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
@@ -835,7 +850,8 @@ clean:
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
-		test/tools/test_frame_timing test/tools/test_runahead_determinism \
+		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -873,26 +889,32 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
-		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_pit_clock_rate \
+		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
-		test/tools/test_runahead_determinism \
+		test/tools/test_runahead_determinism test/tools/test_wedge_spin \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
+		test/tools/i2s_lag_probe
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
 	@# the summary at the end of this recipe prints the roll-up.
 	@bash scripts/test-skip.sh reset
+	@# The wide test ABI is spelled twice -- link-test.T for GNU ld, and
+	@# exports-test.list for Mach-O -- and a symbol added to only one is
+	@# hidden on the other platform, where harness_dlsym silently returns
+	@# NULL.  Cheap, so it runs before anything links against that ABI.
+	@python3 scripts/check-export-lists.py
 	./test/test_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
@@ -904,12 +926,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# vjtrace flight-recorder selftest: determinism (field_diff +
+	@# trace_memdiff on two identical runs), watch attribution, and
+	@# VJ_TRACE_RING wrap correctness. Builds its own analyzer/smoke tools
+	@# into test/tools/ on first run (see the script header); needs only
+	@# the in-tree test/roms/yarc.j64, never test/roms/private.
+	bash test/tools/vjtrace_selftest.sh ./$(TARGET)
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
 	./test/test_tom_visible_window
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
+	./test/test_titledb
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -933,6 +962,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/test_audio_pipeline ./$(TARGET); \
 	fi
 	./test/test_audio_clipping ./$(TARGET) --self-test
+	@# Wedge-detector spin-aliasing regression (#378 pilot finding): a
+	@# healthy GPU wait/spin loop must not log gpu_wedge.  Super Burnout
+	@# spins ~446k GPU opcodes/frame at one sampled PC during attract.
+	@rom=$$(bash scripts/find-rom.sh 'Super Burnout (1995).jag' 'Super Burnout*.jag' 'Super Burnout*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_wedge_spin ./$(TARGET) "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Wedge spin-aliasing (Super Burnout)" "no ROM matching 'Super Burnout*' in the private corpus"; \
+	fi
 	@# ROM lookup goes through scripts/find-rom.sh, which searches the whole
 	@# private corpus case-insensitively and prefers the canonical top-level
 	@# copy over duplicates buried in sub-collections.  It replaced a pair of
@@ -949,6 +987,40 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/test_audio_clipping ./$(TARGET) "$$rom" --label "Atari Karts (negative control)" --quiet; \
 	else \
 		bash scripts/test-skip.sh record "Atari Karts (clipping neg. control)" "no ROM matching 'Atari Karts*' in the private corpus"; \
+	fi
+	@# Frame-boundary discontinuity (60 Hz crackle class).  The clipping
+	@# and presence tests are both blind to this: it is neither
+	@# saturation nor silence.  Atari Karts' attract mode measured 10x
+	@# on the broken core vs 1.0x fixed; see test_audio_boundary.c.
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_boundary ./$(TARGET) "$$rom" --label "Atari Karts (boundary)" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Atari Karts (audio boundary)" "no ROM matching 'Atari Karts*' in the private corpus"; \
+	fi
+	@# Delivered-vs-advertised sample rate.  A steady deficit drains the
+	@# frontend's audio buffer until it underruns -- a pop every few
+	@# seconds in every title.  Orthogonal to the boundary check: the
+	@# pre-2026-08 core passed this and failed that; the first fix
+	@# inverted it.  Both must hold.
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/test_audio_rate ./$(TARGET) "$$rom" --label "Atari Karts (rate)" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Atari Karts (audio rate)" "no ROM matching 'Atari Karts*' in the private corpus"; \
+	fi
+	@# Resample-cursor drift (periodic-skip class, #393).  Boundary, rate,
+	@# clipping and presence are all blind to this one: the read cursor
+	@# lags the write cursor a fraction of a sample per frame until the
+	@# gross-drift resync discards ~254 ring samples (~12 ms) in one hop
+	@# -- an audible skip every ~36 s NTSC / ~8 s PAL.  Asserts the lag
+	@# stays bounded and no resync ever fires during steady-state play.
+	@rom=$$(bash scripts/find-rom.sh 'Atari Karts (1995).jag' 'Atari Karts*.jag' 'Atari Karts*.j64'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/i2s_lag_probe ./$(TARGET) "$$rom" --frames 2400 --window 2400 --max-lag 64 --max-resyncs 0 --quiet && \
+		./test/tools/i2s_lag_probe ./$(TARGET) "$$rom" --frames 2400 --window 2400 --max-lag 64 --max-resyncs 0 --quiet --option virtualjaguar_pal=enabled; \
+	else \
+		bash scripts/test-skip.sh record "Atari Karts (i2s lag drift)" "no ROM matching 'Atari Karts*' in the private corpus"; \
 	fi
 	@# Formerly known-broken titles (DSP-synth saturation class): fixed by
 	@# the MMULT secondary-bank fix (JTRM: the vector operand is always
@@ -1019,6 +1091,18 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --quiet; \
 	else \
 		bash scripts/test-skip.sh record "Iron Soldier 1 (savestate determinism)" "no ROM matching 'Iron Soldier*' in the private corpus"; \
+	fi
+	@# Issue #400: the two ROMs above are both stock-path titles, so nothing
+	@# here exercised a title carrying per-title enhancement defaults — and
+	@# the hi-res shadow surface's frame epoch was outside the state blob for
+	@# exactly that reason.  Doom takes internal_resolution=2x + true_color
+	@# from titledb, so this row is the one that fails if a cache-coherence
+	@# counter escapes serialization again.  Keep a DB-tagged title here.
+	@rom=$$(bash scripts/find-rom.sh 'Doom - Evil Unleashed (1994).jag' 'Doom (World)*.j64' 'Doom.jag'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Doom (savestate determinism, enhancement path)" "no ROM matching 'Doom*' in the private corpus"; \
 	fi
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
@@ -1130,6 +1214,40 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# EEPROM read-race test: joystick polls must not steal EEPROM DO bits
 	@# (Raiden background-music death regression).
 	./test/test_eeprom_read_race ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
+	@# user-override contract, driven through the real dlopen'd core.
+	@# shadowHiresN is fixed for the whole session at retro_load_game
+	@# time, so each case is a separate process invocation -- exactly
+	@# like a real frontend restart.  The seed CRC (0xDC187F82) is
+	@# verified against the actual ROM bytes first: a corpus rip that
+	@# does not match the seed would otherwise make the test "pass"
+	@# without ever exercising the DB lookup it claims to test.
+	@avp=$$(bash scripts/find-rom.sh 'Alien vs Predator (1994).jag' '*Alien*Predator*.jag' '*Alien*Predator*.j64'); \
+	if [ -n "$$avp" ]; then \
+		avp_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$avp" 2>/dev/null); \
+		if [ "$$avp_crc" = "0xDC187F82" ]; then \
+			rc=0; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 1 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 2 --quiet \
+				--option virtualjaguar_pertitle_defaults=disabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 3 --quiet \
+				--option virtualjaguar_pertitle_defaults=disabled \
+				--option virtualjaguar_internal_resolution=2x || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
+				--option virtualjaguar_true_color=disabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 6 --quiet || rc=1; \
+			exit $$rc; \
+		else \
+			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
+				"AvP ROM CRC $$avp_crc != 0xDC187F82 (seed mismatch)"; \
+		fi; \
+	else \
+		bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
+			"no ROM matching 'Alien vs Predator*' in the private corpus"; \
+	fi
+	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
+	@# yarc.j64 is committed in-tree so this case never skips.
+	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
 	@echo ""
 	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
 	@echo "test/test_cd_toc_contract (needs VJ_TOC_DISC=<image>),"
@@ -1150,6 +1268,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cheat.c src/core/cheat.c
+
+test/test_titledb: test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1277,6 +1399,18 @@ test/test_audio_presence: test/test_audio_presence.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_audio_presence.c -ldl -lm
 
+test/test_audio_boundary: test/test_audio_boundary.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_boundary.c -ldl -lm
+
+test/test_audio_rate: test/test_audio_rate.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_audio_rate.c -ldl -lm
+
+test/tools/i2s_lag_probe: test/tools/i2s_lag_probe.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/i2s_lag_probe.c test/harness/harness.c -ldl -lm
+
 test/test_memtrack: test/test_memtrack.c src/core/memtrack.c src/core/memtrack.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_memtrack.c src/core/memtrack.c -lm
@@ -1289,6 +1423,17 @@ test/test_nvmbios: test/test_nvmbios.c src/core/nvmbios.c src/core/nvmbios.h \
 test/tools/test_memory_map: test/tools/test_memory_map.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_memory_map.c -ldl
+
+# E2E behaviour test for the per-title enhancement defaults DB (#368):
+# apply / disable / user-override contract, driven through the real core
+# via the shared harness.  Needs shadowHiresN + shadowFBActive from the
+# wide test symbol set (exports-test.list / link-test.T).
+test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_pertitle_db.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1354,6 +1499,13 @@ test/tools/test_runahead_determinism: test/tools/test_runahead_determinism.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_runahead_determinism.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_wedge_spin.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
@@ -1632,4 +1784,3 @@ cue2cdi:
 
 print-%:
 	@echo '$*=$($*)'
-

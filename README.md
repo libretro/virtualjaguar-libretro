@@ -80,6 +80,10 @@ Two independent clock-scale options — the 68000 (`virtualjaguar_m68k_clock_sca
 
 `virtualjaguar_crash_detect` (on by default) checks once per frame for known failure signatures and writes the diagnosis into the frontend log. Cost when enabled: one indirect call plus a ~256-pixel hash per frame. ([`src/core/crash_detect.c`](src/core/crash_detect.c))
 
+### Per-title enhancement defaults
+
+`virtualjaguar_pertitle_defaults` (on by default) applies known-safe enhancement presets automatically for recognized games — only for options you've left at their default value. Any option you've changed yourself always wins, and disabling this option restores stock behaviour for every title. 12 entries covering 11 titles, derived from the blit census in [`docs/hires-stage0-census.md`](docs/hires-stage0-census.md), including **Alien vs Predator** (2x internal resolution + true color), **Doom** (2x + true color), **Missile Command 3D** (2x + true color), **Hover Strike** (2x), and **Cybermorph** (true color). New entries require committed evidence — propose candidates via [issue #368](https://github.com/libretro/virtualjaguar-libretro/issues/368).
+
 ### Roadmap: internal hi-res upscaling — *in design*
 
 The true-color shadow framebuffer is deliberately the 1× prototype of a larger architecture: rendering above native resolution inside the core. That work, and the rest of the enhancement suite, is tracked as epic [#338](https://github.com/libretro/virtualjaguar-libretro/issues/338). It is **in design** — no dates, no promises beyond what's in the issue.
@@ -233,7 +237,7 @@ System clock 26.590906 MHz NTSC / 26.593900 MHz PAL. Full source map: [`docs/sou
 - **[GitHub Discussions](https://github.com/libretro/virtualjaguar-libretro/discussions)** — questions and compatibility reports. Bring your frontend log.
 - **[Issues](https://github.com/libretro/virtualjaguar-libretro/issues)** — confirmed bugs.
 - **[Releases](https://github.com/libretro/virtualjaguar-libretro/releases)** — tagged builds for 16 platforms. The rolling **[`nightly` prerelease](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly)** is rebuilt from every push to `develop`; it is gated on *compiling*, not on the test suite — treat it as bleeding edge.
-- **[`docs/`](docs)** — the full document index: [network play setup](docs/netlink-user-guide.md), [file formats](docs/README), [source layout](docs/source-layout.md), [savestate compatibility](docs/savestate-compat.md), [CD read speed](docs/cd-read-speed.md), [CD known issues](docs/cd-known-issues.md), [cartridge triage](docs/cart-issue-triage.md), [profiling](docs/profiling.md), [release process](docs/release-process.md), [changelog](docs/WHATSNEW), [TODO](docs/TODO), and the distilled JTRM hardware references (`docs/jtrm-*.md`).
+- **[`docs/`](docs)** — the full document index: [network play setup](docs/netlink-user-guide.md), [file formats](docs/README), [source layout](docs/source-layout.md), [savestate compatibility](docs/savestate-compat.md), [ROM patches / soft patching](docs/rom-patches.md), [CD read speed](docs/cd-read-speed.md), [CD known issues](docs/cd-known-issues.md), [cartridge triage](docs/cart-issue-triage.md), [profiling](docs/profiling.md), [release process](docs/release-process.md), [changelog](docs/WHATSNEW), [TODO](docs/TODO), and the distilled JTRM hardware references (`docs/jtrm-*.md`).
 - **[SECURITY.md](SECURITY.md)** — security policy and binary verification.
 
 ## Contributors

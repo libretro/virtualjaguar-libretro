@@ -120,7 +120,7 @@ struct retro_core_option_v2_category option_cats_us[] = {
    {
       "timing",
       "Timing",
-      "Experimental hardware timing accuracy (bus/DRAM access modeling)."
+      "Clock speed multipliers, then the experimental hardware-timing models."
    },
    { NULL, NULL, NULL },
 };
@@ -169,6 +169,35 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_pertitle_defaults",
+      "Per-Title Enhancement Defaults",
+      NULL,
+      "Apply known-safe enhancement presets automatically for recognized games (e.g. internal resolution or true color for titles verified to benefit). A preset only applies to options you have left at their default value -- any option you change yourself always wins. Disable for stock behaviour on every title.",
+      NULL,
+      "video",
+      {
+         { "enabled",  NULL },
+         { "disabled", NULL },
+         { NULL, NULL },
+      },
+      "enabled"
+   },
+   {
+      "virtualjaguar_blit_memo",
+      "Blit Memoization (Per-Title)",
+      NULL,
+      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render an identical scene every engine cycle while the player is idle). Output is bit-identical by construction; enabled per title via the enhancement database. Verify mode never skips - it executes every would-be skip and logs any divergence (for validating new titles). Not available for CD content.",
+      NULL,
+      "video",
+      {
+         { "disabled", "Disabled" },
+         { "enabled",  "Enabled" },
+         { "verify",   "Verify (debug, no speedup)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,
@@ -183,25 +212,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled"
    },
-   {
-      "virtualjaguar_dram_timing",
-      "DRAM Timing (Experimental)",
-      NULL,
-      "Charge the GPU and 68000 realistic DRAM access time for memory accesses that leave their local buses, pacing games that rely on hardware timing (Doom-class) closer to real hardware. Symmetric: each processor pays only its own access costs, so relative CPU/GPU timing is preserved. Experimental: the cost model is still being calibrated; leave disabled unless a game visibly runs too fast.",
-      NULL,
-      "timing",
-      {
-         { "disabled", NULL },
-         { "enabled",  NULL },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
+   /* Clock speeds first, then the experimental timing models they interact
+    * with -- the toggles below are grouped under the two scales on purpose. */
    {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,
-      "Run the 68000 CPU at a multiple of its stock ~13.3 MHz. An enhancement lever, not an accuracy fix: overclocking can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that rely on stock CPU timing, and underclocking is for experimentation only. Bus/DRAM costs and all timers stay at stock speed. Leave at 1x unless a specific game benefits; bug reports are only valid at 1x.",
+      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix: it can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. If an overclocked game misbehaves, try enabling the timing models below. Report bugs only at 1x.",
       NULL,
       "timing",
       {
@@ -218,7 +235,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_clock_scale",
       "RISC (GPU/DSP) Clock Scale (Overclock)",
       NULL,
-      "Run the GPU and DSP RISC processors at a multiple of their stock ~26.6 MHz. An enhancement lever, not an accuracy fix: extra RISC cycles can lift GPU-bound framerates. Audio sample pacing (I2S/DAC) and all timers stay at stock speed, so audio does not pitch-shift -- the DSP simply gets more compute per sample. May break titles that rely on stock RISC timing. Leave at 1x unless a specific game benefits; bug reports are only valid at 1x.",
+      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing. If an overclocked game misbehaves, try enabling the timing models below. Report bugs only at 1x.",
       NULL,
       "timing",
       {
@@ -229,6 +246,48 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "1x"
+   },
+   {
+      "virtualjaguar_dram_timing",
+      "DRAM Timing (Experimental)",
+      NULL,
+      "Charge the GPU and 68000 realistic DRAM access time once they leave their local buses, pacing hardware-timed games (Doom-class) closer to real hardware. Each processor pays only its own costs, so relative CPU/GPU timing is preserved. Still being calibrated.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_gpu_pipeline_timing",
+      "GPU Pipeline Timing (Experimental)",
+      NULL,
+      "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board, and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_blitter_timing",
+      "Blitter Bus Timing (Experimental)",
+      NULL,
+      "Charge the 68000 the bus time each blit really takes -- on hardware the blitter is the top-priority bus master and freezes the cacheless 68000 while it runs. Zero-time blits let games paced on blit completion (Doom's menus, Hover Strike) run too fast. Still being calibrated.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
    },
    {
       "virtualjaguar_netlink",

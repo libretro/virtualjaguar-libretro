@@ -16,6 +16,16 @@
  * statics need explicit extern decls here. */
 extern uint32_t gpu_pc;
 extern uint32_t dsp_pc;
+/* Executed-opcode counters (gpu.c / dsp.c).  The wedge predicate needs
+ * them: a sampled PC that never changes does NOT mean the processor is
+ * stuck -- deterministic per-frame slice budgets land the end-of-slice PC
+ * on the same instruction of a healthy wait/spin loop every frame
+ * (Super Burnout spins ~446k GPU opcodes/frame at one sampled PC; found
+ * in the issue #378 overclock pilot).  A wedge is only real when the
+ * processor is flagged running yet executed ZERO opcodes for the whole
+ * window.  User-visible hangs stay covered by video_stall regardless. */
+extern uint32_t gpu_exec_opcode_count;
+extern uint32_t dsp_exec_opcode_count;
 
 /* ---------- tunables ---------- */
 
@@ -81,10 +91,10 @@ static int  cd_initialized = 0;
 
 static unsigned frame_no;
 
-static uint32_t last_gpu_pc;
 static unsigned gpu_same_pc_frames;
-static uint32_t last_dsp_pc;
+static uint32_t last_gpu_opcount;
 static unsigned dsp_same_pc_frames;
+static uint32_t last_dsp_opcount;
 
 static uint32_t fb_hash_prev;
 static unsigned fb_same_hash_frames;
@@ -269,10 +279,10 @@ void CrashDetectInit(void)
 void CrashDetectReset(void)
 {
    frame_no = 0;
-   last_gpu_pc = 0;
    gpu_same_pc_frames = 0;
-   last_dsp_pc = 0;
+   last_gpu_opcount = 0;
    dsp_same_pc_frames = 0;
+   last_dsp_opcount = 0;
    fb_hash_prev = 0;
    fb_same_hash_frames = 0;
    last_cd_fifo_drains = 0;
@@ -335,33 +345,43 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
                  frame_no, cur_dsp_pc);
    }
 
-   /* ---- GPU wedge: same PC, still running ---- */
-   if (gpu_running && cur_gpu_pc == last_gpu_pc)
+   /* ---- GPU wedge: still running, executing NOTHING ----
+    * The opcode delta is the whole predicate.  A stable sampled PC is NOT
+    * required: it aliases on healthy spin loops (see the extern block at
+    * the top of this file), and requiring it can mask a real zero-opcode
+    * wedge whose PC moves anyway (e.g. an external G_PC write while the
+    * core executes nothing). */
+   if (gpu_running && gpu_exec_opcode_count == last_gpu_opcount)
    {
       gpu_same_pc_frames++;
       if (gpu_same_pc_frames == WEDGE_FRAMES_GPU
           && may_log(&last_log_gpu_wedge))
-         LOG_WRN("[CRASH-DETECT] gpu_wedge frame=%u pc=$%08X stuck for %u frames\n",
+         LOG_WRN("[CRASH-DETECT] gpu_wedge frame=%u pc=$%08X running but 0 opcodes for %u frames\n",
                  frame_no, cur_gpu_pc, WEDGE_FRAMES_GPU);
    }
    else
    {
       gpu_same_pc_frames = 0;
    }
+   last_gpu_opcount = gpu_exec_opcode_count;
 
-   /* ---- DSP wedge: same PC, still running ---- */
-   if (dsp_running && cur_dsp_pc == last_dsp_pc)
+   /* ---- DSP wedge: same rule as the GPU.  (The old sampled-PC-only
+    * predicate is also why WEDGE_FRAMES_DSP grew to 600: audio engines
+    * idle in JR loops that alias exactly like Super Burnout's GPU wait.
+    * The threshold stays conservative anyway.) ---- */
+   if (dsp_running && dsp_exec_opcode_count == last_dsp_opcount)
    {
       dsp_same_pc_frames++;
       if (dsp_same_pc_frames == WEDGE_FRAMES_DSP
           && may_log(&last_log_dsp_wedge))
-         LOG_WRN("[CRASH-DETECT] dsp_wedge frame=%u pc=$%08X stuck for %u frames\n",
+         LOG_WRN("[CRASH-DETECT] dsp_wedge frame=%u pc=$%08X running but 0 opcodes for %u frames\n",
                  frame_no, cur_dsp_pc, WEDGE_FRAMES_DSP);
    }
    else
    {
       dsp_same_pc_frames = 0;
    }
+   last_dsp_opcount = dsp_exec_opcode_count;
 
    /* ---- Video stall: framebuffer hash unchanged while either
     * processor still running. */
@@ -432,7 +452,5 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
       next_heartbeat_frame = frame_no + HEARTBEAT_FRAMES;
    }
 
-   last_gpu_pc = cur_gpu_pc;
-   last_dsp_pc = cur_dsp_pc;
    fb_hash_prev = cur_fb_hash;
 }

@@ -127,11 +127,20 @@ static int linebuffer_has_pixels(void)
                   "\x12\x34\x56\x78\x9A\xBC\xDE\xF0", 8) == 0;
 }
 
+/* OB exposes the latched phrase as four 16-bit registers, least significant
+ * word at the lowest address, each register big-endian internally
+ * (jag_sim netlists/tom/OB.NET:55-67 + IODEC.NET:85-88):
+ *
+ *   OB0 $F00010 = phrase[15:0]     OB2 $F00014 = phrase[47:32]
+ *   OB1 $F00012 = phrase[31:16]    OB3 $F00016 = phrase[63:48]
+ *
+ * In byte terms that is a swap of each address pair, so TOM byte $10+n holds
+ * phrase byte (n ^ 1).  See docs/jtrm-object-processor.md. */
 static int ob_holds(uint64_t p0)
 {
-    int i;
-    for (i = 7; i >= 0; i--) {
-        if (g_tom[0x10 + (7 - i)] != (uint8_t)((p0 >> (i * 8)) & 0xFF))
+    int n;
+    for (n = 0; n < 8; n++) {
+        if (g_tom[0x10 + n] != (uint8_t)(p0 >> (8 * (n ^ 1))))
             return 0;
     }
     return 1;

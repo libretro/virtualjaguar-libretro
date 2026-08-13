@@ -18,6 +18,7 @@
 #include "readcpu.h"
 #include "../core/state.h"
 #include "../core/vjag_memory.h"
+#include "../core/vjtrace.h"
 
 // Exception Vectors handled by emulation
 #define EXCEPTION_BUS_ERROR                2 /* This one is not emulated! */
@@ -287,6 +288,9 @@ void m68ki_exception_interrupt(uint32_t intLevel)
 		//			 m68ki_cpu_names[CPU_TYPE], ADDRESS_68K(REG_PC), vector));
 		return;
 	}
+
+	// The 68K has now committed to servicing this interrupt level.
+	VJT_EMIT(VJT_EV_IRQ_DISPATCH, M68K, intLevel, 0);
 
 	// Start exception processing
 	sr = m68ki_init_exception();

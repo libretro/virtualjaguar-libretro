@@ -40,7 +40,7 @@ jobs:
       # (fetch-depth: 1) that reports the checkout commit for every path, so
       # build_site.py detects the shallow clone and falls back to the build
       # date instead of publishing four identical, wrong timestamps.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Build site
@@ -57,8 +57,8 @@ jobs:
       # JSON-LD or sitemap).  Nothing is deployed if it trips.
       - name: Check generated site
         run: python3 scripts/check_site.py _site
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
@@ -70,4 +70,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

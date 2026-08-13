@@ -28,6 +28,7 @@
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
+#include "../core/vjtrace.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -305,6 +306,11 @@ static uint32_t dspgo_poll_count;
 
 static uint32_t dsp_in_exec = 0;
 static uint32_t dsp_releaseTimeSlice_flag = 0;
+/* DSP execution liveness counter for the crash watchdog's wedge
+ * predicate -- see gpu.c gpu_exec_opcode_count for rationale and the
+ * delay-slot caveat (PC sampling aliases on idle JR/wait loops, which
+ * DSP audio engines sit in constantly). */
+uint32_t dsp_exec_opcode_count = 0;
 
 /* Instruction slots a DSP-issued D_FLAGS store waits out before it
  * retires: the slot holding the store itself, plus the one instruction
@@ -929,6 +935,24 @@ uint32_t DSPGetFlags(void)
 	return dsp_flags;
 }
 
+/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
+ * VJ_TRACE; DSPGetReg is new-for-vjtrace surface (unlike GPU's
+ * pre-existing #406 GPUGetReg, left unguarded elsewhere), so it
+ * compiles out entirely in shipped/non-test builds rather than relying
+ * solely on exports.list to hide it. */
+#ifdef VJ_TRACE
+/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose a DSP
+ * register by index from the CURRENT bank, mirroring GPUGetReg in
+ * src/tom/gpu.c. Not part of the shipped ABI (production link uses
+ * exports.list, which does not have the _DSP* wildcard). */
+uint32_t DSPGetReg(int n)
+{
+	if (n < 0 || n > 31)
+		return 0;
+	return dsp_reg[n];
+}
+#endif /* VJ_TRACE */
+
 void DSPInit(void)
 {
 	dsp_build_branch_condition_table();
@@ -1004,6 +1028,9 @@ void DSPExec(int32_t cycles)
 	{
       uint16_t opcode;
       uint32_t index;
+#ifdef VJ_TRACE
+      VJT_PCHIST_DSP(dsp_pc);
+#endif
 
 		/* If IMASK was cleared, see if any other interrupts are pending --
 		 * but not until the D_FLAGS store that cleared it has retired, so
@@ -1060,6 +1087,7 @@ void DSPExec(int32_t cycles)
 		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = opcode & 0x1F;
 		dsp_pc += 2;
+		dsp_exec_opcode_count++;
 		dsp_executeOpcode(index);
 		cycles -= dsp_opcode_cycles[index];
 
@@ -1294,6 +1322,7 @@ INLINE static void dsp_opcode_jump(void)
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
+		dsp_exec_opcode_count++;
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Refilling the pipeline from the branch target costs enough
@@ -1330,6 +1359,7 @@ INLINE static void dsp_opcode_jr(void)
 		dsp_opcode_first_parameter  = (ds_opcode >> 5) & 0x1F;
 		dsp_opcode_second_parameter = ds_opcode & 0x1F;
 		dsp_pc += 2;
+		dsp_exec_opcode_count++;
 		dsp_executeOpcode(ds_index);
 		dsp_pc = delayed_pc;
 		/* Same branch-target pipeline refill as dsp_opcode_jump. */
@@ -2412,6 +2442,7 @@ INLINE static void DSP_jr(void)
          pipeline[plPtrExec].writebackRegister = pipeline[plPtrExec].operand2;	// Set it to RN
       }//*/
       dsp_pc += 2;	// For DSP_DIS_* accuracy
+      dsp_exec_opcode_count++;
       DSPOpcode[pipeline[plPtrExec].opcode]();
       pipeline[plPtrWrite] = pipeline[plPtrExec];
 

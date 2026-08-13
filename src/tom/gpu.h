@@ -28,6 +28,12 @@ void GPUBeginSlice(uint32_t riscCycles);
 int32_t GPUSliceRemaining(void);
 void GPUSyncToM68K(void);
 void GPUUpdateRegisterBanks(void);
+/* Add wall-time system clocks to the current GPU instruction's bus
+ * stall (blitter bus-time model). */
+void GPUChargeBusStall(uint32_t sysclks);
+/* Zero the pipeline/gateway timing model's transient state (option
+ * toggle, reset, savestate load). */
+void GPUPipeTimingReset(void);
 void GPUHandleIRQs(void);
 void GPUSetIRQLine(int irqline, int state);
 
