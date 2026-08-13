@@ -8,7 +8,7 @@
   Full list: <a href="{{DOCS_OPTIONS_URL}}">libretro docs</a>.
 </p>
 
-<h2>True-color rendering <span class="badge review">merged — PR #341</span></h2>
+<h2>True-color rendering <span class="badge good">shipped — v3.2.0</span></h2>
 <p>
   The blitter computes Gouraud shading with 16 fraction bits, then discards
   them in the 16-bit CRY write. <code>virtualjaguar_true_color</code> keeps
@@ -39,12 +39,12 @@
 <div class="evidence">
   304&nbsp;&rarr;&nbsp;450 unique colors (peak 423&nbsp;&rarr;&nbsp;702). Both
   blitter engines agree exactly; off, 600 frames hash bit-identical to develop.
-  CRY 16bpp only, ~8&nbsp;MB when enabled. Merged &mdash;
-  <a href="{{REPO}}/pull/341">PR #341</a>; in nightlies, not yet in a tagged
-  release.
+  CRY 16bpp only, ~8&nbsp;MB when enabled. Shipped in
+  <a href="{{REPO}}/releases/tag/v3.2.0">v3.2.0</a> &mdash;
+  <a href="{{REPO}}/pull/341">PR #341</a>.
 </div>
 
-<h2>Internal resolution 2&times; <span class="badge review">stage&nbsp;1 merged &middot; stage&nbsp;2 in review</span></h2>
+<h2>Internal resolution 2&times; <span class="badge good">complete — v3.3.0</span></h2>
 <p>
   The blitter is the Jaguar's rasterizer, and it walks source textures with
   16.16 fixed-point steps &mdash; then rounds each output pixel to the nearest
@@ -53,6 +53,20 @@
   same walks at double density into a shadow surface. The extra pixels are
   <strong>source data the hardware sampled past</strong> &mdash; not
   interpolation, not sharpening, not a neural upscaler.
+</p>
+<p>
+  As of <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a> the pipeline is
+  complete: supersampling covers fractional-walk <strong>blits</strong>
+  (Stage&nbsp;2), the Object Processor's <strong>scaled sprites</strong>
+  (Stage&nbsp;3, SCBITOBJ) including <strong>8bpp CLUT objects</strong>, and
+  both <strong>CRY and RGB16 direct</strong> video modes render the recovered
+  detail to the screen. The RGB16 renderer mattered more than it sounds:
+  measured across ~3,000,000 scaled calls, Val d&rsquo;Is&egrave;re and Primal
+  Rage are 100% RGB16 &mdash; before v3.3.0 an entire class of titles produced
+  supersampled content and then threw it away at scanline time. And the CLUT
+  extension is what reaches 2D games at all: scaled CLUT objects are 81% of the
+  truly-scaled pixels in International Sensible Soccer and 76% in
+  Val d&rsquo;Is&egrave;re.
 </p>
 <p>
   The emulated machine never sees it. The stock framebuffer stays bit-identical
@@ -94,6 +108,29 @@
   </figcaption>
 </figure>
 
+<figure class="smooth">
+  <img src="assets/hires_ab_valdisere_fullframe.png" width="1048" height="448"
+       alt="Val d'Isere Skiing and Snowboarding, downhill run: left is the 1x frame pixel-doubled, right is the same frame at 2x internal resolution. The snowboarder, trees and course furniture carry finer edges on the right.">
+  <figcaption>
+    Val d&rsquo;Is&egrave;re, mid-run at 46&nbsp;MPH, same ROM and same input
+    script &mdash; only the option differs. This title measured a flat
+    <strong>0.0000%</strong> before v3.3.0: every scaled object on screen is an
+    8bpp CLUT sprite, and its video mode is RGB16. Both v3.3.0 additions are
+    load-bearing here.
+  </figcaption>
+</figure>
+
+<figure class="smooth">
+  <img src="assets/hires_ab_valdisere_sprite.png" width="908" height="240"
+       alt="Magnified 3x crop of the snowboarder sprite. In the 1x panel the rider and board outline are flat 2x2 blocks; in the 2x panel the board edge, jacket and limbs resolve intermediate texels.">
+  <figcaption>
+    The rider, <strong>magnified 3&times;</strong> &mdash; a scaled 8bpp CLUT
+    object, exactly the path Stage&nbsp;3&rsquo;s CLUT extension supersamples.
+    The board outline and jacket edges resolve texels the 1&times; walk stepped
+    past.
+  </figcaption>
+</figure>
+
 <p>
   <strong>Which titles benefit, measured.</strong> The number is the share of
   2&times;2 output blocks carrying genuine sub-pixel detail &mdash; a coverage
@@ -109,6 +146,8 @@
   <tr><td>Skyhammer</td><td>in-mission cockpit, city flight</td><td>3.4&ndash;17.7%</td></tr>
   <tr><td>Doom</td><td>E1M1 gameplay</td><td>8.7%</td></tr>
   <tr><td>Missile Command 3D</td><td>Original 3D gameplay</td><td>5.0&ndash;5.9%</td></tr>
+  <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>downhill run (new in v3.3.0: RGB16 + scaled CLUT)</td><td>2.5&ndash;7.2% <em>(was 0.0000%)</em></td></tr>
+  <tr><td>International Sensible Soccer</td><td>match kickoff (scaled CLUT sprites)</td><td>0.1&ndash;0.6% <em>(was 0.0000% outside 16bpp scenes)</em></td></tr>
 </table></div>
 
 <p>
@@ -123,18 +162,19 @@
   candidates measured a true 0.0000%, for three different reasons:
 </p>
 <ul>
-  <li><strong>Hover Strike</strong> &mdash; the detail is produced correctly,
-  then discarded. 89% of it lands in an off-screen buffer that the game
-  plain-copies to the display; that copy is an integer 1:1 walk, so it
-  replicates. A known, cheaply fixable follow-on, not a limit.</li>
+  <li><strong>Towers II</strong> &mdash; zero non-uniform blocks across
+  1.17&nbsp;billion rendered pixels. Its content is information-theoretically
+  flat for this feature.</li>
   <li><strong>I-War</strong> and <strong>Towers II</strong> &mdash; they
   magnify their textures (81% of I-War's qualifying walks consume less than one
   texel per pixel). The half-step sample lands inside the same texel, so there
   is nothing to recover. Information-theoretic, not a bug.</li>
   <li><strong>Cybermorph</strong> and <strong>Checkered Flag</strong> &mdash;
   effectively none of their blits use a fractional source walk (13 and 8
-  qualifying blits out of roughly 1.7&nbsp;M each). Nothing for this feature to
-  hook into.</li>
+  qualifying blits out of roughly 1.7&nbsp;M each), and Cybermorph re-measured
+  0.0000% on v3.3.0 even with true colour on. Nothing for this feature to hook
+  into &mdash; use True Color there instead, which is exactly why the
+  per-title defaults ship it for Cybermorph.</li>
 </ul>
 <p>
   Iron Soldier 2 on CD is <em>unverified</em>, not zero &mdash; its gameplay
@@ -150,16 +190,17 @@
 </p>
 
 <div class="evidence">
-  Stage&nbsp;1 (the 2&times; pipeline, box replication only) merged &mdash;
-  <a href="{{REPO}}/pull/353">PR #353</a>; Stage&nbsp;2 (the supersampling that
-  recovers the detail above) in review &mdash;
-  <a href="{{REPO}}/pull/357">PR #357</a>. Method, per-title input scripts and
+  Stage&nbsp;1+2 shipped in v3.2.0 (<a href="{{REPO}}/pull/353">PR #353</a>,
+  <a href="{{REPO}}/pull/359">PR #359</a>); Stage&nbsp;3 and the RGB16 renderer
+  shipped in <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a>
+  (<a href="{{REPO}}/pull/381">PR #381</a>,
+  <a href="{{REPO}}/pull/383">PR #383</a>, the CLUT extension in
+  <a href="{{REPO}}/issues/367">#367</a>). Method, per-title input scripts and
   instrumentation:
   <a href="{{REPO}}/blob/develop/docs/avp-renderer-analysis.md">docs/avp-renderer-analysis.md</a>
-  &middot; <a href="{{REPO}}/blob/feature/338-hires-stage2/docs/hires-stage0-census.md">corpus census &sect;9</a>
-  (lands on <code>develop</code> with PR&nbsp;#357)
+  &middot; <a href="{{REPO}}/blob/develop/docs/hires-stage0-census.md">corpus census</a>
   &middot; <a href="{{REPO}}/blob/develop/docs/hires-upscaling-design.md">design</a>
-  &middot; epic <a href="{{REPO}}/issues/338">#338</a>. Not in a tagged release.
+  &middot; epic <a href="{{REPO}}/issues/338">#338</a>.
 </div>
 
 <h2>Overclocking that doesn't break the game</h2>
@@ -197,10 +238,33 @@
   (signatures and thresholds in the header comment).
 </div>
 
-<h2>Roadmap <span class="badge plain">in design</span></h2>
+<h2>Per-title enhancement defaults <span class="badge good">shipped — v3.2.0+</span></h2>
 <p>
-  Stage&nbsp;3 of the internal-resolution track extends supersampling to the
-  Object Processor's scaled sprites, which is the only stage that reaches 2D
-  titles. Epic <a href="{{REPO}}/issues/338">#338</a> &mdash; in design, no
-  dates.
+  <code>virtualjaguar_pertitle_defaults</code> (default on) applies known-safe
+  presets for recognized games &mdash; 2&times; + true colour for Doom and
+  Alien vs Predator, true colour for Cybermorph, and more as titles are
+  verified. A preset only touches options you have left at their defaults; any
+  option you set yourself always wins. Disable it for stock behaviour on every
+  title.
 </p>
+<div class="evidence">
+  Title table: <a href="{{REPO}}/blob/develop/src/core/titledb.c">src/core/titledb.c</a>
+  (every row carries its evidence citation) &middot;
+  <a href="{{REPO}}/issues/368">#368</a>.
+</div>
+
+<h2>Blit memoization <span class="badge good">shipped — v3.3.0</span></h2>
+<p>
+  Some titles re-render a bit-identical scene every engine cycle while the
+  player is idle. <code>virtualjaguar_blit_memo</code> skips a blit only when
+  its <em>entire</em> input state provably matches an earlier identical blit,
+  and replays the recorded writes &mdash; output is bit-identical by
+  construction, and a verify mode executes every would-be skip and checks it.
+  Enabled per title via the enhancement database; 2,546,482 corpus
+  verifications, zero divergences.
+</p>
+<div class="evidence">
+  <a href="{{REPO}}/blob/develop/docs/blit-memo.md">docs/blit-memo.md</a>
+  &middot; <a href="{{REPO}}/issues/411">#411</a>,
+  <a href="{{REPO}}/pull/414">PR #414</a>.
+</div>
