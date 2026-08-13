@@ -274,6 +274,28 @@ Rules for agents:
   (`<Title>/<Title>/*.cue`), so discover cues with `find -L` rather than a
   hardcoded depth.
 
+## Interactive shell aliases will hang your commands
+
+This user's shell aliases `rm`, `cp` and `mv` to their `-i` (interactive)
+forms. A prompt with no TTY to answer it blocks **forever**:
+
+- `cp a b` prints `overwrite b? (y/n [n])` and silently does **nothing** —
+  measurements then run against a stale file and quietly lie to you.
+- `rm x && next_step` inside a backgrounded command hangs at the prompt, so
+  `next_step` never runs. This left an HTML edit half-applied and an orphaned
+  `rm -i` sitting on a prompt for **nine hours**.
+
+Rules:
+
+- **Deleting: use `trash`** (`/usr/bin/trash`, built into macOS). It is
+  recoverable, non-interactive, and the right default in a repo where
+  `test/roms/private` and other gitignored paths hold irreplaceable data.
+- If you truly need it gone, bypass the alias explicitly: `command rm -f`,
+  `command cp -f`, `command mv -f`. Never a bare `rm`/`cp`/`mv` in a chain.
+- **Verify a background task actually exited** — don't infer it from its side
+  effects. Check the task output, and `ps -eo pid,etime,command | grep ' -i '`
+  if something feels slow. A hung prompt looks exactly like "still working".
+
 ## Set DEVELOPER_DIR for host builds
 
 `xcode-select` points at `/Applications/Xcode.app`, so `make`/`cc` resolve to
