@@ -56,12 +56,22 @@ G_PC            equ     GPU_BASE + $10
 G_CTRL          equ     GPU_BASE + $14          ; GPU control / IRQ latches
 GO              equ     $00000001
 
-;; OB (current object) latch, TOM_BASE + $10..$17, big-endian 64-bit.
-;; The OP writes the whole first phrase here before raising IRQ3, so
-;; the high long is the marker we stashed in the object.
+;; OB (current object) latch, TOM_BASE + $10..$17.  The OP writes the
+;; whole first phrase here before raising IRQ3.  OB exposes it as four
+;; 16-bit registers, least significant word at the LOWEST address, each
+;; register big-endian internally (jag_sim netlists/tom/OB.NET:55-67,
+;; IODEC.NET:85-88):
+;;
+;;   OB0 $F00010 = phrase[15:0]     OB2 $F00014 = phrase[47:32]
+;;   OB1 $F00012 = phrase[31:16]    OB3 $F00016 = phrase[63:48]
+;;
+;; Our p0 is $0BADF00D00000002, so a long read at TOM_OB+4 returns
+;; OB2:OB3 = $F00D:$0BAD.  The marker stays asymmetric on purpose --
+;; it discriminates the word order rather than hiding it.
 TOM_OB          equ     TOM_BASE + $10
 
 OBJ_MARKER      equ     $0BADF00D
+OBJ_MARKER_OB   equ     $F00D0BAD
 IRQ3_LATCH      equ     $00000200
 
                 org     $802000
@@ -109,8 +119,8 @@ entry:
                 ;; runs before GPUSetIRQLine and is not gated on GPU state,
                 ;; so this separates "IRQ path broken" from "OP never got
                 ;; there".
-                move.l  TOM_OB.l,d4
-                cmp.l   #OBJ_MARKER,d4
+                move.l  TOM_OB+4.l,d4
+                cmp.l   #OBJ_MARKER_OB,d4
                 bne     .no_object
 
                 ;; Read gpu_control (GPU_BASE+$14) and check the IRQ3 latch.
@@ -123,6 +133,6 @@ entry:
                 ;; the OP->GPU IRQ wiring is broken.
                 ACID_FAIL #1,d5,#IRQ3_LATCH
 
-.no_object:     ACID_FAIL #2,d4,#OBJ_MARKER
+.no_object:     ACID_FAIL #2,d4,#OBJ_MARKER_OB
 
 .saw_irq:       ACID_PASS
