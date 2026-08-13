@@ -127,18 +127,11 @@ static int linebuffer_has_pixels(void)
                   "\x12\x34\x56\x78\x9A\xBC\xDE\xF0", 8) == 0;
 }
 
-/* OB ($F00010-$F00017) holds the latched phrase LOW long first: the low
- * long at $F00010, the high long at $F00014, each big-endian.  For a
- * GPUOBJ that puts the DATA field (JTRM Rev 8: phrase bits 14-63) at
- * $F00014 and leaves TYPE/YPOS at $F00010 -- see OPSetCurrentObject()
- * in src/tom/op.c and issue #354. */
 static int ob_holds(uint64_t p0)
 {
     int i;
-    for (i = 0; i < 4; i++) {
-        uint8_t lo = (uint8_t)((p0 >> ((3 - i) * 8)) & 0xFF);
-        uint8_t hi = (uint8_t)((p0 >> (32 + (3 - i) * 8)) & 0xFF);
-        if (g_tom[0x10 + i] != lo || g_tom[0x14 + i] != hi)
+    for (i = 7; i >= 0; i--) {
+        if (g_tom[0x10 + (7 - i)] != (uint8_t)((p0 >> (i * 8)) & 0xFF))
             return 0;
     }
     return 1;

@@ -119,29 +119,63 @@ Used for: mid-frame effects, palette changes, display list modifications during 
 
 Note: Despite the name, GPUOBJ doesn't run GPU code directly. It fires an interrupt; the GPU ISR at vector offset $30 (interrupt 3) does the actual work.
 
-### Reading DATA back through OB ($F00010-$F00017)
+### Reading DATA back through OB ($F00010-$F00017) -- UNRESOLVED
 
-The OP latches the whole phrase into OB before raising IRQ3. **The low
-long is at `$F00010` and the high long at `$F00014`** -- so `$F00014`
-returns pure DATA, while `$F00010` carries TYPE and YPOS in its low bits.
+The OP latches the whole phrase into OB before raising IRQ3. **Which
+phrase bits land at which OB address is not specified by the JTRM**, and
+this is currently an open question -- see issue #354.
 
-Rev 8 pins that bits 0-13 are control and bits 14-63 are DATA "memory
-mapped as the object code registers OB0-3"; it does *not* say which
-32-bit window holds which half of DATA. What it does constrain is that
-the control fields must not appear in the window an ISR reads for DATA.
+Rev 8's complete set of statements about OB is:
 
-Storing the phrase straight big-endian (high long at `$F00010`) puts
-TYPE/YPOS at `$F00014` and breaks any ISR that reads DATA there. Val
-d'Isere Skiing (issue #354) is the title that shows it: its handler does
-`load ($F00014)` / `cmpq #0` and only runs its perspective-floor renderer
-when that reads zero, which is exactly DATA==0 for its object phrase
-`$8EA` (TYPE=2, YPOS=285, DATA=0). Implemented in
-`OPSetCurrentObject()`, `src/tom/op.c`; pinned by
-`test/acid/tests/op/op_gpu_int_object{,_halted}.s`.
+* Register table: `OB[0-3]  Object Code  F00010-16  RO`
+* "These four registers allow the graphics processor to read the current
+  object. This allows the graphics processor object to pass parameters
+  to the GPU interrupt service routine."
+* GPU object DATA bits are "memory mapped as the object code registers
+  OB0-3, so the GPU can use them as data or as a pointer to additional
+  parameters."
+* "If the interrupt source was the Object Processor, then the interrupt
+  service routine should read the Object Code registers, if required..."
+
+That is all of it. **Rev 8 never says whether OB0 (`$F00010`) holds
+phrase bits 63-48 or bits 15-0**, and its sample GPU ISR does not read
+OB. Rev 10 repeats only the table row.
+
+What Rev 8 *does* establish generally (p.131, "Data Organisation - Big
+and Little Endian") is that the document "adopts the big-endian
+convention", that a big-endian system "will see the high word of
+long-word at the low address", and that for phrase data the left-most
+pixel "always includes bit 63... in byte address terms this is stored in
+byte 0". Applying that to OB gives straight big-endian -- bit 63 at
+`$F00010`, bit 0 at `$F00017` -- which is what `OPSetCurrentObject()`
+implements today. But that passage is about **operands in memory and
+pixels within a phrase**, not about how a four-register group is mapped,
+so applying it to OB is an inference rather than a quote.
+
+**The unresolved conflict (issue #354).** Val d'Isere Skiing's IRQ3
+handler does `load ($F00014)` / `cmpq #0` and only runs its
+perspective-floor renderer (`$F03150`, which writes the per-scanline
+scaled-bitmap objects into the display list at `[$F03094]`) when that
+read returns zero. Under straight big-endian, `$F00014` returns the
+phrase's **low** long -- which necessarily contains TYPE in bits 2-0, so
+it can *never* be zero for a valid object. Measured: the handler reads
+`$87A` and the floor is never drawn. For the shipping game to have
+worked on hardware, `$F00014` must expose DATA (which is 0 for its
+object), not the low long.
+
+Do not "fix" this by flipping the order to match the game without
+resolving it properly: three in-tree tests
+(`test/test_op_gpu_object.c`, `test/acid/tests/op/op_gpu_int_object.s`
+and `..._halted.s`, plus `op_short_branch.s`) assert straight
+big-endian, and they were written against the implementation on a point
+the manual does not settle. Settling this needs hardware or an
+independent implementation, not a vote between our own tests and one
+game.
 
 Every commercial GPU-object phrase in the test corpus carries DATA == 0
 (Doom `$CD2`, Atari Karts `$2`, Attack of the Mutant Penguins `$2`,
-Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`).
+Super Burnout / SlamRacer `$3FFA`, yarc `$2`/`$A`), so no other title in
+the corpus can discriminate the orderings.
 
 ## BRANCHOBJ (Type 3) -- Branch Object
 
