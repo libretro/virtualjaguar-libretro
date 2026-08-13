@@ -42,6 +42,20 @@
  *
  * Requires a BENCH_PROFILE=1 core (perf counters) with test exports:
  *   make clean && make BENCH_PROFILE=1 TEST_EXPORTS=1
+ * (`make` does not track CFLAGS changes, so `make clean` is load-bearing --
+ * a plain rebuild leaves the old objects and the counters stay absent.)
+ *
+ * ALSO REQUIRES THE ACCURATE BLITTER.  PERF_INC(blitter_calls) exists only
+ * in blitter_generic(); blitter_blit() -- the default "fast" blitter -- has
+ * no counters, so a run that leaves the blitter on fast reports 0 blits
+ * with no way to tell "title issues none" from "counters can't see them".
+ * Always pass:
+ *   --option virtualjaguar_usefastblitter=disabled
+ * The tool tracks whether that option was passed explicitly: a zero-blits
+ * result under the accurate blitter is reported as a legitimate 0-traffic
+ * measurement (exit 0); a zero-blits result without it is reported as
+ * genuinely ambiguous and exits 2, since the counters may simply be blind
+ * to real traffic in that configuration.
  * Build:
  *   cc -O2 -Wall -std=c99 -I. -I./libretro-common/include \
  *      -o test/tools/blitter_budget_probe test/tools/blitter_budget_probe.c \
@@ -73,6 +87,10 @@ typedef struct {
     unsigned long long w_reads, w_writes, w_calls, w_inner;
     double   peak_field_pct;
     unsigned peak_frame, over100;
+    /* set when --option virtualjaguar_usefastblitter=disabled was passed
+     * explicitly, i.e. the accurate blitter (and its perf counters) was
+     * live for the whole run -- see the zero-blits branch in main(). */
+    unsigned accurate_requested;
 } budget_state;
 
 static budget_state st;
@@ -132,6 +150,16 @@ int main(int argc, char **argv)
     }
 
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;
+    {
+        /* Was the accurate blitter explicitly requested?  If so, the perf
+         * counters (accurate-path only) were live for the whole run, so a
+         * zero-blits result below is a real measurement, not a config gap. */
+        unsigned oi;
+        for (oi = 0; oi < cfg.num_options; oi++)
+            if (!strcmp(cfg.options[oi].key, "virtualjaguar_usefastblitter") &&
+                !strcmp(cfg.options[oi].value, "disabled"))
+                st.accurate_requested = 1;
+    }
     if (!harness_load_rom(&cfg)) { harness_shutdown(&cfg); return 1; }
 
     find = (find_fn)harness_dlsym(&cfg, "perf_counters_find");
@@ -164,6 +192,40 @@ int main(int argc, char **argv)
 
     printf("\nPEAK: frame %u at %.1f%% of one field; %u/%u frames exceed 100%%\n",
            st.peak_frame, st.peak_field_pct, st.over100, cfg.frames);
+    /* Zero blits is ambiguous under the fast blitter, not automatically
+     * false: PERF_INC(blitter_calls) lives only in the accurate blitter
+     * path (blitter_generic), not in blitter_blit(), so a fast-blitter run
+     * silently reports 0 whether or not the title actually issues blits --
+     * that gap is how "Doom performs zero blitter traffic" got into #401;
+     * Doom in fact issues ~400 blits/field under the accurate blitter
+     * (docs/doom-render-cost-census.md §4.1). But if the ACCURATE blitter
+     * was explicitly selected (st.accurate_requested), the counters were
+     * live for the whole run, so a zero here is a real measurement -- not
+     * every title uses the blitter, and asserting the fast-blitter
+     * explanation for that case would itself be a confident wrong
+     * conclusion from ambiguous-looking data. */
+    if (st.peak_field_pct <= 0.0)
+    {
+        if (st.accurate_requested)
+        {
+            printf("=> ZERO blitter traffic, with the ACCURATE blitter explicitly selected\n"
+                   "   (--option virtualjaguar_usefastblitter=disabled), so the perf counters\n"
+                   "   were live for the whole run.  This is a legitimate result: this title\n"
+                   "   issues no blitter traffic in this window -- it is not a fast-blitter\n"
+                   "   counter gap.\n");
+            harness_shutdown(&cfg);
+            return 0;
+        }
+        printf("=> NO blitter traffic counted, but the counters only exist in the ACCURATE\n"
+               "   blitter path and this run did not explicitly select it, so this result is\n"
+               "   AMBIGUOUS: it may mean the title truly issues no blits, or it may mean the\n"
+               "   fast blitter is simply hiding real traffic from these counters. Re-run\n"
+               "   with:\n"
+               "     --option virtualjaguar_usefastblitter=disabled\n"
+               "   to resolve which one it is before concluding either way.\n");
+        harness_shutdown(&cfg);
+        return 2;
+    }
     printf("%s\n", st.peak_field_pct > 100.0
         ? "=> blitter work alone cannot fit in one field: hardware needs >=2 VBLs\n"
           "   for those frames while we deliver them in one, so render-bound game\n"
