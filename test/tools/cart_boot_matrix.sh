@@ -45,6 +45,16 @@ MAX_RUNS="${CART_MATRIX_MAX_RUNS:-0}"
 
 CORE="${CART_MATRIX_CORE:-./virtualjaguar_libretro.dylib}"
 [ -f "$CORE" ] || CORE=./virtualjaguar_libretro.so
+# Refuse to start without a core.  The fallback above silently selected a
+# nonexistent .so when the dylib was missing (an ABI-mode switch deletes it,
+# and a stray iOS-built .o makes the relink fail), and every worker then
+# dlopen-failed -- which the classifier read as "the ROM would not load" and
+# wrote 123 false LOAD_FAIL rows.  Fail here instead.
+if [ ! -f "$CORE" ]; then
+    echo "error: no core at ./virtualjaguar_libretro.{dylib,so}" >&2
+    echo "build one with:  make TEST_EXPORTS=1" >&2
+    exit 1
+fi
 PROBE=./test/tools/cart_boot_probe
 
 BUILD_ID="$(bash scripts/build-id.sh)"
@@ -112,6 +122,14 @@ classify_mode() {
     fi
     if [ "$rc" -eq 124 ]; then
         echo "? (timeout)|no probe line within ${TIMEOUT_SECS}s${sigs:+; $sigs}"
+        return
+    fi
+    # A dlopen failure is a HARNESS fault, not a title result.  Writing it as
+    # LOAD_FAIL is what let a missing core masquerade as 123 unloadable ROMs,
+    # and because rows are cached per build id, the bad rows were then reused
+    # by the next invocation.  Never let that reach the matrix.
+    if grep -q 'dlopen(' "$logfile" 2>/dev/null; then
+        echo "? (core_error)|core failed to load — row invalid, not a title result"
         return
     fi
     if [ -z "$line" ] || printf '%s' "$line" | grep -q 'load_fail=1'; then
@@ -235,6 +253,36 @@ if [ "$count" -gt 0 ]; then
         grep 'FATAL build mismatch' "$preflight_log" >&2
         echo "rebuild with:  make TEST_EXPORTS=1   (and rebuild the probe if it changed)" >&2
         exit 1
+    fi
+    # The core must actually load.  This check used to be gated behind
+    # "if a CARTPROBE line exists", so a first ROM that legitimately fails to
+    # load (e.g. an alpha dump) skipped the whole preflight and let a broken
+    # core through -- exactly how the 123-LOAD_FAIL sweep got started.
+    if grep -q 'dlopen(' "$preflight_log"; then
+        echo "error: core failed to dlopen: $CORE" >&2
+        grep -m1 'dlopen(' "$preflight_log" >&2
+        echo "rebuild with:  make clean && make TEST_EXPORTS=1" >&2
+        exit 1
+    fi
+    # A first ROM that cannot load is not itself an error, but it means the
+    # preflight proved nothing -- walk forward until one loads, so the sweep is
+    # never started on an unverified core.
+    if ! grep -q '^CARTPROBE ' "$preflight_log"; then
+        probe_ok=0
+        while read -r cand; do
+            run_bounded "$TIMEOUT_SECS" "$preflight_log" \
+                "$PROBE" "$CORE" "$cand" --frames 1
+            if grep -q 'dlopen(' "$preflight_log"; then
+                echo "error: core failed to dlopen: $CORE" >&2
+                exit 1
+            fi
+            if grep -q '^CARTPROBE ' "$preflight_log"; then probe_ok=1; break; fi
+        done < "$FRESH"
+        if [ "$probe_ok" -eq 0 ]; then
+            echo "error: no ROM in the corpus produced a CARTPROBE line" >&2
+            echo "the core or the probe is broken -- refusing to write a matrix" >&2
+            exit 1
+        fi
     fi
     if grep -q '^CARTPROBE ' "$preflight_log" &&
        ! grep -q ' pc_valid=1 ' "$preflight_log"; then
