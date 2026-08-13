@@ -121,13 +121,58 @@
 </figure>
 
 <figure class="smooth">
-  <img src="assets/hires_ab_valdisere_sprite.png" width="908" height="240"
-       alt="Magnified 3x crop of the snowboarder sprite. In the 1x panel the rider and board outline are flat 2x2 blocks; in the 2x panel the board edge, jacket and limbs resolve intermediate texels.">
+  <img src="assets/hires_ab_valdisere_detail.png" width="1208" height="360"
+       alt="Magnified 3x crop of the course ahead of the snowboarder. The tree clusters in the 2x panel resolve branch-level structure where the 1x panel shows flat 2x2 blocks.">
   <figcaption>
-    The rider, <strong>magnified 3&times;</strong> &mdash; a scaled 8bpp CLUT
-    object, exactly the path Stage&nbsp;3&rsquo;s CLUT extension supersamples.
-    The board outline and jacket edges resolve texels the 1&times; walk stepped
-    past.
+    The course ahead, <strong>magnified 3&times;</strong> (densest-detail
+    window, located by measurement rather than by eye). The trees are scaled
+    8bpp CLUT objects &mdash; exactly the path Stage&nbsp;3&rsquo;s CLUT
+    extension supersamples &mdash; and at 2&times; they resolve branch
+    structure the 1&times; walk stepped past.
+  </figcaption>
+</figure>
+
+<figure class="smooth">
+  <img src="assets/hires_diff_valdisere_detail.png" width="1816" height="360"
+       alt="Three panels: the 1x crop, the 2x crop, and their difference amplified 8 times. The difference concentrates on the tree clusters.">
+  <figcaption>
+    Same crop &mdash; 1&times; / 2&times; / difference
+    <strong>amplified 8&times;</strong>. The recovered detail concentrates
+    exactly where the scaled objects are; the flat snow, which carries no
+    sub-texel information, stays black.
+  </figcaption>
+</figure>
+
+<h3>Doom and JagDoomEX</h3>
+<p>
+  Doom &mdash; and the popular <strong>JagDoomEX</strong> romhack, which the
+  per-title database recognizes by its patched CRCs and enhances identically
+  &mdash; is CRY-mode and blit-rendered, so it exercises the Stage&nbsp;2 path.
+  The frame below is from the attract demo, machine-selected for the highest
+  measured sub-pixel density in the run (13.9% of 2&times;2 blocks).
+</p>
+
+<figure class="smooth">
+  <img src="assets/hires_ab_doomex_fullframe.png" width="1312" height="480"
+       alt="JagDoomEX demo frame: left is the 1x frame pixel-doubled, right the same frame at 2x internal resolution with true color.">
+  <figcaption>
+    JagDoomEX, demo frame 1800, same ROM and same (empty) input &mdash; only
+    the options differ: 2&times; + true colour, the exact preset the per-title
+    database applies for Doom and both JagDoomEX CRCs.
+  </figcaption>
+</figure>
+
+<figure class="smooth">
+  <img src="assets/hires_diff_doomex_wall.png" width="1816" height="360"
+       alt="Three panels of a wall crop magnified 3x: 1x, 2x, and the difference amplified 8 times showing dense horizontal runs of recovered texels across the wall texture.">
+  <figcaption>
+    Wall crop, <strong>magnified 3&times;</strong> &mdash; 1&times; /
+    2&times; / difference <strong>amplified 8&times;</strong>. 14.7% of the
+    frame&rsquo;s pixels change; the diagonal mortar seam resolves continuously
+    at 2&times; where the 1&times; walk renders it broken. Doom&rsquo;s
+    palette is deliberately murky, so the honest presentation is the
+    difference map &mdash; at 1:1 this reads as texture solidity, not a
+    different picture.
   </figcaption>
 </figure>
 
