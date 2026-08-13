@@ -1319,8 +1319,26 @@ void blitter_blit(uint32_t cmd)
       unsigned v;
       zadd = REG(ZINC);
 
+      /* The four 16.16 Z corner values reach the blitter through the
+       * B_Z0-B_Z3 aliases ($F0228C-$F02298).  BlitterWriteByte splits
+       * every one of those writes into the SRCZINT (integer half) and
+       * SRCZFRAC (fractional half) mirrors and stores NOTHING at the
+       * PHRASEZ0..3 offsets themselves, so `REG(PHRASEZ0 + v*4)` read
+       * permanently-stale blitter_ram and handed the Z comparator
+       * near-zero source Z for every blit -- which, with Z_OP_SUP
+       * ("inhibit when source Z > destination Z"), never inhibits and
+       * also stamps ~0 into the Z buffer, disabling Z-buffering
+       * outright.  Rebuild each corner from the mirror, exactly as the
+       * Gouraud intensity init below rebuilds gd_c[]/gd_i[] from the
+       * PATTERNDATA/SRCDATA mirrors of the B_I0-B_I3 aliases. */
       for(v = 0; v < 4; v++)
-         z_i[v] = REG(PHRASEZ0 + v*4);
+      {
+         uint32_t b = 6 - (v * 2);
+         z_i[v] = ((uint32_t)blitter_ram[SRCZINT  + b]     << 24)
+                | ((uint32_t)blitter_ram[SRCZINT  + b + 1] << 16)
+                | ((uint32_t)blitter_ram[SRCZFRAC + b]     <<  8)
+                |  (uint32_t)blitter_ram[SRCZFRAC + b + 1];
+      }
    }
 
    // Gouraud shading
@@ -1632,23 +1650,29 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 
    /* nowrite and winhibit (pixel-mode write inhibit)
     *
-    * Z-comparator lane in pixel-mode 16bpp: the fast blitter reads
-    * source/dest Z via `REG(SRCZINT|DSTZ) & 0xFFFF`, which is bytes 2-3
-    * of the 8-byte register (low 16 of the high 32 half).  In the
-    * GET64-shift lane convention here, that is lane 2 -- so
-    * `zcomp & 0x04` matches fast.  Previously accurate used `zcomp & 0x01`
-    * (lane 0 = bytes 6-7), which produced visibly wrong z-inhibit
-    * decisions in BSG sprite blits (cmd=09900F71 / 09800F41 families:
-    * pixel-mode 16bpp DCOMPEN sprites with constant source Z).
+    * Z-comparator lane in pixel-mode 16bpp.  In PIXEL (non-phrase)
+    * mode both engines take the source/destination Z from the register
+    * file rather than from a phrase position, so there is exactly one
+    * correct lane and it is fixed.  The fast blitter reads it through
+    * READ_RDATA_16's pixel-mode arm, `REG(r + 4) & 0xFFFF`: `REG(r+4)`
+    * is the longword at bytes 4-7 and the `& 0xFFFF` keeps its LOW
+    * half, i.e. bytes **6-7** of the 8-byte register.  Those are the
+    * bytes BlitterWriteByte fills from the B_Z0 alias, and in the
+    * GET64 big-endian view they are bits 15..0 -- lane 0.  So the
+    * matching accurate-path test is `zcomp & 0x01`.
     *
-    * This is a match-fast pragmatic fix; the JTRM-pure behaviour would
-    * select the lane based on the destination pixel's position within a
-    * phrase, which neither path currently does.  See #189 for the full
-    * divergence writeup. */
+    * This previously read `zcomp & 0x04` (lane 2 = bytes 2-3 = B_Z2),
+    * justified by a misreading of `REG(r+4) & 0xFFFF` as "bytes 2-3".
+    * That compared an unrelated Z corner and inhibited whole sprites:
+    * Cybermorph's projectile (cmd=09900F39, A1_FLAGS=00032420 --
+    * pixel-mode 16bpp DSTENZ/Z_OP_SUP/DCOMPEN, the same family as the
+    * BSG cmd=09900F71 / 09800F41 sprites) was rejected in its entirety
+    * under the accurate blitter while the fast blitter drew it.  See
+    * #189 for the full divergence writeup. */
    winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-      || ((zcomp & 0x04) && !phrase_mode && (pixsize == 4));
+      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
    *nowrite = winhibit && !bkgwren;
 
    /* 16-bit pixel mode flag */
