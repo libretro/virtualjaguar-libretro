@@ -882,6 +882,14 @@ void BlitMemoSetMode(int mode)
       return;
    }
 
+   /* Re-arming counts as a fresh session for the arena-full notice.  The
+    * shadow arena is NOT freed when the mode goes OFF (only the pool is),
+    * so bm_alloc_shadow_arena() -- which is guarded on !bmShArena -- does
+    * not run again on the way back in.  Without this, a user who toggles
+    * the option off and on would never see the explanatory first-occurrence
+    * line again, only the terse every-256th one. */
+   bmShFullFlushes = 0;
+
    /* The pool is allocated lazily at the first blit launch, not here, so
     * content that never reaches BlitMemoLaunch() -- CD titles, anything
     * running with a shadow surface, anything that never blits -- pays
