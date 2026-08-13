@@ -178,6 +178,70 @@ static uint16_t op_hires_scale_peek(uint32_t data, int pixCount,
    return JaguarReadWord(addr, OP);
 }
 
+/* CLUT counterpart of op_hires_scale_peek (issue #367, design section 6.5).
+ *
+ * Section 6.5 left the CLUT depths on the stock box-replicated path in v1 on
+ * the grounds that "a CLUT index carries no sub-pixel information anyway; the
+ * only gain would come from scaled CLUT objects, which is a Stage-3+
+ * extension".  Stage 3 shipped, so that condition is met -- and a corpus
+ * census found scaled CLUT objects are the DOMINANT scaled traffic in exactly
+ * the 2D titles Stage 3 targets: 81.1% of truly-scaled destination pixels in
+ * International Sensible Soccer and 75.7% in Val d'Isere, against 0% in the
+ * 3D titles (AvP, Atari Karts).  Almost all of it is 8bpp.
+ *
+ * Returns the palette INDEX one hi-res sub-step ahead, not a colour: the
+ * caller owns the CLUT offset (`index |` for 1-4bpp) and the palette lookup,
+ * because those differ per depth.  Falls back to stockIndex on every bail-out
+ * path, so a peek can only ever degrade to the stock sample.
+ *
+ * Written generically over bpp (1/2/4/8).  Only 8bpp is wired up today --
+ * 2bpp and 4bpp together are 0.5% of Val d'Isere's scaled CLUT pixels and
+ * 1bpp never occurs, so the remaining depths are deliberately left unwired
+ * rather than carrying untested bit-extraction paths. */
+static int op_hires_scale_peek_clut(uint32_t data, int pixCount,
+      uint16_t horizontalRemainder, uint16_t hscale, uint32_t pitchBytes,
+      int bpp, uint32_t iwidthRemaining, int stockIndex)
+{
+   uint16_t rem;
+   int count;
+   int steps;
+   int pixelsPerPhrase;
+   int bitOff;
+   int shift;
+   uint32_t phrasesNeeded;
+   uint32_t addr;
+   uint8_t byte;
+
+   rem = (uint16_t)(horizontalRemainder + (0x20 / SHADOWFB_HIRES_MAX_N));
+   count = pixCount;
+   steps = 0;
+
+   while (rem >= hscale)
+   {
+      rem -= hscale;
+      count++;
+
+      if (++steps > 64)			/* pathological hscale: bail, don't spin */
+         return stockIndex;
+   }
+
+   pixelsPerPhrase = 64 / bpp;
+   phrasesNeeded = (uint32_t)count / (uint32_t)pixelsPerPhrase;
+   if (phrasesNeeded >= iwidthRemaining)
+      return stockIndex;
+
+   /* Pixels are packed MSB-first within the phrase, so the first pixel of a
+    * byte occupies its high bits. */
+   bitOff = (count % pixelsPerPhrase) * bpp;
+   addr = (data + phrasesNeeded * pitchBytes + (uint32_t)(bitOff >> 3)) & 0xFFFFFF;
+   if (addr >= 0xDFFF00)		/* CD/TOM/JERRY window: possible read side effect */
+      return stockIndex;
+
+   byte = JaguarReadByte(addr, OP);
+   shift = 8 - bpp - (bitOff & 7);
+   return (int)((byte >> shift) & ((1 << bpp) - 1));
+}
+
 
 //
 // Object Processor initialization
@@ -1571,6 +1635,76 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
                   // This is the *only* correct use of endian-dependent code
                   // (i.e., mem-to-mem direct copying)!
                   *(uint16_t *)currentLineBuffer = paletteRAM16[bits];
+
+                  /* Hi-res Stage 3 for scaled CLUT objects (issue #367,
+                   * promoting design section 6.5's CLUT deferral on corpus
+                   * evidence -- see op_hires_scale_peek_clut).  Same shape as
+                   * the 16bpp branch below: a non-1.0x HSCALE means this one
+                   * stock pixel was sampled from a source with more
+                   * horizontal detail than the destination kept, so peek one
+                   * sub-step ahead and place the two point samples in output
+                   * column order (REFLECT flips only the destination step, so
+                   * the physically-left sub-column holds the later source
+                   * sample).
+                   *
+                   * No RAM-shadow resolve here, unlike 16bpp: the source word
+                   * holds packed palette INDICES, not colour, so a shadow
+                   * lookup keyed on the stock 16-bit value would be
+                   * meaningless.  The peek is the only path.
+                   *
+                   * Colours are composed from the palette BYTE array rather
+                   * than paletteRAM16: the uint16 read above is deliberately
+                   * host-endian for the mem-to-mem copy, whereas the shadow
+                   * surface stores values in the same (hi << 8) | lo form the
+                   * 16bpp branch uses.  Reusing paletteRAM16 here would
+                   * byte-swap every sub-sample on a little-endian host. */
+                  if (shadowHiresActive && shadowHiresN == 2 && hscale != 0x20)
+                  {
+                     shadowfb_sub cols[SHADOWFB_HIRES_MAX_N];
+                     shadowfb_sub s0, s1;
+                     uint16_t stockVal;
+                     int lbIdx;
+                     int peekIdx;
+
+                     stockVal = ((uint16_t)paletteRAM[bits << 1] << 8)
+                              | paletteRAM[(bits << 1) + 1];
+                     lbIdx = (int)((currentLineBuffer - &tomRam8[0x1800]) >> 1);
+
+                     peekIdx = op_hires_scale_peek_clut(data, pixCount,
+                           horizontalRemainder, hscale, (uint32_t)(pitch << 3),
+                           8, iwidth, (int)bits);
+
+                     s0.value16 = stockVal;
+                     s0.frac16  = 0;
+                     /* The stock pixel already passed the TRANS test; the
+                      * peeked index never did.  A transparent peek is padding
+                      * the stock walk would draw nothing for -- degrade that
+                      * sub-column to the stock sample rather than to whatever
+                      * palette entry 0 happens to hold. */
+#ifndef OP_USES_PALETTE_ZERO
+                     if (flagTRANS && peekIdx == 0)
+#else
+                     if (flagTRANS && paletteRAM16[peekIdx] == 0)
+#endif
+                        s1.value16 = stockVal;
+                     else
+                        s1.value16 = ((uint16_t)paletteRAM[peekIdx << 1] << 8)
+                                   | paletteRAM[(peekIdx << 1) + 1];
+                     s1.frac16 = 0;
+
+                     if (flagREFLECT)
+                     {
+                        cols[0] = s1;
+                        cols[1] = s0;
+                     }
+                     else
+                     {
+                        cols[0] = s0;
+                        cols[1] = s1;
+                     }
+
+                     ShadowHiresLineFromScaledSamples(lbIdx, cols, stockVal);
+                  }
                }
                else
                {
