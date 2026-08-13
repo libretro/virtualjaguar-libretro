@@ -158,14 +158,21 @@ pixels/field, 31-33k phrases/field → 74k sysclks = 16.7% of a field**
 missing time.
 
 > **Configuration seam — read before reusing this number.** Every other
-> figure in this document was measured in the **default fast-blitter**
-> configuration; this row alone had to be taken with
+> figure in this document was measured with the blitter left at the
+> **headless test harness's** default, which is **fast**
+> (`test/harness/harness.c:385-387` hardcodes
+> `virtualjaguar_usefastblitter` to `"enabled"` for any run that doesn't pass
+> `--option` to override it). That is *not* the shipped core's default: the
+> core option itself (`libretro_core_options.h:130-141`) defaults
+> `virtualjaguar_usefastblitter` to `"disabled"`, i.e. **Accurate** — a
+> RetroArch user who has never touched the Blitter option is running
+> accurate, not fast. This row alone had to be taken with
 > `virtualjaguar_usefastblitter=disabled`, because that is the only mode with
 > the perf counters (§4.1 correction below). `blitter_generic` and
 > `blitter_blit` are not identical renderers — divergence between them is the
 > whole premise of `test/tools/test_blitter_compare`. The blit *count* was
 > corroborated across the seam: the vjtrace `--field-csv` `blit_cmd` column in
-> a default fast-blitter run reads **389 blits/field**, against **~400** from
+> a harness-default (fast) run reads **389 blits/field**, against **~400** from
 > the accurate-blitter probe. Pixel and phrase counts were **not** corroborated
 > and are accurate-blitter figures. The conclusion is insensitive to this (0.34
 > vs 0.4 field does not change "no single component is 10x cheap"), but do not
@@ -175,8 +182,11 @@ missing time.
 > traffic (renders via GPU/OP)". That reading came from a `blitter_calls`
 > perf counter that reads zero under the **fast** blitter:
 > `PERF_INC(blitter_calls)` exists only in `blitter_generic`/the accurate
-> path, not in `blitter_blit` (`src/tom/blitter.c:1158`), and fast is the
-> default. Run blitter censuses with
+> path, not in `blitter_blit` (`src/tom/blitter.c:1158`). Zero blits was a
+> tooling artifact of the **headless harness's** fast-blitter default
+> (`test/harness/harness.c:385-387`), not of the **shipped core's**
+> default, which is accurate (`libretro_core_options.h:130-141`,
+> `"disabled"`). Run blitter censuses with
 > `--option virtualjaguar_usefastblitter=disabled`.
 
 ### 4.2 68K

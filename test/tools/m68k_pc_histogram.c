@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "../harness/harness.h"
 
 #define NBUCKET 4096u
@@ -85,13 +86,43 @@ int main(int argc, char **argv)
     qsort(order, NBUCKET, sizeof(order[0]), cmp);
     printf("total samples=%u\n", total);
     {
-        /* Guard the parse: PC_TOP=0 or a non-numeric value would print no
-         * rows at all, which reads exactly like "no samples were taken" --
-         * a confusing zero this tool can already produce for a real reason
-         * (a core built without BENCH_PROFILE).  One such failure mode is
-         * enough. */
+        /* Guard the parse: atoi() on PC_TOP=0, a negative value, or a
+         * non-numeric value silently becomes 0 (prints no rows -- reads
+         * exactly like "no samples were taken", a confusing zero this tool
+         * can already produce for a real reason: a core built without
+         * BENCH_PROFILE) or, cast to unsigned, an enormous topn (dumps every
+         * bucket). strtoul() with endptr/errno validation rejects both
+         * non-numeric input and out-of-range values instead of coercing them,
+         * and the result is clamped to [1, NBUCKET] so a huge PC_TOP can't
+         * walk past the bucket table either. */
         const char *e = getenv("PC_TOP");
-        if (e && atoi(e) > 0) topn = (unsigned)atoi(e);
+        if (e && *e != '\0')
+        {
+            char *end = NULL;
+            unsigned long v;
+            /* strtoul() accepts a leading '-' and silently wraps it into a
+             * huge unsigned value (the C standard's documented behaviour,
+             * not a bug) -- reject that explicitly rather than letting the
+             * clamp below turn "-1" into "NBUCKET" without a word. */
+            if (e[0] == '-')
+                fprintf(stderr,
+                        "PC_TOP=%s ignored (must be an integer in [1, %u]); using default %u\n",
+                        e, NBUCKET, topn);
+            else
+            {
+                errno = 0;
+                v = strtoul(e, &end, 10);
+                if (end == e || *end != '\0' || errno == ERANGE || v == 0)
+                    fprintf(stderr,
+                            "PC_TOP=%s ignored (must be an integer in [1, %u]); using default %u\n",
+                            e, NBUCKET, topn);
+                else
+                {
+                    if (v > NBUCKET) v = NBUCKET;
+                    topn = (unsigned)v;
+                }
+            }
+        }
     }
     for (i = 0; i < NBUCKET && shown < topn; i++)
         if (hcount[order[i]])
