@@ -344,27 +344,44 @@ void OPNotifyOBFWrite(void)
 
 void OPSetCurrentObject(uint64_t object)
 {
-   //Not sure this is right... Wouldn't it just be stored 64 bit BE?
-   // Stored as least significant 32 bits first, ms32 last in big endian
-   /*	objectp_ram[0x13] = object & 0xFF; object >>= 8;
-      objectp_ram[0x12] = object & 0xFF; object >>= 8;
-      objectp_ram[0x11] = object & 0xFF; object >>= 8;
-      objectp_ram[0x10] = object & 0xFF; object >>= 8;
-
-      objectp_ram[0x17] = object & 0xFF; object >>= 8;
-      objectp_ram[0x16] = object & 0xFF; object >>= 8;
-      objectp_ram[0x15] = object & 0xFF; object >>= 8;
-      objectp_ram[0x14] = object & 0xFF;*/
-   // Let's try regular good old big endian...
-   tomRam8[0x17] = object & 0xFF; object >>= 8;
-   tomRam8[0x16] = object & 0xFF; object >>= 8;
-   tomRam8[0x15] = object & 0xFF; object >>= 8;
-   tomRam8[0x14] = object & 0xFF; object >>= 8;
-
+   /* OB ($F00010-$F00017) exposes the phrase the OP just latched, LOW
+    * long first at $F00010, HIGH long at $F00014.
+    *
+    * JTRM Rev 8, "Graphics Processor Object", splits the phrase into
+    * TYPE (bits 0-2), YPOS (bits 3-13) and DATA (bits 14-63), and says
+    * of DATA: "These bits may be used by the GPU interrupt service
+    * routine.  They are memory mapped as the object code registers
+    * OB0-3, so the GPU can use them as data or as a pointer to
+    * additional parameters."  So the window an ISR reads for DATA must
+    * not hand it TYPE/YPOS instead.
+    *
+    * We used to store the phrase straight big-endian (high long at
+    * $F00010), which put TYPE and YPOS at $F00014 -- inside the DATA
+    * range.  Val d'Isere Skiing (issue #354) is the title that shows
+    * this: its IRQ3 handler does `load ($F00014)` / `cmpq #0` and only
+    * runs the perspective-floor renderer at $F03150 when that reads
+    * zero.  Its GPU object is $00000000000008EA -- TYPE=2, YPOS=285,
+    * DATA=0 -- so the compare must succeed on every one of the 105
+    * scanlines the object fires on.  With the high long at $F00010 the
+    * read returned $8EA, the compare never matched, and the floor was
+    * never drawn: the ground stayed a flat constant-scale band.
+    *
+    * The JTRM does not spell out which 32-bit window holds which half
+    * of DATA, so this pins only what it does constrain -- the control
+    * fields stay out of the DATA window.  Every commercial GPU-object
+    * phrase in the corpus carries DATA==0 (Doom $CD2, Atari Karts $2,
+    * Super Burnout $3FFA, yarc $2/$A), so the remaining ambiguity is
+    * unobservable; a frame-hash A/B over those titles is bit-identical
+    * either way, and only Val d'Isere changes. */
    tomRam8[0x13] = object & 0xFF; object >>= 8;
    tomRam8[0x12] = object & 0xFF; object >>= 8;
    tomRam8[0x11] = object & 0xFF; object >>= 8;
-   tomRam8[0x10] = object & 0xFF;
+   tomRam8[0x10] = object & 0xFF; object >>= 8;
+
+   tomRam8[0x17] = object & 0xFF; object >>= 8;
+   tomRam8[0x16] = object & 0xFF; object >>= 8;
+   tomRam8[0x15] = object & 0xFF; object >>= 8;
+   tomRam8[0x14] = object & 0xFF;
 }
 
 

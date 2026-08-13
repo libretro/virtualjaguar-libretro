@@ -48,8 +48,12 @@ SPIN_LIMIT      equ     500000
 
 G_CTRL          equ     GPU_BASE + $14          ; GPU control / IRQ latches
 
-;; OB (current object) latch, TOM_BASE + $10..$17, big-endian 64-bit.
-TOM_OB          equ     TOM_BASE + $10
+;; OB (current object) latch, TOM_BASE + $10..$17.  The object's DATA
+;; field (JTRM Rev 8: phrase bits 14-63, "memory mapped as the object
+;; code registers OB0-3") is the high long and appears at
+;; TOM_BASE + $14; TOM_BASE + $10 holds the low long (TYPE + YPOS).
+;; See the longer note in op_gpu_int_object.s and issue #354.
+TOM_OB          equ     TOM_BASE + $14
 
 OBJ_MARKER      equ     $0BADF00D
 IRQ3_LATCH      equ     $00000200

@@ -56,10 +56,26 @@ G_PC            equ     GPU_BASE + $10
 G_CTRL          equ     GPU_BASE + $14          ; GPU control / IRQ latches
 GO              equ     $00000001
 
-;; OB (current object) latch, TOM_BASE + $10..$17, big-endian 64-bit.
-;; The OP writes the whole first phrase here before raising IRQ3, so
-;; the high long is the marker we stashed in the object.
-TOM_OB          equ     TOM_BASE + $10
+;; OB (current object) latch, TOM_BASE + $10..$17.  The OP writes the
+;; whole first phrase here before raising IRQ3.
+;;
+;; JTRM Rev 8, "Graphics Processor Object": bits 0-2 are TYPE, bits
+;; 3-13 are YPOS, and bits 14-63 are DATA -- "memory mapped as the
+;; object code registers OB0-3, so the GPU can use them as data or as
+;; a pointer to additional parameters".  So the DATA half of the
+;; phrase (the object's high long) is what appears at TOM_BASE + $14;
+;; TOM_BASE + $10 holds the low long, which carries TYPE and YPOS.
+;;
+;; This test previously read TOM_BASE + $10 and expected the marker
+;; there.  That pinned a straight-big-endian layout on a point the
+;; JTRM was believed silent about, and it put the control fields in
+;; the window the JTRM reserves for DATA.  Val d'Isere Skiing (issue
+;; #354) disambiguates it: its GPU-object ISR reads TOM_BASE + $14 as
+;; a long and runs the perspective-floor renderer only when it reads
+;; zero, which is exactly DATA==0 for its object phrase ($8EA: TYPE=2,
+;; YPOS=285, DATA=0).  Under the old layout that window returned $8EA
+;; and the floor never rendered.
+TOM_OB          equ     TOM_BASE + $14
 
 OBJ_MARKER      equ     $0BADF00D
 IRQ3_LATCH      equ     $00000200
