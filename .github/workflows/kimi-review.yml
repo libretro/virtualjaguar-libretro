@@ -1,0 +1,68 @@
+name: Kimi review
+
+# Second-opinion AI review, independent of Copilot (whose quota is per-requester
+# and runs out) and of CodeRabbit.  Self-contained on purpose: no third-party
+# action to drift, and the auth shape stays visible in one file.
+#
+# Runs automatically on PRs into develop/master, and on demand by commenting
+# "@kimi review" on a pull request.
+#
+# Fails SOFT: a review is advisory, so an API hiccup must never red-X a PR that
+# compiles and passes its tests.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [develop, master]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '@kimi review'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number
+        id: pr
+        run: |
+          set -u
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Review
+        env:
+          # Keys from the Kimi Code console (kimi.com/code/console) are for the
+          # "Kimi for Coding" SUBSCRIPTION, which is a different host from the
+          # pay-per-token Moonshot platform -- a subscription key 401s against
+          # api.moonshot.ai. Two protocol bases are offered; we use the
+          # OpenAI-compatible one:
+          #   OpenAI-compatible:    https://api.kimi.com/coding/v1
+          #   Anthropic-compatible: https://api.kimi.com/coding/
+          # The console issues a single key value; KIMI_KEY_ID is sent as an
+          # identifying header, harmless where unused.
+          #
+          # Models are tier-dependent: k3, k3-256k, kimi-for-coding,
+          # kimi-for-coding-highspeed. Override either value with a repo
+          # variable -- no code change needed.
+          KIMI_KEY_VALUE: ${{ secrets.KIMI_KEY_VALUE }}
+          KIMI_KEY_ID: ${{ secrets.KIMI_KEY_ID }}
+          KIMI_API_BASE: ${{ vars.KIMI_API_BASE || 'https://api.kimi.com/coding/v1' }}
+          KIMI_MODEL: ${{ vars.KIMI_MODEL || 'k3-256k' }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: python3 .github/scripts/kimi_review.py
