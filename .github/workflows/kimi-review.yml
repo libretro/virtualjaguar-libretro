@@ -1,0 +1,60 @@
+name: Kimi review
+
+# Second-opinion AI review, independent of Copilot (whose quota is per-requester
+# and runs out) and of CodeRabbit.  Self-contained on purpose: no third-party
+# action to drift, and the auth shape stays visible in one file.
+#
+# Runs automatically on PRs into develop/master, and on demand by commenting
+# "@kimi review" on a pull request.
+#
+# Fails SOFT: a review is advisory, so an API hiccup must never red-X a PR that
+# compiles and passes its tests.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [develop, master]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '@kimi review'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number
+        id: pr
+        run: |
+          set -u
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Review
+        env:
+          # KIMI_KEY_VALUE is the bearer token; KIMI_KEY_ID is passed through as
+          # an identifying header for providers that want it and is harmless
+          # where they don't.  If your console issues an AK/SK pair requiring a
+          # signed request instead, this step will fail with a clear 401 and the
+          # auth block below is the only thing that needs changing.
+          KIMI_KEY_VALUE: ${{ secrets.KIMI_KEY_VALUE }}
+          KIMI_KEY_ID: ${{ secrets.KIMI_KEY_ID }}
+          KIMI_API_BASE: ${{ vars.KIMI_API_BASE || 'https://api.moonshot.ai/v1' }}
+          KIMI_MODEL: ${{ vars.KIMI_MODEL || 'kimi-k2-0905-preview' }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: python3 .github/scripts/kimi_review.py
