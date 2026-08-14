@@ -52,7 +52,9 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "log.h"
 #include "version.h" /* generated; defines CORE_VERSION */
 
-#define SAMPLERATE 48000
+/* Samples (not pairs) handed to the frontend once per field.  These are
+ * also the numerator of the advertised sample rate -- see
+ * retro_get_system_av_info(). */
 #define BUFPAL  1920
 #define BUFNTSC 1600
 #define BUFMAX 2048
@@ -1167,8 +1169,32 @@ void retro_get_system_info(struct retro_system_info *info)
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
    memset(info, 0, sizeof(*info));
-   info->timing.fps            = vjs.hardwareTypeNTSC ? 60 : 50;
-   info->timing.sample_rate    = SAMPLERATE;
+   /* Advertised timing (issue #392).  The field rate is derived from the
+    * field the core actually paces -- JaguarGetFieldRateHz(), defined
+    * once in jaguar.h with its JTRM citations -- instead of the rounded
+    * 60/50 that used to be hard-coded here.  A non-interlaced NTSC field
+    * is 524 halflines x 31.7778 us = 60.05445 Hz; PAL is 624 x 32.0 us =
+    * 50.08013 Hz.  (NOT 59.94 Hz: that is the 262.5-line INTERLACED rate,
+    * and 525 halflines would put TOM into interlace -- JTRM Rev 8 p.15.)
+    *
+    * The declared sample rate has to follow, because retro_run hands the
+    * frontend a FIXED batch of BUFNTSC/BUFPAL samples -- 800 / 960 stereo
+    * pairs -- exactly once per field, so the true output rate IS
+    * pairs x field rate (48043.6 Hz NTSC / 48076.9 Hz PAL).  Advertising
+    * a flat 48000 against the corrected fps would over-deliver by ~0.09%
+    * forever, draining/overfilling the frontend's audio buffer: the
+    * underrun-pop class that test_audio_rate gates at 5 samples/sec.
+    * Before this change, 60 x 800 and 50 x 960 were both exactly 48000 --
+    * self-consistent only because both numbers were wrong together.
+    *
+    * 48000 remains the DAC's internal resample target (DAC_AUDIO_RATE);
+    * it cancels out of the pitch math (the per-output phase step is
+    * ring-samples-captured / output-pairs), so this is an advertised-value
+    * change only, with no effect on emulated state or emitted samples. */
+   info->timing.fps            = JaguarGetFieldRateHz();
+   info->timing.sample_rate    = (double)(vjs.hardwareTypeNTSC
+                                          ? (BUFNTSC / 2) : (BUFPAL / 2))
+                                 * info->timing.fps;
    info->geometry.base_width   = game_width;
    info->geometry.base_height  = game_height;
    /* Hi-res: the maxima scale by the (load-time-fixed) internal
