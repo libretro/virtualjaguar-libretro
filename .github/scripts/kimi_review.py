@@ -165,9 +165,19 @@ def main():
         print(f"Kimi API returned HTTP {e.code}: {detail}")
         if e.code in (401, 403):
             print(
-                "Auth failed. KIMI_KEY_VALUE is being sent as a bearer token. "
-                "If the provider issues an AK/SK pair needing a signed request, "
-                "the auth block in call_kimi() is what needs changing."
+                "Auth failed against " + os.environ["KIMI_API_BASE"] + ".\n"
+                "A key from the Kimi Code console (kimi.com/code/console) is a "
+                "'Kimi for Coding' SUBSCRIPTION key and only authenticates "
+                "against https://api.kimi.com/coding/v1 -- it will 401 against "
+                "the pay-per-token host api.moonshot.ai, and vice versa. Set "
+                "the KIMI_API_BASE repo variable to match where the key was "
+                "issued."
+            )
+        elif e.code in (400, 404):
+            print(
+                "Model '" + os.environ["KIMI_MODEL"] + "' was rejected. Valid "
+                "names are tier-dependent: k3, k3-256k, kimi-for-coding, "
+                "kimi-for-coding-highspeed. Set the KIMI_MODEL repo variable."
             )
         return 0
     except Exception as e:  # noqa: BLE001 - advisory job, never fail the PR
