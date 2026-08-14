@@ -43,22 +43,32 @@ TIMEOUT_SECS="${CART_MATRIX_TIMEOUT:-90}"
 JOBS="${CART_MATRIX_JOBS:-4}"
 MAX_RUNS="${CART_MATRIX_MAX_RUNS:-0}"
 
-CORE="${CART_MATRIX_CORE:-./virtualjaguar_libretro.dylib}"
-[ -f "$CORE" ] || CORE=./virtualjaguar_libretro.so
-# Refuse to start without a core.  The fallback above silently selected a
-# nonexistent .so when the dylib was missing (an ABI-mode switch deletes it,
-# and a stray iOS-built .o makes the relink fail), and every worker then
-# dlopen-failed -- which the classifier read as "the ROM would not load" and
-# wrote 123 false LOAD_FAIL rows.  Fail here instead.
-if [ ! -f "$CORE" ]; then
-    echo "error: no core at ./virtualjaguar_libretro.{dylib,so}" >&2
-    echo "build one with:  make TEST_EXPORTS=1" >&2
-    exit 1
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/matrix_common.sh"
+
+# Core discovery, the test-export check and the build-identity guard are shared
+# with the CD sweep (matrix_common.sh).  Refusing to start without a core is the
+# point: the old fallback silently selected a nonexistent .so when the dylib was
+# missing (an ABI-mode switch deletes it, and a stray iOS-built .o makes the
+# relink fail), every worker then dlopen-failed, and the classifier read that as
+# "the ROM would not load" -- 123 false LOAD_FAIL rows.
+if [ -n "${CART_MATRIX_CORE:-}" ]; then
+    CORE="$CART_MATRIX_CORE"
+    if [ ! -f "$CORE" ]; then
+        echo "error: CART_MATRIX_CORE=$CORE does not exist" >&2
+        exit 1
+    fi
+else
+    matrix_find_core || exit 1
+    CORE="./$MATRIX_CORE"
 fi
 PROBE=./test/tools/cart_boot_probe
 
-BUILD_ID="$(bash scripts/build-id.sh)"
+BUILD_ID="$(matrix_build_id)"
 export VJ_EXPECT_BUILD="$BUILD_ID"
+
+# Row-cache identity (#440): scoped to inputs that can change a verdict, so a
+# docs-only commit no longer invalidates all 154 rows.  See matrix_common.sh.
+CACHE_ID="$(matrix_cache_id)"
 
 ROWDIR="$LOGDIR/rows"
 mkdir -p "$LOGDIR" "$ROWDIR"
@@ -72,32 +82,7 @@ if [ ! -d "$ROMS_ROOT" ]; then
     exit 1
 fi
 
-TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
-
-run_bounded() {
-    # usage: run_bounded <seconds> <logfile> <cmd...>
-    secs="$1"; logfile="$2"; shift 2
-    if [ -n "$TIMEOUT_BIN" ]; then
-        "$TIMEOUT_BIN" "$secs" "$@" >"$logfile" 2>&1
-        return $?
-    fi
-    "$@" >"$logfile" 2>&1 &
-    pid=$!
-    waited=0
-    while kill -0 "$pid" 2>/dev/null; do
-        sleep 1
-        waited=$((waited + 1))
-        if [ "$waited" -ge "$secs" ]; then
-            kill -TERM "$pid" 2>/dev/null
-            sleep 2
-            kill -KILL "$pid" 2>/dev/null
-            wait "$pid" 2>/dev/null
-            return 124
-        fi
-    done
-    wait "$pid"
-    return $?
-}
+run_bounded() { matrix_run_bounded "$@"; }
 
 field() {
     # usage: field <name> <probe-line>   (numeric / $hex fields)
@@ -126,10 +111,11 @@ classify_mode() {
     fi
     # A dlopen failure is a HARNESS fault, not a title result.  Writing it as
     # LOAD_FAIL is what let a missing core masquerade as 123 unloadable ROMs,
-    # and because rows are cached per build id, the bad rows were then reused
-    # by the next invocation.  Never let that reach the matrix.
-    if grep -q 'dlopen(' "$logfile" 2>/dev/null; then
-        echo "? (core_error)|core failed to load — row invalid, not a title result"
+    # and because rows are cached, the bad rows were then reused by the next
+    # invocation.  Shared with the CD sweep so one fix covers both.
+    core_err="$(matrix_core_error "$logfile")"
+    if [ -n "$core_err" ]; then
+        echo "? (core_error)|$core_err"
         return
     fi
     if [ -z "$line" ] || printf '%s' "$line" | grep -q 'load_fail=1'; then
@@ -182,7 +168,7 @@ process_one() {
     slug="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')"
     rowfile="$ROWDIR/$slug.row"
 
-    if [ -f "$rowfile" ] && grep -q "build:$BUILD_ID" "$rowfile"; then
+    if [ -f "$rowfile" ] && grep -q "build:$CACHE_ID" "$rowfile"; then
         return 0
     fi
 
@@ -205,11 +191,12 @@ process_one() {
         "$title" \
         "${hle%%|*}" "${hle#*|}" \
         "${bios%%|*}" "${bios#*|}" \
-        "$BUILD_ID" > "$rowfile"
+        "$CACHE_ID" > "$rowfile"
     echo "done: $title  [hle: ${hle%%|*}]  [bios: ${bios%%|*}]"
 }
 export -f process_one run_bounded classify_mode field
-export ROWDIR LOGDIR FRAMES TIMEOUT_SECS TIMEOUT_BIN PROBE CORE BUILD_ID VJ_EXPECT_BUILD
+export -f matrix_core_error matrix_run_bounded
+export ROWDIR LOGDIR FRAMES TIMEOUT_SECS MATRIX_TIMEOUT_BIN PROBE CORE BUILD_ID CACHE_ID VJ_EXPECT_BUILD
 
 # ---------------------------------------------------------------------------
 # ROM list -> fresh work list (respecting MAX_RUNS) -> parallel workers
@@ -229,7 +216,7 @@ count=0
 while IFS= read -r rom; do
     base="$(basename "$rom")"
     slug="$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')"
-    if [ -f "$ROWDIR/$slug.row" ] && grep -q "build:$BUILD_ID" "$ROWDIR/$slug.row"; then
+    if [ -f "$ROWDIR/$slug.row" ] && grep -q "build:$CACHE_ID" "$ROWDIR/$slug.row"; then
         continue
     fi
     printf '%s\n' "$rom" >> "$FRESH"
@@ -237,7 +224,7 @@ while IFS= read -r rom; do
     if [ "$MAX_RUNS" -gt 0 ] && [ "$count" -ge "$MAX_RUNS" ]; then break; fi
 done < "$LIST"
 
-echo "corpus: $TOTAL ROMs; fresh this invocation: $count; build: $BUILD_ID; jobs: $JOBS"
+echo "corpus: $TOTAL ROMs; fresh this invocation: $count; build: $BUILD_ID; cache: $CACHE_ID; jobs: $JOBS"
 
 # Preflight: the build-identity guard must pass BEFORE any worker writes a
 # row.  A stale or mismatched core once turned an entire sweep into 153
@@ -258,9 +245,11 @@ if [ "$count" -gt 0 ]; then
     # "if a CARTPROBE line exists", so a first ROM that legitimately fails to
     # load (e.g. an alpha dump) skipped the whole preflight and let a broken
     # core through -- exactly how the 123-LOAD_FAIL sweep got started.
-    if grep -q 'dlopen(' "$preflight_log"; then
-        echo "error: core failed to dlopen: $CORE" >&2
-        grep -m1 'dlopen(' "$preflight_log" >&2
+    preflight_err="$(matrix_core_error "$preflight_log")"
+    if [ -n "$preflight_err" ]; then
+        echo "error: $preflight_err" >&2
+        echo "  core: $CORE" >&2
+        grep -m1 'dlopen(' "$preflight_log" >&2 2>/dev/null
         echo "rebuild with:  make clean && make TEST_EXPORTS=1" >&2
         exit 1
     fi
@@ -272,8 +261,9 @@ if [ "$count" -gt 0 ]; then
         while read -r cand; do
             run_bounded "$TIMEOUT_SECS" "$preflight_log" \
                 "$PROBE" "$CORE" "$cand" --frames 1
-            if grep -q 'dlopen(' "$preflight_log"; then
-                echo "error: core failed to dlopen: $CORE" >&2
+            preflight_err="$(matrix_core_error "$preflight_log")"
+            if [ -n "$preflight_err" ]; then
+                echo "error: $preflight_err (core: $CORE)" >&2
                 exit 1
             fi
             if grep -q '^CARTPROBE ' "$preflight_log"; then probe_ok=1; break; fi
