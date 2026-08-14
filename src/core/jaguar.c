@@ -423,6 +423,45 @@ static int m68kBusNoCharge = 0;
          regs.remainingCycles -= (int32_t)bus_arbiter_m68k_access((addr), (naccesses), m68kClockScalePct); \
    } while (0)
 
+/* A 68000 READ from GPU local RAM samples the state of a coprocessor that
+ * is running concurrently, so the GPU has to be advanced to where the
+ * 68000 already is inside this scheduler slice before the value is taken
+ * -- the exact mirror of the write-side handshake (M68KGPURAMSync, below).
+ *
+ * Without it a mailbox handshake can be read stale.  Doom's GPU job
+ * dispatch (issue #406): the GPU's idle loop re-writes a "done" flag at
+ * $F0304C on every pass, and the 68000 posts a job by clearing $F0304C,
+ * writing the routine address to $F03048, then polling $F0304C until the
+ * GPU sets it again.  The write to $F03048 syncs the GPU up to the 68000's
+ * position; the poll that follows a few 68000 cycles later does not, so the
+ * GPU never gets the cycles in which it would have loaded the command and
+ * cleared the flag.  The 68000 reads the idle loop's leftover 1, concludes
+ * the job is finished before it has started, and consumes the output buffer
+ * while the GPU is still filling it -- Doom then reads a level number of 0
+ * out of a half-written demo header and stops in I_Error("W_GetNumForName:
+ * MAP00 not found!").  On hardware the GPU runs ~2 instructions per 68000
+ * cycle and clears the flag long before the first poll completes.
+ *
+ * Nothing about it is timing-model specific: the read simply samples the
+ * GPU at the wrong point on the time line, so the outcome flips with any
+ * change in 68000 cycle accounting (which is why the wedge moved between
+ * VJ_DRAM_SCALE values instead of appearing past a threshold).
+ *
+ * m68kInLongRead suppresses the sync for the two halves of a 68000 long
+ * read that decomposes into two 16-bit accesses: the GPU is advanced once,
+ * before the pair, so a longword mailbox cannot be sampled with the GPU
+ * having run in between and torn it. */
+static int m68kInLongRead = 0;
+
+static void M68KGPURAMSyncRead(unsigned int address, unsigned int length)
+{
+   if (m68kInLongRead || m68kBusNoCharge)
+      return;
+   if (address < GPU_WORK_RAM_BASE + 0x1000
+       && address + length > GPU_WORK_RAM_BASE)
+      GPUSyncToM68K();
+}
+
 unsigned int m68k_read_memory_8(unsigned int address)
 {
 #ifdef ALPINE_FUNCTIONS
@@ -440,6 +479,7 @@ unsigned int m68k_read_memory_8(unsigned int address)
    if (!m68kBusNoCharge)
       VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
+   M68KGPURAMSyncRead(address, 1);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFF))
@@ -484,6 +524,7 @@ unsigned int m68k_read_memory_16(unsigned int address)
    if (!m68kBusNoCharge)
       VJT_WATCH_RD(address, 0, M68K);
    M68K_BUS_CHARGE(address, 1);
+   M68KGPURAMSyncRead(address, 2);
 
    // Note that the Jaguar only has 2M of RAM, not 4!
    if ((address >= 0x000000) && (address <= 0x1FFFFE))
@@ -561,8 +602,18 @@ unsigned int m68k_read_memory_32(unsigned int address)
       return GET32(jaguarMainROM, address - 0x800000);
    }
 
-   /* Fallthrough recurses into _16 twice — charged there, not here. */
-   return (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
+   /* Fallthrough recurses into _16 twice — charged there, not here.
+    * The GPU catch-up runs once for the whole longword instead (see
+    * M68KGPURAMSyncRead): the two halves are one 68000 access as far as
+    * the mailbox handshakes that need it are concerned. */
+   M68KGPURAMSyncRead(address, 4);
+   {
+      unsigned int v;
+      m68kInLongRead++;
+      v = (m68k_read_memory_16(address) << 16) | m68k_read_memory_16(address + 2);
+      m68kInLongRead--;
+      return v;
+   }
 }
 
 
