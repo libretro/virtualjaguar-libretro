@@ -65,7 +65,9 @@
       ResolveBootConfig;
       BlitterCompare*;
       DAC*;
-      JoystickState*;
+      Joystick*;
+      joypad0Buttons;
+      joypad1Buttons;
       MTState*;
       NVMBios*;
       NVM_*;
