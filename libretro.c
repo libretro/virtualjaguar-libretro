@@ -49,6 +49,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "vjag_memory.h"
 #include "state.h"
 #include "titledb.h"
+#include "titlehook.h"
 #include "log.h"
 #include "version.h" /* generated; defines CORE_VERSION */
 
@@ -103,6 +104,12 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
 /* One-shot latch for the "restart required" notice when the
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
+/* Same one-shot latch for the enhancement-hooks gate (issue #370).  Hooks
+ * are applied once at content load; toggling mid-session cannot un-patch
+ * (reverting would need a saved original the design deliberately does not
+ * keep, and would desync anything running), so the change is reported and
+ * takes effect on restart. */
+static int hook_restart_notice_logged = 0;
 
 #ifdef VJ_TRACE
 /* vjtrace per-session frame counter (see the use site in retro_run()).
@@ -647,6 +654,30 @@ static void check_variables(void)
          LOG_INF("[HIRES] internal resolution change to %s takes effect on restart\n",
                  var.value);
          hires_restart_notice_logged = 1;
+      }
+   }
+
+   /* Enhancement hooks (issue #370) are applied ONCE at content load, so
+    * this is compare-and-log only: never re-latch the gate here, or a
+    * mid-session toggle would disagree with the bytes actually in ROM.
+    * Read raw, like the load-time latch, so a DB row cannot flip its own
+    * gate.  Same "takes effect on restart" contract the internal-resolution
+    * option already has. */
+   {
+      struct retro_variable hook_var;
+      int hook_want;
+      hook_var.key = "virtualjaguar_enhancement_hooks";
+      hook_var.value = NULL;
+      hook_want = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hook_var)
+                   && hook_var.value
+                   && strcmp(hook_var.value, "enabled") == 0) ? 1 : 0;
+      if (hook_want == TitleHookGetEnabled())
+         hook_restart_notice_logged = 0;
+      else if (content_loaded && !hook_restart_notice_logged)
+      {
+         LOG_INF("[hooks] enhancement hooks %s takes effect on restart\n",
+                 hook_want ? "enabled" : "disabled");
+         hook_restart_notice_logged = 1;
       }
    }
 
@@ -1829,6 +1860,25 @@ bool retro_load_game(const struct retro_game_info *info)
          pertitle_enabled = true;
    }
 
+   /* Enhancement-hook gate (issue #370), latched HERE and nowhere else.
+    * Read raw for the same reason the gate above is: otherwise a DB row
+    * could carry {"virtualjaguar_enhancement_hooks","enabled"} in its own
+    * pairs[] and defeat "off by default" for its own title.  Defaults to
+    * disabled, including on a frontend that does not answer the query, so
+    * headless callers and tests get stock behaviour unless they ask.
+    * check_variables() only compares-and-logs; it must never re-latch, or a
+    * mid-session toggle would change what a later read sees. */
+   {
+      struct retro_variable hook_var;
+      hook_var.key = "virtualjaguar_enhancement_hooks";
+      hook_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hook_var) && hook_var.value)
+         TitleHookSetEnabled(strcmp(hook_var.value, "enabled") == 0);
+      else
+         TitleHookSetEnabled(0);
+      hook_restart_notice_logged = 0;
+   }
+
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
     * so N is fixed for the session and mid-game option changes only apply
@@ -1998,6 +2048,16 @@ bool retro_load_game(const struct retro_game_info *info)
       }
    }
 
+   /* Per-title enhancement hooks (issue #370): the single trigger.  Both
+    * boot strategies have finished (JaguarLoadFile + JaguarReset for the
+    * cart path), so the cart window is populated and nothing later
+    * rewrites it.  Gated off by default; refuses on anything but a
+    * cartridge, and refuses any hook whose expect[] bytes are not present.
+    * Cart ROM is not serialized and JaguarReset() never touches it, so
+    * this never needs re-applying -- not after retro_reset(), not after
+    * unserialize. */
+   TitleHookApplyROM();
+
    /* Advertise the Jaguar memory map so frontends (RetroArch, etc.) can
     * resolve emulated addresses to host buffers. Required for rcheevos.
     *
@@ -2089,6 +2149,12 @@ void retro_unload_game(void)
 
    /* The next option read must not see the previous title's CRC/match. */
    TitleDBSetContent(NULL, 0);
+   /* Same for the hook gate and any test-installed hook array: the next
+    * load re-latches the gate from the option (iOS cannot dlclose cores,
+    * so statics must be reset here, not left to process teardown). */
+   TitleHookSetEnabled(0);
+   TitleDBSetHooksForTest(NULL, 0);
+   hook_restart_notice_logged = 0;
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -2250,6 +2316,12 @@ void retro_deinit(void)
    TitleDBSetContent(NULL, 0);
    pertitle_enabled = true;
    blit_memo_requested = BLIT_MEMO_OFF;
+
+   /* Per-title enhancement hooks (#370): the gate is re-latched from the
+    * option on every load, so it re-arms OFF here. */
+   TitleHookSetEnabled(0);
+   TitleDBSetHooksForTest(NULL, 0);
+   hook_restart_notice_logged = 0;
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

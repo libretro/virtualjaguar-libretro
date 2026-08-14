@@ -57,6 +57,7 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 - `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA/Q-subcode in `cdrom.c`, image loading (CUE/BIN, CDI — **no CHD**, removed during the CD overhaul; see issue #322) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
 - `src/core/jaggd.c` — Jaguar GameDrive: SPI mailbox at `$F16000`, embedded GDBIOS blob, 6×1MB page → 16-bank switching for images up to 16 MB (spec: `docs/jgd-interface-notes.md`)
 - `src/core/titledb.c` — per-title enhancement defaults (#368); applied at option-read time in `libretro.c`, user-set values always win
+- `src/core/titlehook.c` — per-title enhancement **hooks** (#370): verified byte patches into cartridge ROM at load, gated by `virtualjaguar_enhancement_hooks` (default **disabled**). Ships with **zero** rows — the mechanism, not the data. Authoring rules + the three non-obvious fences (GameDrive banked image, cart entry vector `$400..$407`, `TitleHook*` needing its own export-list entry) in [`docs/enhancement-hooks.md`](docs/enhancement-hooks.md). Not a general scripting surface: if a behaviour fits a `{key, value}` string it is a `pairs[]` entry, and an emulator timing bug is never a hook
 - `src/bios/` — embedded BIOS / boot stubs
 - `src/m68000/` — UAE 68K (machine-generated; treat as opaque)
 - `libretro-common/` — shared utility lib
