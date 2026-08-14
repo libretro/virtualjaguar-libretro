@@ -166,6 +166,7 @@
 #include "perf_counters.h"
 
 PERF_COUNTER(timing_jerry_irqs);
+#include "inputdev.h"
 #include "joystick.h"
 #include "jlink.h"
 #include "uart.h"
@@ -381,6 +382,7 @@ void JERRYI2SCallback(void)
 void JERRYInit(void)
 {
    JoystickInit();
+   InputDevInit();
    MTInit();
    memcpy(&jerry_ram_8[0xD000], waveTableROM, 0x1000);
 
@@ -399,6 +401,7 @@ void JERRYInit(void)
 void JERRYReset(void)
 {
    JoystickReset();
+   InputDevReset();
    EepromReset();
    MTReset();
    JERRYResetI2S();

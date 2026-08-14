@@ -65,6 +65,8 @@ _DAC*
 _Joystick*
 _joypad0Buttons
 _joypad1Buttons
+_InputDev*
+_Quad*
 _MTState*
 _NVMBios*
 _NVM_*

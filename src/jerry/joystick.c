@@ -15,6 +15,7 @@
 
 #include <string.h>			// For memset()
 #include "joystick.h"
+#include "inputdev.h"
 #include "settings.h"
 
 // Global vars
@@ -69,6 +70,11 @@ uint16_t JoystickReadWord(uint32_t offset)
 		if (!joysticksEnabled)
 			return 0xFFFF;
 
+		// Non-pad devices self-clock against the game's own polling: at
+		// most one quadrature state per armed read (inputdev.h).  No-op
+		// when nothing but pads are attached.
+		InputDevClock();
+
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
 		offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
@@ -98,7 +104,8 @@ uint16_t JoystickReadWord(uint32_t offset)
 			data &= msk2[offset1 / 4];
 		}
 
-		return data;
+		// Row-independent overlay for a non-pad device (inputdev.h).
+		return InputDevOverlayF14000(data);
 	}
 	else if (offset == 2)
 	{
@@ -132,7 +139,10 @@ uint16_t JoystickReadWord(uint32_t offset)
 				data &= (joypad1Buttons[mask[offset1][1]] ? 0xFFFB : 0xFFFF);
 		}
 
-		return data;
+		// offset0/offset1 already hold the decoded row (0-3), or 0xFF when
+		// that port's nibble is not a socket-0 code -- both divisions above
+		// happen in place.
+		return InputDevOverlayF14002(data, offset0, offset1);
 	}
 
 	return 0xFFFF;
@@ -149,6 +159,8 @@ void JoystickWriteWord(uint32_t offset, uint16_t data)
 	{
 		audioEnabled     = ((data & 0x0100) ? true : false);
 		joysticksEnabled = ((data & 0x8000) ? true : false);
+		// Arm the non-pad emission clock (inputdev.h).
+		InputDevArm();
 	}
 }
 

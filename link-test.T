@@ -68,6 +68,8 @@
       Joystick*;
       joypad0Buttons;
       joypad1Buttons;
+      InputDev*;
+      Quad*;
       MTState*;
       NVMBios*;
       NVM_*;
