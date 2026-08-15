@@ -27,6 +27,12 @@ jobs:
       github.event_name == 'pull_request' ||
       (github.event.issue.pull_request && contains(github.event.comment.body, '@kimi review'))
     runs-on: ubuntu-latest
+    # The script soft-fails on purpose, but that only covers failures the
+    # script is alive to see.  Anything earlier -- checkout, a runner
+    # hiccup, a missing secret -- used to red-X the PR, which is the one
+    # thing this workflow's header says it must never do.  Same pattern the
+    # sanitizer job uses for the same reason: advisory, not gating.
+    continue-on-error: true
     steps:
       - name: Resolve PR number
         id: pr
@@ -38,6 +44,41 @@ jobs:
             echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
           fi
 
+      # GitHub computes refs/pull/N/merge asynchronously, so a job that starts
+      # immediately after a push -- especially a force-push, where mergeability
+      # goes back to UNKNOWN -- can reach checkout before the ref exists.
+      # actions/checkout's own retry (3 tries over ~40s) is not always enough:
+      # PR #450 burned all three and failed the job outright.
+      #
+      # That failure mode is worse than it looks.  It happens in `checkout`,
+      # BEFORE kimi_review.py runs, so none of the script's soft-fail handling
+      # applies and the advisory reviewer red-Xes a PR that compiles and passes
+      # its tests -- exactly what this workflow's design forbids.
+      - name: Resolve the ref to review
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          n='${{ steps.pr.outputs.number }}'
+          url="https://github.com/${{ github.repository }}"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if git ls-remote --exit-code "$url" "refs/pull/$n/merge" >/dev/null 2>&1; then
+              echo "ref=refs/pull/$n/merge" >> "$GITHUB_OUTPUT"
+              echo "merge ref available after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "refs/pull/$n/merge not computed yet (attempt $i); waiting 10s"
+            sleep 10
+          done
+          # Fall back rather than fail.  The head ref reviews the same diff;
+          # what it loses is the merge ref's useful property that an open PR
+          # picks up a reviewer fix landed on its base without a rebase.  Say
+          # so, because a silent downgrade is how the base-branch behaviour
+          # would quietly stop being true.
+          echo "ref=refs/pull/$n/head" >> "$GITHUB_OUTPUT"
+          echo "::warning title=Reviewing the head ref::refs/pull/$n/merge was still not computed after 100s; reviewing refs/pull/$n/head instead. The diff is the same, but this run does not pick up base-branch changes."
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -47,7 +88,7 @@ jobs:
           # script, so an "@kimi review" comment would run the wrong tree.
           # The merge ref is right for both, and it is what makes a PR pick up
           # a reviewer fix that has landed on its base without needing a rebase.
-          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
+          ref: ${{ steps.ref.outputs.ref }}
           fetch-depth: 0
 
       - name: Review
