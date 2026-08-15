@@ -113,7 +113,12 @@ def call_kimi(base_url, key, key_id, model, system, user):
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions", data=body, headers=headers
     )
-    with urllib.request.urlopen(req, timeout=180) as r:
+    # 180s was not enough for a large PR: #449 timed out at exactly 181s on a
+    # diff near MAX_DIFF_CHARS.  A long-context model reasoning over ~180 KB
+    # of diff routinely needs several minutes, and the job is advisory, so a
+    # generous ceiling costs only runner minutes on a request that stalls.
+    timeout = int(os.environ.get("KIMI_TIMEOUT_S", "600"))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         payload = json.load(r)
     return payload["choices"][0]["message"]["content"]
 
