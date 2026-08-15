@@ -92,10 +92,11 @@ def filtered_diff(base, head):
 
 
 def call_kimi(base_url, key, key_id, model, system, user):
+    # No temperature: the Kimi coding models accept only the default (1) and
+    # reject anything else with a 400, which used to kill every review.
     body = json.dumps(
         {
             "model": model,
-            "temperature": 0.2,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -163,6 +164,12 @@ def main():
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
         print(f"Kimi API returned HTTP {e.code}: {detail}")
+        # Soft-fail keeps the PR green, so the only signal a maintainer ever
+        # sees is this annotation -- without it a permanently broken reviewer
+        # looks identical to a healthy one in the runs list.
+        print("::warning title=Kimi review did not run::"
+              f"HTTP {e.code} from the Kimi API; no review was posted. "
+              "See the job log for the API's message.")
         if e.code in (401, 403):
             print(
                 "Auth failed against " + os.environ["KIMI_API_BASE"] + ".\n"
@@ -173,11 +180,20 @@ def main():
                 "the KIMI_API_BASE repo variable to match where the key was "
                 "issued."
             )
-        elif e.code in (400, 404):
+        elif e.code in (400, 404) and "model" in detail.lower():
             print(
                 "Model '" + os.environ["KIMI_MODEL"] + "' was rejected. Valid "
                 "names are tier-dependent: k3, k3-256k, kimi-for-coding, "
                 "kimi-for-coding-highspeed. Set the KIMI_MODEL repo variable."
+            )
+        elif e.code == 400:
+            # Do NOT guess here.  This branch used to assert a bad model name
+            # for every 400, which masked a request-shape bug (an unsupported
+            # temperature) behind a wrong diagnosis for the whole life of the
+            # workflow.  The API's own message above is the diagnosis.
+            print(
+                "The request was rejected on its shape, not its credentials. "
+                "The API's message is quoted above -- fix what it names."
             )
         return 0
     except Exception as e:  # noqa: BLE001 - advisory job, never fail the PR
