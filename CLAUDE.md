@@ -121,12 +121,32 @@ Every harness that dlopens the core prints the binary's embedded version (`vX.Y.
 ### Test ABI and re-linking
 
 `make` links the production-slim ABI (`retro_*` only); `make test` needs the
-wide test ABI so harnesses can `dlsym` internals. Switching between them
-re-links automatically — the Makefile deletes the library when the mode
-changes, so `make` followed by `make TEST_EXPORTS=1 test` works. (It did not
-before v2.3.2: the library was newer than every object, nothing relinked, and
-the suite failed with `Missing: m68k_execute`.) After `make test`, the library
-in the tree carries the wide exports; plain `make` restores the shipped ABI.
+wide test ABI so harnesses can `dlsym` internals. `TEST_EXPORTS=1` selects the
+wide one — and also adds `-DVJ_TRACE`, so it changes object *content*, not just
+the export list.
+
+Switching in **either** direction is handled automatically: the Makefile stamps
+the mode into `.link-mode` and, when it differs, deletes the library **and every
+object** before the build. Both `make` → `make TEST_EXPORTS=1 test` and
+`make TEST_EXPORTS=1` → `make` work with no `make clean`. Cost is one full
+rebuild per flip (~21s at `-j8` without ccache).
+
+The flush is deliberately unconditional rather than a list of "objects that use
+vjtrace". That list is what broke before: it omitted `src/tom/blit_memo.o`, so
+`make TEST_EXPORTS=1` followed by plain `make` died with undefined
+`_vjtrace_emit` referenced from `BlitMemoLaunch`, and the reverse direction
+linked cleanly while silently keeping the no-op macro expansion — traced builds
+that record nothing. Do not reintroduce a curated (or grepped, or `-MD`-derived)
+list; a file can pick up the `VJT_*` macros through an indirect include.
+CI gates both directions on every host row of `c-cpp.yml`'s build job: the
+build + `make test` steps cover `plain` → `TEST_EXPORTS=1`, and a final plain
+`make` after the artifact upload covers the reverse. `make -n` is exempt from
+the flush, so a dry run costs nothing.
+
+Earlier history: before v2.3.2 the mode switch didn't relink at all — the
+library was newer than every object, nothing rebuilt, and the suite failed with
+`Missing: m68k_execute`. After `make test`, the library in the tree carries the
+wide exports; plain `make` restores the shipped ABI.
 
 ### Build-identity guard (stale-binary protection)
 
