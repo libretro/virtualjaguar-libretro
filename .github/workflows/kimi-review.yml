@@ -41,6 +41,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          # Explicit, because the default differs per event: `pull_request`
+          # gives the merge ref, but `issue_comment` gives the DEFAULT branch
+          # (master here) -- which carries neither this workflow nor the
+          # script, so an "@kimi review" comment would run the wrong tree.
+          # The merge ref is right for both, and it is what makes a PR pick up
+          # a reviewer fix that has landed on its base without needing a rebase.
+          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
           fetch-depth: 0
 
       - name: Review
