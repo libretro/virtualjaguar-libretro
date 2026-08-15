@@ -119,7 +119,31 @@ static const TitleDBEntry titledb_table[] = {
 
    /* Doom EX romhack family — alias rows inheriting Doom (0x5E2CDBC0)'s
     * pairs.  CRC = IPS patch applied to the verified retail dump;
-    * boot-verified via cart_boot_probe (issue #409). */
+    * boot-verified via cart_boot_probe (issue #409).
+    *
+    * NO virtualjaguar_p2_device ROW HERE, and it is not an oversight
+    * (#429, #428).  #429 proposed auto-selecting the ST/Amiga mouse for
+    * JagDoomEX by CRC; the design spec made that row conditional on
+    * first confirming the title actually reads port 2.  It does not.
+    * Disassembled against every CRC in this block (plus the 250318
+    * archive build, which hashes to 0x35743B9C above):
+    *
+    *   - the pad poll writes only the port-1 row selects $81FE, $81FD,
+    *     $81FB and $81F7.  The port-2 nibble is $F in all four, i.e.
+    *     every port-2 row is deselected;
+    *   - the poll then does or.l #$F0FFFFFC before and.l into an 8-bit
+    *     accumulator, so $F14000 bits 12-15 -- the four lines a mouse
+    *     adapter drives -- cannot reach the result;
+    *   - all 11 absolute-long $F14000 references in the image are
+    *     accounted for: 8 in that poll, one move.l #$100 at init, and
+    *     two lea $F14000,a0 in the EEPROM driver (which reads bit 0).
+    *     There is no other path to the register.
+    *
+    * A row here would therefore disconnect the port-2 RetroPad for a
+    * title that reads nothing from port 2, in exchange for no function.
+    * Do not add one without re-running that check against the build in
+    * hand -- a future JagDoomEX release may add mouse support, and it
+    * will hash differently from every CRC listed here anyway. */
    {
       0x754096DB, "Doom EX (JagDoomEX)",
       {

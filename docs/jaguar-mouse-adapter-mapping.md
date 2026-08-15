@@ -563,6 +563,15 @@ empirically — drive synthetic quadrature per case and observe which produces c
 axis-aligned cursor motion. Expect case 3; a mismatch shows up as motion coupled
 diagonally between axes, which is unmistakable.
 
+*Still open.* The 3-entry table shipped (PR #449) but Elansar has not been run against
+it. Note also that whichever way it lands, it cannot become a per-title default:
+Elansar and Philia are **CD** titles, and `src/core/titledb.c` is keyed on cartridge
+CRCs and deliberately never hashes a disc image (`libretro.c`, the
+`info->data && !is_cd_content` guard). Elansar's wiring case will always be a manual
+option choice, so the answer belongs in the user guide
+([`docs/input-devices-user-guide.md`](input-devices-user-guide.md)), not in the
+database.
+
 ### B. Y-axis sign between case 1 and case 2
 
 The dedicated Amiga adapter (§4b) lands the Amiga's `V` (Y phase A) on bit 15 and `VQ`
@@ -615,9 +624,41 @@ at netlist level (and hence Domin's `$81xx` writes).
 - Physical measurement of a real adapter (none on hand).
 - Contacting AtariAge / The Brewing Academy for a schematic — worth doing for the PS/2
   question if it ever becomes load-bearing.
-- Disassembling Elansar or JagDoomEX to read their mouse routine directly. **This is the
-  highest-value unexplored lead for item A** and needs no external source: the row-select
-  write and bit tests are visible in the ROM.
+- ~~Disassembling Elansar or JagDoomEX to read their mouse routine directly.~~
+  **JagDoomEX: DONE, and the answer is negative** (see F.1). **Elansar: still not
+  attempted** — it is a CD title, so its executable has to be pulled out of the disc
+  image first, and item A remains open until someone does that or runs the game against
+  each option value.
+
+#### F.1. JagDoomEX does NOT read a mouse — settled by disassembly
+
+Checked against every JagDoomEX CRC carried in `src/core/titledb.c`
+(`0x754096DB`, `0x4643E9DB`, `0x35743B9C`, `0xAD6B68BA`, `0xC4F4CACF`, `0x1F4EE4A5`,
+`0x013A5359`, `0xB92D1CA3`, `0xEA12E234`), each reproduced by applying the matching IPS
+patch to the verified retail dump (`Doom - Evil Unleashed (1994).jag`, `0x5E2CDBC0`),
+plus the local `Doom (World) EX.j64` (`0xEE7B84EB`) and the newest patch archive
+(`JagDoomEX-ips-250318.7z`, which reapplies to `0x35743B9C`).
+
+Every one of them is **port 1 only**, by two independent mechanisms:
+
+1. The pad poll writes only the port-1 row selects `$81FE`, `$81FD`, `$81FB`, `$81F7`.
+   The port-2 nibble is `$F` in all four, i.e. **every port-2 row is deselected**.
+2. The poll reads `move.l $F14000` and immediately does `or.l #$F0FFFFFC,d0` before
+   folding into an 8-bit accumulator. That mask clears everything except `$F14000`
+   bits 8-11 and `$F14002` bits 0-1 — the port-1 columns. `$F14000` bits 12-15, the
+   four lines a mouse adapter drives, **cannot reach the result**.
+
+And there is no third path: all **11** absolute-long `$F14000` references in the image
+are accounted for — 8 in that poll (4 writes + 4 reads), one `move.l #$100,$F14000` at
+init, and two `lea $F14000,a0` in the EEPROM driver (which reads bit 0 and `$F15000`).
+A driver reading the register through a register-indirect base would still need one of
+these to load the address.
+
+Consequence, recorded at the site in `src/core/titledb.c`: **no
+`virtualjaguar_p2_device` row ships for JagDoomEX**, and #429's "auto-select the mouse
+for JagDoomEX by CRC" checklist item is not applicable to any released build. If a
+future release adds mouse support it will hash differently from all nine CRCs above, so
+it needs its own row and its own re-check.
 
 ---
 
