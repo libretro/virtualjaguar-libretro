@@ -59,11 +59,19 @@
 #include "../harness/harness.h"
 
 /* Mirrors src/jerry/inputdev.h; the tool must not include emulator
- * headers it would then be testing against itself. */
-#define DEV_PAD                 0
-#define DEV_MOUSE_ST            1
-#define DEV_MOUSE_AMIGA_ADAPTER 2
-#define DEV_MOUSE_AMIGA_ON_ST   3
+ * headers it would then be testing against itself.  An enum rather than
+ * four #defines because the TYPE is load-bearing as well as the values:
+ * InputDevSetType's second parameter is this enum, and UBSan's
+ * -fsanitize=function compares a dlsym'd pointer's declared signature
+ * against the callee's, so `int` there aborts the whole suite.  Values are
+ * still restated by hand, so a renumbering in the header cannot silently
+ * propagate into this test. */
+typedef enum {
+   DEV_PAD                 = 0,
+   DEV_MOUSE_ST            = 1,
+   DEV_MOUSE_AMIGA_ADAPTER = 2,
+   DEV_MOUSE_AMIGA_ON_ST   = 3
+} InputDevType;
 
 #define BTN_LEFT   0x01
 #define BTN_RIGHT  0x02
@@ -93,7 +101,7 @@ static const char *case_name[4] = {
 
 static uint16_t (*p_ReadWord)(uint32_t);
 static void     (*p_WriteWord)(uint32_t, uint16_t);
-static void     (*p_SetType)(int, int);
+static void     (*p_SetType)(int, InputDevType);
 static void     (*p_SetScale)(int, int32_t);
 static void     (*p_Reset)(void);
 static void     (*p_Feed)(int, int32_t, int32_t, uint32_t);
@@ -586,7 +594,7 @@ int main(int argc, char **argv)
 
    p_ReadWord    = (uint16_t (*)(uint32_t))harness_dlsym(&cfg, "JoystickReadWord");
    p_WriteWord   = (void (*)(uint32_t, uint16_t))harness_dlsym(&cfg, "JoystickWriteWord");
-   p_SetType     = (void (*)(int, int))harness_dlsym(&cfg, "InputDevSetType");
+   p_SetType     = (void (*)(int, InputDevType))harness_dlsym(&cfg, "InputDevSetType");
    p_SetScale    = (void (*)(int, int32_t))harness_dlsym(&cfg, "InputDevSetScale");
    p_Reset       = (void (*)(void))harness_dlsym(&cfg, "InputDevReset");
    p_Feed        = (void (*)(int, int32_t, int32_t, uint32_t))
