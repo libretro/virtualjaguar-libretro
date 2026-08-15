@@ -28,14 +28,25 @@ All three live under **Port 2** in the core options menu.
 a deliberate result, not an unfinished switch.
 
 Your frontend can also select the device directly (RetroArch: *Controls →
-Port 2 → Device Type*), which offers the same four devices. A device set that
-way outranks the core option until the frontend changes it again.
+Port 2 → Device Type*), which offers the same four devices. A **mouse** set
+that way outranks the core option. Setting the port back to *Joypad* or *None*
+releases that claim rather than forcing a pad — the core option decides again,
+immediately.
 
-### While a mouse is attached, the port-2 RetroPad is disconnected
+### Once a mouse is live, the port-2 RetroPad is disconnected
 
 That is the hardware being faithful, not a bug. The adapter occupies the port;
 there is no pad plugged into it. Port 1 is untouched — a mouse on port 2
 cannot perturb port 1's bits, and there is a test asserting exactly that.
+
+**The pad is not dropped until the mouse has actually moved.** Selecting a
+mouse must never leave the port with no working input, and whether your
+frontend routes host mouse deltas to port 2 is not something the core can
+know in advance (see [the limitation below](#known-limitation-frontend-mouse-routing-is-unverified)).
+So port 2 keeps its RetroPad until the frontend reports a non-zero delta or a
+mouse button; from that moment the pad stays suppressed for the session, or
+until you change the device type. Consequence worth knowing: with a mouse
+selected but not routed, port 2 behaves exactly like a joypad.
 
 ## Which wiring do I pick?
 
@@ -124,8 +135,10 @@ speculative port-0 fallback**: silently reading port 1's mouse into a port-2
 device would be a guess, and a wrong guess would be invisible until it
 misbehaved.
 
-If you select a mouse on port 2 and the pointer does not move at all,
-that is the symptom of this limitation rather than of the emulation. Please
+If you select a mouse on port 2 and nothing responds to the mouse — while the
+port-2 **pad still works normally** — that is the symptom of this limitation
+rather than of the emulation. (The pad still working is the deliberate
+fallback described above, not a second bug.) Please
 report it with your frontend and version on
 [#429](https://github.com/libretro/virtualjaguar-libretro/issues/429) — real
 frontend data is exactly what is needed to settle it.
