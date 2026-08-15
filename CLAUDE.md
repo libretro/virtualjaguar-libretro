@@ -138,6 +138,10 @@ vjtrace". That list is what broke before: it omitted `src/tom/blit_memo.o`, so
 linked cleanly while silently keeping the no-op macro expansion — traced builds
 that record nothing. Do not reintroduce a curated (or grepped, or `-MD`-derived)
 list; a file can pick up the `VJT_*` macros through an indirect include.
+CI gates both directions on every host row of `c-cpp.yml`'s build job: the
+build + `make test` steps cover `plain` → `TEST_EXPORTS=1`, and a final plain
+`make` after the artifact upload covers the reverse. `make -n` is exempt from
+the flush, so a dry run costs nothing.
 
 Earlier history: before v2.3.2 the mode switch didn't relink at all — the
 library was newer than every object, nothing rebuilt, and the suite failed with
