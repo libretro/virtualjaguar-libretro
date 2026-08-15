@@ -335,9 +335,26 @@ void InputDevClock(uint8_t row0, uint8_t row1)
    }
 
    /* The arm is spent only by a read some attached device could decode
-    * from (inputdev.h, ARM CONSUMPTION).  Clearing it on every offset-0
-    * read would let a port-1-only read eat the arm a port-2 mouse was
-    * owed, which changes mouse advance timing. */
+    * from (inputdev.h, ARM CONSUMPTION).
+    *
+    * THIS GUARDS NOTHING REACHABLE TODAY, and the comment here used to
+    * claim otherwise.  The reasoning that motivated it -- a port-1-only
+    * read eating the arm a port-2 mouse was owed -- cannot happen on the
+    * bus: the row select lives in joystick_ram[1], the only writer is
+    * JoystickWriteWord at offset 0, and that path arms unconditionally.
+    * So the arm is always set at the first read after any row change,
+    * and a later read at unchanged rows re-runs this same gate to the
+    * same answer.  Measured, not argued: 2.4M random write/read
+    * sequences across six device combinations digest bit-identically
+    * with and without the `if`.
+    *
+    * It stays because it is the honest statement of the contract -- an
+    * arm is a permission for ONE decodable sample, not for one bus read
+    * -- and the next device that samples on some other condition (a
+    * lightgun latch, a second row-blind peripheral) makes the difference
+    * real.  Pinned by test_arm_is_spent_only_by_a_decodable_read in
+    * mouse_decode_test.c, which reaches it by calling InputDevArm() and
+    * InputDevClock() directly, because no aligned bus sequence can. */
    if (consumed)
       inputdev_armed = 0;
 }

@@ -458,8 +458,13 @@ static void test_case_discrimination(void)
  */
 static void test_port1_poll_does_not_clock(void)
 {
-   /* Port-1-only row select.  Low nibble 7 = port 1's socket-0 row 0;
-    * high nibble F is NOT a socket-0 code, so port 2 is unselected. */
+   /* Port-1-only row select.  Low nibble 7 selects a port-1 socket-0 row
+    * -- row 3, not row 0: joypad0Offset[0x7] == 0x0C, and row 0 is
+    * nibble 0xE.  Which row it is does not matter here (the mouse is
+    * row-blind and this case only needs port 2 deselected), but the
+    * comment used to say row 0 and would mislead anyone adding a port-1
+    * rotary case, where the row is load-bearing.  High nibble F is not a
+    * socket-0 code, so port 2 is unselected. */
    const uint16_t p1_row_word = 0x81F7;
    decode_result r;
    uint16_t ref;
