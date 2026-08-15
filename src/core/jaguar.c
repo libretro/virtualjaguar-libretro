@@ -1215,7 +1215,9 @@ double JaguarGetFieldRateHz(void)
 
 // Normally, TVs will render a full frame in 1/30s (NTSC) or 1/25s (PAL) by
 // rendering two fields that are slighty vertically offset from each other.
-// Each field is created in 1/60s (NTSC) or 1/50s (PAL), and every other line
+// Each field is created in 1/60.05445s (NTSC) or 1/50.08013s (PAL) -- see the
+// field-rate derivation below; 60/50 are the round numbers, not the rates --
+// and every other line
 // is rendered in this mode so that each field, when overlaid on each other,
 // will yield the final picture at the full resolution for the full frame.
 //

@@ -377,7 +377,11 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
     * what it last received.
     *
     * The batch stays a fixed `length`, which is what keeps the
-    * delivered rate exactly on the advertised 48 kHz (800 x 60 fps).
+    * delivered rate exactly on the advertised rate (800 pairs x the
+    * field rate = 48043.6 Hz NTSC, 960 x 50.08013 = 48076.9 Hz PAL).
+    * It read "the advertised 48 kHz (800 x 60 fps)" until #392 made
+    * both advertised numbers real; the reasoning was always the
+    * fixed batch, not the round number.
     * Submitting the short count instead lost the 0.27 remainder every
     * frame -- 108 samples/sec of deficit that drained the frontend's
     * buffer until it underran, a pop every few seconds in every title.
