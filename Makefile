@@ -803,22 +803,32 @@ else
 # the same second, which is exactly the timestamp-granularity trap this is
 # meant to close.  Runs at parse time, once TARGET is known.
 #
-# vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
-# site or a vjtrace_pchist_*() call (including libretro.o's
-# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
-# *content* (not just the export list) that depends on TEST_EXPORTS --
-# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
-# -DVJ_TRACE line above), so those objects must be deleted alongside the
-# library on every mode transition, or a stale object compiled in the
-# other mode silently survives the relink: either vjtrace_* symbols go
-# missing from a `make TEST_EXPORTS=1` build that started from a plain
-# `make` (undefined symbols at link time), or the reverse transition
-# silently keeps the no-op macro expansion, so the ring never receives
-# events despite vjtrace_* being exported.
-VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
+# TEST_EXPORTS also changes object *content*, not just the export list:
+# it adds -DVJ_TRACE to CFLAGS (see the line above), so vjtrace.o defines
+# the vjtrace_* functions only in that branch, and every object carrying a
+# VJT_EMIT/VJT_WATCH_*/vjtrace_pchist_*/vjtrace_init call site compiles to
+# real calls in one mode and to nothing in the other.  A stale object from
+# the other mode that survives the relink breaks the build in one direction
+# and lies in the other: TEST_EXPORTS=1 -> plain fails with undefined
+# vjtrace_* symbols, while plain -> TEST_EXPORTS=1 links fine but keeps the
+# no-op macro expansion, so the ring silently records nothing despite
+# vjtrace_* being exported.
+#
+# So a mode change flushes *every* object, not a curated list of the ones
+# believed to be trace-hooked.  That list is exactly the stale-.o hazard it
+# was meant to prevent: it shipped without src/tom/blit_memo.o, whose
+# BlitMemoLaunch VJT_EMIT call site broke `make TEST_EXPORTS=1 && make`.
+# Any list -- hand-written, grepped, or derived from -MD -- can also miss a
+# file that picks up the macros through an indirect include, so there is no
+# list.  Cost is one full rebuild per flip (~21s at -j8 without ccache);
+# the curated list already recompiled most of the heavy objects anyway.
+#
+# Note this $(shell) runs at parse time, so even `make -n` performs the
+# flush.  Pre-existing behaviour, kept deliberately: correctness of the
+# next real build beats a side-effect-free dry run.
 $(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
         || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })
+             rm -f $(TARGET) $(OBJECTS); })
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
