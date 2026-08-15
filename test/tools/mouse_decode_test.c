@@ -439,6 +439,64 @@ static void test_case_discrimination(void)
    report(r.net_x == 0 && r.net_y == -40, detail);
 }
 
+/*
+ * THE EMISSION CLOCK IS GATED ON PORT 2'S ROW SELECT (mapping doc §5).
+ *
+ * §5 requires at most one Gray state per $F14000 read taken with port 2's
+ * row select asserted.  Ungated, a title polling PORT 1 rapidly advances
+ * the port-2 encoder between the port-2 poller's own samples -- which does
+ * not merely lag, it loses motion outright, because the decoder discards
+ * the resulting two-state jumps.
+ *
+ * This test fails without the gate: with it, 200 port-1 polls leave the
+ * phase untouched and the queued motion intact; without it, those polls
+ * drain the 40-state backlog and the following port-2 run decodes nothing.
+ */
+static void test_port1_poll_does_not_clock(void)
+{
+   /* Port-1-only row select.  Low nibble 7 = port 1's socket-0 row 0;
+    * high nibble F is NOT a socket-0 code, so port 2 is unselected. */
+   const uint16_t p1_row_word = 0x81F7;
+   decode_result r;
+   uint16_t ref;
+   unsigned i;
+   int held = 1;
+
+   printf("emission clock is gated on port 2's row select\n");
+
+   attach(DEV_MOUSE_ST);
+   p_Feed(1, 40, 0, 0);
+
+   /* Sample the mouse bits without clocking: a read with no intervening
+    * write is unarmed, so it cannot advance the encoder.  The first read
+    * consumes the arm left by the write; the second is the sample. */
+   p_WriteWord(0, row_words[0]);
+   (void)p_ReadWord(0);
+   ref = (uint16_t)(p_ReadWord(0) & 0xF000u);
+
+   for (i = 0; i < 200; i++)
+   {
+      p_WriteWord(0, p1_row_word);
+      if ((uint16_t)(p_ReadWord(0) & 0xF000u) != ref)
+         held = 0;
+   }
+
+   sprintf(detail,
+           "200 port-1 row polls do not advance the port-2 encoder "
+           "($F14000 bits 12-15 held at $%X)",
+           (unsigned)((ref >> 12) & 0x0Fu));
+   report(held, detail);
+
+   /* The queued motion is still there afterwards.  run_polls primes with
+    * one port-2 write+read (one state) and then polls 30 times, so a
+    * backlog that survived the port-1 traffic decodes exactly 30. */
+   run_polls(&r, 'A', DEV_MOUSE_ST, 30, 0, 0, 0);
+   sprintf(detail,
+           "the motion queued before them is not lost (NET_X=%d expect 30, "
+           "dropped=%u)", (int)r.net_x, r.dropped);
+   report(r.net_x == 30 && r.dropped == 0, detail);
+}
+
 static void test_pad_is_inert(void)
 {
    decode_result r;
@@ -629,6 +687,7 @@ int main(int argc, char **argv)
    }
 
    test_case_discrimination();
+   test_port1_poll_does_not_clock();
    test_savestate();
    test_chunk_size();
    test_port1_rejects_mouse();

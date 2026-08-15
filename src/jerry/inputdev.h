@@ -86,7 +86,14 @@ void InputDevSetScale(int port, int32_t scale_q8);
 /* ---- bus-side hooks, called only from joystick.c ------------------- *
  *
  * THE EMISSION RULE: arm on write, advance at most one state on the next
- * offset-0 read.
+ * offset-0 read TAKEN WITH PORT 2'S ROW SELECT ASSERTED.
+ *
+ * The row gate is joystick.c's `offset1 != 0xFF` test (any of rows 0-3,
+ * not row 0 specifically -- the adapter is row-blind, so every row is a
+ * poll of it).  Without it a title that polls port 1 rapidly would
+ * advance the port-2 encoder between the port-2 poller's own samples,
+ * which is precisely the lost motion the one-state ceiling exists to
+ * prevent.
  *
  * The naive "advance once per offset-0 read" has a latent motion-loss
  * bug.  A driver that writes the row select once and then reads twice per
@@ -106,7 +113,8 @@ void InputDevSetScale(int port, int32_t scale_q8);
  * stall-breaker that advances anyway after N consecutive unarmed reads;
  * it is not implemented speculatively. */
 void     InputDevArm(void);                        /* $F14000 write          */
-void     InputDevClock(void);                      /* $F14000 read, offset 0 */
+void     InputDevClock(void);                      /* $F14000 read, offset 0,
+                                                    * port-2 row asserted    */
 uint16_t InputDevOverlayF14000(uint16_t data);
 /* row0/row1 are the decoded socket-0 row (0-3) for each port, or 0xFF
  * when that port's nibble is not a socket-0 code.  The mouse ignores them

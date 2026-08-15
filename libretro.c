@@ -217,6 +217,29 @@ static bool         port_device_forced[2]   = { false, false };
 static InputDevType port_device_active[2]   = { INPUTDEV_PAD, INPUTDEV_PAD };
 static bool         show_mouse_options      = true;
 
+/* Has this port actually received non-zero mouse state from the frontend?
+ *
+ * THE RULE: selecting a mouse must never leave the port with no working
+ * input.  A frontend that does not route mouse state to the port (it never
+ * called retro_set_controller_port_device with a mouse, the user has no
+ * mouse, or the port is mapped to a gamepad) would otherwise lose BOTH
+ * devices -- the pad because update_input() suppresses it, and the mouse
+ * because nothing ever feeds it.  So the pad suppression is deferred until
+ * the mouse has proven live, i.e. until the frontend reports a non-zero
+ * delta or a button.  Until then port 2 keeps its RetroPad.
+ *
+ * Once live it stays suppressed for the rest of the session (or until the
+ * device type changes, which clears this): a mouse that has moved once is
+ * a mouse the frontend is routing, and letting a pad drive the same six
+ * lines at that point is the ambiguity the suppression exists to prevent.
+ *
+ * File-scope static -- reset in retro_deinit (iOS cannot dlclose a core). */
+static bool         inputdev_live[2]        = { false, false };
+
+/* One-shot savestate headroom report (retro_serialize).  File-scope rather
+ * than function-local so retro_deinit can put it back. */
+static bool         headroom_logged         = false;
+
 static const char *inputdev_type_name(InputDevType t)
 {
    switch (t)
@@ -240,6 +263,8 @@ static void apply_port_device(int port, InputDevType type)
    if (type != port_device_active[port])
    {
       port_device_active[port] = type;
+      /* A new device has to earn the port back (see inputdev_live). */
+      inputdev_live[port]      = false;
       if (type != INPUTDEV_PAD)
          LOG_INF("[input] port %d: %s attached\n", port + 1,
                  inputdev_type_name(type));
@@ -672,6 +697,40 @@ static bool get_variable_pertitle(struct retro_variable *var)
    return ok;
 }
 
+/* Port 2 controller type as the CORE OPTION alone resolves it, with no
+ * regard for what the frontend may have set.  Factored out of
+ * check_variables() because retro_set_controller_port_device() has to be
+ * able to re-resolve the option the moment the frontend releases its claim
+ * -- nothing schedules a check_variables() for it, so deferring to "the
+ * next one" meant a frontend's routine post-load JOYPAD/NONE assignment
+ * detached the mouse for the rest of the session.
+ *
+ * Called from retro_set_controller_port_device() it can run before
+ * retro_load_game(): TitleDBOverride() returns NULL with no title loaded,
+ * so it degrades to a plain GET_VARIABLE.  The "auto -> per-title DB" leg
+ * of the documented precedence genuinely cannot fire on that early call;
+ * the check_variables() during retro_load_game() resolves it properly. */
+static InputDevType p2_device_from_option(void)
+{
+   struct retro_variable var;
+   InputDevType p2 = INPUTDEV_PAD;
+
+   var.key   = "virtualjaguar_p2_device";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (!strcmp(var.value, "mouse_st"))
+         p2 = INPUTDEV_MOUSE_ST;
+      else if (!strcmp(var.value, "mouse_amiga"))
+         p2 = INPUTDEV_MOUSE_AMIGA_ON_ST;
+      else if (!strcmp(var.value, "mouse_amiga_adapter"))
+         p2 = INPUTDEV_MOUSE_AMIGA_ADAPTER;
+      /* "pad" and "auto" (with no DB row) both mean pad. */
+   }
+
+   return p2;
+}
+
 static void check_variables(void)
 {
    unsigned i;
@@ -989,20 +1048,7 @@ static void check_variables(void)
     * No titledb row ships in this PR, so "auto" is "pad" for every title
     * today and the mouse is strictly opt-in. */
    {
-      InputDevType p2 = INPUTDEV_PAD;
-
-      var.key   = "virtualjaguar_p2_device";
-      var.value = NULL;
-      if (get_variable_pertitle(&var) && var.value)
-      {
-         if (!strcmp(var.value, "mouse_st"))
-            p2 = INPUTDEV_MOUSE_ST;
-         else if (!strcmp(var.value, "mouse_amiga"))
-            p2 = INPUTDEV_MOUSE_AMIGA_ON_ST;
-         else if (!strcmp(var.value, "mouse_amiga_adapter"))
-            p2 = INPUTDEV_MOUSE_AMIGA_ADAPTER;
-         /* "pad" and "auto" (with no DB row) both mean pad. */
-      }
+      InputDevType p2 = p2_device_from_option();
 
       if (port_device_forced[1])
          p2 = port_device_frontend[1];
@@ -1014,10 +1060,17 @@ static void check_variables(void)
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
    {
-      /* Percent -> Q8 (256 == 1.0). */
+      /* Percent -> Q8 (256 == 1.0).  Clamp BEFORE the multiply: the
+       * option value comes from the frontend's config file, which a user
+       * can hand-edit to anything, and InputDevSetScale's own clamp fires
+       * only after this multiply has already overflowed a signed int.
+       * 1600% is InputDevSetScale's 4096 ceiling expressed as a percent
+       * (4096 * 100 / 256), so nothing reachable is lost. */
       int pct = atoi(var.value);
       if (pct < 1)
          pct = 100;
+      if (pct > 1600)
+         pct = 1600;
       InputDevSetScale(1, (int32_t)((pct * 256) / 100));
    }
    else
@@ -1280,7 +1333,12 @@ static void update_input(void)
     * a mouse drive the same six lines at once.  (A rotary port, when
     * #436 lands, keeps its buttons and withholds only U/D/L/R, so this
     * will have to become selective then -- it cannot simply grow another
-    * type here.) */
+    * type here.)
+    *
+    * The suppression is deferred until the mouse is LIVE -- see
+    * inputdev_live: reading the frontend's mouse state first and
+    * suppressing only once it has been non-zero guarantees that selecting
+    * a mouse can never leave the port with no working input at all. */
    if (InputDevAnyAttached())
    {
       for (player = 0; player < 2; player++)
@@ -1291,8 +1349,6 @@ static void update_input(void)
 
          if (t == INPUTDEV_PAD)
             continue;
-
-         memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
 
          dx = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
                                       RETRO_DEVICE_ID_MOUSE_X);
@@ -1305,6 +1361,19 @@ static void update_input(void)
          if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
                             RETRO_DEVICE_ID_MOUSE_RIGHT))
             buttons |= INPUTDEV_BTN_RIGHT;
+
+         if (dx || dy || buttons)
+         {
+            if (!inputdev_live[player])
+            {
+               inputdev_live[player] = true;
+               LOG_INF("[input] port %d: mouse is live, RetroPad released\n",
+                       player + 1);
+            }
+         }
+
+         if (inputdev_live[player])
+            memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
 
          InputDevFeed((int)player, dx, dy, buttons);
       }
@@ -1373,9 +1442,18 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    }
 
    /* A frontend that sets JOYPAD/NONE is releasing its claim, so the core
-    * option takes over again on the next check_variables(). */
+    * option takes over again -- IMMEDIATELY, not "on the next
+    * check_variables()".  Nothing schedules one: check_variables() runs
+    * from retro_load_game() and from retro_run() only behind
+    * GET_VARIABLE_UPDATE.  RetroArch issues a per-port controller init
+    * right after load, so forcing PAD here used to detach the mouse the
+    * core option had just attached, for the whole session -- which is why
+    * the feature was never seen working in a frontend. */
    port_device_frontend[port] = type;
    port_device_forced[port]   = (type != INPUTDEV_PAD);
+
+   if (type == INPUTDEV_PAD)
+      type = (port == 1) ? p2_device_from_option() : INPUTDEV_PAD;
 
    apply_port_device((int)port, type);
    update_option_visibility();
@@ -1472,7 +1550,6 @@ bool retro_serialize(void *data, size_t size)
     * every release and the only backstop is the hard fail above, so make
     * the margin visible in a log rather than assumed. */
    {
-      static bool headroom_logged = false;
       if (!headroom_logged)
       {
          headroom_logged = true;
@@ -2495,7 +2572,10 @@ void retro_deinit(void)
    port_device_forced[1]   = false;
    port_device_active[0]   = INPUTDEV_PAD;
    port_device_active[1]   = INPUTDEV_PAD;
+   inputdev_live[0]        = false;
+   inputdev_live[1]        = false;
    show_mouse_options      = true;
+   headroom_logged         = false;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 

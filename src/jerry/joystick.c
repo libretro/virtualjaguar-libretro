@@ -70,15 +70,23 @@ uint16_t JoystickReadWord(uint32_t offset)
 		if (!joysticksEnabled)
 			return 0xFFFF;
 
-		// Non-pad devices self-clock against the game's own polling: at
-		// most one quadrature state per armed read (inputdev.h).  No-op
-		// when nothing but pads are attached.
-		InputDevClock();
-
 		// Joystick data returns active low for buttons pressed, high for non-
 		// pressed.
 		offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
 		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
+
+		// Non-pad devices self-clock against the game's own polling: at
+		// most one quadrature state per armed read (inputdev.h).  Gated on
+		// port 2's row select being asserted (any of rows 0-3, i.e.
+		// offset1 decoded to something other than 0xFF), because that is
+		// the only read the port-2 poller can decode from -- a title
+		// polling port 1 rapidly would otherwise advance the port-2
+		// encoder between the port-2 poller's own samples, which is
+		// exactly the lost motion the one-state ceiling exists to
+		// prevent (mapping doc section 5).  No-op when nothing but pads
+		// are attached.
+		if (offset1 != 0xFF)
+			InputDevClock();
 
 		if (offset0 != 0xFF)
 		{

@@ -56,7 +56,7 @@ static void test_sequence_forward(void)
    for (i = 0; i < 8; i++)
    {
       int a, b;
-      int expect = (i + 1) & 3;
+      int expect = (QUAD_REST_PHASE + i + 1) & 3;
 
       if (!QuadAdvance(&q))
       {
@@ -68,7 +68,7 @@ static void test_sequence_forward(void)
          ok = 0;
    }
 
-   check(ok, "8 advances walk 0,1,2,3,0,1,2,3 with the table's levels");
+   check(ok, "8 advances walk the Gray table upward from the rest phase");
    check(q.backlog == 0, "backlog fully drained after 8 advances");
    check(QuadAdvance(&q) == 0, "an empty backlog does not advance");
 }
@@ -87,7 +87,7 @@ static void test_sequence_reverse(void)
    for (i = 0; i < 8; i++)
    {
       int a, b;
-      int expect = (4 - ((i + 1) & 3)) & 3;   /* 3,2,1,0,3,2,1,0 */
+      int expect = (QUAD_REST_PHASE - (i + 1)) & 3;   /* downward */
 
       if (!QuadAdvance(&q))
       {
@@ -99,7 +99,7 @@ static void test_sequence_reverse(void)
          ok = 0;
    }
 
-   check(ok, "8 advances walk 3,2,1,0,3,2,1,0 with the table's levels");
+   check(ok, "8 advances walk the Gray table downward from the rest phase");
    check(q.backlog == 0, "backlog fully drained after 8 advances");
 }
 
@@ -215,8 +215,18 @@ static void test_reset(void)
    QuadAdvance(&q);
    QuadFeed(&q, 1, 64);
    QuadReset(&q);
-   check(q.backlog == 0 && q.frac == 0 && q.phase == 0,
-         "QuadReset zeroes backlog, carry and phase");
+   check(q.backlog == 0 && q.frac == 0 && q.phase == QUAD_REST_PHASE,
+         "QuadReset zeroes backlog and carry and parks at the rest phase");
+
+   /* The rest phase must be the (1,1) state: the mouse overlay is active
+    * low, so any other parking position leaves an IDLE mouse asserting
+    * direction lines at $F14000 -- see QUAD_REST_PHASE in quadrature.h. */
+   {
+      int a = -1, b = -1;
+      QuadLevels(&q, &a, &b);
+      check(a == 1 && b == 1,
+            "the rest phase drives both lines high (idle asserts nothing)");
+   }
 }
 
 int main(void)

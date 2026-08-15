@@ -54,6 +54,25 @@ extern "C" {
  * unusable, so clamping there loses nothing a user wants. */
 #define QUAD_MAX_BACKLOG 64
 
+/* REST PHASE -- where QuadReset() parks the encoder.
+ *
+ * Index 2 is (A=1, B=1), the only one of the four states with BOTH lines
+ * at logic 1.  That matters because the mouse overlay is active low: it
+ * clears a $F14000 bit when the level is 0, so parking at index 0 (0,0)
+ * would leave an IDLE mouse asserting all four direction lines -- row 0
+ * reading U+D+L+R held, rows 1-3 reading four keypad digits held -- after
+ * every JERRYReset, every device change and every pre-v12 state load.
+ * At index 2 an idle mouse is bit-identical to an idle pad, which is the
+ * property #429's acceptance condition is written around.
+ *
+ * NO SOURCE NAMES A REST PHASE.  A real encoder stops wherever the last
+ * motion left it, and neither the mapping doc nor the JTRM specifies a
+ * power-on state, so this is a free choice made on the "indistinguishable
+ * from idle" argument above rather than a documented fact.  #436's rotary
+ * shares this module and may want to revisit it -- it is a detent device,
+ * not a mouse, so its rest position is a different question. */
+#define QUAD_REST_PHASE 2
+
 typedef struct
 {
    int32_t backlog;   /* pending Gray states, signed; +ve = positive dir */

@@ -110,6 +110,19 @@ static const uint8_t sweep_hi_bytes[4] = { 0x00, 0x01, 0x80, 0x81 };
 #define EXPECT_DIGEST_FULL    0xC24DDCDEu
 #define EXPECT_DIGEST_PORT1   0xD0CD02E2u
 
+/* Third sweep: the same domain with an ST mouse attached to port 2.  This
+ * one is NOT a develop measurement -- it is measured on the device layer
+ * and is the only assertion that pins the mouse's own bits.
+ *
+ * Why it has to exist: every check in mouse_decode_test compares Gray
+ * indices modulo 4, so inverting the active-low polarity on the direction
+ * lines (inputdev.c, `if (!ax)` -> `if (ax)`) shifts the index by a
+ * constant +2 mod 4 and every one of them still passes -- test_directions,
+ * test_rate_ceiling, test_poll_shapes, test_case_discrimination, and even
+ * `phase_seen != 0x0F`, which reads $D under the inversion.  This digest
+ * folds the raw register words, so a constant phase offset moves it. */
+#define EXPECT_DIGEST_FULL_WITH_MOUSE 0x5E1858EAu
+
 /* ---- FNV-1a ---------------------------------------------------------- */
 
 #define FNV1A_OFFSET 2166136261u
@@ -216,11 +229,11 @@ static void run_sweep(uint32_t *out_full, uint32_t *out_port1,
 int main(int argc, char **argv)
 {
    harness_config cfg = HARNESS_CONFIG_DEFAULT;
-   harness_result results[3];
+   harness_result results[4];
    unsigned num_results = 0;
    int print_only = 0;
    int i;
-   int ok_full, ok_port1;
+   int ok_full, ok_port1, ok_mouse_port1, ok_mouse_full;
 
    void (*p_InputDevSetType)(int, InputDevType);
    void (*p_InputDevReset)(void);
@@ -230,9 +243,14 @@ int main(int argc, char **argv)
    uint32_t digest_port1 = FNV1A_OFFSET;
    unsigned long reads   = 0;
 
+   uint32_t mouse_full   = FNV1A_OFFSET;
+   uint32_t mouse_port1  = FNV1A_OFFSET;
+   unsigned long mouse_reads = 0;
+
    char detail_full[192];
    char detail_port1[192];
    char detail_mouse[192];
+   char detail_mouse_full[192];
 
    for (i = 1; i < argc; i++)
    {
@@ -273,10 +291,55 @@ int main(int argc, char **argv)
       return 1;
    }
 
+   /* The device-layer symbols are resolved BEFORE the pad-only sweep so a
+    * build that cannot run the mouse assertion fails loudly here rather
+    * than half-running.  A skip is exit 77 (never a silent 0): the live
+    * trigger for this branch is an exports-test.list / link-test.T
+    * divergence, which is a build bug in this repo, not an environment. */
+   p_InputDevSetType = (void (*)(int, InputDevType))
+                          harness_dlsym(&cfg, "InputDevSetType");
+   p_InputDevReset   = (void (*)(void))harness_dlsym(&cfg, "InputDevReset");
+   p_InputDevFeed    = (void (*)(int, int32_t, int32_t, uint32_t))
+                          harness_dlsym(&cfg, "InputDevFeed");
+
+   if (!p_InputDevSetType || !p_InputDevReset || !p_InputDevFeed)
+   {
+      fprintf(stderr,
+              "joymatrix_identity: InputDevSetType/Reset/Feed are not in the "
+              "test ABI, so the port-2-mouse assertions cannot run.  Since "
+              "#429 these are part of the wide ABI -- check exports-test.list "
+              "and link-test.T.  Exiting 77 (skip), NOT 0.\n");
+      harness_shutdown(&cfg);
+      return 77;
+   }
+
    run_sweep(&digest_full, &digest_port1, &reads);
 
-   ok_full  = (digest_full  == EXPECT_DIGEST_FULL);
-   ok_port1 = (digest_port1 == EXPECT_DIGEST_PORT1);
+   /* Second sweep, identical domain, with an ST mouse on port 2.
+    *
+    * The feed is clamped to QUAD_MAX_BACKLOG (64) by QuadFeed, and the
+    * encoder is clocked at most once per read whose port-2 row select is
+    * asserted, so it drains over the first 64 qualifying polls of the
+    * ~131,072 in the sweep and then holds a fixed phase for the rest.
+    * That is deliberate and sufficient: the polarity class this digest
+    * exists to catch shifts the held phase by a constant, which moves the
+    * folded bits on every one of those reads.  (Re-feeding inside
+    * run_sweep() would put mouse-specific code in the function that also
+    * produces digests 1 and 2 -- the one place this file must not
+    * perturb.)  Both buttons are held for the whole sweep. */
+   p_InputDevSetType(1, INPUTDEV_MOUSE_ST);
+   p_InputDevReset();
+   p_InputDevFeed(1, 4000, -4000, 0x03);
+
+   run_sweep(&mouse_full, &mouse_port1, &mouse_reads);
+
+   p_InputDevSetType(1, INPUTDEV_PAD);
+   p_InputDevReset();
+
+   ok_full        = (digest_full  == EXPECT_DIGEST_FULL);
+   ok_port1       = (digest_port1 == EXPECT_DIGEST_PORT1);
+   ok_mouse_port1 = (mouse_port1  == EXPECT_DIGEST_PORT1);
+   ok_mouse_full  = (mouse_full   == EXPECT_DIGEST_FULL_WITH_MOUSE);
 
    if (print_only)
    {
@@ -284,10 +347,14 @@ int main(int argc, char **argv)
              " x %d vectors x 4 offsets = %lu reads (seed 0x%08X)\n",
              2, 4, SWEEP_ROW_BYTES, SWEEP_VECTORS, reads,
              (unsigned)SWEEP_SEED);
-      printf("joymatrix_identity: EXPECT_DIGEST_FULL  = 0x%08Xu\n",
+      printf("joymatrix_identity: EXPECT_DIGEST_FULL            = 0x%08Xu\n",
              digest_full);
-      printf("joymatrix_identity: EXPECT_DIGEST_PORT1 = 0x%08Xu\n",
+      printf("joymatrix_identity: EXPECT_DIGEST_PORT1           = 0x%08Xu\n",
              digest_port1);
+      printf("joymatrix_identity: EXPECT_DIGEST_FULL_WITH_MOUSE = 0x%08Xu\n",
+             mouse_full);
+      printf("joymatrix_identity: (port-1 bits with the mouse    = 0x%08X, "
+             "must equal EXPECT_DIGEST_PORT1)\n", mouse_port1);
       harness_shutdown(&cfg);
       return 0;
    }
@@ -316,48 +383,38 @@ int main(int argc, char **argv)
     * The mouse's overlay drives $F14000 bits 12-15 and $F14002 bits 2-3
     * in EVERY row (it is row-blind), which is precisely the shape of
     * change that could leak sideways if a mask were written wrong. */
-   p_InputDevSetType = (void (*)(int, InputDevType))
-                          harness_dlsym(&cfg, "InputDevSetType");
-   p_InputDevReset   = (void (*)(void))harness_dlsym(&cfg, "InputDevReset");
-   p_InputDevFeed    = (void (*)(int, int32_t, int32_t, uint32_t))
-                          harness_dlsym(&cfg, "InputDevFeed");
+   sprintf(detail_mouse,
+           "port-1 bits with an ST mouse on port 2: 0x%08X (expected 0x%08X)",
+           mouse_port1, (unsigned)EXPECT_DIGEST_PORT1);
 
-   if (p_InputDevSetType && p_InputDevReset && p_InputDevFeed)
-   {
-      uint32_t mouse_full, mouse_port1;
-      unsigned long mouse_reads;
-      int ok_mouse;
+   results[num_results].status = ok_mouse_port1 ? "PASS" : "FAIL";
+   results[num_results].name   = "joymatrix_identity_port1_with_mouse";
+   results[num_results].detail = detail_mouse;
+   num_results++;
 
-      p_InputDevSetType(1, INPUTDEV_MOUSE_ST);
-      p_InputDevReset();
-      /* Enough motion that the encoder is draining throughout the sweep,
-       * with both buttons held, so every mouse-driven bit is live. */
-      p_InputDevFeed(1, 4000, -4000, 0x03);
+   /* Fourth assertion: the mouse's OWN bits.  Without this the third one
+    * only proves the mouse did not break port 1 -- a mouse that emitted
+    * nothing at all, or emitted the right waveform with inverted
+    * polarity, would pass it. */
+   sprintf(detail_mouse_full,
+           "full digest with an ST mouse on port 2: 0x%08X (expected 0x%08X); "
+           "%lu reads",
+           mouse_full, (unsigned)EXPECT_DIGEST_FULL_WITH_MOUSE, mouse_reads);
 
-      run_sweep(&mouse_full, &mouse_port1, &mouse_reads);
-
-      p_InputDevSetType(1, INPUTDEV_PAD);
-      p_InputDevReset();
-
-      ok_mouse = (mouse_port1 == EXPECT_DIGEST_PORT1);
-      sprintf(detail_mouse,
-              "port-1 bits with an ST mouse on port 2: 0x%08X (expected "
-              "0x%08X); port-2 bits did move (full 0x%08X)",
-              mouse_port1, (unsigned)EXPECT_DIGEST_PORT1, mouse_full);
-
-      results[num_results].status = ok_mouse ? "PASS" : "FAIL";
-      results[num_results].name   = "joymatrix_identity_port1_with_mouse";
-      results[num_results].detail = detail_mouse;
-      num_results++;
-
-      if (!ok_mouse)
-         ok_port1 = 0;
-   }
-   else
-      printf("joymatrix_identity: InputDev* not in the test ABI -- skipping "
-             "the port-2-mouse isolation assertion (build predates #429)\n");
+   results[num_results].status = ok_mouse_full ? "PASS" : "FAIL";
+   results[num_results].name   = "joymatrix_identity_full_with_mouse";
+   results[num_results].detail = detail_mouse_full;
+   num_results++;
 
    harness_report(&cfg, results, num_results);
+
+   if (!ok_mouse_port1 || !ok_mouse_full)
+      fprintf(stderr,
+              "joymatrix_identity: the port-2 MOUSE overlay changed.  A "
+              "moved full-with-mouse digest with digests 1 and 2 intact "
+              "means the device layer changed, not the joystick path -- "
+              "check the wiring table and the active-low polarity in "
+              "src/jerry/inputdev.c before re-baselining anything.\n");
 
    if (!ok_full || !ok_port1)
       fprintf(stderr,
@@ -367,5 +424,8 @@ int main(int argc, char **argv)
               "commit; do not silently update the constants.\n");
 
    harness_shutdown(&cfg);
-   return (ok_full && ok_port1) ? 0 : 1;
+   /* All four assertions gate the exit status.  (An earlier revision folded
+    * the mouse result into ok_port1 instead; a FAIL row that does not reach
+    * the exit code is the skip-as-pass class wearing a different hat.) */
+   return (ok_full && ok_port1 && ok_mouse_port1 && ok_mouse_full) ? 0 : 1;
 }

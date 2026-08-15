@@ -136,6 +136,13 @@ void InputDevSetType(int port, InputDevType type)
       QuadReset(&inputdev_ports[port].y);
       inputdev_ports[port].btn_left  = 0;
       inputdev_ports[port].btn_right = 0;
+      /* The arm flag is part of the dynamic state too: without this a
+       * mouse -> pad -> mouse round trip leaves a stale arm behind, worth
+       * one unrequested advance on the next read.  Cleared only on a real
+       * type change -- apply_port_device() calls this on every
+       * check_variables(), and an unconditional clear there would eat a
+       * legitimate arm in the common path. */
+      inputdev_armed = 0;
    }
 
    if (type == INPUTDEV_PAD)
@@ -307,6 +314,27 @@ size_t InputDevStateSave(uint8_t *buf)
    return (size_t)(buf - start);
 }
 
+/* A savestate is untrusted input.  `phase` was already masked on load;
+ * `backlog` and `frac` need the same treatment, because QuadFeed() clamps
+ * only AFTER `q->backlog += states`, so a corrupt backlog near INT32_MAX
+ * overflows before the clamp can see it.  The invariants are the ones
+ * QuadFeed/QuadAdvance maintain: |backlog| <= QUAD_MAX_BACKLOG and
+ * |frac| < 256 (it is a Q8 remainder). */
+static void inputdev_sanitize_axis(quad_axis *q)
+{
+   q->phase &= 3;
+
+   if (q->backlog >  QUAD_MAX_BACKLOG)
+      q->backlog =  QUAD_MAX_BACKLOG;
+   if (q->backlog < -QUAD_MAX_BACKLOG)
+      q->backlog = -QUAD_MAX_BACKLOG;
+
+   if (q->frac >  255)
+      q->frac =  255;
+   if (q->frac < -255)
+      q->frac = -255;
+}
+
 size_t InputDevStateLoad(const uint8_t *buf)
 {
    const uint8_t *start = buf;
@@ -322,8 +350,8 @@ size_t InputDevStateLoad(const uint8_t *buf)
       STATE_LOAD_VAR(buf, inputdev_ports[p].y.phase);
       STATE_LOAD_VAR(buf, inputdev_ports[p].btn_left);
       STATE_LOAD_VAR(buf, inputdev_ports[p].btn_right);
-      inputdev_ports[p].x.phase &= 3;
-      inputdev_ports[p].y.phase &= 3;
+      inputdev_sanitize_axis(&inputdev_ports[p].x);
+      inputdev_sanitize_axis(&inputdev_ports[p].y);
    }
 
    STATE_LOAD_VAR(buf, inputdev_armed);

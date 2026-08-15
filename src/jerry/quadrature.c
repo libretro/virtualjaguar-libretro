@@ -19,7 +19,7 @@ void QuadReset(quad_axis *q)
 
    q->backlog = 0;
    q->frac    = 0;
-   q->phase   = 0;
+   q->phase   = QUAD_REST_PHASE;   /* (1,1): idle reads as no assertion */
 }
 
 void QuadFeed(quad_axis *q, int32_t delta, int32_t scale_q8)

@@ -1458,6 +1458,7 @@ test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 # $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
 # the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
 test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
+		src/jerry/inputdev.h \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/joymatrix_identity.c \
