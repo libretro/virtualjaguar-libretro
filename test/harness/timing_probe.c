@@ -29,9 +29,12 @@ static const char *counter_labels[TIMING_NUM_COUNTERS] = {
     "Blitter calls"
 };
 
-/* NTSC: 524 halflines/frame, PAL: 625 halflines/frame */
+/* Halflines per non-interlaced field (VP+1): JTRM Rev 10 p.8 "Video
+ * Timings", Vertical Lines (non interlaced) = 524 NTSC / 624 PAL.
+ * PAL read 625 here -- the INTERLACED value -- which made the PAL
+ * cycle expectations below 0.16% high. */
 #define NTSC_HALFLINES  524
-#define PAL_HALFLINES   625
+#define PAL_HALFLINES   624
 
 /* Halfline period in microseconds */
 #define NTSC_HALFLINE_US  31.777777777

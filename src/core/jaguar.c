@@ -47,8 +47,8 @@ static bool frameDone;
 
 /* Frame-pacing instrumentation (no-op unless built with BENCH_PROFILE).
  * Lets the acid runner / benchmark detect timing regressions like the
- * Doom 2x speed bug -- e.g. expected 525 halflines/frame NTSC, 60 vblank
- * IRQs/sec.  See test/acid/README.md and src/core/perf_counters.h.
+ * Doom 2x speed bug -- e.g. expected 524 halflines/field NTSC (JTRM Rev 10
+ * "Video Timings", non-interlaced), 60.05 vblank IRQs/sec.  See test/acid/README.md and src/core/perf_counters.h.
  * Counters that fire from other TUs are declared at their use sites
  * (PERF_COUNTER backs each name with a file-scope static). */
 PERF_COUNTER(timing_halfline_callbacks);
@@ -1192,16 +1192,42 @@ void JaguarInit(void)
 // regardless of whether it's in interlace mode or not.
 // NB2: Seems it doens't always, not sure what the constraint is...)
 //
+/* Video field geometry -- the single source of truth behind the advertised
+ * field rate (issue #392).  Definitions and the JTRM citations live in
+ * jaguar.h; these are the three accessors every consumer uses so the
+ * numbers cannot drift apart between libretro.c and dac.c. */
+double JaguarGetHalflinePeriodUs(void)
+{
+   return vjs.hardwareTypeNTSC ? VJ_HALFLINE_US_NTSC : VJ_HALFLINE_US_PAL;
+}
+
+uint32_t JaguarGetDefaultFieldHalflines(void)
+{
+   return vjs.hardwareTypeNTSC ? VJ_HALFLINES_PER_FIELD_NTSC
+                               : VJ_HALFLINES_PER_FIELD_PAL;
+}
+
+double JaguarGetFieldRateHz(void)
+{
+   return 1000000.0 / ((double)JaguarGetDefaultFieldHalflines()
+                       * JaguarGetHalflinePeriodUs());
+}
+
 // Normally, TVs will render a full frame in 1/30s (NTSC) or 1/25s (PAL) by
 // rendering two fields that are slighty vertically offset from each other.
-// Each field is created in 1/60s (NTSC) or 1/50s (PAL), and every other line
+// Each field is created in 1/60.05445s (NTSC) or 1/50.08013s (PAL) -- see the
+// field-rate derivation below; 60/50 are the round numbers, not the rates --
+// and every other line
 // is rendered in this mode so that each field, when overlaid on each other,
 // will yield the final picture at the full resolution for the full frame.
 //
-// We execute a half frame in each timeslice (1/60s NTSC, 1/50s PAL).
-// Since the number of lines in a FULL frame is 525 for NTSC, 625 for PAL,
-// it will be half this number for a half frame. BUT, since we're counting
-// HALF lines, we double this number and we're back at 525 for NTSC, 625 for PAL.
+// We execute one field in each timeslice.  A field is VP+1 HALF lines, and
+// per JTRM Rev 8 p.15 an odd half-line count selects interlace -- so a
+// non-interlaced field is the even value from the Rev 10 "Video Timings"
+// table: 524 for NTSC, 624 for PAL (525/625 are the interlaced variants).
+// That makes a field 16651.56 us NTSC / 19968.0 us PAL, i.e. 60.05445 Hz
+// and 50.08013 Hz -- not 60/50, and not NTSC's interlaced 59.94 Hz.
+// See JaguarGetFieldRateHz() above and jaguar.h for the full citations.
 //
 // Scanline times are 63.5555... μs in NTSC and 64 μs in PAL
 // Half line times are, naturally, half of this. :-P
@@ -1251,7 +1277,7 @@ void HalflineCallback(void)
       uint32_t halfclks;
       uint32_t charge;
       halfclks = (uint32_t)USEC_TO_RISC_CYCLES(
-                    vjs.hardwareTypeNTSC ? 31.777777777 : 32.0);
+                    JaguarGetHalflinePeriodUs());
       charge = bus_arbiter_op_take() + bus_arbiter_refresh_clocks(halfclks);
       /* Bus occupancy within a halfline cannot exceed the halfline:
        * the emulated OP walks its whole list instantly, so a
@@ -1267,8 +1293,7 @@ void HalflineCallback(void)
 
    /* Blitter bus-time window decays with real time: a blit finishes on
     * its own whether or not anyone is watching (blitter_mmio.c). */
-   BlitterTimingTick(USEC_TO_RISC_CYCLES(
-                        vjs.hardwareTypeNTSC ? 31.777777777 : 32.0));
+   BlitterTimingTick(USEC_TO_RISC_CYCLES(JaguarGetHalflinePeriodUs()));
 
    //Change this to VBB???
    //Doesn't seem to matter (at least for Flip Out & I-War)
@@ -1292,7 +1317,7 @@ void HalflineCallback(void)
       JaguarCDHLEStreamTick();
    }
 
-   SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
+   SetCallbackTime(HalflineCallback, JaguarGetHalflinePeriodUs(), EVENT_MAIN);
 }
 
 void JaguarReset(void)
@@ -1490,7 +1515,7 @@ void JaguarReset(void)
    m68k_pulse_reset();								// Reset the 68000
 
    lowerField = false;								// Reset the lower field flag
-   SetCallbackTime(HalflineCallback, (vjs.hardwareTypeNTSC ? 31.777777777 : 32.0), EVENT_MAIN);
+   SetCallbackTime(HalflineCallback, JaguarGetHalflinePeriodUs(), EVENT_MAIN);
 }
 
 
