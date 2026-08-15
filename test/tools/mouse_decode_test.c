@@ -71,7 +71,8 @@ typedef enum {
    DEV_PAD                 = 0,
    DEV_MOUSE_ST            = 1,
    DEV_MOUSE_AMIGA_ADAPTER = 2,
-   DEV_MOUSE_AMIGA_ON_ST   = 3
+   DEV_MOUSE_AMIGA_ON_ST   = 3,
+   DEV_ROTARY              = 4
 } InputDevType;
 
 #define BTN_LEFT   0x01
@@ -107,6 +108,8 @@ static void     (*p_SetScale)(int, int32_t);
 static void     (*p_Reset)(void);
 static void     (*p_Feed)(int, int32_t, int32_t, uint32_t);
 static InputDevType (*p_GetType)(int);
+static void     (*p_Arm)(void);
+static void     (*p_Clock)(uint8_t, uint8_t);
 static int      (*p_AnyAttached)(void);
 static size_t   (*p_StateSave)(uint8_t *);
 
@@ -498,6 +501,102 @@ static void test_port1_poll_does_not_clock(void)
    report(r.net_x == 30 && r.dropped == 0, detail);
 }
 
+/*
+ * THE ARM IS SPENT ONLY BY A READ SOME ATTACHED DEVICE COULD DECODE FROM.
+ *
+ * inputdev.h, ARM CONSUMPTION.  InputDevClock() clears the armed flag
+ * under `if (consumed)`, not unconditionally.  A read that addressed no
+ * attached device -- port 1's row select while the mouse sits on port 2,
+ * or a non-row-0 read while port 1 holds a rotary -- must leave the arm
+ * standing for the read that device is actually owed.  Spending it there
+ * drops that device's next Gray state, and a dropped state is lost
+ * motion, not lag: the decoder cannot recover it.
+ *
+ * WHY THIS DRIVES THE TWO HOOKS DIRECTLY
+ * ======================================
+ * Measured, not assumed: NO sequence of aligned $F14000 / $F14002
+ * accesses can tell the guarded clear from an unconditional one.  The row
+ * select lives in joystick_ram[1], only an offset-0 write changes it, and
+ * every offset-0 write calls InputDevArm() -- so the arm is always 1 at
+ * the first read after any row change, and a later read at unchanged rows
+ * re-runs the same gate to the same answer.  A 2.4M-operation random
+ * write/read sweep across six device combinations digests bit-identically
+ * with the guard deleted.
+ *
+ * The guard is therefore a contract about InputDevClock()'s OWN inputs,
+ * and is pinned at that boundary: InputDevArm() and InputDevClock() model
+ * the driver's row-select write and the undecodable read that followed
+ * it, while every assertion below is still a $F14000 register read taken
+ * through JoystickReadWord().  Do not "simplify" this to a bus-only
+ * sequence -- there isn't one, which is exactly why the guard shipped
+ * untested.
+ */
+static void test_arm_is_spent_only_by_a_decodable_read(int rotary_on_port1)
+{
+   uint16_t before, after, settled;
+   const char *ctx;
+
+   ctx = rotary_on_port1
+       ? "with a rotary on port 1 (row 3, which no rotary can sample)"
+       : "with a bare pad on port 1";
+
+   printf("arm consumption is gated on the same read that samples (%s)\n",
+          ctx);
+
+   if (!p_Arm || !p_Clock)
+   {
+      report(0, "InputDevArm / InputDevClock resolvable");
+      return;
+   }
+
+   attach(DEV_MOUSE_ST);
+   if (rotary_on_port1)
+      p_SetType(0, DEV_ROTARY);
+   p_Feed(1, 40, 0, 0);
+
+   /* Settle on a known phase with the arm already spent: the write arms,
+    * the first read consumes it and advances, the second is unarmed and
+    * so is a pure sample. */
+   p_WriteWord(0, row_words[0]);
+   (void)p_ReadWord(0);
+   before = (uint16_t)(p_ReadWord(0) & 0xF000u);
+
+   /* The driver's row-select write, then a read that addressed only port
+    * 1 -- nothing the port-2 mouse could have decoded from. */
+   p_Arm();
+   p_Clock((uint8_t)(rotary_on_port1 ? 3 : 0), 0xFF);
+
+   /* The mouse's own next read.  Rows are still port 2 row 0, so this is
+    * the read the arm was owed to. */
+   after = (uint16_t)(p_ReadWord(0) & 0xF000u);
+
+   sprintf(detail,
+           "a read no attached device could decode from does not spend the "
+           "arm the port-2 mouse was owed %s ($F14000 bits 12-15 $%X -> $%X, "
+           "expect a change)",
+           ctx, (unsigned)(before >> 12), (unsigned)(after >> 12));
+   report(after != before, detail);
+
+   /* The other half.  A guard that simply never cleared the arm would
+    * pass the check above, so pin the consuming case too: once a read the
+    * mouse DID sample has spent the arm, the reads that follow it are
+    * unarmed and the phase stands still. */
+   p_Arm();
+   p_Clock(0xFF, 0);                                /* the mouse samples  */
+   after   = (uint16_t)(p_ReadWord(0) & 0xF000u);
+   settled = (uint16_t)(p_ReadWord(0) & 0xF000u);
+
+   sprintf(detail,
+           "a read the mouse did sample DOES spend the arm: the reads after "
+           "it are unarmed and hold the phase ($%X then $%X)",
+           (unsigned)(after >> 12), (unsigned)(settled >> 12));
+   report(after == settled, detail);
+
+   p_SetType(0, DEV_PAD);
+   p_SetType(1, DEV_PAD);
+   p_Reset();
+}
+
 static void test_pad_is_inert(void)
 {
    decode_result r;
@@ -725,6 +824,9 @@ int main(int argc, char **argv)
    p_AnyAttached = (int (*)(void))harness_dlsym(&cfg, "InputDevAnyAttached");
    p_StateSave   = (size_t (*)(uint8_t *))
                       harness_dlsym(&cfg, "InputDevStateSave");
+   p_Arm         = (void (*)(void))harness_dlsym(&cfg, "InputDevArm");
+   p_Clock       = (void (*)(uint8_t, uint8_t))
+                      harness_dlsym(&cfg, "InputDevClock");
 
    p_serialize_size = (size_t (*)(void))harness_dlsym(&cfg, "retro_serialize_size");
    p_serialize      = (bool (*)(void *, size_t))harness_dlsym(&cfg, "retro_serialize");
@@ -752,6 +854,8 @@ int main(int argc, char **argv)
 
    test_case_discrimination();
    test_port1_poll_does_not_clock();
+   test_arm_is_spent_only_by_a_decodable_read(0);
+   test_arm_is_spent_only_by_a_decodable_read(1);
    test_savestate();
    test_chunk_size();
    test_port1_rejects_mouse();
