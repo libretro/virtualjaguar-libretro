@@ -202,7 +202,17 @@ def main():
                 "the KIMI_API_BASE repo variable to match where the key was "
                 "issued."
             )
-        elif e.code in (400, 404) and "model" in detail.lower():
+        # Match the model NAME being rejected, not the bare word "model" --
+        # "invalid temperature: only 1 is allowed for this model" contains it
+        # too, so a substring test re-creates the very misdiagnosis this
+        # handler was rewritten to remove.
+        elif e.code in (400, 404) and (
+            os.environ["KIMI_MODEL"].lower() in low
+            or any(p in low for p in (
+                "model not found", "unknown model", "invalid model",
+                "model does not exist", "no such model",
+            ))
+        ):
             print(
                 "Model '" + os.environ["KIMI_MODEL"] + "' was rejected. Valid "
                 "names are tier-dependent: k3, k3-256k, kimi-for-coding, "
