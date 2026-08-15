@@ -51,6 +51,29 @@ defaults.  Any other patched ROM falls through: the core logs
 `[titledb] no per-title entry for CRC32 $XXXXXXXX` and you set enhancement
 options by hand.
 
+## Soft patches vs enhancement hooks
+
+Both write bytes into the cartridge image, so it is worth being precise
+about which is which — see [`enhancement-hooks.md`](enhancement-hooks.md)
+for the full picture.
+
+| | Soft patching (this page) | Enhancement hooks (`virtualjaguar_enhancement_hooks`) |
+|---|---|---|
+| Who authors it | you | the core, in `src/core/titledb.c` |
+| Where it lives | an `.ips`/`.bps`/`.ups`/`.xdelta` beside the ROM | compiled into the core |
+| Who applies it | the frontend, before the core sees the buffer | the core, at load, after the boot strategy |
+| Scope | the whole file, unlimited | ≤4 patches of ≤64 bytes each, per title |
+| Safety check | BPS/UPS verify a source CRC; IPS does not | a mandatory `expect[]` per patch; refuses and logs on mismatch |
+| Default | on when the patch file is present | **off** |
+
+They compose badly in one specific way, and it is not a bug: **a soft
+patch changes the CRC, so it drops every per-title row for that title,
+hooks included.** The frontend patches the buffer before the core hashes
+it, the hash no longer matches any table key, and you get the
+`[titledb] no per-title entry` miss line. If you want both, that is a
+request for a hook row keyed on the patched image's own CRC, with its own
+verified `expect[]` bytes — never an alias of the retail row's.
+
 ## Jaguar CD content cannot be soft patched
 
 For CD images (`.cue`/`.cdi`) the core declares itself path-loaded for

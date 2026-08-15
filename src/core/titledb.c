@@ -43,6 +43,42 @@
  * QUALIFY16 405.8k/4800f=84.5/f (both thresholds cleared); Cybermorph
  * shaded 1.70M/2400f=708/f (cleared), QUALIFY16 13/2400f=0.005/f (below
  * threshold) -> true_color only.
+ *
+ * ------------------------------------------------------------------
+ * hooks[] authoring checklist (issue #370, docs/enhancement-hooks.md)
+ *
+ * A hook row (a byte patch into cartridge ROM at load) is admissible
+ * only when ALL of the following hold.  test_titledb enforces the
+ * mechanical half at `make test` time; the rest is review.
+ *
+ *  1. `offset` is PAYLOAD-relative -- verified against a headerless
+ *     dump, or with 512 subtracted from a headered one.  The CRC is
+ *     identical for both dumps, so a raw hex-editor offset from a
+ *     headered file is silently wrong by 512.
+ *  2. `expect[]` was read out of the SHIPPED image at that offset, and
+ *     `crc32` is the CRC of that exact image.  NEVER inherited from an
+ *     alias row: the Doom EX rows above deliberately reuse retail
+ *     Doom's pairs, and that is safe for settings and unsafe for bytes,
+ *     because offset $X in a romhack is exactly the region the hack may
+ *     have rewritten.  On mismatch the applier refuses and logs; it
+ *     never writes.
+ *  3. The behaviour the patch produces was determined by OUR OWN
+ *     analysis (disassembly, vjtrace, m68k_pc_histogram, gpu_disasm_dump,
+ *     trace_dump) and the comment cites which.  No third-party patch
+ *     data is transliterated into this table.
+ *  4. The defect is a GAME defect, not one of ours.  A hook whose root
+ *     cause is emulator inaccuracy is rejected at review and re-filed
+ *     against the accuracy track (#319 / #408).
+ *  5. Before/after measurement is committed as the row's evidence, the
+ *     way every existing row cites its census numbers.
+ *  6. cart_boot_probe boots the title clean with the hook on.
+ *  7. frame_hash_ab with virtualjaguar_enhancement_hooks OFF is
+ *     byte-identical to the pre-change build.
+ *
+ * The table currently ships ZERO hook rows.  The mechanism is complete,
+ * gated off by default and CI-covered; rows land as data once a
+ * behaviour has been researched to the standard above.
+ * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
    /* Alien vs Predator (retail) — 2x internal resolution + true color.
@@ -318,6 +354,10 @@ static const TitleDBEntry *current = NULL;
 /* Kept even on a miss so the caller can name the CRC it looked up. */
 static uint32_t content_crc = 0;
 
+/* Test-only hook override; see TitleDBSetHooksForTest in titledb.h. */
+static const TitleDBHook *hooks_override = NULL;
+static int hooks_override_count = 0;
+
 /*
  * Internal: set the CRC directly.
  * Linear-scan the table to find a match.
@@ -402,6 +442,43 @@ const char *TitleDBTitleName(void)
    if (current == NULL)
       return NULL;
    return current->name;
+}
+
+/*
+ * Enhancement hooks for the loaded content, or NULL on a miss.
+ * The test override, when installed, wins regardless of CRC match.
+ */
+const TitleDBHook *TitleDBHooks(int *count)
+{
+   if (hooks_override != NULL)
+   {
+      if (count != NULL)
+         *count = hooks_override_count;
+      return hooks_override;
+   }
+
+   if (current == NULL)
+      return NULL;
+
+   if (count != NULL)
+      *count = TITLEDB_MAX_HOOKS;
+   return current->hooks;
+}
+
+/*
+ * Test-only: install a hook array TitleDBHooks() returns regardless of
+ * CRC match.  NULL restores normal table lookup.
+ */
+void TitleDBSetHooksForTest(const TitleDBHook *hooks, int count)
+{
+   if (hooks == NULL || count <= 0)
+   {
+      hooks_override = NULL;
+      hooks_override_count = 0;
+      return;
+   }
+   hooks_override = hooks;
+   hooks_override_count = count;
 }
 
 /*

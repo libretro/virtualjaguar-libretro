@@ -80,4 +80,7 @@ _shadowHiresN
 _shadowFBActive
 _blitMemo*
 _TitleDB*
+# _TitleHook* is NOT covered by _TitleDB* -- the applier lives in its own
+# translation unit and its own name prefix.
+_TitleHook*
 _vjtrace_*

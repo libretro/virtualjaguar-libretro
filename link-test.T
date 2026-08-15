@@ -83,6 +83,9 @@
       shadowFBActive;
       blitMemo*;
       TitleDB*;
+      /* TitleHook* is NOT covered by TitleDB* -- the applier lives in its
+       * own translation unit and its own name prefix. */
+      TitleHook*;
       vjtrace_*;
    local: *;
 };
