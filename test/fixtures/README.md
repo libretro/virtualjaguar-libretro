@@ -84,7 +84,7 @@ comparison in #411 needs. Issue #435; unblocks #378 and #411.
 | ROM CRC32 | `0xDC187F82` — the `src/core/titledb.c` seed |
 | Savestate version | **11** (`STATE_VERSION`, `src/core/state.h`) |
 | Verified on build | `v3.3.0 eb19f12` |
-| Options at capture | **assumed** stock, so per-title defaults (#368) in force: 2x + true color — not recoverable from the file, see below |
+| Options at capture | as reported by the capturer: video enhancements on, all three timing-model booleans on, both clock scales stock `1x`. Not recoverable from the file — see below |
 
 Stored as RetroArch's **uncompressed** `RASTATE` container (`MEM ` block =
 2 621 440 bytes of core state). RetroArch writes `.state` files RZIP-compressed
@@ -120,11 +120,22 @@ the scene animates standing still — unlike the post-frame-3000 window of the
 
 The capture options are **not** recoverable from the file — `serialize_size()`
 is identical with per-title defaults enabled or disabled, so the state restores
-either way. What differs is the presented geometry: 652×480 with the defaults
-in force, 326×240 under `virtualjaguar_pertitle_defaults=disabled`. Since 2x +
-true color roughly doubles absolute cost, a number measured under one option
-set is not comparable with one measured under the other — record the options
-alongside any measurement taken from this fixture.
+under any option set. What differs is the presented geometry: 652×480 with the
+per-title defaults in force (#368 gives AvP 2x + true color),
+326×240 under `virtualjaguar_pertitle_defaults=disabled`. Since 2x + true color
+roughly doubles absolute cost, a number measured under one option set is not
+comparable with one measured under another — **record the options of the run
+you measure**, and do not assume they match the capture.
+
+That matters here because the capture was *not* taken at stock: the capturer
+reports the video enhancements and all three timing-model booleans
+(`virtualjaguar_dram_timing`, `virtualjaguar_gpu_pipeline_timing`,
+`virtualjaguar_blitter_timing`, all default `disabled`) enabled, with
+`virtualjaguar_m68k_clock_scale` and `virtualjaguar_risc_clock_scale` left at
+`1x`. None of that constrains the fixture — the timing models change pacing,
+not the saved machine state — but it does mean the state is not a stock-options
+artefact, so the numbers above (taken at stock) and any #378/#411 numbers must
+each name their own configuration.
 
 Savestate compatibility breaks on `STATE_VERSION` bumps (one bump per release
 by policy), so this file needs re-capturing after a bump; update the version
