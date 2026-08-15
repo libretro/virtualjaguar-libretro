@@ -86,6 +86,9 @@
 #include <stdint.h>
 
 #include "../harness/harness.h"
+/* For InputDevType: dlsym'd pointers must carry the real signature, or
+ * UBSan -fsanitize=function aborts the suite on a type mismatch. */
+#include "../../src/jerry/inputdev.h"
 #include "settings.h"
 
 /* ---- sweep parameters (part of the digest's definition) ------------- */
@@ -219,7 +222,7 @@ int main(int argc, char **argv)
    int i;
    int ok_full, ok_port1;
 
-   void (*p_InputDevSetType)(int, int);
+   void (*p_InputDevSetType)(int, InputDevType);
    void (*p_InputDevReset)(void);
    void (*p_InputDevFeed)(int, int32_t, int32_t, uint32_t);
 
@@ -313,7 +316,7 @@ int main(int argc, char **argv)
     * The mouse's overlay drives $F14000 bits 12-15 and $F14002 bits 2-3
     * in EVERY row (it is row-blind), which is precisely the shape of
     * change that could leak sideways if a mask were written wrong. */
-   p_InputDevSetType = (void (*)(int, int))
+   p_InputDevSetType = (void (*)(int, InputDevType))
                           harness_dlsym(&cfg, "InputDevSetType");
    p_InputDevReset   = (void (*)(void))harness_dlsym(&cfg, "InputDevReset");
    p_InputDevFeed    = (void (*)(int, int32_t, int32_t, uint32_t))
@@ -325,7 +328,7 @@ int main(int argc, char **argv)
       unsigned long mouse_reads;
       int ok_mouse;
 
-      p_InputDevSetType(1, 1);          /* INPUTDEV_MOUSE_ST */
+      p_InputDevSetType(1, INPUTDEV_MOUSE_ST);
       p_InputDevReset();
       /* Enough motion that the encoder is draining throughout the sweep,
        * with both buttons held, so every mouse-driven bit is live. */
@@ -333,7 +336,7 @@ int main(int argc, char **argv)
 
       run_sweep(&mouse_full, &mouse_port1, &mouse_reads);
 
-      p_InputDevSetType(1, 0);          /* INPUTDEV_PAD */
+      p_InputDevSetType(1, INPUTDEV_PAD);
       p_InputDevReset();
 
       ok_mouse = (mouse_port1 == EXPECT_DIGEST_PORT1);
