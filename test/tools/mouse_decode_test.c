@@ -55,6 +55,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "../harness/harness.h"
 
@@ -105,13 +106,13 @@ static void     (*p_SetType)(int, InputDevType);
 static void     (*p_SetScale)(int, int32_t);
 static void     (*p_Reset)(void);
 static void     (*p_Feed)(int, int32_t, int32_t, uint32_t);
-static int      (*p_GetType)(int);
+static InputDevType (*p_GetType)(int);
 static int      (*p_AnyAttached)(void);
 static size_t   (*p_StateSave)(uint8_t *);
 
 static size_t (*p_serialize_size)(void);
-static int    (*p_serialize)(void *, size_t);
-static int    (*p_unserialize)(const void *, size_t);
+static bool   (*p_serialize)(void *, size_t);
+static bool   (*p_unserialize)(const void *, size_t);
 
 /* ---- reporting ------------------------------------------------------- */
 
@@ -720,14 +721,14 @@ int main(int argc, char **argv)
    p_Reset       = (void (*)(void))harness_dlsym(&cfg, "InputDevReset");
    p_Feed        = (void (*)(int, int32_t, int32_t, uint32_t))
                       harness_dlsym(&cfg, "InputDevFeed");
-   p_GetType     = (int (*)(int))harness_dlsym(&cfg, "InputDevGetType");
+   p_GetType     = (InputDevType (*)(int))harness_dlsym(&cfg, "InputDevGetType");
    p_AnyAttached = (int (*)(void))harness_dlsym(&cfg, "InputDevAnyAttached");
    p_StateSave   = (size_t (*)(uint8_t *))
                       harness_dlsym(&cfg, "InputDevStateSave");
 
    p_serialize_size = (size_t (*)(void))harness_dlsym(&cfg, "retro_serialize_size");
-   p_serialize      = (int (*)(void *, size_t))harness_dlsym(&cfg, "retro_serialize");
-   p_unserialize    = (int (*)(const void *, size_t))
+   p_serialize      = (bool (*)(void *, size_t))harness_dlsym(&cfg, "retro_serialize");
+   p_unserialize    = (bool (*)(const void *, size_t))
                          harness_dlsym(&cfg, "retro_unserialize");
 
    if (!p_ReadWord || !p_WriteWord || !p_SetType || !p_SetScale
