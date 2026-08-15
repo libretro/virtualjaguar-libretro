@@ -175,7 +175,24 @@ def main():
         print("::warning title=Kimi review did not run::"
               f"HTTP {e.code} from the Kimi API; no review was posted. "
               "See the job log for the API's message.")
-        if e.code in (401, 403):
+        low = detail.lower()
+        if e.code == 403 and (
+            "usage limit" in low or "quota" in low
+            or "access_terminated" in low or "insufficient" in low
+        ):
+            # A quota 403 is NOT an auth problem, and saying "auth failed"
+            # here sends the reader to the key and the base URL when neither
+            # is wrong -- the same misdiagnosis that hid the temperature bug.
+            print(
+                "This is a BILLING limit, not a credential problem: the key "
+                "authenticated fine and the plan is out of quota for the "
+                "current cycle. Nothing in this repo needs changing -- the "
+                "reviewer resumes when the quota refreshes, or sooner if the "
+                "plan is topped up. Note that every push to an open PR spends "
+                "quota, so a branch that is being iterated on will burn it "
+                "faster than the PR count suggests."
+            )
+        elif e.code in (401, 403):
             print(
                 "Auth failed against " + os.environ["KIMI_API_BASE"] + ".\n"
                 "A key from the Kimi Code console (kimi.com/code/console) is a "
@@ -185,7 +202,17 @@ def main():
                 "the KIMI_API_BASE repo variable to match where the key was "
                 "issued."
             )
-        elif e.code in (400, 404) and "model" in detail.lower():
+        # Match the model NAME being rejected, not the bare word "model" --
+        # "invalid temperature: only 1 is allowed for this model" contains it
+        # too, so a substring test re-creates the very misdiagnosis this
+        # handler was rewritten to remove.
+        elif e.code in (400, 404) and (
+            os.environ["KIMI_MODEL"].lower() in low
+            or any(p in low for p in (
+                "model not found", "unknown model", "invalid model",
+                "model does not exist", "no such model",
+            ))
+        ):
             print(
                 "Model '" + os.environ["KIMI_MODEL"] + "' was rejected. Valid "
                 "names are tier-dependent: k3, k3-256k, kimi-for-coding, "

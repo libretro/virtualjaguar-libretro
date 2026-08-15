@@ -803,22 +803,49 @@ else
 # the same second, which is exactly the timestamp-granularity trap this is
 # meant to close.  Runs at parse time, once TARGET is known.
 #
-# vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
-# site or a vjtrace_pchist_*() call (including libretro.o's
-# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
-# *content* (not just the export list) that depends on TEST_EXPORTS --
-# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
-# -DVJ_TRACE line above), so those objects must be deleted alongside the
-# library on every mode transition, or a stale object compiled in the
-# other mode silently survives the relink: either vjtrace_* symbols go
-# missing from a `make TEST_EXPORTS=1` build that started from a plain
-# `make` (undefined symbols at link time), or the reverse transition
-# silently keeps the no-op macro expansion, so the ring never receives
-# events despite vjtrace_* being exported.
-VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
+# TEST_EXPORTS also changes object *content*, not just the export list:
+# it adds -DVJ_TRACE to CFLAGS (see the line above), so vjtrace.o defines
+# the vjtrace_* functions only in that branch, and every object carrying a
+# VJT_EMIT/VJT_WATCH_*/vjtrace_pchist_*/vjtrace_init call site compiles to
+# real calls in one mode and to nothing in the other.  A stale object from
+# the other mode that survives the relink breaks the build in one direction
+# and lies in the other: TEST_EXPORTS=1 -> plain fails with undefined
+# vjtrace_* symbols, while plain -> TEST_EXPORTS=1 links fine but keeps the
+# no-op macro expansion, so the ring silently records nothing despite
+# vjtrace_* being exported.
+#
+# So a mode change flushes *every* object, not a curated list of the ones
+# believed to be trace-hooked.  That list is exactly the stale-.o hazard it
+# was meant to prevent: it shipped without src/tom/blit_memo.o, whose
+# BlitMemoLaunch VJT_EMIT call site broke `make TEST_EXPORTS=1 && make`.
+# Any list -- hand-written, grepped, or derived from -MD -- can also miss a
+# file that picks up the macros through an indirect include, so there is no
+# list.  Cost is one full rebuild per flip (~21s at -j8 without ccache);
+# the curated list already recompiled most of the heavy objects anyway.
+#
+# The $(shell) runs at parse time, so it would also fire under `make -n`.
+# That was tolerable when the flush was nine objects; with the whole object
+# list in scope a dry run would silently cost a full rebuild, so skip it
+# when -n is in effect.
+#
+# GNU make encodes -n two different ways, so both are matched.  Normally the
+# short options collect into MAKEFLAGS' first word with no leading dash
+# ("n", "ns", "nk") -- but under make 3.81 (stock macOS) a long option
+# empties that group and -n reappears as its own word, e.g.
+# `make --no-print-directory -n` gives MAKEFLAGS=" --no-print-directory -n".
+# Only the letter group is scanned for 'n' (no short option other than -n
+# uses that letter); long options and the `--`/NAME=value words that carry
+# command-line variables start with '-' or contain '=', and are dropped, so
+# `make platform=android` cannot false-match.  A false positive here would
+# silently skip the flush and bring the stale-object bug straight back, so
+# the detection is deliberately conservative in that direction.
+MAKEFLAGS_LETTERS := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+DRY_RUN := $(strip $(findstring n,$(MAKEFLAGS_LETTERS)) \
+                   $(filter -n --dry-run --just-print --recon,$(MAKEFLAGS)))
+$(if $(DRY_RUN),,\
 $(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
         || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })
+             rm -f $(TARGET) $(OBJECTS); }))
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
@@ -853,6 +880,8 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
+		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/test_quadrature \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -906,7 +935,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
-		test/tools/i2s_lag_probe
+		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/test_quadrature test/tools/mouse_decode_test
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -1135,6 +1165,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	@# $F14000/$F14002 identity guardrail for the input-devices track
+	@# (#428/#429/#436): sweeps the whole joystick read domain and asserts
+	@# an FNV digest measured on develop.  Committed before any device code
+	@# so later PRs are measured against a number that predates them.
+	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Quadrature encoder unit test (no core): the Gray sequence in both
+	@# directions, the one-state-per-advance rate policy, the backlog
+	@# clamp and the Q8 carry.
+	./test/test_quadrature
+	@# ST/Amiga mouse end-to-end: synthetic deltas in, decoded direction
+	@# and distance out, all three wiring cases and all three poll shapes,
+	@# plus row-blindness and the v12 savestate round-trip.
+	./test/tools/mouse_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1474,6 +1517,26 @@ test/tools/test_hook_gate: test/tools/test_hook_gate.c \
 		-o $@ test/tools/test_hook_gate.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
+# the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
+test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
+		src/jerry/inputdev.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/joymatrix_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/mouse_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_quadrature: test/test_quadrature.c src/jerry/quadrature.c src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_quadrature.c src/jerry/quadrature.c
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \

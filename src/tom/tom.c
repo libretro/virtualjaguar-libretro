@@ -1341,7 +1341,11 @@ void TOMExecHalfline(uint16_t halfline, bool render)
        * the stock path is unchanged (see shadowfb.h). */
       uint32_t hiresRowScale = (uint32_t)shadowHiresN;
 
-      // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
+      // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced.
+      // (JTRM Rev 8 p.15: half lines per field = VP+1, and an ODD half-line
+      // count is interlaced -- so the REGISTER's bit 0 carries the inverse
+      // sense: VP odd -> VP+1 even -> non-interlaced.  tomRam8[VP + 1] is
+      // the low byte of the 16-bit VP register, not VP+1 halflines.)
       if (tomRam8[VP + 1] & 0x01)
          writtenRow = (halfline - topVisible) / 2;//non-interlace
       else

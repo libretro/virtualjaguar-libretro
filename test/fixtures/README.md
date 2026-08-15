@@ -1,6 +1,7 @@
-# Scripted-input fixtures
+# Test fixtures
 
-Plain-text `--press` scripts for the shared harness (`test/harness/`).
+Plain-text `--press` scripts for the shared harness
+(`test/harness/`).
 
 ## `avp_reach_gameplay.press`
 
@@ -67,3 +68,37 @@ message). The gate is the CD trace ring — a read whose LBA delta exceeds
 100 000 sectors — **not** the `seeks`/`seekstarts` CSV columns, which are
 structurally 0 in HLE mode because HLE never touches the BUTCH `$12xx` path.
 A no-press control run fails the gate, so it is falsifiable.
+## Why there is no committed savestate
+
+`#435` originally shipped `avp_corridor_gameplay.state`, a mid-route Alien vs
+Predator capture, to skip the ~3000-frame run-up that `avp_reach_gameplay.press`
+pays. It is deliberately **not** in this tree.
+
+A Virtual Jaguar savestate is an *uncompressed* dump of the emulated machine:
+2 621 440 bytes, of which the bulk is the Jaguar's 2 MB main RAM. For a
+commercial title that RAM holds the game's own code and data — `strings` on the
+AvP capture returns its in-game text verbatim (`PULSE RIFLE`, `AIRLOCK DOOR`,
+`SUBLEVEL ?`). Committing one to a public repository publishes a substantial
+part of the copyrighted work, which is the same reason `test/roms/private` is a
+symlink to a tree outside every checkout rather than a directory in it.
+
+Two practical problems came with it, independent of the licensing one:
+
+- **It expires.** A state is pinned to `STATE_VERSION`, and the policy is one
+  bump per release — the AvP capture was version 11 and #429 takes the core to
+  12, so it would have been stale before it was ever used.
+- **It hid its own configuration.** A state restores the machine, not the
+  options that produced it, so any measurement taken from it has to re-declare
+  its configuration anyway.
+
+### What to use instead
+
+Drive the fixture from boot with the `--press` scripts above. They are our own
+input recordings, a couple of kilobytes each, carry no game data, never expire
+against a `STATE_VERSION` bump, and state their own timeline so a run is
+reproducible from a cold start.
+
+If a mid-game state genuinely cannot be reached by replaying input, keep the
+`.state` beside the ROMs in the private tree and have the test **skip loudly**
+when it is absent — `exit 77`, per the repo convention — rather than committing
+it here.

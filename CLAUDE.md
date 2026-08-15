@@ -122,12 +122,32 @@ Every harness that dlopens the core prints the binary's embedded version (`vX.Y.
 ### Test ABI and re-linking
 
 `make` links the production-slim ABI (`retro_*` only); `make test` needs the
-wide test ABI so harnesses can `dlsym` internals. Switching between them
-re-links automatically — the Makefile deletes the library when the mode
-changes, so `make` followed by `make TEST_EXPORTS=1 test` works. (It did not
-before v2.3.2: the library was newer than every object, nothing relinked, and
-the suite failed with `Missing: m68k_execute`.) After `make test`, the library
-in the tree carries the wide exports; plain `make` restores the shipped ABI.
+wide test ABI so harnesses can `dlsym` internals. `TEST_EXPORTS=1` selects the
+wide one — and also adds `-DVJ_TRACE`, so it changes object *content*, not just
+the export list.
+
+Switching in **either** direction is handled automatically: the Makefile stamps
+the mode into `.link-mode` and, when it differs, deletes the library **and every
+object** before the build. Both `make` → `make TEST_EXPORTS=1 test` and
+`make TEST_EXPORTS=1` → `make` work with no `make clean`. Cost is one full
+rebuild per flip (~21s at `-j8` without ccache).
+
+The flush is deliberately unconditional rather than a list of "objects that use
+vjtrace". That list is what broke before: it omitted `src/tom/blit_memo.o`, so
+`make TEST_EXPORTS=1` followed by plain `make` died with undefined
+`_vjtrace_emit` referenced from `BlitMemoLaunch`, and the reverse direction
+linked cleanly while silently keeping the no-op macro expansion — traced builds
+that record nothing. Do not reintroduce a curated (or grepped, or `-MD`-derived)
+list; a file can pick up the `VJT_*` macros through an indirect include.
+CI gates both directions on every host row of `c-cpp.yml`'s build job: the
+build + `make test` steps cover `plain` → `TEST_EXPORTS=1`, and a final plain
+`make` after the artifact upload covers the reverse. `make -n` is exempt from
+the flush, so a dry run costs nothing.
+
+Earlier history: before v2.3.2 the mode switch didn't relink at all — the
+library was newer than every object, nothing rebuilt, and the suite failed with
+`Missing: m68k_execute`. After `make test`, the library in the tree carries the
+wide exports; plain `make` restores the shipped ABI.
 
 ### Build-identity guard (stale-binary protection)
 
@@ -187,8 +207,9 @@ The "Acid suite (linux x86_64)" job can show `conclusion: failure` for two unrel
 - List unresolved threads: `gh api graphql -f query='{repository(owner:"libretro",name:"virtualjaguar-libretro"){pullRequest(number:N){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{id author{login} body}}}}}}}'`
 - Inline reply: `gh api -X POST repos/libretro/virtualjaguar-libretro/pulls/N/comments/<REST_ID>/replies -f body="..."` — parent is the REST `id` from `gh api .../comments`, NOT the GraphQL `PRRC_*` id (returns 404).
 - Resolve thread: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_..."}) { thread { isResolved } } }'`.
-- Trigger a Copilot review: `gh pr comment N --body "@copilot review"`. The `requested_reviewers` REST endpoint rejects `copilot-pull-request-reviewer` as "not a collaborator".
 - Always reply AND resolve when addressing feedback — leaving a thread open after a fix is noise for the next reviewer.
+- **Do NOT trigger Copilot reviews.** `gh pr comment N --body "@copilot review"` used to be the documented trigger; it is now discouraged. Copilot bills per token since 2026-06-01, that comment spawns a *coding agent* session (38 of them in Aug 2026, up to 4 on a single PR), and `kimi-review.yml` already reviews every PR to `develop`/`master` automatically on a different provider's budget. Reach for it only when a second opinion is genuinely worth the spend, and say why in the PR.
+- Repo-level custom instructions for Copilot live in `.github/copilot-instructions.md`. Keep it short — it is input on every request. Depth goes in `.github/prompts/*.prompt.md`, which load only when invoked.
 
 ### Headless framebuffer caveat
 

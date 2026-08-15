@@ -496,6 +496,43 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_p2_device",
+      "Port 2 > Controller Type",
+      "Controller Type",
+      "Which peripheral is plugged into controller port 2. 'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected.",
+      NULL,
+      "input_p2",
+      {
+         { "auto",                "Auto (per-title default)" },
+         { "pad",                 "Standard Joypad" },
+         { "mouse_st",            "Atari ST / PS2 Mouse" },
+         { "mouse_amiga",         "Amiga Mouse (ST adapter)" },
+         { "mouse_amiga_adapter", "Amiga Mouse (Amiga adapter)" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "virtualjaguar_mouse_sensitivity",
+      "Port 2 > Mouse Sensitivity",
+      "Mouse Sensitivity",
+      "Scales mouse movement before it is converted to quadrature pulses. The emulated device can only emit one pulse per controller poll, so raising this past what the game's poll rate can carry adds lag rather than speed.",
+      NULL,
+      "input_p2",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { "150", "150%" },
+         { "200", "200%" },
+         { "300", "300%" },
+         { "400", "400%" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
       "virtualjaguar_p1_numpad_to_kb",
       "Port 1 > Numpad Buttons to Keyboard Keys",
       "Numpad Buttons to Keyboard Keys",

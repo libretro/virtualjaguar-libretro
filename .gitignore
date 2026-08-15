@@ -60,6 +60,8 @@ test/tools/fmv_seek_probe
 test/tools/sram_test
 test/tools/netlink_pair
 test/tools/netlink_game
+test/tools/joymatrix_identity
+test/tools/mouse_decode_test
 # vjtrace flight-recorder analyzer/smoke tools -- built on demand by
 # test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
 # comment); never tracked, same Mach-O-on-Linux-CI hazard as above.

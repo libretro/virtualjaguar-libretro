@@ -86,12 +86,14 @@ static uint32_t i2sResyncCount = 0;	/* gross-drift resyncs this session (diagnos
  *
  * The batch is a fixed `length` (800 NTSC / 960 PAL pairs) but the
  * emulated field is NOT 800 sample periods long: it is VP+1 halflines
- * (799.275 periods at 48 kHz for the standard NTSC VP=523, 961.536 for
- * PAL VP=625).  Scheduling the chain at a flat 1/48000 s landed only
- * 799 (NTSC) / 960 (PAL) callbacks inside the frame while ring capture
- * (word strobes) tracked the full field, so the read cursor fell
- * behind by 0.275 x ratio (NTSC) / 1.54 x ratio (PAL) ring samples per
- * frame.  The lag climbed from I2S_TARGET_LAG to I2S_RESYNC_LAG and
+ * (799.275 periods at 48 kHz for the standard NTSC VP=523, 958.464 for
+ * PAL VP=623).  Scheduling the chain at a flat 1/48000 s landed only
+ * 799 (NTSC) callbacks inside the frame while ring capture (word
+ * strobes) tracked the full field, so the read cursor fell behind by
+ * 0.275 x ratio ring samples per frame.  PAL drifts the other way by
+ * the same magnitude: a 624-halfline field is 958.464 periods but the
+ * flat schedule consumed 960, so the cursor gained 1.536 x ratio ring
+ * samples per frame.  The lag climbed from I2S_TARGET_LAG to I2S_RESYNC_LAG and
  * the gross-drift resync snapped it back, discarding ~254 ring samples
  * (~12 ms) in one hop -- an audible skip every ~36 s NTSC / ~8 s PAL
  * in every title with continuous DSP audio (issue #393).
@@ -343,8 +345,8 @@ void DACPrepareFrame(int length)
     * zero, mid-init writes) to the hardware default field. */
    vp1 = (uint32_t)(TOMReadWord(0xF0003E, JAGUAR) & 0x7FF) + 1;
    if (vp1 < 200 || vp1 > 1200)
-      vp1 = vjs.hardwareTypeNTSC ? 524 : 626;
-   halfline_us = vjs.hardwareTypeNTSC ? 31.777777777 : 32.0;
+      vp1 = JaguarGetDefaultFieldHalflines();
+   halfline_us = JaguarGetHalflinePeriodUs();
    frame_us = (double)vp1 * halfline_us;
    out_pairs = length / 2;
    pairs = (double)out_pairs;
@@ -375,7 +377,11 @@ void SoundCallback(void * userdata, uint16_t * buffer, int length)
     * what it last received.
     *
     * The batch stays a fixed `length`, which is what keeps the
-    * delivered rate exactly on the advertised 48 kHz (800 x 60 fps).
+    * delivered rate exactly on the advertised rate (800 pairs x the
+    * field rate = 48043.6 Hz NTSC, 960 x 50.08013 = 48076.9 Hz PAL).
+    * It read "the advertised 48 kHz (800 x 60 fps)" until #392 made
+    * both advertised numbers real; the reasoning was always the
+    * fixed batch, not the round number.
     * Submitting the short count instead lost the 0.27 remainder every
     * frame -- 108 samples/sec of deficit that drained the frontend's
     * buffer until it underran, a pop every few seconds in every title.
