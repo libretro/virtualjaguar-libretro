@@ -213,6 +213,14 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    if ((size % 1048576) == 0 || size == 131072)
       return JST_ROM;
 
+   /* Homebrew / bootintro carts are rarely a whole megabyte and are often
+    * well under the Memory Track size of 128K.  The universal header at
+    * $400 is the same marker DetectPrependedHeaderSize uses, and is
+    * enough on its own to call the file a cartridge (issue #462). */
+   if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8)
+         && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) == CART_UNIVERSAL_MARKER)
+      return JST_ROM;
+
    // If the file size + 8192 bytes is divisible by 1M, we probably have an
    // Alpine format ROM.
    if (((size + 8192) % 1048576) == 0)
@@ -220,6 +228,17 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 
    if (InferRawBinaryLoadAddress(buffer, size, &rawLoadAddress))
       return JST_RAW_BINARY;
+
+   /* Last resort for headerless bootintros smaller than 1 MiB: map them
+    * as a cartridge so real-BIOS mode can boot them from $800000.  Must
+    * be at least large enough to hold the $400 universal-header slot
+    * (otherwise DetectPrependedHeaderSize's 512-byte floor is a cart).
+    * RAM-load BJL binaries with recognizable absolute refs already
+    * returned JST_RAW_BINARY above.  Files >= 1 MiB that are not an
+    * exact megabyte multiple stay unrecognized (the bad-dump /
+    * leftover-header class ReportUnrecognizedContent names). */
+   if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8) && size < 1048576)
+      return JST_ROM;
 
    // Headerless crap
    return JST_NONE;
