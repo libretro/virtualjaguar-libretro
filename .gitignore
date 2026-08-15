@@ -121,6 +121,7 @@ test/acid/tests/**/*.jag
 /test/tools/hires_state_digest
 /test/tools/hires_shot
 test/tools/__pycache__/
+.build-config
 .link-mode
 
 # gcov instrumentation output (make coverage)
