@@ -36,6 +36,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jlink_netpacket.h"
 #include "uart.h"
 #include "joystick.h"
+#include "inputdev.h"
 #include "settings.h"
 #include "shadowfb.h"
 #include "blit_memo.h"
@@ -193,6 +194,95 @@ static bool show_cd_options        = true;
 static bool show_cart_bios_option  = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
+
+/* ---- non-pad input devices (#428/#429) ------------------------------
+ *
+ * Subclass IDs for RETRO_ENVIRONMENT_SET_CONTROLLER_INFO.  The mouse is a
+ * RETRO_DEVICE_MOUSE subclass because it is a relative-motion pointer;
+ * the three subclasses are the three adapter/mouse wiring combinations
+ * (docs/jaguar-mouse-adapter-mapping.md section 4d), not three different
+ * devices.  Port 2 only -- see inputdev.h. */
+#define RETRO_DEVICE_JAG_PAD             RETRO_DEVICE_JOYPAD
+#define RETRO_DEVICE_JAG_MOUSE_ST        RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 0)
+#define RETRO_DEVICE_JAG_MOUSE_AMIGA     RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
+#define RETRO_DEVICE_JAG_MOUSE_AMIGA_AD  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 2)
+
+/* Device the frontend explicitly selected via
+ * retro_set_controller_port_device, or INPUTDEV_PAD when it never did.
+ * An explicit frontend selection outranks the core option (a frontend
+ * that sets a port device is making a deliberate statement); otherwise
+ * the option decides.  Not serialized: option/frontend derived. */
+static InputDevType port_device_frontend[2] = { INPUTDEV_PAD, INPUTDEV_PAD };
+static bool         port_device_forced[2]   = { false, false };
+/* Device actually attached, so the resolution is logged only when it
+ * changes rather than on every check_variables() call. */
+static InputDevType port_device_active[2]   = { INPUTDEV_PAD, INPUTDEV_PAD };
+static bool         show_mouse_options      = true;
+
+/* Has this port actually received non-zero mouse state from the frontend?
+ *
+ * THE RULE: selecting a mouse must never leave the port with no working
+ * input.  A frontend that does not route mouse state to the port (it never
+ * called retro_set_controller_port_device with a mouse, the user has no
+ * mouse, or the port is mapped to a gamepad) would otherwise lose BOTH
+ * devices -- the pad because update_input() suppresses it, and the mouse
+ * because nothing ever feeds it.  So the pad suppression is deferred until
+ * the mouse has proven live, i.e. until the frontend reports a non-zero
+ * delta or a button.  Until then port 2 keeps its RetroPad.
+ *
+ * Once live it stays suppressed for the rest of the session (or until the
+ * device type changes, which clears this): a mouse that has moved once is
+ * a mouse the frontend is routing, and letting a pad drive the same six
+ * lines at that point is the ambiguity the suppression exists to prevent.
+ *
+ * DELIBERATELY NOT SERIALIZED, for the same reason inputdev.h gives for
+ * the device type and the sensitivity scale: this is a fact about how the
+ * HOST is routing input, not about the emulated machine, and restoring it
+ * from a state would let a stale state fight the current session.  The
+ * asymmetry with the v12 chunk is bounded and benign -- a state saved
+ * while the mouse was live loads with port 2's pad un-suppressed until
+ * the mouse next moves, i.e. at most a frame of pad contribution, and
+ * only if the frontend is routing a pad there at all.
+ *
+ * File-scope static -- reset in retro_deinit (iOS cannot dlclose a core). */
+static bool         inputdev_live[2]        = { false, false };
+
+/* One-shot savestate headroom report (retro_serialize).  File-scope rather
+ * than function-local so retro_deinit can put it back. */
+static bool         headroom_logged         = false;
+
+static const char *inputdev_type_name(InputDevType t)
+{
+   switch (t)
+   {
+      case INPUTDEV_MOUSE_ST:            return "Atari ST / PS2 mouse";
+      case INPUTDEV_MOUSE_AMIGA_ADAPTER: return "Amiga mouse (Amiga adapter)";
+      case INPUTDEV_MOUSE_AMIGA_ON_ST:   return "Amiga mouse (ST adapter)";
+      default:                           break;
+   }
+   return "standard joypad";
+}
+
+static void apply_port_device(int port, InputDevType type)
+{
+   InputDevSetType(port, type);
+
+   /* Read back: InputDevSetType refuses a mouse on port 1, so the
+    * resolved type is whatever it actually accepted. */
+   type = InputDevGetType(port);
+
+   if (type != port_device_active[port])
+   {
+      port_device_active[port] = type;
+      /* A new device has to earn the port back (see inputdev_live). */
+      inputdev_live[port]      = false;
+      if (type != INPUTDEV_PAD)
+         LOG_INF("[input] port %d: %s attached\n", port + 1,
+                 inputdev_type_name(type));
+      else
+         LOG_INF("[input] port %d: standard joypad\n", port + 1);
+   }
+}
 
 static int number_keys[12] = {
    RETROK_MINUS,
@@ -384,6 +474,25 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_cart_bios_option;
          option_display.key     = "virtualjaguar_bios";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
+   /* Mouse sensitivity only means anything while a mouse is attached to
+    * port 2.  Resolved from the live device rather than the option string
+    * so a frontend-set port device (retro_set_controller_port_device)
+    * reveals it too. */
+   {
+      bool show_mouse_prev = show_mouse_options;
+
+      show_mouse_options = (InputDevGetType(1) != INPUTDEV_PAD);
+
+      if (show_mouse_options != show_mouse_prev)
+      {
+         option_display.visible = show_mouse_options;
+         option_display.key     = "virtualjaguar_mouse_sensitivity";
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
                     &option_display);
          updated = true;
@@ -597,6 +706,40 @@ static bool get_variable_pertitle(struct retro_variable *var)
       return true;
    }
    return ok;
+}
+
+/* Port 2 controller type as the CORE OPTION alone resolves it, with no
+ * regard for what the frontend may have set.  Factored out of
+ * check_variables() because retro_set_controller_port_device() has to be
+ * able to re-resolve the option the moment the frontend releases its claim
+ * -- nothing schedules a check_variables() for it, so deferring to "the
+ * next one" meant a frontend's routine post-load JOYPAD/NONE assignment
+ * detached the mouse for the rest of the session.
+ *
+ * Called from retro_set_controller_port_device() it can run before
+ * retro_load_game(): TitleDBOverride() returns NULL with no title loaded,
+ * so it degrades to a plain GET_VARIABLE.  The "auto -> per-title DB" leg
+ * of the documented precedence genuinely cannot fire on that early call;
+ * the check_variables() during retro_load_game() resolves it properly. */
+static InputDevType p2_device_from_option(void)
+{
+   struct retro_variable var;
+   InputDevType p2 = INPUTDEV_PAD;
+
+   var.key   = "virtualjaguar_p2_device";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (!strcmp(var.value, "mouse_st"))
+         p2 = INPUTDEV_MOUSE_ST;
+      else if (!strcmp(var.value, "mouse_amiga"))
+         p2 = INPUTDEV_MOUSE_AMIGA_ON_ST;
+      else if (!strcmp(var.value, "mouse_amiga_adapter"))
+         p2 = INPUTDEV_MOUSE_AMIGA_ADAPTER;
+      /* "pad" and "auto" (with no DB row) both mean pad. */
+   }
+
+   return p2;
 }
 
 static void check_variables(void)
@@ -907,6 +1050,43 @@ static void check_variables(void)
    else
       vjs.cdReadSpeed = CDSPEED_2X;
 
+   /* Port 2 controller type (#429).  Precedence, per the design spec:
+    *   1. a device the frontend explicitly set via
+    *      retro_set_controller_port_device wins until it changes it again;
+    *   2. otherwise this option;
+    *   3. "auto" resolves through the per-title DB, and falls back to
+    *      "pad" -- which is bit-identical to a core without this feature.
+    * No titledb row ships in this PR, so "auto" is "pad" for every title
+    * today and the mouse is strictly opt-in. */
+   {
+      InputDevType p2 = p2_device_from_option();
+
+      if (port_device_forced[1])
+         p2 = port_device_frontend[1];
+
+      apply_port_device(1, p2);
+   }
+
+   var.key   = "virtualjaguar_mouse_sensitivity";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      /* Percent -> Q8 (256 == 1.0).  Clamp BEFORE the multiply: the
+       * option value comes from the frontend's config file, which a user
+       * can hand-edit to anything, and InputDevSetScale's own clamp fires
+       * only after this multiply has already overflowed a signed int.
+       * 1600% is InputDevSetScale's 4096 ceiling expressed as a percent
+       * (4096 * 100 / 256), so nothing reachable is lost. */
+      int pct = atoi(var.value);
+      if (pct < 1)
+         pct = 100;
+      if (pct > 1600)
+         pct = 1600;
+      InputDevSetScale(1, (int32_t)((pct * 256) / 100));
+   }
+   else
+      InputDevSetScale(1, 256);
+
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
@@ -1149,6 +1329,66 @@ static void update_input(void)
       if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
          joypad1Buttons[BUTTON_d] = 0xff;
    }
+
+   /* ---- non-pad devices (#428/#429) --------------------------------
+    *
+    * Runs after every retropad fill path so it cannot be bypassed by one
+    * of them.  There are three (the plain bitmask branch, the
+    * enable_alt_inputs remap branch including its analog-as-button cases,
+    * and the numpad_to_kb sub-path that writes slots 4-15 straight from
+    * RETRO_DEVICE_KEYBOARD) and missing any one of them would keep
+    * injecting host presses into a port with no pad plugged into it.
+    *
+    * A mouse port takes NOTHING from the retropad: physically there is no
+    * pad there, and leaving the host contribution would let a gamepad and
+    * a mouse drive the same six lines at once.  (A rotary port, when
+    * #436 lands, keeps its buttons and withholds only U/D/L/R, so this
+    * will have to become selective then -- it cannot simply grow another
+    * type here.)
+    *
+    * The suppression is deferred until the mouse is LIVE -- see
+    * inputdev_live: reading the frontend's mouse state first and
+    * suppressing only once it has been non-zero guarantees that selecting
+    * a mouse can never leave the port with no working input at all. */
+   if (InputDevAnyAttached())
+   {
+      for (player = 0; player < 2; player++)
+      {
+         InputDevType t = InputDevGetType((int)player);
+         int32_t  dx, dy;
+         uint32_t buttons;
+
+         if (t == INPUTDEV_PAD)
+            continue;
+
+         dx = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                                      RETRO_DEVICE_ID_MOUSE_X);
+         dy = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                                      RETRO_DEVICE_ID_MOUSE_Y);
+         buttons = 0;
+         if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                            RETRO_DEVICE_ID_MOUSE_LEFT))
+            buttons |= INPUTDEV_BTN_LEFT;
+         if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                            RETRO_DEVICE_ID_MOUSE_RIGHT))
+            buttons |= INPUTDEV_BTN_RIGHT;
+
+         if (dx || dy || buttons)
+         {
+            if (!inputdev_live[player])
+            {
+               inputdev_live[player] = true;
+               LOG_INF("[input] port %d: mouse is live, RetroPad released\n",
+                       player + 1);
+            }
+         }
+
+         if (inputdev_live[player])
+            memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
+
+         InputDevFeed((int)player, dx, dy, buttons);
+      }
+   }
 }
 
 /************************************
@@ -1214,8 +1454,44 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
-   (void)port;
-   (void)device;
+   InputDevType type = INPUTDEV_PAD;
+
+   if (port > 1)
+      return;
+
+   switch (device)
+   {
+      case RETRO_DEVICE_JAG_MOUSE_ST:
+      case RETRO_DEVICE_MOUSE:  /* a plain mouse means the ST wiring */
+         type = INPUTDEV_MOUSE_ST;
+         break;
+      case RETRO_DEVICE_JAG_MOUSE_AMIGA:
+         type = INPUTDEV_MOUSE_AMIGA_ON_ST;
+         break;
+      case RETRO_DEVICE_JAG_MOUSE_AMIGA_AD:
+         type = INPUTDEV_MOUSE_AMIGA_ADAPTER;
+         break;
+      default:
+         type = INPUTDEV_PAD;
+         break;
+   }
+
+   /* A frontend that sets JOYPAD/NONE is releasing its claim, so the core
+    * option takes over again -- IMMEDIATELY, not "on the next
+    * check_variables()".  Nothing schedules one: check_variables() runs
+    * from retro_load_game() and from retro_run() only behind
+    * GET_VARIABLE_UPDATE.  RetroArch issues a per-port controller init
+    * right after load, so forcing PAD here used to detach the mouse the
+    * core option had just attached, for the whole session -- which is why
+    * the feature was never seen working in a frontend. */
+   port_device_frontend[port] = type;
+   port_device_forced[port]   = (type != INPUTDEV_PAD);
+
+   if (type == INPUTDEV_PAD)
+      type = (port == 1) ? p2_device_from_option() : INPUTDEV_PAD;
+
+   apply_port_device((int)port, type);
+   update_option_visibility();
 }
 
 size_t retro_serialize_size(void)
@@ -1295,9 +1571,29 @@ bool retro_serialize(void *data, size_t size)
       STATE_SAVE_VAR(buf, hiresEpoch);
    }
 
+   /* v12: input-device chunk (src/jerry/inputdev.c).  The quadrature
+    * accumulator and phase are machine-visible -- the phase IS what the
+    * game reads at $F14000 -- so a state restored without them replays
+    * different motion. */
+   buf += InputDevStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
+
+   /* One-shot headroom report.  The trailing chunks in this function grow
+    * every release and the only backstop is the hard fail above, so make
+    * the margin visible in a log rather than assumed. */
+   {
+      if (!headroom_logged)
+      {
+         headroom_logged = true;
+         LOG_INF("[state] v%u payload %lu / %lu bytes (%lu free)\n",
+                 (unsigned)STATE_VERSION, (unsigned long)written,
+                 (unsigned long)STATE_SIZE,
+                 (unsigned long)(STATE_SIZE - written));
+      }
+   }
 
    /* Zero-fill remaining bytes for deterministic save states */
    if (written < STATE_SIZE)
@@ -1414,6 +1710,16 @@ bool retro_unserialize(const void *data, size_t size)
    }
    else
       ShadowHiresSetEpoch(0);
+
+   /* v12: input-device chunk.  Older states load with the encoders reset
+    * and no button held, which is exactly what a pre-v12 core was: the
+    * device type itself is option-derived and never serialized, so the
+    * user's currently selected mouse stays attached either way. */
+   if (version >= STATE_VERSION_INPUT_DEVICES)
+      buf += InputDevStateLoad(buf);
+   else
+      InputDevReset();
+
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
     * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from
@@ -2232,6 +2538,29 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
+   /* Controller types the frontend may assign per port (#428/#429).
+    * Port 1 is pad-only: the ST/Amiga mouse adapter is a vendor-documented
+    * PORT 2 device, every title known to read one reads port 2, and a
+    * port-1 mouse would be a configuration no software supports. */
+   {
+      static const struct retro_controller_description port1_devices[] = {
+         { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
+      };
+      static const struct retro_controller_description port2_devices[] = {
+         { "Standard Joypad",             RETRO_DEVICE_JAG_PAD },
+         { "Atari ST / PS2 Mouse",        RETRO_DEVICE_JAG_MOUSE_ST },
+         { "Amiga Mouse (ST adapter)",    RETRO_DEVICE_JAG_MOUSE_AMIGA },
+         { "Amiga Mouse (Amiga adapter)", RETRO_DEVICE_JAG_MOUSE_AMIGA_AD },
+      };
+      static const struct retro_controller_info ports[] = {
+         { port1_devices, 1 },
+         { port2_devices, 4 },
+         { NULL, 0 },
+      };
+
+      environ_cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
+   }
+
    /* Reset all bus-arbiter state (iOS cannot dlclose cores, so statics
     * persist across loads).  Must run before check_variables() applies
     * the core option — retro_load_game calls that after retro_init. */
@@ -2268,6 +2597,20 @@ void retro_deinit(void)
    ShadowFBShutdown();
    ShadowHiresShutdown();
    BlitMemoShutdown();
+   /* Non-pad input devices: encoders, phases, attach mask, armed flag and
+    * the option-derived type/scale all go back to their load-time values
+    * (iOS cannot dlclose a core). */
+   InputDevShutdown();
+   port_device_frontend[0] = INPUTDEV_PAD;
+   port_device_frontend[1] = INPUTDEV_PAD;
+   port_device_forced[0]   = false;
+   port_device_forced[1]   = false;
+   port_device_active[0]   = INPUTDEV_PAD;
+   port_device_active[1]   = INPUTDEV_PAD;
+   inputdev_live[0]        = false;
+   inputdev_live[1]        = false;
+   show_mouse_options      = true;
+   headroom_logged         = false;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 

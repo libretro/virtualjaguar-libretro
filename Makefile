@@ -852,7 +852,8 @@ clean:
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
-		test/tools/joymatrix_identity \
+		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/test_quadrature \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -905,7 +906,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
-		test/tools/i2s_lag_probe test/tools/joymatrix_identity
+		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/test_quadrature test/tools/mouse_decode_test
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -1138,6 +1140,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# an FNV digest measured on develop.  Committed before any device code
 	@# so later PRs are measured against a number that predates them.
 	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Quadrature encoder unit test (no core): the Gray sequence in both
+	@# directions, the one-state-per-advance rate policy, the backlog
+	@# clamp and the Q8 carry.
+	./test/test_quadrature
+	@# ST/Amiga mouse end-to-end: synthetic deltas in, decoded direction
+	@# and distance out, all three wiring cases and all three poll shapes,
+	@# plus row-blindness and the v12 savestate round-trip.
+	./test/tools/mouse_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1448,11 +1458,22 @@ test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 # $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
 # the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
 test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
+		src/jerry/inputdev.h \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/joymatrix_identity.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/mouse_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_quadrature: test/test_quadrature.c src/jerry/quadrature.c src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_quadrature.c src/jerry/quadrature.c
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
