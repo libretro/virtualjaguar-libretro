@@ -24,7 +24,7 @@
  * ======================================================================
  *
  *   Per frame (via perf_counters deltas):
- *   - Halfline callbacks fired (expected: 524 NTSC, 625 PAL)
+ *   - Halfline callbacks fired (expected: 524 NTSC, 624 PAL)
  *   - VBlank IRQs delivered (expected: 1)
  *   - JERRY IRQs delivered
  *   - GPU-to-68K IRQs delivered
