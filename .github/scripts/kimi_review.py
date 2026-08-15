@@ -123,6 +123,76 @@ def call_kimi(base_url, key, key_id, model, system, user):
     return payload["choices"][0]["message"]["content"]
 
 
+MARKER_FMT = "<!-- kimi-review:{} -->"
+
+
+def pr_note(repo, pr, marker, body):
+    """Upsert a marker-tagged comment on the PR.
+
+    Sticky on purpose: every push to an open PR re-runs the reviewer, and a
+    reviewer that is down stays down for the whole billing cycle, so posting
+    a fresh comment per push would bury the PR under identical notices.  The
+    marker is an HTML comment, invisible in the rendered thread.
+
+    Never raises: this runs on the failure path of an advisory job, and a
+    broken notice must not become a second, louder failure.
+    """
+    tag = MARKER_FMT.format(marker)
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/issues/{pr}/comments",
+             "--paginate", "--jq",
+             '.[] | select(.body | contains("%s")) | .id' % tag],
+            capture_output=True, text=True, timeout=60,
+        )
+        existing = (r.stdout or "").split()
+        p = "/tmp/kimi-note.md"
+        with open(p, "w") as f:
+            f.write(tag + "\n" + body)
+        if existing:
+            cmd = ["gh", "api", "--method", "PATCH",
+                   f"repos/{repo}/issues/comments/{existing[0]}",
+                   "-F", "body=@" + p]
+        else:
+            cmd = ["gh", "pr", "comment", pr, "--repo", repo,
+                   "--body-file", p]
+        n = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if n.returncode != 0:
+            print(f"could not post the unavailable-notice: {n.stderr}")
+    except Exception as e:  # noqa: BLE001 - notice is best-effort
+        print(f"could not post the unavailable-notice: {type(e).__name__}: {e}")
+
+
+def pr_note_body(code, detail):
+    """The PR-visible half of the diagnosis.
+
+    Deliberately short and non-alarming: this is not a review verdict and
+    must not read like one.  It says only that no review happened and why,
+    so a maintainer knows the silence is the reviewer being down rather
+    than the reviewer being satisfied.
+    """
+    low = detail.lower()
+    if code == 403 and (
+        "usage limit" in low or "quota" in low
+        or "access_terminated" in low or "insufficient" in low
+    ):
+        why = ("the plan is out of quota for the current billing cycle. "
+               "This is a billing limit, not a repo or credential problem — "
+               "it resumes on its own when the quota refreshes.")
+    elif code in (401, 403):
+        why = ("authentication against the configured endpoint failed. See "
+               "the job log for which of the key and `KIMI_API_BASE` to fix.")
+    else:
+        why = (f"the API rejected the request (HTTP {code}). The API's own "
+               "message is quoted in the job log.")
+    return (
+        "**No automated review was posted on this PR** — " + why + "\n\n"
+        "<sub>This PR has not been machine-reviewed. Posted by the review "
+        "workflow so that an unreviewed PR is not mistaken for a clean "
+        "one; it updates in place rather than repeating on every push.</sub>"
+    )
+
+
 def main():
     key = os.environ.get("KIMI_KEY_VALUE", "")
     if not key:
@@ -169,6 +239,12 @@ def main():
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
         print(f"Kimi API returned HTTP {e.code}: {detail}")
+        # A ::warning:: only reaches whoever opens the run log.  On the PR --
+        # where the decision to merge is actually made -- an unreviewed PR and
+        # a PR the reviewer had nothing to say about look identical.  Three
+        # PRs sat unreviewed for a day on a quota 403 for exactly that reason,
+        # so the persistent failures leave a note on the PR itself.
+        pr_note(repo, pr, "reviewer-unavailable", pr_note_body(e.code, detail))
         # Soft-fail keeps the PR green, so the only signal a maintainer ever
         # sees is this annotation -- without it a permanently broken reviewer
         # looks identical to a healthy one in the runs list.
@@ -263,7 +339,23 @@ def main():
         ["gh", "pr", "comment", pr, "--repo", repo, "--body-file", p],
         capture_output=True, text=True,
     )
-    print("posted" if r.returncode == 0 else f"could not post: {r.stderr}")
+    if r.returncode != 0:
+        # The review was generated and then thrown away.  Without an
+        # annotation this is the one remaining path where a run goes green
+        # having produced nothing -- the same invisible failure the HTTP
+        # handlers above exist to prevent, one step further along.
+        print(f"could not post: {r.stderr}")
+        print("::warning title=Kimi review was not posted::"
+              "The review generated but `gh pr comment` failed; see the job "
+              "log. Check the workflow's pull-requests: write permission.")
+        return 0
+
+    print("posted")
+    # A review landed, so any earlier "reviewer unavailable" notice on this
+    # PR is now false.  Retract it rather than leaving both on the thread.
+    pr_note(repo, pr, "reviewer-unavailable",
+            "<sub>An automated review was posted after this notice; the "
+            "reviewer is working again.</sub>")
     return 0
 
 
