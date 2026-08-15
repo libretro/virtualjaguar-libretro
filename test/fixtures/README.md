@@ -84,6 +84,7 @@ comparison in #411 needs. Issue #435; unblocks #378 and #411.
 | ROM CRC32 | `0xDC187F82` — the `src/core/titledb.c` seed |
 | Savestate version | **11** (`STATE_VERSION`, `src/core/state.h`) |
 | Verified on build | `v3.3.0 eb19f12` |
+| Captured on | Provenance (iOS), **not** a desktop RetroArch — so a desktop `Virtual Jaguar.opt` is not this capture's configuration |
 | Options at capture | as reported by the capturer: video enhancements on, all three timing-model booleans on, both clock scales stock `1x`. Not recoverable from the file — see below |
 
 Stored as RetroArch's **uncompressed** `RASTATE` container (`MEM ` block =
@@ -127,8 +128,11 @@ roughly doubles absolute cost, a number measured under one option set is not
 comparable with one measured under another — **record the options of the run
 you measure**, and do not assume they match the capture.
 
-That matters here because the capture was *not* taken at stock: the capturer
-reports the video enhancements and all three timing-model booleans
+That matters here because the capture was *not* taken at stock, and its option
+set lives on the iOS device it was made on — there is no config file in the
+tree, and a desktop RetroArch `Virtual Jaguar.opt` is a different machine's
+settings, not this one's. The capturer reports the video enhancements and all
+three timing-model booleans
 (`virtualjaguar_dram_timing`, `virtualjaguar_gpu_pipeline_timing`,
 `virtualjaguar_blitter_timing`, all default `disabled`) enabled, with
 `virtualjaguar_m68k_clock_scale` and `virtualjaguar_risc_clock_scale` left at
