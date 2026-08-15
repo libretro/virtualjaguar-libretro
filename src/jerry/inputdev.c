@@ -10,6 +10,7 @@
 
 #include "inputdev.h"
 #include "quadrature.h"
+#include "joystick.h"
 #include "state.h"
 
 /* Wiring table.  Values are $F14000 bit positions for PORT 2, all active
@@ -59,11 +60,16 @@ typedef struct
    int32_t      scale_q8;
    uint8_t      btn_left;
    uint8_t      btn_right;
+   uint8_t      rotary_id;   /* option-derived; see InputDevSetRotaryID */
 } InputDevPort;
 
 static InputDevPort inputdev_ports[2];
 static uint32_t     inputdev_attach_mask;
 static uint8_t      inputdev_armed;
+
+/* joypadNButtons[], indexed by port.  A rotary is a matrix device and
+ * reports through these slots; the mouse never touches them. */
+static uint8_t *const inputdev_pad[2] = { joypad0Buttons, joypad1Buttons };
 
 static int inputdev_is_mouse(InputDevType t)
 {
@@ -123,10 +129,14 @@ void InputDevSetType(int port, InputDevType type)
    if (port < 0 || port > 1)
       return;
 
-   /* Mouse is port 2 only (see inputdev.h), and the rotary is reserved
-    * for #436 and not implemented in this build.  Anything else is a
-    * plain pad, i.e. not attached. */
-   if (type != INPUTDEV_PAD && !(inputdev_is_mouse(type) && port == 1))
+   /* Mouse is port 2 only (see inputdev.h); the rotary is valid on both.
+    * Anything else is a plain pad, i.e. not attached. */
+   if (inputdev_is_mouse(type))
+   {
+      if (port != 1)
+         type = INPUTDEV_PAD;
+   }
+   else if (type != INPUTDEV_ROTARY)
       type = INPUTDEV_PAD;
 
    if (inputdev_ports[port].type != type)
@@ -174,6 +184,13 @@ void InputDevSetScale(int port, int32_t scale_q8)
    inputdev_ports[port].scale_q8 = scale_q8;
 }
 
+void InputDevSetRotaryID(int port, int reports_rotary)
+{
+   if (port < 0 || port > 1)
+      return;
+   inputdev_ports[port].rotary_id = reports_rotary ? 1 : 0;
+}
+
 void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons)
 {
    InputDevPort *p;
@@ -182,11 +199,35 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons)
       return;
 
    p = &inputdev_ports[port];
-   if (!inputdev_is_mouse(p->type))
-      return;
 
    if (p->scale_q8 <= 0)
       p->scale_q8 = 256;
+
+   if (p->type == INPUTDEV_ROTARY)
+   {
+      /* One axis, not two: the rotary is a single wheel.  dy is ignored,
+       * and so are the mouse buttons -- a rotary's A/B/C/Option/Pause and
+       * keypad are real matrix switches and come from the retropad.
+       *
+       * DIRECTION.  TR10 gives the phase sequences as pin levels:
+       *   anticlockwise  J10 0 1 1 0 ...   clockwise  J10 0 0 1 1 ...
+       *                  J11 0 0 1 1 ...              J11 0 1 1 0 ...
+       * i.e. anticlockwise = (A,B) walking 00,10,11,01 = INCREASING Gray
+       * index = A leads B, and clockwise = decreasing.
+       *
+       * Mapping host +X to clockwise is a HOST-SIDE UX CONVENTION, not a
+       * hardware fact: pushing a spinner to the right turns the knob
+       * clockwise.  Hence the negation.  There is deliberately no invert
+       * option -- an unsourced sign knob is how a real wiring bug gets
+       * papered over instead of found. */
+      QuadFeed(&p->x, -dx, p->scale_q8);
+      (void)dy;
+      (void)buttons;
+      return;
+   }
+
+   if (!inputdev_is_mouse(p->type))
+      return;
 
    /* One libretro unit = one Gray-code state at scale 1.0.  Domin's
     * decoder increments its position by one per state transition, so one
@@ -207,24 +248,115 @@ void InputDevArm(void)
    inputdev_armed = 1;
 }
 
-void InputDevClock(void)
+/* Write a rotary port's current phase into its pad slots.
+ *
+ * POLARITY IS INVERTED RELATIVE TO THE MOUSE OVERLAY, which is the single
+ * easiest way to ship a backwards spinner.  TR10 gives phase sequences as
+ * PIN LEVELS, and "reading a zero means the appropriate button is
+ * depressed"; joystick.c does `data &= (joypadNButtons[slot] ? mask :
+ * 0xFFFF)`, so a NON-ZERO array entry pulls the bit low.  Therefore
+ * pin level 1 -> slot 0x00, pin level 0 -> slot 0xFF.  The mouse overlay
+ * drives raw $F14000 bits where "0 = asserted" applies with no inversion.
+ * Two conventions in one feature, which is exactly why QuadLevels()
+ * returns logic levels and each sink applies its own polarity here.
+ *
+ * Phase 0 -> BUTTON_L, Phase 1 -> BUTTON_R (TR10's row-0 matrix: J10/J14
+ * and J11/J15, the same slot indices on both ports).  BUTTON_U / BUTTON_D
+ * are forced clear: the controller physically has no up/down, which is
+ * why TR10 tells rotary games to use A = Up and C = Down for menus.
+ *
+ * The encoder's rest phase is (1,1) -- QUAD_REST_PHASE, chosen by #429 --
+ * so an idle rotary writes 0x00 into all four slots and is bit-identical
+ * to an idle pad. */
+static void inputdev_publish_rotary(unsigned port)
 {
+   uint8_t *pad = inputdev_pad[port];
+   int a, b;
+
+   QuadLevels(&inputdev_ports[port].x, &a, &b);
+
+   pad[BUTTON_U] = 0x00;
+   pad[BUTTON_D] = 0x00;
+   pad[BUTTON_L] = a ? 0x00 : 0xFF;
+   pad[BUTTON_R] = b ? 0x00 : 0xFF;
+}
+
+void InputDevClock(uint8_t row0, uint8_t row1)
+{
+   uint8_t  row[2];
    unsigned p;
+   int      armed, consumed;
 
    if (!inputdev_attach_mask)
       return;
-   if (!inputdev_armed)
-      return;
 
-   inputdev_armed = 0;
+   row[0]   = row0;
+   row[1]   = row1;
+   armed    = inputdev_armed ? 1 : 0;
+   consumed = 0;
 
    for (p = 0; p < 2; p++)
    {
-      if (!inputdev_is_mouse(inputdev_ports[p].type))
-         continue;
-      QuadAdvance(&inputdev_ports[p].x);
-      QuadAdvance(&inputdev_ports[p].y);
+      InputDevType t = inputdev_ports[p].type;
+
+      if (inputdev_is_mouse(t))
+      {
+         /* Row-blind: every read of ITS PORT is a sample, whatever the
+          * row, so any armed read with that port addressed advances.
+          * Both axes, independently -- they are four parallel wires, not
+          * a time-multiplexed stream. */
+         if (armed && row[p] != 0xFF)
+         {
+            QuadAdvance(&inputdev_ports[p].x);
+            QuadAdvance(&inputdev_ports[p].y);
+            consumed = 1;
+         }
+      }
+      else if (t == INPUTDEV_ROTARY)
+      {
+         /* Row-gated: a rotary's phases exist in row 0 only, so the only
+          * read that samples it is a row-0 read of its own port.  See the
+          * measured Tempest 2000 scan in inputdev.h -- advancing on all
+          * eight of its per-frame armed reads would decode as garbage,
+          * including a sign inversion at three states. */
+         if (armed && row[p] == 0)
+         {
+            QuadAdvance(&inputdev_ports[p].x);
+            consumed = 1;
+         }
+
+         /* Published on EVERY call, not only when it advanced:
+          * update_input() zeroes a rotary port's four direction slots
+          * each frame, so without an unconditional publish a rotary would
+          * read as "both phases high" for every read between the frame
+          * boundary and the next armed row-0 advance. */
+         inputdev_publish_rotary(p);
+      }
    }
+
+   /* The arm is spent only by a read some attached device could decode
+    * from (inputdev.h, ARM CONSUMPTION).
+    *
+    * THIS GUARDS NOTHING REACHABLE TODAY, and the comment here used to
+    * claim otherwise.  The reasoning that motivated it -- a port-1-only
+    * read eating the arm a port-2 mouse was owed -- cannot happen on the
+    * bus: the row select lives in joystick_ram[1], the only writer is
+    * JoystickWriteWord at offset 0, and that path arms unconditionally.
+    * So the arm is always set at the first read after any row change,
+    * and a later read at unchanged rows re-runs this same gate to the
+    * same answer.  Measured, not argued: 2.4M random write/read
+    * sequences across six device combinations digest bit-identically
+    * with and without the `if`.
+    *
+    * It stays because it is the honest statement of the contract -- an
+    * arm is a permission for ONE decodable sample, not for one bus read
+    * -- and the next device that samples on some other condition (a
+    * lightgun latch, a second row-blind peripheral) makes the difference
+    * real.  Pinned by test_arm_is_spent_only_by_a_decodable_read in
+    * mouse_decode_test.c, which reaches it by calling InputDevArm() and
+    * InputDevClock() directly, because no aligned bus sequence can. */
+   if (consumed)
+      inputdev_armed = 0;
 }
 
 uint16_t InputDevOverlayF14000(uint16_t data)
@@ -265,14 +397,26 @@ uint16_t InputDevOverlayF14002(uint16_t data, uint8_t row0, uint8_t row1)
 {
    InputDevPort *p;
 
-   /* The mouse is row-blind, so it ignores both rows; they are here for
-    * the rotary's C2/C3 controller-type reporting (#436). */
-   (void)row0;
-   (void)row1;
-
    if (!inputdev_attach_mask)
       return data;
 
+   /* Rotary controller-type identification (TR10 "Identifying Controller
+    * Types"; see InputDevSetRotaryID).  C2 C3 = 1 0 is "Tempest Rotary",
+    * and the C-column rows differ by port: C3 is $F14002 bit 0 in row 3
+    * on port 1, and bit 2 in row 2 on port 2.  C2 is left high, which is
+    * what joystick.c already returns.
+    *
+    * joystick.c drives only bit 1 (port 1) / bit 3 (port 2) in those
+    * rows, so clearing the C bit here cannot collide with a button. */
+   if (inputdev_ports[0].type == INPUTDEV_ROTARY
+       && inputdev_ports[0].rotary_id && row0 == 3)
+      data &= (uint16_t)~(1u << 0);
+
+   if (inputdev_ports[1].type == INPUTDEV_ROTARY
+       && inputdev_ports[1].rotary_id && row1 == 2)
+      data &= (uint16_t)~(1u << 2);
+
+   /* The mouse is row-blind, so its own contribution ignores both rows. */
    p = &inputdev_ports[1];
    if (!inputdev_is_mouse(p->type))
       return data;
