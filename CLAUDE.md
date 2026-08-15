@@ -127,10 +127,26 @@ wide one — and also adds `-DVJ_TRACE`, so it changes object *content*, not jus
 the export list.
 
 Switching in **either** direction is handled automatically: the Makefile stamps
-the mode into `.link-mode` and, when it differs, deletes the library **and every
-object** before the build. Both `make` → `make TEST_EXPORTS=1 test` and
-`make TEST_EXPORTS=1` → `make` work with no `make clean`. Cost is one full
-rebuild per flip (~21s at `-j8` without ccache).
+the build configuration into `.build-config` and, when it differs, deletes the
+library **and every object** before the build. Both `make` →
+`make TEST_EXPORTS=1 test` and `make TEST_EXPORTS=1` → `make` work with no
+`make clean`. Cost is one full rebuild per flip (~21s at `-j8` without ccache).
+
+The stamp covers **every** compile-affecting switch, not just `TEST_EXPORTS`
+(`BUILD_AXES` in the Makefile: `TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE
+COVERAGE RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform`).
+**Adding a new switch that changes `CFLAGS` means adding it to that list** —
+forgetting costs a silent chimera binary, not a build error. It stamps variable
+*names*, not `$(CFLAGS)`: `DEBUG=1` puts a per-second `-DBUILD_TIMESTAMP` in
+the flags, so stamping flags would flush the tree on every single build.
+
+Before issue #457 the stamp tracked `TEST_EXPORTS` alone, which left the same
+hazard one level up: `make DEBUG=1` after a release build recompiled **zero**
+objects (a "debug build" that was entirely `-O2` with no debug info), and
+toggling `BENCH_PROFILE` recompiled nothing, so `timing_probe` tools reported
+`timing_halfline_callbacks counter not found` — which reads as a broken tool
+rather than an ignored flag. `VJ_EXPECT_BUILD` cannot catch either: the git rev
+is identical across the flip, so the guard passes on a wrong binary.
 
 The flush is deliberately unconditional rather than a list of "objects that use
 vjtrace". That list is what broke before: it omitted `src/tom/blit_memo.o`, so

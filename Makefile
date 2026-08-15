@@ -94,10 +94,29 @@ MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
-# Records which ABI the library in the tree was last linked with; see the
-# mode-switch hook next to the link rule below.
-LINK_MODE := $(if $(filter 1,$(TEST_EXPORTS)),test,prod)
-LINK_MODE_STAMP := .link-mode
+# Records the build configuration the objects in the tree were last
+# compiled under; see the mode-switch hook next to the link rule below.
+#
+# Every variable listed here changes how objects are COMPILED (or which
+# symbols survive the link), so flipping any one of them invalidates
+# every existing .o.  Adding a new such switch means adding it here --
+# that is the whole maintenance burden, and forgetting costs a silent
+# chimera binary rather than a build error.
+#
+# It is deliberately a list of *variable names* and not $(CFLAGS)
+# itself.  Stamping the flags would look more future-proof but breaks
+# on DEBUG=1, whose CFLAGS carry a -DBUILD_TIMESTAMP that changes every
+# second: the stamp would never match and every single build would
+# flush the tree.  Values here are plain tokens (1, or a platform
+# name), so the comparison also stays free of shell quoting hazards --
+# CFLAGS contains -DINLINE="inline".
+BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
+              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
+BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
+BUILD_CONFIG_STAMP := .build-config
+# Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
+# hook below so a tree built before this change doesn't keep a dead file.
+LEGACY_LINK_MODE_STAMP := .link-mode
 
 # Unix
 ifeq ($(platform), unix)
@@ -794,14 +813,30 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
-# Force a re-link when the exported ABI changes.  Almost every object is
-# identical either way, so a plain `make` followed by `make TEST_EXPORTS=1
-# test` would otherwise reuse the production-slim library -- it is newer
-# than every object, so nothing relinks -- and the white-box tests fail
-# with "Missing: m68k_execute".  Delete the library outright rather than
-# relying on a stamp file's mtime: the stamp and the library can land in
-# the same second, which is exactly the timestamp-granularity trap this is
-# meant to close.  Runs at parse time, once TARGET is known.
+# Force a rebuild when the build configuration changes ($(BUILD_AXES)).
+# Almost every object is identical across an ABI flip, so a plain `make`
+# followed by `make TEST_EXPORTS=1 test` would otherwise reuse the
+# production-slim library -- it is newer than every object, so nothing
+# relinks -- and the white-box tests fail with "Missing: m68k_execute".
+# Delete the library outright rather than relying on a stamp file's mtime:
+# the stamp and the library can land in the same second, which is exactly
+# the timestamp-granularity trap this is meant to close.  Runs at parse
+# time, once TARGET is known.
+#
+# The stamp covers every compile-affecting switch, not just TEST_EXPORTS
+# (issue #457).  It originally tracked TEST_EXPORTS alone, which left the
+# same hazard open one level up:
+#   BENCH_PROFILE -- `make TEST_EXPORTS=1` then
+#     `make BENCH_PROFILE=1 TEST_EXPORTS=1` recompiled nothing, so no
+#     object got -DBENCH_PROFILE, no PERF_COUNTER registered, and every
+#     timing_probe tool died with "timing_halfline_callbacks counter not
+#     found" -- which reads as a broken tool, not an ignored flag.
+#   DEBUG -- `make` then `make DEBUG=1` recompiled *zero* objects: a
+#     "debug build" that is entirely -O2 with no debug info.  The reverse
+#     leaves -O0 objects in a release binary and silently invalidates any
+#     performance measurement taken from it.
+# VJ_EXPECT_BUILD cannot catch either: the git rev is identical across the
+# flip, so the guard passes while the binary is wrong.
 #
 # TEST_EXPORTS also changes object *content*, not just the export list:
 # it adds -DVJ_TRACE to CFLAGS (see the line above), so vjtrace.o defines
@@ -843,9 +878,9 @@ MAKEFLAGS_LETTERS := $(filter-out -%,$(firstword $(MAKEFLAGS)))
 DRY_RUN := $(strip $(findstring n,$(MAKEFLAGS_LETTERS)) \
                    $(filter -n --dry-run --just-print --recon,$(MAKEFLAGS)))
 $(if $(DRY_RUN),,\
-$(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
-        || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET) $(OBJECTS); }))
+$(shell [ "$$(cat $(BUILD_CONFIG_STAMP) 2>/dev/null)" = "$(BUILD_CONFIG)" ] \
+        || { printf '%s' "$(BUILD_CONFIG)" > $(BUILD_CONFIG_STAMP); \
+             rm -f $(TARGET) $(OBJECTS) $(LEGACY_LINK_MODE_STAMP); }))
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
@@ -860,7 +895,7 @@ endif
 $(CORE_DIR)/libretro.o: $(VERSION_H)
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) $(LINK_MODE_STAMP) \
+	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
 		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
