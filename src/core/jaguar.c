@@ -1638,10 +1638,11 @@ void JaguarExecuteNew(void)
       double timeDelta;
       uint32_t riscCycles;
 
-      /* GPUBeginSlice/GPUSliceRemaining: part of the GPU's slice may already
-       * have been run from GPUSyncToM68K(), so the end-of-slice call runs only
-       * what is left.  The total per slice is unchanged -- see the comment on
-       * gpuSliceBudget in gpu.c.
+      /* GPUBeginSlice/DSPBeginSlice + *SliceRemaining: part of each
+       * RISC slice may already have been run from GPUSyncToM68K() /
+       * DSPSyncToM68K() on a 68K access into local RAM, so the
+       * end-of-slice call runs only what is left.  The total per slice
+       * is unchanged -- see gpuSliceBudget in gpu.c and issue #456.
        *
        * Clock scales (issue #314) apply here, where the budgets are
        * handed out: the RISC scale widens the GPU+DSP compute budget per
