@@ -233,6 +233,15 @@ static bool         show_mouse_options      = true;
  * a mouse the frontend is routing, and letting a pad drive the same six
  * lines at that point is the ambiguity the suppression exists to prevent.
  *
+ * DELIBERATELY NOT SERIALIZED, for the same reason inputdev.h gives for
+ * the device type and the sensitivity scale: this is a fact about how the
+ * HOST is routing input, not about the emulated machine, and restoring it
+ * from a state would let a stale state fight the current session.  The
+ * asymmetry with the v12 chunk is bounded and benign -- a state saved
+ * while the mouse was live loads with port 2's pad un-suppressed until
+ * the mouse next moves, i.e. at most a frame of pad contribution, and
+ * only if the frontend is routing a pad there at all.
+ *
  * File-scope static -- reset in retro_deinit (iOS cannot dlclose a core). */
 static bool         inputdev_live[2]        = { false, false };
 

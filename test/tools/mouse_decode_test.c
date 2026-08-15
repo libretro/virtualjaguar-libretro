@@ -523,6 +523,69 @@ static void test_pad_is_inert(void)
    report(r.net_x == 0 && r.net_y == 0 && !bl[0] && !br[0], detail);
 }
 
+/*
+ * THE FRONTEND MUST NOT BE ABLE TO SILENTLY DETACH THE MOUSE.
+ *
+ * retro_set_controller_port_device used to force INPUTDEV_PAD on any
+ * JOYPAD/NONE assignment and defer to "the next check_variables()".
+ * Nothing schedules one, and RetroArch issues a per-port controller init
+ * right after load -- so the mouse the core option had just attached was
+ * detached for the entire session.  That is the regression that shipped;
+ * this pins it.
+ *
+ * The core option is set AFTER the load deliberately: the harness's
+ * environment callback serves cfg.options live, so this measures what
+ * retro_set_controller_port_device resolves at call time, which is the
+ * thing under test.
+ */
+static void test_frontend_pad_assignment_rereads_option(harness_config *cfg,
+                                                        void (*p_SetPort)(unsigned, unsigned))
+{
+   /* Mirrors libretro.h; this file deliberately includes no emulator or
+    * libretro headers (see the InputDevType comment above). */
+   const unsigned DEV_NONE_ID   = 0;
+   const unsigned DEV_JOYPAD_ID = 1;
+   const unsigned DEV_MOUSE_ID  = 2;
+
+   printf("frontend port-device assignment vs the core option\n");
+
+   if (!p_SetPort)
+   {
+      report(0, "retro_set_controller_port_device resolvable");
+      return;
+   }
+
+   harness_set_option(cfg, "virtualjaguar_p2_device", "mouse_st");
+
+   /* virtualjaguar_p2_device = mouse_st is now in effect.  A frontend
+    * assigning JOYPAD to port 2 -- exactly RetroArch's post-load per-port
+    * init -- must leave the option's mouse attached. */
+   p_SetPort(1, DEV_JOYPAD_ID);
+   sprintf(detail,
+           "RETRO_DEVICE_JOYPAD on port 2 re-reads the core option instead of "
+           "forcing pad (type=%d, expect %d)", p_GetType(1), (int)DEV_MOUSE_ST);
+   report(p_GetType(1) == DEV_MOUSE_ST, detail);
+
+   p_SetPort(1, DEV_NONE_ID);
+   sprintf(detail,
+           "RETRO_DEVICE_NONE on port 2 likewise (type=%d, expect %d)",
+           p_GetType(1), (int)DEV_MOUSE_ST);
+   report(p_GetType(1) == DEV_MOUSE_ST, detail);
+
+   /* An explicit frontend mouse still outranks the option, and port 1 is
+    * never given a mouse whatever the frontend says. */
+   p_SetPort(1, DEV_MOUSE_ID);
+   report(p_GetType(1) == DEV_MOUSE_ST,
+          "an explicit frontend mouse on port 2 is honoured");
+
+   p_SetPort(0, DEV_MOUSE_ID);
+   report(p_GetType(0) == DEV_PAD,
+          "a frontend mouse on port 1 is still refused");
+
+   p_SetPort(0, DEV_JOYPAD_ID);
+   p_SetPort(1, DEV_JOYPAD_ID);
+}
+
 static void test_port1_rejects_mouse(void)
 {
    printf("port scope\n");
@@ -692,6 +755,10 @@ int main(int argc, char **argv)
    test_chunk_size();
    test_port1_rejects_mouse();
    test_pad_is_inert();
+   /* Last: it leaves a core option set, which nothing after it should see. */
+   test_frontend_pad_assignment_rereads_option(
+      &cfg, (void (*)(unsigned, unsigned))
+               harness_dlsym(&cfg, "retro_set_controller_port_device"));
 
    sprintf(summary, "%d failure(s)", failures);
    result.status = failures ? "FAIL" : "PASS";
