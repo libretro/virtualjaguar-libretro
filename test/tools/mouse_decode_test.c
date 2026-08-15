@@ -200,10 +200,15 @@ static void run_polls(decode_result *r, char shape, int decode_case,
 
    /* Prime the decoder with a reference sample, exactly as a real driver
     * does on its first pass: a quadrature decoder cannot report movement
-    * until it has something to compare against.  Safe to read here
-    * because the backlog is empty on entry, so this cannot advance the
-    * encoder.  For shape B this IS the one row-select write the shape is
-    * defined by -- it never writes again. */
+    * until it has something to compare against.  For shape B this IS the
+    * one row-select write the shape is defined by -- it never writes
+    * again.
+    *
+    * This read is ARMED like any other, so it advances the encoder when
+    * the caller left a non-empty backlog behind -- test_savestate does,
+    * deliberately.  Harmless here (the sample only seeds prev_x/prev_y),
+    * but it is why test_savestate's two capture reads must start from
+    * identical state to be comparable. */
    p_WriteWord(0, row_words[0]);
    prime  = p_ReadWord(0);
    prev_x = gray_index(level_of(prime, w->xa), level_of(prime, w->xb));
@@ -701,11 +706,30 @@ static void test_port1_rejects_mouse(void)
    p_SetType(0, DEV_PAD);
 }
 
+/*
+ * The magnitude and the raw phase readback are both load-bearing; see the
+ * same argument spelled out at length in rotary_decode_test.c.  In short:
+ *
+ *   - THREE units per poll at 37.5% is more than one Gray state per poll,
+ *     so every poll emitted one either way and the replay matched with
+ *     `frac` dropped from InputDevStateLoad outright.  ONE unit is
+ *     96/256, so the Q8 carry decides WHICH polls emit.
+ *   - `backlog` was 0 at every poll boundary at that magnitude, hence
+ *     equally unpinned; the extra p_Feed() below leaves states queued but
+ *     undrained at the instant of the save.
+ *   - `phase` is invisible to NET at any magnitude, because run_polls()
+ *     re-primes its reference sample on entry.  It needs a raw readback,
+ *     taken by an identical sequence from an identical state on both
+ *     sides -- the capture read is itself armed.
+ */
 static void test_savestate(void)
 {
    uint8_t *snap;
    size_t   sz;
    decode_result cont, restored;
+   const wiring *w = &case_wiring[DEV_MOUSE_ST];
+   uint16_t raw;
+   int      px_cont, py_cont, px_restored, py_restored;
    int      ok;
 
    printf("savestate round-trip mid-motion\n");
@@ -724,11 +748,12 @@ static void test_savestate(void)
       return;
    }
 
-   /* Drive the encoder into the middle of a Gray cycle with a non-empty
-    * backlog and a non-zero Q8 carry, then save. */
+   /* Drive the encoder into the middle of a Gray cycle with a non-zero Q8
+    * carry, then queue states the polls have NOT drained, then save. */
    attach(DEV_MOUSE_ST);
    p_SetScale(1, 96);               /* 37.5%: guarantees a carry remainder */
-   run_polls(&cont, 'A', DEV_MOUSE_ST, 7, 3, 2, BTN_LEFT);
+   run_polls(&cont, 'A', DEV_MOUSE_ST, 7, 1, 1, BTN_LEFT);
+   p_Feed(1, 8, 5, BTN_LEFT);       /* 3 states on X, 1 on Y, undrained */
 
    ok = p_serialize(snap, sz) ? 1 : 0;
    report(ok, "retro_serialize succeeded mid-motion");
@@ -739,7 +764,11 @@ static void test_savestate(void)
     }
 
    /* Continue from here and record what the machine does next. */
-   run_polls(&cont, 'A', DEV_MOUSE_ST, 25, 3, 2, 0);
+   p_WriteWord(0, row_words[0]);
+   raw     = p_ReadWord(0);
+   px_cont = gray_index(level_of(raw, w->xa), level_of(raw, w->xb));
+   py_cont = gray_index(level_of(raw, w->ya), level_of(raw, w->yb));
+   run_polls(&cont, 'A', DEV_MOUSE_ST, 25, 1, 1, 0);
 
    /* Now roll back and replay the identical input.  If the phase, the
     * backlog or the Q8 carry were outside the state blob, the replay
@@ -747,15 +776,21 @@ static void test_savestate(void)
    ok = p_unserialize(snap, sz) ? 1 : 0;
    report(ok, "retro_unserialize accepted the v12 state");
 
-   run_polls(&restored, 'A', DEV_MOUSE_ST, 25, 3, 2, 0);
+   p_WriteWord(0, row_words[0]);
+   raw         = p_ReadWord(0);
+   px_restored = gray_index(level_of(raw, w->xa), level_of(raw, w->xb));
+   py_restored = gray_index(level_of(raw, w->ya), level_of(raw, w->yb));
+   run_polls(&restored, 'A', DEV_MOUSE_ST, 25, 1, 1, 0);
 
    sprintf(detail,
-           "post-restore replay matches (NET_X %d vs %d, NET_Y %d vs %d, "
-           "dropped %u vs %u)",
+           "raw phase X %d vs %d, Y %d vs %d; replay NET_X %d vs %d, "
+           "NET_Y %d vs %d, dropped %u vs %u",
+           px_cont, px_restored, py_cont, py_restored,
            (int)cont.net_x, (int)restored.net_x,
            (int)cont.net_y, (int)restored.net_y,
            cont.dropped, restored.dropped);
-   report(cont.net_x == restored.net_x && cont.net_y == restored.net_y
+   report(px_cont == px_restored && py_cont == py_restored
+          && cont.net_x == restored.net_x && cont.net_y == restored.net_y
           && cont.dropped == restored.dropped && restored.dropped == 0,
           detail);
 

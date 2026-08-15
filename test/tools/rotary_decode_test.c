@@ -24,6 +24,18 @@
  * asserts both halves.  If someone ever "simplifies" the rotary onto the
  * mouse's row-independent overlay, that test fails.
  *
+ * THE ONE THING A DECODER CANNOT SEE
+ * ==================================
+ * Every check below decodes DIFFERENCES between Gray indices, and a
+ * global polarity inversion of both phase lines is a +2 mod 4 shift of
+ * the index -- which differencing cancels.  joymatrix_identity.c closed
+ * that hole for the mouse with EXPECT_DIGEST_FULL_WITH_MOUSE; the rotary
+ * closes it with test_idle_rest_phase() instead of a fourth digest
+ * constant, by asserting the one absolute fact the shift moves: an idle
+ * encoder rests at QUAD_REST_PHASE (1,1), both lines high, bit-identical
+ * to an idle pad.  Under the inversion an idle rotary holds Left and
+ * Right down from the first scan.
+ *
  * THE ROW-GATED EMISSION RULE (the regression for the real defect)
  * ===============================================================
  * Measured on Tempest 2000 (vjtrace --watch 0xF14000:4:rw, 400 frames):
@@ -221,9 +233,14 @@ static void run_polls(decode_result *r, int port, char shape,
 
    /* Prime the decoder with a reference sample, as any real driver must:
     * a quadrature decoder cannot report movement until it has something
-    * to compare against.  The backlog is empty here, so this read cannot
-    * advance the encoder.  For shape B this IS the single row-select
-    * write that defines the shape. */
+    * to compare against.  For shape B this IS the single row-select write
+    * that defines the shape.
+    *
+    * This read is ARMED like any other, so it advances the encoder when
+    * the caller left a non-empty backlog behind -- test_savestate does,
+    * deliberately.  Harmless here (the sample only seeds `prev`), but it
+    * is why test_savestate's two capture reads must start from identical
+    * state to be comparable. */
    p_WriteWord(0, w);
    prev = sample_phase(port, p_ReadWord(0));
 
@@ -370,13 +387,61 @@ static void test_row_scope(int port)
    report(!level_of(v[1], port_bits[port].b), detail);
 
    /* Up and Down do not exist on a rotary.  TR10 notes this is why rotary
-    * games are told to use A = Up and C = Down for menus. */
+    * games are told to use A = Up and C = Down for menus.
+    *
+    * The two pokes go AFTER attach(), which memsets the pad array: set
+    * before it they are erased by the attach itself, and the assertion
+    * then reads slots that were never 0xFF in the first place -- true
+    * with inputdev_publish_rotary's two clears deleted outright. */
+   attach(port, DEV_ROTARY);
    p_joypad[port][SLOT_U] = 0xFF;
    p_joypad[port][SLOT_D] = 0xFF;
-   attach(port, DEV_ROTARY);
    run_polls(&r, port, 'A', 5, 1);
    report(p_joypad[port][SLOT_U] == 0x00 && p_joypad[port][SLOT_D] == 0x00,
           "Up and Down never assert on a rotary port");
+}
+
+/*
+ * IDLE POLARITY -- the one shape a GLOBAL phase inversion cannot hide in.
+ *
+ * Inverting both phase lines at once shifts the Gray index by +2 mod 4,
+ * and every other check in this file decodes DIFFERENCES between indices,
+ * which that shift cancels out of.  What it cannot cancel is the rest
+ * position: QUAD_REST_PHASE is (1,1), the only state with both lines
+ * high, chosen so an idle rotary is bit-identical to an idle pad
+ * (inputdev.c, "The encoder's rest phase is (1,1)").  Under the inversion
+ * an idle rotary instead writes 0xFF into both phase slots and holds Left
+ * and Right down from the moment the port is first scanned.
+ *
+ * The four slots are poked to 0xFF AFTER attach() so this cannot pass
+ * vacuously on a publish that never ran: with inputdev_publish_rotary
+ * removed the pokes survive and the assertion fails.
+ */
+static void test_idle_rest_phase(int port)
+{
+   uint16_t v;
+
+   printf("%s rotary: idle rests with BOTH phase lines high\n",
+          port_name[port]);
+
+   attach(port, DEV_ROTARY);
+
+   p_joypad[port][SLOT_U] = 0xFF;
+   p_joypad[port][SLOT_D] = 0xFF;
+   p_joypad[port][SLOT_L] = 0xFF;
+   p_joypad[port][SLOT_R] = 0xFF;
+
+   p_WriteWord(0, row_word(port, 0));
+   v = p_ReadWord(0);
+
+   sprintf(detail,
+           "a freshly attached, unmoved rotary clears all four direction "
+           "slots and leaves phase bits %d/%d HIGH (row 0 = $%04X)",
+           port_bits[port].a, port_bits[port].b, v);
+   report(p_joypad[port][SLOT_U] == 0x00 && p_joypad[port][SLOT_D] == 0x00
+          && p_joypad[port][SLOT_L] == 0x00 && p_joypad[port][SLOT_R] == 0x00
+          && level_of(v, port_bits[port].a) == 1
+          && level_of(v, port_bits[port].b) == 1, detail);
 }
 
 /*
@@ -389,6 +454,17 @@ static void test_row_scope(int port)
  * per armed read" the encoder drains up to 8 states between the samples
  * the driver decodes, so the decoded value is (drained mod 4): 2 is
  * dropped, 3 inverts the sign, 4 and 8 read as no movement at all.
+ *
+ * THE MAGNITUDE IS PART OF THE TEST.  Feeding ONE unit per scan makes
+ * this vacuous: the backlog never exceeds 1, so the row-0 read drains it
+ * and QuadAdvance() no-ops on the other seven armed reads whether they
+ * are gated or not.  Widening the gate by a single row then still decodes
+ * a clean -40.  Four units per scan keeps the backlog non-empty across
+ * the whole scan, so every ungated read is a real state and the decoded
+ * result collapses (two states between samples is Domin's "undetermined"
+ * entry -- dropped, net 0).  The expected count is unchanged at one per
+ * scan, because that is what the gate is for: the excess queues in the
+ * backlog and the sample rate, not the feed rate, sets the drain rate.
  */
 static void test_t2k_scan_shape(int port)
 {
@@ -408,7 +484,9 @@ static void test_t2k_scan_shape(int port)
 
    for (scan = 0; scan < 40; scan++)
    {
-      p_Feed(port, 1, 0, 0);        /* one unit of rotation per frame */
+      /* Four units per frame -- four times what one scan can drain, so
+       * the backlog stays non-empty for all eight reads.  See above. */
+      p_Feed(port, 4, 0, 0);
 
       /* half 0 = port-1 rows 0-3, half 1 = port-2 rows 0-3, in the order
        * the measured loop issues them.  Each write is followed by a
@@ -432,9 +510,9 @@ static void test_t2k_scan_shape(int port)
    }
 
    sprintf(detail,
-           "one clean count per scan across 40 scans (net=%d, expect -40), "
-           "dropped=%u -- a per-read clock would decode garbage here",
-           (int)net, dropped);
+           "one clean count per scan across 40 scans at 4 units/scan "
+           "(net=%d, expect -40), dropped=%u -- a per-read clock would "
+           "decode garbage here", (int)net, dropped);
    report(net == -40 && dropped == 0, detail);
 }
 
@@ -602,11 +680,37 @@ static void test_mouse_still_row_blind(void)
    attach(1, DEV_PAD);
 }
 
+/*
+ * SAVESTATE -- and why the magnitude and the phase readback are both
+ * load-bearing.
+ *
+ * quad_axis carries three fields (backlog, frac, phase) and this check is
+ * the only thing asserting that InputDevStateLoad restores them.  Three
+ * traps make an obvious version of it prove nothing:
+ *
+ *   1. A feed of THREE units at 37.5% is 288/256 -- more than one state
+ *      per poll -- so every poll emits exactly one state regardless of
+ *      what the carry or the backlog held, and the replay matches with
+ *      `frac` and `backlog` dropped from the load entirely.  ONE unit per
+ *      poll is 96/256, so a state comes out only every third-ish poll and
+ *      the Q8 carry decides WHICH ones -- now `frac` moves `net`.
+ *   2. `backlog` was 0 at every poll boundary at that magnitude, so it
+ *      was equally unpinned.  The extra p_Feed() below leaves states
+ *      queued but undrained at the instant of the save.
+ *   3. `phase` is invisible to `net` no matter what the magnitude is,
+ *      because run_polls() re-primes its reference sample on entry.  It
+ *      needs a raw readback, taken by an IDENTICAL sequence from an
+ *      IDENTICAL state on both sides -- the capture read is itself armed
+ *      and advances the encoder when the backlog is non-empty, so an
+ *      asymmetric capture would differ by one state on its own.
+ */
 static void test_savestate(void)
 {
    uint8_t      *snap;
    size_t        sz;
    decode_result cont, restored;
+   uint16_t      w0;
+   int           phase_cont, phase_restored;
    int           ok;
 
    printf("savestate round-trip mid-rotation\n");
@@ -625,11 +729,12 @@ static void test_savestate(void)
       return;
    }
 
-   /* Stop in the middle of a Gray cycle with a non-empty backlog and a
-    * non-zero Q8 carry, then save. */
+   /* Stop mid-Gray-cycle with a non-zero Q8 carry (trap 1) and states
+    * still queued in the backlog (trap 2), then save. */
    attach(0, DEV_ROTARY);
    p_SetScale(0, 96);              /* 37.5%: guarantees a carry remainder */
-   run_polls(&cont, 0, 'A', 7, 3);
+   run_polls(&cont, 0, 'A', 7, 1);
+   p_Feed(0, 8, 0, 0);             /* 3 states queued, none drained yet */
 
    ok = p_serialize(snap, sz) ? 1 : 0;
    report(ok, "retro_serialize succeeded mid-rotation");
@@ -639,18 +744,28 @@ static void test_savestate(void)
       return;
    }
 
-   run_polls(&cont, 0, 'A', 25, 3);
+   w0 = row_word(0, 0);
+
+   p_WriteWord(0, w0);
+   phase_cont = sample_phase(0, p_ReadWord(0));
+   run_polls(&cont, 0, 'A', 25, 1);
 
    ok = p_unserialize(snap, sz) ? 1 : 0;
    report(ok, "retro_unserialize accepted the state");
 
-   run_polls(&restored, 0, 'A', 25, 3);
+   /* Identical sequence from the identical state -- see trap 3. */
+   p_WriteWord(0, w0);
+   phase_restored = sample_phase(0, p_ReadWord(0));
+   run_polls(&restored, 0, 'A', 25, 1);
 
    sprintf(detail,
-           "post-restore replay matches (net %d vs %d, dropped %u vs %u) "
-           "-- phase, backlog and Q8 carry all survived the rollback",
+           "raw phase reads back the same (%d vs %d) and the replay "
+           "matches (net %d vs %d, dropped %u vs %u) -- phase, backlog "
+           "and Q8 carry all survived the rollback",
+           phase_cont, phase_restored,
            (int)cont.net, (int)restored.net, cont.dropped, restored.dropped);
-   report(cont.net == restored.net && cont.dropped == restored.dropped
+   report(phase_cont == phase_restored
+          && cont.net == restored.net && cont.dropped == restored.dropped
           && restored.dropped == 0, detail);
 
    free(snap);
@@ -722,6 +837,7 @@ int main(int argc, char **argv)
       test_directions(port);
       test_poll_shapes(port);
       test_row_scope(port);
+      test_idle_rest_phase(port);
       test_t2k_scan_shape(port);
       test_controller_id(port);
       attach(port, DEV_PAD);
