@@ -880,6 +880,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test \
 		test/test_quadrature \
 		test/.skipped-checks
 
@@ -934,7 +935,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
-		test/test_quadrature test/tools/mouse_decode_test
+		test/test_quadrature test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -1175,6 +1177,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# and distance out, all three wiring cases and all three poll shapes,
 	@# plus row-blindness and the v12 savestate round-trip.
 	./test/tools/mouse_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Tempest rotary end-to-end (#436): synthetic rotation in, decoded
+	@# direction and magnitude out in BOTH directions on BOTH ports, the
+	@# row-0-only visibility that distinguishes a matrix device from the
+	@# row-blind mouse, Tempest 2000's measured 8-write scan, the
+	@# two-controller Pause unlock, the C2/C3 ID bits and a savestate
+	@# round-trip mid-rotation.
+	./test/tools/rotary_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1496,6 +1505,13 @@ test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/mouse_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/rotary_decode_test.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

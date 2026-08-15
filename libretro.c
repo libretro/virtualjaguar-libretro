@@ -201,11 +201,19 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
  * RETRO_DEVICE_MOUSE subclass because it is a relative-motion pointer;
  * the three subclasses are the three adapter/mouse wiring combinations
  * (docs/jaguar-mouse-adapter-mapping.md section 4d), not three different
- * devices.  Port 2 only -- see inputdev.h. */
+ * devices.  Port 2 only -- see inputdev.h.
+ *
+ * The rotary (#436) is also a RETRO_DEVICE_MOUSE subclass, driven by
+ * relative X: that is the established libretro spinner convention and it
+ * covers real spinner hardware.  RETRO_DEVICE_ANALOG as an alternate
+ * rotary source is deliberately out of scope here (design spec Q4) and
+ * belongs with #439's shared analog layer.  Rotary is offered on BOTH
+ * ports; unlike the mouse it is a genuine matrix device (inputdev.h). */
 #define RETRO_DEVICE_JAG_PAD             RETRO_DEVICE_JOYPAD
 #define RETRO_DEVICE_JAG_MOUSE_ST        RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 0)
 #define RETRO_DEVICE_JAG_MOUSE_AMIGA     RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 #define RETRO_DEVICE_JAG_MOUSE_AMIGA_AD  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 2)
+#define RETRO_DEVICE_JAG_ROTARY          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 3)
 
 /* Device the frontend explicitly selected via
  * retro_set_controller_port_device, or INPUTDEV_PAD when it never did.
@@ -218,6 +226,12 @@ static bool         port_device_forced[2]   = { false, false };
  * changes rather than on every check_variables() call. */
 static InputDevType port_device_active[2]   = { INPUTDEV_PAD, INPUTDEV_PAD };
 static bool         show_mouse_options      = true;
+static bool         show_rotary_options     = true;
+/* Sensitivity ladders, Q8 (256 == 1.0).  Kept separate because a spinner
+ * and a mouse want very different multipliers; the per-port scale is
+ * whichever one matches the device actually attached to that port. */
+static int32_t      mouse_scale_q8          = 256;
+static int32_t      rotary_scale_q8         = 256;
 
 /* Has this port actually received non-zero mouse state from the frontend?
  *
@@ -234,6 +248,17 @@ static bool         show_mouse_options      = true;
  * device type changes, which clears this): a mouse that has moved once is
  * a mouse the frontend is routing, and letting a pad drive the same six
  * lines at that point is the ambiguity the suppression exists to prevent.
+ *
+ * A ROTARY PORT DELIBERATELY DOES NOT USE THIS, and that is not an
+ * oversight to "fix" later.  The rule exists because a mouse port loses
+ * BOTH devices; a rotary port loses neither -- it withholds only U/D/L/R
+ * and keeps A/B/C/Option/Pause and the keypad on the RetroPad, so a
+ * frontend that routes no mouse state still leaves the port usable.  (In
+ * particular Tempest 2000's rotary unlock, Option then Pause on both
+ * controllers, is entirely buttons and works with no spinner routed.)
+ * Deferring the rotary's four-slot withholding would instead mean an
+ * un-serialized flag that test_savestate's exact-replay assertion has to
+ * reason around, for a failure mode that cannot occur.
  *
  * DELIBERATELY NOT SERIALIZED, for the same reason inputdev.h gives for
  * the device type and the sensitivity scale: this is a fact about how the
@@ -258,9 +283,17 @@ static const char *inputdev_type_name(InputDevType t)
       case INPUTDEV_MOUSE_ST:            return "Atari ST / PS2 mouse";
       case INPUTDEV_MOUSE_AMIGA_ADAPTER: return "Amiga mouse (Amiga adapter)";
       case INPUTDEV_MOUSE_AMIGA_ON_ST:   return "Amiga mouse (ST adapter)";
+      case INPUTDEV_ROTARY:              return "Tempest rotary";
       default:                           break;
    }
    return "standard joypad";
+}
+
+static bool inputdev_is_mouse_type(InputDevType t)
+{
+   return (t == INPUTDEV_MOUSE_ST
+           || t == INPUTDEV_MOUSE_AMIGA_ADAPTER
+           || t == INPUTDEV_MOUSE_AMIGA_ON_ST);
 }
 
 static void apply_port_device(int port, InputDevType type)
@@ -487,12 +520,33 @@ static bool update_option_visibility(void)
    {
       bool show_mouse_prev = show_mouse_options;
 
-      show_mouse_options = (InputDevGetType(1) != INPUTDEV_PAD);
+      show_mouse_options = inputdev_is_mouse_type(InputDevGetType(1));
 
       if (show_mouse_options != show_mouse_prev)
       {
          option_display.visible = show_mouse_options;
          option_display.key     = "virtualjaguar_mouse_sensitivity";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
+   /* Rotary sensitivity and the rotary controller-type knob mean nothing
+    * unless a rotary is attached to one port or the other (#436). */
+   {
+      bool show_rotary_prev = show_rotary_options;
+
+      show_rotary_options = (InputDevGetType(0) == INPUTDEV_ROTARY
+                             || InputDevGetType(1) == INPUTDEV_ROTARY);
+
+      if (show_rotary_options != show_rotary_prev)
+      {
+         option_display.visible = show_rotary_options;
+         option_display.key     = "virtualjaguar_rotary_sensitivity";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         option_display.key     = "virtualjaguar_rotary_id";
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
                     &option_display);
          updated = true;
@@ -736,10 +790,42 @@ static InputDevType p2_device_from_option(void)
          p2 = INPUTDEV_MOUSE_AMIGA_ON_ST;
       else if (!strcmp(var.value, "mouse_amiga_adapter"))
          p2 = INPUTDEV_MOUSE_AMIGA_ADAPTER;
+      else if (!strcmp(var.value, "rotary"))
+         p2 = INPUTDEV_ROTARY;
       /* "pad" and "auto" (with no DB row) both mean pad. */
    }
 
    return p2;
+}
+
+/* Port 1 controller type, same contract as p2_device_from_option().
+ *
+ * Port 1 offers pad or rotary only.  It needed no such helper while it was
+ * pad-only -- retro_set_controller_port_device() could hardcode
+ * INPUTDEV_PAD when the frontend released the port -- but with a rotary
+ * reachable there, that hardcode would re-detach it on a frontend's
+ * routine post-load JOYPAD assignment, which is exactly the bug the port-2
+ * helper exists to prevent.
+ *
+ * No titledb row will ever select a rotary (design spec section 4.7):
+ * selecting one removes Up and Down from row 0, so a player using a pad on
+ * that title would lose menu navigation entirely.  That is a functional
+ * break, not a preference, so the rotary is opt-in always. */
+static InputDevType p1_device_from_option(void)
+{
+   struct retro_variable var;
+   InputDevType p1 = INPUTDEV_PAD;
+
+   var.key   = "virtualjaguar_p1_device";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (!strcmp(var.value, "rotary"))
+         p1 = INPUTDEV_ROTARY;
+      /* "pad" and "auto" both mean pad. */
+   }
+
+   return p1;
 }
 
 static void check_variables(void)
@@ -1057,14 +1143,23 @@ static void check_variables(void)
     *   3. "auto" resolves through the per-title DB, and falls back to
     *      "pad" -- which is bit-identical to a core without this feature.
     * No titledb row ships in this PR, so "auto" is "pad" for every title
-    * today and the mouse is strictly opt-in. */
+    * today and the mouse is strictly opt-in.
+    *
+    * Port 1 (#436) follows the same precedence, but offers pad or rotary
+    * only and will never get a titledb row -- see p1_device_from_option. */
    {
+      InputDevType p1 = p1_device_from_option();
       InputDevType p2 = p2_device_from_option();
 
       if (port_device_forced[1])
          p2 = port_device_frontend[1];
 
       apply_port_device(1, p2);
+
+      if (port_device_forced[0])
+         p1 = port_device_frontend[0];
+
+      apply_port_device(0, p1);
    }
 
    var.key   = "virtualjaguar_mouse_sensitivity";
@@ -1082,10 +1177,48 @@ static void check_variables(void)
          pct = 100;
       if (pct > 1600)
          pct = 1600;
-      InputDevSetScale(1, (int32_t)((pct * 256) / 100));
+      mouse_scale_q8 = (int32_t)((pct * 256) / 100);
    }
    else
-      InputDevSetScale(1, 256);
+      mouse_scale_q8 = 256;
+
+   var.key   = "virtualjaguar_rotary_sensitivity";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      /* Same pre-multiply clamp as the mouse ladder above, for the same
+       * hand-edited-config reason. */
+      int pct = atoi(var.value);
+      if (pct < 1)
+         pct = 100;
+      if (pct > 1600)
+         pct = 1600;
+      rotary_scale_q8 = (int32_t)((pct * 256) / 100);
+   }
+   else
+      rotary_scale_q8 = 256;
+
+   /* One scale per port, picked by what is actually plugged into it --
+    * the two ladders are separate options because a spinner and a mouse
+    * want very different multipliers. */
+   {
+      unsigned port;
+
+      for (port = 0; port < 2; port++)
+         InputDevSetScale((int)port,
+                          InputDevGetType((int)port) == INPUTDEV_ROTARY
+                             ? rotary_scale_q8 : mouse_scale_q8);
+   }
+
+   var.key   = "virtualjaguar_rotary_id";
+   var.value = NULL;
+   {
+      int reports = (get_variable_pertitle(&var) && var.value
+                     && !strcmp(var.value, "rotary")) ? 1 : 0;
+
+      InputDevSetRotaryID(0, reports);
+      InputDevSetRotaryID(1, reports);
+   }
 
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
@@ -1341,15 +1474,27 @@ static void update_input(void)
     *
     * A mouse port takes NOTHING from the retropad: physically there is no
     * pad there, and leaving the host contribution would let a gamepad and
-    * a mouse drive the same six lines at once.  (A rotary port, when
-    * #436 lands, keeps its buttons and withholds only U/D/L/R, so this
-    * will have to become selective then -- it cannot simply grow another
-    * type here.)
+    * a mouse drive the same six lines at once.
     *
     * The suppression is deferred until the mouse is LIVE -- see
     * inputdev_live: reading the frontend's mouse state first and
     * suppressing only once it has been non-zero guarantees that selecting
-    * a mouse can never leave the port with no working input at all. */
+    * a mouse can never leave the port with no working input at all.
+    *
+    * A ROTARY PORT IS DIFFERENT, and this is the branch that matters most
+    * to a real user.  A rotary is a modified standard controller: it
+    * really does have A, B, C, Option, Pause and the keypad, and those
+    * stay wired to the retropad.  Only Up/Down/Left/Right are withheld,
+    * because on that controller those four lines ARE the encoder (Up and
+    * Down do not exist; Left/Right are Phase 0/Phase 1) -- so the withhold
+    * is unconditional here, with no inputdev_live deferral, for the reason
+    * spelled out at inputdev_live itself.
+    *
+    * Keeping the buttons is not a nicety.  Tempest 2000's rotary support
+    * is hidden behind an unlock that requires pressing PAUSE ON BOTH
+    * CONTROLLERS SIMULTANEOUSLY from the Options screen, and the unlock
+    * is persisted in the game's EEPROM save.  Zero the whole array for a
+    * rotary port and the user can never turn the feature on at all. */
    if (InputDevAnyAttached())
    {
       for (player = 0; player < 2; player++)
@@ -1363,28 +1508,44 @@ static void update_input(void)
 
          dx = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
                                       RETRO_DEVICE_ID_MOUSE_X);
-         dy = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
-                                      RETRO_DEVICE_ID_MOUSE_Y);
+         dy      = 0;
          buttons = 0;
-         if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
-                            RETRO_DEVICE_ID_MOUSE_LEFT))
-            buttons |= INPUTDEV_BTN_LEFT;
-         if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
-                            RETRO_DEVICE_ID_MOUSE_RIGHT))
-            buttons |= INPUTDEV_BTN_RIGHT;
 
-         if (dx || dy || buttons)
+         if (t == INPUTDEV_ROTARY)
          {
-            if (!inputdev_live[player])
-            {
-               inputdev_live[player] = true;
-               LOG_INF("[input] port %d: mouse is live, RetroPad released\n",
-                       player + 1);
-            }
+            /* Withhold only the four direction slots; everything from
+             * BUTTON_s (4) up is a real switch on a real rotary.  The
+             * phases are published into BUTTON_L / BUTTON_R by
+             * InputDevClock() on each $F14000 row-0 read. */
+            joypad_buttons[player][BUTTON_U] = 0x00;
+            joypad_buttons[player][BUTTON_D] = 0x00;
+            joypad_buttons[player][BUTTON_L] = 0x00;
+            joypad_buttons[player][BUTTON_R] = 0x00;
          }
+         else
+         {
+            dy = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                                         RETRO_DEVICE_ID_MOUSE_Y);
+            if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                               RETRO_DEVICE_ID_MOUSE_LEFT))
+               buttons |= INPUTDEV_BTN_LEFT;
+            if (input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
+                               RETRO_DEVICE_ID_MOUSE_RIGHT))
+               buttons |= INPUTDEV_BTN_RIGHT;
 
-         if (inputdev_live[player])
-            memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
+            if (dx || dy || buttons)
+            {
+               if (!inputdev_live[player])
+               {
+                  inputdev_live[player] = true;
+                  LOG_INF("[input] port %d: mouse is live, RetroPad released\n",
+                          player + 1);
+               }
+            }
+
+            if (inputdev_live[player])
+               memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
+         }
 
          InputDevFeed((int)player, dx, dy, buttons);
       }
@@ -1471,6 +1632,9 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
       case RETRO_DEVICE_JAG_MOUSE_AMIGA_AD:
          type = INPUTDEV_MOUSE_AMIGA_ADAPTER;
          break;
+      case RETRO_DEVICE_JAG_ROTARY:
+         type = INPUTDEV_ROTARY;
+         break;
       default:
          type = INPUTDEV_PAD;
          break;
@@ -1488,7 +1652,7 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    port_device_forced[port]   = (type != INPUTDEV_PAD);
 
    if (type == INPUTDEV_PAD)
-      type = (port == 1) ? p2_device_from_option() : INPUTDEV_PAD;
+      type = (port == 1) ? p2_device_from_option() : p1_device_from_option();
 
    apply_port_device((int)port, type);
    update_option_visibility();
@@ -2538,23 +2702,28 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
-   /* Controller types the frontend may assign per port (#428/#429).
-    * Port 1 is pad-only: the ST/Amiga mouse adapter is a vendor-documented
-    * PORT 2 device, every title known to read one reads port 2, and a
-    * port-1 mouse would be a configuration no software supports. */
+   /* Controller types the frontend may assign per port (#428/#429/#436).
+    * Port 1 offers pad or rotary: the ST/Amiga mouse adapter is a
+    * vendor-documented PORT 2 device, every title known to read one reads
+    * port 2, and a port-1 mouse would be a configuration no software
+    * supports -- but TR10 documents the rotary matrix for both ports and
+    * Tempest 2000's CONTROLLER TYPE menu carries independent P1 and P2
+    * toggles, so the rotary is offered on both. */
    {
       static const struct retro_controller_description port1_devices[] = {
          { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
+         { "Rotary (Tempest)", RETRO_DEVICE_JAG_ROTARY },
       };
       static const struct retro_controller_description port2_devices[] = {
          { "Standard Joypad",             RETRO_DEVICE_JAG_PAD },
          { "Atari ST / PS2 Mouse",        RETRO_DEVICE_JAG_MOUSE_ST },
          { "Amiga Mouse (ST adapter)",    RETRO_DEVICE_JAG_MOUSE_AMIGA },
          { "Amiga Mouse (Amiga adapter)", RETRO_DEVICE_JAG_MOUSE_AMIGA_AD },
+         { "Rotary (Tempest)",            RETRO_DEVICE_JAG_ROTARY },
       };
       static const struct retro_controller_info ports[] = {
-         { port1_devices, 1 },
-         { port2_devices, 4 },
+         { port1_devices, 2 },
+         { port2_devices, 5 },
          { NULL, 0 },
       };
 
@@ -2610,6 +2779,9 @@ void retro_deinit(void)
    inputdev_live[0]        = false;
    inputdev_live[1]        = false;
    show_mouse_options      = true;
+   show_rotary_options     = true;
+   mouse_scale_q8          = 256;
+   rotary_scale_q8         = 256;
    headroom_logged         = false;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
