@@ -153,7 +153,19 @@ A row is admissible only when all of the following hold:
 | `test/tools/test_hook_gate` | End-to-end through the real core on `yarc.j64`: gate on patches and logs; gate off (the default) does not; a deliberate `expect[]` mismatch refuses and logs; the patch survives `retro_reset()` and a state round trip. |
 | `test/tools/hook_identity_ab.sh` | Stock-path identity: per-frame framebuffer-hash CSVs are byte-identical with the gate at its default, explicitly disabled, and explicitly enabled — plus a base-vs-base determinism control, because a nondeterministic run makes every other comparison meaningless. |
 
-All four run on repo-resident public content, so all four gate CI.
+All four run on repo-resident public content, so all four gate CI — and
+`hook_identity_ab.sh` enforces that for itself by counting the ROMs it
+compared and failing on zero, rather than trusting the ROMs to be present.
+
+**What the A/B does not cover.** With no shipped row carrying a hook, the
+applier's body is unreachable in every configuration that ships today, so
+`hook_identity_ab.sh` proves the applier is *unreached*, not that it is
+*inert* — replace its body with a `memset` and the A/B still passes. The
+applier's own behaviour is covered by `test_titlehook` and
+`test_hook_gate`, which install hooks programmatically; those are the
+tests that go red if it breaks. Read the A/B as the stock-path identity
+guard it is: it catches an option that perturbs rendering merely by being
+registered, which is a real hazard, but not a broken patch path.
 
 The end-to-end test installs its hooks with `TitleDBSetHooksForTest()`
 rather than adding a canary row to the shipped table. That is not

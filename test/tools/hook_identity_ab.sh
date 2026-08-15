@@ -16,9 +16,27 @@
 #   on        virtualjaguar_enhancement_hooks=enabled
 #
 # The `on` arm matters as much as the `off` one: no shipped table row
-# carries a hook, so turning the gate ON must also change nothing.  That is
-# what proves the applier is inert on unlisted content rather than merely
-# unreached.
+# carries a hook, so turning the gate ON must also change nothing.
+#
+# WHAT THE `on` ARM DOES **NOT** PROVE.  It does not prove the applier is
+# inert -- it proves the applier is unREACHED, which is a weaker claim, and
+# the header used to overstate it.  TitleHookApplyToBuffer() returns at its
+# first guard for every ROM this script can run:
+#
+#     hooks == NULL          unlisted content (both in-repo ROMs)
+#     hooks[0].kind == NONE  every row the shipped table does carry
+#
+# So the applier's body is dead code in every configuration shipping today.
+# Replace that body with `memset(rom, 0, romSize)` and this script still
+# prints OK on all eight arms.  The only sabotage it catches is one where
+# merely REGISTERING the option perturbs rendering -- which is a real thing
+# to guard (an option that changes defaults, or reorders a struct read at
+# init, would show up here), just not the thing the old wording claimed.
+#
+# The applier's own behaviour is covered by test_titlehook (refusal paths,
+# bounds, wrap safety) and test_hook_gate (gate on/off/mismatch against a
+# synthetic row).  Those are the tests that go red if the applier breaks;
+# this one is the stock-path identity guard.  Do not credit it with more.
 #
 # NOTE ON SCOPE.  This is a self-comparison: it proves the OPTION cannot
 # move the picture.  It is NOT the same claim as "byte-identical to the
@@ -65,6 +83,7 @@ if [ -z "$OUT" ]; then
 fi
 
 rc=0
+compared=0
 
 run_arm() {
     # run_arm <rom-tag> <arm-name> [extra args...]
@@ -82,7 +101,11 @@ run_arm() {
 
 for ROM in $ROMS; do
     if [ ! -f "$ROM" ]; then
-        echo "hook_identity_ab: SKIP (missing $ROM)"
+        # NOT a skip-as-pass.  These ROMs are committed to the repo, so a
+        # missing one means the checkout is wrong, not that the check is
+        # optional -- and the `compared` tally below turns "every ROM was
+        # missing" into a failure rather than a green run of nothing.
+        echo "hook_identity_ab: SKIP (missing $ROM)" >&2
         continue
     fi
     TAG=$(basename "$ROM" .j64)
@@ -111,12 +134,24 @@ for ROM in $ROMS; do
             rc=1
         fi
     done
+    compared=$((compared + 1))
 done
 
 [ "$CLEANUP" = "1" ] && rm -rf "$OUT"
 
+# A run that compared nothing must not report OK.  Without this the script
+# exits 0 having skipped every ROM -- the skip-as-pass failure mode this
+# repo has shipped before, and the reason the Makefile's claim that "none
+# of them can skip" needed something other than a comment to enforce it.
+if [ "$compared" = "0" ]; then
+    echo "hook_identity_ab: FAILED -- 0 ROMs compared (none of: $ROMS)" >&2
+    echo "       These are committed to the repo; a missing one means the" >&2
+    echo "       checkout is wrong, not that this check is optional." >&2
+    exit 1
+fi
+
 if [ "$rc" = "0" ]; then
-    echo "hook_identity_ab: OK -- the enhancement-hooks option cannot move the picture"
+    echo "hook_identity_ab: OK ($compared ROM(s)) -- the enhancement-hooks option cannot move the picture"
 else
     echo "hook_identity_ab: FAILED" >&2
 fi

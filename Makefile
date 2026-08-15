@@ -1299,7 +1299,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
 	@# Enhancement hooks (issue #370).  All four gates run on in-repo public
-	@# content, so none of them can skip.  The hook array is installed
+	@# content, so none of them can skip -- and hook_identity_ab.sh now
+	@# ENFORCES that rather than asserting it: it counts the ROMs it actually
+	@# compared and fails on zero, instead of exiting 0 having skipped them
+	@# all.  The hook array is installed
 	@# programmatically via TitleDBSetHooksForTest -- deliberately NOT as a
 	@# canary row in the shipped table, which would break --case 5 above.
 	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case on --quiet
