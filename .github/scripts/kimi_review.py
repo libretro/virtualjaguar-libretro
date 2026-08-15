@@ -195,9 +195,26 @@ def main():
                 "The request was rejected on its shape, not its credentials. "
                 "The API's message is quoted above -- fix what it names."
             )
+        elif e.code == 404:
+            # A 404 that never names the model is usually the path, not the
+            # tier: /chat/completions hanging off the wrong base.
+            print(
+                "No model was named in the response, so this is most likely "
+                "the endpoint rather than the tier: check that the "
+                "KIMI_API_BASE repo variable ('"
+                + os.environ["KIMI_API_BASE"] + "') is the host's OpenAI-"
+                "compatible root, such that <base>/chat/completions resolves."
+            )
         return 0
     except Exception as e:  # noqa: BLE001 - advisory job, never fail the PR
+        # Same annotation as the HTTP path.  Without it, an unreachable
+        # endpoint -- DNS failure, refused connection, TLS error, timeout --
+        # is the one way this job can fail completely silently, which is the
+        # exact invisible-failure mode the warning exists to prevent.
         print(f"Kimi review failed: {type(e).__name__}: {e}")
+        print("::warning title=Kimi review did not run::"
+              f"{type(e).__name__} reaching the Kimi API; no review was "
+              "posted. See the job log.")
         return 0
 
     note = ""
