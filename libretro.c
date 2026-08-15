@@ -309,6 +309,23 @@ static void apply_port_device(int port, InputDevType type)
       port_device_active[port] = type;
       /* A new device has to earn the port back (see inputdev_live). */
       inputdev_live[port]      = false;
+      /* Re-resolve the sensitivity ladder for the device now in the port.
+       * The rotary and the mouse have separate options because a spinner
+       * and a mouse want very different multipliers, and until this line
+       * existed the only place that picked between them was
+       * check_variables().  So switching a port to "Rotary (Tempest)"
+       * from RetroArch's Controls menu -- which reaches
+       * retro_set_controller_port_device, not GET_VARIABLE_UPDATE -- left
+       * the port running at the OTHER ladder's multiplier until the next
+       * core-option change happened to fix it.  Invisible at defaults
+       * (both ladders are 256) and self-healing, but real.
+       *
+       * Both statics hold their last resolved values here; on the
+       * check_variables() path the loop after the ladders recomputes them
+       * and calls InputDevSetScale again anyway, so this is at worst one
+       * redundant assignment there. */
+      InputDevSetScale(port, type == INPUTDEV_ROTARY
+                                ? rotary_scale_q8 : mouse_scale_q8);
       if (type != INPUTDEV_PAD)
          LOG_INF("[input] port %d: %s attached\n", port + 1,
                  inputdev_type_name(type));
