@@ -186,8 +186,9 @@ The "Acid suite (linux x86_64)" job can show `conclusion: failure` for two unrel
 - List unresolved threads: `gh api graphql -f query='{repository(owner:"libretro",name:"virtualjaguar-libretro"){pullRequest(number:N){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{id author{login} body}}}}}}}'`
 - Inline reply: `gh api -X POST repos/libretro/virtualjaguar-libretro/pulls/N/comments/<REST_ID>/replies -f body="..."` — parent is the REST `id` from `gh api .../comments`, NOT the GraphQL `PRRC_*` id (returns 404).
 - Resolve thread: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_..."}) { thread { isResolved } } }'`.
-- Trigger a Copilot review: `gh pr comment N --body "@copilot review"`. The `requested_reviewers` REST endpoint rejects `copilot-pull-request-reviewer` as "not a collaborator".
 - Always reply AND resolve when addressing feedback — leaving a thread open after a fix is noise for the next reviewer.
+- **Do NOT trigger Copilot reviews.** `gh pr comment N --body "@copilot review"` used to be the documented trigger; it is now discouraged. Copilot bills per token since 2026-06-01, that comment spawns a *coding agent* session (38 of them in Aug 2026, up to 4 on a single PR), and `kimi-review.yml` already reviews every PR to `develop`/`master` automatically on a different provider's budget. Reach for it only when a second opinion is genuinely worth the spend, and say why in the PR.
+- Repo-level custom instructions for Copilot live in `.github/copilot-instructions.md`. Keep it short — it is input on every request. Depth goes in `.github/prompts/*.prompt.md`, which load only when invoked.
 
 ### Headless framebuffer caveat
 
