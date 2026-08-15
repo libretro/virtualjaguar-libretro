@@ -31,6 +31,10 @@ void CrashDetectInit(void);
 void CrashDetectReset(void);   /* called from retro_load_game */
 void CrashDetectSetMode(int mode);
 
+/* Record G_PC at every GPU GO so gpu_runaway can tell a program the GPU
+ * was started at from a jump into a data buffer (issue #461). */
+void CrashDetectNoteGPUGo(uint32_t pc);
+
 /* Per-frame hook -- call once at the END of JaguarExecuteNew so all
  * subsystems have been advanced.  fb may be NULL if no framebuffer
  * is available this frame; the stall detector skips that frame. */

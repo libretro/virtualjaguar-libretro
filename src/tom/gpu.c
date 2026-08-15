@@ -36,6 +36,7 @@
 #include "event.h"
 #include "settings.h"
 #include "../core/vjtrace.h"
+#include "crash_detect.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -1054,7 +1055,10 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // writes and GPU self-writes (STORE opcodes route through
                // this same GPUWriteLong path with who == GPU).
                if (!wasRunning && GPU_RUNNING)
+               {
                   VJT_EMIT(VJT_EV_GPU_GO, GPU, 0, gpu_pc);
+                  CrashDetectNoteGPUGo(gpu_pc);
+               }
                else if (wasRunning && !GPU_RUNNING)
                   VJT_EMIT(VJT_EV_GPU_STOP, GPU, 0, gpu_pc);
 
