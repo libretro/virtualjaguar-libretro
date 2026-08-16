@@ -172,10 +172,12 @@ static int gpu_pc_valid(uint32_t pc)
 
 static int dsp_pc_valid(uint32_t pc)
 {
-   /* High-byte garbage aliases on the 24-bit bus (JTRM): $FD012786
-    * fetches from $012786.  Treating that as an escape was a false
-    * positive; the fetch is mapped.  DSP has no gpu_runaway twin --
-    * a Defender-style jump into a data buffer is still invisible here. */
+   /* High-byte garbage aliases in this core: GPUReadWord / DSP fetch
+    * and the 68K bus path all do `addr &= 0x00FFFFFF` (gpu.c:331,
+    * jaguar.c m68k_read_memory_*).  $FD012786 fetches from $012786.
+    * Treating that as an escape was a false positive against our own
+    * decode.  DSP has no gpu_runaway twin -- a Defender-style jump
+    * into a data buffer is still invisible here. */
    pc = pc_canonical(pc);
    if (pc <= MAPPED_CODE_HI) return 1;
    if (dsp_pc_in_local(pc)) return 1;
@@ -480,15 +482,16 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    last_dsp_opcount = dsp_exec_opcode_count;
 
    /* ---- Video stall: framebuffer hash unchanged while a processor is
-    * running AND that processor is not in a healthy local-RAM spin.
-    * A title that parks a still image with the GPU looping in local RAM
-    * (AvP idle, pause screens) is not a crash (issue #461). */
+    * running AND that processor is not in a healthy spin.  GPU: local
+    * RAM or a recorded GO window (same predicate as gpu_runaway).
+    * DSP: local RAM only (no start-page table).  A still image with
+    * the GPU looping in a program it was started at is not a crash. */
    {
       int gpu_healthy_spin;
       int dsp_healthy_spin;
       int stalled_processor;
 
-      gpu_healthy_spin = gpu_running && gpu_pc_in_local(cur_gpu_pc)
+      gpu_healthy_spin = gpu_running && gpu_pc_in_start_page(cur_gpu_pc)
             && gpu_zero_opcode_frames == 0;
       dsp_healthy_spin = dsp_running && dsp_pc_in_local(cur_dsp_pc)
             && dsp_zero_opcode_frames == 0;

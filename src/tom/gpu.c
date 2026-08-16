@@ -1000,7 +1000,13 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             gpu_data_organization = data;
             break;
          case 0x10:
+            /* Immediate retarget.  A write to G_PC while the GPU is
+             * already running is a jump; record it so gpu_runaway does
+             * not treat the new page as a data-buffer escape.  A write
+             * while stopped is the start address for the next GO --
+             * recording it here matches the GO-edge call below. */
             gpu_pc = data;
+            CrashDetectNoteGPUGo(gpu_pc);
             break;
          case 0x14:
             {
