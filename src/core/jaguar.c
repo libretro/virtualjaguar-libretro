@@ -179,8 +179,10 @@ extern uint8_t jagMemSpace[];
 #define HLE_EXCEPT_HANDLER_RTE  0x0404
 #define M68K_OP_ADDQ8_SP        0x508F
 #define M68K_OP_RTE             0x4E73
-/* BRA.S * already present in the embedded boot ROM (offset $5DC).  Used
- * as a pre-init exception park so a 68K trap cannot execute PRNG RAM. */
+/* Series K halt island at boot-ROM offset $5DC: ILLEGAL then BRA.S *
+ * ($60FE).  Cart-BIOS mode parks unset exception vectors here so a
+ * trap cannot execute PRNG-filled RAM.  Sticky: this BIOS image never
+ * writes a vector table of its own. */
 #define BIOS_ROM_PARK_PC        0x00E005DC
 
 /* Cart header: byte 0 of the 4-byte CARTRIDGE block at $800400.
@@ -1402,25 +1404,30 @@ void JaguarReset(void)
    // AND only if a jaguar cartridge has been inserted.
    if (vjs.useJaguarBIOS && jaguarCartInserted)
    {
-      unsigned v;
-
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
 
-      /* Exception vector stubs.  JaguarReset PRNG-fills RAM[8..] in BIOS
-       * mode to mimic power-on DRAM, including vectors 2-255.  The real
-       * boot ROM eventually writes handlers, but a GPU-only jagcrypt cart
-       * (Fountain, #469) starts the GPU and leaves the 68K executing empty
-       * RAM first.  Illegal/F-line fetches then jump through PRNG vectors,
-       * the 68K double-faults, and its runaway writes smash GPU local RAM
-       * and G_PC -- the GPU leaves the 4K window, executes TOM MMIO as
-       * code, and the core presents 1024-wide frames that abort RetroArch.
+      /* Cart BIOS only.  JaguarReset PRNG-fills RAM[8..] (vectors 2-255)
+       * to mimic power-on DRAM.  Series K never installs a vector table;
+       * it copies SSP+PC, copies workspace to $5000, then a 60-byte
+       * trampoline to $400-$43B (LEA $400 / JMP $400) -- not the vectors.
+       * A GPU-only jagcrypt cart (Fountain, #469) therefore leaves the
+       * 68K with no program after that trampoline.  Illegal/F-line
+       * fetches through PRNG vectors smash GPU RAM / G_PC; the core
+       * then presents 1024-wide frames and RetroArch aborts (max_width
+       * is 652).
        *
-       * Point the unset vectors at the boot ROM's own BRA.S * ($E005DC),
-       * not a RAM stub: BIOS memcpy during cart decrypt overwrites low
-       * RAM (including $400) before it installs handlers.  The boot ROM
-       * may still overwrite these vectors when it reaches vector init. */
-      for (v = 2; v <= 255; v++)
-         SET32(jaguarMainRAM, v * 4, BIOS_ROM_PARK_PC);
+       * Park traps at the boot ROM BRA.S * ($E005DC), not a RAM stub:
+       * the $400 trampoline would overwrite an HLE-style RTE there.
+       * Skip CD BIOS: that path also sets jaguarCartInserted (the CD
+       * BIOS image is mapped as a cart) and uses ILLEGAL as a deliberate
+       * halt; parking vector 4 would turn that halt into a ROM spin. */
+      if (!bootConfig.isCDGame)
+      {
+         unsigned v;
+
+         for (v = 2; v <= 255; v++)
+            SET32(jaguarMainRAM, v * 4, BIOS_ROM_PARK_PC);
+      }
    }
    else
    {
@@ -1453,10 +1460,10 @@ void JaguarReset(void)
       unsigned v;
 
       /* --- Exception vector stubs ---
-       * The real BIOS populates the entire vector table with safe
-       * handlers.  Without this, any exception (bus error, illegal
-       * instruction, etc.) jumps to random PRNG garbage and the CPU
-       * double-faults.  Place RTE stubs in low RAM and fill vectors. */
+       * Series K BIOS does not fill the vector table.  HLE does, with
+       * RTE stubs, so a bus/address error or IRQ does not jump through
+       * PRNG RAM.  Cart BIOS mode parks traps at $E005DC instead (see
+       * JaguarReset above). */
       SET16(jaguarMainRAM, HLE_EXCEPT_HANDLER, M68K_OP_ADDQ8_SP);
       SET16(jaguarMainRAM, HLE_EXCEPT_HANDLER + 2, M68K_OP_RTE);
       SET16(jaguarMainRAM, HLE_EXCEPT_HANDLER_RTE, M68K_OP_RTE);

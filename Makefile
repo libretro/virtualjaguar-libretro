@@ -1024,12 +1024,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_subsystem_timeline ./$(TARGET)
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
-	@# Fountain (#469): real-BIOS jagcrypt GPU-only intro.  ROM is public
-	@# but not vendored; skip (ledger, not a silent pass) if absent.
+	@# Fountain (#469): dummy-cart vector park always (CI).  Live jagcrypt
+	@# ROM is public but not vendored -- ledger a skip for that arm only.
+	./test/test_fountain_crash ./$(TARGET) --bios --quiet
 	@if [ -f /tmp/fountain_vj.j64 ]; then \
 		./test/test_fountain_crash ./$(TARGET) /tmp/fountain_vj.j64 --bios --frames 180 --option virtualjaguar_pal=enabled --quiet; \
 	else \
-		bash scripts/test-skip.sh record "Fountain BIOS crash (#469)" "no /tmp/fountain_vj.j64"; \
+		bash scripts/test-skip.sh record "Fountain live abort (#469)" "no /tmp/fountain_vj.j64"; \
 	fi
 	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
 	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
