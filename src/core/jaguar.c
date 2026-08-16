@@ -179,6 +179,9 @@ extern uint8_t jagMemSpace[];
 #define HLE_EXCEPT_HANDLER_RTE  0x0404
 #define M68K_OP_ADDQ8_SP        0x508F
 #define M68K_OP_RTE             0x4E73
+/* BRA.S * already present in the embedded boot ROM (offset $5DC).  Used
+ * as a pre-init exception park so a 68K trap cannot execute PRNG RAM. */
+#define BIOS_ROM_PARK_PC        0x00E005DC
 
 /* Cart header: byte 0 of the 4-byte CARTRIDGE block at $800400.
  * Bits 1-4 of this byte are the MEMCON1 ROM bus-width/speed bits the
@@ -1398,7 +1401,27 @@ void JaguarReset(void)
    // Only use the system BIOS if it's available...! (it's always available now!)
    // AND only if a jaguar cartridge has been inserted.
    if (vjs.useJaguarBIOS && jaguarCartInserted)
+   {
+      unsigned v;
+
       memcpy(jaguarMainRAM, jagMemSpace + 0xE00000, 8);
+
+      /* Exception vector stubs.  JaguarReset PRNG-fills RAM[8..] in BIOS
+       * mode to mimic power-on DRAM, including vectors 2-255.  The real
+       * boot ROM eventually writes handlers, but a GPU-only jagcrypt cart
+       * (Fountain, #469) starts the GPU and leaves the 68K executing empty
+       * RAM first.  Illegal/F-line fetches then jump through PRNG vectors,
+       * the 68K double-faults, and its runaway writes smash GPU local RAM
+       * and G_PC -- the GPU leaves the 4K window, executes TOM MMIO as
+       * code, and the core presents 1024-wide frames that abort RetroArch.
+       *
+       * Point the unset vectors at the boot ROM's own BRA.S * ($E005DC),
+       * not a RAM stub: BIOS memcpy during cart decrypt overwrites low
+       * RAM (including $400) before it installs handlers.  The boot ROM
+       * may still overwrite these vectors when it reaches vector init. */
+      for (v = 2; v <= 255; v++)
+         SET32(jaguarMainRAM, v * 4, BIOS_ROM_PARK_PC);
+   }
    else
    {
       /* For RAM-loaded executables (.abs/.cof/JagServer), park SSP at the

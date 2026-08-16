@@ -900,7 +900,7 @@ clean:
 		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
-		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
+		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
 		test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_eeprom_read_race \
@@ -959,6 +959,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
+		test/test_fountain_crash \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
@@ -1023,6 +1024,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_subsystem_timeline ./$(TARGET)
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
+	@# Fountain (#469): real-BIOS jagcrypt GPU-only intro.  ROM is public
+	@# but not vendored; skip (ledger, not a silent pass) if absent.
+	@if [ -f /tmp/fountain_vj.j64 ]; then \
+		./test/test_fountain_crash ./$(TARGET) /tmp/fountain_vj.j64 --bios --frames 180 --option virtualjaguar_pal=enabled --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Fountain BIOS crash (#469)" "no /tmp/fountain_vj.j64"; \
+	fi
 	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
 	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
 	@# with ROMs, without ROMs, always.  It was invoked bare, so those two
@@ -1414,6 +1422,10 @@ test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/ua
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_uart_core.c test/harness/harness.c -ldl -lm
+
+test/test_fountain_crash: test/test_fountain_crash.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/test_fountain_crash.c test/harness/harness.c -ldl -lm
 
 test/test_netlink_host: test/test_netlink_host.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
