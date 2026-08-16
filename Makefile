@@ -808,7 +808,7 @@ endif
 
 ifeq ($(platform), theos_ios)
 COMMON_FLAGS := -DIOS $(COMMON_DEFINES) $(INCFLAGS) -I$(THEOS_INCLUDE_PATH) -Wno-error
-$(LIBRARY_NAME)_CFLAGS += $(CFLAGS) $(COMMON_FLAGS)
+$(LIBRARY_NAME)_CFLAGS += $(CFLAGS) $(COMMON_FLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS)
 $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C) $(SOURCES_LIBCHDR)
 include $(THEOS_MAKE_PATH)/library.mk
@@ -917,7 +917,7 @@ clean:
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
-		tools/jagcd/jagcd-chd-check test/test_chd_unit \
+		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
@@ -1760,16 +1760,6 @@ test/test_cd_chd: test/test_cd_chd.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_chd.c -ldl
 
-# Standalone (no dlopen): runs on Windows MSYS2 CI where `make test` is skipped.
-test/test_chd_unit: test/test_chd_unit.c test/test_framework.h $(SOURCES_LIBCHDR)
-	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 \
-		$(INCFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS) \
-		-o $@ test/test_chd_unit.c $(SOURCES_LIBCHDR)
-
-tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
-	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) $(LIBCHDR_CFLAGS) \
-		-o $@ tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
-
 test/test_cd_synth_read: test/test_cd_synth_read.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_synth_read.c -ldl
@@ -1840,6 +1830,19 @@ endif
         runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
         jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
+
+# Standalone libchdr binaries (no core dlopen / no TEST_EXPORTS). Live
+# outside the TEST_EXPORTS=1 branch so Windows MSYS2 CI can build them
+# without flushing the object tree. An explicit test/test_chd_unit rule
+# beats the TEST_EXPORTS!=1 catch-all.
+test/test_chd_unit: test/test_chd_unit.c $(SOURCES_LIBCHDR)
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 \
+		$(INCFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS) \
+		-o $@ test/test_chd_unit.c $(SOURCES_LIBCHDR)
+
+tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) $(LIBCHDR_CFLAGS) \
+		-o $@ tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
 
 lint:
 	@scripts/c89-lint.sh

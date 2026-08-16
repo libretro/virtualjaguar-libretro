@@ -107,9 +107,8 @@ static struct CDIntfDisc disc;
  * CDIntfExtractBootStub); 0 until an extraction succeeds. */
 static uint32_t bootStubEndLBA = 0;
 
-// Tracks whether the last CDIntfReadBlock() hit a virtual-pregap gap.
-// Used by cdrom.c to correlate pregap-auth reads with the BIOS's subsequent
-// STOP command so we can identify the auth-fail branch PC.
+// Tracks whether the last CDIntfReadBlock() returned synthesized silence
+// (unowned LBA / inter-session gap, or CHD PGTYPE=V in-track pregap).
 static bool lastReadVirtualPregap = false;
 static uint32_t lastVirtualPregapLBA = 0;
 
@@ -2182,7 +2181,11 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       {
          if (!CDIntfReadBlock(disc.tracks[firstS2Idx].dataLBA + s,
                               raw + s * 2352u))
+         {
+            LOG_ERR("[CD-BOOTSTUB] CHD read failed at LBA %u after %u sector(s)\n",
+                    disc.tracks[firstS2Idx].dataLBA + s, (unsigned)s);
             break;
+         }
          bytesRead += 2352;
       }
       LOG_INF("[CD-BOOTSTUB] Read %lld bytes from CHD TOC\n", (long long)bytesRead);

@@ -2,7 +2,10 @@
  * test_chd_unit.c -- libchdr-only CHD fixture tests (no core dlopen).
  *
  * Runs on every host that can compile unity.c, including Windows MSYS2
- * where `make test` is skipped. Gates:
+ * where `make test` is skipped. Does not include test_framework.h
+ * (that header pulls <dlfcn.h>, which mingw-w64 gcc does not ship).
+ *
+ * Gates:
  *   - synth_jagcd.chd opens, has CHSE, two AUDIO tracks, PREGAP 0
  *   - session-2 INDEX 01 (CHD frame 4) stores native ATARI magic
  *   - synth_jagcd_nosession.chd opens, has no CHSE, same track layout
@@ -10,10 +13,10 @@
  * Build: make test/test_chd_unit
  */
 
-#include "test_framework.h"
-
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <libchdr/chd.h>
 #include <libchdr/cdrom.h>
 
@@ -27,6 +30,33 @@
 #define GOOD_CHD      "test/roms/synth_jagcd.chd"
 #define NOSESSION_CHD "test/roms/synth_jagcd_nosession.chd"
 #define BOOT_MAGIC    "ATARI APPROVED DATA HEADER ATRI "
+
+static int g_fail;
+static int g_pass;
+static int g_test_fail;
+
+#define TEST(name) static void test_##name(void)
+
+#define ASSERT_TRUE(c) do { \
+    if (!(c)) { \
+        fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); \
+        g_test_fail = 1; \
+        return; \
+    } \
+} while (0)
+
+#define ASSERT_FALSE(c) ASSERT_TRUE(!(c))
+
+#define ASSERT_EQ(a, b) do { \
+    long _a = (long)(a); \
+    long _b = (long)(b); \
+    if (_a != _b) { \
+        fprintf(stderr, "FAIL %s:%d: %s (%ld) != %s (%ld)\n", \
+                __FILE__, __LINE__, #a, _a, #b, _b); \
+        g_test_fail = 1; \
+        return; \
+    } \
+} while (0)
 
 struct track_row {
     int tracknum;
@@ -167,14 +197,28 @@ TEST(nosession_chd_has_no_chse)
     ASSERT_EQ(rows[1].frames, 8);
 }
 
+static void run_test(const char *name, void (*fn)(void))
+{
+    g_test_fail = 0;
+    fn();
+    if (g_test_fail) {
+        fprintf(stderr, "  FAIL %s\n", name);
+        g_fail++;
+    } else {
+        printf("  PASS %s\n", name);
+        g_pass++;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc;
     (void)argv;
 
-    TEST_INIT("CHD libchdr unit");
-    RUN_TEST(good_chd_toc);
-    RUN_TEST(good_chd_boot_magic_in_session2);
-    RUN_TEST(nosession_chd_has_no_chse);
-    return TEST_REPORT();
+    printf("CHD libchdr unit\n");
+    run_test("good_chd_toc", test_good_chd_toc);
+    run_test("good_chd_boot_magic_in_session2", test_good_chd_boot_magic_in_session2);
+    run_test("nosession_chd_has_no_chse", test_nosession_chd_has_no_chse);
+    printf("%d passed, %d failed\n", g_pass, g_fail);
+    return g_fail ? 1 : 0;
 }

@@ -2340,7 +2340,7 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Feed the per-title DB the loaded content so option reads below (and in
     * check_variables()) can match by CRC (issue #368). On a frontend that
     * honours the env-65 content-info override set up in retro_set_environment,
-    * CD content (.cue/.cdi) arrives here with info->data == NULL -- it is
+    * CD content (.cue/.cdi/.chd) arrives here with info->data == NULL -- it is
     * path-loaded, not read into memory -- so the info->data guard below
     * already excludes it. On a frontend without env 65, CD content instead
     * arrives with info->data holding the whole disc image; the explicit
@@ -2461,7 +2461,7 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
    mt_dirty_cb     = mt_pack_save_buf;
 
-   /* Detect CD content (CUE/CDI/ISO) and stage a CD BIOS (external file
+   /* Detect CD content (CUE/CDI/CHD/ISO) and stage a CD BIOS (external file
     * if present, embedded otherwise) so ResolveBootConfig can pick the
     * right boot strategy. */
    jaguar_cd_mode            = false;
