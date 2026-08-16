@@ -239,6 +239,33 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make test CC="${{ matrix.config.cc }}"
 
+    # Standalone libchdr + committed fixtures. No core dlopen, so this
+    # also runs on Windows MSYS2 where `make test` is skipped.
+    - name: CHD fixture unit tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      run: |
+        # Compile with $CC directly. `make` of these targets after `make test`
+        # flips the ABI stamp and deletes the core library.
+        CC="${{ matrix.config.cc }}"
+        INCFLAGS="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include -Ideps/libchdr/include -Ideps/libchdr/deps/lzma-25.01/include -Ideps/libchdr/deps/miniz-3.1.1 -Ideps/libchdr/deps/zstd-1.5.7"
+        LIBCHDR="-D_7ZIP_ST -DWANT_RAW_DATA_SECTOR=1 -DWANT_SUBCODE=1 -DVERIFY_BLOCK_CRC=1"
+        $CC -O2 -Wall -std=c99 $INCFLAGS $LIBCHDR \
+          -o tools/jagcd/jagcd-chd-check tools/jagcd/jagcd-chd-check.c deps/libchdr/unity.c
+        $CC -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $INCFLAGS $LIBCHDR \
+          -o test/test_chd_unit test/test_chd_unit.c deps/libchdr/unity.c
+        ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd.chd
+        if ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_nosession.chd; then
+          echo "jagcd-chd-check: expected exit 1 on synth_jagcd_nosession.chd"
+          exit 1
+        else
+          rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "jagcd-chd-check: unexpected $rc"
+            exit "$rc"
+          fi
+        fi
+        ./test/test_chd_unit
+
     - name: Run SIMD blitter tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
       run: |
@@ -388,7 +415,9 @@ jobs:
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /Ideps\libchdr\include /Ideps\libchdr\deps\lzma-25.01\include /Ideps\libchdr\deps\miniz-3.1.1 /Ideps\libchdr\deps\zstd-1.5.7 ^
           /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
+          /D_7ZIP_ST /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
           libretro.c ^
           src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
@@ -399,7 +428,8 @@ jobs:
           src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
-          src\tom\blitter_simd_scalar.c
+          src\tom\blitter_simd_scalar.c ^
+          deps\libchdr\unity.c
 
     # The shape Makefile.common now selects for windows_msvc2015/2017
     # x64 and x86: blitter.c inlines blitter_simd_sse2.h, so cl.exe

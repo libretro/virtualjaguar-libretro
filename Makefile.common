@@ -1,5 +1,7 @@
 LIBRETRO_COMM_DIR  = $(CORE_DIR)/libretro-common
 
+LIBCHDR_DIR := $(CORE_DIR)/deps/libchdr
+
 INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src \
 				-I$(CORE_DIR)/src/core \
@@ -8,7 +10,25 @@ INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src/cd \
 				-I$(CORE_DIR)/src/bios \
 				-I$(CORE_DIR)/src/m68000 \
-				-I$(LIBRETRO_COMM_DIR)/include
+				-I$(LIBRETRO_COMM_DIR)/include \
+				-I$(LIBCHDR_DIR)/include \
+				-I$(LIBCHDR_DIR)/deps/lzma-25.01/include \
+				-I$(LIBCHDR_DIR)/deps/miniz-3.1.1 \
+				-I$(LIBCHDR_DIR)/deps/zstd-1.5.7
+
+# libchdr is C99 (vendored). Compiled as its own translation unit
+# (unity.c) with -std=c99; see the unity.o rule in the Makefile.
+# _7ZIP_ST is the LZMA single-thread decode config libchdr expects.
+# -std=c99 / -Wno-* are GCC/Clang only; cl.exe rejects both.
+LIBCHDR_CFLAGS := -D_7ZIP_ST \
+	-DWANT_RAW_DATA_SECTOR=1 -DWANT_SUBCODE=1 -DVERIFY_BLOCK_CRC=1
+ifeq (,$(findstring msvc,$(platform)))
+LIBCHDR_CFLAGS += -std=c99
+LIBCHDR_WARNFLAGS := -Wno-unused-function -Wno-unused-variable
+else
+LIBCHDR_WARNFLAGS :=
+endif
+SOURCES_LIBCHDR := $(LIBCHDR_DIR)/unity.c
 
 ifneq (,$(findstring msvc2003,$(platform)))
 INCFLAGS += -I$(LIBRETRO_COMM_DIR)/include/compat/msvc

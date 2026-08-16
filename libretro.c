@@ -62,17 +62,19 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #define BUFMAX 2048
 
 /* File extensions accepted by the core for retro_load_game.
- * Mirrors what src/core/file.c::ParseFileType() can identify by
- * sniffing the header bytes (sizes/magic), regardless of the
- * filename extension:
+ * Cart types mirror what src/core/file.c::ParseFileType() can identify
+ * by sniffing header bytes (sizes/magic), regardless of extension:
  *   j64, jag, rom : standard cart images / JST_ROM / JST_ALPINE
  *   abs           : Removers/aln output, JST_ABS_TYPE1 / TYPE2
  *   cof           : COFF binaries (also routes through JST_ABS_TYPE1)
  *   bin, prg      : conservative headerless raw-homebrew with valid
  *                   68k bootstrap (JST_RAW_BINARY)
- *   cue, cdi      : Jaguar CD images (CUE/BIN and CDI).  Bare `iso`
- *                   images are not bootable -- see docs/cd-known-issues.md. */
-#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
+ * CD images are path-loaded (need_fullpath); file.c does not sniff them:
+ *   cue, cdi, chd : Jaguar CD (CUE/BIN, CDI, CHD).  Bare `iso` is not
+ *                   bootable -- see docs/cd-known-issues.md.  CHD needs
+ *                   CHSE session tags from a post-2026-08 chdman; see
+ *                   docs/jagcd-chd.md. */
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi|chd"
 
 /* Framebuffer allocation, in pixels.  Sized for the widest / tallest video
  * mode TOM can be programmed into (TOMWriteWord clamps tomWidth to 1024 and
@@ -648,7 +650,7 @@ void retro_set_environment(retro_environment_t cb)
    {
       static const struct retro_system_content_info_override
          content_overrides[] = {
-         { "cue|cdi", true /* need_fullpath */, false /* persistent_data */ },
+         { "cue|cdi|chd", true /* need_fullpath */, false /* persistent_data */ },
          { NULL, false, false }
       };
       environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
@@ -2317,6 +2319,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    is_cd_content = info->path && (has_extension(info->path, "cue")
                                   || has_extension(info->path, "cdi")
+                                  || has_extension(info->path, "chd")
                                   || has_extension(info->path, "iso"));
 
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
@@ -2337,7 +2340,7 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Feed the per-title DB the loaded content so option reads below (and in
     * check_variables()) can match by CRC (issue #368). On a frontend that
     * honours the env-65 content-info override set up in retro_set_environment,
-    * CD content (.cue/.cdi) arrives here with info->data == NULL -- it is
+    * CD content (.cue/.cdi/.chd) arrives here with info->data == NULL -- it is
     * path-loaded, not read into memory -- so the info->data guard below
     * already excludes it. On a frontend without env 65, CD content instead
     * arrives with info->data holding the whole disc image; the explicit
@@ -2458,7 +2461,7 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
    mt_dirty_cb     = mt_pack_save_buf;
 
-   /* Detect CD content (CUE/CDI/ISO) and stage a CD BIOS (external file
+   /* Detect CD content (CUE/CDI/CHD/ISO) and stage a CD BIOS (external file
     * if present, embedded otherwise) so ResolveBootConfig can pick the
     * right boot strategy. */
    jaguar_cd_mode            = false;

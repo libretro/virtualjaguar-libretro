@@ -61,7 +61,7 @@ For each of the 14 matrix platforms (Linux x86_64/aarch64/i686, macOS arm64/x86_
 3. Strip the shipped binary so it's small.
 4. Upload as a CI artifact.
 
-Two extra container-based jobs do PS Vita (`vitasdk/vitasdk:latest`) and Nintendo Switch (`devkitpro/devkita64:latest`).
+Two extra container-based jobs do PS Vita (`vitasdk/vitasdk:latest`) and Nintendo Switch (`devkitpro/devkita64:latest`). A parallel `jagcd-tools` job (`.github/workflows/chdman-tools.yml`) builds pinned `chdman` plus `jagcd-to-chd` / `jagcd-chd-check` for linux-x64, macOS, and windows-x64 — the same desktop trio as `cue2cdi`.
 
 After all platform builds finish, the `release` job:
 
@@ -74,7 +74,7 @@ After all platform builds finish, the `release` job:
 ### 3b. Nightly builds (develop pushes)
 
 `release.yml` also fires on every push to `develop`. The build matrix is
-identical — the same 16 jobs (14 matrix entries + Vita + Switch), the same split-debug packaging — but the
+identical — the same 16 jobs (14 matrix entries + Vita + Switch) plus the jagcd-tools zips, the same split-debug packaging — but the
 publishing step is the `nightly` job instead of `release`:
 
 1. Moves the `nightly` git tag onto the pushed commit.

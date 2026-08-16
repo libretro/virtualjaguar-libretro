@@ -50,6 +50,9 @@ test/tools/test_*
 !test/tools/test_*.sh
 !test/tools/test_*.py
 # Hand-built tool binaries that don't match the test_* prefix.
+tools/jagcd/jagcd-chd-check
+tools/jagcd/chdman
+tools/jagcd/*.exe
 test/tools/blit_memo_verify
 test/tools/i2s_lag_probe
 test/tools/test_memory_map

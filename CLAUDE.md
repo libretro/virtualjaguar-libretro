@@ -28,7 +28,7 @@ The libretro buildbot uses MSVC on Windows. CI has a `c89-lint` job. Run `bash s
 - **No mid-block declarations.** All vars at top of block, before any statement. Most common violation.
 - `//` comments allowed (GNU89), but prefer `/* */` for new code.
 - No C99: no `for (int i…)`, no compound literals, no designated initializers, no VLAs.
-- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
+- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic), `deps/libchdr/*` and `tools/jagcd/*` (vendored libchdr is a C99 unity TU; see the `unity.o` rule in the Makefile).
 
 ## Hardware model
 
@@ -54,7 +54,7 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 - `src/core/` — orchestration, memory map, events, settings, files, cheats
 - `src/tom/` — video, GPU, OP, blitter (+ SIMD)
 - `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable, UART/netlink (`uart.c` + `jlink.c`, see `docs/netlink-design.md`)
-- `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA/Q-subcode in `cdrom.c`, image loading (CUE/BIN, CDI — **no CHD**, removed during the CD overhaul; see issue #322) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
+- `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA/Q-subcode in `cdrom.c`, image loading (CUE/BIN, CDI, CHD) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`. CHD requires `CHSE` session tags from a post-2026-08 chdman — old internet CHDs are refused; see [`docs/jagcd-chd.md`](docs/jagcd-chd.md) and issue #322.
 - `src/core/jaggd.c` — Jaguar GameDrive: SPI mailbox at `$F16000`, embedded GDBIOS blob, 6×1MB page → 16-bank switching for images up to 16 MB (spec: `docs/jgd-interface-notes.md`)
 - `src/core/titledb.c` — per-title enhancement defaults (#368); applied at option-read time in `libretro.c`, user-set values always win
 - `src/core/titlehook.c` — per-title enhancement **hooks** (#370): verified byte patches into cartridge ROM at load, gated by `virtualjaguar_enhancement_hooks` (default **disabled**). Ships with **zero** rows — the mechanism, not the data. Authoring rules + the three non-obvious fences (GameDrive banked image, cart entry vector `$400..$407`, `TitleHook*` needing its own export-list entry) in [`docs/enhancement-hooks.md`](docs/enhancement-hooks.md). Not a general scripting surface: if a behaviour fits a `{key, value}` string it is a `pairs[]` entry, and an emulator timing bug is never a hook

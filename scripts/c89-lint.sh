@@ -16,7 +16,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 CC="${CC:-gcc}"
 CFLAGS="-fsyntax-only -std=gnu89 -Werror=declaration-after-statement"
-INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include"
+INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include -Ideps/libchdr/include"
 DEFINES='-D__LIBRETRO__ -DINLINE=inline'
 
 skip_file() {
@@ -32,6 +32,8 @@ skip_file() {
         test/tools/test_rcheevos_e2e.c) return 0 ;;
         # Diagnostic tools — not part of the libretro core build.
         test/tools/flicker_detect.c) return 0 ;;
+        deps/libchdr/*) return 0 ;;
+        tools/jagcd/*) return 0 ;;
         # Builds against test/harness/, which is outside $INCLUDES; C99 harness.
         test/tools/fmv_seek_probe.c) return 0 ;;
         test/tools/frame_hash_ab.c) return 0 ;;
