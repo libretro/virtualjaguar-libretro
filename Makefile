@@ -810,7 +810,7 @@ ifeq ($(platform), theos_ios)
 COMMON_FLAGS := -DIOS $(COMMON_DEFINES) $(INCFLAGS) -I$(THEOS_INCLUDE_PATH) -Wno-error
 $(LIBRARY_NAME)_CFLAGS += $(CFLAGS) $(COMMON_FLAGS)
 $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
-${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
+${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C) $(SOURCES_LIBCHDR)
 include $(THEOS_MAKE_PATH)/library.mk
 else
 # Force a rebuild when the build configuration changes ($(BUILD_AXES)).
@@ -1199,6 +1199,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
 	./test/test_cd_chd
+	@# Checker on the committed fixtures: exit 0 = CHSE present, exit 1 =
+	@# Jaguar-shaped and missing CHSE. This is the ParseCHD refuse gate
+	@# without going through HLE extract.
+	./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd.chd
+	@if ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_nosession.chd; then \
+		echo "jagcd-chd-check: expected exit 1 on synth_jagcd_nosession.chd"; exit 1; \
+	 else rc=$$?; \
+	   if [ $$rc -ne 1 ]; then echo "jagcd-chd-check: unexpected $$rc"; exit $$rc; fi; \
+	 fi
 	@# Optional: PATH/JAGCD_CHDMAN round-trip. Exit 77 = no CHSE-capable
 	@# chdman (CI, Homebrew 0.288). The committed synth_jagcd*.chd files
 	@# are the actual CHD load gate; this only checks the converter.

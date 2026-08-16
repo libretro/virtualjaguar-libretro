@@ -62,18 +62,18 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #define BUFMAX 2048
 
 /* File extensions accepted by the core for retro_load_game.
- * Mirrors what src/core/file.c::ParseFileType() can identify by
- * sniffing the header bytes (sizes/magic), regardless of the
- * filename extension:
+ * Cart types mirror what src/core/file.c::ParseFileType() can identify
+ * by sniffing header bytes (sizes/magic), regardless of extension:
  *   j64, jag, rom : standard cart images / JST_ROM / JST_ALPINE
  *   abs           : Removers/aln output, JST_ABS_TYPE1 / TYPE2
  *   cof           : COFF binaries (also routes through JST_ABS_TYPE1)
  *   bin, prg      : conservative headerless raw-homebrew with valid
  *                   68k bootstrap (JST_RAW_BINARY)
- *   cue, cdi, chd : Jaguar CD images (CUE/BIN, CDI, and CHD).  Bare `iso`
- *                   images are not bootable -- see docs/cd-known-issues.md.
- *                   CHD files need session metadata from a post-2026-08
- *                   chdman; see docs/jagcd-chd.md. */
+ * CD images are path-loaded (need_fullpath); file.c does not sniff them:
+ *   cue, cdi, chd : Jaguar CD (CUE/BIN, CDI, CHD).  Bare `iso` is not
+ *                   bootable -- see docs/cd-known-issues.md.  CHD needs
+ *                   CHSE session tags from a post-2026-08 chdman; see
+ *                   docs/jagcd-chd.md. */
 #define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi|chd"
 
 /* Framebuffer allocation, in pixels.  Sized for the widest / tallest video

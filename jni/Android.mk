@@ -45,9 +45,19 @@ COREFLAGS := -DINLINE="inline" -D__LIBRETRO__ $(INCFLAGS) $(BLITTER_SIMD_DEFINE)
 # so the parse-time $(shell ...) there doesn't fire for us.
 _VERSION_GEN := $(shell sh $(CORE_DIR)/scripts/gen-version-h.sh && echo ok)
 
+# libchdr is C99. A separate static module so -std=c99 never lands on
+# first-party SOURCES_C (the desktop Makefile isolates it the same way
+# via the unity.o rule).
+include $(CLEAR_VARS)
+LOCAL_MODULE    := vjchdr
+LOCAL_SRC_FILES := $(SOURCES_LIBCHDR)
+LOCAL_CFLAGS    := $(COREFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS)
+include $(BUILD_STATIC_LIBRARY)
+
 include $(CLEAR_VARS)
 LOCAL_MODULE    := retro
-LOCAL_SRC_FILES := $(SOURCES_C) $(SOURCES_LIBCHDR)
-LOCAL_CFLAGS    := $(COREFLAGS) $(LIBCHDR_CFLAGS)
+LOCAL_SRC_FILES := $(SOURCES_C)
+LOCAL_CFLAGS    := $(COREFLAGS)
+LOCAL_STATIC_LIBRARIES := vjchdr
 LOCAL_LDFLAGS   := -Wl,-version-script=$(CORE_DIR)/link.T
 include $(BUILD_SHARED_LIBRARY)

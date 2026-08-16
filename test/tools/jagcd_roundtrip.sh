@@ -28,9 +28,19 @@ printf '%s\n' \
   '    INDEX 01 00:00:00' > "$TMP/disc.cue"
 
 export JAGCD_CHDMAN=$CHDMAN
-if ! sh "$ROOT/tools/jagcd/jagcd-to-chd" "$TMP/disc.cue" "$TMP/disc.chd"; then
-   echo "SKIP or FAIL: chdman could not write CHSE (too old?)"
-   exit 77
+set +e
+out=$(sh "$ROOT/tools/jagcd/jagcd-to-chd" "$TMP/disc.cue" "$TMP/disc.chd" 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+   echo "round-trip ok: $TMP/disc.chd"
+   exit 0
 fi
-echo "round-trip ok: $TMP/disc.chd"
-exit 0
+printf '%s\n' "$out"
+case "$out" in
+   *too\ old*|*did\ not\ write\ CHSE*)
+      echo "SKIP: chdman could not write CHSE (too old)"
+      exit 77
+      ;;
+esac
+exit "$rc"

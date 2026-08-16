@@ -6,7 +6,7 @@ CHD is supported for Jaguar CD **only** when the file carries MAME's `CHSE` sess
 
 Jaguar CDs are two-session discs: session 1 is Red Book audio, session 2 is game data mastered as audio-type 2352-byte tracks. Classic `chdman createcd` flattened that into one session and dropped the ~11400-sector inter-session gap, so the TOC the BIOS and HLE walk is wrong.
 
-Those files are **refused** at load with a `[CD-CHD]` error pointing here. Reconvert from a Redump CUE/BIN (or from CDI, after turning it into CUE/BIN). Do not try to "fix" an old CHD in place.
+Those files are **refused** at load with a `[CD-CHD]` error that points at issue #322 and `tools/jagcd`. Reconvert from a Redump CUE/BIN with `jagcd-to-chd` (or load a CDI directly). Do not try to "fix" an old CHD in place.
 
 `chdman` 0.288 from Homebrew, and every CHD made before PR 15886, is in this class. `chdman info` on a good file shows a `CHSE` / `SESSION:2` metadata blob; a bad file has only `CHT2` track lines.
 

@@ -2,12 +2,15 @@
  * test_cd_chd.c -- CHD session gate (issue #322)
  *
  *   good      : test/roms/synth_jagcd.chd (CHSE, two sessions) must load
- *   nosession : test/roms/synth_jagcd_nosession.chd must be refused
+ *               with session-2 INDEX 01 at LBA 11404 (4-sector session 1
+ *               + synthesized 11400-sector gap, PREGAP 0).
+ *   nosession : test/roms/synth_jagcd_nosession.chd must be refused by
+ *               ParseCHD (log contains "no session metadata (CHSE)"),
+ *               not merely fail later at HLE extract.
  *
- * Fixtures are uncompressed CD CHDs generated with the pinned chdman
- * (CHSE) and Homebrew 0.288 (no CHSE).  If a fixture is missing, the
- * test can rebuild it when JAGCD_CHDMAN / chdman is on PATH; otherwise
- * SKIP rather than fail a checkout that forgot to git-add the files.
+ * Fixtures are committed uncompressed CD CHDs. If one is missing, SKIP
+ * rather than fail a checkout that forgot to git-add the files. There
+ * is no in-test rebuild path (CI/Homebrew chdman cannot write CHSE).
  *
  * Build: make TEST_EXPORTS=1 test/test_cd_chd
  */
@@ -15,15 +18,33 @@
 #include "cd_assertions.h"
 #include "../libretro-common/include/libretro.h"
 
+#include <stdarg.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
 static struct vj_core C;
+static char g_log[8192];
 
 static bool file_exists(const char *path)
 {
     struct stat st;
     return stat(path, &st) == 0 && st.st_size > 0;
+}
+
+static void test_log(enum retro_log_level level, const char *fmt, ...)
+{
+    va_list ap;
+    size_t n;
+    int wrote;
+
+    (void)level;
+    n = strlen(g_log);
+    if (n + 1 >= sizeof(g_log))
+        return;
+    va_start(ap, fmt);
+    wrote = vsnprintf(g_log + n, sizeof(g_log) - n, fmt, ap);
+    va_end(ap);
+    (void)wrote;
 }
 
 static bool cd_load_game(const char *path)
@@ -35,6 +56,7 @@ static bool cd_load_game(const char *path)
     p_retro_load_game = (bool (*)(const struct retro_game_info *))
                             dlsym(C.handle, "retro_load_game");
     if (!p_retro_load_game) return false;
+    g_log[0] = '\0';
     return p_retro_load_game(&info);
 }
 
@@ -51,8 +73,20 @@ static uint32_t cd_num_sessions(void)
     return p();
 }
 
+static uint32_t cd_session2_lba(void)
+{
+    uint32_t (*p)(void) = (uint32_t (*)(void))dlsym(C.handle, "CDIntfGetSession2FirstTrackLBA");
+    if (!p) return 0;
+    return p();
+}
+
 static bool env_cb(unsigned cmd, void *data)
 {
+    if (cmd == RETRO_ENVIRONMENT_GET_LOG_INTERFACE) {
+        struct retro_log_callback *cb = (struct retro_log_callback *)data;
+        cb->log = test_log;
+        return true;
+    }
     if (cmd == RETRO_ENVIRONMENT_GET_VARIABLE) {
         struct retro_variable *var = (struct retro_variable *)data;
         if (strcmp(var->key, "virtualjaguar_cd_boot_mode") == 0) {
@@ -85,6 +119,7 @@ TEST(chd_without_chse_is_refused)
         return;
     }
     ASSERT_TRUE(!cd_load_game(fix));
+    ASSERT_TRUE(strstr(g_log, "no session metadata (CHSE)") != NULL);
     cd_unload_game();
 }
 
@@ -97,6 +132,8 @@ TEST(chd_with_chse_has_two_sessions)
     }
     ASSERT_TRUE(cd_load_game(fix));
     ASSERT_EQ_U32(cd_num_sessions(), 2u);
+    /* 4-sector session 1 + synthesized 11400-sector gap, PREGAP 0. */
+    ASSERT_EQ_U32(cd_session2_lba(), 11404u);
     cd_unload_game();
 }
 

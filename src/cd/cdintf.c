@@ -4,7 +4,7 @@
 // by James Hammons
 // (C) 2010 Underground Software
 //
-// CD image (CUE/BIN) support for Jaguar CD emulation
+// CD image (CUE/BIN, CDI, CHD) support for Jaguar CD emulation
 //
 
 #include <stdio.h>
@@ -37,11 +37,13 @@
 static RFILE *cdi_file = NULL;
 static bool ParseCDI(const char *cdiPath);
 
-/* CHD (MAME compressed hunks) — libchdr, opened through libretro VFS. */
+/* CHD (MAME compressed hunks) — libchdr. Path chd_open() first;
+ * libretro VFS callbacks are the Android-URI fallback. */
 static chd_file *chd = NULL;
 static RFILE *chd_rfile = NULL;
 static uint8_t *chd_hunk = NULL;
 static uint32_t chd_hunkbytes = 0;
+static uint32_t chd_read_err_logged = 0;
 static int32_t chd_hunknum = -1;
 /* First CHD frame of each track's stored data (includes 4-frame padding
  * of earlier tracks; does NOT include virtual pregaps). */
@@ -100,6 +102,10 @@ static bool GetDirectoryFromPath(const char *path, char *dir, size_t dirSize);
 
 // The global disc state
 static struct CDIntfDisc disc;
+
+/* Disc LBA one past the end of the extracted boot executable (see
+ * CDIntfExtractBootStub); 0 until an extraction succeeds. */
+static uint32_t bootStubEndLBA = 0;
 
 // Tracks whether the last CDIntfReadBlock() hit a virtual-pregap gap.
 // Used by cdrom.c to correlate pregap-auth reads with the BIOS's subsequent
@@ -309,6 +315,7 @@ static void CDIntfCloseCHD(void)
    }
    chd_hunkbytes = 0;
    chd_hunknum = -1;
+   chd_read_err_logged = 0;
    memset(chd_frame0, 0, sizeof(chd_frame0));
    memset(chd_virtual_pregap, 0, sizeof(chd_virtual_pregap));
 }
@@ -508,8 +515,9 @@ static bool ParseCHD(const char *chdPath)
    {
       LOG_ERR("[CD-CHD] this CHD has no session metadata (CHSE). "
               "It was almost certainly made with an old chdman that flattened "
-              "Jaguar CD's two sessions. Reconvert from CUE/BIN or CDI with "
-              "tools/jagcd (https://github.com/libretro/virtualjaguar-libretro/issues/322).\n");
+              "Jaguar CD's two sessions. Reconvert from CUE/BIN with "
+              "tools/jagcd, or load a CDI directly "
+              "(https://github.com/libretro/virtualjaguar-libretro/issues/322).\n");
       CDIntfCloseCHD();
       return false;
    }
@@ -567,6 +575,8 @@ static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
    if (chd_virtual_pregap[track->number - 1] && sector < track->dataLBA)
    {
       memset(buffer, 0, 2352);
+      lastReadVirtualPregap = true;
+      lastVirtualPregapLBA = sector;
       return true;
    }
 
@@ -586,6 +596,12 @@ static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
       if (err != CHDERR_NONE)
       {
          memset(buffer, 0, 2352);
+         if (chd_read_err_logged < 8)
+         {
+            chd_read_err_logged++;
+            LOG_ERR("[CD-CHD] chd_read hunk %u failed: %s\n",
+                    (unsigned)hunknum, chd_error_string(err));
+         }
          return false;
       }
       chd_hunknum = (int32_t)hunknum;
@@ -1668,7 +1684,8 @@ bool CDIntfOpenImage(const char *path)
    if (ext && strcasecmp(ext + 1, "iso") == 0)
    {
       LOG_ERR("[CD-ISO] bare .iso images cannot represent a Jaguar CD "
-              "(no session/track layout) -- use CUE/BIN or CDI\n");
+              "(no session/track layout) -- use CUE/BIN, CDI, or a "
+              "CHSE-tagged CHD\n");
       return false;
    }
 
@@ -1699,6 +1716,7 @@ bool CDIntfOpenImage(const char *path)
 void CDIntfCloseImage(void)
 {
    CDIntfCloseCHD();
+   bootStubEndLBA = 0;
 
    if (cdi_file)
    {
@@ -2101,10 +2119,6 @@ uint8_t CDIntfGetTrackSession(uint32_t track)
  *
  * On success: writes load address to *outLoadAddr, length to *outLength, and
  * fills outBuf (size outBufSize) with the code bytes.  Returns true. */
-/* Disc LBA one past the end of the extracted boot executable (see
- * CDIntfExtractBootStub); 0 until an extraction succeeds. */
-static uint32_t bootStubEndLBA = 0;
-
 uint32_t CDIntfGetBootStubEndLBA(void)
 {
    return bootStubEndLBA;
@@ -2129,6 +2143,8 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    uint32_t loadAddr, length;
    uint32_t nsec;
    uint32_t s;
+
+   bootStubEndLBA = 0;
 
    if (!disc.loaded || disc.numSessions < 2)
    {
@@ -2344,7 +2360,7 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
     * games that continue with a bare Unpause (Battle Morph: $0400 pause,
     * $0500 unpause, no seek) expect data to flow from there, not from
     * block 0. */
-   bootStubEndLBA = disc.tracks[firstS2Idx].startLBA
+   bootStubEndLBA = disc.tracks[firstS2Idx].dataLBA
                   + (0x6A + length + 2351) / 2352;
 
    LOG_INF("[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
