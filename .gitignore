@@ -111,6 +111,11 @@ test/tools/build/
 # Acid-test build outputs
 test/acid/acid_run
 test/acid/tests/**/*.jag
+
+# On-demand JaguarDemos clone (see test/jaguar-demos/PIN). Not a submodule:
+# pinning 23 MiB of demo sources into every core clone is unnecessary when
+# CI/local fetch can check out one SHA.
+test/vendor/
 /test/tools/test_frame_timing
 /test/tools/audio_timeline
 /test/tools/cd_visual_verify

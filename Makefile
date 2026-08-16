@@ -1782,7 +1782,8 @@ tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
-        runahead-determinism
+        runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
 
 lint:
@@ -1938,6 +1939,40 @@ cd-visual:
 .PHONY: cue2cdi
 cue2cdi:
 	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
+
+# ---------------------------------------------------------------------------
+# JaguarDemos corpus (https://codeberg.org/42Bastian/JaguarDemos)
+#
+# On-demand clone + cart_boot_probe sweep.  NOT part of `make test`.
+# Smoke (curated list) is what PR CI runs; full is for release PRs / tags.
+# See test/jaguar-demos/README.md.  The clone is gitignored under
+# test/vendor/JaguarDemos — not a submodule, so a normal checkout stays
+# small and CI pins the SHA in test/jaguar-demos/PIN.
+# ---------------------------------------------------------------------------
+.PHONY: jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
+jaguar-demos-fetch:
+	bash test/jaguar-demos/run.sh fetch
+
+jaguar-demos-build: jaguar-demos-fetch
+	bash test/jaguar-demos/run.sh build
+
+jaguar-demos-smoke jaguar-demos: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-smoke jaguar-demos:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh smoke ./$(TARGET)
+
+jaguar-demos-full: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-full:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh build
+	bash test/jaguar-demos/run.sh full ./$(TARGET)
+
+jaguar-demos-baseline: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-baseline:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh build
+	bash test/jaguar-demos/run.sh baseline ./$(TARGET)
 
 print-%:
 	@echo '$*=$($*)'
