@@ -36,7 +36,7 @@
 #include "event.h"
 #include "settings.h"
 #include "../core/vjtrace.h"
-#include "crash_detect.h"
+#include "../core/crash_detect.h"
 
 
 // Seems alignment in loads & stores was off...
