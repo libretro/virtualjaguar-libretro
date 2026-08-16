@@ -78,8 +78,8 @@ jobs:
           test -n "$CHDMAN"
           command cp -f "$CHDMAN" dist-jagcd/
           command cp -f tools/jagcd/jagcd-to-chd tools/jagcd/jagcd-to-chd.cmd \
-             tools/jagcd/jagcd-chd-check tools/jagcd/CHDMAN_PIN \
-             docs/jagcd-chd.md dist-jagcd/
+            tools/jagcd/jagcd-chd-check tools/jagcd/CHDMAN_PIN \
+            docs/jagcd-chd.md dist-jagcd/
           chmod +x dist-jagcd/jagcd-to-chd dist-jagcd/jagcd-chd-check \
             dist-jagcd/chdman dist-jagcd/chdman.exe 2>/dev/null || true
           cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
