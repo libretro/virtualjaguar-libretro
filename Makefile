@@ -877,7 +877,15 @@ else
 MAKEFLAGS_LETTERS := $(filter-out -%,$(firstword $(MAKEFLAGS)))
 DRY_RUN := $(strip $(findstring n,$(MAKEFLAGS_LETTERS)) \
                    $(filter -n --dry-run --just-print --recon,$(MAKEFLAGS)))
-$(if $(DRY_RUN),,\
+# Host-only libchdr binaries compile unity.c into the tool; they do not
+# consume $(TARGET)/$(OBJECTS).  A CI step that builds only these after
+# `make test` (TEST_EXPORTS=1) must not treat the missing flag as an ABI
+# flip and delete the core — that left Linux/macOS with no .so/.dylib
+# for the later memory-map / instruction-set jobs.
+STANDALONE_CHD_GOALS := tools/jagcd/jagcd-chd-check test/test_chd_unit
+SKIP_BUILD_FLUSH := $(if $(MAKECMDGOALS),\
+  $(if $(filter-out $(STANDALONE_CHD_GOALS),$(MAKECMDGOALS)),,1))
+$(if $(or $(DRY_RUN),$(SKIP_BUILD_FLUSH)),,\
 $(shell [ "$$(cat $(BUILD_CONFIG_STAMP) 2>/dev/null)" = "$(BUILD_CONFIG)" ] \
         || { printf '%s' "$(BUILD_CONFIG)" > $(BUILD_CONFIG_STAMP); \
              rm -f $(TARGET) $(OBJECTS) $(LEGACY_LINK_MODE_STAMP); }))
