@@ -33,14 +33,20 @@
  * whole-file CRC ($0FDCEB66) is catalogued as FF_BAD_DUMP.  Nothing about the
  * image data is wrong, so skip the header instead of refusing the file.
  *
- * Detection is deliberately narrow, because the size test alone would start
+ * Detection is deliberately narrow, because a size test alone would start
  * accepting arbitrary junk.  Both must hold:
  *
- *   - the file overhangs a whole number of megabytes by exactly the header
- *     length, and
+ *   - the file is large enough to hold a 512-byte header plus the payload's
+ *     $400 marker slot, and
  *   - the cartridge universal-header marker ($04040404, which precedes the run
  *     address that JaguarLoadFile reads from ROM offset $404) is present at
  *     that offset measured from the payload rather than from the file.
+ *
+ * A native cart already has the marker at file offset $400, so those are
+ * left alone even if $04040404 also appears at $600.  The payload no longer
+ * has to be a whole number of megabytes: a sub-1 MiB homebrew with the same
+ * 512-byte copier header used to fall through to the headerless JST_ROM
+ * fallback and load skewed (Kimi review on #465).
  */
 #define CART_HEADER_SKIP_SIZE   512
 #define CART_UNIVERSAL_MARKER_OFFSET   0x400
@@ -48,19 +54,15 @@
 
 uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
 {
-   uint32_t payloadSize;
-
-   /* Ordered first so a zero-length or undersized buffer is never read. */
-   if (size <= CART_HEADER_SKIP_SIZE)
+   /* Need room for the header plus the payload's $400 marker longword. */
+   if (size < CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET + 4)
       return 0;
 
-   payloadSize = size - CART_HEADER_SKIP_SIZE;
-
-   if ((payloadSize % 1048576) != 0)
+   /* Native cart: marker is already at file $400.  Do not strip 512 bytes
+    * off a real image that happens to also contain $04040404 at $600. */
+   if (GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) == CART_UNIVERSAL_MARKER)
       return 0;
 
-   /* payloadSize is a non-zero multiple of 1 MiB here, so the marker offset is
-    * comfortably inside the buffer. */
    if (GET32(buffer, CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET)
          != CART_UNIVERSAL_MARKER)
       return 0;

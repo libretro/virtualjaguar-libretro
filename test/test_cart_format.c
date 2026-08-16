@@ -12,9 +12,10 @@
  * frontend does (info->data / info->size), so no ROM on disk is required.
  *
  * The negative cases matter as much as the positive one: a bare
- * "size overhangs a MiB by 512" rule would start accepting arbitrary junk,
- * so detection also requires the cartridge universal-header marker at the
- * offset measured from the payload.
+ * size-shape rule would start accepting arbitrary junk, so detection
+ * requires the cartridge universal-header marker at the offset measured
+ * from the payload (and refuses to strip a native cart whose marker is
+ * already at file $400).
  *
  * Build:
  *   make -j4 && make TEST_EXPORTS=1 test/test_cart_format
@@ -265,6 +266,21 @@ TEST(bootintro_headered_cart_loads)
    free(img);
 }
 
+/* A 64 KiB cart with a 512-byte copier header must strip the header,
+ * not map the whole file as a skewed cart (Kimi review on #465). */
+TEST(small_headered_with_copier_header_loads)
+{
+   unsigned size = 0;
+   uint8_t *img = make_image(65536u, HEADER_SIZE, true, &size);
+
+   ASSERT(img != NULL);
+   ASSERT_EQ_U(size, 65536u + HEADER_SIZE);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(*p_romsize, 65536u);
+   p_retro_unload_game();
+   free(img);
+}
+
 /* Headerless homebrew below 1 MiB still loads as a cart so real-BIOS
  * mode can boot it from $800000.  Floor is $408 so a 512-byte copier
  * header by itself is still refused. */
@@ -331,6 +347,7 @@ int main(int argc, char **argv)
    RUN(header_sized_file_rejected);
    RUN(small_headered_cart_loads);
    RUN(bootintro_headered_cart_loads);
+   RUN(small_headered_with_copier_header_loads);
    RUN(small_headerless_bootintro_loads);
 
    p_retro_deinit();
