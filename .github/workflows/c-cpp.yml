@@ -239,6 +239,25 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make test CC="${{ matrix.config.cc }}"
 
+    # Standalone libchdr + committed fixtures. No core dlopen, so this
+    # also runs on Windows MSYS2 where `make test` is skipped.
+    - name: CHD fixture unit tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      run: |
+        make -j4 tools/jagcd/jagcd-chd-check test/test_chd_unit CC="${{ matrix.config.cc }}"
+        ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd.chd
+        if ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_nosession.chd; then
+          echo "jagcd-chd-check: expected exit 1 on synth_jagcd_nosession.chd"
+          exit 1
+        else
+          rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "jagcd-chd-check: unexpected $rc"
+            exit "$rc"
+          fi
+        fi
+        ./test/test_chd_unit
+
     - name: Run SIMD blitter tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
       run: |

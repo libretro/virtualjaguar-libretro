@@ -80,6 +80,61 @@ static uint32_t cd_session2_lba(void)
     return p();
 }
 
+static uint32_t cd_num_tracks(void)
+{
+    uint32_t (*p)(void) = (uint32_t (*)(void))dlsym(C.handle, "CDIntfGetNumTracks");
+    if (!p) return 0;
+    return p();
+}
+
+static uint8_t cd_track_session(uint32_t track)
+{
+    uint8_t (*p)(uint32_t) = (uint8_t (*)(uint32_t))dlsym(C.handle, "CDIntfGetTrackSession");
+    if (!p) return 0;
+    return p(track);
+}
+
+static bool cd_read_block(uint32_t lba, uint8_t *buf)
+{
+    bool (*p)(uint32_t, uint8_t *) =
+        (bool (*)(uint32_t, uint8_t *))dlsym(C.handle, "CDIntfReadBlock");
+    if (!p) return false;
+    return p(lba, buf);
+}
+
+static bool cd_last_virtual_pregap(void)
+{
+    bool (*p)(void) = (bool (*)(void))dlsym(C.handle, "CDIntfLastReadWasVirtualPregap");
+    if (!p) return false;
+    return p();
+}
+
+static void cd_clear_virtual_pregap(void)
+{
+    void (*p)(void) = (void (*)(void))dlsym(C.handle, "CDIntfClearLastReadVirtualPregap");
+    if (p) p();
+}
+
+static bool cd_extract_stub(uint8_t *buf, uint32_t bufsz, uint32_t *addr, uint32_t *len)
+{
+    bool (*p)(uint8_t *, uint32_t, uint32_t *, uint32_t *) =
+        (bool (*)(uint8_t *, uint32_t, uint32_t *, uint32_t *))
+            dlsym(C.handle, "CDIntfExtractBootStub");
+    if (!p) return false;
+    return p(buf, bufsz, addr, len);
+}
+
+static void swap16(uint8_t *buf, size_t n)
+{
+    size_t i;
+    uint8_t t;
+    for (i = 0; i + 1 < n; i += 2) {
+        t = buf[i];
+        buf[i] = buf[i + 1];
+        buf[i + 1] = t;
+    }
+}
+
 static bool env_cb(unsigned cmd, void *data)
 {
     if (cmd == RETRO_ENVIRONMENT_GET_LOG_INTERFACE) {
@@ -132,8 +187,71 @@ TEST(chd_with_chse_has_two_sessions)
     }
     ASSERT_TRUE(cd_load_game(fix));
     ASSERT_EQ_U32(cd_num_sessions(), 2u);
+    ASSERT_EQ_U32(cd_num_tracks(), 2u);
+    ASSERT_EQ(cd_track_session(1), 1);
+    ASSERT_EQ(cd_track_session(2), 2);
     /* 4-sector session 1 + synthesized 11400-sector gap, PREGAP 0. */
     ASSERT_EQ_U32(cd_session2_lba(), 11404u);
+    cd_unload_game();
+}
+
+TEST(chd_gap_and_session1_are_silence)
+{
+    const char *fix = "test/roms/synth_jagcd.chd";
+    uint8_t buf[2352];
+    size_t i;
+    int nonzero;
+
+    if (!file_exists(fix)) {
+        SKIP_TEST(chd_gap_and_session1_are_silence, "missing test/roms/synth_jagcd.chd");
+        return;
+    }
+    ASSERT_TRUE(cd_load_game(fix));
+
+    ASSERT_TRUE(cd_read_block(0, buf));
+    nonzero = 0;
+    for (i = 0; i < sizeof(buf); i++) {
+        if (buf[i]) { nonzero = 1; break; }
+    }
+    ASSERT_FALSE(nonzero);
+
+    cd_clear_virtual_pregap();
+    ASSERT_TRUE(cd_read_block(100, buf));
+    ASSERT_TRUE(cd_last_virtual_pregap());
+    nonzero = 0;
+    for (i = 0; i < sizeof(buf); i++) {
+        if (buf[i]) { nonzero = 1; break; }
+    }
+    ASSERT_FALSE(nonzero);
+
+    cd_unload_game();
+}
+
+TEST(chd_session2_header_and_extract)
+{
+    const char *fix = "test/roms/synth_jagcd.chd";
+    static const char magic[32] = "ATARI APPROVED DATA HEADER ATRI ";
+    uint8_t raw[2352];
+    uint8_t stub[0x800];
+    uint32_t addr, len;
+
+    if (!file_exists(fix)) {
+        SKIP_TEST(chd_session2_header_and_extract, "missing test/roms/synth_jagcd.chd");
+        return;
+    }
+    ASSERT_TRUE(cd_load_game(fix));
+
+    ASSERT_TRUE(cd_read_block(11404u, raw));
+    /* ReadBlock returns CUE/BIN I2S order; unswap to host/header space. */
+    swap16(raw, sizeof(raw));
+    ASSERT_TRUE(memcmp(raw + 0x42, magic, 32) == 0);
+
+    addr = 0;
+    len = 0;
+    ASSERT_TRUE(cd_extract_stub(stub, sizeof(stub), &addr, &len));
+    ASSERT_TRUE(len > 0);
+    ASSERT_TRUE(len <= sizeof(stub));
+
     cd_unload_game();
 }
 
@@ -158,6 +276,8 @@ int main(int argc, char *argv[])
 
     RUN_TEST(chd_without_chse_is_refused);
     RUN_TEST(chd_with_chse_has_two_sessions);
+    RUN_TEST(chd_gap_and_session1_are_silence);
+    RUN_TEST(chd_session2_header_and_extract);
 
     {
         void (*p)(void) = (void (*)(void))dlsym(C.handle, "retro_deinit");

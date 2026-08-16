@@ -913,11 +913,11 @@ clean:
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
-		tools/jagcd/jagcd-chd-check \
+		tools/jagcd/jagcd-chd-check test/test_chd_unit \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
@@ -974,7 +974,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
@@ -1199,6 +1199,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
 	./test/test_cd_chd
+	./test/test_chd_unit
 	@# Checker on the committed fixtures: exit 0 = CHSE present, exit 1 =
 	@# Jaguar-shaped and missing CHSE. This is the ParseCHD refuse gate
 	@# without going through HLE extract.
@@ -1758,6 +1759,12 @@ test/test_cd_pregap: test/test_cd_pregap.c test/test_framework.h test/cd_asserti
 test/test_cd_chd: test/test_cd_chd.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_chd.c -ldl
+
+# Standalone (no dlopen): runs on Windows MSYS2 CI where `make test` is skipped.
+test/test_chd_unit: test/test_chd_unit.c test/test_framework.h $(SOURCES_LIBCHDR)
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 \
+		$(INCFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS) \
+		-o $@ test/test_chd_unit.c $(SOURCES_LIBCHDR)
 
 tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) $(LIBCHDR_CFLAGS) \
