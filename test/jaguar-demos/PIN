@@ -1,0 +1,7 @@
+# Pinned JaguarDemos checkout for reproducible CI.
+# Refresh: bump SHA after reviewing upstream, then re-run
+#   make jaguar-demos-full JAGUAR_DEMOS_WRITE_BASELINE=1
+# and commit BASELINE.txt if the PASS/FAIL set changed.
+URL=https://codeberg.org/42Bastian/JaguarDemos.git
+REF=main
+SHA=36afa5572757471470b7a12ff1d856648d47591f
