@@ -603,7 +603,7 @@ CORE_DIR     := .
 
 include Makefile.common
 
-OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
+OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o) $(SOURCES_LIBCHDR:.c=.o)
 
 # ----------------------------------------------------------------
 # version.h: generated header read by libretro.c.  Single source of
@@ -890,6 +890,12 @@ else
 	$(LD) $(LINKOUT)$@ $(OBJECTS) $(LDFLAGS)
 endif
 
+# libchdr is C99; the rest of the core is gnu89. A dedicated rule so
+# the generic %.o: %.c line cannot compile unity.c as C89.  Must sit
+# AFTER `all:` so it is not the default goal.
+$(LIBCHDR_DIR)/unity.o: $(LIBCHDR_DIR)/unity.c
+	$(CC) -c $(OBJOUT)$@ $< $(CFLAGS) $(LIBCHDR_CFLAGS) -Wno-unused-function -Wno-unused-variable
+
 # version.h dependency hook (must come after `all:` so Make 3.81 on
 # stock macOS doesn't latch onto libretro.o as the default goal).
 $(CORE_DIR)/libretro.o: $(VERSION_H)
@@ -907,10 +913,11 @@ clean:
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
+		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
@@ -967,14 +974,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test
+		test/tools/rotary_decode_test \
+		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -1190,6 +1198,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
+	./test/test_cd_chd
+	@# Optional: PATH/JAGCD_CHDMAN round-trip. Exit 77 = no CHSE-capable
+	@# chdman (CI, Homebrew 0.288). The committed synth_jagcd*.chd files
+	@# are the actual CHD load gate; this only checks the converter.
+	@if bash test/tools/jagcd_roundtrip.sh; then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "jagcd CUE->CHD round-trip" "no CHSE-capable chdman on PATH"; \
+	   else exit $$rc; fi; \
+	 fi
 	./test/test_cd_synth_read
 	./test/test_cd_synth_butch
 	./test/test_cd_synth_cdda
@@ -1728,6 +1746,14 @@ test/test_cd_pregap: test/test_cd_pregap.c test/test_framework.h test/cd_asserti
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_pregap.c -ldl
 
+test/test_cd_chd: test/test_cd_chd.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_chd.c -ldl
+
+tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) $(LIBCHDR_CFLAGS) \
+		-o $@ tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
+
 test/test_cd_synth_read: test/test_cd_synth_read.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_synth_read.c -ldl
@@ -1791,7 +1817,7 @@ test/heap_search: test/heap_search.c
 
 # Aggregate target for the manual diagnostic tools.
 .PHONY: tools
-tools: test/dump_pc test/heap_search test/test_cd_boot
+tools: test/dump_pc test/heap_search test/test_cd_boot tools/jagcd/jagcd-chd-check
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \

@@ -598,6 +598,25 @@ done
 run_title "baldies.cdi" "hle" "cdi"
 run_title "baldies.cdi" "bios" "cdi"
 
+# CHD conversions (issue #322). A sibling .chd of a matrix CUE, or a
+# named homebrew dump, is measured the same way as CUE/CDI. Missing
+# files are skipped -- CHD is produced locally with tools/jagcd, not
+# shipped in the private tree by default.
+chd_basename_exists() {
+    find -L "$ROMS_ROOT" -iname "$1" 2>/dev/null | grep -q .
+}
+for t in "${CUE_TITLES[@]}"; do
+    chd="${t%.cue}.chd"
+    if chd_basename_exists "$chd"; then
+        run_title "$chd" "hle" "chd"
+        run_title "$chd" "bios" "chd"
+    fi
+done
+if chd_basename_exists "Frog Feast (USA) (Unl).chd"; then
+    run_title "Frog Feast (USA) (Unl).chd" "hle" "chd"
+    run_title "Frog Feast (USA) (Unl).chd" "bios" "chd"
+fi
+
 # Loose ISOs: support was removed entirely (CDIntf refuses .iso at load
 # with a LOG_ERR explaining why -- no session/track layout means no retail
 # title can boot; see docs/cd-known-issues.md).  No matrix row: there is

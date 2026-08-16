@@ -117,7 +117,13 @@ from structured noise at the right level.
   which survive an ISO rip. No retail game can ever start from one
   (BigPEmu declines ISOs for the same reason), so the loader refuses
   `.iso` outright with an explanatory error instead of raising false
-  hopes with a BIOS screen that goes nowhere. Use CUE/BIN or CDI.
+  hopes with a BIOS screen that goes nowhere. Use CUE/BIN, CDI, or a
+  CHD created with a chdman that writes CHSE session tags (see
+  `docs/jagcd-chd.md`).
+- **Old / internet CHD rips**: CHD is supported, but files made before
+  MAME PR 15886 (no `CHSE` session metadata) flattened Jaguar CD's two
+  sessions and are refused at load. Reconvert from CUE/BIN with
+  `tools/jagcd`. Virtual-pregap CHDs warn and still load (HLE is fine).
 - **CD read speeds above 2x on the real-BIOS path**: the
   `virtualjaguar_cd_read_speed` option is HLE-only by design; scaling the
   BIOS path's FIFO/DSA cadence re-opens the DSA-steal and FIFO-storm race

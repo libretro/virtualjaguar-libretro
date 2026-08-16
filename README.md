@@ -140,7 +140,7 @@ libretro also hosts a community-maintained **[Atari Jaguar compatibility list](h
 
 1. **Install the core.** In RetroArch: *Main Menu → Online Updater → Core Downloader → Atari - Jaguar (Virtual Jaguar)*. Or download a build from [Releases](https://github.com/libretro/virtualjaguar-libretro/releases) and drop it in your `cores` folder.
 2. **No BIOS files needed.** Nothing to hunt down — see [BIOS](#bios).
-3. **Load a game.** Supported: `.j64`, `.jag`, `.rom`, `.abs`, `.cof`, `.bin`, `.prg` (including inside ZIP archives), plus `.cue` and `.cdi` for Jaguar CD images, and conservative headerless raw homebrew loading.
+3. **Load a game.** Supported: `.j64`, `.jag`, `.rom`, `.abs`, `.cof`, `.bin`, `.prg` (including inside ZIP archives), plus `.cue`, `.cdi`, and `.chd` for Jaguar CD images, and conservative headerless raw homebrew loading. CHD files must include session metadata from a current chdman; see [`docs/jagcd-chd.md`](docs/jagcd-chd.md).
 
 ### Core options worth knowing
 

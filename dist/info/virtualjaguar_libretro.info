@@ -1,7 +1,7 @@
 # Software Information
 display_name = "Atari - Jaguar (Virtual Jaguar)"
 authors = "Joseph Mattiello|David Raingeard|Shamus"
-supported_extensions = "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
+supported_extensions = "j64|jag|rom|abs|cof|bin|prg|cue|cdi|chd"
 corename = "Virtual Jaguar"
 license = "GPLv3"
 permissions = ""
@@ -39,4 +39,4 @@ firmware1_desc = "[BIOS] Atari Jaguar Developer CD (World).j64 (Jaguar CD BIOS, 
 firmware1_path = "[BIOS] Atari Jaguar Developer CD (World).j64"
 firmware1_opt = "true"
 
-description = "The actively maintained Atari Jaguar and Jaguar CD emulator for libretro, continuing the Virtual Jaguar project (originally by David Raingeard of Potato Emulation). No BIOS files are required: the Jaguar boot ROM and CD BIOS images are embedded in the core. Supports Jaguar CD (CUE/BIN, CDI) with Memory Track saves, JagLink/CatBox network play over TCP or RetroArch netplay, a high-level BIOS that lets most commercial titles boot without a real BIOS image, save states, SRAM, cheat codes, RetroAchievements, and M68K/RISC clock-scale (overclock) core options for framerate-limited games. The accurate blitter is SIMD-accelerated (SSE2 on x86, NEON on ARM); the Blitter core option can be set to 'Fast' to trade some accuracy for additional speed on lower-end hardware."
+description = "The actively maintained Atari Jaguar and Jaguar CD emulator for libretro, continuing the Virtual Jaguar project (originally by David Raingeard of Potato Emulation). No BIOS files are required: the Jaguar boot ROM and CD BIOS images are embedded in the core. Supports Jaguar CD (CUE/BIN, CDI, CHD) with Memory Track saves, JagLink/CatBox network play over TCP or RetroArch netplay, a high-level BIOS that lets most commercial titles boot without a real BIOS image, save states, SRAM, cheat codes, RetroAchievements, and M68K/RISC clock-scale (overclock) core options for framerate-limited games. CHD images must be created with a chdman that writes CHSE session metadata (MAME 2026-08-15 / PR 15886 or later); see the core's jagcd tools. The accurate blitter is SIMD-accelerated (SSE2 on x86, NEON on ARM); the Blitter core option can be set to 'Fast' to trade some accuracy for additional speed on lower-end hardware."

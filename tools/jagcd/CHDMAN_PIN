@@ -1,0 +1,4 @@
+# MAME commit used to build the chdman we ship.
+# Must include mamedev/mame#15886 (CHSE session metadata).
+# Update this file and .github/workflows/chdman-tools.yml together.
+420968ca7a722418b27cbcaf5a332f83bde4a9be

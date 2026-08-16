@@ -47,7 +47,7 @@ _VERSION_GEN := $(shell sh $(CORE_DIR)/scripts/gen-version-h.sh && echo ok)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE    := retro
-LOCAL_SRC_FILES := $(SOURCES_C)
-LOCAL_CFLAGS    := $(COREFLAGS)
+LOCAL_SRC_FILES := $(SOURCES_C) $(SOURCES_LIBCHDR)
+LOCAL_CFLAGS    := $(COREFLAGS) $(LIBCHDR_CFLAGS)
 LOCAL_LDFLAGS   := -Wl,-version-script=$(CORE_DIR)/link.T
 include $(BUILD_SHARED_LIBRARY)

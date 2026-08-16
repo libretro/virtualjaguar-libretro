@@ -1,0 +1,90 @@
+name: CHD tools
+
+# Desktop-only chdman + jagcd helpers. Consoles never write CHDs, and MAME
+# is too heavy to fold into the 16-platform core matrix. release.yml calls
+# this workflow so tagged releases and nightlies attach the same zips as
+# the cores. workflow_dispatch rebuilds the artifacts without publishing.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-tools:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: jagcd-tools-linux-x64
+          - os: macos-latest
+            artifact: jagcd-tools-macos
+          - os: windows-latest
+            artifact: jagcd-tools-windows-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.os == 'windows-latest' && 'msys2 {0}' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: msys2/setup-msys2@v2
+        if: matrix.os == 'windows-latest'
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git make python zip
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-python
+
+      - name: Read chdman pin
+        id: pin
+        run: |
+          PIN=$(grep -E '^[0-9a-f]{7,}' tools/jagcd/CHDMAN_PIN | tail -n 1)
+          echo "sha=$PIN" >> "$GITHUB_OUTPUT"
+          echo "pin=$PIN"
+
+      - name: Clone MAME at pin
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/mamedev/mame.git mame
+          cd mame
+          git fetch --depth 1 origin ${{ steps.pin.outputs.sha }}
+          git checkout FETCH_HEAD
+
+      - name: Build chdman
+        working-directory: mame
+        run: |
+          make -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) \
+            TOOLS=1 EMULATOR=0 NOWERROR=1 PRECOMPILE=0 REGENIE=1
+
+      - name: Build jagcd-chd-check
+        run: |
+          gcc -O2 -std=c99 \
+            -I deps/libchdr/include \
+            -I deps/libchdr/deps/lzma-25.01/include \
+            -I deps/libchdr/deps/miniz-3.1.1 \
+            -I deps/libchdr/deps/zstd-1.5.7 \
+            -D_7ZIP_ST \
+            -o tools/jagcd/jagcd-chd-check \
+            tools/jagcd/jagcd-chd-check.c deps/libchdr/unity.c
+
+      - name: Package
+        run: |
+          mkdir -p dist-jagcd
+          CHDMAN=$(find mame \( -name chdman -o -name chdman.exe \) | head -1)
+          test -n "$CHDMAN"
+          cp "$CHDMAN" dist-jagcd/
+          cp tools/jagcd/jagcd-to-chd tools/jagcd/jagcd-to-chd.cmd \
+             tools/jagcd/jagcd-chd-check tools/jagcd/CHDMAN_PIN \
+             docs/jagcd-chd.md dist-jagcd/
+          chmod +x dist-jagcd/jagcd-to-chd dist-jagcd/jagcd-chd-check \
+            dist-jagcd/chdman dist-jagcd/chdman.exe 2>/dev/null || true
+          cd dist-jagcd && zip -r ../${{ matrix.artifact }}.zip .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+          if-no-files-found: error

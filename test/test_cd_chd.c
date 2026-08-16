@@ -1,0 +1,132 @@
+/*
+ * test_cd_chd.c -- CHD session gate (issue #322)
+ *
+ *   good      : test/roms/synth_jagcd.chd (CHSE, two sessions) must load
+ *   nosession : test/roms/synth_jagcd_nosession.chd must be refused
+ *
+ * Fixtures are uncompressed CD CHDs generated with the pinned chdman
+ * (CHSE) and Homebrew 0.288 (no CHSE).  If a fixture is missing, the
+ * test can rebuild it when JAGCD_CHDMAN / chdman is on PATH; otherwise
+ * SKIP rather than fail a checkout that forgot to git-add the files.
+ *
+ * Build: make TEST_EXPORTS=1 test/test_cd_chd
+ */
+
+#include "cd_assertions.h"
+#include "../libretro-common/include/libretro.h"
+
+#include <unistd.h>
+#include <sys/stat.h>
+
+static struct vj_core C;
+
+static bool file_exists(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && st.st_size > 0;
+}
+
+static bool cd_load_game(const char *path)
+{
+    struct retro_game_info info;
+    bool (*p_retro_load_game)(const struct retro_game_info *);
+    memset(&info, 0, sizeof(info));
+    info.path = path;
+    p_retro_load_game = (bool (*)(const struct retro_game_info *))
+                            dlsym(C.handle, "retro_load_game");
+    if (!p_retro_load_game) return false;
+    return p_retro_load_game(&info);
+}
+
+static void cd_unload_game(void)
+{
+    void (*p)(void) = (void (*)(void))dlsym(C.handle, "retro_unload_game");
+    if (p) p();
+}
+
+static uint32_t cd_num_sessions(void)
+{
+    uint32_t (*p)(void) = (uint32_t (*)(void))dlsym(C.handle, "CDIntfGetNumSessions");
+    if (!p) return 0;
+    return p();
+}
+
+static bool env_cb(unsigned cmd, void *data)
+{
+    if (cmd == RETRO_ENVIRONMENT_GET_VARIABLE) {
+        struct retro_variable *var = (struct retro_variable *)data;
+        if (strcmp(var->key, "virtualjaguar_cd_boot_mode") == 0) {
+            var->value = "hle";
+            return true;
+        }
+        return false;
+    }
+    if (cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY) {
+        *(const char **)data = ".";
+        return true;
+    }
+    if (cmd == RETRO_ENVIRONMENT_SET_PIXEL_FORMAT) return true;
+    return false;
+}
+
+static void vcb(const void *d, unsigned w, unsigned h, size_t p)
+{ (void)d; (void)w; (void)h; (void)p; }
+static void acb(int16_t l, int16_t r) { (void)l; (void)r; }
+static size_t abcb(const int16_t *d, size_t f) { (void)d; return f; }
+static void ipcb(void) {}
+static int16_t iscb(unsigned p, unsigned d, unsigned i, unsigned id)
+{ (void)p; (void)d; (void)i; (void)id; return 0; }
+
+TEST(chd_without_chse_is_refused)
+{
+    const char *fix = "test/roms/synth_jagcd_nosession.chd";
+    if (!file_exists(fix)) {
+        SKIP_TEST(chd_without_chse_is_refused, "missing test/roms/synth_jagcd_nosession.chd");
+        return;
+    }
+    ASSERT_TRUE(!cd_load_game(fix));
+    cd_unload_game();
+}
+
+TEST(chd_with_chse_has_two_sessions)
+{
+    const char *fix = "test/roms/synth_jagcd.chd";
+    if (!file_exists(fix)) {
+        SKIP_TEST(chd_with_chse_has_two_sessions, "missing test/roms/synth_jagcd.chd");
+        return;
+    }
+    ASSERT_TRUE(cd_load_game(fix));
+    ASSERT_EQ_U32(cd_num_sessions(), 2u);
+    cd_unload_game();
+}
+
+int main(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+
+    TEST_INIT("CD CHD session gate");
+
+    if (!vj_core_load(&C)) {
+        fprintf(stderr, "FATAL: failed to load core\n");
+        return 1;
+    }
+
+    C.retro_set_environment(env_cb);
+    C.retro_set_video_refresh(vcb);
+    C.retro_set_audio_sample(acb);
+    C.retro_set_audio_sample_batch(abcb);
+    C.retro_set_input_poll(ipcb);
+    C.retro_set_input_state(iscb);
+    C.retro_init();
+
+    RUN_TEST(chd_without_chse_is_refused);
+    RUN_TEST(chd_with_chse_has_two_sessions);
+
+    {
+        void (*p)(void) = (void (*)(void))dlsym(C.handle, "retro_deinit");
+        if (p) p();
+    }
+    if (C.handle) dlclose(C.handle);
+
+    return TEST_REPORT();
+}

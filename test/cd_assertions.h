@@ -70,6 +70,7 @@ static inline int cd_disc_priority(const char *ext)
     if (cd_str_iequals(ext, "cue")) return 0;
     if (cd_str_iequals(ext, "iso")) return 1;
     if (cd_str_iequals(ext, "cdi")) return 2;
+    if (cd_str_iequals(ext, "chd")) return 3;
     return -1;
 }
 

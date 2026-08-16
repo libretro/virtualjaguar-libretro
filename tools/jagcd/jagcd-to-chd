@@ -1,0 +1,66 @@
+#!/bin/sh
+# Convert a Jaguar CD CUE/BIN to CHD with a chdman that writes CHSE.
+# Usage: jagcd-to-chd INPUT.cue [OUTPUT.chd]
+set -e
+
+die() { echo "jagcd-to-chd: $*" >&2; exit 1; }
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PIN_FILE="$SCRIPT_DIR/CHDMAN_PIN"
+PIN=$(grep -E '^[0-9a-f]{7,}' "$PIN_FILE" | tail -n 1)
+
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+   die "usage: $0 INPUT.cue [OUTPUT.chd]"
+fi
+
+IN=$1
+case "$IN" in
+   *.cue|*.CUE|*.toc|*.TOC) ;;
+   *.cdi|*.CDI) die "chdman createcd does not read CDI; convert to CUE/BIN first (or use the core's CDI loader directly)" ;;
+   *) die "input must be a .cue (or .toc)" ;;
+esac
+[ -f "$IN" ] || die "not found: $IN"
+
+OUT=$2
+if [ -z "$OUT" ]; then
+   OUT=$(printf '%s' "$IN" | sed 's/\.[Cc][Uu][Ee]$/.chd/;s/\.[Tt][Oo][Cc]$/.chd/')
+fi
+
+if [ -n "$JAGCD_CHDMAN" ]; then
+   CHDMAN=$JAGCD_CHDMAN
+elif [ -x "$SCRIPT_DIR/chdman" ]; then
+   CHDMAN=$SCRIPT_DIR/chdman
+elif [ -x "$SCRIPT_DIR/chdman.exe" ]; then
+   CHDMAN=$SCRIPT_DIR/chdman.exe
+else
+   CHDMAN=$(command -v chdman || true)
+fi
+[ -n "$CHDMAN" ] || die "chdman not found. Set JAGCD_CHDMAN or put chdman next to this script (pin $PIN)."
+
+CHECK=$SCRIPT_DIR/jagcd-chd-check
+if [ ! -x "$CHECK" ]; then
+   CHECK=$SCRIPT_DIR/jagcd-chd-check.exe
+fi
+
+echo "using $CHDMAN"
+"$CHDMAN" createcd -i "$IN" -o "$OUT" -f
+
+if [ -x "$CHECK" ]; then
+   set +e
+   "$CHECK" "$OUT"
+   st=$?
+   set -e
+   if [ "$st" -eq 1 ]; then
+      die "chdman did not write CHSE session tags (too old). Use the binary from this repo's GitHub release (pin $PIN), not Homebrew/distro chdman."
+   fi
+   # 0 = clean, 2 = virtual pregaps (warn, still a valid conversion)
+   exit "$st"
+fi
+
+# Fallback when the checker is not built: require dumpmeta CHSE on track 0 or 1.
+if "$CHDMAN" dumpmeta -i "$OUT" -t CHSE -ix 0 >/dev/null 2>&1 \
+   || "$CHDMAN" dumpmeta -i "$OUT" -t CHSE -ix 1 >/dev/null 2>&1; then
+   echo "CHSE present"
+   exit 0
+fi
+die "no CHSE tag in $OUT — chdman is too old (need pin $PIN / MAME with PR 15886)"

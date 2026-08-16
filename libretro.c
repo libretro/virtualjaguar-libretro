@@ -70,9 +70,11 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
  *   cof           : COFF binaries (also routes through JST_ABS_TYPE1)
  *   bin, prg      : conservative headerless raw-homebrew with valid
  *                   68k bootstrap (JST_RAW_BINARY)
- *   cue, cdi      : Jaguar CD images (CUE/BIN and CDI).  Bare `iso`
- *                   images are not bootable -- see docs/cd-known-issues.md. */
-#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi"
+ *   cue, cdi, chd : Jaguar CD images (CUE/BIN, CDI, and CHD).  Bare `iso`
+ *                   images are not bootable -- see docs/cd-known-issues.md.
+ *                   CHD files need session metadata from a post-2026-08
+ *                   chdman; see docs/jagcd-chd.md. */
+#define JAGUAR_VALID_EXTENSIONS "j64|jag|rom|abs|cof|bin|prg|cue|cdi|chd"
 
 /* Framebuffer allocation, in pixels.  Sized for the widest / tallest video
  * mode TOM can be programmed into (TOMWriteWord clamps tomWidth to 1024 and
@@ -648,7 +650,7 @@ void retro_set_environment(retro_environment_t cb)
    {
       static const struct retro_system_content_info_override
          content_overrides[] = {
-         { "cue|cdi", true /* need_fullpath */, false /* persistent_data */ },
+         { "cue|cdi|chd", true /* need_fullpath */, false /* persistent_data */ },
          { NULL, false, false }
       };
       environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
@@ -2317,6 +2319,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    is_cd_content = info->path && (has_extension(info->path, "cue")
                                   || has_extension(info->path, "cdi")
+                                  || has_extension(info->path, "chd")
                                   || has_extension(info->path, "iso"));
 
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
