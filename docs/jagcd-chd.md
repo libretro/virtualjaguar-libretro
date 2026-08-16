@@ -37,4 +37,6 @@ PR 15886 did not change pregap-byte encoding; it only added session tags.
 - CHD audio frames are stored as 16-bit PCM. The core byte-swaps them back to Jaguar I2S (CUE/BIN) order on read.
 - The ~11400-sector session gap is synthesized when `CHSE` shows a session change and the first session-2 track's `PREGAP` is not already that large (so a CHD that encoded the gap as a pregap is not double-counted). Measured on a post-15886 `createcd` of Frog Feast: every `CHT2` `PREGAP` is 0 and `PGTYPE` is `MODE1` (not virtual); `extractcd` emits `REM SESSION 02`. Retail Redump CUEs have one audio track in session 1, so `CHSE` index 1 is session 2's first track. Homebrew dumps with two session-1 tracks may see MAME tag session 2 one track early — reconvert from a CUE the core already boots if a title looks wrong.
 
+The in-tree fixtures `test/roms/synth_jagcd.chd` (CHSE) and `synth_jagcd_nosession.chd` (pre-15886 / Homebrew 0.288 shape) were built with the pinned `chdman` using `-c none` so they stay tiny. CI and Homebrew 0.288 cannot recreate the CHSE file; that is why `jagcd_roundtrip.sh` exits 77 when the converter is missing.
+
 Tracking: issue #322.

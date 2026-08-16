@@ -1,3 +1,18 @@
+/* Feature-test macros must precede every system header in this TU.
+ * libchdr_chd.c defines the same pair, but that is too late here:
+ * miniz/lzma/zstd are included first and pull in <stdio.h>. Clang
+ * -std=c99 then treats fseeko/ftello as undeclared (CI Linux Clang). */
+#if !defined(_WIN32) && !defined(__PS3__) && !defined(__SWITCH__) && !defined(__vita__)
+#  ifndef _POSIX_C_SOURCE
+#    define _POSIX_C_SOURCE 200809L
+#  endif
+#  ifndef __ANDROID__
+#    ifndef _FILE_OFFSET_BITS
+#      define _FILE_OFFSET_BITS 64
+#    endif
+#  endif
+#endif
+
 /* Disable unused features of miniz (but allow
    them to be restored by dependent projects). */
 #ifndef MINIZ_ARCHIVE_APIS

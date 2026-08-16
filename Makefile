@@ -894,7 +894,7 @@ endif
 # the generic %.o: %.c line cannot compile unity.c as C89.  Must sit
 # AFTER `all:` so it is not the default goal.
 $(LIBCHDR_DIR)/unity.o: $(LIBCHDR_DIR)/unity.c
-	$(CC) -c $(OBJOUT)$@ $< $(CFLAGS) $(LIBCHDR_CFLAGS) -Wno-unused-function -Wno-unused-variable
+	$(CC) -c $(OBJOUT)$@ $< $(CFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS)
 
 # version.h dependency hook (must come after `all:` so Make 3.81 on
 # stock macOS doesn't latch onto libretro.o as the default goal).

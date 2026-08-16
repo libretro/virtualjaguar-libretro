@@ -388,7 +388,9 @@ jobs:
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /Ideps\libchdr\include /Ideps\libchdr\deps\lzma-25.01\include /Ideps\libchdr\deps\miniz-3.1.1 /Ideps\libchdr\deps\zstd-1.5.7 ^
           /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
+          /D_7ZIP_ST /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
           libretro.c ^
           src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
@@ -399,7 +401,8 @@ jobs:
           src\bios\jagbios.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
-          src\tom\blitter_simd_scalar.c
+          src\tom\blitter_simd_scalar.c ^
+          deps\libchdr\unity.c
 
     # The shape Makefile.common now selects for windows_msvc2015/2017
     # x64 and x86: blitter.c inlines blitter_simd_sse2.h, so cl.exe

@@ -19,8 +19,15 @@ INCFLAGS := -I$(CORE_DIR) \
 # libchdr is C99 (vendored). Compiled as its own translation unit
 # (unity.c) with -std=c99; see the unity.o rule in the Makefile.
 # _7ZIP_ST is the LZMA single-thread decode config libchdr expects.
-LIBCHDR_CFLAGS := -std=c99 -D_7ZIP_ST \
+# -std=c99 / -Wno-* are GCC/Clang only; cl.exe rejects both.
+LIBCHDR_CFLAGS := -D_7ZIP_ST \
 	-DWANT_RAW_DATA_SECTOR=1 -DWANT_SUBCODE=1 -DVERIFY_BLOCK_CRC=1
+ifeq (,$(findstring msvc,$(platform)))
+LIBCHDR_CFLAGS += -std=c99
+LIBCHDR_WARNFLAGS := -Wno-unused-function -Wno-unused-variable
+else
+LIBCHDR_WARNFLAGS :=
+endif
 SOURCES_LIBCHDR := $(LIBCHDR_DIR)/unity.c
 
 ifneq (,$(findstring msvc2003,$(platform)))

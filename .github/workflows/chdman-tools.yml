@@ -67,6 +67,7 @@ jobs:
             -I deps/libchdr/deps/miniz-3.1.1 \
             -I deps/libchdr/deps/zstd-1.5.7 \
             -D_7ZIP_ST \
+            -DWANT_RAW_DATA_SECTOR=1 -DWANT_SUBCODE=1 -DVERIFY_BLOCK_CRC=1 \
             -o tools/jagcd/jagcd-chd-check \
             tools/jagcd/jagcd-chd-check.c deps/libchdr/unity.c
 
@@ -75,8 +76,8 @@ jobs:
           mkdir -p dist-jagcd
           CHDMAN=$(find mame \( -name chdman -o -name chdman.exe \) | head -1)
           test -n "$CHDMAN"
-          cp "$CHDMAN" dist-jagcd/
-          cp tools/jagcd/jagcd-to-chd tools/jagcd/jagcd-to-chd.cmd \
+          command cp -f "$CHDMAN" dist-jagcd/
+          command cp -f tools/jagcd/jagcd-to-chd tools/jagcd/jagcd-to-chd.cmd \
              tools/jagcd/jagcd-chd-check tools/jagcd/CHDMAN_PIN \
              docs/jagcd-chd.md dist-jagcd/
           chmod +x dist-jagcd/jagcd-to-chd dist-jagcd/jagcd-chd-check \
