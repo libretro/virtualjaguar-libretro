@@ -305,6 +305,8 @@ static uint32_t dspgo_poll_count;
 #define BRANCH_CONDITION(x)		dsp_branch_condition_table[(x) + ((jaguar_flags & 7) << 5)]
 
 static uint32_t dsp_in_exec = 0;
+static int32_t dspSliceBudget;
+static int32_t dspSliceSpent;
 static uint32_t dsp_releaseTimeSlice_flag = 0;
 /* DSP execution liveness counter for the crash watchdog's wedge
  * predicate -- see gpu.c gpu_exec_opcode_count for rationale and the
@@ -975,6 +977,8 @@ void DSPReset(void)
 	dsp_control			  = 0x00002000;				// Report DSP version 2
 	dsp_div_control		  = 0x00000000;
 	dsp_in_exec			  = 0;
+	dspSliceBudget		  = 0;
+	dspSliceSpent		  = 0;
 
 	dsp_reg = dsp_reg_bank_0;
 	dsp_alternate_reg = dsp_reg_bank_1;
@@ -1008,6 +1012,42 @@ void DSPReset(void)
 
 void DSPDone(void)
 {
+}
+
+void DSPBeginSlice(uint32_t riscCycles)
+{
+	dspSliceBudget = (int32_t)riscCycles;
+	dspSliceSpent  = 0;
+}
+
+int32_t DSPSliceRemaining(void)
+{
+	int32_t left = dspSliceBudget - dspSliceSpent;
+	return (left > 0 ? left : 0);
+}
+
+/* Advance the DSP to the 68000's position inside the current slice.
+ * Mirror of GPUSyncToM68K (issue #406 / PR #445): without this a 68K
+ * poll of a DSP mailbox samples stale state from the previous slice,
+ * which is #408 H3 and issue #456.  Same 2:1 RISC:68K clock ratio. */
+void DSPSyncToM68K(void)
+{
+	int32_t target, run;
+
+	if (!DSP_RUNNING || dsp_in_exec)
+		return;
+
+	target = (int32_t)(((int64_t)m68k_cycles_run() * 2 * riscClockScalePct)
+	                   / m68kClockScalePct);
+	if (target > dspSliceBudget)
+		target = dspSliceBudget;
+
+	run = target - dspSliceSpent;
+	if (run <= 0)
+		return;
+
+	dspSliceSpent += run;
+	DSPExec(run);
 }
 
 /* DSP execution core */

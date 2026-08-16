@@ -460,6 +460,14 @@ static void M68KGPURAMSyncRead(unsigned int address, unsigned int length)
    if (address < GPU_WORK_RAM_BASE + 0x1000
        && address + length > GPU_WORK_RAM_BASE)
       GPUSyncToM68K();
+   /* Same handshake on the DSP side (issue #456 / #408 H3).  Doom's
+    * MiniLoop polls `DSPRead(&dspfinished)`; `_dspfinished` is a long
+    * in dspbase.gas (`.org $f1b000`, DSP local RAM), not D_CTRL /
+    * $F1A100.  The 68K read has to see the DSP that has already run
+    * up to this point in the slice, not the leftover of the previous one. */
+   if (address < DSP_WORK_RAM_BASE + 0x2000
+       && address + length > DSP_WORK_RAM_BASE)
+      DSPSyncToM68K();
 }
 
 unsigned int m68k_read_memory_8(unsigned int address)
@@ -640,6 +648,9 @@ static void M68KGPURAMSync(unsigned int address, unsigned int length)
    if (address < GPU_WORK_RAM_BASE + 0x1000
        && address + length > GPU_WORK_RAM_BASE)
       GPUSyncToM68K();
+   if (address < DSP_WORK_RAM_BASE + 0x2000
+       && address + length > DSP_WORK_RAM_BASE)
+      DSPSyncToM68K();
 }
 
 /* GPU and DSP local RAM are 32-bit memories, but an external bus master sees
@@ -1629,10 +1640,11 @@ void JaguarExecuteNew(void)
       double timeDelta;
       uint32_t riscCycles;
 
-      /* GPUBeginSlice/GPUSliceRemaining: part of the GPU's slice may already
-       * have been run from GPUSyncToM68K(), so the end-of-slice call runs only
-       * what is left.  The total per slice is unchanged -- see the comment on
-       * gpuSliceBudget in gpu.c.
+      /* GPUBeginSlice/DSPBeginSlice + *SliceRemaining: part of each
+       * RISC slice may already have been run from GPUSyncToM68K() /
+       * DSPSyncToM68K() on a 68K access into local RAM, so the
+       * end-of-slice call runs only what is left.  The total per slice
+       * is unchanged -- see gpuSliceBudget in gpu.c and issue #456.
        *
        * Clock scales (issue #314) apply here, where the budgets are
        * handed out: the RISC scale widens the GPU+DSP compute budget per
@@ -1647,9 +1659,10 @@ void JaguarExecuteNew(void)
          timeDelta = timeToJerryEvent;
          riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
          GPUBeginSlice(riscCycles);
+         DSPBeginSlice(riscCycles);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          GPUExec(GPUSliceRemaining());
-         DSPExec(riscCycles);
+         DSPExec(DSPSliceRemaining());
          SubtractEventTimes(timeDelta, EVENT_MAIN);
          HandleNextEvent(EVENT_JERRY);
       }
@@ -1658,9 +1671,10 @@ void JaguarExecuteNew(void)
          timeDelta = timeToMainEvent;
          riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
          GPUBeginSlice(riscCycles);
+         DSPBeginSlice(riscCycles);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
          GPUExec(GPUSliceRemaining());
-         DSPExec(riscCycles);
+         DSPExec(DSPSliceRemaining());
          SubtractEventTimes(timeDelta, EVENT_JERRY);
          HandleNextEvent(EVENT_MAIN);
       }
