@@ -60,6 +60,9 @@ test/tools/fmv_seek_probe
 test/tools/sram_test
 test/tools/netlink_pair
 test/tools/netlink_game
+test/tools/joymatrix_identity
+test/tools/mouse_decode_test
+test/tools/rotary_decode_test
 # vjtrace flight-recorder analyzer/smoke tools -- built on demand by
 # test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
 # comment); never tracked, same Mach-O-on-Linux-CI hazard as above.
@@ -108,6 +111,11 @@ test/tools/build/
 # Acid-test build outputs
 test/acid/acid_run
 test/acid/tests/**/*.jag
+
+# On-demand JaguarDemos clone (see test/jaguar-demos/PIN). Not a submodule:
+# pinning 23 MiB of demo sources into every core clone is unnecessary when
+# CI/local fetch can check out one SHA.
+test/vendor/
 /test/tools/test_frame_timing
 /test/tools/audio_timeline
 /test/tools/cd_visual_verify
@@ -119,6 +127,7 @@ test/acid/tests/**/*.jag
 /test/tools/hires_state_digest
 /test/tools/hires_shot
 test/tools/__pycache__/
+.build-config
 .link-mode
 
 # gcov instrumentation output (make coverage)
@@ -140,3 +149,12 @@ test/.skipped-checks
 # Generated static site (scripts/build_site.py output)
 /_site/
 __pycache__/
+/test/tools/cart_boot_probe
+/test/tools/counter_rate_scan
+/test/tools/gpu_bench_read
+/test/tools/gpu_disasm_dump
+/test/tools/gpu_pipe_probe
+/test/tools/irq_rate_probe
+/test/tools/m68k_pc_histogram
+/test/tools/menu_step_probe
+/test/tools/present_rate_probe

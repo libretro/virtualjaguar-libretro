@@ -33,14 +33,20 @@
  * whole-file CRC ($0FDCEB66) is catalogued as FF_BAD_DUMP.  Nothing about the
  * image data is wrong, so skip the header instead of refusing the file.
  *
- * Detection is deliberately narrow, because the size test alone would start
- * accepting arbitrary junk.  Both must hold:
+ * Detection is deliberately narrow.  The payload must carry the cartridge
+ * universal-header marker ($04040404 at payload $400), AND the file must
+ * shape-wise look like copier output:
  *
- *   - the file overhangs a whole number of megabytes by exactly the header
- *     length, and
- *   - the cartridge universal-header marker ($04040404, which precedes the run
- *     address that JaguarLoadFile reads from ROM offset $404) is present at
- *     that offset measured from the payload rather than from the file.
+ *   - payload is a whole number of megabytes (the circulating Brutal Sports
+ *     class), or
+ *   - payload is smaller than 1 MiB (sub-1 MiB homebrew with the same 512-byte
+ *     header; without this arm those files fell through to the headerless
+ *     JST_ROM fallback and loaded skewed).
+ *
+ * An exact-megabyte file is never stripped (copier output is always
+ * N MiB + 512), so an incidental $04040404 at file $600 on a full-size
+ * native ROM cannot take the header off.  A native small cart already
+ * has the marker at file $400 and is left alone.
  */
 #define CART_HEADER_SKIP_SIZE   512
 #define CART_UNIVERSAL_MARKER_OFFSET   0x400
@@ -50,22 +56,33 @@ uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
 {
    uint32_t payloadSize;
 
-   /* Ordered first so a zero-length or undersized buffer is never read. */
-   if (size <= CART_HEADER_SKIP_SIZE)
+   /* Need room for the header plus the payload's $400 marker longword. */
+   if (size < CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET + 4)
+      return 0;
+
+   /* Exact-megabyte files are native dumps.  A copier-headered image is
+    * always N MiB + 512, so this excludes the incidental-$600 case on
+    * full-size commercial ROMs before any payload math runs. */
+   if ((size % 1048576) == 0)
       return 0;
 
    payloadSize = size - CART_HEADER_SKIP_SIZE;
 
-   if ((payloadSize % 1048576) != 0)
-      return 0;
-
-   /* payloadSize is a non-zero multiple of 1 MiB here, so the marker offset is
-    * comfortably inside the buffer. */
    if (GET32(buffer, CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET)
          != CART_UNIVERSAL_MARKER)
       return 0;
 
-   return CART_HEADER_SKIP_SIZE;
+   /* Classic copier dump (Brutal Sports: 2 MiB + 512). */
+   if ((payloadSize % 1048576) == 0)
+      return CART_HEADER_SKIP_SIZE;
+
+   /* Sub-1 MiB homebrew with a copier header.  A native small cart has
+    * the marker at file $400 already -- do not strip those. */
+   if (payloadSize < 1048576
+         && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) != CART_UNIVERSAL_MARKER)
+      return CART_HEADER_SKIP_SIZE;
+
+   return 0;
 }
 
 /* Say what we were handed when ParseFileType came up empty. Several images in
@@ -213,6 +230,14 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    if ((size % 1048576) == 0 || size == 131072)
       return JST_ROM;
 
+   /* Homebrew / bootintro carts are rarely a whole megabyte and are often
+    * well under the Memory Track size of 128K.  The universal header at
+    * $400 is the same marker DetectPrependedHeaderSize uses, and is
+    * enough on its own to call the file a cartridge (issue #462). */
+   if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8)
+         && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) == CART_UNIVERSAL_MARKER)
+      return JST_ROM;
+
    // If the file size + 8192 bytes is divisible by 1M, we probably have an
    // Alpine format ROM.
    if (((size + 8192) % 1048576) == 0)
@@ -220,6 +245,17 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 
    if (InferRawBinaryLoadAddress(buffer, size, &rawLoadAddress))
       return JST_RAW_BINARY;
+
+   /* Last resort for headerless bootintros smaller than 1 MiB: map them
+    * as a cartridge so real-BIOS mode can boot them from $800000.  Must
+    * be at least large enough to hold the $400 universal-header slot
+    * (otherwise DetectPrependedHeaderSize's 512-byte floor is a cart).
+    * RAM-load BJL binaries with recognizable absolute refs already
+    * returned JST_RAW_BINARY above.  Files >= 1 MiB that are not an
+    * exact megabyte multiple stay unrecognized (the bad-dump /
+    * leftover-header class ReportUnrecognizedContent names). */
+   if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8) && size < 1048576)
+      return JST_ROM;
 
    // Headerless crap
    return JST_NONE;

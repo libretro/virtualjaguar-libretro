@@ -62,7 +62,11 @@ _jaguar_cd_*
 _ResolveBootConfig
 _BlitterCompare*
 _DAC*
-_JoystickState*
+_Joystick*
+_joypad0Buttons
+_joypad1Buttons
+_InputDev*
+_Quad*
 _MTState*
 _NVMBios*
 _NVM_*
@@ -76,4 +80,7 @@ _shadowHiresN
 _shadowFBActive
 _blitMemo*
 _TitleDB*
+# _TitleHook* is NOT covered by _TitleDB* -- the applier lives in its own
+# translation unit and its own name prefix.
+_TitleHook*
 _vjtrace_*

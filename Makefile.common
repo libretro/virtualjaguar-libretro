@@ -49,6 +49,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/eeprom.c \
 	$(CORE_DIR)/src/core/filedb.c \
 	$(CORE_DIR)/src/core/titledb.c \
+	$(CORE_DIR)/src/core/titlehook.c \
 	$(CORE_DIR)/src/m68000/cpustbl.c \
 	$(CORE_DIR)/src/m68000/cpudefs.c \
 	$(CORE_DIR)/src/m68000/cpuemu.c \
@@ -59,6 +60,8 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/bios/jagcdbios.c \
 	$(CORE_DIR)/src/bios/jagdevcdbios.c \
 	$(CORE_DIR)/src/jerry/joystick.c \
+	$(CORE_DIR)/src/jerry/quadrature.c \
+	$(CORE_DIR)/src/jerry/inputdev.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
 	$(CORE_DIR)/src/core/jaggd.c \

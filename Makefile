@@ -94,10 +94,29 @@ MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
-# Records which ABI the library in the tree was last linked with; see the
-# mode-switch hook next to the link rule below.
-LINK_MODE := $(if $(filter 1,$(TEST_EXPORTS)),test,prod)
-LINK_MODE_STAMP := .link-mode
+# Records the build configuration the objects in the tree were last
+# compiled under; see the mode-switch hook next to the link rule below.
+#
+# Every variable listed here changes how objects are COMPILED (or which
+# symbols survive the link), so flipping any one of them invalidates
+# every existing .o.  Adding a new such switch means adding it here --
+# that is the whole maintenance burden, and forgetting costs a silent
+# chimera binary rather than a build error.
+#
+# It is deliberately a list of *variable names* and not $(CFLAGS)
+# itself.  Stamping the flags would look more future-proof but breaks
+# on DEBUG=1, whose CFLAGS carry a -DBUILD_TIMESTAMP that changes every
+# second: the stamp would never match and every single build would
+# flush the tree.  Values here are plain tokens (1, or a platform
+# name), so the comparison also stays free of shell quoting hazards --
+# CFLAGS contains -DINLINE="inline".
+BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
+              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
+BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
+BUILD_CONFIG_STAMP := .build-config
+# Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
+# hook below so a tree built before this change doesn't keep a dead file.
+LEGACY_LINK_MODE_STAMP := .link-mode
 
 # Unix
 ifeq ($(platform), unix)
@@ -794,31 +813,74 @@ $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
 ${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
 include $(THEOS_MAKE_PATH)/library.mk
 else
-# Force a re-link when the exported ABI changes.  Almost every object is
-# identical either way, so a plain `make` followed by `make TEST_EXPORTS=1
-# test` would otherwise reuse the production-slim library -- it is newer
-# than every object, so nothing relinks -- and the white-box tests fail
-# with "Missing: m68k_execute".  Delete the library outright rather than
-# relying on a stamp file's mtime: the stamp and the library can land in
-# the same second, which is exactly the timestamp-granularity trap this is
-# meant to close.  Runs at parse time, once TARGET is known.
+# Force a rebuild when the build configuration changes ($(BUILD_AXES)).
+# Almost every object is identical across an ABI flip, so a plain `make`
+# followed by `make TEST_EXPORTS=1 test` would otherwise reuse the
+# production-slim library -- it is newer than every object, so nothing
+# relinks -- and the white-box tests fail with "Missing: m68k_execute".
+# Delete the library outright rather than relying on a stamp file's mtime:
+# the stamp and the library can land in the same second, which is exactly
+# the timestamp-granularity trap this is meant to close.  Runs at parse
+# time, once TARGET is known.
 #
-# vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
-# site or a vjtrace_pchist_*() call (including libretro.o's
-# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
-# *content* (not just the export list) that depends on TEST_EXPORTS --
-# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
-# -DVJ_TRACE line above), so those objects must be deleted alongside the
-# library on every mode transition, or a stale object compiled in the
-# other mode silently survives the relink: either vjtrace_* symbols go
-# missing from a `make TEST_EXPORTS=1` build that started from a plain
-# `make` (undefined symbols at link time), or the reverse transition
-# silently keeps the no-op macro expansion, so the ring never receives
-# events despite vjtrace_* being exported.
-VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
-$(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
-        || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })
+# The stamp covers every compile-affecting switch, not just TEST_EXPORTS
+# (issue #457).  It originally tracked TEST_EXPORTS alone, which left the
+# same hazard open one level up:
+#   BENCH_PROFILE -- `make TEST_EXPORTS=1` then
+#     `make BENCH_PROFILE=1 TEST_EXPORTS=1` recompiled nothing, so no
+#     object got -DBENCH_PROFILE, no PERF_COUNTER registered, and every
+#     timing_probe tool died with "timing_halfline_callbacks counter not
+#     found" -- which reads as a broken tool, not an ignored flag.
+#   DEBUG -- `make` then `make DEBUG=1` recompiled *zero* objects: a
+#     "debug build" that is entirely -O2 with no debug info.  The reverse
+#     leaves -O0 objects in a release binary and silently invalidates any
+#     performance measurement taken from it.
+# VJ_EXPECT_BUILD cannot catch either: the git rev is identical across the
+# flip, so the guard passes while the binary is wrong.
+#
+# TEST_EXPORTS also changes object *content*, not just the export list:
+# it adds -DVJ_TRACE to CFLAGS (see the line above), so vjtrace.o defines
+# the vjtrace_* functions only in that branch, and every object carrying a
+# VJT_EMIT/VJT_WATCH_*/vjtrace_pchist_*/vjtrace_init call site compiles to
+# real calls in one mode and to nothing in the other.  A stale object from
+# the other mode that survives the relink breaks the build in one direction
+# and lies in the other: TEST_EXPORTS=1 -> plain fails with undefined
+# vjtrace_* symbols, while plain -> TEST_EXPORTS=1 links fine but keeps the
+# no-op macro expansion, so the ring silently records nothing despite
+# vjtrace_* being exported.
+#
+# So a mode change flushes *every* object, not a curated list of the ones
+# believed to be trace-hooked.  That list is exactly the stale-.o hazard it
+# was meant to prevent: it shipped without src/tom/blit_memo.o, whose
+# BlitMemoLaunch VJT_EMIT call site broke `make TEST_EXPORTS=1 && make`.
+# Any list -- hand-written, grepped, or derived from -MD -- can also miss a
+# file that picks up the macros through an indirect include, so there is no
+# list.  Cost is one full rebuild per flip (~21s at -j8 without ccache);
+# the curated list already recompiled most of the heavy objects anyway.
+#
+# The $(shell) runs at parse time, so it would also fire under `make -n`.
+# That was tolerable when the flush was nine objects; with the whole object
+# list in scope a dry run would silently cost a full rebuild, so skip it
+# when -n is in effect.
+#
+# GNU make encodes -n two different ways, so both are matched.  Normally the
+# short options collect into MAKEFLAGS' first word with no leading dash
+# ("n", "ns", "nk") -- but under make 3.81 (stock macOS) a long option
+# empties that group and -n reappears as its own word, e.g.
+# `make --no-print-directory -n` gives MAKEFLAGS=" --no-print-directory -n".
+# Only the letter group is scanned for 'n' (no short option other than -n
+# uses that letter); long options and the `--`/NAME=value words that carry
+# command-line variables start with '-' or contain '=', and are dropped, so
+# `make platform=android` cannot false-match.  A false positive here would
+# silently skip the flush and bring the stale-object bug straight back, so
+# the detection is deliberately conservative in that direction.
+MAKEFLAGS_LETTERS := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+DRY_RUN := $(strip $(findstring n,$(MAKEFLAGS_LETTERS)) \
+                   $(filter -n --dry-run --just-print --recon,$(MAKEFLAGS)))
+$(if $(DRY_RUN),,\
+$(shell [ "$$(cat $(BUILD_CONFIG_STAMP) 2>/dev/null)" = "$(BUILD_CONFIG)" ] \
+        || { printf '%s' "$(BUILD_CONFIG)" > $(BUILD_CONFIG_STAMP); \
+             rm -f $(TARGET) $(OBJECTS) $(LEGACY_LINK_MODE_STAMP); }))
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
@@ -833,12 +895,12 @@ endif
 $(CORE_DIR)/libretro.o: $(VERSION_H)
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) $(LINK_MODE_STAMP) \
+	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
 		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
-		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
+		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
 		test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_eeprom_read_race \
@@ -851,7 +913,11 @@ clean:
 		test/dump_pc test/heap_search \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
+		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test \
+		test/test_quadrature \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -889,10 +955,11 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
+		test/test_fountain_crash \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
@@ -904,7 +971,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
-		test/tools/i2s_lag_probe
+		test/tools/test_hook_gate \
+		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/test_quadrature test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -932,6 +1002,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# into test/tools/ on first run (see the script header); needs only
 	@# the in-tree test/roms/yarc.j64, never test/roms/private.
 	bash test/tools/vjtrace_selftest.sh ./$(TARGET)
+	@# Boot-matrix shared logic (matrix_common.sh): core-fault verdicts must
+	@# never be blamed on a title, and the row cache must ignore docs-only
+	@# changes. Synthetic logs only -- no ROMs, no core, runs in <1s.
+	bash test/tools/matrix_common_test.sh
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
@@ -939,6 +1013,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_titledb
+	./test/test_titlehook
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -949,6 +1024,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_subsystem_timeline ./$(TARGET)
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
+	@# Fountain (#469): dummy-cart vector park always (CI).  Live jagcrypt
+	@# ROM is public but not vendored -- ledger a skip for that arm only.
+	./test/test_fountain_crash ./$(TARGET) --bios --quiet
+	@if [ -f /tmp/fountain_vj.j64 ]; then \
+		./test/test_fountain_crash ./$(TARGET) /tmp/fountain_vj.j64 --bios --frames 180 --option virtualjaguar_pal=enabled --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Fountain live abort (#469)" "no /tmp/fountain_vj.j64"; \
+	fi
 	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
 	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
 	@# with ROMs, without ROMs, always.  It was invoked bare, so those two
@@ -1128,6 +1211,26 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_cart_format ./$(TARGET)
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	@# $F14000/$F14002 identity guardrail for the input-devices track
+	@# (#428/#429/#436): sweeps the whole joystick read domain and asserts
+	@# an FNV digest measured on develop.  Committed before any device code
+	@# so later PRs are measured against a number that predates them.
+	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Quadrature encoder unit test (no core): the Gray sequence in both
+	@# directions, the one-state-per-advance rate policy, the backlog
+	@# clamp and the Q8 carry.
+	./test/test_quadrature
+	@# ST/Amiga mouse end-to-end: synthetic deltas in, decoded direction
+	@# and distance out, all three wiring cases and all three poll shapes,
+	@# plus row-blindness and the v12 savestate round-trip.
+	./test/tools/mouse_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Tempest rotary end-to-end (#436): synthetic rotation in, decoded
+	@# direction and magnitude out in BOTH directions on BOTH ports, the
+	@# row-0-only visibility that distinguishes a matrix device from the
+	@# row-blind mouse, Tempest 2000's measured 8-write scan, the
+	@# two-controller Pause unlock, the C2/C3 ID bits and a savestate
+	@# round-trip mid-rotation.
+	./test/tools/rotary_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1248,6 +1351,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+	@# Enhancement hooks (issue #370).  All four gates run on in-repo public
+	@# content, so none of them can skip -- and hook_identity_ab.sh now
+	@# ENFORCES that rather than asserting it: it counts the ROMs it actually
+	@# compared and fails on zero, instead of exiting 0 having skipped them
+	@# all.  The hook array is installed
+	@# programmatically via TitleDBSetHooksForTest -- deliberately NOT as a
+	@# canary row in the shipped table, which would break --case 5 above.
+	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case on --quiet
+	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case off --quiet
+	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case mismatch --quiet
+	@# Stock-path identity: with the gate at its default AND with it turned
+	@# on (no shipped row carries a hook), the per-frame framebuffer-hash
+	@# CSVs must be byte-identical.  Epic #338's non-negotiable guardrail.
+	bash test/tools/hook_identity_ab.sh ./$(TARGET)
 	@echo ""
 	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
 	@echo "test/test_cd_toc_contract (needs VJ_TOC_DISC=<image>),"
@@ -1273,6 +1390,16 @@ test/test_titledb: test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 
+# Enhancement-hook applier (issue #370).  Host unit test: no dlopen, no
+# ROMs.  titlehook.c's pure half takes the image as a parameter, so this
+# links with the same two-file style as test_titledb plus a handful of
+# stubbed core globals defined in the test itself.
+test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
+		src/core/titledb.c src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_titlehook.c src/core/titlehook.c \
+		src/core/titledb.c src/core/crc32.c
+
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
@@ -1296,6 +1423,10 @@ test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/ua
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_uart_core.c test/harness/harness.c -ldl -lm
+
+test/test_fountain_crash: test/test_fountain_crash.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/test_fountain_crash.c test/harness/harness.c -ldl -lm
 
 test/test_netlink_host: test/test_netlink_host.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
@@ -1434,6 +1565,45 @@ test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 		-o $@ test/tools/test_pertitle_db.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# End-to-end enhancement-hook gate wiring (issue #370).  Needs
+# TitleDBSetHooksForTest + TitleHookApplyROM + jagMemSpace from the wide
+# test symbol set (exports-test.list / link-test.T) -- note TitleHook* is
+# NOT covered by the TitleDB* wildcard and is listed separately there.
+test/tools/test_hook_gate: test/tools/test_hook_gate.c \
+		test/harness/harness.c test/harness/harness.h \
+		src/core/titledb.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_hook_gate.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
+# the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
+test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
+		src/jerry/inputdev.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/joymatrix_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/mouse_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/rotary_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_quadrature: test/test_quadrature.c src/jerry/quadrature.c src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_quadrature.c src/jerry/quadrature.c
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1625,7 +1795,8 @@ tools: test/dump_pc test/heap_search test/test_cd_boot
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
-        runahead-determinism
+        runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
 
 lint:
@@ -1781,6 +1952,40 @@ cd-visual:
 .PHONY: cue2cdi
 cue2cdi:
 	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
+
+# ---------------------------------------------------------------------------
+# JaguarDemos corpus (https://codeberg.org/42Bastian/JaguarDemos)
+#
+# On-demand clone + cart_boot_probe sweep.  NOT part of `make test`.
+# Smoke (curated list) is what PR CI runs; full is for release PRs / tags.
+# See test/jaguar-demos/README.md.  The clone is gitignored under
+# test/vendor/JaguarDemos — not a submodule, so a normal checkout stays
+# small and CI pins the SHA in test/jaguar-demos/PIN.
+# ---------------------------------------------------------------------------
+.PHONY: jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
+jaguar-demos-fetch:
+	bash test/jaguar-demos/run.sh fetch
+
+jaguar-demos-build: jaguar-demos-fetch
+	bash test/jaguar-demos/run.sh build
+
+jaguar-demos-smoke jaguar-demos: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-smoke jaguar-demos:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh smoke ./$(TARGET)
+
+jaguar-demos-full: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-full:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh build
+	bash test/jaguar-demos/run.sh full ./$(TARGET)
+
+jaguar-demos-baseline: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-baseline:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh build
+	bash test/jaguar-demos/run.sh baseline ./$(TARGET)
 
 print-%:
 	@echo '$*=$($*)'

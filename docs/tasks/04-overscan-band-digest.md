@@ -122,7 +122,10 @@ Minimal acceptable `fb_row_diff.py` behaviour for merge:
        test/harness/harness.c -ldl -lm
    ```
 
-5. Gate run — AvP (wide) vs yarc (typically 320):
+5. Gate run. **AvP's first ~31 frames are the 320-wide title screen** — the
+   band only appears once it switches to 326, so run 400 frames and scan every
+   frame, never just frame 0. (`yarc.j64` is not a 320-only title either: only
+   its frame 0 is 320 wide, frames 1+ are also 326.)
 
    ```bash
    AVP='test/roms/private/ROMS/Alien vs Predator (1994).jag'
@@ -130,25 +133,29 @@ Minimal acceptable `fb_row_diff.py` behaviour for merge:
 
    VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
      ./test/tools/fb_row_digest ./virtualjaguar_libretro.dylib "$AVP" \
-       --frames 120 --out /tmp/avp_dig3.bin --quiet
+       --frames 400 --out /tmp/avp_dig3.bin --quiet
 
    VJ_EXPECT_BUILD=$(./scripts/build-id.sh) \
      ./test/tools/fb_row_digest ./virtualjaguar_libretro.dylib test/roms/yarc.j64 \
        --frames 120 --out /tmp/yarc_dig3.bin --quiet
 
-   # Inspect with Python one-liner (not committed):
+   # Inspect with Python (not committed) — scans all frames:
    python3 <<'PY'
-   import struct, sys
+   import struct, collections
    def peek(path):
-       b = open(path,'rb').read(16)
-       assert b[:8] == b'VJFBDIG3', b[:8]
-       nv, na = struct.unpack_from('<2I', b, 8)
-       # first frame header after 16-byte file hdr
-       f = open(path,'rb'); f.seek(16)
-       w,h,fh,ext = struct.unpack('<4I', f.read(16))
-       f.read(4*h)  # row hashes
-       band = struct.unpack('<6I', f.read(24))
-       print(path, 'frames', nv, 'w', w, 'band', band)
+       f = open(path,'rb')
+       assert f.read(8) == b'VJFBDIG3'
+       nv, na = struct.unpack('<2I', f.read(8))
+       widths = collections.Counter()
+       first_wide = None
+       for i in range(nv):
+           w,h,fh,ext = struct.unpack('<4I', f.read(16))
+           f.read(4*h)
+           band = struct.unpack('<6I', f.read(24))
+           widths[w] += 1
+           if w > 320 and first_wide is None:
+               first_wide = (i, band)
+       print(path, 'frames', nv, 'widths', dict(widths), 'first_wide', first_wide)
    peek('/tmp/avp_dig3.bin')
    peek('/tmp/yarc_dig3.bin')
    PY
@@ -163,21 +170,43 @@ dd if=/tmp/avp_dig3.bin bs=8 count=1 2>/dev/null | od -An -tc
 
 python3 <<'PY'
 import struct
-def band(path):
-    f=open(path,'rb'); assert f.read(8)==b'VJFBDIG3'
-    nv,na=struct.unpack('<2I', f.read(8))
-    w,h,fh,ext=struct.unpack('<4I', f.read(16))
-    f.read(4*h)
-    return struct.unpack('<6I', f.read(24)) + (w,)
-bx0,bw,bh,bnb,fx,fy,w = band('/tmp/avp_dig3.bin')
-assert w > 320, w
-assert bx0 == 320 and bw == w-320, (bx0,bw,w)
-print('AVP_OK', w, bw)
-bx0,bw,bh,bnb,fx,fy,w = band('/tmp/yarc_dig3.bin')
-assert bw == 0 or w <= 320, (w,bw)
-print('YARC_OK', w, bw)
+NARROW = (0, 0, 0, 0, 0xFFFFFFFF, 0xFFFFFFFF)
+
+def scan(path):
+    f = open(path,'rb')
+    assert f.read(8) == b'VJFBDIG3', 'bad magic'
+    nv, na = struct.unpack('<2I', f.read(8))
+    wide, narrow = [], []
+    for i in range(nv):
+        w,h,fh,ext = struct.unpack('<4I', f.read(16))
+        f.read(4*h)
+        b = struct.unpack('<6I', f.read(24))
+        (wide if w > 320 else narrow).append((i, w, b))
+    return nv, wide, narrow
+
+nv, wide, narrow = scan('/tmp/avp_dig3.bin')
+assert wide, 'AvP: no frame wider than 320 in %d frames' % nv
+fi, fw, fb = wide[0]
+assert fb[0] == 320 and fb[1] == fw - 320, (fi, fw, fb)
+for i, w, b in narrow:
+    assert b == NARROW, ('AvP narrow frame has non-sentinel band', i, w, b)
+print('AVP_OK frames=%d first_wide=%d w=%d band_x0=%d band_width=%d narrow=%d'
+      % (nv, fi, fw, fb[0], fb[1], len(narrow)))
+
+nv, wide, narrow = scan('/tmp/yarc_dig3.bin')
+for i, w, b in wide:
+    assert b[0] == 320 and b[1] == w - 320, (i, w, b)
+for i, w, b in narrow:
+    assert b == NARROW, ('yarc narrow frame has non-sentinel band', i, w, b)
+print('YARC_OK frames=%d wide=%d narrow=%d' % (nv, len(wide), len(narrow)))
 PY
 # exit 0
+
+# Error paths must return 2 with no traceback
+python3 test/tools/fb_row_diff.py /tmp/nope.bin /tmp/yarc_dig3.bin --label missing; echo exit:$?
+head -c 400 /tmp/yarc_dig3.bin > /tmp/trunc_dig3.bin
+python3 test/tools/fb_row_diff.py /tmp/trunc_dig3.bin /tmp/yarc_dig3.bin --label trunc; echo exit:$?
+# both: a single 'FAIL <label>: ...' line and exit:2
 
 python3 test/tools/fb_row_diff.py /tmp/yarc_dig3.bin /tmp/yarc_dig3.bin --label yarc
 # exit 0 (identical)
@@ -185,7 +214,7 @@ python3 test/tools/fb_row_diff.py /tmp/yarc_dig3.bin /tmp/yarc_dig3.bin --label 
 
 ## STOP conditions (abort triggers — report, do not improvise)
 
-- AvP dump shows `width <= 320` for all frames — the overscan strip is not
+- AvP dump shows `width <= 320` for **all 400** frames — the overscan strip is not
   reachable via this path on current develop; STOP and report (do not blank
   columns in the core to "create" a band).
 - You are about to "fix" #266 by clearing columns 320–325 in TOM/OP — STOP.

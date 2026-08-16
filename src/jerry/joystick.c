@@ -15,6 +15,7 @@
 
 #include <string.h>			// For memset()
 #include "joystick.h"
+#include "inputdev.h"
 #include "settings.h"
 
 // Global vars
@@ -74,6 +75,24 @@ uint16_t JoystickReadWord(uint32_t offset)
 		offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
 		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
 
+		// Non-pad devices self-clock against the game's own polling: at
+		// most one quadrature state per armed read (inputdev.h).  The
+		// decoded row per port is passed rather than gated on here: a
+		// mouse still advances only when ITS port's row select is
+		// asserted (any of rows 0-3 -- the adapter is row-blind, and
+		// without that a title polling port 1 rapidly would advance the
+		// port-2 encoder between the port-2 poller's own samples, the
+		// lost motion the one-state ceiling exists to prevent, mapping
+		// doc section 5), while a rotary is a matrix device whose phases
+		// exist in row 0 only and so samples on a row-0 read of its own
+		// port.  Both gates live in inputdev.c because a port-1 rotary
+		// has to advance on reads a port-2 test would reject.  No-op
+		// when nothing but pads are attached.  The two lookups above are
+		// pure table reads, hoisted (not added) so they can be passed
+		// here.
+		InputDevClock(offset0 == 0xFF ? 0xFF : offset0 / 4,
+		              offset1 == 0xFF ? 0xFF : offset1 / 4);
+
 		if (offset0 != 0xFF)
 		{
 			unsigned i;
@@ -98,7 +117,8 @@ uint16_t JoystickReadWord(uint32_t offset)
 			data &= msk2[offset1 / 4];
 		}
 
-		return data;
+		// Row-independent overlay for a non-pad device (inputdev.h).
+		return InputDevOverlayF14000(data);
 	}
 	else if (offset == 2)
 	{
@@ -132,7 +152,10 @@ uint16_t JoystickReadWord(uint32_t offset)
 				data &= (joypad1Buttons[mask[offset1][1]] ? 0xFFFB : 0xFFFF);
 		}
 
-		return data;
+		// offset0/offset1 already hold the decoded row (0-3), or 0xFF when
+		// that port's nibble is not a socket-0 code -- both divisions above
+		// happen in place.
+		return InputDevOverlayF14002(data, offset0, offset1);
 	}
 
 	return 0xFFFF;
@@ -149,6 +172,8 @@ void JoystickWriteWord(uint32_t offset, uint16_t data)
 	{
 		audioEnabled     = ((data & 0x0100) ? true : false);
 		joysticksEnabled = ((data & 0x8000) ? true : false);
+		// Arm the non-pad emission clock (inputdev.h).
+		InputDevArm();
 	}
 }
 

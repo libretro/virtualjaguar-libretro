@@ -343,6 +343,18 @@ jobs:
         path: ${{ matrix.config.artifact }}
         if-no-files-found: error
 
+    # TEST_EXPORTS=1 -> production mode switch.  TEST_EXPORTS adds
+    # -DVJ_TRACE, so it changes object *content*, not just the export list;
+    # the Makefile flushes every object on a mode change, and a stale one
+    # fails the link with undefined vjtrace_* symbols.  The build + `make
+    # test` steps above already exercise plain -> TEST_EXPORTS=1; this is the
+    # reverse, which is the direction that regressed (blit_memo.o was missing
+    # from the flush list).  Runs last so it cannot hand a production-ABI
+    # library to the dlsym-based steps or to the uploaded artifact.
+    - name: Verify TEST_EXPORTS -> production mode switch relinks
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
+
   msvc-check:
     name: MSVC ${{ matrix.arch }} compilation check
     runs-on: windows-latest

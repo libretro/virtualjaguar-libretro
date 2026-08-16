@@ -1,0 +1,16 @@
+# Curated smoke set: prefer titles that light up under HLE so PR CI
+# catches real regressions.  One or two known-FAIL BootIntros stay in
+# the list to document HLE gaps (FAIL in BASELINE.txt is non-blocking).
+#
+# Skips in-tree yarc.j64 / jagniccc.j64 (covered by make test + regression).
+# voxelFlight has no committed .j64 (zip-only).
+
+jag_ball/jag_ball.j64
+jagniccc2000_dda/jagniccc.j64
+jagniccc2000_tri/jagniccc_tri.j64
+hirez_slideshow/slideshow.j64
+gpuobj_hack/gpuobj.j64
+jagniccc2000/jagniccc_desertd2.j64
+# Known FAIL under HLE (GPU-only / BootIntro — needs Model-M BIOS path):
+yarc_reloaded/cube.j64
+256/Outline2026/Fountain/vj.j64

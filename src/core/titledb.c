@@ -43,6 +43,42 @@
  * QUALIFY16 405.8k/4800f=84.5/f (both thresholds cleared); Cybermorph
  * shaded 1.70M/2400f=708/f (cleared), QUALIFY16 13/2400f=0.005/f (below
  * threshold) -> true_color only.
+ *
+ * ------------------------------------------------------------------
+ * hooks[] authoring checklist (issue #370, docs/enhancement-hooks.md)
+ *
+ * A hook row (a byte patch into cartridge ROM at load) is admissible
+ * only when ALL of the following hold.  test_titledb enforces the
+ * mechanical half at `make test` time; the rest is review.
+ *
+ *  1. `offset` is PAYLOAD-relative -- verified against a headerless
+ *     dump, or with 512 subtracted from a headered one.  The CRC is
+ *     identical for both dumps, so a raw hex-editor offset from a
+ *     headered file is silently wrong by 512.
+ *  2. `expect[]` was read out of the SHIPPED image at that offset, and
+ *     `crc32` is the CRC of that exact image.  NEVER inherited from an
+ *     alias row: the Doom EX rows above deliberately reuse retail
+ *     Doom's pairs, and that is safe for settings and unsafe for bytes,
+ *     because offset $X in a romhack is exactly the region the hack may
+ *     have rewritten.  On mismatch the applier refuses and logs; it
+ *     never writes.
+ *  3. The behaviour the patch produces was determined by OUR OWN
+ *     analysis (disassembly, vjtrace, m68k_pc_histogram, gpu_disasm_dump,
+ *     trace_dump) and the comment cites which.  No third-party patch
+ *     data is transliterated into this table.
+ *  4. The defect is a GAME defect, not one of ours.  A hook whose root
+ *     cause is emulator inaccuracy is rejected at review and re-filed
+ *     against the accuracy track (#319 / #408).
+ *  5. Before/after measurement is committed as the row's evidence, the
+ *     way every existing row cites its census numbers.
+ *  6. cart_boot_probe boots the title clean with the hook on.
+ *  7. frame_hash_ab with virtualjaguar_enhancement_hooks OFF is
+ *     byte-identical to the pre-change build.
+ *
+ * The table currently ships ZERO hook rows.  The mechanism is complete,
+ * gated off by default and CI-covered; rows land as data once a
+ * behaviour has been researched to the standard above.
+ * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
    /* Alien vs Predator (retail) — 2x internal resolution + true color.
@@ -119,7 +155,31 @@ static const TitleDBEntry titledb_table[] = {
 
    /* Doom EX romhack family — alias rows inheriting Doom (0x5E2CDBC0)'s
     * pairs.  CRC = IPS patch applied to the verified retail dump;
-    * boot-verified via cart_boot_probe (issue #409). */
+    * boot-verified via cart_boot_probe (issue #409).
+    *
+    * NO virtualjaguar_p2_device ROW HERE, and it is not an oversight
+    * (#429, #428).  #429 proposed auto-selecting the ST/Amiga mouse for
+    * JagDoomEX by CRC; the design spec made that row conditional on
+    * first confirming the title actually reads port 2.  It does not.
+    * Disassembled against every CRC in this block (plus the 250318
+    * archive build, which hashes to 0x35743B9C above):
+    *
+    *   - the pad poll writes only the port-1 row selects $81FE, $81FD,
+    *     $81FB and $81F7.  The port-2 nibble is $F in all four, i.e.
+    *     every port-2 row is deselected;
+    *   - the poll then does or.l #$F0FFFFFC before and.l into an 8-bit
+    *     accumulator, so $F14000 bits 12-15 -- the four lines a mouse
+    *     adapter drives -- cannot reach the result;
+    *   - all 11 absolute-long $F14000 references in the image are
+    *     accounted for: 8 in that poll, one move.l #$100 at init, and
+    *     two lea $F14000,a0 in the EEPROM driver (which reads bit 0).
+    *     There is no other path to the register.
+    *
+    * A row here would therefore disconnect the port-2 RetroPad for a
+    * title that reads nothing from port 2, in exchange for no function.
+    * Do not add one without re-running that check against the build in
+    * hand -- a future JagDoomEX release may add mouse support, and it
+    * will hash differently from every CRC listed here anyway. */
    {
       0x754096DB, "Doom EX (JagDoomEX)",
       {
@@ -294,6 +354,10 @@ static const TitleDBEntry *current = NULL;
 /* Kept even on a miss so the caller can name the CRC it looked up. */
 static uint32_t content_crc = 0;
 
+/* Test-only hook override; see TitleDBSetHooksForTest in titledb.h. */
+static const TitleDBHook *hooks_override = NULL;
+static int hooks_override_count = 0;
+
 /*
  * Internal: set the CRC directly.
  * Linear-scan the table to find a match.
@@ -378,6 +442,43 @@ const char *TitleDBTitleName(void)
    if (current == NULL)
       return NULL;
    return current->name;
+}
+
+/*
+ * Enhancement hooks for the loaded content, or NULL on a miss.
+ * The test override, when installed, wins regardless of CRC match.
+ */
+const TitleDBHook *TitleDBHooks(int *count)
+{
+   if (hooks_override != NULL)
+   {
+      if (count != NULL)
+         *count = hooks_override_count;
+      return hooks_override;
+   }
+
+   if (current == NULL)
+      return NULL;
+
+   if (count != NULL)
+      *count = TITLEDB_MAX_HOOKS;
+   return current->hooks;
+}
+
+/*
+ * Test-only: install a hook array TitleDBHooks() returns regardless of
+ * CRC match.  NULL restores normal table lookup.
+ */
+void TitleDBSetHooksForTest(const TitleDBHook *hooks, int count)
+{
+   if (hooks == NULL || count <= 0)
+   {
+      hooks_override = NULL;
+      hooks_override_count = 0;
+      return;
+   }
+   hooks_override = hooks;
+   hooks_override_count = count;
 }
 
 /*

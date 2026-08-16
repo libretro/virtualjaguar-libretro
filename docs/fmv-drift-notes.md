@@ -309,6 +309,22 @@ than a visible stall. Worth a diagnostic log line at minimum
 
 ### 5.2 The emulated NTSC field is one halfline short — unverified, out of scope
 
+> **RESOLVED (2026-08-14, issue #392).** 524 is **correct** and there is no
+> 0.19 % field-clock error. `Technical Reference v8.pdf` and
+> `Technical Reference v10.pdf` in the same directory *do* carry a text
+> layer (only the chunked `03/04 - *.pdf` scans do not), and they settle it:
+> JTRM Rev 8 p.15 (`VP`) — "the number of half lines per field ... one more
+> than the value written ... **If the number of half lines is odd then the
+> display is interlaced**"; JTRM Rev 10 p.8 "Video Timings" — Vertical Lines
+> (non interlaced) = **524 NTSC / 624 PAL**, with 525/625 listed as the
+> *interlaced* variants. Titles run non-interlaced, so 524/624 is the
+> hardware field and 59.94 Hz is the interlaced 262.5-line rate the Jaguar
+> does not use. The hedge below ("a real Jaguar NTSC field may genuinely be
+> 60.05 Hz") was right. The section's own conclusion — do not change `VP` —
+> stands, and the *advertised* rate now follows the emulated field
+> (`JaguarGetFieldRateHz()`, `libretro.c retro_get_system_av_info`).
+> The original text is left in place below for the record.
+
 `src/tom/tom.c:1159` sets `VP = 523`, i.e. 524 halflines per field:
 
 ```
@@ -381,7 +397,9 @@ playthrough".
 * **Space Ace beyond boot.** Its clock pair was located
   (`$00582E`/`$005830`) and matches Dragon's Lair bit-for-bit at the same
   field, but no long run was made.
-* **VP against the JTRM** — see §5.2, the PDFs have no text layer.
+* **VP against the JTRM** — see §5.2. **Now done (#392):** the chunked
+  `03/04 - *.pdf` scans have no text layer, but `Technical Reference
+  v8.pdf` / `v10.pdf` do; 524/624 non-interlaced is confirmed.
 * **Anything above the core.** Frontend-side pacing (RetroArch audio-sync
   resampling, frame duping/dropping when the host cannot hold 60 fps,
   fast-forward, run-ahead) is invisible to a headless harness and is not

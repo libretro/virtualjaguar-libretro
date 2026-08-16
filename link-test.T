@@ -65,7 +65,11 @@
       ResolveBootConfig;
       BlitterCompare*;
       DAC*;
-      JoystickState*;
+      Joystick*;
+      joypad0Buttons;
+      joypad1Buttons;
+      InputDev*;
+      Quad*;
       MTState*;
       NVMBios*;
       NVM_*;
@@ -79,6 +83,9 @@
       shadowFBActive;
       blitMemo*;
       TitleDB*;
+      /* TitleHook* is NOT covered by TitleDB* -- the applier lives in its
+       * own translation unit and its own name prefix. */
+      TitleHook*;
       vjtrace_*;
    local: *;
 };

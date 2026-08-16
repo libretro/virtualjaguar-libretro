@@ -1,0 +1,116 @@
+name: Kimi review
+
+# Second-opinion AI review, independent of Copilot (whose quota is per-requester
+# and runs out) and of CodeRabbit.  Self-contained on purpose: no third-party
+# action to drift, and the auth shape stays visible in one file.
+#
+# Runs automatically on PRs into develop/master, and on demand by commenting
+# "@kimi review" on a pull request.
+#
+# Fails SOFT: a review is advisory, so an API hiccup must never red-X a PR that
+# compiles and passes its tests.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [develop, master]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '@kimi review'))
+    runs-on: ubuntu-latest
+    # The script soft-fails on purpose, but that only covers failures the
+    # script is alive to see.  Anything earlier -- checkout, a runner
+    # hiccup, a missing secret -- used to red-X the PR, which is the one
+    # thing this workflow's header says it must never do.  Same pattern the
+    # sanitizer job uses for the same reason: advisory, not gating.
+    continue-on-error: true
+    steps:
+      - name: Resolve PR number
+        id: pr
+        run: |
+          set -u
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # GitHub computes refs/pull/N/merge asynchronously, so a job that starts
+      # immediately after a push -- especially a force-push, where mergeability
+      # goes back to UNKNOWN -- can reach checkout before the ref exists.
+      # actions/checkout's own retry (3 tries over ~40s) is not always enough:
+      # PR #450 burned all three and failed the job outright.
+      #
+      # That failure mode is worse than it looks.  It happens in `checkout`,
+      # BEFORE kimi_review.py runs, so none of the script's soft-fail handling
+      # applies and the advisory reviewer red-Xes a PR that compiles and passes
+      # its tests -- exactly what this workflow's design forbids.
+      - name: Resolve the ref to review
+        id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          n='${{ steps.pr.outputs.number }}'
+          url="https://github.com/${{ github.repository }}"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if git ls-remote --exit-code "$url" "refs/pull/$n/merge" >/dev/null 2>&1; then
+              echo "ref=refs/pull/$n/merge" >> "$GITHUB_OUTPUT"
+              echo "merge ref available after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "refs/pull/$n/merge not computed yet (attempt $i); waiting 10s"
+            sleep 10
+          done
+          # Fall back rather than fail.  The head ref reviews the same diff;
+          # what it loses is the merge ref's useful property that an open PR
+          # picks up a reviewer fix landed on its base without a rebase.  Say
+          # so, because a silent downgrade is how the base-branch behaviour
+          # would quietly stop being true.
+          echo "ref=refs/pull/$n/head" >> "$GITHUB_OUTPUT"
+          echo "::warning title=Reviewing the head ref::refs/pull/$n/merge was still not computed after 100s; reviewing refs/pull/$n/head instead. The diff is the same, but this run does not pick up base-branch changes."
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Explicit, because the default differs per event: `pull_request`
+          # gives the merge ref, but `issue_comment` gives the DEFAULT branch
+          # (master here) -- which carries neither this workflow nor the
+          # script, so an "@kimi review" comment would run the wrong tree.
+          # The merge ref is right for both, and it is what makes a PR pick up
+          # a reviewer fix that has landed on its base without needing a rebase.
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Review
+        env:
+          # Keys from the Kimi Code console (kimi.com/code/console) are for the
+          # "Kimi for Coding" SUBSCRIPTION, which is a different host from the
+          # pay-per-token Moonshot platform -- a subscription key 401s against
+          # api.moonshot.ai. Two protocol bases are offered; we use the
+          # OpenAI-compatible one:
+          #   OpenAI-compatible:    https://api.kimi.com/coding/v1
+          #   Anthropic-compatible: https://api.kimi.com/coding/
+          # The console issues a single key value; KIMI_KEY_ID is sent as an
+          # identifying header, harmless where unused.
+          #
+          # Models are tier-dependent: k3, k3-256k, kimi-for-coding,
+          # kimi-for-coding-highspeed. Override either value with a repo
+          # variable -- no code change needed.
+          KIMI_KEY_VALUE: ${{ secrets.KIMI_KEY_VALUE }}
+          KIMI_KEY_ID: ${{ secrets.KIMI_KEY_ID }}
+          KIMI_API_BASE: ${{ vars.KIMI_API_BASE || 'https://api.kimi.com/coding/v1' }}
+          KIMI_MODEL: ${{ vars.KIMI_MODEL || 'k3-256k' }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: python3 .github/scripts/kimi_review.py

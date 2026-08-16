@@ -183,6 +183,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_enhancement_hooks",
+      "Per-Title Enhancement Hooks",
+      NULL,
+      "Apply per-game byte patches from the enhancement database to the loaded cartridge image at load time (game-side fixes that no core option can express). Off by default. Each patch verifies the bytes it expects to find and refuses to write anything if they differ, so it can never corrupt a dump it was not written for. Cartridge content only; a change takes effect on restart.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_blit_memo",
       "Blit Memoization (Per-Title)",
       NULL,
@@ -480,6 +494,93 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
+   },
+   {
+      "virtualjaguar_p2_device",
+      "Port 2 > Controller Type",
+      "Controller Type",
+      "Which peripheral is plugged into controller port 2. 'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons stay on the RetroPad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
+      NULL,
+      "input_p2",
+      {
+         { "auto",                "Auto (per-title default)" },
+         { "pad",                 "Standard Joypad" },
+         { "mouse_st",            "Atari ST / PS2 Mouse" },
+         { "mouse_amiga",         "Amiga Mouse (ST adapter)" },
+         { "mouse_amiga_adapter", "Amiga Mouse (Amiga adapter)" },
+         { "rotary",              "Rotary (Tempest)" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "virtualjaguar_p1_device",
+      "Port 1 > Controller Type",
+      "Controller Type",
+      "Which peripheral is plugged into controller port 1. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons (A, B, C, Option, Pause and the keypad) stay on the RetroPad, which is what a real rotary has. There is no per-title default for this option and there never will be -- selecting a rotary removes Up and Down, so it would break menu navigation for anyone using a pad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
+      NULL,
+      "input_p1",
+      {
+         { "auto",   "Auto (per-title default)" },
+         { "pad",    "Standard Joypad" },
+         { "rotary", "Rotary (Tempest)" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "virtualjaguar_rotary_sensitivity",
+      "Rotary Sensitivity",
+      "Rotary Sensitivity",
+      "Scales spinner movement before it is converted to quadrature pulses. The emulated encoder can only emit one pulse per controller poll of its row, so raising this past what the game's poll rate can carry adds lag rather than speed.",
+      NULL,
+      "input",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { "150", "150%" },
+         { "200", "200%" },
+         { "300", "300%" },
+         { "400", "400%" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_rotary_id",
+      "Rotary Reports Controller Type",
+      "Rotary Reports Controller Type",
+      "Whether an emulated rotary identifies itself to software as a rotary (diode D23 fitted). Most rotary controllers ever built shipped without the diode and identify as a standard joypad, which is the default here. Tempest 2000 does not read this -- it uses its own CONTROLLER TYPE menu instead.",
+      NULL,
+      "input",
+      {
+         { "joypad", "Standard Joypad (no diode -- as most real units)" },
+         { "rotary", "Tempest Rotary (diode fitted)" },
+         { NULL, NULL },
+      },
+      "joypad"
+   },
+   {
+      "virtualjaguar_mouse_sensitivity",
+      "Port 2 > Mouse Sensitivity",
+      "Mouse Sensitivity",
+      "Scales mouse movement before it is converted to quadrature pulses. The emulated device can only emit one pulse per controller poll, so raising this past what the game's poll rate can carry adds lag rather than speed.",
+      NULL,
+      "input_p2",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { "150", "150%" },
+         { "200", "200%" },
+         { "300", "300%" },
+         { "400", "400%" },
+         { NULL, NULL },
+      },
+      "100"
    },
    {
       "virtualjaguar_p1_numpad_to_kb",

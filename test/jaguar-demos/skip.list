@@ -1,0 +1,15 @@
+# Relative paths (or shell globs) excluded from the full sweep.
+# One pattern per line.  '#' comments and blank lines are ignored.
+#
+# In-tree duplicates (screenshot regression + make test already cover these):
+yarc/yarc.j64
+jagniccc2000/jagniccc.j64
+#
+# Prefer Model-M / vj pads: drop _K / _k siblings when a Model-M or
+# un-suffixed sibling is selected by run.sh's prefer-pad logic.  Explicit
+# skips below catch cases where only the K variant should be ignored even
+# if dedupe misses them (e.g. differently named pairs).
+#
+# BootIntros that need a real Model-M BIOS under HLE are recorded as FAIL
+# in BASELINE.txt rather than skipped — so a future BIOS-path improvement
+# can flip FAIL -> PASS without changing this list.

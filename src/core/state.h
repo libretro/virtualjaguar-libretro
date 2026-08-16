@@ -35,19 +35,27 @@ extern "C" {
  *     all in-flight changes since the last release use v7.
  * v8: trailing Jaguar GameDrive chunk (bank pages + SPI mailbox engine,
  *     jaggd.c).  One shared bump — all in-flight changes since the
- *     v3.1.0 release use v8.  This is the newest RELEASED layout (v3.2.0).
- * v9: DAC block gained the I2S ring (dac.c).  develop only.
+ *     v3.1.0 release use v8.  Released in v3.2.0.
+ * v9: DAC block gained the I2S ring (dac.c).
  * v10: trailing blitter busy-window counter (blitter timing model).
- *     develop only.
  * v11: trailing hi-res shadow-surface epoch (shadowfb.c).  The epoch is a
  *     modulo-256 age stamp that gates which supersampled blocks resolve,
  *     and ShadowHiresFrameTick() drops every cached block when it wraps.
  *     That clear is visible in the presented frame, so a state restored
  *     without it replays the wrap at a different frame and diverges —
  *     which is exactly the determinism we advertise as
- *     savestate_features = 3.  See issue #400. */
+ *     savestate_features = 3.  See issue #400.
+ *     v9-v11 all shipped together: this is the newest RELEASED layout
+ *     (v3.3.0).  (The note that used to sit on v8 calling it the newest
+ *     released layout, and the "develop only" tags on v9-v11, were stale
+ *     from before the v3.3.0 cut.)
+ * v12: trailing input-device chunk (src/jerry/inputdev.c).  The
+ *     quadrature accumulator and phase are machine-visible — the phase IS
+ *     what the game reads at $F14000 — so a state restored without them
+ *     replays different motion.  Older states load with the encoders
+ *     reset, which is what a pre-v12 core was.  develop only. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   11
+#define STATE_VERSION   12
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -118,6 +126,11 @@ extern "C" {
  * (shadowfb.c).  Issue #400: without it, the epoch wrap's cache clear
  * replays at a different frame after a rollback and the picture diverges. */
 #define STATE_VERSION_HIRES_EPOCH 11
+/* First version carrying the trailing input-device chunk (inputdev.c):
+ * per-port quadrature backlog / Q8 carry / Gray phase, the mouse button
+ * latches, and the emission-clock armed flag.  Older states load with
+ * InputDevReset() -- encoders at phase 0, no button held. */
+#define STATE_VERSION_INPUT_DEVICES 12
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
