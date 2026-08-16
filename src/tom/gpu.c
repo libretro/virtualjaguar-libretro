@@ -36,6 +36,7 @@
 #include "event.h"
 #include "settings.h"
 #include "../core/vjtrace.h"
+#include "../core/crash_detect.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -999,7 +1000,13 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
             gpu_data_organization = data;
             break;
          case 0x10:
+            /* Immediate retarget.  A write to G_PC while the GPU is
+             * already running is a jump; record it so gpu_runaway does
+             * not treat the new page as a data-buffer escape.  A write
+             * while stopped is the start address for the next GO --
+             * recording it here matches the GO-edge call below. */
             gpu_pc = data;
+            CrashDetectNoteGPUGo(gpu_pc);
             break;
          case 0x14:
             {
@@ -1054,7 +1061,10 @@ void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // writes and GPU self-writes (STORE opcodes route through
                // this same GPUWriteLong path with who == GPU).
                if (!wasRunning && GPU_RUNNING)
+               {
                   VJT_EMIT(VJT_EV_GPU_GO, GPU, 0, gpu_pc);
+                  CrashDetectNoteGPUGo(gpu_pc);
+               }
                else if (wasRunning && !GPU_RUNNING)
                   VJT_EMIT(VJT_EV_GPU_STOP, GPU, 0, gpu_pc);
 
