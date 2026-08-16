@@ -28,7 +28,7 @@ extern "C" {
 
 /* Lifecycle */
 void CrashDetectInit(void);
-void CrashDetectReset(void);   /* called from retro_load_game */
+void CrashDetectReset(void);   /* retro_load_game and retro_reset */
 void CrashDetectSetMode(int mode);
 
 /* Record G_PC at every GPU GO so gpu_runaway can tell a program the GPU

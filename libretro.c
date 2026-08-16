@@ -2918,6 +2918,7 @@ void retro_deinit(void)
 void retro_reset(void)
 {
    JaguarReset();
+   CrashDetectReset();
    BlitMemoFlush();
 
    /* Console reset re-runs the CD BIOS boot on hardware, which reinstalls
