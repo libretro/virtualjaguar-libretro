@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "vjtrace.h"
 #include "crc32.h"
 #include "bus_arbiter.h"
 #include "file.h"
@@ -37,7 +38,9 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "joystick.h"
 #include "settings.h"
 #include "shadowfb.h"
+#include "blit_memo.h"
 #include "tom.h"
+#include "blitter.h"
 #include "gpu.h"
 #include "eeprom.h"
 #include "memtrack.h"
@@ -45,6 +48,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "nvmbios.h"
 #include "vjag_memory.h"
 #include "state.h"
+#include "titledb.h"
 #include "log.h"
 #include "version.h" /* generated; defines CORE_VERSION */
 
@@ -99,6 +103,15 @@ static int video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
 /* One-shot latch for the "restart required" notice when the
  * internal-resolution option changes mid-game. */
 static int hires_restart_notice_logged = 0;
+
+#ifdef VJ_TRACE
+/* vjtrace per-session frame counter (see the use site in retro_run()).
+ * File-scope, not a retro_run()-local static, so retro_unload_game()/
+ * retro_deinit() can reset it: iOS cannot dlclose cores, so a
+ * function-local static would keep counting from a previous title
+ * instead of restarting the documented frame==1 invariant. */
+static uint32_t vjt_frame = 0;
+#endif
 
 extern uint16_t eeprom_ram[64];
 extern uint16_t cdrom_eeprom_ram[64];
@@ -422,6 +435,36 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+
+   /* CD extensions are declared path-loaded (env 65).  DELIBERATELY the
+    * inverse of the usual pattern: hybrid cart+disc cores (Genesis Plus GX,
+    * PicoDrive, Geargrafx) set need_fullpath=true globally and override
+    * their cartridge extensions to false, because that fails safe for THEM
+    * on a frontend without this callback.  For this core the safe failure
+    * is the other way around: global false + CD-only true degrades, on a
+    * frontend without env 65, to exactly the old behavior (the frontend
+    * loads the disc image into RAM and we ignore it -- ~400 MB wasted on a
+    * .cdi, nothing else lost).  The standard direction would instead cost
+    * cartridge soft patching and the per-title DB feed, and break the
+    * RAM-loaded (.abs/.cof) reload in retro_load_game, on any frontend
+    * below RetroArch 1.9.6.  Measured effect (hover_strike.cdi, 396 MB):
+    * RetroArch peak RSS 557 MB -> ~165-180 MB depending on frontend
+    * buffering (164 MB and 181 MB both observed across runs).
+    * NOTE: no 'iso' entry here -- libretro.h's struct documentation limits
+    * override extensions to those in retro_system_info::valid_extensions
+    * (JAGUAR_VALID_EXTENSIONS, above) and that list does not include 'iso'.
+    * It needs none anyway: is_cd_content in retro_load_game still matches
+    * a bare .iso by path, and CDIntfOpenImage (src/cd/cdintf.c) refuses to
+    * open one regardless of how it arrived. */
+   {
+      static const struct retro_system_content_info_override
+         content_overrides[] = {
+         { "cue|cdi", true /* need_fullpath */, false /* persistent_data */ },
+         { NULL, false, false }
+      };
+      environ_cb(RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE,
+                 (void *)content_overrides);
+   }
 }
 
 /* Resolve the TCP endpoint for the network link and apply the mode.
@@ -502,24 +545,88 @@ static void netlink_apply(int mode)
    UARTSetLinkMode(mode);
 }
 
+/* Gate for per-title enhancement defaults (issue #368). Read raw (never
+ * through get_variable_pertitle()) at the top of check_variables() and once
+ * in retro_load_game() before the hires read, so it is never itself
+ * substituted by the DB. Defaults to enabled so headless callers/tests that
+ * never read the option still get stock behaviour identical to "enabled"
+ * with no DB match. */
+static bool pertitle_enabled = true;
+
+/* Blit-memo mode the option asked for, remembered because check_variables()
+ * runs before ResolveBootConfig() on the load path and so cannot yet tell
+ * cartridge from CD content (BlitMemoSetMode refuses the latter). */
+static int blit_memo_requested = BLIT_MEMO_OFF;
+
+/* Default value registered for a core option key, from the v2 definitions
+ * in option_defs_us[] (libretro_core_options.h). */
+static const char *core_option_default(const char *key)
+{
+   size_t i;
+   for (i = 0; option_defs_us[i].key; i++)
+      if (!strcmp(option_defs_us[i].key, key))
+         return option_defs_us[i].default_value;
+   return NULL;
+}
+
+/* GET_VARIABLE with per-title defaults (issue #368): when the frontend's
+ * value equals the option's registered default (the user never touched it)
+ * and the loaded title has a DB entry for this key, substitute the DB
+ * value. A user-set non-default value always wins. Logs once per
+ * substitution via LOG_INF. */
+static bool get_variable_pertitle(struct retro_variable *var)
+{
+   bool ok = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value;
+   const char *ovr, *def;
+
+   if (!pertitle_enabled)
+      return ok;
+
+   ovr = TitleDBOverride(var->key);
+   if (!ovr)
+      return ok;
+
+   def = core_option_default(var->key);
+   if (!ok || (def && !strcmp(var->value, def)))
+   {
+      LOG_INF("[titledb] %s: %s=%s (option at default)\n",
+              TitleDBTitleName(), var->key, ovr);
+      var->value = ovr;
+      return true;
+   }
+   return ok;
+}
+
 static void check_variables(void)
 {
    unsigned i;
    struct retro_variable var;
+   struct retro_variable gate_var;
+
+   gate_var.key = "virtualjaguar_pertitle_defaults";
+   gate_var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gate_var) && gate_var.value)
+      pertitle_enabled = (strcmp(gate_var.value, "disabled") != 0);
+   else
+      pertitle_enabled = true;
+
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.useFastBlitter = true;
       else
          vjs.useFastBlitter = false;
    }
+   /* Recorded blit-memo post-states belong to one engine; flush the
+    * memo whenever the engine identity flips. */
+   BlitMemoNotifyEngine(vjs.useFastBlitter ? 1 : 0);
 
    var.key = "virtualjaguar_true_color";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       ShadowFBSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       ShadowFBSetEnabled(0);
@@ -530,7 +637,7 @@ static void check_variables(void)
     * restart (design section 7.1). */
    var.key = "virtualjaguar_internal_resolution";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       int hires_want = (strcmp(var.value, "2x") == 0) ? 2 : 1;
       if (hires_want == shadowHiresN)
@@ -543,9 +650,31 @@ static void check_variables(void)
       }
    }
 
+   /* Blit memoization (issue #411): off by default, tagged per title in
+    * the DB.  BlitMemoSetMode() refuses CD content -- but on the
+    * retro_load_game path this call happens BEFORE ResolveBootConfig,
+    * so the requested mode is remembered and re-applied there, once
+    * cartridge-vs-CD is actually known. */
+   var.key = "virtualjaguar_blit_memo";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (strcmp(var.value, "enabled") == 0)
+         blit_memo_requested = BLIT_MEMO_ON;
+      else if (strcmp(var.value, "verify") == 0)
+         blit_memo_requested = BLIT_MEMO_VERIFY;
+      else
+         blit_memo_requested = BLIT_MEMO_OFF;
+      /* On the load path bootConfig does not exist yet, so applying the
+       * mode here would log a mode that the CD check then overrides.
+       * retro_load_game applies it after ResolveBootConfig instead. */
+      if (content_loaded)
+         BlitMemoSetMode(blit_memo_requested);
+   }
+
    var.key = "virtualjaguar_crash_detect";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "verbose") == 0)
          CrashDetectSetMode(CRASH_DETECT_VERBOSE);
@@ -561,10 +690,38 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_cd_trace";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       CDTraceSetEnabled(strcmp(var.value, "enabled") == 0);
    else
       CDTraceSetEnabled(0);
+
+   /* Blitter bus time: a blit kicked by the 68K charges the 68K the
+    * blit's whole bus duration through the pending-stall channel (the
+    * blitter is the top-priority bus master and the cacheless 68K is
+    * frozen while it runs).  Fixes render-bound loops pacing faster
+    * than hardware — Doom's menu auto-repeat landing inside a normal
+    * button tap (#399/#401).  See BlitDurationSysclks() in
+    * src/tom/blitter_mmio.c for the model and its deliberate floor. */
+   var.key = "virtualjaguar_blitter_timing";
+   var.value = NULL;
+   vjs.blitterTiming = false;
+   if (get_variable_pertitle(&var) && var.value)
+      vjs.blitterTiming = (strcmp(var.value, "enabled") == 0);
+
+   /* GPU pipeline/gateway timing (issue #401/#313).  Transient model
+    * state must not survive a toggle: a stale gateway timestamp from
+    * an earlier enabled period would charge phantom stalls on
+    * re-enable. */
+   var.key = "virtualjaguar_gpu_pipeline_timing";
+   var.value = NULL;
+   {
+      bool pipeWas = vjs.gpuPipelineTiming;
+      vjs.gpuPipelineTiming = false;
+      if (get_variable_pertitle(&var) && var.value)
+         vjs.gpuPipelineTiming = (strcmp(var.value, "enabled") == 0);
+      if (pipeWas != vjs.gpuPipelineTiming)
+         GPUPipeTimingReset();
+   }
 
    /* DRAM timing: enabled/disabled only, covering BOTH halves of the
     * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
@@ -573,19 +730,24 @@ static void check_variables(void)
     * overrides it for headless calibration experiments only. */
    var.key = "virtualjaguar_dram_timing";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       busArbiter.enabled = (strcmp(var.value, "enabled") == 0);
    else
       busArbiter.enabled = 0;
    /* No charging happens while disabled, so a carry left over from a
     * runtime toggle (or an older savestate) must not leak into the
-    * first charged access when the option is re-enabled. */
+    * first charged access when the option is re-enabled.  The
+    * pending-stall channel is shared with the blitter bus-time model,
+    * so it is only cleared when BOTH chargers are off — otherwise this
+    * (default) branch would wipe live blitter charges at every option
+    * read. */
    if (!busArbiter.enabled)
    {
       busArbiter.m68k_sysclk_carry = 0;
       busArbiter.refresh_clk_carry = 0;
       busArbiter.op_clk_accum = 0;
-      busArbiter.m68k_pending_stall = 0;
+      if (!vjs.blitterTiming)
+         busArbiter.m68k_pending_stall = 0;
    }
    {
       const char *scale_env = getenv("VJ_DRAM_SCALE");
@@ -604,7 +766,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_m68k_clock_scale";
    var.value = NULL;
    m68kClockScalePct = 100;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "0.5x") == 0)
          m68kClockScalePct = 50;
@@ -622,7 +784,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_risc_clock_scale";
    var.value = NULL;
    riscClockScalePct = 100;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "0.5x") == 0)
          riscClockScalePct = 50;
@@ -641,7 +803,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       int mode = JLINK_MODE_DISABLED;
       if (strcmp(var.value, "loopback") == 0)
@@ -658,7 +820,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_bios";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.useJaguarBIOS = true;
@@ -669,7 +831,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_pal";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          vjs.hardwareTypeNTSC = false;
@@ -680,7 +842,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_memory_track";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
       opt_memory_track = (strcmp(var.value, "disabled") != 0);
 
    /* Jaguar GameDrive: mode is latched here; activation happens at
@@ -688,7 +850,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_jgd";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "enabled") == 0)
          JGDSetMode(JGD_MODE_ENABLED);
@@ -703,7 +865,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_cd_bios_type";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "dev") == 0)
          vjs.cdBiosType = CDBIOS_DEV;
@@ -714,7 +876,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_cd_boot_mode";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "hle") == 0)
          vjs.cdBootMode = CDBOOT_HLE;
@@ -727,7 +889,7 @@ static void check_variables(void)
    var.key = "virtualjaguar_cd_read_speed";
    var.value = NULL;
 
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (strcmp(var.value, "1x") == 0)
          vjs.cdReadSpeed = CDSPEED_1X;
@@ -745,7 +907,7 @@ static void check_variables(void)
 
    var.key = "virtualjaguar_alt_inputs";
    var.value = NULL;
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   if (get_variable_pertitle(&var) && var.value)
    {
       if (!strcmp(var.value, "enabled"))
          enable_alt_inputs = true;
@@ -766,7 +928,7 @@ static void check_variables(void)
       build_port_option_key(key, sizeof(key), i, "_numpad_to_kb");
       var.key   = key;
       var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      if (get_variable_pertitle(&var) && var.value)
       {
          if (!strcmp(var.value, "disabled"))
             numpad_to_kb[i] = 0;
@@ -781,7 +943,7 @@ static void check_variables(void)
          build_port_option_key(key, sizeof(key), i, retropad_option_map[j].suffix);
          var.key   = key;
          var.value = NULL;
-         if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+         if (get_variable_pertitle(&var) && var.value)
             jag_retropad[i][retropad_option_map[j].id] = get_button_id(var.value);
       }
    }
@@ -1090,10 +1252,22 @@ bool retro_serialize(void *data, size_t size)
    STATE_SAVE_VAR(buf, busArbiter.refresh_clk_carry);
    STATE_SAVE_VAR(buf, busArbiter.op_clk_accum);
    STATE_SAVE_VAR(buf, busArbiter.m68k_pending_stall);
+   {
+      uint32_t blitterBusy = BlitterTimingGetBusy();
+      STATE_SAVE_VAR(buf, blitterBusy);
+   }
 
    /* v8: Jaguar GameDrive chunk (bank pages + SPI engine; all-zero for
     * non-GD content). */
    buf += JGDStateSave(buf);
+
+   /* v11: hi-res shadow-surface epoch (issue #400).  Its wrap clears
+    * every cached supersampled block, which is visible in the presented
+    * frame, so the wrap phase has to survive a rollback. */
+   {
+      uint32_t hiresEpoch = ShadowHiresGetEpoch();
+      STATE_SAVE_VAR(buf, hiresEpoch);
+   }
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -1113,7 +1287,11 @@ bool retro_unserialize(const void *data, size_t size)
    extern uint8_t jerry_ram_8[];
    extern bool lowerField;
 
-   if (!data || size < STATE_SIZE)
+   /* Floor at the smallest layout any accepted version can occupy; the
+    * exact floor for the declared version is enforced below, once the
+    * header has been read.  A flat `size < STATE_SIZE` here would
+    * reject every state written before the v9 size increase. */
+   if (!data || size < STATE_SIZE_V8)
       return false;
 
    buf = (const uint8_t *)data;
@@ -1130,6 +1308,9 @@ bool retro_unserialize(const void *data, size_t size)
     * STATE_VERSION, and states newer than we understand are refused. */
    if (magic != STATE_MAGIC
        || version < STATE_MIN_VERSION || version > STATE_VERSION)
+      return false;
+
+   if (version >= STATE_VERSION_DAC_I2S_RING && size < STATE_SIZE)
       return false;
 
    /* Large memory blocks */
@@ -1167,6 +1348,15 @@ bool retro_unserialize(const void *data, size_t size)
       STATE_LOAD_VAR(buf, busArbiter.refresh_clk_carry);
       STATE_LOAD_VAR(buf, busArbiter.op_clk_accum);
       STATE_LOAD_VAR(buf, busArbiter.m68k_pending_stall);
+
+      if (version >= STATE_VERSION_BLITTER_TIMING)
+      {
+         uint32_t blitterBusy;
+         STATE_LOAD_VAR(buf, blitterBusy);
+         BlitterTimingSetBusy(blitterBusy);
+      }
+      else
+         BlitterTimingSetBusy(0);
    }
    else
    {
@@ -1174,6 +1364,7 @@ bool retro_unserialize(const void *data, size_t size)
       busArbiter.refresh_clk_carry = 0;
       busArbiter.op_clk_accum = 0;
       busArbiter.m68k_pending_stall = 0;
+      BlitterTimingSetBusy(0);
    }
 
    if (version >= STATE_VERSION_JAGGD)
@@ -1182,6 +1373,21 @@ bool retro_unserialize(const void *data, size_t size)
       /* Pre-v8 states carry no GameDrive chunk: reset mapping (identity
        * pages, write protect, idle SPI) — the game re-installs. */
       JGDReset();
+
+   /* v11: hi-res shadow-surface epoch (issue #400).  Applied here rather
+    * than after ShadowHiresInvalidate() below only for locality — the
+    * invalidate drops cache entries and deliberately leaves the epoch
+    * alone, so the order of the two does not matter.  Pre-v11 states
+    * carry no epoch: start from a fixed phase so an old state at least
+    * replays the same way every time it is loaded. */
+   if (version >= STATE_VERSION_HIRES_EPOCH)
+   {
+      uint32_t hiresEpoch;
+      STATE_LOAD_VAR(buf, hiresEpoch);
+      ShadowHiresSetEpoch(hiresEpoch);
+   }
+   else
+      ShadowHiresSetEpoch(0);
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
     * loaded state (dram_row_miss/rom_clocks/dram_refresh_clks from
@@ -1198,6 +1404,10 @@ bool retro_unserialize(const void *data, size_t size)
     * surface: invalidation cost is per stock word, independent of N. */
    ShadowFBInvalidate();
    ShadowHiresInvalidate();
+
+   /* The blit memo is likewise a derived cache over RAM that was just
+    * replaced wholesale (never serialized). */
+   BlitMemoFlush();
 
    /* The 68K->RISC-RAM 16-bit-port latch is deliberately not serialized
     * (see jaguar.c): dropping an unpaired low word is what hardware does.
@@ -1510,6 +1720,7 @@ static void video_buffer_blank(void)
 bool retro_load_game(const struct retro_game_info *info)
 {
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
+   bool is_cd_content;
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -1560,6 +1771,10 @@ bool retro_load_game(const struct retro_game_info *info)
    if (!info)
       return false;
 
+   is_cd_content = info->path && (has_extension(info->path, "cue")
+                                  || has_extension(info->path, "cdi")
+                                  || has_extension(info->path, "iso"));
+
    environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, desc);
 
    /* Report that save states are deterministic (no quirks).
@@ -1575,6 +1790,45 @@ bool retro_load_game(const struct retro_game_info *info)
       return false;
    }
 
+   /* Feed the per-title DB the loaded content so option reads below (and in
+    * check_variables()) can match by CRC (issue #368). On a frontend that
+    * honours the env-65 content-info override set up in retro_set_environment,
+    * CD content (.cue/.cdi) arrives here with info->data == NULL -- it is
+    * path-loaded, not read into memory -- so the info->data guard below
+    * already excludes it. On a frontend without env 65, CD content instead
+    * arrives with info->data holding the whole disc image; the explicit
+    * !is_cd_content guard covers that fallback so the CRC is never computed
+    * over disc bytes either way. v1 only covers cartridge CRCs, and hashing
+    * a disc image would find nothing this table knows about while risking a
+    * collision handing a CD title some cartridge's per-title overrides. */
+   if (info->data && !is_cd_content)
+   {
+      TitleDBSetContent((const uint8_t *)info->data, info->size);
+      /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
+       * hashes differently from its retail base, so it matches no row and
+       * silently loses that title's enhancement defaults.  Say so (#409). */
+      if (!TitleDBTitleName())
+         LOG_INF("[titledb] no per-title entry for CRC32 $%08X -- patched or "
+                 "unlisted content; enhancement defaults not applied (see "
+                 "docs/rom-patches.md)\n", (unsigned)TitleDBContentCRC());
+   }
+   else
+      TitleDBSetContent(NULL, 0);
+
+   /* Raw gate read (never through get_variable_pertitle()) so the hires
+    * read just below -- which runs before check_variables() -- is already
+    * gated correctly even on a frontend that hasn't called
+    * check_variables() yet. */
+   {
+      struct retro_variable gate_var;
+      gate_var.key = "virtualjaguar_pertitle_defaults";
+      gate_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gate_var) && gate_var.value)
+         pertitle_enabled = (strcmp(gate_var.value, "disabled") != 0);
+      else
+         pertitle_enabled = true;
+   }
+
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
     * so N is fixed for the session and mid-game option changes only apply
@@ -1584,7 +1838,7 @@ bool retro_load_game(const struct retro_game_info *info)
       int hires_n = 1;
       hires_var.key = "virtualjaguar_internal_resolution";
       hires_var.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hires_var)
+      if (get_variable_pertitle(&hires_var)
           && hires_var.value && strcmp(hires_var.value, "2x") == 0)
          hires_n = 2;
       ShadowHiresSetN(hires_n);
@@ -1614,6 +1868,7 @@ bool retro_load_game(const struct retro_game_info *info)
       free(sampleBuffer);
       videoBuffer = NULL;
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
    memset(sampleBuffer, 0, BUFMAX * sizeof(uint16_t));
@@ -1648,9 +1903,7 @@ bool retro_load_game(const struct retro_game_info *info)
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
 
-   if (info && info->path && (has_extension(info->path, "cue")
-                              || has_extension(info->path, "cdi")
-                              || has_extension(info->path, "iso")))
+   if (is_cd_content)
    {
       jaguar_cd_mode = true;
       /* Hardware has the Memory Track cart plugged in alongside the CD
@@ -1670,6 +1923,14 @@ bool retro_load_game(const struct retro_game_info *info)
                      vjs.cdBootMode, vjs.useJaguarBIOS);
    vjs.useJaguarBIOS = bootConfig.showBootROM;
 
+   /* check_variables() ran above, before bootConfig existed, so the blit
+    * memo could not tell cartridge from CD content then.  Re-apply the
+    * requested mode now that it can: BlitMemoSetMode() forces CD content
+    * back to OFF, which keeps blitMemoMode zero and short-circuits the
+    * write hooks instead of charging CD titles for a memo that can never
+    * hit. */
+   BlitMemoSetMode(blit_memo_requested);
+
    /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
     * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
    if (jaguar_cd_mode)
@@ -1682,6 +1943,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
       LOG_INF("[CD] Disc image opened OK\n");
@@ -1711,6 +1973,7 @@ bool retro_load_game(const struct retro_game_info *info)
       videoBuffer = NULL;
       free(sampleBuffer);
       sampleBuffer = NULL;
+      TitleDBSetContent(NULL, 0);
       return false;
    }
 
@@ -1730,6 +1993,7 @@ bool retro_load_game(const struct retro_game_info *info)
          videoBuffer = NULL;
          free(sampleBuffer);
          sampleBuffer = NULL;
+         TitleDBSetContent(NULL, 0);
          return false;
       }
    }
@@ -1797,6 +2061,12 @@ void retro_unload_game(void)
    update_option_visibility();
    JaguarDone();
 
+#ifdef VJ_TRACE
+   /* Next title's frame 1 must be ring/field-CSV frame 1, not a
+    * continuation of this session's count (see vjt_frame's decl). */
+   vjt_frame = 0;
+#endif
+
    if (videoBuffer)
       free(videoBuffer);
    videoBuffer = NULL;
@@ -1816,6 +2086,9 @@ void retro_unload_game(void)
    ShadowHiresShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
+
+   /* The next option read must not see the previous title's CRC/match. */
+   TitleDBSetContent(NULL, 0);
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -1939,6 +2212,10 @@ void retro_init(void)
    bus_arbiter_init();
 
    CrashDetectInit();
+
+#ifdef VJ_TRACE
+   vjtrace_init();
+#endif
 }
 
 void retro_deinit(void)
@@ -1964,8 +2241,15 @@ void retro_deinit(void)
     * loads). */
    ShadowFBShutdown();
    ShadowHiresShutdown();
+   BlitMemoShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
+
+   /* Per-title enhancement defaults DB (#368): clear the cached CRC match
+    * and re-arm the gate for the next load. */
+   TitleDBSetContent(NULL, 0);
+   pertitle_enabled = true;
+   blit_memo_requested = BLIT_MEMO_OFF;
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -1984,11 +2268,27 @@ void retro_deinit(void)
    content_loaded = false;
    show_cd_options = true;
    show_cart_bios_option = true;
+#ifdef VJ_TRACE
+   /* Belt-and-suspenders, matching retro_unload_game() -- see vjt_frame's
+    * decl. */
+   vjt_frame = 0;
+   /* Paired with vjtrace_init() in retro_init(): frees the ring (fixes a
+    * leak the sanitizer job caught -- 33,554,432 bytes = the default
+    * 1<<20-record ring, calloc'd once and never freed) and resets every
+    * other vjtrace static, so a later retro_init() on the same process
+    * (iOS cannot dlclose cores) re-allocates cleanly instead of hitting
+    * vjtrace_init()'s "if (ring) return" early-out with a dangling cap.
+    * Any harness's own ring dump (trace_probe_finish() and friends) has
+    * already run by this point -- see harness_shutdown(), which calls
+    * retro_unload_game() then retro_deinit() last. */
+   vjtrace_shutdown();
+#endif
 }
 
 void retro_reset(void)
 {
    JaguarReset();
+   BlitMemoFlush();
 
    /* Console reset re-runs the CD BIOS boot on hardware, which reinstalls
     * the Memory Track NVM module. */
@@ -2039,6 +2339,24 @@ static void dbg_dump_frame(void)
 void retro_run(void)
 {
    bool updated = false;
+
+#ifdef VJ_TRACE
+   /* Stamp the frame number BEFORE the machine runs, so every event
+    * emitted during this retro_run carries the number of the frame it
+    * belongs to.  Ticking at the END instead (where this used to live)
+    * left machine events stamped with the PREVIOUS frame while events a
+    * harness emits from its post-run frame hook carried the current
+    * one -- two different corrections needed to align one ring.  The
+    * first retro_run is frame 1, matching the harness frame counter;
+    * events emitted during retro_load_game/retro_init, before any
+    * retro_run, carry frame 0.  retro_run has no early return, so this
+    * runs exactly once per frame. */
+   vjtrace_frame_tick(++vjt_frame);
+#endif
+
+   /* Blit memo: advance the shadow-restamp dedupe epoch. */
+   if (blitMemoMode)
+      BlitMemoFrame();
 
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */

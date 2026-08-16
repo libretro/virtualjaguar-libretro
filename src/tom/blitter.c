@@ -29,6 +29,8 @@
 #include "perf_counters.h"
 #include "shadowfb.h"
 #include "state.h"
+#include "blit_memo.h"
+#include "../core/vjtrace.h"
 
 // Various conditional compilation goodies...
 
@@ -57,7 +59,11 @@
 static BLITTER_ALWAYS_INLINE uint8_t blitter_read_byte(uint32_t addr)
 {
    if (addr < 0x200000)
+   {
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 1);
       return jaguarMainRAM[addr & 0x1FFFFF];
+   }
    return JaguarReadByte(addr, BLITTER);
 }
 
@@ -66,6 +72,8 @@ static BLITTER_ALWAYS_INLINE uint16_t blitter_read_word(uint32_t addr)
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 2);
       a = addr & 0x1FFFFF;
       return ((uint16_t)jaguarMainRAM[a] << 8) | jaguarMainRAM[(a + 1) & 0x1FFFFF];
    }
@@ -77,6 +85,8 @@ static BLITTER_ALWAYS_INLINE uint32_t blitter_read_long(uint32_t addr)
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoRecording)
+         BlitMemoNoteRead(addr, 4);
       a = addr & 0x1FFFFF;
       return ((uint32_t)jaguarMainRAM[a] << 24)
            | ((uint32_t)jaguarMainRAM[(a + 1) & 0x1FFFFF] << 16)
@@ -90,6 +100,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_byte(uint32_t addr, uint8_t data
 {
    if (addr < 0x200000)
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 1, data);
       jaguarMainRAM[addr & 0x1FFFFF] = data;
       return;
    }
@@ -101,6 +113,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_word(uint32_t addr, uint16_t dat
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 2, data);
       a = addr & 0x1FFFFF;
       jaguarMainRAM[a]                   = (uint8_t)(data >> 8);
       jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)(data & 0xFF);
@@ -114,6 +128,8 @@ static BLITTER_ALWAYS_INLINE void blitter_write_long(uint32_t addr, uint32_t dat
    uint32_t a;
    if (addr < 0x200000)
    {
+      if (blitMemoMode)
+         BlitMemoWriteHook(addr, 4, data);
       a = addr & 0x1FFFFF;
       jaguarMainRAM[a]                   = (uint8_t)((data >> 24) & 0xFF);
       jaguarMainRAM[(a + 1) & 0x1FFFFF] = (uint8_t)((data >> 16) & 0xFF);
@@ -964,9 +980,21 @@ void blitter_generic(uint32_t cmd)
                            && (SRCSHADE || (!GOURD && !PATDSEL)))
                      {
                         int32_t hx = 0, hy = 0, vx = 0, vy = 0;
-                        int q_in = (xadd_a1_control == XADDINC
+                        /* The half-step sub-sample lies between this
+                         * pixel's stock sample and the NEXT one, so it is
+                         * inside the source region iff that next sample
+                         * exists.  On the last inner pixel / outer line
+                         * the walk ends here and the forward half-step
+                         * can read past the source's edge (issue #396:
+                         * Doom span blits end flush with the 64x64 flat,
+                         * and the overrun reads the next texture in the
+                         * lump -- isolated wrong-chroma speckles), so
+                         * those subpixels keep stock replication. */
+                        int q_in = (inner_loop != 0
+                              && xadd_a1_control == XADDINC
                               && (((a1_xadd | a1_yadd) & 0xFFFF) != 0));
-                        int q_out = (xadd_a1_control == XADD0
+                        int q_out = (outer_loop != 0
+                              && xadd_a1_control == XADD0
                               && a1_yadd == 0 && UPDA1F
                               && (((a1_step_x | a1_step_y) & 0xFFFF) != 0));
                         if (q_in)
@@ -1131,6 +1159,9 @@ void blitter_blit(uint32_t cmd)
 {
    uint32_t m, e;
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
+
+   VJT_EMIT(VJT_EV_BLIT_CMD, BLITTER, cmd, REG(A1_BASE));
+
    colour_index = 0;
    src = cmd & 0x07;
    dst = (cmd >> 3) & 0x07;
@@ -1288,8 +1319,26 @@ void blitter_blit(uint32_t cmd)
       unsigned v;
       zadd = REG(ZINC);
 
+      /* The four 16.16 Z corner values reach the blitter through the
+       * B_Z0-B_Z3 aliases ($F0228C-$F02298).  BlitterWriteByte splits
+       * every one of those writes into the SRCZINT (integer half) and
+       * SRCZFRAC (fractional half) mirrors and stores NOTHING at the
+       * PHRASEZ0..3 offsets themselves, so `REG(PHRASEZ0 + v*4)` read
+       * permanently-stale blitter_ram and handed the Z comparator
+       * near-zero source Z for every blit -- which, with Z_OP_SUP
+       * ("inhibit when source Z > destination Z"), never inhibits and
+       * also stamps ~0 into the Z buffer, disabling Z-buffering
+       * outright.  Rebuild each corner from the mirror, exactly as the
+       * Gouraud intensity init below rebuilds gd_c[]/gd_i[] from the
+       * PATTERNDATA/SRCDATA mirrors of the B_I0-B_I3 aliases. */
       for(v = 0; v < 4; v++)
-         z_i[v] = REG(PHRASEZ0 + v*4);
+      {
+         uint32_t b = 6 - (v * 2);
+         z_i[v] = ((uint32_t)blitter_ram[SRCZINT  + b]     << 24)
+                | ((uint32_t)blitter_ram[SRCZINT  + b + 1] << 16)
+                | ((uint32_t)blitter_ram[SRCZFRAC + b]     <<  8)
+                |  (uint32_t)blitter_ram[SRCZFRAC + b + 1];
+      }
    }
 
    // Gouraud shading
@@ -1601,23 +1650,29 @@ void COMP_CTRL(uint8_t *dbinh, bool *nowrite,
 
    /* nowrite and winhibit (pixel-mode write inhibit)
     *
-    * Z-comparator lane in pixel-mode 16bpp: the fast blitter reads
-    * source/dest Z via `REG(SRCZINT|DSTZ) & 0xFFFF`, which is bytes 2-3
-    * of the 8-byte register (low 16 of the high 32 half).  In the
-    * GET64-shift lane convention here, that is lane 2 -- so
-    * `zcomp & 0x04` matches fast.  Previously accurate used `zcomp & 0x01`
-    * (lane 0 = bytes 6-7), which produced visibly wrong z-inhibit
-    * decisions in BSG sprite blits (cmd=09900F71 / 09800F41 families:
-    * pixel-mode 16bpp DCOMPEN sprites with constant source Z).
+    * Z-comparator lane in pixel-mode 16bpp.  In PIXEL (non-phrase)
+    * mode both engines take the source/destination Z from the register
+    * file rather than from a phrase position, so there is exactly one
+    * correct lane and it is fixed.  The fast blitter reads it through
+    * READ_RDATA_16's pixel-mode arm, `REG(r + 4) & 0xFFFF`: `REG(r+4)`
+    * is the longword at bytes 4-7 and the `& 0xFFFF` keeps its LOW
+    * half, i.e. bytes **6-7** of the 8-byte register.  Those are the
+    * bytes BlitterWriteByte fills from the B_Z0 alias, and in the
+    * GET64 big-endian view they are bits 15..0 -- lane 0.  So the
+    * matching accurate-path test is `zcomp & 0x01`.
     *
-    * This is a match-fast pragmatic fix; the JTRM-pure behaviour would
-    * select the lane based on the destination pixel's position within a
-    * phrase, which neither path currently does.  See #189 for the full
-    * divergence writeup. */
+    * This previously read `zcomp & 0x04` (lane 2 = bytes 2-3 = B_Z2),
+    * justified by a misreading of `REG(r+4) & 0xFFFF` as "bytes 2-3".
+    * That compared an unrelated Z corner and inhibited whole sprites:
+    * Cybermorph's projectile (cmd=09900F39, A1_FLAGS=00032420 --
+    * pixel-mode 16bpp DSTENZ/Z_OP_SUP/DCOMPEN, the same family as the
+    * BSG cmd=09900F71 / 09800F41 sprites) was rejected in its entirety
+    * under the accurate blitter while the fast blitter drew it.  See
+    * #189 for the full divergence writeup. */
    winhibit = (bcompen && !bcompbit && !phrase_mode)
       || (dcompen && (dcomp & 0x01) && !phrase_mode && (pixsize == 3))
       || (dcompen && ((dcomp & 0x03) == 0x03) && !phrase_mode && (pixsize == 4))
-      || ((zcomp & 0x04) && !phrase_mode && (pixsize == 4));
+      || ((zcomp & 0x01) && !phrase_mode && (pixsize == 4));
    *nowrite = winhibit && !bkgwren;
 
    /* 16-bit pixel mode flag */
@@ -2212,6 +2267,8 @@ void BlitterMidsummer2(void)
    uint16_t a1FracCInX = 0, a1FracCInY = 0;
 
    // Bugs in Jaguar I
+
+   VJT_EMIT(VJT_EV_BLIT_CMD, BLITTER, cmd, a1_base);
 
    a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
 
@@ -3667,9 +3724,21 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                                  && !patdsel && !gourd && !adddsel)
                            {
                               int32_t hx = 0, hy = 0, vx = 0, vy = 0;
-                              int q_in = (a1addx == 3
+                              /* The half-step sub-sample lies between
+                               * this pixel's stock sample and the NEXT
+                               * one, so it is inside the source region
+                               * iff that next sample exists.  On the
+                               * last inner pixel (inner0, set by the
+                               * icount decrement above) / last outer
+                               * line (ocount == 1 here; it decrements
+                               * only after the inner loop finishes) the
+                               * forward half-step can read past the
+                               * source's edge (issue #396 speckles), so
+                               * those subpixels keep stock replication. */
+                              int q_in = (!inner0 && a1addx == 3
                                     && ((a1_incf_x | a1_incf_y) != 0));
-                              int q_out = (a1addx == 2 && !a1addy && upda1f
+                              int q_out = (ocount != 1
+                                    && a1addx == 2 && !a1addy && upda1f
                                     && ((a1_stepf_x | a1_stepf_y) != 0));
                               if (q_in)
                               {

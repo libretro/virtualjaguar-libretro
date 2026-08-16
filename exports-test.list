@@ -19,6 +19,9 @@ _jaguarMainRAM
 _jaguarMainROM
 _jagMemSpace
 _busArbiter
+_gpuPCSample
+_m68kPCSample
+_m68kPCSampleIdx
 _pcQueue
 _pcQPtr
 _a6Queue
@@ -69,3 +72,8 @@ _shadowHiresResolveHits
 _shadowHiresResolveMissValue
 _shadowHiresResolveMissEpoch
 _shadowHiresResolveMissNoPage
+_shadowHiresN
+_shadowFBActive
+_blitMemo*
+_TitleDB*
+_vjtrace_*

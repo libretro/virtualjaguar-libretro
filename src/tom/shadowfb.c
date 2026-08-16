@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "shadowfb.h"
+#include "blit_memo.h"   /* blit-memo shadow-store logging (issue #411) */
 #include "log.h"
 
 /* CRY chroma tables + stock LUT live in tom.c */
@@ -47,6 +48,8 @@ void ShadowFBStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
    uint32_t idx;
    if (!shadowFBActive)
       return;
+   if (blitMemoRecording)
+      BlitMemoNoteShadow(BLIT_MEMO_SH_FB, addr, value16, frac16, NULL);
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return;
@@ -232,6 +235,8 @@ void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
 
    if (!shadowHiresActive)
       return;
+   if (blitMemoRecording)
+      BlitMemoNoteShadow(BLIT_MEMO_SH_HIRES, addr, value16, frac16, NULL);
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return;
@@ -263,6 +268,9 @@ void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
 
    if (!shadowHiresActive)
       return;
+   if (blitMemoRecording)
+      BlitMemoNoteShadow(BLIT_MEMO_SH_HIRES | BLIT_MEMO_SH_BLOCK,
+                         addr, stock16, 0, blk);
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return;
@@ -327,16 +335,16 @@ static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16)
         + word * (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;
 }
 
-void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
+int ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
 {
    const shadowfb_sub *blk;
    shadowfb_sub *dst;
    int n, sy, sx;
 
    if (!shadowHiresActive)
-      return;
+      return 0;
    if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
-      return;
+      return 0;
 
    n   = shadowHiresN;
    blk = shadow_hires_block(srcAddr, value16);
@@ -356,6 +364,29 @@ void ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
       }
    }
    shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
+   return blk != NULL;
+}
+
+void ShadowHiresLineFromScaledSamples(int idx, const shadowfb_sub *cols,
+                                       uint16_t value16)
+{
+   shadowfb_sub *dst;
+   int n, sy, sx;
+
+   if (!shadowHiresActive)
+      return;
+   if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
+      return;
+
+   n = shadowHiresN;
+   for (sy = 0; sy < n; sy++)
+   {
+      dst = shadowHiresLineSub
+          + ((uint32_t)sy * SHADOWFB_LINE_PIXELS + (uint32_t)idx) * (uint32_t)n;
+      for (sx = 0; sx < n; sx++)
+         dst[sx] = cols[sx];
+   }
+   shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
 }
 
 /* Clear every allocated page tag (VALID bit off).  Cost is per stock
@@ -371,20 +402,78 @@ static void shadow_hires_clear_tags(void)
 
 void ShadowHiresFrameTick(void)
 {
-   if (!shadowHiresActive)
-      return;
+   /* The epoch advances on EVERY presented frame, whether or not the hi-res
+    * surface is active.
+    *
+    * It used to early-return when inactive, which was free until the epoch
+    * became part of the savestate (issue #400).  From that point a 1x blob
+    * carried 0 and a 2x blob carried a live counter, so the two differed by
+    * construction from the first frame -- breaking the epic #338 guarantee
+    * that the emulated machine cannot observe the option, as measured by
+    * hires_state_digest.  (Verified: identical before that commit, differing
+    * after.)
+    *
+    * Advancing unconditionally makes the field a pure frame-phase counter
+    * that is identical between a 1x and a 2x run of the same length, which
+    * restores the guarantee at its source rather than teaching the gate to
+    * ignore the field.  At 1x it costs one increment per frame and changes
+    * nothing else: no pages are allocated, so there are no tags to clear,
+    * and nothing reads the epoch. */
    hiresEpoch = (hiresEpoch + 1) & 0xFF;
    /* On epoch wrap, entries stamped 256/257 frames ago would re-enter
     * the trusted window; clearing all tags at the wrap closes that
     * hole for ~4MB of memset every 256 frames, worst case. */
-   if (hiresEpoch == 0)
+   if (hiresEpoch == 0 && shadowHiresActive)
       shadow_hires_clear_tags();
+}
+
+/* Blit-memo support (shadowfb.h): refresh the epoch of every VALID
+ * entry covering one 4KB RAM page.  The caller guarantees the page's
+ * RAM bytes are untouched since the entries were stored, so this
+ * freezes the live cycle's resolve outcome rather than widening the
+ * stale-structure window HIRES_EPOCH_WINDOW bounds. */
+void ShadowHiresRestampRamPage(uint32_t ramPage4k)
+{
+   uint32_t idx0, page, w0, w, tag;
+   uint32_t *tags;
+
+   if (!shadowHiresActive)
+      return;
+   idx0 = ramPage4k << 11;                /* 2048 stock words per 4KB */
+   page = idx0 >> 12;
+   if (page >= SHADOWFB_HIRES_PAGES)
+      return;
+   tags = hiresPageTag[page];
+   if (!tags)
+      return;
+   w0 = idx0 & 0xFFF;
+   for (w = w0; w < w0 + 2048; w++)
+   {
+      tag = tags[w];
+      if (tag & SHADOWFB_TAG_VALID)
+         tags[w] = (tag & 0x1FFFF)
+                 | (hiresEpoch << HIRES_TAG_EPOCH_SHIFT);
+   }
 }
 
 void ShadowHiresInvalidate(void)
 {
    shadow_hires_clear_tags();
    memset(shadowHiresLineTag, 0, sizeof(shadowHiresLineTag));
+}
+
+/* Deliberately NOT reset by ShadowHiresInvalidate(): the epoch is carried
+ * across a savestate load by the caller (see shadowfb.h and issue #400),
+ * and clearing it there would defeat that.  Invalidate drops entries;
+ * the epoch says which frame we are on. */
+uint32_t ShadowHiresGetEpoch(void)
+{
+   return hiresEpoch;
+}
+
+void ShadowHiresSetEpoch(uint32_t epoch)
+{
+   hiresEpoch = epoch & 0xFF;
 }
 
 void ShadowHiresShutdown(void)

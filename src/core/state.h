@@ -35,9 +35,19 @@ extern "C" {
  *     all in-flight changes since the last release use v7.
  * v8: trailing Jaguar GameDrive chunk (bank pages + SPI mailbox engine,
  *     jaggd.c).  One shared bump — all in-flight changes since the
- *     v3.1.0 release use v8. */
+ *     v3.1.0 release use v8.  This is the newest RELEASED layout (v3.2.0).
+ * v9: DAC block gained the I2S ring (dac.c).  develop only.
+ * v10: trailing blitter busy-window counter (blitter timing model).
+ *     develop only.
+ * v11: trailing hi-res shadow-surface epoch (shadowfb.c).  The epoch is a
+ *     modulo-256 age stamp that gates which supersampled blocks resolve,
+ *     and ShadowHiresFrameTick() drops every cached block when it wraps.
+ *     That clear is visible in the presented frame, so a state restored
+ *     without it replays the wrap at a different frame and diverges —
+ *     which is exactly the determinism we advertise as
+ *     savestate_features = 3.  See issue #400. */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   8
+#define STATE_VERSION   11
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -92,13 +102,35 @@ extern "C" {
  * protect, idle SPI) — see JGDStateLoad / the caller's else branch. */
 #define STATE_VERSION_JAGGD 8
 
+/* v9: the I2S resample ring contents.  The ring and its cursors now
+ * persist across frames (the per-frame reset was half of the 60 Hz
+ * audio step), so replay determinism requires the ring data itself in
+ * the state -- the cursors alone reference content the load cannot
+ * reconstruct. */
+#define STATE_VERSION_DAC_I2S_RING 9
+
+/* v10: blitter bus-time busy window (virtualjaguar_blitter_timing).
+ * One uint32 appended after the bus-arbiter fields.  Older states load
+ * with the window closed -- at most one pending blit's stall is lost,
+ * self-corrects within a field. */
+#define STATE_VERSION_BLITTER_TIMING 10
+/* First version whose trailer carries the hi-res shadow-surface epoch
+ * (shadowfb.c).  Issue #400: without it, the epoch wrap's cache clear
+ * replays at a different frame after a rollback and the picture diverges. */
+#define STATE_VERSION_HIRES_EPOCH 11
+
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
 #define STATE_FLAG_CDROM     0x02
 
 /* Fixed save state size (~2.4 MB).
  * Must never increase between retro_load_game() and retro_unload_game(). */
-#define STATE_SIZE  0x260000  /* 2,490,368 bytes */
+/* v9 grew the payload by the 64 KB I2S resample ring
+ * (STATE_VERSION_DAC_I2S_RING).  States written by v8-and-older cores
+ * are STATE_SIZE_V8 bytes; retro_unserialize sizes its floor check by
+ * the version the state itself declares, so those still load. */
+#define STATE_SIZE     0x280000  /* 2,621,440 bytes */
+#define STATE_SIZE_V8  0x260000  /* 2,490,368 bytes -- all pre-v9 layouts */
 
 /* Helper macros for sequential buffer writes/reads.
  * These advance the buffer pointer automatically. */

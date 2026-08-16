@@ -33,6 +33,7 @@
 #include "event.h"
 #include "jerry.h"
 #include "jaguar.h"
+#include "tom.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 
@@ -46,6 +47,15 @@ extern retro_audio_sample_batch_t audio_batch_cb;
 /* Ring buffer for I2S samples produced by the DSP at hardware rate */
 #define I2S_RING_SIZE		16384	/* Power of 2, must be > max samples/frame (PAL SCLK=0 ~8311) */
 #define I2S_RING_MASK		(I2S_RING_SIZE - 1)
+
+/* Steady-state distance the read cursor keeps behind the write cursor,
+ * and the drift beyond which it snaps back instead of free-running.
+ * Capture (word strobe) and consumption (rate ratio) both derive from
+ * SCLK, so in steady state the lag only jitters by a fraction of a
+ * sample; the resync handles discontinuities -- SCLK reprogramming,
+ * savestate loads, a DSP that stops feeding the port. */
+#define I2S_TARGET_LAG		2
+#define I2S_RESYNC_LAG		256
 
 /* Jaguar memory locations */
 
@@ -70,6 +80,31 @@ static uint32_t i2sWriteCount = 0;	/* total samples captured this frame */
 static uint32_t i2sNonZeroCount = 0;	/* samples with non-zero amplitude this frame */
 static double i2sPhase = 0.0;		/* fractional read position */
 static double i2sRateRatio = 1.0;	/* i2s_rate / 48000.0 */
+static uint32_t i2sResyncCount = 0;	/* gross-drift resyncs this session (diagnostic) */
+
+/* Output-sample cadence, derived per frame in DACPrepareFrame (#393).
+ *
+ * The batch is a fixed `length` (800 NTSC / 960 PAL pairs) but the
+ * emulated field is NOT 800 sample periods long: it is VP+1 halflines
+ * (799.275 periods at 48 kHz for the standard NTSC VP=523, 961.536 for
+ * PAL VP=625).  Scheduling the chain at a flat 1/48000 s landed only
+ * 799 (NTSC) / 960 (PAL) callbacks inside the frame while ring capture
+ * (word strobes) tracked the full field, so the read cursor fell
+ * behind by 0.275 x ratio (NTSC) / 1.54 x ratio (PAL) ring samples per
+ * frame.  The lag climbed from I2S_TARGET_LAG to I2S_RESYNC_LAG and
+ * the gross-drift resync snapped it back, discarding ~254 ring samples
+ * (~12 ms) in one hop -- an audible skip every ~36 s NTSC / ~8 s PAL
+ * in every title with continuous DSP audio (issue #393).
+ *
+ * Instead, spread the `length/2` output samples evenly across the real
+ * field (period = frame_us / pairs) and scale the per-sample phase
+ * step by the same factor (frame_periods / pairs), so per-frame
+ * consumption equals capture identically -- for any VP, any SCLK,
+ * master or slave mode.  The half-period first-callback offset keeps
+ * the final callback strictly inside the frame, away from the
+ * frame-boundary race with HalflineCallback. */
+static double i2sSamplePeriodUs = 1000000.0 / (double)DAC_AUDIO_RATE;
+static double i2sStepScale = 1.0;
 
 /* Private function prototypes */
 static void DACUpdateSCLKRate(void);
@@ -97,6 +132,9 @@ void DACReset(void)
    i2sNonZeroCount = 0;
    i2sPhase = 0.0;
    i2sRateRatio = 1.0;
+   i2sResyncCount = 0;
+   i2sSamplePeriodUs = 1000000.0 / (double)DAC_AUDIO_RATE;
+   i2sStepScale = 1.0;
    memset(i2sRingL, 0, sizeof(i2sRingL));
    memset(i2sRingR, 0, sizeof(i2sRingR));
 }
@@ -113,6 +151,19 @@ uint32_t DACGetI2SWriteCount(void)
 uint32_t DACGetI2SNonZeroCount(void)
 {
    return i2sNonZeroCount;
+}
+
+/* Diagnostics for the resample cursor pair (issue #393): the distance the
+ * read cursor trails the write cursor, and how many times the gross-drift
+ * resync in DSPSampleCallback has snapped it back. */
+double DACGetI2SLag(void)
+{
+   return (double)i2sWritePos - i2sPhase;
+}
+
+uint32_t DACGetI2SResyncCount(void)
+{
+   return i2sResyncCount;
 }
 
 /* Update the rate ratio when SCLK or SMODE changes */
@@ -164,6 +215,39 @@ static void DACCaptureSample(int16_t left, int16_t right)
    i2sWriteCount++;
    if (left != 0 || right != 0)
       i2sNonZeroCount++;
+
+   /* Both cursors run monotonically for the whole session; fold them
+    * back together once per ring lap.  Subtracting a whole ring size
+    * leaves every masked index unchanged, keeps the uint32 write cursor
+    * from wrapping and the double read cursor in a range where adding
+    * a fractional step still resolves exactly. */
+   if (i2sWritePos >= (uint32_t)(2 * I2S_RING_SIZE)
+       && i2sPhase >= (double)I2S_RING_SIZE)
+   {
+      i2sWritePos -= (uint32_t)I2S_RING_SIZE;
+      i2sPhase    -= (double)I2S_RING_SIZE;
+   }
+}
+
+/* One I2S word strobe has elapsed: latch whatever the DSP left in
+ * LTXD/RTXD into the resample ring.
+ *
+ * The I2S port is a holding register, not a queue.  Hardware serialises
+ * exactly one sample pair per word strobe and simply overwrites the
+ * holding register on any write in between -- those intermediate values
+ * never reach the DAC.  Capturing on every RTXD write instead fabricated
+ * samples that were never transmitted: Atari Karts (master mode, SCLK=19)
+ * writes 417 pairs per frame against 346 word strobes, so the ring grew
+ * 20% faster than DSPSampleCallback consumed it and DACPrepareFrame threw
+ * the surplus away on the next frame.  That reset yanked the output phase
+ * forward once per frame -- a 60 Hz step of mean amplitude ~2959 (peak
+ * 21881) in an otherwise ~110-amplitude signal, heard as constant
+ * crackle on cartridge titles.  It is the master-mode twin of the
+ * slave-mode chop described in DACUpdateSCLKRate().
+ */
+void DACWordStrobe(void)
+{
+   DACCaptureSample((int16_t)(*ltxd), (int16_t)(*rtxd));
 }
 
 void DSPSampleCallback(void)
@@ -173,26 +257,47 @@ void DSPSampleCallback(void)
    double frac;
    int32_t s0L, s1L, s0R, s1R;
 
-   /* Guard: hold current register value if ring is empty (e.g. after reset) */
-   if (i2sWriteCount < 2)
+   /* Guard: hold current register value until the ring has data */
+   if (i2sWritePos < 2)
    {
       outL = (int16_t)(*ltxd);
       outR = (int16_t)(*rtxd);
    }
    else
    {
-      /* Linear interpolation between ring buffer samples.
-       * i2sPhase is our fractional position in the I2S sample stream.
-       * We advance by i2sRateRatio for each 48 kHz output sample. */
+      /* i2sPhase is a monotonic read cursor into the captured I2S
+       * stream; it advances by the rate ratio per 48 kHz output sample
+       * and carries across frames.  Both cursors are rebased together
+       * in DACCaptureSample, which leaves masked indices unchanged.
+       *
+       * Resetting the cursor every frame (the old scheme) discarded the
+       * read position and re-anchored at the newest sample, stepping
+       * the output once per frame at 60 Hz. */
+      double lag = (double)i2sWritePos - i2sPhase;
+
+      /* Resync only on gross drift: a rate change mid-stream (SCLK
+       * write), a savestate load, or a DSP that stopped feeding the
+       * port.  In steady state capture and consumption both derive
+       * from SCLK, so the lag stays put. */
+      if (lag < 0.0 || lag > (double)I2S_RESYNC_LAG)
+      {
+         i2sResyncCount++;
+         i2sPhase = (double)i2sWritePos - (double)I2S_TARGET_LAG;
+         if (i2sPhase < 0.0)
+            i2sPhase = 0.0;
+         lag = (double)i2sWritePos - i2sPhase;
+      }
+
       idx0 = (uint32_t)i2sPhase;
       frac = i2sPhase - (double)idx0;
       idx1 = idx0 + 1;
 
-      /* Clamp indices to available data */
-      if (idx0 >= i2sWriteCount)
-         idx0 = i2sWriteCount - 1;
-      if (idx1 >= i2sWriteCount)
-         idx1 = i2sWriteCount - 1;
+      /* Never read at or past the write cursor: those slots hold the
+       * previous lap of the ring. */
+      if (idx0 >= i2sWritePos)
+         idx0 = i2sWritePos - 1;
+      if (idx1 >= i2sWritePos)
+         idx1 = i2sWritePos - 1;
 
       s0L = (int32_t)i2sRingL[idx0 & I2S_RING_MASK];
       s1L = (int32_t)i2sRingL[idx1 & I2S_RING_MASK];
@@ -202,8 +307,10 @@ void DSPSampleCallback(void)
       outL = (int16_t)(s0L + (int32_t)((double)(s1L - s0L) * frac));
       outR = (int16_t)(s0R + (int32_t)((double)(s1R - s0R) * frac));
 
-      /* Advance phase by the rate ratio */
-      i2sPhase += i2sRateRatio;
+      /* Underrun: hold position until the next capture lands rather
+       * than running past the write head. */
+      if (lag > 1.0)
+         i2sPhase += i2sRateRatio * i2sStepScale;
    }
 
    sampleBuffer[bufferIndex + 0] = (uint16_t)outL;
@@ -216,46 +323,90 @@ void DSPSampleCallback(void)
       return;
    }
 
-   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+   SetCallbackTime(DSPSampleCallback, i2sSamplePeriodUs, EVENT_JERRY);
 }
 
 void DACPrepareFrame(int length)
 {
+   uint32_t vp1;
+   int out_pairs;
+   double halfline_us, frame_us, pairs;
+
    RemoveCallback(DSPSampleCallback);
    bufferIndex = 0;
    numberOfSamples = length;
    bufferDone = false;
 
-   /* Seed ring with current DAC register values so interpolation has valid
-    * endpoints before the first real DSP write arrives.  Two copies give
-    * both idx0 and idx1 valid data for the interpolator. */
-   i2sRingL[0] = (int16_t)(*ltxd);
-   i2sRingR[0] = (int16_t)(*rtxd);
-   i2sRingL[1] = (int16_t)(*ltxd);
-   i2sRingR[1] = (int16_t)(*rtxd);
-   i2sWritePos = 2;
-   i2sWriteCount = 2;
+   /* Derive the output cadence from the field the frame loop will
+    * actually run: JaguarExecuteNew ends the frame when VC wraps after
+    * VP+1 halflines (HalflineCallback).  Clamp a garbage VP (boot-time
+    * zero, mid-init writes) to the hardware default field. */
+   vp1 = (uint32_t)(TOMReadWord(0xF0003E, JAGUAR) & 0x7FF) + 1;
+   if (vp1 < 200 || vp1 > 1200)
+      vp1 = vjs.hardwareTypeNTSC ? 524 : 626;
+   halfline_us = vjs.hardwareTypeNTSC ? 31.777777777 : 32.0;
+   frame_us = (double)vp1 * halfline_us;
+   out_pairs = length / 2;
+   pairs = (double)out_pairs;
+   i2sSamplePeriodUs = frame_us / pairs;
+   i2sStepScale = (frame_us * ((double)DAC_AUDIO_RATE / 1000000.0)) / pairs;
+
+   /* Per-frame diagnostic counters only (DACGetI2SWriteCount /
+    * DACGetI2SNonZeroCount consumers).  The ring and both cursors
+    * deliberately survive the frame boundary -- resetting and
+    * re-anchoring them at the newest register value every frame was
+    * the other half of the 60 Hz step. */
+   i2sWriteCount = 0;
    i2sNonZeroCount = 0;
-   i2sPhase = i2sPhase - (double)(uint32_t)i2sPhase;
 
    /* Refresh rate ratio in case SCLK was written between frames */
    DACUpdateSCLKRate();
 
-   SetCallbackTime(DSPSampleCallback, 1000000.0 / (double)DAC_AUDIO_RATE, EVENT_JERRY);
+   SetCallbackTime(DSPSampleCallback, 0.5 * i2sSamplePeriodUs, EVENT_JERRY);
 }
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)
 {
-   int idx;
 
-   RemoveCallback(DSPSampleCallback);
-
+   /* An NTSC field is 524 halflines = 16651.56 us = 799.27 periods of
+    * the 48 kHz sample clock, so the event chain lands 799 pairs and
+    * the 800th does not exist yet.  Pad it by HOLDING the last pair the
+    * resampler produced: a DAC starved of new data keeps transmitting
+    * what it last received.
+    *
+    * The batch stays a fixed `length`, which is what keeps the
+    * delivered rate exactly on the advertised 48 kHz (800 x 60 fps).
+    * Submitting the short count instead lost the 0.27 remainder every
+    * frame -- 108 samples/sec of deficit that drained the frontend's
+    * buffer until it underran, a pop every few seconds in every title.
+    *
+    * Holding only works because the resample cursors now persist across
+    * the frame boundary: the held pair is continuous with the next
+    * frame's first output.  Before that change the cursor was
+    * re-anchored at the newest sample each frame, so holding merely
+    * moved the step from the tail of one frame to the head of the next. */
    if (bufferIndex < length)
    {
+      uint16_t holdL;
+      uint16_t holdR;
+      int idx;
+
+      holdL = (bufferIndex >= 2)
+         ? buffer[bufferIndex - 2] : (uint16_t)((int16_t)(*ltxd));
+      holdR = (bufferIndex >= 2)
+         ? buffer[bufferIndex - 1] : (uint16_t)((int16_t)(*rtxd));
+
       for (idx = bufferIndex; idx < length; idx += 2)
       {
-         buffer[idx + 0] = (uint16_t)((int16_t)(*ltxd));
-         buffer[idx + 1] = (uint16_t)((int16_t)(*rtxd));
+         buffer[idx + 0] = holdL;
+         buffer[idx + 1] = holdR;
+
+         /* A held pair still stands for one output period of real
+          * time: advance the read cursor for it too, or the deficit
+          * accumulates into a gross-drift resync skip (#393).  Same
+          * underrun guard as DSPSampleCallback. */
+         if (((double)i2sWritePos - i2sPhase) > 1.0)
+            i2sPhase += i2sRateRatio * i2sStepScale;
       }
    }
 
@@ -276,14 +427,14 @@ void DACWriteWord(uint32_t offset, uint16_t data, uint32_t who)
 {
    if (offset == LTXD + 2)
    {
+      /* Holding register only.  The pair is latched into the resample
+       * ring by DACWordStrobe() when the I2S word clock ticks, not here
+       * -- see the comment on DACWordStrobe(). */
       *ltxd = data;
-      /* Capture left sample; pair completes when RTXD is written */
    }
    else if (offset == RTXD + 2)
    {
       *rtxd = data;
-      /* Both channels written — capture the stereo pair */
-      DACCaptureSample((int16_t)(*ltxd), (int16_t)data);
    }
    else if (offset == SCLK + 2)					/* Sample rate */
    {
@@ -371,6 +522,11 @@ size_t DACStateSave(uint8_t *buf)
 	STATE_SAVE_VAR(buf, rrxd);
 	STATE_SAVE_VAR(buf, sstat);
 
+	/* v9: ring contents -- the cursors above index into this data and
+	 * both now survive frame boundaries (STATE_VERSION_DAC_I2S_RING). */
+	STATE_SAVE_BUF(buf, i2sRingL, sizeof(i2sRingL));
+	STATE_SAVE_BUF(buf, i2sRingR, sizeof(i2sRingR));
+
 	return (size_t)(buf - start);
 }
 
@@ -437,6 +593,22 @@ size_t DACStateLoad(const uint8_t *buf, uint32_t stateVersion)
 		 * now that they hold the restored values rather than the ones the
 		 * previous run left behind. */
 		DACUpdateSCLKRate();
+	}
+
+	if (stateVersion >= STATE_VERSION_DAC_I2S_RING)
+	{
+		STATE_LOAD_BUF(buf, i2sRingL, sizeof(i2sRingL));
+		STATE_LOAD_BUF(buf, i2sRingR, sizeof(i2sRingR));
+	}
+	else
+	{
+		/* Older states carry no ring data: zero it.  The loaded cursor
+		 * pair is left alone -- a v8 state's phase and writePos are
+		 * mutually consistent (both were frame-local), and the read
+		 * cursor's gross-drift resync covers anything pathological on
+		 * the first sample after load. */
+		memset(i2sRingL, 0, sizeof(i2sRingL));
+		memset(i2sRingR, 0, sizeof(i2sRingR));
 	}
 
 	return (size_t)(buf - start);

@@ -32,6 +32,19 @@ Two classes of evidence are used, and they are **not** equally strong:
 
 ## Triage table
 
+> **STATUS 2026-08-10: every issue in this table is now CLOSED** (#138, #178,
+> #180, #186, #187, #189). The verdicts and "suggested disposition" section
+> below are preserved as the *historical* investigation record — they describe
+> the state at the time of triage, **not** current behaviour. Do not read a
+> "STILL REPRODUCES" row as a live bug.
+>
+> Re-verified for this status note: **#138 Pitfall** (the row below calls it the
+> worst offender, wedging at frame 3989/3491) now runs **7200 frames clean** with
+> no crash-watchdog signature — 94.4% non-black, 6751 lit frames, motion 4335,
+> audio throughout — and **5200 frames clean under a scripted run+jump input**.
+> The fixes landed in PR #212 (68000 group-0 14-byte bus-error frame + GPU
+> `STOREP` masking). Nothing here reproduces headlessly today.
+
 | # | Title | Verdict | Basis |
 |---|---|---|---|
 | **138** | Pitfall: The Mayan Adventure — black screen | **STILL REPRODUCES** (worst offender) | deterministic hard wedge — `video_stall` at **3989** (run+jump script) / **3491** (no-input control, i.e. it dies sooner without input); 68K parked on an `RTE` stub at `$000404`; bit-identical under both blitters |

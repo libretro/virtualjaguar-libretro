@@ -3095,6 +3095,82 @@ static void test_headerless_bin_rejected(void)
 }
 
 /* ================================================================
+ * Test 20: Cart Entry Vector Validation (cart+$404)
+ * A JST_ROM whose cart+$404 longword isn't a usable PC must fall back
+ * to the cart base $800000 instead of parking the 68K somewhere it can
+ * never execute.  Two rejection cases:
+ *   - out of range: $3BE800F0 masks to $E800F0, past the boot ROM
+ *     window (the measured Rayman Demo value)
+ *   - odd: $00802001 is inside the cart window but misaligned, and
+ *     JaguarExecute() returns immediately on (m68kPC & 1)
+ * A valid even in-range vector must still be taken verbatim.
+ * ================================================================ */
+static void load_entry_vector_rom(uint8_t *dummy_rom, const char *path,
+      uint32_t vector)
+{
+   struct retro_game_info game;
+
+   p_retro_unload_game();
+
+   dummy_rom[0x404] = (uint8_t)(vector >> 24);
+   dummy_rom[0x405] = (uint8_t)(vector >> 16);
+   dummy_rom[0x406] = (uint8_t)(vector >> 8);
+   dummy_rom[0x407] = (uint8_t)vector;
+
+   memset(&game, 0, sizeof(game));
+   game.path = path;
+   game.data = dummy_rom;
+   game.size = 131072;
+
+   if (!p_retro_load_game(&game))
+      FAIL("retro_load_game failed for entry vector $%08X", vector);
+}
+
+static void check_entry_vector(uint32_t vector, uint32_t expected)
+{
+   uint32_t *p_jaguarRunAddress;
+   uint32_t run_addr;
+
+   p_jaguarRunAddress = dlsym(core_handle, "jaguarRunAddress");
+   if (!p_jaguarRunAddress) {
+      FAIL("Missing jaguarRunAddress symbol");
+      return;
+   }
+
+   if (*p_jaguarRunAddress == expected)
+      PASS("cart+$404 = $%08X -> jaguarRunAddress $%08X",
+           vector, *p_jaguarRunAddress);
+   else
+      FAIL("cart+$404 = $%08X -> jaguarRunAddress $%08X (expected $%08X)",
+           vector, *p_jaguarRunAddress, expected);
+
+   run_addr = ram_get32(4);
+   if (run_addr == expected)
+      PASS("Reset PC vector RAM[4] = $%08X", run_addr);
+   else
+      FAIL("Reset PC vector RAM[4] = $%08X (expected $%08X)",
+           run_addr, expected);
+}
+
+static void test_entry_vector_validation(uint8_t *dummy_rom)
+{
+   printf("\n=== Test 20: Cart Entry Vector Validation ===\n");
+
+   /* Out of every executable band -> fall back to the cart base. */
+   load_entry_vector_rom(dummy_rom, "dummy_badvec.jag", 0x3BE800F0);
+   check_entry_vector(0x3BE800F0, 0x800000);
+
+   /* In the cart window but odd -> the 68K can't fetch there either. */
+   load_entry_vector_rom(dummy_rom, "dummy_oddvec.jag", 0x00802001);
+   check_entry_vector(0x00802001, 0x800000);
+
+   /* Restore the good vector: a valid even in-range one is still used
+    * verbatim, and the reloaded ROM is what main() unloads at exit. */
+   load_entry_vector_rom(dummy_rom, "dummy_goodvec.jag", 0x00802000);
+   check_entry_vector(0x00802000, 0x00802000);
+}
+
+/* ================================================================
  * Main
  * ================================================================ */
 int main(int argc, char *argv[])
@@ -3294,6 +3370,7 @@ int main(int argc, char *argv[])
 
    test_recognized_raw_homebrew_load();
    test_headerless_bin_rejected();
+   test_entry_vector_validation(dummy_rom);
 
    printf("\n=== Results: %d passed, %d failed ===\n", passes, fails);
 

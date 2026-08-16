@@ -57,7 +57,8 @@
 #include <ctype.h>
 #include <stdint.h>
 
-/* Batch mode is host-side POSIX (opendir/readdir/lstat) */
+/* Batch mode walks directories with opendir/readdir (MinGW provides
+ * dirent.h; the symlink skip is POSIX-only, see collect_cues) */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -1045,10 +1046,17 @@ static int collect_cues(const char *dirPath, PathList *out)
       if (de->d_name[0] == '.')
          continue;
       snprintf(full, sizeof(full), "%s/%s", dirPath, de->d_name);
+#ifdef _WIN32
+      /* MinGW has no lstat/S_ISLNK; stat() is fine — NTFS symlinks are
+       * rare and following one just converts the file it points at. */
+      if (stat(full, &st) != 0)
+         continue;
+#else
       if (lstat(full, &st) != 0)
          continue;
       if (S_ISLNK(st.st_mode))
          continue;
+#endif
       if (S_ISDIR(st.st_mode)) {
          if (collect_cues(full, out) != 0)
             ret = -1;

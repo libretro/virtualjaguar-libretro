@@ -518,6 +518,22 @@ visually near-static scene trips it.
 
 ### 9.5 Hover Strike — detail is produced, then discarded downstream
 
+> **CORRECTION 2026-08-10 — this section's conclusion is WRONG; do not build
+> on it.** The `$100000` bucket below is an instrumentation artifact, not an
+> off-screen buffer: the histogram bucketed addresses with a 2 MB period, and
+> GPU local RAM writes (`$F03000-$F03FFF`) alias into the `$100000` bucket
+> (`0xF00000 mod 0x200000 = 0x100000`). Re-measured on screenshot-verified
+> mission gameplay: there is **no off-screen RAM buffer and no copy blit** —
+> a propagation gate wired into both blitter engines' identity-copy paths
+> fired ~1.5M times with **zero** Stage-2-tracked source hits (the only
+> identity copies read static HUD graphics). §9.8 item 1 ("shadow-aware copy
+> propagation", called the one cheaply-fixable case) is therefore built on
+> this artifact and was **investigated and closed as not applicable** — see
+> `docs/hires-copy-propagation-notes.md` on branch
+> `feature/hires-copy-propagation` for the full analysis and the corrected
+> methodology (mask instrumented addresses to the real 24-bit bus and
+> exclude processor-local RAM before bucketing).
+
 Hover Strike is **not** blocked by the Stage 2 predicate at all. Over 2,500
 frames of verified mission gameplay:
 

@@ -46,7 +46,7 @@
 #define CART_UNIVERSAL_MARKER_OFFSET   0x400
 #define CART_UNIVERSAL_MARKER          0x04040404
 
-static uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
+uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
 {
    uint32_t payloadSize;
 
@@ -125,16 +125,29 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
    static const uint32_t candidates[] = { 0x00802000, 0x00020000, 0x00004000 };
    unsigned bestCandidate = 0;
    unsigned bestScore = 0;
+   unsigned minScore;
+   bool knownStartup;
    unsigned i;
    uint32_t offset;
 
    if (size < 16 || !loadAddress)
       return false;
 
-   /* Known raw homebrew startup writes big-endian mode before touching TOM. */
-   if (GET16(buffer, 0) != 0x23FC || GET32(buffer, 2) != 0x00070007
-         || GET32(buffer, 6) != 0x00F0210C)
-      return false;
+   /* One known homebrew startup idiom writes big-endian mode before
+    * touching TOM.  It used to be a hard REQUIREMENT, which rejected any
+    * raw binary that opens differently -- the majority of the PD/BJL
+    * corpus.  Measured over the local homebrew set: 56 images that this
+    * gate refused score 17-56 on the absolute-reference test below (i.e.
+    * overwhelmingly consistent with one candidate base), while genuine
+    * non-binaries -- .zip files, headered dev images like the AvP alpha --
+    * score 0-1.  So the idiom is now a confidence hint, not an entry
+    * requirement: recognised startup keeps the permissive threshold, and
+    * anything else has to clear a much higher bar of self-consistent
+    * absolute references before we will claim to know its load address. */
+   knownStartup = (GET16(buffer, 0) == 0x23FC
+         && GET32(buffer, 2) == 0x00070007
+         && GET32(buffer, 6) == 0x00F0210C);
+   minScore = knownStartup ? 2 : 8;
 
    for (i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
    {
@@ -162,7 +175,7 @@ static bool InferRawBinaryLoadAddress(uint8_t *buffer, uint32_t size, uint32_t *
       }
    }
 
-   if (bestScore < 2)
+   if (bestScore < minScore)
       return false;
 
    *loadAddress = candidates[bestCandidate];
@@ -269,8 +282,56 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
       jaguarCartInserted = true;
       memcpy(jagMemSpace + 0x800000, buffer, flatSize);
       JGDLoadROM(buffer, jaguarROMSize);
-      // Checking something...
-      jaguarRunAddress = GET32(jagMemSpace, 0x800404);
+
+      /* The common cart layout places a 68K vector table right after a
+       * $400-byte header: SSP at cart+$400, PC (the real entry point) at
+       * cart+$404.  Most JST_ROM images follow this, but some (raw demo
+       * builds, homebrew) do not and start executing at cart+0 instead --
+       * for those, cart+$404 lands mid-instruction-stream and decodes to
+       * whatever bytes happen to be there, not a vector.
+       *
+       * "Rayman Demo (1995) (UBI Soft).jag" is the measured case: bytes at
+       * cart+$400 are real 68K code (a MOVE.L immediate), and cart+$404
+       * happens to read as $3BE800F0, which masks to $E800F0 -- just past
+       * the mapped boot-ROM window ($E00000-$E1FFFF).  In HLE (no real
+       * BIOS to validate/redirect the cart), that garbage becomes the
+       * initial PC and the 68K never reaches the game's own code.  Real
+       * BIOS mode is unaffected: it runs its own boot code first and
+       * ignores jaguarRunAddress entirely (JaguarReset() only consults it
+       * for the non-BIOS path).
+       *
+       * A masked value outside every executable band (main RAM $000000-
+       * $1FFFFF, cart ROM $800000-$DFFEFF, boot ROM $E00000-$E1FFFF) can
+       * never be a genuine vector, so treat it as evidence the
+       * header/vector-table convention isn't followed and fall back to the
+       * cart base -- the other common convention, and where this demo's
+       * real startup code (VMODE/VI register writes) actually lives.
+       * Note: $DFFF00-$DFFFFF is the CDROM overlay, not cart ROM; the
+       * cart window ends at $DFFEFF.
+       *
+       * An odd candidate is rejected for the same reason: the 68000 cannot
+       * fetch an instruction from an odd PC, and JaguarExecute() bails out
+       * immediately whenever (m68kPC & 1), so an in-range but misaligned
+       * vector (say $800001 out of a raw byte stream) would leave the CPU
+       * parked instead of running the game.  Those take the fallback too. */
+      {
+         uint32_t candidate = GET32(jagMemSpace, 0x800404);
+         uint32_t masked = candidate & 0x00FFFFFF;
+         bool validVector = ((masked & 1) == 0)
+               && ((masked < 0x200000)
+                  || (masked >= 0x800000 && masked <= 0xDFFEFF)
+                  || (masked >= 0xE00000 && masked <= 0xE1FFFF));
+
+         if (validVector)
+            jaguarRunAddress = candidate;
+         else
+         {
+            LOG_INF("[CART] cart+$404 ($%08X) is not a valid execute address; "
+                  "falling back to cart base $800000 as the entry point\n",
+                  candidate);
+            jaguarRunAddress = 0x800000;
+         }
+      }
       return true;
    }
    else if (fileType == JST_ALPINE)
