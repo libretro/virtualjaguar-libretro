@@ -460,9 +460,11 @@ static void M68KGPURAMSyncRead(unsigned int address, unsigned int length)
    if (address < GPU_WORK_RAM_BASE + 0x1000
        && address + length > GPU_WORK_RAM_BASE)
       GPUSyncToM68K();
-   /* Same handshake on the DSP side (issue #456 / #408 H3): a 68K poll
-    * of dspfinished must see the DSP that has already run up to this
-    * point in the slice, not the leftover of the previous one. */
+   /* Same handshake on the DSP side (issue #456 / #408 H3).  Doom's
+    * MiniLoop polls `DSPRead(&dspfinished)`; `_dspfinished` is a long
+    * in dspbase.gas (`.org $f1b000`, DSP local RAM), not D_CTRL /
+    * $F1A100.  The 68K read has to see the DSP that has already run
+    * up to this point in the slice, not the leftover of the previous one. */
    if (address < DSP_WORK_RAM_BASE + 0x2000
        && address + length > DSP_WORK_RAM_BASE)
       DSPSyncToM68K();
