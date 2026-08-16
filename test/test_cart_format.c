@@ -266,6 +266,24 @@ TEST(bootintro_headered_cart_loads)
    free(img);
 }
 
+/* A full-size native ROM with an incidental $04040404 at file $600
+ * (and no marker at $400) must not lose 512 bytes. */
+TEST(fullsize_incidental_marker_at_600_not_stripped)
+{
+   unsigned size = 0;
+   uint8_t *img = make_image(MIB, 0, false, &size);
+
+   ASSERT(img != NULL);
+   img[0x600] = 0x04;
+   img[0x601] = 0x04;
+   img[0x602] = 0x04;
+   img[0x603] = 0x04;
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(*p_romsize, MIB);
+   p_retro_unload_game();
+   free(img);
+}
+
 /* A 64 KiB cart with a 512-byte copier header must strip the header,
  * not map the whole file as a skewed cart (Kimi review on #465). */
 TEST(small_headered_with_copier_header_loads)
@@ -347,6 +365,7 @@ int main(int argc, char **argv)
    RUN(header_sized_file_rejected);
    RUN(small_headered_cart_loads);
    RUN(bootintro_headered_cart_loads);
+   RUN(fullsize_incidental_marker_at_600_not_stripped);
    RUN(small_headered_with_copier_header_loads);
    RUN(small_headerless_bootintro_loads);
 

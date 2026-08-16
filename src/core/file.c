@@ -33,20 +33,20 @@
  * whole-file CRC ($0FDCEB66) is catalogued as FF_BAD_DUMP.  Nothing about the
  * image data is wrong, so skip the header instead of refusing the file.
  *
- * Detection is deliberately narrow, because a size test alone would start
- * accepting arbitrary junk.  Both must hold:
+ * Detection is deliberately narrow.  The payload must carry the cartridge
+ * universal-header marker ($04040404 at payload $400), AND the file must
+ * shape-wise look like copier output:
  *
- *   - the file is large enough to hold a 512-byte header plus the payload's
- *     $400 marker slot, and
- *   - the cartridge universal-header marker ($04040404, which precedes the run
- *     address that JaguarLoadFile reads from ROM offset $404) is present at
- *     that offset measured from the payload rather than from the file.
+ *   - payload is a whole number of megabytes (the circulating Brutal Sports
+ *     class), or
+ *   - payload is smaller than 1 MiB (sub-1 MiB homebrew with the same 512-byte
+ *     header; without this arm those files fell through to the headerless
+ *     JST_ROM fallback and loaded skewed).
  *
- * A native cart already has the marker at file offset $400, so those are
- * left alone even if $04040404 also appears at $600.  The payload no longer
- * has to be a whole number of megabytes: a sub-1 MiB homebrew with the same
- * 512-byte copier header used to fall through to the headerless JST_ROM
- * fallback and load skewed (Kimi review on #465).
+ * An exact-megabyte file is never stripped (copier output is always
+ * N MiB + 512), so an incidental $04040404 at file $600 on a full-size
+ * native ROM cannot take the header off.  A native small cart already
+ * has the marker at file $400 and is left alone.
  */
 #define CART_HEADER_SKIP_SIZE   512
 #define CART_UNIVERSAL_MARKER_OFFSET   0x400
@@ -54,20 +54,35 @@
 
 uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
 {
+   uint32_t payloadSize;
+
    /* Need room for the header plus the payload's $400 marker longword. */
    if (size < CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET + 4)
       return 0;
 
-   /* Native cart: marker is already at file $400.  Do not strip 512 bytes
-    * off a real image that happens to also contain $04040404 at $600. */
-   if (GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) == CART_UNIVERSAL_MARKER)
+   /* Exact-megabyte files are native dumps.  A copier-headered image is
+    * always N MiB + 512, so this excludes the incidental-$600 case on
+    * full-size commercial ROMs before any payload math runs. */
+   if ((size % 1048576) == 0)
       return 0;
+
+   payloadSize = size - CART_HEADER_SKIP_SIZE;
 
    if (GET32(buffer, CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET)
          != CART_UNIVERSAL_MARKER)
       return 0;
 
-   return CART_HEADER_SKIP_SIZE;
+   /* Classic copier dump (Brutal Sports: 2 MiB + 512). */
+   if ((payloadSize % 1048576) == 0)
+      return CART_HEADER_SKIP_SIZE;
+
+   /* Sub-1 MiB homebrew with a copier header.  A native small cart has
+    * the marker at file $400 already -- do not strip those. */
+   if (payloadSize < 1048576
+         && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) != CART_UNIVERSAL_MARKER)
+      return CART_HEADER_SKIP_SIZE;
+
+   return 0;
 }
 
 /* Say what we were handed when ParseFileType came up empty. Several images in
