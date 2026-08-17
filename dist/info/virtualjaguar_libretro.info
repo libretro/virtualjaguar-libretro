@@ -30,7 +30,7 @@ disk_control = "false"
 is_experimental = "false"
 
 # BIOS / Firmware (all optional -- embedded copies are used when absent)
-notes = "(!) No BIOS files are required: the Jaguar boot ROM and CD BIOS images are embedded in the core.|(!) An optional CD BIOS file in the system directory overrides the embedded copy in real-BIOS CD boot mode.|(!) An optional jagboot_m.rom in the system directory overrides the embedded Model-M cart boot ROM."
+notes = "(!) No BIOS files are required: the Jaguar boot ROM and CD BIOS images are embedded in the core.|(!) CD BIOS override (optional, real-BIOS CD boot): any ONE of [BIOS] Atari Jaguar CD (World).j64/.rom/.bin, [BIOS] Atari Jaguar Developer CD (World).j64/.rom/.bin, Jaguar CD BIOS.rom/.bin, jaguarcd_bios.bin, jagcd_bios.bin, jaguarcd.bin or jagcd.bin.|(!) Those are searched in the system directory and in its "Atari - Jaguar", "Atari - Jaguar CD", "jaguar" and "jaguarcd" subfolders. The image is identified by checksum, so the filename only sets search order - a "Missing" firmware entry above is harmless if you have any other accepted name.|(!) An optional jagboot_m.rom in the system directory overrides the embedded Model-M cart boot ROM."
 firmware_count = 3
 firmware0_desc = "[BIOS] Atari Jaguar CD (World).j64 (Jaguar CD BIOS, retail - optional override)"
 firmware0_path = "[BIOS] Atari Jaguar CD (World).j64"
