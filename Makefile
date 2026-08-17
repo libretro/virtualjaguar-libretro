@@ -912,7 +912,7 @@ clean:
 		test/test_eeprom_read_race \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format \
+		test/test_cart_format test/test_cart_needs_bios \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
@@ -973,7 +973,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_frontend_pacing test/test_jgd \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format \
+		test/test_cart_format test/test_cart_needs_bios \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
@@ -1237,6 +1237,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	fi; \
 	./test/test_bios_config && ./test/test_boot_config
 	./test/test_cart_format ./$(TARGET)
+	./test/test_cart_needs_bios ./$(TARGET) --quiet
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
 	@# $F14000/$F14002 identity guardrail for the input-devices track
@@ -1743,6 +1744,10 @@ test/test_boot_config: test/test_boot_config.c
 test/test_cart_format: test/test_cart_format.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cart_format.c -ldl
+
+test/test_cart_needs_bios: test/test_cart_needs_bios.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cart_needs_bios.c test/harness/harness.c -ldl -lm
 
 test/test_cd_boot: test/test_cd_boot.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \

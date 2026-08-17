@@ -484,7 +484,6 @@ bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
    uint32_t payload;
    const uint8_t *body;
    unsigned i;
-   unsigned ff;
    uint16_t op;
 
    if (!buffer || size < 2)
@@ -508,14 +507,20 @@ bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
    if (payload < 0x2002u)
       return true;
 
-   ff = 0;
-   for (i = 0; i < 256; i++)
+   /* Blank cart entry at $802000 — typical BootIntro pad. Require a full
+    * 256-byte window (no over-read) and skip megabyte-or-larger dumps:
+    * Rayman Demo is a 2 MiB commercial cart with FF there but real 68K
+    * elsewhere; HLE must keep jumping to $802000 for those. */
+   if (payload >= 0x2100u && payload < 0x100000u)
    {
-      if (body[0x2000 + i] == 0xFFu)
-         ff++;
+      for (i = 0; i < 256; i++)
+      {
+         if (body[0x2000 + i] != 0xFFu)
+            break;
+      }
+      if (i == 256)
+         return true;
    }
-   if (ff == 256)
-      return true;
 
    op = (uint16_t)(((uint16_t)body[0x2000] << 8) | body[0x2001]);
    /* All-zero dummy carts used by HLE tests. */

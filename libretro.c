@@ -2273,6 +2273,9 @@ static void cart_bios_type_from_path(const char *path)
 
 static void apply_cart_bios_autodetect(const struct retro_game_info *info)
 {
+   struct retro_variable var;
+   const char *def;
+
    if (!info)
       return;
    if (info->data && info->size > 0 &&
@@ -2280,7 +2283,15 @@ static void apply_cart_bios_autodetect(const struct retro_game_info *info)
             (uint32_t)info->size))
    {
       vjs.useJaguarBIOS = true;
-      cart_bios_type_from_path(info->path);
+      /* Filename K/M hint only when bios_type is still at its registered
+       * default (or unset). User-set and titledb values already applied
+       * via check_variables() / get_variable_pertitle() win. */
+      var.key = "virtualjaguar_bios_type";
+      var.value = NULL;
+      def = core_option_default(var.key);
+      if (!get_variable_pertitle(&var) || !var.value ||
+            !def || strcmp(var.value, def) == 0)
+         cart_bios_type_from_path(info->path);
       LOG_INF("[BOOT] GPU-only cart -- real boot ROM enabled (jagcrypt)\n");
    }
 }
