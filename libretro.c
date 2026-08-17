@@ -2278,6 +2278,17 @@ static void apply_cart_bios_autodetect(const struct retro_game_info *info)
 
    if (!info)
       return;
+   /* info->data is guaranteed for cart content: retro_get_system_info
+    * sets need_fullpath=false, and CD content -- the only path-loaded
+    * class (CONTENT_INFO_OVERRIDE) -- takes the is_cd_content branch and
+    * never reaches here (test_memory_map asserts both).  The NULL check
+    * is defensive against non-compliant frontends only.
+    *
+    * The BIOS enable is forced even over an explicit user 'HLE' setting:
+    * a GPU-only/jagcrypt cart has no 68K program at $802000 for HLE to
+    * start, so honouring 'HLE' would be a guaranteed black screen.  The
+    * K/M *type* hint below, by contrast, does defer to user/titledb
+    * values. */
    if (info->data && info->size > 0 &&
          JaguarCartNeedsBIOS((const uint8_t *)info->data,
             (uint32_t)info->size))
