@@ -3,8 +3,7 @@ name: JaguarDemos suite
 # On-demand boot sweep of 42Bastian/JaguarDemos (public-domain homebrew).
 # Smoke (curated list) runs on ordinary PRs; the full committed-.j64 sweep
 # runs only on release/* PRs, v* tags, and manual dispatch.  Same
-# PASS->FAIL baseline gate as the acid suite — known FAILs (e.g. BootIntros
-# that need a Model-M BIOS under HLE) are recorded, not blocking.
+# PASS->FAIL baseline gate as the acid suite — BootIntros are probed with --bios + PAL; remaining FAILs are accuracy gaps.
 #
 # Does NOT install lyxass/rmac; CI only runs .j64 files already committed
 # upstream.  Local `make jaguar-demos-build` is the rebuild path.

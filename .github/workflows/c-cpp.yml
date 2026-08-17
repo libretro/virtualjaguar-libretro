@@ -426,6 +426,7 @@ jobs:
           src\core\memtrack.c src\core\vjag_memory.c src\core\cheat.c ^
           src\core\universalhdr.c src\jerry\wavetable.c ^
           src\bios\jagbios.c ^
+          src\bios\jagbios_m.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
           src\tom\blitter_simd_scalar.c ^

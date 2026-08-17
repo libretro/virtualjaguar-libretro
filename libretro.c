@@ -23,6 +23,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
+#include "jagbios_m.h"
 #include "jagcdbios.h"
 #include "jagdevcdbios.h"
 #include "jaguar.h"
@@ -533,6 +534,9 @@ static bool update_option_visibility(void)
       {
          option_display.visible = show_cart_bios_option;
          option_display.key     = "virtualjaguar_bios";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         option_display.key     = "virtualjaguar_bios_type";
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
                     &option_display);
          updated = true;
@@ -1107,6 +1111,17 @@ static void check_variables(void)
          vjs.useJaguarBIOS = true;
       else
          vjs.useJaguarBIOS = false;
+   }
+
+   var.key = "virtualjaguar_bios_type";
+   var.value = NULL;
+
+   if (get_variable_pertitle(&var) && var.value)
+   {
+      if (strcmp(var.value, "m") == 0)
+         vjs.biosType = BT_M_SERIES;
+      else
+         vjs.biosType = BT_K_SERIES;
    }
 
    var.key = "virtualjaguar_pal";
@@ -2230,6 +2245,80 @@ static void stage_cd_bios(void)
    LOG_INF("[CD-BIOS] using embedded retail CD BIOS\n");
 }
 
+static void cart_bios_type_from_path(const char *path)
+{
+   const char *base;
+   const char *slash;
+   const char *bslash;
+   size_t n;
+
+   if (!path || !path[0])
+      return;
+   slash = strrchr(path, '/');
+   bslash = strrchr(path, '\\');
+   if (bslash && (!slash || bslash > slash))
+      slash = bslash;
+   base = slash ? slash + 1 : path;
+   n = strlen(base);
+   if (n == 6 && (base[0] == 'v' || base[0] == 'V') &&
+         (base[1] == 'j' || base[1] == 'J'))
+      vjs.biosType = BT_K_SERIES;
+   else if (n >= 7 && base[n - 6] == '_' &&
+         (base[n - 5] == 'M' || base[n - 5] == 'm'))
+      vjs.biosType = BT_M_SERIES;
+   else if (n >= 7 && base[n - 6] == '_' &&
+         (base[n - 5] == 'K' || base[n - 5] == 'k'))
+      vjs.biosType = BT_K_SERIES;
+}
+
+static void apply_cart_bios_autodetect(const struct retro_game_info *info)
+{
+   if (!info)
+      return;
+   if (info->data && info->size > 0 &&
+         JaguarCartNeedsBIOS((const uint8_t *)info->data,
+            (uint32_t)info->size))
+   {
+      vjs.useJaguarBIOS = true;
+      cart_bios_type_from_path(info->path);
+      LOG_INF("[BOOT] GPU-only cart -- real boot ROM enabled (jagcrypt)\n");
+   }
+}
+
+static void stage_cart_boot_rom(void)
+{
+   const uint8_t *src;
+   const char *system_dir;
+   RFILE *f;
+   char path[4096];
+
+   src = (vjs.biosType == BT_M_SERIES) ? jaguarBootROM_M : jaguarBootROM;
+   system_dir = NULL;
+   f = NULL;
+
+   if (vjs.biosType == BT_M_SERIES &&
+         environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) &&
+         system_dir)
+   {
+      snprintf(path, sizeof(path), "%s/jagboot_m.rom", system_dir);
+      f = rfopen(path, "rb");
+      if (f)
+      {
+         if (rfread(jagMemSpace + 0xE00000, 1, 0x20000, f) == 0x20000)
+         {
+            rfclose(f);
+            LOG_INF("[BOOT] using external Model-M boot ROM %s\n", path);
+            return;
+         }
+         rfclose(f);
+      }
+   }
+
+   memcpy(jagMemSpace + 0xE00000, src, 0x20000);
+   LOG_INF("[BOOT] cart boot ROM: %s\n",
+         (vjs.biosType == BT_M_SERIES) ? "Model M" : "Series K");
+}
+
 /* Fill the entire framebuffer allocation with opaque black.
  *
  * TOM only writes the rows of the presented frame that fall inside its
@@ -2445,6 +2534,7 @@ bool retro_load_game(const struct retro_game_info *info)
    // Emulate BIOS
    vjs.hardwareTypeNTSC = true;
    vjs.useJaguarBIOS    = false;
+   vjs.biosType         = BT_K_SERIES;
    vjs.cdBiosType       = CDBIOS_RETAIL;
    vjs.cdBootMode       = CDBOOT_HLE;
    vjs.cdReadSpeed      = CDSPEED_2X;
@@ -2482,6 +2572,8 @@ bool retro_load_game(const struct retro_game_info *info)
       if (vjs.cdBootMode != CDBOOT_HLE)
          stage_cd_bios();
    }
+   else
+      apply_cart_bios_autodetect(info);
 
    /* Resolve boot configuration — single source of truth for which
     * strategy (cart / HLE / real BIOS) we will dispatch to below. */
@@ -2517,7 +2609,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    JaguarInit();                                             // set up hardware
    CrashDetectReset();                                       // zero per-game watchdog state
-   memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000); // Use the stock BIOS
+   stage_cart_boot_rom();
 
    JaguarSetScreenPitch(videoWidth * shadowHiresN);
    JaguarSetScreenBuffer(videoBuffer);

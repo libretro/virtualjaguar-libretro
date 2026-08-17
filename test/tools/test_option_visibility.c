@@ -239,6 +239,7 @@ int main(int argc, char **argv)
    expect("(cart)", "virtualjaguar_cd_read_speed", false);
    expect("(cart)", "virtualjaguar_cd_trace",      false);
    expect("(cart)", "virtualjaguar_bios",          true);
+   expect("(cart)", "virtualjaguar_bios_type",     true);
    p_unload();
 
    /* --- CD: CD options shown, cartridge BIOS option hidden --- */
@@ -259,6 +260,7 @@ int main(int argc, char **argv)
          expect("(cd)", "virtualjaguar_cd_read_speed", true);
          expect("(cd)", "virtualjaguar_cd_trace",      true);
          expect("(cd)", "virtualjaguar_bios",          false);
+         expect("(cd)", "virtualjaguar_bios_type",     false);
          p_unload();
       }
    }

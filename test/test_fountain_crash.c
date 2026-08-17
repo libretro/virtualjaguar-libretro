@@ -105,10 +105,34 @@ static int check_parked_vectors(harness_config *cfg)
     return 1;
 }
 
+static int check_boot_rom_image(harness_config *cfg, int want_m)
+{
+    uint8_t *space;
+    uint8_t *want;
+    unsigned i;
+
+    space = (uint8_t *)harness_dlsym(cfg, "jagMemSpace");
+    want = (uint8_t *)harness_dlsym(cfg,
+          want_m ? "jaguarBootROM_M" : "jaguarBootROM");
+    if (!space || !want) {
+        fprintf(stderr, "FAIL: jagMemSpace/jaguarBootROM%s not exported\n",
+                want_m ? "_M" : "");
+        return 0;
+    }
+    for (i = 0; i < 16; i++) {
+        if (space[0xE00000u + i] != want[i]) {
+            fprintf(stderr, "FAIL: boot ROM[%u] = $%02X want $%02X (%s)\n",
+                    i, space[0xE00000u + i], want[i], want_m ? "M" : "K");
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
-    harness_result results[2];
+    harness_result results[3];
     unsigned nres;
     const char *live_rom;
     int live_requested;
@@ -121,6 +145,7 @@ int main(int argc, char **argv)
     unsigned early_ok;
     unsigned width_ok;
     char dummy_detail[80];
+    char m_detail[80];
     char live_detail[160];
 
     cfg.frames = 180;
@@ -147,12 +172,34 @@ int main(int argc, char **argv)
         harness_shutdown(&cfg);
         return 1;
     }
-    dummy_ok = check_parked_vectors(&cfg);
+    dummy_ok = check_parked_vectors(&cfg) && check_boot_rom_image(&cfg, 0);
     snprintf(dummy_detail, sizeof(dummy_detail),
-             "vectors 2-255 parked at $%08X", BIOS_ROM_PARK_PC);
+             "vectors 2-255 parked at $%08X, Series K ROM mapped",
+             BIOS_ROM_PARK_PC);
     results[nres].status = dummy_ok ? "PASS" : "FAIL";
     results[nres].name   = "bios_cart_vector_park";
     results[nres].detail = dummy_detail;
+    nres++;
+    harness_shutdown(&cfg);
+
+    if (!dummy_ok)
+        return 1;
+
+    if (!harness_init_from_args(&cfg, argc, argv))
+        return 1;
+    cfg.use_bios = 1;
+    cfg.rom_path = DUMMY_CART_PATH;
+    harness_set_option(&cfg, "virtualjaguar_bios_type", "m");
+    if (!harness_load_rom(&cfg)) {
+        harness_shutdown(&cfg);
+        return 1;
+    }
+    dummy_ok = check_boot_rom_image(&cfg, 1);
+    snprintf(m_detail, sizeof(m_detail),
+             "Model-M boot ROM mapped at $E00000");
+    results[nres].status = dummy_ok ? "PASS" : "FAIL";
+    results[nres].name   = "bios_cart_model_m_map";
+    results[nres].detail = m_detail;
     nres++;
     harness_shutdown(&cfg);
 

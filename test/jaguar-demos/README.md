@@ -17,12 +17,13 @@ the private cart boot matrix). A ROM **PASS**es when it loads
 and lights up the framebuffer within the frame budget. This is a boot + rendering
 gate, not a screenshot golden or a "finished the demo" certificate.
 
-Known HLE failures (e.g. BootIntros / GPU-only boots that need a Model-M BIOS)
-stay in `BASELINE.txt` as `[FAIL …]` so they document gaps without blocking CI.
-Smoke never rewrites `BASELINE.txt`; use `make jaguar-demos-baseline` (full
-sweep) when the PASS/FAIL set changes.
-On the initial pin, most size-coded intros FAIL under HLE; a handful of full
-demos (jag_ball, jagniccc variants, hirez_slideshow, gpuobj_hack) PASS.
+BootIntros and GPU-only carts (`64/` `128/` `256/` `512/`, plus named
+titles such as `yarc_reloaded`) are probed with `--bios` and PAL, matching
+JaguarDemos' own `Rules.launch`.  Size-coded pads prefer `vj.j64` then
+Series K (`*_K`) because the embedded cart boot ROM is Series K.
+Remaining `[FAIL …]` rows in `BASELINE.txt` are accuracy gaps, not
+"HLE never started".  Smoke never rewrites `BASELINE.txt`; use
+`make jaguar-demos-baseline` (full sweep) when the PASS/FAIL set changes.
 
 ## Targets
 
