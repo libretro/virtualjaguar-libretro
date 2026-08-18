@@ -43,7 +43,14 @@ run_case()
 {
     local label="$1" core_port="$2" proxy_port="$3" wait_opt="$4"
     local probe_log rate fps
-    probe_log="$(mktemp "${TMPDIR:-/tmp}/vj_nl_lat_XXXXXX.log")"
+    # Fail fast if mktemp cannot hand us a scratch file.  Without this the
+    # empty $probe_log flows into the redirect, the grep and both seds below
+    # and each reports its own "No such file or directory" before the case
+    # finally errors -- a cascade that buries the actual cause.
+    probe_log="$(mktemp "${TMPDIR:-/tmp}/vj_nl_lat_XXXXXX.log")" || {
+        echo "netlink_latency_test: FAIL ($label: mktemp failed)" >&2
+        return 1
+    }
 
     "$TOOLS/netlink_delay_proxy" --listen "$proxy_port" \
         --connect "127.0.0.1:$core_port" --delay-ms 3 2>/dev/null &
