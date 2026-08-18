@@ -968,6 +968,16 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+# Per-process EEPROM fixture scratch: two concurrent `make test` runs
+# (different worktrees/sessions sharing /tmp) would otherwise recompile
+# and overwrite the same generator binary and regenerate/truncate the
+# same fixture ROM out from under each other mid-suite.  $(shell echo
+# $$PPID) is evaluated once, at parse time, in a subshell whose parent
+# is this `make` process -- so every recipe line below sees the same
+# value for the life of one `make test` invocation, and two concurrent
+# invocations get different values.
+test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
+test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
 test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
@@ -1373,12 +1383,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		--max-fastest-frame-fraction 100 \
 		--option virtualjaguar_m68k_clock_scale=0.5x
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
-	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
-		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
-		./test/test_eeprom_lifecycle ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	@# EEPROM_GEN_TOOL / EEPROM_FIXTURE are per-process (see the `test:`
+	@# target-specific variable above) so two concurrent `make test` runs
+	@# don't recompile/overwrite each other's generator binary or fixture.
+	@$(CC) -O2 -Wall -o $(EEPROM_GEN_TOOL) test/tools/gen_eeprom_test_rom.c && \
+		$(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE) && \
+		./test/test_eeprom_lifecycle ./$(TARGET) $(EEPROM_FIXTURE)
 	@# EEPROM read-race test: joystick polls must not steal EEPROM DO bits
 	@# (Raiden background-music death regression).
-	./test/test_eeprom_read_race ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	./test/test_eeprom_read_race ./$(TARGET) $(EEPROM_FIXTURE)
+	@rm -f $(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE)
 	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
 	@# user-override contract, driven through the real dlopen'd core.
 	@# shadowHiresN is fixed for the whole session at retro_load_game
