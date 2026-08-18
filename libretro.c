@@ -1102,17 +1102,25 @@ static void netlink_apply(int mode, const char *opt_value)
               netlink_mode_name(mode));
 
    /* LAN discovery beacon/listener lifecycle (#467).  A host beacons AND
-    * listens, so it can see other peers too; a client or "auto" listens
-    * only -- neither dials out on its own.  Anything else (disabled,
-    * loopback) has no use for a peer list, so discovery stops. */
+    * listens, so it can see other peers too; a client listens only --
+    * neither dials out on its own.  Deliberately NOT started for "auto":
+    * the host field it would populate is hidden in auto (see the
+    * update_option_visibility() gate), and auto never auto-connects to a
+    * discovered peer either (a Voice Modem "auto-dial" would place a call
+    * the user did not initiate) -- so in auto the peer table is invisible
+    * and unread. Auto is also the option's default, so starting a socket
+    * here would open a UDP listener on port 42170 for every user on
+    * every load, tripping the OS's Local Network permission prompt for
+    * players who never touched the networking options. Anything else
+    * (disabled, loopback) has no use for a peer list either, so discovery
+    * stops. */
    {
       int device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
                    ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
 
       if (opt_value && !strcmp(opt_value, "tcp_server"))
          JLinkDiscStart(0 /* listen_only */, device, port);
-      else if (opt_value && (!strcmp(opt_value, "tcp_client")
-                              || !strcmp(opt_value, "auto")))
+      else if (opt_value && !strcmp(opt_value, "tcp_client"))
          JLinkDiscStart(1 /* listen_only */, device, port);
       else
          JLinkDiscStop();
@@ -3805,10 +3813,14 @@ void retro_deinit(void)
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
    netlink_was_up          = -1;
-   /* LAN discovery (#467): close the beacon/listener socket and reset the
+   /* LAN discovery (#467): close the beacon/listener socket, drop any
+    * peers it found (JLinkDiscStop() only closes the socket -- the peer
+    * array survives it, and a resident core would otherwise carry stale
+    * peers from an unrelated ROM into the next session), and reset the
     * host/port visibility gates -- same iOS-no-dlclose reasoning as the
     * rest of this function. */
    JLinkDiscStop();
+   JLinkDiscPeersReset();
    show_netlink_host       = true;
    show_netlink_port       = true;
    show_mouse_options      = true;

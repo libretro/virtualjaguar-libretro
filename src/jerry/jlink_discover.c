@@ -174,6 +174,16 @@ int JLinkDiscStart(int listen_only, int device, int link_port)
    struct sockaddr_in sa;
    int one = 1;
 
+   /* Idempotent when nothing changed.  libretro.c re-applies the netlink
+      option (and this call along with it) on EVERY frontend
+      variable-update flag, not just when netlink's own key changed --
+      that flag is a single dirty bit shared by all options.  Without this
+      guard, tweaking an unrelated option would silently wipe the
+      discovered peer table a host picker reads from. */
+   if (discSock >= 0 && discListenOnly == listen_only
+       && discDevice == device && discLinkPort == link_port)
+      return 1;
+
    JLinkDiscStop();
    JLinkDiscPeersReset();
 

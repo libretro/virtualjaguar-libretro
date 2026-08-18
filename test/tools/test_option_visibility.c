@@ -153,9 +153,36 @@ typedef void (*set_ipoll_fn)(retro_input_poll_t);
 typedef void (*set_istate_fn)(retro_input_state_t);
 typedef void (*void_fn)(void);
 typedef bool (*load_fn)(const struct retro_game_info *);
+typedef int  (*int_fn)(void);
 
 static load_fn  p_load;
 static void_fn  p_unload;
+static int_fn   p_disc_active; /* JLinkDiscActive(), or NULL if unresolved */
+
+/* Assert the LAN discovery socket's on/off state directly, rather than
+ * through the SET_CORE_OPTIONS_DISPLAY recording used by expect() --
+ * JLinkDiscActive() is a live query, not an option-visibility toggle. */
+static void expect_active(const char *what, bool want)
+{
+   bool got;
+   if (!p_disc_active)
+   {
+      printf("  SKIP JLinkDiscActive()             %s -- symbol not resolved\n",
+             what);
+      return;
+   }
+   checks++;
+   got = p_disc_active() != 0;
+   if (got == want)
+      printf("  ok   JLinkDiscActive()              %s active=%d\n",
+             what, (int)got);
+   else
+   {
+      printf("  FAIL JLinkDiscActive()              %s active=%d, expected %d\n",
+             what, (int)got, (int)want);
+      failures++;
+   }
+}
 
 static bool load_content(const char *path)
 {
@@ -231,8 +258,9 @@ int main(int argc, char **argv)
    ((set_istate_fn)dlsym(lib, "retro_set_input_state"))(input_state_cb);
    ((void_fn)dlsym(lib, "retro_init"))();
 
-   p_load   = (load_fn)dlsym(lib, "retro_load_game");
-   p_unload = (void_fn)dlsym(lib, "retro_unload_game");
+   p_load       = (load_fn)dlsym(lib, "retro_load_game");
+   p_unload     = (void_fn)dlsym(lib, "retro_unload_game");
+   p_disc_active = (int_fn)dlsym(lib, "JLinkDiscActive");
 
    /* --- cartridge: CD options hidden, cartridge BIOS option shown --- */
    if (!load_content(cart))
@@ -286,6 +314,13 @@ int main(int argc, char **argv)
    printf("[netlink=auto] %s\n", cart);
    expect("(netlink=auto)", "virtualjaguar_netlink_host", false);
    expect("(netlink=auto)", "virtualjaguar_netlink_port", false);
+   /* auto must never open the discovery socket: the host row it would
+    * feed is hidden (checked above) and auto never auto-connects to a
+    * found peer anyway, so the peer list is invisible and unread --
+    * opening it here would be a silent UDP listener (and OS Local
+    * Network permission prompt) for every user, since auto is now the
+    * option's default. */
+   expect_active("(netlink=auto)", false);
    p_unload();
 
    netlink_opt_value = "tcp_client";
@@ -298,6 +333,9 @@ int main(int argc, char **argv)
    printf("[netlink=tcp_client] %s\n", cart);
    expect("(netlink=tcp_client)", "virtualjaguar_netlink_host", true);
    expect("(netlink=tcp_client)", "virtualjaguar_netlink_port", true);
+   /* tcp_client listens for LAN hosts (never beacons) so the host row's
+    * "hosts on your LAN are found automatically" claim is real. */
+   expect_active("(netlink=tcp_client)", true);
    p_unload();
 
    netlink_opt_value = "tcp_server";
