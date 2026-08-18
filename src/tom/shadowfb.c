@@ -26,6 +26,14 @@ extern uint32_t CRY16ToRGB32[0x10000];
 
 int shadowFBActive = 0;
 
+/* Gouraud/SRCSHADE precision stores in the blitter engines are gated
+ * separately from the surface (issue #369 deliverable 2): the texture
+ * replacement pipeline needs the surface + presentation path WITHOUT
+ * changing any non-replaced pixel, while the True Color option wants
+ * both.  Effective = option wanted AND surface active. */
+int shadowFBPrecision = 0;
+static int shadowFBPrecisionWant = 0;
+
 uint32_t shadowLineRGB[SHADOWFB_LINE_PIXELS];
 uint32_t shadowLineTag[SHADOWFB_LINE_PIXELS];
 
@@ -55,6 +63,26 @@ void ShadowFBStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
       return;
    idx = (addr & 0x1FFFFE) >> 1;
    shadowRGB[idx] = ShadowFBCryRGB(value16, frac16);
+   shadowTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
+}
+
+/* Texture-replacement store (issue #369 deliverable 2): record an
+ * ARBITRARY RGB888 for a main-RAM word, tagged against the 16-bit value
+ * the RAM actually holds.  Unlike ShadowFBStoreCry the RGB is not a
+ * function of the value -- it is pack art -- so this is only called
+ * from the replacement pipeline's post-blit walk, which re-runs on
+ * every launch (memo skips included); it is deliberately NOT logged to
+ * the blit memo's shadow-store replay. */
+void ShadowFBStoreRGB(uint32_t addr, uint16_t value16, uint32_t rgb888)
+{
+   uint32_t idx;
+   if (!shadowFBActive)
+      return;
+   addr &= 0xFFFFFF;
+   if (addr >= 0x800000)
+      return;
+   idx = (addr & 0x1FFFFE) >> 1;
+   shadowRGB[idx] = rgb888 & 0x00FFFFFF;
    shadowTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
 }
 
@@ -109,9 +137,16 @@ void ShadowFBSetEnabled(int enable)
       }
       ShadowFBInvalidate();
       shadowFBActive = 1;
+      shadowFBPrecision = shadowFBPrecisionWant;
    }
    else
       ShadowFBShutdown();
+}
+
+void ShadowFBSetPrecision(int on)
+{
+   shadowFBPrecisionWant = on ? 1 : 0;
+   shadowFBPrecision = (shadowFBPrecisionWant && shadowFBActive) ? 1 : 0;
 }
 
 void ShadowFBShutdown(void)
@@ -123,6 +158,8 @@ void ShadowFBShutdown(void)
    shadowRGB = NULL;
    shadowTag = NULL;
    shadowFBActive = 0;
+   shadowFBPrecision = 0;
+   shadowFBPrecisionWant = 0;
    memset(shadowLineRGB, 0, sizeof(shadowLineRGB));
    memset(shadowLineTag, 0, sizeof(shadowLineTag));
 }

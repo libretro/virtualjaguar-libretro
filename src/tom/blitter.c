@@ -795,7 +795,7 @@ void blitter_generic(uint32_t cmd)
                            sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
                      }
                   }
-                  if (shadowFBActive && !inhibit && (GOURD || SRCSHADE))
+                  if (shadowFBPrecision && !inhibit && (GOURD || SRCSHADE))
                      ShadowFBStoreCry(a1_addr + (PIXEL_OFFSET_16(a1) << 1),
                            (uint16_t)writedata, sfb_frac);
                   if (shadowHiresActive)
@@ -964,7 +964,7 @@ void blitter_generic(uint32_t cmd)
                            sfb_frac = (uint16_t)(sfb_i24 & 0xFFFF);
                      }
                   }
-                  if (shadowFBActive && !inhibit && (GOURD || SRCSHADE))
+                  if (shadowFBPrecision && !inhibit && (GOURD || SRCSHADE))
                      ShadowFBStoreCry(a2_addr + (PIXEL_OFFSET_16(a2) << 1),
                            (uint16_t)writedata, sfb_frac);
                   if (shadowHiresActive)
@@ -3681,7 +3681,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                    * just gouraud, also refreshes the Nx shadow block by
                    * box replication (see shadowfb.h). */
                   if (pixsize == 4
-                        && (shadowHiresActive || (shadowFBActive && gourd)))
+                        && (shadowHiresActive || (shadowFBPrecision && gourd)))
                   {
                      if (phrase_mode)
                      {
@@ -3692,7 +3692,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                            sfb_v = (uint16_t)(wdata >> ((3 - sfb_k) << 4));
                            sfb_f = gourd
                               ? (uint16_t)(srcd1 >> ((3 - sfb_k) << 4)) : 0;
-                           if (shadowFBActive && gourd)
+                           if (shadowFBPrecision && gourd)
                               ShadowFBStoreCry(address + ((uint32_t)sfb_k << 1),
                                     sfb_v, sfb_f);
                            if (shadowHiresActive)
@@ -3703,7 +3703,7 @@ A1_outside	:= OR6 (a1_outside, a1_x{15}, a1xgr, a1xeq, a1_y{15}, a1ygr, a1yeq);
                      else
                      {
                         uint16_t sfb_f = gourd ? (uint16_t)srcd1 : 0;
-                        if (shadowFBActive && gourd)
+                        if (shadowFBPrecision && gourd)
                            ShadowFBStoreCry(address, (uint16_t)wdata, sfb_f);
                         if (shadowHiresActive)
                         {
