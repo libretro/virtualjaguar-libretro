@@ -941,6 +941,19 @@ void retro_set_environment(retro_environment_t cb)
  * one and swallow the first UP/DOWN edge. */
 static int netlink_was_up = -1;
 
+/* Discovered-host option list (task 4, #467).  netlink_last_rebuild_ms
+ * paces SET_CORE_OPTIONS_V2 re-registration (a full RetroArch option-
+ * manager teardown, see netlink_rebuild_host_options() below);
+ * netlink_peers_dirty is a sticky latch set the instant a peer-set change
+ * is observed and cleared only once a rebuild actually runs -- see the
+ * gating block in retro_run() for why a bare rate-limit check isn't
+ * enough.  Both are file scope (not function-local) for the same reason
+ * as netlink_was_up: iOS never dlcloses the core, so a function-local
+ * static would carry the previous session's pacing/latch state into the
+ * next one. */
+static uint32_t netlink_last_rebuild_ms = 0;
+static int      netlink_peers_dirty     = 0;
+
 /* Names for the [NETLINK] log lines.  Not exported: nothing outside this
  * file needs to render a mode. */
 static const char *netlink_mode_name(int mode)
@@ -1125,6 +1138,147 @@ static void netlink_apply(int mode, const char *opt_value)
       else
          JLinkDiscStop();
    }
+}
+
+/* Discovered-host option list (task 4, #467): the LAN discovery beacon
+ * (jlink_discover.c) finds peers, but libretro core options are a fixed
+ * enumeration on every platform -- no core can offer a free-text field --
+ * so a peer is useless until it becomes a selectable
+ * virtualjaguar_netlink_host value.  Everything below wires that up.
+ *
+ * retro_core_option_v2_definition::values[] is a fixed-size array INLINE
+ * in the struct (libretro.h), not a pointer, so option_defs_us (compiled
+ * into libretro_core_options.h, already static storage duration) can be
+ * mutated in place -- no separate "static so it outlives the call" array
+ * is needed for the value list itself.  The value/label *strings* still
+ * need their own static storage: netlink_peer_value/label below, since
+ * they are built fresh from JLinkPeer data the frontend does not own. */
+static char netlink_peer_value[JLINK_DISC_MAX_PEERS][JLINK_DISC_ADDR_MAX];
+static char netlink_peer_label[JLINK_DISC_MAX_PEERS][128];
+
+/* The three presets from libretro_core_options.h (127.0.0.1, jaghub.local,
+ * vj_netlink.txt), snapshotted once from the pristine array before the
+ * first peer splice.  Every rebuild below reads this copy rather than the
+ * live option_defs_us array, which this same function overwrites -- so a
+ * second rebuild can never mistake an already-spliced peer entry for a
+ * preset. */
+static struct retro_core_option_value netlink_host_presets[3];
+static int netlink_host_presets_valid = 0;
+
+/* Index of virtualjaguar_netlink_host in option_defs_us, found by key
+ * rather than hard-coded so a reorder of the option table can't silently
+ * corrupt the wrong option's value list.  Shared by the rebuild and the
+ * retro_deinit() restore. */
+static int netlink_host_option_index(void)
+{
+   int i;
+
+   for (i = 0; option_defs_us[i].key; i++)
+      if (!strcmp(option_defs_us[i].key, "virtualjaguar_netlink_host"))
+         return i;
+   return -1;
+}
+
+/* Rebuild virtualjaguar_netlink_host's value list from the current LAN
+ * discovery peer table and push it to the frontend with a second
+ * SET_CORE_OPTIONS_V2.  That is a legal call -- RetroArch's
+ * core_option_manager tears down and rebuilds on it (runloop.c),
+ * flushing current values to disk first -- but it IS a full teardown, so
+ * callers must only invoke this when the peer set actually changed (see
+ * the gated call site in retro_run()), never on a timer or per beacon.
+ *
+ * Values: 127.0.0.1, then one entry per peer labelled "<name> - <addr>"
+ * (with " (JagLink)" / " (Voice Modem)" appended when the peer's device
+ * differs from ours, so a mismatch is visible instead of silently
+ * failing), then jaghub.local and vj_netlink.txt -- the existing presets
+ * stay selectable, peers are added, not substituted. Capped at
+ * JLINK_DISC_MAX_PEERS entries. */
+static void netlink_rebuild_host_options(void)
+{
+   int idx, i, n, peer_count, my_device;
+
+   idx = netlink_host_option_index();
+   if (idx < 0)
+      return;
+
+   if (!netlink_host_presets_valid)
+   {
+      for (i = 0; i < 3 && option_defs_us[idx].values[i].value; i++)
+         netlink_host_presets[i] = option_defs_us[idx].values[i];
+      netlink_host_presets_valid = 1;
+   }
+
+   n = 0;
+   option_defs_us[idx].values[n++] = netlink_host_presets[0]; /* 127.0.0.1 */
+
+   my_device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+               ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+
+   peer_count = JLinkDiscPeerCount();
+   if (peer_count > JLINK_DISC_MAX_PEERS)
+      peer_count = JLINK_DISC_MAX_PEERS;
+
+   for (i = 0; i < peer_count; i++)
+   {
+      const JLinkPeer *peer;
+      const char *devtag;
+      const char *name;
+
+      peer = JLinkDiscPeerAt(i);
+      if (!peer)
+         break;
+
+      /* Beacon-supplied name is untrusted and may be empty; fall back to
+       * the address so the label is never just " - 1.2.3.4". */
+      name = peer->name[0] ? peer->name : peer->addr;
+
+      devtag = "";
+      if (peer->device != my_device)
+         devtag = (peer->device == JLINK_DISC_DEV_VOICEMODEM)
+                  ? " (Voice Modem)" : " (JagLink)";
+
+      strncpy(netlink_peer_value[i], peer->addr,
+              sizeof(netlink_peer_value[i]) - 1);
+      netlink_peer_value[i][sizeof(netlink_peer_value[i]) - 1] = '\0';
+
+      snprintf(netlink_peer_label[i], sizeof(netlink_peer_label[i]),
+               "%s - %s%s", name, peer->addr, devtag);
+
+      option_defs_us[idx].values[n].value = netlink_peer_value[i];
+      option_defs_us[idx].values[n].label = netlink_peer_label[i];
+      n++;
+   }
+
+   option_defs_us[idx].values[n++] = netlink_host_presets[1]; /* jaghub.local */
+   option_defs_us[idx].values[n++] = netlink_host_presets[2]; /* vj_netlink.txt */
+
+   option_defs_us[idx].values[n].value = NULL;
+   option_defs_us[idx].values[n].label = NULL;
+
+   environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+
+   /* SET_CORE_OPTIONS_V2 rebuilds RetroArch's whole core_option_manager
+    * from these definitions, which carry no visibility field -- every
+    * option comes back visible.  update_option_visibility() caches
+    * show_netlink_host/show_netlink_port and only re-pushes
+    * SET_CORE_OPTIONS_DISPLAY when a value CHANGES, so without this it
+    * would keep believing a row it hid earlier is still hidden and never
+    * re-hide it.  Re-assert both current flags directly (not by calling
+    * update_option_visibility(), which would no-op against its own
+    * cached prevs) so a host row hidden in tcp_server mode -- discovery
+    * runs there too -- doesn't reappear the moment a peer is found. */
+   {
+      struct retro_core_option_display od;
+      od.key     = "virtualjaguar_netlink_host";
+      od.visible = show_netlink_host;
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &od);
+      od.key     = "virtualjaguar_netlink_port";
+      od.visible = show_netlink_port;
+      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &od);
+   }
+
+   LOG_INF("[NETLINK] host picker rebuilt: %d discovered peer%s\n",
+           peer_count, peer_count == 1 ? "" : "s");
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
@@ -3821,6 +3975,26 @@ void retro_deinit(void)
     * rest of this function. */
    JLinkDiscStop();
    JLinkDiscPeersReset();
+   /* Host option value list (task 4, #467): JLinkDiscPeersReset() above
+    * clears the runtime peer table, but option_defs_us's live value list
+    * is a separate copy this session may have spliced peers into.
+    * Without restoring it, a resident core (iOS never dlcloses) would
+    * have retro_set_environment() republish last session's stale peers
+    * for a fresh session where discovery may not even be running yet. */
+   netlink_last_rebuild_ms = 0;
+   netlink_peers_dirty     = 0;
+   if (netlink_host_presets_valid)
+   {
+      int host_idx = netlink_host_option_index();
+      if (host_idx >= 0)
+      {
+         option_defs_us[host_idx].values[0] = netlink_host_presets[0];
+         option_defs_us[host_idx].values[1] = netlink_host_presets[1];
+         option_defs_us[host_idx].values[2] = netlink_host_presets[2];
+         option_defs_us[host_idx].values[3].value = NULL;
+         option_defs_us[host_idx].values[3].label = NULL;
+      }
+   }
    show_netlink_host       = true;
    show_netlink_port       = true;
    show_mouse_options      = true;
@@ -4045,6 +4219,37 @@ void retro_run(void)
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
                     netlink_mode_name(JLinkMode()));
          netlink_was_up = up;
+      }
+   }
+
+   /* Rebuild the host picker only when the peer set actually changed --
+    * never on a timer.  A second SET_CORE_OPTIONS_V2 tears down and
+    * rebuilds RetroArch's whole option manager (runloop.c), so doing it
+    * per beacon would thrash the menu under the user's thumb.
+    *
+    * JLinkDiscConsumeChanged() both reads AND CLEARS the flag.  A bare
+    * "flag && rate_limit_ok" (as sketched in the task brief) drops any
+    * change that lands inside the 2s cooldown -- the flag is gone, and
+    * the peer that triggered it is never rebuilt in; the next flag to
+    * fire is likely that same peer's 10s expiry, which publishes a list
+    * that never showed it at all.  The sticky latch below fixes that:
+    * any change latches netlink_peers_dirty, and only the rate limit
+    * gates the rebuild itself, so a change is delayed by at most 2s,
+    * never lost.  JLinkDiscStart() (jlink_discover.c) is already
+    * idempotent on repeated netlink_apply() calls with unchanged
+    * parameters, so this rebuild's own SET_CORE_OPTIONS_V2 -- even if it
+    * causes the frontend to re-signal a variables update -- cannot wipe
+    * the peer table out from under itself. */
+   {
+      uint32_t disc_now = JLinkNowMs();
+      if (JLinkDiscConsumeChanged())
+         netlink_peers_dirty = 1;
+      if (netlink_peers_dirty
+          && (uint32_t)(disc_now - netlink_last_rebuild_ms) >= 2000)
+      {
+         netlink_rebuild_host_options();
+         netlink_last_rebuild_ms = disc_now;
+         netlink_peers_dirty     = 0;
       }
    }
 
