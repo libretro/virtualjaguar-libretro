@@ -64,6 +64,34 @@ These are verified facts, not assumptions. They drove the design.
 Consequence: **UDP is the primary discovery mechanism, not the fallback.**
 mDNS is deferred to a follow-up ticket, blocked upstream on iOS/tvOS.
 
+### Testing trap: Local Network permission is per binary
+
+On macOS (and iOS), Local Network access is approved **per executable**, not
+per user or per machine. A freshly built test binary is a new subject and
+raises its own prompt; an unanswered prompt fails closed, silently.
+
+This cost a full misdiagnosis during implementation. A run of
+`netlink_discover_pair.sh` failed, and three independent from-scratch
+reproductions "confirmed" that local UDP broadcast did not loop back on the
+host at all — so the failure was attributed to the machine's network stack.
+It was not. Every reproduction ran under an interpreter that already held
+the permission, while the newly compiled probe did not, and its prompt had
+timed out. A direct three-destination measurement on the same machine showed
+`255.255.255.255` and `127.0.0.1` both delivering normally, and the real pair
+test passed on the next run once the prompt was settled.
+
+When a discovery test fails on macOS, check the permission before suspecting
+the code:
+
+- answer the Local Network prompt (it may appear behind the terminal window)
+- System Settings → Privacy & Security → Local Network, confirm the terminal
+  or test binary is listed and enabled
+- a rebuild can re-prompt, so a test that passed yesterday can fail today for
+  this reason alone
+
+A timed-out prompt and a broken network stack are indistinguishable from
+inside the process: `sendto` succeeds either way and nothing arrives.
+
 ## Design
 
 ### 1. Option model
