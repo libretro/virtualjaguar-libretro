@@ -80,6 +80,15 @@ _shadowHiresN
 _shadowFBActive
 _blitMemo*
 _TitleDB*
+# Texture dump/replacement (#369) probes + the shadow-framebuffer
+# presentation functions the replacement tests drive directly.
+_TexDump*
+_TexReplace*
+_texDumpEnabled
+_texReplaceEnabled
+_ShadowFB*
+_shadowLineRGB
+_shadowLineTag
 # _TitleHook* is NOT covered by _TitleDB* -- the applier lives in its own
 # translation unit and its own name prefix.
 _TitleHook*

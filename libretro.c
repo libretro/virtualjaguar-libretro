@@ -43,6 +43,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "shadowfb.h"
 #include "blit_memo.h"
 #include "texdump.h"
+#include "texreplace.h"
 #include "tom.h"
 #include "blitter.h"
 #include "gpu.h"
@@ -209,6 +210,9 @@ static bool show_cart_bios_option  = true;
  * update_option_visibility() sees a change and hides it while the dump
  * option sits at its disabled default. */
 static bool show_texdump_16bpp     = true;
+/* Texture replacement (#369 deliverable 2) only means anything when a
+ * pack directory exists for the loaded content; hidden otherwise. */
+static bool show_texture_replace   = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -685,6 +689,23 @@ static bool update_option_visibility(void)
       }
    }
 
+   /* Texture replacement (#369 deliverable 2): only shown when a pack
+    * directory exists for the loaded content -- an option that can
+    * never do anything is noise. */
+   {
+      bool show_replace_prev = show_texture_replace;
+
+      show_texture_replace = TexReplacePackAvailable() ? true : false;
+      if (show_texture_replace != show_replace_prev)
+      {
+         option_display.visible = show_texture_replace;
+         option_display.key     = "virtualjaguar_texture_replace";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
    return updated;
 }
 
@@ -1035,12 +1056,31 @@ static void check_variables(void)
     * memo whenever the engine identity flips. */
    BlitMemoNotifyEngine(vjs.useFastBlitter ? 1 : 0);
 
+   /* Texture replacement (#369 deliverable 2): raw read (never a
+    * per-title default).  Enabling triggers the one-off pack load once
+    * the system dir + content CRC are known (retro_load_game). */
+   var.key = "virtualjaguar_texture_replace";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      TexReplaceSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      TexReplaceSetEnabled(0);
+
    var.key = "virtualjaguar_true_color";
    var.value = NULL;
-   if (get_variable_pertitle(&var) && var.value)
-      ShadowFBSetEnabled(strcmp(var.value, "enabled") == 0);
-   else
-      ShadowFBSetEnabled(0);
+   {
+      bool tc_on = false;
+      if (get_variable_pertitle(&var) && var.value)
+         tc_on = strcmp(var.value, "enabled") == 0;
+      /* An active texture-replacement pack presents through the shadow
+       * framebuffer, so it forces the SURFACE on even with True Color
+       * disabled -- but the Gouraud precision stores (the True Color
+       * feature proper) follow the option alone, so a replacement-only
+       * activation leaves every non-replaced pixel bit-identical
+       * (docs/texture-dump.md, "Replacement pipeline"). */
+      ShadowFBSetEnabled((tc_on || texReplaceEnabled) ? 1 : 0);
+      ShadowFBSetPrecision(tc_on ? 1 : 0);
+   }
 
    /* Internal resolution is applied ONCE at content load (retro_load_game)
     * because the libretro geometry maximum cannot grow mid-session.  Here
@@ -2783,6 +2823,15 @@ bool retro_load_game(const struct retro_game_info *info)
          TexDumpSetBasePath(texdump_sys_dir);
       else
          TexDumpSetBasePath(NULL);
+      /* Texture replacement (#369 deliverable 2): same base, packs read
+       * from <system dir>/vj_texpacks/<CRC32>/.  ContentLoaded probes
+       * availability (option visibility) and performs the one-off pack
+       * load if the option was already on; a loaded pack then forces
+       * the shadow framebuffer it presents through. */
+      TexReplaceSetBasePath(texdump_sys_dir);
+      TexReplaceContentLoaded();
+      if (texReplaceEnabled)
+         ShadowFBSetEnabled(1);
    }
 
    /* Raw gate read (never through get_variable_pertitle()) so the hires
@@ -3091,6 +3140,10 @@ void retro_unload_game(void)
     * next load's check_variables() re-enables (and re-allocates) if the
     * option is still on. */
    TexDumpShutdown();
+   /* Texture replacement (#369): packs are per-CRC too -- free the map
+    * and log the session summary; the next load's check_variables() +
+    * TexReplaceContentLoaded() reload if the option is still on. */
+   TexReplaceShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -3287,6 +3340,9 @@ void retro_deinit(void)
     * free the dedupe set and reset every static. */
    TexDumpShutdown();
    show_texdump_16bpp = true;
+   /* Texture replacement (#369): free the pack map, reset every static. */
+   TexReplaceShutdown();
+   show_texture_replace = true;
    /* Non-pad input devices: encoders, phases, attach mask, armed flag and
     * the option-derived type/scale all go back to their load-time values
     * (iOS cannot dlclose a core). */

@@ -437,6 +437,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "cry"
    },
    {
+      "virtualjaguar_texture_replace",
+      "Texture Replacement",
+      NULL,
+      "Present community texture-pack art in place of the title's own blitter tiles (issue #369). Packs live in <system dir>/vj_texpacks/<cart CRC32>/, named by the same hashes Texture Dump Mode writes. Presentation-only: the emulated machine, savestates and netplay are bit-identical with or without a pack. Shown only when a pack directory exists for the loaded title.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_jgd",
       "Jaguar GameDrive (Restart)",
       NULL,

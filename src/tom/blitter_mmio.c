@@ -2,6 +2,7 @@
 #include "blitter_internal.h"
 #include "blit_memo.h"
 #include "texdump.h"
+#include "texreplace.h"
 
 #include <string.h>
 #include "bus_arbiter.h"
@@ -320,6 +321,7 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       /* Compute the bus time BEFORE dispatch: the engines update their
        * shadow registers as they run. */
       uint32_t busClks = 0;
+      int trBlit = 0;
       if (vjs.blitterTiming)
          busClks = BlitDurationSysclks();
 
@@ -328,6 +330,15 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * host-side work; the emulated machine cannot observe it. */
       if (texDumpEnabled)
          TexDumpLaunch();
+
+      /* Texture replacement (issue #369 deliverable 2): hash the source
+       * window pre-dispatch (dump mode above captures the ORIGINAL
+       * tile, so dump+replace compose for authors).  On a pack hit the
+       * post-dispatch hook records pack RGB into the shadow
+       * framebuffer -- host-side presentation only, the emulated
+       * machine cannot observe it either. */
+      if (texReplaceEnabled)
+         trBlit = TexReplacePreBlit();
 
       if (BlitterCompareIsEnabled())
          BlitterRunComparison();
@@ -339,6 +350,9 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
          else
             BlitterMidsummer2();
       }
+
+      if (trBlit)
+         TexReplacePostBlit();
 
       /* The blit's results are complete (memory is final, as before);
        * only the TIME is owed.  The window is paid by the next
