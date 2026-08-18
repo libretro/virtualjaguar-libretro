@@ -31,7 +31,6 @@
 #include "harness/harness.h"
 
 #define FOUNTAIN_ROM_DEFAULT "/tmp/fountain_vj.j64"
-#define DUMMY_CART_PATH      "/tmp/vj_dummy_cart_469.j64"
 #define DUMMY_CART_SIZE      131072u
 #define BIOS_ROM_PARK_PC     0x00E005DCu
 #define MAX_PRESENT_WIDTH    652u
@@ -147,6 +146,15 @@ int main(int argc, char **argv)
     char dummy_detail[80];
     char m_detail[80];
     char live_detail[160];
+    char dummy_cart_path[64];
+
+    /* Per-process scratch path: two concurrent `make test` suites would
+     * otherwise write/read the same dummy cart file. FOUNTAIN_ROM_DEFAULT
+     * stays fixed -- it names a well-known spot for a manually-placed,
+     * read-only optional ROM, and the Makefile checks that literal path
+     * too. */
+    snprintf(dummy_cart_path, sizeof(dummy_cart_path),
+             "/tmp/vj_dummy_cart_469_%ld.j64", (long)getpid());
 
     cfg.frames = 180;
     cfg.use_bios = 1;
@@ -162,12 +170,12 @@ int main(int argc, char **argv)
     dummy_ok = 0;
     live_ok = 1;
 
-    if (!write_dummy_cart(DUMMY_CART_PATH)) {
-        fprintf(stderr, "FAIL: cannot write dummy cart %s\n", DUMMY_CART_PATH);
+    if (!write_dummy_cart(dummy_cart_path)) {
+        fprintf(stderr, "FAIL: cannot write dummy cart %s\n", dummy_cart_path);
         harness_shutdown(&cfg);
         return 1;
     }
-    cfg.rom_path = DUMMY_CART_PATH;
+    cfg.rom_path = dummy_cart_path;
     if (!harness_load_rom(&cfg)) {
         harness_shutdown(&cfg);
         return 1;
@@ -188,7 +196,7 @@ int main(int argc, char **argv)
     if (!harness_init_from_args(&cfg, argc, argv))
         return 1;
     cfg.use_bios = 1;
-    cfg.rom_path = DUMMY_CART_PATH;
+    cfg.rom_path = dummy_cart_path;
     harness_set_option(&cfg, "virtualjaguar_bios_type", "m");
     if (!harness_load_rom(&cfg)) {
         harness_shutdown(&cfg);
@@ -202,6 +210,7 @@ int main(int argc, char **argv)
     results[nres].detail = m_detail;
     nres++;
     harness_shutdown(&cfg);
+    remove(dummy_cart_path);
 
     if (!dummy_ok)
         return 1;

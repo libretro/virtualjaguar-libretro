@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #include "libretro-common/include/libretro.h"
 
 #define WIN 16
@@ -22,6 +23,10 @@
 
 static unsigned cur_frame = 0;
 static unsigned total_frames = 600;
+/* Per-process default prefix, set in main() before argv parsing so a
+ * default (unspecified --prefix) run doesn't collide with a concurrent
+ * invocation in /tmp; explicit --prefix still overrides it. */
+static char default_prefix[64];
 static const char *out_prefix = "/tmp/flicker";
 static const char *label = "rom";
 static int use_bios = 0;
@@ -262,6 +267,9 @@ int main(int argc, char **argv) {
       return 1;
    }
    int i;
+   snprintf(default_prefix, sizeof(default_prefix), "/tmp/flicker_%ld",
+            (long)getpid());
+   out_prefix = default_prefix;
    for (i = 3; i < argc; i++) {
       if (!strcmp(argv[i], "--frames") && i + 1 < argc) total_frames = atoi(argv[++i]);
       else if (!strcmp(argv[i], "--prefix") && i + 1 < argc) out_prefix = argv[++i];

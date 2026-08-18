@@ -17,6 +17,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <dlfcn.h>
+#include <unistd.h>
 
 #include "harness/harness.h"
 
@@ -278,6 +279,18 @@ int main(int argc, char **argv)
    uint32_t size = 0;
    int fail = 0;
    const char *core;
+   char ff_path[64];
+   char rayman_path[64];
+   char addq_path[64];
+
+   /* Per-process scratch paths: two concurrent `make test` suites would
+    * otherwise write/read the same fixture ROMs. */
+   snprintf(ff_path, sizeof(ff_path), "/tmp/vj_needs_bios_ff_%ld.j64",
+            (long)getpid());
+   snprintf(rayman_path, sizeof(rayman_path),
+            "/tmp/vj_needs_bios_rayman_%ld.j64", (long)getpid());
+   snprintf(addq_path, sizeof(addq_path), "/tmp/vj_needs_bios_addq_%ld.j64",
+            (long)getpid());
 
    core = (argc > 1 && argv[1] && argv[1][0] != '-') ? argv[1]
          : default_core_path();
@@ -304,7 +317,7 @@ int main(int argc, char **argv)
    fprintf(stderr, "=== default-HLE autodetect ===\n");
 
    if (!build_ff_pad_bootintro(&buf, &size) ||
-         !write_rom("/tmp/vj_needs_bios_ff.j64", buf, size))
+         !write_rom(ff_path, buf, size))
    {
       fprintf(stderr, "FAIL: write ff pad rom\n");
       free(buf);
@@ -312,12 +325,13 @@ int main(int argc, char **argv)
    }
    free(buf);
    buf = NULL;
-   if (run_autodetect_arm(argc, argv, "/tmp/vj_needs_bios_ff.j64", 1,
+   if (run_autodetect_arm(argc, argv, ff_path, 1,
          "autodetect_ff_pad"))
       fail++;
+   remove(ff_path);
 
    if (!build_rayman_demo_shape(&buf, &size) ||
-         !write_rom("/tmp/vj_needs_bios_rayman.j64", buf, size))
+         !write_rom(rayman_path, buf, size))
    {
       fprintf(stderr, "FAIL: write rayman-shape rom\n");
       free(buf);
@@ -325,21 +339,23 @@ int main(int argc, char **argv)
    }
    free(buf);
    buf = NULL;
-   if (run_autodetect_arm(argc, argv, "/tmp/vj_needs_bios_rayman.j64", 0,
+   if (run_autodetect_arm(argc, argv, rayman_path, 0,
          "autodetect_rayman_demo_shape"))
       fail++;
+   remove(rayman_path);
 
    if (!build_addq_fence(&buf, &size) ||
-         !write_rom("/tmp/vj_needs_bios_addq.j64", buf, size))
+         !write_rom(addq_path, buf, size))
    {
       fprintf(stderr, "FAIL: write addq rom\n");
       free(buf);
       return 1;
    }
    free(buf);
-   if (run_autodetect_arm(argc, argv, "/tmp/vj_needs_bios_addq.j64", 0,
+   if (run_autodetect_arm(argc, argv, addq_path, 0,
          "autodetect_addq_fence"))
       fail++;
+   remove(addq_path);
 
    if (fail)
    {
