@@ -858,6 +858,29 @@ void retro_set_environment(retro_environment_t cb)
    }
 }
 
+/* Last logged link state: -1 = link not open, 0 = open with no peer,
+ * 1 = peer attached.  File scope (not a function-local static) so
+ * retro_deinit() can reset it -- iOS never dlcloses the core, so a
+ * function-local would carry the previous session's state into the next
+ * one and swallow the first UP/DOWN edge. */
+static int netlink_was_up = -1;
+
+/* Names for the [NETLINK] log lines.  Not exported: nothing outside this
+ * file needs to render a mode. */
+static const char *netlink_mode_name(int mode)
+{
+   switch (mode)
+   {
+   case JLINK_MODE_DISABLED:   return "disabled";
+   case JLINK_MODE_LOOPBACK:   return "loopback";
+   case JLINK_MODE_TCP_SERVER: return "tcp_server";
+   case JLINK_MODE_TCP_CLIENT: return "tcp_client";
+   case JLINK_MODE_NETPACKET:  return "netpacket";
+   default: break;
+   }
+   return "unknown";
+}
+
 /* Resolve the TCP endpoint for the network link and apply the mode.
  * Host (client mode): VJ_NETLINK_HOST env, else the
  * virtualjaguar_netlink_host option (any string is accepted verbatim so
@@ -871,6 +894,14 @@ static void netlink_apply(int mode)
    int port = 42171;
    const char *env;
    struct retro_variable pvar;
+   /* Where the address came from, and whether the vj_netlink.txt sentinel
+    * actually produced one.  Both exist purely for the log line at the end:
+    * this layer used to be completely silent, so a link that never came up
+    * looked identical to one that was never configured, and a missing
+    * vj_netlink.txt fell back to 127.0.0.1 with nothing said. */
+   const char *src = "default";
+   int want_file = 0;
+   int got_file = 0;
 
    host[0] = '\0';
 
@@ -896,16 +927,23 @@ static void netlink_apply(int mode)
    {
       strncpy(host, env, sizeof(host) - 1);
       host[sizeof(host) - 1] = '\0';
+      src = "VJ_NETLINK_HOST env";
    }
    if (!host[0])
    {
       pvar.key = "virtualjaguar_netlink_host";
       pvar.value = NULL;
       if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value
-          && pvar.value[0] && strcmp(pvar.value, "vj_netlink.txt") != 0)
+          && pvar.value[0])
       {
-         strncpy(host, pvar.value, sizeof(host) - 1);
-         host[sizeof(host) - 1] = '\0';
+         if (strcmp(pvar.value, "vj_netlink.txt") != 0)
+         {
+            strncpy(host, pvar.value, sizeof(host) - 1);
+            host[sizeof(host) - 1] = '\0';
+            src = "core option";
+         }
+         else
+            want_file = 1;
       }
    }
    if (!host[0])
@@ -928,12 +966,50 @@ static void netlink_apply(int mode)
                   host[--n] = '\0';
             }
             fclose(f);
+            if (host[0])
+            {
+               got_file = 1;
+               src = "vj_netlink.txt";
+            }
          }
       }
    }
 
    JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
    UARTSetLinkMode(mode);
+
+   /* One line that answers "what did the core actually do with my
+    * settings".  Without it the whole link stack is silent, and a session
+    * that never connected is indistinguishable from one that was never
+    * configured -- which is exactly how a stale core with no Voice Modem
+    * option at all read as "the modem is there but won't dial". */
+   if (mode == JLINK_MODE_DISABLED)
+      LOG_INF("[NETLINK] disabled (device=%s)\n",
+              JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
+                                                       : "jaglink");
+   else if (mode == JLINK_MODE_TCP_CLIENT)
+      LOG_INF("[NETLINK] mode=%s device=%s peer=%s:%d (address from %s)\n",
+              netlink_mode_name(mode),
+              JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
+                                                       : "jaglink",
+              host[0] ? host : "127.0.0.1", port, src);
+   else
+      LOG_INF("[NETLINK] mode=%s device=%s port=%d\n",
+              netlink_mode_name(mode),
+              JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
+                                                       : "jaglink",
+              port);
+
+   /* The "From file" preset selected but no usable address in the file is
+    * a silent 127.0.0.1 fallback -- the one that cost a debugging session. */
+   if (want_file && !got_file)
+      LOG_WRN("[NETLINK] 'From file' selected but no address read from "
+              "<system>/vj_netlink.txt -- falling back to 127.0.0.1\n");
+
+   if (mode != JLINK_MODE_DISABLED
+       && JLinkMode() == JLINK_MODE_DISABLED)
+      LOG_ERR("[NETLINK] failed to open %s -- link is DOWN\n",
+              netlink_mode_name(mode));
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
@@ -3627,6 +3703,10 @@ void retro_deinit(void)
    port_device_active[1]   = INPUTDEV_PAD;
    inputdev_live[0]        = false;
    inputdev_live[1]        = false;
+   /* Link-state edge tracker: same reason as the block above -- a resident
+    * core would otherwise start the next session believing the previous
+    * one's peer was still attached and skip the first UP edge. */
+   netlink_was_up          = -1;
    show_mouse_options      = true;
    show_rotary_options     = true;
    mouse_scale_q8          = 256;
@@ -3825,6 +3905,32 @@ void retro_run(void)
    JLinkFrameTick();
    JLinkPoll();
    UARTPoll();
+
+   /* Log link up/down edges.  JLinkConnected() already abstracts TCP and
+    * netpacket, so this reports the one fact a user debugging "it says it
+    * has a modem but won't dial" needs and previously could not get from
+    * anywhere: whether a peer is actually on the other end.  Edge-only --
+    * a per-frame line would flood the log. */
+   {
+      int up = (JLinkMode() != JLINK_MODE_DISABLED) && JLinkConnected();
+      if (JLinkMode() == JLINK_MODE_DISABLED)
+         netlink_was_up = -1;
+      else if (up != netlink_was_up)
+      {
+         if (up)
+            LOG_INF("[NETLINK] link UP (%s, device=%s)\n",
+                    netlink_mode_name(JLinkMode()),
+                    JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
+                                                             : "jaglink");
+         else if (netlink_was_up == 1)
+            LOG_WRN("[NETLINK] link DOWN (%s) -- peer disconnected\n",
+                    netlink_mode_name(JLinkMode()));
+         else
+            LOG_INF("[NETLINK] %s open, waiting for peer...\n",
+                    netlink_mode_name(JLinkMode()));
+         netlink_was_up = up;
+      }
+   }
 
    update_input();
 

@@ -141,6 +141,46 @@ modem is rate-agnostic. Modem session state is host-side (like jlink's
 sockets) and deliberately not serialized in savestates: loading a state
 mid-call behaves as a pulled phone line.
 
+## Troubleshooting a call that never connects
+
+Ultra Vortek prints INITIALIZING VOICE MODEM *before* any reply arrives, so
+that screen looks identical whether or not a modem is answering — it is not
+evidence the link works. The core logs the facts instead; look for
+`[NETLINK]` in the frontend log.
+
+At load, one line reports what the options actually resolved to:
+
+```
+[NETLINK] mode=tcp_client device=voicemodem peer=127.0.0.1:42171 (address from core option)
+[NETLINK] mode=tcp_server device=voicemodem port=42171
+[NETLINK] disabled (device=voicemodem)          <- netplay/netpacket, or nothing configured
+```
+
+then the link state, on edges only:
+
+```
+[NETLINK] tcp_client open, waiting for peer...   <- no one on the other end yet
+[NETLINK] link UP (tcp_client, device=voicemodem)
+[NETLINK] link DOWN (tcp_client) -- peer disconnected
+```
+
+Reading them:
+
+- **No `[NETLINK]` lines at all** — the core is too old to have the voice
+  modem. Check the binary the frontend actually loaded, not the build tree:
+  `strings <core> | grep -c virtualjaguar_uart_device` must be non-zero.
+- **`device=jaglink`** — "Network Link Device" is still at its default. The
+  raw cable cannot answer the wake handshake, so the game reports MODEM
+  INITIALIZING FAILED. It must be set to Voice Modem on **both** sides.
+- **Stuck at `waiting for peer...`** — the transport never paired. Check both
+  sides agree on the port, and that exactly one is TCP Host.
+- **`'From file' selected but no address read`** — the "From file" preset was
+  chosen but `<system>/vj_netlink.txt` is missing or empty; the address fell
+  back to 127.0.0.1.
+- **`link UP` on both sides but the call still fails** — that is a modem-layer
+  problem, not transport. Re-run with `VJ_VM_TRACE=1` for the command/reply
+  stream, and see the choreography table above.
+
 ## Open questions
 
 - `$B1xx` ring payload (we send `$B100`); the driver only matches the
