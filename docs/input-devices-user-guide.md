@@ -26,14 +26,14 @@ plugged into either port draws on the same five rotary options.
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
 | *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
 | *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
-| *Port 2 > Mouse Offset (X)* (`virtualjaguar_mouse_offset_x`) | -4 – +4 | Off |
-| *Port 2 > Mouse Offset (Y)* (`virtualjaguar_mouse_offset_y`) | -4 – +4 | Off |
+| *Port 2 > Mouse Offset (X)* (`virtualjaguar_mouse_offset_x`) | -4 – -1, Off, +1 – +4 | Off |
+| *Port 2 > Mouse Offset (Y)* (`virtualjaguar_mouse_offset_y`) | -4 – -1, Off, +1 – +4 | Off |
 | *Port 2 > Mouse Response Curve (X)* (`virtualjaguar_mouse_exponent_x`) | Linear (1.00) – 3.00 | Linear (1.00) |
 | *Port 2 > Mouse Response Curve (Y)* (`virtualjaguar_mouse_exponent_y`) | Linear (1.00) – 3.00 | Linear (1.00) |
 | *Rotary Sensitivity* (`virtualjaguar_rotary_sensitivity`) | 25% – 400% | 100% |
 | *Rotary Reports Controller Type* (`virtualjaguar_rotary_id`) | Standard Joypad (no diode), Tempest Rotary (diode fitted) | Standard Joypad |
 | *Rotary Dead Zone* (`virtualjaguar_rotary_deadzone`) | Off, 1 – 8 units | Off |
-| *Rotary Offset* (`virtualjaguar_rotary_offset`) | -4 – +4 | Off |
+| *Rotary Offset* (`virtualjaguar_rotary_offset`) | -4 – -1, Off, +1 – +4 | Off |
 | *Rotary Response Curve* (`virtualjaguar_rotary_exponent`) | Linear (1.00) – 3.00 | Linear (1.00) |
 
 The seven mouse rows (*Mouse Sensitivity* through *Mouse Response Curve (Y)*)
