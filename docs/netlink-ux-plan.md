@@ -185,15 +185,24 @@ static void test_peer_table(void)
          "refresh of a known peer reports no change");
    check(JLinkDiscPeerCount() == 1, "refresh does not duplicate");
 
-   check(JLinkDiscPeerSeen("192.168.1.3", "b", 1, 42172, 2000) == 1,
+   /* Seen at 5000, i.e. LATER than .2's last refresh at 2000.  Both at
+      2000 would share a last_seen_ms, and then no expiry boundary can
+      drop one without the other -- the scenario would be unsatisfiable. */
+   check(JLinkDiscPeerSeen("192.168.1.3", "b", 1, 42172, 5000) == 1,
          "second peer reports a change");
    check(JLinkDiscPeerCount() == 2, "two peers tracked");
 
+   /* At 12000: .2 (last 2000) is exactly at the 10000 boundary and goes;
+      .3 (last 5000) is 7000 old and stays. */
    check(JLinkDiscPeerExpire(2000 + JLINK_DISC_EXPIRE_MS) == 1,
          "expiry of the stale peer reports a change");
    check(JLinkDiscPeerCount() == 1, "stale peer dropped, fresh one kept");
-   check(strcmp(JLinkDiscPeerAt(0)->addr, "192.168.1.3") == 0,
-         "surviving peer is the fresh one");
+   /* Guarded: an unguarded deref turns a future regression into a
+      segfault, which reports nothing.  A test must fail, not crash. */
+   check(JLinkDiscPeerAt(0) != NULL, "a peer survived expiry");
+   if (JLinkDiscPeerAt(0))
+      check(strcmp(JLinkDiscPeerAt(0)->addr, "192.168.1.3") == 0,
+            "surviving peer is the fresh one");
    check(JLinkDiscPeerAt(5) == NULL, "out-of-range index returns NULL");
 }
 
