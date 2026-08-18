@@ -10,6 +10,7 @@
 
 #include "inputdev.h"
 #include "quadrature.h"
+#include "axistune.h"
 #include "joystick.h"
 #include "state.h"
 
@@ -58,6 +59,8 @@ typedef struct
    quad_axis    x;
    quad_axis    y;
    int32_t      scale_q8;
+   axis_tune    tune_x;      /* option-derived; see InputDevSetTune (#439) */
+   axis_tune    tune_y;
    uint8_t      btn_left;
    uint8_t      btn_right;
    uint8_t      rotary_id;   /* option-derived; see InputDevSetRotaryID */
@@ -102,8 +105,20 @@ void InputDevInit(void)
    unsigned p;
 
    for (p = 0; p < 2; p++)
+   {
       if (inputdev_ports[p].scale_q8 <= 0)
          inputdev_ports[p].scale_q8 = 256;
+
+      /* A zero-filled axis_tune already reads as the identity (see
+       * axistune.h), so this is belt-and-braces rather than load-bearing
+       * -- but it makes the default explicit at exactly the place the
+       * scale's default is, instead of leaving it to a reader to work out
+       * that exponent_q8 == 0 means linear. */
+      if (inputdev_ports[p].tune_x.exponent_q8 <= 0)
+         AxisTuneReset(&inputdev_ports[p].tune_x);
+      if (inputdev_ports[p].tune_y.exponent_q8 <= 0)
+         AxisTuneReset(&inputdev_ports[p].tune_y);
+   }
 
    inputdev_reset_dynamic();
 }
@@ -120,6 +135,10 @@ void InputDevShutdown(void)
    memset(inputdev_ports, 0, sizeof(inputdev_ports));
    inputdev_ports[0].scale_q8 = 256;
    inputdev_ports[1].scale_q8 = 256;
+   AxisTuneReset(&inputdev_ports[0].tune_x);
+   AxisTuneReset(&inputdev_ports[0].tune_y);
+   AxisTuneReset(&inputdev_ports[1].tune_x);
+   AxisTuneReset(&inputdev_ports[1].tune_y);
    inputdev_attach_mask       = 0;
    inputdev_armed             = 0;
 }
@@ -184,11 +203,60 @@ void InputDevSetScale(int port, int32_t scale_q8)
    inputdev_ports[port].scale_q8 = scale_q8;
 }
 
+void InputDevSetTune(int port, int axis, int32_t deadzone, int32_t offset,
+                     int32_t exponent_q8)
+{
+   if (port < 0 || port > 1)
+      return;
+
+   AxisTuneSet(axis == INPUTDEV_AXIS_Y ? &inputdev_ports[port].tune_y
+                                       : &inputdev_ports[port].tune_x,
+               deadzone, offset, exponent_q8);
+}
+
 void InputDevSetRotaryID(int port, int reports_rotary)
 {
    if (port < 0 || port > 1)
       return;
    inputdev_ports[port].rotary_id = reports_rotary ? 1 : 0;
+}
+
+/* The single tuned feed path (#439).  Every analog source funnels through
+ * here, so the tuning has exactly one implementation and cannot drift
+ * between devices.
+ *
+ * `invert` negates the TUNED delta, not the raw one, and the order matters:
+ * the dead zone and the curve are magnitude-symmetric and commute with a
+ * sign flip, but the OFFSET DOES NOT.  An offset cancels a bias measured on
+ * the host axis, so it has to be subtracted in host orientation, before any
+ * device-specific inversion.  Do not "simplify" this by negating `raw` at
+ * the call site.
+ *
+ * The curve arrives as a Q8 gain and multiplies into the port's Q8
+ * sensitivity, which is what lets QuadFeed's existing fractional carry keep
+ * small movement alive -- axistune.h explains why a curved delta could not.
+ * The product is clamped to the same 1..4096 window InputDevSetScale
+ * enforces, because QuadFeed's overflow argument is written against a 4096
+ * ceiling and two multipliers in series would otherwise walk past it. */
+static void inputdev_feed_axis(quad_axis *q, const axis_tune *t,
+                               int32_t raw, int invert, int32_t scale_q8)
+{
+   int32_t gain_q8 = 256;
+   int32_t d       = AxisTuneApply(t, raw, &gain_q8);
+   int32_t eff;
+
+   if (invert)
+      d = -d;
+
+   /* At defaults gain_q8 is exactly 256 and this is exactly scale_q8, so
+    * the call below is bit-for-bit the pre-#439 one. */
+   eff = (scale_q8 * gain_q8) / 256;
+   if (eff < 1)
+      eff = 1;
+   if (eff > 4096)
+      eff = 4096;
+
+   QuadFeed(q, d, eff);
 }
 
 void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons)
@@ -219,8 +287,10 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons)
        * hardware fact: pushing a spinner to the right turns the knob
        * clockwise.  Hence the negation.  There is deliberately no invert
        * option -- an unsourced sign knob is how a real wiring bug gets
-       * papered over instead of found. */
-      QuadFeed(&p->x, -dx, p->scale_q8);
+       * papered over instead of found.  The negation is applied to the
+       * TUNED delta by inputdev_feed_axis -- see the note there on why the
+       * offset must be subtracted in host orientation first. */
+      inputdev_feed_axis(&p->x, &p->tune_x, dx, 1, p->scale_q8);
       (void)dy;
       (void)buttons;
       return;
@@ -234,8 +304,8 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons)
     * host "pixel" of motion maps to one decoded count.  Positive dx is
     * right and positive dy is down in libretro, and A-leads-B (increasing
     * phase) is right/down on the wire, so the mapping is direct. */
-   QuadFeed(&p->x, dx, p->scale_q8);
-   QuadFeed(&p->y, dy, p->scale_q8);
+   inputdev_feed_axis(&p->x, &p->tune_x, dx, 0, p->scale_q8);
+   inputdev_feed_axis(&p->y, &p->tune_y, dy, 0, p->scale_q8);
 
    p->btn_left  = (buttons & INPUTDEV_BTN_LEFT)  ? 1 : 0;
    p->btn_right = (buttons & INPUTDEV_BTN_RIGHT) ? 1 : 0;

@@ -242,6 +242,21 @@ static bool         show_rotary_options     = true;
 static int32_t      mouse_scale_q8          = 256;
 static int32_t      rotary_scale_q8         = 256;
 
+/* Per-axis tuning (#439), resolved from the options and applied to
+ * whichever device is actually in each port -- the same "one ladder per
+ * device kind, selected by what is plugged in" shape as the scales above.
+ * A rotary is one wheel, so it has a single tune and no Y entry.
+ *
+ * Held as raw ints rather than axis_tune structs because libretro.c has no
+ * business knowing that layout; InputDevSetTune() clamps and stores them.
+ * Index 0 is X, index 1 is Y, matching INPUTDEV_AXIS_*. */
+static int32_t      mouse_deadzone[2]       = { 0, 0 };
+static int32_t      mouse_offset[2]         = { 0, 0 };
+static int32_t      mouse_exponent_q8[2]    = { 256, 256 };
+static int32_t      rotary_deadzone         = 0;
+static int32_t      rotary_offset           = 0;
+static int32_t      rotary_exponent_q8      = 256;
+
 /* Has this port actually received non-zero mouse state from the frontend?
  *
  * THE RULE: selecting a mouse must never leave the port with no working
@@ -305,6 +320,36 @@ static bool inputdev_is_mouse_type(InputDevType t)
            || t == INPUTDEV_MOUSE_AMIGA_ON_ST);
 }
 
+/* Push the sensitivity ladder AND the per-axis tuning (#439) that belong to
+ * whatever device is currently in `port`.
+ *
+ * The two are resolved together, in one function called from both paths,
+ * because they are selected by the same fact -- what is plugged into the
+ * port -- and a second place that picks between the two devices' ladders is
+ * exactly how the bug documented in apply_port_device() came about. */
+static void apply_port_tuning(int port)
+{
+   if (InputDevGetType(port) == INPUTDEV_ROTARY)
+   {
+      InputDevSetScale(port, rotary_scale_q8);
+      /* A rotary is one wheel and never reads its Y tune, but both axes are
+       * set so a rotary -> mouse switch on port 2 cannot inherit a stale Y
+       * tune from whatever was configured before. */
+      InputDevSetTune(port, INPUTDEV_AXIS_X, rotary_deadzone,
+                      rotary_offset, rotary_exponent_q8);
+      InputDevSetTune(port, INPUTDEV_AXIS_Y, rotary_deadzone,
+                      rotary_offset, rotary_exponent_q8);
+   }
+   else
+   {
+      InputDevSetScale(port, mouse_scale_q8);
+      InputDevSetTune(port, INPUTDEV_AXIS_X, mouse_deadzone[0],
+                      mouse_offset[0], mouse_exponent_q8[0]);
+      InputDevSetTune(port, INPUTDEV_AXIS_Y, mouse_deadzone[1],
+                      mouse_offset[1], mouse_exponent_q8[1]);
+   }
+}
+
 static void apply_port_device(int port, InputDevType type)
 {
    InputDevSetType(port, type);
@@ -318,7 +363,7 @@ static void apply_port_device(int port, InputDevType type)
       port_device_active[port] = type;
       /* A new device has to earn the port back (see inputdev_live). */
       inputdev_live[port]      = false;
-      /* Re-resolve the sensitivity ladder for the device now in the port.
+      /* Re-resolve the ladders for the device now in the port.
        * The rotary and the mouse have separate options because a spinner
        * and a mouse want very different multipliers, and until this line
        * existed the only place that picked between them was
@@ -329,12 +374,11 @@ static void apply_port_device(int port, InputDevType type)
        * core-option change happened to fix it.  Invisible at defaults
        * (both ladders are 256) and self-healing, but real.
        *
-       * Both statics hold their last resolved values here; on the
+       * The statics hold their last resolved values here; on the
        * check_variables() path the loop after the ladders recomputes them
-       * and calls InputDevSetScale again anyway, so this is at worst one
-       * redundant assignment there. */
-      InputDevSetScale(port, type == INPUTDEV_ROTARY
-                                ? rotary_scale_q8 : mouse_scale_q8);
+       * and calls apply_port_tuning again anyway, so this is at worst one
+       * redundant pass there. */
+      apply_port_tuning(port);
       if (type != INPUTDEV_PAD)
          LOG_INF("[input] port %d: %s attached\n", port + 1,
                  inputdev_type_name(type));
@@ -539,11 +583,20 @@ static bool update_option_visibility(void)
       }
    }
 
-   /* Mouse sensitivity only means anything while a mouse is attached to
-    * port 2.  Resolved from the live device rather than the option string
-    * so a frontend-set port device (retro_set_controller_port_device)
-    * reveals it too. */
+   /* Mouse sensitivity and the per-axis tuning (#439) only mean anything
+    * while a mouse is attached to port 2.  Resolved from the live device
+    * rather than the option string so a frontend-set port device
+    * (retro_set_controller_port_device) reveals them too. */
    {
+      static const char * const mouse_keys[] = {
+         "virtualjaguar_mouse_sensitivity",
+         "virtualjaguar_mouse_deadzone_x",
+         "virtualjaguar_mouse_deadzone_y",
+         "virtualjaguar_mouse_offset_x",
+         "virtualjaguar_mouse_offset_y",
+         "virtualjaguar_mouse_exponent_x",
+         "virtualjaguar_mouse_exponent_y",
+      };
       bool show_mouse_prev = show_mouse_options;
 
       show_mouse_options = inputdev_is_mouse_type(InputDevGetType(1));
@@ -551,16 +604,27 @@ static bool update_option_visibility(void)
       if (show_mouse_options != show_mouse_prev)
       {
          option_display.visible = show_mouse_options;
-         option_display.key     = "virtualjaguar_mouse_sensitivity";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         for (i = 0; i < ARRAY_SIZE(mouse_keys); i++)
+         {
+            option_display.key = mouse_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
          updated = true;
       }
    }
 
-   /* Rotary sensitivity and the rotary controller-type knob mean nothing
-    * unless a rotary is attached to one port or the other (#436). */
+   /* Rotary sensitivity, its per-axis tuning (#439) and the rotary
+    * controller-type knob mean nothing unless a rotary is attached to one
+    * port or the other (#436). */
    {
+      static const char * const rotary_keys[] = {
+         "virtualjaguar_rotary_sensitivity",
+         "virtualjaguar_rotary_id",
+         "virtualjaguar_rotary_deadzone",
+         "virtualjaguar_rotary_offset",
+         "virtualjaguar_rotary_exponent",
+      };
       bool show_rotary_prev = show_rotary_options;
 
       show_rotary_options = (InputDevGetType(0) == INPUTDEV_ROTARY
@@ -569,12 +633,12 @@ static bool update_option_visibility(void)
       if (show_rotary_options != show_rotary_prev)
       {
          option_display.visible = show_rotary_options;
-         option_display.key     = "virtualjaguar_rotary_sensitivity";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
-         option_display.key     = "virtualjaguar_rotary_id";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         for (i = 0; i < ARRAY_SIZE(rotary_keys); i++)
+         {
+            option_display.key = rotary_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
          updated = true;
       }
    }
@@ -852,6 +916,49 @@ static InputDevType p1_device_from_option(void)
    }
 
    return p1;
+}
+
+/* Per-axis tuning option readers (#439).
+ *
+ * Deliberately thin: the clamps that decide what is a legal dead zone,
+ * offset or exponent live in AxisTuneSet(), one layer down, so a
+ * hand-edited config is bounded in exactly one place no matter which
+ * option it came through.  These only have to survive a missing or
+ * non-numeric string. */
+static int32_t read_tune_units(const char *key)
+{
+   struct retro_variable var;
+
+   var.key   = key;
+   var.value = NULL;
+
+   if (get_variable_pertitle(&var) && var.value)
+      return (int32_t)atoi(var.value);
+
+   return 0;
+}
+
+static int32_t read_tune_exponent(const char *key)
+{
+   struct retro_variable var;
+   int pct = 100;
+
+   var.key   = key;
+   var.value = NULL;
+
+   if (get_variable_pertitle(&var) && var.value)
+      pct = atoi(var.value);
+
+   /* Percent -> Q8 (256 == 1.0), the same conversion the sensitivity
+    * ladders use, and clamped BEFORE the multiply for the same reason
+    * they are.  800% is AxisTuneSet's own 2048 ceiling expressed as a
+    * percent, so nothing reachable is lost. */
+   if (pct < 1)
+      pct = 100;
+   if (pct > 800)
+      pct = 800;
+
+   return (int32_t)((pct * 256) / 100);
 }
 
 static void check_variables(void)
@@ -1248,16 +1355,28 @@ static void check_variables(void)
    else
       rotary_scale_q8 = 256;
 
-   /* One scale per port, picked by what is actually plugged into it --
-    * the two ladders are separate options because a spinner and a mouse
-    * want very different multipliers. */
+   /* Per-axis tuning (#439).  Read unconditionally: every one of these
+    * defaults to the identity, so a build where nobody touched the menu
+    * resolves to exactly the pre-#439 numbers. */
+   mouse_deadzone[0]    = read_tune_units("virtualjaguar_mouse_deadzone_x");
+   mouse_deadzone[1]    = read_tune_units("virtualjaguar_mouse_deadzone_y");
+   mouse_offset[0]      = read_tune_units("virtualjaguar_mouse_offset_x");
+   mouse_offset[1]      = read_tune_units("virtualjaguar_mouse_offset_y");
+   mouse_exponent_q8[0] = read_tune_exponent("virtualjaguar_mouse_exponent_x");
+   mouse_exponent_q8[1] = read_tune_exponent("virtualjaguar_mouse_exponent_y");
+
+   rotary_deadzone      = read_tune_units("virtualjaguar_rotary_deadzone");
+   rotary_offset        = read_tune_units("virtualjaguar_rotary_offset");
+   rotary_exponent_q8   = read_tune_exponent("virtualjaguar_rotary_exponent");
+
+   /* One scale and one tuning set per port, picked by what is actually
+    * plugged into it -- the two ladders are separate options because a
+    * spinner and a mouse want very different multipliers. */
    {
       unsigned port;
 
       for (port = 0; port < 2; port++)
-         InputDevSetScale((int)port,
-                          InputDevGetType((int)port) == INPUTDEV_ROTARY
-                             ? rotary_scale_q8 : mouse_scale_q8);
+         apply_port_tuning((int)port);
    }
 
    var.key   = "virtualjaguar_rotary_id";
@@ -2868,6 +2987,17 @@ void retro_deinit(void)
    show_rotary_options     = true;
    mouse_scale_q8          = 256;
    rotary_scale_q8         = 256;
+   /* #439's tuning statics go back to the identity here too -- iOS cannot
+    * dlclose a core, so anything left set would leak into the next load. */
+   mouse_deadzone[0]       = 0;
+   mouse_deadzone[1]       = 0;
+   mouse_offset[0]         = 0;
+   mouse_offset[1]         = 0;
+   mouse_exponent_q8[0]    = 256;
+   mouse_exponent_q8[1]    = 256;
+   rotary_deadzone         = 0;
+   rotary_offset           = 0;
+   rotary_exponent_q8      = 256;
    headroom_logged         = false;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
