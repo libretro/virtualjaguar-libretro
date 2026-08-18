@@ -929,7 +929,7 @@ clean:
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
-		test/tools/tuning_identity \
+		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		test/test_quadrature test/test_axistune \
 		test/.skipped-checks
@@ -989,7 +989,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
-		test/tools/tuning_identity \
+		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
@@ -1294,6 +1294,22 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# immunity), the type ID bits, the engagement guardrail, the absolute
 	@# tuning semantics and the extended v12 savestate chunk.
 	./test/tools/analog_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Light gun (#438).  The register-level half (LPH/LPV transform,
+	@# off-screen freeze, and the 1x-vs-2x identity that keeps the
+	@# internal-resolution option out of the aim) runs on the in-tree public
+	@# ROM and is never skipped.  The Balloons half -- its own two-target
+	@# calibration screen, a full-width sweep proving the game's decode of
+	@# our LPH lands on the pixel aimed at, and a scripted balloon kill --
+	@# needs the private corpus; the tool exits 77 for that and the skip is
+	@# ledgered rather than passing silently.
+	@rom=$$(bash scripts/find-rom.sh 'BALLOONS.BIN' 'Balloons*.bin' 'Balloon*.bin'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_lightgun ./$(TARGET) "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Light gun Balloons calibration + hit (#438)" "no ROM matching 'BALLOONS.BIN' in the private corpus"; \
+		./test/tools/test_lightgun ./$(TARGET) /nonexistent/BALLOONS.BIN; \
+		st=$$?; [ $$st = 0 ] || [ $$st = 77 ]; \
+	fi
 	@# Per-axis input tuning (#439), no core: the identity at defaults over
 	@# the whole int16 range, the dead zone as a gate rather than a re-base,
 	@# the curve's fixed point at QUAD_MAX_BACKLOG and its exact values.
@@ -1700,6 +1716,17 @@ test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/mouse_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Light gun (#438).  Part A is register-level and runs on the in-tree public
+# ROM; part B drives Balloons' calibration and hit detection and exits 77
+# when that private ROM is absent.
+test/tools/test_lightgun: test/tools/test_lightgun.c \
+		src/jerry/inputdev.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_lightgun.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

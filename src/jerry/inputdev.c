@@ -76,6 +76,9 @@ typedef struct
    uint8_t      an_y;
    uint8_t      an_sw;
    uint8_t      an_engaged;
+   int32_t      gun_col;     /* light gun aim, NATIVE framebuffer pixels */
+   int32_t      gun_row;
+   uint8_t      gun_offscreen;
 } InputDevPort;
 
 static InputDevPort inputdev_ports[2];
@@ -125,6 +128,7 @@ static void inputdev_reset_dynamic(void)
       inputdev_ports[p].an_y       = 128;
       inputdev_ports[p].an_sw      = 0;
       inputdev_ports[p].an_engaged = 0;
+      inputdev_ports[p].gun_offscreen = 1;
    }
 
    inputdev_armed = 0;
@@ -169,6 +173,8 @@ void InputDevShutdown(void)
    AxisTuneReset(&inputdev_ports[0].tune_y);
    AxisTuneReset(&inputdev_ports[1].tune_x);
    AxisTuneReset(&inputdev_ports[1].tune_y);
+   inputdev_ports[0].gun_offscreen = 1;
+   inputdev_ports[1].gun_offscreen = 1;
    inputdev_attach_mask       = 0;
    inputdev_armed             = 0;
 }
@@ -178,12 +184,18 @@ void InputDevSetType(int port, InputDevType type)
    if (port < 0 || port > 1)
       return;
 
-   /* Mouse is port 2 only (see inputdev.h); the rotary and the analog /
+   /* Mouse is port 2 only and the light gun is port 1 only (both are
+    * hardware facts -- see inputdev.h); the rotary and the analog /
     * driving controller (#437 -- TR10 restricts neither socket) are valid
     * on both.  Anything else is a plain pad, i.e. not attached. */
    if (inputdev_is_mouse(type))
    {
       if (port != 1)
+         type = INPUTDEV_PAD;
+   }
+   else if (type == INPUTDEV_LIGHTGUN)
+   {
+      if (port != 0)
          type = INPUTDEV_PAD;
    }
    else if (type != INPUTDEV_ROTARY && !inputdev_is_analog(type))
@@ -205,6 +217,11 @@ void InputDevSetType(int port, InputDevType type)
       inputdev_ports[port].an_y       = 128;
       inputdev_ports[port].an_sw      = 0;
       inputdev_ports[port].an_engaged = 0;
+      /* An unplugged gun stops pulsing LP, which is exactly "off-screen":
+       * LPH/LPV keep whatever they last latched. */
+      inputdev_ports[port].gun_col       = 0;
+      inputdev_ports[port].gun_row       = 0;
+      inputdev_ports[port].gun_offscreen = 1;
       /* The arm flag is part of the dynamic state too: without this a
        * mouse -> pad -> mouse round trip leaves a stale arm behind, worth
        * one unrequested advance on the next read.  Cleared only on a real
@@ -397,6 +414,70 @@ void InputDevFeedAnalog(int port, int32_t x, int32_t y, uint32_t switches)
    p->an_y       = inputdev_analog_byte(&p->tune_y, y, 1);
    p->an_sw      = (uint8_t)(switches & 0xFF);
    p->an_engaged = 1;
+}
+
+/* Light gun host feed (#438).  See the block comment in inputdev.h for why
+ * the trigger lands on BUTTON_B and why the aim is fed every frame rather
+ * than only when the trigger is pulled. */
+void InputDevFeedLightgun(int port, int32_t col, int32_t row,
+                          int offscreen, uint32_t buttons)
+{
+   InputDevPort *p;
+   uint8_t      *pad;
+
+   if (port < 0 || port > 1)
+      return;
+
+   p = &inputdev_ports[port];
+
+   if (p->type != INPUTDEV_LIGHTGUN)
+      return;
+
+   p->gun_col       = col;
+   p->gun_row       = row;
+   p->gun_offscreen = offscreen ? 1 : 0;
+
+   /* A gun-equipped controller is a MODIFIED STANDARD CONTROLLER (TR10's
+    * own phrase for the rotary, and the only shape a Jaguar peripheral
+    * with buttons can take), so its switches are ordinary matrix slots --
+    * the rotary's mechanism, not the mouse's row-blind overlay.  Written
+    * here rather than OR-ed into the retropad fill so that a frontend
+    * routing both a pad and a gun to port 1 cannot double-drive a line:
+    * update_input() runs this after every retropad path. */
+   pad = inputdev_pad[port];
+
+   if (buttons & INPUTDEV_GUN_TRIGGER)
+      pad[BUTTON_B]      = 0xFF;
+   if (buttons & INPUTDEV_GUN_AUX_A)
+      pad[BUTTON_A]      = 0xFF;
+   if (buttons & INPUTDEV_GUN_AUX_B)
+      pad[BUTTON_C]      = 0xFF;
+   if (buttons & INPUTDEV_GUN_START)
+      pad[BUTTON_OPTION] = 0xFF;
+   if (buttons & INPUTDEV_GUN_SELECT)
+      pad[BUTTON_PAUSE]  = 0xFF;
+}
+
+int InputDevLightgunAim(int32_t *col, int32_t *row)
+{
+   const InputDevPort *p;
+
+   if (!inputdev_attach_mask)
+      return 0;
+
+   /* Port 1 only -- InputDevSetType() guarantees no other port can hold
+    * a gun, so there is nothing to search. */
+   p = &inputdev_ports[0];
+
+   if (p->type != INPUTDEV_LIGHTGUN || p->gun_offscreen)
+      return 0;
+
+   if (col)
+      *col = p->gun_col;
+   if (row)
+      *row = p->gun_row;
+
+   return 1;
 }
 
 void InputDevArm(void)

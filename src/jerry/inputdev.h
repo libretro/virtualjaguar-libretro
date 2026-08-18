@@ -157,7 +157,8 @@ typedef enum
    INPUTDEV_MOUSE_AMIGA_ON_ST,   /* case 3: Amiga mouse in an ST-wired adapter  */
    INPUTDEV_ROTARY,              /* TR10 "Tempest" rotary (#436)                */
    INPUTDEV_ANALOG,              /* TR10 bank-switching analogue stick (#437)   */
-   INPUTDEV_DRIVING              /* same wire protocol, driving skin (#437)     */
+   INPUTDEV_DRIVING,             /* same wire protocol, driving skin (#437)     */
+   INPUTDEV_LIGHTGUN             /* TR10 port-1 light gun (#438)                */
 } InputDevType;
 
 void InputDevInit(void);
@@ -245,6 +246,54 @@ void InputDevSetTune(int port, int axis, int32_t deadzone, int32_t offset,
  * identify as a standard joypad, and Tempest 2000 does not consult these
  * bits at all -- it uses its own hidden CONTROLLER TYPE menu. */
 void InputDevSetRotaryID(int port, int reports_rotary);
+
+/* ---- light gun (#438) ---------------------------------------------- *
+ *
+ * PORT 1 ONLY, and that is silicon, not policy: TR10's pin-out gives port
+ * 1 pin 6 as "Button input / Light Gun on Port 1" while port 2's pin 6 is
+ * plain B2.  InputDevSetType() refuses a gun on port 2, the mirror of the
+ * mouse's port-1 refusal.
+ *
+ * THE GUN IS NOT A MATRIX DEVICE AND NOT AN OVERLAY.  It contributes
+ * nothing to $F14000/$F14002 by itself.  What it drives is TOM's LP pin,
+ * whose rising edge latches LPH ($F00008) and LPV ($F0000A) -- registers
+ * that live in tomRam8 and are synthesized in src/tom/tom.c, not here.
+ * This file owns only the AIM POINT and the gun's buttons; tom.c owns the
+ * geometry that turns an aim point into a pair of counter values.
+ *
+ * THE LATCH IS CONTINUOUS, NOT TRIGGER-GATED.  A real gun's photodiode
+ * pulses LP every field the beam crosses the aim point, whether or not
+ * the trigger is held -- there is no "LP was pulsed" status bit anywhere
+ * in the register map, so software cannot detect a shot from LPH/LPV at
+ * all.  Balloons (the one confirmed title) proves it: it reads LPH/LPV
+ * unconditionally after every VBL and draws a live crosshair from them,
+ * and reads the trigger from an ORDINARY PAD BUTTON.  A trigger-edge-only
+ * latch would freeze that crosshair.
+ *
+ * WHICH pad button: Balloons polls all four rows into a bitmask and tests
+ * bit 25, which decodes to row 1 / JOYBUTS bit 1 -- BUTTON_B (verified by
+ * simulating joystick.c against the ROM's own scan loop at $4A42).  So
+ * TRIGGER drives BUTTON_B.  The remaining libretro gun buttons are mapped
+ * to the other switches a gun-equipped controller physically has, so a
+ * title that wants a different one is still reachable.
+ *
+ * `col`/`row` are NATIVE framebuffer pixels -- the internal-resolution
+ * factor must already be divided out by the caller (libretro.c), because
+ * the enhancement path must not be able to move the aim point (#400). */
+#define INPUTDEV_GUN_TRIGGER  0x01
+#define INPUTDEV_GUN_AUX_A    0x02
+#define INPUTDEV_GUN_AUX_B    0x04
+#define INPUTDEV_GUN_START    0x08
+#define INPUTDEV_GUN_SELECT   0x10
+
+void InputDevFeedLightgun(int port, int32_t col, int32_t row,
+                          int offscreen, uint32_t buttons);
+
+/* Current aim point, for the LPH/LPV synthesis in src/tom/tom.c.  Returns
+ * 0, and leaves the outputs untouched, when no gun is attached or the
+ * shot is off-screen, which is the "photodiode sees no light, so LP never
+ * pulses and the registers keep their last value" case. */
+int InputDevLightgunAim(int32_t *col, int32_t *row);
 
 /* ---- bus-side hooks, called only from joystick.c ------------------- *
  *

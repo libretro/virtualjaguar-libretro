@@ -3,10 +3,113 @@
 Spec for issue [#438](https://github.com/libretro/virtualjaguar-libretro/issues/438), under
 epic [#428](https://github.com/libretro/virtualjaguar-libretro/issues/428).
 
-Status: **design only, no code written.** No source file under `src/` was modified while
-producing this document — two other agents are concurrently editing the input and options
-files, and this document is meant to make that eventual PR clean and pre-informed rather
-than to race it. Target branch when implementation starts: `develop`.
+Status: **IMPLEMENTED** (branch `feat/438-lightgun`). Everything below the line marked
+"AS BUILT" in §0.1 is the original research document, kept unedited so the reasoning that
+led to the design — and the two places it turned out to be wrong — stays readable.
+**Read §0.1 first: two load-bearing decisions in §3.2 and §3.4 are wrong**, and the
+corrections are backed by the ROM's own disassembly plus a measured A/B.
+
+---
+
+## 0.1 AS BUILT — what changed once the ROM could actually be run
+
+Balloons landed in the private corpus after this document was written, which turned three
+of its open questions into measurements. Two of the answers contradict the design.
+
+### Deviation 1 — the LP latch is CONTINUOUS, not trigger-gated (§3.4 was wrong)
+
+§3.4 says to synthesize `LPH`/`LPV` "on the trigger's rising edge". That is not how a
+light gun works and it does not work with Balloons.
+
+Balloons' main loop (`$4266`, `$43D6`, `$452C` — the calibration and gameplay loops) is:
+
+```
+stop   #$2000                  ; wait for the video interrupt
+move.w LPH,$7E50               ; read the pair UNCONDITIONALLY, every field
+move.w LPV,$7E52
+...
+move.w d0,$4E28                ; ...and write the decoded position straight
+move.w d0,$4E2A                ;    into the CROSSHAIR sprite's X / Y
+```
+
+The trigger is tested *separately and afterwards*, only to decide whether a shot happened.
+So the registers must update every field regardless of the trigger, or the crosshair
+freezes. This is also the only thing that makes sense electrically: a real gun's
+photodiode pulses `LP` every time the beam sweeps past the barrel, and **there is no
+"`LP` was pulsed" status bit anywhere in the register map** — software cannot detect a
+shot from `LPH`/`LPV` at all, so the trigger has to be something else.
+
+As built: `TOMLightgunHalfline()` is called from `TOMExecHalfline()` for every half-line
+and latches when the beam reaches the aimed-at row. That is cheaper *and* closer to the
+hardware than the trigger-edge model, and it needs no beam hit-test window.
+
+### Deviation 2 — the trigger is BUTTON_B, not BUTTON_PAUSE (§3.2 was wrong)
+
+§3.2 reasons from TR10's "pin 6 of Port 1, shared with B0" to "the trigger drives
+`joypad0Buttons[BUTTON_PAUSE]`". The pin-sharing fact may well be true of the silicon, but
+it is not how a game reads a shot — and given Deviation 1 it *cannot* be, because `LP`
+carries the beam pulse, not the switch.
+
+Balloons scans all four rows into a bitmask (`$4A42`), edge-detects it into `$4C60`, and
+tests **bit 25**. Simulating `joystick.c`'s decode against that exact scan sequence maps
+bit 25 to row 1 / `JOYBUTS` bit 1 = **`BUTTON_B`**. (`BUTTON_PAUSE` lands on bit 28 and is
+never tested.)
+
+As built: `RETRO_DEVICE_ID_LIGHTGUN_TRIGGER` drives `joypad0Buttons[BUTTON_B]`, with
+`AUX_A`/`AUX_B`/`START`/`SELECT` on `A`/`C`/`OPTION`/`PAUSE` so a title wanting a different
+switch is still reachable. Mechanism is the rotary's (ordinary matrix slots), as §3.2
+concluded — just a different slot.
+
+### Deviation 3 — `LPH` is emitted as a GAP-FREE count, not TOM's bit-10 encoding
+
+§3.4 left the encoding to the implementer. It matters, and only the ROM could settle it.
+
+TOM encodes `HC` as bit 10 = "second half-line" plus a `0..HP` offset, so raw values jump
+`845 -> 1024` mid-line (NTSC) — a 179-count hole. Balloons decodes with a plain
+`(LPH - calibration_LPH) / PWIDTH` and no bit-10 handling. Both encodings were built and
+swept across 21 aim points (`test/tools/test_lightgun.c`):
+
+| encoding | result |
+|---|---|
+| gap-free (shipped) | exact at every column, 0 to the right edge |
+| bit-10 raw `HC` | exact to column 237; column 238 decodes to object X **318** instead of 259 — `+59 px`, i.e. `179 / PWIDTH(3)`, exactly at Balloons' half-line boundary |
+
+**Balloons' calibration screen passes under both**, because it only records the raw `LPH`
+it is handed and range-checks `LPV`. So §6's "does it calibrate cleanly" test (open
+question 2) is *not* sufficient on its own, and a single-point aim check on the left half
+would have shipped the wrong encoding. The full-width sweep is the discriminator.
+
+Nothing else in this core reads `LPH`, so there is no second consumer to keep consistent.
+
+### Confirmed as designed
+
+- **§1.3 savestates are free.** `tomRam8` is saved wholesale; no new chunk, no
+  `STATE_VERSION` bump. Verified — the feature adds zero savestate code.
+- **§3.1 port 1 only, additive to the pad.** `InputDevSetType()` refuses a gun on port 2.
+- **§3.3 no controller-ID bits.** Nothing added.
+- **§3.5 hi-res.** `libretro.c` divides `shadowHiresN` out before the aim reaches the core;
+  `test_lightgun` asserts 1x and 2x latch byte-identical `LPH`/`LPV` (#400's guardrail).
+- **§3.6 off-screen suppresses the latch.** Asserted.
+- **§3.7 default off.** `virtualjaguar_p1_device` gains `lightgun`; the default stays
+  `auto` → pad, and `joymatrix_identity`'s digests are untouched.
+- **§4 non-goals** all hold: no crosshair overlay, no `_RELOAD`, no Bullets/MiSTer fudge
+  constants (none were needed — the direct-inverse transform has no residual to cancel),
+  no Followthrough claim.
+
+### Open questions now answered
+
+| # | Answer |
+|---|---|
+| 1 | Constants come from `TOMGetLeftVisibleHC()` (HC origin of framebuffer column 0) and `PWIDTH` from `VMODE` bits 9-11, read live. Vertically, `LPV = topVisible + 2*row`, because that is where `TOMExecHalfline()` writes row `r`. No SDK constants, no fudges. |
+| 2 | Yes — but see Deviation 3: calibration converging proves less than §6 assumed. |
+| 6 | Resolved: `BALLOONS.BIN`, 15904 bytes, md5 `cda44eeb071b5bd29582665ce8405eaa`. |
+
+Still open: §5.3 (Team Tap), §5.4 (gun controller-ID bits), §5.5 (building Bullets).
+Bullets remains untestable, so which button *it* reads is unverified; if it turns out to
+want `A`, that is `AUX_A` today and a mapping question, not a design one.
+
+---
+
 
 Primary sources:
 

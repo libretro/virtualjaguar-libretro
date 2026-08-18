@@ -14,15 +14,16 @@ with a pad.
 
 ## Core options
 
-Fourteen options together cover device selection and per-axis tuning for both
-ports. The mouse rows live under **Port 2**; the rotary rows are shared by
-**both** ports, exactly like *Rotary Sensitivity* always has been — a rotary
-plugged into either port draws on the same five rotary options.
+Twenty options together cover device selection and per-axis tuning for both
+ports. The mouse rows live under **Port 2**; the rotary and analog rows are
+shared by **both** ports, exactly like *Rotary Sensitivity* always has been —
+a rotary plugged into either port draws on the same five rotary options, and
+an analog or driving controller on the same six analog options.
 
 | Option | Values | Default |
 |---|---|---|
-| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Rotary (Tempest) | Auto |
-| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest) | Auto |
+| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
 | *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
 | *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
@@ -35,11 +36,18 @@ plugged into either port draws on the same five rotary options.
 | *Rotary Dead Zone* (`virtualjaguar_rotary_deadzone`) | Off, 1 – 8 units | Off |
 | *Rotary Offset* (`virtualjaguar_rotary_offset`) | -4 – -1, Off, +1 – +4 | Off |
 | *Rotary Response Curve* (`virtualjaguar_rotary_exponent`) | Linear (1.00) – 3.00 | Linear (1.00) |
+| *Analog Dead Zone (X)* (`virtualjaguar_analog_deadzone_x`) | Off, 1 – 8 ADC counts | Off |
+| *Analog Dead Zone (Y)* (`virtualjaguar_analog_deadzone_y`) | Off, 1 – 8 ADC counts | Off |
+| *Analog Offset (X)* (`virtualjaguar_analog_offset_x`) | -4 – -1, Off, +1 – +4 | Off |
+| *Analog Offset (Y)* (`virtualjaguar_analog_offset_y`) | -4 – -1, Off, +1 – +4 | Off |
+| *Analog Response Curve (X)* (`virtualjaguar_analog_exponent_x`) | Linear (1.00) – 3.00 | Linear (1.00) |
+| *Analog Response Curve (Y)* (`virtualjaguar_analog_exponent_y`) | Linear (1.00) – 3.00 | Linear (1.00) |
 
 The seven mouse rows (*Mouse Sensitivity* through *Mouse Response Curve (Y)*)
 only appear once a mouse is actually attached to port 2. The five rotary rows
-only appear once a rotary is attached to port 1 or port 2. Both groups are
-gated on the live device, not the option string, so a device your frontend
+only appear once a rotary is attached to port 1 or port 2, and the six analog
+rows once an analog or driving controller is attached to either port. Every
+group is gated on the live device, not the option string, so a device your frontend
 assigned directly (see below) reveals them too, exactly as a core-option
 selection would.
 
@@ -56,8 +64,10 @@ a deliberate result, not an unfinished switch.
 
 Your frontend can also select the device directly (RetroArch: *Controls →
 Port 1/2 → Device Type*), which offers the same devices as each port's
-*Controller Type* option: two on port 1 (Standard Joypad, Rotary), five on
-port 2 (Standard Joypad, the three mice, Rotary) — everything except *Auto*,
+*Controller Type* option: five on port 1 (Standard Joypad, Rotary, Light Gun,
+Analog Joystick, Driving Controller), seven on port 2 (Standard Joypad, the
+three mice, Rotary, Analog Joystick, Driving Controller) — everything except
+*Auto*,
 which is not a real device. A device set that way outranks the core option.
 Setting the port back to *Joypad* or *None* releases that claim rather than
 forcing a pad — the core option decides again, immediately.
@@ -233,11 +243,46 @@ Two neighbouring findings, recorded so they stay asked-and-answered:
   TR10, but no released software uses it (Missile Command 3D was a
   prototype). Out of scope, per the epic.
 
-## Not yet implemented
+## Light gun (port 1)
 
-Lightgun support (#438) is open. The **Tempest rotary** (#436), analog /
-driving controllers (#437) and per-axis tuning (#439) have since shipped —
-see [Core options](#core-options) above.
+Set *Port 1 > Controller Type* (`virtualjaguar_p1_device`) to **Light Gun**,
+or pick *Light Gun* for port 1 in your frontend's Controls menu. Default is
+*Auto*, which means a plain joypad — nothing changes until you choose it.
+
+**Port 1 only, and that is the hardware.** The Jaguar wires TOM's light-pen
+pin to port 1 and port 1 alone, so the option does not exist on port 2.
+
+Aim with whatever your frontend maps to a light gun (a mouse and a Wiimote
+both work). The mapping is:
+
+| Light gun input | Jaguar |
+|---|---|
+| Trigger | **B** |
+| Aux A / Aux B | A / C |
+| Start / Select | Option / Pause |
+
+The trigger is **B** rather than a dedicated "fire" line because a Jaguar gun
+is a modified controller: the light-pen pin carries the *beam* pulse that
+tells the console where you are pointing, and the shot itself has to arrive as
+an ordinary button. Balloons — the one confirmed light gun title — reads B.
+
+**Pointing off-screen freezes the aim** instead of jumping to a screen edge.
+That is what a real gun does: no light reaches it, so it sends no pulse and
+the console keeps the last position it saw. The trigger still registers.
+
+The one title known to use it is **Balloons** (Matthias Domin, 2003), a free
+homebrew calibration-and-shooting demo. It opens with a two-target calibration
+screen: point at each target and pull the trigger. Aiming near the bottom of
+the screen quits the program — that is the demo's own behaviour, not a bug.
+
+## Already shipped
+
+The **Tempest rotary** (#436), the **analog / driving controllers** (#437),
+the **light gun** (#438) and **per-axis tuning** (#439) have all shipped —
+see [Core options](#core-options) above. The two deliberate exclusions,
+"ADC-Reg" and the Jaguar VR head tracker, are recorded with their reasons in
+the analog section above; anything else still open lives on
+[#428](https://github.com/libretro/virtualjaguar-libretro/issues/428).
 
 ## See also
 
