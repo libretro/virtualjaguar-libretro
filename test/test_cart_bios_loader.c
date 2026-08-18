@@ -225,11 +225,17 @@ static const char *find_real_k_dump(void)
 
 TEST(custom_with_file_present_loads_it)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   /* mkdtemp() is hidden behind different feature-test macros on Darwin
+    * vs glibc under -std=c99, and glibc Clang treats the resulting
+    * implicit declaration as a hard error (see test_cd_pregap.c /
+    * test_cd_synth_cdda.c for the same workaround) -- a getpid()-keyed
+    * name needs no uniqueness beyond the running process. */
+   char dirbuf[512];
+   char *dir = dirbuf;
    char path[512];
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_present_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    snprintf(path, sizeof(path), "%s/jagboot.rom", dir);
    ASSERT(write_pattern_file(path, 0x20000, 0x11));
 
@@ -247,10 +253,11 @@ TEST(custom_with_file_present_loads_it)
 
 TEST(custom_without_file_falls_back_to_embedded_k)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   char dirbuf[512];
+   char *dir = dirbuf;
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_nofile_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    /* Deliberately empty: no jagboot.rom / boot.rom / boot0.rom / etc. */
 
    g_system_dir = dir;
@@ -267,11 +274,12 @@ TEST(custom_without_file_falls_back_to_embedded_k)
 
 TEST(k_series_unchanged)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   char dirbuf[512];
+   char *dir = dirbuf;
    char path[512];
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_kseries_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    /* A jagboot.rom sitting right there must be ignored -- 'k' never
     * consults the custom search path. */
    snprintf(path, sizeof(path), "%s/jagboot.rom", dir);
@@ -292,10 +300,11 @@ TEST(k_series_unchanged)
 
 TEST(model_m_unchanged)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   char dirbuf[512];
+   char *dir = dirbuf;
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_modelm_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    /* No jagboot_m.rom present -> embedded Model M image, same as
     * develop's existing behaviour. */
 
@@ -313,11 +322,12 @@ TEST(model_m_unchanged)
 
 TEST(custom_wrong_size_file_is_skipped)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   char dirbuf[512];
+   char *dir = dirbuf;
    char path[512];
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_wrongsize_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    /* Present but the wrong size -- must be rejected, not loaded, and the
     * search must fall through to the embedded-K fallback exactly like
     * "no file at all". */
@@ -339,12 +349,13 @@ TEST(custom_wrong_size_file_is_skipped)
 
 TEST(custom_finds_file_in_subdirectory)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   char dirbuf[512];
+   char *dir = dirbuf;
    char subdir[600];
    char path[700];
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_subdir_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    snprintf(subdir, sizeof(subdir), "%s/Atari - Jaguar", dir);
    ASSERT(mkdir(subdir, 0755) == 0);
    snprintf(path, sizeof(path), "%s/boot0.rom", subdir);
@@ -373,13 +384,14 @@ TEST(custom_finds_file_in_subdirectory)
  * names in play at once. */
 TEST(custom_filename_priority_beats_subdirectory)
 {
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
-   char *dir = mkdtemp(dirtpl);
+   char dirbuf[512];
+   char *dir = dirbuf;
    char subdir[600];
    char lo_path[700];  /* boot0.rom: lower priority, in the root */
    char hi_path[700];  /* jagboot.rom: higher priority, in a sub-dir */
 
-   ASSERT(dir != NULL);
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_priority_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
    snprintf(lo_path, sizeof(lo_path), "%s/boot0.rom", dir);
    ASSERT(write_pattern_file(lo_path, 0x20000, 0x55));
 
@@ -414,7 +426,7 @@ TEST(custom_filename_priority_beats_subdirectory)
 TEST(custom_recognized_real_image_matches_embedded_k)
 {
    const char *src_path = find_real_k_dump();
-   char dirtpl[] = "/tmp/vj_cartbios_XXXXXX";
+   char dirbuf[512];
    char *dir;
    char dst_path[512];
    FILE *src, *dst;
@@ -423,8 +435,9 @@ TEST(custom_recognized_real_image_matches_embedded_k)
 
    ASSERT(src_path != NULL); /* main() only RUNs this when a dump exists */
 
-   dir = mkdtemp(dirtpl);
-   ASSERT(dir != NULL);
+   dir = dirbuf;
+   snprintf(dirbuf, sizeof(dirbuf), "/tmp/vj_cartbios_realdump_%ld", (long)getpid());
+   ASSERT(mkdir(dir, 0755) == 0);
 
    src = fopen(src_path, "rb");
    ASSERT(src != NULL);
