@@ -231,7 +231,7 @@ Add to `Makefile`, next to the other `test/test_jlink*` rules (~line 1548):
 
 ```make
 test/test_jlink_discover: test/test_jlink_discover.c src/jerry/jlink_discover.c src/jerry/jlink_discover.h
-	$(CC) -O2 -Wall -std=c89 $(INCFLAGS) -Itest \
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_jlink_discover.c src/jerry/jlink_discover.c
 ```
 
@@ -424,6 +424,8 @@ git commit -m "feat(netlink): discovery beacon codec and peer table"
   - `void JLinkDiscStop(void)`
   - `int  JLinkDiscPoll(uint32_t now_ms)` → 1 if the peer set changed this call
   - `int  JLinkDiscActive(void)`
+  - `int  JLinkDiscConsumeChanged(void)` -- returns and clears the "peer set changed" flag; Task 4 consumes this
+  - `uint32_t JLinkNowMs(void)` (exposed from `jlink.c`, declared in `jlink.h`)
 
 - [ ] **Step 1: Write the failing pair test**
 
@@ -476,7 +478,11 @@ int  JLinkDiscActive(void);
 Append to `src/jerry/jlink_discover.c`, guarded like `jlink_tcp.c` does:
 
 ```c
-#if defined(_WIN32) || defined(HAVE_SOCKET_LEGACY) || !defined(__CELLOS_LV2__)
+/* Guard mirrors jlink_tcp.c verbatim: discovery has exactly the same
+   platform surface as the TCP transport, and divergent guards are how one
+   builds and the other does not. */
+#if defined(_WIN32) || defined(__unix__) || defined(__APPLE__) || \
+    defined(__linux__) || defined(__ANDROID__)
 #define JLINK_DISC_HAVE_NET 1
 #endif
 
@@ -652,14 +658,26 @@ Create `test/tools/netlink_discover_probe.c` — a direct driver of the module (
 
 ```c
 #include <stdio.h>
+#include <stdlib.h>      /* atoi */
 #include <string.h>
-#include <time.h>
 #include "jlink_discover.h"
 
+#ifdef _WIN32
+#include <windows.h>
+static uint32_t now_ms(void) { return (uint32_t)GetTickCount(); }
+#else
+#include <sys/time.h>
+/* Wall clock, NOT clock(): clock() measures CPU time, and this probe
+   spins, so a CPU-time clock would race ahead of the 10 s peer expiry
+   this test exists to exercise. */
 static uint32_t now_ms(void)
 {
-   return (uint32_t)(((uint64_t)clock() * 1000ULL) / CLOCKS_PER_SEC);
+   struct timeval tv;
+   gettimeofday(&tv, NULL);
+   return (uint32_t)((uint32_t)tv.tv_sec * 1000u
+                     + (uint32_t)(tv.tv_usec / 1000));
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -695,7 +713,7 @@ Add the Makefile rule:
 
 ```make
 test/tools/netlink_discover_probe: test/tools/netlink_discover_probe.c src/jerry/jlink_discover.c
-	$(CC) -O2 -Wall -std=c89 $(INCFLAGS) -Itest \
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/tools/netlink_discover_probe.c src/jerry/jlink_discover.c
 ```
 
@@ -713,8 +731,28 @@ In `src/jerry/jlink.c`, `#include "jlink_discover.h"` and inside `JLinkPoll()`, 
 
 with a file-scope `static int jlinkDiscChanged = 0;` and an accessor
 `int JLinkDiscConsumeChanged(void)` that returns and clears it, declared in
-`jlink.h`. `JLinkNowMs()` already exists for the reply-wait EWMA; if it is
-static, expose it as `uint32_t JLinkNowMs(void)`.
+`jlink.h`.
+
+**There is no existing `JLinkNowMs()` — you must add it.** `jlink.c` has
+`static long long JLinkNowUsec(void)`, in *microseconds*, and it is defined
+only inside the `JLINK_HAVE_WAIT` platform ladder. Add next to it:
+
+```c
+uint32_t JLinkNowMs(void)
+{
+#ifdef JLINK_HAVE_WAIT
+   return (uint32_t)(JLinkNowUsec() / 1000LL);
+#else
+   /* No wait helper on this platform means no sockets either, so
+      discovery is inert here and a frozen clock is harmless. */
+   return 0;
+#endif
+}
+```
+
+Declare it in `jlink.h`. Note `JLinkNowUsec` is `static` and defined twice
+(once per platform branch) — `JLinkNowMs` must be placed after both
+definitions, not inside either branch.
 
 - [ ] **Step 6: Lint, wire into the suite, verify**
 
@@ -789,13 +827,17 @@ In `libretro_core_options.h`, change the `virtualjaguar_netlink` entry:
 In `libretro.c`, replace the inline `strcmp` ladder in `check_variables()`:
 
 ```c
-/* Resolve the Network Link option to a concrete JLINK_MODE_*.  "auto"
- * means: let a frontend netplay session own the link when one exists --
- * JLinkNPStart() takes over on its own, so auto simply stays out of the
- * way -- and otherwise fall back to whatever direct mode the user last
- * chose explicitly.  It deliberately never dials a discovered peer by
- * itself; with the Voice Modem that would place a call the user did not
- * initiate. */
+/* Resolve the Network Link option to a concrete JLINK_MODE_*.
+ *
+ * "auto" means netplay-when-live, else idle.  The design doc originally
+ * had auto also fall back to "the direct mode last chosen explicitly";
+ * that was dropped, because with a single option key there is nowhere to
+ * read a previous choice from -- selecting "auto" overwrites it -- so
+ * honouring it would need hidden persisted state whose behaviour the user
+ * cannot see or predict across restarts.
+ *
+ * Auto deliberately never dials a discovered peer by itself either; with
+ * the Voice Modem that would place a call the user did not initiate. */
 static int netlink_resolve_mode(const char *v)
 {
    if (!v)
@@ -848,20 +890,33 @@ git commit -m "feat(netlink): automatic link mode and per-mode option visibility
 
 - [ ] **Step 1: Implement the rebuild**
 
-In `retro_run`, next to the link-state edge block:
+Add a file-scope static beside `netlink_was_up`, and reset it in
+`retro_deinit()` alongside that one (iOS never dlcloses the core):
+
+```c
+static uint32_t netlink_last_rebuild_ms = 0;
+```
+
+Then in `retro_run`, next to the link-state edge block:
 
 ```c
    /* Rebuild the host picker only when the peer set actually changed --
     * never on a timer.  A second SET_CORE_OPTIONS_V2 tears down and
     * rebuilds RetroArch's whole option manager (runloop.c), so doing it
     * per beacon would thrash the menu under the user's thumb. */
-   if (JLinkDiscConsumeChanged()
-       && (uint32_t)(now_ms - netlink_last_rebuild_ms) >= 2000)
    {
-      netlink_rebuild_host_options();
-      netlink_last_rebuild_ms = now_ms;
+      uint32_t disc_now = JLinkNowMs();
+      if (JLinkDiscConsumeChanged()
+          && (uint32_t)(disc_now - netlink_last_rebuild_ms) >= 2000)
+      {
+         netlink_rebuild_host_options();
+         netlink_last_rebuild_ms = disc_now;
+      }
    }
 ```
+
+`JLinkNowMs()` is the helper added in Task 2; it is declared in `jlink.h`,
+which `libretro.c` already includes.
 
 `netlink_rebuild_host_options()` builds a `retro_core_option_v2_definition`
 array whose `virtualjaguar_netlink_host` values are: `127.0.0.1`, one entry

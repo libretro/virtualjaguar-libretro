@@ -82,8 +82,15 @@ existing `.opt` file breaks and no migration code is needed.
 `auto` resolution order, evaluated at load and whenever netplay starts/stops:
 
 1. frontend netplay session live → netpacket (already automatic today)
-2. else an explicit direct mode previously chosen → use it
-3. else idle
+2. else idle
+
+> **Amended during pre-flight review.** This originally read "else an
+> explicit direct mode previously chosen → use it". Dropped: with a single
+> option key there is nowhere to read a previous choice from — selecting
+> `auto` overwrites it — so honouring it would require hidden persisted
+> state whose behaviour the user can neither see nor predict across
+> restarts. Users wanting a direct link select `tcp_host`/`tcp_client`
+> explicitly, and the OSD says so when the link is idle.
 
 **`auto` never auto-connects to a discovered peer.** Discovery populates the
 host list; choosing a host stays a deliberate user action. Silently dialling
