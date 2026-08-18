@@ -162,7 +162,12 @@ int main(int argc, char **argv)
     harness_result results[8];
     uint8_t *jagmem;
     void (*set_hooks)(const TitleDBHook *, int);
-    const char *statefile = "/tmp/vj_hook_gate_state.raw";
+    char statefile[64];
+
+    /* Per-process path: a fixed name collides when two `make test`
+     * suites run concurrently in different worktrees/sessions. */
+    snprintf(statefile, sizeof(statefile), "/tmp/vj_hook_gate_state_%ld.raw",
+              (long)getpid());
 
     for (i = 1; i < argc; i++)
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
