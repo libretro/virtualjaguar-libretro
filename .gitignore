@@ -163,3 +163,4 @@ __pycache__/
 /test/tools/menu_step_probe
 /test/tools/present_rate_probe
 test/tools/blitter_static_leak
+test/tools/voicemodem_pair

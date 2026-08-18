@@ -71,6 +71,12 @@ high byte, then low byte**. Reply classes, per the driver's parsers
 | `$6800` | poll for detected DTMF digit | `$68nn` = heard digit nn, word `$FFFE` = nothing yet |
 | `$8000` | go to data mode (pre-connect) | echo |
 | `$8100` | connect/carrier query | `$86xx` = connected at speed xx, `$80xx` = not yet (retried); after `$86xx` the console waits for `$A4` events to clear `$57F6` bits 0+1 (send `$A4FC`) |
+
+**The `$86xx` speed byte is validated** (RAM `$803C30`, post-connect): the
+game computes `(xx >> 4) - 8`; a negative result is declared TOO MUCH
+TELEPHONE NOISE and the call is torn down. Nibbles `8..E` index a
+displayed-speed table: 9600, 9600, 12000, 14400, 16800, 19200, 57600.
+The emulation replies `$86D0` (19200, matching the programmed UART rate).
 | `$0002`, `$A3FE` | post-connect config | echo |
 | `$9000` | hang up / abort | echo (sent repeatedly until echoed) |
 | `$A040`, `$A0A0` | audio path control (hangup path sends `$9000` then `$A040`) | echo |
@@ -91,6 +97,24 @@ probe digits `0,9,8,…,1` → listens via `$6800` for `1,2,…,9,0` → `$2480`
 The mutual DTMF probe is the line-quality check ("TOO MUCH TELEPHONE
 NOISE" when it fails). Speed/carrier negotiation is the `$8000`/`$8100`/
 `$86xx` + `$A4FC` sequence at `$80B278`.
+
+## Top-level flow (RAM code; RAM address = ROM offset + $43FE)
+
+The whole 68K driver is copied to RAM with the main program and runs
+there (absolute `jsr $11298`-style refs prove it); the `$80Bxxx`
+addresses in this document are the ROM image of RAM `$F394..$FE17`.
+Dial UI path (`$803A50`): dial_seq (`$80B6DC`) -> go_online (`$80B278`)
+-> `$57DB=0` (this console is player 1). Answer path (`$803ABC`):
+answer_seq (`$80B850`) -> go_online -> `$57DB=1`. Both converge at
+`$803C30`: speed-nibble check, then `$57DC=1` — the flag that switches
+the game's input layer to modem-exchanged pad state.
+
+**What UV's netplay actually exchanges:** with `$57DC` set, each frame
+the game packs its local pad longword (plus a coin/meta bit 22) into
+`$579A` and sends it as one 4-byte packet (`$803DDC` -> SendData
+`$80B570`); the far side's packet is received into `$57A0` and the two
+pads are fed to the player slots (`$57E4`/`$57E8`, selected by `$57DB`).
+`$57DD` throttles to one packet per received packet — classic lockstep.
 
 ## Data phase (in-game)
 
@@ -119,8 +143,6 @@ mid-call behaves as a pulled phone line.
 
 ## Open questions
 
-- The `$86xx` speed code's exact encoding (we reply `$8613`); harmless —
-  the game only displays it.
 - `$B1xx` ring payload (we send `$B100`); the driver only matches the
   high byte.
 - Config words (`$3952` etc.) are opaque Phylon chipset parameters;

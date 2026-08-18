@@ -242,7 +242,12 @@ static void VMCommand(uint16_t cmd)
       case 0x8100:              /* carrier / connect-result query */
          if (vmConnected)
          {
-            VMQueueMsg(0x8613);   /* $86xx: connected, xx = speed code */
+            /* $86xx: connected.  Ultra Vortek requires (xx >> 4) >= 8
+             * and maps nibbles 8..E to a speed display table
+             * (9600,9600,12000,14400,16800,19200,57600); below 8 it
+             * declares TOO MUCH TELEPHONE NOISE and hangs up.  $D =
+             * 19200, the rate the UART is actually programmed to. */
+            VMQueueMsg(0x86D0);
             VMQueueMsg(0xA4FC);   /* clear the $57F6 connect wait bits */
          }
          else

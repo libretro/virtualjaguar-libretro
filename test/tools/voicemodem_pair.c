@@ -374,7 +374,7 @@ int main(int argc, char **argv)
 
         /* --- carrier query: $86xx then the async $A4FC --- */
         if (!cmd_echo(0x8000)) break;
-        if (!send_word(0x8100) || !expect(0x8613) || !expect(0xA4FC)) break;
+        if (!send_word(0x8100) || !expect(0x86D0) || !expect(0xA4FC)) break;
 
         /* --- data phase: one packet each way --- */
         if (dialer)
