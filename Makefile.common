@@ -77,6 +77,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/m68000/m68kinterface.c \
 	$(CORE_DIR)/src/m68000/readcpu.c \
 	$(CORE_DIR)/src/bios/jagbios.c \
+	$(CORE_DIR)/src/bios/jagbios_m.c \
 	$(CORE_DIR)/src/bios/jagcdbios.c \
 	$(CORE_DIR)/src/bios/jagdevcdbios.c \
 	$(CORE_DIR)/src/jerry/joystick.c \

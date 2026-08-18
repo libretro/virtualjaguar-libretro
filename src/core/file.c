@@ -456,6 +456,86 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
    return false;
 }
 
+/* Cart entry at $802000 that is real 68K (HLE can jump there). */
+static int cart_entry_looks_like_68k(uint16_t op)
+{
+   if (op == 0x46FC)
+      return 1;
+   if (op == 0x4E71)
+      return 1;
+   if (op == 0x23FC || op == 0x33FC)
+      return 1;
+   if (op == 0x2E7C)
+      return 1;
+   if ((op & 0xFF00) == 0x7000)
+      return 1;
+   if ((op & 0xF000) == 0x6000)
+      return 1;
+   if ((op & 0xF1FF) == 0x41F8 || (op & 0xF1FF) == 0x41F9)
+      return 1;
+   if (op == 0x4EF8 || op == 0x4EF9 || op == 0x4EB8 || op == 0x4EB9)
+      return 1;
+   return 0;
+}
+
+bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
+{
+   uint32_t headerSize;
+   uint32_t payload;
+   const uint8_t *body;
+   unsigned i;
+   uint16_t op;
+
+   if (!buffer || size < 2)
+      return false;
+
+   /* RAM-loaded formats have their own entry; do not force the boot ROM. */
+   if (buffer[0] == 0x60 && buffer[1] == 0x1B)
+      return false;
+   if (buffer[0] == 0x01 && buffer[1] == 0x50)
+      return false;
+   if (buffer[0] == 0x60 && buffer[1] == 0x1A)
+      return false;
+
+   headerSize = DetectPrependedHeaderSize((uint8_t *)buffer, size);
+   if (headerSize >= size)
+      return false;
+   body = buffer + headerSize;
+   payload = size - headerSize;
+
+   /* Too small to hold 68K at $802000: BootIntro / header-only. */
+   if (payload < 0x2002u)
+      return true;
+
+   /* Blank cart entry at $802000 — typical BootIntro pad. Require a full
+    * 256-byte window (no over-read) and skip megabyte-or-larger dumps:
+    * Rayman Demo is a 2 MiB commercial cart with FF there but real 68K
+    * elsewhere; HLE must keep jumping to $802000 for those. */
+   if (payload >= 0x2100u && payload < 0x100000u)
+   {
+      for (i = 0; i < 256; i++)
+      {
+         if (body[0x2000 + i] != 0xFFu)
+            break;
+      }
+      if (i == 256)
+         return true;
+   }
+
+   op = (uint16_t)(((uint16_t)body[0x2000] << 8) | body[0x2001]);
+   /* All-zero dummy carts used by HLE tests. */
+   if (op == 0x0000)
+      return false;
+   if (cart_entry_looks_like_68k(op))
+      return false;
+   /* Tursi jagcrypt / GPU-only intros typically start 0xFC or 0xFE.
+    * Do not treat every non-68K entry as BIOS: synthetic test ROMs
+    * start with ADDQ and similar. */
+   if (body[0] == 0xFC || body[0] == 0xFE)
+      return true;
+   return false;
+}
+
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize)
 {
    bool loaded = JaguarLoadFileInternal(buffer, bufsize);

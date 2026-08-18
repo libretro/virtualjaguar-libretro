@@ -22,6 +22,8 @@ enum { JST_NONE = 0, JST_ROM, JST_ALPINE, JST_ABS_TYPE1, JST_ABS_TYPE2, JST_JAGS
 
 bool JaguarLoadFile(uint8_t *buffer, size_t bufsize);
 uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size);
+/* GPU-only / jagcrypt BootIntro: no 68K program at $802000. */
+bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size);
 
 #ifdef __cplusplus
 }
