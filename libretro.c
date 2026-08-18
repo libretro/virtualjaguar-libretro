@@ -1258,6 +1258,14 @@ static void check_variables(void)
       LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
               (unsigned)m68kClockScalePct, (unsigned)riscClockScalePct);
 
+   var.key = "virtualjaguar_uart_device";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value
+       && strcmp(var.value, "voicemodem") == 0)
+      JLinkSetDevice(JLINK_DEVICE_VOICEMODEM);
+   else
+      JLinkSetDevice(JLINK_DEVICE_JAGLINK);
+
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)

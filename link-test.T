@@ -34,6 +34,7 @@
       JERRY*;
       UART*;
       JLink*;
+      VM*;
       TOM*;
       OP*;
       tomRam8;
