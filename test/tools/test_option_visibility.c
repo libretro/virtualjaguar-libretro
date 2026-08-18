@@ -240,6 +240,9 @@ int main(int argc, char **argv)
    expect("(cart)", "virtualjaguar_cd_trace",      false);
    expect("(cart)", "virtualjaguar_bios",          true);
    expect("(cart)", "virtualjaguar_bios_type",     true);
+   /* Texture dump (#369): the 16bpp preview knob is hidden while the
+    * dump option sits at its disabled default. */
+   expect("(cart)", "virtualjaguar_texdump_16bpp", false);
    p_unload();
 
    /* --- CD: CD options shown, cartridge BIOS option hidden --- */

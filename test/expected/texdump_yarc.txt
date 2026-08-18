@@ -1,0 +1,31 @@
+# texdump v1 golden hash list -- see docs/texture-dump.md.
+# Regenerate ONLY for a deliberate contract bump:
+#   ./test/tools/test_texdump <core> <rom> --update-golden
+0e4ae2eb24870790
+0f772bb6bc839bd8
+16e8fa46e9f385ac
+21cf0c079984ecac
+2a5e050ac9b17bd0
+2bde3a05ce2964bc
+421d8b30f71200cc
+61988d68f3fa4c16
+6a7d968113200e58
+7c9d3d7e79ca5e0c
+814cea49cca6aac8
+844b45fe86eb8fd6
+9d9387421c646610
+b1f77f2d3bbfef90
+b88041c0ba7e58d0
+bdec3fb0c6ee6a98
+be036a03e848b290
+c2f123c336896a6c
+c8e69a047a2827e8
+cfae851286a0f848
+d45afa75267ac058
+d646a02c367010d0
+d81ecf4097997450
+d921299d59d81428
+db1330dddf747173
+dcc886748f68a513
+f7d9939f2e53e450
+fbe56a8d86973510

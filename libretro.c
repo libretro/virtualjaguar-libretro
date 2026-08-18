@@ -41,6 +41,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "settings.h"
 #include "shadowfb.h"
 #include "blit_memo.h"
+#include "texdump.h"
 #include "tom.h"
 #include "blitter.h"
 #include "gpu.h"
@@ -202,6 +203,11 @@ static bool show_input_options = true;
 static bool content_loaded         = false;
 static bool show_cd_options        = true;
 static bool show_cart_bios_option  = true;
+/* 16bpp preview interpretation only matters while texture dump is on
+ * (#369).  Defaults visible, like the other show_* gates, so the first
+ * update_option_visibility() sees a change and hides it while the dump
+ * option sits at its disabled default. */
+static bool show_texdump_16bpp     = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -656,6 +662,28 @@ static bool update_option_visibility(void)
       }
    }
 
+   /* The 16bpp preview knob only means anything while texture dump is
+    * enabled (#369) -- same machinery as the mouse/rotary gates above. */
+   {
+      bool show_texdump_prev = show_texdump_16bpp;
+
+      show_texdump_16bpp = false;
+      var.key = "virtualjaguar_texture_dump";
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+          && !strcmp(var.value, "enabled"))
+         show_texdump_16bpp = true;
+
+      if (show_texdump_16bpp != show_texdump_prev)
+      {
+         option_display.visible = show_texdump_16bpp;
+         option_display.key     = "virtualjaguar_texdump_16bpp";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
    return updated;
 }
 
@@ -1076,6 +1104,29 @@ static void check_variables(void)
        * retro_load_game applies it after ResolveBootConfig instead. */
       if (content_loaded)
          BlitMemoSetMode(blit_memo_requested);
+   }
+
+   /* Texture dump (issue #369): runtime-toggleable, capture is passive
+    * so no restart is needed.  Read raw (not through
+    * get_variable_pertitle()): dumping is a dev-facing choice, never a
+    * per-title default. */
+   var.key = "virtualjaguar_texture_dump";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      TexDumpSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      TexDumpSetEnabled(0);
+
+   var.key = "virtualjaguar_texdump_16bpp";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "rgb") == 0)
+         TexDumpSet16bppMode(TEXDUMP_16BPP_RGB);
+      else if (strcmp(var.value, "both") == 0)
+         TexDumpSet16bppMode(TEXDUMP_16BPP_BOTH);
+      else
+         TexDumpSet16bppMode(TEXDUMP_16BPP_CRY);
    }
 
    var.key = "virtualjaguar_crash_detect";
@@ -2606,6 +2657,19 @@ bool retro_load_game(const struct retro_game_info *info)
    else
       TitleDBSetContent(NULL, 0);
 
+   /* Texture dump (#369): dumps land under the system directory, keyed
+    * by the content CRC the DB just latched.  The path is set here once
+    * so a mid-session enable via check_variables() has somewhere to
+    * write without needing environ_cb of its own. */
+   {
+      const char *texdump_sys_dir = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &texdump_sys_dir)
+          && texdump_sys_dir)
+         TexDumpSetBasePath(texdump_sys_dir);
+      else
+         TexDumpSetBasePath(NULL);
+   }
+
    /* Raw gate read (never through get_variable_pertitle()) so the hires
     * read just below -- which runs before check_variables() -- is already
     * gated correctly even on a frontend that hasn't called
@@ -2907,6 +2971,11 @@ void retro_unload_game(void)
    /* Hi-res: N is per-load; drop the shadow surface so the next load
     * re-reads the option from scratch (see shadowfb.h). */
    ShadowHiresShutdown();
+   /* Texture dump (#369): dumps are keyed by content CRC, so a title
+    * boundary closes the manifest and logs the session summary; the
+    * next load's check_variables() re-enables (and re-allocates) if the
+    * option is still on. */
+   TexDumpShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -3099,6 +3168,10 @@ void retro_deinit(void)
    ShadowFBShutdown();
    ShadowHiresShutdown();
    BlitMemoShutdown();
+   /* Texture dump (#369): close the manifest, log the session summary,
+    * free the dedupe set and reset every static. */
+   TexDumpShutdown();
+   show_texdump_16bpp = true;
    /* Non-pad input devices: encoders, phases, attach mask, armed flag and
     * the option-derived type/scale all go back to their load-time values
     * (iOS cannot dlclose a core). */
@@ -3249,6 +3322,10 @@ void retro_run(void)
    /* Blit memo: advance the shadow-restamp dedupe epoch. */
    if (blitMemoMode)
       BlitMemoFrame();
+
+   /* Texture dump (#369): advance the manifest frame number. */
+   if (texDumpEnabled)
+      TexDumpFrame();
 
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */
