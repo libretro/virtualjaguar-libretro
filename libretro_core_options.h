@@ -320,6 +320,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_uart_device",
+      "Network Link Device",
+      NULL,
+      "What is plugged into the serial port. 'JagLink / CatBox' is the raw cable used by BattleSphere, AirCars and Doom. 'Voice Modem' emulates the Jaguar Voice Modem for Ultra Vortek's phone-line versus mode: type 911 on the numpad at the title screen, then one player dials (any number) and the other answers -- the 'call' is carried over the Network Link transport selected above.",
+      NULL,
+      "network",
+      {
+         { "jaglink",    "JagLink / CatBox (raw cable)" },
+         { "voicemodem", "Voice Modem (Ultra Vortek)" },
+         { NULL, NULL },
+      },
+      "jaglink"
+   },
+   {
       "virtualjaguar_netlink_host",
       "Network Link Host (TCP Client)",
       NULL,

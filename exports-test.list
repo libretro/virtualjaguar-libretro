@@ -31,6 +31,7 @@ _gpu_*
 _JERRY*
 _UART*
 _JLink*
+_VM*
 _TOM*
 _OP*
 _tomRam8

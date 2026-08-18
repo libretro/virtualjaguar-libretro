@@ -91,8 +91,9 @@ void UARTTXCallback(void)
    {
       /* Burst finished (shift drained, nothing queued): push the
          batched transport bytes out NOW so a mid-frame tic exchange
-         gets sub-millisecond latency as one packet per burst. */
-      JLinkPump();
+         gets sub-millisecond latency as one packet per burst.  The
+         voice modem also emits its end-of-packet marker here. */
+      JLinkTxBurstEnd();
    }
    UARTKickRx();
 }

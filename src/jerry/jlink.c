@@ -10,6 +10,7 @@
 #include "jlink.h"
 #include "jlink_tcp.h"
 #include "jlink_netpacket.h"
+#include "voicemodem.h"
 #include "state.h"
 
 #define JLINK_RING_SIZE 256
@@ -56,6 +57,7 @@ static void JLinkSleepUsec(int usec)
 #endif
 
 static int jlinkMode = JLINK_MODE_DISABLED;
+static int jlinkDevice = JLINK_DEVICE_JAGLINK;
 static uint8_t jlinkRing[JLINK_RING_SIZE];
 static uint32_t jlinkHead = 0;   /* next byte to pop */
 static uint32_t jlinkCount = 0;
@@ -97,6 +99,8 @@ static long long jlinkReplyEwmaUsec = 0; /* smoothed reply latency */
 #define JLINK_WAIT_MARGIN_USEC  2000
 #define JLINK_SAMPLE_MAX_USEC  50000   /* slower = not a reply, ignore */
 
+static void JLinkVMDrain(void);
+
 static void JLinkRingPush(uint8_t b)
 {
    uint32_t tail;
@@ -128,6 +132,12 @@ static void JLinkRingPush(uint8_t b)
     * and the two counters were never comparable.  (In loopback the same byte
     * legitimately increments both: it really does go out and come back.) */
    jlinkRxTotal++;
+   /* Voice modem: transport bytes are inter-modem frames, parsed as
+    * they arrive; the ring never holds console-visible bytes.  (Bounded
+    * reentrancy through loopback: a parsed frame may send a reply frame,
+    * which lands here again.) */
+   if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
+      JLinkVMDrain();
 }
 
 void JLinkSetTCPEndpoint(const char *host, int port)
@@ -170,9 +180,17 @@ int JLinkOpen(int mode)
    return 0;
 }
 
+void JLinkTxBurstEnd(void)
+{
+   if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
+      VMTxBurstEnd();
+   JLinkPump();
+}
+
 void JLinkClose(void)
 {
    JLinkTCPClose();
+   VMReset();
    jlinkMode = JLINK_MODE_DISABLED;
    jlinkHead = 0;
    jlinkCount = 0;
@@ -210,7 +228,58 @@ void JLinkNPDeliver(const uint8_t *buf, size_t len)
       JLinkRingPush(buf[i]);
 }
 
+void JLinkSetDevice(int device)
+{
+   if (device != jlinkDevice)
+   {
+      jlinkDevice = device;
+      VMReset();
+   }
+}
+
+int JLinkDevice(void)
+{
+   return jlinkDevice;
+}
+
+/* Move transport-ring bytes into the voice modem's frame parser.  In
+ * voice-modem mode the ring carries inter-modem frames, never bytes the
+ * console may see directly. */
+static void JLinkVMDrain(void)
+{
+   uint8_t b;
+   while (jlinkCount > 0)
+   {
+      b = jlinkRing[jlinkHead];
+      jlinkHead = (jlinkHead + 1) % JLINK_RING_SIZE;
+      jlinkCount--;
+      VMWireInput(b);
+   }
+}
+
+/* Console-deliverable RX depth for the active device. */
+static int JLinkDeliverable(void)
+{
+   if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
+      return VMConsoleRxPending();
+   return (int)jlinkCount;
+}
+
 void JLinkSendByte(uint8_t b)
+{
+   if (jlinkMode == JLINK_MODE_DISABLED)
+      return;
+   if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
+   {
+      /* The modem consumes the console's TX stream; anything bound for
+       * the far side goes out through JLinkWireSendByte. */
+      VMConsoleTx(b);
+      return;
+   }
+   JLinkWireSendByte(b);
+}
+
+void JLinkWireSendByte(uint8_t b)
 {
    if (jlinkMode == JLINK_MODE_DISABLED)
       return;
@@ -278,6 +347,8 @@ void JLinkSetWaitEnabled(int enabled)
 void JLinkFrameTick(void)
 {
    long long budget;
+   if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
+      VMFrameTick();
    if (!jlinkWaitEnabled)
    {
       jlinkWaitBudgetUsec = 0;
@@ -315,7 +386,8 @@ void JLinkAwaitReply(void)
 {
 #ifdef JLINK_HAVE_WAIT
    long long start, now;
-   if (!jlinkAwaitingReply || jlinkWaitBudgetUsec <= 0 || jlinkCount > 0)
+   if (!jlinkAwaitingReply || jlinkWaitBudgetUsec <= 0
+       || JLinkDeliverable() > 0)
       return;
    if (!JLinkConnected())
       return;
@@ -323,7 +395,7 @@ void JLinkAwaitReply(void)
    for (;;)
    {
       JLinkPump();
-      if (jlinkCount > 0)
+      if (JLinkDeliverable() > 0)
          break;
       if (!JLinkConnected())
          break;             /* peer went away mid-wait */
@@ -356,6 +428,8 @@ void JLinkPump(void)
 
 int JLinkRecvByte(uint8_t *b)
 {
+   if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
+      return VMConsoleRecv(b);
    if (jlinkCount == 0)
       return 0;
    *b = jlinkRing[jlinkHead];
@@ -366,7 +440,7 @@ int JLinkRecvByte(uint8_t *b)
 
 int JLinkRxPending(void)
 {
-   return (int)jlinkCount;
+   return JLinkDeliverable();
 }
 
 size_t JLinkStateSave(uint8_t *buf)
