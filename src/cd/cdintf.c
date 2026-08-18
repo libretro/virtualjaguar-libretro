@@ -295,6 +295,77 @@ static const core_file_callbacks chd_vfs_cb = {
    chd_vfs_fseek
 };
 
+/* Determine, for each track in file order, which CD session (1-based) it
+ * belongs to.
+ *
+ * CHD's CHSE (session) metadata entries are indexed among *themselves*
+ * (search index 0 = the 1st CHSE entry anywhere in the file, 1 = the 2nd,
+ * ...) -- that index space is NOT the track index.  A Jaguar disc always
+ * carries exactly two CHSE entries (session 1 at the top, session 2
+ * wherever the game-data session actually starts), but "wherever" varies
+ * with how many tracks precede it: one track for most retail Redump rips,
+ * but two or more for several homebrew CUEs (Frog Feast, Ants, Klax, ...
+ * -- see docs/jagcd-chd.md).  Querying CHSE at the same search index as
+ * the track loop counter (as this parser used to) only happens to land on
+ * the right entry when session 1 has exactly one track: issue #476 was
+ * exactly this, one track early, because Frog Feast's session 1 has two.
+ *
+ * Fix: walk the *whole* metadata list once with CHDMETATAG_WILDCARD, which
+ * enumerates every entry in true on-disk order regardless of tag, and
+ * stamp the session that was current at the moment each track (CHT2/CHTR)
+ * entry was seen.  This also makes the caller's own CHT2/CHTR-by-index
+ * loop and this session lookup agree on what "index i" means for tracks:
+ * both now count actual track entries in file order. */
+static bool DetermineCHDTrackSessions(chd_file *chdFile, uint32_t *trackSession,
+                                       uint32_t maxTracks, uint32_t *outNumTracks,
+                                       bool *outSawChse)
+{
+   char metadata[256];
+   uint32_t mdIndex;
+   uint32_t session;
+   uint32_t trackCount;
+   bool sawChse;
+
+   session = 1;
+   trackCount = 0;
+   sawChse = false;
+
+   for (mdIndex = 0; ; mdIndex++)
+   {
+      chd_error err;
+      uint32_t resulttag;
+
+      metadata[0] = '\0';
+      resulttag = 0;
+      err = chd_get_metadata(chdFile, CHDMETATAG_WILDCARD, mdIndex, metadata,
+                             sizeof(metadata), NULL, &resulttag, NULL);
+      if (err != CHDERR_NONE)
+         break;
+
+      if (resulttag == CDROM_SESSION_METADATA_TAG)
+      {
+         int sess;
+         sess = 1;
+         if (sscanf(metadata, CDROM_SESSION_METADATA_FORMAT, &sess) == 1 && sess >= 1)
+         {
+            session = (uint32_t)sess;
+            sawChse = true;
+         }
+      }
+      else if (resulttag == CDROM_TRACK_METADATA2_TAG ||
+               resulttag == CDROM_TRACK_METADATA_TAG)
+      {
+         if (trackCount < maxTracks)
+            trackSession[trackCount] = session;
+         trackCount++;
+      }
+   }
+
+   *outNumTracks = trackCount;
+   *outSawChse = sawChse;
+   return trackCount > 0;
+}
+
 static void CDIntfCloseCHD(void)
 {
    if (chd)
@@ -332,6 +403,8 @@ static bool ParseCHD(const char *chdPath)
    bool saw_chse;
    bool all_audio;
    bool warn_virtual;
+   uint32_t chdTrackSession[CDINTF_MAX_TRACKS];
+   uint32_t chdSessionTrackCount;
    const uint32_t INTER_SESSION_GAP = 11400;
 
    CDIntfCloseCHD();
@@ -383,33 +456,30 @@ static bool ParseCHD(const char *chdPath)
    discLBA = 0;
    chdFrames = 0;
    prevSession = 0;
-   saw_chse = false;
    all_audio = true;
    warn_virtual = false;
+
+   /* Resolve per-track session numbers in true file order first (see
+    * DetermineCHDTrackSessions for why per-track-index CHSE lookup is
+    * wrong) -- the main loop below just reads the result. */
+   memset(chdTrackSession, 0, sizeof(chdTrackSession));
+   chdSessionTrackCount = 0;
+   saw_chse = false;
+   DetermineCHDTrackSessions(chd, chdTrackSession, CDINTF_MAX_TRACKS,
+                              &chdSessionTrackCount, &saw_chse);
 
    for (i = 0; i < CDINTF_MAX_TRACKS; i++)
    {
       int tracknum, frames, pregap, postgap;
-      int sess;
       char type[16], subtype[16], pgtype[16], pgsub[16];
       uint32_t stored_pregap;
       uint32_t padded;
 
       type[0] = subtype[0] = pgtype[0] = pgsub[0] = '\0';
       tracknum = frames = pregap = postgap = 0;
-      sess = 0;
 
-      metadata[0] = '\0';
-      if (chd_get_metadata(chd, CDROM_SESSION_METADATA_TAG, (uint32_t)i,
-                           metadata, sizeof(metadata), NULL, NULL, NULL) == CHDERR_NONE)
-      {
-         sess = 1;
-         if (sscanf(metadata, CDROM_SESSION_METADATA_FORMAT, &sess) == 1 && sess >= 1)
-         {
-            sessionnum = sess;
-            saw_chse = true;
-         }
-      }
+      if ((uint32_t)i < chdSessionTrackCount)
+         sessionnum = chdTrackSession[i];
 
       metadata[0] = '\0';
       if (chd_get_metadata(chd, CDROM_TRACK_METADATA2_TAG, (uint32_t)i,
@@ -2105,14 +2175,28 @@ uint8_t CDIntfGetTrackSession(uint32_t track)
 /* Extract the game boot stub from the start of session 2.
  *
  * Jaguar CD bootable discs encode the universal-header + boot-loader at the
- * very start of the first session-2 track.  The 32-byte ATARI APPROVED magic
- * lives at byte +0x42 of the (word-swapped) data, immediately followed by:
- *   +0x62: 4-byte load address (typically $00080000)
- *   +0x66: 4-byte length
- *   +0x6A: code bytes (length bytes)
+ * start of the first session-2 track: the 32-byte "ATARI APPROVED DATA
+ * HEADER ATRI " magic, then (relative to the start of that magic):
+ *   +0x20: 4-byte load address (typically $00080000)
+ *   +0x24: 4-byte length
+ *   +0x28: code bytes (length bytes)
+ * Real discs typically precede the magic with a run of repeated "ATRI"
+ * sync words, but that run is not load-bearing here -- only the magic is.
+ *
+ * How far into the track's data the magic sits is NOT a disc-format
+ * constant -- it varies with how much (if any) leading filler the
+ * mastering tool left before it.  Baldies has a 2-byte lead-in (magic at
+ * +0x42); Frog Feast has 378 bytes of lead-in, mostly zero (magic at
+ * +0x17A) -- see issue #476.  This function therefore searches for the
+ * magic within the first sector (2352 bytes) of the track's data instead
+ * of assuming it starts at a fixed offset; when it lands at +0x42 (the
+ * common case), the derived offsets are bit-identical to the old
+ * hardcoded ones.  A 32-byte specific ASCII signature has no realistic
+ * chance of a false-positive match inside one sector of boot-loader
+ * binary, so no extra qualifier (like requiring the sync run) is needed.
  *
  * The on-disc data is word-swapped because the Jaguar's I2S audio path swaps
- * each 16-bit word during read.  We undo that swap, validate the magic, then
+ * each 16-bit word during read.  We undo that swap, locate the header, then
  * the caller injects the resulting stub directly into main RAM at the load
  * address — bypassing the BIOS streaming path entirely.
  *
@@ -2128,6 +2212,13 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
 {
    static const uint8_t MAGIC[32] =
       "ATARI APPROVED DATA HEADER ATRI ";
+   /* One CD sector: both known real-disc cases (Baldies +0x42, Frog Feast
+    * +0x17A) land well inside it.  A title that needs more than a sector
+    * of skip before the header is a different disc shape and should fail
+    * loudly rather than be silently absorbed by an ever-widening search. */
+   const uint32_t SEARCH_WINDOW = 2352;
+   uint32_t headerOffset;
+   bool foundHeader;
    uint32_t i;
    uint32_t firstS2Idx = 0;
    bool foundS2 = false;
@@ -2254,10 +2345,10 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       rfclose(trackFile);
       LOG_INF("[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
    }
-   if (bytesRead < 0x6A + 4)
+   if (bytesRead < (int64_t)sizeof(MAGIC))
    {
       LOG_ERR("[CD-BOOTSTUB] Too few bytes read (%lld < %d)\n",
-              (long long)bytesRead, 0x6A + 4);
+              (long long)bytesRead, (int)sizeof(MAGIC));
       return false;
    }
 
@@ -2305,22 +2396,59 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x%02X: %s\n",
               (unsigned)(last ? last - 1 : 0), swphex);
    }
-   LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
-
-   if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
+   /* Locate the magic.  A CDI V2 repair overlay establishes the header at
+    * a fixed position by construction (see the memcpy above) -- honor
+    * that instead of re-deriving it, so the search never second-guesses
+    * an offset the repair path just synthesized. */
+   foundHeader = false;
+   headerOffset = 0x42;
+   if (disc.tracks[firstS2Idx].synthBootHeader)
    {
-      uint32_t matched;
+      foundHeader = (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) == 0);
+   }
+   else
+   {
+      uint32_t window;
+
+      window = ((uint32_t)bytesRead < SEARCH_WINDOW)
+                  ? (uint32_t)bytesRead : SEARCH_WINDOW;
+
+      if (window >= sizeof(MAGIC))
+      {
+         uint32_t limit;
+         uint32_t off;
+
+         limit = window - (uint32_t)sizeof(MAGIC);
+         for (off = 0; off <= limit; off++)
+         {
+            if (memcmp(swapped + off, MAGIC, sizeof(MAGIC)) == 0)
+            {
+               headerOffset = off;
+               foundHeader = true;
+               break;
+            }
+         }
+      }
+   }
+
+   LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + headerOffset);
+
+   if (!foundHeader)
+   {
+      uint32_t window;
       uint32_t all_zero;
       uint32_t j;
 
-      matched = 0;
+      window = ((uint32_t)bytesRead < SEARCH_WINDOW)
+                  ? (uint32_t)bytesRead : SEARCH_WINDOW;
       all_zero = 1;
-      for (j = 0; j < (uint32_t)sizeof(MAGIC); j++)
+      for (j = 0; j < window; j++)
       {
-         if (swapped[0x42 + j] == MAGIC[j])
-            matched++;
-         if (swapped[0x42 + j] != 0)
+         if (swapped[j] != 0)
+         {
             all_zero = 0;
+            break;
+         }
       }
 
       if (all_zero)
@@ -2328,33 +2456,39 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
          /* Bad CDI V2 rips: boot header region is zeros in the file itself.
           * No offset fix recovers absent data - refuse with an actionable
           * message so users stop re-filing this as an unsupported format. */
-         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled at +0x42 - "
-                 "this image is an incomplete / bad rip, not an unsupported "
-                 "format\n");
+         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled in the "
+                 "first %u byte(s) of session-2 track data - this image is "
+                 "an incomplete / bad rip, not an unsupported format\n",
+                 (unsigned)window);
       }
       else
       {
-         LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
-                 "(matched %u/%u bytes)\n",
-                 (unsigned)matched, (unsigned)sizeof(MAGIC));
+         LOG_ERR("[CD-BOOTSTUB] ATARI boot header (sync run + magic) not "
+                 "found within the first %u byte(s) of session-2 track "
+                 "data\n", (unsigned)window);
       }
       return false;
    }
 
-   loadAddr = ((uint32_t)swapped[0x62] << 24) | ((uint32_t)swapped[0x63] << 16)
-            | ((uint32_t)swapped[0x64] <<  8) |  (uint32_t)swapped[0x65];
-   length   = ((uint32_t)swapped[0x66] << 24) | ((uint32_t)swapped[0x67] << 16)
-            | ((uint32_t)swapped[0x68] <<  8) |  (uint32_t)swapped[0x69];
+   loadAddr = ((uint32_t)swapped[headerOffset + 0x20] << 24)
+            | ((uint32_t)swapped[headerOffset + 0x21] << 16)
+            | ((uint32_t)swapped[headerOffset + 0x22] <<  8)
+            |  (uint32_t)swapped[headerOffset + 0x23];
+   length   = ((uint32_t)swapped[headerOffset + 0x24] << 24)
+            | ((uint32_t)swapped[headerOffset + 0x25] << 16)
+            | ((uint32_t)swapped[headerOffset + 0x26] <<  8)
+            |  (uint32_t)swapped[headerOffset + 0x27];
 
    if (length == 0 || length > outBufSize
-       || (uint64_t)0x6A + length > (uint64_t)bytesRead)
+       || (uint64_t)headerOffset + 0x28 + length > (uint64_t)bytesRead)
    {
       LOG_ERR("[CD-BOOTSTUB] Bad length $%X (loadAddr=$%06X, bufSize=%u, available=%lld)\n",
-              length, loadAddr, outBufSize, (long long)bytesRead - 0x6A);
+              length, loadAddr, outBufSize,
+              (long long)bytesRead - headerOffset - 0x28);
       return false;
    }
 
-   memcpy(outBuf, swapped + 0x6A, length);
+   memcpy(outBuf, swapped + headerOffset + 0x28, length);
    *outLoadAddr = loadAddr;
    *outLength   = length;
 
@@ -2364,7 +2498,7 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
     * $0500 unpause, no seek) expect data to flow from there, not from
     * block 0. */
    bootStubEndLBA = disc.tracks[firstS2Idx].dataLBA
-                  + (0x6A + length + 2351) / 2352;
+                  + (headerOffset + 0x28 + length + 2351) / 2352;
 
    LOG_INF("[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
            length, loadAddr,

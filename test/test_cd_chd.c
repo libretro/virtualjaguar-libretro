@@ -1,5 +1,6 @@
 /*
- * test_cd_chd.c -- CHD session gate (issue #322)
+ * test_cd_chd.c -- CHD session gate (issue #322) and CHSE track-position
+ * conflation (issue #476)
  *
  *   good      : test/roms/synth_jagcd.chd (CHSE, two sessions) must load
  *               with session-2 INDEX 01 at LBA 11404 (4-sector session 1
@@ -7,6 +8,16 @@
  *   nosession : test/roms/synth_jagcd_nosession.chd must be refused by
  *               ParseCHD (log contains "no session metadata (CHSE)"),
  *               not merely fail later at HLE extract.
+ *   multi     : test/roms/synth_jagcd_multi.chd has THREE tracks, with
+ *               session 1 carrying two of them (track 1, track 2) and
+ *               session 2 starting at track 3. CHD's CHSE metadata is
+ *               indexed among CHSE entries themselves (index 0 = the 1st
+ *               CHSE entry anywhere in the file, 1 = the 2nd), not by
+ *               track position -- a parser that queries CHSE at the same
+ *               index as its track loop counter only gets the right
+ *               answer when session 1 has exactly one track. This fixture
+ *               pins track 2 to session 1 (not session 2) and the boot
+ *               stub to track 3.
  *
  * Fixtures are committed uncompressed CD CHDs. If one is missing, SKIP
  * rather than fail a checkout that forgot to git-add the files. There
@@ -255,6 +266,41 @@ TEST(chd_session2_header_and_extract)
     cd_unload_game();
 }
 
+TEST(chd_multi_track_session1_is_not_flipped_early)
+{
+    const char *fix = "test/roms/synth_jagcd_multi.chd";
+    uint32_t addr, len;
+
+    if (!file_exists(fix)) {
+        SKIP_TEST(chd_multi_track_session1_is_not_flipped_early,
+                   "missing test/roms/synth_jagcd_multi.chd");
+        return;
+    }
+    ASSERT_TRUE(cd_load_game(fix));
+    ASSERT_EQ_U32(cd_num_sessions(), 2u);
+    ASSERT_EQ_U32(cd_num_tracks(), 3u);
+
+    /* The regression: track 2 must stay session 1 (CHSE's 2nd entry
+     * belongs to track 3, not track 2 -- see the file header comment). */
+    ASSERT_EQ(cd_track_session(1), 1);
+    ASSERT_EQ(cd_track_session(2), 1);
+    ASSERT_EQ(cd_track_session(3), 2);
+
+    /* track1 (4) + track2 (4) + synthesized 11400-sector gap, PREGAP 0. */
+    ASSERT_EQ_U32(cd_session2_lba(), 11408u);
+
+    {
+        uint8_t stub[0x800];
+        addr = 0;
+        len = 0;
+        ASSERT_TRUE(cd_extract_stub(stub, sizeof(stub), &addr, &len));
+        ASSERT_EQ_U32(addr, 0x00080000u);
+        ASSERT_EQ_U32(len, 0x100u);
+    }
+
+    cd_unload_game();
+}
+
 int main(int argc, char *argv[])
 {
     (void)argc; (void)argv;
@@ -278,6 +324,7 @@ int main(int argc, char *argv[])
     RUN_TEST(chd_with_chse_has_two_sessions);
     RUN_TEST(chd_gap_and_session1_are_silence);
     RUN_TEST(chd_session2_header_and_extract);
+    RUN_TEST(chd_multi_track_session1_is_not_flipped_early);
 
     {
         void (*p)(void) = (void (*)(void))dlsym(C.handle, "retro_deinit");
