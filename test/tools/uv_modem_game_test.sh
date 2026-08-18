@@ -15,11 +15,18 @@ set -u
 
 CORE="${1:?usage: uv_modem_game_test.sh <core> [port]}"
 PORT="${2:-$(( 25000 + ($$ % 4000) ))}"
-ROM="test/roms/private/ROMS/Atari Jaguar Rom Collection/ROMS/Ultra Vortek (1995).jag"
+# Locate the ROM through find-rom.sh rather than one hardcoded spelling:
+# the corpus holds BOTH a top-level "Ultra Vortek (1995).jag" and a deeper
+# copy under "Atari Jaguar Rom Collection/", and a retail-vs-beta pair.
+# Hardcoding one path is how the Skyhammer sentinel went inert -- see the
+# header of scripts/find-rom.sh.  Exact retail spelling first so the Beta
+# is only ever a last resort; VJ_UV_ROM overrides everything.
+ROM="${VJ_UV_ROM:-$(bash "$(dirname "$0")/../../scripts/find-rom.sh" \
+    'Ultra Vortek (1995).jag' 'Ultra Vortek (1995).*' 'Ultra Vortek*.jag')}"
 BIN="$(dirname "$0")/netlink_game"
 OUT="${TMPDIR:-/tmp}/uv_modem_game_$$"
 
-if [ ! -f "$ROM" ]; then
+if [ -z "$ROM" ] || [ ! -f "$ROM" ]; then
     echo "uv_modem_game_test: SKIP (private ROM absent)" >&2
     exit 77
 fi
@@ -27,6 +34,19 @@ if [ ! -x "$BIN" ]; then
     echo "uv_modem_game_test: $BIN not built" >&2
     exit 1
 fi
+# A dylib passes -x but dies at exec with "cannot execute binary file".
+# That happens for real: the test-tool link rules live inside the
+# TEST_EXPORTS=1 branch of the Makefile, so `make test/tools/netlink_game`
+# without it silently falls through to make's built-in %:%.c rule and
+# links a shared library (LDFLAGS carries -dynamiclib/-shared).  Fail with
+# the fix instead of two bogus "sent 0 data words" lines.
+case "$(file -b "$BIN" 2>/dev/null)" in
+    *"shared library"*|*dylib*|*"dynamically linked library"*)
+        echo "uv_modem_game_test: $BIN is a shared library, not an executable." >&2
+        echo "  Rebuild it with:  make TEST_EXPORTS=1 $BIN" >&2
+        exit 1
+        ;;
+esac
 mkdir -p "$OUT"
 
 MAPOPTS=(--option virtualjaguar_uart_device=voicemodem

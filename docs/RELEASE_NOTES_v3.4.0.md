@@ -53,6 +53,31 @@ against it.
 Default off. Enable `virtualjaguar_texture_dump`, play, and find the tiles
 under `<system>/vj_texdump/<CRC32>/`.
 
+### Texture replacement, tier 1 (#369)
+
+The other half of the pipeline also ships: drop redrawn art into
+`<system>/vj_texpacks/<CRC32>/<hash>.png` — the same hashes dump mode
+writes — and it presents in place of the title's own tiles. Authoring is
+"dump, redraw, move one directory over".
+
+Packs are **true colour**; nothing in the path quantises RGB back to CRY,
+and a pack pixel with alpha below 128 keeps the stock pixel instead.
+
+The pipeline never writes the emulated machine. Replacement rides the
+existing true-colour shadow framebuffer, gated on a per-pixel
+straight-copy witness, so savestates, rewind, run-ahead and netplay stay
+**bit-identical** with or without a pack — a pack cannot desync a link
+game or invalidate a state.
+
+Tier 1 covers 16bpp source tiles at 1x through straight-copy blits, which
+is the sprite and UI blit class dump mode was built around. Indexed
+sources (tier 2) and >1x Stage 2 surfaces (tier 3) are designed but not
+implemented; entries of those kinds are skipped and the stock pixel
+presents.
+
+Default off, and the option only appears when a pack directory exists for
+the loaded cartridge.
+
 ### Boot ROM selection (#469, #473, #477)
 
 Cartridges can now boot the **Series K** or **Model M** console boot ROM

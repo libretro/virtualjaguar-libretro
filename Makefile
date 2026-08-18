@@ -994,7 +994,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/voicemodem_pair test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1024,6 +1024,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
+	@# title: two core instances drive the real ROM through 911 -> the
+	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
+	@# on $$F0xx pad words actually crossing the link.  voicemodem_pair
+	@# above covers the handshake synthetically; this is the only check
+	@# that proves the game itself gets online.  Needs the private ROM --
+	@# exit 77 is ledgered, never a silent pass.  ~95 s (two realtime
+	@# 5400-frame instances), so it is the slowest optional check here.
+	@if bash test/tools/uv_modem_game_test.sh ./$(TARGET); then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "Ultra Vortek Voice Modem full-game netplay (#481)" "no ROM matching 'Ultra Vortek (1995).jag' in the private corpus"; \
+	   else exit $$rc; fi; \
+	 fi
 	@# vjtrace flight-recorder selftest: determinism (field_diff +
 	@# trace_memdiff on two identical runs), watch attribution, and
 	@# VJ_TRACE_RING wrap correctness. Builds its own analyzer/smoke tools
