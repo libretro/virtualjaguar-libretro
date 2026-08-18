@@ -36,9 +36,21 @@ extern "C" {
 #define SHADOWFB_LINE_PIXELS 720
 #define SHADOWFB_TAG_VALID   0x10000
 
-/* Nonzero when the core option is on AND the buffers are allocated.
- * Hot paths gate on this before doing any shadow work. */
+/* Nonzero when the surface is on AND the buffers are allocated.  Hot
+ * paths gate on this before doing any shadow work.  The surface can be
+ * active for two reasons: the True Color option, or an active texture
+ * replacement pack (#369 deliverable 2) presenting through it. */
 extern int shadowFBActive;
+
+/* Nonzero when the blitter engines should make Gouraud/SRCSHADE
+ * precision stores (the True Color feature proper).  Always implies
+ * shadowFBActive.  A replacement-only activation leaves this OFF so
+ * every non-replaced pixel presents bit-identically to stock. */
+extern int shadowFBPrecision;
+
+/* Set by the True Color option (independent of surface allocation
+ * order; the effective flag is recomputed on enable). */
+void ShadowFBSetPrecision(int on);
 
 /* Shadow line buffer, parallel to tomRam8[0x1800..], one entry per
  * 16-bit line-buffer pixel.  Tag = value16 | SHADOWFB_TAG_VALID. */
@@ -64,6 +76,12 @@ uint32_t ShadowFBCryRGB(uint16_t value16, uint16_t frac16);
 /* Record a full-precision pixel for a main-RAM word address (blit time).
  * Addresses outside the bottom-8MB RAM mirror window are ignored. */
 void ShadowFBStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16);
+
+/* Texture-replacement store (issue #369 deliverable 2): record an
+ * ARBITRARY RGB888 for a main-RAM word address, tagged against value16.
+ * Only the replacement pipeline calls this (see texreplace.c); it is
+ * not part of the blit memo's shadow-store replay. */
+void ShadowFBStoreRGB(uint32_t addr, uint16_t value16, uint32_t rgb888);
 
 /* Value-checked lookup: returns nonzero and fills *rgb888 only when the
  * entry's tag matches current16 (the value just read from RAM). */

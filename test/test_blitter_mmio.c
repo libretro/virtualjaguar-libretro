@@ -34,6 +34,9 @@ void BlitterResetDecodeState(void) {}
 int BlitMemoLaunch(void) { return 0; }   /* memo off: dispatch as before */
 int texDumpEnabled = 0;                  /* texture dump off */
 void TexDumpLaunch(void) {}
+int texReplaceEnabled = 0;               /* texture replacement off */
+int TexReplacePreBlit(void) { return 0; }
+void TexReplacePostBlit(void) {}
 
 /* Blitter bus-time model dependencies (vjs.blitterTiming stays 0 in the
  * stub settings above, so the timing path short-circuits; these only

@@ -62,6 +62,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/tom/op.c \
 	$(CORE_DIR)/src/tom/shadowfb.c \
 	$(CORE_DIR)/src/tom/texdump.c \
+	$(CORE_DIR)/src/tom/texreplace.c \
 	$(CORE_DIR)/src/tom/tom.c  \
 	$(CORE_DIR)/src/cd/cdintf.c \
 	$(CORE_DIR)/src/cd/cdrom.c \

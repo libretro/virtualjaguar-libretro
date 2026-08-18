@@ -96,6 +96,10 @@ extern uint32_t RGB16ToRGB32[0x10000];
 #define TD_FNV_OFFSET 0xCBF29CE484222325ULL
 #define TD_FNV_PRIME  0x00000100000001B3ULL
 
+/* Local aliases for the shared window-size constants (texdump.h). */
+#define TD_MAX_WINDOW_BYTES TEXDUMP_MAX_WINDOW_BYTES
+#define TD_SCRATCH_BYTES    TEXDUMP_SCRATCH_BYTES
+
 /* Dedupe set: open-addressed uint64 table, fixed 2^17 entries (1 MB
  * host RAM).  0 is the empty sentinel; a real hash of 0 is remapped to
  * a fixed non-zero constant so it stays representable.  Insertion stops
@@ -105,12 +109,6 @@ extern uint32_t RGB16ToRGB32[0x10000];
 #define TD_SET_MASK    (TD_SET_SIZE - 1u)
 #define TD_SET_MAXLOAD ((TD_SET_SIZE / 4u) * 3u)
 #define TD_HASH_ZERO_REMAP 0xD6E8FEB86659FD93ULL
-
-/* Garbage-register guard: described source windows larger than 1 MB are
- * never hashed (docs/texture-dump.md, "Skipped"). */
-#define TD_MAX_WINDOW_BYTES (1u << 20)
-/* Serialization slack: per row up to a phrase of alignment spill. */
-#define TD_SCRATCH_BYTES (TD_MAX_WINDOW_BYTES + 0x10000)
 
 /* ---- state (ALL host-transient; reset in TexDumpShutdown) ----------- */
 
@@ -178,8 +176,8 @@ static int td_set_insert(uint64_t h)
  * and the boot ROM window.  BUTCH/TOM/JERRY and unmapped space are
  * refused -- reads there can carry side effects, so a window touching
  * them is skipped entirely (same rule as blitter.c's
- * shadow_hires_read_src16_a1). */
-static int td_addr_ok(uint32_t a)
+ * shadow_hires_read_src16_a1).  Shared with texreplace.c (texdump.h). */
+int TexDumpAddrOK(uint32_t a)
 {
    if (a < 0xDFFF00)
       return 1;
@@ -188,7 +186,7 @@ static int td_addr_ok(uint32_t a)
    return 0;
 }
 
-static uint8_t td_read8(uint32_t a)
+uint8_t TexDumpRead8(uint32_t a)
 {
    if (a < 0x800000)
       return jaguarMainRAM[a & 0x1FFFFF];
@@ -198,7 +196,7 @@ static uint8_t td_read8(uint32_t a)
          return JGDReadROM8(a - 0x800000);
       return jaguarMainROM[a - 0x800000];
    }
-   return jagMemSpace[a];   /* boot ROM window (td_addr_ok guarded) */
+   return jagMemSpace[a];   /* boot ROM window (TexDumpAddrOK guarded) */
 }
 
 /* ---- source-window walk --------------------------------------------- */
@@ -232,26 +230,29 @@ static uint32_t td_pixel_offset(uint32_t x, uint32_t y, uint32_t width,
    }
 }
 
-/* Capture description of the current launch, filled by td_describe(). */
-typedef struct
+/* Byte offset of pixel (c, r) inside the described window, scaled to
+ * bytes for every bpp (texdump.h; used by the replacement pipeline's
+ * destination-window walk). */
+uint32_t TexDumpPixelByteOffset(const TexDumpDesc *d, uint32_t c,
+                                uint32_t r)
 {
-   uint32_t base;        /* phrase-aligned channel base                */
-   uint32_t flags;       /* channel FLAGS register                     */
-   uint32_t psizefield;  /* (flags >> 3) & 7                           */
-   uint32_t bpp;         /* 1 << psizefield                            */
-   uint32_t pitch;       /* phrase-gap ({0,1,3,2}[flags & 3])          */
-   uint32_t width;       /* window width in pixels (6-bit float)       */
-   uint32_t x0, y0;      /* integer pixel origin                       */
-   uint32_t inner;       /* pixels per row (B_COUNT low)               */
-   uint32_t outer;       /* rows (B_COUNT high)                        */
-   uint32_t src_addr;    /* byte address of pixel (x0, y0)             */
-} td_desc;
+   uint32_t px  = (d->x0 + c) & 0xFFFF;
+   uint32_t py  = (d->y0 + r) & 0xFFFF;
+   uint32_t off = td_pixel_offset(px, py, d->width, d->pitch,
+                                  d->psizefield);
+   if (d->psizefield == 4)
+      off <<= 1;
+   else if (d->psizefield == 5)
+      off <<= 2;
+   return off;
+}
 
-/* Serialize the described window into td_scratch, row-major, packed
- * exactly as stored (each covering byte appended once).  Returns the
- * byte count, or 0 when any byte falls outside populated address space
- * or the serialization overruns the scratch buffer. */
-static uint32_t td_serialize(const td_desc *d)
+/* Serialize the described window into buf, row-major, packed exactly
+ * as stored (each covering byte appended once).  Returns the byte
+ * count, or 0 when any byte falls outside populated address space or
+ * the serialization overruns cap.  Shared with texreplace.c: this IS
+ * the identity contract's byte stream -- do not change the walk. */
+uint32_t TexDumpSerialize(const TexDumpDesc *d, uint8_t *buf, uint32_t cap)
 {
    uint32_t len = 0;
    uint32_t r, c, k;
@@ -273,14 +274,14 @@ static uint32_t td_serialize(const td_desc *d)
             continue;               /* same stored byte as previous pixel */
          prev = off;
          k = (d->bpp <= 8) ? 1 : (d->bpp >> 3);
-         if (len + k > TD_SCRATCH_BYTES)
+         if (len + k > cap)
             return 0;
          for (; k > 0; k--)
          {
             a = (d->base + off) & 0xFFFFFF;
-            if (!td_addr_ok(a))
+            if (!TexDumpAddrOK(a))
                return 0;
-            td_scratch[len++] = td_read8(a);
+            buf[len++] = TexDumpRead8(a);
             off++;
          }
       }
@@ -288,7 +289,8 @@ static uint32_t td_serialize(const td_desc *d)
    return len;
 }
 
-static uint64_t td_hash(const td_desc *d, uint32_t len)
+uint64_t TexDumpHashKey(const TexDumpDesc *d, const uint8_t *bytes,
+                        uint32_t len)
 {
    uint64_t h = TD_FNV_OFFSET;
    uint8_t hdr[10];
@@ -312,10 +314,85 @@ static uint64_t td_hash(const td_desc *d, uint32_t len)
    }
    for (i = 0; i < len; i++)
    {
-      h ^= td_scratch[i];
+      h ^= bytes[i];
       h *= TD_FNV_PRIME;
    }
    return h;
+}
+
+/* Decode ONE address channel into *d with the given counts (texdump.h;
+ * the replacement pipeline models a launch's destination window with
+ * this).  Returns 0 on a garbage pixel-size encoding. */
+int TexDumpDescribeChannel(TexDumpDesc *d, int use_a1,
+                           uint32_t inner, uint32_t outer)
+{
+   uint32_t m, e;
+
+   if (use_a1)
+   {
+      d->base  = TD_REG(TD_A1_BASE) & 0xFFFFFFF8;
+      d->flags = TD_REG(TD_A1_FLAGS);
+      d->x0    = TD_REG(TD_A1_PIXEL) & 0xFFFF;
+      d->y0    = (TD_REG(TD_A1_PIXEL) >> 16) & 0xFFFF;
+   }
+   else
+   {
+      d->base  = TD_REG(TD_A2_BASE) & 0xFFFFFFF8;
+      d->flags = TD_REG(TD_A2_FLAGS);
+      d->x0    = TD_REG(TD_A2_PIXEL) & 0xFFFF;
+      d->y0    = (TD_REG(TD_A2_PIXEL) >> 16) & 0xFFFF;
+   }
+
+   d->psizefield = (d->flags >> 3) & 0x07;
+   if (d->psizefield > 5)            /* garbage pixel-size encoding */
+      return 0;
+   d->bpp = 1u << d->psizefield;
+   {
+      static const uint32_t pitch_lut[4] = { 0, 1, 3, 2 };
+      d->pitch = pitch_lut[d->flags & 0x03];
+   }
+   m = (d->flags >> 9) & 0x03;
+   e = (d->flags >> 11) & 0x0F;
+   d->width = ((0x04 | m) << e) >> 2;
+
+   d->inner = inner;
+   d->outer = outer;
+   d->src_addr = (d->base + TexDumpPixelByteOffset(d, 0, 0)) & 0xFFFFFF;
+   return 1;
+}
+
+/* Decode the current launch's SOURCE window (texdump.h).  Returns 1
+ * when this is a sane SRCEN blit worth hashing, 0 for no-source /
+ * garbage-register launches, and -1 for a sane-looking window larger
+ * than the 1 MB guard (counted as a skip by dump mode). */
+int TexDumpDescribe(TexDumpDesc *d, uint32_t *cmd_out)
+{
+   uint32_t cmd, count;
+   uint64_t bytes_est;
+   int src_is_a1;
+
+   cmd = TD_REG(TD_COMMAND);
+   if (cmd_out)
+      *cmd_out = cmd;
+   if (!(cmd & 0x00000001))         /* SRCEN: no source read, no tile */
+      return 0;
+
+   /* JTRM B_CMD bit 0: source data comes from A2, or from A1 when
+    * DSTA2 (bit 11) makes A2 the destination. */
+   src_is_a1 = (cmd & 0x00000800) != 0;
+
+   count = TD_REG(TD_COUNT);
+   if ((count & 0xFFFF) == 0 || (count >> 16) == 0)
+      return 0;
+   if (!TexDumpDescribeChannel(d, src_is_a1, count & 0xFFFF,
+                               (count >> 16) & 0xFFFF))
+      return 0;
+
+   /* Garbage-register guard: > 1 MB described windows are skipped. */
+   bytes_est = ((uint64_t)d->inner * d->outer * d->bpp + 7) / 8;
+   if (bytes_est > TD_MAX_WINDOW_BYTES)
+      return -1;
+   return 1;
 }
 
 /* ---- output plumbing ------------------------------------------------ */
@@ -439,7 +516,7 @@ static void td_store_rgb(uint8_t *dst, uint32_t xrgb)
 
 /* Extract pixel (c, r) of the described window from emulated memory
  * (same addressing as td_serialize).  Returns the raw pixel value. */
-static uint32_t td_pixel_value(const td_desc *d, uint32_t c, uint32_t r)
+static uint32_t td_pixel_value(const TexDumpDesc *d, uint32_t c, uint32_t r)
 {
    uint32_t px  = (d->x0 + c) & 0xFFFF;
    uint32_t py  = (d->y0 + r) & 0xFFFF;
@@ -450,27 +527,27 @@ static uint32_t td_pixel_value(const td_desc *d, uint32_t c, uint32_t r)
    {
       case 0:
          a = (d->base + off) & 0xFFFFFF;
-         return (td_read8(a) >> ((~px) & 7)) & 0x01;
+         return (TexDumpRead8(a) >> ((~px) & 7)) & 0x01;
       case 1:
          a = (d->base + off) & 0xFFFFFF;
-         return (td_read8(a) >> (((~px) << 1) & 6)) & 0x03;
+         return (TexDumpRead8(a) >> (((~px) << 1) & 6)) & 0x03;
       case 2:
          a = (d->base + off) & 0xFFFFFF;
-         return (td_read8(a) >> (((~px) << 2) & 4)) & 0x0F;
+         return (TexDumpRead8(a) >> (((~px) << 2) & 4)) & 0x0F;
       case 3:
          a = (d->base + off) & 0xFFFFFF;
-         return td_read8(a);
+         return TexDumpRead8(a);
       case 4:
          a = (d->base + (off << 1)) & 0xFFFFFF;
-         b0 = td_read8(a);
-         b1 = td_read8((a + 1) & 0xFFFFFF);
+         b0 = TexDumpRead8(a);
+         b1 = TexDumpRead8((a + 1) & 0xFFFFFF);
          return (b0 << 8) | b1;
       default:
          a = (d->base + (off << 2)) & 0xFFFFFF;
-         b0 = td_read8(a);
-         b1 = td_read8((a + 1) & 0xFFFFFF);
-         b2 = td_read8((a + 2) & 0xFFFFFF);
-         b3 = td_read8((a + 3) & 0xFFFFFF);
+         b0 = TexDumpRead8(a);
+         b1 = TexDumpRead8((a + 1) & 0xFFFFFF);
+         b2 = TexDumpRead8((a + 2) & 0xFFFFFF);
+         b3 = TexDumpRead8((a + 3) & 0xFFFFFF);
          return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
    }
 }
@@ -478,7 +555,7 @@ static uint32_t td_pixel_value(const td_desc *d, uint32_t c, uint32_t r)
 /* Render the window as RGB8 rows.  mode16 selects the 16bpp
  * interpretation (TEXDUMP_16BPP_CRY / _RGB); clut16 is the snapshotted
  * CLUT (256 x u16, host order) for <=8bpp windows. */
-static uint8_t *td_render(const td_desc *d, int mode16,
+static uint8_t *td_render(const TexDumpDesc *d, int mode16,
                           const uint16_t *clut16)
 {
    uint8_t *rgb;
@@ -513,7 +590,7 @@ static uint8_t *td_render(const td_desc *d, int mode16,
 
 /* ---- first-sight dump ----------------------------------------------- */
 
-static void td_first_sight(const td_desc *d, uint64_t h, uint32_t cmd,
+static void td_first_sight(const TexDumpDesc *d, uint64_t h, uint32_t cmd,
                            uint32_t clut_crc, const uint16_t *clut16)
 {
    char path[1500];
@@ -593,72 +670,26 @@ static void td_first_sight(const td_desc *d, uint64_t h, uint32_t cmd,
 
 void TexDumpLaunch(void)
 {
-   td_desc d;
-   uint32_t cmd, count, m, e, first_off;
+   TexDumpDesc d;
+   uint32_t cmd;
    uint32_t len;
-   uint64_t h, bytes_est;
-   int src_is_a1;
+   uint64_t h;
+   int rc;
    int is_new;
 
    if (!td_set)
       return;                       /* enable-time allocation failed */
 
-   cmd = TD_REG(TD_COMMAND);
-   if (!(cmd & 0x00000001))         /* SRCEN: no source read, no tile */
+   rc = TexDumpDescribe(&d, &cmd);
+   if (rc == 0)
       return;
-
-   /* JTRM B_CMD bit 0: source data comes from A2, or from A1 when
-    * DSTA2 (bit 11) makes A2 the destination. */
-   src_is_a1 = (cmd & 0x00000800) != 0;
-   if (src_is_a1)
-   {
-      d.base  = TD_REG(TD_A1_BASE) & 0xFFFFFFF8;
-      d.flags = TD_REG(TD_A1_FLAGS);
-      d.x0    = TD_REG(TD_A1_PIXEL) & 0xFFFF;
-      d.y0    = (TD_REG(TD_A1_PIXEL) >> 16) & 0xFFFF;
-   }
-   else
-   {
-      d.base  = TD_REG(TD_A2_BASE) & 0xFFFFFFF8;
-      d.flags = TD_REG(TD_A2_FLAGS);
-      d.x0    = TD_REG(TD_A2_PIXEL) & 0xFFFF;
-      d.y0    = (TD_REG(TD_A2_PIXEL) >> 16) & 0xFFFF;
-   }
-
-   d.psizefield = (d.flags >> 3) & 0x07;
-   if (d.psizefield > 5)            /* garbage pixel-size encoding */
-      return;
-   d.bpp = 1u << d.psizefield;
-   {
-      static const uint32_t pitch_lut[4] = { 0, 1, 3, 2 };
-      d.pitch = pitch_lut[d.flags & 0x03];
-   }
-   m = (d.flags >> 9) & 0x03;
-   e = (d.flags >> 11) & 0x0F;
-   d.width = ((0x04 | m) << e) >> 2;
-
-   count   = TD_REG(TD_COUNT);
-   d.inner = count & 0xFFFF;
-   d.outer = (count >> 16) & 0xFFFF;
-   if (d.inner == 0 || d.outer == 0)
-      return;
-
-   /* Garbage-register guard: > 1 MB described windows are skipped. */
-   bytes_est = ((uint64_t)d.inner * d.outer * d.bpp + 7) / 8;
-   if (bytes_est > TD_MAX_WINDOW_BYTES)
+   if (rc < 0)                      /* > 1 MB described window */
    {
       td_stat_skipped++;
       return;
    }
 
-   first_off = td_pixel_offset(d.x0, d.y0, d.width, d.pitch, d.psizefield);
-   if (d.psizefield == 4)
-      first_off <<= 1;
-   else if (d.psizefield == 5)
-      first_off <<= 2;
-   d.src_addr = (d.base + first_off) & 0xFFFFFF;
-
-   len = td_serialize(&d);
+   len = TexDumpSerialize(&d, td_scratch, TD_SCRATCH_BYTES);
    if (len == 0)                    /* outside populated space / overrun */
    {
       td_stat_skipped++;
@@ -666,7 +697,7 @@ void TexDumpLaunch(void)
    }
    td_stat_captures++;
 
-   h = td_hash(&d, len);
+   h = TexDumpHashKey(&d, td_scratch, len);
    is_new = td_set_insert(h);
 
    if (d.bpp <= 8)
