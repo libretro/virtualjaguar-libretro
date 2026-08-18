@@ -36,8 +36,18 @@
  *      exponent the layer accepts and every magnitude below the reference,
  *      a sample that passed the gate keeps a non-zero gain.
  *   9. The effective response mag*gain is monotone non-decreasing in mag,
- *      for every exponent.  A curve with a fixed-point dip would read as
- *      the pointer stalling at one speed and is invisible to spot checks.
+ *      verified for exponent_q8 in [100, 800] -- the exact domain
+ *      test_response_is_monotone() sweeps below. That is not "every
+ *      exponent": the invariant is genuinely FALSE below exponent_q8=100
+ *      (e.g. exponent_q8=1 dips mag 15->16 from mag*gain 16290 to 16288,
+ *      confirmed by direct calculation against AxisTuneApply()). The test
+ *      does not chase that region because nothing in the shipped option
+ *      pipeline can reach it: read_tune_exponent() (libretro.c) only ever
+ *      sees one of the exponent core options' own enumerated values, which
+ *      run 100%-300% (exponent_q8 256-768) -- comfortably inside the
+ *      swept-and-proven [100, 800]. A curve with a fixed-point dip inside
+ *      that reachable range would read as the pointer stalling at one
+ *      speed and is invisible to spot checks.
  */
 
 #include <stdio.h>

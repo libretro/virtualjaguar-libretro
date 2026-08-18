@@ -82,9 +82,11 @@ static int inputdev_is_mouse(InputDevType t)
 }
 
 /* Dynamic (machine-visible) state only: encoders, button latches and the
- * armed flag.  The device type and the sensitivity scale are owned by the
- * core options and survive a machine reset, exactly as a physical mouse
- * stays plugged in across a console reset. */
+ * armed flag.  The device type, the sensitivity scale, and the per-axis
+ * tuning (tune_x/tune_y, #439 -- dead zone, offset, response exponent) are
+ * all owned by the core options and survive a machine reset, exactly as a
+ * physical mouse stays plugged in across a console reset. Deliberate, and
+ * load-bearing: see test/tools/tuning_identity.c's sweep-order comment. */
 static void inputdev_reset_dynamic(void)
 {
    unsigned p;

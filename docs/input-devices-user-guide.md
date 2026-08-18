@@ -14,24 +14,53 @@ with a pad.
 
 ## Core options
 
-All three live under **Port 2** in the core options menu.
+Fourteen options together cover device selection and per-axis tuning for both
+ports. The mouse rows live under **Port 2**; the rotary rows are shared by
+**both** ports, exactly like *Rotary Sensitivity* always has been — a rotary
+plugged into either port draws on the same five rotary options.
 
 | Option | Values | Default |
 |---|---|---|
-| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter) | Auto |
+| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Rotary (Tempest) | Auto |
+| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest) | Auto |
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
+| *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
+| *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
+| *Port 2 > Mouse Offset (X)* (`virtualjaguar_mouse_offset_x`) | -4 – -1, Off, +1 – +4 | Off |
+| *Port 2 > Mouse Offset (Y)* (`virtualjaguar_mouse_offset_y`) | -4 – -1, Off, +1 – +4 | Off |
+| *Port 2 > Mouse Response Curve (X)* (`virtualjaguar_mouse_exponent_x`) | Linear (1.00) – 3.00 | Linear (1.00) |
+| *Port 2 > Mouse Response Curve (Y)* (`virtualjaguar_mouse_exponent_y`) | Linear (1.00) – 3.00 | Linear (1.00) |
+| *Rotary Sensitivity* (`virtualjaguar_rotary_sensitivity`) | 25% – 400% | 100% |
+| *Rotary Reports Controller Type* (`virtualjaguar_rotary_id`) | Standard Joypad (no diode), Tempest Rotary (diode fitted) | Standard Joypad |
+| *Rotary Dead Zone* (`virtualjaguar_rotary_deadzone`) | Off, 1 – 8 units | Off |
+| *Rotary Offset* (`virtualjaguar_rotary_offset`) | -4 – -1, Off, +1 – +4 | Off |
+| *Rotary Response Curve* (`virtualjaguar_rotary_exponent`) | Linear (1.00) – 3.00 | Linear (1.00) |
 
-*Mouse Sensitivity* only appears while a mouse is actually attached to port 2.
+The seven mouse rows (*Mouse Sensitivity* through *Mouse Response Curve (Y)*)
+only appear once a mouse is actually attached to port 2. The five rotary rows
+only appear once a rotary is attached to port 1 or port 2. Both groups are
+gated on the live device, not the option string, so a device your frontend
+assigned directly (see below) reveals them too, exactly as a core-option
+selection would.
+
+The dead zone, offset and response-curve rows are per-axis tuning (#439,
+landed in #474): a noise gate, a centring correction and a low-speed response
+curve, in that order, applied identically to mouse and rotary motion by the
+shared layer in `src/jerry/axistune.c`. Every default is the exact identity,
+so a user who never opens this menu gets the pre-#439 path unchanged — the
+same guarantee the mouse feature itself makes (see above).
 
 **Auto currently means Standard Joypad for every title.** See
 [No per-title auto-select](#no-per-title-auto-select-and-why) below — that is
 a deliberate result, not an unfinished switch.
 
 Your frontend can also select the device directly (RetroArch: *Controls →
-Port 2 → Device Type*), which offers the same four devices. A **mouse** set
-that way outranks the core option. Setting the port back to *Joypad* or *None*
-releases that claim rather than forcing a pad — the core option decides again,
-immediately.
+Port 1/2 → Device Type*), which offers the same devices as each port's
+*Controller Type* option: two on port 1 (Standard Joypad, Rotary), five on
+port 2 (Standard Joypad, the three mice, Rotary) — everything except *Auto*,
+which is not a real device. A device set that way outranks the core option.
+Setting the port back to *Joypad* or *None* releases that claim rather than
+forcing a pad — the core option decides again, immediately.
 
 ### Once a mouse is live, the port-2 RetroPad is disconnected
 
@@ -162,9 +191,9 @@ such at the code sites so nobody "fixes" them later.
 
 ## Not yet implemented
 
-The **Tempest rotary** controller (#436) is a separate device on the same
-track and is not covered here. Lightgun (#437), analog/driving controllers
-(#438) and per-axis tuning (#439) are also open.
+Lightgun support (#438) and analog / driving controllers (#437) are open.
+The **Tempest rotary** (#436) and per-axis tuning (#439) have since shipped —
+see [Core options](#core-options) above.
 
 ## See also
 
