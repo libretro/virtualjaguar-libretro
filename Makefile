@@ -924,6 +924,7 @@ clean:
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
@@ -967,7 +968,7 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -978,7 +979,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_frontend_pacing test/test_jgd \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format test/test_cart_needs_bios \
+		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
@@ -1027,6 +1028,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_titledb
+	./test/test_biosdb
+	./test/test_cart_bios_loader
 	./test/test_titlehook
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
@@ -1448,6 +1451,25 @@ test/test_cheat: test/test_cheat.c src/core/cheat.c src/core/cheat.h
 test/test_titledb: test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
+
+# Known cart boot ROM image table unit test (issue #469). Links biosdb.c +
+# crc32.c + the two embedded boot ROM blobs directly, same no-dlopen style
+# as test_titledb: no core, no private ROMs.
+test/test_biosdb: test/tools/test_biosdb.c src/core/biosdb.c src/core/crc32.c \
+		src/bios/jagbios.c src/bios/jagbios_m.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_biosdb.c src/core/biosdb.c src/core/crc32.c \
+		src/bios/jagbios.c src/bios/jagbios_m.c
+
+# Custom cart boot ROM loader end-to-end test (issue #469): dlopens the
+# built core and drives retro_load_game() with a synthetic cart image to
+# exercise stage_cart_boot_rom()'s 'custom' path (file present, file
+# absent -> embedded-K fallback) plus a k/m-unchanged sanity check.
+test/test_cart_bios_loader: test/test_cart_bios_loader.c $(TARGET) \
+		src/bios/jagbios.c src/bios/jagbios_m.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cart_bios_loader.c \
+		src/bios/jagbios.c src/bios/jagbios_m.c -ldl
 
 # Enhancement-hook applier (issue #370).  Host unit test: no dlopen, no
 # ROMs.  titlehook.c's pure half takes the image as a parameter, so this
