@@ -564,7 +564,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    /* Per-axis rotary tuning (#439).  A rotary is a single wheel, so there
     * is one axis and no X/Y split; the arithmetic is the same shared layer
-    * the mouse uses (src/jerry/axistune.c).  Defaults are the identity. */
+    * the mouse uses (src/jerry/axistune.c).  Defaults are the identity.
+    *
+    * These are SHARED BY BOTH PORTS, exactly as Rotary Sensitivity already
+    * is: two rotaries cannot be tuned independently.  That is a deliberate
+    * carry-forward of the existing shape rather than an omission -- the
+    * rotary options live in the un-prefixed "input" category precisely
+    * because the device is offered on either port. */
    {
       "virtualjaguar_rotary_deadzone",
       "Rotary Dead Zone",

@@ -326,7 +326,16 @@ static bool inputdev_is_mouse_type(InputDevType t)
  * The two are resolved together, in one function called from both paths,
  * because they are selected by the same fact -- what is plugged into the
  * port -- and a second place that picks between the two devices' ladders is
- * exactly how the bug documented in apply_port_device() came about. */
+ * exactly how the bug documented in apply_port_device() came about.
+ *
+ * IT CAN RUN BEFORE THE OPTIONS HAVE EVER BEEN READ.  The frontend may
+ * call retro_set_controller_port_device() before retro_load_game(), and
+ * that path reaches here without passing through check_variables().  The
+ * statics then still hold their initialisers, which are deliberately the
+ * IDENTITY (and retro_deinit puts them back), so the worst case is a
+ * device that runs untuned until retro_load_game's own check_variables()
+ * resolves it a moment later.  Any future static added here must keep that
+ * property: its initialiser has to be a safe value, not a sentinel. */
 static void apply_port_tuning(int port)
 {
    if (InputDevGetType(port) == INPUTDEV_ROTARY)
@@ -929,6 +938,11 @@ static int32_t read_tune_units(const char *key)
 {
    struct retro_variable var;
 
+   /* NO CLAMP HERE, ON PURPOSE.  AxisTuneSet() owns the bounds for both
+    * the dead zone and the offset; duplicating them here would give the
+    * feature two sets of limits to keep in step.  The exponent reader
+    * below does clamp, but only because it MULTIPLIES before handing the
+    * value on and an unbounded percent would overflow on the way. */
    var.key   = key;
    var.value = NULL;
 
