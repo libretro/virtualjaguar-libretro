@@ -6,7 +6,10 @@ something to redraw and developers get a window into what titles
 actually blit. This is the first half of #369; the replacement pipeline
 (second half, v3.5) consumes the contract defined here.
 
-Status: **design approved pending review — not implemented.**
+Status: **implemented (v3.4 deliverable 1).** Capture module
+`src/tom/texdump.c`, hook in `src/tom/blitter_mmio.c`, options in
+`libretro.c` / `libretro_core_options.h`, test gates in
+`test/tools/test_texdump.c` + `test/expected/texdump_yarc.txt`.
 
 ## Goals and non-goals
 
@@ -226,13 +229,65 @@ shipped).
   (directory layout, what the hash means, palette caveats) written at
   implementation time.
 
-## Open items carried into implementation
+## Authoring guide (for pack authors)
 
-- Verify source-channel B_CMD decode against `docs/jtrm-blitter.md`
-  before trusting the engines' variable naming.
-- Confirm `tdefl_write_image_to_png_file_in_memory_ex` links cleanly
-  from outside the unity TU on MSVC (symbol visibility) — fallback is
-  a tiny TU-local wrapper compiled into unity.
-- Golden-list size for yarc.j64 unknown until first run; if yarc blits
-  too few unique sources to be a meaningful tripwire, add a second
-  committed ROM from `test/roms/`.
+Turn on **Texture Dump Mode** (Options → Diagnostics) and play. Every
+unique source tile the game pushes through the blitter lands in
+
+```
+<RetroArch system dir>/vj_texdump/<cart CRC32 as 8 hex digits>/
+    manifest.tsv         one row per unique tile (+ palette sightings)
+    <hash16>.png         preview, named by the tile's identity hash
+```
+
+What to know before redrawing:
+
+- **The filename is the contract.** `<hash16>` is the FNV-1a 64 key of
+  the tile's raw bytes (plus bpp and dimensions). The v3.5 replacement
+  pipeline will look art up under exactly this name — never rename the
+  files. If the manifest header ever says something other than
+  `texdump v1`, hashes from a different contract version are not
+  interchangeable.
+- **The PNG is a preview, not the truth.** For indexed (≤8bpp) tiles it
+  was rendered through whatever CLUT the game had loaded the first time
+  the tile was seen; the manifest row records that CLUT's CRC. A tile
+  the game recolours via palette swaps appears ONCE (one hash, one
+  file) with extra `clut=` sighting rows telling you other palettes
+  exist. That is deliberate: the blitter never sees a palette, so two
+  CLUT variants of one tile are indistinguishable at the point where
+  replacement will happen. Draw for the tile, not for one palette.
+- **16bpp tiles** can be CRY or RGB16 — the hardware doesn't say. If a
+  preview looks like noise, switch *Texture Dump: 16bpp Preview* to the
+  other interpretation (or `both`) and reload; the hash (and therefore
+  the filename) does not change.
+- Transparency is a property of each blit, not of the tile; `flags=`
+  in the manifest records the comparator bits seen on first sight.
+  Previews are fully opaque.
+- The manifest is append-only across sessions; play more of the game
+  and new tiles simply append. Dedupe is per-session, so a replayed
+  session may re-append rows for tiles already listed — rows are
+  advisory, files are identity.
+
+## Open items carried into implementation — resolution
+
+- **B_CMD source-channel decode**: verified against
+  `docs/jtrm-blitter.md` — bit 0 SRCEN reads source from **A2**, or
+  from **A1 when DSTA2 (bit 11)** is set. Implemented exactly so in
+  `TexDumpLaunch()`; the engines' variable naming agrees.
+- **miniz linkage**: `tdefl_write_image_to_png_file_in_memory_ex`
+  links cleanly from outside the unity TU (plain extern function, no
+  visibility annotations); the CI MSVC job compiles unity.c with
+  `/DMINIZ_DEFLATE_APIS` to keep cl.exe honest. The fallback wrapper
+  was not needed. The define lives in `LIBCHDR_CFLAGS`
+  (Makefile.common) rather than on the `unity.o` rule alone so the
+  theos_ios path — which compiles unity.c without that rule — gets it
+  too.
+- **Golden-list population**: yarc.j64 blits only its two boot-time
+  code copies through SRCEN (it renders via the OP), and so does
+  jagniccc.j64 — no in-tree public ROM is a meaningful tripwire by
+  itself. Instead of a second ROM, `test/tools/test_texdump.c` drives
+  a **synthetic blit battery** through the real bus/launch path
+  (26 scripted tiles: every bpp, both source channels, plus a
+  palette-change re-blit that must not mint a new hash). The committed
+  golden list (`test/expected/texdump_yarc.txt`, 28 hashes) freezes
+  the ROM tiles and the battery together.
