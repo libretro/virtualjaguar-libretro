@@ -396,12 +396,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios_type",
       "Cart BIOS Type (Restart)",
       NULL,
-      "Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart auto-enables the boot ROM. 'Series K' is the original Jaguar. 'Model M' is the later revision (patch address $4804) that most size-coded BootIntros are built for. Both images are built into the core. A jagboot_m.rom in the system directory overrides the embedded Model-M image. Ignored for CD content.",
+      "Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart auto-enables the boot ROM. 'Series K' is the original Jaguar. 'Model M' is the later revision (patch address $4804) that most size-coded BootIntros are built for. Both images are built into the core. 'Custom' loads a 128 KB image from the system directory: jagboot.rom, boot.rom, boot0.rom, or a named '[BIOS] Atari Jaguar...' file, identified by checksum and logged; falls back to Series K if none is found. A jagboot_m.rom in the system directory overrides the embedded Model-M image. Ignored for CD content.",
       NULL,
       "bios_boot",
       {
          { "k", "Series K" },
          { "m", "Model M" },
+         { "custom", "Custom (external file)" },
          { NULL, NULL },
       },
       "k"

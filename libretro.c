@@ -20,6 +20,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "crash_detect.h"
 #include "vjtrace.h"
 #include "crc32.h"
+#include "biosdb.h"
 #include "bus_arbiter.h"
 #include "file.h"
 #include "jagbios.h"
@@ -1120,6 +1121,8 @@ static void check_variables(void)
    {
       if (strcmp(var.value, "m") == 0)
          vjs.biosType = BT_M_SERIES;
+      else if (strcmp(var.value, "custom") == 0)
+         vjs.biosType = BT_CUSTOM;
       else
          vjs.biosType = BT_K_SERIES;
    }
@@ -2307,12 +2310,124 @@ static void apply_cart_bios_autodetect(const struct retro_game_info *info)
    }
 }
 
+/* Try to load a 128 KB cart boot ROM image from the given path directly
+ * into the boot ROM window at $E00000.  Returns true on success.  Any
+ * checksum is accepted -- unlike the CD BIOS loader, a custom cart boot
+ * ROM has no header sanity check to fall back on, and "load whatever the
+ * user pointed us at" is the whole point of the 'Custom' option.  The
+ * identification is purely informational (logged), never a gate. */
+static bool try_load_cart_boot_rom_file(const char *path)
+{
+   RFILE   *f;
+   int64_t  size;
+   uint32_t crc;
+   const char *name;
+
+   f = rfopen(path, "rb");
+   if (!f)
+      return false;
+
+   rfseek(f, 0, SEEK_END);
+   size = rftell(f);
+   rfseek(f, 0, SEEK_SET);
+
+   if (size != 0x20000)
+   {
+      LOG_DBG("[BOOT]   wrong size (%lld, need 131072): %s\n",
+              (long long)size, path);
+      rfclose(f);
+      return false;
+   }
+
+   if (rfread(jagMemSpace + 0xE00000, 1, 0x20000, f) != 0x20000)
+   {
+      LOG_DBG("[BOOT]   short read (need 131072): %s\n", path);
+      rfclose(f);
+      return false;
+   }
+   rfclose(f);
+
+   name = BIOSDBIdentify(jagMemSpace + 0xE00000, 0x20000, &crc);
+   if (name == BIOSDB_UNKNOWN_NAME)
+      LOG_WRN("[BOOT] %s is an unrecognized cart boot ROM image "
+              "(crc %08x) -- loading anyway, custom images are the point\n",
+              path, (unsigned)crc);
+   LOG_INF("[BOOT] external cart boot ROM %s: %s (crc %08x)\n",
+           path, name, (unsigned)crc);
+   return true;
+}
+
+/* Search common cart boot ROM filenames in the system directory (and a
+ * handful of well-known sub-directories), for 'Cart BIOS Type' = Custom.
+ * Mirrors load_external_cd_bios()'s sub-directory list minus the
+ * CD-specific entries.  Filename priority is the outer loop -- a
+ * jagboot.rom several sub-directories down still beats a boot0.rom in the
+ * system directory root, because the filename is the user's explicit
+ * signal of which image they mean for us to use. */
+static bool load_external_cart_boot_rom(void)
+{
+   static const char *names[] = {
+      "jagboot.rom",
+      "boot.rom",
+      "boot0.rom",
+      "[BIOS] Atari Jaguar (World).j64",
+      "[BIOS] Atari Jaguar Stubulator '94 (World).j64",
+      "[BIOS] Atari Jaguar Stubulator '93 (World).j64",
+      NULL
+   };
+   static const char *sub_dirs[] = {
+      "",
+      "Atari - Jaguar",
+      "jaguar",
+      NULL
+   };
+   const char *system_dir = NULL;
+   int i, s;
+
+   if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
+       || !system_dir)
+   {
+      LOG_WRN("[BOOT] No system directory available for custom cart boot ROM search\n");
+      return false;
+   }
+
+   for (i = 0; names[i]; i++)
+   {
+      for (s = 0; sub_dirs[s]; s++)
+      {
+         char path[4096];
+         if (sub_dirs[s][0])
+            snprintf(path, sizeof(path), "%s/%s/%s",
+                     system_dir, sub_dirs[s], names[i]);
+         else
+            snprintf(path, sizeof(path), "%s/%s", system_dir, names[i]);
+
+         if (try_load_cart_boot_rom_file(path))
+            return true;
+      }
+   }
+
+   return false;
+}
+
 static void stage_cart_boot_rom(void)
 {
    const uint8_t *src;
    const char *system_dir;
    RFILE *f;
    char path[4096];
+
+   if (vjs.biosType == BT_CUSTOM)
+   {
+      if (load_external_cart_boot_rom())
+         return;
+
+      LOG_WRN("[BOOT] Custom cart boot ROM selected but no usable file "
+              "found -- falling back to embedded Series K\n");
+      memcpy(jagMemSpace + 0xE00000, jaguarBootROM, 0x20000);
+      LOG_INF("[BOOT] cart boot ROM: Series K (fallback)\n");
+      return;
+   }
 
    src = (vjs.biosType == BT_M_SERIES) ? jaguarBootROM_M : jaguarBootROM;
    system_dir = NULL;
