@@ -138,3 +138,176 @@ const JLinkPeer *JLinkDiscPeerAt(int i)
       return NULL;
    return &discPeers[i];
 }
+
+/* Guard mirrors jlink_tcp.c verbatim: discovery has exactly the same
+   platform surface as the TCP transport, and divergent guards are how one
+   builds and the other does not. */
+#if defined(_WIN32) || defined(__unix__) || defined(__APPLE__) || \
+    defined(__linux__) || defined(__ANDROID__)
+#define JLINK_DISC_HAVE_NET 1
+#endif
+
+#ifdef JLINK_DISC_HAVE_NET
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#endif
+
+static int      discSock       = -1;
+static int      discListenOnly = 1;
+static int      discDevice     = 0;
+static int      discLinkPort   = 0;
+static uint32_t discLastBeacon = 0;
+static char     discSelfName[JLINK_DISC_NAME_MAX];
+
+int JLinkDiscStart(int listen_only, int device, int link_port)
+{
+   struct sockaddr_in sa;
+   int one = 1;
+
+   JLinkDiscStop();
+   JLinkDiscPeersReset();
+
+   discSock = (int)socket(AF_INET, SOCK_DGRAM, 0);
+   if (discSock < 0)
+      return 0;
+
+   /* Two cores on ONE machine is the normal dev/test layout (see
+      netlink_pair_test.sh, uv_modem_game_test.sh).  Without these the
+      second instance cannot bind and discovery silently does nothing on
+      exactly the setup used to test it. */
+   setsockopt(discSock, SOL_SOCKET, SO_REUSEADDR,
+              (const char *)&one, sizeof(one));
+#ifdef SO_REUSEPORT
+   setsockopt(discSock, SOL_SOCKET, SO_REUSEPORT,
+              (const char *)&one, sizeof(one));
+#endif
+   setsockopt(discSock, SOL_SOCKET, SO_BROADCAST,
+              (const char *)&one, sizeof(one));
+
+   memset(&sa, 0, sizeof(sa));
+   sa.sin_family      = AF_INET;
+   sa.sin_addr.s_addr = htonl(INADDR_ANY);
+   sa.sin_port        = htons((unsigned short)JLINK_DISC_PORT);
+   if (bind(discSock, (struct sockaddr *)&sa, sizeof(sa)) != 0)
+   {
+      JLinkDiscStop();
+      return 0;
+   }
+
+#ifdef _WIN32
+   { u_long nb = 1; ioctlsocket(discSock, FIONBIO, &nb); }
+#else
+   fcntl(discSock, F_SETFL, fcntl(discSock, F_GETFL, 0) | O_NONBLOCK);
+#endif
+
+   discListenOnly = listen_only;
+   discDevice     = device;
+   discLinkPort   = link_port;
+   discLastBeacon = 0;
+
+   discSelfName[0] = '\0';
+#ifdef _WIN32
+   { DWORD n = JLINK_DISC_NAME_MAX - 1; GetComputerNameA(discSelfName, &n); }
+#else
+   if (gethostname(discSelfName, JLINK_DISC_NAME_MAX - 1) != 0)
+      discSelfName[0] = '\0';
+   discSelfName[JLINK_DISC_NAME_MAX - 1] = '\0';
+#endif
+   if (!discSelfName[0])
+      strcpy(discSelfName, "jaguar");
+   return 1;
+}
+
+void JLinkDiscStop(void)
+{
+   if (discSock >= 0)
+   {
+#ifdef _WIN32
+      closesocket(discSock);
+#else
+      close(discSock);
+#endif
+   }
+   discSock = -1;
+}
+
+int JLinkDiscActive(void)
+{
+   return discSock >= 0;
+}
+
+int JLinkDiscPoll(uint32_t now_ms)
+{
+   uint8_t  pkt[JLINK_DISC_PKT_LEN];
+   struct sockaddr_in from;
+   char     addr[JLINK_DISC_ADDR_MAX];
+   char     name[JLINK_DISC_NAME_MAX];
+   int      dev, port, changed = 0;
+   socklen_t flen;
+   int      n;
+
+   if (discSock < 0)
+      return 0;
+
+   if (!discListenOnly
+       && (discLastBeacon == 0 || (uint32_t)(now_ms - discLastBeacon) >= 1000))
+   {
+      struct sockaddr_in to;
+      uint8_t out[JLINK_DISC_PKT_LEN];
+      memset(&to, 0, sizeof(to));
+      to.sin_family      = AF_INET;
+      to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+      to.sin_port        = htons((unsigned short)JLINK_DISC_PORT);
+      if (JLinkDiscEncode(out, sizeof(out), discDevice, discLinkPort,
+                          discSelfName))
+         sendto(discSock, (const char *)out, JLINK_DISC_PKT_LEN, 0,
+                (struct sockaddr *)&to, sizeof(to));
+      discLastBeacon = now_ms;
+   }
+
+   for (;;)
+   {
+      flen = sizeof(from);
+      memset(&from, 0, sizeof(from));
+      n = (int)recvfrom(discSock, (char *)pkt, sizeof(pkt), 0,
+                        (struct sockaddr *)&from, &flen);
+      if (n <= 0)
+         break;
+      if (!JLinkDiscDecode(pkt, (size_t)n, &dev, &port, name, sizeof(name)))
+         continue;
+      /* Ignore our own beacon.  Matched on name+port, not source IP:
+         the same machine appears under different addresses depending on
+         which interface the broadcast came back through. */
+      if (!discListenOnly && port == discLinkPort
+          && strcmp(name, discSelfName) == 0)
+         continue;
+      addr[0] = '\0';
+      strncpy(addr, inet_ntoa(from.sin_addr), JLINK_DISC_ADDR_MAX - 1);
+      addr[JLINK_DISC_ADDR_MAX - 1] = '\0';
+      if (JLinkDiscPeerSeen(addr, name, dev, port, now_ms))
+         changed = 1;
+   }
+
+   if (JLinkDiscPeerExpire(now_ms))
+      changed = 1;
+   return changed;
+}
+
+#else  /* no networking */
+
+int  JLinkDiscStart(int a, int b, int c) { (void)a; (void)b; (void)c; return 0; }
+void JLinkDiscStop(void) {}
+int  JLinkDiscPoll(uint32_t t) { (void)t; return 0; }
+int  JLinkDiscActive(void) { return 0; }
+
+#endif

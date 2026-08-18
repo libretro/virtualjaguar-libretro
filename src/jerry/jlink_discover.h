@@ -43,4 +43,12 @@ int    JLinkDiscPeerExpire(uint32_t now_ms);
 int    JLinkDiscPeerCount(void);
 const JLinkPeer *JLinkDiscPeerAt(int i);
 
+/* Socket layer.  listen_only = 1 for client/auto (listen but never
+   beacon); 0 for a host (beacon AND listen, so a host still sees peers).
+   link_port is the TCP port advertised in the beacon. */
+int  JLinkDiscStart(int listen_only, int device, int link_port);
+void JLinkDiscStop(void);
+int  JLinkDiscPoll(uint32_t now_ms);
+int  JLinkDiscActive(void);
+
 #endif
