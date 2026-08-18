@@ -893,6 +893,10 @@ endif
 # libchdr is C99; the rest of the core is gnu89. A dedicated rule so
 # the generic %.o: %.c line cannot compile unity.c as C89.  Must sit
 # AFTER `all:` so it is not the default goal.
+#
+# MINIZ_DEFLATE_APIS (texture dump's PNG encoder, issue #369) rides in
+# LIBCHDR_CFLAGS -- see the comment in Makefile.common -- so the
+# theos_ios path, which compiles unity.c without this rule, gets it too.
 $(LIBCHDR_DIR)/unity.o: $(LIBCHDR_DIR)/unity.c
 	$(CC) -c $(OBJOUT)$@ $< $(CFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS)
 
@@ -923,9 +927,12 @@ clean:
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate test/test_biosdb \
 		test/test_cart_bios_loader \
 		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
+		test/tools/test_wedge_spin test/tools/test_texdump test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test \
-		test/test_quadrature \
+		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/tools/blitter_static_leak \
+		test/test_quadrature test/test_axistune \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -972,7 +979,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
-		test/tools/test_runahead_determinism test/tools/test_wedge_spin \
+		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
@@ -981,8 +988,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
-		test/test_quadrature test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test \
+		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
@@ -1180,6 +1188,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# every STATE_SAVE_BUF; yarc.j64 is in-tree so this never skips, and
 	@# a real music-on title is used when the private corpus is present.
 	./test/tools/test_runahead_determinism ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Texture dump mode (issue #369): identity-contract freeze vs the
+	@# committed golden list, determinism, fast/accurate engine
+	@# independence, machine inertness (fb hashes + savestate digests
+	@# on vs off), PNG validity, and the bytes-only-identity palette
+	@# check.  yarc.j64 is in-tree so this never skips; the synthetic
+	@# blit battery inside the tool covers every bpp (see the tool
+	@# header for why a ROM run alone is a 2-hash tripwire).
+	./test/tools/test_texdump ./$(TARGET) test/roms/yarc.j64 --quiet
 	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
 	if [ -n "$$rom" ]; then \
 		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --quiet; \
@@ -1248,6 +1264,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# an FNV digest measured on develop.  Committed before any device code
 	@# so later PRs are measured against a number that predates them.
 	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Cross-load static leak (#479): a fast-blitter session must not
+	@# contaminate the savestate of the accurate session that follows it
+	@# while the core stays resident (iOS cannot dlclose).  The run1-vs-run2
+	@# control inside the tool means a failure here is attributable, not
+	@# just "the harness is not reproducible".
+	./test/tools/blitter_static_leak ./$(TARGET) test/roms/yarc.j64
 	@# Quadrature encoder unit test (no core): the Gray sequence in both
 	@# directions, the one-state-per-advance rate policy, the backlog
 	@# clamp and the Q8 carry.
@@ -1263,6 +1285,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# two-controller Pause unlock, the C2/C3 ID bits and a savestate
 	@# round-trip mid-rotation.
 	./test/tools/rotary_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Per-axis input tuning (#439), no core: the identity at defaults over
+	@# the whole int16 range, the dead zone as a gate rather than a re-base,
+	@# the curve's fixed point at QUAD_MAX_BACKLOG and its exact values.
+	./test/test_axistune
+	@# ...and the same feature measured end to end through $F14000: the
+	@# digital pad is bit-identical with tuning at ANY setting, the analog
+	@# paths are bit-identical at defaults, and a non-default tuning does
+	@# move the analog digest (the negative control that stops the two
+	@# equalities passing on a disconnected layer).
+	./test/tools/tuning_identity ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1639,6 +1671,18 @@ test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
+# Cross-load static-state leak gate (#479).  Pins the core with an extra
+# dlopen ref (the iOS no-dlclose regime) and proves an accurate-blitter
+# session run AFTER a fast-blitter session serialises byte-identical
+# state.  Catches BlitterStateSave()/BlitterResetDecodeState() drifting
+# apart: a newly-serialised field that nobody clears fails here.
+test/tools/blitter_static_leak: test/tools/blitter_static_leak.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/blitter_static_leak.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1655,6 +1699,20 @@ test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
 
 test/test_quadrature: test/test_quadrature.c src/jerry/quadrature.c src/jerry/quadrature.h
 	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_quadrature.c src/jerry/quadrature.c
+
+test/test_axistune: test/test_axistune.c src/jerry/axistune.c src/jerry/axistune.h \
+		src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_axistune.c src/jerry/axistune.c
+
+# #439's guardrail: needs the wide test ABI's InputDev* / Joystick* /
+# joypad0Buttons / joypad1Buttons exports.
+test/tools/tuning_identity: test/tools/tuning_identity.c \
+		src/jerry/inputdev.h src/jerry/axistune.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/tuning_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1721,6 +1779,13 @@ test/tools/test_runahead_determinism: test/tools/test_runahead_determinism.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_runahead_determinism.c \
 		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/test_texdump: test/tools/test_texdump.c \
+		test/harness/harness.c test/harness/harness.h src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_texdump.c \
+		test/harness/harness.c src/core/crc32.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \

@@ -408,6 +408,35 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "k"
    },
    {
+      "virtualjaguar_texture_dump",
+      "Texture Dump Mode",
+      NULL,
+      "Write every unique blitter source tile the title uses to <system dir>/vj_texdump/<cart CRC32>/ as a PNG preview plus a manifest row, for HD texture pack authoring (issue #369). Tiles are identified by a hash of their raw source bytes only -- the palette is advisory metadata, never identity. Takes effect immediately, no restart needed. Developer-facing: leave disabled for normal play.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_texdump_16bpp",
+      "Texture Dump: 16bpp Preview",
+      NULL,
+      "How 16-bit source tiles are rendered in their preview PNGs. The blitter cannot know whether 16-bit values are CRY or RGB16 -- that is display-time interpretation -- so this only changes the preview image, never the tile's hash. 'Both' writes a -cry and a -rgb PNG per tile.",
+      NULL,
+      "diagnostics",
+      {
+         { "cry",  "CRY" },
+         { "rgb",  "RGB16" },
+         { "both", "Both" },
+         { NULL, NULL },
+      },
+      "cry"
+   },
+   {
       "virtualjaguar_jgd",
       "Jaguar GameDrive (Restart)",
       NULL,
@@ -577,6 +606,74 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "joypad"
    },
+   /* Per-axis rotary tuning (#439).  A rotary is a single wheel, so there
+    * is one axis and no X/Y split; the arithmetic is the same shared layer
+    * the mouse uses (src/jerry/axistune.c).  Defaults are the identity.
+    *
+    * These are SHARED BY BOTH PORTS, exactly as Rotary Sensitivity already
+    * is: two rotaries cannot be tuned independently.  That is a deliberate
+    * carry-forward of the existing shape rather than an omission -- the
+    * rotary options live in the un-prefixed "input" category precisely
+    * because the device is offered on either port. */
+   {
+      "virtualjaguar_rotary_deadzone",
+      "Rotary Dead Zone",
+      "Rotary Dead Zone",
+      "Discards spinner movement at or below this many host units per poll. A noise gate for a jittery source; movement above the threshold passes at full size.",
+      NULL,
+      "input",
+      {
+         { "0", "Off" },
+         { "1", "1 unit" },
+         { "2", "2 units" },
+         { "3", "3 units" },
+         { "4", "4 units" },
+         { "6", "6 units" },
+         { "8", "8 units" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_rotary_offset",
+      "Rotary Offset",
+      "Rotary Offset",
+      "Subtracts a constant from every spinner sample. Cancels a source that reports a small non-zero movement while at rest, which would otherwise spin the knob forever with the controls untouched. Applied in host orientation, before the wheel's direction convention.",
+      NULL,
+      "input",
+      {
+         { "-4", "-4" },
+         { "-3", "-3" },
+         { "-2", "-2" },
+         { "-1", "-1" },
+         { "0",  "Off" },
+         { "1",  "+1" },
+         { "2",  "+2" },
+         { "3",  "+3" },
+         { "4",  "+4" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_rotary_exponent",
+      "Rotary Response Curve",
+      "Rotary Response Curve",
+      "Response exponent for the spinner, giving finer control at low speed. The curve is anchored at 64 units per poll: below that an exponent above 1.00 attenuates, at and above it movement passes through unchanged. A higher exponent therefore makes the spinner SLOWER overall -- raise Rotary Sensitivity to get the top speed back.",
+      NULL,
+      "input",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
    {
       "virtualjaguar_mouse_sensitivity",
       "Port 2 > Mouse Sensitivity",
@@ -593,6 +690,129 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "200", "200%" },
          { "300", "300%" },
          { "400", "400%" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   /* Per-axis mouse tuning (#439).  Dead zone and offset are in raw host
+    * units per poll; the exponent is a percentage of 1.0, anchored at 64
+    * units per poll (quadrature.h's saturation point -- see axistune.h).
+    * All defaults are the exact identity, so a user who never opens this
+    * menu gets the pre-#439 path unchanged. */
+   {
+      "virtualjaguar_mouse_deadzone_x",
+      "Port 2 > Mouse Dead Zone (X)",
+      "Mouse Dead Zone (X)",
+      "Discards horizontal mouse movement at or below this many host units per poll. A noise gate for a jittery source (or an analog stick mapped to the mouse); a real mouse reports nothing at rest and needs none. Movement above the threshold passes at full size -- the dead zone drops samples, it does not shrink them.",
+      NULL,
+      "input_p2",
+      {
+         { "0", "Off" },
+         { "1", "1 unit" },
+         { "2", "2 units" },
+         { "3", "3 units" },
+         { "4", "4 units" },
+         { "6", "6 units" },
+         { "8", "8 units" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_deadzone_y",
+      "Port 2 > Mouse Dead Zone (Y)",
+      "Mouse Dead Zone (Y)",
+      "As Mouse Dead Zone (X), for vertical movement.",
+      NULL,
+      "input_p2",
+      {
+         { "0", "Off" },
+         { "1", "1 unit" },
+         { "2", "2 units" },
+         { "3", "3 units" },
+         { "4", "4 units" },
+         { "6", "6 units" },
+         { "8", "8 units" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_offset_x",
+      "Port 2 > Mouse Offset (X)",
+      "Mouse Offset (X)",
+      "Subtracts a constant from every horizontal sample. Cancels a source that reports a small non-zero movement while at rest -- typically an analog stick mapped to the mouse, which otherwise drifts forever. A real mouse reports exactly zero at rest and is unaffected.",
+      NULL,
+      "input_p2",
+      {
+         { "-4", "-4" },
+         { "-3", "-3" },
+         { "-2", "-2" },
+         { "-1", "-1" },
+         { "0",  "Off" },
+         { "1",  "+1" },
+         { "2",  "+2" },
+         { "3",  "+3" },
+         { "4",  "+4" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_offset_y",
+      "Port 2 > Mouse Offset (Y)",
+      "Mouse Offset (Y)",
+      "As Mouse Offset (X), for vertical movement.",
+      NULL,
+      "input_p2",
+      {
+         { "-4", "-4" },
+         { "-3", "-3" },
+         { "-2", "-2" },
+         { "-1", "-1" },
+         { "0",  "Off" },
+         { "1",  "+1" },
+         { "2",  "+2" },
+         { "3",  "+3" },
+         { "4",  "+4" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_exponent_x",
+      "Port 2 > Mouse Response Curve (X)",
+      "Mouse Response Curve (X)",
+      "Response exponent for horizontal movement, giving finer control at low speed. The curve is anchored at 64 units per poll: below that an exponent above 1.00 attenuates, at and above it movement passes through unchanged. Because ordinary movement is well below 64 units, a higher exponent makes the mouse SLOWER overall -- raise Mouse Sensitivity to get the top speed back. These are two different controls.",
+      NULL,
+      "input_p2",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_mouse_exponent_y",
+      "Port 2 > Mouse Response Curve (Y)",
+      "Mouse Response Curve (Y)",
+      "As Mouse Response Curve (X), for vertical movement.",
+      NULL,
+      "input_p2",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
          { NULL, NULL },
       },
       "100"

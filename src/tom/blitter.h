@@ -17,6 +17,9 @@ void BlitterTimingTick(uint32_t sysclks);
 uint32_t BlitterTimingGetBusy(void);
 void BlitterTimingSetBusy(uint32_t clks);
 void BlitterReset(void);
+/* Zero the B_CMD decode statics that BlitterStateSave() serialises.
+ * Called by BlitterReset()/BlitterDone(); see blitter.c for why (#479). */
+void BlitterResetDecodeState(void);
 void BlitterDone(void);
 
 uint8_t BlitterReadByte(uint32_t, uint32_t who);

@@ -42,6 +42,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "settings.h"
 #include "shadowfb.h"
 #include "blit_memo.h"
+#include "texdump.h"
 #include "tom.h"
 #include "blitter.h"
 #include "gpu.h"
@@ -203,6 +204,11 @@ static bool show_input_options = true;
 static bool content_loaded         = false;
 static bool show_cd_options        = true;
 static bool show_cart_bios_option  = true;
+/* 16bpp preview interpretation only matters while texture dump is on
+ * (#369).  Defaults visible, like the other show_* gates, so the first
+ * update_option_visibility() sees a change and hides it while the dump
+ * option sits at its disabled default. */
+static bool show_texdump_16bpp     = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -243,6 +249,21 @@ static bool         show_rotary_options     = true;
  * whichever one matches the device actually attached to that port. */
 static int32_t      mouse_scale_q8          = 256;
 static int32_t      rotary_scale_q8         = 256;
+
+/* Per-axis tuning (#439), resolved from the options and applied to
+ * whichever device is actually in each port -- the same "one ladder per
+ * device kind, selected by what is plugged in" shape as the scales above.
+ * A rotary is one wheel, so it has a single tune and no Y entry.
+ *
+ * Held as raw ints rather than axis_tune structs because libretro.c has no
+ * business knowing that layout; InputDevSetTune() clamps and stores them.
+ * Index 0 is X, index 1 is Y, matching INPUTDEV_AXIS_*. */
+static int32_t      mouse_deadzone[2]       = { 0, 0 };
+static int32_t      mouse_offset[2]         = { 0, 0 };
+static int32_t      mouse_exponent_q8[2]    = { 256, 256 };
+static int32_t      rotary_deadzone         = 0;
+static int32_t      rotary_offset           = 0;
+static int32_t      rotary_exponent_q8      = 256;
 
 /* Has this port actually received non-zero mouse state from the frontend?
  *
@@ -307,6 +328,45 @@ static bool inputdev_is_mouse_type(InputDevType t)
            || t == INPUTDEV_MOUSE_AMIGA_ON_ST);
 }
 
+/* Push the sensitivity ladder AND the per-axis tuning (#439) that belong to
+ * whatever device is currently in `port`.
+ *
+ * The two are resolved together, in one function called from both paths,
+ * because they are selected by the same fact -- what is plugged into the
+ * port -- and a second place that picks between the two devices' ladders is
+ * exactly how the bug documented in apply_port_device() came about.
+ *
+ * IT CAN RUN BEFORE THE OPTIONS HAVE EVER BEEN READ.  The frontend may
+ * call retro_set_controller_port_device() before retro_load_game(), and
+ * that path reaches here without passing through check_variables().  The
+ * statics then still hold their initialisers, which are deliberately the
+ * IDENTITY (and retro_deinit puts them back), so the worst case is a
+ * device that runs untuned until retro_load_game's own check_variables()
+ * resolves it a moment later.  Any future static added here must keep that
+ * property: its initialiser has to be a safe value, not a sentinel. */
+static void apply_port_tuning(int port)
+{
+   if (InputDevGetType(port) == INPUTDEV_ROTARY)
+   {
+      InputDevSetScale(port, rotary_scale_q8);
+      /* A rotary is one wheel and never reads its Y tune, but both axes are
+       * set so a rotary -> mouse switch on port 2 cannot inherit a stale Y
+       * tune from whatever was configured before. */
+      InputDevSetTune(port, INPUTDEV_AXIS_X, rotary_deadzone,
+                      rotary_offset, rotary_exponent_q8);
+      InputDevSetTune(port, INPUTDEV_AXIS_Y, rotary_deadzone,
+                      rotary_offset, rotary_exponent_q8);
+   }
+   else
+   {
+      InputDevSetScale(port, mouse_scale_q8);
+      InputDevSetTune(port, INPUTDEV_AXIS_X, mouse_deadzone[0],
+                      mouse_offset[0], mouse_exponent_q8[0]);
+      InputDevSetTune(port, INPUTDEV_AXIS_Y, mouse_deadzone[1],
+                      mouse_offset[1], mouse_exponent_q8[1]);
+   }
+}
+
 static void apply_port_device(int port, InputDevType type)
 {
    InputDevSetType(port, type);
@@ -320,7 +380,7 @@ static void apply_port_device(int port, InputDevType type)
       port_device_active[port] = type;
       /* A new device has to earn the port back (see inputdev_live). */
       inputdev_live[port]      = false;
-      /* Re-resolve the sensitivity ladder for the device now in the port.
+      /* Re-resolve the ladders for the device now in the port.
        * The rotary and the mouse have separate options because a spinner
        * and a mouse want very different multipliers, and until this line
        * existed the only place that picked between them was
@@ -331,12 +391,11 @@ static void apply_port_device(int port, InputDevType type)
        * core-option change happened to fix it.  Invisible at defaults
        * (both ladders are 256) and self-healing, but real.
        *
-       * Both statics hold their last resolved values here; on the
+       * The statics hold their last resolved values here; on the
        * check_variables() path the loop after the ladders recomputes them
-       * and calls InputDevSetScale again anyway, so this is at worst one
-       * redundant assignment there. */
-      InputDevSetScale(port, type == INPUTDEV_ROTARY
-                                ? rotary_scale_q8 : mouse_scale_q8);
+       * and calls apply_port_tuning again anyway, so this is at worst one
+       * redundant pass there. */
+      apply_port_tuning(port);
       if (type != INPUTDEV_PAD)
          LOG_INF("[input] port %d: %s attached\n", port + 1,
                  inputdev_type_name(type));
@@ -544,11 +603,20 @@ static bool update_option_visibility(void)
       }
    }
 
-   /* Mouse sensitivity only means anything while a mouse is attached to
-    * port 2.  Resolved from the live device rather than the option string
-    * so a frontend-set port device (retro_set_controller_port_device)
-    * reveals it too. */
+   /* Mouse sensitivity and the per-axis tuning (#439) only mean anything
+    * while a mouse is attached to port 2.  Resolved from the live device
+    * rather than the option string so a frontend-set port device
+    * (retro_set_controller_port_device) reveals them too. */
    {
+      static const char * const mouse_keys[] = {
+         "virtualjaguar_mouse_sensitivity",
+         "virtualjaguar_mouse_deadzone_x",
+         "virtualjaguar_mouse_deadzone_y",
+         "virtualjaguar_mouse_offset_x",
+         "virtualjaguar_mouse_offset_y",
+         "virtualjaguar_mouse_exponent_x",
+         "virtualjaguar_mouse_exponent_y",
+      };
       bool show_mouse_prev = show_mouse_options;
 
       show_mouse_options = inputdev_is_mouse_type(InputDevGetType(1));
@@ -556,16 +624,27 @@ static bool update_option_visibility(void)
       if (show_mouse_options != show_mouse_prev)
       {
          option_display.visible = show_mouse_options;
-         option_display.key     = "virtualjaguar_mouse_sensitivity";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
+         for (i = 0; i < ARRAY_SIZE(mouse_keys); i++)
+         {
+            option_display.key = mouse_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
          updated = true;
       }
    }
 
-   /* Rotary sensitivity and the rotary controller-type knob mean nothing
-    * unless a rotary is attached to one port or the other (#436). */
+   /* Rotary sensitivity, its per-axis tuning (#439) and the rotary
+    * controller-type knob mean nothing unless a rotary is attached to one
+    * port or the other (#436). */
    {
+      static const char * const rotary_keys[] = {
+         "virtualjaguar_rotary_sensitivity",
+         "virtualjaguar_rotary_id",
+         "virtualjaguar_rotary_deadzone",
+         "virtualjaguar_rotary_offset",
+         "virtualjaguar_rotary_exponent",
+      };
       bool show_rotary_prev = show_rotary_options;
 
       show_rotary_options = (InputDevGetType(0) == INPUTDEV_ROTARY
@@ -574,10 +653,32 @@ static bool update_option_visibility(void)
       if (show_rotary_options != show_rotary_prev)
       {
          option_display.visible = show_rotary_options;
-         option_display.key     = "virtualjaguar_rotary_sensitivity";
-         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
-                    &option_display);
-         option_display.key     = "virtualjaguar_rotary_id";
+         for (i = 0; i < ARRAY_SIZE(rotary_keys); i++)
+         {
+            option_display.key = rotary_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
+         updated = true;
+      }
+   }
+
+   /* The 16bpp preview knob only means anything while texture dump is
+    * enabled (#369) -- same machinery as the mouse/rotary gates above. */
+   {
+      bool show_texdump_prev = show_texdump_16bpp;
+
+      show_texdump_16bpp = false;
+      var.key = "virtualjaguar_texture_dump";
+      var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value
+          && !strcmp(var.value, "enabled"))
+         show_texdump_16bpp = true;
+
+      if (show_texdump_16bpp != show_texdump_prev)
+      {
+         option_display.visible = show_texdump_16bpp;
+         option_display.key     = "virtualjaguar_texdump_16bpp";
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
                     &option_display);
          updated = true;
@@ -859,6 +960,54 @@ static InputDevType p1_device_from_option(void)
    return p1;
 }
 
+/* Per-axis tuning option readers (#439).
+ *
+ * Deliberately thin: the clamps that decide what is a legal dead zone,
+ * offset or exponent live in AxisTuneSet(), one layer down, so a
+ * hand-edited config is bounded in exactly one place no matter which
+ * option it came through.  These only have to survive a missing or
+ * non-numeric string. */
+static int32_t read_tune_units(const char *key)
+{
+   struct retro_variable var;
+
+   /* NO CLAMP HERE, ON PURPOSE.  AxisTuneSet() owns the bounds for both
+    * the dead zone and the offset; duplicating them here would give the
+    * feature two sets of limits to keep in step.  The exponent reader
+    * below does clamp, but only because it MULTIPLIES before handing the
+    * value on and an unbounded percent would overflow on the way. */
+   var.key   = key;
+   var.value = NULL;
+
+   if (get_variable_pertitle(&var) && var.value)
+      return (int32_t)atoi(var.value);
+
+   return 0;
+}
+
+static int32_t read_tune_exponent(const char *key)
+{
+   struct retro_variable var;
+   int pct = 100;
+
+   var.key   = key;
+   var.value = NULL;
+
+   if (get_variable_pertitle(&var) && var.value)
+      pct = atoi(var.value);
+
+   /* Percent -> Q8 (256 == 1.0), the same conversion the sensitivity
+    * ladders use, and clamped BEFORE the multiply for the same reason
+    * they are.  800% is AxisTuneSet's own 2048 ceiling expressed as a
+    * percent, so nothing reachable is lost. */
+   if (pct < 1)
+      pct = 100;
+   if (pct > 800)
+      pct = 800;
+
+   return (int32_t)((pct * 256) / 100);
+}
+
 static void check_variables(void)
 {
    unsigned i;
@@ -956,6 +1105,29 @@ static void check_variables(void)
        * retro_load_game applies it after ResolveBootConfig instead. */
       if (content_loaded)
          BlitMemoSetMode(blit_memo_requested);
+   }
+
+   /* Texture dump (issue #369): runtime-toggleable, capture is passive
+    * so no restart is needed.  Read raw (not through
+    * get_variable_pertitle()): dumping is a dev-facing choice, never a
+    * per-title default. */
+   var.key = "virtualjaguar_texture_dump";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      TexDumpSetEnabled(strcmp(var.value, "enabled") == 0);
+   else
+      TexDumpSetEnabled(0);
+
+   var.key = "virtualjaguar_texdump_16bpp";
+   var.value = NULL;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "rgb") == 0)
+         TexDumpSet16bppMode(TEXDUMP_16BPP_RGB);
+      else if (strcmp(var.value, "both") == 0)
+         TexDumpSet16bppMode(TEXDUMP_16BPP_BOTH);
+      else
+         TexDumpSet16bppMode(TEXDUMP_16BPP_CRY);
    }
 
    var.key = "virtualjaguar_crash_detect";
@@ -1266,16 +1438,28 @@ static void check_variables(void)
    else
       rotary_scale_q8 = 256;
 
-   /* One scale per port, picked by what is actually plugged into it --
-    * the two ladders are separate options because a spinner and a mouse
-    * want very different multipliers. */
+   /* Per-axis tuning (#439).  Read unconditionally: every one of these
+    * defaults to the identity, so a build where nobody touched the menu
+    * resolves to exactly the pre-#439 numbers. */
+   mouse_deadzone[0]    = read_tune_units("virtualjaguar_mouse_deadzone_x");
+   mouse_deadzone[1]    = read_tune_units("virtualjaguar_mouse_deadzone_y");
+   mouse_offset[0]      = read_tune_units("virtualjaguar_mouse_offset_x");
+   mouse_offset[1]      = read_tune_units("virtualjaguar_mouse_offset_y");
+   mouse_exponent_q8[0] = read_tune_exponent("virtualjaguar_mouse_exponent_x");
+   mouse_exponent_q8[1] = read_tune_exponent("virtualjaguar_mouse_exponent_y");
+
+   rotary_deadzone      = read_tune_units("virtualjaguar_rotary_deadzone");
+   rotary_offset        = read_tune_units("virtualjaguar_rotary_offset");
+   rotary_exponent_q8   = read_tune_exponent("virtualjaguar_rotary_exponent");
+
+   /* One scale and one tuning set per port, picked by what is actually
+    * plugged into it -- the two ladders are separate options because a
+    * spinner and a mouse want very different multipliers. */
    {
       unsigned port;
 
       for (port = 0; port < 2; port++)
-         InputDevSetScale((int)port,
-                          InputDevGetType((int)port) == INPUTDEV_ROTARY
-                             ? rotary_scale_q8 : mouse_scale_q8);
+         apply_port_tuning((int)port);
    }
 
    var.key   = "virtualjaguar_rotary_id";
@@ -2588,6 +2772,19 @@ bool retro_load_game(const struct retro_game_info *info)
    else
       TitleDBSetContent(NULL, 0);
 
+   /* Texture dump (#369): dumps land under the system directory, keyed
+    * by the content CRC the DB just latched.  The path is set here once
+    * so a mid-session enable via check_variables() has somewhere to
+    * write without needing environ_cb of its own. */
+   {
+      const char *texdump_sys_dir = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &texdump_sys_dir)
+          && texdump_sys_dir)
+         TexDumpSetBasePath(texdump_sys_dir);
+      else
+         TexDumpSetBasePath(NULL);
+   }
+
    /* Raw gate read (never through get_variable_pertitle()) so the hires
     * read just below -- which runs before check_variables() -- is already
     * gated correctly even on a frontend that hasn't called
@@ -2889,6 +3086,11 @@ void retro_unload_game(void)
    /* Hi-res: N is per-load; drop the shadow surface so the next load
     * re-reads the option from scratch (see shadowfb.h). */
    ShadowHiresShutdown();
+   /* Texture dump (#369): dumps are keyed by content CRC, so a title
+    * boundary closes the manifest and logs the session summary; the
+    * next load's check_variables() re-enables (and re-allocates) if the
+    * option is still on. */
+   TexDumpShutdown();
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -3081,6 +3283,10 @@ void retro_deinit(void)
    ShadowFBShutdown();
    ShadowHiresShutdown();
    BlitMemoShutdown();
+   /* Texture dump (#369): close the manifest, log the session summary,
+    * free the dedupe set and reset every static. */
+   TexDumpShutdown();
+   show_texdump_16bpp = true;
    /* Non-pad input devices: encoders, phases, attach mask, armed flag and
     * the option-derived type/scale all go back to their load-time values
     * (iOS cannot dlclose a core). */
@@ -3097,6 +3303,17 @@ void retro_deinit(void)
    show_rotary_options     = true;
    mouse_scale_q8          = 256;
    rotary_scale_q8         = 256;
+   /* #439's tuning statics go back to the identity here too -- iOS cannot
+    * dlclose a core, so anything left set would leak into the next load. */
+   mouse_deadzone[0]       = 0;
+   mouse_deadzone[1]       = 0;
+   mouse_offset[0]         = 0;
+   mouse_offset[1]         = 0;
+   mouse_exponent_q8[0]    = 256;
+   mouse_exponent_q8[1]    = 256;
+   rotary_deadzone         = 0;
+   rotary_offset           = 0;
+   rotary_exponent_q8      = 256;
    headroom_logged         = false;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
@@ -3220,6 +3437,10 @@ void retro_run(void)
    /* Blit memo: advance the shadow-restamp dedupe epoch. */
    if (blitMemoMode)
       BlitMemoFrame();
+
+   /* Texture dump (#369): advance the manifest frame number. */
+   if (texDumpEnabled)
+      TexDumpFrame();
 
    /* On the first frame, unpack save data that the frontend loaded
     * into our RETRO_MEMORY_SAVE_RAM buffer after retro_load_game(). */

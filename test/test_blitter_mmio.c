@@ -27,7 +27,13 @@ int BlitterCompareIsEnabled(void) { return 0; }
 void BlitterRunComparison(void) {}
 void blitter_blit(uint32_t cmd) { (void)cmd; }
 void BlitterMidsummer2(void) {}
+/* The B_CMD decode statics live in blitter.c, which this test
+ * deliberately does not link; the real one is exercised by
+ * test/tools/blitter_static_leak (#479). */
+void BlitterResetDecodeState(void) {}
 int BlitMemoLaunch(void) { return 0; }   /* memo off: dispatch as before */
+int texDumpEnabled = 0;                  /* texture dump off */
+void TexDumpLaunch(void) {}
 
 /* Blitter bus-time model dependencies (vjs.blitterTiming stays 0 in the
  * stub settings above, so the timing path short-circuits; these only

@@ -417,9 +417,9 @@ jobs:
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
           /Ideps\libchdr\include /Ideps\libchdr\deps\lzma-25.01\include /Ideps\libchdr\deps\miniz-3.1.1 /Ideps\libchdr\deps\zstd-1.5.7 ^
           /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
-          /D_7ZIP_ST /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
+          /D_7ZIP_ST /DMINIZ_DEFLATE_APIS /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
           libretro.c ^
-          src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
+          src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\tom\texdump.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
           src\cd\cdintf.c src\cd\cdrom.c src\core\crc32.c src\core\biosdb.c src\core\event.c ^
           src\jerry\eeprom.c src\core\filedb.c src\jerry\joystick.c src\core\settings.c ^

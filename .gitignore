@@ -66,6 +66,7 @@ test/tools/netlink_game
 test/tools/joymatrix_identity
 test/tools/mouse_decode_test
 test/tools/rotary_decode_test
+test/tools/tuning_identity
 # vjtrace flight-recorder analyzer/smoke tools -- built on demand by
 # test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
 # comment); never tracked, same Mach-O-on-Linux-CI hazard as above.
@@ -161,3 +162,4 @@ __pycache__/
 /test/tools/m68k_pc_histogram
 /test/tools/menu_step_probe
 /test/tools/present_rate_probe
+test/tools/blitter_static_leak
