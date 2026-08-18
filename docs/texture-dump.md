@@ -1,15 +1,18 @@
-# Texture dump mode (issue #369, deliverable 1 of 2)
+# Texture dump + replacement (issue #369)
 
-Design spec for `virtualjaguar_texture_dump`: write every unique blit
-source tile a title uses to disk as PNG + manifest, so pack authors have
-something to redraw and developers get a window into what titles
-actually blit. This is the first half of #369; the replacement pipeline
-(second half, v3.5) consumes the contract defined here.
+Design spec for `virtualjaguar_texture_dump` (deliverable 1: write
+every unique blit source tile a title uses to disk as PNG + manifest,
+so pack authors have something to redraw) and
+`virtualjaguar_texture_replace` (deliverable 2: present pack art in
+place of those tiles).  The replacement pipeline consumes exactly the
+identity contract dump mode freezes — see "Replacement pipeline" below.
 
-Status: **implemented (v3.4 deliverable 1).** Capture module
-`src/tom/texdump.c`, hook in `src/tom/blitter_mmio.c`, options in
-`libretro.c` / `libretro_core_options.h`, test gates in
-`test/tools/test_texdump.c` + `test/expected/texdump_yarc.txt`.
+Status: **both implemented.**  Dump: capture module `src/tom/texdump.c`,
+hook in `src/tom/blitter_mmio.c`, options in `libretro.c` /
+`libretro_core_options.h`, test gates in `test/tools/test_texdump.c` +
+`test/expected/texdump_yarc.txt`.  Replacement: `src/tom/texreplace.c`
+(+ `ShadowFBStoreRGB` in `src/tom/shadowfb.c`), gates in
+`test/tools/test_texreplace.c`.
 
 ## Goals and non-goals
 
@@ -267,6 +270,143 @@ What to know before redrawing:
   and new tiles simply append. Dedupe is per-session, so a replayed
   session may re-append rows for tiles already listed — rows are
   advisory, files are identity.
+
+## Replacement pipeline (deliverable 2 of 2)
+
+`virtualjaguar_texture_replace` presents pack art in place of dumped
+tiles.  Module: `src/tom/texreplace.c`; hooks around the engine
+dispatch in `src/tom/blitter_mmio.c`; presentation via
+`ShadowFBStoreRGB` in `src/tom/shadowfb.c`.
+
+### Pack layout
+
+```
+<system_dir>/vj_texpacks/<CRC32 8-hex>/<hash16>.png
+```
+
+Mirrors the dump layout, so an author's workflow is: dump, redraw,
+move one directory over.  Only files named exactly `<16 hex>.png` are
+read; anything else in the directory (manifest copies, notes, PSDs) is
+ignored.  Accepted PNGs: 8-bit depth, non-interlaced, color types
+0/2/3/4/6 (gray, RGB, indexed, gray+alpha, RGBA).  The whole pack is
+decoded ONCE into a host-side hash→pixels map — at content load, or on
+first enable — never at blit time.
+
+### Architecture: host-only, presentation-riding
+
+The pipeline never touches the emulated machine.  Not "restores it
+afterwards" — never touches it:
+
+1. At blit launch (pre-dispatch) the SOURCE window is hashed with the
+   same shared helpers dump mode uses (`TexDumpDescribe` /
+   `TexDumpSerialize` / `TexDumpHashKey` — one implementation, frozen
+   contract).  A map hit with matching dimensions arms the launch, and
+   the DESTINATION window is described before the engines write back
+   the pointer registers.
+2. The blit dispatches completely stock.
+3. Post-dispatch, the destination window is walked host-side: every
+   pixel whose RAM word now equals the source pixel captured
+   pre-dispatch (the **per-pixel straight-copy witness**) gets its pack
+   RGB888 stored into the true-color shadow framebuffer, tagged with
+   that RAM value.  The OP's existing shadow presentation path
+   (`ShadowFBLineFromRAM` → the CRY scanline renderer) then presents
+   the pack art; the value-check makes every entry self-invalidating
+   when RAM moves on.
+
+The witness makes wrong models harmless: transparent (BCOMPEN /
+DCOMPEN) pixels, shaded or Gouraud outputs, exotic step patterns —
+anything whose destination value is not the source value — simply
+never stores, and the stock pixel presents.
+
+Consequences, all load-bearing:
+
+- **Zero savestate fields, zero RAM writes, zero bus-model time.**
+  Savestates, rewind, run-ahead and netplay see a bit-identical
+  machine with or without a pack; only the presented frame differs.
+  `test/tools/test_texreplace.c` asserts framebuffer hashes, savestate
+  digests AND battery destination RAM are identical to
+  replacement-off, while the shadow surface provably carries the pack
+  art.
+- **Packs are true-color.**  Replacement RGB is presented through the
+  shadow surface, so there is no RGB→CRY quantization anywhere in the
+  pipeline.  Alpha < 128 in a pack pixel means "keep the stock pixel"
+  (transparency at blit time is still the game's business).
+- **The shadow surface is forced on** while a pack is active, but the
+  Gouraud-precision stores (the True Color feature proper) stay gated
+  on `virtualjaguar_true_color` via the separate `shadowFBPrecision`
+  flag — a replacement-only activation leaves every non-replaced pixel
+  bit-identical to stock.
+- The option is **visible only when a pack directory exists** for the
+  loaded content (same `SET_CORE_OPTIONS_DISPLAY` machinery as the
+  16bpp-preview knob), and defaults to disabled.
+
+### Tier status and limits
+
+- **Tier 1 (shipped): 16bpp source tiles, 1x, straight-copy blits** —
+  the sprite/UI blit class dump mode was built for.  Presentation
+  requires the CRY 16bpp OP path (the dominant framebuffer case);
+  RGB16-mode displays and GPU-computed surfaces (Doom's texture
+  mapper) are out of scope, same as dump mode.
+- **Known coherence limit:** a replacement entry's RGB is pack art,
+  not a function of the tagged value.  A later non-blit write of the
+  *same* 16-bit value to a replaced address keeps presenting pack RGB
+  until the next store to that word.  Stock true-color has the same
+  tag scheme but is immune by construction (its RGB is derived from
+  the value); for replacement this is a documented cosmetic edge.
+- **Interaction with internal resolution:** at Nx the hi-res shadow
+  surface wins wherever its entries hit, so replaced tiles may present
+  stock there.  >1x replacements riding the Stage 2 surface are the
+  planned fix (tier 3, design notes on #369).
+- **Indexed (≤8bpp) sources (tier 2, not yet shipped):** the pipeline
+  cannot inject RGB into an indexed blit — the destination holds
+  palette indices and the CLUT is applied per-object at OP render
+  time.  The planned design (notes on #369) keeps the host-only
+  architecture: a byte-granular index shadow filled at the same
+  post-blit witness point, resolved at the OP's indexed line-buffer
+  write sites through the object's own palette base, presenting via
+  the same shadow line buffer.  Authors will supply index-map PNGs
+  (gray or indexed color type; the sample value IS the Jaguar palette
+  index), which keeps palette-swapped sprites faithful.  Until it
+  ships, indexed pack entries load but never present (counted in the
+  session summary).
+
+### Test gates (all in `make test`)
+
+`test/tools/test_texreplace.c`, on `test/roms/yarc.j64` plus a
+scripted 9-tile blit battery (16bpp A2- and A1-sourced, a 16×16, a
+dimension-mismatched entry, an RGBA entry with alpha holes, an 8bpp
+and a 32bpp tier-skip entry):
+
+1. `nopack_inert` — enabled with no pack ≡ disabled (framebuffer,
+   savestate digests, battery destination RAM, gate off).
+2. `pack_machine_inert` — enabled WITH a pack: the machine is still
+   bit-identical to disabled.
+3. `pack_presents` — every replaced destination word resolves
+   (value-tagged) to the pack pixel's RGB; mismatched/holed/other-tier
+   entries produce exactly no stores.
+4. `presentation_path` — `ShadowFBLineFromRAM` lands pack RGB in the
+   line buffer the scanline renderer reads.
+5. `determinism` — two identical pack runs agree on everything.
+
+The synthetic pack is built from FIRST PRINCIPLES: the test computes
+each tile's hash from the documented contract and writes the PNGs
+itself, so a lookup hit also cross-checks the frozen contract against
+an independent implementation.  (It caught a real test bug on first
+run: an LFU nibble of 3 is a NOT-copy, and the per-pixel witness
+correctly refused to store a single pixel.)
+
+### Authoring guide (replacement)
+
+1. Turn on **Texture Dump Mode** and play; collect
+   `<system dir>/vj_texdump/<CRC32>/`.
+2. Redraw any tile you like.  Keep the dumped pixel dimensions — a
+   resized PNG is skipped (one log line names the first offender).
+   Draw in full RGB; alpha means "keep the original game pixel here".
+3. Save under the SAME filename into
+   `<system dir>/vj_texpacks/<CRC32>/`.
+4. Enable **Texture Replacement** (Options → Video; it appears once
+   the pack directory exists).  No restart needed.  The log reports
+   `pack ...: N/M PNGs loaded` at load and a session summary at exit.
 
 ## Open items carried into implementation — resolution
 
