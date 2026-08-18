@@ -732,8 +732,13 @@ int main(int argc, char **argv)
     if (!harness_init_from_args(&argcfg, argc, argv)) {
         fprintf(stderr, "usage: %s <core> [rom] [--frames N] [--golden F] "
                 "[--update-golden] [--json] [--quiet]\n", argv[0]);
+        free(argv);
         return 1;
     }
+    /* argv now points at the fargv scratch array built above; it is not
+     * read again past this point, so free it here rather than leaving it
+     * for process exit (LeakSanitizer flags the latter). */
+    free(argv);
     if (!argcfg.rom_path)
         argcfg.rom_path = "test/roms/yarc.j64";
     if (access(argcfg.rom_path, R_OK) != 0) {
