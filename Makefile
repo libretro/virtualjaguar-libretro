@@ -923,8 +923,8 @@ clean:
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test \
-		test/test_quadrature \
+		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/test_quadrature test/test_axistune \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -980,8 +980,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
-		test/test_quadrature test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test \
+		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test test/tools/tuning_identity \
 		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
@@ -1259,6 +1259,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# two-controller Pause unlock, the C2/C3 ID bits and a savestate
 	@# round-trip mid-rotation.
 	./test/tools/rotary_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Per-axis input tuning (#439), no core: the identity at defaults over
+	@# the whole int16 range, the dead zone as a gate rather than a re-base,
+	@# the curve's fixed point at QUAD_MAX_BACKLOG and its exact values.
+	./test/test_axistune
+	@# ...and the same feature measured end to end through $F14000: the
+	@# digital pad is bit-identical with tuning at ANY setting, the analog
+	@# paths are bit-identical at defaults, and a non-default tuning does
+	@# move the analog digest (the negative control that stops the two
+	@# equalities passing on a disconnected layer).
+	./test/tools/tuning_identity ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1632,6 +1642,20 @@ test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
 
 test/test_quadrature: test/test_quadrature.c src/jerry/quadrature.c src/jerry/quadrature.h
 	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_quadrature.c src/jerry/quadrature.c
+
+test/test_axistune: test/test_axistune.c src/jerry/axistune.c src/jerry/axistune.h \
+		src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_axistune.c src/jerry/axistune.c
+
+# #439's guardrail: needs the wide test ABI's InputDev* / Joystick* /
+# joypad0Buttons / joypad1Buttons exports.
+test/tools/tuning_identity: test/tools/tuning_identity.c \
+		src/jerry/inputdev.h src/jerry/axistune.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/tuning_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
