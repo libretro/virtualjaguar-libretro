@@ -35,6 +35,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "dac.h"
 #include "dsp.h"
 #include "jlink.h"
+#include "jlink_discover.h"
 #include "jlink_netpacket.h"
 #include "uart.h"
 #include "joystick.h"
@@ -213,6 +214,13 @@ static bool show_texdump_16bpp     = true;
 /* Texture replacement (#369 deliverable 2) only means anything when a
  * pack directory exists for the loaded content; hidden otherwise. */
 static bool show_texture_replace   = true;
+/* Network Link host/port fields (task 3, #467) only mean anything for the
+ * direct TCP modes: the client needs somewhere to dial, the server needs a
+ * listen port to advertise.  "auto" and "loopback" need neither -- hidden,
+ * like the other show_* gates, whenever the resolved mode isn't one that
+ * reads them. */
+static bool show_netlink_host      = true;
+static bool show_netlink_port      = true;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -566,6 +574,33 @@ static int get_button_id(const char *val)
    return BUTTON_NONE;
 }
 
+/* Resolve the Network Link option to a concrete JLINK_MODE_*.
+ *
+ * "auto" means netplay-when-live, else idle.  The design doc originally
+ * had auto also fall back to "the direct mode last chosen explicitly";
+ * that was dropped, because with a single option key there is nowhere to
+ * read a previous choice from -- selecting "auto" overwrites it -- so
+ * honouring it would need hidden persisted state whose behaviour the user
+ * cannot see or predict across restarts.
+ *
+ * Auto deliberately never dials a discovered peer by itself either; with
+ * the Voice Modem that would place a call the user did not initiate. */
+static int netlink_resolve_mode(const char *v)
+{
+   if (!v)
+      return JLINK_MODE_DISABLED;
+   if (!strcmp(v, "loopback"))   return JLINK_MODE_LOOPBACK;
+   if (!strcmp(v, "tcp_server")) return JLINK_MODE_TCP_SERVER;
+   if (!strcmp(v, "tcp_client")) return JLINK_MODE_TCP_CLIENT;
+   if (!strcmp(v, "auto"))
+   {
+      if (JLinkMode() == JLINK_MODE_NETPACKET)
+         return JLINK_MODE_NETPACKET;
+      return JLINK_MODE_DISABLED;
+   }
+   return JLINK_MODE_DISABLED;
+}
+
 static bool update_option_visibility(void)
 {
    struct retro_core_option_display option_display;
@@ -779,6 +814,47 @@ static bool update_option_visibility(void)
       }
    }
 
+   /* Network Link host/port (task 3, #467): host only means anything for
+    * the TCP client (the side that dials out); port only means anything
+    * for a mode with a TCP socket of its own at all -- server (listens)
+    * or client (connects).  "auto" and "loopback" hide both: auto never
+    * asks the user to configure an address (that is the whole point of
+    * it), and loopback never leaves this console.  Read raw, like the
+    * alt-inputs/texture-dump gates above, rather than through
+    * get_variable_pertitle() -- per-title defaults have no business
+    * steering a transport choice the user made explicitly. */
+   {
+      bool show_netlink_host_prev = show_netlink_host;
+      bool show_netlink_port_prev = show_netlink_port;
+      int  resolved;
+
+      var.key = "virtualjaguar_netlink";
+      var.value = NULL;
+      environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var);
+      resolved = netlink_resolve_mode(var.value);
+
+      show_netlink_host = (resolved == JLINK_MODE_TCP_CLIENT);
+      show_netlink_port = (resolved == JLINK_MODE_TCP_CLIENT
+                            || resolved == JLINK_MODE_TCP_SERVER);
+
+      if (show_netlink_host != show_netlink_host_prev)
+      {
+         option_display.visible = show_netlink_host;
+         option_display.key     = "virtualjaguar_netlink_host";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+      if (show_netlink_port != show_netlink_port_prev)
+      {
+         option_display.visible = show_netlink_port;
+         option_display.key     = "virtualjaguar_netlink_port";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
    return updated;
 }
 
@@ -887,8 +963,17 @@ static const char *netlink_mode_name(int mode)
  * frontends with free-text option entry can supply arbitrary addresses;
  * the sentinel "vj_netlink.txt" defers to the file), else first line of
  * <system_dir>/vj_netlink.txt, else 127.0.0.1.  Port: VJ_NETLINK_PORT
- * env overrides the virtualjaguar_netlink_port option. */
-static void netlink_apply(int mode)
+ * env overrides the virtualjaguar_netlink_port option.
+ *
+ * mode is the resolved JLINK_MODE_* (see netlink_resolve_mode()); opt_value
+ * is the RAW option string that produced it, and may be NULL.  The two can
+ * disagree on purpose: "auto" with no netplay session live resolves to
+ * JLINK_MODE_DISABLED for the link itself (there is nothing yet to carry
+ * the emulated UART), but the discovery beacon/listener below is driven by
+ * opt_value so a user who picked "auto" or "tcp_client" still sees LAN
+ * peers to act on -- discovery never auto-connects, it only populates the
+ * list a later task's UI reads. */
+static void netlink_apply(int mode, const char *opt_value)
 {
    char host[128];
    int port = 42171;
@@ -1015,6 +1100,23 @@ static void netlink_apply(int mode)
        && JLinkMode() == JLINK_MODE_DISABLED)
       LOG_ERR("[NETLINK] failed to open %s -- link is DOWN\n",
               netlink_mode_name(mode));
+
+   /* LAN discovery beacon/listener lifecycle (#467).  A host beacons AND
+    * listens, so it can see other peers too; a client or "auto" listens
+    * only -- neither dials out on its own.  Anything else (disabled,
+    * loopback) has no use for a peer list, so discovery stops. */
+   {
+      int device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+                   ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+
+      if (opt_value && !strcmp(opt_value, "tcp_server"))
+         JLinkDiscStart(0 /* listen_only */, device, port);
+      else if (opt_value && (!strcmp(opt_value, "tcp_client")
+                              || !strcmp(opt_value, "auto")))
+         JLinkDiscStart(1 /* listen_only */, device, port);
+      else
+         JLinkDiscStop();
+   }
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
@@ -1476,18 +1578,9 @@ static void check_variables(void)
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
-   {
-      int mode = JLINK_MODE_DISABLED;
-      if (strcmp(var.value, "loopback") == 0)
-         mode = JLINK_MODE_LOOPBACK;
-      else if (strcmp(var.value, "tcp_server") == 0)
-         mode = JLINK_MODE_TCP_SERVER;
-      else if (strcmp(var.value, "tcp_client") == 0)
-         mode = JLINK_MODE_TCP_CLIENT;
-      netlink_apply(mode);
-   }
+      netlink_apply(netlink_resolve_mode(var.value), var.value);
    else
-      netlink_apply(JLINK_MODE_DISABLED);
+      netlink_apply(JLINK_MODE_DISABLED, NULL);
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -3712,6 +3805,12 @@ void retro_deinit(void)
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
    netlink_was_up          = -1;
+   /* LAN discovery (#467): close the beacon/listener socket and reset the
+    * host/port visibility gates -- same iOS-no-dlclose reasoning as the
+    * rest of this function. */
+   JLinkDiscStop();
+   show_netlink_host       = true;
+   show_netlink_port       = true;
    show_mouse_options      = true;
    show_rotary_options     = true;
    mouse_scale_q8          = 256;

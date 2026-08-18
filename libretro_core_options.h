@@ -305,19 +305,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "virtualjaguar_netlink",
-      "Network Link (JagLink / CatBox)",
+      "Network Link",
       NULL,
-      "Emulates JERRY's serial link port used by networked games (BattleSphere, AirCars, Doom deathmatch). 'Loopback' echoes transmitted bytes back to this console, for testing link-detect menus without a partner. TCP Host listens for a second emulator instance; TCP Client connects to the address in 'Network Link Host'. Localhost/LAN latency recommended.",
+      "How this console's serial port reaches another player. 'Automatic' uses your frontend's netplay session when one is running -- nothing to configure, no addresses to type -- and otherwise stays idle. 'TCP Host'/'TCP Client' link two emulators directly without netplay; the client picks a host below, and hosts on your LAN are found automatically. 'Loopback' echoes back to this console for testing link-detect menus with no partner.",
       NULL,
       "network",
       {
-         { "disabled",   NULL },
+         { "auto",       "Automatic (use netplay when available)" },
+         { "disabled",   "Off" },
          { "loopback",   "Loopback (echo to self)" },
          { "tcp_server", "TCP Host (listen)" },
          { "tcp_client", "TCP Client (connect)" },
          { NULL, NULL },
       },
-      "disabled"
+      "auto"
    },
    {
       "virtualjaguar_uart_device",

@@ -86,6 +86,12 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
    (void)level; (void)fmt;
 }
 
+/* Raw value the harness hands back for the virtualjaguar_netlink key on the
+ * next GET_VARIABLE call, or NULL for "not set" (every other option below
+ * always returns NULL -- only netlink's per-mode visibility needs a real
+ * value to react to). */
+static const char *netlink_opt_value;
+
 static bool env_cb(unsigned cmd, void *data)
 {
    switch (cmd)
@@ -123,6 +129,8 @@ static bool env_cb(unsigned cmd, void *data)
       {
          struct retro_variable *v = (struct retro_variable *)data;
          v->value = NULL;
+         if (v->key && !strcmp(v->key, "virtualjaguar_netlink"))
+            v->value = netlink_opt_value;
          return true;
       }
    }
@@ -244,6 +252,66 @@ int main(int argc, char **argv)
     * dump option sits at its disabled default. */
    expect("(cart)", "virtualjaguar_texdump_16bpp", false);
    p_unload();
+
+   /* --- Network Link (task 3, #467): host/port visibility per mode ---
+    * auto:       neither field means anything (never asks for an address)
+    * tcp_client: both fields apply (dials host:port)
+    * tcp_server: only the listen port applies
+    *
+    * update_option_visibility() only calls SET_CORE_OPTIONS_DISPLAY on a
+    * CHANGE, and the gates are module statics that persist across loads
+    * (like every other show_* gate in libretro.c). The cartridge checks
+    * above already evaluated netlink visibility once with no value set
+    * (GET_VARIABLE returns NULL), which resolves to disabled -- host/port
+    * already hidden. Prime a known "shown" baseline first so the very
+    * first real assertion below (auto, expecting hidden) is guaranteed to
+    * see the toggle fire rather than silently inheriting a state that
+    * happens to already match. */
+   netlink_opt_value = "tcp_client";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink priming)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   p_unload();
+
+   netlink_opt_value = "auto";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink=auto)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   printf("[netlink=auto] %s\n", cart);
+   expect("(netlink=auto)", "virtualjaguar_netlink_host", false);
+   expect("(netlink=auto)", "virtualjaguar_netlink_port", false);
+   p_unload();
+
+   netlink_opt_value = "tcp_client";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink=tcp_client)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   printf("[netlink=tcp_client] %s\n", cart);
+   expect("(netlink=tcp_client)", "virtualjaguar_netlink_host", true);
+   expect("(netlink=tcp_client)", "virtualjaguar_netlink_port", true);
+   p_unload();
+
+   netlink_opt_value = "tcp_server";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink=tcp_server)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   printf("[netlink=tcp_server] %s\n", cart);
+   expect("(netlink=tcp_server)", "virtualjaguar_netlink_host", false);
+   expect("(netlink=tcp_server)", "virtualjaguar_netlink_port", true);
+   p_unload();
+   netlink_opt_value = NULL;
 
    /* --- CD: CD options shown, cartridge BIOS option hidden --- */
    if (disc)
