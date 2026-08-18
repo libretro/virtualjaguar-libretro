@@ -240,6 +240,11 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
  * them.  Only the explicit subclasses attach it. */
 #define RETRO_DEVICE_JAG_ANALOG          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0)
 #define RETRO_DEVICE_JAG_DRIVING         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+/* The light gun (#438) is a plain RETRO_DEVICE_LIGHTGUN, not a subclass:
+ * there is only one Jaguar gun wiring and frontends bind their gun/mouse
+ * pointer to the base type.  Port 1 only -- TR10 puts the LP pin there
+ * and nowhere else (inputdev.h). */
+#define RETRO_DEVICE_JAG_LIGHTGUN        RETRO_DEVICE_LIGHTGUN
 
 /* Device the frontend explicitly selected via
  * retro_set_controller_port_device, or INPUTDEV_PAD when it never did.
@@ -337,6 +342,7 @@ static const char *inputdev_type_name(InputDevType t)
       case INPUTDEV_ROTARY:              return "Tempest rotary";
       case INPUTDEV_ANALOG:              return "Analog joystick (bank-switching)";
       case INPUTDEV_DRIVING:             return "Driving controller (bank-switching)";
+      case INPUTDEV_LIGHTGUN:            return "light gun";
       default:                           break;
    }
    return "standard joypad";
@@ -1031,6 +1037,8 @@ static InputDevType p1_device_from_option(void)
          p1 = INPUTDEV_ANALOG;
       else if (!strcmp(var.value, "driving"))
          p1 = INPUTDEV_DRIVING;
+      else if (!strcmp(var.value, "lightgun"))
+         p1 = INPUTDEV_LIGHTGUN;
       /* "pad" and "auto" both mean pad. */
    }
 
@@ -1935,6 +1943,75 @@ static void update_input(void)
             continue;
          }
 
+         /* A LIGHT GUN IS AN ABSOLUTE POINTER, so it shares nothing with
+          * the two relative-motion devices below and returns early.
+          *
+          * The whole hi-res guardrail (#400) is the two divisions here.
+          * RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X/Y are normalised over the
+          * frame this core REPORTS, and retro_run publishes
+          * game_width = tomWidth * shadowHiresN.  Dividing back down to
+          * tomWidth/tomHeight is what makes a 2x session latch the same
+          * LPH/LPV as a 1x one; without it every shot would land at
+          * roughly twice its intended position.  Nothing downstream of
+          * here knows the internal-resolution option exists. */
+         if (t == INPUTDEV_LIGHTGUN)
+         {
+            int32_t nat_w = (shadowHiresN > 0)
+                          ? (int32_t)(game_width  / shadowHiresN) : 0;
+            int32_t nat_h = (shadowHiresN > 0)
+                          ? (int32_t)(game_height / shadowHiresN) : 0;
+            int32_t gx    = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_LIGHTGUN, 0,
+                     RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X);
+            int32_t gy    = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_LIGHTGUN, 0,
+                     RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y);
+            int32_t col   = 0;
+            int32_t rowpx = 0;
+            int      off;
+
+            buttons = 0;
+            if (input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
+                               RETRO_DEVICE_ID_LIGHTGUN_TRIGGER))
+               buttons |= INPUTDEV_GUN_TRIGGER;
+            if (input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
+                               RETRO_DEVICE_ID_LIGHTGUN_AUX_A))
+               buttons |= INPUTDEV_GUN_AUX_A;
+            if (input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
+                               RETRO_DEVICE_ID_LIGHTGUN_AUX_B))
+               buttons |= INPUTDEV_GUN_AUX_B;
+            if (input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
+                               RETRO_DEVICE_ID_LIGHTGUN_START))
+               buttons |= INPUTDEV_GUN_START;
+            if (input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
+                               RETRO_DEVICE_ID_LIGHTGUN_SELECT))
+               buttons |= INPUTDEV_GUN_SELECT;
+
+            /* Off-screen is the "photodiode sees no light" case: no LP
+             * pulse, so LPH/LPV keep their last value while the trigger
+             * still reports normally (the pin is electrically the same
+             * wherever the barrel points).  A frame before the first
+             * geometry is published, or a coordinate outside the frame,
+             * is treated the same way rather than clamped to an edge --
+             * clamping would invent an aim point the player never made. */
+            off = input_state_cb(player, RETRO_DEVICE_LIGHTGUN, 0,
+                                 RETRO_DEVICE_ID_LIGHTGUN_IS_OFFSCREEN)
+                  ? 1 : 0;
+
+            if (nat_w <= 0 || nat_h <= 0)
+               off = 1;
+            else
+            {
+               col   = ((gx + 0x8000) * nat_w) / 0x10000;
+               rowpx = ((gy + 0x8000) * nat_h) / 0x10000;
+               if (col < 0 || col >= nat_w || rowpx < 0 || rowpx >= nat_h)
+                  off = 1;
+            }
+
+            InputDevFeedLightgun((int)player, col, rowpx, off, buttons);
+            continue;
+         }
+
          dx = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
                                       RETRO_DEVICE_ID_MOUSE_X);
          dy      = 0;
@@ -2072,6 +2149,9 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
          break;
       /* A plain RETRO_DEVICE_ANALOG falls through to the pad on purpose
        * -- see the subclass definitions. */
+      case RETRO_DEVICE_JAG_LIGHTGUN:
+         type = INPUTDEV_LIGHTGUN;
+         break;
       default:
          type = INPUTDEV_PAD;
          break;
@@ -3410,13 +3490,16 @@ void retro_init(void)
     * port 2, and a port-1 mouse would be a configuration no software
     * supports -- but TR10 documents the rotary matrix for both ports and
     * Tempest 2000's CONTROLLER TYPE menu carries independent P1 and P2
-    * toggles, so the rotary is offered on both. */
+    * toggles, so the rotary is offered on both.  The light gun (#438)
+    * is port 1 only for the mirror-image reason: TR10 wires the light-pen
+    * input to that socket and nowhere else. */
    {
       static const struct retro_controller_description port1_devices[] = {
          { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
          { "Rotary (Tempest)", RETRO_DEVICE_JAG_ROTARY },
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
+         { "Light Gun", RETRO_DEVICE_JAG_LIGHTGUN },
       };
       static const struct retro_controller_description port2_devices[] = {
          { "Standard Joypad",             RETRO_DEVICE_JAG_PAD },
@@ -3428,7 +3511,7 @@ void retro_init(void)
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
       };
       static const struct retro_controller_info ports[] = {
-         { port1_devices, 4 },
+         { port1_devices, 5 },
          { port2_devices, 7 },
          { NULL, 0 },
       };
