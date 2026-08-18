@@ -153,7 +153,7 @@ At load, one line reports what the options actually resolved to:
 ```
 [NETLINK] mode=tcp_client device=voicemodem peer=127.0.0.1:42171 (address from core option)
 [NETLINK] mode=tcp_server device=voicemodem port=42171
-[NETLINK] disabled (device=voicemodem)          <- netplay/netpacket, or nothing configured
+[NETLINK] built-in TCP link disabled (device=voicemodem) -- frontend netplay will carry the link if a session is running
 ```
 
 then the link state, on edges only:

@@ -983,8 +983,13 @@ static void netlink_apply(int mode)
     * that never connected is indistinguishable from one that was never
     * configured -- which is exactly how a stale core with no Voice Modem
     * option at all read as "the modem is there but won't dial". */
+   /* "disabled" here means only the core's OWN TCP link is off, which is
+    * the correct setting for frontend netplay -- netpacket is negotiated
+    * later, by the frontend, and shows up as a link UP below.  Say so, or
+    * the pair of lines reads as a contradiction. */
    if (mode == JLINK_MODE_DISABLED)
-      LOG_INF("[NETLINK] disabled (device=%s)\n",
+      LOG_INF("[NETLINK] built-in TCP link disabled (device=%s) -- frontend "
+              "netplay will carry the link if a session is running\n",
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink");
    else if (mode == JLINK_MODE_TCP_CLIENT)
