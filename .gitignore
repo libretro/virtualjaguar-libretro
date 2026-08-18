@@ -162,3 +162,4 @@ __pycache__/
 /test/tools/m68k_pc_histogram
 /test/tools/menu_step_probe
 /test/tools/present_rate_probe
+test/tools/blitter_static_leak

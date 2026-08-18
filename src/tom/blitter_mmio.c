@@ -184,11 +184,18 @@ void BlitterInit(void)
 void BlitterReset(void)
 {
    memset(blitter_ram, 0x00, 0xA0);
+   /* The register file is not the whole of the blitter's serialised
+    * state: the B_CMD decode statics live in blitter.c and used to
+    * survive teardown into the next session's savestate (#479). */
+   BlitterResetDecodeState();
 }
 
 
 void BlitterDone(void)
 {
+   /* iOS cannot dlclose the core, so nothing re-zeroes statics between
+    * sessions -- teardown has to do it explicitly (see CLAUDE.md). */
+   BlitterReset();
 }
 
 

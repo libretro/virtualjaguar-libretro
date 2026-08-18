@@ -4373,6 +4373,51 @@ pipe-lining the comparator inputs where appropriate.
 
 /* Save state serialization for Blitter */
 
+/* Clear every decoded field that BlitterStateSave() serialises (issue
+ * #479).
+ *
+ * These statics are the B_CMD decode: the FAST engine (blitter_blit)
+ * writes them, the accurate engine (BlitterMidsummer2) does not, and
+ * most of them feed nothing but the savestate.  BlitterReset() used to
+ * clear only blitter_ram, so once the fast engine had run, every field
+ * below survived retro_unload_game + retro_deinit and was serialised
+ * into the NEXT session's state blob.
+ *
+ * A fresh dlopen zeroes them as BSS, which is why this is invisible on
+ * desktop -- and why it is live on iOS, where dlclose is impossible and
+ * the core stays resident for the life of the app.
+ *
+ * KEEP THIS LIST IN THE SAME ORDER AS BlitterStateSave() BELOW.  If a
+ * field is serialised it must be cleared here; test/tools/blitter_static_leak
+ * is the regression gate that catches the two lists drifting apart.
+ * blitter_ram itself is not cleared here -- BlitterReset() owns it. */
+void BlitterResetDecodeState(void)
+{
+   src = dst = misc = a1ctl = mode = ity = zop = op = ctrl = 0;
+   a1_addr = a2_addr = 0;
+   a1_zoffs = a2_zoffs = 0;
+   xadd_a1_control = xadd_a2_control = 0;
+   a1_pitch = a2_pitch = 0;
+   n_pixels = n_lines = 0;
+   a1_x = a1_y = a1_width = 0;
+   a2_x = a2_y = a2_width = 0;
+   a2_mask_x = a2_mask_y = 0;
+   a1_xadd = a1_yadd = a2_xadd = a2_yadd = 0;
+   a1_phrase_mode = a2_phrase_mode = 0;
+   a1_step_x = a1_step_y = a2_step_x = a2_step_y = 0;
+   outer_loop = inner_loop = 0;
+   a2_psize = a1_psize = 0;
+   gouraud_add = 0;
+   memset(gd_i, 0, sizeof(gd_i));
+   memset(gd_c, 0, sizeof(gd_c));
+   gd_ia = gd_ca = 0;
+   colour_index = 0;
+   zadd = 0;
+   memset(z_i, 0, sizeof(z_i));
+   a1_clip_x = a1_clip_y = 0;
+}
+
+
 size_t BlitterStateSave(uint8_t *buf)
 {
    uint8_t *start = buf;
