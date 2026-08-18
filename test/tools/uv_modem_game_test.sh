@@ -42,16 +42,19 @@ MAPOPTS=(--option virtualjaguar_uart_device=voicemodem
   --option virtualjaguar_p1_retropad_l1=num_9
   --option virtualjaguar_p1_retropad_r1=num_1)
 
-export VJ_VM_TRACE=1 VJ_NETLINK_PORT="$PORT"
+# netlink_game putenv()s VJ_NETLINK_PORT itself from --port (default
+# 42171), overriding any inherited value -- the port MUST go on the
+# command line or concurrent pairs cross-connect on the default.
+export VJ_VM_TRACE=1
 
-"$BIN" "$CORE" "$ROM" --role server --frames 5400 --realtime \
+"$BIN" "$CORE" "$ROM" --role server --port "$PORT" --frames 5400 --realtime \
   "${MAPOPTS[@]}" \
   --press 905:1:6 --press 918:2:6 --press 931:2:6 \
   --press 1250:up:6 --press 1290:up:6 --press 1360:a:6 \
   > "$OUT/answer.log" 2>&1 &
 SRV=$!
 sleep 2
-"$BIN" "$CORE" "$ROM" --role client --frames 5400 --realtime \
+"$BIN" "$CORE" "$ROM" --role client --port "$PORT" --frames 5400 --realtime \
   "${MAPOPTS[@]}" \
   --press 905:1:6 --press 918:2:6 --press 931:2:6 \
   --press 1250:up:6 --press 1350:a:6 --press 1450:2:6 --press 1530:a:6 \
