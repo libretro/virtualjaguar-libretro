@@ -1,6 +1,7 @@
 #include "blitter.h"
 #include "blitter_internal.h"
 #include "blit_memo.h"
+#include "texdump.h"
 
 #include <string.h>
 #include "bus_arbiter.h"
@@ -314,6 +315,12 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       uint32_t busClks = 0;
       if (vjs.blitterTiming)
          busClks = BlitDurationSysclks();
+
+      /* Texture dump (issue #369): capture the register-described
+       * source window BEFORE dispatch, engine-independently.  Read-only
+       * host-side work; the emulated machine cannot observe it. */
+      if (texDumpEnabled)
+         TexDumpLaunch();
 
       if (BlitterCompareIsEnabled())
          BlitterRunComparison();

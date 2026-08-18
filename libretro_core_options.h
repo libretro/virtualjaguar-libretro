@@ -407,6 +407,35 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "k"
    },
    {
+      "virtualjaguar_texture_dump",
+      "Texture Dump Mode",
+      NULL,
+      "Write every unique blitter source tile the title uses to <system dir>/vj_texdump/<cart CRC32>/ as a PNG preview plus a manifest row, for HD texture pack authoring (issue #369). Tiles are identified by a hash of their raw source bytes only -- the palette is advisory metadata, never identity. Takes effect immediately, no restart needed. Developer-facing: leave disabled for normal play.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_texdump_16bpp",
+      "Texture Dump: 16bpp Preview",
+      NULL,
+      "How 16-bit source tiles are rendered in their preview PNGs. The blitter cannot know whether 16-bit values are CRY or RGB16 -- that is display-time interpretation -- so this only changes the preview image, never the tile's hash. 'Both' writes a -cry and a -rgb PNG per tile.",
+      NULL,
+      "diagnostics",
+      {
+         { "cry",  "CRY" },
+         { "rgb",  "RGB16" },
+         { "both", "Both" },
+         { NULL, NULL },
+      },
+      "cry"
+   },
+   {
       "virtualjaguar_jgd",
       "Jaguar GameDrive (Restart)",
       NULL,
