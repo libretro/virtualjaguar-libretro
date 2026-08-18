@@ -384,15 +384,27 @@ static int run_partA(const char *core, const char *rom, int hires2x,
    if (hires2x)
       harness_set_option(&cfg, "virtualjaguar_internal_resolution", "2x");
 
+   /* A load or bind failure has to be recorded as a FAILURE, not just
+    * returned: main() maps "no failures" to exit 77 when Balloons is
+    * absent, so a silent 0 here would report a broken core as a skip. */
    if (!harness_load_core(&cfg))
+   {
+      if (report)
+         record(0, "lightgun_transform", "could not load core %s", core);
       return 0;
+   }
    if (!harness_load_rom(&cfg))
    {
+      if (report)
+         record(0, "lightgun_transform", "could not load ROM %s", rom);
       harness_shutdown(&cfg);
       return 0;
    }
    if (!core_syms_bind(&cfg, &a.syms))
    {
+      if (report)
+         record(0, "lightgun_transform",
+                "test-ABI symbols missing (needs TEST_EXPORTS=1)");
       harness_shutdown(&cfg);
       return 0;
    }
@@ -433,6 +445,28 @@ static int run_partA(const char *core, const char *rom, int hires2x,
 
    if (report)
    {
+      /* PRECONDITION, not an assertion about the feature: tom_top_visible()
+       * reads VDB raw, while the core's TOMGetTopVisible() substitutes a
+       * mode fallback when VDB is 0, is still at the shared reset value of
+       * 38, or exceeds VP.  They agree only outside those cases.  Every ROM
+       * this test drives programs its own VDB long before frame 90, so a
+       * hit here means the ROM changed, not that the transform broke --
+       * fail loudly rather than let it surface as a phantom offset. */
+      {
+         uint16_t vdb = rd16(a.syms.tom, R_VDB);
+         uint16_t vp  = rd16(a.syms.tom, R_VP);
+
+         if (vdb == 0 || vdb == 38 || (vp != 0 && vdb > vp))
+         {
+            ok = 0;
+            record(0, "lightgun_transform",
+                   "PRECONDITION: %s left VDB=%u (VP=%u), which the core's "
+                   "TOMGetTopVisible() replaces with a fallback -- pick a "
+                   "ROM that programs its own display window",
+                   rom, vdb, vp);
+         }
+      }
+
       /* A1: LPH affine in column with slope PWIDTH; LPV affine in row
        * with slope 2 (half-lines). */
       for (i = 0; i < 4; i++)
@@ -517,6 +551,11 @@ typedef struct {
    int       quit_detected;
    int       cal1_done;
    int       cal2_done;
+   /* Diagnostics so a failed hit is attributable: a balloon that never
+    * entered the aimable band reads exactly like a broken transform. */
+   int       hunt_last_objx;
+   int       hunt_last_objy;
+   int       hunt_frames;
 } partB;
 
 static void gun_aim(int col, int row)
@@ -722,6 +761,10 @@ static bool partB_frame(void *ud, unsigned frame)
          gun.trigger   = 0;
          gun.offscreen = 1;
 
+         b->hunt_last_objx = obj_x;
+         b->hunt_last_objy = obj_y;
+         b->hunt_frames++;
+
          if (b->phase_frame > 1200)
             return false;
 
@@ -803,14 +846,20 @@ static int run_partB(const char *core, const char *rom)
    harness_set_option(&cfg, "virtualjaguar_p1_device", "lightgun");
 
    if (!harness_load_core(&cfg))
+   {
+      record(0, "balloons_calibration", "could not load core %s", core);
       return 0;
+   }
    if (!harness_load_rom(&cfg))
    {
+      record(0, "balloons_calibration", "could not load ROM %s", rom);
       harness_shutdown(&cfg);
       return 0;
    }
    if (!core_syms_bind(&cfg, &b.syms))
    {
+      record(0, "balloons_calibration",
+             "test-ABI symbols missing (needs TEST_EXPORTS=1)");
       harness_shutdown(&cfg);
       return 0;
    }
@@ -851,9 +900,18 @@ static int run_partB(const char *core, const char *rom)
              "aimed pixel exactly (startPos=%d, topVis=%d, pwidth=%d)",
              b.sweep_checked, b.start_pos, b.top_vis, b.pwidth);
 
-   record(b.hit_registered, "balloons_hit",
-          "%d shot(s) fired, hit registered: %s",
-          b.shots_fired, b.hit_registered ? "yes" : "NO");
+   if (b.hit_registered)
+      record(1, "balloons_hit", "hit registered after %d shot(s)",
+             b.shots_fired);
+   else
+      record(0, "balloons_hit",
+             "no hit after %d shot(s); last balloon object (%d,%d), aimable "
+             "band is object Y < %d half-lines and object X in [%d,%d), "
+             "%d frame(s) spent waiting for one",
+             b.shots_fired, b.hunt_last_objx, b.hunt_last_objy,
+             B_QUIT_HALFLINE - 8 - B_Y_FUDGE - 40,
+             -b.start_pos - 24, b.nat_w - b.start_pos - 24,
+             b.hunt_frames);
 
    i = (b.cal1_done && b.cal2_done && !b.quit_detected
         && b.sweep_checked > 0 && !b.sweep_bad && b.hit_registered) ? 1 : 0;

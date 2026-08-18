@@ -275,14 +275,14 @@ homebrew calibration-and-shooting demo. It opens with a two-target calibration
 screen: point at each target and pull the trigger. Aiming near the bottom of
 the screen quits the program — that is the demo's own behaviour, not a bug.
 
-## Not yet implemented
+## Already shipped
 
-Nothing in the input-devices epic is outstanding: the **Tempest rotary**
-(#436), the **analog / driving controllers** (#437), the **light gun** (#438)
-and **per-axis tuning** (#439) have all shipped — see
-[Core options](#core-options) above. The two deliberate exclusions,
+The **Tempest rotary** (#436), the **analog / driving controllers** (#437),
+the **light gun** (#438) and **per-axis tuning** (#439) have all shipped —
+see [Core options](#core-options) above. The two deliberate exclusions,
 "ADC-Reg" and the Jaguar VR head tracker, are recorded with their reasons in
-the analog section above.
+the analog section above; anything else still open lives on
+[#428](https://github.com/libretro/virtualjaguar-libretro/issues/428).
 
 ## See also
 
