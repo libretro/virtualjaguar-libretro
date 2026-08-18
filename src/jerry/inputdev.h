@@ -98,6 +98,34 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons);
 /* Sensitivity, Q8 (256 == 1.0), from the core options. */
 void InputDevSetScale(int port, int32_t scale_q8);
 
+/* Per-axis tuning -- dead zone, offset, response exponent (#439).
+ *
+ * ONE LAYER FOR EVERY ANALOG SOURCE.  Both shipped analog devices reach
+ * the machine through InputDevFeed(), so the tuning is applied there and
+ * nowhere else; #437's analog/driving axes will land on the same call.
+ * The semantics, the reference magnitude for the exponent and the reason
+ * the curve arrives as a gain rather than a modified delta are all in
+ * axistune.h -- read that before changing anything here.
+ *
+ * `axis` is INPUTDEV_AXIS_X or INPUTDEV_AXIS_Y.  A rotary is a single
+ * wheel and uses X only; its Y tune is stored but never consulted.
+ *
+ * THE PAD IS NOT TOUCHED BY ANY OF THIS.  A port whose type is
+ * INPUTDEV_PAD never enters InputDevFeed's tuned paths at all -- the
+ * standard digital pad's bits come from joypadNButtons[] via joystick.c
+ * and this file contributes nothing to them.  Pinned by
+ * test/tools/joymatrix_identity's unchanged digests and by
+ * test/tools/tuning_identity.
+ *
+ * Values are clamped in AxisTuneSet(), because they originate in
+ * core-option strings a user can hand-edit.  Defaults (0 / 0 / 256) are
+ * the exact identity, so a user who never opens the menu gets the
+ * pre-#439 behaviour byte for byte. */
+#define INPUTDEV_AXIS_X 0
+#define INPUTDEV_AXIS_Y 1
+void InputDevSetTune(int port, int axis, int32_t deadzone, int32_t offset,
+                     int32_t exponent_q8);
+
 /* Whether a rotary on this port identifies itself to software as a rotary
  * (diode D23 fitted -- TR10 supplemental).  TR10 "Identifying Controller
  * Types": C2 C3 = 1 0 means "Tempest Rotary", 1 1 means "Standard Jaguar
@@ -214,6 +242,12 @@ uint16_t InputDevOverlayF14002(uint16_t data, uint8_t row0, uint8_t row1);
  * The device type and the sensitivity scale are deliberately NOT saved:
  * both are option-derived and constant for a session, and restoring them
  * from a state would let a stale state fight the user's current option.
+ *
+ * The per-axis tuning (#439) is NOT saved either, for the same reason as
+ * the scale: it is option-derived and constant for a session, and it
+ * changes only how host motion is turned into feeds, never any state the
+ * machine can observe.  The chunk does not grow and STATE_VERSION does not
+ * move.
  *
  * The rotary (#436) adds NOTHING here and the chunk does not grow.  It
  * uses the port's existing X axis, so its backlog/carry/phase are already

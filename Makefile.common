@@ -82,6 +82,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/bios/jagdevcdbios.c \
 	$(CORE_DIR)/src/jerry/joystick.c \
 	$(CORE_DIR)/src/jerry/quadrature.c \
+	$(CORE_DIR)/src/jerry/axistune.c \
 	$(CORE_DIR)/src/jerry/inputdev.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
