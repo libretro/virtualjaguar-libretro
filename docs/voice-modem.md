@@ -1,0 +1,129 @@
+# Jaguar Voice Modem (JVM) — protocol as spoken by Ultra Vortek
+
+**Status:** derived 2026-08-17 by disassembling the retail Ultra Vortek ROM
+(`Ultra Vortek (1995).jag`, 4 MB, the only JVM title). The game's own modem
+driver is the authoritative spec for what a modem must say; no BigPEmu
+assets were consulted. Emulated by `src/jerry/voicemodem.c` (issue #481).
+
+## Hardware placement
+
+The JVM plugs into the DSP port and talks to JERRY's asynchronous serial
+UART (`$F10030` ASIDATA / `$F10032` ASICTRL+ASISTAT / `$F10034` ASICLK) —
+the same silicon JagLink and CatBox use, so the netlink transport
+(`docs/netlink-design.md`) carries it.
+
+How Ultra Vortek services the port (all addresses are the retail ROM):
+
+- **68K side** (driver at `$80AF96–$80BA19`, runs in ROM): transmits by
+  polling ASISTAT TBE (bit 8) and writing ASIDATA; **never reads RX data
+  registers** outside an init flush.
+- **DSP side**: the audio engine's I2S interrupt handler tail
+  (`$F1B168–$F1B1C2`, loaded to DSP RAM from ROM offset `$E31C`) polls
+  ASISTAT once per I2S sample: on ERROR (bit 15) it writes CLRERR if SERIN
+  is high; on RBF (bit 7) it reads ASIDATA and pushes the byte into a
+  **256-byte ring in main RAM `$6274–$6373`**, write pointer at DSP RAM
+  `$F1BA84`, read pointer at `$F1BA88`. The 68K driver consumes replies
+  from that ring only. There is no RX interrupt use despite RINTEN being
+  set; JINTCTRL bit 4 is enabled but the transfer path is the DSP poll.
+- **UART programming**: ASICTRL = `$0021` (odd parity + RINTEN), wake
+  attempts at ASICLK = `$1C` (~57.6 kbaud) falling back to `$56`
+  (~19.2 kbaud); after wake succeeds the driver issues `$FFFE` (see below)
+  and settles at ASICLK = `$56` — i.e. the DTE rate in use is **19200**.
+
+Menu entry: type **`911` on the numpad while the title logo is on screen**
+("AWESOME" sting → INITIALIZING VOICE MODEM). With no modem answering, the
+game shows MODEM INITIALIZING FAILED / MAKE SURE THE MODEM IS ON.
+
+## Wire format
+
+Console → modem: **16-bit command words, low byte first** (`$8A21` goes out
+as `$21 $8A`). Every command is answered except `$FFFE`.
+
+Modem → console: **3-byte messages: sync `$FF` (`$FE` also accepted), then
+high byte, then low byte**. Reply classes, per the driver's parsers
+(`$80B3B0` transact, `$80B452` data-receive, `$80AFE2` ring scan):
+
+| High byte | Meaning | Driver behavior |
+|-----------|---------|-----------------|
+| echo of command | command acknowledged | compared against what was sent |
+| `$A4` | async status event | `$57F6 &= word` (a bit-clear mask); if the mask goes to zero **and bit 0 of the low byte is set** the driver returns error `$FFF3` ("lost phone connection" class); otherwise consumed silently |
+| `$B1` | async ring indicate | returns status `$FFF4` (RING) to whatever call is in progress |
+| `$F0` | data byte (low byte = payload) | data-phase receive |
+| `$F3` | data frame end; `$F301` = clean end-of-packet | terminates a receive burst |
+| `$86` | connect result for `$8100` (low byte = speed code, shown as MODEM CONNECT SPEED) | proceed with connection |
+| `$80..$8F` (`& $F000 == $8000`) | `$8100` "not yet" | retry (up to 255×) |
+| `$FFFE` (word) | "nothing" reply to `$6800` DTMF poll | poll again |
+
+## Command set (as issued by Ultra Vortek)
+
+| Word | Name (inferred) | Modem must do |
+|------|-----------------|----------------|
+| `$FFFF` (two raw `$FF` bytes) | wake/detect | reply word **`$B800`**; sent at 57.6k, then 19.2k, then 57.6k until answered |
+| `$FFFE` | switch line rate (to 19200) | **no reply** (console switches ASICLK right after) |
+| `$0102` | ident/ping after wake | echo |
+| `$0501` | begin config block | echo |
+| `$000F $B000 $3952 $A021 $F207 $B602 $B504 $B405 $A3FC $A060` | config parameters | echo each |
+| `$2C80` | originate mode (appears in the dial config table, at dial start, and again after handshake) | echo |
+| `$2480` | answer mode (same positions on the answer side) | echo; going off-hook to answer a pending ring |
+| `$8C01` | dial-tone check | echo `$8C01` when line ok (anything else retried ~1000×, then NO DIALTONE) |
+| `$8A2n` | send DTMF digit n (0–15; the dialed number, and the post-connect probe digits) | echo; deliver digit to the far side when connected |
+| `$8C00` | call-progress query | low byte `$1x` = tone/dial still in progress, `$0x` = idle/done |
+| `$6800` | poll for detected DTMF digit | `$68nn` = heard digit nn, word `$FFFE` = nothing yet |
+| `$8000` | go to data mode (pre-connect) | echo |
+| `$8100` | connect/carrier query | `$86xx` = connected at speed xx, `$80xx` = not yet (retried); after `$86xx` the console waits for `$A4` events to clear `$57F6` bits 0+1 (send `$A4FC`) |
+| `$0002`, `$A3FE` | post-connect config | echo |
+| `$9000` | hang up / abort | echo (sent repeatedly until echoed) |
+| `$A040`, `$A0A0` | audio path control (hangup path sends `$9000` then `$A040`) | echo |
+| `$F0xx` | data byte xx to peer (sent raw, no echo consumed) | forward to peer; **do not echo** |
+
+## Connection choreography (both consoles run Ultra Vortek)
+
+Originator: wake → `$FFFE` → `$0102` → `$0501` + config(`$2C80`) →
+`$8C01` dial tone → `$2C80` + `$8A2n` digits of the phone number (`$8C00`
+polled between digits; keypad `$10` = 2 s pause) → poll `$6800` for the
+answerer's probe digits `0,9,8,…,1` → send its own probe digits
+`1,2,…,9,0` as `$8A2n`, polling `$8C00` after each → `$2C80`.
+
+Answerer: wake/config happen when the user enters the modem screen; on
+RING (`$B1xx`) and the user choosing ANSWER PHONE: config(`$2480`) → sends
+probe digits `0,9,8,…,1` → listens via `$6800` for `1,2,…,9,0` → `$2480`.
+
+The mutual DTMF probe is the line-quality check ("TOO MUCH TELEPHONE
+NOISE" when it fails). Speed/carrier negotiation is the `$8000`/`$8100`/
+`$86xx` + `$A4FC` sequence at `$80B278`.
+
+## Data phase (in-game)
+
+- Sender: 4 payload bytes per exchange, each as a raw `$F0xx` word
+  (`$80B570`, from `$579A`), no replies consumed.
+- Receiver: expects 4 × `$F0xx` messages then **`$F301` end-of-packet**
+  (`$80B596` → `$57A0`). The `$F301` is generated by the modem (packet
+  framing), not sent by the far console — the emulation emits it at
+  TX-burst end.
+- Async `$A4` with bit 0 set (e.g. `$A401`) during a call = line drop →
+  LOST PHONE CONNECTION.
+
+## What the emulation does (src/jerry/voicemodem.c)
+
+A virtual modem in front of the jlink transport (`virtualjaguar_uart_device
+= voicemodem`; JagLink stays the default). Dial resolves to the existing
+netlink TCP/netpacket/loopback session; no voice, no DTMF audio, no real
+telephony. Inter-modem wire protocol (2-byte frames over the transport):
+`$01 digit` DTMF, `$02 -` dial, `$03 -` answer, `$04 -` hangup, `$05 xx`
+data byte, `$06 -` end-of-packet. Ring indications are paced ~1/second;
+`$A4FC` is queued after each connected `$86xx` reply so the `$57F6` wait
+can never miss it. ASICLK is ignored — the UART already paces bytes; the
+modem is rate-agnostic. Modem session state is host-side (like jlink's
+sockets) and deliberately not serialized in savestates: loading a state
+mid-call behaves as a pulled phone line.
+
+## Open questions
+
+- The `$86xx` speed code's exact encoding (we reply `$8613`); harmless —
+  the game only displays it.
+- `$B1xx` ring payload (we send `$B100`); the driver only matches the
+  high byte.
+- Config words (`$3952` etc.) are opaque Phylon chipset parameters;
+  echoing satisfies the driver.
+- The retail beta ROM and any voice-mode-specific commands beyond `$A0xx`
+  echoes are unexplored.
