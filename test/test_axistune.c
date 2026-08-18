@@ -162,6 +162,50 @@ static void test_offset(void)
          "and a sample that survives both keeps its de-biased magnitude");
 }
 
+/* ---- 4b: an idle device must stay idle ------------------------------- */
+
+static void test_offset_leaves_idle_alone(void)
+{
+   axis_tune t;
+   int32_t   gain = 0;
+   int32_t   off;
+   int       ok = 1;
+
+   printf("a non-zero offset never manufactures motion from an idle device\n");
+
+   /* libretro.c feeds every attached port every frame, passing 0 when the
+    * frontend reports no motion.  On a relative axis that is "no sample",
+    * not "a sample at the biased centre", so the offset must not turn it
+    * into one -- otherwise a configured offset spins the knob forever
+    * with the controls untouched, which is the exact failure the option
+    * exists to cure. */
+   for (off = -64; off <= 64; off++)
+   {
+      AxisTuneSet(&t, 0, off, 256);      /* dead zone 0: nothing else can gate */
+      if (AxisTuneApply(&t, 0, &gain) != 0)
+         ok = 0;
+   }
+   check(ok, "raw 0 stays 0 for every offset in [-64, 64] at dead zone 0");
+
+   /* Same, with a curve in play: the early-out must precede the curve too. */
+   ok = 1;
+   for (off = -64; off <= 64; off++)
+   {
+      AxisTuneSet(&t, 0, off, 512);      /* exponent 2.0 */
+      if (AxisTuneApply(&t, 0, &gain) != 0)
+         ok = 0;
+   }
+   check(ok, "and stays 0 with a non-identity exponent as well");
+
+   /* The offset must still do its job on a real sample -- this is the
+    * guard against "fixing" the above by disabling offset entirely. */
+   AxisTuneSet(&t, 0, 3, 256);
+   check(AxisTuneApply(&t, 3, &gain) == 0,
+         "a device that really reports +3 at rest is still cancelled");
+   check(AxisTuneApply(&t, 10, &gain) == 7,
+         "and real motion is still de-biased");
+}
+
 /* ---- 5 + 6 + 7: the response curve ---------------------------------- */
 
 static void test_curve_reference(void)
@@ -354,6 +398,7 @@ int main(void)
    test_deadzone_is_a_gate();
    printf("\n");
    test_offset();
+   test_offset_leaves_idle_alone();
    printf("\n");
    test_curve_reference();
    printf("\n");

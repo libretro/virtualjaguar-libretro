@@ -178,6 +178,20 @@ int32_t AxisTuneApply(const axis_tune *t, int32_t raw, int32_t *gain_q8)
    if (AxisTuneIsIdentity(t))
       return raw;
 
+   /* No sample this poll.  On a RELATIVE axis raw == 0 does not mean "a
+    * reading at the (biased) centre" -- it means the frontend reported no
+    * motion at all, which libretro.c does every single frame for an
+    * attached-but-idle device.  Subtracting the offset here would
+    * manufacture a non-zero delta, clear the (default-zero) dead-zone
+    * gate, and feed QuadFeed forever with the device untouched: exactly
+    * the "spin the knob forever with the controls untouched" failure the
+    * offset option exists to CURE, and a contradiction of its own help
+    * text ("a real mouse reports exactly zero at rest and is
+    * unaffected").  Offset corrects a source that reports movement; it
+    * has nothing to correct when the source reports none. */
+   if (raw == 0)
+      return 0;
+
    v = raw - t->offset;
 
    if (v == 0)
