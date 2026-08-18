@@ -53,7 +53,12 @@ extern "C" {
  *     quadrature accumulator and phase are machine-visible — the phase IS
  *     what the game reads at $F14000 — so a state restored without them
  *     replays different motion.  Older states load with the encoders
- *     reset, which is what a pre-v12 core was.  develop only. */
+ *     reset, which is what a pre-v12 core was.  develop only.
+ *     EXTENDED IN PLACE (still v12, develop only, one bump per release):
+ *     the analog / driving controller (#437) appended 5 bytes per port —
+ *     bank, last row, latched ADC X/Y, switch mask — to the chunk; a
+ *     pre-extension v12 state reads them from the zero-fill tail, which
+ *     is inert (see inputdev.h). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   12
 /* Oldest layout retro_unserialize still accepts.  States between

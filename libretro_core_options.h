@@ -557,7 +557,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_p2_device",
       "Port 2 > Controller Type",
       "Controller Type",
-      "Which peripheral is plugged into controller port 2. 'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons stay on the RetroPad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
+      "Which peripheral is plugged into controller port 2. 'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons stay on the RetroPad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first.",
       NULL,
       "input_p2",
       {
@@ -567,6 +567,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "mouse_amiga",         "Amiga Mouse (ST adapter)" },
          { "mouse_amiga_adapter", "Amiga Mouse (Amiga adapter)" },
          { "rotary",              "Rotary (Tempest)" },
+         { "analog",              "Analog Joystick (bank-switching)" },
+         { "driving",             "Driving Controller (bank-switching)" },
          { NULL, NULL },
       },
       "auto"
@@ -575,13 +577,15 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_p1_device",
       "Port 1 > Controller Type",
       "Controller Type",
-      "Which peripheral is plugged into controller port 1. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons (A, B, C, Option, Pause and the keypad) stay on the RetroPad, which is what a real rotary has. There is no per-title default for this option and there never will be -- selecting a rotary removes Up and Down, so it would break menu navigation for anyone using a pad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
+      "Which peripheral is plugged into controller port 1. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons (A, B, C, Option, Pause and the keypad) stay on the RetroPad, which is what a real rotary has. There is no per-title default for this option and there never will be -- selecting a rotary removes Up and Down, so it would break menu navigation for anyone using a pad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first.",
       NULL,
       "input_p1",
       {
          { "auto",   "Auto (per-title default)" },
          { "pad",    "Standard Joypad" },
          { "rotary", "Rotary (Tempest)" },
+         { "analog",  "Analog Joystick (bank-switching)" },
+         { "driving", "Driving Controller (bank-switching)" },
          { NULL, NULL },
       },
       "auto"
@@ -674,6 +678,132 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Rotary Response Curve",
       "Rotary Response Curve",
       "Response exponent for the spinner, giving finer control at low speed. The curve is anchored at 64 units per poll: below that an exponent above 1.00 attenuates, at and above it movement passes through unchanged. A higher exponent therefore makes the spinner SLOWER overall -- raise Rotary Sensitivity to get the top speed back.",
+      NULL,
+      "input",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   /* Analog / driving controller tuning (#437).  SHARED BY BOTH PORTS,
+    * like the rotary ladder, and applied through the same shared layer
+    * (src/jerry/axistune.c) -- but on an ABSOLUTE axis, so the units are
+    * ADC counts (127 = full stick deflection, the device's own 8-bit
+    * domain) and the dead zone RE-BASES instead of gating: positions
+    * inside it read as centred, the edge maps smoothly to centre, and
+    * full deflection still reads full scale (see axistune.h, "THE
+    * ABSOLUTE-AXIS ANSWER").  Defaults are the exact identity. */
+   {
+      "virtualjaguar_analog_deadzone_x",
+      "Analog Controller Dead Zone (X)",
+      "Analog Dead Zone (X)",
+      "Stick positions within this many ADC counts of centre (127 = full deflection) read as exactly centred. The rest of the travel is rescaled so the response is smooth at the edge and full deflection still reads full scale.",
+      NULL,
+      "input",
+      {
+         { "0",  "Off" },
+         { "4",  "4 counts (~3%)" },
+         { "8",  "8 counts (~6%)" },
+         { "12", "12 counts (~9%)" },
+         { "16", "16 counts (~13%)" },
+         { "24", "24 counts (~19%)" },
+         { "32", "32 counts (~25%)" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_deadzone_y",
+      "Analog Controller Dead Zone (Y)",
+      "Analog Dead Zone (Y)",
+      "As Analog Controller Dead Zone (X), for the Y axis (pitch, or accelerator/brake on the driving controller).",
+      NULL,
+      "input",
+      {
+         { "0",  "Off" },
+         { "4",  "4 counts (~3%)" },
+         { "8",  "8 counts (~6%)" },
+         { "12", "12 counts (~9%)" },
+         { "16", "16 counts (~13%)" },
+         { "24", "24 counts (~19%)" },
+         { "32", "32 counts (~25%)" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_offset_x",
+      "Analog Controller Offset (X)",
+      "Analog Offset (X)",
+      "Subtracts a constant (in ADC counts) from every X sample, in host orientation before any device convention. Cancels a stick that rests off-centre; a centred stick is moved by it, which is the point.",
+      NULL,
+      "input",
+      {
+         { "-16", "-16" },
+         { "-8",  "-8" },
+         { "-4",  "-4" },
+         { "-2",  "-2" },
+         { "0",   "Off" },
+         { "2",   "+2" },
+         { "4",   "+4" },
+         { "8",   "+8" },
+         { "16",  "+16" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_offset_y",
+      "Analog Controller Offset (Y)",
+      "Analog Offset (Y)",
+      "As Analog Controller Offset (X), for the Y axis.",
+      NULL,
+      "input",
+      {
+         { "-16", "-16" },
+         { "-8",  "-8" },
+         { "-4",  "-4" },
+         { "-2",  "-2" },
+         { "0",   "Off" },
+         { "2",   "+2" },
+         { "4",   "+4" },
+         { "8",   "+8" },
+         { "16",  "+16" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_exponent_x",
+      "Analog Controller Response Curve (X)",
+      "Analog Response Curve (X)",
+      "Response exponent for the X axis, anchored at full deflection: an exponent above 1.00 gives finer control near centre while full deflection still reads full scale. Unlike the mouse/rotary curves this costs no top speed, so there is no paired sensitivity control.",
+      NULL,
+      "input",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_analog_exponent_y",
+      "Analog Controller Response Curve (Y)",
+      "Analog Response Curve (Y)",
+      "As Analog Controller Response Curve (X), for the Y axis.",
       NULL,
       "input",
       {

@@ -64,6 +64,18 @@ typedef struct
    uint8_t      btn_left;
    uint8_t      btn_right;
    uint8_t      rotary_id;   /* option-derived; see InputDevSetRotaryID */
+   /* Analog / driving controller (#437) -- TR10 bank-switching device.
+    * an_bank / an_row are the microcontroller's bank counter and the row
+    * code it last saw on its socket; an_x / an_y are the latched 8-bit
+    * ADC values (128 = centre); an_sw is the INPUTDEV_SW_* mask.  All
+    * five are machine-visible and serialized.  an_engaged is the
+    * host-routing liveness latch (inputdev.h, ENGAGEMENT) and is NOT. */
+   uint8_t      an_bank;
+   uint8_t      an_row;      /* last row decoded, 0-3; 0xFF = none yet */
+   uint8_t      an_x;
+   uint8_t      an_y;
+   uint8_t      an_sw;
+   uint8_t      an_engaged;
 } InputDevPort;
 
 static InputDevPort inputdev_ports[2];
@@ -79,6 +91,13 @@ static int inputdev_is_mouse(InputDevType t)
    return (t == INPUTDEV_MOUSE_ST
            || t == INPUTDEV_MOUSE_AMIGA_ADAPTER
            || t == INPUTDEV_MOUSE_AMIGA_ON_ST) ? 1 : 0;
+}
+
+/* Analog stick and driving controller are one wire protocol (inputdev.h);
+ * the two types differ only in how libretro.c sources host values. */
+static int inputdev_is_analog(InputDevType t)
+{
+   return (t == INPUTDEV_ANALOG || t == INPUTDEV_DRIVING) ? 1 : 0;
 }
 
 /* Dynamic (machine-visible) state only: encoders, button latches and the
@@ -97,6 +116,15 @@ static void inputdev_reset_dynamic(void)
       QuadReset(&inputdev_ports[p].y);
       inputdev_ports[p].btn_left  = 0;
       inputdev_ports[p].btn_right = 0;
+      /* Analog device (#437): the microcontroller powers up in bank 0
+       * with nothing latched.  Engagement clears too -- the port has to
+       * prove live again after a reset, exactly as after a type change. */
+      inputdev_ports[p].an_bank    = 0;
+      inputdev_ports[p].an_row     = 0xFF;
+      inputdev_ports[p].an_x       = 128;
+      inputdev_ports[p].an_y       = 128;
+      inputdev_ports[p].an_sw      = 0;
+      inputdev_ports[p].an_engaged = 0;
    }
 
    inputdev_armed = 0;
@@ -150,14 +178,15 @@ void InputDevSetType(int port, InputDevType type)
    if (port < 0 || port > 1)
       return;
 
-   /* Mouse is port 2 only (see inputdev.h); the rotary is valid on both.
-    * Anything else is a plain pad, i.e. not attached. */
+   /* Mouse is port 2 only (see inputdev.h); the rotary and the analog /
+    * driving controller (#437 -- TR10 restricts neither socket) are valid
+    * on both.  Anything else is a plain pad, i.e. not attached. */
    if (inputdev_is_mouse(type))
    {
       if (port != 1)
          type = INPUTDEV_PAD;
    }
-   else if (type != INPUTDEV_ROTARY)
+   else if (type != INPUTDEV_ROTARY && !inputdev_is_analog(type))
       type = INPUTDEV_PAD;
 
    if (inputdev_ports[port].type != type)
@@ -167,6 +196,15 @@ void InputDevSetType(int port, InputDevType type)
       QuadReset(&inputdev_ports[port].y);
       inputdev_ports[port].btn_left  = 0;
       inputdev_ports[port].btn_right = 0;
+      /* Analog dynamic state is per-plug too: a freshly attached
+       * controller is in bank 0 with nothing latched, and has to earn
+       * engagement again (inputdev.h). */
+      inputdev_ports[port].an_bank    = 0;
+      inputdev_ports[port].an_row     = 0xFF;
+      inputdev_ports[port].an_x       = 128;
+      inputdev_ports[port].an_y       = 128;
+      inputdev_ports[port].an_sw      = 0;
+      inputdev_ports[port].an_engaged = 0;
       /* The arm flag is part of the dynamic state too: without this a
        * mouse -> pad -> mouse round trip leaves a stale arm behind, worth
        * one unrequested advance on the next read.  Cleared only on a real
@@ -313,11 +351,99 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons)
    p->btn_right = (buttons & INPUTDEV_BTN_RIGHT) ? 1 : 0;
 }
 
+/* Absolute-axis conversion for the analog device (#437): libretro int16
+ * -> tuned 8-bit ADC byte.  The tuning runs in the device's own 8-bit
+ * domain (range 127) so the shared dead-zone/offset option units mean
+ * "ADC counts" here, comparable in magnitude to the relative path's
+ * "host units per poll".  `invert` flips the TUNED value -- the offset
+ * must be subtracted in host orientation first, exactly as
+ * inputdev_feed_axis does on the relative path (#474). */
+static uint8_t inputdev_analog_byte(const axis_tune *t, int32_t v16,
+                                    int invert)
+{
+   int32_t v8;
+
+   /* -32768..32767 -> -128..127, then symmetrized to -127..127 so the
+    * tuned magnitude maps cleanly onto 128 +/- 127 (byte range 1..255;
+    * TR10 forbids games from assuming the endpoints anyway). */
+   v8 = v16 / 258;
+   if (v8 >  127)  v8 =  127;
+   if (v8 < -127)  v8 = -127;
+
+   v8 = AxisTuneApplyAbs(t, v8, 127);
+
+   if (invert)
+      v8 = -v8;
+
+   return (uint8_t)(128 + v8);
+}
+
+void InputDevFeedAnalog(int port, int32_t x, int32_t y, uint32_t switches)
+{
+   InputDevPort *p;
+
+   if (port < 0 || port > 1)
+      return;
+
+   p = &inputdev_ports[port];
+
+   if (!inputdev_is_analog(p->type))
+      return;
+
+   /* TR10: +X = right (matches the libretro convention, no inversion) and
+    * +Y = forward / accelerator, which is libretro's -Y -- hence the
+    * inversion, applied to the tuned value. */
+   p->an_x       = inputdev_analog_byte(&p->tune_x, x, 0);
+   p->an_y       = inputdev_analog_byte(&p->tune_y, y, 1);
+   p->an_sw      = (uint8_t)(switches & 0xFF);
+   p->an_engaged = 1;
+}
+
 void InputDevArm(void)
 {
    if (!inputdev_attach_mask)
       return;
    inputdev_armed = 1;
+}
+
+void InputDevRowSelect(uint8_t row0, uint8_t row1)
+{
+   uint8_t  row[2];
+   unsigned p;
+
+   if (!inputdev_attach_mask)
+      return;
+
+   row[0] = row0;
+   row[1] = row1;
+
+   for (p = 0; p < 2; p++)
+   {
+      InputDevPort *dp = &inputdev_ports[p];
+
+      if (!inputdev_is_analog(dp->type) || !dp->an_engaged)
+         continue;
+
+      /* TR10: "Bank switching is done automatically when the controller
+       * sees a transition from row 3 to row 0 (of the same controller
+       * socket)", and interleaved reads of OTHER sockets "must not cause
+       * the controller to lose synchronisation or perform any bank
+       * switching" -- TR10's own driver recipe reads a bank from one
+       * controller, banks from others, then comes back.  While another
+       * socket is addressed (or the output enable is clear), OUR lines
+       * sit at the pulled-up no-row pattern; the microcontroller treats
+       * that as idle and REMEMBERS the last row it decoded, so a
+       * row-3 ... idle ... row-0 sequence still switches.  Hence a
+       * non-row code is skipped, not recorded.  Only two banks exist on
+       * this device, so the cycle is a toggle. */
+      if (row[p] > 3)
+         continue;
+
+      if (dp->an_row == 3 && row[p] == 0)
+         dp->an_bank ^= 1;
+
+      dp->an_row = row[p];
+   }
 }
 
 /* Write a rotary port's current phase into its pad slots.
@@ -431,14 +557,67 @@ void InputDevClock(uint8_t row0, uint8_t row1)
       inputdev_armed = 0;
 }
 
-uint16_t InputDevOverlayF14000(uint16_t data)
+/* The nibble an engaged analog controller drives on its four J lines for
+ * the current row and bank, as logic levels (bit i of the return = line
+ * J+i).  TR10 Bank 0/Bank 1 tables, restated in inputdev.h. */
+static uint8_t inputdev_analog_nibble(const InputDevPort *p, uint8_t row)
+{
+   if (p->an_bank == 0)
+   {
+      switch (row)
+      {
+         case 0:  return (uint8_t)(p->an_x & 0x0F);        /* X0..X3 */
+         case 1:  return (uint8_t)((p->an_x >> 4) & 0x0F); /* X4..X7 */
+         case 2:  return (uint8_t)(p->an_y & 0x0F);        /* Y0..Y3 */
+         default: return (uint8_t)((p->an_y >> 4) & 0x0F); /* Y4..Y7 */
+      }
+   }
+
+   /* Bank 1: rows 1-3 read all 1s; row 0 carries the hat / gear shift
+    * switches, active low (pressed pulls the line to 0). */
+   if (row != 0)
+      return 0x0F;
+
+   return (uint8_t)(0x0F
+                    & ~((p->an_sw & INPUTDEV_SW_UP    ? 1u : 0u)
+                       | (p->an_sw & INPUTDEV_SW_DOWN  ? 2u : 0u)
+                       | (p->an_sw & INPUTDEV_SW_LEFT  ? 4u : 0u)
+                       | (p->an_sw & INPUTDEV_SW_RIGHT ? 8u : 0u)));
+}
+
+uint16_t InputDevOverlayF14000(uint16_t data, uint8_t row0, uint8_t row1)
 {
    const MouseWiring *w;
    InputDevPort *p;
+   uint8_t  row[2];
+   unsigned q;
    int ax, bx, ay, by;
 
    if (!inputdev_attach_mask)
       return data;
+
+   row[0] = row0;
+   row[1] = row1;
+
+   /* Analog / driving controller (#437): drives its port's four J lines
+    * ($F14000 bits 8-11 for port 1, 12-15 for port 2) whenever its own
+    * row select is asserted.  The matrix contributes nothing there (an
+    * engaged analog port's pad slots are suppressed by update_input, and
+    * the bus default is all-high), so clearing the zero-level lines is a
+    * complete drive, same AND-only shape as the mouse overlay below. */
+   for (q = 0; q < 2; q++)
+   {
+      InputDevPort *ap = &inputdev_ports[q];
+      uint8_t nib;
+
+      if (!inputdev_is_analog(ap->type) || !ap->an_engaged)
+         continue;
+      if (row[q] > 3)
+         continue;
+
+      nib = inputdev_analog_nibble(ap, row[q]);
+      data &= (uint16_t)~(((uint16_t)(~nib & 0x0F)) << (8 + 4 * q));
+   }
 
    p = &inputdev_ports[1];
    if (!inputdev_is_mouse(p->type))
@@ -488,6 +667,62 @@ uint16_t InputDevOverlayF14002(uint16_t data, uint8_t row0, uint8_t row1)
        && inputdev_ports[1].rotary_id && row1 == 2)
       data &= (uint16_t)~(1u << 2);
 
+   /* Analog / driving controller (#437): the B and C columns.
+    *
+    * Port 1's columns are B0 (bit 0, the C column) and B1 (bit 1, the
+    * button column); port 2's are B2 (bit 2) and B3 (bit 3).
+    *
+    * C column: in row 0 it is the BANK FLAG -- "It will always be zero in
+    * Bank 0, while all other banks will return 1" (TR10, Reading Bank
+    * Switching Controllers).  In rows 1-3 it carries C1/C2/C3, whose
+    * row assignment differs by port (the same port-headed TR10 tables the
+    * rotary ID above uses): port 1 reads C1/C2/C3 in rows 1/2/3, port 2
+    * reads C1/C3/C2 in rows 1/2/3.  The values are fixed -- C1 = 1,
+    * C2 = 0, C3 = 1, i.e. C2 C3 = 0 1 = "Bank Switching" -- so the only
+    * bit to clear is C2: row 2 on port 1, row 3 on port 2.
+    *
+    * B column: bank 0 carries buttons A/B/C/D in rows 0-3, active low;
+    * bank 1 reads 1 in every row, which is the "1111 = Analogue Joystick
+    * or Driving Controller" type identifier among the bank-switching
+    * types.  All-high needs no clearing. */
+   {
+      unsigned q;
+      uint8_t  arow[2];
+
+      arow[0] = row0;
+      arow[1] = row1;
+
+      for (q = 0; q < 2; q++)
+      {
+         InputDevPort *ap    = &inputdev_ports[q];
+         unsigned      c_bit = 0 + 2 * q;
+         unsigned      b_bit = 1 + 2 * q;
+         uint8_t       r     = arow[q];
+
+         if (!inputdev_is_analog(ap->type) || !ap->an_engaged)
+            continue;
+         if (r > 3)
+            continue;
+
+         if (r == 0)
+         {
+            if (ap->an_bank == 0)
+               data &= (uint16_t)~(1u << c_bit);
+         }
+         else if (r == (q == 0 ? 2u : 3u))
+            data &= (uint16_t)~(1u << c_bit);   /* C2 = 0 */
+
+         if (ap->an_bank == 0)
+         {
+            static const uint8_t sw_of_row[4] = {
+               INPUTDEV_SW_A, INPUTDEV_SW_B, INPUTDEV_SW_C, INPUTDEV_SW_D
+            };
+            if (ap->an_sw & sw_of_row[r])
+               data &= (uint16_t)~(1u << b_bit);
+         }
+      }
+   }
+
    /* The mouse is row-blind, so its own contribution ignores both rows. */
    p = &inputdev_ports[1];
    if (!inputdev_is_mouse(p->type))
@@ -526,6 +761,19 @@ size_t InputDevStateSave(uint8_t *buf)
    }
 
    STATE_SAVE_VAR(buf, inputdev_armed);
+
+   /* Analog controller (#437), appended so the pre-analog field order is
+    * untouched.  Machine-visible only: bank, last row, latched ADC bytes
+    * and switch mask; engagement is host-routing-derived and stays out
+    * (inputdev.h). */
+   for (p = 0; p < 2; p++)
+   {
+      STATE_SAVE_VAR(buf, inputdev_ports[p].an_bank);
+      STATE_SAVE_VAR(buf, inputdev_ports[p].an_row);
+      STATE_SAVE_VAR(buf, inputdev_ports[p].an_x);
+      STATE_SAVE_VAR(buf, inputdev_ports[p].an_y);
+      STATE_SAVE_VAR(buf, inputdev_ports[p].an_sw);
+   }
 
    return (size_t)(buf - start);
 }
@@ -571,6 +819,24 @@ size_t InputDevStateLoad(const uint8_t *buf)
    }
 
    STATE_LOAD_VAR(buf, inputdev_armed);
+
+   /* Analog controller (#437).  A state is untrusted input: the bank has
+    * exactly two values and the row is 0-3 or the none-yet sentinel, so
+    * anything else is coerced.  The ADC bytes and the switch mask are
+    * full-range by construction.  A pre-extension v12 develop state
+    * reads the zero-fill tail here (see inputdev.h) -- bank 0, row 0,
+    * zeroed latches -- inert unless a device is selected and engaged. */
+   for (p = 0; p < 2; p++)
+   {
+      STATE_LOAD_VAR(buf, inputdev_ports[p].an_bank);
+      STATE_LOAD_VAR(buf, inputdev_ports[p].an_row);
+      STATE_LOAD_VAR(buf, inputdev_ports[p].an_x);
+      STATE_LOAD_VAR(buf, inputdev_ports[p].an_y);
+      STATE_LOAD_VAR(buf, inputdev_ports[p].an_sw);
+      inputdev_ports[p].an_bank &= 1;
+      if (inputdev_ports[p].an_row > 3)
+         inputdev_ports[p].an_row = 0xFF;
+   }
 
    return (size_t)(buf - start);
 }

@@ -80,8 +80,9 @@ typedef enum {
 
 /* Mirrors INPUTDEV_STATE_SIZE in src/jerry/inputdev.h, restated here
  * on purpose: 2 ports x (2 axes x (int32 backlog + int32 carry +
- * uint8 phase) + 2 button latches) + 1 armed byte. */
-#define INPUTDEV_STATE_SIZE_EXPECTED 41
+ * uint8 phase) + 2 button latches) + 1 armed byte, plus the #437 analog
+ * trailer: 2 ports x (bank + last row + ADC X + ADC Y + switch mask). */
+#define INPUTDEV_STATE_SIZE_EXPECTED 51
 
 /* Port-2 socket-0 row codes: rows 0, 1, 2, 3 (mapping doc section 2). */
 static const uint16_t row_words[4] = { 0x817F, 0x81BF, 0x81DF, 0x81EF };

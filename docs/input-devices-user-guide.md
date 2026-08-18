@@ -189,10 +189,54 @@ row scans. We reproduce that, so three odd-looking behaviours are faithful:
 All three happen on real hardware with a real adapter. They are commented as
 such at the code sites so nobody "fixes" them later.
 
+## Analog / driving controller (#437)
+
+Atari specified — but **never released** — an analog controller: a
+bank-switching matrix device with its own ADC chip, documented in the Jaguar
+Technical Reference V10 ("Analogue Joystick and 'Driving' Controllers",
+"Reading Bank Switching Controllers"). The core emulates that specification
+faithfully on both ports, as two option values that are one wire protocol:
+
+| Option value | Host mapping |
+|---|---|
+| *Analog Joystick (bank-switching)* | Left stick X/Y (stick forward = TR10 +Y). A/B/C on the pad's A/B/Y, D on X, hat on the d-pad. |
+| *Driving Controller (bank-switching)* | Left stick X = steering; R2/L2 analog triggers = accelerator/brake (stick Y as fallback). D-pad up/down = gear shift. |
+
+Facts to know before selecting one:
+
+- **No released title reads this protocol.** The research for #437
+  established that the controller never shipped and no commercial software
+  polls it (BigPEmu's Checkered Flag "analog" support is a game *patch*, not
+  this device). It exists here for homebrew and BigPEmu parity, and its
+  verification is the synthetic register-level suite
+  `test/tools/analog_decode_test.c` — there is no game to boot against.
+- **The port stays a RetroPad until the stick moves** (the same liveness rule
+  as the mouse). Consequence: a title that probes controller types once at
+  boot will see a standard pad unless you deflect the stick first.
+- Per-axis tuning (`virtualjaguar_analog_*`) goes through the same shared
+  layer as the mouse and rotary, but with *absolute* semantics: units are ADC
+  counts (127 = full deflection), the dead zone re-bases smoothly instead of
+  gating, and the response curve is anchored at full deflection (so it costs
+  no range and there is no sensitivity option).
+
+Two neighbouring findings, recorded so they stay asked-and-answered:
+
+- **"ADC-Reg" (BigPEmu's third analog type) is out of scope as unsourced.**
+  Early *development* Jaguars had an 8-bit ADC on the motherboard (the
+  connector's PAD0X/PAD0Y/PAD1X/PAD1Y pins; GPIO5 `$F17C00-$F17FFF` is
+  labelled "Paddle Interface" in TRM rev 8) — but TR10 records it as
+  **deleted** from production hardware, no document we hold specifies the
+  register layout, and the only known software (the JANALOG.ABS test) targets
+  dev units. Emulating it would mean inventing register behaviour; if a
+  source surfaces, it can be added.
+- **Head tracker (Jaguar VR):** a bank-switching type ID exists for it in
+  TR10, but no released software uses it (Missile Command 3D was a
+  prototype). Out of scope, per the epic.
+
 ## Not yet implemented
 
-Lightgun support (#438) and analog / driving controllers (#437) are open.
-The **Tempest rotary** (#436) and per-axis tuning (#439) have since shipped —
+Lightgun support (#438) is open. The **Tempest rotary** (#436), analog /
+driving controllers (#437) and per-axis tuning (#439) have since shipped —
 see [Core options](#core-options) above.
 
 ## See also

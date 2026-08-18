@@ -231,6 +231,15 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 #define RETRO_DEVICE_JAG_MOUSE_AMIGA     RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 #define RETRO_DEVICE_JAG_MOUSE_AMIGA_AD  RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 2)
 #define RETRO_DEVICE_JAG_ROTARY          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 3)
+/* The TR10 bank-switching analog / driving controller (#437) is a
+ * RETRO_DEVICE_ANALOG subclass: it is a genuine absolute-stick device.
+ * A PLAIN RETRO_DEVICE_ANALOG deliberately maps to the standard pad in
+ * retro_set_controller_port_device -- users routinely pick "RetroPad
+ * w/ Analog" for stick-to-dpad, and silently swapping the Jaguar pad
+ * for a bank-switching peripheral no released title reads would break
+ * them.  Only the explicit subclasses attach it. */
+#define RETRO_DEVICE_JAG_ANALOG          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0)
+#define RETRO_DEVICE_JAG_DRIVING         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
 
 /* Device the frontend explicitly selected via
  * retro_set_controller_port_device, or INPUTDEV_PAD when it never did.
@@ -264,6 +273,16 @@ static int32_t      mouse_exponent_q8[2]    = { 256, 256 };
 static int32_t      rotary_deadzone         = 0;
 static int32_t      rotary_offset           = 0;
 static int32_t      rotary_exponent_q8      = 256;
+/* Analog / driving controller ladder (#437).  Shared by both ports like
+ * the rotary's, and in ADC counts (127 = full deflection) rather than
+ * host units per poll -- the tuning runs in the device's own 8-bit
+ * domain, see inputdev_analog_byte().  No sensitivity entry: on an
+ * absolute axis a linear gain only trades range for saturation, and the
+ * response exponent is the control that actually shapes it. */
+static int32_t      analog_deadzone[2]      = { 0, 0 };
+static int32_t      analog_offset[2]        = { 0, 0 };
+static int32_t      analog_exponent_q8[2]   = { 256, 256 };
+static bool         show_analog_options     = true;
 
 /* Has this port actually received non-zero mouse state from the frontend?
  *
@@ -316,6 +335,8 @@ static const char *inputdev_type_name(InputDevType t)
       case INPUTDEV_MOUSE_AMIGA_ADAPTER: return "Amiga mouse (Amiga adapter)";
       case INPUTDEV_MOUSE_AMIGA_ON_ST:   return "Amiga mouse (ST adapter)";
       case INPUTDEV_ROTARY:              return "Tempest rotary";
+      case INPUTDEV_ANALOG:              return "Analog joystick (bank-switching)";
+      case INPUTDEV_DRIVING:             return "Driving controller (bank-switching)";
       default:                           break;
    }
    return "standard joypad";
@@ -326,6 +347,11 @@ static bool inputdev_is_mouse_type(InputDevType t)
    return (t == INPUTDEV_MOUSE_ST
            || t == INPUTDEV_MOUSE_AMIGA_ADAPTER
            || t == INPUTDEV_MOUSE_AMIGA_ON_ST);
+}
+
+static bool inputdev_is_analog_type(InputDevType t)
+{
+   return (t == INPUTDEV_ANALOG || t == INPUTDEV_DRIVING);
 }
 
 /* Push the sensitivity ladder AND the per-axis tuning (#439) that belong to
@@ -346,7 +372,19 @@ static bool inputdev_is_mouse_type(InputDevType t)
  * property: its initialiser has to be a safe value, not a sentinel. */
 static void apply_port_tuning(int port)
 {
-   if (InputDevGetType(port) == INPUTDEV_ROTARY)
+   if (inputdev_is_analog_type(InputDevGetType(port)))
+   {
+      /* The analog device has no sensitivity ladder (see the statics),
+       * but the port scale is still pinned to unity so an analog ->
+       * mouse/rotary switch cannot inherit a stale multiplier -- the
+       * same hygiene the rotary branch applies to its unused Y tune. */
+      InputDevSetScale(port, 256);
+      InputDevSetTune(port, INPUTDEV_AXIS_X, analog_deadzone[0],
+                      analog_offset[0], analog_exponent_q8[0]);
+      InputDevSetTune(port, INPUTDEV_AXIS_Y, analog_deadzone[1],
+                      analog_offset[1], analog_exponent_q8[1]);
+   }
+   else if (InputDevGetType(port) == INPUTDEV_ROTARY)
    {
       InputDevSetScale(port, rotary_scale_q8);
       /* A rotary is one wheel and never reads its Y tune, but both axes are
@@ -663,6 +701,35 @@ static bool update_option_visibility(void)
       }
    }
 
+   /* Analog / driving tuning (#437) means nothing unless one of the two
+    * types is attached to a port -- same machinery as the rotary gate. */
+   {
+      static const char * const analog_keys[] = {
+         "virtualjaguar_analog_deadzone_x",
+         "virtualjaguar_analog_deadzone_y",
+         "virtualjaguar_analog_offset_x",
+         "virtualjaguar_analog_offset_y",
+         "virtualjaguar_analog_exponent_x",
+         "virtualjaguar_analog_exponent_y",
+      };
+      bool show_analog_prev = show_analog_options;
+
+      show_analog_options = (inputdev_is_analog_type(InputDevGetType(0))
+                             || inputdev_is_analog_type(InputDevGetType(1)));
+
+      if (show_analog_options != show_analog_prev)
+      {
+         option_display.visible = show_analog_options;
+         for (i = 0; i < ARRAY_SIZE(analog_keys); i++)
+         {
+            option_display.key = analog_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
+         updated = true;
+      }
+   }
+
    /* The 16bpp preview knob only means anything while texture dump is
     * enabled (#369) -- same machinery as the mouse/rotary gates above. */
    {
@@ -924,6 +991,10 @@ static InputDevType p2_device_from_option(void)
          p2 = INPUTDEV_MOUSE_AMIGA_ADAPTER;
       else if (!strcmp(var.value, "rotary"))
          p2 = INPUTDEV_ROTARY;
+      else if (!strcmp(var.value, "analog"))
+         p2 = INPUTDEV_ANALOG;
+      else if (!strcmp(var.value, "driving"))
+         p2 = INPUTDEV_DRIVING;
       /* "pad" and "auto" (with no DB row) both mean pad. */
    }
 
@@ -932,8 +1003,10 @@ static InputDevType p2_device_from_option(void)
 
 /* Port 1 controller type, same contract as p2_device_from_option().
  *
- * Port 1 offers pad or rotary only.  It needed no such helper while it was
- * pad-only -- retro_set_controller_port_device() could hardcode
+ * Port 1 offers pad, rotary, or the analog / driving controller (#437 --
+ * TR10 restricts the bank-switching device to neither socket).  It needed
+ * no such helper while it was pad-only -- retro_set_controller_port_device()
+ * could hardcode
  * INPUTDEV_PAD when the frontend released the port -- but with a rotary
  * reachable there, that hardcode would re-detach it on a frontend's
  * routine post-load JOYPAD assignment, which is exactly the bug the port-2
@@ -954,6 +1027,10 @@ static InputDevType p1_device_from_option(void)
    {
       if (!strcmp(var.value, "rotary"))
          p1 = INPUTDEV_ROTARY;
+      else if (!strcmp(var.value, "analog"))
+         p1 = INPUTDEV_ANALOG;
+      else if (!strcmp(var.value, "driving"))
+         p1 = INPUTDEV_DRIVING;
       /* "pad" and "auto" both mean pad. */
    }
 
@@ -1460,6 +1537,15 @@ static void check_variables(void)
    rotary_offset        = read_tune_units("virtualjaguar_rotary_offset");
    rotary_exponent_q8   = read_tune_exponent("virtualjaguar_rotary_exponent");
 
+   /* Analog / driving ladder (#437); units are ADC counts, see the
+    * statics.  AxisTuneSet() owns the bounds, same as the others. */
+   analog_deadzone[0]    = read_tune_units("virtualjaguar_analog_deadzone_x");
+   analog_deadzone[1]    = read_tune_units("virtualjaguar_analog_deadzone_y");
+   analog_offset[0]      = read_tune_units("virtualjaguar_analog_offset_x");
+   analog_offset[1]      = read_tune_units("virtualjaguar_analog_offset_y");
+   analog_exponent_q8[0] = read_tune_exponent("virtualjaguar_analog_exponent_x");
+   analog_exponent_q8[1] = read_tune_exponent("virtualjaguar_analog_exponent_y");
+
    /* One scale and one tuning set per port, picked by what is actually
     * plugged into it -- the two ladders are separate options because a
     * spinner and a mouse want very different multipliers. */
@@ -1766,6 +1852,89 @@ static void update_input(void)
          if (t == INPUTDEV_PAD)
             continue;
 
+         /* Analog / driving controller (#437): an ABSOLUTE device fed
+          * from RETRO_DEVICE_ANALOG, not the relative mouse path below.
+          *
+          * LIVENESS: same rule as the mouse, adapted to an absolute
+          * source.  A centred stick is indistinguishable from "no analog
+          * routed at all", so the port keeps its RetroPad -- and the
+          * device stays entirely inert, controller-type probes included
+          * (inputdev.h, ENGAGEMENT) -- until a deflection past the
+          * existing stick-to-dpad threshold proves the frontend is
+          * routing analog state.  Button presses deliberately do NOT
+          * count: they are ambiguous with pad presses.  Once live, the
+          * whole pad is suppressed (the physical device has no keypad /
+          * Pause / Option -- TR10 gives it A-D, a hat and two axes). */
+         if (inputdev_is_analog_type(t))
+         {
+            int32_t  ax, ay;
+            uint32_t sw = 0;
+
+            ax = (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
+                                         RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                                         RETRO_DEVICE_ID_ANALOG_X);
+            ay = (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
+                                         RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                                         RETRO_DEVICE_ID_ANALOG_Y);
+
+            if (t == INPUTDEV_DRIVING)
+            {
+               /* Driving skin: steering on stick X; accelerator / brake
+                * on the R2 / L2 analog triggers when the frontend
+                * reports them (0..32767 each), stick Y otherwise.  The
+                * feed convention is +y DOWN (host), which the device
+                * flips to TR10's +accelerator, so accel must arrive
+                * negative here. */
+               int32_t r2 = (int32_t)input_state_cb(player,
+                               RETRO_DEVICE_ANALOG,
+                               RETRO_DEVICE_INDEX_ANALOG_BUTTON,
+                               RETRO_DEVICE_ID_JOYPAD_R2);
+               int32_t l2 = (int32_t)input_state_cb(player,
+                               RETRO_DEVICE_ANALOG,
+                               RETRO_DEVICE_INDEX_ANALOG_BUTTON,
+                               RETRO_DEVICE_ID_JOYPAD_L2);
+
+               if (r2 || l2)
+                  ay = l2 - r2;
+            }
+
+            if (!inputdev_live[player]
+                && (ax > ANALOG_THRESHOLD || ax < -ANALOG_THRESHOLD
+                    || ay > ANALOG_THRESHOLD || ay < -ANALOG_THRESHOLD))
+            {
+               inputdev_live[player] = true;
+               LOG_INF("[input] port %d: analog controller is live, "
+                       "RetroPad released\n", player + 1);
+            }
+
+            if (inputdev_live[player])
+            {
+               /* A/B/C from the same RetroPad slots the pad maps them to
+                * (A/B/Y); D -- TR10's fourth button -- on X.  Hat (gear
+                * shift Up/Down on the driving skin) from the d-pad. */
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
+                  sw |= INPUTDEV_SW_A;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
+                  sw |= INPUTDEV_SW_B;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
+                  sw |= INPUTDEV_SW_C;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+                  sw |= INPUTDEV_SW_D;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
+                  sw |= INPUTDEV_SW_UP;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_DOWN))
+                  sw |= INPUTDEV_SW_DOWN;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_LEFT))
+                  sw |= INPUTDEV_SW_LEFT;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_RIGHT))
+                  sw |= INPUTDEV_SW_RIGHT;
+
+               memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
+               InputDevFeedAnalog((int)player, ax, ay, sw);
+            }
+            continue;
+         }
+
          dx = (int32_t)input_state_cb(player, RETRO_DEVICE_MOUSE, 0,
                                       RETRO_DEVICE_ID_MOUSE_X);
          dy      = 0;
@@ -1895,6 +2064,14 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
       case RETRO_DEVICE_JAG_ROTARY:
          type = INPUTDEV_ROTARY;
          break;
+      case RETRO_DEVICE_JAG_ANALOG:
+         type = INPUTDEV_ANALOG;
+         break;
+      case RETRO_DEVICE_JAG_DRIVING:
+         type = INPUTDEV_DRIVING;
+         break;
+      /* A plain RETRO_DEVICE_ANALOG falls through to the pad on purpose
+       * -- see the subclass definitions. */
       default:
          type = INPUTDEV_PAD;
          break;
@@ -3238,6 +3415,8 @@ void retro_init(void)
       static const struct retro_controller_description port1_devices[] = {
          { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
          { "Rotary (Tempest)", RETRO_DEVICE_JAG_ROTARY },
+         { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
+         { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
       };
       static const struct retro_controller_description port2_devices[] = {
          { "Standard Joypad",             RETRO_DEVICE_JAG_PAD },
@@ -3245,10 +3424,12 @@ void retro_init(void)
          { "Amiga Mouse (ST adapter)",    RETRO_DEVICE_JAG_MOUSE_AMIGA },
          { "Amiga Mouse (Amiga adapter)", RETRO_DEVICE_JAG_MOUSE_AMIGA_AD },
          { "Rotary (Tempest)",            RETRO_DEVICE_JAG_ROTARY },
+         { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
+         { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
       };
       static const struct retro_controller_info ports[] = {
-         { port1_devices, 2 },
-         { port2_devices, 5 },
+         { port1_devices, 4 },
+         { port2_devices, 7 },
          { NULL, 0 },
       };
 
@@ -3322,6 +3503,13 @@ void retro_deinit(void)
    rotary_deadzone         = 0;
    rotary_offset           = 0;
    rotary_exponent_q8      = 256;
+   analog_deadzone[0]      = 0;
+   analog_deadzone[1]      = 0;
+   analog_offset[0]        = 0;
+   analog_offset[1]        = 0;
+   analog_exponent_q8[0]   = 256;
+   analog_exponent_q8[1]   = 256;
+   show_analog_options     = true;
    headroom_logged         = false;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
