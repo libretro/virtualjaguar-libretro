@@ -43,6 +43,84 @@
  * mouse's row-blind overlay.  Two peripherals, one encoder, two entirely
  * different assertion mechanisms.
  *
+ * THE ANALOG / DRIVING CONTROLLER IS A BANK-SWITCHING MATRIX DEVICE (#437)
+ * ========================================================================
+ * TR10 sections "Analogue Joystick and 'Driving' Controllers",
+ * "Identifying Controller Types" and "Reading Bank Switching Controllers"
+ * are the complete wire spec, and the first surprise is that there is no
+ * console-side ADC in it AT ALL: "Early versions of the Jaguar included
+ * an 8 bit ADC on the motherboard.  This has been deleted -- analogue
+ * controllers now require their own ADC chip."  The controller carries a
+ * microcontroller (Atari's prototype used a 68HC05P9) that digitises the
+ * pots itself and answers the ordinary $F14000/$F14002 row scan with
+ * data bits instead of switch closures.  So this device, like the rotary,
+ * is row-select-driven matrix synthesis -- no new bus plumbing.
+ *
+ * The layout, per TR10's Bank 0 / Bank 1 tables (port 1 columns are
+ * B0/B1/J8..J11, port 2 columns B2/B3/J12..J15; J8..J15 are $F14000 bits
+ * 8..15, B0..B3 are $F14002 bits 0..3):
+ *
+ *   Bank 0   C column     B column   J+0  J+1  J+2  J+3
+ *   Row 0    0 (bank id)  button A   X0   X1   X2   X3
+ *   Row 1    C1 = 1       button B   X4   X5   X6   X7
+ *   Row 2    (C table)    button C   Y0   Y1   Y2   Y3
+ *   Row 3    (C table)    button D   Y4   Y5   Y6   Y7
+ *
+ *   Bank 1   C column     B column   J+0  J+1   J+2   J+3
+ *   Row 0    1 (bank id)  1          Up   Down  Left  Right
+ *   Rows 1-3 (C table)    1          1    1     1     1
+ *
+ * X/Y are the 8-bit ADC values presented as logic levels (NOT active-low
+ * switches); the buttons and the hat ARE switches and read active low.
+ * C2 C3 = 0 1 identifies "Bank Switching" (see the rotary's C-row table
+ * below for which row carries which C bit on which port), and the B-column
+ * bits of the last bank -- all 1s across rows 3..0 -- identify "Analogue
+ * Joystick or Driving Controller" among the bank-switching types.
+ *
+ * THE BANK SWITCHES ON THE ROW SELECT, NOT ON READS: "Bank switching is
+ * done automatically when the controller sees a transition from row 3 to
+ * row 0 (of the same controller socket)."  The row select is a latched
+ * output the 68K WRITES, so the device clocks its bank from
+ * InputDevRowSelect() (called on every $F14000 write), not from
+ * InputDevClock().  A nibble that is not a socket-0 row code (or a write
+ * with the output enable bit clear) breaks the row-3 -> row-0 adjacency,
+ * exactly as the physical lines leaving the row-code space would.
+ *
+ * TWO DELIBERATE SIMPLIFICATIONS, both supersets of the spec:
+ *   1. TR10 requires ~25us of settling per row and ~300us per bank
+ *      change, and tells games to delay before reading.  The emulated
+ *      controller answers instantly; a compliant driver's delay loop just
+ *      spins over valid data.
+ *   2. Real controllers have arbitrary centres and ranges (TR10's example
+ *      driving controller reads 160 centred / 245 hard right / 75 hard
+ *      left, drifting with temperature) and games MUST calibrate.  The
+ *      emulated device is ideal -- 128 centred, symmetric -- which every
+ *      calibration routine handles trivially.
+ *
+ * NO RELEASED TITLE READS THIS PROTOCOL (research for #437: Atari never
+ *  shipped the controller; the one known consumer of console-side analog
+ * input, JANALOG.ABS, targets the deleted early-board ADC instead).  The
+ * device exists for homebrew and for parity with BigPEmu's analog /
+ * driving types, and its verification is therefore the synthetic
+ * register-level suite in test/tools/analog_decode_test.c, clearly
+ * labelled as such.
+ *
+ * ANALOG vs DRIVING: identical on the wire -- TR10 defines ONE protocol
+ * and two interpretations (stick: X=roll +right, Y=pitch +forward;
+ * driving: X=steering +right, Y=accelerator +/brake -).  The two
+ * InputDevTypes differ only in how libretro.c sources host values.
+ *
+ * ENGAGEMENT (the liveness guardrail, core side).  A configured analog
+ * device must not steal the port from a pad the frontend is actually
+ * routing (same rule as the mouse's inputdev_live).  Until the first
+ * InputDevFeedAnalog() call the device drives NOTHING -- overlays and
+ * bank clock inert, the port bit-identical to a pad -- and libretro.c
+ * only starts feeding once the stick has proven live.  Consequence worth
+ * stating: a title that probes controller types once at boot sees a
+ * standard pad unless the stick moves first; deflect the stick during
+ * boot (or before the title's controller menu) to be identified.  Like
+ * inputdev_live, engagement is host-routing-derived and NOT serialized.
+ *
  * PORT SCOPE
  * ==========
  * The mouse is a PORT 2 device only.  The adapter is vendor-documented as
@@ -77,7 +155,9 @@ typedef enum
    INPUTDEV_MOUSE_ST,            /* case 1: ST adapter + ST mouse (also PS/2)   */
    INPUTDEV_MOUSE_AMIGA_ADAPTER, /* case 2: dedicated Amiga adapter + Amiga     */
    INPUTDEV_MOUSE_AMIGA_ON_ST,   /* case 3: Amiga mouse in an ST-wired adapter  */
-   INPUTDEV_ROTARY               /* TR10 "Tempest" rotary (#436)                */
+   INPUTDEV_ROTARY,              /* TR10 "Tempest" rotary (#436)                */
+   INPUTDEV_ANALOG,              /* TR10 bank-switching analogue stick (#437)   */
+   INPUTDEV_DRIVING              /* same wire protocol, driving skin (#437)     */
 } InputDevType;
 
 void InputDevInit(void);
@@ -94,6 +174,24 @@ int          InputDevAnyAttached(void);  /* 0 => bit-identical to pad-only */
 #define INPUTDEV_BTN_LEFT   0x01
 #define INPUTDEV_BTN_RIGHT  0x02
 void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons);
+
+/* Analog / driving feed (#437).  x and y are ABSOLUTE positions in the
+ * libretro int16 convention (-32768..32767, +x right, +y DOWN); the
+ * device applies the per-axis tuning in host orientation and THEN flips Y
+ * to TR10's +forward/+accelerator -- same offset-before-inversion order
+ * the relative path uses, and for the same #474 reason.  `switches` is a
+ * mask of INPUTDEV_SW_*; the hat doubles as the driving controller's
+ * gear shift (Up/Down) and Spare 1/2 per TR10.  First call marks the
+ * device ENGAGED (see the header comment). */
+#define INPUTDEV_SW_A      0x01
+#define INPUTDEV_SW_B      0x02
+#define INPUTDEV_SW_C      0x04
+#define INPUTDEV_SW_D      0x08
+#define INPUTDEV_SW_UP     0x10
+#define INPUTDEV_SW_DOWN   0x20
+#define INPUTDEV_SW_LEFT   0x40
+#define INPUTDEV_SW_RIGHT  0x80
+void InputDevFeedAnalog(int port, int32_t x, int32_t y, uint32_t switches);
 
 /* Sensitivity, Q8 (256 == 1.0), from the core options. */
 void InputDevSetScale(int port, int32_t scale_q8);
@@ -227,8 +325,18 @@ void InputDevSetRotaryID(int port, int reports_rotary);
  * cannot distinguish "port 1 row 0" from "port 1 not addressed" (that
  * port's row-0 mask is 0xFFFF, i.e. it clears nothing). */
 void     InputDevArm(void);                        /* $F14000 write          */
+/* Row-select change notification (#437), called from JoystickWriteWord on
+ * every offset-0 write with the DECODED socket-0 row per port (0-3, or
+ * 0xFF when that nibble is not a socket-0 code or the output enable bit
+ * is clear).  This is the analog controller's bank clock -- TR10: banks
+ * switch on the row-3 -> row-0 transition of the device's own socket --
+ * and a no-op for every other device type. */
+void     InputDevRowSelect(uint8_t row0, uint8_t row1);
 void     InputDevClock(uint8_t row0, uint8_t row1);/* $F14000 read, offset 0 */
-uint16_t InputDevOverlayF14000(uint16_t data);
+/* row0/row1: decoded socket-0 row per port, as in InputDevOverlayF14002.
+ * The mouse ignores them (row-blind); the analog controller (#437) needs
+ * them because its J-line nibble is a different slice of X/Y per row. */
+uint16_t InputDevOverlayF14000(uint16_t data, uint8_t row0, uint8_t row1);
 /* row0/row1 are the decoded socket-0 row (0-3) for each port, or 0xFF
  * when that port's nibble is not a socket-0 code.  The mouse ignores them
  * -- it is row-blind -- but the rotary's C2/C3 controller-type reporting
@@ -254,8 +362,22 @@ uint16_t InputDevOverlayF14002(uint16_t data, uint8_t row0, uint8_t row1);
  * in this chunk; its published phase lives in joypadNButtons[], which
  * JoystickStateSave() already serializes; and the controller-type ID flag
  * is option-derived like the scale.  Hence no STATE_VERSION bump beyond
- * the v12 this chunk already introduced. */
-#define INPUTDEV_STATE_SIZE 41
+ * the v12 this chunk already introduced.
+ *
+ * The analog controller (#437) DOES grow the chunk, by 5 bytes per port:
+ * bank, last observed row, the latched X/Y ADC bytes and the switch mask
+ * are all machine-visible (the bank decides which table a read decodes
+ * from, and TR10's own driver recipe -- "read all banks into a table,
+ * find bank 0 by the flag bit" -- depends on it surviving a rollback).
+ * v12 is still develop-only (v3.3.0 shipped v11), so per the
+ * one-bump-per-release policy the v12 layout is extended IN PLACE rather
+ * than minting a v13; a pre-extension develop state loads these ten
+ * bytes from the zero-fill tail -- bank 0, row 0, zeroed latches --
+ * which is inert unless an analog device is both selected and engaged,
+ * and the first frame's feed overwrites the latches anyway.  Engagement
+ * itself is host-routing-derived and deliberately NOT saved, same
+ * argument as libretro.c's inputdev_live. */
+#define INPUTDEV_STATE_SIZE 51
 size_t InputDevStateSave(uint8_t *buf);
 size_t InputDevStateLoad(const uint8_t *buf);
 

@@ -928,7 +928,8 @@ clean:
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/tuning_identity \
 		test/tools/blitter_static_leak \
 		test/test_quadrature test/test_axistune \
 		test/.skipped-checks
@@ -987,7 +988,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
-		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/tuning_identity \
 		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
@@ -1283,6 +1285,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# two-controller Pause unlock, the C2/C3 ID bits and a savestate
 	@# round-trip mid-rotation.
 	./test/tools/rotary_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# TR10 bank-switching analog / driving controller (#437): NO RELEASED
+	@# TITLE reads this protocol, so this synthetic register-level suite IS
+	@# the device's verification (the tool's header says so at length): a
+	@# TR10-faithful driver scans both banks out of $F14000/$F14002 and
+	@# asserts the layout, the bank cycling (incl. other-socket interleave
+	@# immunity), the type ID bits, the engagement guardrail, the absolute
+	@# tuning semantics and the extended v12 savestate chunk.
+	./test/tools/analog_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Per-axis input tuning (#439), no core: the identity at defaults over
 	@# the whole int16 range, the dead zone as a gate rather than a re-base,
 	@# the curve's fixed point at QUAD_MAX_BACKLOG and its exact values.
@@ -1692,6 +1702,13 @@ test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/rotary_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/analog_decode_test: test/tools/analog_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/analog_decode_test.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

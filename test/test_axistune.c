@@ -399,6 +399,122 @@ static void test_set_clamps(void)
          "the clamped ceiling exponent still passes a 1-unit sample");
 }
 
+/* ---- the ABSOLUTE path (#437) --------------------------------------- *
+ *
+ * AxisTuneApplyAbs answers the question this header deferred to the first
+ * absolute consumer: on a POSITION the dead zone RE-BASES (edge maps to
+ * centre, full deflection preserved), the exponent anchors at the
+ * caller's range, and raw == 0 is a real sample -- fixed by dead zone and
+ * exponent, moved only by offset.  See "THE ABSOLUTE-AXIS ANSWER" in
+ * axistune.h. */
+
+static void test_abs_identity(void)
+{
+   axis_tune t;
+   int32_t   raw;
+   int       ok = 1;
+
+   printf("absolute path: identity over the whole domain\n");
+
+   AxisTuneReset(&t);
+   for (raw = -127; raw <= 127; raw++)
+      if (AxisTuneApplyAbs(&t, raw, 127) != raw)
+         ok = 0;
+   check(ok, "identity tune returns every position in [-127,127] unchanged");
+
+   check(AxisTuneApplyAbs(&t, 500, 127) == 127
+         && AxisTuneApplyAbs(&t, -500, 127) == -127,
+         "out-of-domain input is clamped, even by the identity");
+}
+
+static void test_abs_deadzone_rebases(void)
+{
+   axis_tune t;
+   int32_t   prev, raw, out;
+   int       ok;
+
+   printf("absolute path: dead zone re-bases (the deferred question)\n");
+
+   AxisTuneSet(&t, 16, 0, 256);
+
+   check(AxisTuneApplyAbs(&t, 0, 127) == 0,   "centre stays centred");
+   check(AxisTuneApplyAbs(&t, 16, 127) == 0,  "the dead-zone edge reads centred");
+   check(AxisTuneApplyAbs(&t, 10, 127) == 0
+         && AxisTuneApplyAbs(&t, -10, 127) == 0,
+         "positions inside the zone read centred, both signs");
+
+   /* THE RE-BASE ASSERTION: just past the edge the output is small, not a
+    * step to the edge value.  A gate implementation returns 17 here. */
+   out = AxisTuneApplyAbs(&t, 17, 127);
+   check(out >= 1 && out <= 2,
+         "one count past the edge is a small value, not a 17-count step");
+
+   check(AxisTuneApplyAbs(&t, 127, 127) == 127
+         && AxisTuneApplyAbs(&t, -127, 127) == -127,
+         "full deflection still reads full scale after re-basing");
+
+   /* Monotone across the whole travel: a re-base with a dip would read
+    * as steering that stalls mid-turn. */
+   ok   = 1;
+   prev = 0;
+   for (raw = 0; raw <= 127; raw++)
+   {
+      out = AxisTuneApplyAbs(&t, raw, 127);
+      if (out < prev)
+         ok = 0;
+      prev = out;
+   }
+   check(ok, "re-based response is monotone non-decreasing");
+
+   /* Degenerate: a zone covering the whole travel gates everything and
+    * must not divide by zero. */
+   AxisTuneSet(&t, AXISTUNE_REF, 0, 256);
+   check(AxisTuneApplyAbs(&t, 40, AXISTUNE_REF) == 0,
+         "dz == range gates the whole travel without dividing by zero");
+}
+
+static void test_abs_offset_moves_centre(void)
+{
+   axis_tune t;
+
+   printf("absolute path: offset is the ONLY field that moves the centre\n");
+
+   AxisTuneSet(&t, 0, 8, 256);
+   check(AxisTuneApplyAbs(&t, 0, 127) == -8,
+         "raw 0 is a SAMPLE here: a +8 offset moves rest to -8 "
+         "(no relative-style raw==0 early-out)");
+   check(AxisTuneApplyAbs(&t, 8, 127) == 0,
+         "a stick resting at +8 is re-centred exactly");
+
+   /* Dead zone and exponent fix the centre. */
+   AxisTuneSet(&t, 24, 0, 512);
+   check(AxisTuneApplyAbs(&t, 0, 127) == 0,
+         "dead zone + exponent leave the centre fixed");
+}
+
+static void test_abs_curve_anchor(void)
+{
+   axis_tune t;
+   int32_t   out;
+
+   printf("absolute path: curve anchored at full deflection\n");
+
+   AxisTuneSet(&t, 0, 0, 512);   /* e = 2.0 */
+
+   check(AxisTuneApplyAbs(&t, 127, 127) == 127
+         && AxisTuneApplyAbs(&t, -127, 127) == -127,
+         "full deflection is the fixed point for e = 2.0");
+
+   /* Half deflection squared: 127 * (64/127)^2 = 32.25... -> 32 +/- 1
+    * for fixed-point rounding. */
+   out = AxisTuneApplyAbs(&t, 64, 127);
+   check(out >= 31 && out <= 33,
+         "half deflection at e = 2.0 curves to ~a quarter scale");
+
+   out = AxisTuneApplyAbs(&t, -64, 127);
+   check(out <= -31 && out >= -33, "and symmetrically for negative");
+}
+
 int main(void)
 {
    printf("=== Per-axis input tuning (axistune) ===\n\n");
@@ -419,6 +535,14 @@ int main(void)
    test_response_is_monotone();
    printf("\n");
    test_set_clamps();
+   printf("\n");
+   test_abs_identity();
+   printf("\n");
+   test_abs_deadzone_rebases();
+   printf("\n");
+   test_abs_offset_moves_centre();
+   printf("\n");
+   test_abs_curve_anchor();
 
    printf("\n%s\n", failures ? "FAILED" : "All axistune checks passed");
    return failures ? 1 : 0;

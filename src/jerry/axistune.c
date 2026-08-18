@@ -243,3 +243,60 @@ int32_t AxisTuneApply(const axis_tune *t, int32_t raw, int32_t *gain_q8)
 
    return v;
 }
+
+int32_t AxisTuneApplyAbs(const axis_tune *t, int32_t raw, int32_t range)
+{
+   int32_t  v, mag, neg, out;
+   uint32_t n_q16, p_q16;
+
+   if (range <= 0)
+      return 0;
+
+   /* Same structural identity guarantee as the relative path: defaults
+    * return the argument before any arithmetic (clamped to the domain the
+    * caller declared, which the identity cannot widen). */
+   if (AxisTuneIsIdentity(t))
+   {
+      if (raw >  range) return  range;
+      if (raw < -range) return -range;
+      return raw;
+   }
+
+   /* NO raw == 0 early-out here -- on an absolute axis 0 is a sample (the
+    * stick at rest), not "no sample", and a non-zero offset must move it.
+    * See "THE ABSOLUTE-AXIS ANSWER" in axistune.h. */
+   v = raw - t->offset;
+
+   if (v >  range)  v =  range;
+   if (v < -range)  v = -range;
+
+   neg = (v < 0);
+   mag = neg ? -v : v;
+
+   /* RE-BASE, not gate: the dead-zone edge maps to centre and full
+    * deflection still maps to full scale, so the response is continuous
+    * where a gate would step.  dz >= range means the whole travel is
+    * inside the zone. */
+   if (mag <= t->deadzone)
+      return 0;
+   if (t->deadzone >= range)
+      return 0;
+   if (t->deadzone > 0)
+      mag = (int32_t)(((int64_t)(mag - t->deadzone) * range)
+                      / (range - t->deadzone));
+
+   /* Curve anchored at `range`: out = range * (mag/range)^e, so the
+    * centre and full deflection are fixed points for every exponent. */
+   if (t->exponent_q8 != 256 && mag < range)
+   {
+      n_q16 = ((uint32_t)mag << 16) / (uint32_t)range;
+      p_q16 = axistune_pow_q16(n_q16, (uint32_t)t->exponent_q8);
+      mag   = (int32_t)((((uint32_t)range * p_q16) + 32768u) >> 16);
+   }
+
+   if (mag > range)
+      mag = range;
+
+   out = neg ? -mag : mag;
+   return out;
+}

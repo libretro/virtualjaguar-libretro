@@ -32,10 +32,38 @@
  * gate-only: below the threshold the sample is dropped, above it the
  * sample passes at full magnitude.
  *
- * An absolute-axis consumer (#437) will have to answer the re-basing
- * question for itself.  It is deliberately NOT pre-answered here with an
- * unused flag: one caller does not justify a mode switch, and the shape of
- * that answer belongs to the ticket that has a device to test it against.
+ * THE ABSOLUTE-AXIS ANSWER (#437), now that the consumer exists
+ * =============================================================
+ * The analog / driving controller (TR10 bank-switching, inputdev.c) is an
+ * ABSOLUTE consumer: the quantity is a stick POSITION, not a speed, and
+ * the answer deferred above is now decided the other way around --
+ * AxisTuneApplyAbs() RE-BASES its dead zone.  The drift argument that
+ * forbade re-basing on a relative axis does not exist here: nothing
+ * integrates a position, so subtracting the dead-zone edge cannot walk a
+ * pointer away from the hand.  What a GATE would cost on a position is a
+ * step: as the stick crosses the edge the output would jump from centre
+ * straight to the edge value, which a game turns into a steering snap.
+ * So the surviving magnitude is remapped (mag - dz) * range / (range -
+ * dz): continuous at the edge, and full deflection still reads full
+ * scale.
+ *
+ * THE IDENTITY RULE DIFFERS TOO, deliberately.  On the relative path
+ * raw == 0 means "no sample this poll" and must stay 0 under every tune
+ * (the #474 lesson, spelled out in AxisTuneApply).  On an absolute axis
+ * raw == 0 IS a sample -- the stick resting at centre -- so the rule
+ * becomes: dead zone and exponent are magnitude-symmetric and must FIX
+ * the centre (raw 0 -> out 0 for every dz / e), and OFFSET ALONE may move
+ * it, because cancelling a mis-centred rest position is offset's entire
+ * job.  There is consequently no raw == 0 early-out in the absolute
+ * path: with a non-zero offset, a centred stick must read -offset.
+ *
+ * The exponent's reference is the caller's `range` (full deflection),
+ * not AXISTUNE_REF: an absolute axis has a natural full scale and the
+ * curve's fixed point belongs there, so full deflection is never
+ * attenuated and e > 1 buys finer control near centre.  The curve comes
+ * back folded into the returned position rather than as a gain -- there
+ * is no QuadFeed carry downstream to keep a fraction alive, and a
+ * position quantised to the device's own 8-bit ADC step loses nothing.
  *
  * OFFSET IS A PER-SAMPLE BIAS, subtracted before the gate.  A real mouse
  * reports exactly zero at rest and is unaffected by any offset.  The case
@@ -153,6 +181,16 @@ int AxisTuneIsIdentity(const axis_tune *t);
  * see "THE CURVE COMES OUT AS A GAIN" above for why it is not folded into
  * the returned delta. */
 int32_t AxisTuneApply(const axis_tune *t, int32_t raw, int32_t *gain_q8);
+
+/* Absolute-axis variant (#437) -- see "THE ABSOLUTE-AXIS ANSWER" above.
+ * `raw` is a position in [-range, +range] with 0 at centre; the return is
+ * the tuned position in the same domain, clamped.  Offset is subtracted
+ * first (host orientation -- the caller applies any device-specific
+ * inversion to the RESULT, as inputdev_feed_axis does on the relative
+ * path); the dead zone re-bases; the exponent's fixed point is `range`.
+ * dz >= range degenerates to "everything gated", never a divide by
+ * zero. */
+int32_t AxisTuneApplyAbs(const axis_tune *t, int32_t raw, int32_t range);
 
 #ifdef __cplusplus
 }
