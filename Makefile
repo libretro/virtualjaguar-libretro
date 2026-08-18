@@ -928,6 +928,7 @@ clean:
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/tools/blitter_static_leak \
 		test/test_quadrature test/test_axistune \
 		test/.skipped-checks
 
@@ -986,6 +987,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/tuning_identity \
+		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
@@ -1257,6 +1259,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# an FNV digest measured on develop.  Committed before any device code
 	@# so later PRs are measured against a number that predates them.
 	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Cross-load static leak (#479): a fast-blitter session must not
+	@# contaminate the savestate of the accurate session that follows it
+	@# while the core stays resident (iOS cannot dlclose).  The run1-vs-run2
+	@# control inside the tool means a failure here is attributable, not
+	@# just "the harness is not reproducible".
+	./test/tools/blitter_static_leak ./$(TARGET) test/roms/yarc.j64
 	@# Quadrature encoder unit test (no core): the Gray sequence in both
 	@# directions, the one-state-per-advance rate policy, the backlog
 	@# clamp and the Q8 carry.
@@ -1636,6 +1644,18 @@ test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/joymatrix_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Cross-load static-state leak gate (#479).  Pins the core with an extra
+# dlopen ref (the iOS no-dlclose regime) and proves an accurate-blitter
+# session run AFTER a fast-blitter session serialises byte-identical
+# state.  Catches BlitterStateSave()/BlitterResetDecodeState() drifting
+# apart: a newly-serialised field that nobody clears fails here.
+test/tools/blitter_static_leak: test/tools/blitter_static_leak.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/blitter_static_leak.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
