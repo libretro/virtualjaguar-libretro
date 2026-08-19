@@ -1,7 +1,7 @@
 # Network link setup: usable configuration for JagLink, CatBox and the Voice Modem
 
 **Date:** 2026-08-18
-**Status:** design approved, not yet implemented
+**Status:** implemented (see `libretro.c`, `src/jerry/jlink.c`, `src/jerry/jlink_discover.c`)
 **Branch:** `feat/netlink-ux`, stacked on `release/v3.4.0`
 **Issues:** follows #481 (voice modem), #494 (netpacket untested)
 
@@ -104,8 +104,8 @@ existing `.opt` file breaks and no migration code is needed.
 | `virtualjaguar_netlink` | label → **"Network Link"**. New `auto` value, becomes the default. `disabled` / `loopback` / `tcp_server` / `tcp_client` all still parse. |
 | `virtualjaguar_uart_device` | unchanged. **"What is plugged in"**: JagLink/CatBox, or Voice Modem. CatBox and JagLink are the same wire protocol and stay one entry. |
 | `virtualjaguar_netlink_host` | becomes the **discovered-host picker**. Values rebuilt at runtime: `127.0.0.1`, one row per live beacon, then `vj_netlink.txt` and the `.local` preset as fallbacks. |
-| `virtualjaguar_netlink_port` | unchanged; moves to an Advanced category. |
-| `virtualjaguar_netlink_wait` | unchanged; moves to Advanced. |
+| `virtualjaguar_netlink_port` | unchanged. (This design originally proposed moving it to an "Advanced" category; that category was never implemented and there is no plan to add it -- the option stays in its existing top-level position.) |
+| `virtualjaguar_netlink_wait` | unchanged. (Same "Advanced" category that was never implemented -- see above.) |
 
 `auto` resolution order, evaluated at load and whenever netplay starts/stops:
 
@@ -144,8 +144,10 @@ core already registers:
 New file `src/jerry/jlink_discover.c` / `.h`. No dependencies; plain BSD
 sockets, guarded the same way `jlink_tcp.c` guards its platform support.
 
-**Beacon.** A host in `tcp_server` (or `auto` having resolved to a direct
-host) broadcasts once per second to `255.255.255.255:42170`:
+**Beacon.** A host in `tcp_server` broadcasts once per second to
+`255.255.255.255:42170`. (As shipped, `auto` never resolves to a direct
+host -- see the "amended during pre-flight review" note above -- so this is
+`tcp_server` only, not `tcp_server` or `auto`.)
 
 ```
 offset  size  field
@@ -164,10 +166,24 @@ The display name is the system hostname (`gethostname`, `GetComputerNameA` on
 Windows), truncated to 31 chars + NUL. No new option: a name the user must
 type is the problem this feature exists to remove.
 
-**Listener.** Any core in `tcp_client` or `auto` binds 42170 and keeps a peer
-table: source IP, name, device, port, last-seen timestamp. Entries expire
-after 10 s. The listener runs from the existing per-frame `JLinkPoll()` path —
-no thread.
+**Listener.** A core in `tcp_client` (listen-only) or `tcp_server` (beacon +
+listen) binds 42170 and keeps a peer table: source IP, name, device, port,
+last-seen timestamp. Entries expire after 10 s. **`auto` never binds the
+socket at all** -- discovery is deliberately not started for `auto` (see the
+`JLinkDiscStart()` call site in `libretro.c`'s `netlink_apply()`), because
+`auto` is the option's default: opening a UDP listener on port 42170 for
+every user on every load would trip the OS's Local Network permission
+prompt for players who never touched the networking options. Do not "fix"
+this back to matching an earlier draft of this doc that said otherwise.
+
+The listener runs from `JLinkFrameTick()` (`src/jerry/jlink.c`), not from
+`JLinkPoll()`. `JLinkPoll()` is also reached via `JLinkPump()`, which games
+call thousands of times per frame while spinning on a reply, so a
+`recvfrom()` drain loop there would be wasteful and, unlike TCP polling, has
+no mode gate to keep it rare. `JLinkFrameTick()` runs once per video frame
+regardless of `jlinkMode`, which matches the 1 Hz beacon / 10 s expiry
+cadence this module works on (see `JLinkFrameTick()`'s declaration comment
+in `jlink.c` for the full rationale).
 
 The listener socket **must** set `SO_REUSEADDR` (and `SO_REUSEPORT` where it
 exists) before binding. Two cores on one machine is the normal development and
@@ -228,7 +244,7 @@ into savestates — consistent with the existing rule for modem session state.
 | Test | Gate |
 |---|---|
 | `test/test_jlink_discover` (new, no core) | beacon encode/decode round-trip; truncated and wrong-magic packets rejected; peer expiry at 10 s; table caps at 8 |
-| `test/tools/netlink_discover_pair.sh` (new) | two cores on loopback: host beacons, client's peer table populates, then expires after the host exits |
+| `test/tools/netlink_discover_pair.sh` (new) | two cores on loopback: host beacons, client's peer table populates. As shipped this asserts population only -- it kills the beacon process but never re-checks the listener afterward, so it does NOT cover expiry after the host exits. (Expiry-at-10s logic is covered separately, beacon-free, by `test/test_jlink_discover` above.) |
 | existing `netlink_pair_test.sh`, `voicemodem_pair_test.sh`, `uv_modem_game_test.sh` | must stay green — `auto` must not change explicit-mode behaviour |
 | `test/tools/test_option_visibility` | extended: per-mode row visibility matrix |
 | manual, two RetroArch instances | OSD text correct on iOS and macOS |
