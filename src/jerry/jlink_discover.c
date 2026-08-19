@@ -1,7 +1,6 @@
 /* jlink_discover.c -- LAN discovery beacon.  See jlink_discover.h. */
 #include "jlink_discover.h"
 #include <string.h>
-#include <stdio.h>
 
 static JLinkPeer discPeers[JLINK_DISC_MAX_PEERS];
 static int       discPeerCount = 0;
@@ -297,7 +296,13 @@ int JLinkDiscPoll(uint32_t now_ms)
          continue;
       /* Ignore our own beacon.  Matched on name+port, not source IP:
          the same machine appears under different addresses depending on
-         which interface the broadcast came back through. */
+         which interface the broadcast came back through.
+         Caveat: this is a false-positive risk, not just a false-negative
+         fix. Two distinct hosts on the LAN that happen to share a
+         hostname (common for cloned VM images or default hostnames like
+         "raspberrypi") AND the default link port will filter each
+         other's beacons out as "self", and neither will ever appear in
+         the other's peer table. */
       if (!discListenOnly && port == discLinkPort
           && strcmp(name, discSelfName) == 0)
          continue;

@@ -1036,6 +1036,75 @@ static void netlink_osd(const char *fmt, ...)
    environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &msg);
 }
 
+/* Edge-gate for netlink_check_device_mismatch()'s OSD: the last sel_host
+ * value that already got a mismatch toast, so two calls in a row (or
+ * repeated rebuilds while nothing changed) don't repeat it.  File scope
+ * for the same iOS-no-dlclose reason as netlink_osd_last_host above; reset
+ * alongside it in retro_deinit(). */
+static char netlink_mismatch_last_host[128] = "";
+
+/* Device-mismatch check for tcp_client (fix wave, PR review finding 3):
+ * the discovery beacon carries device type, so if the host about to be
+ * dialed (or already selected) is a peer we've seen beaconing the OTHER
+ * device, warn -- JagLink and Voice Modem never interoperate and fail
+ * silently otherwise (docs/netlink-ux-design.md section 2).
+ *
+ * Called from BOTH netlink_apply() (immediate: catches a host edit made
+ * while the peer table was already populated) AND
+ * netlink_rebuild_host_options() (catches the persisted-config load path:
+ * netlink_apply()'s mismatch scan runs BEFORE the JLinkDiscStart() call in
+ * the same function, and a real JLinkDiscStart() resets the peer table --
+ * so at load the apply-time scan always sees an empty table, and the peer
+ * only appears ~1s later when discovery hears the beacon; nothing
+ * re-evaluates the mismatch at that point unless this second call site
+ * does it).  netlink_mismatch_last_host above edge-gates the OSD so the
+ * two call sites (or repeated rebuilds) don't double-toast the same
+ * condition. */
+static void netlink_check_device_mismatch(const char *sel_host)
+{
+   int my_device;
+   int pi, peer_count;
+   int mismatched;
+   const char *mismatch_label;
+
+   mismatched = 0;
+   mismatch_label = "";
+   my_device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+               ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+   peer_count = JLinkDiscPeerCount();
+   if (peer_count > JLINK_DISC_MAX_PEERS)
+      peer_count = JLINK_DISC_MAX_PEERS;
+
+   for (pi = 0; pi < peer_count; pi++)
+   {
+      const JLinkPeer *peer;
+
+      peer = JLinkDiscPeerAt(pi);
+      if (peer && !strcmp(peer->addr, sel_host) && peer->device != my_device)
+      {
+         mismatched = 1;
+         mismatch_label = (peer->device == JLINK_DISC_DEV_VOICEMODEM)
+                           ? "Voice Modem" : "JagLink";
+         break;
+      }
+   }
+
+   if (mismatched)
+   {
+      if (strcmp(sel_host, netlink_mismatch_last_host) != 0)
+      {
+         netlink_osd("Host is running %s, you are set to %s",
+                     mismatch_label, netlink_device_label(JLinkDevice()));
+         strncpy(netlink_mismatch_last_host, sel_host,
+                 sizeof(netlink_mismatch_last_host) - 1);
+         netlink_mismatch_last_host[sizeof(netlink_mismatch_last_host) - 1]
+            = '\0';
+      }
+   }
+   else
+      netlink_mismatch_last_host[0] = '\0';
+}
+
 /* Resolve the TCP endpoint for the network link and apply the mode.
  * Host (client mode): VJ_NETLINK_HOST env, else the
  * virtualjaguar_netlink_host option (any string is accepted verbatim so
@@ -1214,39 +1283,11 @@ static void netlink_apply(int mode, const char *opt_value)
                      netlink_device_label(JLinkDevice()),
                      host[0] ? host : "127.0.0.1", port);
 
-         /* Device mismatch: the discovery beacon carries device type, so
-          * if the host we are about to dial is a peer we've already seen
-          * beaconing the OTHER device, warn now -- JagLink and Voice
-          * Modem never interoperate and today fail silently (docs/
-          * netlink-ux-design.md section 2). */
-         {
-            const char *sel_host;
-            int my_device;
-            int pi, peer_count;
-
-            sel_host = host[0] ? host : "127.0.0.1";
-            my_device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
-                        ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
-            peer_count = JLinkDiscPeerCount();
-            if (peer_count > JLINK_DISC_MAX_PEERS)
-               peer_count = JLINK_DISC_MAX_PEERS;
-
-            for (pi = 0; pi < peer_count; pi++)
-            {
-               const JLinkPeer *peer;
-
-               peer = JLinkDiscPeerAt(pi);
-               if (peer && !strcmp(peer->addr, sel_host)
-                   && peer->device != my_device)
-               {
-                  netlink_osd("Host is running %s, you are set to %s",
-                              peer->device == JLINK_DISC_DEV_VOICEMODEM
-                                 ? "Voice Modem" : "JagLink",
-                              netlink_device_label(JLinkDevice()));
-                  break;
-               }
-            }
-         }
+         /* Device mismatch (fix wave, PR review finding 3): see
+          * netlink_check_device_mismatch()'s declaration comment for why
+          * this call alone does not cover the persisted-config load path,
+          * and why netlink_rebuild_host_options() duplicates it. */
+         netlink_check_device_mismatch(host[0] ? host : "127.0.0.1");
       }
    }
    else
@@ -1291,9 +1332,21 @@ static void netlink_apply(int mode, const char *opt_value)
                    ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
 
       if (opt_value && !strcmp(opt_value, "tcp_server"))
-         JLinkDiscStart(0 /* listen_only */, device, port);
+      {
+         if (!JLinkDiscStart(0 /* listen_only */, device, port))
+            LOG_ERR("[NETLINK] LAN discovery failed to bind UDP port %d -- "
+                    "host picker will only show the static presets (macOS/"
+                    "iOS Local Network permission denied or timed out?)\n",
+                    JLINK_DISC_PORT);
+      }
       else if (opt_value && !strcmp(opt_value, "tcp_client"))
-         JLinkDiscStart(1 /* listen_only */, device, port);
+      {
+         if (!JLinkDiscStart(1 /* listen_only */, device, port))
+            LOG_ERR("[NETLINK] LAN discovery failed to bind UDP port %d -- "
+                    "host picker will only show the static presets (macOS/"
+                    "iOS Local Network permission denied or timed out?)\n",
+                    JLINK_DISC_PORT);
+      }
       else
          JLinkDiscStop();
    }
@@ -1359,6 +1412,7 @@ static void netlink_rebuild_host_options(void)
    int cur_host_known;
    int cur_host_is_preset;
    int cur_host_found;
+   bool options_pushed;
 
    idx = netlink_host_option_index();
    if (idx < 0)
@@ -1447,7 +1501,7 @@ static void netlink_rebuild_host_options(void)
    option_defs_us[idx].values[n].value = NULL;
    option_defs_us[idx].values[n].label = NULL;
 
-   environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+   options_pushed = environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
 
    /* SET_CORE_OPTIONS_V2 rebuilds RetroArch's whole core_option_manager
     * from these definitions, which carry no visibility field -- every
@@ -1468,8 +1522,20 @@ static void netlink_rebuild_host_options(void)
    visibility_force_push = 1;
    update_option_visibility();
 
-   LOG_INF("[NETLINK] host picker rebuilt: %d discovered peer%s\n",
-           peer_count, peer_count == 1 ? "" : "s");
+   /* SET_CORE_OPTIONS_V2 returns false on a frontend reporting core
+    * options v2 unsupported (RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION <
+    * 2) -- option_defs_us above was still mutated in place, but the
+    * frontend never saw it, so the picker did NOT gain the peer.  Claiming
+    * success here (or in the "Found N" toast below) would be the same
+    * silent-failure class this fix wave exists to close. */
+   if (options_pushed)
+      LOG_INF("[NETLINK] host picker rebuilt: %d discovered peer%s\n",
+              peer_count, peer_count == 1 ? "" : "s");
+   else
+      LOG_WRN("[NETLINK] SET_CORE_OPTIONS_V2 rejected by frontend (core "
+              "options v2 unsupported?) -- host picker NOT updated, %d "
+              "discovered peer%s not shown\n",
+              peer_count, peer_count == 1 ? "" : "s");
 
    if (cur_host_known && !cur_host_is_preset && !cur_host_found)
    {
@@ -1484,9 +1550,28 @@ static void netlink_rebuild_host_options(void)
     * arriving -- "Found 0 Jaguar host(s)" would tell the player nothing
     * they don't already know from the dropped-selection warning above (if
     * their host was the one that expired) or from the host list simply
-    * being back down to the static presets (if it wasn't). */
-   if (peer_count > 0)
+    * being back down to the static presets (if it wasn't).  Also gated on
+    * options_pushed: if the frontend rejected the rebuild, the picker
+    * still shows the old list, so telling the player their host was
+    * "Found" would be a lie -- see the LOG_WRN above. */
+   if (peer_count > 0 && options_pushed)
       netlink_osd("Found %d Jaguar host(s) on the LAN", peer_count);
+
+   /* Device-mismatch check (fix wave, PR review finding 3): the scan in
+    * netlink_apply() runs BEFORE the JLinkDiscStart() call in that same
+    * function, and a real JLinkDiscStart() resets the peer table -- so on
+    * a persisted-config load (saved tcp_client + a host that turns out to
+    * beacon the other device) the apply-time scan always sees an empty
+    * table, and the OSD dedup there never re-fires once the peer shows up
+    * ~1s later because (mode, device, host) hasn't changed.  This rebuild
+    * only runs once the peer table just finished being repopulated from
+    * live beacon data, so check again here -- gated on JLinkMode() rather
+    * than the option string because JLinkMode() reflects what actually
+    * got dialed (a socket-level TCP connect succeeds regardless of the
+    * remote's device type; the mismatch is a protocol-level problem this
+    * warning exists to surface before it manifests as silence). */
+   if (JLinkMode() == JLINK_MODE_TCP_CLIENT)
+      netlink_check_device_mismatch(cur_host_known ? cur_host : "127.0.0.1");
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
@@ -4182,6 +4267,10 @@ void retro_deinit(void)
    netlink_osd_last_mode      = -1;
    netlink_osd_last_device    = -1;
    netlink_osd_last_host[0]   = '\0';
+   /* Device-mismatch OSD dedup (fix wave, PR review finding 3): same
+    * iOS-no-dlclose reasoning -- a resident core would otherwise believe
+    * the new session already warned about a host it has never seen. */
+   netlink_mismatch_last_host[0] = '\0';
    /* LAN discovery (#467): close the beacon/listener socket, drop any
     * peers it found (JLinkDiscStop() only closes the socket -- the peer
     * array survives it, and a resident core would otherwise carry stale
