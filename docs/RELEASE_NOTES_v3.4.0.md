@@ -22,6 +22,39 @@ guessed: a custom Phylon command set (not AT), 16-bit words console→modem,
 3-byte replies back, and a mutual DTMF probe as the line-quality check. The
 full decode is in [`docs/voice-modem.md`](docs/voice-modem.md).
 
+Verified on two real iOS devices, not only headlessly.
+
+### Network link setup that explains itself (#502)
+
+Linking two consoles used to mean typing an IP address — which libretro
+core options cannot do. They are strictly enumerated: the frontend stores a
+value *index*, and no core on any platform can present a text field. The
+only routes were a `.local` preset, a file, or localhost, and on iOS those
+were the *only* options at all.
+
+So the link now finds its own peers:
+
+- **Automatic mode**, the new default: if a frontend netplay session is
+  running, the link rides it with nothing to configure. That path already
+  worked and nothing said so — it was buried in a blurb on the TCP *client*
+  option, findable only once you had already committed to typing an address.
+- **LAN discovery** — hosts beacon over UDP and appear in the host picker by
+  name. Chosen over Bonjour because RetroArch's iOS/tvOS property lists
+  enumerate only their own service types, so a core advertising its own is
+  blocked, while the iOS entitlements *do* permit broadcast. UDP is not the
+  fallback here; it is the only mechanism that works on the platform this
+  was reported from.
+- **On-screen narration** — what mode resolved, when the link comes up or
+  drops, how many hosts were found, and a warning when the peer is running a
+  different device than you (JagLink and Voice Modem cannot interoperate,
+  and that used to fail silently).
+- **`vj_netlink.txt` is finally documented**: one line, the address only, no
+  port.
+
+Automatic mode deliberately never opens a listener and never dials a
+discovered peer by itself — with the Voice Modem that would place a call the
+user did not initiate.
+
 ### The input-device epic, complete (#428)
 
 | Device | Notes |
@@ -88,6 +121,18 @@ flagged, so homebrew and modified ROMs work.
 
 ## Fixes
 
+- **Voice Modem corrupted video (#500)** — activating the modem tore the
+  picture apart: scanlines out of order, content stamped repeatedly down the
+  screen, alternating garbage and clean at 60 Hz. It needed no connection —
+  starting to dial was enough. `UARTRaiseIRQ()` asserted a 68000 level-2
+  interrupt after checking only JERRY's own mask, but JERRY's interrupt
+  output reaches the 68000 solely through TOM's `C_JERENA` gate, which both
+  PIT callbacks apply and the UART did not. Ultra Vortek never enables that
+  gate (measured: 2598 of 2600 frames), because its DSP polls the serial
+  status and the 68000 never uses the receive interrupt — so on real silicon
+  those bytes raise nothing, while here each one re-entered the display
+  handler at an arbitrary raster position. Measured 3.26 spurious interrupts
+  per frame before the gate, 0.999 after.
 - **Blitter cross-load state leak (#479)** — the B_CMD decode statics were
   never reset, so a session that used the fast blitter contaminated the
   *next* session's savestate. Invisible on desktop (a fresh `dlopen`
@@ -120,9 +165,18 @@ The campaign itself lands in **v4.0.0**.
 
 ## Known issues
 
-- Ultra Vortek netplay is verified headlessly to the connected lobby with
-  sustained lockstep input exchange; a full match has not been played on
-  hardware-equivalent setups.
+- Ultra Vortek netplay over **RetroArch netplay** (the netpacket transport)
+  is verified only as far as the link coming up (#494); the direct TCP path
+  is verified end to end through the in-game lockstep exchange.
+- The device-mismatch warning does not fire when the host was selected as
+  `jaghub.local`, from `vj_netlink.txt`, or via `VJ_NETLINK_HOST` (#501). It
+  compares against the raw option value rather than the resolved address, so
+  the warning degrades to silence — connections themselves are unaffected.
+- Link input latency is authentic rather than good: the modem's DTE rate is
+  permanently 19200 (proven from Atari's own JVM manual and the retail ROM,
+  where the connect-speed byte turns out to be cosmetic), which is ~5.8 ms of
+  wire time each way per frame against a strictly lockstep exchange. An
+  opt-in enhancement to compress it is tracked as #498 for v3.5.0.
 - Voice audio over the modem is not emulated (#485) — the real JVM carried
   voice modem-to-modem, bypassing the console entirely.
 - The analog/driving controller has no released software that reads it;
@@ -134,8 +188,8 @@ Cores for 16 platforms are attached below. No BIOS files are required.
 
 ## Stats
 
-`git diff --shortstat v3.3.0..v3.4.0` — 207 files changed, 95,056
-insertions, 720 deletions, across 143 commits.
+`git diff --shortstat v3.3.0..v3.4.0` — 219 files changed, 98,856
+insertions, 761 deletions, across 176 commits.
 
 ## Maintainers
 
