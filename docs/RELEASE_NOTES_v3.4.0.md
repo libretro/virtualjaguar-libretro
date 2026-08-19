@@ -165,9 +165,12 @@ The campaign itself lands in **v4.0.0**.
 
 ## Known issues
 
-- Ultra Vortek netplay over **RetroArch netplay** (the netpacket transport)
-  is verified only as far as the link coming up (#494); the direct TCP path
-  is verified end to end through the in-game lockstep exchange.
+- Ultra Vortek netplay is verified over **both** transports: the direct TCP
+  link by an automated two-instance test through the in-game lockstep
+  exchange, and RetroArch netplay by play-testing on two devices. There is
+  still no automated test for the netplay transport (#494) — RetroArch
+  netplay cannot be driven by scripted input — so regressions there would
+  not be caught by CI.
 - The device-mismatch warning does not fire when the host was selected as
   `jaghub.local`, from `vj_netlink.txt`, or via `VJ_NETLINK_HOST` (#501). It
   compares against the raw option value rather than the resolved address, so
