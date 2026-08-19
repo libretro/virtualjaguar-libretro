@@ -25,10 +25,46 @@ How Ultra Vortek services the port (all addresses are the retail ROM):
   `$F1BA84`, read pointer at `$F1BA88`. The 68K driver consumes replies
   from that ring only. There is no RX interrupt use despite RINTEN being
   set; JINTCTRL bit 4 is enabled but the transfer path is the DSP poll.
-- **UART programming**: ASICTRL = `$0021` (odd parity + RINTEN), wake
-  attempts at ASICLK = `$1C` (~57.6 kbaud) falling back to `$56`
+- **UART programming**: ASICTRL = `$0021` = ODD (bit 0) + RINTEN (bit 5).
+  Note **parity is DISABLED** here — PAREN is bit 1 and is clear. An earlier
+  version of this line read "odd parity", which is wrong: only the ODD bit is
+  set. Per JTRM Rev 8 p.94, "when parity is disabled the value of the ODD bit
+  is transmitted in the parity bit time", so the slot is still sent and the
+  frame is still **11 bit times** (1 start + 8 data + 1 parity slot + 1 stop).
+  That 11 is what `UARTFrameUsec()` in `src/jerry/uart.c` multiplies by, and
+  it is correct — verified against JTRM Rev 8 p.93, which also gives the
+  divisor as `system clock / (N+1)` then /16.
+  Wake attempts at ASICLK = `$1C` (~57.6 kbaud) falling back to `$56`
   (~19.2 kbaud); after wake succeeds the driver issues `$FFFE` (see below)
-  and settles at ASICLK = `$56` — i.e. the DTE rate in use is **19200**.
+  and settles at ASICLK = `$56` — i.e. the DTE rate in use is **19200**,
+  which works out to ~576 µs per byte.
+
+**The 19200 rate is permanent, and the `$86xx` connect speed cannot change
+it.** Confirmed from two independent directions:
+
+- The official Atari spec (`docs/atari-jaguar-1999/07 - The Jaguar Voice
+  Modem.pdf`, p.13) defines `$FFFE` as "Set host baud rate to 19200. **Only
+  reset (`$FFFF`) can change the baud rate back to 57600.**" The DTE link has
+  exactly two rates and only those two commands select them. The `$8100`
+  reply reports the *analog* modem-to-modem handshake rate and never touches
+  the baud register.
+- In the retail ROM, `$F10034` (ASICLK) is written exactly **six** times in
+  the whole 4 MB image, every one an immediate `MOVE.W #imm,$F10034` with a
+  value of only `$1C` or `$56`, all inside the wake/reset routines
+  (`$80B10A`–`$80B18C`, `$80B1EC`–`$80B238`, `$80B358`). There is no
+  register-sourced write anywhere. The `$86xx` low byte is decoded at
+  `$803C30` and stored solely to RAM `$57D4` for the MODEM CONNECT SPEED
+  display.
+
+So the ~5.8 ms of wire time each way for a 10-byte pad packet is authentic
+and not tunable through the protocol. Reducing it is an emulator-side
+enhancement — see issue #498.
+
+**Note on sourcing:** this decode was derived by disassembling the retail
+ROM, deliberately without consulting other emulators. The official Atari JVM
+manual above (present in the gitignored `docs/atari-jaguar-1999/` tree)
+independently corroborates the command set and both baud rates. Consult it
+first for any future JVM work — it is the primary source.
 
 Menu entry: type **`911` on the numpad while the title logo is on screen**
 ("AWESOME" sting → INITIALIZING VOICE MODEM). With no modem answering, the
@@ -166,6 +202,13 @@ then the link state, on edges only:
 
 Reading them:
 
+- **"Network Link" is at its default (`auto`) and the OSD says `Voice Modem
+  selected but link is idle -- start netplay or pick a host`** — this is
+  the single most common report and is not a bug. `auto` resolves to
+  netplay-when-a-session-is-live, else idle; it never restores a
+  previously chosen direct mode and never auto-dials a discovered peer.
+  Either start a RetroArch netplay session, or set "Network Link" to
+  `TCP Host (listen)` / `TCP Client (connect)` explicitly on both sides.
 - **No `[NETLINK]` lines at all** — the core is too old to have the voice
   modem. Check the binary the frontend actually loaded, not the build tree:
   `strings <core> | grep -c virtualjaguar_uart_device` must be non-zero.
@@ -173,13 +216,37 @@ Reading them:
   raw cable cannot answer the wake handshake, so the game reports MODEM
   INITIALIZING FAILED. It must be set to Voice Modem on **both** sides.
 - **Stuck at `waiting for peer...`** — the transport never paired. Check both
-  sides agree on the port, and that exactly one is TCP Host.
+  sides agree on the port, and that exactly one is TCP Host. In `tcp_client`
+  mode, hosts running on the same LAN normally appear in the "Network Link
+  Host" list by themselves within a couple of seconds — if the one you want
+  isn't there, confirm it is actually in `tcp_server` mode (discovery only
+  beacons/listens in `tcp_server`/`tcp_client`, never in `auto`) and that
+  nothing on the network blocks UDP broadcast (client-isolated Wi-Fi APs are
+  a common culprit).
 - **`'From file' selected but no address read`** — the "From file" preset was
   chosen but `<system>/vj_netlink.txt` is missing or empty; the address fell
-  back to 127.0.0.1.
+  back to 127.0.0.1. The file format is one line, the address only, no
+  port — e.g. `192.168.1.42` or `myhost.local` — the port always comes from
+  "Network Link Port".
+- **The host you had selected quietly reverted to `127.0.0.1`** — a
+  discovered host that goes offline (or stops beaconing) expires from the
+  list after 10 s; if it was your active selection, the OSD says
+  `Selected host <addr> dropped off the LAN -- falling back to 127.0.0.1`
+  and the option resets. Re-pick it once it reappears, or pin it with
+  `vj_netlink.txt`/`VJ_NETLINK_HOST` if it's on an unreliable network.
+- **OSD says `Host is running JagLink, you are set to Voice Modem`** (or the
+  reverse) — the discovered peer and your "Network Link Device" don't
+  match. JagLink/CatBox and the Voice Modem never interoperate; set both
+  sides to the same device.
 - **`link UP` on both sides but the call still fails** — that is a modem-layer
   problem, not transport. Re-run with `VJ_VM_TRACE=1` for the command/reply
   stream, and see the choreography table above.
+
+On-screen narration mirrors these log lines (`SET_MESSAGE_EXT`, 4 s,
+transitions only) so a player without a log window in front of them sees
+the same facts: link resolved at load, link up, link lost, "Found N Jaguar
+host(s) on the LAN", the device-mismatch warning, the dropped-selection
+warning above, and the idle-Voice-Modem message.
 
 ## Open questions
 

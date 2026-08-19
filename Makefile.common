@@ -56,6 +56,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/jerry.c \
 	$(CORE_DIR)/src/jerry/jlink.c \
 	$(CORE_DIR)/src/jerry/jlink_tcp.c \
+	$(CORE_DIR)/src/jerry/jlink_discover.c \
 	$(CORE_DIR)/src/jerry/jlink_netpacket.c \
 	$(CORE_DIR)/src/jerry/voicemodem.c \
 	$(CORE_DIR)/src/jerry/uart.c \

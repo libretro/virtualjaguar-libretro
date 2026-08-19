@@ -35,6 +35,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "dac.h"
 #include "dsp.h"
 #include "jlink.h"
+#include "jlink_discover.h"
 #include "jlink_netpacket.h"
 #include "uart.h"
 #include "joystick.h"
@@ -213,6 +214,26 @@ static bool show_texdump_16bpp     = true;
 /* Texture replacement (#369 deliverable 2) only means anything when a
  * pack directory exists for the loaded content; hidden otherwise. */
 static bool show_texture_replace   = true;
+/* Network Link host/port fields (task 3, #467) only mean anything for the
+ * direct TCP modes: the client needs somewhere to dial, the server needs a
+ * listen port to advertise.  "auto" and "loopback" need neither -- hidden,
+ * like the other show_* gates, whenever the resolved mode isn't one that
+ * reads them. */
+static bool show_netlink_host      = true;
+static bool show_netlink_port      = true;
+/* One-shot "push every managed key regardless of its cached show_* prev"
+ * flag (task 4, #467).  update_option_visibility() normally only
+ * re-pushes SET_CORE_OPTIONS_DISPLAY for a group when that group's
+ * show_* flag CHANGES since the cached previous value -- cheap, but
+ * wrong immediately after a SET_CORE_OPTIONS_V2 rebuild, which resets
+ * every option to visible on the frontend side while every show_* prev
+ * in this file still matches current state, so nothing would normally
+ * re-push and rows that were hidden (CD-only keys, mouse/rotary/analog
+ * tuning, texdump/texreplace, per-port remaps) reappear and stay
+ * reappeared.  Set this, then call update_option_visibility(); it reads
+ * and clears the flag on entry, so the force applies to exactly the next
+ * call. */
+static int  visibility_force_push  = 0;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -566,22 +587,57 @@ static int get_button_id(const char *val)
    return BUTTON_NONE;
 }
 
+/* Resolve the Network Link option to a concrete JLINK_MODE_*.
+ *
+ * "auto" means netplay-when-live, else idle.  The design doc originally
+ * had auto also fall back to "the direct mode last chosen explicitly";
+ * that was dropped, because with a single option key there is nowhere to
+ * read a previous choice from -- selecting "auto" overwrites it -- so
+ * honouring it would need hidden persisted state whose behaviour the user
+ * cannot see or predict across restarts.
+ *
+ * Auto deliberately never dials a discovered peer by itself either; with
+ * the Voice Modem that would place a call the user did not initiate. */
+static int netlink_resolve_mode(const char *v)
+{
+   if (!v)
+      return JLINK_MODE_DISABLED;
+   if (!strcmp(v, "loopback"))   return JLINK_MODE_LOOPBACK;
+   if (!strcmp(v, "tcp_server")) return JLINK_MODE_TCP_SERVER;
+   if (!strcmp(v, "tcp_client")) return JLINK_MODE_TCP_CLIENT;
+   if (!strcmp(v, "auto"))
+   {
+      if (JLinkMode() == JLINK_MODE_NETPACKET)
+         return JLINK_MODE_NETPACKET;
+      return JLINK_MODE_DISABLED;
+   }
+   return JLINK_MODE_DISABLED;
+}
+
 static bool update_option_visibility(void)
 {
    struct retro_core_option_display option_display;
    struct retro_variable var;
    bool updated = false;
    unsigned i;
-
+   /* Read-and-clear: see visibility_force_push's declaration comment.
+    * One-shot so a normal (non-rebuild) call right afterward goes back to
+    * the cheap change-only behavior.  Declared here (with the other
+    * top-of-block locals, C89) rather than assigned as a statement, so the
+    * clear below is the first STATEMENT in the function, after every
+    * declaration. */
+   int force = visibility_force_push;
    // Show/hide input options
    bool show_input_options_prev = show_input_options;
+
+   visibility_force_push = 0;
    show_input_options = true;
 
    var.key = "virtualjaguar_alt_inputs";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "disabled"))
       show_input_options = false;
 
-   if (show_input_options != show_input_options_prev)
+   if (force || show_input_options != show_input_options_prev)
    {
       option_display.visible = show_input_options;
 
@@ -626,7 +682,7 @@ static bool update_option_visibility(void)
        * showing it there would advertise a control that does nothing. */
       show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
 
-      if (show_cd_options != show_cd_prev)
+      if (force || show_cd_options != show_cd_prev)
       {
          option_display.visible = show_cd_options;
          for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
@@ -638,7 +694,7 @@ static bool update_option_visibility(void)
          updated = true;
       }
 
-      if (show_cart_bios_option != show_cart_bios_prev)
+      if (force || show_cart_bios_option != show_cart_bios_prev)
       {
          option_display.visible = show_cart_bios_option;
          option_display.key     = "virtualjaguar_bios";
@@ -669,7 +725,7 @@ static bool update_option_visibility(void)
 
       show_mouse_options = inputdev_is_mouse_type(InputDevGetType(1));
 
-      if (show_mouse_options != show_mouse_prev)
+      if (force || show_mouse_options != show_mouse_prev)
       {
          option_display.visible = show_mouse_options;
          for (i = 0; i < ARRAY_SIZE(mouse_keys); i++)
@@ -698,7 +754,7 @@ static bool update_option_visibility(void)
       show_rotary_options = (InputDevGetType(0) == INPUTDEV_ROTARY
                              || InputDevGetType(1) == INPUTDEV_ROTARY);
 
-      if (show_rotary_options != show_rotary_prev)
+      if (force || show_rotary_options != show_rotary_prev)
       {
          option_display.visible = show_rotary_options;
          for (i = 0; i < ARRAY_SIZE(rotary_keys); i++)
@@ -727,7 +783,7 @@ static bool update_option_visibility(void)
       show_analog_options = (inputdev_is_analog_type(InputDevGetType(0))
                              || inputdev_is_analog_type(InputDevGetType(1)));
 
-      if (show_analog_options != show_analog_prev)
+      if (force || show_analog_options != show_analog_prev)
       {
          option_display.visible = show_analog_options;
          for (i = 0; i < ARRAY_SIZE(analog_keys); i++)
@@ -752,7 +808,7 @@ static bool update_option_visibility(void)
           && !strcmp(var.value, "enabled"))
          show_texdump_16bpp = true;
 
-      if (show_texdump_16bpp != show_texdump_prev)
+      if (force || show_texdump_16bpp != show_texdump_prev)
       {
          option_display.visible = show_texdump_16bpp;
          option_display.key     = "virtualjaguar_texdump_16bpp";
@@ -769,10 +825,51 @@ static bool update_option_visibility(void)
       bool show_replace_prev = show_texture_replace;
 
       show_texture_replace = TexReplacePackAvailable() ? true : false;
-      if (show_texture_replace != show_replace_prev)
+      if (force || show_texture_replace != show_replace_prev)
       {
          option_display.visible = show_texture_replace;
          option_display.key     = "virtualjaguar_texture_replace";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+   }
+
+   /* Network Link host/port (task 3, #467): host only means anything for
+    * the TCP client (the side that dials out); port only means anything
+    * for a mode with a TCP socket of its own at all -- server (listens)
+    * or client (connects).  "auto" and "loopback" hide both: auto never
+    * asks the user to configure an address (that is the whole point of
+    * it), and loopback never leaves this console.  Read raw, like the
+    * alt-inputs/texture-dump gates above, rather than through
+    * get_variable_pertitle() -- per-title defaults have no business
+    * steering a transport choice the user made explicitly. */
+   {
+      bool show_netlink_host_prev = show_netlink_host;
+      bool show_netlink_port_prev = show_netlink_port;
+      int  resolved;
+
+      var.key = "virtualjaguar_netlink";
+      var.value = NULL;
+      environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var);
+      resolved = netlink_resolve_mode(var.value);
+
+      show_netlink_host = (resolved == JLINK_MODE_TCP_CLIENT);
+      show_netlink_port = (resolved == JLINK_MODE_TCP_CLIENT
+                            || resolved == JLINK_MODE_TCP_SERVER);
+
+      if (force || show_netlink_host != show_netlink_host_prev)
+      {
+         option_display.visible = show_netlink_host;
+         option_display.key     = "virtualjaguar_netlink_host";
+         environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                    &option_display);
+         updated = true;
+      }
+      if (force || show_netlink_port != show_netlink_port_prev)
+      {
+         option_display.visible = show_netlink_port;
+         option_display.key     = "virtualjaguar_netlink_port";
          environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
                     &option_display);
          updated = true;
@@ -865,6 +962,34 @@ void retro_set_environment(retro_environment_t cb)
  * one and swallow the first UP/DOWN edge. */
 static int netlink_was_up = -1;
 
+/* Discovered-host option list (task 4, #467).  netlink_last_rebuild_ms
+ * paces SET_CORE_OPTIONS_V2 re-registration (a full RetroArch option-
+ * manager teardown, see netlink_rebuild_host_options() below);
+ * netlink_peers_dirty is a sticky latch set the instant a peer-set change
+ * is observed and cleared only once a rebuild actually runs -- see the
+ * gating block in retro_run() for why a bare rate-limit check isn't
+ * enough.  Both are file scope (not function-local) for the same reason
+ * as netlink_was_up: iOS never dlcloses the core, so a function-local
+ * static would carry the previous session's pacing/latch state into the
+ * next one. */
+static uint32_t netlink_last_rebuild_ms = 0;
+static int      netlink_peers_dirty     = 0;
+
+/* Last (mode, device, host) narrated to the OSD by netlink_apply()'s
+ * mode-resolution messages (task 5, #467).  netlink_apply() runs on
+ * EVERY check_variables() call, which fires whenever ANY core option
+ * changes -- not just the netlink ones -- so without this dedup the
+ * player gets a link toast (and, in tcp_client, a repeat of the device-
+ * mismatch warning) for completely unrelated menu edits.  -1 sentinels
+ * guarantee the first call after load always narrates.  File scope (not
+ * function-local) for the same reason as netlink_was_up above: iOS never
+ * dlcloses the core, so a function-local static would carry the previous
+ * session's narrated state into the next one and swallow its first
+ * message. */
+static int  netlink_osd_last_mode      = -1;
+static int  netlink_osd_last_device    = -1;
+static char netlink_osd_last_host[128] = "";
+
 /* Names for the [NETLINK] log lines.  Not exported: nothing outside this
  * file needs to render a mode. */
 static const char *netlink_mode_name(int mode)
@@ -881,14 +1006,122 @@ static const char *netlink_mode_name(int mode)
    return "unknown";
 }
 
+/* Human-readable device label for OSD text ("voicemodem"/"jaglink" in the
+ * log lines are fine for grep, not for a player reading the screen). */
+static const char *netlink_device_label(int device)
+{
+   return device == JLINK_DEVICE_VOICEMODEM ? "Voice Modem" : "JagLink";
+}
+
+/* OSD narration.  Mirrors the [NETLINK] log lines so screen and log
+ * always agree; fires on transitions only, never per frame. */
+static void netlink_osd(const char *fmt, ...)
+{
+   struct retro_message_ext msg;
+   char text[256];
+   va_list ap;
+
+   va_start(ap, fmt);
+   vsnprintf(text, sizeof(text), fmt, ap);
+   va_end(ap);
+
+   memset(&msg, 0, sizeof(msg));
+   msg.msg      = text;
+   msg.duration = 4000;
+   msg.priority = 2;
+   msg.level    = RETRO_LOG_INFO;
+   msg.target   = RETRO_MESSAGE_TARGET_OSD;
+   msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION;
+   msg.progress = -1;
+   environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &msg);
+}
+
+/* Edge-gate for netlink_check_device_mismatch()'s OSD: the last sel_host
+ * value that already got a mismatch toast, so two calls in a row (or
+ * repeated rebuilds while nothing changed) don't repeat it.  File scope
+ * for the same iOS-no-dlclose reason as netlink_osd_last_host above; reset
+ * alongside it in retro_deinit(). */
+static char netlink_mismatch_last_host[128] = "";
+
+/* Device-mismatch check for tcp_client (fix wave, PR review finding 3):
+ * the discovery beacon carries device type, so if the host about to be
+ * dialed (or already selected) is a peer we've seen beaconing the OTHER
+ * device, warn -- JagLink and Voice Modem never interoperate and fail
+ * silently otherwise (docs/netlink-ux-design.md section 2).
+ *
+ * Called from BOTH netlink_apply() (immediate: catches a host edit made
+ * while the peer table was already populated) AND
+ * netlink_rebuild_host_options() (catches the persisted-config load path:
+ * netlink_apply()'s mismatch scan runs BEFORE the JLinkDiscStart() call in
+ * the same function, and a real JLinkDiscStart() resets the peer table --
+ * so at load the apply-time scan always sees an empty table, and the peer
+ * only appears ~1s later when discovery hears the beacon; nothing
+ * re-evaluates the mismatch at that point unless this second call site
+ * does it).  netlink_mismatch_last_host above edge-gates the OSD so the
+ * two call sites (or repeated rebuilds) don't double-toast the same
+ * condition. */
+static void netlink_check_device_mismatch(const char *sel_host)
+{
+   int my_device;
+   int pi, peer_count;
+   int mismatched;
+   const char *mismatch_label;
+
+   mismatched = 0;
+   mismatch_label = "";
+   my_device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+               ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+   peer_count = JLinkDiscPeerCount();
+   if (peer_count > JLINK_DISC_MAX_PEERS)
+      peer_count = JLINK_DISC_MAX_PEERS;
+
+   for (pi = 0; pi < peer_count; pi++)
+   {
+      const JLinkPeer *peer;
+
+      peer = JLinkDiscPeerAt(pi);
+      if (peer && !strcmp(peer->addr, sel_host) && peer->device != my_device)
+      {
+         mismatched = 1;
+         mismatch_label = (peer->device == JLINK_DISC_DEV_VOICEMODEM)
+                           ? "Voice Modem" : "JagLink";
+         break;
+      }
+   }
+
+   if (mismatched)
+   {
+      if (strcmp(sel_host, netlink_mismatch_last_host) != 0)
+      {
+         netlink_osd("Host is running %s, you are set to %s",
+                     mismatch_label, netlink_device_label(JLinkDevice()));
+         strncpy(netlink_mismatch_last_host, sel_host,
+                 sizeof(netlink_mismatch_last_host) - 1);
+         netlink_mismatch_last_host[sizeof(netlink_mismatch_last_host) - 1]
+            = '\0';
+      }
+   }
+   else
+      netlink_mismatch_last_host[0] = '\0';
+}
+
 /* Resolve the TCP endpoint for the network link and apply the mode.
  * Host (client mode): VJ_NETLINK_HOST env, else the
  * virtualjaguar_netlink_host option (any string is accepted verbatim so
  * frontends with free-text option entry can supply arbitrary addresses;
  * the sentinel "vj_netlink.txt" defers to the file), else first line of
  * <system_dir>/vj_netlink.txt, else 127.0.0.1.  Port: VJ_NETLINK_PORT
- * env overrides the virtualjaguar_netlink_port option. */
-static void netlink_apply(int mode)
+ * env overrides the virtualjaguar_netlink_port option.
+ *
+ * mode is the resolved JLINK_MODE_* (see netlink_resolve_mode()); opt_value
+ * is the RAW option string that produced it, and may be NULL.  The two can
+ * disagree on purpose: "auto" with no netplay session live resolves to
+ * JLINK_MODE_DISABLED for the link itself (there is nothing yet to carry
+ * the emulated UART), but the discovery beacon/listener below is driven by
+ * opt_value so a user who picked "auto" or "tcp_client" still sees LAN
+ * peers to act on -- discovery never auto-connects, it only populates the
+ * list a later task's UI reads. */
+static void netlink_apply(int mode, const char *opt_value)
 {
    char host[128];
    int port = 42171;
@@ -902,6 +1135,10 @@ static void netlink_apply(int mode)
    const char *src = "default";
    int want_file = 0;
    int got_file = 0;
+   /* OSD dedup state -- see netlink_osd_last_mode's declaration comment. */
+   char narrate_host[128];
+   int narrate_device;
+   int narrate_changed;
 
    host[0] = '\0';
 
@@ -978,6 +1215,37 @@ static void netlink_apply(int mode)
    JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
    UARTSetLinkMode(mode);
 
+   /* Whether the resolved (mode, device, host) actually changed since the
+    * last narration.  netlink_apply() runs on every check_variables()
+    * call, which fires on ANY option change -- not just the netlink ones
+    * -- so the LOG_INF lines below are intentionally unconditional (log
+    * scrollback is cheap to re-emit), but the netlink_osd() calls are
+    * gated on this, or a player using Voice Modem in tcp_client would get
+    * a link toast for every unrelated settings tweak.  host only matters
+    * for tcp_client (it is not shown in the other messages), so it is
+    * excluded from the comparison otherwise -- an unrelated host edit
+    * while in another mode must not itself count as a transition. */
+   narrate_device = JLinkDevice();
+   if (mode == JLINK_MODE_TCP_CLIENT)
+   {
+      strncpy(narrate_host, host[0] ? host : "127.0.0.1",
+              sizeof(narrate_host) - 1);
+      narrate_host[sizeof(narrate_host) - 1] = '\0';
+   }
+   else
+      narrate_host[0] = '\0';
+   narrate_changed = (mode != netlink_osd_last_mode)
+                      || (narrate_device != netlink_osd_last_device)
+                      || strcmp(narrate_host, netlink_osd_last_host) != 0;
+   if (narrate_changed)
+   {
+      netlink_osd_last_mode   = mode;
+      netlink_osd_last_device = narrate_device;
+      strncpy(netlink_osd_last_host, narrate_host,
+              sizeof(netlink_osd_last_host) - 1);
+      netlink_osd_last_host[sizeof(netlink_osd_last_host) - 1] = '\0';
+   }
+
    /* One line that answers "what did the core actually do with my
     * settings".  Without it the whole link stack is silent, and a session
     * that never connected is indistinguishable from one that was never
@@ -988,22 +1256,52 @@ static void netlink_apply(int mode)
     * later, by the frontend, and shows up as a link UP below.  Say so, or
     * the pair of lines reads as a contradiction. */
    if (mode == JLINK_MODE_DISABLED)
+   {
       LOG_INF("[NETLINK] built-in TCP link disabled (device=%s) -- frontend "
               "netplay will carry the link if a session is running\n",
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink");
+      /* This is the failure that motivated the whole feature: a Voice
+       * Modem selected with "auto" and no netplay session running does
+       * nothing, silently, until the player either starts netplay or
+       * picks a direct mode -- say so on screen. */
+      if (narrate_changed && JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+         netlink_osd("Voice Modem selected but link is idle -- start "
+                     "netplay or pick a host");
+   }
    else if (mode == JLINK_MODE_TCP_CLIENT)
+   {
       LOG_INF("[NETLINK] mode=%s device=%s peer=%s:%d (address from %s)\n",
               netlink_mode_name(mode),
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink",
               host[0] ? host : "127.0.0.1", port, src);
+      if (narrate_changed)
+      {
+         netlink_osd("Network Link: %s (%s) -> %s:%d",
+                     netlink_mode_name(mode),
+                     netlink_device_label(JLinkDevice()),
+                     host[0] ? host : "127.0.0.1", port);
+
+         /* Device mismatch (fix wave, PR review finding 3): see
+          * netlink_check_device_mismatch()'s declaration comment for why
+          * this call alone does not cover the persisted-config load path,
+          * and why netlink_rebuild_host_options() duplicates it. */
+         netlink_check_device_mismatch(host[0] ? host : "127.0.0.1");
+      }
+   }
    else
+   {
       LOG_INF("[NETLINK] mode=%s device=%s port=%d\n",
               netlink_mode_name(mode),
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink",
               port);
+      if (narrate_changed)
+         netlink_osd("Network Link: %s (%s), port %d",
+                     netlink_mode_name(mode),
+                     netlink_device_label(JLinkDevice()), port);
+   }
 
    /* The "From file" preset selected but no usable address in the file is
     * a silent 127.0.0.1 fallback -- the one that cost a debugging session. */
@@ -1015,6 +1313,265 @@ static void netlink_apply(int mode)
        && JLinkMode() == JLINK_MODE_DISABLED)
       LOG_ERR("[NETLINK] failed to open %s -- link is DOWN\n",
               netlink_mode_name(mode));
+
+   /* LAN discovery beacon/listener lifecycle (#467).  A host beacons AND
+    * listens, so it can see other peers too; a client listens only --
+    * neither dials out on its own.  Deliberately NOT started for "auto":
+    * the host field it would populate is hidden in auto (see the
+    * update_option_visibility() gate), and auto never auto-connects to a
+    * discovered peer either (a Voice Modem "auto-dial" would place a call
+    * the user did not initiate) -- so in auto the peer table is invisible
+    * and unread. Auto is also the option's default, so starting a socket
+    * here would open a UDP listener on port 42170 for every user on
+    * every load, tripping the OS's Local Network permission prompt for
+    * players who never touched the networking options. Anything else
+    * (disabled, loopback) has no use for a peer list either, so discovery
+    * stops. */
+   {
+      int device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+                   ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+
+      if (opt_value && !strcmp(opt_value, "tcp_server"))
+      {
+         if (!JLinkDiscStart(0 /* listen_only */, device, port))
+            LOG_ERR("[NETLINK] LAN discovery failed to bind UDP port %d -- "
+                    "host picker will only show the static presets (macOS/"
+                    "iOS Local Network permission denied or timed out?)\n",
+                    JLINK_DISC_PORT);
+      }
+      else if (opt_value && !strcmp(opt_value, "tcp_client"))
+      {
+         if (!JLinkDiscStart(1 /* listen_only */, device, port))
+            LOG_ERR("[NETLINK] LAN discovery failed to bind UDP port %d -- "
+                    "host picker will only show the static presets (macOS/"
+                    "iOS Local Network permission denied or timed out?)\n",
+                    JLINK_DISC_PORT);
+      }
+      else
+         JLinkDiscStop();
+   }
+}
+
+/* Discovered-host option list (task 4, #467): the LAN discovery beacon
+ * (jlink_discover.c) finds peers, but libretro core options are a fixed
+ * enumeration on every platform -- no core can offer a free-text field --
+ * so a peer is useless until it becomes a selectable
+ * virtualjaguar_netlink_host value.  Everything below wires that up.
+ *
+ * retro_core_option_v2_definition::values[] is a fixed-size array INLINE
+ * in the struct (libretro.h), not a pointer, so option_defs_us (compiled
+ * into libretro_core_options.h, already static storage duration) can be
+ * mutated in place -- no separate "static so it outlives the call" array
+ * is needed for the value list itself.  The value/label *strings* still
+ * need their own static storage: netlink_peer_value/label below, since
+ * they are built fresh from JLinkPeer data the frontend does not own. */
+static char netlink_peer_value[JLINK_DISC_MAX_PEERS][JLINK_DISC_ADDR_MAX];
+static char netlink_peer_label[JLINK_DISC_MAX_PEERS][128];
+
+/* The three presets from libretro_core_options.h (127.0.0.1, jaghub.local,
+ * vj_netlink.txt), snapshotted once from the pristine array before the
+ * first peer splice.  Every rebuild below reads this copy rather than the
+ * live option_defs_us array, which this same function overwrites -- so a
+ * second rebuild can never mistake an already-spliced peer entry for a
+ * preset. */
+static struct retro_core_option_value netlink_host_presets[3];
+static int netlink_host_presets_valid = 0;
+
+/* Index of virtualjaguar_netlink_host in option_defs_us, found by key
+ * rather than hard-coded so a reorder of the option table can't silently
+ * corrupt the wrong option's value list.  Shared by the rebuild and the
+ * retro_deinit() restore. */
+static int netlink_host_option_index(void)
+{
+   int i;
+
+   for (i = 0; option_defs_us[i].key; i++)
+      if (!strcmp(option_defs_us[i].key, "virtualjaguar_netlink_host"))
+         return i;
+   return -1;
+}
+
+/* Rebuild virtualjaguar_netlink_host's value list from the current LAN
+ * discovery peer table and push it to the frontend with a second
+ * SET_CORE_OPTIONS_V2.  That is a legal call -- RetroArch's
+ * core_option_manager tears down and rebuilds on it (runloop.c),
+ * flushing current values to disk first -- but it IS a full teardown, so
+ * callers must only invoke this when the peer set actually changed (see
+ * the gated call site in retro_run()), never on a timer or per beacon.
+ *
+ * Values: 127.0.0.1, then one entry per peer labelled "<name> - <addr>"
+ * (with " (JagLink)" / " (Voice Modem)" appended when the peer's device
+ * differs from ours, so a mismatch is visible instead of silently
+ * failing), then jaghub.local and vj_netlink.txt -- the existing presets
+ * stay selectable, peers are added, not substituted. Capped at
+ * JLINK_DISC_MAX_PEERS entries. */
+static void netlink_rebuild_host_options(void)
+{
+   int idx, i, n, peer_count, my_device;
+   char cur_host[128];
+   int cur_host_known;
+   int cur_host_is_preset;
+   int cur_host_found;
+   bool options_pushed;
+
+   idx = netlink_host_option_index();
+   if (idx < 0)
+      return;
+
+   /* Selected-host-expired check (review note from task 4, #467): read
+    * the value currently active in the frontend BEFORE the value list is
+    * overwritten below.  If it names a discovered peer that is about to
+    * drop out of the rebuilt list, RetroArch's core_option_manager resets
+    * the option to its first value (127.0.0.1) with no explanation --
+    * warn on screen before that silently happens rather than after. */
+   cur_host_known     = 0;
+   cur_host_is_preset = 0;
+   cur_host_found     = 0;
+   {
+      struct retro_variable cur;
+
+      cur.key = "virtualjaguar_netlink_host";
+      cur.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cur) && cur.value)
+      {
+         strncpy(cur_host, cur.value, sizeof(cur_host) - 1);
+         cur_host[sizeof(cur_host) - 1] = '\0';
+         cur_host_known = 1;
+         cur_host_is_preset = !strcmp(cur_host, "127.0.0.1")
+                               || !strcmp(cur_host, "jaghub.local")
+                               || !strcmp(cur_host, "vj_netlink.txt");
+      }
+   }
+
+   if (!netlink_host_presets_valid)
+   {
+      for (i = 0; i < 3 && option_defs_us[idx].values[i].value; i++)
+         netlink_host_presets[i] = option_defs_us[idx].values[i];
+      netlink_host_presets_valid = 1;
+   }
+
+   n = 0;
+   option_defs_us[idx].values[n++] = netlink_host_presets[0]; /* 127.0.0.1 */
+
+   my_device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+               ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+
+   peer_count = JLinkDiscPeerCount();
+   if (peer_count > JLINK_DISC_MAX_PEERS)
+      peer_count = JLINK_DISC_MAX_PEERS;
+
+   for (i = 0; i < peer_count; i++)
+   {
+      const JLinkPeer *peer;
+      const char *devtag;
+      const char *name;
+
+      peer = JLinkDiscPeerAt(i);
+      if (!peer)
+         break;
+
+      if (cur_host_known && !cur_host_is_preset
+          && !strcmp(peer->addr, cur_host))
+         cur_host_found = 1;
+
+      /* Beacon-supplied name is untrusted and may be empty; fall back to
+       * the address so the label is never just " - 1.2.3.4". */
+      name = peer->name[0] ? peer->name : peer->addr;
+
+      devtag = "";
+      if (peer->device != my_device)
+         devtag = (peer->device == JLINK_DISC_DEV_VOICEMODEM)
+                  ? " (Voice Modem)" : " (JagLink)";
+
+      strncpy(netlink_peer_value[i], peer->addr,
+              sizeof(netlink_peer_value[i]) - 1);
+      netlink_peer_value[i][sizeof(netlink_peer_value[i]) - 1] = '\0';
+
+      snprintf(netlink_peer_label[i], sizeof(netlink_peer_label[i]),
+               "%s - %s%s", name, peer->addr, devtag);
+
+      option_defs_us[idx].values[n].value = netlink_peer_value[i];
+      option_defs_us[idx].values[n].label = netlink_peer_label[i];
+      n++;
+   }
+
+   option_defs_us[idx].values[n++] = netlink_host_presets[1]; /* jaghub.local */
+   option_defs_us[idx].values[n++] = netlink_host_presets[2]; /* vj_netlink.txt */
+
+   option_defs_us[idx].values[n].value = NULL;
+   option_defs_us[idx].values[n].label = NULL;
+
+   options_pushed = environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options_us);
+
+   /* SET_CORE_OPTIONS_V2 rebuilds RetroArch's whole core_option_manager
+    * from these definitions, which carry no visibility field -- every
+    * option comes back visible, not just virtualjaguar_netlink_host/port:
+    * every group update_option_visibility() manages (CD-only keys,
+    * cart-BIOS keys, per-port input remaps, mouse/rotary/analog tuning,
+    * texdump/texture-replace) comes back too, and that function normally
+    * only re-pushes SET_CORE_OPTIONS_DISPLAY for a group whose show_*
+    * flag CHANGED since last call -- after this rebuild none of them did,
+    * so nothing would re-push and every hidden row (e.g. mouse/rotary/
+    * analog tuning on an ordinary RetroPad session, or the host row
+    * itself in tcp_server mode, where discovery also runs) would reappear
+    * and stay reappeared for the rest of the session.  Force a full
+    * re-push of every managed key from current state -- see
+    * visibility_force_push's declaration comment -- rather than
+    * special-casing just the two keys this feature owns, so there is
+    * still exactly one place that knows which rows are hidden when. */
+   visibility_force_push = 1;
+   update_option_visibility();
+
+   /* SET_CORE_OPTIONS_V2 returns false on a frontend reporting core
+    * options v2 unsupported (RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION <
+    * 2) -- option_defs_us above was still mutated in place, but the
+    * frontend never saw it, so the picker did NOT gain the peer.  Claiming
+    * success here (or in the "Found N" toast below) would be the same
+    * silent-failure class this fix wave exists to close. */
+   if (options_pushed)
+      LOG_INF("[NETLINK] host picker rebuilt: %d discovered peer%s\n",
+              peer_count, peer_count == 1 ? "" : "s");
+   else
+      LOG_WRN("[NETLINK] SET_CORE_OPTIONS_V2 rejected by frontend (core "
+              "options v2 unsupported?) -- host picker NOT updated, %d "
+              "discovered peer%s not shown\n",
+              peer_count, peer_count == 1 ? "" : "s");
+
+   if (cur_host_known && !cur_host_is_preset && !cur_host_found)
+   {
+      LOG_WRN("[NETLINK] selected host %s dropped off the LAN -- falling "
+              "back to 127.0.0.1\n", cur_host);
+      netlink_osd("Selected host %s dropped off the LAN -- falling back "
+                  "to 127.0.0.1", cur_host);
+   }
+
+   /* Only the "found" case gets a toast.  peer_count == 0 means this
+    * rebuild was triggered by the last peer expiring, not a new one
+    * arriving -- "Found 0 Jaguar host(s)" would tell the player nothing
+    * they don't already know from the dropped-selection warning above (if
+    * their host was the one that expired) or from the host list simply
+    * being back down to the static presets (if it wasn't).  Also gated on
+    * options_pushed: if the frontend rejected the rebuild, the picker
+    * still shows the old list, so telling the player their host was
+    * "Found" would be a lie -- see the LOG_WRN above. */
+   if (peer_count > 0 && options_pushed)
+      netlink_osd("Found %d Jaguar host(s) on the LAN", peer_count);
+
+   /* Device-mismatch check (fix wave, PR review finding 3): the scan in
+    * netlink_apply() runs BEFORE the JLinkDiscStart() call in that same
+    * function, and a real JLinkDiscStart() resets the peer table -- so on
+    * a persisted-config load (saved tcp_client + a host that turns out to
+    * beacon the other device) the apply-time scan always sees an empty
+    * table, and the OSD dedup there never re-fires once the peer shows up
+    * ~1s later because (mode, device, host) hasn't changed.  This rebuild
+    * only runs once the peer table just finished being repopulated from
+    * live beacon data, so check again here -- gated on JLinkMode() rather
+    * than the option string because JLinkMode() reflects what actually
+    * got dialed (a socket-level TCP connect succeeds regardless of the
+    * remote's device type; the mismatch is a protocol-level problem this
+    * warning exists to surface before it manifests as silence). */
+   if (JLinkMode() == JLINK_MODE_TCP_CLIENT)
+      netlink_check_device_mismatch(cur_host_known ? cur_host : "127.0.0.1");
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
@@ -1476,18 +2033,9 @@ static void check_variables(void)
    var.key = "virtualjaguar_netlink";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
-   {
-      int mode = JLINK_MODE_DISABLED;
-      if (strcmp(var.value, "loopback") == 0)
-         mode = JLINK_MODE_LOOPBACK;
-      else if (strcmp(var.value, "tcp_server") == 0)
-         mode = JLINK_MODE_TCP_SERVER;
-      else if (strcmp(var.value, "tcp_client") == 0)
-         mode = JLINK_MODE_TCP_CLIENT;
-      netlink_apply(mode);
-   }
+      netlink_apply(netlink_resolve_mode(var.value), var.value);
    else
-      netlink_apply(JLINK_MODE_DISABLED);
+      netlink_apply(JLINK_MODE_DISABLED, NULL);
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -3712,6 +4260,54 @@ void retro_deinit(void)
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
    netlink_was_up          = -1;
+   /* OSD narration dedup (task 5, #467): same iOS-no-dlclose reasoning --
+    * a resident core would otherwise believe the new session's first
+    * mode/device/host is identical to the previous session's last one and
+    * stay silent instead of narrating it. */
+   netlink_osd_last_mode      = -1;
+   netlink_osd_last_device    = -1;
+   netlink_osd_last_host[0]   = '\0';
+   /* Device-mismatch OSD dedup (fix wave, PR review finding 3): same
+    * iOS-no-dlclose reasoning -- a resident core would otherwise believe
+    * the new session already warned about a host it has never seen. */
+   netlink_mismatch_last_host[0] = '\0';
+   /* LAN discovery (#467): close the beacon/listener socket, drop any
+    * peers it found (JLinkDiscStop() only closes the socket -- the peer
+    * array survives it, and a resident core would otherwise carry stale
+    * peers from an unrelated ROM into the next session), and reset the
+    * host/port visibility gates -- same iOS-no-dlclose reasoning as the
+    * rest of this function. */
+   JLinkDiscStop();
+   JLinkDiscPeersReset();
+   /* Host option value list (task 4, #467): JLinkDiscPeersReset() above
+    * clears the runtime peer table, but option_defs_us's live value list
+    * is a separate copy this session may have spliced peers into.
+    * Without restoring it, a resident core (iOS never dlcloses) would
+    * have retro_set_environment() republish last session's stale peers
+    * for a fresh session where discovery may not even be running yet. */
+   netlink_last_rebuild_ms = 0;
+   netlink_peers_dirty     = 0;
+   /* One-shot force-push latch (see its declaration comment): a rebuild
+    * mid-session could leave it set to 1 if retro_deinit() ran between
+    * the flag being set and update_option_visibility() consuming it --
+    * not reachable today (netlink_rebuild_host_options() sets and
+    * consumes it back-to-back with no yield in between), but resetting
+    * it costs nothing and matches every other static in this function. */
+   visibility_force_push  = 0;
+   if (netlink_host_presets_valid)
+   {
+      int host_idx = netlink_host_option_index();
+      if (host_idx >= 0)
+      {
+         option_defs_us[host_idx].values[0] = netlink_host_presets[0];
+         option_defs_us[host_idx].values[1] = netlink_host_presets[1];
+         option_defs_us[host_idx].values[2] = netlink_host_presets[2];
+         option_defs_us[host_idx].values[3].value = NULL;
+         option_defs_us[host_idx].values[3].label = NULL;
+      }
+   }
+   show_netlink_host       = true;
+   show_netlink_port       = true;
    show_mouse_options      = true;
    show_rotary_options     = true;
    mouse_scale_q8          = 256;
@@ -3923,17 +4519,55 @@ void retro_run(void)
       else if (up != netlink_was_up)
       {
          if (up)
+         {
             LOG_INF("[NETLINK] link UP (%s, device=%s)\n",
                     netlink_mode_name(JLinkMode()),
                     JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                              : "jaglink");
+            netlink_osd("Jaguar link connected (%s)",
+                        netlink_device_label(JLinkDevice()));
+         }
          else if (netlink_was_up == 1)
+         {
             LOG_WRN("[NETLINK] link DOWN (%s) -- peer disconnected\n",
                     netlink_mode_name(JLinkMode()));
+            netlink_osd("Jaguar link lost");
+         }
          else
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
                     netlink_mode_name(JLinkMode()));
          netlink_was_up = up;
+      }
+   }
+
+   /* Rebuild the host picker only when the peer set actually changed --
+    * never on a timer.  A second SET_CORE_OPTIONS_V2 tears down and
+    * rebuilds RetroArch's whole option manager (runloop.c), so doing it
+    * per beacon would thrash the menu under the user's thumb.
+    *
+    * JLinkDiscConsumeChanged() both reads AND CLEARS the flag.  A bare
+    * "flag && rate_limit_ok" (as sketched in the task brief) drops any
+    * change that lands inside the 2s cooldown -- the flag is gone, and
+    * the peer that triggered it is never rebuilt in; the next flag to
+    * fire is likely that same peer's 10s expiry, which publishes a list
+    * that never showed it at all.  The sticky latch below fixes that:
+    * any change latches netlink_peers_dirty, and only the rate limit
+    * gates the rebuild itself, so a change is delayed by at most 2s,
+    * never lost.  JLinkDiscStart() (jlink_discover.c) is already
+    * idempotent on repeated netlink_apply() calls with unchanged
+    * parameters, so this rebuild's own SET_CORE_OPTIONS_V2 -- even if it
+    * causes the frontend to re-signal a variables update -- cannot wipe
+    * the peer table out from under itself. */
+   {
+      uint32_t disc_now = JLinkNowMs();
+      if (JLinkDiscConsumeChanged())
+         netlink_peers_dirty = 1;
+      if (netlink_peers_dirty
+          && (uint32_t)(disc_now - netlink_last_rebuild_ms) >= 2000)
+      {
+         netlink_rebuild_host_options();
+         netlink_last_rebuild_ms = disc_now;
+         netlink_peers_dirty     = 0;
       }
    }
 

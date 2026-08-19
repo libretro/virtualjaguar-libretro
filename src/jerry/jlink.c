@@ -10,6 +10,7 @@
 #include "jlink.h"
 #include "jlink_tcp.h"
 #include "jlink_netpacket.h"
+#include "jlink_discover.h"
 #include "voicemodem.h"
 #include "state.h"
 
@@ -56,6 +57,21 @@ static void JLinkSleepUsec(int usec)
 }
 #endif
 
+/* Wall-clock milliseconds for the discovery beacon/expiry cadence
+   (JLinkDiscPoll).  Placed after both JLinkNowUsec definitions above --
+   it is defined once, not per platform branch -- and just downconverts
+   whichever one this platform compiled. */
+uint32_t JLinkNowMs(void)
+{
+#ifdef JLINK_HAVE_WAIT
+   return (uint32_t)(JLinkNowUsec() / 1000LL);
+#else
+   /* No wait helper on this platform means no sockets either, so
+      discovery is inert here and a frozen clock is harmless. */
+   return 0;
+#endif
+}
+
 static int jlinkMode = JLINK_MODE_DISABLED;
 static int jlinkDevice = JLINK_DEVICE_JAGLINK;
 static uint8_t jlinkRing[JLINK_RING_SIZE];
@@ -67,6 +83,11 @@ static int jlinkTCPPort = 42171;
 
 static uint32_t jlinkTxTotal = 0;
 static uint32_t jlinkRxTotal = 0;
+
+/* Set by JLinkFrameTick when JLinkDiscPoll reports the peer set changed;
+   consumed (read + cleared) by JLinkDiscConsumeChanged so a UI layer can
+   poll cheaply without re-deriving the diff itself. */
+static int jlinkDiscChanged = 0;
 
 /* Reply wait: after a TX burst goes out over a real transport, the games
    spin on ASISTAT for the partner's answer.  The spin burns its emulated
@@ -314,6 +335,17 @@ uint32_t JLinkRxTotal(void)
    return jlinkRxTotal;
 }
 
+/* Returns whether the discovery peer set has changed since the last
+   call, clearing the flag.  Set by JLinkFrameTick's JLinkDiscPoll call;
+   a UI layer polls this once per frame to know when to re-read the peer
+   list, instead of diffing it itself. */
+int JLinkDiscConsumeChanged(void)
+{
+   int changed = jlinkDiscChanged;
+   jlinkDiscChanged = 0;
+   return changed;
+}
+
 void JLinkPoll(void)
 {
    if (jlinkMode == JLINK_MODE_NETPACKET)
@@ -343,10 +375,23 @@ void JLinkSetWaitEnabled(int enabled)
 }
 
 /* Called once per video frame from retro_run: refill the wait budget
-   from the measured reply latency. */
+   from the measured reply latency, and service LAN discovery.
+
+   Discovery is driven from here rather than JLinkPoll(): JLinkPoll() is
+   also reached via JLinkPump(), which games call thousands of times per
+   frame while spinning on a reply (see JLinkAwaitReply's comment on the
+   fast-path bail needing to stay cheap) -- a recvfrom() drain loop on
+   every one of those calls would be wasteful and, unlike TCP polling,
+   has no gate on jlinkMode to keep it rare.  JLinkFrameTick has no mode
+   gate either, so discovery still runs while the link itself is
+   JLINK_MODE_DISABLED (exactly the state it exists to help escape), but
+   it runs at guaranteed once-per-video-frame cadence, which matches the
+   1 Hz beacon and 10 s peer expiry this module works on. */
 void JLinkFrameTick(void)
 {
    long long budget;
+   if (JLinkDiscActive())
+      jlinkDiscChanged |= JLinkDiscPoll(JLinkNowMs());
    if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
       VMFrameTick();
    if (!jlinkWaitEnabled)

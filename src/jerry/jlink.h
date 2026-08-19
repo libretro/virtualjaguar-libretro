@@ -73,6 +73,13 @@ void JLinkPump(void);
 uint32_t JLinkTxTotal(void);
 uint32_t JLinkRxTotal(void);
 
+/* Wall-clock milliseconds, used to drive jlink_discover.c's beacon
+   cadence and peer expiry from JLinkFrameTick. */
+uint32_t JLinkNowMs(void);
+/* Has the LAN discovery peer set changed since the last call?  Reads
+   and clears the flag set by JLinkFrameTick's discovery poll. */
+int JLinkDiscConsumeChanged(void);
+
 size_t JLinkStateSave(uint8_t *buf);
 size_t JLinkStateLoad(const uint8_t *buf);
 
