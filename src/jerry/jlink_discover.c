@@ -1,4 +1,13 @@
 /* jlink_discover.c -- LAN discovery beacon.  See jlink_discover.h. */
+/* glibc hides gethostname() (and SO_REUSEPORT) behind a feature-test macro
+   under strict -std=c99, which is exactly how the test/test_jlink* rules
+   compile this file -- so the core built fine while `make test` failed to
+   compile on Linux/clang.  Same class as the nanosleep note in jlink.c.
+   Must precede every include.  BSD/macOS ignore it. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+
 #include "jlink_discover.h"
 #include <stdlib.h>   /* getenv, atoi */
 #include <string.h>
@@ -305,8 +314,25 @@ int JLinkDiscPoll(uint32_t now_ms)
       to.sin_port        = htons((unsigned short)JLinkDiscPort());
       if (JLinkDiscEncode(out, sizeof(out), discDevice, discLinkPort,
                           discSelfName))
+      {
+         struct sockaddr_in lo;
          sendto(discSock, (const char *)out, JLINK_DISC_PKT_LEN, 0,
                 (struct sockaddr *)&to, sizeof(to));
+         /* Also unicast to loopback.  Broadcast delivery to another process
+            on the SAME host is not guaranteed -- it depends on the platform
+            and, on macOS/iOS, on the Local Network permission -- and CI
+            macOS runners drop it, which failed netlink_discover_pair there
+            while it passed locally.  Loopback needs no permission and no
+            broadcast route, so two cores on one machine always find each
+            other.  Self-beacons are filtered below, so this costs nothing
+            when the peer is remote. */
+         memset(&lo, 0, sizeof(lo));
+         lo.sin_family      = AF_INET;
+         lo.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+         lo.sin_port        = htons((unsigned short)JLinkDiscPort());
+         sendto(discSock, (const char *)out, JLINK_DISC_PKT_LEN, 0,
+                (struct sockaddr *)&lo, sizeof(lo));
+      }
       discLastBeacon = now_ms;
    }
 
