@@ -179,8 +179,21 @@ The campaign itself lands in **v4.0.0**.
   opt-in enhancement to compress it is tracked as #498 for v3.5.0.
 - Voice audio over the modem is not emulated (#485) — the real JVM carried
   voice modem-to-modem, bypassing the console entirely.
-- The analog/driving controller has no released software that reads it;
-  verification is synthetic and labelled as such.
+- The analog/driving controller implements the TR10 bank-switching protocol
+  on the `$F14000` joystick matrix. No released title is known to read *that*
+  protocol, so its verification is the synthetic register-level suite in
+  `test/tools/analog_decode_test.c`.
+
+  Analog-capable software does exist, but it targets different hardware:
+  **BattleSphere** and **BattleSphere Gold** sample the *motherboard* 8-bit
+  ADC at `$F17C00` — JERRY GPIO5, the "Paddle Interface", an ADC0844 fitted
+  only to early Jaguar boards and deleted from production silicon. They round-
+  robin four channels from a JERRY Timer 1 handler and consume two of them in
+  an "Analog Joystick Calibrator" screen and in GPU code, gated behind
+  *Gameplay Options → 2nd Controller: Analog Stick*. Club Drive writes the
+  same channel-select without ever reading it back. That interface is **not
+  emulated** — we return `0x0000` where an ADC-less console returns `0xFF` —
+  and is tracked separately.
 
 ## Downloads
 
