@@ -165,3 +165,5 @@ __pycache__/
 /test/tools/present_rate_probe
 test/tools/blitter_static_leak
 test/tools/voicemodem_pair
+/test/tools/netlink_discover_probe
+/test/tools/netlink_rebuild_witness
