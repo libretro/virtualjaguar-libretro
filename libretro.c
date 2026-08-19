@@ -221,6 +221,19 @@ static bool show_texture_replace   = true;
  * reads them. */
 static bool show_netlink_host      = true;
 static bool show_netlink_port      = true;
+/* One-shot "push every managed key regardless of its cached show_* prev"
+ * flag (task 4, #467).  update_option_visibility() normally only
+ * re-pushes SET_CORE_OPTIONS_DISPLAY for a group when that group's
+ * show_* flag CHANGES since the cached previous value -- cheap, but
+ * wrong immediately after a SET_CORE_OPTIONS_V2 rebuild, which resets
+ * every option to visible on the frontend side while every show_* prev
+ * in this file still matches current state, so nothing would normally
+ * re-push and rows that were hidden (CD-only keys, mouse/rotary/analog
+ * tuning, texdump/texreplace, per-port remaps) reappear and stay
+ * reappeared.  Set this, then call update_option_visibility(); it reads
+ * and clears the flag on entry, so the force applies to exactly the next
+ * call. */
+static int  visibility_force_push  = 0;
 static bool enable_alt_inputs = false;
 static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 
@@ -607,16 +620,24 @@ static bool update_option_visibility(void)
    struct retro_variable var;
    bool updated = false;
    unsigned i;
-
+   /* Read-and-clear: see visibility_force_push's declaration comment.
+    * One-shot so a normal (non-rebuild) call right afterward goes back to
+    * the cheap change-only behavior.  Declared here (with the other
+    * top-of-block locals, C89) rather than assigned as a statement, so the
+    * clear below is the first STATEMENT in the function, after every
+    * declaration. */
+   int force = visibility_force_push;
    // Show/hide input options
    bool show_input_options_prev = show_input_options;
+
+   visibility_force_push = 0;
    show_input_options = true;
 
    var.key = "virtualjaguar_alt_inputs";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value && !strcmp(var.value, "disabled"))
       show_input_options = false;
 
-   if (show_input_options != show_input_options_prev)
+   if (force || show_input_options != show_input_options_prev)
    {
       option_display.visible = show_input_options;
 
@@ -661,7 +682,7 @@ static bool update_option_visibility(void)
        * showing it there would advertise a control that does nothing. */
       show_cart_bios_option = (!content_loaded || !jaguar_cd_mode);
 
-      if (show_cd_options != show_cd_prev)
+      if (force || show_cd_options != show_cd_prev)
       {
          option_display.visible = show_cd_options;
          for (i = 0; i < ARRAY_SIZE(cd_only_keys); i++)
@@ -673,7 +694,7 @@ static bool update_option_visibility(void)
          updated = true;
       }
 
-      if (show_cart_bios_option != show_cart_bios_prev)
+      if (force || show_cart_bios_option != show_cart_bios_prev)
       {
          option_display.visible = show_cart_bios_option;
          option_display.key     = "virtualjaguar_bios";
@@ -704,7 +725,7 @@ static bool update_option_visibility(void)
 
       show_mouse_options = inputdev_is_mouse_type(InputDevGetType(1));
 
-      if (show_mouse_options != show_mouse_prev)
+      if (force || show_mouse_options != show_mouse_prev)
       {
          option_display.visible = show_mouse_options;
          for (i = 0; i < ARRAY_SIZE(mouse_keys); i++)
@@ -733,7 +754,7 @@ static bool update_option_visibility(void)
       show_rotary_options = (InputDevGetType(0) == INPUTDEV_ROTARY
                              || InputDevGetType(1) == INPUTDEV_ROTARY);
 
-      if (show_rotary_options != show_rotary_prev)
+      if (force || show_rotary_options != show_rotary_prev)
       {
          option_display.visible = show_rotary_options;
          for (i = 0; i < ARRAY_SIZE(rotary_keys); i++)
@@ -762,7 +783,7 @@ static bool update_option_visibility(void)
       show_analog_options = (inputdev_is_analog_type(InputDevGetType(0))
                              || inputdev_is_analog_type(InputDevGetType(1)));
 
-      if (show_analog_options != show_analog_prev)
+      if (force || show_analog_options != show_analog_prev)
       {
          option_display.visible = show_analog_options;
          for (i = 0; i < ARRAY_SIZE(analog_keys); i++)
@@ -787,7 +808,7 @@ static bool update_option_visibility(void)
           && !strcmp(var.value, "enabled"))
          show_texdump_16bpp = true;
 
-      if (show_texdump_16bpp != show_texdump_prev)
+      if (force || show_texdump_16bpp != show_texdump_prev)
       {
          option_display.visible = show_texdump_16bpp;
          option_display.key     = "virtualjaguar_texdump_16bpp";
@@ -804,7 +825,7 @@ static bool update_option_visibility(void)
       bool show_replace_prev = show_texture_replace;
 
       show_texture_replace = TexReplacePackAvailable() ? true : false;
-      if (show_texture_replace != show_replace_prev)
+      if (force || show_texture_replace != show_replace_prev)
       {
          option_display.visible = show_texture_replace;
          option_display.key     = "virtualjaguar_texture_replace";
@@ -837,7 +858,7 @@ static bool update_option_visibility(void)
       show_netlink_port = (resolved == JLINK_MODE_TCP_CLIENT
                             || resolved == JLINK_MODE_TCP_SERVER);
 
-      if (show_netlink_host != show_netlink_host_prev)
+      if (force || show_netlink_host != show_netlink_host_prev)
       {
          option_display.visible = show_netlink_host;
          option_display.key     = "virtualjaguar_netlink_host";
@@ -845,7 +866,7 @@ static bool update_option_visibility(void)
                     &option_display);
          updated = true;
       }
-      if (show_netlink_port != show_netlink_port_prev)
+      if (force || show_netlink_port != show_netlink_port_prev)
       {
          option_display.visible = show_netlink_port;
          option_display.key     = "virtualjaguar_netlink_port";
@@ -1259,23 +1280,22 @@ static void netlink_rebuild_host_options(void)
 
    /* SET_CORE_OPTIONS_V2 rebuilds RetroArch's whole core_option_manager
     * from these definitions, which carry no visibility field -- every
-    * option comes back visible.  update_option_visibility() caches
-    * show_netlink_host/show_netlink_port and only re-pushes
-    * SET_CORE_OPTIONS_DISPLAY when a value CHANGES, so without this it
-    * would keep believing a row it hid earlier is still hidden and never
-    * re-hide it.  Re-assert both current flags directly (not by calling
-    * update_option_visibility(), which would no-op against its own
-    * cached prevs) so a host row hidden in tcp_server mode -- discovery
-    * runs there too -- doesn't reappear the moment a peer is found. */
-   {
-      struct retro_core_option_display od;
-      od.key     = "virtualjaguar_netlink_host";
-      od.visible = show_netlink_host;
-      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &od);
-      od.key     = "virtualjaguar_netlink_port";
-      od.visible = show_netlink_port;
-      environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &od);
-   }
+    * option comes back visible, not just virtualjaguar_netlink_host/port:
+    * every group update_option_visibility() manages (CD-only keys,
+    * cart-BIOS keys, per-port input remaps, mouse/rotary/analog tuning,
+    * texdump/texture-replace) comes back too, and that function normally
+    * only re-pushes SET_CORE_OPTIONS_DISPLAY for a group whose show_*
+    * flag CHANGED since last call -- after this rebuild none of them did,
+    * so nothing would re-push and every hidden row (e.g. mouse/rotary/
+    * analog tuning on an ordinary RetroPad session, or the host row
+    * itself in tcp_server mode, where discovery also runs) would reappear
+    * and stay reappeared for the rest of the session.  Force a full
+    * re-push of every managed key from current state -- see
+    * visibility_force_push's declaration comment -- rather than
+    * special-casing just the two keys this feature owns, so there is
+    * still exactly one place that knows which rows are hidden when. */
+   visibility_force_push = 1;
+   update_option_visibility();
 
    LOG_INF("[NETLINK] host picker rebuilt: %d discovered peer%s\n",
            peer_count, peer_count == 1 ? "" : "s");
@@ -3983,6 +4003,13 @@ void retro_deinit(void)
     * for a fresh session where discovery may not even be running yet. */
    netlink_last_rebuild_ms = 0;
    netlink_peers_dirty     = 0;
+   /* One-shot force-push latch (see its declaration comment): a rebuild
+    * mid-session could leave it set to 1 if retro_deinit() ran between
+    * the flag being set and update_option_visibility() consuming it --
+    * not reachable today (netlink_rebuild_host_options() sets and
+    * consumes it back-to-back with no yield in between), but resetting
+    * it costs nothing and matches every other static in this function. */
+   visibility_force_push  = 0;
    if (netlink_host_presets_valid)
    {
       int host_idx = netlink_host_option_index();

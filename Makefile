@@ -994,7 +994,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1026,6 +1026,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	bash test/tools/netlink_discover_pair.sh ./$(TARGET)
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# Review-round-1 finding (task 4, #467): no other test runs a core in
+	@# a discovery-active mode long enough in REAL wall-clock time (not
+	@# frame count) for netlink_rebuild_host_options()'s 2s rate-limit
+	@# gate to open, so its SET_CORE_OPTIONS_V2 push -- the feature's
+	@# actual deliverable -- had never executed anywhere. Single process:
+	@# injects one real UDP beacon over the core's own discovery socket,
+	@# paces retro_run() past the 2s gate, and asserts the rebuild's own
+	@# log line fires and three independently-hidden option rows (host,
+	@# CD-only, mouse tuning) are still hidden afterward.
+	./test/tools/netlink_rebuild_witness ./$(TARGET)
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
@@ -1597,6 +1607,15 @@ test/tools/netlink_delay_proxy: test/tools/netlink_delay_proxy.c
 test/tools/netlink_discover_probe: test/tools/netlink_discover_probe.c src/jerry/jlink_discover.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/tools/netlink_discover_probe.c src/jerry/jlink_discover.c
+
+# Deliberately NOT linked against test/harness/harness.c -- this test needs
+# SET_CORE_OPTIONS_DISPLAY recording and an interceptable log callback,
+# neither of which the shared harness's environment callback provides (see
+# the file header comment for why). Standalone dlopen loader instead, same
+# shape as test/tools/test_option_visibility.c.
+test/tools/netlink_rebuild_witness: test/tools/netlink_rebuild_witness.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/netlink_rebuild_witness.c -ldl
 
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c
