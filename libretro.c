@@ -975,6 +975,21 @@ static int netlink_was_up = -1;
 static uint32_t netlink_last_rebuild_ms = 0;
 static int      netlink_peers_dirty     = 0;
 
+/* Last (mode, device, host) narrated to the OSD by netlink_apply()'s
+ * mode-resolution messages (task 5, #467).  netlink_apply() runs on
+ * EVERY check_variables() call, which fires whenever ANY core option
+ * changes -- not just the netlink ones -- so without this dedup the
+ * player gets a link toast (and, in tcp_client, a repeat of the device-
+ * mismatch warning) for completely unrelated menu edits.  -1 sentinels
+ * guarantee the first call after load always narrates.  File scope (not
+ * function-local) for the same reason as netlink_was_up above: iOS never
+ * dlcloses the core, so a function-local static would carry the previous
+ * session's narrated state into the next one and swallow its first
+ * message. */
+static int  netlink_osd_last_mode      = -1;
+static int  netlink_osd_last_device    = -1;
+static char netlink_osd_last_host[128] = "";
+
 /* Names for the [NETLINK] log lines.  Not exported: nothing outside this
  * file needs to render a mode. */
 static const char *netlink_mode_name(int mode)
@@ -989,6 +1004,36 @@ static const char *netlink_mode_name(int mode)
    default: break;
    }
    return "unknown";
+}
+
+/* Human-readable device label for OSD text ("voicemodem"/"jaglink" in the
+ * log lines are fine for grep, not for a player reading the screen). */
+static const char *netlink_device_label(int device)
+{
+   return device == JLINK_DEVICE_VOICEMODEM ? "Voice Modem" : "JagLink";
+}
+
+/* OSD narration.  Mirrors the [NETLINK] log lines so screen and log
+ * always agree; fires on transitions only, never per frame. */
+static void netlink_osd(const char *fmt, ...)
+{
+   struct retro_message_ext msg;
+   char text[256];
+   va_list ap;
+
+   va_start(ap, fmt);
+   vsnprintf(text, sizeof(text), fmt, ap);
+   va_end(ap);
+
+   memset(&msg, 0, sizeof(msg));
+   msg.msg      = text;
+   msg.duration = 4000;
+   msg.priority = 2;
+   msg.level    = RETRO_LOG_INFO;
+   msg.target   = RETRO_MESSAGE_TARGET_OSD;
+   msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION;
+   msg.progress = -1;
+   environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &msg);
 }
 
 /* Resolve the TCP endpoint for the network link and apply the mode.
@@ -1021,6 +1066,10 @@ static void netlink_apply(int mode, const char *opt_value)
    const char *src = "default";
    int want_file = 0;
    int got_file = 0;
+   /* OSD dedup state -- see netlink_osd_last_mode's declaration comment. */
+   char narrate_host[128];
+   int narrate_device;
+   int narrate_changed;
 
    host[0] = '\0';
 
@@ -1097,6 +1146,37 @@ static void netlink_apply(int mode, const char *opt_value)
    JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
    UARTSetLinkMode(mode);
 
+   /* Whether the resolved (mode, device, host) actually changed since the
+    * last narration.  netlink_apply() runs on every check_variables()
+    * call, which fires on ANY option change -- not just the netlink ones
+    * -- so the LOG_INF lines below are intentionally unconditional (log
+    * scrollback is cheap to re-emit), but the netlink_osd() calls are
+    * gated on this, or a player using Voice Modem in tcp_client would get
+    * a link toast for every unrelated settings tweak.  host only matters
+    * for tcp_client (it is not shown in the other messages), so it is
+    * excluded from the comparison otherwise -- an unrelated host edit
+    * while in another mode must not itself count as a transition. */
+   narrate_device = JLinkDevice();
+   if (mode == JLINK_MODE_TCP_CLIENT)
+   {
+      strncpy(narrate_host, host[0] ? host : "127.0.0.1",
+              sizeof(narrate_host) - 1);
+      narrate_host[sizeof(narrate_host) - 1] = '\0';
+   }
+   else
+      narrate_host[0] = '\0';
+   narrate_changed = (mode != netlink_osd_last_mode)
+                      || (narrate_device != netlink_osd_last_device)
+                      || strcmp(narrate_host, netlink_osd_last_host) != 0;
+   if (narrate_changed)
+   {
+      netlink_osd_last_mode   = mode;
+      netlink_osd_last_device = narrate_device;
+      strncpy(netlink_osd_last_host, narrate_host,
+              sizeof(netlink_osd_last_host) - 1);
+      netlink_osd_last_host[sizeof(netlink_osd_last_host) - 1] = '\0';
+   }
+
    /* One line that answers "what did the core actually do with my
     * settings".  Without it the whole link stack is silent, and a session
     * that never connected is indistinguishable from one that was never
@@ -1107,22 +1187,80 @@ static void netlink_apply(int mode, const char *opt_value)
     * later, by the frontend, and shows up as a link UP below.  Say so, or
     * the pair of lines reads as a contradiction. */
    if (mode == JLINK_MODE_DISABLED)
+   {
       LOG_INF("[NETLINK] built-in TCP link disabled (device=%s) -- frontend "
               "netplay will carry the link if a session is running\n",
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink");
+      /* This is the failure that motivated the whole feature: a Voice
+       * Modem selected with "auto" and no netplay session running does
+       * nothing, silently, until the player either starts netplay or
+       * picks a direct mode -- say so on screen. */
+      if (narrate_changed && JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+         netlink_osd("Voice Modem selected but link is idle -- start "
+                     "netplay or pick a host");
+   }
    else if (mode == JLINK_MODE_TCP_CLIENT)
+   {
       LOG_INF("[NETLINK] mode=%s device=%s peer=%s:%d (address from %s)\n",
               netlink_mode_name(mode),
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink",
               host[0] ? host : "127.0.0.1", port, src);
+      if (narrate_changed)
+      {
+         netlink_osd("Network Link: %s (%s) -> %s:%d",
+                     netlink_mode_name(mode),
+                     netlink_device_label(JLinkDevice()),
+                     host[0] ? host : "127.0.0.1", port);
+
+         /* Device mismatch: the discovery beacon carries device type, so
+          * if the host we are about to dial is a peer we've already seen
+          * beaconing the OTHER device, warn now -- JagLink and Voice
+          * Modem never interoperate and today fail silently (docs/
+          * netlink-ux-design.md section 2). */
+         {
+            const char *sel_host;
+            int my_device;
+            int pi, peer_count;
+
+            sel_host = host[0] ? host : "127.0.0.1";
+            my_device = (JLinkDevice() == JLINK_DEVICE_VOICEMODEM)
+                        ? JLINK_DISC_DEV_VOICEMODEM : JLINK_DISC_DEV_JAGLINK;
+            peer_count = JLinkDiscPeerCount();
+            if (peer_count > JLINK_DISC_MAX_PEERS)
+               peer_count = JLINK_DISC_MAX_PEERS;
+
+            for (pi = 0; pi < peer_count; pi++)
+            {
+               const JLinkPeer *peer;
+
+               peer = JLinkDiscPeerAt(pi);
+               if (peer && !strcmp(peer->addr, sel_host)
+                   && peer->device != my_device)
+               {
+                  netlink_osd("Host is running %s, you are set to %s",
+                              peer->device == JLINK_DISC_DEV_VOICEMODEM
+                                 ? "Voice Modem" : "JagLink",
+                              netlink_device_label(JLinkDevice()));
+                  break;
+               }
+            }
+         }
+      }
+   }
    else
+   {
       LOG_INF("[NETLINK] mode=%s device=%s port=%d\n",
               netlink_mode_name(mode),
               JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                        : "jaglink",
               port);
+      if (narrate_changed)
+         netlink_osd("Network Link: %s (%s), port %d",
+                     netlink_mode_name(mode),
+                     netlink_device_label(JLinkDevice()), port);
+   }
 
    /* The "From file" preset selected but no usable address in the file is
     * a silent 127.0.0.1 fallback -- the one that cost a debugging session. */
@@ -1217,10 +1355,39 @@ static int netlink_host_option_index(void)
 static void netlink_rebuild_host_options(void)
 {
    int idx, i, n, peer_count, my_device;
+   char cur_host[128];
+   int cur_host_known;
+   int cur_host_is_preset;
+   int cur_host_found;
 
    idx = netlink_host_option_index();
    if (idx < 0)
       return;
+
+   /* Selected-host-expired check (review note from task 4, #467): read
+    * the value currently active in the frontend BEFORE the value list is
+    * overwritten below.  If it names a discovered peer that is about to
+    * drop out of the rebuilt list, RetroArch's core_option_manager resets
+    * the option to its first value (127.0.0.1) with no explanation --
+    * warn on screen before that silently happens rather than after. */
+   cur_host_known     = 0;
+   cur_host_is_preset = 0;
+   cur_host_found     = 0;
+   {
+      struct retro_variable cur;
+
+      cur.key = "virtualjaguar_netlink_host";
+      cur.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &cur) && cur.value)
+      {
+         strncpy(cur_host, cur.value, sizeof(cur_host) - 1);
+         cur_host[sizeof(cur_host) - 1] = '\0';
+         cur_host_known = 1;
+         cur_host_is_preset = !strcmp(cur_host, "127.0.0.1")
+                               || !strcmp(cur_host, "jaghub.local")
+                               || !strcmp(cur_host, "vj_netlink.txt");
+      }
+   }
 
    if (!netlink_host_presets_valid)
    {
@@ -1248,6 +1415,10 @@ static void netlink_rebuild_host_options(void)
       peer = JLinkDiscPeerAt(i);
       if (!peer)
          break;
+
+      if (cur_host_known && !cur_host_is_preset
+          && !strcmp(peer->addr, cur_host))
+         cur_host_found = 1;
 
       /* Beacon-supplied name is untrusted and may be empty; fall back to
        * the address so the label is never just " - 1.2.3.4". */
@@ -1299,6 +1470,23 @@ static void netlink_rebuild_host_options(void)
 
    LOG_INF("[NETLINK] host picker rebuilt: %d discovered peer%s\n",
            peer_count, peer_count == 1 ? "" : "s");
+
+   if (cur_host_known && !cur_host_is_preset && !cur_host_found)
+   {
+      LOG_WRN("[NETLINK] selected host %s dropped off the LAN -- falling "
+              "back to 127.0.0.1\n", cur_host);
+      netlink_osd("Selected host %s dropped off the LAN -- falling back "
+                  "to 127.0.0.1", cur_host);
+   }
+
+   /* Only the "found" case gets a toast.  peer_count == 0 means this
+    * rebuild was triggered by the last peer expiring, not a new one
+    * arriving -- "Found 0 Jaguar host(s)" would tell the player nothing
+    * they don't already know from the dropped-selection warning above (if
+    * their host was the one that expired) or from the host list simply
+    * being back down to the static presets (if it wasn't). */
+   if (peer_count > 0)
+      netlink_osd("Found %d Jaguar host(s) on the LAN", peer_count);
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
@@ -3987,6 +4175,13 @@ void retro_deinit(void)
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
    netlink_was_up          = -1;
+   /* OSD narration dedup (task 5, #467): same iOS-no-dlclose reasoning --
+    * a resident core would otherwise believe the new session's first
+    * mode/device/host is identical to the previous session's last one and
+    * stay silent instead of narrating it. */
+   netlink_osd_last_mode      = -1;
+   netlink_osd_last_device    = -1;
+   netlink_osd_last_host[0]   = '\0';
    /* LAN discovery (#467): close the beacon/listener socket, drop any
     * peers it found (JLinkDiscStop() only closes the socket -- the peer
     * array survives it, and a resident core would otherwise carry stale
@@ -4235,13 +4430,20 @@ void retro_run(void)
       else if (up != netlink_was_up)
       {
          if (up)
+         {
             LOG_INF("[NETLINK] link UP (%s, device=%s)\n",
                     netlink_mode_name(JLinkMode()),
                     JLinkDevice() == JLINK_DEVICE_VOICEMODEM ? "voicemodem"
                                                              : "jaglink");
+            netlink_osd("Jaguar link connected (%s)",
+                        netlink_device_label(JLinkDevice()));
+         }
          else if (netlink_was_up == 1)
+         {
             LOG_WRN("[NETLINK] link DOWN (%s) -- peer disconnected\n",
                     netlink_mode_name(JLinkMode()));
+            netlink_osd("Jaguar link lost");
+         }
          else
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
                     netlink_mode_name(JLinkMode()));
