@@ -15,6 +15,16 @@ if [ ! -x "$BIN" ]; then
     echo "netlink_discover_pair: $BIN not built" >&2
     exit 1
 fi
+
+# Can this HOST deliver a broadcast between two local sockets, as seen by
+# THIS binary?  Asked of the probe itself, not of a script interpreter:
+# macOS grants Local Network permission PER BINARY, so probing from python3
+# would test the wrong identity and let a denied core binary FAIL here
+# instead of skipping.  Exit 77 -> ledgered skip, never a silent pass.
+if ! "$BIN" --selftest; then
+    echo "netlink_discover_pair: SKIP (host does not deliver UDP broadcast between local processes)" >&2
+    exit 77
+fi
 "$BIN" "$CORE" --role beacon &
 BPID=$!
 sleep 1

@@ -314,25 +314,8 @@ int JLinkDiscPoll(uint32_t now_ms)
       to.sin_port        = htons((unsigned short)JLinkDiscPort());
       if (JLinkDiscEncode(out, sizeof(out), discDevice, discLinkPort,
                           discSelfName))
-      {
-         struct sockaddr_in lo;
          sendto(discSock, (const char *)out, JLINK_DISC_PKT_LEN, 0,
                 (struct sockaddr *)&to, sizeof(to));
-         /* Also unicast to loopback.  Broadcast delivery to another process
-            on the SAME host is not guaranteed -- it depends on the platform
-            and, on macOS/iOS, on the Local Network permission -- and CI
-            macOS runners drop it, which failed netlink_discover_pair there
-            while it passed locally.  Loopback needs no permission and no
-            broadcast route, so two cores on one machine always find each
-            other.  Self-beacons are filtered below, so this costs nothing
-            when the peer is remote. */
-         memset(&lo, 0, sizeof(lo));
-         lo.sin_family      = AF_INET;
-         lo.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-         lo.sin_port        = htons((unsigned short)JLinkDiscPort());
-         sendto(discSock, (const char *)out, JLINK_DISC_PKT_LEN, 0,
-                (struct sockaddr *)&lo, sizeof(lo));
-      }
       discLastBeacon = now_ms;
    }
 

@@ -1023,7 +1023,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_uart_core ./$(TARGET)
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
-	bash test/tools/netlink_discover_pair.sh ./$(TARGET)
+	@# Discovery needs UDP broadcast to fan out between two local processes.
+	@# That is a host capability, not a property of the core -- GitHub's macOS
+	@# runners drop it -- so the script probes for it and exits 77 rather than
+	@# reporting a failure the code cannot cause.  Ledgered, never a silent pass.
+	@if bash test/tools/netlink_discover_pair.sh ./$(TARGET); then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "LAN discovery pair (#502)" "host does not deliver UDP broadcast between local processes"; \
+	   else exit $$rc; fi; \
+	 fi
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
 	@# Review-round-1 finding (task 4, #467): no other test runs a core in
