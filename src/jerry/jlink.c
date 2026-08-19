@@ -25,8 +25,10 @@ static long long JLinkNowUsec(void)
 {
    /* QueryPerformanceCounter: GetTickCount64's ~15 ms granularity would
       let the bounded wait overshoot its whole budget in one tick. */
-   LARGE_INTEGER f, c;
-   QueryPerformanceFrequency(&f);
+   static LARGE_INTEGER f;   /* frequency is fixed for the process */
+   LARGE_INTEGER c;
+   if (f.QuadPart == 0)
+      QueryPerformanceFrequency(&f);
    QueryPerformanceCounter(&c);
    return (c.QuadPart / f.QuadPart) * 1000000LL
         + (c.QuadPart % f.QuadPart) * 1000000LL / f.QuadPart;
@@ -42,9 +44,23 @@ static void JLinkSleepUsec(int usec)
 #define JLINK_HAVE_WAIT 1
 static long long JLinkNowUsec(void)
 {
-   struct timeval tv;
-   gettimeofday(&tv, NULL);
-   return (long long)tv.tv_sec * 1000000LL + tv.tv_usec;
+   /* CLOCK_MONOTONIC, not gettimeofday: every caller measures a DURATION
+      (the bounded reply wait, the 1 s discovery beacon, the 10 s peer
+      expiry), and wall-clock time can step backwards on an NTP correction.
+      A backward step made the unsigned elapsed-time subtraction in
+      JLinkDiscPeerExpire() wrap to a huge value and expire every live peer
+      at once.  Falls back to gettimeofday where the monotonic clock is
+      unavailable. */
+#if defined(CLOCK_MONOTONIC)
+   struct timespec ts;
+   if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+      return (long long)ts.tv_sec * 1000000LL + (long long)ts.tv_nsec / 1000LL;
+#endif
+   {
+      struct timeval tv;
+      gettimeofday(&tv, NULL);
+      return (long long)tv.tv_sec * 1000000LL + tv.tv_usec;
+   }
 }
 static void JLinkSleepUsec(int usec)
 {
