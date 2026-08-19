@@ -19,6 +19,7 @@
 #include "settings.h"
 #include "state.h"
 #include "jlink.h"
+#include "tom.h"
 #include "m68000/m68kinterface.h"
 
 /* ASICTRL write bits */
@@ -60,7 +61,11 @@ static void UARTRaiseIRQ(void)
    if (JERRYIRQEnabled(IRQ2_ASI))
    {
       JERRYSetPendingIRQ(IRQ2_ASI);
-      m68k_set_irq(2);
+      /* JERRY's interrupt output (DINT) reaches the 68K only through
+         TOM's INT1 bit 4 (C_JERENA) -- the same gate JERRYPIT1Callback
+         and JERRYPIT2Callback apply before raising IPL2. */
+      if (TOMIRQEnabled(IRQ_DSP))
+         m68k_set_irq(2);
    }
 }
 
