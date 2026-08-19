@@ -202,6 +202,13 @@ then the link state, on edges only:
 
 Reading them:
 
+- **"Network Link" is at its default (`auto`) and the OSD says `Voice Modem
+  selected but link is idle -- start netplay or pick a host`** — this is
+  the single most common report and is not a bug. `auto` resolves to
+  netplay-when-a-session-is-live, else idle; it never restores a
+  previously chosen direct mode and never auto-dials a discovered peer.
+  Either start a RetroArch netplay session, or set "Network Link" to
+  `TCP Host (listen)` / `TCP Client (connect)` explicitly on both sides.
 - **No `[NETLINK]` lines at all** — the core is too old to have the voice
   modem. Check the binary the frontend actually loaded, not the build tree:
   `strings <core> | grep -c virtualjaguar_uart_device` must be non-zero.
@@ -209,13 +216,37 @@ Reading them:
   raw cable cannot answer the wake handshake, so the game reports MODEM
   INITIALIZING FAILED. It must be set to Voice Modem on **both** sides.
 - **Stuck at `waiting for peer...`** — the transport never paired. Check both
-  sides agree on the port, and that exactly one is TCP Host.
+  sides agree on the port, and that exactly one is TCP Host. In `tcp_client`
+  mode, hosts running on the same LAN normally appear in the "Network Link
+  Host" list by themselves within a couple of seconds — if the one you want
+  isn't there, confirm it is actually in `tcp_server` mode (discovery only
+  beacons/listens in `tcp_server`/`tcp_client`, never in `auto`) and that
+  nothing on the network blocks UDP broadcast (client-isolated Wi-Fi APs are
+  a common culprit).
 - **`'From file' selected but no address read`** — the "From file" preset was
   chosen but `<system>/vj_netlink.txt` is missing or empty; the address fell
-  back to 127.0.0.1.
+  back to 127.0.0.1. The file format is one line, the address only, no
+  port — e.g. `192.168.1.42` or `myhost.local` — the port always comes from
+  "Network Link Port".
+- **The host you had selected quietly reverted to `127.0.0.1`** — a
+  discovered host that goes offline (or stops beaconing) expires from the
+  list after 10 s; if it was your active selection, the OSD says
+  `Selected host <addr> dropped off the LAN -- falling back to 127.0.0.1`
+  and the option resets. Re-pick it once it reappears, or pin it with
+  `vj_netlink.txt`/`VJ_NETLINK_HOST` if it's on an unreliable network.
+- **OSD says `Host is running JagLink, you are set to Voice Modem`** (or the
+  reverse) — the discovered peer and your "Network Link Device" don't
+  match. JagLink/CatBox and the Voice Modem never interoperate; set both
+  sides to the same device.
 - **`link UP` on both sides but the call still fails** — that is a modem-layer
   problem, not transport. Re-run with `VJ_VM_TRACE=1` for the command/reply
   stream, and see the choreography table above.
+
+On-screen narration mirrors these log lines (`SET_MESSAGE_EXT`, 4 s,
+transitions only) so a player without a log window in front of them sees
+the same facts: link resolved at load, link up, link lost, "Found N Jaguar
+host(s) on the LAN", the device-mismatch warning, the dropped-selection
+warning above, and the idle-Voice-Modem message.
 
 ## Open questions
 
