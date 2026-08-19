@@ -32,6 +32,23 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         if: matrix.os == 'windows-latest'
+
+      # MAME's build system probes for SDL/ALSA via pkg-config even with
+      # EMULATOR=0 TOOLS=1, and the hosted runner images no longer ship them.
+      # Their absence is what broke the nightly on 2026-08-18: chdman failed,
+      # and the nightly publish was gated on it, so three days of otherwise
+      # good 16-platform core builds were never released.
+      - name: Install chdman build dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsdl2-dev libsdl2-ttf-dev libasound2-dev \
+            libfontconfig1-dev libpulse-dev
+
+      - name: Install chdman build dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install sdl2 sdl2_ttf || true
         with:
           msystem: MINGW64
           update: true

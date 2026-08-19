@@ -569,7 +569,17 @@ jobs:
   nightly:
     name: Update nightly prerelease
     needs: [build, vita-build, switch-build, jagcd-tools]
-    if: github.ref == 'refs/heads/develop'
+    # Wait for the tools build, but do not REQUIRE it.  chdman is an
+    # auxiliary desktop helper; the nightly's product is the 16 core
+    # binaries.  Gating the publish on it meant a missing pkg-config
+    # package on a runner image silently withheld three days of good core
+    # builds (2026-08-18).  Tagged releases still require it below, because
+    # there the tools zips are part of the deliverable.
+    if: |
+      always() && github.ref == 'refs/heads/develop'
+      && needs.build.result == 'success'
+      && needs.vita-build.result == 'success'
+      && needs.switch-build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # move the tag, create/update the release
