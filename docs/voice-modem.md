@@ -25,10 +25,46 @@ How Ultra Vortek services the port (all addresses are the retail ROM):
   `$F1BA84`, read pointer at `$F1BA88`. The 68K driver consumes replies
   from that ring only. There is no RX interrupt use despite RINTEN being
   set; JINTCTRL bit 4 is enabled but the transfer path is the DSP poll.
-- **UART programming**: ASICTRL = `$0021` (odd parity + RINTEN), wake
-  attempts at ASICLK = `$1C` (~57.6 kbaud) falling back to `$56`
+- **UART programming**: ASICTRL = `$0021` = ODD (bit 0) + RINTEN (bit 5).
+  Note **parity is DISABLED** here — PAREN is bit 1 and is clear. An earlier
+  version of this line read "odd parity", which is wrong: only the ODD bit is
+  set. Per JTRM Rev 8 p.94, "when parity is disabled the value of the ODD bit
+  is transmitted in the parity bit time", so the slot is still sent and the
+  frame is still **11 bit times** (1 start + 8 data + 1 parity slot + 1 stop).
+  That 11 is what `UARTFrameUsec()` in `src/jerry/uart.c` multiplies by, and
+  it is correct — verified against JTRM Rev 8 p.93, which also gives the
+  divisor as `system clock / (N+1)` then /16.
+  Wake attempts at ASICLK = `$1C` (~57.6 kbaud) falling back to `$56`
   (~19.2 kbaud); after wake succeeds the driver issues `$FFFE` (see below)
-  and settles at ASICLK = `$56` — i.e. the DTE rate in use is **19200**.
+  and settles at ASICLK = `$56` — i.e. the DTE rate in use is **19200**,
+  which works out to ~576 µs per byte.
+
+**The 19200 rate is permanent, and the `$86xx` connect speed cannot change
+it.** Confirmed from two independent directions:
+
+- The official Atari spec (`docs/atari-jaguar-1999/07 - The Jaguar Voice
+  Modem.pdf`, p.13) defines `$FFFE` as "Set host baud rate to 19200. **Only
+  reset (`$FFFF`) can change the baud rate back to 57600.**" The DTE link has
+  exactly two rates and only those two commands select them. The `$8100`
+  reply reports the *analog* modem-to-modem handshake rate and never touches
+  the baud register.
+- In the retail ROM, `$F10034` (ASICLK) is written exactly **six** times in
+  the whole 4 MB image, every one an immediate `MOVE.W #imm,$F10034` with a
+  value of only `$1C` or `$56`, all inside the wake/reset routines
+  (`$80B10A`–`$80B18C`, `$80B1EC`–`$80B238`, `$80B358`). There is no
+  register-sourced write anywhere. The `$86xx` low byte is decoded at
+  `$803C30` and stored solely to RAM `$57D4` for the MODEM CONNECT SPEED
+  display.
+
+So the ~5.8 ms of wire time each way for a 10-byte pad packet is authentic
+and not tunable through the protocol. Reducing it is an emulator-side
+enhancement — see issue #498.
+
+**Note on sourcing:** this decode was derived by disassembling the retail
+ROM, deliberately without consulting other emulators. The official Atari JVM
+manual above (present in the gitignored `docs/atari-jaguar-1999/` tree)
+independently corroborates the command set and both baud rates. Consult it
+first for any future JVM work — it is the primary source.
 
 Menu entry: type **`911` on the numpad while the title logo is on screen**
 ("AWESOME" sting → INITIALIZING VOICE MODEM). With no modem answering, the
