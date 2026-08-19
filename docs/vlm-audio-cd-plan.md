@@ -1,5 +1,13 @@
 # Audio CDs and the Virtual Light Machine — investigation and plan
 
+**Status (2026-08-19):** #291 closed 2026-08-06; the Q-subcode fix
+described in §8 shipped (`3ffade1`). The residual items §8.7 lists as
+"still open (unchanged)" — HLE-mode loader acceptance for audio discs,
+transport polish, and RetroArch non-headless verification — are **not**
+tracked by any open follow-up issue (checked via `gh issue list`). Kept
+for the DSP alt-bank-R13 mute mechanism and Q-serializer design, which are
+the reference for anyone touching CD-DA/VLM code again.
+
 Issue: [#291](https://github.com/libretro/virtualjaguar-libretro/issues/291) —
 "Jaguar CD: audio CDs never reach the Virtual Light Machine (single-session discs rejected)".
 

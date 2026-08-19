@@ -10,6 +10,17 @@ point into it.
 the core could offload rendering stages to GPU compute through libretro's
 hardware-render API, and recommends against building it now.
 
+**Currency note (2026-08-19):** kept for the negative result — the
+recommendation to skip GPU compute stands. Checked both re-open conditions
+this document names against what has since shipped: the hi-res track it
+was a follow-up to shipped in v3.2.0 with two measured beneficiaries at N=2
+(Doom, Alien vs Predator; see `docs/hires-stage0-census.md`), not the
+"second beneficiary" scenario the doc treats as a trigger for N>=4; and
+v3.4.0's texture dump/replacement (`docs/texture-dump.md`, issue #369) is
+explicitly 1x-only — its own non-goals defer >1x replacement (which would
+ride the Stage 2 shadow surface, the condition-5 trigger here) to v3.5.
+Neither condition is met; not re-checked beyond that.
+
 **Honesty convention:** claims marked **[verified]** have a source link in §9.
 Claims marked **[inference]** are reasoned from verified facts plus our own
 code/measurements. Claims marked **[unknown]** are unresolved, each with a
