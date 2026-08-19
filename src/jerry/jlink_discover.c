@@ -1,5 +1,6 @@
 /* jlink_discover.c -- LAN discovery beacon.  See jlink_discover.h. */
 #include "jlink_discover.h"
+#include <stdlib.h>   /* getenv, atoi */
 #include <string.h>
 
 static JLinkPeer discPeers[JLINK_DISC_MAX_PEERS];
@@ -168,6 +169,31 @@ static int      discLinkPort   = 0;
 static uint32_t discLastBeacon = 0;
 static char     discSelfName[JLINK_DISC_NAME_MAX];
 
+/* Effective discovery port.  Defaults to the protocol's fixed rendezvous
+   port; VJ_DISC_PORT overrides it for tests only.
+   42170 sits inside Linux's default ephemeral range (32768-60999), and the
+   listener sets SO_REUSEPORT so two cores on one machine can share it.  That
+   combination means two concurrent `make test` runs do NOT collide with a
+   clean EADDRINUSE -- the kernel load-balances datagrams between them and one
+   run's beacon is silently consumed by the other run's listener.  The repo hit
+   the same class before with a fixed 42171 (see netlink_pair_test.sh) and
+   settled on PID-spread ports below 32768; this override is how the discovery
+   tests do the same without moving the shipped protocol port. */
+static int JLinkDiscPort(void)
+{
+   const char *e;
+   int p;
+
+   e = getenv("VJ_DISC_PORT");
+   if (e && e[0])
+   {
+      p = atoi(e);
+      if (p > 0 && p < 65536)
+         return p;
+   }
+   return JLINK_DISC_PORT;
+}
+
 int JLinkDiscStart(int listen_only, int device, int link_port)
 {
    struct sockaddr_in sa;
@@ -206,7 +232,7 @@ int JLinkDiscStart(int listen_only, int device, int link_port)
    memset(&sa, 0, sizeof(sa));
    sa.sin_family      = AF_INET;
    sa.sin_addr.s_addr = htonl(INADDR_ANY);
-   sa.sin_port        = htons((unsigned short)JLINK_DISC_PORT);
+   sa.sin_port        = htons((unsigned short)JLinkDiscPort());
    if (bind(discSock, (struct sockaddr *)&sa, sizeof(sa)) != 0)
    {
       JLinkDiscStop();
@@ -276,7 +302,7 @@ int JLinkDiscPoll(uint32_t now_ms)
       memset(&to, 0, sizeof(to));
       to.sin_family      = AF_INET;
       to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-      to.sin_port        = htons((unsigned short)JLINK_DISC_PORT);
+      to.sin_port        = htons((unsigned short)JLinkDiscPort());
       if (JLinkDiscEncode(out, sizeof(out), discDevice, discLinkPort,
                           discSelfName))
          sendto(discSock, (const char *)out, JLINK_DISC_PKT_LEN, 0,

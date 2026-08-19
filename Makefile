@@ -1035,7 +1035,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# paces retro_run() past the 2s gate, and asserts the rebuild's own
 	@# log line fires and three independently-hidden option rows (host,
 	@# CD-only, mouse tuning) are still hidden afterward.
-	./test/tools/netlink_rebuild_witness ./$(TARGET)
+	@# PID-spread the discovery port below Linux's ephemeral range so two
+	@# concurrent `make test` runs cannot silently share the SO_REUSEPORT
+	@# socket and consume each other's beacons.
+	VJ_DISC_PORT=$$((23000 + ($$$$ % 4000))) ./test/tools/netlink_rebuild_witness ./$(TARGET)
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating

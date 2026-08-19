@@ -4,6 +4,11 @@
 # listener is what makes two instances on one machine work at all, which
 # is exactly how every other netlink test runs.
 set -u
+# PID-spread, below Linux's ephemeral range (32768-60999).  A fixed port plus
+# SO_REUSEPORT lets two concurrent `make test` runs silently share the socket
+# and steal each other's beacons -- the same class the netlink TCP tests fixed.
+VJ_DISC_PORT="${VJ_DISC_PORT:-$(( 23000 + ($$ % 4000) ))}"
+export VJ_DISC_PORT
 CORE="${1:?usage: netlink_discover_pair.sh <core>}"
 BIN="$(dirname "$0")/netlink_discover_probe"
 if [ ! -x "$BIN" ]; then

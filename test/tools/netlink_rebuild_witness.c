@@ -85,6 +85,23 @@
 #include <libretro.h>
 #include "jlink_discover.h"
 
+/* Must match the core's JLinkDiscPort(): VJ_DISC_PORT overrides the fixed
+   protocol port so concurrent `make test` runs cannot have the kernel
+   load-balance one run's beacon into the other run's listener (SO_REUSEPORT
+   makes that silent rather than an EADDRINUSE). */
+static int witness_disc_port(void)
+{
+   const char *e = getenv("VJ_DISC_PORT");
+   if (e && e[0])
+   {
+      int v = atoi(e);
+      if (v > 0 && v < 65536)
+         return v;
+   }
+   return JLINK_DISC_PORT;
+}
+
+
 #define ROM_SIZE          131072
 #define FRAME_USEC        16667  /* ~60 fps, matches the real frontend cadence
                                    * JLinkNowMs()'s real-time-based gate assumes */
@@ -369,7 +386,7 @@ int main(int argc, char **argv)
    }
    memset(&dest, 0, sizeof(dest));
    dest.sin_family = AF_INET;
-   dest.sin_port   = htons(JLINK_DISC_PORT);
+   dest.sin_port   = htons((unsigned short)witness_disc_port());
    inet_pton(AF_INET, "127.0.0.1", &dest.sin_addr);
    sendto(udp_sock, beacon, beacon_len, 0, (struct sockaddr *)&dest, sizeof(dest));
 
