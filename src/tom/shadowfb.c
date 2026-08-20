@@ -34,6 +34,10 @@ int shadowFBActive = 0;
 int shadowFBPrecision = 0;
 static int shadowFBPrecisionWant = 0;
 
+/* Issue #528: nonzero once a pack has stored one 1x replacement entry.
+ * Gates the RGB16-direct renderers' per-pixel work (shadowfb.h). */
+int shadowFBReplActive = 0;
+
 uint32_t shadowLineRGB[SHADOWFB_LINE_PIXELS];
 uint32_t shadowLineTag[SHADOWFB_LINE_PIXELS];
 
@@ -83,33 +87,65 @@ void ShadowFBStoreRGB(uint32_t addr, uint16_t value16, uint32_t rgb888)
       return;
    idx = (addr & 0x1FFFFE) >> 1;
    shadowRGB[idx] = rgb888 & 0x00FFFFFF;
-   shadowTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
+   /* SHADOWFB_TAG_REPL marks this as pack art rather than a CRY
+    * reconstruction (issue #528): the RGB16-direct renderers may
+    * substitute it, the CRY renderers mask the bit out. */
+   shadowTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID
+                  | SHADOWFB_TAG_REPL;
+   shadowFBReplActive = 1;
 }
 
-int ShadowFBLookup(uint32_t addr, uint16_t current16, uint32_t *rgb888)
+/* Shared value-check.  `replOut` (optional) reports whether the entry is
+ * pack art. */
+static int shadow_fb_lookup(uint32_t addr, uint16_t current16,
+                            uint32_t *rgb888, int *replOut)
 {
-   uint32_t idx;
+   uint32_t idx, tag;
+   if (replOut)
+      *replOut = 0;
    if (!shadowFBActive)
       return 0;
    addr &= 0xFFFFFF;
    if (addr >= 0x800000)
       return 0;
    idx = (addr & 0x1FFFFE) >> 1;
-   if (shadowTag[idx] != ((uint32_t)current16 | SHADOWFB_TAG_VALID))
+   tag = shadowTag[idx];
+   if ((tag & SHADOWFB_TAG_VMASK)
+         != ((uint32_t)current16 | SHADOWFB_TAG_VALID))
       return 0;
+   if (replOut)
+      *replOut = (tag & SHADOWFB_TAG_REPL) ? 1 : 0;
    *rgb888 = shadowRGB[idx];
    return 1;
+}
+
+int ShadowFBLookup(uint32_t addr, uint16_t current16, uint32_t *rgb888)
+{
+   return shadow_fb_lookup(addr, current16, rgb888, NULL);
+}
+
+int ShadowFBLookupRepl(uint32_t addr, uint16_t current16, uint32_t *rgb888)
+{
+   int repl;
+   if (!shadow_fb_lookup(addr, current16, rgb888, &repl))
+      return 0;
+   return repl;
 }
 
 void ShadowFBLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
 {
    uint32_t rgb;
+   int repl;
    if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
       return;
-   if (!ShadowFBLookup(srcAddr, value16, &rgb))
-      rgb = CRY16ToRGB32[value16] & 0x00FFFFFF;
+   if (!shadow_fb_lookup(srcAddr, value16, &rgb, &repl))
+   {
+      rgb  = CRY16ToRGB32[value16] & 0x00FFFFFF;
+      repl = 0;
+   }
    shadowLineRGB[idx] = rgb;
-   shadowLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
+   shadowLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID
+                      | (repl ? SHADOWFB_TAG_REPL : 0u);
 }
 
 void ShadowFBInvalidate(void)
@@ -160,6 +196,7 @@ void ShadowFBShutdown(void)
    shadowFBActive = 0;
    shadowFBPrecision = 0;
    shadowFBPrecisionWant = 0;
+   shadowFBReplActive = 0;
    memset(shadowLineRGB, 0, sizeof(shadowLineRGB));
    memset(shadowLineTag, 0, sizeof(shadowLineTag));
 }
@@ -440,7 +477,13 @@ void ShadowHiresStoreReplBlock(uint32_t addr, uint16_t stock16,
  *             an allocated page that was never itself written).
  *   epoch  -- the entry matches by value and was rejected only for age.
  *             This is the silent-total-failure bucket: a slow or
- *             double-buffered engine can push 100% of its blocks here. */
+ *             double-buffered engine can push 100% of its blocks here.
+ *
+ * Counted buckets describe the SUB (stock supersampled) block only.  An
+ * epoch-expired word that carries pack art still returns its
+ * replacement plane (see the HIRES_TAG_REPL block below), so `missEpoch`
+ * climbing while pack art is visibly on screen is expected, not a
+ * contradiction. */
 static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16,
                                               const uint32_t **replOut)
 {
@@ -471,6 +514,31 @@ static const shadowfb_sub *shadow_hires_block(uint32_t addr, uint16_t current16,
    if (((hiresEpoch - ep) & 0xFF) >= HIRES_EPOCH_WINDOW)
    {
       shadowHiresResolveMissEpoch++;
+      /* Issue #528: pack art is EXEMPT from the age check, stock
+       * supersampled content is not.
+       *
+       * The epoch window bounds the R3 stale-STRUCTURE class: an entry
+       * whose value16 still matches RAM but whose N*N interior was
+       * derived from a write that is no longer the one RAM holds.  For
+       * pack art that class is already unbounded and already shipping
+       * at 1x -- the tier-1 shadow (ShadowFBStoreRGB / shadowLineTag)
+       * carries NO epoch, so the very same pack tile's 1x
+       * representative is being presented at this very pixel right now
+       * on exactly the same value-check.  Rejecting the Nx block for
+       * age therefore cannot prevent a wrong-tile artifact; it only
+       * drops that artifact's resolution from the author's art to a
+       * flat 1x block.  That is what made a tile blitted once and left
+       * on screen (HUD, menu, title card) go blocky after
+       * HIRES_EPOCH_WINDOW frames.
+       *
+       * The SUB block is still refused: stale stock structure is
+       * precisely what the window exists to reject, and returning NULL
+       * makes author alpha holes fall back to box replication of the
+       * word RAM actually holds -- the exact 1x result, never invented
+       * detail. */
+      if ((tag & HIRES_TAG_REPL) && hiresPageRepl[page])
+         *replOut = hiresPageRepl[page]
+                  + word * (uint32_t)shadowHiresN * (uint32_t)shadowHiresN;
       return NULL;
    }
    shadowHiresResolveHits++;
@@ -521,7 +589,12 @@ int ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
       }
    }
    shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
-   return blk != NULL;
+   /* Pack art counts as content even when the sub block was refused for
+    * age (issue #528): op.c's Stage 3 miss fallback would otherwise call
+    * ShadowHiresLineFromScaledSamples, which zeroes the line
+    * replacement plane -- wiping the art one statement after it was
+    * delivered.  Point samples never beat the author's pixels anyway. */
+   return (blk != NULL) || (rblk != NULL);
 }
 
 void ShadowHiresLineFromScaledSamples(int idx, const shadowfb_sub *cols,

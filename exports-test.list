@@ -91,6 +91,11 @@ _texReplaceEnabled
 _ShadowFB*
 _shadowLineRGB
 _shadowLineTag
+# RGB16-direct pack presentation (#528): the gate drives the seam both
+# RGB16 renderers use.  _TomLinePackRGB is NOT covered by _TOM* -- the
+# prefix differs in case.
+_shadowFBReplActive
+_TomLinePackRGB
 # Nx surface probes: the tier-3 (>1x pack art) gates drive the OP's own
 # resolve function and read the Nx line planes directly.
 _ShadowHires*

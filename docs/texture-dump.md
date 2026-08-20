@@ -346,9 +346,10 @@ Consequences, all load-bearing:
 
 - **Tier 1 (shipped): 16bpp source tiles, 1x, straight-copy blits** —
   the sprite/UI blit class dump mode was built for.  Presentation
-  requires the CRY 16bpp OP path (the dominant framebuffer case);
-  RGB16-mode displays and GPU-computed surfaces (Doom's texture
-  mapper) are out of scope, same as dump mode.
+  requires the 16bpp OP path; GPU-computed surfaces (Doom's texture
+  mapper) are out of scope, same as dump mode.  Both 16bpp scanout
+  modes present: CRY **and** RGB16-direct (issue #528, see
+  "RGB16-direct scanout" below).
 - **Tier 3 (shipped): >1x pack art on the Nx shadow surface** — see
   "Tier 3" below.  Pack art may be authored at exactly N times the
   dumped dimensions while **Internal Resolution** is Nx, and is then
@@ -427,28 +428,84 @@ pack's top-left subpixel (recorded in the 1x shadow, so a hi-res
 resolve miss degrades to pack colour rather than to stock).  Top-left,
 not an average: an average would invent a colour the author never drew.
 
-**Known tier-3 limit — epoch expiry on static content.** Nx blocks
-carry the surface's frame epoch and are only trusted for
-`HIRES_EPOCH_WINDOW` (16) presented frames; the 1x shadow has no epoch
-and persists on value-check alone.  So a tile blitted once and left on
-screen — a static HUD, a menu, a title card — presents crisp N× art for
-~16 frames and then ages out to the 1× representative, i.e. the same
-tile as flat blocky top-left colours.  It does *not* revert to stock,
-which is exactly why the 1× representative is recorded; that is the
-load-bearing reason for it.  Continuously re-blitting engines
-(Doom-class) are unaffected, and any block self-heals at the next blit.
-The battery gates cannot observe this (they probe with a current
-epoch), so it is documented rather than asserted.
+**Static content keeps its N× art (issue #528; was a tier-3 limit).**
+Nx blocks carry the surface's frame epoch and stock supersampled
+content is only trusted for `HIRES_EPOCH_WINDOW` (16) presented
+frames.  Pack art is **exempt from that age check**; only the stock
+sub block behind an author alpha hole still ages.  Before the
+exemption, a tile blitted once and left on screen — a static HUD, a
+menu, a title card — showed crisp N× art for ~16 frames and then aged
+out to the 1× representative: the same tile as flat blocky top-left
+colours.
+
+The exemption is safe because it adds no new failure class.  The
+window bounds *stale structure* — an N×N interior derived from a write
+RAM no longer holds — and for pack art that class is already unbounded
+and already shipping at 1×, where the tier-1 shadow carries no epoch
+at all and is presenting the same tile's 1× representative at the same
+pixel on the same value check.  Refusing the N× block therefore
+prevented no wrong-tile artifact; it only dropped that artifact's
+resolution.  (Note `shadowHiresResolveMissEpoch` still counts such
+words: the resolve counters describe the stock block, so the counter
+climbing while pack art is on screen is expected.)
+
+Asserted by gate 9, `hires_static_persist`, which steps **real**
+presented frames between the battery blits and the probe — nothing
+fakes the epoch, `harness_step` drives `retro_run` which drives
+`ShadowHiresFrameTick` — and first checks that the destination RAM is
+byte-unchanged across those frames, so "art gone" can only mean
+expiry.  (The earlier claim that catching this needed a faked epoch
+was wrong; the battery simply never stepped any frames after blitting.)
 
 Unchanged by tier 3: zero savestate fields, zero RAM writes, zero
 bus-model time.  The replacement plane is a derived cache like every
 other shadow surface, dropped by `ShadowHiresInvalidate` on savestate
 load and when a pack is unloaded.
 
-Not wired in (deliberate): the RGB16-direct Nx renderer
-(`tom_render_16bpp_rgb_scanline_hires`).  Tier 1 does not present on
-the 1x RGB16 path either, so wiring only the 2x one would make a pack
-look different at 2x than at 1x for reasons unrelated to resolution.
+### RGB16-direct scanout (issue #528)
+
+Packs present on TOM's **RGB16-direct** scanout mode
+(`TOMGetVideoMode() == 3`) as well as CRY, at **1× and N× together**.
+Both were wired in one change on purpose: tier 3 left RGB16 unwired at
+*both* resolutions precisely so a pack could not look different at 2×
+than at 1× for a reason unrelated to resolution, and doing half of it
+would have recreated exactly that defect.
+
+A corpus census settled the "which titles" question the deferral left
+open — 157 ROMs, TOM `VMODE` sampled once per presented frame over 900
+frames with scripted input: **66 titles reach mode 3 at all, 58 spend
+the majority of their frames there, and 32 never leave it.**
+RGB16-direct is not a niche path; it is the majority scanout mode for
+a large slice of the library, including Alien vs Predator (parks at
+`VMODE=$06C7` from frame 30 and never leaves), Rayman, Atari Karts,
+Iron Soldier 2, Towers II, Pinball Fantasies and Club Drive.
+
+Mechanically the store side needed nothing: the shadow surfaces
+capture the raw 16-bit destination word, and TOM's video mode only
+decides how that word is *interpreted* at scanout.  What was missing
+was a consumer, plus one bit to tell the two kinds of shadow entry
+apart:
+
+- `SHADOWFB_TAG_REPL` (bit 17 of the 1× tag, mirroring
+  `HIRES_TAG_REPL` on the Nx tag) marks an entry as **pack art** —
+  absolute RGB888 the author drew — rather than a **true-color CRY
+  reconstruction**, which is a decomposition of the 16-bit word
+  through the chroma tables and is meaningless for a word being
+  scanned out as RGB16.  The RGB16 renderers substitute on that bit
+  and only that bit; the CRY renderers mask it out and substitute on
+  either kind.  As with the Nx tag, an ordinary `ShadowFBStoreCry`
+  rewrites the tag *without* the bit, so stale pack art self-clears.
+- `TomLinePackRGB()` is the single seam both RGB16 renderers call per
+  presented pixel — one source of truth for the substitution, and what
+  gate 10 drives, the same way gate 4 drives `ShadowFBLineFromRAM`.
+- True color is still **not** wired into either RGB16 renderer, for
+  the original reason: track 3 is CRY-only, and substituting a CRY
+  reconstruction there would show a colour nothing ever drew.
+
+With no pack loaded, `shadowFBReplActive` and `shadowHiresReplActive`
+are both 0, the 1× RGB16 renderer takes a separate loop that is
+byte-for-byte the one that shipped before, and the Nx box-replication
+identity is untouched.
 
 ### Test gates (all in `make test`)
 
@@ -486,6 +543,28 @@ and a 32bpp tier-skip entry):
    (see the resolve-counter note in `shadowfb.h`), so this gate
    asserts delivery, not stores.
 8. `hires_determinism` — two identical 2x pack runs agree.
+9. `hires_static_persist` (#528) — a tile blitted **once** and then
+   left alone still delivers its N× art after 24 real presented frames
+   have carried the epoch past the 16-frame window (24 also stays far
+   from the 256-frame epoch wrap, which clears every tag for an
+   unrelated reason).  Precondition, checked first: the battery
+   destination RAM must be byte-unchanged across those frames, or the
+   gate cannot tell expiry from a coherence miss.
+10. `rgb16_presents` (#528) — `TomLinePackRGB`, the seam both RGB16
+   renderers call per presented pixel, delivers the pack at 1x and at
+   2x, **and delivers only the pack**: a true-color CRY reconstruction
+   sitting in the same shadow line plane must never substitute on an
+   RGB16 scanout.  That second half is what carries the correctness
+   claim — "substitute whenever the line entry hits" passes everything
+   else in this file and fails here.
+
+Both new gates were shown non-vacuous against deliberately broken
+builds rather than only against a baseline missing their symbols
+(#526's negative control was weaker than ideal on exactly that point):
+removing only the epoch exemption fails gate 9 alone, at 0/64 words
+delivered with RAM confirmed unchanged; dropping only the
+`SHADOWFB_TAG_REPL` requirement fails gate 10 alone, with 66 non-pack
+entries wrongly claimed at 1x and 65 at 2x.
 
 The 2x pack is generated by the same first-principles code as the 1x
 one, with one tile deliberately left at 1× art (proving replication)

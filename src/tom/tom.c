@@ -754,6 +754,35 @@ static uint16_t tom_clamp_line_buffer_width(
    return (width > safe_width) ? (uint16_t)safe_width : width;
 }
 
+/* Texture-pack substitution for ONE presented pixel on a non-CRY
+ * scanline path (issue #528).
+ *
+ * This is the single seam the RGB16-direct renderers -- 1x and Nx --
+ * use, so both paths present a pack identically and a resolution change
+ * can never make a pack look different for a reason unrelated to
+ * resolution.  It is also exactly what the test gate drives, the same
+ * way gates 4 and 7 drive ShadowFBLineFromRAM / ShadowHiresLineFromRAM.
+ *
+ * A hit requires SHADOWFB_TAG_REPL, i.e. the entry is absolute RGB888
+ * the pack author drew.  A true-color CRY reconstruction deliberately
+ * does NOT hit here: it is a decomposition of the 16-bit word through
+ * the chroma tables and means nothing for a word TOM is scanning out as
+ * RGB16 (see the SHADOWFB_TAG_REPL comment in shadowfb.h).
+ *
+ * Returns nonzero and fills *out (with alpha) on a hit. */
+int TomLinePackRGB(int idx, uint16_t color, uint32_t *out)
+{
+   if (!shadowFBActive || !shadowFBReplActive)
+      return 0;
+   if (idx < 0 || idx >= SHADOWFB_LINE_PIXELS)
+      return 0;
+   if (shadowLineTag[idx] != ((uint32_t)color | SHADOWFB_TAG_VALID
+                              | SHADOWFB_TAG_REPL))
+      return 0;
+   *out = 0xFF000000 | shadowLineRGB[idx];
+   return 1;
+}
+
 // 16 BPP CRY/RGB mixed mode rendering
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer)
 {
@@ -844,8 +873,11 @@ void tom_render_16bpp_cry_scanline(uint32_t * backbuffer)
          uint16_t color = (*current_line_buffer++) << 8;
          color |= *current_line_buffer++;
          out = CRY16ToRGB32[color];
+         /* SHADOWFB_TAG_REPL is masked out: on the CRY path BOTH kinds
+          * of entry (true-color reconstruction and pack art) present. */
          if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
-               && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+               && (shadowLineTag[sfbIdx] & SHADOWFB_TAG_VMASK)
+                  == ((uint32_t)color | SHADOWFB_TAG_VALID))
             out = 0xFF000000 | shadowLineRGB[sfbIdx];
          sfbIdx++;
          for (s = 0; s < pwidth_scale; s++)
@@ -935,7 +967,8 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
        * the true-color substitution when that option is on). */
       base = CRY16ToRGB32[color];
       if (shadowFBActive && sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
-            && shadowLineTag[sfbIdx] == ((uint32_t)color | SHADOWFB_TAG_VALID))
+            && (shadowLineTag[sfbIdx] & SHADOWFB_TAG_VMASK)
+               == ((uint32_t)color | SHADOWFB_TAG_VALID))
          base = 0xFF000000 | shadowLineRGB[sfbIdx];
 
       for (sub = 0; sub < n; sub++)
@@ -1034,7 +1067,15 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
  * RGB renderer) has no true-color hookup either -- track 3 is CRY-only --
  * so adding one here at 2x would make the 2x frame differ from the 1x
  * frame by something that is not supersampling, breaking the
- * box-replication identity this renderer must uphold on every miss. */
+ * box-replication identity this renderer must uphold on every miss.
+ *
+ * Texture-pack art IS wired in (issue #528), and by that same rule: the
+ * 1x RGB renderer presents packs too, through the same TomLinePackRGB
+ * seam, so `base` here carries the pack's 1x representative exactly as
+ * the CRY hires renderer's `base` carries the 1x substitution.  With no
+ * pack loaded shadowHiresReplActive and shadowFBReplActive are both 0,
+ * every branch below is predicted-not-taken, and the box-replication
+ * identity is untouched. */
 static void tom_render_16bpp_rgb_scanline_hires(uint32_t * backbuffer)
 {
    unsigned i;
@@ -1049,6 +1090,9 @@ static void tom_render_16bpp_rgb_scanline_hires(uint32_t * backbuffer)
    uint16_t startPos_disp;
    uint32_t *rows[SHADOWFB_HIRES_MAX_N];
    int sfbIdx;
+   /* Hoisted exactly as in the CRY hires renderer: 0 for every run of
+    * the base hi-res feature, so the pack branches cost nothing. */
+   int replActive = (shadowHiresReplActive && shadowHiresLineRepl) ? 1 : 0;
    startPos /= pwidth;
 
    for (sub = 0; sub < n; sub++)
@@ -1077,29 +1121,44 @@ static void tom_render_16bpp_rgb_scanline_hires(uint32_t * backbuffer)
    {
       uint32_t base;
       const shadowfb_sub *ent;
+      const uint32_t *rent;
       uint16_t color = (*current_line_buffer++) << 8;
       color |= *current_line_buffer++;
 
       /* `base` = the exact 1x result for this stock pixel: a plain
        * RGB16ToRGB32 lookup, same as tom_render_16bpp_rgb_scanline --
-       * no true-color substitution (see comment above). */
+       * no true-color substitution (see comment above), but WITH the
+       * pack's 1x representative when one exists, because the 1x RGB
+       * renderer presents that too (issue #528). */
       base = RGB16ToRGB32[color];
+      TomLinePackRGB(sfbIdx, color, &base);
 
       for (sub = 0; sub < n; sub++)
       {
-         ent = NULL;
+         ent  = NULL;
+         rent = NULL;
          if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
                && shadowHiresLineTag[sfbIdx] ==
                   ((uint32_t)color | SHADOWFB_TAG_VALID))
-            ent = shadowHiresLineSub
-                + ((uint32_t)sub * SHADOWFB_LINE_PIXELS + (uint32_t)sfbIdx)
-                  * (uint32_t)n;
+         {
+            uint32_t off = ((uint32_t)sub * SHADOWFB_LINE_PIXELS
+                            + (uint32_t)sfbIdx) * (uint32_t)n;
+            ent = shadowHiresLineSub + off;
+            if (replActive)
+               rent = shadowHiresLineRepl + off;
+         }
          for (sx = 0; sx < n; sx++)
          {
-            /* A hit renders each entry's raw value16 through the stock
-             * RGB16 LUT (frac16 ignored -- see comment above); a miss
-             * falls back to `base`, the exact 1x result. */
-            uint32_t out = ent ? RGB16ToRGB32[ent[sx].value16] : base;
+            /* Pack art is absolute RGB888 and wins outright; an author
+             * alpha hole (entry 0) falls through.  Otherwise a hit
+             * renders each entry's raw value16 through the stock RGB16
+             * LUT (frac16 ignored -- see comment above); a miss falls
+             * back to `base`, the exact 1x result. */
+            uint32_t out;
+            if (rent && (rent[sx] & SHADOWFB_HIRES_REPL_VALID))
+               out = 0xFF000000 | (rent[sx] & 0x00FFFFFF);
+            else
+               out = ent ? RGB16ToRGB32[ent[sx].value16] : base;
             for (s = 0; s < pwidth_scale; s++)
                *rows[sub]++ = out;
          }
@@ -1230,7 +1289,21 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
 }
 
 
-// 16 BPP RGB mode rendering
+/* 16 BPP RGB mode rendering.
+ *
+ * Texture packs present here as well as on the CRY path (issue #528).
+ * The two were wired TOGETHER on purpose: tier 3 (#526) left RGB16
+ * unwired at both 1x and Nx precisely so a pack could not look
+ * different at 2x than at 1x for a reason unrelated to resolution, and
+ * wiring one without the other would recreate exactly that defect.
+ * A corpus census (162 ROMs, TOM VMODE sampled per frame) settled the
+ * "which titles" question the deferral left open: RGB16-direct is not a
+ * niche path -- it is the majority scanout mode for most of the library,
+ * including Alien vs Predator, which parks at VMODE=$06C7 from frame 30
+ * and never leaves it.
+ *
+ * Only pack art substitutes here, never a true-color CRY
+ * reconstruction; see TomLinePackRGB above. */
 void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 {
    unsigned i;
@@ -1262,6 +1335,29 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 #endif
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+
+   /* Pack-present path.  Split from the stock loop rather than folded
+    * into it so that with no pack loaded -- every ordinary run, True
+    * Color included -- the code below is byte-for-byte the loop that
+    * shipped before #528. */
+   if (shadowFBActive && shadowFBReplActive)
+   {
+      int sfbIdx = (int)((current_line_buffer - &tomRam8[0x1800]) >> 1);
+      while (width >= pwidth_scale)
+      {
+         uint32_t out;
+         uint16_t color = (*current_line_buffer++) << 8;
+         color |= *current_line_buffer++;
+         out = RGB16ToRGB32[color];
+         TomLinePackRGB(sfbIdx, color, &out);
+         sfbIdx++;
+         for (s = 0; s < pwidth_scale; s++)
+            *backbuffer++ = out;
+         width -= pwidth_scale;
+      }
+      return;
+   }
+
    while (width >= pwidth_scale)
    {
       uint32_t color = (*current_line_buffer++) << 8;
