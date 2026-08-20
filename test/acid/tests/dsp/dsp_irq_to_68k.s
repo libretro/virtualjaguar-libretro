@@ -6,7 +6,13 @@
 ;      (Jaguar TOM/JERRY return user vector 64 on IACK -- they don't
 ;      assert VPA -- so even a level-2 IRQ goes to $100, not the
 ;      autovector slot at $68.)
-;   2. 68K enables JERRY IRQ2_DSP mask via J_INT ($F10020 low byte = $02).
+;   2. 68K enables JERRY IRQ2_DSP mask via J_INT ($F10020 low byte = $02)
+;      AND TOM C_JERENA (INT1 $F000E0 low byte bit 4).  Both are
+;      required: JERRY has no wire of its own to the 68K, its sources
+;      all merge onto TOM INT1 bit 4 (docs/jtrm-jerry.md,
+;      "JERRY-to-TOM Interrupt Routing").  tests/irq/jerry_pit_irq.s
+;      sets up the same pair for the PIT path.  The C_JERENA half of
+;      the enable is pinned on its own by dsp_irq_tom_gate.s.
 ;   3. 68K loads a tiny DSP program that writes CPUINT (=$0002) to its
 ;      own D_CTRL.  That asks JERRY to fire IRQ2_DSP.
 ;   4. 68K runs in supervisor with IPL=0 so level-2 IRQs unmask.
@@ -39,6 +45,8 @@ D_CTRL          equ     DSP_BASE+$14
 CPUINT          equ     $00000002
 GO              equ     $00000001
 J_INT           equ     $00F10020
+TOM_INT1_W      equ     $00F000E0
+TOM_INT_DSP_EN  equ     $0010           ; INT1 bit 4 = C_JERENA (IRQ_DSP)
 
 IRQ_MARKER_ADDR equ     $00080010
 IRQ_MARKER_VAL  equ     $C0FFEE01
@@ -73,6 +81,11 @@ entry:
                 move.w  #$FF02,J_INT.l   ; low byte mask=$02 (IRQ2_DSP);
                                          ; high byte $FF clears any
                                          ; stale pending bits.
+
+                ;; Open TOM's JERRY gate -- without C_JERENA, JERRY's
+                ;; DINT never reaches the 68K on real silicon.
+                move.w  #$1F00,TOM_INT1_W          ; clear TOM pendings
+                move.w  #TOM_INT_DSP_EN,TOM_INT1_W ; C_JERENA on
 
                 ;; Build DSP program: write CPUINT to D_CTRL via store.
                 lea     DSP_RAM.l,a0
