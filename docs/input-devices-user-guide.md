@@ -22,8 +22,8 @@ an analog or driving controller on the same six analog options.
 
 | Option | Values | Default |
 |---|---|---|
-| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Team Tap (4-player adaptor), Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
-| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Team Tap (4-player adaptor), Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
 | *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
 | *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
@@ -71,6 +71,12 @@ three mice, Rotary, Analog Joystick, Driving Controller) — everything except
 which is not a real device. A device set that way outranks the core option.
 Setting the port back to *Joypad* or *None* releases that claim rather than
 forcing a pad — the core option decides again, immediately.
+
+**Pro Controller (#514) is the one exception: core option only.** It does not
+appear in your frontend's *Controls → Device Type* list, because it is not a
+distinct RetroPad-shaped device the way the others are — see
+[Pro Controller](#pro-controller-514) below for why. Select it from the
+*Controller Type* core option on the port you want it on.
 
 ### Once a mouse is live, the port-2 RetroPad is disconnected
 
@@ -463,20 +469,111 @@ Reports that the adapter is **inert** on a title that should support it are
 just as valuable as crash reports — that is the failure mode the tester ROM
 cannot catch.
 
+## Pro Controller (#514)
+
+Set *Port 1/2 > Controller Type* to **Pro Controller (6-button)**. Default is
+*Auto*, which means a plain joypad — nothing changes until you choose it, and
+`test/tools/joymatrix_identity` and `test/tools/procontroller_decode_test`
+both assert the default is bit-identical to a core without this option.
+
+**What we implement.** The retail Pro Controller adds three fire buttons
+(X, Y, Z) and a pair of shoulder buttons to the standard three-button pad.
+Atari's own Jaguar SDK header (`jaguar.inc`, revision 8/08/95, *"added
+ProController equates"*) and its developer newsletter of the same week both
+say the same thing: those five extra buttons are **wired onto five existing
+numeric-keypad positions**, not a new device with its own identifier. To
+quote the newsletter directly — *"reading the new buttons is very simple,
+because they map directly to keys on the numeric keypad ... to see if the 'X'
+button is pressed, for example, you simply check the same bit as you would
+for the '9' key."* The full citation trail is
+[`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md)
+section 9 — the TR10 manual never mentions the device at all, which is why
+that spike originally left #514 blocked before the SDK source was found.
+
+| Pro Controller button | Aliased keypad key | Bound RetroPad button |
+|---|---|---|
+| Z (fire) | 7 | R2 |
+| Y (fire) | 8 | L2 |
+| X (fire) | 9 | X |
+| Left shoulder | 4 | L1 |
+| Right shoulder | 6 | R1 |
+
+A, B, C, Option and Pause keep their standard bindings (A, B, Y, Start,
+Select) — selecting Pro Controller only changes the five rows above.
+
+**Why this is a core option and not a frontend device type.** Every other
+device on this page (mouse, rotary, analog, driving, paddle, light gun) is a
+genuinely different piece of electronics with its own signal on the wire, so
+it gets its own `RETRO_DEVICE` subclass and shows up in your frontend's
+*Controls → Device Type* list. The Pro Controller has **no such thing to
+plug into**: register-for-register it is an ordinary standard pad, and the
+"six-button" part is entirely in which five keypad intersections the extra
+buttons happen to close. Exposing that as a separate frontend device would
+imply a plumbing distinction that does not exist, so it lives as a preset on
+the existing *Controller Type* option instead — see
+[`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md)
+section 9.7 for the reasoning in full.
+
+**Why this is opt-in, and will stay opt-in.** Because the aliasing is real
+hardware, not an emulation shortcut, a title that reads its own keypad —
+weapon select, level codes, a menu shortcut on `7`/`8`/`9`/`4`/`6` — cannot
+tell a genuine keypad press from a Pro Controller press pressing the "same"
+button; on real silicon those are the identical electrical event. With Pro
+Controller selected, pressing RetroPad X/Y/L1/R1/L2/R2 on a title that never
+heard of the Pro Controller will register as those keypad digits. Leave the
+option on *Standard Joypad* unless a game specifically wants the extra
+buttons.
+
+**Coverage is register-level, not game-verified.** No detection method for
+the Pro Controller was ever published — not by Atari, not since. A game
+cannot ask the console "is a Pro Controller attached," so no title can be
+shown to *require* this preset, and the retail catalogue includes no
+confirmed Pro-Controller-only game in this project's testing so far.
+`test/tools/procontroller_decode_test.c` proves the register-level claim
+above — pressing each of the five slots clears exactly the predicted
+`$F14000` bit on its own row and moves nothing else, on both ports — but
+that is a unit-level guarantee about the matrix decode, not evidence any
+specific game reacts correctly to it.
+
+**Call for testing.** If you own a Jaguar title that specifically advertises
+Pro Controller support (packaging, in-game controls screen, or a manual
+"ProController / Standard" menu — community reports say some titles offer
+one), please try this option and tell us what you find:
+
+- Does the game's own controls screen show the Pro Controller's extra
+  buttons responding?
+- Does gameplay actually change (a fire button doing something a standard
+  pad's A/B/C could not), or does the game merely read the same keypad keys
+  it would from a standard pad's numeric entry?
+- Did you find a game that reacts *incorrectly* — buttons landing on the
+  wrong function, or a standard-pad-only game visibly confused by phantom
+  keypad presses when this option is on?
+
+File an issue on the tracker with the game, region and what you observed
+either way — a working report and a "does nothing new" report are both
+useful data, since no released title is currently confirmed to require this
+preset.
+
 ## Already shipped
 
 The **Tempest rotary** (#436), the **analog / driving controllers** (#437),
-the **light gun** (#438) and **per-axis tuning** (#439) have all shipped —
-see [Core options](#core-options) above. The two deliberate exclusions,
-"ADC-Reg" and the Jaguar VR head tracker, are recorded with their reasons in
-the analog section above; anything else still open lives on
+the **light gun** (#438), **per-axis tuning** (#439) and the **Pro
+Controller preset** (#514) have all shipped — see [Core
+options](#core-options) above. The two deliberate exclusions, "ADC-Reg" and
+the Jaguar VR head tracker, are recorded with their reasons in the analog
+section above; anything else still open lives on
 [#428](https://github.com/libretro/virtualjaguar-libretro/issues/428).
 
 ## See also
 
 - [`docs/jaguar-mouse-adapter-mapping.md`](jaguar-mouse-adapter-mapping.md) —
   the sourced pin → register-bit mapping this is built from
+- [`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md) —
+  the Pro Controller (and Team Tap) source spike, including the SDK/devnews
+  citations behind the keypad-aliasing table above
 - [#428](https://github.com/libretro/virtualjaguar-libretro/issues/428) —
   input-devices epic
 - [#429](https://github.com/libretro/virtualjaguar-libretro/issues/429) —
   ST/Amiga mouse
+- [#514](https://github.com/libretro/virtualjaguar-libretro/issues/514) —
+  Pro Controller
