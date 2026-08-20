@@ -4,7 +4,7 @@
 // by James Hammons
 // (C) 2010 Underground Software
 //
-// CD image (CUE/BIN) support for Jaguar CD emulation
+// CD image (CUE/BIN, CDI, CHD) support for Jaguar CD emulation
 //
 
 #include <stdio.h>
@@ -23,9 +23,34 @@
 #include "jaguar.h"
 #include "log.h"
 
+#include <libchdr/chd.h>
+#include <libchdr/cdrom.h>
+
+#ifndef CDROM_SESSION_METADATA_TAG
+#define CDROM_SESSION_METADATA_TAG CHD_MAKE_TAG('C','H','S','E')
+#endif
+#ifndef CDROM_SESSION_METADATA_FORMAT
+#define CDROM_SESSION_METADATA_FORMAT "SESSION:%d"
+#endif
+
 // CDI (DiscJuggler) format support
 static RFILE *cdi_file = NULL;
 static bool ParseCDI(const char *cdiPath);
+
+/* CHD (MAME compressed hunks) — libchdr. Path chd_open() first;
+ * libretro VFS callbacks are the Android-URI fallback. */
+static chd_file *chd = NULL;
+static RFILE *chd_rfile = NULL;
+static uint8_t *chd_hunk = NULL;
+static uint32_t chd_hunkbytes = 0;
+static uint32_t chd_read_err_logged = 0;
+static int32_t chd_hunknum = -1;
+/* First CHD frame of each track's stored data (includes 4-frame padding
+ * of earlier tracks; does NOT include virtual pregaps). */
+static uint32_t chd_frame0[CDINTF_MAX_TRACKS];
+static uint8_t chd_virtual_pregap[CDINTF_MAX_TRACKS];
+static bool ParseCHD(const char *chdPath);
+static void CDIntfCloseCHD(void);
 
 /* Multi-file CUE sector reads used to rfopen/rfseek/rfread/rfclose the
  * track's BIN on EVERY 2352-byte sector (measured 18.3 us vs 0.4 us per
@@ -69,6 +94,7 @@ static int cdintf_strncasecmp(const char *a, const char *b, size_t n)
 
 // Private function prototypes
 static bool ParseCueSheet(const char *cuePath);
+static void CDIntfFinalizeSessions(void);
 static void MSFFromLBA(uint32_t lba, uint8_t *m, uint8_t *s, uint8_t *f);
 static uint32_t LBAFromMSF(uint8_t m, uint8_t s, uint8_t f);
 static char *TrimWhitespace(char *str);
@@ -77,9 +103,12 @@ static bool GetDirectoryFromPath(const char *path, char *dir, size_t dirSize);
 // The global disc state
 static struct CDIntfDisc disc;
 
-// Tracks whether the last CDIntfReadBlock() hit a virtual-pregap gap.
-// Used by cdrom.c to correlate pregap-auth reads with the BIOS's subsequent
-// STOP command so we can identify the auth-fail branch PC.
+/* Disc LBA one past the end of the extracted boot executable (see
+ * CDIntfExtractBootStub); 0 until an extraction succeeds. */
+static uint32_t bootStubEndLBA = 0;
+
+// Tracks whether the last CDIntfReadBlock() returned synthesized silence
+// (unowned LBA / inter-session gap, or CHD PGTYPE=V in-track pregap).
 static bool lastReadVirtualPregap = false;
 static uint32_t lastVirtualPregapLBA = 0;
 
@@ -151,6 +180,516 @@ static bool GetDirectoryFromPath(const char *path, char *dir, size_t dirSize)
 
    dir[0] = '\0';
    return false;
+}
+
+static void CDIntfFinalizeSessions(void)
+{
+   int i;
+   uint32_t sess1Min = 99, sess1Max = 0;
+   uint32_t sess2Min = 99, sess2Max = 0;
+
+   disc.numSessions = 1;
+
+   for (i = 0; i < (int)disc.numTracks; i++)
+   {
+      uint32_t trackNum = disc.tracks[i].number;
+      uint32_t sess = disc.tracks[i].session;
+
+      if (sess == 1)
+      {
+         if (trackNum < sess1Min) sess1Min = trackNum;
+         if (trackNum > sess1Max) sess1Max = trackNum;
+      }
+      else if (sess == 2)
+      {
+         disc.numSessions = 2;
+         if (trackNum < sess2Min) sess2Min = trackNum;
+         if (trackNum > sess2Max) sess2Max = trackNum;
+      }
+   }
+
+   disc.sessions[0].number = 1;
+   disc.sessions[0].firstTrack = (sess1Min <= CDINTF_MAX_TRACKS) ? sess1Min : 1;
+   disc.sessions[0].lastTrack = (sess1Max > 0) ? sess1Max : 1;
+
+   if (disc.numSessions >= 2 && sess2Min <= CDINTF_MAX_TRACKS)
+   {
+      uint32_t leadOut = disc.tracks[sess2Min - 1].startLBA;
+      disc.sessions[0].leadOutLBA = leadOut;
+      MSFFromLBA(leadOut, &disc.sessions[0].leadOutM,
+                 &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
+   }
+   else
+   {
+      uint32_t lastIdx = disc.sessions[0].lastTrack - 1;
+      uint32_t leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
+      disc.sessions[0].leadOutLBA = leadOut;
+      MSFFromLBA(leadOut, &disc.sessions[0].leadOutM,
+                 &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
+   }
+
+   if (disc.numSessions >= 2)
+   {
+      uint32_t lastIdx, leadOut;
+      disc.sessions[1].number = 2;
+      disc.sessions[1].firstTrack = sess2Min;
+      disc.sessions[1].lastTrack = sess2Max;
+
+      lastIdx = sess2Max - 1;
+      leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
+      disc.sessions[1].leadOutLBA = leadOut;
+      MSFFromLBA(leadOut, &disc.sessions[1].leadOutM,
+                 &disc.sessions[1].leadOutS, &disc.sessions[1].leadOutF);
+   }
+}
+
+static uint64_t chd_vfs_fsize(void *argp)
+{
+   int64_t sz;
+   sz = filestream_get_size((RFILE *)argp);
+   if (sz < 0)
+      return (uint64_t)-1;
+   return (uint64_t)sz;
+}
+
+static size_t chd_vfs_fread(void *ptr, size_t size, size_t nmemb, void *argp)
+{
+   int64_t want;
+   int64_t got;
+   if (size == 0 || nmemb == 0)
+      return 0;
+   want = (int64_t)size * (int64_t)nmemb;
+   got = filestream_read((RFILE *)argp, ptr, want);
+   if (got < 0)
+      return 0;
+   return (size_t)(got / (int64_t)size);
+}
+
+static int chd_vfs_fclose(void *argp)
+{
+   /* We own the RFILE; chd_close must not fclose it (non-owner). */
+   (void)argp;
+   return 0;
+}
+
+static int chd_vfs_fseek(void *argp, int64_t offset, int whence)
+{
+   int pos;
+   if (whence == SEEK_SET)
+      pos = RETRO_VFS_SEEK_POSITION_START;
+   else if (whence == SEEK_CUR)
+      pos = RETRO_VFS_SEEK_POSITION_CURRENT;
+   else if (whence == SEEK_END)
+      pos = RETRO_VFS_SEEK_POSITION_END;
+   else
+      return -1;
+   if (filestream_seek((RFILE *)argp, offset, pos) < 0)
+      return -1;
+   return 0;
+}
+
+static const core_file_callbacks chd_vfs_cb = {
+   chd_vfs_fsize,
+   chd_vfs_fread,
+   chd_vfs_fclose,
+   chd_vfs_fseek
+};
+
+/* Determine, for each track in file order, which CD session (1-based) it
+ * belongs to.
+ *
+ * CHD's CHSE (session) metadata entries are indexed among *themselves*
+ * (search index 0 = the 1st CHSE entry anywhere in the file, 1 = the 2nd,
+ * ...) -- that index space is NOT the track index.  A Jaguar disc always
+ * carries exactly two CHSE entries (session 1 at the top, session 2
+ * wherever the game-data session actually starts), but "wherever" varies
+ * with how many tracks precede it: one track for most retail Redump rips,
+ * but two or more for several homebrew CUEs (Frog Feast, Ants, Klax, ...
+ * -- see docs/jagcd-chd.md).  Querying CHSE at the same search index as
+ * the track loop counter (as this parser used to) only happens to land on
+ * the right entry when session 1 has exactly one track: issue #476 was
+ * exactly this, one track early, because Frog Feast's session 1 has two.
+ *
+ * Fix: walk the *whole* metadata list once with CHDMETATAG_WILDCARD, which
+ * enumerates every entry in true on-disk order regardless of tag, and
+ * stamp the session that was current at the moment each track (CHT2/CHTR)
+ * entry was seen.  This also makes the caller's own CHT2/CHTR-by-index
+ * loop and this session lookup agree on what "index i" means for tracks:
+ * both now count actual track entries in file order. */
+static bool DetermineCHDTrackSessions(chd_file *chdFile, uint32_t *trackSession,
+                                       uint32_t maxTracks, uint32_t *outNumTracks,
+                                       bool *outSawChse)
+{
+   char metadata[256];
+   uint32_t mdIndex;
+   uint32_t session;
+   uint32_t trackCount;
+   bool sawChse;
+
+   session = 1;
+   trackCount = 0;
+   sawChse = false;
+
+   for (mdIndex = 0; ; mdIndex++)
+   {
+      chd_error err;
+      uint32_t resulttag;
+
+      metadata[0] = '\0';
+      resulttag = 0;
+      err = chd_get_metadata(chdFile, CHDMETATAG_WILDCARD, mdIndex, metadata,
+                             sizeof(metadata), NULL, &resulttag, NULL);
+      if (err != CHDERR_NONE)
+         break;
+
+      if (resulttag == CDROM_SESSION_METADATA_TAG)
+      {
+         int sess;
+         sess = 1;
+         if (sscanf(metadata, CDROM_SESSION_METADATA_FORMAT, &sess) == 1 && sess >= 1)
+         {
+            session = (uint32_t)sess;
+            sawChse = true;
+         }
+      }
+      else if (resulttag == CDROM_TRACK_METADATA2_TAG ||
+               resulttag == CDROM_TRACK_METADATA_TAG)
+      {
+         if (trackCount < maxTracks)
+            trackSession[trackCount] = session;
+         trackCount++;
+      }
+   }
+
+   *outNumTracks = trackCount;
+   *outSawChse = sawChse;
+   return trackCount > 0;
+}
+
+static void CDIntfCloseCHD(void)
+{
+   if (chd)
+   {
+      chd_close(chd);
+      chd = NULL;
+   }
+   if (chd_rfile)
+   {
+      rfclose(chd_rfile);
+      chd_rfile = NULL;
+   }
+   if (chd_hunk)
+   {
+      free(chd_hunk);
+      chd_hunk = NULL;
+   }
+   chd_hunkbytes = 0;
+   chd_hunknum = -1;
+   chd_read_err_logged = 0;
+   memset(chd_frame0, 0, sizeof(chd_frame0));
+   memset(chd_virtual_pregap, 0, sizeof(chd_virtual_pregap));
+}
+
+static bool ParseCHD(const char *chdPath)
+{
+   const chd_header *head;
+   chd_error err;
+   char metadata[256];
+   int i;
+   uint32_t sessionnum;
+   uint32_t discLBA;
+   uint32_t chdFrames;
+   int prevSession;
+   bool saw_chse;
+   bool all_audio;
+   bool warn_virtual;
+   uint32_t chdTrackSession[CDINTF_MAX_TRACKS];
+   uint32_t chdSessionTrackCount;
+   const uint32_t INTER_SESSION_GAP = 11400;
+
+   CDIntfCloseCHD();
+   memset(&disc, 0, sizeof(disc));
+
+   /* Prefer libchdr's own path open (real FILE* inside unity.c).  This TU
+    * remaps FILE to RFILE via file_stream_transforms.h, so we must not
+    * pass our RFILE to chd_open_file().  Android content URIs fail that
+    * path and succeed through VFS callbacks below. */
+   err = chd_open(chdPath, CHD_OPEN_READ, NULL, &chd);
+   if (err != CHDERR_NONE)
+   {
+      chd_rfile = rfopen(chdPath, "rb");
+      if (!chd_rfile)
+      {
+         LOG_ERR("[CD-CHD] cannot open '%s' (%s)\n",
+                 chdPath, chd_error_string(err));
+         return false;
+      }
+      err = chd_open_core_file_callbacks(&chd_vfs_cb, chd_rfile,
+                                        CHD_OPEN_READ, NULL, &chd);
+      if (err != CHDERR_NONE)
+      {
+         LOG_ERR("[CD-CHD] chd_open failed: %s\n", chd_error_string(err));
+         CDIntfCloseCHD();
+         return false;
+      }
+   }
+
+   head = chd_get_header(chd);
+   if (!head || head->hunkbytes == 0 || (head->hunkbytes % CD_FRAME_SIZE) != 0)
+   {
+      LOG_ERR("[CD-CHD] not a CD CHD (hunk size %u)\n",
+              head ? head->hunkbytes : 0);
+      CDIntfCloseCHD();
+      return false;
+   }
+
+   chd_hunkbytes = head->hunkbytes;
+   chd_hunk = (uint8_t *)malloc(chd_hunkbytes);
+   if (!chd_hunk)
+   {
+      CDIntfCloseCHD();
+      return false;
+   }
+   chd_hunknum = -1;
+
+   sessionnum = 1;
+   discLBA = 0;
+   chdFrames = 0;
+   prevSession = 0;
+   all_audio = true;
+   warn_virtual = false;
+
+   /* Resolve per-track session numbers in true file order first (see
+    * DetermineCHDTrackSessions for why per-track-index CHSE lookup is
+    * wrong) -- the main loop below just reads the result. */
+   memset(chdTrackSession, 0, sizeof(chdTrackSession));
+   chdSessionTrackCount = 0;
+   saw_chse = false;
+   DetermineCHDTrackSessions(chd, chdTrackSession, CDINTF_MAX_TRACKS,
+                              &chdSessionTrackCount, &saw_chse);
+
+   for (i = 0; i < CDINTF_MAX_TRACKS; i++)
+   {
+      int tracknum, frames, pregap, postgap;
+      char type[16], subtype[16], pgtype[16], pgsub[16];
+      uint32_t stored_pregap;
+      uint32_t padded;
+
+      type[0] = subtype[0] = pgtype[0] = pgsub[0] = '\0';
+      tracknum = frames = pregap = postgap = 0;
+
+      if ((uint32_t)i < chdSessionTrackCount)
+         sessionnum = chdTrackSession[i];
+
+      metadata[0] = '\0';
+      if (chd_get_metadata(chd, CDROM_TRACK_METADATA2_TAG, (uint32_t)i,
+                           metadata, sizeof(metadata), NULL, NULL, NULL) == CHDERR_NONE)
+      {
+         if (sscanf(metadata, CDROM_TRACK_METADATA2_FORMAT,
+                    &tracknum, type, subtype, &frames,
+                    &pregap, pgtype, pgsub, &postgap) != 8)
+            break;
+      }
+      else if (chd_get_metadata(chd, CDROM_TRACK_METADATA_TAG, (uint32_t)i,
+                                metadata, sizeof(metadata), NULL, NULL, NULL) == CHDERR_NONE)
+      {
+         if (sscanf(metadata, CDROM_TRACK_METADATA_FORMAT,
+                    &tracknum, type, subtype, &frames) != 4)
+            break;
+         pregap = 0;
+      }
+      else
+         break;
+
+      if (tracknum != i + 1 || frames < 0 || pregap < 0)
+      {
+         LOG_ERR("[CD-CHD] bad track metadata at index %d\n", i);
+         CDIntfCloseCHD();
+         return false;
+      }
+
+      disc.tracks[i].number = (uint32_t)tracknum;
+      disc.tracks[i].session = sessionnum;
+      disc.tracks[i].sectorSize = 2352;
+      snprintf(disc.tracks[i].binFilePath, sizeof(disc.tracks[i].binFilePath),
+               "%s", chdPath);
+
+      if (strcmp(type, "AUDIO") == 0)
+         disc.tracks[i].type = CDINTF_TRACK_AUDIO;
+      else if (strncmp(type, "MODE1", 5) == 0)
+      {
+         disc.tracks[i].type = CDINTF_TRACK_MODE1;
+         all_audio = false;
+      }
+      else
+      {
+         disc.tracks[i].type = CDINTF_TRACK_MODE2;
+         all_audio = false;
+      }
+
+      /* Virtual pregaps (PGTYPE starts with V) are silence, not stored.
+       * Real pregaps live at the start of FRAMES. */
+      stored_pregap = (uint32_t)pregap;
+      if (pgtype[0] == 'V')
+      {
+         chd_virtual_pregap[i] = 1;
+         warn_virtual = true;
+      }
+      else
+      {
+         chd_virtual_pregap[i] = 0;
+         /* Pregap bytes are inside FRAMES; still use PREGAP for INDEX 01. */
+      }
+
+      if (prevSession != 0 && (int)sessionnum > prevSession)
+      {
+         /* MAME/CHD may encode the ~11400-sector session gap as a
+          * per-track pregap. Only synthesize it when the metadata did
+          * not already account for it. */
+         if (stored_pregap < 10000)
+            discLBA += INTER_SESSION_GAP;
+      }
+      prevSession = (int)sessionnum;
+
+      disc.tracks[i].startLBA = discLBA;
+      disc.tracks[i].dataLBA = discLBA + stored_pregap;
+      if (chd_virtual_pregap[i])
+         disc.tracks[i].lengthLBA = stored_pregap + (uint32_t)frames;
+      else
+         disc.tracks[i].lengthLBA = (uint32_t)frames;
+
+      MSFFromLBA(disc.tracks[i].dataLBA,
+                 &disc.tracks[i].startM,
+                 &disc.tracks[i].startS,
+                 &disc.tracks[i].startF);
+
+      chd_frame0[i] = chdFrames;
+      padded = (uint32_t)(((frames + CD_TRACK_PADDING - 1) / CD_TRACK_PADDING)
+                          * CD_TRACK_PADDING);
+      chdFrames += padded;
+      discLBA += disc.tracks[i].lengthLBA;
+      disc.numTracks = (uint32_t)(i + 1);
+   }
+
+   if (disc.numTracks == 0)
+   {
+      LOG_ERR("[CD-CHD] no tracks in '%s'\n", chdPath);
+      CDIntfCloseCHD();
+      return false;
+   }
+
+   /* Old chdman flattened Jaguar CD's two sessions and wrote no CHSE.
+    * Those images cannot reconstruct the session-2 LBA; refuse them. */
+   if (!saw_chse && all_audio && disc.numTracks >= 2)
+   {
+      LOG_ERR("[CD-CHD] this CHD has no session metadata (CHSE). "
+              "It was almost certainly made with an old chdman that flattened "
+              "Jaguar CD's two sessions. Reconvert from CUE/BIN with "
+              "tools/jagcd, or load a CDI directly "
+              "(https://github.com/libretro/virtualjaguar-libretro/issues/322).\n");
+      CDIntfCloseCHD();
+      return false;
+   }
+
+   if (warn_virtual)
+   {
+      LOG_WRN("[CD-CHD] one or more tracks use virtual (silent) pregaps. "
+               "HLE boot is fine; real-BIOS authentication may fail. "
+               "CDI-class dumps preserve pregap audio; see docs/jagcd-chd.md.\n");
+   }
+
+   CDIntfFinalizeSessions();
+   snprintf(disc.binPath, sizeof(disc.binPath), "%s", chdPath);
+   disc.loaded = true;
+   LOG_INF("[CD-CHD] loaded %u track(s), %u session(s) from %s\n",
+           disc.numTracks, disc.numSessions, chdPath);
+   return true;
+}
+
+static bool CDIntfReadBlockCHD(uint32_t sector, uint8_t *buffer)
+{
+   int i;
+   struct CDIntfTrack *track;
+   uint32_t rel;
+   uint32_t frame;
+   uint32_t frames_per_hunk;
+   uint32_t hunknum;
+   uint32_t offs;
+   chd_error err;
+   uint32_t b;
+   uint8_t tmp;
+
+   track = NULL;
+   for (i = (int)disc.numTracks - 1; i >= 0; i--)
+   {
+      uint32_t tStart = disc.tracks[i].startLBA;
+      uint32_t tEnd = tStart + disc.tracks[i].lengthLBA;
+      if (sector >= tStart && sector < tEnd)
+      {
+         track = &disc.tracks[i];
+         break;
+      }
+   }
+
+   if (!track)
+   {
+      memset(buffer, 0, 2352);
+      lastReadVirtualPregap = true;
+      lastVirtualPregapLBA = sector;
+      return true;
+   }
+
+   lastReadVirtualPregap = false;
+
+   if (chd_virtual_pregap[track->number - 1] && sector < track->dataLBA)
+   {
+      memset(buffer, 0, 2352);
+      lastReadVirtualPregap = true;
+      lastVirtualPregapLBA = sector;
+      return true;
+   }
+
+   if (chd_virtual_pregap[track->number - 1])
+      rel = sector - track->dataLBA;
+   else
+      rel = sector - track->startLBA;
+
+   frame = chd_frame0[track->number - 1] + rel;
+   frames_per_hunk = chd_hunkbytes / CD_FRAME_SIZE;
+   hunknum = frame / frames_per_hunk;
+   offs = (frame % frames_per_hunk) * CD_FRAME_SIZE;
+
+   if ((int32_t)hunknum != chd_hunknum)
+   {
+      err = chd_read(chd, hunknum, chd_hunk);
+      if (err != CHDERR_NONE)
+      {
+         memset(buffer, 0, 2352);
+         if (chd_read_err_logged < 8)
+         {
+            chd_read_err_logged++;
+            LOG_ERR("[CD-CHD] chd_read hunk %u failed: %s\n",
+                    (unsigned)hunknum, chd_error_string(err));
+         }
+         return false;
+      }
+      chd_hunknum = (int32_t)hunknum;
+   }
+
+   memcpy(buffer, chd_hunk + offs, 2352);
+   /* CHD audio frames are host/LE PCM; Jaguar CUE/BINs are I2S
+    * byte-swapped 16-bit words.  Restore BIN order so HLE extract and
+    * the disc stream match ParseCueSheet. */
+   if (track->type == CDINTF_TRACK_AUDIO)
+   {
+      for (b = 0; b < 2352; b += 2)
+      {
+         tmp = buffer[b];
+         buffer[b] = buffer[b + 1];
+         buffer[b + 1] = tmp;
+      }
+   }
+   return true;
 }
 
 // Parse a CUE sheet and populate the disc structure
@@ -414,70 +953,7 @@ static bool ParseCueSheet(const char *cuePath)
       }
    }
 
-   // Build session info
-   {
-      int i;
-      uint32_t sess1Min = 99, sess1Max = 0;
-      uint32_t sess2Min = 99, sess2Max = 0;
-
-      disc.numSessions = 1;
-
-      for (i = 0; i < (int)disc.numTracks; i++)
-      {
-         uint32_t trackNum = disc.tracks[i].number;
-         uint32_t sess = disc.tracks[i].session;
-
-         if (sess == 1)
-         {
-            if (trackNum < sess1Min) sess1Min = trackNum;
-            if (trackNum > sess1Max) sess1Max = trackNum;
-         }
-         else if (sess == 2)
-         {
-            disc.numSessions = 2;
-            if (trackNum < sess2Min) sess2Min = trackNum;
-            if (trackNum > sess2Max) sess2Max = trackNum;
-         }
-      }
-
-      // Session 1
-      disc.sessions[0].number = 1;
-      disc.sessions[0].firstTrack = (sess1Min <= CDINTF_MAX_TRACKS) ? sess1Min : 1;
-      disc.sessions[0].lastTrack = (sess1Max > 0) ? sess1Max : 1;
-
-      // Session 1 lead-out: start of session 2 first track, or end of session 1 last track
-      if (disc.numSessions >= 2 && sess2Min <= CDINTF_MAX_TRACKS)
-      {
-         uint32_t leadOut = disc.tracks[sess2Min - 1].startLBA;
-         disc.sessions[0].leadOutLBA = leadOut;
-         MSFFromLBA(leadOut, &disc.sessions[0].leadOutM,
-                    &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
-      }
-      else
-      {
-         // Single session: lead-out after last track
-         uint32_t lastIdx = disc.sessions[0].lastTrack - 1;
-         uint32_t leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
-         disc.sessions[0].leadOutLBA = leadOut;
-         MSFFromLBA(leadOut, &disc.sessions[0].leadOutM,
-                    &disc.sessions[0].leadOutS, &disc.sessions[0].leadOutF);
-      }
-
-      // Session 2
-      if (disc.numSessions >= 2)
-      {
-         uint32_t lastIdx, leadOut;
-         disc.sessions[1].number = 2;
-         disc.sessions[1].firstTrack = sess2Min;
-         disc.sessions[1].lastTrack = sess2Max;
-
-         lastIdx = sess2Max - 1;
-         leadOut = disc.tracks[lastIdx].startLBA + disc.tracks[lastIdx].lengthLBA;
-         disc.sessions[1].leadOutLBA = leadOut;
-         MSFFromLBA(leadOut, &disc.sessions[1].leadOutM,
-                    &disc.sessions[1].leadOutS, &disc.sessions[1].leadOutF);
-      }
-   }
+   CDIntfFinalizeSessions();
 
    {
       int i;
@@ -1266,6 +1742,9 @@ bool CDIntfOpenImage(const char *path)
    if (ext && strcasecmp(ext + 1, "cdi") == 0)
       return ParseCDI(path);
 
+   if (ext && strcasecmp(ext + 1, "chd") == 0)
+      return ParseCHD(path);
+
    /* Bare ISO is refused deliberately: a 2048-byte-sector image cannot
     * carry the multi-session layout a Jaguar CD requires (session 1 audio
     * warning, session 2 data-as-audio 2352-byte tracks, lead-in offsets),
@@ -1274,7 +1753,8 @@ bool CDIntfOpenImage(const char *path)
    if (ext && strcasecmp(ext + 1, "iso") == 0)
    {
       LOG_ERR("[CD-ISO] bare .iso images cannot represent a Jaguar CD "
-              "(no session/track layout) -- use CUE/BIN or CDI\n");
+              "(no session/track layout) -- use CUE/BIN, CDI, or a "
+              "CHSE-tagged CHD\n");
       return false;
    }
 
@@ -1304,6 +1784,9 @@ bool CDIntfOpenImage(const char *path)
 
 void CDIntfCloseImage(void)
 {
+   CDIntfCloseCHD();
+   bootStubEndLBA = 0;
+
    if (cdi_file)
    {
       rfclose(cdi_file);
@@ -1329,6 +1812,8 @@ bool CDIntfIsImageLoaded(void)
 {
    if (!disc.loaded)
       return false;
+   if (chd)
+      return true;
    if (cdi_file)
       return true;
    // Multi-file CUE: binFile is NULL, but tracks have their own file paths
@@ -1362,6 +1847,9 @@ bool CDIntfReadBlock(uint32_t sector, uint8_t *buffer)
 
    if (cdi_file)
       return CDIntfReadBlockCDI(sector, buffer);
+
+   if (chd)
+      return CDIntfReadBlockCHD(sector, buffer);
 
    // Find which track contains this sector. A sector belongs to a track only
    // if it falls within [startLBA, startLBA + lengthLBA). Sectors in the
@@ -1687,23 +2175,33 @@ uint8_t CDIntfGetTrackSession(uint32_t track)
 /* Extract the game boot stub from the start of session 2.
  *
  * Jaguar CD bootable discs encode the universal-header + boot-loader at the
- * very start of the first session-2 track.  The 32-byte ATARI APPROVED magic
- * lives at byte +0x42 of the (word-swapped) data, immediately followed by:
- *   +0x62: 4-byte load address (typically $00080000)
- *   +0x66: 4-byte length
- *   +0x6A: code bytes (length bytes)
+ * start of the first session-2 track: the 32-byte "ATARI APPROVED DATA
+ * HEADER ATRI " magic, then (relative to the start of that magic):
+ *   +0x20: 4-byte load address (typically $00080000)
+ *   +0x24: 4-byte length
+ *   +0x28: code bytes (length bytes)
+ * Real discs typically precede the magic with a run of repeated "ATRI"
+ * sync words, but that run is not load-bearing here -- only the magic is.
+ *
+ * How far into the track's data the magic sits is NOT a disc-format
+ * constant -- it varies with how much (if any) leading filler the
+ * mastering tool left before it.  Baldies has a 2-byte lead-in (magic at
+ * +0x42); Frog Feast has 378 bytes of lead-in, mostly zero (magic at
+ * +0x17A) -- see issue #476.  This function therefore searches for the
+ * magic within the first sector (2352 bytes) of the track's data instead
+ * of assuming it starts at a fixed offset; when it lands at +0x42 (the
+ * common case), the derived offsets are bit-identical to the old
+ * hardcoded ones.  A 32-byte specific ASCII signature has no realistic
+ * chance of a false-positive match inside one sector of boot-loader
+ * binary, so no extra qualifier (like requiring the sync run) is needed.
  *
  * The on-disc data is word-swapped because the Jaguar's I2S audio path swaps
- * each 16-bit word during read.  We undo that swap, validate the magic, then
+ * each 16-bit word during read.  We undo that swap, locate the header, then
  * the caller injects the resulting stub directly into main RAM at the load
  * address — bypassing the BIOS streaming path entirely.
  *
  * On success: writes load address to *outLoadAddr, length to *outLength, and
  * fills outBuf (size outBufSize) with the code bytes.  Returns true. */
-/* Disc LBA one past the end of the extracted boot executable (see
- * CDIntfExtractBootStub); 0 until an extraction succeeds. */
-static uint32_t bootStubEndLBA = 0;
-
 uint32_t CDIntfGetBootStubEndLBA(void)
 {
    return bootStubEndLBA;
@@ -1714,6 +2212,13 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
 {
    static const uint8_t MAGIC[32] =
       "ATARI APPROVED DATA HEADER ATRI ";
+   /* One CD sector: both known real-disc cases (Baldies +0x42, Frog Feast
+    * +0x17A) land well inside it.  A title that needs more than a sector
+    * of skip before the header is a different disc shape and should fail
+    * loudly rather than be silently absorbed by an ever-widening search. */
+   const uint32_t SEARCH_WINDOW = 2352;
+   uint32_t headerOffset;
+   bool foundHeader;
    uint32_t i;
    uint32_t firstS2Idx = 0;
    bool foundS2 = false;
@@ -1726,6 +2231,10 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
    int64_t bytesRead;
    int64_t trackFileBase;
    uint32_t loadAddr, length;
+   uint32_t nsec;
+   uint32_t s;
+
+   bootStubEndLBA = 0;
 
    if (!disc.loaded || disc.numSessions < 2)
    {
@@ -1743,13 +2252,37 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
          break;
       }
    }
-   if (!foundS2 || (!disc.tracks[firstS2Idx].binFilePath[0] && !disc.binPath[0]))
+   if (!foundS2 || (!chd && !disc.tracks[firstS2Idx].binFilePath[0] && !disc.binPath[0]))
    {
       LOG_WRN("[CD-BOOTSTUB] No session-2 track found (foundS2=%d, pathEmpty=%d)\n",
               foundS2, foundS2 ? !disc.tracks[firstS2Idx].binFilePath[0] : -1);
       return false;
    }
 
+   bytesRead = 0;
+   if (chd)
+   {
+      /* The track "BIN" path is the CHD container.  Stream INDEX 01
+       * through the same TOC used at runtime. */
+      LOG_INF("[CD-BOOTSTUB] Reading session-2 track %u from CHD at LBA %u\n",
+              disc.tracks[firstS2Idx].number,
+              disc.tracks[firstS2Idx].dataLBA);
+      nsec = (uint32_t)(sizeof(raw) / 2352);
+      for (s = 0; s < nsec; s++)
+      {
+         if (!CDIntfReadBlock(disc.tracks[firstS2Idx].dataLBA + s,
+                              raw + s * 2352u))
+         {
+            LOG_ERR("[CD-BOOTSTUB] CHD read failed at LBA %u after %u sector(s)\n",
+                    disc.tracks[firstS2Idx].dataLBA + s, (unsigned)s);
+            break;
+         }
+         bytesRead += 2352;
+      }
+      LOG_INF("[CD-BOOTSTUB] Read %lld bytes from CHD TOC\n", (long long)bytesRead);
+   }
+   else
+   {
    /* Both layouts start the track REGION with the track's pregap, and the
     * Atari boot header sits at the start of the user data (INDEX 01), so the
     * pregap has to be skipped -- otherwise we read pregap silence and the
@@ -1768,8 +2301,8 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
     * every CUE in the test corpus has INDEX 01 00:00:00 on its first
     * session-2 track.  DiscJuggler does store it (150 sectors on the
     * session-2 track of the ROM-set Baldies image). */
-   {
-      uint32_t pregapSectors = 0;
+      uint32_t pregapSectors;
+      pregapSectors = 0;
       if (disc.tracks[firstS2Idx].dataLBA > disc.tracks[firstS2Idx].startLBA)
          pregapSectors = disc.tracks[firstS2Idx].dataLBA -
                          disc.tracks[firstS2Idx].startLBA;
@@ -1799,23 +2332,23 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
                  (unsigned long long)trackFileBase);
          trackFile = rfopen(disc.binPath, "rb");
       }
-   }
-   if (!trackFile)
-   {
-      LOG_ERR("[CD-BOOTSTUB] rfopen failed for %s\n",
-              disc.tracks[firstS2Idx].binFilePath[0] ?
-                 disc.tracks[firstS2Idx].binFilePath : disc.binPath);
-      return false;
-   }
+      if (!trackFile)
+      {
+         LOG_ERR("[CD-BOOTSTUB] rfopen failed for %s\n",
+                 disc.tracks[firstS2Idx].binFilePath[0] ?
+                    disc.tracks[firstS2Idx].binFilePath : disc.binPath);
+         return false;
+      }
 
-   rfseek(trackFile, trackFileBase, SEEK_SET);
-   bytesRead = rfread(raw, 1, sizeof(raw), trackFile);
-   rfclose(trackFile);
-   LOG_INF("[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
-   if (bytesRead < 0x6A + 4)
+      rfseek(trackFile, trackFileBase, SEEK_SET);
+      bytesRead = rfread(raw, 1, sizeof(raw), trackFile);
+      rfclose(trackFile);
+      LOG_INF("[CD-BOOTSTUB] Read %lld bytes from track BIN\n", (long long)bytesRead);
+   }
+   if (bytesRead < (int64_t)sizeof(MAGIC))
    {
       LOG_ERR("[CD-BOOTSTUB] Too few bytes read (%lld < %d)\n",
-              (long long)bytesRead, 0x6A + 4);
+              (long long)bytesRead, (int)sizeof(MAGIC));
       return false;
    }
 
@@ -1863,22 +2396,59 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
       LOG_DBG("[CD-BOOTSTUB] Swapped bytes 0x40-0x%02X: %s\n",
               (unsigned)(last ? last - 1 : 0), swphex);
    }
-   LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + 0x42);
-
-   if (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) != 0)
+   /* Locate the magic.  A CDI V2 repair overlay establishes the header at
+    * a fixed position by construction (see the memcpy above) -- honor
+    * that instead of re-deriving it, so the search never second-guesses
+    * an offset the repair path just synthesized. */
+   foundHeader = false;
+   headerOffset = 0x42;
+   if (disc.tracks[firstS2Idx].synthBootHeader)
    {
-      uint32_t matched;
+      foundHeader = (memcmp(swapped + 0x42, MAGIC, sizeof(MAGIC)) == 0);
+   }
+   else
+   {
+      uint32_t window;
+
+      window = ((uint32_t)bytesRead < SEARCH_WINDOW)
+                  ? (uint32_t)bytesRead : SEARCH_WINDOW;
+
+      if (window >= sizeof(MAGIC))
+      {
+         uint32_t limit;
+         uint32_t off;
+
+         limit = window - (uint32_t)sizeof(MAGIC);
+         for (off = 0; off <= limit; off++)
+         {
+            if (memcmp(swapped + off, MAGIC, sizeof(MAGIC)) == 0)
+            {
+               headerOffset = off;
+               foundHeader = true;
+               break;
+            }
+         }
+      }
+   }
+
+   LOG_DBG("[CD-BOOTSTUB] Swapped as text: '%.32s'\n", swapped + headerOffset);
+
+   if (!foundHeader)
+   {
+      uint32_t window;
       uint32_t all_zero;
       uint32_t j;
 
-      matched = 0;
+      window = ((uint32_t)bytesRead < SEARCH_WINDOW)
+                  ? (uint32_t)bytesRead : SEARCH_WINDOW;
       all_zero = 1;
-      for (j = 0; j < (uint32_t)sizeof(MAGIC); j++)
+      for (j = 0; j < window; j++)
       {
-         if (swapped[0x42 + j] == MAGIC[j])
-            matched++;
-         if (swapped[0x42 + j] != 0)
+         if (swapped[j] != 0)
+         {
             all_zero = 0;
+            break;
+         }
       }
 
       if (all_zero)
@@ -1886,33 +2456,39 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
          /* Bad CDI V2 rips: boot header region is zeros in the file itself.
           * No offset fix recovers absent data - refuse with an actionable
           * message so users stop re-filing this as an unsupported format. */
-         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled at +0x42 - "
-                 "this image is an incomplete / bad rip, not an unsupported "
-                 "format\n");
+         LOG_ERR("[CD-BOOTSTUB] Boot header region is zero-filled in the "
+                 "first %u byte(s) of session-2 track data - this image is "
+                 "an incomplete / bad rip, not an unsupported format\n",
+                 (unsigned)window);
       }
       else
       {
-         LOG_ERR("[CD-BOOTSTUB] Magic mismatch at +0x42 of session-2 track BIN "
-                 "(matched %u/%u bytes)\n",
-                 (unsigned)matched, (unsigned)sizeof(MAGIC));
+         LOG_ERR("[CD-BOOTSTUB] ATARI boot header (sync run + magic) not "
+                 "found within the first %u byte(s) of session-2 track "
+                 "data\n", (unsigned)window);
       }
       return false;
    }
 
-   loadAddr = ((uint32_t)swapped[0x62] << 24) | ((uint32_t)swapped[0x63] << 16)
-            | ((uint32_t)swapped[0x64] <<  8) |  (uint32_t)swapped[0x65];
-   length   = ((uint32_t)swapped[0x66] << 24) | ((uint32_t)swapped[0x67] << 16)
-            | ((uint32_t)swapped[0x68] <<  8) |  (uint32_t)swapped[0x69];
+   loadAddr = ((uint32_t)swapped[headerOffset + 0x20] << 24)
+            | ((uint32_t)swapped[headerOffset + 0x21] << 16)
+            | ((uint32_t)swapped[headerOffset + 0x22] <<  8)
+            |  (uint32_t)swapped[headerOffset + 0x23];
+   length   = ((uint32_t)swapped[headerOffset + 0x24] << 24)
+            | ((uint32_t)swapped[headerOffset + 0x25] << 16)
+            | ((uint32_t)swapped[headerOffset + 0x26] <<  8)
+            |  (uint32_t)swapped[headerOffset + 0x27];
 
    if (length == 0 || length > outBufSize
-       || (uint64_t)0x6A + length > (uint64_t)bytesRead)
+       || (uint64_t)headerOffset + 0x28 + length > (uint64_t)bytesRead)
    {
       LOG_ERR("[CD-BOOTSTUB] Bad length $%X (loadAddr=$%06X, bufSize=%u, available=%lld)\n",
-              length, loadAddr, outBufSize, (long long)bytesRead - 0x6A);
+              length, loadAddr, outBufSize,
+              (long long)bytesRead - headerOffset - 0x28);
       return false;
    }
 
-   memcpy(outBuf, swapped + 0x6A, length);
+   memcpy(outBuf, swapped + headerOffset + 0x28, length);
    *outLoadAddr = loadAddr;
    *outLength   = length;
 
@@ -1921,8 +2497,8 @@ bool CDIntfExtractBootStub(uint8_t *outBuf, uint32_t outBufSize,
     * games that continue with a bare Unpause (Battle Morph: $0400 pause,
     * $0500 unpause, no seek) expect data to flow from there, not from
     * block 0. */
-   bootStubEndLBA = disc.tracks[firstS2Idx].startLBA
-                  + (0x6A + length + 2351) / 2352;
+   bootStubEndLBA = disc.tracks[firstS2Idx].dataLBA
+                  + (headerOffset + 0x28 + length + 2351) / 2352;
 
    LOG_INF("[CD-BOOTSTUB] Extracted $%X bytes for load addr $%06X (track %u BIN: %s)\n",
            length, loadAddr,

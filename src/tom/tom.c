@@ -260,6 +260,7 @@
 #include "bus_arbiter.h"
 #include "event.h"
 #include "gpu.h"
+#include "inputdev.h"
 #include "jaguar.h"
 #include "jerry.h"
 #include "shadowfb.h"
@@ -351,6 +352,8 @@ uint8_t bluecv[16][16] = {
 #define MEMCON2		0x02
 #define HC			0x04
 #define VC			0x06
+#define LPH			0x08		// Light pen horizontal (latched HC), RO
+#define LPV			0x0A		// Light pen vertical (latched VC, half-lines), RO
 #define OLP			0x20		// Object list pointer
 #define OBF			0x26		// Object processor flag
 #define VMODE		0x28
@@ -1251,6 +1254,103 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
 }
 
 // Process a single scanline
+/* ---- light gun: LPH / LPV synthesis (#438) --------------------------
+ *
+ * TR10: "A TTL rising edge on the LP signal (pin 6 of Port 1, shared with
+ * B0) causes the light pen registers (LPH and LPV) to be latched."  On
+ * real hardware that edge comes from the gun's photodiode seeing the beam
+ * sweep past where the barrel is pointed, so it fires ONCE PER FIELD, on
+ * the half-line the aim point sits on -- not when the trigger is pulled.
+ * The trigger is an ordinary controller button (inputdev.h explains how
+ * Balloons proves this and why it must be so).
+ *
+ * That is exactly what this models: called from TOMExecHalfline for every
+ * half-line, it latches when the beam reaches the aimed-at row.  No beam
+ * hit-test window, no pulse generator, and above all no per-clock
+ * horizontal counter -- which this core does not have (HC advances once
+ * per half-line here) and which a corpus scan says nothing needs: no
+ * shipped title reads HC/VC ($F00004/$F00006) at all, Balloons included.
+ * Synthesising the latched value from the aim point is therefore not a
+ * shortcut around a timing model, it is the whole of the observable
+ * behaviour.
+ *
+ * The forward map is the inverse of what the renderers already do:
+ * TOMGetLeftVisibleHC() is the fixed HC origin of framebuffer column 0
+ * (the same origin `startPos = HDB1 - leftHC` is measured from), and one
+ * framebuffer column is PWIDTH video clocks wide (VMODE bits 9-11, "width
+ * of pixel in video clock cycles", value written + 1).  Vertically,
+ * TOMExecHalfline writes framebuffer row r at half-line
+ * topVisible + 2*r, so the latched VC of row r is exactly that.  Both
+ * quantities are read live from the registers, so a title that reprograms
+ * its display geometry (Balloons does: HDB1, HDE, VDB and PWIDTH=3 are
+ * all its own) is followed automatically, and PAL/NTSC needs no branch
+ * here because TOMGetTopVisible()/TOMGetLeftVisibleHC() already resolve it.
+ *
+ * `col`/`row` arrive as NATIVE framebuffer pixels: libretro.c divides the
+ * internal-resolution factor out before feeding them, so a 2x session
+ * latches byte-identical LPH/LPV to a 1x one (#400's lesson -- the
+ * enhancement path must be invisible to the emulated machine).
+ *
+ * LPH IS A GAP-FREE HORIZONTAL COUNT, deliberately, and this is the one
+ * place the implementation departs from a literal reading of the
+ * hardware.  TOM encodes HC as bit 10 = "second half-line" plus a 0..HP
+ * offset, so raw values jump 845 -> 1024 mid-line (NTSC), a 179-count
+ * hole.  Balloons' decoder is `(LPH - calibration_LPH) / PWIDTH`, with no
+ * bit-10 handling at all, so that hole would land as a ~60-pixel step in
+ * the middle of its playfield: aim right of centre and the shot lands 60
+ * pixels further right than the crosshair.  Emitting a linear count makes
+ * the ROM exact across the whole screen.  Nothing else in this core reads
+ * LPH, so there is no second consumer to keep consistent.
+ *
+ * MEASURED, not argued.  Both encodings were built and run against the
+ * ROM (test/tools/test_lightgun.c sweeps 21 aim points across the width):
+ *
+ *   linear   every point exact -- aim column C decodes to object X
+ *            C - startPos, from column 0 to the right edge.
+ *   bit-10   exact up to column 237, then column 238 decodes to object X
+ *            318 instead of 259.  +59 pixels, i.e. the 179-count hole
+ *            divided by Balloons' PWIDTH of 3, appearing exactly where
+ *            the half-line boundary falls in its geometry.
+ *
+ * Balloons' CALIBRATION SCREEN PASSES UNDER BOTH, because it only records
+ * the raw LPH it is handed and range-checks LPV -- so "calibration works"
+ * is not evidence the transform is right, and a single-point aim test on
+ * the left half would have shipped the wrong encoding.
+ *
+ * Savestates come for free: state.h saves tomRam8 wholesale, so the
+ * latched pair is already covered with no new chunk and no version bump. */
+static void TOMLightgunHalfline(uint16_t halfline)
+{
+   int32_t  col = 0;
+   int32_t  row = 0;
+   uint32_t pwidth;
+   uint32_t hc;
+   uint32_t vc;
+
+   if (!InputDevLightgunAim(&col, &row))
+      return;
+
+   if (col < 0 || row < 0)
+      return;
+
+   vc = (uint32_t)TOMGetTopVisible() + ((uint32_t)row * 2);
+
+   if (vc > 0x07FF || (uint32_t)halfline != vc)
+      return;
+
+   pwidth = (uint32_t)(((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1);
+   hc     = TOMGetLeftVisibleHC() + ((uint32_t)col * pwidth);
+
+   /* Both registers are 11 bits (jtrm-register-map.md).  A real line is
+    * ~1690 video clocks, so a legal aim point never reaches the clamp;
+    * it is here so a garbage geometry cannot wrap the value round. */
+   if (hc > 0x07FF)
+      hc = 0x07FF;
+
+   SET16(tomRam8, LPH, (uint16_t)hc);
+   SET16(tomRam8, LPV, (uint16_t)vc);
+}
+
 void TOMExecHalfline(uint16_t halfline, bool render)
 {
    unsigned i;
@@ -1293,6 +1393,11 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       SET16(tomRam8, HC, 0);
       tomHCReadPhase = 0;
    }
+
+   /* Light gun LP edge (#438).  Before the odd-half-line early-out below,
+    * because an aim point can sit on an odd half-line and the latch is
+    * per-half-line, not per-OP-pass.  A no-op with no gun attached. */
+   TOMLightgunHalfline(halfline);
 
    /* Execute OP only on even halflines; higher horizontal resolutions need
     * more precise halfline scheduling. */
@@ -1341,7 +1446,11 @@ void TOMExecHalfline(uint16_t halfline, bool render)
        * the stock path is unchanged (see shadowfb.h). */
       uint32_t hiresRowScale = (uint32_t)shadowHiresN;
 
-      // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced
+      // Bit 0 in VP is interlace flag. 0 = interlace, 1 = non-interlaced.
+      // (JTRM Rev 8 p.15: half lines per field = VP+1, and an ODD half-line
+      // count is interlaced -- so the REGISTER's bit 0 carries the inverse
+      // sense: VP odd -> VP+1 even -> non-interlaced.  tomRam8[VP + 1] is
+      // the low byte of the 16-bit VP register, not VP+1 halflines.)
       if (tomRam8[VP + 1] & 0x01)
          writtenRow = (halfline - topVisible) / 2;//non-interlace
       else

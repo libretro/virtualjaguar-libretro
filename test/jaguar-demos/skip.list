@@ -1,0 +1,12 @@
+# Relative paths (or shell globs) excluded from the full sweep.
+# One pattern per line.  '#' comments and blank lines are ignored.
+#
+# In-tree duplicates (screenshot regression + make test already cover these):
+yarc/yarc.j64
+jagniccc2000/jagniccc.j64
+#
+# Prefer vj / Series-K pads: drop _M siblings when a K or vj sibling is
+# selected by run.sh's prefer-pad logic (embedded cart BIOS is Series K).
+#
+# BootIntros run with --bios + PAL in run.sh.  Remaining FAILs in
+# BASELINE.txt are accuracy gaps, not "HLE never started".

@@ -3,6 +3,15 @@
 This tracks actionable issues found while auditing old inline comments that
 describe guesses, timing gaps, or known emulation shortcuts.
 
+**Status (2026-08-19):** v2.2.0-era snapshot, oldest entries dated
+2026-04-30. Kept for the architecture-level TODOs (OP resumable scheduler,
+TOM visible-window constants, DSP/`dac.c` follow-ups, code-organization
+items) which remain open and are not tracked elsewhere. The per-title
+"Game compatibility (v2.2.0)" and "Still broken / regressed" lists are
+**not current** — check the GitHub issue tracker, `docs/cart-issue-triage.md`,
+and the release notes for live game status before acting on any specific
+title claim in this document.
+
 ## Cross-cutting finding from cluster investigation (2026-04-30)
 
 A round of parallel sub-agent investigation snapshotted DSP RAM, 68K regs,

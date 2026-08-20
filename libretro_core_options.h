@@ -183,6 +183,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_enhancement_hooks",
+      "Per-Title Enhancement Hooks",
+      NULL,
+      "Apply per-game byte patches from the enhancement database to the loaded cartridge image at load time (game-side fixes that no core option can express). Off by default. Each patch verifies the bytes it expects to find and refuses to write anything if they differ, so it can never corrupt a dump it was not written for. Cartridge content only; a change takes effect on restart.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_blit_memo",
       "Blit Memoization (Per-Title)",
       NULL,
@@ -291,25 +305,40 @@ struct retro_core_option_v2_definition option_defs_us[] = {
    },
    {
       "virtualjaguar_netlink",
-      "Network Link (JagLink / CatBox)",
+      "Network Link",
       NULL,
-      "Emulates JERRY's serial link port used by networked games (BattleSphere, AirCars, Doom deathmatch). 'Loopback' echoes transmitted bytes back to this console, for testing link-detect menus without a partner. TCP Host listens for a second emulator instance; TCP Client connects to the address in 'Network Link Host'. Localhost/LAN latency recommended.",
+      "How this console's serial port reaches another player. 'Automatic' uses your frontend's netplay session when one is running -- nothing to configure, no addresses to type -- and otherwise stays idle. 'TCP Host'/'TCP Client' link two emulators directly without netplay; the client picks a host below, and hosts on your LAN are found automatically. 'Loopback' echoes back to this console for testing link-detect menus with no partner.",
       NULL,
       "network",
       {
-         { "disabled",   NULL },
+         { "auto",       "Automatic (use netplay when available)" },
+         { "disabled",   "Off" },
          { "loopback",   "Loopback (echo to self)" },
          { "tcp_server", "TCP Host (listen)" },
          { "tcp_client", "TCP Client (connect)" },
          { NULL, NULL },
       },
-      "disabled"
+      "auto"
+   },
+   {
+      "virtualjaguar_uart_device",
+      "Network Link Device",
+      NULL,
+      "What is plugged into the serial port. 'JagLink / CatBox' is the raw cable used by BattleSphere, AirCars and Doom. 'Voice Modem' emulates the Jaguar Voice Modem for Ultra Vortek's phone-line versus mode: type 911 on the numpad at the title screen, then one player dials (any number) and the other answers -- the 'call' is carried over the Network Link transport selected above.",
+      NULL,
+      "network",
+      {
+         { "jaglink",    "JagLink / CatBox (raw cable)" },
+         { "voicemodem", "Voice Modem (Ultra Vortek)" },
+         { NULL, NULL },
+      },
+      "jaglink"
    },
    {
       "virtualjaguar_netlink_host",
       "Network Link Host (TCP Client)",
       NULL,
-      "Address the TCP client connects to -- an IP, a DNS name, or a Bonjour/mDNS name. Easiest LAN setup with no typing at all: name the host machine 'jaghub' (its local hostname), then pick the 'jaghub.local' preset here on each client. Frontends with free-text option entry accept any address directly; in stock RetroArch the alternative is 'From file' with the address on the first line of vj_netlink.txt in the system directory. The VJ_NETLINK_HOST environment variable overrides this option. If you would rather not configure anything, use RetroArch's own netplay instead -- it finds hosts on the LAN by itself and carries the link with this option left disabled.",
+      "Which host to connect to. Hosts running on your LAN appear here automatically within a couple of seconds. 'From file' reads <system>/vj_netlink.txt: one line, the address only, no port -- for example '192.168.1.42' or 'myhost.local'. The port comes from 'Network Link Port'. The VJ_NETLINK_HOST environment variable overrides this option.",
       NULL,
       "network",
       {
@@ -368,12 +397,70 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios",
       "BIOS (Cartridges)",
       NULL,
-      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot faster and skips the boot animation. 'Real' runs the actual Jaguar boot ROM, which some titles require. The boot ROM is built into the core, so neither setting needs a file -- unlike the CD BIOS, the console boot ROM is never loaded from the system directory. Ignored for CD content: there, 'CD Boot Mode' decides and turns the boot ROM on or off to match.",
+      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot faster and skips the boot animation. 'Real' runs the actual Jaguar boot ROM, which some titles require. Both boot ROM images are built into the core, so neither setting needs a file; the one exception is an optional jagboot_m.rom in the system directory, which overrides the embedded Model-M image. GPU-only/jagcrypt carts (BootIntro demos) auto-enable the real boot ROM even when this is set to HLE -- they contain no 68K program for HLE to start. Ignored for CD content: there, 'CD Boot Mode' decides and turns the boot ROM on or off to match.",
       NULL,
       "bios_boot",
       {
          { "disabled", "HLE" },
          { "enabled",  "Real" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_bios_type",
+      "Cart BIOS Type (Restart)",
+      NULL,
+      "Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart auto-enables the boot ROM. 'Series K' is the original Jaguar. 'Model M' is the later revision (patch address $4804) that most size-coded BootIntros are built for. Both images are built into the core. 'Custom' loads a 128 KB image from the system directory: jagboot.rom, boot.rom, boot0.rom, or a named '[BIOS] Atari Jaguar...' file, identified by checksum and logged; falls back to Series K if none is found. A jagboot_m.rom in the system directory overrides the embedded Model-M image. Ignored for CD content.",
+      NULL,
+      "bios_boot",
+      {
+         { "k", "Series K" },
+         { "m", "Model M" },
+         { "custom", "Custom (external file)" },
+         { NULL, NULL },
+      },
+      "k"
+   },
+   {
+      "virtualjaguar_texture_dump",
+      "Texture Dump Mode",
+      NULL,
+      "Write every unique blitter source tile the title uses to <system dir>/vj_texdump/<cart CRC32>/ as a PNG preview plus a manifest row, for HD texture pack authoring (issue #369). Tiles are identified by a hash of their raw source bytes only -- the palette is advisory metadata, never identity. Takes effect immediately, no restart needed. Developer-facing: leave disabled for normal play.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_texdump_16bpp",
+      "Texture Dump: 16bpp Preview",
+      NULL,
+      "How 16-bit source tiles are rendered in their preview PNGs. The blitter cannot know whether 16-bit values are CRY or RGB16 -- that is display-time interpretation -- so this only changes the preview image, never the tile's hash. 'Both' writes a -cry and a -rgb PNG per tile.",
+      NULL,
+      "diagnostics",
+      {
+         { "cry",  "CRY" },
+         { "rgb",  "RGB16" },
+         { "both", "Both" },
+         { NULL, NULL },
+      },
+      "cry"
+   },
+   {
+      "virtualjaguar_texture_replace",
+      "Texture Replacement",
+      NULL,
+      "Present community texture-pack art in place of the title's own blitter tiles (issue #369). Packs live in <system dir>/vj_texpacks/<cart CRC32>/, named by the same hashes Texture Dump Mode writes. Presentation-only: the emulated machine, savestates and netplay are bit-identical with or without a pack. Shown only when a pack directory exists for the loaded title.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
          { NULL, NULL },
       },
       "disabled"
@@ -480,6 +567,415 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "disabled"
+   },
+   {
+      "virtualjaguar_p2_device",
+      "Port 2 > Controller Type",
+      "Controller Type",
+      "Which peripheral is plugged into controller port 2. 'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons stay on the RetroPad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first.",
+      NULL,
+      "input_p2",
+      {
+         { "auto",                "Auto (per-title default)" },
+         { "pad",                 "Standard Joypad" },
+         { "mouse_st",            "Atari ST / PS2 Mouse" },
+         { "mouse_amiga",         "Amiga Mouse (ST adapter)" },
+         { "mouse_amiga_adapter", "Amiga Mouse (Amiga adapter)" },
+         { "rotary",              "Rotary (Tempest)" },
+         { "analog",              "Analog Joystick (bank-switching)" },
+         { "driving",             "Driving Controller (bank-switching)" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "virtualjaguar_p1_device",
+      "Port 1 > Controller Type",
+      "Controller Type",
+      "Which peripheral is plugged into controller port 1. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons (A, B, C, Option, Pause and the keypad) stay on the RetroPad, which is what a real rotary has. 'Light Gun' is the port-1 light gun: the Jaguar wires its LP pin to port 1 only, so it is not offered on port 2. Aim with whatever your frontend maps to the light gun (mouse or Wiimote); the trigger reports as the Jaguar's B button, which is what Balloons reads, and Aux A / Aux B / Start / Select reach A / C / Option / Pause. Aiming off-screen stops the aim updating, exactly as a real gun stops seeing the beam. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first. There is no per-title default for any of these and there never will be -- selecting a rotary removes Up and Down and a gun repurposes B, so either would break the controls of anyone using a pad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
+      NULL,
+      "input_p1",
+      {
+         { "auto",     "Auto (per-title default)" },
+         { "pad",      "Standard Joypad" },
+         { "rotary",   "Rotary (Tempest)" },
+         { "lightgun", "Light Gun" },
+         { "analog",   "Analog Joystick (bank-switching)" },
+         { "driving",  "Driving Controller (bank-switching)" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
+      "virtualjaguar_rotary_sensitivity",
+      "Rotary Sensitivity",
+      "Rotary Sensitivity",
+      "Scales spinner movement before it is converted to quadrature pulses. The emulated encoder can only emit one pulse per controller poll of its row, so raising this past what the game's poll rate can carry adds lag rather than speed.",
+      NULL,
+      "input",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { "150", "150%" },
+         { "200", "200%" },
+         { "300", "300%" },
+         { "400", "400%" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_rotary_id",
+      "Rotary Reports Controller Type",
+      "Rotary Reports Controller Type",
+      "Whether an emulated rotary identifies itself to software as a rotary (diode D23 fitted). Most rotary controllers ever built shipped without the diode and identify as a standard joypad, which is the default here. Tempest 2000 does not read this -- it uses its own CONTROLLER TYPE menu instead.",
+      NULL,
+      "input",
+      {
+         { "joypad", "Standard Joypad (no diode -- as most real units)" },
+         { "rotary", "Tempest Rotary (diode fitted)" },
+         { NULL, NULL },
+      },
+      "joypad"
+   },
+   /* Per-axis rotary tuning (#439).  A rotary is a single wheel, so there
+    * is one axis and no X/Y split; the arithmetic is the same shared layer
+    * the mouse uses (src/jerry/axistune.c).  Defaults are the identity.
+    *
+    * These are SHARED BY BOTH PORTS, exactly as Rotary Sensitivity already
+    * is: two rotaries cannot be tuned independently.  That is a deliberate
+    * carry-forward of the existing shape rather than an omission -- the
+    * rotary options live in the un-prefixed "input" category precisely
+    * because the device is offered on either port. */
+   {
+      "virtualjaguar_rotary_deadzone",
+      "Rotary Dead Zone",
+      "Rotary Dead Zone",
+      "Discards spinner movement at or below this many host units per poll. A noise gate for a jittery source; movement above the threshold passes at full size.",
+      NULL,
+      "input",
+      {
+         { "0", "Off" },
+         { "1", "1 unit" },
+         { "2", "2 units" },
+         { "3", "3 units" },
+         { "4", "4 units" },
+         { "6", "6 units" },
+         { "8", "8 units" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_rotary_offset",
+      "Rotary Offset",
+      "Rotary Offset",
+      "Subtracts a constant from every spinner sample. Cancels a source that reports a small non-zero movement while at rest, which would otherwise spin the knob forever with the controls untouched. Applied in host orientation, before the wheel's direction convention.",
+      NULL,
+      "input",
+      {
+         { "-4", "-4" },
+         { "-3", "-3" },
+         { "-2", "-2" },
+         { "-1", "-1" },
+         { "0",  "Off" },
+         { "1",  "+1" },
+         { "2",  "+2" },
+         { "3",  "+3" },
+         { "4",  "+4" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_rotary_exponent",
+      "Rotary Response Curve",
+      "Rotary Response Curve",
+      "Response exponent for the spinner, giving finer control at low speed. The curve is anchored at 64 units per poll: below that an exponent above 1.00 attenuates, at and above it movement passes through unchanged. A higher exponent therefore makes the spinner SLOWER overall -- raise Rotary Sensitivity to get the top speed back.",
+      NULL,
+      "input",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   /* Analog / driving controller tuning (#437).  SHARED BY BOTH PORTS,
+    * like the rotary ladder, and applied through the same shared layer
+    * (src/jerry/axistune.c) -- but on an ABSOLUTE axis, so the units are
+    * ADC counts (127 = full stick deflection, the device's own 8-bit
+    * domain) and the dead zone RE-BASES instead of gating: positions
+    * inside it read as centred, the edge maps smoothly to centre, and
+    * full deflection still reads full scale (see axistune.h, "THE
+    * ABSOLUTE-AXIS ANSWER").  Defaults are the exact identity. */
+   {
+      "virtualjaguar_analog_deadzone_x",
+      "Analog Controller Dead Zone (X)",
+      "Analog Dead Zone (X)",
+      "Stick positions within this many ADC counts of centre (127 = full deflection) read as exactly centred. The rest of the travel is rescaled so the response is smooth at the edge and full deflection still reads full scale.",
+      NULL,
+      "input",
+      {
+         { "0",  "Off" },
+         { "4",  "4 counts (~3%)" },
+         { "8",  "8 counts (~6%)" },
+         { "12", "12 counts (~9%)" },
+         { "16", "16 counts (~13%)" },
+         { "24", "24 counts (~19%)" },
+         { "32", "32 counts (~25%)" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_deadzone_y",
+      "Analog Controller Dead Zone (Y)",
+      "Analog Dead Zone (Y)",
+      "As Analog Controller Dead Zone (X), for the Y axis (pitch, or accelerator/brake on the driving controller).",
+      NULL,
+      "input",
+      {
+         { "0",  "Off" },
+         { "4",  "4 counts (~3%)" },
+         { "8",  "8 counts (~6%)" },
+         { "12", "12 counts (~9%)" },
+         { "16", "16 counts (~13%)" },
+         { "24", "24 counts (~19%)" },
+         { "32", "32 counts (~25%)" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_offset_x",
+      "Analog Controller Offset (X)",
+      "Analog Offset (X)",
+      "Subtracts a constant (in ADC counts) from every X sample, in host orientation before any device convention. Cancels a stick that rests off-centre; a centred stick is moved by it, which is the point.",
+      NULL,
+      "input",
+      {
+         { "-16", "-16" },
+         { "-8",  "-8" },
+         { "-4",  "-4" },
+         { "-2",  "-2" },
+         { "0",   "Off" },
+         { "2",   "+2" },
+         { "4",   "+4" },
+         { "8",   "+8" },
+         { "16",  "+16" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_offset_y",
+      "Analog Controller Offset (Y)",
+      "Analog Offset (Y)",
+      "As Analog Controller Offset (X), for the Y axis.",
+      NULL,
+      "input",
+      {
+         { "-16", "-16" },
+         { "-8",  "-8" },
+         { "-4",  "-4" },
+         { "-2",  "-2" },
+         { "0",   "Off" },
+         { "2",   "+2" },
+         { "4",   "+4" },
+         { "8",   "+8" },
+         { "16",  "+16" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_analog_exponent_x",
+      "Analog Controller Response Curve (X)",
+      "Analog Response Curve (X)",
+      "Response exponent for the X axis, anchored at full deflection: an exponent above 1.00 gives finer control near centre while full deflection still reads full scale. Unlike the mouse/rotary curves this costs no top speed, so there is no paired sensitivity control.",
+      NULL,
+      "input",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_analog_exponent_y",
+      "Analog Controller Response Curve (Y)",
+      "Analog Response Curve (Y)",
+      "As Analog Controller Response Curve (X), for the Y axis.",
+      NULL,
+      "input",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_mouse_sensitivity",
+      "Port 2 > Mouse Sensitivity",
+      "Mouse Sensitivity",
+      "Scales mouse movement before it is converted to quadrature pulses. The emulated device can only emit one pulse per controller poll, so raising this past what the game's poll rate can carry adds lag rather than speed.",
+      NULL,
+      "input_p2",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { "150", "150%" },
+         { "200", "200%" },
+         { "300", "300%" },
+         { "400", "400%" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   /* Per-axis mouse tuning (#439).  Dead zone and offset are in raw host
+    * units per poll; the exponent is a percentage of 1.0, anchored at 64
+    * units per poll (quadrature.h's saturation point -- see axistune.h).
+    * All defaults are the exact identity, so a user who never opens this
+    * menu gets the pre-#439 path unchanged. */
+   {
+      "virtualjaguar_mouse_deadzone_x",
+      "Port 2 > Mouse Dead Zone (X)",
+      "Mouse Dead Zone (X)",
+      "Discards horizontal mouse movement at or below this many host units per poll. A noise gate for a jittery source (or an analog stick mapped to the mouse); a real mouse reports nothing at rest and needs none. Movement above the threshold passes at full size -- the dead zone drops samples, it does not shrink them.",
+      NULL,
+      "input_p2",
+      {
+         { "0", "Off" },
+         { "1", "1 unit" },
+         { "2", "2 units" },
+         { "3", "3 units" },
+         { "4", "4 units" },
+         { "6", "6 units" },
+         { "8", "8 units" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_deadzone_y",
+      "Port 2 > Mouse Dead Zone (Y)",
+      "Mouse Dead Zone (Y)",
+      "As Mouse Dead Zone (X), for vertical movement.",
+      NULL,
+      "input_p2",
+      {
+         { "0", "Off" },
+         { "1", "1 unit" },
+         { "2", "2 units" },
+         { "3", "3 units" },
+         { "4", "4 units" },
+         { "6", "6 units" },
+         { "8", "8 units" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_offset_x",
+      "Port 2 > Mouse Offset (X)",
+      "Mouse Offset (X)",
+      "Subtracts a constant from every horizontal sample. Cancels a source that reports a small non-zero movement while at rest -- typically an analog stick mapped to the mouse, which otherwise drifts forever. A real mouse reports exactly zero at rest and is unaffected.",
+      NULL,
+      "input_p2",
+      {
+         { "-4", "-4" },
+         { "-3", "-3" },
+         { "-2", "-2" },
+         { "-1", "-1" },
+         { "0",  "Off" },
+         { "1",  "+1" },
+         { "2",  "+2" },
+         { "3",  "+3" },
+         { "4",  "+4" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_offset_y",
+      "Port 2 > Mouse Offset (Y)",
+      "Mouse Offset (Y)",
+      "As Mouse Offset (X), for vertical movement.",
+      NULL,
+      "input_p2",
+      {
+         { "-4", "-4" },
+         { "-3", "-3" },
+         { "-2", "-2" },
+         { "-1", "-1" },
+         { "0",  "Off" },
+         { "1",  "+1" },
+         { "2",  "+2" },
+         { "3",  "+3" },
+         { "4",  "+4" },
+         { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "virtualjaguar_mouse_exponent_x",
+      "Port 2 > Mouse Response Curve (X)",
+      "Mouse Response Curve (X)",
+      "Response exponent for horizontal movement, giving finer control at low speed. The curve is anchored at 64 units per poll: below that an exponent above 1.00 attenuates, at and above it movement passes through unchanged. Because ordinary movement is well below 64 units, a higher exponent makes the mouse SLOWER overall -- raise Mouse Sensitivity to get the top speed back. These are two different controls.",
+      NULL,
+      "input_p2",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
+   },
+   {
+      "virtualjaguar_mouse_exponent_y",
+      "Port 2 > Mouse Response Curve (Y)",
+      "Mouse Response Curve (Y)",
+      "As Mouse Response Curve (X), for vertical movement.",
+      NULL,
+      "input_p2",
+      {
+         { "100", "Linear (1.00)" },
+         { "125", "1.25" },
+         { "150", "1.50" },
+         { "175", "1.75" },
+         { "200", "2.00" },
+         { "250", "2.50" },
+         { "300", "3.00" },
+         { NULL, NULL },
+      },
+      "100"
    },
    {
       "virtualjaguar_p1_numpad_to_kb",

@@ -166,6 +166,7 @@
 #include "perf_counters.h"
 
 PERF_COUNTER(timing_jerry_irqs);
+#include "inputdev.h"
 #include "joystick.h"
 #include "jlink.h"
 #include "uart.h"
@@ -381,6 +382,7 @@ void JERRYI2SCallback(void)
 void JERRYInit(void)
 {
    JoystickInit();
+   InputDevInit();
    MTInit();
    memcpy(&jerry_ram_8[0xD000], waveTableROM, 0x1000);
 
@@ -399,6 +401,7 @@ void JERRYInit(void)
 void JERRYReset(void)
 {
    JoystickReset();
+   InputDevReset();
    EepromReset();
    MTReset();
    JERRYResetI2S();
@@ -570,6 +573,20 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
    else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
       return JGDControlReadWord(offset);
+   /* GPIO5, the "Paddle Interface": an 8-bit ADC (ADC0844 at U16) fitted
+      only to early Jaguar boards.  TR10: "Early versions of the Jaguar
+      included an 8 bit ADC on the motherboard. This has been deleted --
+      analogue controllers now require their own ADC chip."
+      A stock retail console therefore reads $FF here (no ADC fitted); a
+      board WITH the ADC but nothing plugged in reads $00.  Falling through
+      to the EEPROM handler returned $0000, i.e. we were claiming an ADC is
+      present and centred -- the one state neither real configuration
+      produces.  BattleSphere and BattleSphere Gold sample this from a
+      JERRY Timer 1 ISR; Club Drive drives the channel select.
+      Emulating the ADC itself is issue #505; this only corrects the
+      not-fitted value. */
+   else if ((offset >= 0xF17C00) && (offset <= 0xF17FFF))
+      return 0x00FF;
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
       return EepromReadWord(offset);
 
@@ -757,6 +774,11 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       JGDControlWriteWord(offset, data);
       return;
    }
+   /* Paddle-interface channel select (see JERRYReadWord).  With no ADC
+      fitted the write has nowhere to go; swallow it rather than let it
+      reach the EEPROM handler. */
+   else if (offset >= 0xF17C00 && offset <= 0xF17FFF)
+      return;
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)
    {
       EepromWriteWord(offset, data);

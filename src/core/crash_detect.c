@@ -47,6 +47,16 @@ extern uint32_t dsp_exec_opcode_count;
 #define DSP_LOCAL_LO   0x00F1B000u
 #define DSP_LOCAL_HI   0x00F1CFFFu
 #define MAPPED_CODE_HI 0x00E3FFFFu  /* RAM mirrors + cart + boot ROM */
+#define PC_ALIAS_MASK  0x00FFFFFFu  /* Jaguar addresses are 24-bit */
+
+/* gpu_runaway: a start PC records its 4 KB page.  A main-RAM program that
+ * flows across a page boundary is still "the program the GPU was started
+ * at", so membership is a 64 KB window from that page, not the page alone
+ * (Kimi review on #466).  32 slots is more GO targets than any title uses;
+ * a later GO past that is logged rather than dropped silently. */
+#define GPU_GO_PAGES_MAX  32
+#define GPU_GO_PAGE_MASK  0x00FFF000u
+#define GPU_GO_WINDOW     0x00010000u
 
 /* Wedge thresholds.  We sample once per frame, so 600 frames @ 60Hz =
  * 10 seconds of the same PC while still flagged "running". */
@@ -91,9 +101,9 @@ static int  cd_initialized = 0;
 
 static unsigned frame_no;
 
-static unsigned gpu_same_pc_frames;
+static unsigned gpu_zero_opcode_frames;
 static uint32_t last_gpu_opcount;
-static unsigned dsp_same_pc_frames;
+static unsigned dsp_zero_opcode_frames;
 static uint32_t last_dsp_opcount;
 
 static uint32_t fb_hash_prev;
@@ -129,20 +139,68 @@ static unsigned last_log_gpu_wedge;
 static unsigned last_log_dsp_wedge;
 static unsigned last_log_fb_stall;
 static unsigned last_log_cd_seek_wedge;
+static unsigned last_log_gpu_runaway;
+static unsigned last_log_gpu_go_full;
+
+static uint32_t gpu_go_pages[GPU_GO_PAGES_MAX];
+static unsigned gpu_go_page_count;
 
 /* ---------- helpers ---------- */
 
+static uint32_t pc_canonical(uint32_t pc)
+{
+   return pc & PC_ALIAS_MASK;
+}
+
+static int gpu_pc_in_local(uint32_t pc)
+{
+   return (pc >= GPU_LOCAL_LO && pc <= GPU_LOCAL_HI);
+}
+
+static int dsp_pc_in_local(uint32_t pc)
+{
+   return (pc >= DSP_LOCAL_LO && pc <= DSP_LOCAL_HI);
+}
+
 static int gpu_pc_valid(uint32_t pc)
 {
+   pc = pc_canonical(pc);
    if (pc <= MAPPED_CODE_HI) return 1;
-   if (pc >= GPU_LOCAL_LO && pc <= GPU_LOCAL_HI) return 1;
+   if (gpu_pc_in_local(pc)) return 1;
    return 0;
 }
 
 static int dsp_pc_valid(uint32_t pc)
 {
+   /* High-byte garbage aliases in this core: GPUReadWord / DSP fetch
+    * and the 68K bus path all do `addr &= 0x00FFFFFF` (gpu.c:331,
+    * jaguar.c m68k_read_memory_*).  $FD012786 fetches from $012786.
+    * Treating that as an escape was a false positive against our own
+    * decode.  DSP has no gpu_runaway twin -- a Defender-style jump
+    * into a data buffer is still invisible here. */
+   pc = pc_canonical(pc);
    if (pc <= MAPPED_CODE_HI) return 1;
-   if (pc >= DSP_LOCAL_LO && pc <= DSP_LOCAL_HI) return 1;
+   if (dsp_pc_in_local(pc)) return 1;
+   return 0;
+}
+
+/* True when this (already canonical) PC sits in a window the GPU was
+ * started at.  Local RAM is always a legal start; main-RAM programs are
+ * legal in [start_page, start_page + GPU_GO_WINDOW). */
+static int gpu_pc_in_start_page(uint32_t pc)
+{
+   unsigned i;
+   uint32_t start;
+
+   if (gpu_pc_in_local(pc))
+      return 1;
+
+   for (i = 0; i < gpu_go_page_count; i++)
+   {
+      start = gpu_go_pages[i];
+      if (pc >= start && pc < start + GPU_GO_WINDOW)
+         return 1;
+   }
    return 0;
 }
 
@@ -279,9 +337,9 @@ void CrashDetectInit(void)
 void CrashDetectReset(void)
 {
    frame_no = 0;
-   gpu_same_pc_frames = 0;
+   gpu_zero_opcode_frames = 0;
    last_gpu_opcount = 0;
-   dsp_same_pc_frames = 0;
+   dsp_zero_opcode_frames = 0;
    last_dsp_opcount = 0;
    fb_hash_prev = 0;
    fb_same_hash_frames = 0;
@@ -299,6 +357,34 @@ void CrashDetectReset(void)
    last_log_dsp_wedge = 0;
    last_log_fb_stall = 0;
    last_log_cd_seek_wedge = 0;
+   last_log_gpu_runaway = 0;
+   last_log_gpu_go_full = 0;
+   gpu_go_page_count = 0;
+}
+
+void CrashDetectNoteGPUGo(uint32_t pc)
+{
+   unsigned i;
+   uint32_t page;
+
+   pc = pc_canonical(pc);
+   if (gpu_pc_in_local(pc))
+      return;
+
+   page = pc & GPU_GO_PAGE_MASK;
+   for (i = 0; i < gpu_go_page_count; i++)
+   {
+      if (gpu_go_pages[i] == page)
+         return;
+   }
+   if (gpu_go_page_count >= GPU_GO_PAGES_MAX)
+   {
+      if (may_log(&last_log_gpu_go_full))
+         LOG_WRN("[CRASH-DETECT] gpu_go_pages full (%u); later GO $%08X dropped\n",
+                 GPU_GO_PAGES_MAX, pc);
+      return;
+   }
+   gpu_go_pages[gpu_go_page_count++] = page;
 }
 
 void CrashDetectSetMode(int mode)
@@ -323,8 +409,8 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
 
    frame_no++;
 
-   cur_gpu_pc = gpu_pc;
-   cur_dsp_pc = dsp_pc;
+   cur_gpu_pc = pc_canonical(gpu_pc);
+   cur_dsp_pc = pc_canonical(dsp_pc);
    gpu_running = GPUIsRunning();
    dsp_running = DSPIsRunning();
    cur_fb_hash = fb_hash(fb, w, h);
@@ -334,6 +420,18 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
    {
       if (may_log(&last_log_gpu_escape))
          LOG_ERR("[CRASH-DETECT] gpu_pc_escape frame=%u pc=$%08X (valid: $0-$E3FFFF or $F03000-$F03FFF)\n",
+                 frame_no, cur_gpu_pc);
+   }
+
+   /* ---- GPU runaway: executing outside local RAM and outside any
+    * page the GPU was ever started at.  A data-buffer spin in main RAM
+    * is a valid mapped address, so gpu_pc_escape never fires for it
+    * (Defender 2000 @ 3x, issue #461). */
+   if (gpu_running && gpu_pc_valid(cur_gpu_pc)
+       && !gpu_pc_in_start_page(cur_gpu_pc))
+   {
+      if (may_log(&last_log_gpu_runaway))
+         LOG_ERR("[CRASH-DETECT] gpu_runaway frame=%u pc=$%08X (not local RAM, not a GPU-GO page)\n",
                  frame_no, cur_gpu_pc);
    }
 
@@ -353,15 +451,15 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
     * core executes nothing). */
    if (gpu_running && gpu_exec_opcode_count == last_gpu_opcount)
    {
-      gpu_same_pc_frames++;
-      if (gpu_same_pc_frames == WEDGE_FRAMES_GPU
+      gpu_zero_opcode_frames++;
+      if (gpu_zero_opcode_frames == WEDGE_FRAMES_GPU
           && may_log(&last_log_gpu_wedge))
          LOG_WRN("[CRASH-DETECT] gpu_wedge frame=%u pc=$%08X running but 0 opcodes for %u frames\n",
                  frame_no, cur_gpu_pc, WEDGE_FRAMES_GPU);
    }
    else
    {
-      gpu_same_pc_frames = 0;
+      gpu_zero_opcode_frames = 0;
    }
    last_gpu_opcount = gpu_exec_opcode_count;
 
@@ -371,33 +469,49 @@ void CrashDetectFrameTick(const uint32_t *fb, unsigned w, unsigned h)
     * The threshold stays conservative anyway.) ---- */
    if (dsp_running && dsp_exec_opcode_count == last_dsp_opcount)
    {
-      dsp_same_pc_frames++;
-      if (dsp_same_pc_frames == WEDGE_FRAMES_DSP
+      dsp_zero_opcode_frames++;
+      if (dsp_zero_opcode_frames == WEDGE_FRAMES_DSP
           && may_log(&last_log_dsp_wedge))
          LOG_WRN("[CRASH-DETECT] dsp_wedge frame=%u pc=$%08X running but 0 opcodes for %u frames\n",
                  frame_no, cur_dsp_pc, WEDGE_FRAMES_DSP);
    }
    else
    {
-      dsp_same_pc_frames = 0;
+      dsp_zero_opcode_frames = 0;
    }
    last_dsp_opcount = dsp_exec_opcode_count;
 
-   /* ---- Video stall: framebuffer hash unchanged while either
-    * processor still running. */
-   if (fb && cur_fb_hash == fb_hash_prev && (gpu_running || dsp_running))
+   /* ---- Video stall: framebuffer hash unchanged while a processor is
+    * running AND that processor is not in a healthy spin.  GPU: local
+    * RAM or a recorded GO window (same predicate as gpu_runaway).
+    * DSP: local RAM only (no start-page table).  A still image with
+    * the GPU looping in a program it was started at is not a crash. */
    {
-      fb_same_hash_frames++;
-      if (fb_same_hash_frames == STALL_FRAMES_FB
-          && may_log(&last_log_fb_stall))
-         LOG_WRN("[CRASH-DETECT] video_stall frame=%u fb_hash=$%08X unchanged for %u frames "
-                 "gpu_pc=$%08X gpu_run=%d dsp_pc=$%08X dsp_run=%d\n",
-                 frame_no, cur_fb_hash, STALL_FRAMES_FB,
-                 cur_gpu_pc, gpu_running, cur_dsp_pc, dsp_running);
-   }
-   else
-   {
-      fb_same_hash_frames = 0;
+      int gpu_healthy_spin;
+      int dsp_healthy_spin;
+      int stalled_processor;
+
+      gpu_healthy_spin = gpu_running && gpu_pc_in_start_page(cur_gpu_pc)
+            && gpu_zero_opcode_frames == 0;
+      dsp_healthy_spin = dsp_running && dsp_pc_in_local(cur_dsp_pc)
+            && dsp_zero_opcode_frames == 0;
+      stalled_processor = (gpu_running && !gpu_healthy_spin)
+            || (dsp_running && !dsp_healthy_spin);
+
+      if (fb && cur_fb_hash == fb_hash_prev && stalled_processor)
+      {
+         fb_same_hash_frames++;
+         if (fb_same_hash_frames == STALL_FRAMES_FB
+             && may_log(&last_log_fb_stall))
+            LOG_WRN("[CRASH-DETECT] video_stall frame=%u fb_hash=$%08X unchanged for %u frames "
+                    "gpu_pc=$%08X gpu_run=%d dsp_pc=$%08X dsp_run=%d\n",
+                    frame_no, cur_fb_hash, STALL_FRAMES_FB,
+                    cur_gpu_pc, gpu_running, cur_dsp_pc, dsp_running);
+      }
+      else
+      {
+         fb_same_hash_frames = 0;
+      }
    }
 
    /* ---- CD seek wedge: a seek was issued (real-BIOS/BUTCHExec path) but

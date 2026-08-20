@@ -1,5 +1,13 @@
 # Open-issue handoff — verification, tooling and ticket plan
 
+**Status (2026-08-19): 2026-08-04 snapshot, superseded — not the current
+open-issue picture despite `docs/tasks/README.md` pointing here.** Verified
+via `gh issue view`: #266, #267, #268, #269 and #291 (VLM/audio-CD, §5) have
+all since **closed**. #252 (Crowdin), #254 (standalone SDL frontend) and
+#236 (nightly builds) are still **open** and largely unchanged. For current
+ticket status use the GitHub issue tracker directly. Kept for its ticket
+methodology and the cross-cutting rules in §0, which remain accurate.
+
 Written 2026-08-03 against `develop`. Audience: an agent or engineer who will
 break this into work tickets and execute them. Every claim here is either
 verified (marked so) or explicitly flagged as unconfirmed — do not promote an

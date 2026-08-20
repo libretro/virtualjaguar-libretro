@@ -436,13 +436,24 @@ jobs:
           if-no-files-found: error
 
   # ----------------------------------------------------------------
+  # Desktop jagcd tools (pinned chdman + jagcd-to-chd + jagcd-chd-check).
+  # Same three hosts as cue2cdi. Runs in parallel with the core matrix;
+  # the release/nightly jobs wait on it so the zips land in SHA256SUMS
+  # and on the GitHub release next to the cores.
+  # ----------------------------------------------------------------
+  jagcd-tools:
+    name: jagcd tools (chdman)
+    needs: [guard]
+    uses: ./.github/workflows/chdman-tools.yml
+
+  # ----------------------------------------------------------------
   # Release: collect all artifacts, generate SHA256SUMS, build the
   # release body from docs/RELEASE_NOTES_v<TAG>.md (artifact list
   # and embedded SHA256 checksums always appended), then create the
   # tagged release.  See SECURITY.md for binary verification docs.
   # ----------------------------------------------------------------
   release:
-    needs: [build, vita-build, switch-build]
+    needs: [build, vita-build, switch-build, jagcd-tools]
     # Tag pushes only.  Everything below assumes GITHUB_REF_NAME is a vX.Y.Z
     # tag (release-notes lookup, release title, `gh release create <TAG>`), so
     # this guard is what keeps a develop push from creating a release literally
@@ -557,8 +568,18 @@ jobs:
   # ----------------------------------------------------------------
   nightly:
     name: Update nightly prerelease
-    needs: [build, vita-build, switch-build]
-    if: github.ref == 'refs/heads/develop'
+    needs: [build, vita-build, switch-build, jagcd-tools]
+    # Wait for the tools build, but do not REQUIRE it.  chdman is an
+    # auxiliary desktop helper; the nightly's product is the 16 core
+    # binaries.  Gating the publish on it meant a missing pkg-config
+    # package on a runner image silently withheld three days of good core
+    # builds (2026-08-18).  Tagged releases still require it below, because
+    # there the tools zips are part of the deliverable.
+    if: |
+      always() && github.ref == 'refs/heads/develop'
+      && needs.build.result == 'success'
+      && needs.vita-build.result == 'success'
+      && needs.switch-build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # move the tag, create/update the release

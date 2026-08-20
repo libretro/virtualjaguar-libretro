@@ -27,6 +27,12 @@ static int stubIpl = -1;
 bool JERRYIRQEnabled(int irq) { return (stubIrqMask & irq) != 0; }
 void JERRYSetPendingIRQ(int irq) { stubPending |= irq; }
 void m68k_set_irq(unsigned int level) { stubIpl = (int)level; }
+/* TOM INT1 enable byte: JERRY's interrupt output reaches the 68K only
+   through bit 4 (C_JERENA, IRQ_DSP).  Stubbed rather than pulling in
+   tom.c, which this test deliberately does not link. */
+#define STUB_IRQ_DSP 4
+static int stubTomInt1 = 0;
+int TOMIRQEnabled(int irq) { return stubTomInt1 & (1 << irq); }
 
 #define ASIDATA 0xF10030u
 #define ASISTAT 0xF10032u
@@ -55,6 +61,7 @@ static void fresh(void)
     stubIrqMask = IRQ2_ASI;   /* J_ASYNENA on unless a test clears it */
     stubPending = 0;
     stubIpl = -1;
+    stubTomInt1 = 1 << STUB_IRQ_DSP;   /* C_JERENA on unless a test clears it */
 }
 
 /* Fire JERRY events one at a time, mirroring the production loop:
@@ -189,6 +196,24 @@ static void test_rx_interrupt_masked(void)
     CHECK(stubIpl == -1, "no IPL2 when masked");
 }
 
+/* Regression (#UV voice-modem video corruption): Ultra Vortek enables
+   RINTEN and JINTCTRL bit 4 but leaves TOM INT1 = $01 (video only), so
+   C_JERENA is clear and the ASI interrupt must never reach the 68K.
+   Without this gate every received byte took a spurious level-2
+   exception, re-entering the game's display handler mid-field. */
+static void test_rx_interrupt_tom_gate(void)
+{
+    fresh();
+    stubTomInt1 = 0x01;                    /* video only: C_JERENA clear */
+    UARTWriteWord(ASICLK, 0);
+    UARTWriteWord(ASICTRL, CT_RINTEN);
+    UARTWriteWord(ASIDATA, 0x99);
+    pump(2);
+    CHECK((stubPending & IRQ2_ASI) != 0,
+          "C_JERENA clear: JERRY still latches ASI pending");
+    CHECK(stubIpl == -1, "C_JERENA clear: no 68K IPL2 from UART RX");
+}
+
 static void test_rx_interrupt_disabled(void)
 {
     fresh();                               /* mask on, RINTEN off */
@@ -221,6 +246,7 @@ int main(void)
     test_disabled_link();
     test_rx_interrupt();
     test_rx_interrupt_masked();
+    test_rx_interrupt_tom_gate();
     test_rx_interrupt_disabled();
     test_tx_interrupt_on_holding_drain();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);

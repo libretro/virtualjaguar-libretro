@@ -239,6 +239,33 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make test CC="${{ matrix.config.cc }}"
 
+    # Standalone libchdr + committed fixtures. No core dlopen, so this
+    # also runs on Windows MSYS2 where `make test` is skipped.
+    - name: CHD fixture unit tests
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
+      run: |
+        # Compile with $CC directly. `make` of these targets after `make test`
+        # flips the ABI stamp and deletes the core library.
+        CC="${{ matrix.config.cc }}"
+        INCFLAGS="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include -Ideps/libchdr/include -Ideps/libchdr/deps/lzma-25.01/include -Ideps/libchdr/deps/miniz-3.1.1 -Ideps/libchdr/deps/zstd-1.5.7"
+        LIBCHDR="-D_7ZIP_ST -DWANT_RAW_DATA_SECTOR=1 -DWANT_SUBCODE=1 -DVERIFY_BLOCK_CRC=1"
+        $CC -O2 -Wall -std=c99 $INCFLAGS $LIBCHDR \
+          -o tools/jagcd/jagcd-chd-check tools/jagcd/jagcd-chd-check.c deps/libchdr/unity.c
+        $CC -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $INCFLAGS $LIBCHDR \
+          -o test/test_chd_unit test/test_chd_unit.c deps/libchdr/unity.c
+        ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd.chd
+        if ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_nosession.chd; then
+          echo "jagcd-chd-check: expected exit 1 on synth_jagcd_nosession.chd"
+          exit 1
+        else
+          rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "jagcd-chd-check: unexpected $rc"
+            exit "$rc"
+          fi
+        fi
+        ./test/test_chd_unit
+
     - name: Run SIMD blitter tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross }}
       run: |
@@ -343,6 +370,18 @@ jobs:
         path: ${{ matrix.config.artifact }}
         if-no-files-found: error
 
+    # TEST_EXPORTS=1 -> production mode switch.  TEST_EXPORTS adds
+    # -DVJ_TRACE, so it changes object *content*, not just the export list;
+    # the Makefile flushes every object on a mode change, and a stale one
+    # fails the link with undefined vjtrace_* symbols.  The build + `make
+    # test` steps above already exercise plain -> TEST_EXPORTS=1; this is the
+    # reverse, which is the direction that regressed (blit_memo.o was missing
+    # from the flush list).  Runs last so it cannot hand a production-ABI
+    # library to the dlsym-based steps or to the uploaded artifact.
+    - name: Verify TEST_EXPORTS -> production mode switch relinks
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
+
   msvc-check:
     name: MSVC ${{ matrix.arch }} compilation check
     runs-on: windows-latest
@@ -376,18 +415,22 @@ jobs:
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
           /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /Ideps\libchdr\include /Ideps\libchdr\deps\lzma-25.01\include /Ideps\libchdr\deps\miniz-3.1.1 /Ideps\libchdr\deps\zstd-1.5.7 ^
           /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
+          /D_7ZIP_ST /DMINIZ_DEFLATE_APIS /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
           libretro.c ^
-          src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
+          src\tom\blitter.c src\tom\blitter_compare.c src\tom\blitter_mmio.c src\tom\texdump.c src\tom\texreplace.c src\jerry\dac.c src\jerry\dsp.c src\core\file.c ^
           src\tom\gpu.c src\core\jaguar.c src\jerry\jerry.c src\tom\tom.c src\tom\op.c ^
-          src\cd\cdintf.c src\cd\cdrom.c src\core\crc32.c src\core\event.c ^
+          src\cd\cdintf.c src\cd\cdrom.c src\core\crc32.c src\core\biosdb.c src\core\event.c ^
           src\jerry\eeprom.c src\core\filedb.c src\jerry\joystick.c src\core\settings.c ^
           src\core\memtrack.c src\core\vjag_memory.c src\core\cheat.c ^
-          src\core\universalhdr.c src\jerry\wavetable.c ^
+          src\core\universalhdr.c src\jerry\wavetable.c src\jerry\voicemodem.c ^
           src\bios\jagbios.c ^
+          src\bios\jagbios_m.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
-          src\tom\blitter_simd_scalar.c
+          src\tom\blitter_simd_scalar.c ^
+          deps\libchdr\unity.c
 
     # The shape Makefile.common now selects for windows_msvc2015/2017
     # x64 and x86: blitter.c inlines blitter_simd_sse2.h, so cl.exe

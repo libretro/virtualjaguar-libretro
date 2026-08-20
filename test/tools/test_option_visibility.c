@@ -86,6 +86,12 @@ static void log_cb(enum retro_log_level level, const char *fmt, ...)
    (void)level; (void)fmt;
 }
 
+/* Raw value the harness hands back for the virtualjaguar_netlink key on the
+ * next GET_VARIABLE call, or NULL for "not set" (every other option below
+ * always returns NULL -- only netlink's per-mode visibility needs a real
+ * value to react to). */
+static const char *netlink_opt_value;
+
 static bool env_cb(unsigned cmd, void *data)
 {
    switch (cmd)
@@ -123,6 +129,8 @@ static bool env_cb(unsigned cmd, void *data)
       {
          struct retro_variable *v = (struct retro_variable *)data;
          v->value = NULL;
+         if (v->key && !strcmp(v->key, "virtualjaguar_netlink"))
+            v->value = netlink_opt_value;
          return true;
       }
    }
@@ -145,9 +153,36 @@ typedef void (*set_ipoll_fn)(retro_input_poll_t);
 typedef void (*set_istate_fn)(retro_input_state_t);
 typedef void (*void_fn)(void);
 typedef bool (*load_fn)(const struct retro_game_info *);
+typedef int  (*int_fn)(void);
 
 static load_fn  p_load;
 static void_fn  p_unload;
+static int_fn   p_disc_active; /* JLinkDiscActive(), or NULL if unresolved */
+
+/* Assert the LAN discovery socket's on/off state directly, rather than
+ * through the SET_CORE_OPTIONS_DISPLAY recording used by expect() --
+ * JLinkDiscActive() is a live query, not an option-visibility toggle. */
+static void expect_active(const char *what, bool want)
+{
+   bool got;
+   if (!p_disc_active)
+   {
+      printf("  SKIP JLinkDiscActive()             %s -- symbol not resolved\n",
+             what);
+      return;
+   }
+   checks++;
+   got = p_disc_active() != 0;
+   if (got == want)
+      printf("  ok   JLinkDiscActive()              %s active=%d\n",
+             what, (int)got);
+   else
+   {
+      printf("  FAIL JLinkDiscActive()              %s active=%d, expected %d\n",
+             what, (int)got, (int)want);
+      failures++;
+   }
+}
 
 static bool load_content(const char *path)
 {
@@ -223,8 +258,9 @@ int main(int argc, char **argv)
    ((set_istate_fn)dlsym(lib, "retro_set_input_state"))(input_state_cb);
    ((void_fn)dlsym(lib, "retro_init"))();
 
-   p_load   = (load_fn)dlsym(lib, "retro_load_game");
-   p_unload = (void_fn)dlsym(lib, "retro_unload_game");
+   p_load       = (load_fn)dlsym(lib, "retro_load_game");
+   p_unload     = (void_fn)dlsym(lib, "retro_unload_game");
+   p_disc_active = (int_fn)dlsym(lib, "JLinkDiscActive");
 
    /* --- cartridge: CD options hidden, cartridge BIOS option shown --- */
    if (!load_content(cart))
@@ -239,7 +275,81 @@ int main(int argc, char **argv)
    expect("(cart)", "virtualjaguar_cd_read_speed", false);
    expect("(cart)", "virtualjaguar_cd_trace",      false);
    expect("(cart)", "virtualjaguar_bios",          true);
+   expect("(cart)", "virtualjaguar_bios_type",     true);
+   /* Texture dump (#369): the 16bpp preview knob is hidden while the
+    * dump option sits at its disabled default. */
+   expect("(cart)", "virtualjaguar_texdump_16bpp", false);
    p_unload();
+
+   /* --- Network Link (task 3, #467): host/port visibility per mode ---
+    * auto:       neither field means anything (never asks for an address)
+    * tcp_client: both fields apply (dials host:port)
+    * tcp_server: only the listen port applies
+    *
+    * update_option_visibility() only calls SET_CORE_OPTIONS_DISPLAY on a
+    * CHANGE, and the gates are module statics that persist across loads
+    * (like every other show_* gate in libretro.c). The cartridge checks
+    * above already evaluated netlink visibility once with no value set
+    * (GET_VARIABLE returns NULL), which resolves to disabled -- host/port
+    * already hidden. Prime a known "shown" baseline first so the very
+    * first real assertion below (auto, expecting hidden) is guaranteed to
+    * see the toggle fire rather than silently inheriting a state that
+    * happens to already match. */
+   netlink_opt_value = "tcp_client";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink priming)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   p_unload();
+
+   netlink_opt_value = "auto";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink=auto)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   printf("[netlink=auto] %s\n", cart);
+   expect("(netlink=auto)", "virtualjaguar_netlink_host", false);
+   expect("(netlink=auto)", "virtualjaguar_netlink_port", false);
+   /* auto must never open the discovery socket: the host row it would
+    * feed is hidden (checked above) and auto never auto-connects to a
+    * found peer anyway, so the peer list is invisible and unread --
+    * opening it here would be a silent UDP listener (and OS Local
+    * Network permission prompt) for every user, since auto is now the
+    * option's default. */
+   expect_active("(netlink=auto)", false);
+   p_unload();
+
+   netlink_opt_value = "tcp_client";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink=tcp_client)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   printf("[netlink=tcp_client] %s\n", cart);
+   expect("(netlink=tcp_client)", "virtualjaguar_netlink_host", true);
+   expect("(netlink=tcp_client)", "virtualjaguar_netlink_port", true);
+   /* tcp_client listens for LAN hosts (never beacons) so the host row's
+    * "hosts on your LAN are found automatically" claim is real. */
+   expect_active("(netlink=tcp_client)", true);
+   p_unload();
+
+   netlink_opt_value = "tcp_server";
+   if (!load_content(cart))
+   {
+      printf("  FAIL: could not load cartridge %s (netlink=tcp_server)\n", cart);
+      dlclose(lib);
+      return 1;
+   }
+   printf("[netlink=tcp_server] %s\n", cart);
+   expect("(netlink=tcp_server)", "virtualjaguar_netlink_host", false);
+   expect("(netlink=tcp_server)", "virtualjaguar_netlink_port", true);
+   p_unload();
+   netlink_opt_value = NULL;
 
    /* --- CD: CD options shown, cartridge BIOS option hidden --- */
    if (disc)
@@ -259,6 +369,7 @@ int main(int argc, char **argv)
          expect("(cd)", "virtualjaguar_cd_read_speed", true);
          expect("(cd)", "virtualjaguar_cd_trace",      true);
          expect("(cd)", "virtualjaguar_bios",          false);
+         expect("(cd)", "virtualjaguar_bios_type",     false);
          p_unload();
       }
    }

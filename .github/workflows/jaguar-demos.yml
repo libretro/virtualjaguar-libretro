@@ -1,0 +1,166 @@
+name: JaguarDemos suite
+
+# On-demand boot sweep of 42Bastian/JaguarDemos (public-domain homebrew).
+# Smoke (curated list) runs on ordinary PRs; the full committed-.j64 sweep
+# runs only on release/* PRs, v* tags, and manual dispatch.  Same
+# PASS->FAIL baseline gate as the acid suite — BootIntros are probed with --bios + PAL; remaining FAILs are accuracy gaps.
+#
+# Does NOT install lyxass/rmac; CI only runs .j64 files already committed
+# upstream.  Local `make jaguar-demos-build` is the rebuild path.
+
+on:
+  push:
+    branches: [develop, master]
+    tags: ['v*']
+    paths:
+      - 'src/**'
+      - 'libretro.c'
+      - 'Makefile'
+      - 'Makefile.common'
+      - 'test/jaguar-demos/**'
+      - 'test/tools/cart_boot_probe.c'
+      - 'test/harness/**'
+      - '.github/workflows/jaguar-demos.yml'
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - 'src/**'
+      - 'libretro.c'
+      - 'Makefile'
+      - 'Makefile.common'
+      - 'test/jaguar-demos/**'
+      - 'test/tools/cart_boot_probe.c'
+      - 'test/harness/**'
+      - '.github/workflows/jaguar-demos.yml'
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'Which suite to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - smoke
+          - full
+
+concurrency:
+  group: jaguar-demos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: JaguarDemos smoke (linux x86_64)
+    # Smoke on PR / branch push.  Skip tag pushes (the full job covers
+    # releases) and skip dispatch unless the caller asked for smoke.
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.suite == 'smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Build core (TEST_EXPORTS=1)
+        run: |
+          set -euo pipefail
+          make -j"$(getconf _NPROCESSORS_ONLN)" TEST_EXPORTS=1
+          ls -la virtualjaguar_libretro.so
+
+      - name: Run JaguarDemos smoke suite
+        id: run
+        run: |
+          set -euxo pipefail
+          set +e
+          make jaguar-demos-smoke > test/jaguar-demos/results.log 2>&1
+          rc=$?
+          set -e
+          tail -40 test/jaguar-demos/results.log
+          # make jaguar-demos-smoke already gates via check-baseline.py;
+          # propagate its exit code.
+          exit $rc
+
+      - name: Post summary
+        if: always()
+        run: |
+          {
+            echo "## JaguarDemos smoke"
+            echo
+            echo "\`\`\`"
+            tail -60 test/jaguar-demos/results.log 2>/dev/null || echo "(no log)"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jaguar-demos-smoke
+          path: |
+            test/jaguar-demos/results.log
+            /tmp/jaguar-demos-logs/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  full:
+    name: JaguarDemos full (linux x86_64)
+    # release/* PRs (GitFlow into master), v* tags, or explicit dispatch.
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.suite == 'full' ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Build core (TEST_EXPORTS=1)
+        run: |
+          set -euo pipefail
+          make -j"$(getconf _NPROCESSORS_ONLN)" TEST_EXPORTS=1
+          ls -la virtualjaguar_libretro.so
+
+      - name: Run JaguarDemos full suite
+        run: |
+          set -euxo pipefail
+          set +e
+          # Skip the optional lyxass rebuild in CI — committed .j64 only.
+          # Export the build-id guard the Makefile target would have set;
+          # a stale .so must fail load instead of silently probing the
+          # wrong binary (same as make jaguar-demos-full / smoke).
+          export VJ_EXPECT_BUILD
+          VJ_EXPECT_BUILD="$(./scripts/build-id.sh)"
+          bash test/jaguar-demos/run.sh full ./virtualjaguar_libretro.so \
+            > test/jaguar-demos/results-full.log 2>&1
+          rc=$?
+          set -e
+          tail -80 test/jaguar-demos/results-full.log
+          exit $rc
+
+      - name: Post summary
+        if: always()
+        run: |
+          {
+            echo "## JaguarDemos full"
+            echo
+            echo "\`\`\`"
+            tail -100 test/jaguar-demos/results-full.log 2>/dev/null || echo "(no log)"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jaguar-demos-full
+          path: |
+            test/jaguar-demos/results-full.log
+            /tmp/jaguar-demos-logs/
+          retention-days: 14
+          if-no-files-found: ignore

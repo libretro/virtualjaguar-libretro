@@ -28,7 +28,7 @@ The libretro buildbot uses MSVC on Windows. CI has a `c89-lint` job. Run `bash s
 - **No mid-block declarations.** All vars at top of block, before any statement. Most common violation.
 - `//` comments allowed (GNU89), but prefer `/* */` for new code.
 - No C99: no `for (int i…)`, no compound literals, no designated initializers, no VLAs.
-- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic).
+- Exempt (see `scripts/c89-lint.sh::skip_file`): `src/m68000/cpu*.c` and `src/m68000/read*.c` (UAE 68K), `src/bios/jag*bios*.c` (bin2c hex tables), `src/tom/blitter_simd_{sse2,neon}.c` (platform intrinsics), `test/tools/test_rcheevos_e2e.c` (rcheevos-dependent), `test/tools/flicker_detect.c` (diagnostic), `deps/libchdr/*` and `tools/jagcd/*` (vendored libchdr is a C99 unity TU; see the `unity.o` rule in the Makefile).
 
 ## Hardware model
 
@@ -54,9 +54,10 @@ Frame loop is event-driven (not cycle-accurate): `JaguarExecuteNew()` in `src/co
 - `src/core/` — orchestration, memory map, events, settings, files, cheats
 - `src/tom/` — video, GPU, OP, blitter (+ SIMD)
 - `src/jerry/` — audio, DSP, DAC, EEPROM, input, wavetable, UART/netlink (`uart.c` + `jlink.c`, see `docs/netlink-design.md`)
-- `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA/Q-subcode in `cdrom.c`, image loading (CUE/BIN, CDI — **no CHD**, removed during the CD overhaul; see issue #322) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`
+- `src/cd/` — Jaguar CD: BUTCH/FIFO/DSA/Q-subcode in `cdrom.c`, image loading (CUE/BIN, CDI, CHD) in `cdintf.c`; BIOS auth bypass + boot stub in `src/core/jaguar.c`. CHD requires `CHSE` session tags from a post-2026-08 chdman — old internet CHDs are refused; see [`docs/jagcd-chd.md`](docs/jagcd-chd.md) and issue #322.
 - `src/core/jaggd.c` — Jaguar GameDrive: SPI mailbox at `$F16000`, embedded GDBIOS blob, 6×1MB page → 16-bank switching for images up to 16 MB (spec: `docs/jgd-interface-notes.md`)
 - `src/core/titledb.c` — per-title enhancement defaults (#368); applied at option-read time in `libretro.c`, user-set values always win
+- `src/core/titlehook.c` — per-title enhancement **hooks** (#370): verified byte patches into cartridge ROM at load, gated by `virtualjaguar_enhancement_hooks` (default **disabled**). Ships with **zero** rows — the mechanism, not the data. Authoring rules + the three non-obvious fences (GameDrive banked image, cart entry vector `$400..$407`, `TitleHook*` needing its own export-list entry) in [`docs/enhancement-hooks.md`](docs/enhancement-hooks.md). Not a general scripting surface: if a behaviour fits a `{key, value}` string it is a `pairs[]` entry, and an emulator timing bug is never a hook
 - `src/bios/` — embedded BIOS / boot stubs
 - `src/m68000/` — UAE 68K (machine-generated; treat as opaque)
 - `libretro-common/` — shared utility lib
@@ -100,6 +101,7 @@ To add a new probe: create `test/harness/foo_probe.h` + `.c`, resolve symbols vi
   `cc -O2 -Wall -std=c99 -I./libretro-common/include -o test/tools/test_blitter_compare test/tools/test_blitter_compare.c -ldl`
   Usage: `<core.so|.dylib> <rom> [frames] --load-state <file> [--frame-window F L] [--cmd-filter MASK VAL] [--verbose-dump]` (note: `--load-state`, not `--savestate`).
 - `test/test_dsp_mac40.c` — DSP 40-bit MAC accumulator (`dsp_acc40.h`)
+- `test/tools/dram_scale_sweep.sh` — **the gate for any GPU/68K timing-model change** (issue #406). Sweeps `VJ_DRAM_SCALE` 1..16 with `dram_timing` + `gpu_pipeline_timing` both on and asserts a per-window *liveness floor* on Doom's demo (default 30 flips per 300 fields; healthy is 90-150), not merely "flips != 0" — a fix that turns a deadlock into a 3-flips-per-300 crawl must fail. Exit 77 = private ROM absent (skip, never a silent pass). Timing wedges in this core relocate rather than disappear when the model changes, so **a single-scale run proves nothing**: #406 wedged at scales 4 and 8 before the Verilator constants landed and at scale 3 after. Env: `VJ_SCALES`, `VJ_WINDOW`, `VJ_MIN_FLIPS`, `VJ_WARMUP_W`.
 - `test/sram_test.sh` — SRAM round-trip
 - `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS mode) vs `docs/cd-boot-matrix.md`; env knobs `CD_MATRIX_FRAMES`, `CD_MATRIX_TIMEOUT`, `CD_MATRIX_MAX_RUNS`, `CD_MATRIX_LOGDIR`, `CD_MATRIX_OUT`, `CD_MATRIX_ROMS_ROOT`; chunked/resumable across invocations. Rows are stamped with the core build id (`<!-- build:<rev> -->`); resume skips only same-build rows and re-runs/replaces rows recorded by any other build. This exists because resuming into an OUT file from an older build used to resurrect ancient rows as "fresh" results — the phantom intermittent Battle Morph bios `? (pc_escape)` (`final_pc=$8FBFB758`) was exactly such a stale row, not a real run.
 - CD trace ring: core option `virtualjaguar_cd_trace` (or env `VJ_CD_TRACE=1` for headless use) records `DSA_TX`/`DSA_RX`, `SEEK_START`/`SEEK_DONE`, `FIFO_FILL`/`FIFO_DRAIN`, `STOP`, `HLE_READ` events; dumped to the log on `cd_seek_wedge` or on request
@@ -120,12 +122,48 @@ Every harness that dlopens the core prints the binary's embedded version (`vX.Y.
 ### Test ABI and re-linking
 
 `make` links the production-slim ABI (`retro_*` only); `make test` needs the
-wide test ABI so harnesses can `dlsym` internals. Switching between them
-re-links automatically — the Makefile deletes the library when the mode
-changes, so `make` followed by `make TEST_EXPORTS=1 test` works. (It did not
-before v2.3.2: the library was newer than every object, nothing relinked, and
-the suite failed with `Missing: m68k_execute`.) After `make test`, the library
-in the tree carries the wide exports; plain `make` restores the shipped ABI.
+wide test ABI so harnesses can `dlsym` internals. `TEST_EXPORTS=1` selects the
+wide one — and also adds `-DVJ_TRACE`, so it changes object *content*, not just
+the export list.
+
+Switching in **either** direction is handled automatically: the Makefile stamps
+the build configuration into `.build-config` and, when it differs, deletes the
+library **and every object** before the build. Both `make` →
+`make TEST_EXPORTS=1 test` and `make TEST_EXPORTS=1` → `make` work with no
+`make clean`. Cost is one full rebuild per flip (~21s at `-j8` without ccache).
+
+The stamp covers **every** compile-affecting switch, not just `TEST_EXPORTS`
+(`BUILD_AXES` in the Makefile: `TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE
+COVERAGE RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform`).
+**Adding a new switch that changes `CFLAGS` means adding it to that list** —
+forgetting costs a silent chimera binary, not a build error. It stamps variable
+*names*, not `$(CFLAGS)`: `DEBUG=1` puts a per-second `-DBUILD_TIMESTAMP` in
+the flags, so stamping flags would flush the tree on every single build.
+
+Before issue #457 the stamp tracked `TEST_EXPORTS` alone, which left the same
+hazard one level up: `make DEBUG=1` after a release build recompiled **zero**
+objects (a "debug build" that was entirely `-O2` with no debug info), and
+toggling `BENCH_PROFILE` recompiled nothing, so `timing_probe` tools reported
+`timing_halfline_callbacks counter not found` — which reads as a broken tool
+rather than an ignored flag. `VJ_EXPECT_BUILD` cannot catch either: the git rev
+is identical across the flip, so the guard passes on a wrong binary.
+
+The flush is deliberately unconditional rather than a list of "objects that use
+vjtrace". That list is what broke before: it omitted `src/tom/blit_memo.o`, so
+`make TEST_EXPORTS=1` followed by plain `make` died with undefined
+`_vjtrace_emit` referenced from `BlitMemoLaunch`, and the reverse direction
+linked cleanly while silently keeping the no-op macro expansion — traced builds
+that record nothing. Do not reintroduce a curated (or grepped, or `-MD`-derived)
+list; a file can pick up the `VJT_*` macros through an indirect include.
+CI gates both directions on every host row of `c-cpp.yml`'s build job: the
+build + `make test` steps cover `plain` → `TEST_EXPORTS=1`, and a final plain
+`make` after the artifact upload covers the reverse. `make -n` is exempt from
+the flush, so a dry run costs nothing.
+
+Earlier history: before v2.3.2 the mode switch didn't relink at all — the
+library was newer than every object, nothing rebuilt, and the suite failed with
+`Missing: m68k_execute`. After `make test`, the library in the tree carries the
+wide exports; plain `make` restores the shipped ABI.
 
 ### Build-identity guard (stale-binary protection)
 
@@ -185,8 +223,9 @@ The "Acid suite (linux x86_64)" job can show `conclusion: failure` for two unrel
 - List unresolved threads: `gh api graphql -f query='{repository(owner:"libretro",name:"virtualjaguar-libretro"){pullRequest(number:N){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{id author{login} body}}}}}}}'`
 - Inline reply: `gh api -X POST repos/libretro/virtualjaguar-libretro/pulls/N/comments/<REST_ID>/replies -f body="..."` — parent is the REST `id` from `gh api .../comments`, NOT the GraphQL `PRRC_*` id (returns 404).
 - Resolve thread: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "PRRT_..."}) { thread { isResolved } } }'`.
-- Trigger a Copilot review: `gh pr comment N --body "@copilot review"`. The `requested_reviewers` REST endpoint rejects `copilot-pull-request-reviewer` as "not a collaborator".
 - Always reply AND resolve when addressing feedback — leaving a thread open after a fix is noise for the next reviewer.
+- **Do NOT trigger Copilot reviews.** `gh pr comment N --body "@copilot review"` used to be the documented trigger; it is now discouraged. Copilot bills per token since 2026-06-01, that comment spawns a *coding agent* session (38 of them in Aug 2026, up to 4 on a single PR), and `kimi-review.yml` already reviews every PR to `develop`/`master` automatically on a different provider's budget. Reach for it only when a second opinion is genuinely worth the spend, and say why in the PR.
+- Repo-level custom instructions for Copilot live in `.github/copilot-instructions.md`. Keep it short — it is input on every request. Depth goes in `.github/prompts/*.prompt.md`, which load only when invoked.
 
 ### Headless framebuffer caveat
 
@@ -273,6 +312,28 @@ Rules for agents:
 - Disc images from the iCloud restore nest one level deeper than before
   (`<Title>/<Title>/*.cue`), so discover cues with `find -L` rather than a
   hardcoded depth.
+
+## Interactive shell aliases will hang your commands
+
+This user's shell aliases `rm`, `cp` and `mv` to their `-i` (interactive)
+forms. A prompt with no TTY to answer it blocks **forever**:
+
+- `cp a b` prints `overwrite b? (y/n [n])` and silently does **nothing** —
+  measurements then run against a stale file and quietly lie to you.
+- `rm x && next_step` inside a backgrounded command hangs at the prompt, so
+  `next_step` never runs. This left an HTML edit half-applied and an orphaned
+  `rm -i` sitting on a prompt for **nine hours**.
+
+Rules:
+
+- **Deleting: use `trash`** (`/usr/bin/trash`, built into macOS). It is
+  recoverable, non-interactive, and the right default in a repo where
+  `test/roms/private` and other gitignored paths hold irreplaceable data.
+- If you truly need it gone, bypass the alias explicitly: `command rm -f`,
+  `command cp -f`, `command mv -f`. Never a bare `rm`/`cp`/`mv` in a chain.
+- **Verify a background task actually exited** — don't infer it from its side
+  effects. Check the task output, and `ps -eo pid,etime,command | grep ' -i '`
+  if something feels slow. A hung prompt looks exactly like "still working".
 
 ## Set DEVELOPER_DIR for host builds
 

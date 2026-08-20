@@ -54,9 +54,9 @@
 #                         unlimited). Combined with the resume guard this lets
 #                         a long sweep be chunked across short invocations:
 #                         each chunk skips the rows earlier chunks recorded,
-#                         because the build stamp does not move when the only
-#                         thing that changed is this script's own output
-#                         (scripts/build-id.sh BUILD_ID_IGNORE).
+#                         because rows are keyed on the content-scoped cache id
+#                         (matrix_common.sh), which this script's own output
+#                         cannot move.
 set -u
 
 # ---------------------------------------------------------------------------
@@ -84,76 +84,43 @@ if [ ! -d "$ROMS_ROOT" ]; then
     exit 1
 fi
 
-DYLIB=""
-for candidate in virtualjaguar_libretro.dylib virtualjaguar_libretro.so; do
-    if [ -f "$candidate" ]; then DYLIB="$candidate"; break; fi
-done
-if [ -z "$DYLIB" ]; then
-    echo "No built core found -- building with TEST_EXPORTS=1..." >&2
-    make TEST_EXPORTS=1 -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" || {
-        echo "FATAL: build failed" >&2; exit 1; }
-    for candidate in virtualjaguar_libretro.dylib virtualjaguar_libretro.so; do
-        if [ -f "$candidate" ]; then DYLIB="$candidate"; break; fi
-    done
-fi
+. "$SCRIPT_DIR/matrix_common.sh"
+
+# Core discovery is shared with the cart sweep (matrix_common.sh): it is fatal
+# if no core exists after a rebuild attempt.  This script used to loop over the
+# candidates, build, and then NOT re-check -- leaving $DYLIB empty and running
+# every harness against "".
+matrix_find_core || exit 1
+DYLIB="$MATRIX_CORE"
 
 # The harnesses dlsym() CDROMDiagGetCounters; a plain `make` (no
 # TEST_EXPORTS=1) relinks against the slim production export list and
 # silently drops it, and every dlsym-based assertion then reports SKIP.
-if command -v nm >/dev/null 2>&1; then
-    if ! nm -gU "$DYLIB" 2>/dev/null | grep -q CDROMDiagGetCounters; then
-        echo "$DYLIB is missing test-export symbols -- rebuilding with TEST_EXPORTS=1..." >&2
-        rm -f "$DYLIB"
-        make TEST_EXPORTS=1 -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" || {
-            echo "FATAL: build failed" >&2; exit 1; }
-    fi
-fi
+matrix_require_test_exports "$DYLIB" CDROMDiagGetCounters
 
 # Build-identity guard: every harness invocation below verifies that the
 # core's embedded git rev matches the working tree (scripts/build-id.sh),
-# so matrix rows can never be produced by a stale/wrong-branch binary.
+# so matrix rows can never be produced by a stale/wrong-branch binary.  This
+# stays deliberately broad -- a rebuild is cheap, publishing a matrix from the
+# wrong core is not.
 #
-# The id is computed ONCE per invocation and stamped into every row this
-# invocation writes (see run_title).  Resuming across invocations only
-# works because scripts/build-id.sh excludes the results file from its
-# dirty check -- otherwise writing the first row would flip the id and the
-# next invocation would re-run everything it had just recorded.  The
-# default $OUT is on that ignore list; a custom tracked $OUT is not, so
-# warn rather than let the sweep silently fail to converge.  (This applies
-# to any re-invocation, chunked or not: an interrupted unlimited sweep
-# resumes through the same guard.)
-#
-# The ignore list is written repo-root-relative, so an absolute $OUT has to
-# be normalised before the comparison.  `git ls-files` resolves an absolute
-# path inside the repo on its own, but the string compare below does not:
-# without this, CD_MATRIX_OUT=/abs/path/to/docs/cd-boot-matrix.md -- a file
-# that IS ignored -- fails the compare and draws a warning stating the exact
-# opposite of the truth.
-OUT_REL=$OUT
-OUT_DIR=$(dirname "$OUT")
-if OUT_PREFIX=$(cd "$OUT_DIR" 2>/dev/null && git rev-parse --show-prefix 2>/dev/null); then
-    OUT_REL="${OUT_PREFIX}$(basename "$OUT")"
-fi
-if git ls-files --error-unmatch "$OUT" >/dev/null 2>&1 \
-   && ! scripts/build-id.sh --ignores 2>/dev/null | grep -qxF "$OUT_REL"; then
-    echo "WARNING: CD_MATRIX_OUT=$OUT is tracked by git but is not in" >&2
-    echo "  scripts/build-id.sh's ignore list. Writing rows will flip the build" >&2
-    echo "  id to '-dirty', so the next chunked invocation will treat every row" >&2
-    echo "  this one records as stale and re-run it. Add the path to" >&2
-    echo "  BUILD_ID_IGNORE, or point CD_MATRIX_OUT at an untracked file." >&2
-fi
-
-VJ_EXPECT_BUILD=$(scripts/build-id.sh 2>/dev/null || true)
+# Row caching used to key on this same id, which is why writing rows had to be
+# hidden from it via scripts/build-id.sh's BUILD_ID_IGNORE list (otherwise the
+# first row flipped the id to '-dirty' and the next chunk re-ran everything it
+# had just recorded).  That workaround is no longer load-bearing: rows are keyed
+# on $CACHE_ID below, which is scoped to inputs that can change a verdict, and
+# $OUT is not one of them.  A tracked custom $OUT is therefore fine.
+VJ_EXPECT_BUILD="$(matrix_build_id)"
 export VJ_EXPECT_BUILD
 if [ -n "$VJ_EXPECT_BUILD" ]; then
     echo "expected core build id: $VJ_EXPECT_BUILD" >&2
-    if ! strings "$DYLIB" 2>/dev/null | grep -Eq "$VJ_EXPECT_BUILD( |\$)"; then
-        echo "$DYLIB does not embed build id $VJ_EXPECT_BUILD -- rebuilding..." >&2
-        rm -f "$DYLIB"
-        make TEST_EXPORTS=1 -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" || {
-            echo "FATAL: build failed" >&2; exit 1; }
-    fi
+    matrix_verify_core_build "$DYLIB" "$VJ_EXPECT_BUILD"
 fi
+
+# Row-cache identity is deliberately NOT the git rev (issue #440): a docs-only
+# commit must not invalidate every recorded row.  See matrix_common.sh.
+CACHE_ID="$(matrix_cache_id)"
+echo "row-cache id: $CACHE_ID" >&2
 
 # TEST_EXPORTS=1 is required: the per-binary rules only exist in that
 # Makefile branch.  A bare `make test/<bin>` falls through to GNU make's
@@ -168,38 +135,8 @@ for bin in test/test_cd_hle_boot test/test_cd_bios_boot; do
     fi
 done
 
-# Portable bounded-execution helper: prefer GNU coreutils `timeout`/`gtimeout`,
-# fall back to a plain-bash watchdog. Returns 124 on timeout (matches GNU
-# `timeout`'s convention) so callers have one thing to check either way.
-TIMEOUT_BIN=""
-if command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
-elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
-fi
-
-run_bounded() {
-    # usage: run_bounded <seconds> <logfile> -- <cmd...>
-    secs="$1"; logfile="$2"; shift 2
-    if [ -n "$TIMEOUT_BIN" ]; then
-        "$TIMEOUT_BIN" "$secs" "$@" >"$logfile" 2>&1
-        return $?
-    fi
-    "$@" >"$logfile" 2>&1 &
-    pid=$!
-    waited=0
-    while kill -0 "$pid" 2>/dev/null; do
-        sleep 1
-        waited=$((waited + 1))
-        if [ "$waited" -ge "$secs" ]; then
-            kill -TERM "$pid" 2>/dev/null
-            sleep 2
-            kill -KILL "$pid" 2>/dev/null
-            wait "$pid" 2>/dev/null
-            return 124
-        fi
-    done
-    wait "$pid"
-    return $?
-}
+# Bounded execution lives in matrix_common.sh (identical in both sweeps).
+run_bounded() { matrix_run_bounded "$@"; }
 
 # ---------------------------------------------------------------------------
 # Per-title x mode runner
@@ -298,6 +235,12 @@ run_one() {
 
 classify_stage() {
     mode="$1"; log="$2"; rc="$3"
+    # Core-level faults FIRST: a core that would not load, or that is the wrong
+    # build, says nothing about the title.  Blaming the title here is what let a
+    # missing core publish 123 false LOAD_FAIL rows in the cart matrix (7e6975f);
+    # this script had no such guard at all until #430.
+    core_err="$(matrix_core_error "$log")"
+    if [ -n "$core_err" ]; then echo "? (core_error)"; return; fi
     if [ "$rc" -eq 124 ]; then echo "HARNESS_HANG"; return; fi
     if grep -aq '\[CRASH\]' "$log" 2>/dev/null; then echo "LOAD_FAIL (harness crash)"; return; fi
     if grep -aq 'load failed' "$log" 2>/dev/null; then echo "LOAD_FAIL"; return; fi
@@ -551,13 +494,13 @@ run_title() {
     row_lineno="$(find_row_lineno "$title" "$mode")"
     if [ -n "$row_lineno" ]; then
         row_line="$(sed -n "${row_lineno}p" "$OUT")"
-        if [ -z "$VJ_EXPECT_BUILD" ]; then
-            # No build identity available (no git?): can't tell fresh from
+        if [ -z "$CACHE_ID" ]; then
+            # No cache identity available (no git?): can't tell fresh from
             # stale -- keep legacy skip behavior, but say so.
-            echo "  [$mode] $title -- already recorded, skipping (build id unavailable; provenance unverified)" >&2
+            echo "  [$mode] $title -- already recorded, skipping (cache id unavailable; provenance unverified)" >&2
             return 0
         fi
-        if printf '%s' "$row_line" | grep -qF "<!-- build:$VJ_EXPECT_BUILD -->"; then
+        if printf '%s' "$row_line" | grep -qF "<!-- build:$CACHE_ID -->"; then
             echo "  [$mode] $title -- already recorded by this build, skipping" >&2
             return 0
         fi
@@ -572,7 +515,7 @@ run_title() {
     fi
     RUNS_DONE=$((RUNS_DONE + 1))
     if [ -n "$row_lineno" ]; then
-        echo "  [$mode] $title -- stale row (recorded by '$row_old_build', current '$VJ_EXPECT_BUILD'); re-running" >&2
+        echo "  [$mode] $title -- stale row (recorded by '$row_old_build', current '$CACHE_ID'); re-running" >&2
     else
         echo "  [$mode] $title ..." >&2
     fi
@@ -580,6 +523,15 @@ run_title() {
     log="$RUN_LOG"; rc="$RUN_RC"
 
     stage="$(classify_stage "$mode" "$log" "$rc")"
+    if [ "$stage" = "? (core_error)" ]; then
+        # A core that will not load fails identically for every title.  Abort
+        # before writing anything rather than publishing a matrix of invalid
+        # rows that the row cache will then serve to the next invocation.
+        echo "FATAL: $(matrix_core_error "$log")" >&2
+        echo "  core: $DYLIB   log: $log" >&2
+        echo "  rebuild with:  make clean && make TEST_EXPORTS=1" >&2
+        exit 1
+    fi
     watchdog="$(watchdog_of "$log")"
     [ -z "$watchdog" ] && watchdog="(none)"
     evidence="$(pc_summary_of "$log")"
@@ -609,7 +561,7 @@ run_title() {
     # inside the last cell as an HTML comment so rendered markdown is
     # unchanged.
     stamp=""
-    [ -n "$VJ_EXPECT_BUILD" ] && stamp=" <!-- build:$VJ_EXPECT_BUILD -->"
+    [ -n "$CACHE_ID" ] && stamp=" <!-- build:$CACHE_ID -->"
     row="$(printf '| %s | %s | %s | %s | %s | %s%s |' \
         "$title" "$mode" "$score" "$stage" \
         "$(printf '%s' "$watchdog" | sed 's/|/\\|/g')" \
@@ -645,6 +597,25 @@ done
 
 run_title "baldies.cdi" "hle" "cdi"
 run_title "baldies.cdi" "bios" "cdi"
+
+# CHD conversions (issue #322). A sibling .chd of a matrix CUE, or a
+# named homebrew dump, is measured the same way as CUE/CDI. Missing
+# files are skipped -- CHD is produced locally with tools/jagcd, not
+# shipped in the private tree by default.
+chd_basename_exists() {
+    find -L "$ROMS_ROOT" -iname "$1" 2>/dev/null | grep -q .
+}
+for t in "${CUE_TITLES[@]}"; do
+    chd="${t%.cue}.chd"
+    if chd_basename_exists "$chd"; then
+        run_title "$chd" "hle" "chd"
+        run_title "$chd" "bios" "chd"
+    fi
+done
+if chd_basename_exists "Frog Feast (USA) (Unl).chd"; then
+    run_title "Frog Feast (USA) (Unl).chd" "hle" "chd"
+    run_title "Frog Feast (USA) (Unl).chd" "bios" "chd"
+fi
 
 # Loose ISOs: support was removed entirely (CDIntf refuses .iso at load
 # with a LOG_ERR explaining why -- no session/track layout means no retail

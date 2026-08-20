@@ -49,6 +49,15 @@
  *      test 5 fails (position frozen).
  *   6. Stop mutes the window -- after $0200 Stop, reads fall back to
  *      $0000 (subcode exists only while the disc streams).
+ *   7. The position bytes are really BCD -- tests 3..5 collect within a
+ *      few sectors of a low LBA, so every position field is single
+ *      digit, and BCD == binary below 10.  Test 7 collects 50 sectors
+ *      into track 3, where absolute time is 00:10:50, and compares the
+ *      RAW BYTES against ref_bcd() directly -- never round-tripped
+ *      through from_bcd(), which is exactly what hides the bug.
+ *      NEGATIVE CONTROL: stub SubQBCD() (src/cd/cdrom.c) to
+ *      `return (uint8_t)v;` -> test 7 fails, and only test 7 (issue
+ *      #330: before this test that sabotage left the file 6/6 green).
  *
  * Build: make test/test_cd_synth_subq      (needs TEST_EXPORTS=1)
  * Run:   DYLD_LIBRARY_PATH=. test/test_cd_synth_subq
@@ -628,6 +637,118 @@ TEST(stop_returns_subdata_to_zero)
 }
 
 /* ------------------------------------------------------------------ */
+/* 7. BCD is real: raw bytes at a DOUBLE-DIGIT position (issue #330)    */
+/*                                                                      */
+/* Tests 3-5 collect within a few sectors of a low LBA, so every        */
+/* position field is single-digit -- and BCD == binary below 10.        */
+/* Stubbing SubQBCD() to `return (uint8_t)v;` therefore left all six    */
+/* green.  This test seeks 50 sectors into track 3, where absolute      */
+/* time is 00:10:50, and compares the RAW BYTE against ref_bcd()        */
+/* DIRECTLY.  from_bcd() is deliberately not used anywhere below --     */
+/* round-tripping through the decoder is what hides the bug.            */
+/*                                                                      */
+/* Two independent discriminators:                                      */
+/*   ASEC is exactly 10 by construction -> BCD $10 vs binary $0A.       */
+/*   AFRAME and the track-relative FRAME land in [50, 50+SLOP]; the     */
+/*   BCD images of that window ($50..$70) and its binary images         */
+/*   ($32..$46) are disjoint, which the tightness guard below asserts   */
+/*   at runtime rather than merely claiming in a comment.               */
+/* NEGATIVE CONTROL: SubQBCD() -> `return (uint8_t)v;` -> this fails.   */
+/* ------------------------------------------------------------------ */
+
+/* 50 sectors past track 3's INDEX 01 -- absolute 00:10:50, and the
+ * frame fields stay clear of the 75-frame second boundary. */
+#define BCD_PROBE_OFFSET 50u
+/* Alignment drift budget for collect_frame() (tests 4 and 5 observe
+ * 5-20 and 5-9 frames).  50+20 = 70 < 75, so no second rollover, and
+ * 800+20 = 820 keeps ASEC on 10 (825 would be the boundary). */
+#define BCD_PROBE_SLOP   20u
+
+TEST(raw_bytes_are_bcd_at_double_digit_position)
+{
+    uint8_t  q[SUBQ_BYTES];
+    uint32_t target, abs_lo, exp_amin, exp_asec, v, w;
+    bool     framed, relmatch;
+
+    target   = track_data_lba(3u) + BCD_PROBE_OFFSET;
+    abs_lo   = target + 150u;
+    exp_amin = abs_lo / 4500u;
+    exp_asec = (abs_lo / 75u) % 60u;
+
+    /* PRECONDITION: if the fixture ever stops reaching a double-digit
+     * field, this test has silently stopped testing anything -- which
+     * is the exact hole #330 documents.  Fail loudly instead. */
+    if (exp_asec < 10u)
+        FAIL("fixture no longer reaches a double-digit field (ASEC=%u); "
+             "this test can no longer distinguish BCD from binary",
+             exp_asec);
+    /* exp_asec is exact by construction (computed from `target`).  This
+     * guard says only that alignment slop cannot carry the collected
+     * frame into the NEXT second, which would break both the ASEC
+     * equality and the AFRAME window below. */
+    if (((abs_lo + BCD_PROBE_SLOP) / 75u) % 60u != exp_asec)
+        FAIL("alignment slop of %u frames can cross a second boundary "
+             "(ASEC %u -> %u)", BCD_PROBE_SLOP, exp_asec,
+             ((abs_lo + BCD_PROBE_SLOP) / 75u) % 60u);
+    /* TIGHTNESS: the admissible BCD images and the binary images of the
+     * same window must be disjoint, or a matching byte would prove
+     * nothing about the encoding. */
+    for (v = BCD_PROBE_OFFSET; v <= BCD_PROBE_OFFSET + BCD_PROBE_SLOP; v++)
+        for (w = BCD_PROBE_OFFSET; w <= BCD_PROBE_OFFSET + BCD_PROBE_SLOP; w++)
+            if (ref_bcd(v) == (uint8_t)w)
+                FAIL("frame-field window %u..%u cannot distinguish BCD from "
+                     "binary: ref_bcd(%u) == $%02X == binary %u",
+                     BCD_PROBE_OFFSET, BCD_PROBE_OFFSET + BCD_PROBE_SLOP,
+                     v, ref_bcd(v), w);
+
+    if (!prime_stream(target))
+        FAIL("could not prime the stream %u sectors into track 3",
+             BCD_PROBE_OFFSET);
+    arm_subcode();
+    if (!collect_frame(q))
+        FAIL("no aligned Q frame within the collection window");
+
+    /* Frame integrity first, so a raw-byte mismatch below means the
+     * ENCODING is wrong, not that we grabbed a torn frame. */
+    if (ref_crc16(q, SUBQ_BYTES) != 0x1D0Fu)
+        FAIL("CRC residual $%04X != $1D0F", ref_crc16(q, SUBQ_BYTES));
+    if (q[1] != ref_bcd(3u))
+        FAIL("collected a frame for track byte $%02X, expected $03 -- the "
+             "seek did not land inside track 3", q[1]);
+
+    /* --- the assertions that fail under the sabotage --- */
+
+    /* AMIN: exact.  ASEC: exact AND >= 10, so BCD($10) != binary($0A). */
+    if (q[7] != ref_bcd(exp_amin))
+        FAIL("AMIN byte $%02X, expected $%02X (ref_bcd(%u)) -- raw byte, "
+             "not decoded", q[7], ref_bcd(exp_amin), exp_amin);
+    if (q[8] != ref_bcd(exp_asec))
+        FAIL("ASEC byte $%02X, expected $%02X (ref_bcd(%u)); $%02X is the "
+             "BINARY encoding -- SubQBCD() is not encoding",
+             q[8], ref_bcd(exp_asec), exp_asec, (uint8_t)exp_asec);
+
+    /* AFRAME and the track-relative FRAME both sit in
+     * [OFFSET, OFFSET+SLOP], every member >= 10.  Match the raw byte
+     * against the ref_bcd() of each admissible value -- still a direct
+     * raw-byte comparison, never a decode. */
+    framed = false; relmatch = false;
+    for (v = BCD_PROBE_OFFSET; v <= BCD_PROBE_OFFSET + BCD_PROBE_SLOP; v++)
+    {
+        if (q[9] == ref_bcd(v))
+            framed = true;
+        if (q[5] == ref_bcd(v))
+            relmatch = true;
+    }
+    if (!framed)
+        FAIL("AFRAME byte $%02X is not ref_bcd(v) for any v in %u..%u",
+             q[9], BCD_PROBE_OFFSET, BCD_PROBE_OFFSET + BCD_PROBE_SLOP);
+    if (!relmatch)
+        FAIL("relative FRAME byte $%02X is not ref_bcd(v) for any v in "
+             "%u..%u", q[5], BCD_PROBE_OFFSET,
+             BCD_PROBE_OFFSET + BCD_PROBE_SLOP);
+}
+
+/* ------------------------------------------------------------------ */
 /* Symbol resolution                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -703,6 +824,7 @@ int main(int argc, char *argv[])
     RUN_TEST(pregap_frame_has_index_zero_and_audio_control);
     RUN_TEST(q_position_advances_one_sector_per_588_samples);
     RUN_TEST(stop_returns_subdata_to_zero);
+    RUN_TEST(raw_bytes_are_bcd_at_double_digit_position);
 
     rc = TEST_REPORT();
 

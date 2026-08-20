@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include "../../libretro-common/include/libretro.h"
 #include "../../src/m68000/m68kinterface.h"
@@ -227,11 +228,18 @@ int main(int argc, char **argv)
 {
    void *handle;
    const char *core_path, *rom_path, *state_path;
-   const char *out_path = "/tmp/jaguar_screenshot.ppm";
+   const char *out_path;
+   char default_out_path[64];
    struct retro_game_info info;
    size_t fsize, state_size;
    void *rom_data, *state_data;
    int i, num_frames = 3;
+
+   /* Per-process default: two concurrent invocations without --out
+    * would otherwise clobber each other's screenshot. */
+   snprintf(default_out_path, sizeof(default_out_path),
+            "/tmp/jaguar_screenshot_%ld.ppm", (long)getpid());
+   out_path = default_out_path;
 
    if (argc < 4)
    {

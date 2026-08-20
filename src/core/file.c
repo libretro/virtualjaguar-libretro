@@ -33,14 +33,20 @@
  * whole-file CRC ($0FDCEB66) is catalogued as FF_BAD_DUMP.  Nothing about the
  * image data is wrong, so skip the header instead of refusing the file.
  *
- * Detection is deliberately narrow, because the size test alone would start
- * accepting arbitrary junk.  Both must hold:
+ * Detection is deliberately narrow.  The payload must carry the cartridge
+ * universal-header marker ($04040404 at payload $400), AND the file must
+ * shape-wise look like copier output:
  *
- *   - the file overhangs a whole number of megabytes by exactly the header
- *     length, and
- *   - the cartridge universal-header marker ($04040404, which precedes the run
- *     address that JaguarLoadFile reads from ROM offset $404) is present at
- *     that offset measured from the payload rather than from the file.
+ *   - payload is a whole number of megabytes (the circulating Brutal Sports
+ *     class), or
+ *   - payload is smaller than 1 MiB (sub-1 MiB homebrew with the same 512-byte
+ *     header; without this arm those files fell through to the headerless
+ *     JST_ROM fallback and loaded skewed).
+ *
+ * An exact-megabyte file is never stripped (copier output is always
+ * N MiB + 512), so an incidental $04040404 at file $600 on a full-size
+ * native ROM cannot take the header off.  A native small cart already
+ * has the marker at file $400 and is left alone.
  */
 #define CART_HEADER_SKIP_SIZE   512
 #define CART_UNIVERSAL_MARKER_OFFSET   0x400
@@ -50,22 +56,33 @@ uint32_t DetectPrependedHeaderSize(uint8_t *buffer, uint32_t size)
 {
    uint32_t payloadSize;
 
-   /* Ordered first so a zero-length or undersized buffer is never read. */
-   if (size <= CART_HEADER_SKIP_SIZE)
+   /* Need room for the header plus the payload's $400 marker longword. */
+   if (size < CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET + 4)
+      return 0;
+
+   /* Exact-megabyte files are native dumps.  A copier-headered image is
+    * always N MiB + 512, so this excludes the incidental-$600 case on
+    * full-size commercial ROMs before any payload math runs. */
+   if ((size % 1048576) == 0)
       return 0;
 
    payloadSize = size - CART_HEADER_SKIP_SIZE;
 
-   if ((payloadSize % 1048576) != 0)
-      return 0;
-
-   /* payloadSize is a non-zero multiple of 1 MiB here, so the marker offset is
-    * comfortably inside the buffer. */
    if (GET32(buffer, CART_HEADER_SKIP_SIZE + CART_UNIVERSAL_MARKER_OFFSET)
          != CART_UNIVERSAL_MARKER)
       return 0;
 
-   return CART_HEADER_SKIP_SIZE;
+   /* Classic copier dump (Brutal Sports: 2 MiB + 512). */
+   if ((payloadSize % 1048576) == 0)
+      return CART_HEADER_SKIP_SIZE;
+
+   /* Sub-1 MiB homebrew with a copier header.  A native small cart has
+    * the marker at file $400 already -- do not strip those. */
+   if (payloadSize < 1048576
+         && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) != CART_UNIVERSAL_MARKER)
+      return CART_HEADER_SKIP_SIZE;
+
+   return 0;
 }
 
 /* Say what we were handed when ParseFileType came up empty. Several images in
@@ -213,6 +230,14 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
    if ((size % 1048576) == 0 || size == 131072)
       return JST_ROM;
 
+   /* Homebrew / bootintro carts are rarely a whole megabyte and are often
+    * well under the Memory Track size of 128K.  The universal header at
+    * $400 is the same marker DetectPrependedHeaderSize uses, and is
+    * enough on its own to call the file a cartridge (issue #462). */
+   if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8)
+         && GET32(buffer, CART_UNIVERSAL_MARKER_OFFSET) == CART_UNIVERSAL_MARKER)
+      return JST_ROM;
+
    // If the file size + 8192 bytes is divisible by 1M, we probably have an
    // Alpine format ROM.
    if (((size + 8192) % 1048576) == 0)
@@ -220,6 +245,17 @@ static uint32_t ParseFileType(uint8_t * buffer, uint32_t size)
 
    if (InferRawBinaryLoadAddress(buffer, size, &rawLoadAddress))
       return JST_RAW_BINARY;
+
+   /* Last resort for headerless bootintros smaller than 1 MiB: map them
+    * as a cartridge so real-BIOS mode can boot them from $800000.  Must
+    * be at least large enough to hold the $400 universal-header slot
+    * (otherwise DetectPrependedHeaderSize's 512-byte floor is a cart).
+    * RAM-load BJL binaries with recognizable absolute refs already
+    * returned JST_RAW_BINARY above.  Files >= 1 MiB that are not an
+    * exact megabyte multiple stay unrecognized (the bad-dump /
+    * leftover-header class ReportUnrecognizedContent names). */
+   if (size >= (CART_UNIVERSAL_MARKER_OFFSET + 8) && size < 1048576)
+      return JST_ROM;
 
    // Headerless crap
    return JST_NONE;
@@ -417,6 +453,86 @@ static bool JaguarLoadFileInternal(uint8_t *buffer, size_t bufsize)
 
    // We can assume we have JST_NONE at this point. :-P
    ReportUnrecognizedContent(jaguarMainROMCRC32, jaguarROMSize);
+   return false;
+}
+
+/* Cart entry at $802000 that is real 68K (HLE can jump there). */
+static int cart_entry_looks_like_68k(uint16_t op)
+{
+   if (op == 0x46FC)
+      return 1;
+   if (op == 0x4E71)
+      return 1;
+   if (op == 0x23FC || op == 0x33FC)
+      return 1;
+   if (op == 0x2E7C)
+      return 1;
+   if ((op & 0xFF00) == 0x7000)
+      return 1;
+   if ((op & 0xF000) == 0x6000)
+      return 1;
+   if ((op & 0xF1FF) == 0x41F8 || (op & 0xF1FF) == 0x41F9)
+      return 1;
+   if (op == 0x4EF8 || op == 0x4EF9 || op == 0x4EB8 || op == 0x4EB9)
+      return 1;
+   return 0;
+}
+
+bool JaguarCartNeedsBIOS(const uint8_t *buffer, uint32_t size)
+{
+   uint32_t headerSize;
+   uint32_t payload;
+   const uint8_t *body;
+   unsigned i;
+   uint16_t op;
+
+   if (!buffer || size < 2)
+      return false;
+
+   /* RAM-loaded formats have their own entry; do not force the boot ROM. */
+   if (buffer[0] == 0x60 && buffer[1] == 0x1B)
+      return false;
+   if (buffer[0] == 0x01 && buffer[1] == 0x50)
+      return false;
+   if (buffer[0] == 0x60 && buffer[1] == 0x1A)
+      return false;
+
+   headerSize = DetectPrependedHeaderSize((uint8_t *)buffer, size);
+   if (headerSize >= size)
+      return false;
+   body = buffer + headerSize;
+   payload = size - headerSize;
+
+   /* Too small to hold 68K at $802000: BootIntro / header-only. */
+   if (payload < 0x2002u)
+      return true;
+
+   /* Blank cart entry at $802000 — typical BootIntro pad. Require a full
+    * 256-byte window (no over-read) and skip megabyte-or-larger dumps:
+    * Rayman Demo is a 2 MiB commercial cart with FF there but real 68K
+    * elsewhere; HLE must keep jumping to $802000 for those. */
+   if (payload >= 0x2100u && payload < 0x100000u)
+   {
+      for (i = 0; i < 256; i++)
+      {
+         if (body[0x2000 + i] != 0xFFu)
+            break;
+      }
+      if (i == 256)
+         return true;
+   }
+
+   op = (uint16_t)(((uint16_t)body[0x2000] << 8) | body[0x2001]);
+   /* All-zero dummy carts used by HLE tests. */
+   if (op == 0x0000)
+      return false;
+   if (cart_entry_looks_like_68k(op))
+      return false;
+   /* Tursi jagcrypt / GPU-only intros typically start 0xFC or 0xFE.
+    * Do not treat every non-68K entry as BIOS: synthetic test ROMs
+    * start with ADDQ and similar. */
+   if (body[0] == 0xFC || body[0] == 0xFE)
+      return true;
    return false;
 }
 

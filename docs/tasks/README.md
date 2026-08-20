@@ -2,15 +2,18 @@
 
 > **All six tasks in this directory are complete and merged as of 2026-08-04.**
 > They are kept as worked examples of the self-contained task format, not as
-> open work. Current status lives in
-> [`docs/open-issue-handoff.md`](../open-issue-handoff.md).
+> open work. For current status use the GitHub issues and milestones — that
+> is where planning lives.
 
 Self-contained prompts for weak models in fresh sessions. Each file inlines
 its own environment block, hard rules, allowlist, steps, acceptance gate,
 STOP conditions, and PR/issue deliverable text. Do not rely on shared
 context across sessions.
 
-Source of truth for the open-issue picture: [`docs/open-issue-handoff.md`](../open-issue-handoff.md).
+The open-issue picture lives in GitHub issues and milestones, not in a
+checked-in document. [`docs/open-issue-handoff.md`](../open-issue-handoff.md)
+is a point-in-time snapshot from 2026-08-04 whose tracked tickets have all
+since closed; do not treat it as current.
 Read [`CLAUDE.md`](../../CLAUDE.md) before any code change.
 
 ## Execution protocol

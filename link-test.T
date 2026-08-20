@@ -34,6 +34,7 @@
       JERRY*;
       UART*;
       JLink*;
+      VM*;
       TOM*;
       OP*;
       tomRam8;
@@ -65,7 +66,11 @@
       ResolveBootConfig;
       BlitterCompare*;
       DAC*;
-      JoystickState*;
+      Joystick*;
+      joypad0Buttons;
+      joypad1Buttons;
+      InputDev*;
+      Quad*;
       MTState*;
       NVMBios*;
       NVM_*;
@@ -79,6 +84,18 @@
       shadowFBActive;
       blitMemo*;
       TitleDB*;
+      /* Texture dump/replacement (#369) probes + the shadow-framebuffer
+       * presentation functions the replacement tests drive directly. */
+      TexDump*;
+      TexReplace*;
+      texDumpEnabled;
+      texReplaceEnabled;
+      ShadowFB*;
+      shadowLineRGB;
+      shadowLineTag;
+      /* TitleHook* is NOT covered by TitleDB* -- the applier lives in its
+       * own translation unit and its own name prefix. */
+      TitleHook*;
       vjtrace_*;
    local: *;
 };

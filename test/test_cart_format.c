@@ -12,9 +12,10 @@
  * frontend does (info->data / info->size), so no ROM on disk is required.
  *
  * The negative cases matter as much as the positive one: a bare
- * "size overhangs a MiB by 512" rule would start accepting arbitrary junk,
- * so detection also requires the cartridge universal-header marker at the
- * offset measured from the payload.
+ * size-shape rule would start accepting arbitrary junk, so detection
+ * requires the cartridge universal-header marker at the offset measured
+ * from the payload (and refuses to strip a native cart whose marker is
+ * already at file $400).
  *
  * Build:
  *   make -j4 && make TEST_EXPORTS=1 test/test_cart_format
@@ -237,6 +238,87 @@ TEST(header_sized_file_rejected)
    ASSERT(!load_image(tiny, (unsigned)sizeof(tiny)));
 }
 
+/* Issue #462: a 64 KiB cart with the universal header used to be
+ * refused because JST_ROM required size % 1MiB == 0 or size == 128K. */
+TEST(small_headered_cart_loads)
+{
+   unsigned size = 0;
+   uint8_t *img = make_image(65536u, 0, true, &size);
+
+   ASSERT(img != NULL);
+   ASSERT_EQ_U(size, 65536u);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(*p_romsize, 65536u);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* A 4 KiB bootintro with the same header is also a cartridge. */
+TEST(bootintro_headered_cart_loads)
+{
+   unsigned size = 0;
+   uint8_t *img = make_image(4096u, 0, true, &size);
+
+   ASSERT(img != NULL);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(*p_romsize, 4096u);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* A full-size native ROM with an incidental $04040404 at file $600
+ * (and no marker at $400) must not lose 512 bytes. */
+TEST(fullsize_incidental_marker_at_600_not_stripped)
+{
+   unsigned size = 0;
+   uint8_t *img = make_image(MIB, 0, false, &size);
+
+   ASSERT(img != NULL);
+   img[0x600] = 0x04;
+   img[0x601] = 0x04;
+   img[0x602] = 0x04;
+   img[0x603] = 0x04;
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(*p_romsize, MIB);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* A 64 KiB cart with a 512-byte copier header must strip the header,
+ * not map the whole file as a skewed cart (Kimi review on #465). */
+TEST(small_headered_with_copier_header_loads)
+{
+   unsigned size = 0;
+   uint8_t *img = make_image(65536u, HEADER_SIZE, true, &size);
+
+   ASSERT(img != NULL);
+   ASSERT_EQ_U(size, 65536u + HEADER_SIZE);
+   ASSERT(load_image(img, size));
+   ASSERT_EQ_U(*p_romsize, 65536u);
+   p_retro_unload_game();
+   free(img);
+}
+
+/* Headerless homebrew below 1 MiB still loads as a cart so real-BIOS
+ * mode can boot it from $800000.  Floor is $408 so a 512-byte copier
+ * header by itself is still refused. */
+TEST(small_headerless_bootintro_loads)
+{
+   uint8_t tiny[2048];
+   unsigned i;
+
+   for (i = 0; i < 2048; i++)
+      tiny[i] = (uint8_t)(0x60 + (i & 0x1F));
+   /* No universal header at $400. */
+   tiny[0x400] = 0x11;
+   tiny[0x401] = 0x22;
+   tiny[0x402] = 0x33;
+   tiny[0x403] = 0x44;
+   ASSERT(load_image(tiny, 2048u));
+   ASSERT_EQ_U(*p_romsize, 2048u);
+   p_retro_unload_game();
+}
+
 int main(int argc, char **argv)
 {
    const char *core_path = (argc > 1) ? argv[1]
@@ -281,6 +363,11 @@ int main(int argc, char **argv)
    RUN(headered_without_marker_rejected);
    RUN(other_overhang_rejected);
    RUN(header_sized_file_rejected);
+   RUN(small_headered_cart_loads);
+   RUN(bootintro_headered_cart_loads);
+   RUN(fullsize_incidental_marker_at_600_not_stripped);
+   RUN(small_headered_with_copier_header_loads);
+   RUN(small_headerless_bootintro_loads);
 
    p_retro_deinit();
 

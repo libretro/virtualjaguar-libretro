@@ -97,9 +97,9 @@ bool CDIntfIsSession2Sector(uint32_t sector);
 bool CDIntfGetQPosition(uint32_t lba, uint32_t *trackNum, uint32_t *idx,
                         uint32_t *relLBA, bool *isData);
 
-// True if the most recent CDIntfReadBlock() landed in an inter-session gap
-// (typically the BIOS's pregap authentication read).  Consumed by cdrom.c
-// to instrument the auth-fail STOP path and identify the BIOS's auth branch.
+// True if the most recent CDIntfReadBlock() returned synthesized silence:
+// an inter-session / unowned LBA, or a CHD virtual pregap (PGTYPE starts
+// with 'V').  Consumed by cdrom.c to instrument the auth-fail STOP path.
 bool CDIntfLastReadWasVirtualPregap(void);
 void CDIntfClearLastReadVirtualPregap(void);
 // LBA targeted by the last virtual-pregap read (valid when the getter returns true).

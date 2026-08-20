@@ -336,14 +336,26 @@ int main(int argc, char **argv)
     unsigned       pass2_audio_entries = 0;
     int            audio_measurable;
     int            ring_full_any = 0;
-    char           state_a[] = "/tmp/vj_runahead_a.state";
-    char           state_b[] = "/tmp/vj_runahead_b.state";
-    char           state_c[] = "/tmp/vj_runahead_c.state";
+    char           state_a[64];
+    char           state_b[64];
+    char           state_c[64];
     uint8_t       *blob_b = NULL, *blob_c = NULL;
     size_t         len_b = 0, len_c = 0;
     int            state_stable = 0;
     char           detail_v[256], detail_a[256], detail_s[256], detail_r[256];
     int            failed = 0;
+
+    /* Per-process paths: two concurrent `make test` suites (different
+     * worktrees/sessions) sharing /tmp must not race on the same
+     * savestate file -- one run deleting/overwriting the other's state
+     * mid-test produces a spurious "retro_unserialize failed" that
+     * looks exactly like a real determinism regression. */
+    snprintf(state_a, sizeof(state_a), "/tmp/vj_runahead_a_%ld.state",
+             (long)getpid());
+    snprintf(state_b, sizeof(state_b), "/tmp/vj_runahead_b_%ld.state",
+             (long)getpid());
+    snprintf(state_c, sizeof(state_c), "/tmp/vj_runahead_c_%ld.state",
+             (long)getpid());
 
     for (i = 1; i < (unsigned)argc; i++) {
         if (!strcmp(argv[i], "--warmup") && i + 1 < (unsigned)argc)

@@ -22,6 +22,11 @@ void DSPExec(int32_t);
 void DSPDone(void);
 void DSPUpdateRegisterBanks(void);
 void DSPSetIRQLine(int irqline, int state);
+/* Slice bookkeeping for the 68K->DSP-local-RAM sync; mirror of
+ * GPUBeginSlice / GPUSliceRemaining / GPUSyncToM68K (issue #456). */
+void DSPBeginSlice(uint32_t riscCycles);
+int32_t DSPSliceRemaining(void);
+void DSPSyncToM68K(void);
 uint8_t DSPReadByte(uint32_t offset, uint32_t who);
 uint16_t DSPReadWord(uint32_t offset, uint32_t who);
 uint32_t DSPReadLong(uint32_t offset, uint32_t who);

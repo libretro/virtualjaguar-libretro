@@ -1,5 +1,7 @@
 LIBRETRO_COMM_DIR  = $(CORE_DIR)/libretro-common
 
+LIBCHDR_DIR := $(CORE_DIR)/deps/libchdr
+
 INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src \
 				-I$(CORE_DIR)/src/core \
@@ -8,7 +10,31 @@ INCFLAGS := -I$(CORE_DIR) \
 				-I$(CORE_DIR)/src/cd \
 				-I$(CORE_DIR)/src/bios \
 				-I$(CORE_DIR)/src/m68000 \
-				-I$(LIBRETRO_COMM_DIR)/include
+				-I$(LIBRETRO_COMM_DIR)/include \
+				-I$(LIBCHDR_DIR)/include \
+				-I$(LIBCHDR_DIR)/deps/lzma-25.01/include \
+				-I$(LIBCHDR_DIR)/deps/miniz-3.1.1 \
+				-I$(LIBCHDR_DIR)/deps/zstd-1.5.7
+
+# libchdr is C99 (vendored). Compiled as its own translation unit
+# (unity.c) with -std=c99; see the unity.o rule in the Makefile.
+# _7ZIP_ST is the LZMA single-thread decode config libchdr expects.
+# -std=c99 / -Wno-* are GCC/Clang only; cl.exe rejects both.
+# MINIZ_DEFLATE_APIS restores miniz's compressor (unity.c disables it
+# with MINIZ_NO_DEFLATE_APIS behind an #ifndef guard, precisely so
+# dependents can turn it back on): texture dump (src/tom/texdump.c,
+# issue #369) calls tdefl_write_image_to_png_file_in_memory_ex for its
+# preview PNGs.  Lives here rather than on the unity.o rule alone so the
+# theos_ios path, which compiles unity.c without that rule, gets it too.
+LIBCHDR_CFLAGS := -D_7ZIP_ST -DMINIZ_DEFLATE_APIS \
+	-DWANT_RAW_DATA_SECTOR=1 -DWANT_SUBCODE=1 -DVERIFY_BLOCK_CRC=1
+ifeq (,$(findstring msvc,$(platform)))
+LIBCHDR_CFLAGS += -std=c99
+LIBCHDR_WARNFLAGS := -Wno-unused-function -Wno-unused-variable
+else
+LIBCHDR_WARNFLAGS :=
+endif
+SOURCES_LIBCHDR := $(LIBCHDR_DIR)/unity.c
 
 ifneq (,$(findstring msvc2003,$(platform)))
 INCFLAGS += -I$(LIBRETRO_COMM_DIR)/include/compat/msvc
@@ -30,16 +56,21 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/jerry.c \
 	$(CORE_DIR)/src/jerry/jlink.c \
 	$(CORE_DIR)/src/jerry/jlink_tcp.c \
+	$(CORE_DIR)/src/jerry/jlink_discover.c \
 	$(CORE_DIR)/src/jerry/jlink_netpacket.c \
+	$(CORE_DIR)/src/jerry/voicemodem.c \
 	$(CORE_DIR)/src/jerry/uart.c \
 	$(CORE_DIR)/src/tom/op.c \
 	$(CORE_DIR)/src/tom/shadowfb.c \
+	$(CORE_DIR)/src/tom/texdump.c \
+	$(CORE_DIR)/src/tom/texreplace.c \
 	$(CORE_DIR)/src/tom/tom.c  \
 	$(CORE_DIR)/src/cd/cdintf.c \
 	$(CORE_DIR)/src/cd/cdrom.c \
 	$(CORE_DIR)/src/cd/jagcd_bios.c \
 	$(CORE_DIR)/src/cd/jagcd_cart.c \
 	$(CORE_DIR)/src/cd/jagcd_hle.c \
+	$(CORE_DIR)/src/core/biosdb.c \
 	$(CORE_DIR)/src/core/bus_arbiter.c \
 	$(CORE_DIR)/src/core/cheat.c \
 	$(CORE_DIR)/src/core/crc32.c \
@@ -49,6 +80,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/eeprom.c \
 	$(CORE_DIR)/src/core/filedb.c \
 	$(CORE_DIR)/src/core/titledb.c \
+	$(CORE_DIR)/src/core/titlehook.c \
 	$(CORE_DIR)/src/m68000/cpustbl.c \
 	$(CORE_DIR)/src/m68000/cpudefs.c \
 	$(CORE_DIR)/src/m68000/cpuemu.c \
@@ -56,9 +88,13 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/m68000/m68kinterface.c \
 	$(CORE_DIR)/src/m68000/readcpu.c \
 	$(CORE_DIR)/src/bios/jagbios.c \
+	$(CORE_DIR)/src/bios/jagbios_m.c \
 	$(CORE_DIR)/src/bios/jagcdbios.c \
 	$(CORE_DIR)/src/bios/jagdevcdbios.c \
 	$(CORE_DIR)/src/jerry/joystick.c \
+	$(CORE_DIR)/src/jerry/quadrature.c \
+	$(CORE_DIR)/src/jerry/axistune.c \
+	$(CORE_DIR)/src/jerry/inputdev.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
 	$(CORE_DIR)/src/core/jaggd.c \

@@ -10,14 +10,21 @@ core. Read this before adding one, and before filing it as a core bug.
 
 | field | NTSC | PAL |
 |---|---|---|
-| `timing.fps` | 60 | 50 |
-| `timing.sample_rate` | 48000 | 48000 |
+| `timing.fps` | 60.05445 | 50.08013 |
+| `timing.sample_rate` | 48043.6 | 48076.9 |
 
 `retro_run()` submits audio exactly once per frame via
 `SoundCallback()` (`src/jerry/dac.c`), with `BUFNTSC / 2 = 800`
-sample-frames for NTSC and `BUFPAL / 2 = 960` for PAL. Both work out to
-exactly 48 000 sample-frames per emulated second, so the advertised timing
-and the samples actually produced agree.
+sample-frames for NTSC and `BUFPAL / 2 = 960` for PAL. Multiplied by the
+*true* field rate (524 halflines x 31.777778 us -> 60.05445 Hz; 624 x 32.0 ->
+50.08013 Hz) that is 48043.6 and 48076.9 sample-frames per emulated second,
+which is what `sample_rate` now advertises, so the advertised timing and the
+samples actually produced agree.
+
+Until #392 both rows read 60/50 and 48000, which agreed with each other but
+not with the machine: the emulated field has always been 524/624 halflines,
+never 1/60 s. The agreement below is the same invariant, now stated in real
+numbers.
 
 **That agreement is load-bearing.** If the core submitted more samples per
 second than `sample_rate * 1` implies, the frontend's audio buffer would

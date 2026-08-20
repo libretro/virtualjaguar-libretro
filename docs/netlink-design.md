@@ -134,9 +134,11 @@ Backends selected by core option:
 
 ### 3. Core options (`libretro_core_options.h`)
 
-- `virtualjaguar_netlink`: `disabled` (default; UART still emulated —
-  registers behave, SERIN reads idle, nothing connects) | `loopback` |
-  `tcp_server` | `tcp_client` | `netpacket` (phase 3).
+- `virtualjaguar_netlink`: `disabled` | `loopback` | `tcp_server` |
+  `tcp_client` | `netpacket` (phase 3) | `auto` (added #467, now the
+  default — see "Transport selection" below; UART is still emulated in
+  every mode: registers behave, SERIN reads idle, nothing connects while
+  the resolved mode has no live peer).
 - `virtualjaguar_netlink_port`: enum of a few ports (default 42171).
 - Host for `tcp_client`: `virtualjaguar_netlink_host` option. Stock
   RetroArch options cannot take free text, so the option ships preset
@@ -145,7 +147,70 @@ Backends selected by core option:
   frontend returns — frontends with free-text option UIs (Provenance)
   supply arbitrary addresses directly. Resolution order: env
   `VJ_NETLINK_HOST`, then the option (sentinel defers to the file), then
-  `<system_dir>/vj_netlink.txt`, then `127.0.0.1`.
+  `<system_dir>/vj_netlink.txt`, then `127.0.0.1`. Since #467 the value
+  list is also rebuilt at runtime with LAN-discovered hosts spliced in
+  ahead of the `jaghub.local`/`vj_netlink.txt` presets — see "Transport
+  selection" below. The `vj_netlink.txt` file itself is **one line, the
+  host address only, no port, trailing newline optional** — `fgets` reads
+  the first line and strips trailing CR/LF/space. The port always comes
+  from `virtualjaguar_netlink_port`, never from the file.
+
+### 3a. Transport selection & LAN discovery (2026-08-18 addendum, #467)
+
+Full design rationale, wire format, and the iOS Local-Network permission
+testing trap live in [`docs/netlink-ux-design.md`](netlink-ux-design.md);
+this is the short version for readers of the base design.
+
+`virtualjaguar_netlink` resolves to exactly one of three transport
+families at any given time:
+
+| Family | Modes | Selection |
+|---|---|---|
+| Frontend netplay | `netpacket` | Automatic whenever a RetroArch ≥ 1.16 netplay session is live (env 78, already unconditional); `auto` resolves here first. |
+| Direct TCP | `tcp_server`, `tcp_client` | Explicit user choice. `tcp_client` additionally needs a host, resolved per the order above. |
+| Idle | `disabled`, `loopback`, or `auto` with no netplay session | No transport (`disabled`), local TX→RX echo only (`loopback`), or genuinely nothing yet (`auto` idle — the OSD says so; see below). |
+
+`auto` (default since #467) is netplay-when-live-else-idle **only** — it
+does not restore a previously chosen direct mode (there is nowhere to
+read a prior choice from with a single option key) and it never
+auto-connects to a discovered peer. A "call" the Voice Modem places
+without the player asking for it is exactly the surprise this design
+avoids.
+
+**LAN discovery beacon.** `tcp_server` (and `tcp_client`, listen-only) run
+a UDP broadcast beacon/listener on port **42170** — deliberately outside
+the `virtualjaguar_netlink_port` range (42171–42174) so the two can never
+collide. Fixed 40-byte packet: 4-byte magic `VJAG`, 1-byte protocol
+version, 1-byte device (0 = JagLink/CatBox, 1 = Voice Modem), 2-byte
+big-endian TCP port, 32-byte NUL-padded hostname. A host also beacons
+(so peers can see it) while listening (so it can see other peers too); a
+client only listens — neither dials out on its own. Peers expire after
+10 s; the peer table caps at 8 entries and drives a rebuilt
+`virtualjaguar_netlink_host` value list, rate-limited to at most one
+`SET_CORE_OPTIONS_V2` re-send per 2 s. Discovery deliberately does **not**
+run in `auto` or `disabled` — starting a UDP listener on every load for
+every user, most of whom never touch networking, would trip the OS Local
+Network permission prompt unconditionally.
+
+Because the beacon carries device type, a Voice Modem host discovered by
+a JagLink client (or the reverse) is flagged both in the host picker's
+label and with an on-screen warning — the two products share the wire
+protocol's transport but never interoperate at the device layer, and
+today that failure is otherwise silent.
+
+**iOS/tvOS Bonjour constraint.** mDNS is not used for discovery, on any
+platform, and this is a hard platform constraint rather than a stylistic
+choice: RetroArch's iOS/tvOS `Info.plist` declares only `_ra-bless._tcp`
+and `_ra_netplay._tcp` under `NSBonjourServices`; iOS permits only
+enumerated service types, so a core advertising `_vjaglink._tcp` is
+silently blocked with no error the core could detect or work around.
+UDP broadcast has no such allowlist — iOS/tvOS both carry the
+`com.apple.developer.networking.multicast` entitlement (covers broadcast)
+and declare `NSLocalNetworkUsageDescription` — so broadcast discovery
+works on exactly the platform where mDNS cannot, making it the primary
+mechanism rather than a fallback. Unblocking Bonjour needs an upstream
+RetroArch `Info.plist` change and is tracked as a separate follow-up, not
+part of this core.
 
 ### 4. Testing
 

@@ -15,9 +15,23 @@
 
 #include <string.h>			// For memset()
 #include "joystick.h"
+#include "inputdev.h"
 #include "settings.h"
 
 // Global vars
+
+// Socket-0 row-code decode: low/high nibble of the JOYSTICK register's
+// row-select byte -> joypadNButtons base offset (row * 4), or 0xFF when
+// the nibble is not a socket-0 code.  File-scope so the write path can
+// decode the row for InputDevRowSelect() (#437) with the same tables the
+// read path uses.
+/* E, D, B, 7 */
+static const uint8_t joypad0Offset[16] = {
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0C, 0xFF, 0xFF, 0xFF, 0x08, 0xFF, 0x04, 0x00, 0xFF
+};
+static const uint8_t joypad1Offset[16] = {
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0x04, 0xFF, 0x08, 0x0C, 0xFF
+};
 
 static uint8_t joystick_ram[4];
 uint8_t joypad0Buttons[21];
@@ -51,14 +65,6 @@ void JoystickDone(void)
 
 uint16_t JoystickReadWord(uint32_t offset)
 {
-	/* E, D, B, 7 */
-	const uint8_t joypad0Offset[16] = {
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x0C, 0xFF, 0xFF, 0xFF, 0x08, 0xFF, 0x04, 0x00, 0xFF
-	};
-	const uint8_t joypad1Offset[16] = {
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0x04, 0xFF, 0x08, 0x0C, 0xFF
-	};
-
 	offset &= 0x03;
 
 	if (offset == 0)
@@ -73,6 +79,24 @@ uint16_t JoystickReadWord(uint32_t offset)
 		// pressed.
 		offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
 		offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
+
+		// Non-pad devices self-clock against the game's own polling: at
+		// most one quadrature state per armed read (inputdev.h).  The
+		// decoded row per port is passed rather than gated on here: a
+		// mouse still advances only when ITS port's row select is
+		// asserted (any of rows 0-3 -- the adapter is row-blind, and
+		// without that a title polling port 1 rapidly would advance the
+		// port-2 encoder between the port-2 poller's own samples, the
+		// lost motion the one-state ceiling exists to prevent, mapping
+		// doc section 5), while a rotary is a matrix device whose phases
+		// exist in row 0 only and so samples on a row-0 read of its own
+		// port.  Both gates live in inputdev.c because a port-1 rotary
+		// has to advance on reads a port-2 test would reject.  No-op
+		// when nothing but pads are attached.  The two lookups above are
+		// pure table reads, hoisted (not added) so they can be passed
+		// here.
+		InputDevClock(offset0 == 0xFF ? 0xFF : offset0 / 4,
+		              offset1 == 0xFF ? 0xFF : offset1 / 4);
 
 		if (offset0 != 0xFF)
 		{
@@ -98,7 +122,12 @@ uint16_t JoystickReadWord(uint32_t offset)
 			data &= msk2[offset1 / 4];
 		}
 
-		return data;
+		// Overlay for a non-pad device (inputdev.h).  The mouse is
+		// row-independent and ignores the rows; the analog controller
+		// (#437) drives a different slice of X/Y per row and needs them.
+		return InputDevOverlayF14000(data,
+		              offset0 == 0xFF ? 0xFF : offset0 / 4,
+		              offset1 == 0xFF ? 0xFF : offset1 / 4);
 	}
 	else if (offset == 2)
 	{
@@ -132,7 +161,10 @@ uint16_t JoystickReadWord(uint32_t offset)
 				data &= (joypad1Buttons[mask[offset1][1]] ? 0xFFFB : 0xFFFF);
 		}
 
-		return data;
+		// offset0/offset1 already hold the decoded row (0-3), or 0xFF when
+		// that port's nibble is not a socket-0 code -- both divisions above
+		// happen in place.
+		return InputDevOverlayF14002(data, offset0, offset1);
 	}
 
 	return 0xFFFF;
@@ -147,8 +179,29 @@ void JoystickWriteWord(uint32_t offset, uint16_t data)
 
 	if (offset == 0)
 	{
+		uint8_t offset0, offset1;
+
 		audioEnabled     = ((data & 0x0100) ? true : false);
 		joysticksEnabled = ((data & 0x8000) ? true : false);
+		// Arm the non-pad emission clock (inputdev.h).
+		InputDevArm();
+
+		// Row-select change notification: the analog controller's bank
+		// clock (#437) -- TR10 switches banks on the row-3 -> row-0
+		// transition of the device's own socket, and the row select is
+		// this latched write, not a read.  With bit 15 clear the JOY
+		// outputs are disabled (tri-state, pulled up), so the device
+		// sees no row code at all.
+		if (joysticksEnabled)
+		{
+			offset0 = joypad0Offset[joystick_ram[1] & 0x0F];
+			offset1 = joypad1Offset[(joystick_ram[1] >> 4) & 0x0F];
+		}
+		else
+			offset0 = offset1 = 0xFF;
+
+		InputDevRowSelect(offset0 == 0xFF ? 0xFF : offset0 / 4,
+		                  offset1 == 0xFF ? 0xFF : offset1 / 4);
 	}
 }
 

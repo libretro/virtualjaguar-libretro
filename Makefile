@@ -47,7 +47,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.3.0
+CORE_BASE_VERSION := v3.4.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -94,10 +94,29 @@ MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
-# Records which ABI the library in the tree was last linked with; see the
-# mode-switch hook next to the link rule below.
-LINK_MODE := $(if $(filter 1,$(TEST_EXPORTS)),test,prod)
-LINK_MODE_STAMP := .link-mode
+# Records the build configuration the objects in the tree were last
+# compiled under; see the mode-switch hook next to the link rule below.
+#
+# Every variable listed here changes how objects are COMPILED (or which
+# symbols survive the link), so flipping any one of them invalidates
+# every existing .o.  Adding a new such switch means adding it here --
+# that is the whole maintenance burden, and forgetting costs a silent
+# chimera binary rather than a build error.
+#
+# It is deliberately a list of *variable names* and not $(CFLAGS)
+# itself.  Stamping the flags would look more future-proof but breaks
+# on DEBUG=1, whose CFLAGS carry a -DBUILD_TIMESTAMP that changes every
+# second: the stamp would never match and every single build would
+# flush the tree.  Values here are plain tokens (1, or a platform
+# name), so the comparison also stays free of shell quoting hazards --
+# CFLAGS contains -DINLINE="inline".
+BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
+              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
+BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
+BUILD_CONFIG_STAMP := .build-config
+# Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
+# hook below so a tree built before this change doesn't keep a dead file.
+LEGACY_LINK_MODE_STAMP := .link-mode
 
 # Unix
 ifeq ($(platform), unix)
@@ -584,7 +603,7 @@ CORE_DIR     := .
 
 include Makefile.common
 
-OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o)
+OBJECTS := $(SOURCES_CXX:.cpp=.o) $(SOURCES_C:.c=.o) $(SOURCES_LIBCHDR:.c=.o)
 
 # ----------------------------------------------------------------
 # version.h: generated header read by libretro.c.  Single source of
@@ -789,36 +808,79 @@ endif
 
 ifeq ($(platform), theos_ios)
 COMMON_FLAGS := -DIOS $(COMMON_DEFINES) $(INCFLAGS) -I$(THEOS_INCLUDE_PATH) -Wno-error
-$(LIBRARY_NAME)_CFLAGS += $(CFLAGS) $(COMMON_FLAGS)
+$(LIBRARY_NAME)_CFLAGS += $(CFLAGS) $(COMMON_FLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS)
 $(LIBRARY_NAME)_CXXFLAGS += $(CXXFLAGS) $(COMMON_FLAGS)
-${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C)
+${LIBRARY_NAME}_FILES = $(SOURCES_CXX) $(SOURCES_C) $(SOURCES_LIBCHDR)
 include $(THEOS_MAKE_PATH)/library.mk
 else
-# Force a re-link when the exported ABI changes.  Almost every object is
-# identical either way, so a plain `make` followed by `make TEST_EXPORTS=1
-# test` would otherwise reuse the production-slim library -- it is newer
-# than every object, so nothing relinks -- and the white-box tests fail
-# with "Missing: m68k_execute".  Delete the library outright rather than
-# relying on a stamp file's mtime: the stamp and the library can land in
-# the same second, which is exactly the timestamp-granularity trap this is
-# meant to close.  Runs at parse time, once TARGET is known.
+# Force a rebuild when the build configuration changes ($(BUILD_AXES)).
+# Almost every object is identical across an ABI flip, so a plain `make`
+# followed by `make TEST_EXPORTS=1 test` would otherwise reuse the
+# production-slim library -- it is newer than every object, so nothing
+# relinks -- and the white-box tests fail with "Missing: m68k_execute".
+# Delete the library outright rather than relying on a stamp file's mtime:
+# the stamp and the library can land in the same second, which is exactly
+# the timestamp-granularity trap this is meant to close.  Runs at parse
+# time, once TARGET is known.
 #
-# vjtrace.o, plus every object that carries a VJT_EMIT/VJT_WATCH_* call
-# site or a vjtrace_pchist_*() call (including libretro.o's
-# retro_init/retro_run vjtrace_init / vjtrace_frame_tick calls), has
-# *content* (not just the export list) that depends on TEST_EXPORTS --
-# it compiles under -DVJ_TRACE only in that branch (see the CFLAGS +=
-# -DVJ_TRACE line above), so those objects must be deleted alongside the
-# library on every mode transition, or a stale object compiled in the
-# other mode silently survives the relink: either vjtrace_* symbols go
-# missing from a `make TEST_EXPORTS=1` build that started from a plain
-# `make` (undefined symbols at link time), or the reverse transition
-# silently keeps the no-op macro expansion, so the ring never receives
-# events despite vjtrace_* being exported.
-VJTRACE_HOOKED_OBJS := %vjtrace.o %tom.o %gpu.o %op.o %blitter.o %jaguar.o %m68kinterface.o %libretro.o %dsp.o
-$(shell [ "$$(cat $(LINK_MODE_STAMP) 2>/dev/null)" = "$(LINK_MODE)" ] \
-        || { printf '%s' "$(LINK_MODE)" > $(LINK_MODE_STAMP); \
-             rm -f $(TARGET) $(filter $(VJTRACE_HOOKED_OBJS),$(OBJECTS)); })
+# The stamp covers every compile-affecting switch, not just TEST_EXPORTS
+# (issue #457).  It originally tracked TEST_EXPORTS alone, which left the
+# same hazard open one level up:
+#   BENCH_PROFILE -- `make TEST_EXPORTS=1` then
+#     `make BENCH_PROFILE=1 TEST_EXPORTS=1` recompiled nothing, so no
+#     object got -DBENCH_PROFILE, no PERF_COUNTER registered, and every
+#     timing_probe tool died with "timing_halfline_callbacks counter not
+#     found" -- which reads as a broken tool, not an ignored flag.
+#   DEBUG -- `make` then `make DEBUG=1` recompiled *zero* objects: a
+#     "debug build" that is entirely -O2 with no debug info.  The reverse
+#     leaves -O0 objects in a release binary and silently invalidates any
+#     performance measurement taken from it.
+# VJ_EXPECT_BUILD cannot catch either: the git rev is identical across the
+# flip, so the guard passes while the binary is wrong.
+#
+# TEST_EXPORTS also changes object *content*, not just the export list:
+# it adds -DVJ_TRACE to CFLAGS (see the line above), so vjtrace.o defines
+# the vjtrace_* functions only in that branch, and every object carrying a
+# VJT_EMIT/VJT_WATCH_*/vjtrace_pchist_*/vjtrace_init call site compiles to
+# real calls in one mode and to nothing in the other.  A stale object from
+# the other mode that survives the relink breaks the build in one direction
+# and lies in the other: TEST_EXPORTS=1 -> plain fails with undefined
+# vjtrace_* symbols, while plain -> TEST_EXPORTS=1 links fine but keeps the
+# no-op macro expansion, so the ring silently records nothing despite
+# vjtrace_* being exported.
+#
+# So a mode change flushes *every* object, not a curated list of the ones
+# believed to be trace-hooked.  That list is exactly the stale-.o hazard it
+# was meant to prevent: it shipped without src/tom/blit_memo.o, whose
+# BlitMemoLaunch VJT_EMIT call site broke `make TEST_EXPORTS=1 && make`.
+# Any list -- hand-written, grepped, or derived from -MD -- can also miss a
+# file that picks up the macros through an indirect include, so there is no
+# list.  Cost is one full rebuild per flip (~21s at -j8 without ccache);
+# the curated list already recompiled most of the heavy objects anyway.
+#
+# The $(shell) runs at parse time, so it would also fire under `make -n`.
+# That was tolerable when the flush was nine objects; with the whole object
+# list in scope a dry run would silently cost a full rebuild, so skip it
+# when -n is in effect.
+#
+# GNU make encodes -n two different ways, so both are matched.  Normally the
+# short options collect into MAKEFLAGS' first word with no leading dash
+# ("n", "ns", "nk") -- but under make 3.81 (stock macOS) a long option
+# empties that group and -n reappears as its own word, e.g.
+# `make --no-print-directory -n` gives MAKEFLAGS=" --no-print-directory -n".
+# Only the letter group is scanned for 'n' (no short option other than -n
+# uses that letter); long options and the `--`/NAME=value words that carry
+# command-line variables start with '-' or contain '=', and are dropped, so
+# `make platform=android` cannot false-match.  A false positive here would
+# silently skip the flush and bring the stale-object bug straight back, so
+# the detection is deliberately conservative in that direction.
+MAKEFLAGS_LETTERS := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+DRY_RUN := $(strip $(findstring n,$(MAKEFLAGS_LETTERS)) \
+                   $(filter -n --dry-run --just-print --recon,$(MAKEFLAGS)))
+$(if $(DRY_RUN),,\
+$(shell [ "$$(cat $(BUILD_CONFIG_STAMP) 2>/dev/null)" = "$(BUILD_CONFIG)" ] \
+        || { printf '%s' "$(BUILD_CONFIG)" > $(BUILD_CONFIG_STAMP); \
+             rm -f $(TARGET) $(OBJECTS) $(LEGACY_LINK_MODE_STAMP); }))
 
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
@@ -828,30 +890,48 @@ else
 	$(LD) $(LINKOUT)$@ $(OBJECTS) $(LDFLAGS)
 endif
 
+# libchdr is C99; the rest of the core is gnu89. A dedicated rule so
+# the generic %.o: %.c line cannot compile unity.c as C89.  Must sit
+# AFTER `all:` so it is not the default goal.
+#
+# MINIZ_DEFLATE_APIS (texture dump's PNG encoder, issue #369) rides in
+# LIBCHDR_CFLAGS -- see the comment in Makefile.common -- so the
+# theos_ios path, which compiles unity.c without this rule, gets it too.
+$(LIBCHDR_DIR)/unity.o: $(LIBCHDR_DIR)/unity.c
+	$(CC) -c $(OBJOUT)$@ $< $(CFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS)
+
 # version.h dependency hook (must come after `all:` so Make 3.81 on
 # stock macOS doesn't latch onto libretro.o as the default goal).
 $(CORE_DIR)/libretro.o: $(VERSION_H)
 
 clean:
-	rm -f $(TARGET) $(OBJECTS) $(LINK_MODE_STAMP) \
+	rm -f $(TARGET) $(OBJECTS) $(BUILD_CONFIG_STAMP) $(LEGACY_LINK_MODE_STAMP) \
 		test/test_cheat test/test_event_queue test/test_blitter_simd \
 		test/test_dsp_mac40 test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops \
 		test/test_dsp_ops test/test_dsp_unit test/test_hle_bios \
 		test/test_subsystem_init test/test_subsystem_timeline \
-		test/test_irq_cascade test/test_boot_patterns test/test_audio_pipeline \
+		test/test_irq_cascade test/test_boot_patterns test/test_fountain_crash test/test_audio_pipeline \
 		test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle \
 		test/test_eeprom_read_race \
 		test/test_tom_visible_window test/test_framebuffer_integrity \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
+		test/test_cart_format test/test_cart_needs_bios \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/test_state_compat test/test_frontend_pacing test/test_jgd \
 		test/dump_pc test/heap_search \
+		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
-		test/tools/test_wedge_spin test/tools/i2s_lag_probe \
+		test/test_biosdb test/test_cart_bios_loader \
+		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
+		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
+		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/tuning_identity test/tools/test_lightgun \
+		test/tools/blitter_static_leak \
+		test/test_quadrature test/test_axistune \
 		test/.skipped-checks
 
 # Self-contained unit tests (parser + list management + simulated
@@ -889,22 +969,39 @@ else
 # rev (+ -dirty) against this before running -- a stale dylib fails loudly
 # instead of silently testing the wrong code (see scripts/build-id.sh).
 test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb \
+# Per-process EEPROM fixture scratch: two concurrent `make test` runs
+# (different worktrees/sessions sharing /tmp) would otherwise recompile
+# and overwrite the same generator binary and regenerate/truncate the
+# same fixture ROM out from under each other mid-suite.  $(shell echo
+# $$PPID) is evaluated once, at parse time, in a subshell whose parent
+# is this `make` process -- so every recipe line below sees the same
+# value for the life of one `make test` invocation, and two concurrent
+# invocations get different values.
+test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
+test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
+		test/test_fountain_crash \
 		test/test_audio_pipeline test/test_audio_clipping test/test_audio_presence test/test_audio_boundary test/test_audio_rate test/test_pit_clock_rate \
 		test/test_blitter_mmio test/test_blitter_cmd test/test_eeprom_lifecycle test/test_eeprom_read_race test/test_tom_visible_window \
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
-		test/tools/test_runahead_determinism test/tools/test_wedge_spin \
+		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
-		test/test_cart_format \
-		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
+		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
+		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/test_pertitle_db \
-		test/tools/i2s_lag_probe
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/test_hook_gate \
+		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
+		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/tuning_identity test/tools/test_lightgun \
+		test/tools/blitter_static_leak \
+		tools/jagcd/jagcd-chd-check
 	@# Skip ledger: truncate FIRST so a previous run's rows cannot resurface
 	@# as fresh skips (the stale-row failure mode documented for
 	@# cd_boot_matrix.sh).  Every optional check below records into it, and
@@ -920,18 +1017,61 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_event_queue
 	./test/test_jlink
 	./test/test_jlink_tcp
+	./test/test_jlink_discover
 	./test/test_jlink_netpacket ./$(TARGET)
 	./test/test_uart_loopback
 	./test/test_uart_core ./$(TARGET)
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
+	@# Discovery needs UDP broadcast to fan out between two local processes.
+	@# That is a host capability, not a property of the core -- GitHub's macOS
+	@# runners drop it -- so the script probes for it and exits 77 rather than
+	@# reporting a failure the code cannot cause.  Ledgered, never a silent pass.
+	@if bash test/tools/netlink_discover_pair.sh ./$(TARGET); then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "LAN discovery pair (#502)" "host does not deliver UDP broadcast between local processes"; \
+	   else exit $$rc; fi; \
+	 fi
+	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# Review-round-1 finding (task 4, #467): no other test runs a core in
+	@# a discovery-active mode long enough in REAL wall-clock time (not
+	@# frame count) for netlink_rebuild_host_options()'s 2s rate-limit
+	@# gate to open, so its SET_CORE_OPTIONS_V2 push -- the feature's
+	@# actual deliverable -- had never executed anywhere. Single process:
+	@# injects one real UDP beacon over the core's own discovery socket,
+	@# paces retro_run() past the 2s gate, and asserts the rebuild's own
+	@# log line fires and three independently-hidden option rows (host,
+	@# CD-only, mouse tuning) are still hidden afterward.
+	@# PID-spread the discovery port below Linux's ephemeral range so two
+	@# concurrent `make test` runs cannot silently share the SO_REUSEPORT
+	@# socket and consume each other's beacons.
+	VJ_DISC_PORT=$$((23000 + ($$$$ % 4000))) ./test/tools/netlink_rebuild_witness ./$(TARGET)
+	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
+	@# title: two core instances drive the real ROM through 911 -> the
+	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
+	@# on $$F0xx pad words actually crossing the link.  voicemodem_pair
+	@# above covers the handshake synthetically; this is the only check
+	@# that proves the game itself gets online.  Needs the private ROM --
+	@# exit 77 is ledgered, never a silent pass.  ~95 s (two realtime
+	@# 5400-frame instances), so it is the slowest optional check here.
+	@if bash test/tools/uv_modem_game_test.sh ./$(TARGET); then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "Ultra Vortek Voice Modem full-game netplay (#481)" "no ROM matching 'Ultra Vortek (1995).jag' in the private corpus"; \
+	   else exit $$rc; fi; \
+	 fi
 	@# vjtrace flight-recorder selftest: determinism (field_diff +
 	@# trace_memdiff on two identical runs), watch attribution, and
 	@# VJ_TRACE_RING wrap correctness. Builds its own analyzer/smoke tools
 	@# into test/tools/ on first run (see the script header); needs only
 	@# the in-tree test/roms/yarc.j64, never test/roms/private.
 	bash test/tools/vjtrace_selftest.sh ./$(TARGET)
+	@# Boot-matrix shared logic (matrix_common.sh): core-fault verdicts must
+	@# never be blamed on a title, and the row cache must ignore docs-only
+	@# changes. Synthetic logs only -- no ROMs, no core, runs in <1s.
+	bash test/tools/matrix_common_test.sh
 	./test/test_blitter_mmio
 	./test/test_blitter_cmd ./$(TARGET)
 	./test/test_pit_clock_rate
@@ -939,6 +1079,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_blitter_simd
 	./test/test_dsp_mac40
 	./test/test_titledb
+	./test/test_biosdb
+	./test/test_cart_bios_loader
+	./test/test_titlehook
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -949,6 +1092,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_subsystem_timeline ./$(TARGET)
 	./test/test_irq_cascade ./$(TARGET)
 	./test/test_boot_patterns
+	@# Fountain (#469): dummy-cart vector park always (CI).  Live jagcrypt
+	@# ROM is public but not vendored -- ledger a skip for that arm only.
+	./test/test_fountain_crash ./$(TARGET) --bios --quiet
+	@if [ -f /tmp/fountain_vj.j64 ]; then \
+		./test/test_fountain_crash ./$(TARGET) /tmp/fountain_vj.j64 --bios --frames 180 --option virtualjaguar_pal=enabled --quiet; \
+	else \
+		bash scripts/test-skip.sh record "Fountain live abort (#469)" "no /tmp/fountain_vj.j64"; \
+	fi
 	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
 	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
 	@# with ROMs, without ROMs, always.  It was invoked bare, so those two
@@ -1086,6 +1237,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# every STATE_SAVE_BUF; yarc.j64 is in-tree so this never skips, and
 	@# a real music-on title is used when the private corpus is present.
 	./test/tools/test_runahead_determinism ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Texture dump mode (issue #369): identity-contract freeze vs the
+	@# committed golden list, determinism, fast/accurate engine
+	@# independence, machine inertness (fb hashes + savestate digests
+	@# on vs off), PNG validity, and the bytes-only-identity palette
+	@# check.  yarc.j64 is in-tree so this never skips; the synthetic
+	@# blit battery inside the tool covers every bpp (see the tool
+	@# header for why a ROM run alone is a 2-hash tripwire).
+	./test/tools/test_texdump ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Texture replacement gates (#369 deliverable 2): no-pack and
+	@# with-pack machine inertness (fb hashes + savestate digests +
+	@# battery destination RAM), shadow-framebuffer presentation of a
+	@# first-principles synthetic pack, and determinism.
+	./test/tools/test_texreplace ./$(TARGET) test/roms/yarc.j64 --quiet
 	@rom=$$(bash scripts/find-rom.sh 'Iron Soldier (1994).jag' 'Iron Soldier (World)*.j64' 'Iron Soldier.jag'); \
 	if [ -n "$$rom" ]; then \
 		./test/tools/test_runahead_determinism ./$(TARGET) "$$rom" --quiet; \
@@ -1107,6 +1271,26 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_butch_cd
 	./test/test_cd_hle_idempotent
 	./test/test_cd_pregap
+	./test/test_cd_chd
+	./test/test_chd_unit
+	@# Checker on the committed fixtures: exit 0 = CHSE present, exit 1 =
+	@# Jaguar-shaped and missing CHSE. This is the ParseCHD refuse gate
+	@# without going through HLE extract.
+	./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd.chd
+	@if ./tools/jagcd/jagcd-chd-check test/roms/synth_jagcd_nosession.chd; then \
+		echo "jagcd-chd-check: expected exit 1 on synth_jagcd_nosession.chd"; exit 1; \
+	 else rc=$$?; \
+	   if [ $$rc -ne 1 ]; then echo "jagcd-chd-check: unexpected $$rc"; exit $$rc; fi; \
+	 fi
+	@# Optional: PATH/JAGCD_CHDMAN round-trip. Exit 77 = no CHSE-capable
+	@# chdman (CI, Homebrew 0.288). The committed synth_jagcd*.chd files
+	@# are the actual CHD load gate; this only checks the converter.
+	@if bash test/tools/jagcd_roundtrip.sh; then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "jagcd CUE->CHD round-trip" "no CHSE-capable chdman on PATH"; \
+	   else exit $$rc; fi; \
+	 fi
 	./test/test_cd_synth_read
 	./test/test_cd_synth_butch
 	./test/test_cd_synth_cdda
@@ -1126,8 +1310,69 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	fi; \
 	./test/test_bios_config && ./test/test_boot_config
 	./test/test_cart_format ./$(TARGET)
+	./test/test_cart_needs_bios ./$(TARGET) --quiet
 	./test/test_audio_dac
 	./test/tools/test_memory_map ./$(TARGET)
+	@# $F14000/$F14002 identity guardrail for the input-devices track
+	@# (#428/#429/#436): sweeps the whole joystick read domain and asserts
+	@# an FNV digest measured on develop.  Committed before any device code
+	@# so later PRs are measured against a number that predates them.
+	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Cross-load static leak (#479): a fast-blitter session must not
+	@# contaminate the savestate of the accurate session that follows it
+	@# while the core stays resident (iOS cannot dlclose).  The run1-vs-run2
+	@# control inside the tool means a failure here is attributable, not
+	@# just "the harness is not reproducible".
+	./test/tools/blitter_static_leak ./$(TARGET) test/roms/yarc.j64
+	@# Quadrature encoder unit test (no core): the Gray sequence in both
+	@# directions, the one-state-per-advance rate policy, the backlog
+	@# clamp and the Q8 carry.
+	./test/test_quadrature
+	@# ST/Amiga mouse end-to-end: synthetic deltas in, decoded direction
+	@# and distance out, all three wiring cases and all three poll shapes,
+	@# plus row-blindness and the v12 savestate round-trip.
+	./test/tools/mouse_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Tempest rotary end-to-end (#436): synthetic rotation in, decoded
+	@# direction and magnitude out in BOTH directions on BOTH ports, the
+	@# row-0-only visibility that distinguishes a matrix device from the
+	@# row-blind mouse, Tempest 2000's measured 8-write scan, the
+	@# two-controller Pause unlock, the C2/C3 ID bits and a savestate
+	@# round-trip mid-rotation.
+	./test/tools/rotary_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# TR10 bank-switching analog / driving controller (#437): NO RELEASED
+	@# TITLE reads this protocol, so this synthetic register-level suite IS
+	@# the device's verification (the tool's header says so at length): a
+	@# TR10-faithful driver scans both banks out of $F14000/$F14002 and
+	@# asserts the layout, the bank cycling (incl. other-socket interleave
+	@# immunity), the type ID bits, the engagement guardrail, the absolute
+	@# tuning semantics and the extended v12 savestate chunk.
+	./test/tools/analog_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Light gun (#438).  The register-level half (LPH/LPV transform,
+	@# off-screen freeze, and the 1x-vs-2x identity that keeps the
+	@# internal-resolution option out of the aim) runs on the in-tree public
+	@# ROM and is never skipped.  The Balloons half -- its own two-target
+	@# calibration screen, a full-width sweep proving the game's decode of
+	@# our LPH lands on the pixel aimed at, and a scripted balloon kill --
+	@# needs the private corpus; the tool exits 77 for that and the skip is
+	@# ledgered rather than passing silently.
+	@rom=$$(bash scripts/find-rom.sh 'BALLOONS.BIN' 'Balloons*.bin' 'Balloon*.bin'); \
+	if [ -n "$$rom" ]; then \
+		./test/tools/test_lightgun ./$(TARGET) "$$rom"; \
+	else \
+		bash scripts/test-skip.sh record "Light gun Balloons calibration + hit (#438)" "no ROM matching 'BALLOONS.BIN' in the private corpus"; \
+		./test/tools/test_lightgun ./$(TARGET) /nonexistent/BALLOONS.BIN; \
+		st=$$?; [ $$st = 0 ] || [ $$st = 77 ]; \
+	fi
+	@# Per-axis input tuning (#439), no core: the identity at defaults over
+	@# the whole int16 range, the dead zone as a gate rather than a re-base,
+	@# the curve's fixed point at QUAD_MAX_BACKLOG and its exact values.
+	./test/test_axistune
+	@# ...and the same feature measured end to end through $F14000: the
+	@# digital pad is bit-identical with tuning at ANY setting, the analog
+	@# paths are bit-identical at defaults, and a non-default tuning does
+	@# move the analog digest (the negative control that stops the two
+	@# equalities passing on a disconnected layer).
+	./test/tools/tuning_identity ./$(TARGET) test/roms/yarc.j64 --quiet
 	./test/test_memtrack
 	./test/test_nvmbios
 	@# Option visibility is content-type dependent; the disc half runs only
@@ -1208,12 +1453,16 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		--max-fastest-frame-fraction 100 \
 		--option virtualjaguar_m68k_clock_scale=0.5x
 	@# EEPROM lifecycle test: generates a test ROM, then exercises load/unload/reload.
-	@$(CC) -O2 -Wall -o /tmp/gen_eeprom_test_rom test/tools/gen_eeprom_test_rom.c && \
-		/tmp/gen_eeprom_test_rom /tmp/eeprom_lifecycle_test.j64 && \
-		./test/test_eeprom_lifecycle ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	@# EEPROM_GEN_TOOL / EEPROM_FIXTURE are per-process (see the `test:`
+	@# target-specific variable above) so two concurrent `make test` runs
+	@# don't recompile/overwrite each other's generator binary or fixture.
+	@$(CC) -O2 -Wall -o $(EEPROM_GEN_TOOL) test/tools/gen_eeprom_test_rom.c && \
+		$(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE) && \
+		./test/test_eeprom_lifecycle ./$(TARGET) $(EEPROM_FIXTURE)
 	@# EEPROM read-race test: joystick polls must not steal EEPROM DO bits
 	@# (Raiden background-music death regression).
-	./test/test_eeprom_read_race ./$(TARGET) /tmp/eeprom_lifecycle_test.j64
+	./test/test_eeprom_read_race ./$(TARGET) $(EEPROM_FIXTURE)
+	@rm -f $(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE)
 	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
 	@# user-override contract, driven through the real dlopen'd core.
 	@# shadowHiresN is fixed for the whole session at retro_load_game
@@ -1248,6 +1497,20 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+	@# Enhancement hooks (issue #370).  All four gates run on in-repo public
+	@# content, so none of them can skip -- and hook_identity_ab.sh now
+	@# ENFORCES that rather than asserting it: it counts the ROMs it actually
+	@# compared and fails on zero, instead of exiting 0 having skipped them
+	@# all.  The hook array is installed
+	@# programmatically via TitleDBSetHooksForTest -- deliberately NOT as a
+	@# canary row in the shipped table, which would break --case 5 above.
+	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case on --quiet
+	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case off --quiet
+	./test/tools/test_hook_gate ./$(TARGET) test/roms/yarc.j64 --case mismatch --quiet
+	@# Stock-path identity: with the gate at its default AND with it turned
+	@# on (no shipped row carries a hook), the per-frame framebuffer-hash
+	@# CSVs must be byte-identical.  Epic #338's non-negotiable guardrail.
+	bash test/tools/hook_identity_ab.sh ./$(TARGET)
 	@echo ""
 	@echo "Note: test/test_cd_boot, test/test_cd_hle_boot, test/test_cd_bios_boot,"
 	@echo "test/test_cd_toc_contract (needs VJ_TOC_DISC=<image>),"
@@ -1273,29 +1536,66 @@ test/test_titledb: test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_titledb.c src/core/titledb.c src/core/crc32.c
 
+# Known cart boot ROM image table unit test (issue #469). Links biosdb.c +
+# crc32.c + the two embedded boot ROM blobs directly, same no-dlopen style
+# as test_titledb: no core, no private ROMs.
+test/test_biosdb: test/tools/test_biosdb.c src/core/biosdb.c src/core/crc32.c \
+		src/bios/jagbios.c src/bios/jagbios_m.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_biosdb.c src/core/biosdb.c src/core/crc32.c \
+		src/bios/jagbios.c src/bios/jagbios_m.c
+
+# Custom cart boot ROM loader end-to-end test (issue #469): dlopens the
+# built core and drives retro_load_game() with a synthetic cart image to
+# exercise stage_cart_boot_rom()'s 'custom' path (file present, file
+# absent -> embedded-K fallback) plus a k/m-unchanged sanity check.
+test/test_cart_bios_loader: test/test_cart_bios_loader.c $(TARGET) \
+		src/bios/jagbios.c src/bios/jagbios_m.c
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cart_bios_loader.c \
+		src/bios/jagbios.c src/bios/jagbios_m.c -ldl
+
+# Enhancement-hook applier (issue #370).  Host unit test: no dlopen, no
+# ROMs.  titlehook.c's pure half takes the image as a parameter, so this
+# links with the same two-file style as test_titledb plus a handful of
+# stubbed core globals defined in the test itself.
+test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
+		src/core/titledb.c src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_titlehook.c src/core/titlehook.c \
+		src/core/titledb.c src/core/crc32.c
+
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
 
-test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c
+test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c
+		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
 
-test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink.h src/jerry/jlink_tcp.h
+test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/jlink.h src/jerry/jlink_tcp.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c
+		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+
+test/test_jlink_discover: test/test_jlink_discover.c src/jerry/jlink_discover.c src/jerry/jlink_discover.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/test_jlink_discover.c src/jerry/jlink_discover.c
 
 test/test_jlink_netpacket: test/test_jlink_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_jlink_netpacket.c -ldl
 
-test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/core/event.c
+test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/core/event.c -lm
+		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c -lm
 
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_uart_core.c test/harness/harness.c -ldl -lm
+
+test/test_fountain_crash: test/test_fountain_crash.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/test_fountain_crash.c test/harness/harness.c -ldl -lm
 
 test/test_netlink_host: test/test_netlink_host.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
@@ -1305,12 +1605,29 @@ test/tools/netlink_pair: test/tools/netlink_pair.c test/harness/harness.c test/h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/tools/netlink_pair.c test/harness/harness.c -ldl -lm
 
+test/tools/voicemodem_pair: test/tools/voicemodem_pair.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/tools/voicemodem_pair.c test/harness/harness.c -ldl -lm
+
 test/tools/netlink_latency: test/tools/netlink_latency.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/tools/netlink_latency.c test/harness/harness.c -ldl -lm
 
 test/tools/netlink_delay_proxy: test/tools/netlink_delay_proxy.c
 	$(CC) -O2 -Wall -o $@ test/tools/netlink_delay_proxy.c
+
+test/tools/netlink_discover_probe: test/tools/netlink_discover_probe.c src/jerry/jlink_discover.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
+		-o $@ test/tools/netlink_discover_probe.c src/jerry/jlink_discover.c
+
+# Deliberately NOT linked against test/harness/harness.c -- this test needs
+# SET_CORE_OPTIONS_DISPLAY recording and an interceptable log callback,
+# neither of which the shared harness's environment callback provides (see
+# the file header comment for why). Standalone dlopen loader instead, same
+# shape as test/tools/test_option_visibility.c.
+test/tools/netlink_rebuild_witness: test/tools/netlink_rebuild_witness.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/netlink_rebuild_witness.c -ldl
 
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c
@@ -1435,6 +1752,89 @@ test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
+# End-to-end enhancement-hook gate wiring (issue #370).  Needs
+# TitleDBSetHooksForTest + TitleHookApplyROM + jagMemSpace from the wide
+# test symbol set (exports-test.list / link-test.T) -- note TitleHook* is
+# NOT covered by the TitleDB* wildcard and is listed separately there.
+test/tools/test_hook_gate: test/tools/test_hook_gate.c \
+		test/harness/harness.c test/harness/harness.h \
+		src/core/titledb.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_hook_gate.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
+# the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
+test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
+		src/jerry/inputdev.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/joymatrix_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Cross-load static-state leak gate (#479).  Pins the core with an extra
+# dlopen ref (the iOS no-dlclose regime) and proves an accurate-blitter
+# session run AFTER a fast-blitter session serialises byte-identical
+# state.  Catches BlitterStateSave()/BlitterResetDecodeState() drifting
+# apart: a newly-serialised field that nobody clears fails here.
+test/tools/blitter_static_leak: test/tools/blitter_static_leak.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/blitter_static_leak.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/mouse_decode_test: test/tools/mouse_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/mouse_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Light gun (#438).  Part A is register-level and runs on the in-tree public
+# ROM; part B drives Balloons' calibration and hit detection and exits 77
+# when that private ROM is absent.
+test/tools/test_lightgun: test/tools/test_lightgun.c \
+		src/jerry/inputdev.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_lightgun.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/rotary_decode_test: test/tools/rotary_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/rotary_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/analog_decode_test: test/tools/analog_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/analog_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/test_quadrature: test/test_quadrature.c src/jerry/quadrature.c src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_quadrature.c src/jerry/quadrature.c
+
+test/test_axistune: test/test_axistune.c src/jerry/axistune.c src/jerry/axistune.h \
+		src/jerry/quadrature.h
+	$(CC) -O2 -Wall $(INCFLAGS) -o $@ test/test_axistune.c src/jerry/axistune.c
+
+# #439's guardrail: needs the wide test ABI's InputDev* / Joystick* /
+# joypad0Buttons / joypad1Buttons exports.
+test/tools/tuning_identity: test/tools/tuning_identity.c \
+		src/jerry/inputdev.h src/jerry/axistune.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/tuning_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 test/tools/test_option_visibility: test/tools/test_option_visibility.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_option_visibility.c -ldl
@@ -1502,6 +1902,20 @@ test/tools/test_runahead_determinism: test/tools/test_runahead_determinism.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
+test/tools/test_texdump: test/tools/test_texdump.c \
+		test/harness/harness.c test/harness/harness.h src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_texdump.c \
+		test/harness/harness.c src/core/crc32.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/test_texreplace: test/tools/test_texreplace.c \
+		test/harness/harness.c test/harness/harness.h src/core/crc32.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_texreplace.c \
+		test/harness/harness.c src/core/crc32.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
 test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1546,6 +1960,10 @@ test/test_cart_format: test/test_cart_format.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cart_format.c -ldl
 
+test/test_cart_needs_bios: test/test_cart_needs_bios.c test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cart_needs_bios.c test/harness/harness.c -ldl -lm
+
 test/test_cd_boot: test/test_cd_boot.c
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_boot.c -ldl
@@ -1557,6 +1975,10 @@ test/test_cd_hle_boot: test/test_cd_hle_boot.c test/test_framework.h test/cd_ass
 test/test_cd_pregap: test/test_cd_pregap.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
 		-o $@ test/test_cd_pregap.c -ldl
+
+test/test_cd_chd: test/test_cd_chd.c test/test_framework.h test/cd_assertions.h
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
+		-o $@ test/test_cd_chd.c -ldl
 
 test/test_cd_synth_read: test/test_cd_synth_read.c test/test_framework.h test/cd_assertions.h
 	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 $(INCFLAGS) \
@@ -1621,12 +2043,26 @@ test/heap_search: test/heap_search.c
 
 # Aggregate target for the manual diagnostic tools.
 .PHONY: tools
-tools: test/dump_pc test/heap_search test/test_cd_boot
+tools: test/dump_pc test/heap_search test/test_cd_boot tools/jagcd/jagcd-chd-check
 endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
-        runahead-determinism
+        runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
+
+# Standalone libchdr binaries (no core dlopen / no TEST_EXPORTS). Live
+# outside the TEST_EXPORTS=1 branch so Windows MSYS2 CI can build them
+# without flushing the object tree. An explicit test/test_chd_unit rule
+# beats the TEST_EXPORTS!=1 catch-all.
+test/test_chd_unit: test/test_chd_unit.c $(SOURCES_LIBCHDR)
+	$(CC) -O2 -Wall -Wno-unused-function -Wno-unused-variable -std=c99 \
+		$(INCFLAGS) $(LIBCHDR_CFLAGS) $(LIBCHDR_WARNFLAGS) \
+		-o $@ test/test_chd_unit.c $(SOURCES_LIBCHDR)
+
+tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) $(LIBCHDR_CFLAGS) \
+		-o $@ tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
 
 lint:
 	@scripts/c89-lint.sh
@@ -1781,6 +2217,40 @@ cd-visual:
 .PHONY: cue2cdi
 cue2cdi:
 	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
+
+# ---------------------------------------------------------------------------
+# JaguarDemos corpus (https://codeberg.org/42Bastian/JaguarDemos)
+#
+# On-demand clone + cart_boot_probe sweep.  NOT part of `make test`.
+# Smoke (curated list) is what PR CI runs; full is for release PRs / tags.
+# See test/jaguar-demos/README.md.  The clone is gitignored under
+# test/vendor/JaguarDemos — not a submodule, so a normal checkout stays
+# small and CI pins the SHA in test/jaguar-demos/PIN.
+# ---------------------------------------------------------------------------
+.PHONY: jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
+jaguar-demos-fetch:
+	bash test/jaguar-demos/run.sh fetch
+
+jaguar-demos-build: jaguar-demos-fetch
+	bash test/jaguar-demos/run.sh build
+
+jaguar-demos-smoke jaguar-demos: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-smoke jaguar-demos:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh smoke ./$(TARGET)
+
+jaguar-demos-full: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-full:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh build
+	bash test/jaguar-demos/run.sh full ./$(TARGET)
+
+jaguar-demos-baseline: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+jaguar-demos-baseline:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	bash test/jaguar-demos/run.sh build
+	bash test/jaguar-demos/run.sh baseline ./$(TARGET)
 
 print-%:
 	@echo '$*=$($*)'

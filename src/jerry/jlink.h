@@ -20,6 +20,28 @@ enum
    JLINK_MODE_NETPACKET  = 4   /* frontend netplay session (env 78) */
 };
 
+/* What is plugged into the DSP port on the far side of the UART.
+ * JagLink/CatBox are a bare wire (bytes pass through untouched); the
+ * Voice Modem (voicemodem.c) is a command/response device in front of
+ * the same transport. */
+enum
+{
+   JLINK_DEVICE_JAGLINK    = 0,
+   JLINK_DEVICE_VOICEMODEM = 1
+};
+
+void JLinkSetDevice(int device);
+int  JLinkDevice(void);
+
+/* Raw transport send, bypassing the device layer (used by the voice
+ * modem to reach its peer; identical to JLinkSendByte for JagLink). */
+void JLinkWireSendByte(uint8_t b);
+
+/* UART TX burst finished (shift register drained, hold empty): flush
+ * batched transport bytes; the voice modem also emits its end-of-packet
+ * marker here. */
+void JLinkTxBurstEnd(void);
+
 /* Push transport-received bytes into the RX ring (netpacket backend). */
 void JLinkNPDeliver(const uint8_t *buf, size_t len);
 
@@ -50,6 +72,13 @@ void JLinkPump(void);
 /* Lifetime traffic counters (diagnostics; reset by JLinkClose). */
 uint32_t JLinkTxTotal(void);
 uint32_t JLinkRxTotal(void);
+
+/* Wall-clock milliseconds, used to drive jlink_discover.c's beacon
+   cadence and peer expiry from JLinkFrameTick. */
+uint32_t JLinkNowMs(void);
+/* Has the LAN discovery peer set changed since the last call?  Reads
+   and clears the flag set by JLinkFrameTick's discovery poll. */
+int JLinkDiscConsumeChanged(void);
 
 size_t JLinkStateSave(uint8_t *buf);
 size_t JLinkStateLoad(const uint8_t *buf);
