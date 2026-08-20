@@ -120,10 +120,22 @@ jobs:
           # busy the runner is.  That is the entire reason this job exists.
           IR_NO_CONTAINER: '1'
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # Exit 2 means "both arms produced a byte-identical library", which is
+          # the EXPECTED outcome for a PR that only touches this workflow or
+          # ir_ab.sh itself -- both of which are in the `paths:` filter above.
+          # Treating it as a failure would make the job go red on exactly the
+          # PRs that tune the measurement tool, contradicting the header's
+          # "advisory, not a veto" promise.  Anything else is a real error.
           bash test/tools/ir_ab.sh --ref \
               "${{ steps.arms.outputs.base }}" "${{ steps.arms.outputs.head }}" \
               2>&1 | tee ir-ab.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -eq 2 ]; then
+            echo "::notice::Both arms built an identical library -- nothing to measure (expected for tool-only changes)."
+            exit 0
+          fi
+          exit "$rc"
 
       - name: Job summary
         if: always()
@@ -135,7 +147,18 @@ jobs:
             echo "arm B = PR head \`${{ steps.arms.outputs.head }}\`"
             echo
             echo '```'
-            sed -n '/metric/,$p' ir-ab.log 2>/dev/null || cat ir-ab.log 2>/dev/null || echo '(no output)'
+            # `sed -n` exits 0 even when the pattern never matches, so a naive
+            # `sed ... || cat ...` fallback is dead code: on a build failure or
+            # abort (no "metric" line at all) it would print an empty block and
+            # the fallback would never fire.  Test for the pattern explicitly.
+            if [ ! -s ir-ab.log ]; then
+              echo '(no output)'
+            elif grep -q 'metric' ir-ab.log; then
+              sed -n '/metric/,$p' ir-ab.log
+            else
+              echo '(no metric line -- run failed or aborted; last 40 lines:)'
+              tail -40 ir-ab.log
+            fi
             echo '```'
             echo
             echo "Ir is a deterministic *work* count, not wall time. A change that removes"

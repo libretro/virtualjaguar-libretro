@@ -209,14 +209,22 @@ if ! command -v valgrind >/dev/null 2>&1 && [ "${IR_AB_IN_CONTAINER:-0}" != 1 ];
       | "$ENGINE" build -t "$IMAGE" -f - . >/dev/null
   fi
   echo "ir_ab: no host valgrind -- re-executing under $ENGINE ($IMAGE)"
-  exec "$ENGINE" run --rm \
+  # Run as a CHILD, not exec.  `exec` replaces this shell and destroys the EXIT
+  # trap set above, and the container run re-enters this script with
+  # IR_AB_WORK set, which skips the trap-setup branch there too -- so with
+  # `exec` nothing ever cleans up and every macOS run left two full source
+  # snapshots plus build trees in $TMPDIR forever, despite IR_KEEP defaulting
+  # to 0.  Running it as a child keeps the host trap alive to fire below.
+  rc=0
+  "$ENGINE" run --rm \
       -v "$WORK:$WORK" -v "$ROM:$ROM:ro" -v "$REPO:$REPO:ro" \
       -e IR_AB_IN_CONTAINER=1 -e IR_AB_PREPARED=1 -e "IR_AB_WORK=$WORK" \
       -e "IR_ROM=$ROM" -e "IR_FRAMES=$FRAMES" -e "IR_THRESHOLD=$THRESHOLD" \
       -e "IR_GATE=${IR_GATE:-0}" -e "IR_MAKE_ARGS=${IR_MAKE_ARGS:-}" \
       -e "IR_JOBS=${IR_JOBS:-}" \
       -w "$WORK" "$IMAGE" \
-      bash "$REPO/test/tools/ir_ab.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+      bash "$REPO/test/tools/ir_ab.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"} || rc=$?
+  exit "$rc"
 fi
 
 command -v valgrind >/dev/null 2>&1 || { echo "ir_ab: valgrind missing" >&2; exit 1; }

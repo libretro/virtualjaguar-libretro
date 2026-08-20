@@ -143,7 +143,7 @@ No valgrind on the host?  On macOS the script re-execs itself inside a Linux con
 | Determinism | same source both arms (`--selftest`) | Ir **identical**: 1,633,893,288 twice.  I1/D1/LL miss counts identical too. |
 | Sensitivity | throwaway commit adding one `volatile` increment per emulated GPU opcode | **+1.815%** (+159,337,672 Ir), correctly signed |
 
-The sensitivity control is the one that matters: an instrument that has never shown it can *detect* a change will report "no change" forever and look perfectly healthy.  It also calibrates the tool — the waste is exactly 3 instructions per GPU opcode, so it says yarc@90 executes **53,112,557** GPU opcodes, which turns later deltas into per-instruction arithmetic rather than percentages.
+The sensitivity control is the one that matters: an instrument that has never shown it can *detect* a change will report "no change" forever and look perfectly healthy.  It also calibrates the tool — the added waste is ~3 instructions per GPU opcode, putting yarc@90 at roughly **53.1 million** GPU opcodes, which turns later deltas into per-instruction arithmetic rather than percentages.  (Treat that as a calibration figure, not an exact count: 159,337,672 / 3 is not an integer, so the per-opcode cost is not exactly 3 on every path — the compiler is free to fold the increment differently depending on surrounding code.)
 
 ### What Ir is not
 
