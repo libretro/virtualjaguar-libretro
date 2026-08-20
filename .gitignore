@@ -62,6 +62,7 @@ test/tools/cd_wedge_probe
 test/tools/fmv_seek_probe
 test/tools/sram_test
 test/tools/netlink_pair
+test/tools/perf_iface_witness
 test/tools/netlink_game
 test/tools/joymatrix_identity
 test/tools/mouse_decode_test
