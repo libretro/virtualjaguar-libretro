@@ -30,15 +30,23 @@ endif
 # Optimisation level for release builds (ignored when DEBUG=1, and not used
 # by the MSVC branches, whose -O2 means something else entirely).
 #
-# -O3 is enabled only on the platforms it has actually been measured on.
-# On macOS arm64 it is worth +5.5% (two interleaved A/B runs, n=16 per arm,
-# p ~ 0.025) for +49 KB of __TEXT, with the full test suite green -- see
-# issue #515, which also records the measurement protocol, because the naive
-# sequential A/B reports +12.5% on a loaded host and is wrong by a sign.
+# MEASURED: macOS arm64, where -O3 is worth +5.5% (two interleaved A/B runs,
+# n=16 per arm, p ~ 0.025) for +49 KB of __TEXT, full test suite green.  See
+# issue #515, which also records the protocol, because the naive sequential
+# A/B reports +12.5% on a loaded host and is wrong by a sign.
 #
-# Vita, Switch and the other console targets stay at -O2 deliberately: they
-# build with different compilers, and the Vita is memory constrained, so the
-# arm64/clang result says nothing about them.  Measure before adding one.
+# osx / ios-arm64 / ios9 / tvos-arm64 are that measurement plus the same
+# clang and the same architecture.
+#
+# unix / win are NOT covered by it -- GCC on x86_64 is a different compiler
+# and a different target.  They are enabled on the weaker grounds that they
+# are desktops with CPU headroom to spare, where a regression is cheap to
+# notice and cheap to revert.  If that bothers you, measure them; the
+# protocol on #515 is the whole recipe.
+#
+# Vita, Switch, 3DS, PSP and emscripten stay at -O2 deliberately: different
+# compilers again, and the Vita has real memory limits, so neither result
+# above says anything about them.  Measure before adding one.
 #
 # Override on the command line to test: `make OPT_LEVEL=-O2`.
 OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64
