@@ -38,10 +38,14 @@ on:
       - '.github/workflows/ir-ab.yml'
   workflow_dispatch:
     inputs:
+      rom:
+        description: 'ROM to measure (repo-relative)'
+        required: false
+        default: 'test/roms/jagniccc.j64'
       frames:
         description: 'Frames per arm'
         required: false
-        default: '90'
+        default: '300'
 
 concurrency:
   group: ir-ab-${{ github.workflow }}-${{ github.ref }}
@@ -51,6 +55,9 @@ jobs:
   ir-ab:
     name: Ir A/B (linux x86_64)
     runs-on: ubuntu-latest
+    # Two full builds plus two cachegrind runs.  Cachegrind sustains roughly
+    # 100M simulated instructions/sec, and jagniccc@300 is ~19.5e9 Ir per arm,
+    # so budget ~3-4 min per measured run.
     timeout-minutes: 45
 
     steps:
@@ -89,7 +96,22 @@ jobs:
       - name: Measure
         id: measure
         env:
-          IR_FRAMES: ${{ github.event.inputs.frames || '90' }}
+          # ROM and frame count are pinned HERE, not inherited from the
+          # script's defaults, so the CI workload is legible in this file and
+          # cannot change under it when someone edits ir_ab.sh.
+          #
+          # Why this pair: measured with `ir_ab.sh --profile`, jagniccc at 300
+          # frames splits GPU interpreter 38.6% / DSP interpreter 22.3% /
+          # blitter 7.1% / 68K ~5.9% -- it is the only public workload that
+          # covers every path in the `paths:` filter above.  The SAME ROM at 90
+          # frames is still in BIOS boot and executes ZERO GPU interpreter
+          # instructions, which would make this gate silently inert for exactly
+          # the changes it exists to catch.  yarc.j64 is the opposite extreme
+          # (GPU 71%, blitter 17.5%, DSP 0.08%) -- a better amplifier for a
+          # GPU-loop change, a worse gate.  Do not shorten the frame count
+          # without re-running --profile to confirm the mix survives.
+          IR_ROM: ${{ github.event.inputs.rom || 'test/roms/jagniccc.j64' }}
+          IR_FRAMES: ${{ github.event.inputs.frames || '300' }}
           # Advisory only -- see the header.  Flip to 1 to make a >0.5%
           # instruction-count regression block the PR.
           IR_GATE: '0'
@@ -102,7 +124,6 @@ jobs:
           bash test/tools/ir_ab.sh --ref \
               "${{ steps.arms.outputs.base }}" "${{ steps.arms.outputs.head }}" \
               2>&1 | tee ir-ab.log
-          grep '^IR_AB_RESULT' ir-ab.log >> "$GITHUB_OUTPUT" || true
 
       - name: Job summary
         if: always()

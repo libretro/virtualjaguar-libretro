@@ -55,7 +55,12 @@
 #
 # Env knobs:
 #   IR_ROM        ROM to run           (default test/roms/jagniccc.j64)
-#   IR_FRAMES     frames per arm       (default 90; cachegrind is ~50-100x slow)
+#   IR_FRAMES     frames per arm       (default 300; cachegrind is ~50-100x slow,
+#                                       so this costs ~3 min per arm.  Drop it
+#                                       for a quick --selftest; do NOT drop it
+#                                       for a real A/B without checking the
+#                                       workload still covers your change --
+#                                       see WORKLOAD below.)
 #   IR_MAKE_ARGS  extra make args applied to BOTH arms (ref mode)
 #   IR_JOBS       build parallelism    (default nproc)
 #   IR_GATE=1     exit 3 when B regresses by more than IR_THRESHOLD
@@ -91,6 +96,32 @@
 # hash.  That CSV doubles as an accuracy gate: byte-identical CSVs across arms
 # is direct evidence that the change altered nothing the emulated machine can
 # see.  An A/B whose CSVs differ is reported, not silently scored.
+#
+# CHOOSING THE ROM AND FRAME COUNT IS PART OF THE MEASUREMENT (issue #533).  An
+# A/B on a workload that never enters the code you changed reports 0.0% forever
+# and looks perfectly healthy.  Measured here with --profile:
+#
+#   jagniccc.j64 @  90 frames   still in BIOS boot.  ZERO GPU-interpreter
+#                               instructions; 37% of Ir is the 68K traceback
+#                               hook.  Useless as a GPU/DSP/blitter gate.
+#   jagniccc.j64 @ 300 frames   GPU interp 38.6%, DSP interp 22.3%, blitter
+#                               7.1%, 68K ~5.9%.  THE DEFAULT: it is the
+#                               NICCC-2000 port, its GPU renderer starts only
+#                               after the boot window, and this is the cheapest
+#                               frame count that reaches the steady-state mix
+#                               (600 frames gives the same shape for 2.7x the
+#                               simulation cost).
+#   yarc.j64     @  90 frames   GPU interp 71.2%, blitter 17.5%, DSP 0.08%.
+#                               The GPU amplifier -- but its opcode mix is
+#                               jr-heavy (#533), so per-instruction loop
+#                               overhead is an unusually large share of it and
+#                               a loop-bookkeeping change scores HIGH here
+#                               relative to a real game.
+#
+# Note the Ir denominator includes this harness: frame_hash_ab's own hashing
+# (`ab_video`) is ~4.4% of total on jagniccc@300 and 13.4% on jagniccc@90.  An
+# ir_ab percentage is therefore a share of emulator-plus-instrument work and is
+# not directly comparable to a sampling profiler's "% of process time".
 
 set -euo pipefail
 
@@ -112,7 +143,7 @@ esac
 
 ROM="${IR_ROM:-$REPO/test/roms/jagniccc.j64}"
 case "$ROM" in /*) ;; *) ROM="$REPO/$ROM" ;; esac
-FRAMES="${IR_FRAMES:-90}"
+FRAMES="${IR_FRAMES:-300}"
 JOBS="${IR_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 THRESHOLD="${IR_THRESHOLD:-0.5}"
 IMAGE="${IR_IMAGE:-vj-cachegrind}"
