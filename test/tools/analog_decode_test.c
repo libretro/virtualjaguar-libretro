@@ -72,8 +72,9 @@ typedef enum {
 #define SW_RIGHT  0x80
 
 /* Mirrors INPUTDEV_STATE_SIZE: the pre-#437 41 bytes plus 2 ports x
- * (bank + last row + ADC X + ADC Y + switch mask). */
-#define INPUTDEV_STATE_SIZE_EXPECTED 51
+ * (bank + last row + ADC X + ADC Y + a two-byte switch mask + the 6D
+ * controller's six DOF bytes, #538). */
+#define INPUTDEV_STATE_SIZE_EXPECTED 65
 
 /* Socket-0 row-select words, output enable set (bit 15).  Port 1 rows
  * live in the low nibble, port 2 rows in the high nibble; the unused
