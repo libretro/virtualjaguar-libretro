@@ -12,6 +12,7 @@
 #include "quadrature.h"
 #include "axistune.h"
 #include "joystick.h"
+#include "paddle.h"
 #include "state.h"
 
 /* Wiring table.  Values are $F14000 bit positions for PORT 2, all active
@@ -185,9 +186,10 @@ void InputDevSetType(int port, InputDevType type)
       return;
 
    /* Mouse is port 2 only and the light gun is port 1 only (both are
-    * hardware facts -- see inputdev.h); the rotary and the analog /
-    * driving controller (#437 -- TR10 restricts neither socket) are valid
-    * on both.  Anything else is a plain pad, i.e. not attached. */
+    * hardware facts -- see inputdev.h); the rotary, the analog / driving
+    * controller (#437 -- TR10 restricts neither socket) and the paddle
+    * (#505 -- the ADC has a channel pair per socket) are valid on both.
+    * Anything else is a plain pad, i.e. not attached. */
    if (inputdev_is_mouse(type))
    {
       if (port != 1)
@@ -198,7 +200,8 @@ void InputDevSetType(int port, InputDevType type)
       if (port != 0)
          type = INPUTDEV_PAD;
    }
-   else if (type != INPUTDEV_ROTARY && !inputdev_is_analog(type))
+   else if (type != INPUTDEV_ROTARY && type != INPUTDEV_PADDLE
+            && !inputdev_is_analog(type))
       type = INPUTDEV_PAD;
 
    if (inputdev_ports[port].type != type)
@@ -235,6 +238,13 @@ void InputDevSetType(int port, InputDevType type)
       inputdev_attach_mask &= ~(1u << port);
    else
       inputdev_attach_mask |= (1u << port);
+
+   /* Plug / unplug this port's pot lines at the motherboard ADC (#505).
+    * Unconditional rather than inside the type-change block above: the
+    * converter owns its own no-op-on-unchanged test, and routing the
+    * unplug through here is what makes paddle -> pad actually unfit the
+    * ADC and put $F17C00 back to the not-fitted $FF. */
+   PaddleSetAttached(port, type == INPUTDEV_PADDLE);
 }
 
 InputDevType InputDevGetType(int port)
@@ -414,6 +424,32 @@ void InputDevFeedAnalog(int port, int32_t x, int32_t y, uint32_t switches)
    p->an_y       = inputdev_analog_byte(&p->tune_y, y, 1);
    p->an_sw      = (uint8_t)(switches & 0xFF);
    p->an_engaged = 1;
+}
+
+/* Paddle host feed (#505).  See inputdev.h for why Y is NOT inverted here
+ * and why this device drives no matrix overlay; see paddle.h for the
+ * converter itself.
+ *
+ * The 8-bit conversion is inputdev_analog_byte(), shared verbatim with
+ * #437: both devices present a stick position as an 8-bit ADC count with
+ * 128 at centre, so they must agree on what a given dead zone, offset or
+ * response exponent does -- one arithmetic, two consumers, which is the
+ * rule axistune.h sets out. */
+void InputDevFeedPaddle(int port, int32_t x, int32_t y)
+{
+   InputDevPort *p;
+
+   if (port < 0 || port > 1)
+      return;
+
+   p = &inputdev_ports[port];
+
+   if (p->type != INPUTDEV_PADDLE)
+      return;
+
+   PaddleFeed(port,
+              inputdev_analog_byte(&p->tune_x, x, 0),
+              inputdev_analog_byte(&p->tune_y, y, 0));
 }
 
 /* Light gun host feed (#438).  See the block comment in inputdev.h for why

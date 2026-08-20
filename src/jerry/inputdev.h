@@ -158,7 +158,8 @@ typedef enum
    INPUTDEV_ROTARY,              /* TR10 "Tempest" rotary (#436)                */
    INPUTDEV_ANALOG,              /* TR10 bank-switching analogue stick (#437)   */
    INPUTDEV_DRIVING,             /* same wire protocol, driving skin (#437)     */
-   INPUTDEV_LIGHTGUN             /* TR10 port-1 light gun (#438)                */
+   INPUTDEV_LIGHTGUN,            /* TR10 port-1 light gun (#438)                */
+   INPUTDEV_PADDLE               /* early-board $F17C00 ADC stick (#505)        */
 } InputDevType;
 
 void InputDevInit(void);
@@ -168,7 +169,15 @@ void InputDevShutdown(void);  /* retro_deinit: clear every static (iOS)     */
 /* Selection.  port is 0 (Jaguar port 1) or 1 (Jaguar port 2). */
 void         InputDevSetType(int port, InputDevType type);
 InputDevType InputDevGetType(int port);
-int          InputDevAnyAttached(void);  /* 0 => bit-identical to pad-only */
+/* Nonzero when any port holds something other than a plain pad -- the gate
+ * update_input() gets its per-frame host feed behind.
+ *
+ * ZERO STILL MEANS "bit-identical to pad-only", but note the mask now also
+ * covers a device the $F14000 matrix cannot see at all: the paddle (#505)
+ * is visible only at $F17C00, so a nonzero mask no longer implies the
+ * matrix has been perturbed.  With a paddle and nothing else attached the
+ * joystick matrix is byte-for-byte a pad's. */
+int          InputDevAnyAttached(void);
 
 /* Per-frame host feed, called from update_input() in libretro.c.  dx/dy
  * are libretro relative units; buttons is a bitmask of INPUTDEV_BTN_*. */
@@ -193,6 +202,29 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons);
 #define INPUTDEV_SW_LEFT   0x40
 #define INPUTDEV_SW_RIGHT  0x80
 void InputDevFeedAnalog(int port, int32_t x, int32_t y, uint32_t switches);
+
+/* Paddle feed (#505) -- the early-board motherboard ADC at $F17C00, whose
+ * hardware model lives in paddle.h.  Same absolute int16 convention as
+ * InputDevFeedAnalog and the same shared per-axis tuning, so a user's
+ * dead zone / offset / response settings mean the same thing on both.
+ *
+ * IT ROUTES SOMEWHERE ELSE ENTIRELY.  #437's device answers the $F14000
+ * matrix; this one hands tuned ADC bytes to PaddleFeed() and touches the
+ * matrix not at all.  A paddle port therefore keeps its ordinary digital
+ * pad -- the pots are separate connector pins -- which is why
+ * INPUTDEV_PADDLE appears in no overlay in inputdev.c and why
+ * update_input does not blank its joypad_buttons[].
+ *
+ * Y IS NOT INVERTED HERE, and that divergence from InputDevFeedAnalog is
+ * deliberate rather than an oversight.  #437 inverts because TR10 defines
+ * its device's +Y as "pitch forward".  Nothing defines this one's, so the
+ * evidence is the only shipped consumer: BattleSphere's calibrator at
+ * $827DDC..$827E14 loads channel 3 ($1F9317) and channel 2 ($1F9316) and
+ * uses them DIRECTLY as the crosshair's screen Y and X.  Screen Y grows
+ * downward, so a rising ADC count is downward motion -- libretro's +Y,
+ * with no flip.  Do not "fix" this into agreement with the neighbouring
+ * call. */
+void InputDevFeedPaddle(int port, int32_t x, int32_t y);
 
 /* Sensitivity, Q8 (256 == 1.0), from the core options. */
 void InputDevSetScale(int port, int32_t scale_q8);

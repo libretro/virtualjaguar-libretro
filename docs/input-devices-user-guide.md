@@ -231,17 +231,61 @@ Facts to know before selecting one:
 
 Two neighbouring findings, recorded so they stay asked-and-answered:
 
-- **"ADC-Reg" (BigPEmu's third analog type) is out of scope as unsourced.**
-  Early *development* Jaguars had an 8-bit ADC on the motherboard (the
-  connector's PAD0X/PAD0Y/PAD1X/PAD1Y pins; GPIO5 `$F17C00-$F17FFF` is
-  labelled "Paddle Interface" in TRM rev 8) — but TR10 records it as
-  **deleted** from production hardware, no document we hold specifies the
-  register layout, and the only known software (the JANALOG.ABS test) targets
-  dev units. Emulating it would mean inventing register behaviour; if a
-  source surfaces, it can be added.
+- **The motherboard ADC is a different device and now has its own section**
+  (below). It used to be recorded here as out of scope for want of a register
+  spec; #505 settled the protocol from the software plus the converter's own
+  datasheet, so it is emulated.
 - **Head tracker (Jaguar VR):** a bank-switching type ID exists for it in
   TR10, but no released software uses it (Missile Command 3D was a
   prototype). Out of scope, per the epic.
+
+## Analog stick via the paddle ADC (#505)
+
+Set *Port 1/2 > Controller Type* to **Analog Stick (paddle ADC)**, or pick it
+for that port in your frontend's Controls menu. Default is *Auto*, which means
+a plain joypad — nothing changes until you choose it.
+
+**This is not the controller above.** TR10: *"Early versions of the Jaguar
+included an 8 bit ADC on the motherboard. This has been deleted — analogue
+controllers now require their own ADC chip."* The bank-switching controller is
+the replacement; this is the deleted part — an ADC0844 at U16 behind JERRY's
+GPIO5 decode at `$F17C00-$F17FFF`, labelled "Paddle Interface" in TRM rev 8,
+digitising the joystick connector's PAD0X/PAD0Y/PAD1X/PAD1Y pins. Two channels
+per socket, four in all.
+
+**It is the one analog interface a released game reads.** **BattleSphere** and
+**BattleSphere Gold** sample all four channels from a JERRY Timer 1 handler and
+consume the port-2 pair, in an *Analog Joystick Calibrator* screen and in GPU
+code. Club Drive writes the channel select and never reads it back. A sweep of
+822 cart and CD images found no other title touching the register.
+
+Facts to know before selecting it:
+
+- **The game needs its own setting too.** BattleSphere gates its analog support
+  behind *Gameplay Options → 2nd Controller: Analog Stick*, and reads the
+  motherboard ADC's port-2 channels — so select the paddle on **port 2** for
+  that game. Selecting the device in the core is necessary, not sufficient.
+- **Your pad keeps working.** The potentiometers are separate connector pins
+  from the switches, so unlike the bank-switching controller this device does
+  not take the port over: the RetroPad on a paddle port stays fully connected,
+  and there is no "deflect the stick to wake it up" rule. A centred stick reads
+  centre, which is what the calibrator screen asks you to align on.
+- **Off means a retail console.** A production Jaguar has no converter fitted
+  and reads `$FF` here; that is what the core reports whenever no paddle is
+  selected, and it is exactly what v3.4.0 shipped. Verified inert: BattleSphere
+  over 900 frames and Club Drive over 700 produce byte-identical frame-hash
+  logs with and without this feature compiled in.
+- **A socket without a paddle reads `$00`,** not `$FF` — "converter fitted,
+  nothing plugged into that pot line". So a paddle on port 1 alone leaves
+  BattleSphere's channels reading zero, as the hardware would.
+- Per-axis tuning shares the `virtualjaguar_analog_*` options with the
+  bank-switching controller — same absolute semantics, same units, so a dead
+  zone means the same thing on both. Y is **not** inverted here (it is on the
+  other device, per TR10): BattleSphere's calibrator uses the Y channel
+  directly as a screen coordinate, which grows downward.
+
+Verification is `test/tools/paddle_decode_test.c`, which drives the register
+through BattleSphere's own ISR sequence.
 
 ## Light gun (port 1)
 

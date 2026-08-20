@@ -75,7 +75,12 @@
 // F16000-F16FFF   R/W   xxxxxxxx xxxxxxxx   GPI02 - reserved
 // F17000-F177FF   R/W   xxxxxxxx xxxxxxxx   GPI03 - reserved
 // F17800-F17BFF   R/W   xxxxxxxx xxxxxxxx   GPI04 - reserved
-// F17C00-F17FFF   R/W   xxxxxxxx xxxxxxxx   GPI05 - reserved
+// F17C00-F17FFF   R/W   xxxxxxxx xxxxxxxx   GPI05 - "Paddle Interface":
+//                                           the early-board 8-bit ADC
+//                                           (ADC0844 at U16).  See
+//                                           src/jerry/paddle.h (#505).
+//                 R     -------- xxxxxxxx      (completed conversion)
+//                   W   -------- ----xxxx      (MUX address: channel | 4)
 // ------------------------------------------------------------
 // F18000-F1FFFF   R/W   xxxxxxxx xxxxxxxx   Jerry DSP
 // F1A100          R/W   xxxxxxxx xxxxxxxx   D_FLAGS - DSP flags register
@@ -169,6 +174,7 @@ PERF_COUNTER(timing_jerry_irqs);
 #include "inputdev.h"
 #include "joystick.h"
 #include "jlink.h"
+#include "paddle.h"
 #include "uart.h"
 #include "m68000/m68kinterface.h"
 #include "memtrack.h"
@@ -383,6 +389,7 @@ void JERRYInit(void)
 {
    JoystickInit();
    InputDevInit();
+   PaddleInit();
    MTInit();
    memcpy(&jerry_ram_8[0xD000], waveTableROM, 0x1000);
 
@@ -402,6 +409,7 @@ void JERRYReset(void)
 {
    JoystickReset();
    InputDevReset();
+   PaddleReset();
    EepromReset();
    MTReset();
    JERRYResetI2S();
@@ -515,6 +523,13 @@ uint8_t JERRYReadByte(uint32_t offset, uint32_t who/*=UNKNOWN*/)
     * status read reproduces the stock-console "GD absent" hang. */
    else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
       return JGDControlReadByte(offset);
+   /* GPIO5 paddle ADC (#505).  The word path has diverted this range away
+      from the EEPROM catch-all since v3.4.0; the byte path had been left
+      behind, so a byte read still returned the EEPROM handler's $00
+      instead of the not-fitted $FF.  No known software byte-accesses the
+      range -- the three ROMs that touch it all use move.w. */
+   else if (offset >= 0xF17C00 && offset <= 0xF17FFF)
+      return PaddleReadByte(offset);
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)
       return EepromReadByte(offset);
 
@@ -573,20 +588,12 @@ uint16_t JERRYReadWord(uint32_t offset, uint32_t who/*=UNKNOWN*/)
    /* JagGD SPI mailbox (GPIO2) -- see JERRYReadByte. */
    else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
       return JGDControlReadWord(offset);
-   /* GPIO5, the "Paddle Interface": an 8-bit ADC (ADC0844 at U16) fitted
-      only to early Jaguar boards.  TR10: "Early versions of the Jaguar
-      included an 8 bit ADC on the motherboard. This has been deleted --
-      analogue controllers now require their own ADC chip."
-      A stock retail console therefore reads $FF here (no ADC fitted); a
-      board WITH the ADC but nothing plugged in reads $00.  Falling through
-      to the EEPROM handler returned $0000, i.e. we were claiming an ADC is
-      present and centred -- the one state neither real configuration
-      produces.  BattleSphere and BattleSphere Gold sample this from a
-      JERRY Timer 1 ISR; Club Drive drives the channel select.
-      Emulating the ADC itself is issue #505; this only corrects the
-      not-fitted value. */
+   /* GPIO5, the "Paddle Interface": the 8-bit ADC (ADC0844 at U16) fitted
+      only to early Jaguar boards, emulated in src/jerry/paddle.c (#505).
+      Reads $00FF -- a retail console with no converter on the board --
+      unless the user has explicitly selected a paddle device on a port. */
    else if ((offset >= 0xF17C00) && (offset <= 0xF17FFF))
-      return 0x00FF;
+      return PaddleReadWord(offset);
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
       return EepromReadWord(offset);
 
@@ -671,6 +678,12 @@ void JERRYWriteByte(uint32_t offset, uint8_t data, uint32_t who/*=UNKNOWN*/)
    else if (jgdActive && offset >= JGD_REG_FIRST && offset <= JGD_REG_LAST)
    {
       JGDControlWriteByte(offset, data);
+      return;
+   }
+   /* GPIO5 paddle ADC (#505) -- see JERRYReadByte. */
+   else if (offset >= 0xF17C00 && offset <= 0xF17FFF)
+   {
+      PaddleWriteByte(offset, data);
       return;
    }
    else if ((offset >= 0xF14000) && (offset <= 0xF1A0FF))
@@ -774,11 +787,14 @@ void JERRYWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
       JGDControlWriteWord(offset, data);
       return;
    }
-   /* Paddle-interface channel select (see JERRYReadWord).  With no ADC
-      fitted the write has nowhere to go; swallow it rather than let it
-      reach the EEPROM handler. */
+   /* Paddle-interface channel select (see JERRYReadWord and paddle.h).
+      With no converter fitted the write has nowhere to go; swallowed
+      rather than let through to the EEPROM handler. */
    else if (offset >= 0xF17C00 && offset <= 0xF17FFF)
+   {
+      PaddleWriteWord(offset, data);
       return;
+   }
    else if (offset >= 0xF14000 && offset <= 0xF1A0FF)
    {
       EepromWriteWord(offset, data);
