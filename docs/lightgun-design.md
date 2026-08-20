@@ -586,11 +586,18 @@ of the mouse's port-1 refusal, inverted).
    area for a UX nicety, not a hardware-accuracy requirement — most frontends (RetroArch)
    already draw their own gun crosshair from the same `RETRO_DEVICE_LIGHTGUN` state, so
    this is likely redundant, not just deferred.
-2. **No Team Tap support.** Plausible from the LP pin's direct TOM wiring (a `Team Tap`
-   adapter multiplexes the row/column matrix; `LP` is a dedicated pin outside that mux),
-   but **this document did not find an explicit TR10 sentence confirming it** — the claim
-   in the issue's second comment should be re-verified against TR10's Team Tap section
-   before it becomes a code comment asserting it as fact (§5).
+2. **No Team Tap support** — and, since #513 shipped, no gun in a tap socket either.
+   The reasoning below was **wrong in its direction and has been corrected**. It read:
+   *"Plausible from the LP pin's direct TOM wiring (a `Team Tap` adapter multiplexes the
+   row/column matrix; `LP` is a dedicated pin outside that mux)"*, i.e. the gun would be
+   immune to the adapter. TR10's Team Tap section says the opposite: the adapter's
+   sockets *"have the 6 inputs wire OR'd together"*, and pin 6 is `B0 / LP`. So `LP` is
+   **not** demultiplexed and **not** gated by row select — it reaches TOM through the
+   adapter — but it is equally **not isolated**: it shares one wire with every socket's
+   `B0`. What a gun plus pads on one adapter actually does is undocumented by any source
+   consulted. **Do not write a code comment claiming the gun is immune to the Team Tap.**
+   `src/jerry/joystick.c`'s decode and `apply_port_device()` in `libretro.c` keep the two
+   mutually exclusive for exactly this reason (§5 Q3).
 3. **No `RETRO_DEVICE_ID_LIGHTGUN_RELOAD`.** No register-level hardware analog (§3.6).
 4. **No attempt to reproduce Bullets' `170`-unit calibration fudge or MiSTer's
    `X_SKEW_PIX`/`Y_SKEW_PIX` constants.** Both are empirical corrections for problems
@@ -610,7 +617,7 @@ of the mouse's port-1 refusal, inverted).
 |---|---|---|
 | 1 | Exact `vmid`/`hmid`/`xoff4`-equivalent constants for the §3.4 forward map | Must be derived from this core's own TOM geometry accessors + `docs/jtrm-clocks-timing.md`, NOT copied from Bullets' unseen `jaguar.inc` (§2.2). Real implementation work. |
 | 2 | Does a zero-noise synthetic latch (§3.4) actually calibrate cleanly against Balloon's real calibration routine? | Untested — Balloon's ROM was fetched for byte-level analysis (§2.1) but not booted; needs the harness extension in §6 and the ROM properly placed in the private corpus first. |
-| 3 | Team Tap incompatibility (§4.2) | Plausible, not TR10-confirmed by this document. Re-verify before asserting in code. |
+| 3 | Team Tap incompatibility (§4.2) | **Re-verified, and the original guess was backwards.** TR10 *does* address it: the adapter's sockets "have the 6 inputs wire OR'd together", and pin 6 is `B0 / LP`. `LP` therefore survives the adapter (it is not demultiplexed and not row-gated) but is **not isolated** from the other three sockets' `B0`. Nothing consulted describes a gun sharing an adapter with pads, so what actually happens is still unknown — which is why #513 makes a gun and a tap mutually exclusive per port rather than modelling it. Do not assert immunity in code. |
 | 4 | Does a lightgun-equipped controller report standard-pad ID bits, or something else? | TR10's rotary section uses "modified standard controller" language; this document did not find the equivalent sentence for the gun specifically. Assumed standard-pad ID bits (§3.3); flag if TR10 says otherwise on a closer read. |
 | 5 | Bullets' buildability | `jaguar.inc`/`jaguar.h` are external SDK headers not vendored in the repo; building Bullets from source for the test corpper requires acquiring that SDK. |
 | 6 | Balloon ROM provenance/licensing for the test corpus | mdgames.de hosts it as a free download (same site/convention as the already-in-tree Domin PD titles); recommend fetching `http://www.mdgames.de/Balloons.zip` into `test/roms/private` through the normal (careful, `-n`-flagged symlink-respecting) acquisition process, not something this research task should do unilaterally. |

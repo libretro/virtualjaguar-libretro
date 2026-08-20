@@ -279,17 +279,35 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
  * pointer to the base type.  Port 1 only -- TR10 puts the LP pin there
  * and nowhere else (inputdev.h). */
 #define RETRO_DEVICE_JAG_LIGHTGUN        RETRO_DEVICE_LIGHTGUN
+/* The Team Tap (#513) is a RETRO_DEVICE_JOYPAD subclass, not one of the
+ * MOUSE/ANALOG families: everything behind it is a standard Jaguar pad
+ * (TR10 -- the adapter rewrites sockets 1-3 row codes into socket-0 codes
+ * so "those controllers will only see socket 0 row codes"), so the port
+ * really is carrying joypads.  It is NOT an InputDevType: the device
+ * layer models one peripheral per PORT, and the tap is a row-decode
+ * change that leaves four ordinary pads on the far side.  Offered on both
+ * ports -- TR10 allows one adapter per port, eight pads total. */
+#define RETRO_DEVICE_JAG_TEAMTAP         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0)
 
 /* Device the frontend explicitly selected via
  * retro_set_controller_port_device, or INPUTDEV_PAD when it never did.
  * An explicit frontend selection outranks the core option (a frontend
  * that sets a port device is making a deliberate statement); otherwise
- * the option decides.  Not serialized: option/frontend derived. */
+ * the option decides.  Not serialized: option/frontend derived.
+ *
+ * The Team Tap rides alongside as a bool rather than an InputDevType
+ * value, but is resolved by the SAME code at every step -- one option
+ * key, one frontend claim, one apply_port_device().  Splitting the two
+ * resolutions is the bug apply_port_device() already documents: a fact
+ * about a port derived in two places leaves the port running on the
+ * stale one until something unrelated happens to fix it. */
 static InputDevType port_device_frontend[2] = { INPUTDEV_PAD, INPUTDEV_PAD };
+static bool         port_teamtap_frontend[2]= { false, false };
 static bool         port_device_forced[2]   = { false, false };
 /* Device actually attached, so the resolution is logged only when it
  * changes rather than on every check_variables() call. */
 static InputDevType port_device_active[2]   = { INPUTDEV_PAD, INPUTDEV_PAD };
+static bool         port_teamtap_active[2]  = { false, false };
 static bool         show_mouse_options      = true;
 static bool         show_rotary_options     = true;
 /* Sensitivity ladders, Q8 (256 == 1.0).  Kept separate because a spinner
@@ -457,13 +475,35 @@ static void apply_port_tuning(int port)
    }
 }
 
-static void apply_port_device(int port, InputDevType type)
+static void apply_port_device(int port, InputDevType type, bool teamtap)
 {
    InputDevSetType(port, type);
 
    /* Read back: InputDevSetType refuses a mouse on port 1, so the
     * resolved type is whatever it actually accepted. */
    type = InputDevGetType(port);
+
+   /* A Team Tap and a non-pad peripheral are the same physical socket, so
+    * they are mutually exclusive and the device wins (nothing can select
+    * both through the option -- one key, one value -- but a frontend
+    * claim and the option can arrive from different directions).  TR10
+    * puts standard controllers behind the adapter only: reads work, but
+    * "software control of advanced features like rumble motors, force
+    * feedback and analogue/digital mode will not be possible", so a
+    * mouse or rotary in a tap socket is a deliberate non-goal.  Resolving
+    * it here, in the one function both callers go through, is what stops
+    * the two from ever disagreeing. */
+   if (type != INPUTDEV_PAD)
+      teamtap = false;
+
+   JoystickSetTeamTap(port, teamtap);
+
+   if (teamtap != port_teamtap_active[port])
+   {
+      port_teamtap_active[port] = teamtap;
+      LOG_INF("[input] port %d: Team Tap %s\n", port + 1,
+              teamtap ? "attached (4 sockets)" : "detached");
+   }
 
    if (type != port_device_active[port])
    {
@@ -1818,16 +1858,22 @@ static bool get_variable_pertitle(struct retro_variable *var)
  * so it degrades to a plain GET_VARIABLE.  The "auto -> per-title DB" leg
  * of the documented precedence genuinely cannot fire on that early call;
  * the check_variables() during retro_load_game() resolves it properly. */
-static InputDevType p2_device_from_option(void)
+static InputDevType p2_device_from_option(bool *teamtap)
 {
    struct retro_variable var;
    InputDevType p2 = INPUTDEV_PAD;
+
+   /* One option key resolves BOTH the peripheral and the adapter, so the
+    * two can never be selected together (#513). */
+   *teamtap = false;
 
    var.key   = "virtualjaguar_p2_device";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (!strcmp(var.value, "mouse_st"))
+      if (!strcmp(var.value, "teamtap"))
+         *teamtap = true;
+      else if (!strcmp(var.value, "mouse_st"))
          p2 = INPUTDEV_MOUSE_ST;
       else if (!strcmp(var.value, "mouse_amiga"))
          p2 = INPUTDEV_MOUSE_AMIGA_ON_ST;
@@ -1862,16 +1908,20 @@ static InputDevType p2_device_from_option(void)
  * selecting one removes Up and Down from row 0, so a player using a pad on
  * that title would lose menu navigation entirely.  That is a functional
  * break, not a preference, so the rotary is opt-in always. */
-static InputDevType p1_device_from_option(void)
+static InputDevType p1_device_from_option(bool *teamtap)
 {
    struct retro_variable var;
    InputDevType p1 = INPUTDEV_PAD;
+
+   *teamtap = false;
 
    var.key   = "virtualjaguar_p1_device";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (!strcmp(var.value, "rotary"))
+      if (!strcmp(var.value, "teamtap"))
+         *teamtap = true;
+      else if (!strcmp(var.value, "rotary"))
          p1 = INPUTDEV_ROTARY;
       else if (!strcmp(var.value, "analog"))
          p1 = INPUTDEV_ANALOG;
@@ -2333,18 +2383,25 @@ static void check_variables(void)
     * Port 1 (#436) follows the same precedence, but offers pad or rotary
     * only and will never get a titledb row -- see p1_device_from_option. */
    {
-      InputDevType p1 = p1_device_from_option();
-      InputDevType p2 = p2_device_from_option();
+      bool tap1 = false, tap2 = false;
+      InputDevType p1 = p1_device_from_option(&tap1);
+      InputDevType p2 = p2_device_from_option(&tap2);
 
       if (port_device_forced[1])
-         p2 = port_device_frontend[1];
+      {
+         p2   = port_device_frontend[1];
+         tap2 = port_teamtap_frontend[1];
+      }
 
-      apply_port_device(1, p2);
+      apply_port_device(1, p2, tap2);
 
       if (port_device_forced[0])
-         p1 = port_device_frontend[0];
+      {
+         p1   = port_device_frontend[0];
+         tap1 = port_teamtap_frontend[0];
+      }
 
-      apply_port_device(0, p1);
+      apply_port_device(0, p1, tap1);
    }
 
    var.key   = "virtualjaguar_mouse_sensitivity";
@@ -2472,6 +2529,94 @@ static void check_variables(void)
    update_option_visibility();
 }
 
+/* Team Tap sockets 1-3 (#513).
+ *
+ * Everything behind the adapter is an ordinary standard pad, so this is
+ * the plain default RetroPad layout -- byte for byte the mapping the
+ * non-remapped socket-0 branch below uses.
+ *
+ * FIXED, and deliberately so.  The per-port remap tables
+ * (jag_retropad[2][...], enable_alt_inputs) and the numpad-to-keyboard
+ * option (numpad_to_kb[2]) are indexed by PORT and exist because
+ * RetroArch's own Controls menu cannot reach four of the keypad keys (7,
+ * 8, 9 and the two symbol keys).  Growing them to eight sockets would
+ * mean eight copies of every per-port remap option in
+ * libretro_core_options.h for a device most users will never plug in;
+ * pads 3-8 remap through the frontend's Controls menu instead, which
+ * reaches everything in this table.  Documented in
+ * docs/input-devices-user-guide.md. */
+static const struct { unsigned char id; unsigned char slot; } teamtap_map[] = {
+   { RETRO_DEVICE_ID_JOYPAD_UP,     BUTTON_U },
+   { RETRO_DEVICE_ID_JOYPAD_DOWN,   BUTTON_D },
+   { RETRO_DEVICE_ID_JOYPAD_LEFT,   BUTTON_L },
+   { RETRO_DEVICE_ID_JOYPAD_RIGHT,  BUTTON_R },
+   { RETRO_DEVICE_ID_JOYPAD_A,      BUTTON_A },
+   { RETRO_DEVICE_ID_JOYPAD_B,      BUTTON_B },
+   { RETRO_DEVICE_ID_JOYPAD_Y,      BUTTON_C },
+   { RETRO_DEVICE_ID_JOYPAD_SELECT, BUTTON_PAUSE },
+   { RETRO_DEVICE_ID_JOYPAD_START,  BUTTON_OPTION },
+   { RETRO_DEVICE_ID_JOYPAD_X,      BUTTON_0 },
+   { RETRO_DEVICE_ID_JOYPAD_L,      BUTTON_1 },
+   { RETRO_DEVICE_ID_JOYPAD_R,      BUTTON_2 },
+   { RETRO_DEVICE_ID_JOYPAD_L2,     BUTTON_3 },
+   { RETRO_DEVICE_ID_JOYPAD_R2,     BUTTON_4 },
+   { RETRO_DEVICE_ID_JOYPAD_L3,     BUTTON_5 },
+   { RETRO_DEVICE_ID_JOYPAD_R3,     BUTTON_6 }
+};
+
+/* Which frontend port drives which (Jaguar port, tap socket).
+ *
+ * Ports 1 and 2 keep their existing meaning -- socket 0 of Jaguar port 1
+ * and 2 -- so nothing an existing user has bound moves.  The extra
+ * sockets are appended after them, port 1's first.  With one tap on
+ * Jaguar port 1 the four players are therefore on FRONTEND ports 1, 3, 4
+ * and 5, which is the sort of thing that generates a bug report unless
+ * it is written down: docs/input-devices-user-guide.md carries the
+ * table. */
+static const unsigned teamtap_user[2][3] = { { 2, 3, 4 }, { 5, 6, 7 } };
+
+static void update_teamtap_input(void)
+{
+   unsigned port, socket, i;
+
+   for (port = 0; port < 2; port++)
+   {
+      uint8_t *buttons;
+
+      if (!JoystickGetTeamTap((int)port))
+         continue;
+
+      buttons = joypad_buttons[port];
+
+      for (socket = 1; socket < JOYPAD_SOCKETS; socket++)
+      {
+         unsigned  user = teamtap_user[port][socket - 1];
+         uint8_t  *slot = buttons + socket * JOYPAD_SOCKET_SLOTS;
+         /* Unsigned, unlike the int16_t the socket-0 path carries: R3 is
+          * bit 15, so a signed accumulator would go negative there and
+          * the comparison below would be reasoning about sign extension
+          * for no reason. */
+         uint32_t  ret  = 0;
+
+         if (libretro_supports_bitmasks)
+            ret = (uint32_t)(uint16_t)input_state_cb(user, RETRO_DEVICE_JOYPAD,
+                                                     0,
+                                                     RETRO_DEVICE_ID_JOYPAD_MASK);
+         else
+         {
+            for (i = RETRO_DEVICE_ID_JOYPAD_B;
+                 i <= RETRO_DEVICE_ID_JOYPAD_R3; ++i)
+               if (input_state_cb(user, RETRO_DEVICE_JOYPAD, 0, i))
+                  ret |= (uint32_t)1 << i;
+         }
+
+         for (i = 0; i < ARRAY_SIZE(teamtap_map); i++)
+            if (ret & ((uint32_t)1 << teamtap_map[i].id))
+               slot[teamtap_map[i].slot] = 0xff;
+      }
+   }
+}
+
 static void update_input(void)
 {
    unsigned i;
@@ -2483,7 +2628,14 @@ static void update_input(void)
    ret[0] = ret[1] = 0;
    input_poll_cb();
 
-   for(i=BUTTON_FIRST;i<=BUTTON_LAST;i++){
+   /* Clear ALL FOUR SOCKETS per port, unconditionally -- not just the
+    * socket-0 slots [0..20] this loop used to cover, and not gated on
+    * whether a tap is currently attached.  A conditional clear would
+    * leave a pad in socket 2 latching its last press forever the moment
+    * the adapter was detached, and would give the feature two clear
+    * paths to keep in step.  Still bit-identical with no tap selected:
+    * the decode never reads above slot 20 then. */
+   for (i = 0; i < JOYPAD_BUTTON_SLOTS; i++){
        joypad0Buttons[i] = 0x00;
        joypad1Buttons[i] = 0x00;
    }
@@ -2942,6 +3094,14 @@ static void update_input(void)
          InputDevFeed((int)player, dx, dy, buttons);
       }
    }
+
+   /* Team Tap sockets 1-3 (#513).  LAST, after every socket-0 path
+    * including the non-pad suppression above, because those paths clear
+    * socket 0 wholesale (BUTTON_LAST + 1 bytes) and this must not be
+    * undone by one of them.  Inert unless a tap is attached, and
+    * apply_port_device() guarantees a tap and a non-pad device are never
+    * attached to the same port. */
+   update_teamtap_input();
 }
 
 /************************************
@@ -3008,12 +3168,22 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
    InputDevType type = INPUTDEV_PAD;
+   bool teamtap      = false;
 
+   /* Ports 2-7 are the Team Tap's extra sockets (#513).  They carry
+    * nothing but standard pads and the core reads them straight from
+    * input_state_cb, so there is no per-port device state for them --
+    * and every array in this file is sized 2.  The guard stays. */
    if (port > 1)
       return;
 
    switch (device)
    {
+      case RETRO_DEVICE_JAG_TEAMTAP:
+         /* The pad in socket 0 is still an ordinary pad. */
+         type    = INPUTDEV_PAD;
+         teamtap = true;
+         break;
       case RETRO_DEVICE_JAG_MOUSE_ST:
       case RETRO_DEVICE_MOUSE:  /* a plain mouse means the ST wiring */
          type = INPUTDEV_MOUSE_ST;
@@ -3054,13 +3224,18 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
     * right after load, so forcing PAD here used to detach the mouse the
     * core option had just attached, for the whole session -- which is why
     * the feature was never seen working in a frontend. */
-   port_device_frontend[port] = type;
-   port_device_forced[port]   = (type != INPUTDEV_PAD);
+   port_device_frontend[port]  = type;
+   port_teamtap_frontend[port] = teamtap;
+   /* A Team Tap claim is as much a claim as a mouse: without it in this
+    * predicate, selecting the tap from the frontend's Controls menu would
+    * fall straight through to the option below and be discarded. */
+   port_device_forced[port]    = (type != INPUTDEV_PAD || teamtap);
 
-   if (type == INPUTDEV_PAD)
-      type = (port == 1) ? p2_device_from_option() : p1_device_from_option();
+   if (!port_device_forced[port])
+      type = (port == 1) ? p2_device_from_option(&teamtap)
+                         : p1_device_from_option(&teamtap);
 
-   apply_port_device((int)port, type);
+   apply_port_device((int)port, type, teamtap);
    update_option_visibility();
 }
 
@@ -3152,6 +3327,17 @@ bool retro_serialize(void *data, size_t size)
     * returns.  Trailing, so a state written before it existed reads the
     * zero fill below -- see paddle.h for why that needs no version bump. */
    buf += PaddleStateSave(buf);
+
+   /* v13: Team Tap sockets 1-3 (#513).  What a pad behind the adapter
+    * holds is machine-visible at $F14000/$F14002 the instant the title
+    * selects that socket's row code, so a state without it replays
+    * different input -- the same class of bug as #400 and #479.
+    *
+    * STRICTLY LAST, and after the paddle chunk: the paddle landed first
+    * (#544) so every v12 blob develop already writes ends with it.
+    * Appending here keeps those loadable; interleaving would desync the
+    * blob for every state, silently. */
+   buf += JoystickTeamTapStateSave(buf);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -3306,6 +3492,20 @@ bool retro_unserialize(const void *data, size_t size)
       buf += PaddleStateLoad(buf);
    else
       PaddleReset();
+
+   /* v13: Team Tap sockets 1-3.  Older states carry none, so the pads
+    * behind the adapter come back released -- exactly what a pre-v13
+    * core was.  The adapter's own presence is never serialized (it is
+    * user configuration, see joystick.h), so a state saved with a tap
+    * loads into whatever the current session has selected.
+    *
+    * Order mirrors retro_serialize exactly -- paddle, then this.  A v12
+    * blob (which develop writes) stops after the paddle chunk and takes
+    * the reset branch here. */
+   if (version >= STATE_VERSION_TEAMTAP)
+      buf += JoystickTeamTapStateLoad(buf);
+   else
+      JoystickTeamTapStateReset();
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -3892,6 +4092,38 @@ bool retro_load_game(const struct retro_game_info *info)
       { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Right Analog X" },
       { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Right Analog Y" },
 
+      /* Team Tap sockets (#513), frontend ports 3-8.  Joypad only: the
+       * adapter carries standard controllers, and the analog rows above
+       * exist for the bank-switching device, which cannot be reached
+       * through a tap.  Labels match teamtap_map[] exactly -- the fixed
+       * default layout, since the per-port remap options are socket-0
+       * only (see teamtap_map). */
+#define JAG_TAP_DESC(p) \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "B" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "A" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "Numpad 0" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "C" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "Numpad 1" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "Numpad 3" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,     "Numpad 5" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "Numpad 2" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "Numpad 4" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,     "Numpad 6" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Pause" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Option" }
+
+      JAG_TAP_DESC(2),
+      JAG_TAP_DESC(3),
+      JAG_TAP_DESC(4),
+      JAG_TAP_DESC(5),
+      JAG_TAP_DESC(6),
+      JAG_TAP_DESC(7),
+#undef JAG_TAP_DESC
+
       { 0 },
    };
 
@@ -4424,10 +4656,20 @@ void retro_init(void)
     * Tempest 2000's CONTROLLER TYPE menu carries independent P1 and P2
     * toggles, so the rotary is offered on both.  The light gun (#438)
     * is port 1 only for the mirror-image reason: TR10 wires the light-pen
-    * input to that socket and nowhere else. */
+    * input to that socket and nowhere else.
+    *
+    * The Team Tap (#513) is offered on both ports, and its extra sockets
+    * are advertised as frontend ports 3-8 -- see teamtap_user[] for the
+    * mapping and why ports 1 and 2 keep their existing meaning.  Eight
+    * ports are advertised STATICALLY rather than re-pushed when a tap is
+    * selected: TR10 allows one adapter per port for eight pads total, so
+    * eight is the real maximum, and a frontend showing a few unbound
+    * ports is a far smaller cost than a dynamic SET_CONTROLLER_INFO that
+    * has to be re-pushed from two resolution paths. */
    {
       static const struct retro_controller_description port1_devices[] = {
          { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
+         { "Team Tap (4-player adaptor)", RETRO_DEVICE_JAG_TEAMTAP },
          { "Rotary (Tempest)", RETRO_DEVICE_JAG_ROTARY },
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
@@ -4436,6 +4678,7 @@ void retro_init(void)
       };
       static const struct retro_controller_description port2_devices[] = {
          { "Standard Joypad",             RETRO_DEVICE_JAG_PAD },
+         { "Team Tap (4-player adaptor)", RETRO_DEVICE_JAG_TEAMTAP },
          { "Atari ST / PS2 Mouse",        RETRO_DEVICE_JAG_MOUSE_ST },
          { "Amiga Mouse (ST adapter)",    RETRO_DEVICE_JAG_MOUSE_AMIGA },
          { "Amiga Mouse (Amiga adapter)", RETRO_DEVICE_JAG_MOUSE_AMIGA_AD },
@@ -4444,9 +4687,29 @@ void retro_init(void)
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
          { "Analog Stick (paddle ADC)",   RETRO_DEVICE_JAG_PADDLE },
       };
+      /* Team Tap sockets: standard pads only.  TR10 permits an advanced
+       * controller behind the adapter but allows only a plain controller
+       * READ through it, so the mouse / rotary / analog / gun entries
+       * would advertise a configuration the core deliberately does not
+       * model (see apply_port_device). */
+      static const struct retro_controller_description tap_devices[] = {
+         { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
+      };
+      /* Counts are ARRAY_SIZE, never literals.  Two independent branches
+       * (the paddle #505 and this adapter) each appended one entry to
+       * these arrays while both carried the same hand-written literal, so
+       * a merge kept the literal and silently truncated the last device
+       * off each port's list -- a frontend-only symptom no build, lint or
+       * headless test can see. */
       static const struct retro_controller_info ports[] = {
-         { port1_devices, 6 },
-         { port2_devices, 8 },
+         { port1_devices, ARRAY_SIZE(port1_devices) },
+         { port2_devices, ARRAY_SIZE(port2_devices) },
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 3: Jag port 1, socket 1 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 4: Jag port 1, socket 2 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 5: Jag port 1, socket 3 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 6: Jag port 2, socket 1 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 7: Jag port 2, socket 2 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 8: Jag port 2, socket 3 */
          { NULL, 0 },
       };
 
@@ -4520,6 +4783,17 @@ void retro_deinit(void)
     * game silently pay 16 register stores per emulated 68K instruction
     * with nothing in the log to explain where the frame rate went. */
    startM68KTracing        = false;
+   /* Team Tap (#513): same reason -- a resident core would otherwise
+    * start the next session with the previous session's adapter still
+    * attached, and with port_teamtap_active[] agreeing, so nothing would
+    * ever log or clear it.  JoystickSetTeamTap() also releases the pads
+    * in sockets 1-3 on the way down. */
+   JoystickSetTeamTap(0, false);
+   JoystickSetTeamTap(1, false);
+   port_teamtap_frontend[0] = false;
+   port_teamtap_frontend[1] = false;
+   port_teamtap_active[0]   = false;
+   port_teamtap_active[1]   = false;
    /* Link-state edge tracker: same reason as the block above -- a resident
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */

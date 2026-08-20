@@ -65,6 +65,7 @@ test/tools/netlink_pair
 test/tools/perf_iface_witness
 test/tools/netlink_game
 test/tools/joymatrix_identity
+test/tools/teamtap_rom_probe
 test/tools/mouse_decode_test
 test/tools/rotary_decode_test
 test/tools/analog_decode_test

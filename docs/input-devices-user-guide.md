@@ -22,8 +22,8 @@ an analog or driving controller on the same six analog options.
 
 | Option | Values | Default |
 |---|---|---|
-| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
-| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Team Tap (4-player adaptor), Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Team Tap (4-player adaptor), Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
 | *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
 | *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
@@ -318,6 +318,87 @@ The one title known to use it is **Balloons** (Matthias Domin, 2003), a free
 homebrew calibration-and-shooting demo. It opens with a two-target calibration
 screen: point at each target and pull the trigger. Aiming near the bottom of
 the screen quits the program — that is the demo's own behaviour, not a bug.
+
+## Team Tap (4-player adaptor)
+
+Set *Port 1 > Controller Type* or *Port 2 > Controller Type* to **Team Tap
+(4-player adaptor)**, or pick *Team Tap* for that port in your frontend's
+Controls menu. Default is *Auto*, which means a plain joypad — nothing
+changes until you choose it, and there is no per-title auto-select.
+
+The Team Tap is Atari's four-socket adapter: one plugs into a controller
+port and gives it four controller sockets. The Jaguar's row-select lines
+address sixteen rows rather than four, and the adapter simply spreads those
+sixteen across its four sockets — which is why **everything behind it is an
+ordinary Jaguar joypad**. A pad in socket 2 has no idea the adapter is
+there.
+
+**One adapter per port, so up to eight pads.** You can select it on both
+ports independently.
+
+### Which frontend port is which player
+
+The pad you already use on Jaguar port 1 stays on frontend port 1, and port
+2's stays on frontend port 2, so nothing you have already bound moves. The
+extra sockets are appended after them:
+
+| Frontend port | Jaguar port | Tap socket |
+|---|---|---|
+| 1 | 1 | 0 (the pad plugged straight into the adapter's first socket) |
+| 2 | 2 | 0 |
+| 3 | 1 | 1 |
+| 4 | 1 | 2 |
+| 5 | 1 | 3 |
+| 6 | 2 | 1 |
+| 7 | 2 | 2 |
+| 8 | 2 | 3 |
+
+**So with one Team Tap on Jaguar port 1, your four players are on frontend
+ports 1, 3, 4 and 5** — not 1 to 4. Frontend port 2 is still Jaguar port 2,
+where a fifth pad would go.
+
+### Remapping the extra pads
+
+*Port N > Button Remapping* and *Numpad to Keyboard* apply to **socket 0
+only** — they exist because RetroArch's own Controls menu cannot reach four
+of the Jaguar keypad keys, and there are two of them, one per Jaguar port.
+Pads 3 to 8 use the fixed default layout (D-pad, A/B/C on A/B/Y, Option on
+Start, Pause on Select, keypad 0–6 on X/L/R/L2/R2/L3/R3) and are remapped
+from your frontend's own Controls menu, which reaches all of it.
+
+### Standard pads only
+
+A mouse, rotary, analog/driving controller or light gun cannot be put in a
+tap socket. That is a deliberate limit rather than an oversight: Atari's
+manual allows an advanced controller behind the adapter but permits only a
+plain controller *read* through it — "software control of advanced features
+like rumble motors, force feedback and analogue/digital mode will not be
+possible" — so the useful half of the combination does not exist on real
+hardware either. Selecting one of those devices on a port turns that port's
+Team Tap off.
+
+**Do not assume the light gun is unaffected by an adapter it is sharing.**
+The manual says the adapter's six input lines are wire-ORed across all four
+sockets, and the light-pen pin is one of those six. The pulse still reaches
+TOM, but it is not isolated from the other sockets' B0 line, and nobody has
+documented what a gun plus pads on one adapter actually does. This is why
+the core does not offer a gun in a tap socket.
+
+### Which titles use it
+
+**Not established, and this guide will not guess.** A static scan of 27
+corpus ROMs found no negative result: about half compose their row codes in
+a register, so the scan cannot tell whether they address a tap — and that
+half includes NBA Jam TE and White Men Can't Jump, the two titles most often
+named. Turning the option on for a title that does not read the adapter is
+harmless (it changes nothing the title looks at), but there is no verified
+list to point you at yet.
+
+The one program confirmed to drive it here is the PD **Joypad-TeamTap
+Tester** (Matthias Domin, 2000), which sweeps all sixteen row codes on both
+ports and prints its verdict on screen. With the option off it reports
+"TeamTap not found!" for both ports; with it on for a port, that port reads
+"TeamTap Found!".
 
 ## Already shipped
 

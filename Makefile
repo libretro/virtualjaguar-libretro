@@ -1907,10 +1907,21 @@ test/tools/test_hook_gate: test/tools/test_hook_gate.c \
 # $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
 # the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
 test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
-		src/jerry/inputdev.h \
+		src/jerry/inputdev.h src/jerry/joystick.h \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/joymatrix_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Team Tap end-to-end probe (#513): reads the Joypad-TeamTap Tester's own
+# detection verdict out of main RAM.  NOT part of `make test` -- the ROM
+# is in the private corpus, so the tool exits 77 (skip) without it.  See
+# the file header for the invocation.
+test/tools/teamtap_rom_probe: test/tools/teamtap_rom_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/teamtap_rom_probe.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
