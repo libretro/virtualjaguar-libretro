@@ -18,7 +18,7 @@ settle.
 | Device | Verdict |
 |---|---|
 | **Team Tap (#513)** | **Implementable now.** TR10 documents it completely — the full 16-row socket/row-code table, the transparent row-code conversion, the detection method, and the identifying diode. Two independent manual revisions carry the same table, and a PD ROM in the corpus implements the documented detection byte-for-byte. Size **M**. |
-| **Pro Controller (#514)** | **Blocked on a source we do not have.** The device is absent from every volume of the manual set on this machine. TR10's controller taxonomy is closed and its 21 data bits are fully allocated by the standard pad, which forces a dichotomy (§6.3) that no available document resolves. Partially answerable from ROM disassembly — but only partially, and the corpus scan run for this document did not answer it. |
+| **Pro Controller (#514)** | **Implementable now — see §9.** *(§6's original verdict, "blocked on a source we do not have", is preserved below as the honest record of what the manual set supports; a follow-up source hunt found the device documented outside that set.)* Atari's own SDK header (`JAGUAR.INC`, revision 8/08/95, *"added ProController equates"*) and its own *Jaguar Developer Weekly* of 11 Aug 1995 both state the mapping: the five extra buttons alias onto keypad `7`/`8`/`9`/`4`/`6`, i.e. matrix column `J9` rows 1/2/3 and column `J10` rows 1/3. The core's decode is **already correct**; the work is libretro-layer descriptors and a remap preset. Size **S**, no savestate bump. |
 
 ---
 
@@ -542,7 +542,7 @@ Sizing #514 now would be sizing a guess.
 | 5 | 14 of the 20 manual PDFs are image-only scans that were not OCR'd (§1). | Bounded, not eliminated. IDX — the master TOC across the whole set — lists no controller subsection in any skipped volume, and no Pro Controller entry anywhere. If #514 is ever revisited, OCR'ing `03 - Software Reference.pdf` (103 pp) is the largest remaining stone, though TR8 already carries that volume's JERRY joystick material in text form. |
 | 6 | `docs/jtrm-jerry.md` §"Joystick Interface" cites `src/jerry/joystick.c` as its source, not the manual — a distilled "JTRM" doc sourced from the code it is meant to validate. | Noted, not fixed here (this spike touched no other doc). CLAUDE.md's rule is that the distilled docs supersede source comments; a distilled doc *derived from* the source inverts that. Worth a follow-up that rewrites that section from TR10 §"Reading a Jaguar Controller" + the §3.2 table. |
 | 7 | Why does Club Drive (1994) sweep socket-1 row codes on port 1 (§5.3)? | Unresolved; plausibly an advanced-controller read under TR04's 1995 rules. Not investigated — out of scope. |
-| 8 | Which matrix slots do the Pro Controller's extra buttons occupy, if branch (a) in §6.3 is correct? | **Unanswerable from any source available to this spike**, and probably unanswerable from ROM disassembly (§6.4), because on real hardware "`X` pressed" and "the aliased keypad key pressed" are the same electrical event. Needs an Atari document nobody here has, or a hardware capture. |
+| 8 | Which matrix slots do the Pro Controller's extra buttons occupy, if branch (a) in §6.3 is correct? | **CLOSED — see §9.** Branch (a) confirmed and the slots recovered from published Atari source (the SDK's `JAGUAR.INC` ProController equates + the 11 Aug 1995 *Jaguar Developer Weekly*): `Z`→keypad `7` (row 1, `J9`), `Y`→`8` (row 2, `J9`), `X`→`9` (row 3, `J9`), left shoulder→`4` (row 1, `J10`), right shoulder→`6` (row 3, `J10`). The original wording below was right that the *manual set* could not answer it and that ROM disassembly could not either — it was wrong to assume those were the only channels. |
 | 9 | Which retail titles actually use the Team Tap? | Not established. The static scan (§5.3) leaves the two most-cited candidates UNRESOLVED. Answer this dynamically after #513 exists (log the row codes a running title requests), not from a title list. |
 
 ---
@@ -563,3 +563,264 @@ Sizing #514 now would be sizing a guess.
 - **Update [`docs/lightgun-design.md`](lightgun-design.md) open question 3** with §4's
   finding when #438 or #513 is next touched. The current wording says "plausible, not
   TR10-confirmed"; TR10 does address it, and the answer leans the other way.
+
+> **Superseded for #514 — see §9.** The bullet above stands as an accurate record of what
+> the manual set could support. A follow-up source hunt found the device documented outside
+> the manual set, in Atari's own SDK header and developer newsletter. **#514 unblocks at
+> size S**, with no change to `src/jerry/joystick.c` and no savestate bump.
+
+---
+
+## 9. Pro Controller — RESOLVED from published Atari source
+
+**Added by the #514 source hunt.** §6 established that the Pro Controller is absent from
+the manual set on this machine and left the §6.3 dichotomy open. That was the right
+conclusion *from the manuals*. The device is documented — just not in the Technical
+Reference. It is documented in **Atari's own SDK header and in Atari's own developer
+newsletter**, both dated August 1995, and both publicly published.
+
+**Verdict: branch (a) — aliasing — is confirmed, and the slot mapping is recovered.**
+The Pro Controller's five extra buttons are wired onto five existing keypad positions in
+the standard matrix. There is no new controller-type identifier, no bank switching, and
+no new register surface. **Open question 8 is closed.**
+
+### 9.1 Sources
+
+| Ref | Source | Rank |
+|---|---|---|
+| **SDK.INC** | `jaguar/include/jaguar.inc` — *"JAGUAR.INC Hardware Equates for JAGUAR System / COPYRIGHT 1992-1995 Atari Computer Corporation"*, revision line **`8/08/95 - Fixed two Blitter LFU Equates, added ProController equates, …`**. Read at [`cubanismo/jaguar-sdk`](https://github.com/cubanismo/jaguar-sdk/blob/master/jaguar/include/jaguar.inc). | **Decisive.** Published source that names each extra button and gives the exact bit it occupies. |
+| **DEVNEWS** | `jaguar/docs/docs/devnews/950811.txt` — ***Jaguar Developer Weekly, August 11, 1995, Vol.1, No.8***, Atari's own developer newsletter, section "Jaguar ProController". Reprinted verbatim in `950818.txt` and `950825.txt`. [Link](https://github.com/cubanismo/jaguar-sdk/blob/master/jaguar/docs/docs/devnews/950811.txt). | **Decisive.** Atari prose stating the mapping, and stating explicitly that a program checks *the same bit* as the aliased keypad key. |
+| **JOYTEST** | `jaguar/source/joytest/jt_loop.s` — Atari's `ReadJoypads` sample (SDS, 9/2/94), the routine SDK.INC's own comment names as the origin of its bit numbering (*"Bits when LONGword is formatted as below (from JOYTEST\JT_LOOP.S)"*). | **Strong.** Supplies the row-code scan order that converts SDK.INC's bit numbers into (row, column) positions. |
+| **MIRRORS** | The same `jaguar.inc`, byte-identical through the ProController block, in two unrelated projects: [`mwenge/tempest2k`](https://github.com/mwenge/tempest2k/blob/master/src/jaguar.inc) (Tempest 2000 disassembly) and `scarleyyXD/bubsy3_disasm`. | **Corroboration.** Defeats the "one repo, one corpus" objection — three independently-assembled trees carry the same Atari file. |
+| **COMMUNITY** | Songbird Productions' [Jaguar ProController](https://songbird-productions.com/product/jaguar-procontroller/) product page; AtariAge / Atari I/O / MiSTer-FPGA forum statements of `Z=7, Y=8, X=9, L=4, R=6`; [BlueRetro's Jaguar interface wiki](https://github.com/darthcloud/BlueRetro/wiki/Jaguar-interface). | **Weak — leads only.** Recorded because they agree with the decisive sources, not as evidence for them. Per §1's standard these would not have been enough alone. |
+
+Provenance chain for SDK.INC and DEVNEWS: `cubanismo/jaguar-sdk`'s README states it is a
+modernized re-release of the Jaguar development tools published by Belboz at
+`https://www.hillsoftware.com/files/atari/jaguar/`, with tool fixes and Makefile rework;
+the include files and `docs/` tree carry Atari's own headers and dates unchanged. **Not
+verified by this pass:** the Belboz archives themselves were not downloaded and diffed
+against the GitHub tree. The MIRRORS row is the practical substitute.
+
+### 9.2 The equates — SDK.INC, verbatim
+
+The keypad block, immediately followed by the ProController block:
+
+```
+KEY_STAR        EQU     16              ;keypad
+KEY_7           EQU     17
+KEY_4           EQU     18
+KEY_1           EQU     19
+
+KEY_0           EQU     4
+KEY_8           EQU     5
+KEY_5           EQU     6
+KEY_2           EQU     7
+
+KEY_HASH        EQU     0
+KEY_9           EQU     1
+KEY_6           EQU     2
+KEY_3           EQU     3
+
+SHIFT_L         EQU     18              ; ProController Mappings
+SHIFT_R         EQU     2
+FIRE_Z          EQU     17
+FIRE_Y          EQU     5
+FIRE_X          EQU     1
+```
+
+Every ProController equate is numerically identical to a keypad equate:
+`SHIFT_L = KEY_4 = 18`, `SHIFT_R = KEY_6 = 2`, `FIRE_Z = KEY_7 = 17`,
+`FIRE_Y = KEY_8 = 5`, `FIRE_X = KEY_9 = 1`. They are aliases, in Atari's own header,
+added in the revision the header's own changelog labels *"added ProController equates"*.
+
+### 9.3 The newsletter — DEVNEWS, verbatim
+
+> *"The ProController features three new primary fire buttons labeled "X", "Y", and "Z"
+> to complement the "A", "B", and "C" buttons from a standard joypad. Another new
+> addition is a pair of "Left" and "Right" direction buttons at the top of the
+> controller.*
+>
+> *From your Jaguar programs, reading the new buttons is very simple, because they map
+> directly to keys on the numeric keypad, as follows:*
+>
+> *X = "9" / Y = "8" / Z = "7" / Left = "4" / Right = "6"*
+>
+> *To see if the "X" button is pressed, for example, you simply check the same bit as you
+> would for the "9" key on the keypad."*
+
+The same issue announces the include-file update that produced SDK.INC's 8/08/95
+revision: *"There are new definitions for masks to aid in reading the new Jaguar
+ProController."* The two artifacts are three days apart and describe each other.
+
+### 9.4 Deriving the matrix positions
+
+SDK.INC's bit numbers are positions in the 32-bit word JOYTEST builds, documented in
+SDK.INC itself as `xxApxxBx RLDU147* xxCxxxox 2580369#` (bit 31 leftmost). JOYTEST's
+`ReadJoypads` builds it with four literal row writes — the same four socket-0 row codes
+§3.2 and §2 already established:
+
+| Write | Port-1 nibble | Row | Bits gathered |
+|---|---|---|---|
+| `move.w #$81FE,(a0)` | `$E` | 0 | joypad directions, Pause, A |
+| `move.w #$81FD,(a0)` | `$D` | 1 | `* 7 4 1`, B |
+| `move.w #$81FB,(a0)` | `$B` | 2 | `2 5 8 0`, C |
+| `move.w #$81F7,(a0)` | `$7` | 3 | `3 6 9 #`, Option |
+
+Combining that with TR10's standard matrix (§6.1), the five extra buttons land as:
+
+| Pro Controller button | Aliased keypad key | SDK.INC bit | TR10 row | TR10 column |
+|---|---|---|---|---|
+| **Z** | `7` | 17 | Row 1 | `J9` / `J13` |
+| **Y** | `8` | 5 | Row 2 | `J9` / `J13` |
+| **X** | `9` | 1 | Row 3 | `J9` / `J13` |
+| **Left shoulder** | `4` | 18 | Row 1 | `J10` / `J14` |
+| **Right shoulder** | `6` | 2 | Row 3 | `J10` / `J14` |
+
+The layout is not arbitrary: X/Y/Z occupy one column (`J9`) across rows 3/2/1, and the two
+shoulders occupy the adjacent column (`J10`) on rows 1 and 3. **All five sit inside the
+21 bits §6.1 already accounted for.** Nothing is added to the matrix — which is exactly
+why the manual's controller chapter never needed a Pro Controller section, and why §6.2's
+negative was both correct and misleading.
+
+### 9.5 Cross-check against the shipping core
+
+`src/jerry/joystick.h`'s button enum indexes `joypad0Buttons[21]` as `row * 4 + column`
+with column order `J8, J9, J10, J11` — the same order `JoystickReadWord`'s
+`mask[4] = { 0xFEFF, 0xFDFF, 0xFBFF, 0xF7FF }` loop applies. The five slots resolve to
+constants that already exist:
+
+| Button | Core constant | Index | = row·4 + col |
+|---|---|---|---|
+| Z | `BUTTON_7` | 5 | row 1, `J9` ✔ |
+| Y | `BUTTON_8` | 9 | row 2, `J9` ✔ |
+| X | `BUTTON_9` | 13 | row 3, `J9` ✔ |
+| Left shoulder | `BUTTON_4` | 6 | row 1, `J10` ✔ |
+| Right shoulder | `BUTTON_6` | 14 | row 3, `J10` ✔ |
+
+Independent agreement between Atari's bit numbering and this core's array layout, arrived
+at from opposite ends. **The core's matrix decode is already byte-correct for the Pro
+Controller.** §6.3 branch (a)'s consequence holds: the emulator already emulates this
+device completely.
+
+### 9.6 What this settles, and what it does not
+
+**Settled:**
+
+1. Branch (a) of §6.3. The device is a standard pad electrically; it reports
+   `C2/C3 = %11` like any pad (or like nothing connected), needs no reserved sub-type
+   code, and does not bank-switch. §6.3's argument *against* branch (b) was correct.
+2. Open question 8 — *which* slots. Recovered outright, from published Atari source, with
+   the row/column derivation in §9.4.
+3. §6.3's "a standard-pad-only title misreads one" consequence is now established rather
+   than conditional. A title that reads keypad `7`/`8`/`9`/`4`/`6` cannot distinguish
+   those keys from the Pro Controller's extra buttons; Atari's own instruction is to check
+   *the same bit*.
+
+**Not settled, and honestly labelled:**
+
+4. **There is no detection method, and Atari published none.** DEVNEWS promised *"more
+   information about the Jaguar ProController … in an upcoming issue"*; the remaining 1995
+   issues in the SDK (`950901`, `950908`, `950915`, `950922`) contain no further mention —
+   searched, empty. A program cannot tell a Pro Controller from a standard pad, which is
+   consistent with the community observation (COMMUNITY, weak) that titles with Pro
+   Controller support present a manual *"ProController / Standard"* menu choice rather
+   than autodetecting. Treat that title-behaviour claim as a lead, not a finding.
+5. **The GCC header does not carry the equates.** DEVNEWS says both `JAGUAR.INC` (MADMAC)
+   and `JAGUAR.H` (GCC) were updated. In the SDK snapshot read here,
+   `jaguar/include/jaguar.h` has the keypad defines but **no** `SHIFT_L`/`SHIFT_R`/
+   `FIRE_X`/`FIRE_Y`/`FIRE_Z`. Either the surviving `jaguar.h` predates the update or the
+   C side never got them. Irrelevant to emulation; recorded so nobody re-derives it as a
+   discrepancy.
+6. **Whether the pad's own keypad keys `7`/`8`/`9`/`4`/`6` are physically wired to the
+   same matrix nodes as X/Y/Z/L/R.** Product photos show the Pro Controller retains the
+   full 12-key keypad, so two physical buttons would share one node — the natural reading
+   of "map directly", but no schematic or teardown was found (§9.8). It does not change
+   the emulation either way: the console sees one bit.
+7. **Which retail titles read these five slots.** Not established here. Same shape as Q9
+   for the Team Tap and answerable the same way — dynamically, by logging which matrix
+   slots a running title samples. A static string scan of `Missile Command 3D` and
+   `Atari Karts` for "PRO"/"CONTROLLER" found nothing, which is expected: Jaguar titles
+   draw menu text from bitmap fonts, so a null result there carries no information.
+
+### 9.7 #514 is now implementable — size **S**
+
+This replaces §6.5's "sizing #514 now would be sizing a guess", and confirms the **S**
+that §6.5 named as the outcome *if* branch (a) held. It does.
+
+**No change to `src/jerry/joystick.c`.** The decode is already correct (§9.5); the extra
+buttons are `BUTTON_7`, `BUTTON_8`, `BUTTON_9`, `BUTTON_4`, `BUTTON_6`, all of which the
+existing tables already route. `joypad0Buttons[21]` does not widen, so — unlike #513 —
+**there is no savestate change and no `STATE_VERSION` bump**.
+
+The work is entirely in `libretro.c`:
+
+- A per-port "Pro Controller" device type / preset alongside the existing ones, default
+  off, which sets the five RetroPad bindings to the §9.4 slots. Today's defaults bind
+  something else: `RETRO_DEVICE_ID_JOYPAD_X → "Numpad 0"`, `Y → "C"`, `L → "Numpad 1"`,
+  `R → "Numpad 2"` (input-descriptor table in `retro_set_environment`). The remap
+  machinery (`jag_retropad[2][]`, `retropad_option_map[]`, `get_button_id()`) already
+  supports every target, so this is table data, not new plumbing.
+- Input descriptors, so the frontend's Controls menu says `X (Pro)` / `Z (Pro)` /
+  `Shoulder L (Pro)` rather than `Numpad 9`.
+- The RetroPad has four face buttons against the Jaguar's six, so which of A/B/C/X/Y/Z
+  gets a face button and which gets a shoulder is a **product decision**, not a hardware
+  one. Do not pretend the manual answers it.
+- Keep it opt-in. §9.6 item 3 is the reason: with the preset on, a title that reads keypad
+  digits sees genuine digit presses from the shoulder and X/Y/Z bindings. That is
+  authentic hardware behaviour, and still surprising — same class as the mouse's
+  documented phantom-digit quirk.
+
+**Guardrail:** `test/tools/joymatrix_identity.c` must stay byte-identical with the preset
+off. Since nothing in `joystick.c` changes, that should be free — which makes it a cheap,
+meaningful assertion rather than a formality.
+
+**Test vector:** the harness can already inject these slots headlessly —
+`--press N:0` … `--press N:6` reach the same `joypadNButtons[]` entries — so a "does this
+title react to X" check needs no new tooling.
+
+### 9.8 Negative space — what was searched and came up empty
+
+Recorded so nobody repeats it:
+
+- **Atari `jaguar.h` (GCC header)** — no ProController defines (§9.6 item 5).
+- **Jaguar Developer Weekly `950901`, `950908`, `950915`, `950922`** — the promised
+  follow-up article does not exist in these issues; no occurrence of "controller".
+- **The rest of the SDK tree** — `jaguar/3d/lib/joypad.c`, `joyinp.s`, `joypad.inc`,
+  `qsound/joypad.s` and the `joytest` sample contain **no** ProController handling. The
+  aliasing is why: a program that reads the keypad already reads the pad. `joytest`'s own
+  `FIRE_X`/`FIRE_Y` symbols are screen coordinates (40, 90), not button bits — a name
+  collision that will mislead the next reader of that directory.
+- **A ProController schematic, teardown or pinout** — not found. Searched manufacturer and
+  reproduction-vendor pages (Songbird), controller-adapter projects
+  (`dgrubb/Jaguar-USB-tap`, BlueRetro) and hardware forums. Only the button *count* is
+  documented by vendors; nobody publishes the internal matrix. This is why §9.6 item 6
+  stays open.
+- **Songbird's ProController product page** — confirms six fire buttons and two shoulder
+  buttons; states **no** mapping, no keypad detail, no title list.
+- **BlueRetro's Jaguar interface wiki** — its matrix tables are page images, not text, and
+  its source (`main/adapter/wired/jag.c`) encodes an adapter author's *chosen* host remap,
+  not the retail pad's wiring. Not usable as evidence for this question, though it is a
+  reasonable second opinion on the standard matrix.
+- **In-corpus string scan** for `PRO CONTROLLER` / `PROCONTROLLER` / `PRO PAD` in
+  `Missile Command 3D (1995).jag` and `Atari Karts (1995).jag` — nothing, and uninformative
+  (§9.6 item 7).
+- **`forums.atari.io` thread 3574 ("Jaguar Pro Controller additional button encoding?")
+  and `misterfpga.org` thread 5145** — both return HTTP 403 to automated fetches. Their
+  content is reachable only through search-engine summaries, which is why they are ranked
+  COMMUNITY/weak rather than read directly. Neither is needed: the decisive sources are
+  Atari's own.
+
+### 9.9 Amendments to earlier sections
+
+- **§6.2's negative stands as written** — the Pro Controller genuinely is absent from the
+  manual set. What §6 got wrong was the implicit assumption that the manual set was the
+  only place Atari documented hardware. It was not: the SDK include files and the
+  developer newsletter are separate publication channels, and both carry it. Worth
+  generalising — **for a 1995 Atari peripheral, check `devnews` and the SDK headers before
+  concluding "undocumented".**
+- **§6.3** — dichotomy resolved in favour of branch (a); §9.4 supplies the slots §6.3 said
+  the manual could not give.
+- **§6.4** — its pessimism about ROM disassembly was correct but moot; the answer came
+  from source, not from a ROM.
+- **§6.5** — superseded by §9.7. #514 unblocks at size **S**.
+- **§7 Q8** — closed; see the amended row.
