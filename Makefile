@@ -1036,7 +1036,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1090,6 +1090,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# concurrent `make test` runs cannot silently share the SO_REUSEPORT
 	@# socket and consume each other's beacons.
 	VJ_DISC_PORT=$$((23000 + ($$$$ % 4000))) ./test/tools/netlink_rebuild_witness ./$(TARGET)
+	@# Perf-interface plumbing (#510).  Nothing else in the suite answers
+	@# env 28, so without this the whole feature short-circuits at
+	@# `if (vjPerfActive)` and a broken registration would still be green.
+	@# Also the gate on probe balance: a VJP_ENTER region that gains an
+	@# early return silently wedges its slot off for the rest of a session.
+	./test/tools/perf_iface_witness ./$(TARGET) || test $$? -eq 77
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
@@ -1670,6 +1676,13 @@ test/tools/netlink_discover_probe: test/tools/netlink_discover_probe.c src/jerry
 test/tools/netlink_rebuild_witness: test/tools/netlink_rebuild_witness.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/netlink_rebuild_witness.c -ldl
+
+# Same standalone-loader shape, and for the same reason: this test must BE
+# the frontend (it supplies perf_register/perf_start/perf_stop itself), which
+# the shared harness cannot do.  See the file header.
+test/tools/perf_iface_witness: test/tools/perf_iface_witness.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/perf_iface_witness.c -ldl
 
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c

@@ -18,6 +18,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 
 #include "cheat.h"
 #include "crash_detect.h"
+#include "perf_iface.h"
 #include "vjtrace.h"
 #include "crc32.h"
 #include "biosdb.h"
@@ -4163,6 +4164,12 @@ void retro_init(void)
 
    environ_cb(RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL, &level);
 
+   /* Per-subsystem timing counters, rendered by the frontend's own
+    * performance-counter UI (issue #510).  This is the only profiling route
+    * that reaches a device we cannot attach a profiler to -- everything in
+    * docs/profiling.md is host-side.  Inert when the frontend declines. */
+   VJPerfInit(environ_cb);
+
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
@@ -4216,6 +4223,11 @@ void retro_init(void)
 void retro_deinit(void)
 {
    libretro_supports_bitmasks = false;
+
+   /* Dump totals to the frontend log before going inert.  RetroArch shows
+    * the same numbers in its UI, but a log line is what can actually be
+    * retrieved from a locked-down tvOS box. */
+   VJPerfDeinit();
 
    /* Belt-and-suspenders: shut down emulator subsystems if the frontend
     * calls deinit without unload first (videoBuffer != NULL means a game

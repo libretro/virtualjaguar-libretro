@@ -37,6 +37,7 @@
 #include "settings.h"
 #include "../core/vjtrace.h"
 #include "../core/crash_detect.h"
+#include "perf_iface.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -1414,8 +1415,13 @@ void GPUSyncToM68K(void)
    if (run <= 0)
       return;
 
+   /* Bracketed here, not around GPUExec's body: this measures the GPU time
+    * a 68K bus access pulled in, which is the term that makes vj_m68k_slice
+    * interpretable (perf_iface.h).  It NESTS inside vj_gpu_exec on purpose. */
    gpuSliceSpent += run;
+   VJP_ENTER(VJP_GPU_SYNC);
    GPUExec(run);
+   VJP_LEAVE(VJP_GPU_SYNC);
 }
 
 // Main GPU execution core
@@ -1440,6 +1446,11 @@ void GPUExec(int32_t cycles)
       gpu_control &= ~0x10;
    }
 #endif
+   /* After the two guards above, deliberately: a halted or single-stepped
+    * GPU does no work, and counting those calls would dilute the average
+    * with no-ops.  No return between here and VJP_LEAVE (perf_iface.h). */
+   VJP_ENTER(VJP_GPU);
+
    GPUHandleIRQs();
    gpu_releaseTimeSlice_flag = 0;
    gpu_in_exec++;
@@ -1538,6 +1549,8 @@ void GPUExec(int32_t cycles)
    }
 
    gpu_in_exec--;
+
+   VJP_LEAVE(VJP_GPU);
 }
 
 INLINE static void executeOpcode(uint32_t index) {
