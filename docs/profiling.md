@@ -2,13 +2,102 @@
 
 How to measure where the Virtual Jaguar libretro core actually spends time.
 
-> **Everything below is host-side** (macOS/Linux, Instruments/`perf`/`sample`).
-> None of it reaches a locked-down console/TV device, which is exactly where
-> the open performance work is aimed — see #509 (interpreter optimisation
-> epic for older/slower platforms) and #510 (wiring RetroArch's
-> `GET_PERF_INTERFACE` for on-device, per-subsystem timing). If you're
-> reading this to investigate a report from tvOS, Android, or a console
-> port, #510 is the gap; this guide can't answer that question yet.
+> **Investigating a report from tvOS, Android or a console port? Start with
+> [On-device profiling](#on-device-profiling--retroarchs-performance-counters).**
+> Everything else in this guide is host-side (macOS/Linux,
+> Instruments/`perf`/`sample`) and cannot reach a device you can't attach a
+> profiler to. Context for the wider effort: #509.
+
+## On-device profiling — RetroArch's performance counters
+
+The core registers eight timing counters through
+`RETRO_ENVIRONMENT_GET_PERF_INTERFACE`, and RetroArch renders them in its own
+UI on every platform including tvOS. This is the only route that measures the
+device that is actually slow.
+
+Nothing to build: it ships in release builds and is inert until a frontend
+offers the interface.
+
+### Capturing
+
+1. In RetroArch, **Settings → Frontend → Performance Counters → On**
+   (older builds: *Settings → Logging → Performance Counters*).
+2. Load content, play the part that is slow, then quit the core — totals are
+   also written to the RetroArch log at unload, which is usually easier to
+   retrieve off a locked-down device than reading them off the TV.
+3. **Settings → Logging → Log Verbosity → On** if you want the log copy.
+
+### The counters
+
+| Counter | What it brackets |
+| --- | --- |
+| `vj_m68k_slice` | One 68K slice from the event loop |
+| `vj_gpu_exec` | All GPU RISC execution, every entry path |
+| `vj_dsp_exec` | All DSP RISC execution, every entry path |
+| `vj_gpu_sync` | The part of `vj_gpu_exec` pulled in by a 68K bus access |
+| `vj_dsp_sync` | The part of `vj_dsp_exec` pulled in by a 68K bus access |
+| `vj_op_halfline` | One Object Processor halfline render |
+| `vj_blitter` | One blit, whichever engine is selected |
+| `vj_dac_mix` | One frame of audio mixing |
+
+### Reading them — they deliberately overlap
+
+**These do not sum to frame time and are not a pie chart.** The Jaguar's
+processors do not run in disjoint phases, and two nestings are real:
+
+- A 68K access into GPU/DSP local RAM runs RISC cycles inline via
+  `GPUSyncToM68K()` / `DSPSyncToM68K()`, so `vj_m68k_slice` **contains** RISC
+  time.
+- The Object Processor runs the GPU inline from a halfline callback, so
+  `vj_op_halfline` **contains** GPU time.
+
+`vj_gpu_sync` / `vj_dsp_sync` exist to make the first one measurable rather
+than merely disclosed. To decompose:
+
+```
+real 68K work     ~=  vj_m68k_slice - vj_gpu_sync - vj_dsp_sync
+slice-driven GPU  ~=  vj_gpu_exec   - vj_gpu_sync
+```
+
+`vj_gpu_exec` and `vj_dsp_exec` need no correction — every path that runs RISC
+cycles goes through them.
+
+### Two caveats worth stating plainly
+
+**Enabling the counters costs time.** `vj_gpu_exec` alone brackets ~1,700
+calls per frame, each taking two clock reads. Use the numbers for *relative
+attribution* between subsystems, not as an absolute frame budget, and don't
+compare a counters-on session against a counters-off one for total speed.
+
+**It cannot perturb the emulation.** The instrumentation touches no emulated
+state — `test/tools/perf_iface_witness` asserts that the framebuffer is
+byte-identical with counters on and off, so a capture is measuring the same
+machine you were playing.
+
+### Sample shape
+
+From `perf_iface_witness` on `yarc.j64`, 120 frames — the ordering is the
+point, not the absolute numbers:
+
+```
+vj_gpu_exec      calls=201045  total=475217000   <- dominates
+vj_blitter       calls=1433    total=100466000   <- few calls, expensive each
+vj_op_halfline   calls=31440   total=26878000
+vj_m68k_slice    calls=200390  total=6772000     <- small
+vj_dsp_exec      calls=200390  total=4333000
+vj_dac_mix       calls=120     total=14000
+vj_gpu_sync      calls=0       total=0           <- this title never syncs
+vj_dsp_sync      calls=0       total=0
+```
+
+### Adding a counter
+
+Add a slot to the enum in [`src/core/perf_iface.h`](../src/core/perf_iface.h),
+an identifier to `vjperf_idents[]`, and a `VJP_ENTER`/`VJP_LEAVE` pair at the
+site. **Read the placement rule in that header first** — the probe goes after
+a function's top-of-function guards, and there must be no `return` between
+ENTER and LEAVE, or the slot leaks its nesting depth and silently measures
+nothing for the rest of the session. `perf_iface_witness` gates that.
 
 ## TL;DR — `make benchmark`
 
@@ -17,9 +106,10 @@ Wall-clock baseline you can run on every commit:
 ```bash
 make benchmark                              # default: yarc.j64, 600 frames, fast blitter
 make benchmark BENCH_FRAMES=3000            # longer run (smoother numbers)
-make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path -- do not
-                                             # assume "fast" is faster; it is scalar-only
-                                             # while accurate is SIMD-accelerated (#511)
+make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path.  Measured
+                                             # on arm64 (#511): fast is never slower, and
+                                             # ~2.2x faster in blit-heavy scenes despite
+                                             # being scalar while accurate is NEON.
 make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
 ```
 
