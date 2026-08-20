@@ -36,12 +36,30 @@
  *      cache clears immediately: TitleDBTitleName() is non-NULL after load
  *      and NULL after unload, so a later option read cannot see stale
  *      per-title overrides from the previous content.
+ *   7  AvP, default options, PLUS a programmatically-installed negative
+ *      entry (issue #464) flagging virtualjaguar_true_color=enabled --
+ *      the exact value AvP's own positive row would substitute at
+ *      default. The substitution must be REFUSED (shadowFBActive == 0,
+ *      stock value kept) while the unrelated internal_resolution key is
+ *      unaffected (shadowHiresN == 2), and a [titledb] warning names the
+ *      refusal. Installed via TitleDBSetNegativeForTest(), the same
+ *      "no canary row in the shipped table" reasoning test_hook_gate uses
+ *      for hooks[] -- it would otherwise make AvP's real DB row unsafe
+ *      for every user, not just this test process.
+ *   8  AvP, virtualjaguar_true_color=enabled set EXPLICITLY by the user,
+ *      PLUS the same negative entry as case 7 -- the user's choice must
+ *      still be HONOURED (shadowFBActive != 0) because a negative entry
+ *      may refuse a per-title DEFAULT but must never override an
+ *      explicit user choice; a [titledb] warning is still logged so a bug
+ *      report against this title starts from the right hypothesis.
  *
- * The [titledb] line is logged at RETRO_LOG_INFO via LOG_INF(), which the
- * harness's cb_log filters out below RETRO_LOG_WARN unless
- * VJ_HARNESS_LOG_INFO=1 is set (see harness.c) -- this test sets it before
- * the core can log anything, then redirects stderr to a temp file for the
- * duration of the core load so the captured text can be grepped afterward.
+ * The [titledb] substitution/miss lines are logged at RETRO_LOG_INFO via
+ * LOG_INF(), which the harness's cb_log filters out below RETRO_LOG_WARN
+ * unless VJ_HARNESS_LOG_INFO=1 is set (see harness.c) -- this test sets it
+ * before the core can log anything, then redirects stderr to a temp file
+ * for the duration of the core load so the captured text can be grepped
+ * afterward. The known-bad lines (cases 7/8) are LOG_WRN and are captured
+ * either way -- same reasoning as test_hook_gate.c's apply/refuse pair.
  *
  * Build:  cc -O2 -Wall -std=c99 $(INCFLAGS) -o test/tools/test_pertitle_db \
  *           test/tools/test_pertitle_db.c test/harness/harness.c -ldl -lm
@@ -55,6 +73,12 @@
 #include <string.h>
 #include <unistd.h>
 #include "../harness/harness.h"
+#include "../../src/core/titledb.h"
+
+/* Cases 7/8 (issue #464): a fixed negative row flagging AvP's own
+ * true_color positive default as known-bad, installed programmatically
+ * so the shipped table stays clean (see the case-7 header comment). */
+static TitleDBNegativePair negative_true_color[2];
 
 /* ----------------------------------------------------------------
  * stderr capture: redirect around the core load so the [titledb]
@@ -145,7 +169,7 @@ int main(int argc, char **argv)
     int *shadow_active_ptr;
     const char *(*title_name_fn)(void);
     void (*retro_unload_game_fn)(void);
-    harness_result results[4];
+    harness_result results[6];
     unsigned nres = 0;
     int pass;
     int did_manual_unload = 0;
@@ -161,9 +185,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
             case_num = atoi(argv[i + 1]);
     }
-    if (case_num < 1 || case_num > 6) {
+    if (case_num < 1 || case_num > 8) {
         fprintf(stderr,
-                "usage: test_pertitle_db [core] <rom> --case N[1-6] "
+                "usage: test_pertitle_db [core] <rom> --case N[1-8] "
                 "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -180,6 +204,27 @@ int main(int argc, char **argv)
     if (!cfg.rom_path) {
         fprintf(stderr, "test_pertitle_db: no ROM path given\n");
         return 1;
+    }
+
+    /* Cases 7/8 (issue #464): install the negative row BEFORE
+     * harness_load_rom(), which is where retro_load_game() -> check_
+     * variables() -> get_variable_pertitle() runs and consults it --
+     * mirrors test_hook_gate.c's ordering for TitleDBSetHooksForTest(). */
+    if (case_num == 7 || case_num == 8) {
+        void (*set_negative)(const TitleDBNegativePair *, int);
+
+        set_negative = (void (*)(const TitleDBNegativePair *, int))
+            harness_dlsym(&cfg, "TitleDBSetNegativeForTest");
+        if (!set_negative) {
+            fprintf(stderr, "test_pertitle_db: TitleDBSetNegativeForTest not "
+                            "exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        negative_true_color[0].key   = "virtualjaguar_true_color";
+        negative_true_color[0].value = "enabled";
+        negative_true_color[1].key   = NULL;
+        negative_true_color[1].value = NULL;
+        set_negative(negative_true_color, 1);
     }
 
     log_capture_begin();
@@ -296,6 +341,41 @@ int main(int argc, char **argv)
                 : "retro_unload_game() left stale titledb state");
         pass = had_title && title_name_fn && retro_unload_game_fn
             && title_name_fn() == NULL;
+        break;
+    }
+    case 7: {
+        /* Default substitution refused: true_color stays OFF (the negative
+         * row wins over the positive one for this key), internal_resolution
+         * is untouched (a different key, still substituted normally). */
+        int tc_refused  = (*shadow_active_ptr == 0);
+        int hires_ok    = (*hires_n_ptr == 2);
+        int warn_logged = log_contains("true_color=enabled is known-bad")
+                        && log_contains("refusing the per-title default");
+        results[nres++] = mkres(tc_refused, "case7_unsafe_default_refused",
+            tc_refused ? "shadowFBActive == 0 (known-bad default refused)"
+                       : "shadowFBActive != 0 (unsafe default was applied!)");
+        results[nres++] = mkres(hires_ok, "case7_unrelated_key_unaffected",
+            hires_ok ? "shadowHiresN == 2 (internal_resolution still applied)"
+                     : "shadowHiresN != 2");
+        results[nres++] = mkres(warn_logged, "case7_refusal_logged",
+            warn_logged ? "[titledb] refusal warning logged"
+                        : "no [titledb] refusal warning found");
+        pass = tc_refused && hires_ok && warn_logged;
+        break;
+    }
+    case 8: {
+        /* Explicit user choice honoured despite the same negative row. */
+        int tc_honored  = (*shadow_active_ptr != 0);
+        int warn_logged = log_contains("true_color=enabled is known-bad")
+                        && log_contains("explicit user choice honored");
+        results[nres++] = mkres(tc_honored, "case8_user_choice_honored",
+            tc_honored ? "shadowFBActive != 0 (explicit user value honored)"
+                       : "shadowFBActive == 0 (user's explicit choice was "
+                         "overridden!)");
+        results[nres++] = mkres(warn_logged, "case8_warning_logged",
+            warn_logged ? "[titledb] known-bad warning logged"
+                        : "no [titledb] known-bad warning found");
+        pass = tc_honored && warn_logged;
         break;
     }
     default:
