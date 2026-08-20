@@ -627,8 +627,18 @@ static int run_test(const char *core_path)
          "two core copies load as independent images");
    if (inst[0].jlink_device == inst[1].jlink_device)
    {
-      fprintf(stderr, "the dynamic loader shared one image between both "
-                      "core copies; this test cannot run here\n");
+      /* Not a host capability to skip over: without two images there is
+         only one emulated console and nothing below means anything.
+         dlopen keys already-loaded images on the file itself (dev/ino on
+         glibc, the resolved path on dyld), so two copies at distinct
+         paths load separately -- unless the copy silently failed and
+         both handles name the same file, or this loader deduplicates on
+         something else.  The two paths are printed: check they are two
+         real, distinct files before blaming the loader. */
+      fprintf(stderr, "FAIL: both core copies resolved to ONE loaded "
+                      "image, so both 'consoles' would share one set of "
+                      "core statics.\n  copies: %s , %s\n",
+              inst[0].path, inst[1].path);
       return 1;
    }
 
