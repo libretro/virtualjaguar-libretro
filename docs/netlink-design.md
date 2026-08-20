@@ -375,6 +375,14 @@ Validation:
 - `test_jlink_netpacket` — a self-contained fake frontend exercising the
   full contract (registration, start/receive/stop, RELIABLE+broadcast
   flags, mode handoff and restore); in `make test`.
+- `test_voicemodem_netpacket` — the Voice Modem device over this same
+  transport (#494): the test is the netplay frontend *and* both players,
+  dlopening two private copies of the core (distinct files, so each image
+  gets its own statics) and relaying every packet between them while both
+  consoles are driven through the real Ultra Vortek modem choreography.
+  The other modem tests (`voicemodem_pair`, `uv_modem_game_test.sh`) all
+  run over TCP; this is the only coverage of the transport most users
+  actually get. No sockets, no ports, no ROM; in `make test`.
 - `test/tools/netlink_ra_matrix.sh` under **real RetroArch 1.22.2** on
   macOS: host + client instances of this core with Doom, netplay session
   established (`SET_NETPACKET_INTERFACE` accepted, "joined as player 2",
