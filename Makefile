@@ -50,8 +50,18 @@ endif
 #
 # Override on the command line to test: `make OPT_LEVEL=-O2`.
 OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64
+# classic_armv7_a7 asks for -Ofast in its own platform block and always has.
+# It never took effect: the shared release branch appended -O2 afterwards and
+# the last -O wins, so the target silently built at -O2 (issue #516).  The
+# level is resolved here instead, where it is both effective and stamped.
+# -Ofast's headline implication, -ffast-math, is already applied
+# unconditionally to every non-MSVC build further down, so honouring the
+# declared flag adds no numerical semantics that were not already shipping.
+OPT_OFAST_PLATFORMS := classic_armv7_a7
 ifeq ($(origin OPT_LEVEL),undefined)
-   ifneq ($(filter $(platform),$(OPT_O3_PLATFORMS)),)
+   ifneq ($(filter $(platform),$(OPT_OFAST_PLATFORMS)),)
+      OPT_LEVEL := -Ofast
+   else ifneq ($(filter $(platform),$(OPT_O3_PLATFORMS)),)
       OPT_LEVEL := -O3
    else
       OPT_LEVEL := -O2
@@ -175,8 +185,8 @@ else ifeq ($(platform), classic_armv7_a7)
 	# --gc-sections belongs on the link line, not in CFLAGS; see the
 	# GC_STYLE block below for why this target sets it by hand.
 	LDFLAGS += -Wl,--gc-sections
-	CFLAGS += -Ofast \
-	-flto=4 -fwhole-program -fuse-linker-plugin \
+	# -Ofast lives in OPT_LEVEL above, not here -- see issue #516.
+	CFLAGS += -flto=4 -fwhole-program -fuse-linker-plugin \
 	-fdata-sections -ffunction-sections \
 	-fno-stack-protector -fno-ident -fomit-frame-pointer \
 	-falign-functions=1 -falign-jumps=1 -falign-loops=1 \
