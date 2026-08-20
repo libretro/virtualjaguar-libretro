@@ -1,0 +1,98 @@
+name: Close referenced issues
+
+# GitHub's closing keywords (`Closes #N`, `Fixes #N`) only fire when a PR
+# merges into the DEFAULT branch.  Here that is `master`, and effectively
+# every PR targets `develop`, so the keyword is decorative on almost every
+# PR this project merges.  The failure is silent: the issue just stays open,
+# looking like unfinished work, until someone audits.  #431 and #479 both
+# shipped in v3.4.0 and sat open for days that way (issue #512).
+#
+# This closes the loop for the branches we actually merge into.  Tag merges
+# into `master` are left alone -- GitHub already handles those, and a second
+# close comment there is noise.
+#
+# pull_request_target rather than pull_request: a merged PR from a fork gets
+# a read-only token under `pull_request`, which is exactly the case that
+# needs this most.  It is safe here because this workflow never checks out
+# or executes PR content -- it only reads the PR's title and body, which it
+# treats as data.
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches:
+      - develop
+      - 'release/**'
+      - 'hotfix/**'
+
+permissions:
+  issues: write
+
+# Two merges in quick succession must not race on the same issue.
+concurrency:
+  group: close-referenced-${{ github.event.pull_request.number }}
+
+jobs:
+  close:
+    name: Close issues this PR resolved
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close referenced issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+
+          # Title and body together, passed through env vars rather than
+          # workflow expression interpolation, so a PR description can never
+          # break out into the shell.
+          printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" > /tmp/pr_text
+
+          # GitHub's own keyword set, case-insensitive.  grep -o gives one
+          # match per line; the trailing sort -u keeps a number referenced
+          # twice from being processed twice.
+          NUMS=$(grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' /tmp/pr_text \
+                 | grep -oE '[0-9]+' | sort -un || true)
+
+          if [ -z "$NUMS" ]; then
+            echo "No closing keywords in PR #${PR_NUM}; nothing to do."
+            exit 0
+          fi
+
+          echo "Referenced: $(echo "$NUMS" | tr '\n' ' ')"
+
+          for N in $NUMS; do
+            # Issue and PR numbers share one sequence in a repo, so a
+            # `Closes #442` may well name a PR.  Without this check the
+            # workflow would start closing merged pull requests.
+            if ! META=$(gh api "repos/${REPO}/issues/${N}" 2>/dev/null); then
+              echo "  #${N}: not found (or not visible) -- skipping"
+              continue
+            fi
+            if echo "$META" | jq -e '.pull_request' >/dev/null 2>&1; then
+              echo "  #${N}: is a pull request, not an issue -- skipping"
+              continue
+            fi
+            if [ "$(echo "$META" | jq -r '.state')" = "closed" ]; then
+              echo "  #${N}: already closed -- skipping"
+              continue
+            fi
+
+            # printf, not a heredoc: a heredoc body must start at column 0,
+            # which would terminate this YAML block scalar.
+            printf '%s\n\n%s\n' \
+              "Closed by #${PR_NUM}, merged into \`${BASE}\` as ${MERGE_SHA}." \
+              "Closed by automation rather than by GitHub itself: closing keywords only fire on the default branch (\`master\`), and this PR merged into \`${BASE}\`. See #512." \
+              > /tmp/close_comment
+            gh issue comment "$N" --repo "${REPO}" --body-file /tmp/close_comment >/dev/null
+
+            gh issue close "$N" --repo "${REPO}" --reason completed >/dev/null
+            echo "  #${N}: closed"
+          done
