@@ -17,9 +17,10 @@ Wall-clock baseline you can run on every commit:
 ```bash
 make benchmark                              # default: yarc.j64, 600 frames, fast blitter
 make benchmark BENCH_FRAMES=3000            # longer run (smoother numbers)
-make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path -- do not
-                                             # assume "fast" is faster; it is scalar-only
-                                             # while accurate is SIMD-accelerated (#511)
+make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path.  Measured
+                                             # on arm64 (#511): fast is never slower, and
+                                             # ~2.2x faster in blit-heavy scenes despite
+                                             # being scalar while accurate is NEON.
 make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
 ```
 
