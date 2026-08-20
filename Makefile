@@ -1036,7 +1036,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
@@ -1090,6 +1090,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# concurrent `make test` runs cannot silently share the SO_REUSEPORT
 	@# socket and consume each other's beacons.
 	VJ_DISC_PORT=$$((23000 + ($$$$ % 4000))) ./test/tools/netlink_rebuild_witness ./$(TARGET)
+	@# Regression witness for #501: the device-mismatch warning used to be
+	@# dead code whenever the host came from <system>/vj_netlink.txt or
+	@# VJ_NETLINK_HOST, because the rebuild call site compared the RAW
+	@# option string ("vj_netlink.txt", a sentinel) against the peer
+	@# table's dotted-quad addresses. Runs the core in tcp_client with the
+	@# "From file" preset, injects one Voice Modem beacon, and asserts the
+	@# JagLink-vs-Voice-Modem warning actually reaches the OSD. Same
+	@# PID-spread discovery port as the rebuild witness above.
+	VJ_DISC_PORT=$$((27000 + ($$$$ % 4000))) ./test/tools/netlink_mismatch_witness ./$(TARGET)
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
@@ -1670,6 +1679,12 @@ test/tools/netlink_discover_probe: test/tools/netlink_discover_probe.c src/jerry
 test/tools/netlink_rebuild_witness: test/tools/netlink_rebuild_witness.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/netlink_rebuild_witness.c -ldl
+
+# Same standalone-loader rationale as netlink_rebuild_witness above: this one
+# additionally needs SET_MESSAGE_EXT capture (the OSD text IS the assertion).
+test/tools/netlink_mismatch_witness: test/tools/netlink_mismatch_witness.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/netlink_mismatch_witness.c -ldl
 
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c
