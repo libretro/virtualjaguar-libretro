@@ -393,6 +393,56 @@ Validation:
 Frontend matrix: RetroArch ≥ 1.16 → netpacket netplay; any other frontend
 (Provenance, etc.) → TCP modes; every frontend → loopback/disabled.
 
+## Wire-latency enhancement (2026-08-20 addendum, #498)
+
+`UARTFrameUsec()` is the single choke point for the whole link's emulated
+latency — **both** the TX drain and the RX arrival schedule through it — so
+`virtualjaguar_netlink_speed` (default off, values 2 / 4) divides exactly
+that one number. Three things about the shape are load-bearing:
+
+- **Gated on an active transport, evaluated per call.** With
+  `JLinkMode() == JLINK_MODE_DISABLED` the function takes a branch that is
+  textually develop's original expression, not a divide-by-one, so a stale
+  setting can never perturb a non-link session by a rounding step.
+  `"auto"` resolves to DISABLED until a netplay session actually exists,
+  so the gate is honest about the default. Not cached, so netpacket
+  takeover is followed automatically.
+- **The accelerated receiver applies back-pressure.** Stock hardware drops
+  the new byte when a character completes into a full RBF (an overrun) —
+  correct silicon, and preserved exactly when the option is off. But the
+  *reader's* polling rate belongs to the game, so dividing the character
+  time divides the reader's budget with it. Measured, not theorised: at 4x
+  with the plain hardware rule, Ultra Vortek's DSP-poll driver lost the
+  second byte of the `$B800` wake reply and the modem handshake never
+  completed — **0 pad words against 7044 stock**. With `UARTKickRx()`
+  refusing to start a character while RBF is unread, 4x completes normally
+  (6948). Without back-pressure, only 2x is shippable; with it, the byte
+  stream is provably unchanged and only timing moves.
+- **Not in the savestate.** Like NTSC/PAL it is a runtime setting, and
+  `event.c` saves the *remaining* time of each queued callback rather than
+  a rate — so a state captured accelerated and reloaded stock plays out the
+  one already-scheduled character at its saved deadline and reschedules at
+  stock timing from there.
+
+Symmetry is a documentation matter, not a guard: a lockstep exchange is
+gated by the sum of both sides' clocking, so a mismatched pair still
+completes and stays in sync, it simply gets less of the benefit. Measured
+on the synthetic ping-pong cart at ASICLK 1999 (`netlink_wire_speed_test.sh`),
+two independent runs: **16.9 / 22.6 / 52.5** and **16.4 / 25.0 / 49.9**
+exchanges per second for off-off, 4x-off, 4x-4x. One side alone lands
+between the two symmetric configurations, well short of half the benefit.
+Ultra Vortek's full-game pair completes the choreography in the mismatched
+configuration too (6972 pad words), and 4x-4x reproduces across runs
+(6948, 6920) rather than being bimodal — which matters, because the
+pre-back-pressure failure was catastrophic (0), so a single pass would not
+have shown the margin.
+
+Because the wall-clock ladder is measured off two paced processes, the
+ratio assertions are gated on the probe's own pacing telemetry and SKIP
+(loudly, through `scripts/test-skip.sh`) on a runner that could not hold
+its frame slots. The liveness assertions — every configuration, including
+the mismatched one, still exchanges — are unconditional failures.
+
 ## Decisions log
 
 - TCP before netpacket (user, 2026-07-31) — frontend-agnostic + testable first.

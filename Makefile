@@ -1118,6 +1118,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	 fi
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# Wire-speed enhancement (#498).  Three real core pairs whose only
+	@# difference is each side's virtualjaguar_netlink_speed, so the
+	@# MISMATCHED pair is exercised as a first-class configuration: the
+	@# option's whole documented contract is "both sides, same value; one
+	@# side just gets less benefit", and nothing else would notice if a
+	@# one-sided setup actually stalled the link instead. Uses the same
+	@# below-ephemeral PID-spread port band as the witnesses below.
+	bash test/tools/netlink_wire_speed_test.sh ./$(TARGET)
 	@# Review-round-1 finding (task 4, #467): no other test runs a core in
 	@# a discovery-active mode long enough in REAL wall-clock time (not
 	@# frame count) for netlink_rebuild_host_options()'s 2s rate-limit

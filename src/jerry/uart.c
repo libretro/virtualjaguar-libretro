@@ -48,12 +48,56 @@ static uint8_t uartTxShift;
 static uint8_t uartTxBusy;      /* shift register clocking out */
 static uint8_t uartRxBusy;      /* an RX frame is in flight */
 
+/* Wire-latency enhancement (#498).  1 = stock; see UARTSetWireSpeedup. */
+static unsigned uartWireSpeedup = 1;
+
 /* One character frame in microseconds at the current divider. */
 static double UARTFrameUsec(void)
 {
-   double cyc = 11.0 * 16.0 * (double)((uint32_t)asiClk + 1u);
-   return cyc * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC
-                                      : RISC_CYCLE_PAL_IN_USEC);
+   /* Stock path, byte-for-byte what this function has always computed.
+      Deliberately NOT folded into a "divide by 1" of the accelerated
+      branch: with the enhancement off (or no link transport selected)
+      the arithmetic must be textually identical to develop's, so
+      option-off cannot perturb event scheduling by a rounding step. */
+   if (uartWireSpeedup <= 1 || JLinkMode() == JLINK_MODE_DISABLED)
+   {
+      double cyc = 11.0 * 16.0 * (double)((uint32_t)asiClk + 1u);
+      return cyc * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC
+                                         : RISC_CYCLE_PAL_IN_USEC);
+   }
+   {
+      double cyc = 11.0 * 16.0 * (double)((uint32_t)asiClk + 1u)
+                   / (double)uartWireSpeedup;
+      return cyc * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC
+                                         : RISC_CYCLE_PAL_IN_USEC);
+   }
+}
+
+/* Enhancement knob (#498).  Set from the libretro option layer, never
+   from emulated code, and deliberately outside the savestate: like
+   NTSC/PAL it is a runtime setting, and event.c saves the REMAINING time
+   of the queued UART callbacks rather than a rate, so a state captured
+   with the option on and reloaded with it off just plays out the one
+   already-scheduled character at its saved deadline and reschedules at
+   stock timing from there. */
+void UARTSetWireSpeedup(unsigned divisor)
+{
+   if (divisor < 1u)
+      divisor = 1u;
+   /* Upper clamp matches the largest value the option offers.  The option
+      layer never produces more, but a RetroArch .cfg is a text file a user
+      can put anything in, and an unbounded divisor drives the character
+      time toward zero -- tens of thousands of UART events per emulated
+      frame.  Raise this in step with the option's value list, never
+      independently. */
+   if (divisor > UART_WIRE_SPEEDUP_MAX)
+      divisor = UART_WIRE_SPEEDUP_MAX;
+   uartWireSpeedup = divisor;
+}
+
+unsigned UARTWireSpeedup(void)
+{
+   return uartWireSpeedup;
 }
 
 static void UARTRaiseIRQ(void)
@@ -69,14 +113,40 @@ static void UARTRaiseIRQ(void)
    }
 }
 
-/* Start an RX frame if the transport has data and none is in flight. */
+/* Start an RX frame if the transport has data and none is in flight.
+
+   With the #498 wire-speed enhancement active the receiver additionally
+   refuses to start a character while the last one is still unread (RBF
+   set), holding the byte on the transport instead.  Stock hardware has no
+   such back-pressure -- a character completing into a full RBF is an
+   overrun and the new byte is LOST -- and that is exactly the hazard
+   acceleration creates: the reader's polling rate is set by the game, so
+   dividing the character time divides the reader's budget with it.  Ultra
+   Vortek's driver moves UART bytes with a DSP poll loop, and at 4x the
+   second byte of a two-byte modem reply ($B800) could complete before the
+   poll drained the first, dropping it -- the whole wake handshake then
+   stalls, which is a game-observable change and not allowed.  Holding the
+   wire instead keeps the byte stream byte-for-byte identical and leaves
+   only timing altered, which is the entire contract of the option.
+   ASIDATA reads call back into here, so a held byte starts the instant
+   the reader drains RBF.  With the option off this is the untouched stock
+   condition.
+
+   No JLinkMode() term here, unlike UARTFrameUsec(): dropping the link
+   drains the RX ring (JLinkClose zeroes jlinkCount), so "speedup set but
+   no transport" cannot coexist with a pending byte and the test would be
+   an untested branch rather than a safety net.  UARTFrameUsec() does need
+   its mode check -- the option can be left at 4x with no link selected,
+   and every UART timing in that state must stay stock.  Pinned by
+   test_wire_speedup_link_drop_drains() in test/test_uart_loopback.c. */
 static void UARTKickRx(void)
 {
-   if (!uartRxBusy && JLinkRxPending())
-   {
-      uartRxBusy = 1;
-      SetCallbackTime(UARTRXCallback, UARTFrameUsec(), EVENT_JERRY);
-   }
+   if (uartRxBusy || !JLinkRxPending())
+      return;
+   if (uartWireSpeedup > 1 && uartRxFull)
+      return;
+   uartRxBusy = 1;
+   SetCallbackTime(UARTRXCallback, UARTFrameUsec(), EVENT_JERRY);
 }
 
 void UARTTXCallback(void)
@@ -242,6 +312,12 @@ void UARTReset(void)
 void UARTDone(void)
 {
    UARTReset();
+   /* Teardown, not per-game reset: the option layer re-applies the divisor
+      on every check_variables(), and UARTReset() runs from JERRYInit()
+      AFTER that, so clearing it there would silently discard the setting.
+      Cleared here so the iOS "cores are never dlclosed, reset every static
+      in deinit" rule holds. */
+   uartWireSpeedup = 1;
    JLinkClose();
 }
 

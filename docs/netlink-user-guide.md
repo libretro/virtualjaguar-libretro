@@ -72,6 +72,40 @@ Up to 8 units total (1 host + 7 clients) — enough for AirCars' CatNet.
 Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
 `VJ_NETLINK_PORT` override both the options and the file.
 
+## Making link play feel snappier (optional, not authentic)
+
+*Network Link Wire Speed* (default **Off**) clocks the emulated serial
+port 2x or 4x faster than the real hardware ran it.
+
+You do not need it to play. What it fixes is a specific feel: in a
+strictly lockstep title neither console can draw the next frame until the
+pad data has been swapped both ways, and the Jaguar's link is slow enough
+that the swap can outlast the frame it belongs to — so your own move shows
+up a frame late even on a perfect connection. Ultra Vortek's Voice Modem
+mode is the clearest case: it settles at 19200 baud and trades about ten
+bytes each way every frame, roughly 5.8 ms of pure wire time per
+direction against a 16.7 ms frame.
+
+That slowness is *real* — a Voice Modem or a JagLink cable behaved exactly
+this way — which is why this is off by default and labelled an
+enhancement rather than a fix.
+
+- **Set it on both consoles, to the same value.** Each side only speeds
+  up its own half of the exchange, so one side alone gives you part of
+  the improvement. A mismatched pair still plays correctly and stays in
+  sync; it just gets less benefit. (Verified, not assumed:
+  `test/tools/netlink_wire_speed_test.sh`.)
+- Start at 2x. Go to 4x if you still notice it.
+- If a game starts behaving oddly on the link, put it back to Off before
+  reporting anything — link timing bug reports are only meaningful at
+  Off.
+- The setting does nothing at all unless *Network Link* is actually
+  selected, so leaving it on will never affect a single-player session.
+
+This is a different knob from *Network Link Latency Hiding*, which deals
+with the **network** between the two machines. Wire Speed deals with the
+emulated **cable**, and helps even at zero network latency.
+
 ## Troubleshooting
 
 - **Never mix options A and B** in one session — a netplay host and a TCP
