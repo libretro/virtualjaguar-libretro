@@ -39,11 +39,14 @@ jobs:
             git make python zip
             mingw-w64-x86_64-gcc mingw-w64-x86_64-python
 
-      # MAME's build system probes for SDL/ALSA via pkg-config even with
-      # EMULATOR=0 TOOLS=1, and the hosted runner images no longer ship them.
-      # Their absence is what broke the nightly on 2026-08-18: chdman failed,
-      # and the nightly publish was gated on it, so three days of otherwise
-      # good 16-platform core builds were never released.
+      # MAME's genie pass generates the full OSD project set even with
+      # EMULATOR=0 TOOLS=1, so it still probes for SDL. The hosted runner
+      # images no longer ship it. (The 2026-08-18 nightly break was this
+      # step failing for the Qt reason below; the nightly publish was gated
+      # on chdman, so three days of good 16-platform core builds were never
+      # released. Nightly is ungated from this workflow now -- see
+      # release.yml -- but chdman itself still has to build for tagged
+      # releases to carry the tools zips.)
       - name: Install chdman build dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -70,11 +73,17 @@ jobs:
           git fetch --depth 1 origin ${{ steps.pin.outputs.sha }}
           git checkout FETCH_HEAD
 
+      # USE_QTDEBUG=0 is required: genie emits the qtdbg_* project
+      # unconditionally and then invokes Qt's moc to generate its sources,
+      # so a runner without Qt dies with "qmake6: not found / Qt's Meta
+      # Object Compiler (moc) wasn't found!" before a single tool compiles.
+      # chdman has no Qt dependency -- only the (excluded) debugger does.
       - name: Build chdman
         working-directory: mame
         run: |
           make -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) \
-            TOOLS=1 EMULATOR=0 NOWERROR=1 PRECOMPILE=0 REGENIE=1
+            TOOLS=1 EMULATOR=0 NOWERROR=1 PRECOMPILE=0 REGENIE=1 \
+            USE_QTDEBUG=0
 
       - name: Build jagcd-chd-check
         run: |
@@ -91,7 +100,12 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist-jagcd
-          CHDMAN=$(find mame \( -name chdman -o -name chdman.exe \) | head -1)
+          # -type f matters: mame/regtests/chdman is a DIRECTORY of test
+          # scripts and sorts ahead of the built binary, so a bare -name
+          # match picks the directory and the copy fails. -print -quit
+          # rather than "| head -1": the step runs under pipefail, where
+          # head closing the pipe early can SIGPIPE find into a 141 exit.
+          CHDMAN=$(find mame -type f \( -name chdman -o -name chdman.exe \) -print -quit)
           test -n "$CHDMAN"
           command cp -f "$CHDMAN" dist-jagcd/
           command cp -f tools/jagcd/jagcd-to-chd tools/jagcd/jagcd-to-chd.cmd \
