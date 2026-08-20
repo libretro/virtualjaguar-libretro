@@ -24,6 +24,7 @@ _m68kPCSample
 _m68kPCSampleIdx
 _pcQueue
 _pcQPtr
+_startM68KTracing
 _a6Queue
 _d0Queue
 _GPU*
