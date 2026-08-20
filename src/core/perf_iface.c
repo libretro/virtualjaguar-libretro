@@ -74,7 +74,7 @@ void VJPerfInit(retro_environment_t env_cb)
       LOG_WRN("[PERF] frontend offered an incomplete perf interface; profiling counters disabled\n");
       memset(&vjperf_cb, 0, sizeof(vjperf_cb));
       return;
-    }
+   }
 
    for (i = 0; i < VJP_COUNT; i++)
    {
