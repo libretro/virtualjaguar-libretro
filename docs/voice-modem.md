@@ -163,6 +163,30 @@ pads are fed to the player slots (`$57E4`/`$57E8`, selected by `$57DB`).
 - Async `$A4` with bit 0 set (e.g. `$A401`) during a call = line drop →
   LOST PHONE CONNECTION.
 
+### Why the local player sees their own move late (issue #498)
+
+The data phase is ~10 console bytes per direction per frame (4 × `$F0xx`
++ the `$F301` marker). At the ASICLK = `$56` the driver settles on, one
+character frame is `11 × 16 × 87 = 15312` RISC cycles ≈ **576 µs**, so a
+packet is ~5.8 ms of pure wire time each way — against a 16.7 ms video
+frame, with `$57DD`'s strict lockstep meaning the local pad cannot be
+*displayed* until the whole exchange completes. The instinct is to blame
+the network; the arithmetic says the emulated cable is the choke point,
+and `TCP_NODELAY` plus the adaptive reply wait already cover the network
+side.
+
+This is authentic — a real Voice Modem at 19200 baud was exactly this
+slow — so it is addressed as an **opt-in enhancement**, not a bug fix:
+core option `virtualjaguar_netlink_speed` (default Off) divides the
+character frame time by 2 or 4. The knob is a single one:
+`UARTFrameUsec()` in `src/jerry/uart.c` schedules both the TX drain and
+the RX arrival, and it takes the untouched stock branch whenever the
+option is off *or* no link transport is selected. It changes only *when*
+bytes appear, never which bytes or in what order, and is not part of the
+savestate (event.c already saves the remaining time of the queued UART
+callbacks). Both consoles should set it, to the same value — see
+`docs/netlink-user-guide.md`.
+
 ## What the emulation does (src/jerry/voicemodem.c)
 
 A virtual modem in front of the jlink transport (`virtualjaguar_uart_device

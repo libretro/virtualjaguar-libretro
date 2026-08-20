@@ -22,7 +22,18 @@
  * (pass/fail bounds on exchanges/sec), --wait enabled|disabled (the
  * virtualjaguar_netlink_wait core option; the wait budget itself is
  * adaptive inside the core, not user-tuned).
- * Exit 0 on pass, 1 on fail/error.  Driven by netlink_latency_test.sh.
+ *
+ * Both roles also take --asiclk N (the ASICLK divider the synthetic cart
+ * programs, default 1) and --speed disabled|2|4 (the #498
+ * virtualjaguar_netlink_speed enhancement, this side only).  Together
+ * they turn this tool into the wire-latency A/B: raise --asiclk until the
+ * emulated character frame, not the 60 fps frame slot, sets the exchange
+ * rate, then compare both-stock / one-side-fast / both-fast.  Because
+ * --speed is per side, a mismatched pair is a first-class configuration
+ * here -- see netlink_wire_speed_test.sh.
+ *
+ * Exit 0 on pass, 1 on fail/error.  Driven by netlink_latency_test.sh
+ * and netlink_wire_speed_test.sh.
  */
 #define _DEFAULT_SOURCE 1
 #include <stdio.h>
@@ -69,18 +80,26 @@ static const uint8_t echo_prog[] = {
     0x60, 0xE8
 };
 
-static const char *make_synth_rom(const char *role)
+/* asiclk is the ASICLK divider the synthetic cart programs.  The stock
+   $0001 makes a character frame ~13 us -- far below anything the link
+   stack or the #498 wire-speed enhancement can move -- so a latency A/B
+   run has to raise it until the emulated wire, not the 60 fps frame slot,
+   is the binding constraint.  Patched into the move.w immediate at
+   echo_prog[8..9] rather than assembled a second time. */
+static const char *make_synth_rom(const char *role, int asiclk)
 {
     static char path[256];
     static uint8_t rom_buf[ROM_SIZE];
     FILE *f;
     const char *tmp = getenv("TMPDIR");
-    snprintf(path, sizeof(path), "%s/vj_netlink_lat_%s.j64",
-             tmp ? tmp : "/tmp", role);
+    snprintf(path, sizeof(path), "%s/vj_netlink_lat_%s_%d.j64",
+             tmp ? tmp : "/tmp", role, asiclk);
     memset(rom_buf, 0, ROM_SIZE);
     rom_buf[0x404] = 0x00; rom_buf[0x405] = 0x80;
     rom_buf[0x406] = 0x20; rom_buf[0x407] = 0x00;
     memcpy(rom_buf + 0x2000, echo_prog, sizeof(echo_prog));
+    rom_buf[0x2000 + 8] = (uint8_t)((asiclk >> 8) & 0xFF);
+    rom_buf[0x2000 + 9] = (uint8_t)(asiclk & 0xFF);
     f = fopen(path, "wb");
     if (!f) return NULL;
     fwrite(rom_buf, 1, ROM_SIZE, f);
@@ -111,6 +130,9 @@ int main(int argc, char **argv)
     const char *role = NULL;
     const char *port = "42171";
     const char *wait_opt = "enabled";
+    const char *speed_opt = "disabled";   /* #498 wire speed, this side */
+    int asiclk = 1;
+    int pace_echo = 0;
     int measure_sec = 3;
     double min_rate = -1.0, max_rate = -1.0;
     char port_env[64];
@@ -153,12 +175,33 @@ int main(int argc, char **argv)
             wait_opt = argv[++i];
             argv[i - 1] = argv[i] = (char *)"--quiet";
         }
+        else if (!strcmp(argv[i], "--asiclk") && i + 1 < argc)
+        {
+            asiclk = atoi(argv[++i]);
+            argv[i - 1] = argv[i] = (char *)"--quiet";
+        }
+        else if (!strcmp(argv[i], "--speed") && i + 1 < argc)
+        {
+            speed_opt = argv[++i];
+            argv[i - 1] = argv[i] = (char *)"--quiet";
+        }
+        else if (!strcmp(argv[i], "--pace"))
+        {
+            pace_echo = 1;
+            argv[i] = (char *)"--quiet";
+        }
+    }
+    if (asiclk < 0 || asiclk > 65535)
+    {
+        fprintf(stderr, "netlink_latency: --asiclk out of range\n");
+        return 1;
     }
     if (!role || (strcmp(role, "echo") && strcmp(role, "probe")))
     {
         fprintf(stderr, "usage: netlink_latency <core> --role echo|probe "
                         "[--port N] [--measure-sec N] [--min-rate X] "
-                        "[--max-rate X] [--wait enabled|disabled]\n");
+                        "[--max-rate X] [--wait enabled|disabled] "
+                        "[--asiclk N] [--speed disabled|2|4]\n");
         return 1;
     }
 
@@ -173,12 +216,14 @@ int main(int argc, char **argv)
     cfg.options[1].value = port;
     cfg.options[2].key = "virtualjaguar_netlink_wait";
     cfg.options[2].value = wait_opt;
-    cfg.num_options = 3;
+    cfg.options[3].key = "virtualjaguar_netlink_speed";
+    cfg.options[3].value = speed_opt;
+    cfg.num_options = 4;
 
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;
     if (!cfg.rom_path)
     {
-        cfg.rom_path = make_synth_rom(role);
+        cfg.rom_path = make_synth_rom(role, asiclk);
         if (!cfg.rom_path) return 1;
     }
     if (!harness_load_rom(&cfg)) return 1;
@@ -213,18 +258,33 @@ int main(int argc, char **argv)
 
     if (!strcmp(role, "echo"))
     {
-        /* The 68K does all the work.  Deliberately NOT paced at 60 fps:
-           a free-running echo answers within ~2 ms consistently, so the
-           measured rate isolates the PROBE side's frame quantization
-           instead of beating against a second paced loop's drifting
-           phase (which made the metric noisy run-to-run). */
+        /* The 68K does all the work.  By default deliberately NOT paced at
+           60 fps: a free-running echo answers within ~2 ms consistently, so
+           the measured rate isolates the PROBE side's frame quantization
+           instead of beating against a second paced loop's drifting phase
+           (which made the metric noisy run-to-run).
+
+           --pace turns that off, and any measurement of the #498 wire-speed
+           enhancement NEEDS it: a free-running echo burns its emulated
+           character frames far faster than real time, so its own wire speed
+           barely shows up in the probe's wall-clock exchange rate.  That
+           would make a genuinely one-sided setup look symmetric -- an
+           artifact of this harness, not of the link. */
         uint32_t last = rx_total();
         int idle = 0;
-        while (jlink_connected() && idle < 8000)   /* ~10 s of silence */
+        /* ~10 s of silence either way: the loop period is ~1 ms free-running
+           but a whole 16.7 ms frame slot when paced. */
+        int idle_limit = pace_echo ? 600 : 8000;
+        while (jlink_connected() && idle < idle_limit)
         {
             uint32_t now_rx;
-            run_frame();
-            usleep(1000);
+            if (pace_echo)
+                paced_frame(run_frame);
+            else
+            {
+                run_frame();
+                usleep(1000);
+            }
             now_rx = rx_total();
             idle = (now_rx != last) ? 0 : idle + 1;
             last = now_rx;

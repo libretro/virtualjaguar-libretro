@@ -1227,6 +1227,7 @@ static void netlink_apply(int mode, const char *opt_value)
    const char *src = "default";
    int want_file = 0;
    int got_file = 0;
+   int speedup;                  /* #498 wire-latency divisor, 1 = stock */
    /* OSD dedup state -- see netlink_osd_last_mode's declaration comment. */
    char narrate_host[128];
    int narrate_device;
@@ -1250,6 +1251,21 @@ static void netlink_apply(int mode, const char *opt_value)
    pvar.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
       JLinkSetWaitEnabled(strcmp(pvar.value, "disabled") != 0);
+
+   /* Wire-latency enhancement (#498).  Read raw, like netlink_wait and
+    * the mode itself: a per-title default has no business overriding a
+    * deliberately non-authentic timing choice the user made, and the
+    * setting is only meaningful in the same breath as the transport. */
+   pvar.key = "virtualjaguar_netlink_speed";
+   pvar.value = NULL;
+   speedup = 1;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
+   {
+      int n = atoi(pvar.value);      /* "disabled" -> 0 -> clamped to 1 */
+      if (n > 1)
+         speedup = n;
+   }
+   UARTSetWireSpeedup((unsigned)speedup);
 
    netlink_resolve_host(host, sizeof(host), &src, &want_file, &got_file);
 
@@ -1343,6 +1359,16 @@ static void netlink_apply(int mode, const char *opt_value)
                      netlink_mode_name(mode),
                      netlink_device_label(JLinkDevice()), port);
    }
+
+   /* Same contract as the [CLOCK] non-stock-scale line: an enhancement
+    * that changes emulated timing has to announce itself, or a link bug
+    * filed from an accelerated session reads as an emulation defect.
+    * Only worth a line when it can actually take effect -- with no
+    * transport selected UARTFrameUsec() takes the stock branch anyway. */
+   if (speedup > 1 && mode != JLINK_MODE_DISABLED)
+      LOG_INF("[NETLINK] wire speed %dx -- emulated UART runs faster than "
+              "real hardware (enhancement; both consoles should match, and "
+              "link timing bug reports are only valid at Off)\n", speedup);
 
    /* The "From file" preset selected but no usable address in the file is
     * a silent 127.0.0.1 fallback -- the one that cost a debugging session. */

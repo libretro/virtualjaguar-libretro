@@ -62,20 +62,31 @@ MAPOPTS=(--option virtualjaguar_uart_device=voicemodem
   --option virtualjaguar_p1_retropad_l1=num_9
   --option virtualjaguar_p1_retropad_r1=num_1)
 
+# Wire-speed enhancement (#498), per side, so this script doubles as the
+# safety gate for it: the whole point of the feature is that it may not
+# change anything the GAME can see, and the modem choreography plus the
+# pad-word counts below are the only end-to-end check that holds.  Set
+# both to prove the symmetric case, one to prove that a mismatched pair
+# still completes (it does -- it just gets less of the benefit).
+# "disabled" is the option's own default, so an unset run is the stock
+# baseline this has always measured.
+SPEED_SRV="${VJ_UV_SPEED_SERVER:-disabled}"
+SPEED_CLI="${VJ_UV_SPEED_CLIENT:-disabled}"
+
 # netlink_game putenv()s VJ_NETLINK_PORT itself from --port (default
 # 42171), overriding any inherited value -- the port MUST go on the
 # command line or concurrent pairs cross-connect on the default.
 export VJ_VM_TRACE=1
 
 "$BIN" "$CORE" "$ROM" --role server --port "$PORT" --frames 5400 --realtime \
-  "${MAPOPTS[@]}" \
+  "${MAPOPTS[@]}" --option virtualjaguar_netlink_speed="$SPEED_SRV" \
   --press 905:1:6 --press 918:2:6 --press 931:2:6 \
   --press 1250:up:6 --press 1290:up:6 --press 1360:a:6 \
   > "$OUT/answer.log" 2>&1 &
 SRV=$!
 sleep 2
 "$BIN" "$CORE" "$ROM" --role client --port "$PORT" --frames 5400 --realtime \
-  "${MAPOPTS[@]}" \
+  "${MAPOPTS[@]}" --option virtualjaguar_netlink_speed="$SPEED_CLI" \
   --press 905:1:6 --press 918:2:6 --press 931:2:6 \
   --press 1250:up:6 --press 1350:a:6 --press 1450:2:6 --press 1530:a:6 \
   > "$OUT/dial.log" 2>&1 &
@@ -95,7 +106,8 @@ for side in answer dial; do
     fi
 done
 if [ "$rc" -eq 0 ]; then
-    echo "uv_modem_game_test: PASS (port $PORT)"
+    echo "uv_modem_game_test: PASS (port $PORT, wire speed" \
+         "server=$SPEED_SRV client=$SPEED_CLI)"
     command rm -rf "$OUT"
 fi
 exit "$rc"

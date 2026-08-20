@@ -380,6 +380,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "enabled"
    },
    {
+      "virtualjaguar_netlink_speed",
+      "Network Link Wire Speed (Enhancement)",
+      NULL,
+      "Clocks the emulated serial port faster than the real hardware did, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next. Ultra Vortek's Voice Modem mode settles at 19200 baud and swaps about ten bytes each way per frame, roughly 5.8 ms of pure wire time per direction, which is why you do not see your own move until the round trip completes. Not authentic -- a real Voice Modem or JagLink cable is exactly this slow -- so it is off by default. BOTH consoles should set it, and to the same value: each side only speeds up its own half of the exchange, so one side alone gives you part of the benefit. If a game starts dropping link data, step it back down. Ignored unless Network Link is actually selected.",
+      NULL,
+      "network",
+      {
+         { "disabled", "Off (authentic hardware timing)" },
+         { "2",        "2x faster" },
+         { "4",        "4x faster" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_cd_trace",
       "CD Trace (Diagnostic)",
       NULL,

@@ -57,6 +57,7 @@ static void fresh(void)
 {
     InitializeEventList();
     UARTReset();
+    UARTSetWireSpeedup(1);        /* #498 enhancement off unless a test sets it */
     UARTSetLinkMode(JLINK_MODE_LOOPBACK);
     stubIrqMask = IRQ2_ASI;   /* J_ASYNENA on unless a test clears it */
     stubPending = 0;
@@ -235,6 +236,140 @@ static void test_tx_interrupt_on_holding_drain(void)
     CHECK((stubPending & IRQ2_ASI) != 0, "TINTEN: holding drain raises IRQ");
 }
 
+/* ---- #498: opt-in netlink wire-latency enhancement ----
+   UARTFrameUsec() is the single choke point for BOTH the TX drain and the
+   RX arrival, so these cases pin the whole feature: the divisor applies,
+   it only applies on an active link, and it changes nothing but time. */
+
+/* Emulated microseconds until the pending UART character completes, for
+   one byte written at the given ASICLK.  Uses ASICLK $56 (86) -- the
+   value Ultra Vortek's Voice Modem driver settles at (docs/voice-modem.md),
+   i.e. the case the enhancement exists for. */
+static double frame_usec_at(unsigned speedup, int link_mode)
+{
+    fresh();
+    UARTSetLinkMode(link_mode);
+    UARTSetWireSpeedup(speedup);
+    UARTWriteWord(ASICLK, 0x56);
+    UARTWriteWord(ASIDATA, 0x41);
+    return GetTimeToNextEvent(EVENT_JERRY);
+}
+
+static void test_wire_speedup_scales_frame_time(void)
+{
+    /* Stock reference computed the way uart.c's untouched branch does. */
+    double stock = 11.0 * 16.0 * 87.0 * RISC_CYCLE_IN_USEC;
+    double t;
+
+    fresh();
+    CHECK(UARTWireSpeedup() == 1, "wire speedup defaults to 1 (off)");
+
+    t = frame_usec_at(1, JLINK_MODE_LOOPBACK);
+    CHECK(fabs(t - stock) < 0.001, "speedup off: stock 576 us character frame");
+
+    t = frame_usec_at(2, JLINK_MODE_LOOPBACK);
+    CHECK(fabs(t - stock / 2.0) < 0.001, "speedup 2x halves the character frame");
+
+    t = frame_usec_at(4, JLINK_MODE_LOOPBACK);
+    CHECK(fabs(t - stock / 4.0) < 0.001, "speedup 4x quarters the character frame");
+}
+
+/* The gate that keeps every non-link user on stock timing: with no
+   transport selected the divisor must be ignored outright, so a stale
+   "4x" left in a config can never perturb a single-player session. */
+static void test_wire_speedup_ignored_without_link(void)
+{
+    double stock = 11.0 * 16.0 * 87.0 * RISC_CYCLE_IN_USEC;
+    double t = frame_usec_at(4, JLINK_MODE_DISABLED);
+    CHECK(fabs(t - stock) < 0.001, "link disabled: 4x ignored, stock timing");
+}
+
+static void test_wire_speedup_clamps(void)
+{
+    fresh();
+    UARTSetWireSpeedup(0);
+    CHECK(UARTWireSpeedup() == 1, "divisor 0 clamps to 1");
+    /* A RetroArch .cfg is a text file: the option layer never produces
+       more than the option's largest value, but a hand-edited config can,
+       and an unbounded divisor drives the character time toward zero. */
+    UARTSetWireSpeedup(100000);
+    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
+          "absurd divisor clamps to UART_WIRE_SPEEDUP_MAX");
+}
+
+/* "Nothing game-observable changes except timing": the same bytes arrive
+   in the same order with the same status-register transitions at 4x as at
+   1x.  Only the emulated interval between them differs. */
+static void test_wire_speedup_stream_identical(void)
+{
+    uint16_t st;
+    fresh();
+    UARTSetWireSpeedup(4);
+    UARTWriteWord(ASICLK, 0x56);
+    UARTWriteWord(ASIDATA, 0x01);          /* -> shift */
+    UARTWriteWord(ASIDATA, 0x02);          /* -> holding */
+    st = UARTReadWord(ASISTAT);
+    CHECK((st & ST_TBE) == 0, "4x: holding full still clears TBE");
+    pump(1);
+    st = UARTReadWord(ASISTAT);
+    CHECK((st & ST_TBE) != 0, "4x: holding drained still sets TBE");
+    pump(2);
+    CHECK((UARTReadWord(ASIDATA) & 0xFF) == 0x01, "4x: 1st byte received first");
+    pump(1);
+    CHECK((UARTReadWord(ASIDATA) & 0xFF) == 0x02, "4x: 2nd byte follows");
+    CHECK((UARTReadWord(ASISTAT) & ST_OE) == 0, "4x: no overrun on read-per-byte");
+}
+
+/* The hazard that decides how far the enhancement may go, and the reason
+   the accelerated receiver applies back-pressure.  test_overrun() above
+   pins the stock behaviour: a character completing into a full RBF is an
+   overrun and the NEW byte is lost.  That is correct hardware, but the
+   reader's polling rate belongs to the game, so dividing the character
+   time divides the reader's budget with it -- and a dropped byte in a
+   framed lockstep protocol is a desync, i.e. a game-observable change.
+   Measured, not theorised: at 4x with the plain hardware rule, Ultra
+   Vortek's DSP-poll driver lost the second byte of the $B800 wake reply
+   and the modem handshake never completed (0 pad words vs 7044 stock).
+   Accelerated, the byte waits on the wire instead. */
+static void test_wire_speedup_no_overrun_loss(void)
+{
+    uint16_t st;
+    fresh();
+    UARTSetWireSpeedup(4);
+    UARTWriteWord(ASICLK, 0x56);
+    UARTWriteWord(ASIDATA, 0x01);
+    UARTWriteWord(ASIDATA, 0x02);
+    pump(4);                               /* TX#1, TX#2, RX#1 -- no reads */
+    st = UARTReadWord(ASISTAT);
+    CHECK((st & ST_RBF) != 0, "4x: first byte buffered");
+    CHECK((st & ST_OE) == 0,  "4x: unread RBF holds the wire, no overrun");
+    CHECK((UARTReadWord(ASIDATA) & 0xFF) == 0x01, "4x: first byte intact");
+    pump(1);                               /* the held byte now clocks in */
+    CHECK((UARTReadWord(ASISTAT) & ST_RBF) != 0, "4x: held byte then arrives");
+    CHECK((UARTReadWord(ASIDATA) & 0xFF) == 0x02,
+          "4x: second byte DELIVERED, not dropped");
+}
+
+/* The invariant that lets UARTKickRx()'s back-pressure test omit a
+   JLinkMode() term: dropping the link drains the RX ring, so "speedup set
+   but no transport selected" can never coexist with a byte pending on the
+   wire.  If a future transport change stops clearing the ring on close,
+   this fails here rather than silently applying accelerated back-pressure
+   while UARTFrameUsec() is on its stock branch. */
+static void test_wire_speedup_link_drop_drains(void)
+{
+    fresh();
+    UARTSetWireSpeedup(4);
+    UARTWriteWord(ASICLK, 0x56);
+    UARTWriteWord(ASIDATA, 0x11);
+    UARTWriteWord(ASIDATA, 0x22);
+    pump(2);                               /* both TX frames -> loopback ring */
+    UARTSetLinkMode(JLINK_MODE_DISABLED);  /* pull the cable */
+    pump(2);
+    CHECK((UARTReadWord(ASISTAT) & ST_RBF) == 0,
+          "link dropped: RX ring drained, nothing pending to hold");
+}
+
 int main(void)
 {
     vjs.hardwareTypeNTSC = true;
@@ -249,6 +384,12 @@ int main(void)
     test_rx_interrupt_tom_gate();
     test_rx_interrupt_disabled();
     test_tx_interrupt_on_holding_drain();
+    test_wire_speedup_scales_frame_time();
+    test_wire_speedup_ignored_without_link();
+    test_wire_speedup_clamps();
+    test_wire_speedup_stream_identical();
+    test_wire_speedup_no_overrun_loss();
+    test_wire_speedup_link_drop_drains();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }
