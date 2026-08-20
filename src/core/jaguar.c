@@ -24,6 +24,7 @@
 
 #include "cdrom.h"
 #include "perf_counters.h"
+#include "perf_iface.h"
 #include "jagcd_boot.h"
 #include "jagcd_hle.h"
 #include "dac.h"
@@ -1690,7 +1691,15 @@ void JaguarExecuteNew(void)
          riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
          GPUBeginSlice(riscCycles);
          DSPBeginSlice(riscCycles);
+         /* Bracketed at the call site, not inside M68KExecuteWithStalls:
+          * that function returns from inside a branch, and the placement
+          * rule in perf_iface.h requires a single exit between ENTER and
+          * LEAVE.  This is also the more honest reading of "68K slice".
+          * NOTE it is inclusive of RISC cycles run inline from a 68K bus
+          * access -- subtract vj_gpu_sync / vj_dsp_sync to decompose. */
+         VJP_ENTER(VJP_M68K);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
+         VJP_LEAVE(VJP_M68K);
          GPUExec(GPUSliceRemaining());
          DSPExec(DSPSliceRemaining());
          SubtractEventTimes(timeDelta, EVENT_MAIN);
@@ -1702,7 +1711,15 @@ void JaguarExecuteNew(void)
          riscCycles = SCALE_RISC_CYCLES(USEC_TO_RISC_CYCLES(timeDelta));
          GPUBeginSlice(riscCycles);
          DSPBeginSlice(riscCycles);
+         /* Bracketed at the call site, not inside M68KExecuteWithStalls:
+          * that function returns from inside a branch, and the placement
+          * rule in perf_iface.h requires a single exit between ENTER and
+          * LEAVE.  This is also the more honest reading of "68K slice".
+          * NOTE it is inclusive of RISC cycles run inline from a 68K bus
+          * access -- subtract vj_gpu_sync / vj_dsp_sync to decompose. */
+         VJP_ENTER(VJP_M68K);
          M68KExecuteWithStalls(USEC_TO_M68K_CYCLES(timeDelta));
+         VJP_LEAVE(VJP_M68K);
          GPUExec(GPUSliceRemaining());
          DSPExec(DSPSliceRemaining());
          SubtractEventTimes(timeDelta, EVENT_JERRY);

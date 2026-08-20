@@ -36,6 +36,7 @@
 #include "tom.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
+#include "perf_iface.h"
 
 #include <libretro.h>
 
@@ -334,6 +335,9 @@ void DACPrepareFrame(int length)
    int out_pairs;
    double halfline_us, frame_us, pairs;
 
+   /* No return between here and VJP_LEAVE (perf_iface.h). */
+   VJP_ENTER(VJP_DAC);
+
    RemoveCallback(DSPSampleCallback);
    bufferIndex = 0;
    numberOfSamples = length;
@@ -365,6 +369,8 @@ void DACPrepareFrame(int length)
    DACUpdateSCLKRate();
 
    SetCallbackTime(DSPSampleCallback, 0.5 * i2sSamplePeriodUs, EVENT_JERRY);
+
+   VJP_LEAVE(VJP_DAC);
 }
 
 void SoundCallback(void * userdata, uint16_t * buffer, int length)

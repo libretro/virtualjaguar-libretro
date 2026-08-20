@@ -30,6 +30,7 @@
 #include "shadowfb.h"
 #include "state.h"
 #include "blit_memo.h"
+#include "perf_iface.h"
 #include "../core/vjtrace.h"
 
 // Various conditional compilation goodies...
@@ -1160,6 +1161,11 @@ void blitter_blit(uint32_t cmd)
    uint32_t m, e;
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
 
+   /* One probe per blit, on the FAST engine's entry.  The accurate engine
+    * has its own below; both feed the same slot, so the counter reads as
+    * "time in the blitter" whichever engine the user selected. */
+   VJP_ENTER(VJP_BLITTER);
+
    VJT_EMIT(VJT_EV_BLIT_CMD, BLITTER, cmd, REG(A1_BASE));
 
    colour_index = 0;
@@ -1372,6 +1378,8 @@ void blitter_blit(uint32_t cmd)
    }
 
    blitter_generic(cmd);
+
+   VJP_LEAVE(VJP_BLITTER);
 }
 #endif
 /*******************************************************************************
@@ -2273,6 +2281,13 @@ void BlitterMidsummer2(void)
    a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
 
    // Various state lines set up by user
+
+   /* The accurate engine's entry, placed after this function's long
+    * declaration block so the file stays C89-clean (scripts/c89-lint.sh
+    * rejects a statement before a declaration).  Same slot as
+    * blitter_blit's probe: only one engine runs for a given user setting,
+    * so the counter reads as "time in the blitter" either way. */
+   VJP_ENTER(VJP_BLITTER);
 
    phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
 
@@ -4018,6 +4033,8 @@ fc_inner_done:
       }
    }
 #endif
+
+   VJP_LEAVE(VJP_BLITTER);
 }
 
 // Various pieces of the blitter puzzle are teased out here...
