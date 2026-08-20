@@ -27,6 +27,7 @@
       m68kPCSampleIdx;
       pcQueue;
       pcQPtr;
+      startM68KTracing;
       a6Queue;
       d0Queue;
       GPU*;

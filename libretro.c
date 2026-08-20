@@ -4354,6 +4354,12 @@ void retro_deinit(void)
    port_device_active[1]   = INPUTDEV_PAD;
    inputdev_live[0]        = false;
    inputdev_live[1]        = false;
+   /* 68K register traceback rings (#540): off is the shipped default and a
+    * resident core must go back to it.  A harness that armed the flag
+    * cannot dlclose the core on iOS, so leaving it set would make the next
+    * game silently pay 16 register stores per emulated 68K instruction
+    * with nothing in the log to explain where the frame rate went. */
+   startM68KTracing        = false;
    /* Link-state edge tracker: same reason as the block above -- a resident
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
