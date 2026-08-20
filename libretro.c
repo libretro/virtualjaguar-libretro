@@ -1105,6 +1105,97 @@ static void netlink_check_device_mismatch(const char *sel_host)
       netlink_mismatch_last_host[0] = '\0';
 }
 
+/* Resolve the address the link will actually dial, in precedence order:
+ * VJ_NETLINK_HOST env, else the virtualjaguar_netlink_host option (any
+ * string verbatim; the sentinel "vj_netlink.txt" defers to the file), else
+ * the first line of <system_dir>/vj_netlink.txt.  out is left empty when
+ * nothing resolved -- both callers substitute "127.0.0.1" themselves.
+ *
+ * Split out of netlink_apply() for #501: netlink_rebuild_host_options()
+ * used to hand netlink_check_device_mismatch() the RAW option string,
+ * which under the "From file" preset is the literal sentinel
+ * "vj_netlink.txt" and can never equal a discovered peer's dotted-quad
+ * addr -- so the mismatch warning was dead code for that whole
+ * configuration, and under VJ_NETLINK_HOST it compared the option against
+ * the peer table while the link dialed something else entirely.  The
+ * rebuild path is the one with a populated peer table (see
+ * netlink_check_device_mismatch()'s declaration comment), so it has to
+ * resolve exactly the same way netlink_apply() does.
+ *
+ * src/want_file/got_file are the log-line bookkeeping netlink_apply()
+ * needs and the rebuild path does not; all three accept NULL. */
+static void netlink_resolve_host(char *out, size_t out_len, const char **src,
+                                 int *want_file, int *got_file)
+{
+   const char *env;
+   struct retro_variable pvar;
+
+   out[0] = '\0';
+   if (src)
+      *src = "default";
+   if (want_file)
+      *want_file = 0;
+   if (got_file)
+      *got_file = 0;
+
+   env = getenv("VJ_NETLINK_HOST");
+   if (env && env[0])
+   {
+      strncpy(out, env, out_len - 1);
+      out[out_len - 1] = '\0';
+      if (src)
+         *src = "VJ_NETLINK_HOST env";
+   }
+   if (!out[0])
+   {
+      pvar.key = "virtualjaguar_netlink_host";
+      pvar.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value
+          && pvar.value[0])
+      {
+         if (strcmp(pvar.value, "vj_netlink.txt") != 0)
+         {
+            strncpy(out, pvar.value, out_len - 1);
+            out[out_len - 1] = '\0';
+            if (src)
+               *src = "core option";
+         }
+         else if (want_file)
+            *want_file = 1;
+      }
+   }
+   if (!out[0])
+   {
+      const char *system_dir = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
+          && system_dir)
+      {
+         char path[1024];
+         FILE *f;
+         snprintf(path, sizeof(path), "%s/vj_netlink.txt", system_dir);
+         f = fopen(path, "r");
+         if (f)
+         {
+            if (fgets(out, (int)out_len, f))
+            {
+               size_t n = strlen(out);
+               while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r'
+                                || out[n - 1] == ' '))
+                  out[--n] = '\0';
+            }
+            fclose(f);
+            if (out[0])
+            {
+               if (got_file)
+                  *got_file = 1;
+               if (src)
+                  *src = "vj_netlink.txt";
+            }
+         }
+      }
+   }
+}
+
 /* Resolve the TCP endpoint for the network link and apply the mode.
  * Host (client mode): VJ_NETLINK_HOST env, else the
  * virtualjaguar_netlink_host option (any string is accepted verbatim so
@@ -1159,58 +1250,7 @@ static void netlink_apply(int mode, const char *opt_value)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
       JLinkSetWaitEnabled(strcmp(pvar.value, "disabled") != 0);
 
-   env = getenv("VJ_NETLINK_HOST");
-   if (env && env[0])
-   {
-      strncpy(host, env, sizeof(host) - 1);
-      host[sizeof(host) - 1] = '\0';
-      src = "VJ_NETLINK_HOST env";
-   }
-   if (!host[0])
-   {
-      pvar.key = "virtualjaguar_netlink_host";
-      pvar.value = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value
-          && pvar.value[0])
-      {
-         if (strcmp(pvar.value, "vj_netlink.txt") != 0)
-         {
-            strncpy(host, pvar.value, sizeof(host) - 1);
-            host[sizeof(host) - 1] = '\0';
-            src = "core option";
-         }
-         else
-            want_file = 1;
-      }
-   }
-   if (!host[0])
-   {
-      const char *system_dir = NULL;
-      if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir)
-          && system_dir)
-      {
-         char path[1024];
-         FILE *f;
-         snprintf(path, sizeof(path), "%s/vj_netlink.txt", system_dir);
-         f = fopen(path, "r");
-         if (f)
-         {
-            if (fgets(host, sizeof(host), f))
-            {
-               size_t n = strlen(host);
-               while (n > 0 && (host[n - 1] == '\n' || host[n - 1] == '\r'
-                                || host[n - 1] == ' '))
-                  host[--n] = '\0';
-            }
-            fclose(f);
-            if (host[0])
-            {
-               got_file = 1;
-               src = "vj_netlink.txt";
-            }
-         }
-      }
-   }
+   netlink_resolve_host(host, sizeof(host), &src, &want_file, &got_file);
 
    JLinkSetTCPEndpoint(host[0] ? host : "127.0.0.1", port);
    UARTSetLinkMode(mode);
@@ -1409,6 +1449,9 @@ static void netlink_rebuild_host_options(void)
 {
    int idx, i, n, peer_count, my_device;
    char cur_host[128];
+   /* What the link actually dials, as opposed to what the picker shows --
+    * see netlink_resolve_host() and the mismatch call at the bottom. */
+   char resolved_host[128];
    int cur_host_known;
    int cur_host_is_preset;
    int cur_host_found;
@@ -1442,6 +1485,14 @@ static void netlink_rebuild_host_options(void)
                                || !strcmp(cur_host, "vj_netlink.txt");
       }
    }
+
+   /* Resolve here, next to the cur_host read and BEFORE the
+    * SET_CORE_OPTIONS_V2 push below: after that push the frontend may have
+    * reset virtualjaguar_netlink_host (a selected peer that dropped off the
+    * LAN is no longer in the value list), so a read afterwards would see a
+    * value the running link never dialed. */
+   netlink_resolve_host(resolved_host, sizeof(resolved_host), NULL, NULL,
+                        NULL);
 
    if (!netlink_host_presets_valid)
    {
@@ -1569,9 +1620,18 @@ static void netlink_rebuild_host_options(void)
     * than the option string because JLinkMode() reflects what actually
     * got dialed (a socket-level TCP connect succeeds regardless of the
     * remote's device type; the mismatch is a protocol-level problem this
-    * warning exists to surface before it manifests as silence). */
+    * warning exists to surface before it manifests as silence).
+    *
+    * Compares the RESOLVED host, not cur_host (#501): cur_host is the raw
+    * picker value, which under the "From file" preset is the literal
+    * sentinel "vj_netlink.txt" -- never equal to a peer's dotted-quad addr,
+    * so this whole check used to be dead for that configuration, and under
+    * a VJ_NETLINK_HOST override it scanned for the wrong address entirely.
+    * cur_host stays raw above because the expired-selection warning is
+    * about what the PICKER shows, which is a different question. */
    if (JLinkMode() == JLINK_MODE_TCP_CLIENT)
-      netlink_check_device_mismatch(cur_host_known ? cur_host : "127.0.0.1");
+      netlink_check_device_mismatch(resolved_host[0] ? resolved_host
+                                                     : "127.0.0.1");
 }
 
 /* Gate for per-title enhancement defaults (issue #368). Read raw (never
