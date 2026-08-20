@@ -54,9 +54,20 @@ OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64
 # It never took effect: the shared release branch appended -O2 afterwards and
 # the last -O wins, so the target silently built at -O2 (issue #516).  The
 # level is resolved here instead, where it is both effective and stamped.
-# -Ofast's headline implication, -ffast-math, is already applied
-# unconditionally to every non-MSVC build further down, so honouring the
-# declared flag adds no numerical semantics that were not already shipping.
+#
+# NOTE (issue #517): -Ofast's headline implication is -ffast-math, which
+# used to be applied unconditionally to every non-MSVC build further down
+# and so added no new semantics here.  #517's audit measured that global
+# -ffast-math at ~0% (integer-only hot loops; the only floating point in
+# the tree is a savestated I2S resampler and event-scheduling code, neither
+# on a hot path) and removed it everywhere else as a latent determinism
+# hazard.  classic_armv7_a7 was left alone -- its -Ofast is longstanding,
+# and this is an ARM cross-compile target this repo cannot benchmark on x86
+# or arm64 hardware -- so it is now the ONLY platform that still ships
+# -ffast-math.  If that ever needs to change: -Ofast -fno-fast-math is
+# last-wins (same mechanism as the -O2/-O3 override above) and cancels just
+# the fast-math half while keeping -Ofast's other -O3-family optimizations.
+# Measure before touching; don't assume the null result here transfers.
 OPT_OFAST_PLATFORMS := classic_armv7_a7
 ifeq ($(origin OPT_LEVEL),undefined)
    ifneq ($(filter $(platform),$(OPT_OFAST_PLATFORMS)),)
@@ -308,7 +319,11 @@ else ifeq ($(platform), libnx)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).a
 	DEFINES := -DSWITCH=1 -D__SWITCH__
 	CFLAGS := $(DEFINES) -fPIE -I$(LIBNX)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec -specs=$(LIBNX)/switch.specs
-	CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd -ffast-math
+	# -ffast-math dropped here too (issue #517): the hot loops it could
+	# possibly speed up are integer-only regardless of target architecture,
+	# so the x86_64/arm64 A/B null result (see the FLAGS block below)
+	# generalizes here without needing a Switch-specific measurement.
+	CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
 	CXXFLAGS := $(ASFLAGS) $(CFLAGS)
 	STATIC_LINKING = 1
 
@@ -720,8 +735,21 @@ ifeq ($(COVERAGE),1)
    endif
 endif
 
+# -ffast-math removed (issue #517 audit): every hot loop in this core (68K,
+# GPU/DSP RISC interpreters, blitter) is integer-only, so it cannot speed
+# them up, and the A/B measurement confirmed no effect (p=0.55, well under
+# significance -- see test/tools/opt_ab.sh, `FASTMATH=0` vs `FASTMATH=1`).
+# The only floating point in the tree that isn't test/trace-only is the I2S
+# resampler in src/jerry/dac.c (i2sPhase/i2sRateRatio, both in the
+# savestate) and event scheduling in src/core/event.c / src/tom/gpu.c
+# (riscUSec/consumed feeding EVENT_MAIN) -- both of those are emulated
+# state, and -ffast-math's reassociation/FMA-contraction/denormal-flushing
+# is host- and compiler-dependent, so it was a latent netplay/savestate
+# determinism hazard (same class as #400, #479) for zero measured benefit.
+# See axistune.c's header comment for the project's existing position on
+# host-dependent FP in emulated state.
 ifeq (,$(findstring msvc,$(platform)))
-FLAGS += -ffast-math -fomit-frame-pointer -fno-common
+   FLAGS += -fomit-frame-pointer -fno-common
 endif
 
 # ----------------------------------------------------------------
