@@ -1580,6 +1580,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@rm -f $(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE)
 	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
 	@# user-override contract, driven through the real dlopen'd core.
+	@# Cases 7/8 extend this to the negative/known-bad entry class (#464):
+	@# refuse-the-default / honour-and-warn-the-user, via a
+	@# programmatically-installed row (TitleDBSetNegativeForTest) so the
+	@# shipped table stays at zero negative rows, same reasoning as the
+	@# hooks[] gate test below.
 	@# shadowHiresN is fixed for the whole session at retro_load_game
 	@# time, so each case is a separate process invocation -- exactly
 	@# like a real frontend restart.  The seed CRC (0xDC187F82) is
@@ -1600,6 +1605,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
 				--option virtualjaguar_true_color=disabled || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 6 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 7 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 8 --quiet \
+				--option virtualjaguar_true_color=enabled || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \

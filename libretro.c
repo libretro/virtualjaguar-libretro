@@ -1705,11 +1705,69 @@ static const char *core_option_default(const char *key)
    return NULL;
 }
 
-/* GET_VARIABLE with per-title defaults (issue #368): when the frontend's
- * value equals the option's registered default (the user never touched it)
- * and the loaded title has a DB entry for this key, substitute the DB
- * value. A user-set non-default value always wins. Logs once per
- * substitution via LOG_INF. */
+/* Known-bad (negative-entry, issue #464) warnings: latched per option key
+ * for the lifetime of the loaded content, not per read -- check_variables()
+ * re-reads every option on load AND on every frontend variable-update
+ * notification, so an unlatched warning would spam the log once per
+ * option-menu visit for the whole session. Reset alongside every other
+ * per-load titledb static: retro_load_game(), retro_unload_game() and
+ * retro_deinit() (iOS cannot dlclose a core, so statics must be reset by
+ * hand, not left to process teardown -- same reasoning as
+ * hook_restart_notice_logged next to each of these resets). */
+#define TITLEDB_NEG_WARN_MAX 8
+static char negative_warned_keys[TITLEDB_NEG_WARN_MAX][64];
+static int  negative_warned_count = 0;
+
+static void titledb_reset_negative_warnings(void)
+{
+   negative_warned_count = 0;
+}
+
+/* Returns true if `key` was already warned about this load (and marks it
+ * warned if not). A full latch table degrades to "warn every time" for
+ * keys past TITLEDB_NEG_WARN_MAX rather than crashing or dropping the
+ * warning -- there are a handful of core options total, so 8 slots is
+ * generous headroom, not a hard cap that matters in practice. */
+static bool titledb_negative_warn_seen(const char *key)
+{
+   int i;
+   size_t len;
+
+   for (i = 0; i < negative_warned_count; i++)
+      if (!strcmp(negative_warned_keys[i], key))
+         return true;
+
+   if (negative_warned_count < TITLEDB_NEG_WARN_MAX)
+   {
+      len = strlen(key);
+      if (len >= sizeof(negative_warned_keys[0]))
+         len = sizeof(negative_warned_keys[0]) - 1;
+      memcpy(negative_warned_keys[negative_warned_count], key, len);
+      negative_warned_keys[negative_warned_count][len] = '\0';
+      negative_warned_count++;
+   }
+   return false;
+}
+
+/* GET_VARIABLE with per-title defaults (issue #368) and known-bad refusal
+ * (issue #464).
+ *
+ * Positive path (#368, unchanged): when the frontend's value equals the
+ * option's registered default (the user never touched it) and the loaded
+ * title has a DB entry for this key, substitute the DB value. Logs once
+ * per read via LOG_INF.
+ *
+ * Negative path (#464): a per-title DEFAULT substitution must never be
+ * unsafe, so it is refused (with a warning) if TitleDBUnsafeValue() flags
+ * it -- the option falls back to whatever the frontend/registered default
+ * already gave it, exactly as if this title had no DB row at all. A
+ * user's own EXPLICIT choice is always honoured -- refusing it would
+ * break the DB's one hard rule ("user-set values always win") -- but a
+ * matching negative entry still logs a warning, latched once per key per
+ * load, so a bug report against that title starts from the right
+ * hypothesis instead of a multi-session investigation (see #463). Gated
+ * by the same pertitle_enabled switch as the positive path: one feature,
+ * one on/off knob, documented in docs/enhancement-hooks.md. */
 static bool get_variable_pertitle(struct retro_variable *var)
 {
    bool ok = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value;
@@ -1718,18 +1776,32 @@ static bool get_variable_pertitle(struct retro_variable *var)
    if (!pertitle_enabled)
       return ok;
 
-   ovr = TitleDBOverride(var->key);
-   if (!ovr)
-      return ok;
-
    def = core_option_default(var->key);
-   if (!ok || (def && !strcmp(var->value, def)))
+   ovr = TitleDBOverride(var->key);
+
+   if (ovr && (!ok || (def && !strcmp(var->value, def))))
    {
+      if (TitleDBUnsafeValue(var->key, ovr, def))
+      {
+         if (!titledb_negative_warn_seen(var->key))
+            LOG_WRN("[titledb] %s: %s=%s is known-bad for this title -- "
+                    "refusing the per-title default, staying at %s\n",
+                    TitleDBTitleName(), var->key, ovr,
+                    def ? def : "(unset)");
+         return ok;
+      }
       LOG_INF("[titledb] %s: %s=%s (option at default)\n",
               TitleDBTitleName(), var->key, ovr);
       var->value = ovr;
       return true;
    }
+
+   if (ok && TitleDBUnsafeValue(var->key, var->value, def)
+       && !titledb_negative_warn_seen(var->key))
+      LOG_WRN("[titledb] %s: %s=%s is known-bad for this title "
+              "(explicit user choice honored)\n",
+              TitleDBTitleName(), var->key, var->value);
+
    return ok;
 }
 
@@ -3926,6 +3998,10 @@ bool retro_load_game(const struct retro_game_info *info)
       hook_restart_notice_logged = 0;
    }
 
+   /* Known-bad (#464) warning latch: a fresh load starts with none warned,
+    * even in-process on a platform that cannot dlclose (iOS). */
+   titledb_reset_negative_warnings();
+
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
     * so N is fixed for the session and mid-game option changes only apply
@@ -4214,6 +4290,9 @@ void retro_unload_game(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* Known-bad negative entries (#464): same reasoning, same reset. */
+   TitleDBSetNegativeForTest(NULL, 0);
+   titledb_reset_negative_warnings();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -4530,6 +4609,9 @@ void retro_deinit(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* Known-bad negative entries (#464): same per-load re-arm as above. */
+   TitleDBSetNegativeForTest(NULL, 0);
+   titledb_reset_negative_warnings();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

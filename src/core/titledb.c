@@ -79,6 +79,44 @@
  * gated off by default and CI-covered; rows land as data once a
  * behaviour has been researched to the standard above.
  * ------------------------------------------------------------------
+ *
+ * negative[] authoring checklist (issue #464)
+ *
+ * A negative row ("this setting is known-bad for this title") is
+ * admissible only when ALL of the following hold.  test_titledb enforces
+ * the mechanical half; the rest is review, exactly like hooks[] above.
+ *
+ *  1. The regression was REPRODUCED and CONFIRMED, not hypothesized.  A
+ *     bug report that names a suspect option is not evidence by itself --
+ *     see issue #463 (Cybermorph, RISC overclock): a full headless
+ *     investigation left it at "the deciding experiment has not been
+ *     run" and the issue stays `blocked` pending reporter artifacts. That
+ *     is the bar this checklist enforces: a plausible mechanism is not a
+ *     confirmed one, and a negative row is a stronger claim than a
+ *     positive one, because it changes what the user is prevented from
+ *     doing.
+ *  2. The evidence isolates the SPECIFIC value from every other
+ *     explanation (emulator regression, other timing models, input
+ *     class) the same way #463's own investigation did before it
+ *     stalled -- byte-identical framebuffers vs a known-good baseline,
+ *     the suspect option demonstrably live (changes something), every
+ *     other candidate ruled out.
+ *  3. The comment cites the evidence the way every positive row does: a
+ *     doc, a committed measurement, or an issue with the reproduction
+ *     already closed out -- never "reported by a user" alone.
+ *  4. `TITLEDB_NEG_ANY_NONDEFAULT` ("*") is for a genuinely monotonic
+ *     class of unsafe values (e.g. "any overclock breaks this title's
+ *     frame-coupled physics"), not a shortcut to avoid enumerating which
+ *     specific values were actually tested.  If only some non-default
+ *     values were confirmed bad, list them individually.
+ *  5. No key may appear in both pairs[] and negative[] of the same row --
+ *     a row that both applies X and calls X unsafe is a table bug.
+ *
+ * The table currently ships ZERO negative rows.  The mechanism is the
+ * deliverable for issue #464; rows land once a title clears the bar
+ * above.  See docs/enhancement-hooks.md for the settings-vs-patches
+ * discriminator and this section's evidence bar restated for authors.
+ * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
    /* Alien vs Predator (retail) — 2x internal resolution + true color.
@@ -358,6 +396,10 @@ static uint32_t content_crc = 0;
 static const TitleDBHook *hooks_override = NULL;
 static int hooks_override_count = 0;
 
+/* Test-only negative-pair override; see TitleDBSetNegativeForTest below. */
+static const TitleDBNegativePair *negative_override = NULL;
+static int negative_override_count = 0;
+
 /*
  * Internal: set the CRC directly.
  * Linear-scan the table to find a match.
@@ -435,6 +477,53 @@ const char *TitleDBOverride(const char *key)
 }
 
 /*
+ * Negative-entry lookup (issue #464): does the loaded content's row mark
+ * key=value (or key="any non-default value") as known-bad?  Pure string
+ * comparison only -- no option-system calls -- so this file keeps linking
+ * standalone in test/test_titledb (titledb.c + crc32.c, no core).
+ * The test override, when installed, wins regardless of CRC match, same
+ * as TitleDBHooks()'s hooks_override.
+ */
+int TitleDBUnsafeValue(const char *key, const char *value,
+                        const char *option_default)
+{
+   const TitleDBNegativePair *neg;
+   int count;
+   int i;
+
+   if (key == NULL || value == NULL)
+      return 0;
+
+   if (negative_override != NULL)
+   {
+      neg = negative_override;
+      count = negative_override_count;
+   }
+   else if (current != NULL)
+   {
+      neg = current->negative;
+      count = TITLEDB_MAX_NEGATIVE_PAIRS;
+   }
+   else
+      return 0;
+
+   for (i = 0; i < count && neg[i].key != NULL; i++)
+   {
+      if (strcmp(neg[i].key, key) != 0)
+         continue;
+      if (strcmp(neg[i].value, TITLEDB_NEG_ANY_NONDEFAULT) == 0)
+      {
+         if (option_default == NULL || strcmp(value, option_default) != 0)
+            return 1;
+      }
+      else if (strcmp(neg[i].value, value) == 0)
+         return 1;
+   }
+
+   return 0;
+}
+
+/*
  * Return the title name of the loaded content match, or NULL.
  */
 const char *TitleDBTitleName(void)
@@ -479,6 +568,22 @@ void TitleDBSetHooksForTest(const TitleDBHook *hooks, int count)
    }
    hooks_override = hooks;
    hooks_override_count = count;
+}
+
+/*
+ * Test-only: install a negative-pair array TitleDBUnsafeValue() consults
+ * regardless of CRC match.  NULL restores normal table lookup.
+ */
+void TitleDBSetNegativeForTest(const TitleDBNegativePair *pairs, int count)
+{
+   if (pairs == NULL || count <= 0)
+   {
+      negative_override = NULL;
+      negative_override_count = 0;
+      return;
+   }
+   negative_override = pairs;
+   negative_override_count = count;
 }
 
 /*
