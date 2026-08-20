@@ -32,6 +32,12 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         if: matrix.os == 'windows-latest'
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git make python zip
+            mingw-w64-x86_64-gcc mingw-w64-x86_64-python
 
       # MAME's build system probes for SDL/ALSA via pkg-config even with
       # EMULATOR=0 TOOLS=1, and the hosted runner images no longer ship them.
@@ -49,12 +55,6 @@ jobs:
       - name: Install chdman build dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: brew install sdl2 sdl2_ttf || true
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git make python zip
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-python
 
       - name: Read chdman pin
         id: pin
