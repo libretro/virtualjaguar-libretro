@@ -737,8 +737,14 @@ endif
 
 # -ffast-math removed (issue #517 audit): every hot loop in this core (68K,
 # GPU/DSP RISC interpreters, blitter) is integer-only, so it cannot speed
-# them up, and the A/B measurement confirmed no effect (p=0.55, well under
-# significance -- see test/tools/opt_ab.sh, `FASTMATH=0` vs `FASTMATH=1`).
+# them up, and the A/B measurement confirmed no effect: interleaved
+# A/B/B/A, n=16 per arm, median 217.5 fps without vs 215.0 fps with
+# (-1.1%, i.e. fast-math was fractionally SLOWER), Mann-Whitney z=-0.60
+# p=0.5465 -- under the noise floor, report no effect.  To reproduce you
+# must first re-add a FASTMATH toggle (the audit used a temporary variable
+# in this block, added to BUILD_AXES so the flip flushes every object) and
+# then drive it with test/tools/opt_ab.sh; there is no standing knob,
+# because the flag no longer has two states worth switching between.
 # The only floating point in the tree that isn't test/trace-only is the I2S
 # resampler in src/jerry/dac.c (i2sPhase/i2sRateRatio, both in the
 # savestate) and event scheduling in src/core/event.c / src/tom/gpu.c
