@@ -27,6 +27,29 @@ ifeq ($(platform),)
 	endif
 endif
 
+# Optimisation level for release builds (ignored when DEBUG=1, and not used
+# by the MSVC branches, whose -O2 means something else entirely).
+#
+# -O3 is enabled only on the platforms it has actually been measured on.
+# On macOS arm64 it is worth +5.5% (two interleaved A/B runs, n=16 per arm,
+# p ~ 0.025) for +49 KB of __TEXT, with the full test suite green -- see
+# issue #515, which also records the measurement protocol, because the naive
+# sequential A/B reports +12.5% on a loaded host and is wrong by a sign.
+#
+# Vita, Switch and the other console targets stay at -O2 deliberately: they
+# build with different compilers, and the Vita is memory constrained, so the
+# arm64/clang result says nothing about them.  Measure before adding one.
+#
+# Override on the command line to test: `make OPT_LEVEL=-O2`.
+OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64
+ifeq ($(origin OPT_LEVEL),undefined)
+   ifneq ($(filter $(platform),$(OPT_O3_PLATFORMS)),)
+      OPT_LEVEL := -O3
+   else
+      OPT_LEVEL := -O2
+   endif
+endif
+
 # system platform
 system_platform = unix
 ifeq ($(shell uname -a),)
@@ -111,7 +134,8 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # name), so the comparison also stays free of shell quoting hazards --
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
-              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
+              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
+              OPT_LEVEL
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
@@ -652,7 +676,7 @@ else
       CFLAGS   += -O2 -DNDEBUG
       CXXFLAGS += -O2 -DNDEBUG
    else
-      FLAGS    += -O2 -DNDEBUG
+      FLAGS    += $(OPT_LEVEL) -DNDEBUG
    endif
 endif
 
