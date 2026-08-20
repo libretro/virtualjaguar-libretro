@@ -1,0 +1,131 @@
+name: Instruction-count A/B
+
+# Deterministic perf regression gate (issue #534).
+#
+# Counts retired instructions (Ir) under valgrind's cachegrind for the PR head
+# and for its merge base, and reports the delta.  cachegrind simulates, so the
+# count is bit-identical run to run and machine to machine for a given binary
+# and architecture -- which is exactly what a shared, noisy GitHub-hosted
+# runner cannot give a wall-clock benchmark.  It also needs no privileges,
+# unlike `perf stat`, which hosted runners keep locked down via
+# perf_event_paranoid.
+#
+# Because the variance is zero, the flagging threshold is tight: 0.5%.
+#
+# This job does NOT fail the PR.  Ir is a work count, not a clock: a change
+# that removes dependent loads shows a small Ir delta and a larger wall-clock
+# win, and inlining/unrolling can raise Ir while getting faster.  So the
+# summary is advisory -- a prompt to look, not a veto.  Set IR_GATE=1 below if
+# a future policy decision makes it blocking.
+#
+# Only within-run A/B deltas are meaningful.  Absolute Ir is architecture
+# specific; never cache a baseline count without keying it by runner arch.
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      # Hot paths only.  A docs or workflow-only PR should not pay for two
+      # full builds plus two cachegrind runs.
+      - 'src/tom/gpu.c'
+      - 'src/tom/blitter.c'
+      - 'src/tom/op.c'
+      - 'src/jerry/dsp.c'
+      - 'src/m68000/**'
+      - 'Makefile'
+      - 'Makefile.common'
+      - 'test/tools/ir_ab.sh'
+      - '.github/workflows/ir-ab.yml'
+  workflow_dispatch:
+    inputs:
+      frames:
+        description: 'Frames per arm'
+        required: false
+        default: '90'
+
+concurrency:
+  group: ir-ab-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ir-ab:
+    name: Ir A/B (linux x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # ir_ab.sh --ref snapshots both arms with `git archive`, so both
+          # commits must actually be present in the local object store.
+          fetch-depth: 0
+
+      - name: Install valgrind
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          valgrind --version
+
+      - name: Resolve arms
+        id: arms
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            BASE='${{ github.event.pull_request.base.sha }}'
+            HEAD='${{ github.event.pull_request.head.sha }}'
+          else
+            BASE=$(git rev-parse HEAD~1)
+            HEAD=$(git rev-parse HEAD)
+          fi
+          # fetch-depth: 0 covers the PR ref's history; the base commit can
+          # still be missing on a force-pushed or cross-fork PR.
+          git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch --no-tags origin "$BASE"
+          git cat-file -e "$HEAD^{commit}" 2>/dev/null || git fetch --no-tags origin "$HEAD"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+
+      - name: Measure
+        id: measure
+        env:
+          IR_FRAMES: ${{ github.event.inputs.frames || '90' }}
+          # Advisory only -- see the header.  Flip to 1 to make a >0.5%
+          # instruction-count regression block the PR.
+          IR_GATE: '0'
+          IR_THRESHOLD: '0.5'
+          # No load-average gate here, deliberately: Ir does not depend on how
+          # busy the runner is.  That is the entire reason this job exists.
+          IR_NO_CONTAINER: '1'
+        run: |
+          set -euo pipefail
+          bash test/tools/ir_ab.sh --ref \
+              "${{ steps.arms.outputs.base }}" "${{ steps.arms.outputs.head }}" \
+              2>&1 | tee ir-ab.log
+          grep '^IR_AB_RESULT' ir-ab.log >> "$GITHUB_OUTPUT" || true
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Instruction-count A/B"
+            echo
+            echo "arm A = merge base \`${{ steps.arms.outputs.base }}\`"
+            echo "arm B = PR head \`${{ steps.arms.outputs.head }}\`"
+            echo
+            echo '```'
+            sed -n '/metric/,$p' ir-ab.log 2>/dev/null || cat ir-ab.log 2>/dev/null || echo '(no output)'
+            echo '```'
+            echo
+            echo "Ir is a deterministic *work* count, not wall time. A change that removes"
+            echo "dependent loads understates here; inlining/unrolling can raise Ir and still"
+            echo "be faster. Treat a flagged delta as a prompt to look, not a veto."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ir-ab-log
+          path: ir-ab.log
+          retention-days: 14
