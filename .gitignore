@@ -144,6 +144,7 @@ test/tools/netlink_latency
 test/tools/netlink_delay_proxy
 test/tools/netlink_discover_probe
 test/tools/netlink_rebuild_witness
+test/tools/netlink_mismatch_witness
 
 # Skip ledger written by `make test` (scripts/test-skip.sh)
 test/.skipped-checks
