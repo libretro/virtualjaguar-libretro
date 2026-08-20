@@ -26,7 +26,8 @@
  * format: the peer is the core's own voicemodem.c, so the assertions are
  * purely console-visible behaviour.
  *
- * Pacing mirrors voicemodem_pair.c: ASICLK $0FFF (~27 ms/char) with the
+ * Pacing mirrors voicemodem_pair.c: ASICLK $0FFF (~27 ms/char, that figure
+ * inherited from voicemodem_pair.c rather than measured here) with the
  * transmitter topped up once per frame, so a 4-word data packet stays
  * ONE TX burst and the modem's end-of-packet marker fires exactly once.
  *
@@ -339,6 +340,7 @@ typedef struct
    uint8_t        rxq[RXQ_SIZE];
    unsigned       rxh;
    unsigned       rxn;
+   int            rxq_overflow;
    int            done;
    int            failed;
 } side;
@@ -355,6 +357,14 @@ static void s_drain(side *s)
          (uint8_t)(s->in->jerry_rw(0xF10030, 0) & 0xFF);
       s->rxn++;
    }
+
+   /* If RBF still has a byte we had nowhere to put, the queue overran.  At
+    * this test's volumes (a handful of 3-byte messages per side) 256 entries
+    * is comfortably oversized, so this cannot fire today -- it exists so a
+    * future overrun reports itself instead of degrading into a "stalled at
+    * step N" timeout, which would send the reader hunting the wrong fault. */
+   if (s->in->jerry_rw(0xF10032, 0) & 0x0080)
+      s->rxq_overflow = 1;
 }
 
 static void s_fail(side *s, const char *fmt, unsigned a, unsigned b)
@@ -389,7 +399,13 @@ static int s_msg(side *s, uint16_t *w)
       lo   = s->rxq[(s->rxh + 2) % RXQ_SIZE];
       s->rxh = (s->rxh + 3) % RXQ_SIZE;
       s->rxn -= 3;
-      if (sync != 0xFF && sync != 0xFE)
+      /* Strict: 0xFF only.  Accepting 0xFE as well used to be tolerated
+       * here, but it weakens the one assertion guarding inter-modem frame
+       * alignment -- if the stream ever slipped by one byte, the low half of
+       * a $FFFE no-digit message landing in sync position would be silently
+       * re-aligned rather than reported.  Nothing in this test legitimately
+       * sends a 0xFE sync. */
+      if (sync != 0xFF)
       {
          s_fail(s, "bad sync byte %02X", sync, 0);
          return 0;
@@ -697,7 +713,8 @@ static int run_test(const char *core_path)
    sides[1].name = "dial";
    sides[1].script = script_dial;
 
-   /* ~27 ms/char: slow enough that the transmitter, topped up once per
+   /* ~27 ms/char (as in voicemodem_pair.c -- test pacing, not a hardware
+      claim): slow enough that the transmitter, topped up once per
       frame, never drains mid-packet. */
    for (i = 0; i < 2; i++)
       inst[i].jerry_ww(0xF10034, 0x0FFF, 0);
@@ -741,6 +758,8 @@ static int run_test(const char *core_path)
          "every modem packet went out as a broadcast");
    CHECK(!inst[0].inbox_overflow && !inst[1].inbox_overflow,
          "no packet was dropped by the relay");
+   CHECK(!sides[0].rxq_overflow && !sides[1].rxq_overflow,
+         "neither side's RX FIFO overran");
    CHECK(inst[0].jlink_tx_total() > 0 && inst[0].jlink_rx_total() > 0
              && inst[1].jlink_tx_total() > 0 && inst[1].jlink_rx_total() > 0,
          "transport counters moved in both directions");
