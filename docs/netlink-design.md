@@ -3,11 +3,19 @@
 **Date:** 2026-07-31
 **Status:** COMPLETE — all four phases implemented and play-tested (Doom
 deathmatch confirmed full speed under RetroArch netplay after the sub-frame
-latency fix, PR #244). Known limitations: internet play is best-effort
-(localhost/LAN validated); BattleSphere Gold validated to the networked
-lobby, sustained dogfight play unverified; AirCars under *netpacket* netplay
-untested (its interrupt-driven RX does not hit the ASISTAT pump path — TCP
-mode fully validated); iOS/Provenance TCP mode not yet device-tested.
+latency fix, PR #244). Known limitations as of this writing: internet play
+is best-effort (localhost/LAN validated); BattleSphere Gold validated to the
+networked lobby, sustained dogfight play unverified; AirCars under
+*netpacket* netplay untested (its interrupt-driven RX does not hit the
+ASISTAT pump path — TCP mode fully validated); iOS/Provenance TCP mode not
+yet device-tested.
+
+**Since resolved (v3.4.0):** iOS TCP mode is device-tested and confirmed
+working. The setup/discovery/OSD-narration overhaul and a video-corruption
+fix (missing TOM interrupt gate on the JERRY UART IRQ, `ea42736`) both
+shipped in v3.4.0 — see `docs/netlink-ux-design.md` and
+`docs/netlink-user-guide.md` for current behaviour; treat those two as
+authoritative over this section for anything they cover.
 **Merged:** PR #250 / #263 lineage.
 
 ## Overview

@@ -2,6 +2,14 @@
 
 How to measure where the Virtual Jaguar libretro core actually spends time.
 
+> **Everything below is host-side** (macOS/Linux, Instruments/`perf`/`sample`).
+> None of it reaches a locked-down console/TV device, which is exactly where
+> the open performance work is aimed — see #509 (interpreter optimisation
+> epic for older/slower platforms) and #510 (wiring RetroArch's
+> `GET_PERF_INTERFACE` for on-device, per-subsystem timing). If you're
+> reading this to investigate a report from tvOS, Android, or a console
+> port, #510 is the gap; this guide can't answer that question yet.
+
 ## TL;DR — `make benchmark`
 
 Wall-clock baseline you can run on every commit:
@@ -9,7 +17,9 @@ Wall-clock baseline you can run on every commit:
 ```bash
 make benchmark                              # default: yarc.j64, 600 frames, fast blitter
 make benchmark BENCH_FRAMES=3000            # longer run (smoother numbers)
-make benchmark BENCH_BLITTER=accurate       # A/B against the slow path
+make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path -- do not
+                                             # assume "fast" is faster; it is scalar-only
+                                             # while accurate is SIMD-accelerated (#511)
 make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
 ```
 
