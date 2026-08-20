@@ -286,6 +286,50 @@ trigger a real release.
 - Don't put new features on a release branch — bug fixes only.
 - Don't forget the back-merge to develop (step 8) — otherwise develop diverges from the tagged version string.
 
+## The website is NOT published by this repo's `pages.yml`
+
+The live site is **https://jaguar.provenance-emu.com/**, built from
+`site/pages/*.html` + `scripts/build_site.py` on **`develop`**.
+
+**A green `Deploy Pages` run here is not evidence the site updated.** The
+libretro org's Pages config redirects every project site to
+`www.libretro.com/<repo>/`, which 404s — so this repo's `pages.yml` deploys,
+reports success, and publishes to a dead path. Only a libretro org owner can
+change that, and a repo-level CNAME is rejected ("You must verify your
+domain").
+
+The real publisher is **`Publish site` (workflow id `329140069`) on the
+`Provenance-Emu/virtualjaguar-libretro` fork**, branch `provenance`. It checks
+out `libretro/virtualjaguar-libretro@develop` (`fetch-depth: 0` — the
+generator derives sitemap `lastmod` from per-file git dates and refuses a
+shallow clone), builds, and deploys to the fork's Pages with the verified
+custom domain. Trigger: **cron `17 * * * *`** (hourly, at :17) +
+`workflow_dispatch`.
+
+So a site change merged to `develop` goes live **up to an hour later**. To
+publish immediately:
+
+```bash
+gh workflow run 329140069 --repo Provenance-Emu/virtualjaguar-libretro --ref provenance
+```
+
+Verify against the live domain, not the workflow status:
+
+```bash
+curl -sI https://jaguar.provenance-emu.com/ | grep -i last-modified
+```
+
+That timestamp tracks the **fork's** last publish. If it predates your
+`develop` commit, the site is stale no matter how green `pages.yml` looks —
+dispatch the fork workflow rather than waiting on a cache. Responses carry
+`cache-control: max-age=600`, which makes a stale *publish* look exactly like
+a CDN cache that hasn't rolled; polling past ~10 minutes with an unchanged
+`last-modified` means the content itself is old, not cached.
+
+Local preview: `python3 scripts/build_site.py` writes `_site/` (gitignored).
+`scripts/check_site.py` asserts canonical/`og:url`/sitemap/robots all agree
+with `SITE_BASE` (override with `VJ_SITE_BASE`).
+
 ## Known limitations
 
 - Blitter not fully cycle-accurate (some games need fast mode).
