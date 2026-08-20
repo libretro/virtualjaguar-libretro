@@ -265,6 +265,7 @@
 #include "jerry.h"
 #include "shadowfb.h"
 #include "log.h"
+#include "perf_iface.h"
 #include "m68000/m68kinterface.h"
 #include "op.h"
 #include "perf_counters.h"
@@ -1404,6 +1405,11 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    if (halfline & 0x01)
       return;
 
+   /* After the odd-halfline guard deliberately: those run no OP pass, and
+    * counting them would dilute the average with no-ops.  No return between
+    * here and VJP_LEAVE -- see the placement rule in perf_iface.h. */
+   VJP_ENTER(VJP_OP);
+
    // Initial values that "well behaved" programs use
    startingHalfline = GET16(tomRam8, VDB);
    endingHalfline = GET16(tomRam8, VDE);
@@ -1488,6 +1494,8 @@ void TOMExecHalfline(uint16_t halfline, bool render)
          }
       }
    }
+
+   VJP_LEAVE(VJP_OP);
 }
 
 // TOM initialization

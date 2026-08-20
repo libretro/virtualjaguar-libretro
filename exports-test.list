@@ -94,3 +94,9 @@ _shadowLineTag
 # translation unit and its own name prefix.
 _TitleHook*
 _vjtrace_*
+# _VJPerf* / _vjPerfActive: the libretro perf-interface plumbing (#510).
+# test/tools/perf_iface_witness.c dlsyms these to prove the counters really
+# register and that the probe regions stay balanced -- neither has any other
+# exercised call site, so nothing else would catch a regression.
+_VJPerf*
+_vjPerfActive
