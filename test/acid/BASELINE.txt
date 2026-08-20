@@ -40,6 +40,7 @@
 [PASS tests/bus/cpu_blitter_concurrent.jag
 [PASS tests/dsp/dsp_basic_run.jag
 [PASS tests/dsp/dsp_irq_to_68k.jag
+[PASS tests/dsp/dsp_irq_tom_gate.jag
 [PASS tests/dsp/dsp_mailbox.jag
 [PASS tests/dsp/dsp_op_abs.jag
 [PASS tests/dsp/dsp_op_add.jag

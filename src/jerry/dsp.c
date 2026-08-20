@@ -28,6 +28,7 @@
 #include "log.h"
 #include "m68000/m68kinterface.h"
 #include "settings.h"
+#include "tom.h"
 #include "../core/vjtrace.h"
 
 // Seems alignment in loads & stores was off...
@@ -788,7 +789,17 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                   {
                      JERRYSetPendingIRQ(IRQ2_DSP);
                      DSPReleaseTimeslice();
-                     m68k_set_irq(2);			// Set 68000 IPL 2...
+                     /* JERRY has no wire of its own to the 68K: the DSP
+                        interrupt merges with every other JERRY source
+                        onto DINT, which enters TOM as INT1 bit 4
+                        (C_JERENA).  The latch above stays outside this
+                        gate, so a later C_JERENA write still delivers
+                        via TOMWriteByte's newlyEnabled & TOMPendingMask()
+                        path -- withheld, not lost.  Same gate as
+                        JERRYPIT1Callback/JERRYPIT2Callback and
+                        UARTRaiseIRQ. */
+                     if (TOMIRQEnabled(IRQ_DSP))
+                        m68k_set_irq(2);		// Set 68000 IPL 2...
                   }
                   data &= ~CPUINT;
                }
