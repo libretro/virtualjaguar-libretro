@@ -41,6 +41,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "uart.h"
 #include "joystick.h"
 #include "inputdev.h"
+#include "paddle.h"
 #include "settings.h"
 #include "shadowfb.h"
 #include "blit_memo.h"
@@ -266,6 +267,13 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
  * them.  Only the explicit subclasses attach it. */
 #define RETRO_DEVICE_JAG_ANALOG          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0)
 #define RETRO_DEVICE_JAG_DRIVING         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+/* The early-board paddle / analog stick (#505) is a third
+ * RETRO_DEVICE_ANALOG subclass, for the same reason: an absolute stick.
+ * It is a COMPLETELY DIFFERENT DEVICE from the two above -- those answer
+ * the $F14000 matrix, this one feeds the motherboard ADC at $F17C00 (see
+ * src/jerry/paddle.h) -- and it is the one with a released consumer,
+ * BattleSphere. */
+#define RETRO_DEVICE_JAG_PADDLE          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
 /* The light gun (#438) is a plain RETRO_DEVICE_LIGHTGUN, not a subclass:
  * there is only one Jaguar gun wiring and frontends bind their gun/mouse
  * pointer to the base type.  Port 1 only -- TR10 puts the LP pin there
@@ -369,6 +377,7 @@ static const char *inputdev_type_name(InputDevType t)
       case INPUTDEV_ANALOG:              return "Analog joystick (bank-switching)";
       case INPUTDEV_DRIVING:             return "Driving controller (bank-switching)";
       case INPUTDEV_LIGHTGUN:            return "light gun";
+      case INPUTDEV_PADDLE:              return "Paddle / analog stick (motherboard ADC)";
       default:                           break;
    }
    return "standard joypad";
@@ -384,6 +393,17 @@ static bool inputdev_is_mouse_type(InputDevType t)
 static bool inputdev_is_analog_type(InputDevType t)
 {
    return (t == INPUTDEV_ANALOG || t == INPUTDEV_DRIVING);
+}
+
+/* Absolute-stick devices, i.e. everything sourced from RETRO_DEVICE_ANALOG
+ * and tuned through the shared absolute path.  The paddle (#505) reaches
+ * the machine by a completely different route from the two bank-switching
+ * types -- hence the separate predicate above, which must keep meaning
+ * "answers the $F14000 matrix" -- but it wants the SAME tuning ladder and
+ * the same option group, because to the user it is the same wrist. */
+static bool inputdev_is_abs_stick_type(InputDevType t)
+{
+   return (inputdev_is_analog_type(t) || t == INPUTDEV_PADDLE);
 }
 
 /* Push the sensitivity ladder AND the per-axis tuning (#439) that belong to
@@ -404,7 +424,7 @@ static bool inputdev_is_analog_type(InputDevType t)
  * property: its initialiser has to be a safe value, not a sentinel. */
 static void apply_port_tuning(int port)
 {
-   if (inputdev_is_analog_type(InputDevGetType(port)))
+   if (inputdev_is_abs_stick_type(InputDevGetType(port)))
    {
       /* The analog device has no sensitivity ladder (see the statics),
        * but the port scale is still pinned to unity so an analog ->
@@ -781,8 +801,8 @@ static bool update_option_visibility(void)
       };
       bool show_analog_prev = show_analog_options;
 
-      show_analog_options = (inputdev_is_analog_type(InputDevGetType(0))
-                             || inputdev_is_analog_type(InputDevGetType(1)));
+      show_analog_options = (inputdev_is_abs_stick_type(InputDevGetType(0))
+                             || inputdev_is_abs_stick_type(InputDevGetType(1)));
 
       if (force || show_analog_options != show_analog_prev)
       {
@@ -1747,6 +1767,8 @@ static InputDevType p2_device_from_option(void)
          p2 = INPUTDEV_ANALOG;
       else if (!strcmp(var.value, "driving"))
          p2 = INPUTDEV_DRIVING;
+      else if (!strcmp(var.value, "paddle"))
+         p2 = INPUTDEV_PADDLE;
       /* "pad" and "auto" (with no DB row) both mean pad. */
    }
 
@@ -1785,6 +1807,8 @@ static InputDevType p1_device_from_option(void)
          p1 = INPUTDEV_DRIVING;
       else if (!strcmp(var.value, "lightgun"))
          p1 = INPUTDEV_LIGHTGUN;
+      else if (!strcmp(var.value, "paddle"))
+         p1 = INPUTDEV_PADDLE;
       /* "pad" and "auto" both mean pad. */
    }
 
@@ -2616,6 +2640,40 @@ static void update_input(void)
          if (t == INPUTDEV_PAD)
             continue;
 
+         /* Paddle / early-board ADC stick (#505): an ABSOLUTE device like
+          * the two below, but it drives the motherboard converter at
+          * $F17C00 and nothing on the $F14000 matrix, so this branch is
+          * the whole integration -- no liveness latch and no pad
+          * suppression.
+          *
+          * NO LIVENESS LATCH is the deliberate difference from the branch
+          * below.  That one exists because an engaged analog controller
+          * STEALS the port's matrix from a pad the frontend may really be
+          * routing; the paddle steals nothing (the pots are separate
+          * connector pins, so the digital pad on this port stays fully
+          * live).  And gating on a deflection would break the one shipped
+          * consumer: BattleSphere's calibrator asks the player to align a
+          * crosshair with the stick CENTRED, which an un-engaged device
+          * reading the $00 rail could never satisfy.  A frontend with no
+          * analog routed reports 0/0, which is centre -- exactly what a
+          * plugged-in, untouched stick reads.
+          *
+          * Buttons are not read here at all: the paddle's switches are
+          * the ordinary pad's, already decoded by joystick.c. */
+         if (t == INPUTDEV_PADDLE)
+         {
+            InputDevFeedPaddle((int)player,
+                               (int32_t)input_state_cb(player,
+                                  RETRO_DEVICE_ANALOG,
+                                  RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                                  RETRO_DEVICE_ID_ANALOG_X),
+                               (int32_t)input_state_cb(player,
+                                  RETRO_DEVICE_ANALOG,
+                                  RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                                  RETRO_DEVICE_ID_ANALOG_Y));
+            continue;
+         }
+
          /* Analog / driving controller (#437): an ABSOLUTE device fed
           * from RETRO_DEVICE_ANALOG, not the relative mouse path below.
           *
@@ -2903,6 +2961,9 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
       case RETRO_DEVICE_JAG_DRIVING:
          type = INPUTDEV_DRIVING;
          break;
+      case RETRO_DEVICE_JAG_PADDLE:
+         type = INPUTDEV_PADDLE;
+         break;
       /* A plain RETRO_DEVICE_ANALOG falls through to the pad on purpose
        * -- see the subclass definitions. */
       case RETRO_DEVICE_JAG_LIGHTGUN:
@@ -3013,6 +3074,12 @@ bool retro_serialize(void *data, size_t size)
     * game reads at $F14000 -- so a state restored without them replays
     * different motion. */
    buf += InputDevStateSave(buf);
+
+   /* Paddle ADC chunk (#505): the latched MUX address and the completed
+    * conversion, which together decide what the next $F17C00 read
+    * returns.  Trailing, so a state written before it existed reads the
+    * zero fill below -- see paddle.h for why that needs no version bump. */
+   buf += PaddleStateSave(buf);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -3156,6 +3223,17 @@ bool retro_unserialize(const void *data, size_t size)
       buf += InputDevStateLoad(buf);
    else
       InputDevReset();
+
+   /* Paddle ADC chunk (#505), mirroring retro_serialize.  Guarded by the
+    * same version as the input-device chunk it trails: on an older layout
+    * neither is present, and the converter is reset instead.  A v12 state
+    * written before this chunk existed reads the serializer's zero fill --
+    * MUX 0, result 0 -- which is what PaddleReset() would have set
+    * anyway. */
+   if (version >= STATE_VERSION_INPUT_DEVICES)
+      buf += PaddleStateLoad(buf);
+   else
+      PaddleReset();
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -4274,6 +4352,7 @@ void retro_init(void)
          { "Rotary (Tempest)", RETRO_DEVICE_JAG_ROTARY },
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
+         { "Analog Stick (paddle ADC)", RETRO_DEVICE_JAG_PADDLE },
          { "Light Gun", RETRO_DEVICE_JAG_LIGHTGUN },
       };
       static const struct retro_controller_description port2_devices[] = {
@@ -4284,10 +4363,11 @@ void retro_init(void)
          { "Rotary (Tempest)",            RETRO_DEVICE_JAG_ROTARY },
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
+         { "Analog Stick (paddle ADC)",   RETRO_DEVICE_JAG_PADDLE },
       };
       static const struct retro_controller_info ports[] = {
-         { port1_devices, 5 },
-         { port2_devices, 7 },
+         { port1_devices, 6 },
+         { port2_devices, 8 },
          { NULL, 0 },
       };
 
@@ -4346,6 +4426,7 @@ void retro_deinit(void)
     * the option-derived type/scale all go back to their load-time values
     * (iOS cannot dlclose a core). */
    InputDevShutdown();
+   PaddleShutdown();
    port_device_frontend[0] = INPUTDEV_PAD;
    port_device_frontend[1] = INPUTDEV_PAD;
    port_device_forced[0]   = false;

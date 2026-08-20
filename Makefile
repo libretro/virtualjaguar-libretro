@@ -1005,6 +1005,7 @@ clean:
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
 		test/tools/joymatrix_identity test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/paddle_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		test/test_quadrature test/test_axistune \
@@ -1075,6 +1076,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/paddle_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
@@ -1453,6 +1455,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# immunity), the type ID bits, the engagement guardrail, the absolute
 	@# tuning semantics and the extended v12 savestate chunk.
 	./test/tools/analog_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Motherboard paddle ADC at $$F17C00 (#505): the three reading states
+	@# (no converter fitted / fitted but that socket empty / live axis),
+	@# the channel|4 single-ended MUX select, BattleSphere's own Timer 1
+	@# round robin landing each channel in its own slot, the UN-inverted Y
+	@# its calibrator implies, the joystick matrix staying bit-identical to
+	@# a pad, and the latched-conversion savestate.
+	./test/tools/paddle_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Light gun (#438).  The register-level half (LPH/LPV transform,
 	@# off-screen freeze, and the 1x-vs-2x identity that keeps the
 	@# internal-resolution option out of the aim) runs on the in-tree public
@@ -1938,6 +1947,13 @@ test/tools/analog_decode_test: test/tools/analog_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/analog_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/paddle_decode_test: test/tools/paddle_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/paddle_decode_test.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

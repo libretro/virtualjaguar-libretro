@@ -96,6 +96,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/quadrature.c \
 	$(CORE_DIR)/src/jerry/axistune.c \
 	$(CORE_DIR)/src/jerry/inputdev.c \
+	$(CORE_DIR)/src/jerry/paddle.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
 	$(CORE_DIR)/src/core/jaggd.c \
