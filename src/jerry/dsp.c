@@ -29,6 +29,7 @@
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 #include "../core/vjtrace.h"
+#include "perf_iface.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -1046,8 +1047,11 @@ void DSPSyncToM68K(void)
 	if (run <= 0)
 		return;
 
+	/* Mirror of GPUSyncToM68K's probe -- see perf_iface.h. */
 	dspSliceSpent += run;
+	VJP_ENTER(VJP_DSP_SYNC);
 	DSPExec(run);
+	VJP_LEAVE(VJP_DSP_SYNC);
 }
 
 /* DSP execution core */
@@ -1061,6 +1065,9 @@ void DSPExec(int32_t cycles)
 		dsp_control &= ~0x10;
 	}
 #endif
+	/* No return between here and VJP_LEAVE (perf_iface.h). */
+	VJP_ENTER(VJP_DSP);
+
 	dsp_releaseTimeSlice_flag = 0;
 	dsp_in_exec++;
 
@@ -1140,6 +1147,8 @@ void DSPExec(int32_t cycles)
 	}
 
 	dsp_in_exec--;
+
+	VJP_LEAVE(VJP_DSP);
 }
 
 INLINE static void dsp_executeOpcode(uint32_t index)

@@ -97,5 +97,7 @@
        * own translation unit and its own name prefix. */
       TitleHook*;
       vjtrace_*;
+    VJPerf*;
+    vjPerfActive;
    local: *;
 };
