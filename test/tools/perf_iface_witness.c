@@ -39,6 +39,13 @@
  * Exit:   0 all good, 1 a check failed, 77 the ROM is missing (skip).
  */
 
+/* clock_gettime/CLOCK_MONOTONIC are hidden by glibc under strict -std=c99.
+ * Same guard test/harness/harness.c uses: skip Apple, where defining this
+ * instead HIDES BSD extensions, and skip Windows entirely. */
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
