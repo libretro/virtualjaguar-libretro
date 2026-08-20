@@ -399,6 +399,14 @@ for every user, replacement rides a **parallel per-page plane** of N×N
   allocated per page on first pack write, and both the OP resolve and
   the scanline renderer hoist a single `shadowHiresReplActive` test.
 
+Planes share `SHADOWFB_HIRES_CAP_BYTES` with the base pages, which is
+safe by arithmetic rather than by policy: at N=2 all 256 base pages are
+~20.5 MB and all 256 replacement planes ~16.8 MB, ~37 MB against a
+64 MB cap, and `SHADOWFB_HIRES_MAX_N` is 2 — a pack cannot starve base
+allocation.  A plane allocation that *does* fail sets its own stopped
+flag, never `hiresAllocStopped`: running out of budget for pack art
+must degrade the pack, never the base hi-res feature.
+
 Entry encoding is `SHADOWFB_HIRES_REPL_VALID | RGB888`, or 0 meaning
 "keep what is underneath" — so an author's alpha hole falls through to
 the Stage 2 supersampled content, not to a flat colour.
@@ -418,6 +426,19 @@ The **1× representative** of a stock word covered by N× art is the
 pack's top-left subpixel (recorded in the 1x shadow, so a hi-res
 resolve miss degrades to pack colour rather than to stock).  Top-left,
 not an average: an average would invent a colour the author never drew.
+
+**Known tier-3 limit — epoch expiry on static content.** Nx blocks
+carry the surface's frame epoch and are only trusted for
+`HIRES_EPOCH_WINDOW` (16) presented frames; the 1x shadow has no epoch
+and persists on value-check alone.  So a tile blitted once and left on
+screen — a static HUD, a menu, a title card — presents crisp N× art for
+~16 frames and then ages out to the 1× representative, i.e. the same
+tile as flat blocky top-left colours.  It does *not* revert to stock,
+which is exactly why the 1× representative is recorded; that is the
+load-bearing reason for it.  Continuously re-blitting engines
+(Doom-class) are unaffected, and any block self-heals at the next blit.
+The battery gates cannot observe this (they probe with a current
+epoch), so it is documented rather than asserted.
 
 Unchanged by tier 3: zero savestate fields, zero RAM writes, zero
 bus-model time.  The replacement plane is a derived cache like every

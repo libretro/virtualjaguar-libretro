@@ -41,7 +41,10 @@
  *                        plane the scanline renderer reads -- for 2x
  *                        art at its own resolution, for 1x art
  *                        replicated, and for nothing at all where the
- *                        dimensions do not match.
+ *                        dimensions do not match -- and the 1x
+ *                        representative recorded per replaced word is
+ *                        the pack's TOP-LEFT subpixel, which is what a
+ *                        hi-res resolve miss degrades to.
  *   8. hires_determinism  two identical 2x pack runs agree.
  *
  * The synthetic pack is built from FIRST PRINCIPLES: the test computes
@@ -1144,19 +1147,32 @@ int main(int argc, char **argv)
     {
         int ok = (rH->hires_active == 1) && (rH->repl_active == 1);
         unsigned t;
-        char frag[96];
+        char frag[112];
         snprintf(d_hpres, sizeof(d_hpres), "N=%d repl=%d words:",
                  rH->hires_n, rH->repl_active);
         for (t = 0; t < N_TILES; t++) {
             unsigned w = 0, o = 0, h = 0;
+            /* The 1x representative recorded alongside every Nx block
+             * is the pack's TOP-LEFT subpixel -- what a hi-res resolve
+             * miss (epoch expiry, unshadowed page) degrades to.  Assert
+             * it explicitly: bottom-right, an average, or storing
+             * nothing would otherwise pass every other gate here. */
+            unsigned lo = expect_1x_hits(t, 1);
             expect_hires(t, rH->hires_n ? rH->hires_n : 1, &w, &o, &h);
             if (rH->hi_words[t] != w || rH->hi_sub_ok[t] != o
-                || rH->hi_sub_bad[t] || rH->hi_sub_hole[t] != h)
+                || rH->hi_sub_bad[t] || rH->hi_sub_hole[t] != h
+                || rH->hits[t] != lo || rH->wrong_rgb[t])
                 ok = 0;
-            snprintf(frag, sizeof(frag), " t%u=%u/%u(%u/%u sub%s)", t,
-                     rH->hi_words[t], w, rH->hi_sub_ok[t], o,
-                     rH->hi_sub_bad[t] ? ",WRONG" : "");
+            snprintf(frag, sizeof(frag), " t%u=%u/%u(%u/%u sub,%u/%u 1x%s)",
+                     t, rH->hi_words[t], w, rH->hi_sub_ok[t], o,
+                     rH->hits[t], lo,
+                     (rH->hi_sub_bad[t] || rH->wrong_rgb[t]) ? ",WRONG" : "");
             strncat(d_hpres, frag, sizeof(d_hpres) - strlen(d_hpres) - 1);
+        }
+        if (ok && !rH->line_rgb_ok) {
+            ok = 0;
+            snprintf(d_hpres, sizeof(d_hpres), "the 1x presentation path "
+                     "does not carry pack art at 2x");
         }
         /* The 1x-art tile proves replication: without it the Nx line
          * entry would win and mask the pack outright. */
