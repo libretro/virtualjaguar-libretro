@@ -53,6 +53,11 @@ uint16_t TOMGetVP(void);
 uint16_t TOMGetMEMCON1(void);
 uint16_t TOMGetMEMCON2(void);
 
+/* Texture-pack substitution for one presented pixel on the RGB16-direct
+ * scanline paths (issue #528).  The single seam both the 1x and the Nx
+ * RGB16 renderers use -- see the comment on the definition in tom.c. */
+int TomLinePackRGB(int idx, uint16_t color, uint32_t *out);
+
 int TOMIRQEnabled(int irq);
 uint16_t TOMIRQControlReg(void);
 void TOMSetIRQLatch(int irq, int enabled);

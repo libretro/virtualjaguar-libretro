@@ -95,6 +95,11 @@
       ShadowFB*;
       shadowLineRGB;
       shadowLineTag;
+      /* RGB16-direct pack presentation (#528): the gate drives the seam
+       * both RGB16 renderers use.  TomLinePackRGB is NOT covered by
+       * TOM* -- the prefix differs in case. */
+      shadowFBReplActive;
+      TomLinePackRGB;
       /* Nx surface probes: the tier-3 (>1x pack art) gates drive the OP's
        * own resolve function and read the Nx line planes directly. */
       ShadowHires*;

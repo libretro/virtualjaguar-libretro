@@ -21,7 +21,7 @@
  *      pixel's RGB888 is stored into the true-color shadow
  *      framebuffer, tagged with that RAM value.  The OP's existing
  *      shadow presentation path (op.c -> ShadowFBLineFromRAM -> the
- *      CRY scanline renderer) then presents the pack art.
+ *      scanline renderer) then presents the pack art.
  *
  * The per-pixel witness makes wrong models harmless: transparent
  * (BCOMPEN/DCOMPEN) pixels, shaded/Gouraud outputs, non-rectangular
@@ -42,12 +42,22 @@
  * too, replicated -- without that the Nx surface would MASK 1x packs,
  * because its line entries win wherever they hit.
  *
+ * RGB16-DIRECT SCANOUT (issue #528): presentation is no longer
+ * CRY-only.  Both 16bpp scanout modes present, at 1x and Nx together
+ * -- the store side never cared (it captures the raw destination word;
+ * TOM's video mode only decides how that word is INTERPRETED at
+ * scanout), so this was a missing consumer plus one tag bit,
+ * SHADOWFB_TAG_REPL, telling pack art apart from a true-color CRY
+ * reconstruction.  A CRY reconstruction must NOT present on an RGB16
+ * scanout; pack art is absolute RGB888 and is correct on either.  See
+ * TomLinePackRGB in tom.c and the SHADOWFB_TAG_REPL comment in
+ * shadowfb.h.
+ *
  * Known limits (documented in docs/texture-dump.md): presentation
- * requires the CRY 16bpp OP path (the dominant framebuffer case); the
- * shadow tag is value-checked, so a later NON-blit write of the same
- * 16-bit value to a replaced address keeps presenting pack RGB until
- * the next store to that word; indexed (<=8bpp) sources are a future
- * tier.
+ * requires the 16bpp OP path; the shadow tag is value-checked, so a
+ * later NON-blit write of the same 16-bit value to a replaced address
+ * keeps presenting pack RGB until the next store to that word;
+ * indexed (<=8bpp) sources are a future tier.
  */
 
 #include "texreplace.h"

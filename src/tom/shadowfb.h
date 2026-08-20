@@ -35,6 +35,25 @@ extern "C" {
 
 #define SHADOWFB_LINE_PIXELS 720
 #define SHADOWFB_TAG_VALID   0x10000
+/* Bit 17: this entry's RGB888 is texture-pack art (ShadowFBStoreRGB),
+ * not a CRY reconstruction (ShadowFBStoreCry).  Issue #528.
+ *
+ * The distinction only matters at presentation.  A CRY reconstruction is
+ * meaningful ONLY on the CRY scanline path -- it is a decomposition of
+ * the 16-bit word through the chroma tables, and running it on a word
+ * TOM is scanning out as RGB16 would show an invented colour.  Pack art
+ * is an ABSOLUTE RGB888 the author drew: it carries no format
+ * assumption, so it is correct wherever the word it is tagged against
+ * reaches the screen.  Hence the RGB16-direct renderers substitute on
+ * this bit and this bit only, while the CRY renderers mask it out and
+ * substitute on either kind.
+ *
+ * Tag value comparisons must therefore mask with 0x1FFFF, exactly as the
+ * hi-res tag does for HIRES_TAG_REPL: an ordinary ShadowFBStoreCry
+ * rewrites the tag WITHOUT this bit, so stale pack art self-clears with
+ * no invalidation hook. */
+#define SHADOWFB_TAG_REPL    0x20000
+#define SHADOWFB_TAG_VMASK   0x1FFFF
 
 /* Nonzero when the surface is on AND the buffers are allocated.  Hot
  * paths gate on this before doing any shadow work.  The surface can be
@@ -51,6 +70,13 @@ extern int shadowFBPrecision;
 /* Set by the True Color option (independent of surface allocation
  * order; the effective flag is recomputed on enable). */
 void ShadowFBSetPrecision(int on);
+
+/* Nonzero once a pack has stored at least one 1x replacement entry
+ * (issue #528).  The RGB16-direct scanline renderers gate on this so a
+ * run without a pack -- including a plain True Color run -- does zero
+ * extra per-pixel work and stays bit-identical to stock.  Counterpart
+ * of shadowHiresReplActive on the Nx surface. */
+extern int shadowFBReplActive;
 
 /* Shadow line buffer, parallel to tomRam8[0x1800..], one entry per
  * 16-bit line-buffer pixel.  Tag = value16 | SHADOWFB_TAG_VALID. */
@@ -84,13 +110,23 @@ void ShadowFBStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16);
 void ShadowFBStoreRGB(uint32_t addr, uint16_t value16, uint32_t rgb888);
 
 /* Value-checked lookup: returns nonzero and fills *rgb888 only when the
- * entry's tag matches current16 (the value just read from RAM). */
+ * entry's tag matches current16 (the value just read from RAM).  Both
+ * kinds of entry (CRY reconstruction and pack art) hit. */
 int ShadowFBLookup(uint32_t addr, uint16_t current16, uint32_t *rgb888);
+
+/* As ShadowFBLookup, but hits ONLY on a texture-pack entry
+ * (SHADOWFB_TAG_REPL).  The RGB16-direct presentation path uses this:
+ * see the SHADOWFB_TAG_REPL comment for why a CRY reconstruction must
+ * not be substituted on an RGB16 scanout. */
+int ShadowFBLookupRepl(uint32_t addr, uint16_t current16, uint32_t *rgb888);
 
 /* OP 16bpp write site helper: resolve srcAddr against the shadow RAM
  * (hit -> shadow RGB888, miss -> stock CRY16ToRGB32 conversion) and
  * store the result + tag into shadow line entry `idx`.  Out-of-range
- * idx is ignored (renderer then falls back via tag mismatch). */
+ * idx is ignored (renderer then falls back via tag mismatch).
+ *
+ * The line tag carries SHADOWFB_TAG_REPL through from the RAM entry, so
+ * the scanline renderers can tell pack art from a CRY reconstruction. */
 void ShadowFBLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
 
 /* ==================================================================
@@ -153,6 +189,12 @@ extern int shadowHiresActive;
  *   missNoPage -- no shadow page for the address (production never got here)
  *   missValue  -- entry exists, RAM value no longer matches its tag
  *   missEpoch  -- value matched, entry rejected for age only (the silent one)
+ *
+ * The buckets describe the STOCK supersampled block only.  Texture-pack
+ * art is exempt from the age check (issue #528; see the REPL section
+ * below), so an epoch-expired word carrying pack art bumps missEpoch and
+ * still delivers its replacement plane -- missEpoch climbing while pack
+ * art is on screen is expected, not a contradiction.
  *
  * Stage 3 (design section 6.4) note: OP scaled-bitmap pixels resolve
  * against the RAM shadow FIRST (ShadowHiresLineFromRAM, counted here
@@ -236,9 +278,22 @@ void ShadowHiresShutdown(void);
  *   - any ordinary ShadowHiresStoreCry/Block to the word rewrites the
  *     tag WITHOUT the replacement bit, so stale pack art self-clears
  *     through the machinery that already exists;
- *   - the value+epoch coherence check is unchanged and shared;
+ *   - the value coherence check is unchanged and shared;
  *   - a 1x run, or a 2x run with no pack, allocates nothing and pays
  *     one already-predicted branch.
+ *
+ * The EPOCH half of the coherence check does not apply to pack art
+ * (issue #528).  HIRES_EPOCH_WINDOW bounds stale STRUCTURE -- an N*N
+ * interior derived from a write RAM no longer holds -- and for pack art
+ * that class is already unbounded and already shipping at 1x, where the
+ * tier-1 shadow carries no epoch at all and is presenting the same
+ * tile's 1x representative at the same pixel on the same value check.
+ * Ageing the Nx block out therefore prevented no artifact; it only
+ * dropped a statically-blitted tile (HUD, menu, title card) from the
+ * author's art to a flat 1x block after ~16 frames.  The stock sub
+ * block behind an author alpha hole IS still refused on age, so holes
+ * fall back to box replication of the word RAM holds -- never invented
+ * detail.
  *
  * Entry encoding: SHADOWFB_HIRES_REPL_VALID | RGB888 to replace that
  * subpixel, or 0 to keep the stock/supersampled content underneath
@@ -291,9 +346,12 @@ void ShadowHiresStoreCryBlock(uint32_t addr, uint16_t stock16,
  * value16, the word the OP just read); on miss, replicate
  * {value16, 0} N*N times.  Runs inside the OP's single per-scanline
  * pass, producing all N sub-rows at once (design section 6.1).
- * Returns nonzero on a shadow-block hit, 0 on any miss (the Stage 3
+ * Returns nonzero on a shadow-block hit -- or on a pack-art hit with no
+ * usable stock block (issue #528) -- and 0 on any miss.  The Stage 3
  * caller in op.c uses this to fall back to point samples ONLY when no
- * real supersampled content exists for the word). */
+ * real content exists for the word: ShadowHiresLineFromScaledSamples
+ * zeroes the line replacement plane, so reporting a miss for a word
+ * that just delivered pack art would wipe it. */
 int ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16);
 
 /* Stage 3 (design section 6.4): OP scaled-bitmap miss fallback.  Used
