@@ -33,6 +33,28 @@
  * CI has no copy.  Run it by hand; it exits 77 (skip, never a silent 0)
  * when the ROM is absent.
  *
+ * USE THE PLAIN DUMP.  THE [a1] AND [a2] DUMPS ARE NOT INSTRUMENTS.
+ * ================================================================
+ * The corpus holds three dumps and only the plain one (176,946 bytes) has
+ * the detection sequence above at offset 0x272.  The other two are
+ * differently-linked binaries in which $68AA is simply not the verdict
+ * byte, so this probe's fixed address reads something unrelated:
+ *
+ *   dump          bytes    @0x272                no tap / p1 / p2 / both
+ *   plain        176,946   33FC 81FA 00F14000    0x00 / 0x01 / 0x02 / 0x03
+ *   [a1]         176,900   68A5 13FC 0016 ...    0x01 / 0x01 / 0x01 / 0x01
+ *   [a2]         179,602   0A30 33C0 0003 ...    0x00 / 0x00 / 0x00 / 0x00
+ *
+ * Measured against a core built from a develop revision with NO Team Tap
+ * code at all, [a1] ALSO reports 0x01 and [a2] ALSO reports 0x00.  Neither
+ * value responds to any tap configuration, so neither is evidence for or
+ * against the implementation.
+ *
+ * This matters because [a1]'s stuck 0x01 reads as "Team Tap found on port
+ * 1" and was once recorded as a passing detection -- it is not one.  A
+ * verdict from either alternate dump means nothing; if you want to add a
+ * dump to this matrix, first check for the opcode at 0x272.
+ *
  * USAGE
  *   make TEST_EXPORTS=1 test/tools/teamtap_rom_probe
  *   ./test/tools/teamtap_rom_probe ./virtualjaguar_libretro.dylib \
