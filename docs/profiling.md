@@ -90,6 +90,19 @@ vj_gpu_sync      calls=0       total=0           <- this title never syncs
 vj_dsp_sync      calls=0       total=0
 ```
 
+> **Benchmark-ROM caveat (#533).** `yarc.j64` is an *amplifier*, not a
+> benchmark: 73.3% of its GPU time is `jr` (a spin loop) and its DSP share is
+> ~0.08%, so a DSP or blitter change measures as "no effect" on it. The #532
+> GPU hoist scored −4.33% on yarc against −3.77% on jagniccc — same change,
+> and the gap is that bias. Use yarc to make a GPU-loop effect *visible*;
+> never to *size* one. The figures on this page taken on yarc are still valid
+> for what they measured, but are not a whole-core picture.
+>
+> `make benchmark` now defaults to `jagniccc.j64` @ 900 frames with a **300-frame
+> warmup** — the warmup matters, because jagniccc is still in BIOS boot (zero
+> GPU-interpreter instructions) at 90 frames. Use `test/tools/ir_ab.sh --profile`
+> to check any ROM/window before trusting it.
+
 ### Adding a counter
 
 Add a slot to the enum in [`src/core/perf_iface.h`](../src/core/perf_iface.h),
@@ -104,7 +117,8 @@ nothing for the rest of the session. `perf_iface_witness` gates that.
 Wall-clock baseline you can run on every commit:
 
 ```bash
-make benchmark                              # default: yarc.j64, 600 frames, fast blitter
+make benchmark                              # default: jagniccc.j64, 900 frames, 300 warmup
+make benchmark BENCH_ROM=test/roms/yarc.j64 # GPU-loop amplifier -- see the caveat below
 make benchmark BENCH_FRAMES=3000            # longer run (smoother numbers)
 make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path.  Measured
                                              # on arm64 (#511): fast is never slower, and

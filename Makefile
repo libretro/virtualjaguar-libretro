@@ -2212,9 +2212,40 @@ coverage:
 #   make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
 #   make benchmark BENCH_FRAMES=3000 BENCH_WARMUP=120
 #   make benchmark BENCH_BLITTER=accurate    # default: fast
-BENCH_ROM     ?= test/roms/yarc.j64
-BENCH_FRAMES  ?= 600
-BENCH_WARMUP  ?= 60
+#
+# ROM/window choice (issue #533).  Profiled with `test/tools/ir_ab.sh
+# --profile`, which reports where retired instructions actually go:
+#
+#   workload             GPU interp   DSP interp   blitter   68K
+#   jagniccc @ 90              0.0%         0.0%      0.0%   ~38%   <- BIOS boot
+#   jagniccc @ 300            38.6%        22.3%      7.1%   ~5.9%
+#   jagniccc @ 600            40.2%        23.7%     10.3%   ~2%
+#   yarc     @ 90             71.2%        0.08%     17.5%   ~0%
+#
+# yarc.j64 was the default and is a poor one: its GPU time is 73.3% `jr`
+# (a spin loop) and its DSP share is ~0.08%, so a DSP or blitter change
+# measures as no effect on it.  It is an *amplifier* for GPU-loop work --
+# the #532 hoist scored -4.33% on yarc vs -3.77% on jagniccc, same change.
+# Keep it for making a GPU-loop effect visible; do not use it to size one.
+#
+# jagniccc.j64 (the NICCC 2000 port -- a GPU program rasterising 75,340
+# precalculated polygons while the 68K sits in `stop #$2000`) is the only
+# public ROM that exercises GPU, DSP, blitter and 68K in real proportion.
+#
+# WARMUP IS LOAD-BEARING HERE, not a rounding knob: jagniccc executes
+# ZERO GPU-interpreter instructions at 90 frames because it is still in
+# BIOS boot.  Warming up only 60 frames would put most of the measured
+# window in boot code and quietly report the wrong thing.  300 clears it.
+# If you shorten BENCH_WARMUP, re-run `ir_ab.sh --profile` and confirm the
+# mix survives.
+#
+# Historical note: numbers recorded before this change (e.g. issue #515's
+# -O2/-O3 figures) were taken on yarc @ 600/60 and are NOT comparable to
+# the new default.  `make benchmark` is a same-host commit-to-commit tool
+# either way -- never compare across machines.
+BENCH_ROM     ?= test/roms/jagniccc.j64
+BENCH_FRAMES  ?= 900
+BENCH_WARMUP  ?= 300
 BENCH_BLITTER ?= fast
 # BENCH_PROFILE=1 enables src/core/perf_counters.h instrumentation and
 # wide-export ABI so test_benchmark can dlsym `perf_counters_dump`.
