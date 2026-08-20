@@ -104,7 +104,11 @@ Nothing else in this core reads `LPH`, so there is no second consumer to keep co
 | 2 | Yes — but see Deviation 3: calibration converging proves less than §6 assumed. |
 | 6 | Resolved: `BALLOONS.BIN`, 15904 bytes, md5 `cda44eeb071b5bd29582665ce8405eaa`. |
 
-Still open: §5.3 (Team Tap), §5.4 (gun controller-ID bits), §5.5 (building Bullets).
+Still open: §5.4 (gun controller-ID bits), §5.5 (building Bullets).
+§5.3 (Team Tap) was **answered by #513's TR10 pass, and the answer was the opposite of
+what this document guessed** — `LP` reaches TOM through the adapter but is not isolated
+from the other sockets' `B0`, so the gun is not immune to a Team Tap. See §4.2 item 2 and
+the §5 table.
 Bullets remains untestable, so which button *it* reads is unverified; if it turns out to
 want `A`, that is `AUX_A` today and a mapping question, not a design one.
 

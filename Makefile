@@ -1003,7 +1003,8 @@ clean:
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
-		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/tools/joymatrix_identity test/tools/teamtap_ports \
+		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
 		test/tools/paddle_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
@@ -1074,6 +1075,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
 		test/tools/paddle_decode_test \
@@ -1426,6 +1428,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# an FNV digest measured on develop.  Committed before any device code
 	@# so later PRs are measured against a number that predates them.
 	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Team Tap (#513): the two paths joymatrix_identity structurally
+	@# cannot reach -- update_teamtap_input()'s frontend-port -> socket
+	@# fill, and the trailing v13 state chunk.  That chunk is written
+	@# LAST, so one that writes nothing at all misaligns nothing and
+	@# passes test_state_compat and test_runahead_determinism unchanged.
+	./test/tools/teamtap_ports ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Cross-load static leak (#479): a fast-blitter session must not
 	@# contaminate the savestate of the accurate session that follows it
 	@# while the core stays resident (iOS cannot dlclose).  The run1-vs-run2
@@ -1922,6 +1930,19 @@ test/tools/teamtap_rom_probe: test/tools/teamtap_rom_probe.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/teamtap_rom_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Team Tap frontend plumbing + savestate chunk (#513).  Covers the two
+# paths joymatrix_identity structurally cannot: update_teamtap_input()'s
+# frontend-port -> socket fill, and the trailing v13 state chunk (which is
+# written last, so an empty one misaligns nothing and passes every other
+# state test).  Runs on the committed yarc.j64, so it IS part of `make test`.
+test/tools/teamtap_ports: test/tools/teamtap_ports.c \
+		src/jerry/joystick.h src/core/state.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/teamtap_ports.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 

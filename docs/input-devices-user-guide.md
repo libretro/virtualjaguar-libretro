@@ -357,6 +357,13 @@ extra sockets are appended after them:
 ports 1, 3, 4 and 5** — not 1 to 4. Frontend port 2 is still Jaguar port 2,
 where a fifth pad would go.
 
+**If the extra pads do nothing, check that your frontend has actually
+assigned those ports.** The core advertises eight ports and reads all of
+them, but a frontend that leaves ports it has never been told about set to
+*None* reports no input for them. In RetroArch that is *Settings → Input →
+Port N Controls → Device Type = Standard Joypad*, plus binding a physical
+controller to the port.
+
 ### Remapping the extra pads
 
 *Port N > Button Remapping* and *Numpad to Keyboard* apply to **socket 0
