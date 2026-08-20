@@ -1,6 +1,6 @@
 <!-- title: Virtual Jaguar libretro — Atari Jaguar, everywhere RetroArch runs -->
 <!-- nav: Home -->
-<!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, JagLink networking, GameDrive, deterministic savestates, 16 platforms. -->
+<!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, every Jaguar controller, link play over TCP or netplay, HD texture packs, deterministic savestates, 16 platforms. -->
 
 <div class="hero">
   <div class="kicker">libretro core &middot; open source &middot; GPLv3</div>
@@ -11,7 +11,7 @@
   </h1>
   <p class="lede">
     68000, Tom, Jerry, two RISC coprocessors, the Object Processor, the CD
-    drive, the link port. One core,
+    drive, the link port, the modem. One core,
     <a href="{{REPO}}/blob/develop/.github/workflows/release.yml">16 CI-built platforms</a>.
   </p>
   <figure class="crt-frame" id="hero-crt-frame">
@@ -34,7 +34,7 @@
 <div class="stats">
   <div class="stat"><div class="n">16</div><div class="l">platforms per release (<a href="{{REPO}}/blob/develop/.github/workflows/release.yml">release.yml</a>)</div></div>
   <div class="stat"><div class="n">4 + 1</div><div class="l">processors, plus the CD's BUTCH controller (<a href="{{REPO}}/blob/develop/docs/source-layout.md">source layout</a>)</div></div>
-  <div class="stat"><div class="n">v11</div><div class="l">savestate format; every released format loads (<a href="{{REPO}}/blob/develop/docs/savestate-compat.md">savestate-compat.md</a>)</div></div>
+  <div class="stat"><div class="n">v12</div><div class="l">savestate format; every released format loads (<a href="{{REPO}}/blob/develop/docs/savestate-compat.md">savestate-compat.md</a>)</div></div>
 </div>
 
 <h2>What you get</h2>
@@ -42,8 +42,9 @@
 <div class="grid">
   <div class="card">
     <h3>Jaguar CD, two ways</h3>
-    <p>CUE/BIN and CDI boot via an HLE CD BIOS or the real BIOS on emulated
-    BUTCH hardware. Audio CDs and the VLM work.</p>
+    <p>CUE/BIN, CDI and CHD boot via an HLE CD BIOS or the real BIOS on
+    emulated BUTCH hardware. Audio CDs and the VLM work. CHD needs a
+    session-aware chdman; each release attaches one.</p>
     <p class="src"><a href="compatibility.html">per-title matrix</a> &middot;
       <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a></p>
   </div>
@@ -62,11 +63,14 @@
       <a href="{{REPO}}/blob/develop/test/tools/test_runahead_determinism.c">the test</a></p>
   </div>
   <div class="card">
-    <h3>JagLink networking</h3>
-    <p>Register-level link-port serial over TCP. Doom deathmatch
-    validated.</p>
+    <h3>Link play, self-configuring</h3>
+    <p>JagLink and CatBox serial at register level. Automatic mode rides a
+    RetroArch netplay session with nothing to type; direct TCP finds LAN
+    hosts by UDP beacon and lists them by name. Doom deathmatch validated,
+    and Ultra Vortek dials the emulated Voice Modem (press 911 at the
+    title screen).</p>
     <p class="src"><a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">user guide</a> &middot;
-      <a href="{{REPO}}/blob/develop/docs/netlink-design.md">design</a></p>
+      <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a></p>
   </div>
   <div class="card">
     <h3>Jaguar GameDrive</h3>
@@ -95,6 +99,29 @@
     <p class="src"><a href="{{REPO}}/blob/develop/docs/rom-patches.md">rom-patches.md</a></p>
   </div>
   <div class="card">
+    <h3>Every controller</h3>
+    <p>Pro Controller, Team Tap, ST/Amiga mouse, Tempest 2000 rotary, the
+    TR10 analog protocol, lightgun. Per-axis dead zone, offset and response
+    tuning on every analog source.</p>
+    <p class="src"><a href="{{REPO}}/issues/428">epic #428</a> &middot;
+      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0 notes</a></p>
+  </div>
+  <div class="card">
+    <h3>HD texture pipeline</h3>
+    <p>Dump every unique blit source as a hashed PNG, redraw it, drop it in
+    a pack directory. Replacement is presentation-only; savestates and
+    netplay stay bit-identical with or without a pack.</p>
+    <p class="src"><a href="{{REPO}}/blob/develop/docs/texture-dump.md">texture-dump.md</a> &middot;
+      <a href="{{REPO}}/issues/369">#369</a></p>
+  </div>
+  <div class="card">
+    <h3>Boot ROM selection</h3>
+    <p>Series K or Model M (both embedded), or a custom image identified by
+    checksum. Unrecognized 128&nbsp;KB images still load, with a log
+    warning.</p>
+    <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0 notes</a></p>
+  </div>
+  <div class="card">
     <h3>Fully open source</h3>
     <p>GPLv3, from Shamus Hammons' Virtual Jaguar. Hardware-referenced tests
     gate&nbsp;CI.</p>
@@ -115,6 +142,11 @@
 
 <h2>Recent releases</h2>
 <ul>
+  <li><strong>v3.4.0</strong> &mdash; every controller the Jaguar had (mouse,
+      rotary, analog, lightgun), Ultra Vortek netplay over the emulated Voice
+      Modem, self-configuring link with LAN discovery, texture dump +
+      replacement, boot-ROM selection, CHD.
+      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">Notes</a>.</li>
   <li><strong>v3.3.0</strong> &mdash; hi-res completion (RGB16 renderer, scaled-sprite
       + CLUT supersampling), Val d&rsquo;Is&egrave;re ground fix from the Flare
       netlists, run-ahead determinism.
@@ -125,9 +157,6 @@
   <li><strong>v3.1.0</strong> &mdash; GameDrive, clock scales, audio-CD/VLM,
       savestate compatibility.
       <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">Notes</a>.</li>
-  <li><strong>v3.0.0</strong> &mdash; Jaguar CD matured, JagLink, compatibility
-      wave, acid suite in CI.
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">Notes</a>.</li>
 </ul>
 
 <p class="footnote">

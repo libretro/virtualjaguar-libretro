@@ -89,13 +89,17 @@
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td></tr>
   <tr><td>Power Drive Rally</td><td>Sound freezing on a constant tone mid-game — GPU/DSP local RAM 16-bit-port latch (#355)</td>
       <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot; <a href="{{REPO}}/pull/363">PR #363</a></td></tr>
+  <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>Snow rendered wrong. Object Processor register write order is LSW-first, proven from the Flare netlists (#354)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a></td></tr>
+  <tr><td>Ultra Vortek</td><td>Video torn apart when the Voice Modem activates. UART IRQ was missing TOM&rsquo;s <code>C_JERENA</code> gate; 3.26 spurious interrupts/frame before, 0.999 after (#500)</td>
+      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td></tr>
 </table></div>
 
 <p class="footnote">
-  <strong>Tracked:</strong> Doom combat pacing ~1.5x fast
-  (<a href="{{REPO}}/issues/313">#313</a>) &middot; Battle Morph (CD) too fast
-  (<a href="{{REPO}}/issues/331">#331</a>) &middot; Val D'Isere ground visuals
-  (<a href="{{REPO}}/issues/354">#354</a>).
+  <strong>Tracked:</strong> render-bound game loops ~2x fast in Doom and
+  Hover Strike (<a href="{{REPO}}/issues/401">#401</a>; a real-hardware Doom
+  capture now anchors the v4.0.0 timing campaign) &middot; Battle Morph (CD)
+  too fast (<a href="{{REPO}}/issues/331">#331</a>).
   <strong>Workaround:</strong> the non-default Fast blitter drops Iron
   Soldier's briefing wireframe; keep Accurate
   (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).

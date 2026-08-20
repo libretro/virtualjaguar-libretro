@@ -195,8 +195,10 @@ The campaign itself lands in **v4.0.0**.
   an "Analog Joystick Calibrator" screen and in GPU code, gated behind
   *Gameplay Options → 2nd Controller: Analog Stick*. Club Drive writes the
   same channel-select without ever reading it back. That interface is **not
-  emulated** — we return `0x0000` where an ADC-less console returns `0xFF` —
-  and is tracked separately.
+  emulated**: this release reads `$F17C00` as `0xFF`, matching a production
+  console with no ADC fitted (A/B-verified inert on BattleSphere across 900
+  frames and Club Drive across 700). Emulating the ADC itself, and with it
+  BattleSphere's analog stick, is #505.
 
 ## Downloads
 

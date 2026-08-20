@@ -1,6 +1,6 @@
 <!-- title: Enhancements — Virtual Jaguar libretro -->
 <!-- nav: Enhancements -->
-<!-- description: Beyond stock Atari Jaguar hardware: true-color rendering, 2x internal resolution with real supersampled texture detail, overclocking, CD read-speed control and a crash watchdog. -->
+<!-- description: Beyond stock Atari Jaguar hardware: true-color rendering, 2x internal resolution, HD texture dump and replacement, overclocking, CD read-speed control and a crash watchdog. -->
 
 <h1>Enhancements</h1>
 <p class="lede">
@@ -51,8 +51,8 @@
   texel and throws the rest away. <code>virtualjaguar_internal_resolution</code>
   (<code>1x</code> default, <code>2x</code>; restart required) re-samples those
   same walks at double density into a shadow surface. The extra pixels are
-  <strong>source data the hardware sampled past</strong> &mdash; not
-  interpolation, not sharpening, not a neural upscaler.
+  <strong>source data the hardware sampled past</strong>; no interpolation
+  or filtering is involved.
 </p>
 <p>
   As of <a href="{{REPO}}/releases/tag/v3.3.0">v3.3.0</a> the pipeline is
@@ -246,6 +246,41 @@
   &middot; <a href="{{REPO}}/blob/develop/docs/hires-stage0-census.md">corpus census</a>
   &middot; <a href="{{REPO}}/blob/develop/docs/hires-upscaling-design.md">design</a>
   &middot; epic <a href="{{REPO}}/issues/338">#338</a>.
+</div>
+
+<h2>HD texture dump and replacement <span class="badge good">shipped &mdash; v3.4.0</span></h2>
+<p>
+  Both halves of a texture-pack pipeline. <code>virtualjaguar_texture_dump</code>
+  writes every unique blit source the game uses to
+  <code>&lt;system&gt;/vj_texdump/&lt;CRC32&gt;/</code> as a PNG named by a
+  stable content hash (FNV-1a&nbsp;64 over format, dimensions and raw source
+  bytes). The palette is deliberately excluded from the hash: the Jaguar
+  blitter never sees one, and a key the replacement pipeline cannot
+  discriminate would strand every pack drawn against it. The identity
+  contract is frozen in
+  <a href="{{REPO}}/blob/develop/docs/texture-dump.md">docs/texture-dump.md</a>.
+</p>
+<p>
+  Redraw a tile, keep its filename, move it one directory over
+  (<code>vj_texpacks/&lt;CRC32&gt;/</code>) and it presents in place of the
+  original. Packs are true colour; nothing quantises back to CRY, and a pack
+  pixel with alpha below 128 keeps the stock pixel. Replacement rides the
+  true-colour shadow framebuffer and never writes the emulated machine, so
+  savestates, rewind, run-ahead and netplay stay bit-identical with or
+  without a pack. A pack cannot desync a link game.
+</p>
+<p>
+  Tier&nbsp;1 covers 16bpp source tiles at 1&times; through straight-copy
+  blits, the sprite and UI class dump mode was built around. Indexed sources
+  (tier&nbsp;2) and Stage&nbsp;2 hi-res surfaces (tier&nbsp;3) are designed
+  but not implemented; those entries are skipped and the stock pixel
+  presents. The replacement option only appears when a pack directory exists
+  for the loaded cartridge.
+</p>
+<div class="evidence">
+  Shipped in <a href="{{REPO}}/releases/tag/v3.4.0">v3.4.0</a> &middot;
+  <a href="{{REPO}}/issues/369">#369</a> &middot; identity contract:
+  <a href="{{REPO}}/blob/develop/docs/texture-dump.md">docs/texture-dump.md</a>.
 </div>
 
 <h2>Overclocking that doesn't break the game</h2>
