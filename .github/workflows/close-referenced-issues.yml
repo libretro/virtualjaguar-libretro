@@ -59,7 +59,7 @@ jobs:
           # match per line; the trailing sort -u keeps a number referenced
           # twice from being processed twice.
           NUMS=$(grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]+#[0-9]+' /tmp/pr_text \
-                 | grep -oE '[0-9]+' | sort -un || true)
+            | grep -oE '[0-9]+' | sort -un || true)
 
           if [ -z "$NUMS" ]; then
             echo "No closing keywords in PR #${PR_NUM}; nothing to do."
