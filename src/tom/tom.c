@@ -894,6 +894,10 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
    uint16_t startPos_disp;
    uint32_t *rows[SHADOWFB_HIRES_MAX_N];
    int sfbIdx;
+   /* Hoisted out of the per-subpixel loop: with no texture pack active
+    * (the default, and every run of the base hi-res feature) this stays
+    * 0 and the replacement branch below costs nothing measurable. */
+   int replActive = (shadowHiresReplActive && shadowHiresLineRepl) ? 1 : 0;
    startPos /= pwidth;
 
    for (sub = 0; sub < n; sub++)
@@ -922,6 +926,7 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
    {
       uint32_t base;
       const shadowfb_sub *ent;
+      const uint32_t *rent;
       uint16_t color = (*current_line_buffer++) << 8;
       color |= *current_line_buffer++;
 
@@ -934,22 +939,35 @@ static void tom_render_16bpp_cry_scanline_hires(uint32_t * backbuffer)
 
       for (sub = 0; sub < n; sub++)
       {
-         ent = NULL;
+         ent  = NULL;
+         rent = NULL;
          if (sfbIdx >= 0 && sfbIdx < SHADOWFB_LINE_PIXELS
                && shadowHiresLineTag[sfbIdx] ==
                   ((uint32_t)color | SHADOWFB_TAG_VALID))
-            ent = shadowHiresLineSub
-                + ((uint32_t)sub * SHADOWFB_LINE_PIXELS + (uint32_t)sfbIdx)
-                  * (uint32_t)n;
+         {
+            uint32_t off = ((uint32_t)sub * SHADOWFB_LINE_PIXELS
+                            + (uint32_t)sfbIdx) * (uint32_t)n;
+            ent = shadowHiresLineSub + off;
+            if (replActive)
+               rent = shadowHiresLineRepl + off;
+         }
          for (sx = 0; sx < n; sx++)
          {
             /* Stage 2: entries carry real per-subpixel content, so a
              * hit renders each entry -- with true-color on, through
              * ShadowFBCryRGB so the entry's own frac16 composes
              * (design section 3.2); with it off, through the stock
-             * LUT.  A miss falls back to the exact 1x result. */
+             * LUT.  A miss falls back to the exact 1x result.
+             *
+             * Tier 3 (issue #369): a pack subpixel wins over both.  It
+             * is absolute RGB888 rather than a CRY reconstruction, so
+             * it is presented as-is with no quantization -- and an
+             * author alpha hole (entry 0) falls straight through to
+             * the supersampled/stock content underneath. */
             uint32_t out;
-            if (ent)
+            if (rent && (rent[sx] & SHADOWFB_HIRES_REPL_VALID))
+               out = 0xFF000000 | (rent[sx] & 0x00FFFFFF);
+            else if (ent)
                out = shadowFBActive
                    ? (0xFF000000
                       | ShadowFBCryRGB(ent[sx].value16, ent[sx].frac16))

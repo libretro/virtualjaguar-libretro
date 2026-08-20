@@ -78,6 +78,7 @@ _shadowHiresResolveMissValue
 _shadowHiresResolveMissEpoch
 _shadowHiresResolveMissNoPage
 _shadowHiresN
+_shadowHiresActive
 _shadowFBActive
 _blitMemo*
 _TitleDB*
@@ -90,6 +91,13 @@ _texReplaceEnabled
 _ShadowFB*
 _shadowLineRGB
 _shadowLineTag
+# Nx surface probes: the tier-3 (>1x pack art) gates drive the OP's own
+# resolve function and read the Nx line planes directly.
+_ShadowHires*
+_shadowHiresLineSub
+_shadowHiresLineTag
+_shadowHiresLineRepl
+_shadowHiresReplActive
 # _TitleHook* is NOT covered by _TitleDB* -- the applier lives in its own
 # translation unit and its own name prefix.
 _TitleHook*

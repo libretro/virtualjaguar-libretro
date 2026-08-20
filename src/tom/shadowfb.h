@@ -222,6 +222,56 @@ void ShadowHiresRestampRamPage(uint32_t ramPage4k);
  * retro_unload_game / iOS reload). */
 void ShadowHiresShutdown(void);
 
+/* ------------------------------------------------------------------
+ * Texture-replacement overlay on the Nx surface (issue #369 tier 3).
+ *
+ * Pack art is an ARBITRARY RGB888 per SUBPIXEL -- it is not derived
+ * from the stock word, so it cannot live in a `shadowfb_sub`
+ * ({value16, frac16} is a CRY decomposition).  Rather than widening
+ * every entry to 8 bytes for every user, replacement rides a PARALLEL
+ * per-page plane of N*N uint32 entries, allocated only for pages a
+ * pack actually touches, and marked by one extra bit in the SAME word
+ * tag.  Consequences that make this the cheap option:
+ *
+ *   - any ordinary ShadowHiresStoreCry/Block to the word rewrites the
+ *     tag WITHOUT the replacement bit, so stale pack art self-clears
+ *     through the machinery that already exists;
+ *   - the value+epoch coherence check is unchanged and shared;
+ *   - a 1x run, or a 2x run with no pack, allocates nothing and pays
+ *     one already-predicted branch.
+ *
+ * Entry encoding: SHADOWFB_HIRES_REPL_VALID | RGB888 to replace that
+ * subpixel, or 0 to keep the stock/supersampled content underneath
+ * (author alpha).
+ * ------------------------------------------------------------------ */
+
+#define SHADOWFB_HIRES_REPL_VALID 0x80000000u
+
+/* Nonzero once a pack has stored at least one replacement block.  Hot
+ * paths (the OP resolve, the Nx scanline renderer) gate on this so a
+ * no-pack run does zero extra per-subpixel work. */
+extern int shadowHiresReplActive;
+
+/* Nx line-buffer replacement plane, parallel to shadowHiresLineSub and
+ * indexed identically: entry(sy, stockIdx, sx) =
+ * shadowHiresLineRepl[(sy*720 + stockIdx)*N + sx].  Only meaningful
+ * where shadowHiresLineTag[stockIdx] validates. */
+extern uint32_t *shadowHiresLineRepl;
+
+/* Record an N*N block of pack RGB for a main-RAM word (issue #369
+ * tier 3, called only from texreplace.c's post-blit witness walk).
+ * `stock16` is the tag key -- the value RAM actually holds -- and
+ * `rgb` holds N*N entries in sub-row-major order (sy*N + sx), each
+ * either SHADOWFB_HIRES_REPL_VALID|RGB888 or 0 for "keep stock".
+ *
+ * Deliberately NOT logged to the blit memo: the replacement walk
+ * re-runs on every launch (memo skips included), and the memo's
+ * shadow-store replay deserializes `shadowfb_sub` blocks -- feeding it
+ * RGB words would silently reinterpret them.  Same reasoning as
+ * ShadowFBStoreRGB. */
+void ShadowHiresStoreReplBlock(uint32_t addr, uint16_t stock16,
+                               const uint32_t *rgb);
+
 /* Record a 16bpp CRY destination write (blit time): fills the stock
  * word's N*N block with {value16, frac16} and stamps the epoch tag.
  * Addresses outside the bottom-8MB RAM mirror window are ignored. */

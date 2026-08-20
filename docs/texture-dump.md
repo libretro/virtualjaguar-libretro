@@ -11,8 +11,10 @@ Status: **both implemented.**  Dump: capture module `src/tom/texdump.c`,
 hook in `src/tom/blitter_mmio.c`, options in `libretro.c` /
 `libretro_core_options.h`, test gates in `test/tools/test_texdump.c` +
 `test/expected/texdump_yarc.txt`.  Replacement: `src/tom/texreplace.c`
-(+ `ShadowFBStoreRGB` in `src/tom/shadowfb.c`), gates in
-`test/tools/test_texreplace.c`.
+(+ `ShadowFBStoreRGB` and, for >1x art, `ShadowHiresStoreReplBlock` in
+`src/tom/shadowfb.c`), gates in `test/tools/test_texreplace.c`.
+Remaining: **indexed (≤8bpp) sources**, tier 2 — the design is on
+issue #369 and summarised under "Tier status and limits".
 
 ## Goals and non-goals
 
@@ -347,16 +349,20 @@ Consequences, all load-bearing:
   requires the CRY 16bpp OP path (the dominant framebuffer case);
   RGB16-mode displays and GPU-computed surfaces (Doom's texture
   mapper) are out of scope, same as dump mode.
+- **Tier 3 (shipped): >1x pack art on the Nx shadow surface** — see
+  "Tier 3" below.  Pack art may be authored at exactly N times the
+  dumped dimensions while **Internal Resolution** is Nx, and is then
+  presented per *subpixel*.  1x art is replicated into the Nx surface
+  as well, which also removes tier 1's masking limitation.
 - **Known coherence limit:** a replacement entry's RGB is pack art,
   not a function of the tagged value.  A later non-blit write of the
   *same* 16-bit value to a replaced address keeps presenting pack RGB
   until the next store to that word.  Stock true-color has the same
   tag scheme but is immune by construction (its RGB is derived from
   the value); for replacement this is a documented cosmetic edge.
-- **Interaction with internal resolution:** at Nx the hi-res shadow
-  surface wins wherever its entries hit, so replaced tiles may present
-  stock there.  >1x replacements riding the Stage 2 surface are the
-  planned fix (tier 3, design notes on #369).
+- **Interaction with internal resolution:** resolved by tier 3 below.
+  (Historically, at Nx the hi-res shadow surface won wherever its
+  entries hit, so 1x replacements presented stock there.)
 - **Indexed (≤8bpp) sources (tier 2, not yet shipped):** the pipeline
   cannot inject RGB into an indexed blit — the destination holds
   palette indices and the CLUT is applied per-object at OP render
@@ -369,6 +375,59 @@ Consequences, all load-bearing:
   index), which keeps palette-swapped sprites faithful.  Until it
   ships, indexed pack entries load but never present (counted in the
   session summary).
+
+### Tier 3: >1x pack art on the Nx shadow surface
+
+The internal-resolution feature (#367) gives every stock 16-bit pixel
+word an N×N block of shadow subpixels, resolved by the OP into an Nx
+line buffer and rendered by `tom_render_16bpp_cry_scanline_hires`.
+Tier 3 puts pack art into exactly that pipeline.
+
+Entry format was the whole problem: a `shadowfb_sub` is
+`{value16, frac16}`, a CRY decomposition, and pack RGB is not a
+function of the stock value.  Rather than widen every entry to 8 bytes
+for every user, replacement rides a **parallel per-page plane** of N×N
+`uint32` entries plus **one extra bit in the same word tag**
+(`HIRES_TAG_REPL`).  That buys three properties for free:
+
+- any ordinary `ShadowHiresStoreCry/Block` to the word rewrites the tag
+  *without* the bit, so stale pack art self-clears through machinery
+  that already exists (the same reason the tag scheme was chosen for
+  true color);
+- the value+epoch coherence check is unchanged and shared;
+- a 1x run, or a 2x run with no pack, allocates nothing — planes are
+  allocated per page on first pack write, and both the OP resolve and
+  the scanline renderer hoist a single `shadowHiresReplActive` test.
+
+Entry encoding is `SHADOWFB_HIRES_REPL_VALID | RGB888`, or 0 meaning
+"keep what is underneath" — so an author's alpha hole falls through to
+the Stage 2 supersampled content, not to a flat colour.
+
+**Dimension rule: exactly 1×, or exactly N× in both axes** (N from the
+active internal resolution).  Nothing in between: an arbitrary resize
+has no defined mapping onto stock pixel words, and silently rescaling
+would make the per-pixel straight-copy witness meaningless.
+
+**1× art is stored into the Nx surface too**, replicated N×N.  Without
+that, hi-res would *mask* 1x packs outright — the Nx line entry wins
+wherever it hits and the 1x shadow only shows through on a miss.  This
+is why tier 3 removes a tier 1 limitation rather than only adding a
+capability.
+
+The **1× representative** of a stock word covered by N× art is the
+pack's top-left subpixel (recorded in the 1x shadow, so a hi-res
+resolve miss degrades to pack colour rather than to stock).  Top-left,
+not an average: an average would invent a colour the author never drew.
+
+Unchanged by tier 3: zero savestate fields, zero RAM writes, zero
+bus-model time.  The replacement plane is a derived cache like every
+other shadow surface, dropped by `ShadowHiresInvalidate` on savestate
+load and when a pack is unloaded.
+
+Not wired in (deliberate): the RGB16-direct Nx renderer
+(`tom_render_16bpp_rgb_scanline_hires`).  Tier 1 does not present on
+the 1x RGB16 path either, so wiring only the 2x one would make a pack
+look different at 2x than at 1x for reasons unrelated to resolution.
 
 ### Test gates (all in `make test`)
 
@@ -387,6 +446,30 @@ and a 32bpp tier-skip entry):
 4. `presentation_path` — `ShadowFBLineFromRAM` lands pack RGB in the
    line buffer the scanline renderer reads.
 5. `determinism` — two identical pack runs agree on everything.
+6. `hires_machine_inert` — the four-way identity gate for tier 3:
+   {1x, 2x} × {pack, no pack} all agree on savestate digests and on
+   every battery destination, so neither the resolution option nor a
+   pack — nor the two together — is observable to the emulated
+   machine.  Also asserts the Nx replacement plane stays inert
+   (`shadowHiresReplActive == 0`) at 2x with no pack.  Framebuffer
+   hashes are deliberately not compared across resolutions: a 2x run
+   presents twice the pixels by design, and the digests plus
+   destination RAM are what carry the claim.
+7. `hires_pack_presents` — at 2x the surface *delivers*:
+   `ShadowHiresLineFromRAM` (the function `op.c` calls per 16bpp
+   pixel) lands the expected per-subpixel RGB in the Nx line
+   replacement plane the scanline renderer reads — 2× art at its own
+   resolution, 1× art replicated, and nothing at all where the
+   dimensions do not match.  Production and delivery are separate
+   failure points on this surface and only delivery fails silently
+   (see the resolve-counter note in `shadowfb.h`), so this gate
+   asserts delivery, not stores.
+8. `hires_determinism` — two identical 2x pack runs agree.
+
+The 2x pack is generated by the same first-principles code as the 1x
+one, with one tile deliberately left at 1× art (proving replication)
+and the dimension-mismatch tile moved to 3× (twice the dumped size is
+a *legal* tier-3 entry at 2x).
 
 The synthetic pack is built from FIRST PRINCIPLES: the test computes
 each tile's hash from the documented contract and writes the PNGs
@@ -399,9 +482,11 @@ correctly refused to store a single pixel.)
 
 1. Turn on **Texture Dump Mode** and play; collect
    `<system dir>/vj_texdump/<CRC32>/`.
-2. Redraw any tile you like.  Keep the dumped pixel dimensions — a
-   resized PNG is skipped (one log line names the first offender).
-   Draw in full RGB; alpha means "keep the original game pixel here".
+2. Redraw any tile you like.  Keep the dumped pixel dimensions — or,
+   if you run **Internal Resolution** at Nx, draw at exactly N× them in
+   both axes for genuine higher-detail art.  Any other size is skipped
+   (one log line names the first offender).  Draw in full RGB; alpha
+   means "keep the original game pixel here".
 3. Save under the SAME filename into
    `<system dir>/vj_texpacks/<CRC32>/`.
 4. Enable **Texture Replacement** (Options → Video; it appears once
