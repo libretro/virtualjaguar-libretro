@@ -393,19 +393,75 @@ the core does not offer a gun in a tap socket.
 
 ### Which titles use it
 
-**Not established, and this guide will not guess.** A static scan of 27
-corpus ROMs found no negative result: about half compose their row codes in
-a register, so the scan cannot tell whether they address a tap — and that
-half includes NBA Jam TE and White Men Can't Jump, the two titles most often
-named. Turning the option on for a title that does not read the adapter is
-harmless (it changes nothing the title looks at), but there is no verified
-list to point you at yet.
+**Known retail support is two titles**, and both come from the historical
+record rather than from anything this core has verified:
 
-The one program confirmed to drive it here is the PD **Joypad-TeamTap
+| Title | Team Tap |
+|---|---|
+| *White Men Can't Jump* | **Required** for 3- and 4-player games |
+| *NBA Jam Tournament Edition* | Optional — supports it, does not need it |
+
+**Homebrew support is unestablished.** A static scan of 27 corpus ROMs
+produced no negative result: about half compose their row codes in a
+register, so the scan cannot tell whether they address a tap — and that half
+includes both titles above. So the table is what the hardware's documentation
+says, not a measurement we made.
+
+**No title in this list has been validated in-game here.** The only program
+confirmed to drive the adapter in this core is the PD **Joypad-TeamTap
 Tester** (Matthias Domin, 2000), which sweeps all sixteen row codes on both
 ports and prints its verdict on screen. With the option off it reports
 "TeamTap not found!" for both ports; with it on for a port, that port reads
-"TeamTap Found!".
+"TeamTap Found!". That proves the adapter answers detection correctly — it
+does not prove any game plays correctly through it.
+
+Turning the option on for a title that does not read the adapter is harmless:
+it changes nothing that title looks at.
+
+### Please test this and file what you find
+
+This shipped default-off, on a best-effort reconstruction of the protocol
+from Atari's manual, with exactly one PD tester as game-side evidence. That
+is a thin basis, and the fastest way to thicken it is people trying it.
+
+**What to try**
+
+1. *White Men Can't Jump* with a Team Tap on Jaguar port 1, three or four
+   players. This is the one title that **requires** the adapter, so it is
+   the strongest test available.
+2. *NBA Jam Tournament Edition*, same setup, three or four players.
+3. The **Joypad-TeamTap Tester** if you have it — the quickest sanity check
+   that the adapter is being seen at all.
+4. Homebrew or demos that advertise 4-player support. Nothing here is known
+   to work; a confirmed *working* title is as useful a report as a broken one.
+
+**What "working" looks like**
+
+- The title offers its 3- and 4-player modes instead of greying them out or
+  reporting no adapter.
+- All four pads move their own player, with no crosstalk — pressing a button
+  on pad 3 must not move player 1, 2 or 4.
+- Socket 0 (frontend port 1 or 2) behaves exactly as it did with no adapter
+  selected.
+- Nothing changes in a title that does not support the adapter.
+
+**What to include in an issue**
+
+Please open an issue at
+<https://github.com/libretro/virtualjaguar-libretro/issues> with:
+
+- the title and the dump you used;
+- which port the tap was on, and which frontend ports you bound;
+- what you expected and what happened — "player 3 mirrors player 1" is a far
+  more useful report than "4-player does not work";
+- your frontend and its version (RetroArch's port-assignment behaviour for
+  the advertised-but-unconfigured ports 3–8 is the least-verified part of
+  this feature);
+- your RetroArch log if anything crashed or hung.
+
+Reports that the adapter is **inert** on a title that should support it are
+just as valuable as crash reports — that is the failure mode the tester ROM
+cannot catch.
 
 ## Already shipped
 
