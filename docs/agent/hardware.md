@@ -60,9 +60,24 @@ mode, BIOS, NTSC/PAL, DSP, input).
 
 ## Distilled JTRM reference (`docs/jtrm-*.md`)
 
-Synthesized from the Jaguar Technical Reference Manual, LLM-optimized. **Read before any
-hardware-accuracy decision; supersedes source comments.** Full TRM PDFs in
-`docs/atari-jaguar-1999/` (gitignored — copyrighted).
+LLM-optimized reference for the Jaguar hardware. **Read before any hardware-accuracy decision;
+always supersedes source comments.** But these files themselves are a **mix of manual-derived and
+source-derived material, not a uniformly JTRM-verified set** (issue #522 audit, 2026-08-20): most
+sections were originally distilled from `src/` rather than the manual, then cited back as if
+manual-authoritative. Every section now carries a per-line tag saying which it is:
+
+- `Source: <manual name> p.<N> "<section>" (...)` — read against the PDF and safe to cite as
+  JTRM-authoritative.
+- `Source: the original Flare/Atari TOM design netlists` — a legitimate primary source outside the
+  manual; safe to cite.
+- `Derived from: <src file> -- NOT verified against the JTRM` — distilled from the emulator's own
+  source code. Treat it the same as an inline source comment: plausible, but **not** grounds for a
+  hardware-accuracy decision on its own. If the decision matters, open the cited PDF page yourself.
+
+Two verified disagreements between a `Derived from:` claim and the manual are recorded inline
+where found (`jtrm-clocks-timing.md` CLK1/2/3 divider formula; `jtrm-jerry.md` wavetable entry
+count) — read those notes before touching either area. Full TRM PDFs in `docs/atari-jaguar-1999/`
+(gitignored — copyrighted).
 
 - `jtrm-clocks-timing.md` — clock hierarchy, video timing, PIT formulas, memory map, bus priority
 - `jtrm-register-map.md` — register addresses + bit fields (TOM, GPU, blitter, JERRY, DSP)
