@@ -304,6 +304,21 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
 static InputDevType port_device_frontend[2] = { INPUTDEV_PAD, INPUTDEV_PAD };
 static bool         port_teamtap_frontend[2]= { false, false };
 static bool         port_device_forced[2]   = { false, false };
+/* Pro Controller preset (#514).  The device is electrically an ordinary
+ * standard pad -- its five extra buttons alias onto keypad 4/6/7/8/9, a
+ * fact recovered from Atari's own SDK header and developer newsletter
+ * (docs/teamtap-procontroller-spike.md section 9), NOT from the TR10
+ * manual set, which never mentions the device at all.  There is no new
+ * controller-type identifier and no new register surface for
+ * SET_CONTROLLER_INFO/InputDevType to dispatch on, so unlike the mouse,
+ * rotary, analog/driving and paddle above this does not get its own
+ * InputDevType: it rides the ordinary INPUTDEV_PAD resolved by
+ * p1_device_from_option()/p2_device_from_option(), and this flag only
+ * decides which five RetroPad buttons update_input()'s legacy pad path
+ * targets.  Selected via the SAME "Controller Type" option as every
+ * other per-port device ("pad_pro"), default off, so an unmodified pad
+ * is untouched -- see p1_pro_controller_from_option(). */
+static bool         pro_controller[2]       = { false, false };
 /* Device actually attached, so the resolution is logged only when it
  * changes rather than on every check_variables() call. */
 static InputDevType port_device_active[2]   = { INPUTDEV_PAD, INPUTDEV_PAD };
@@ -1937,6 +1952,34 @@ static InputDevType p1_device_from_option(bool *teamtap)
    return p1;
 }
 
+/* Pro Controller preset readers (#514), same contract and same option
+ * ("virtualjaguar_p1_device" / "_p2_device") as p1_device_from_option() /
+ * p2_device_from_option() above -- deliberately re-reading rather than
+ * threading an out-parameter through those two, so a caller that only
+ * wants the InputDevType is unaffected.  "pad_pro" is the one value that
+ * both (a) resolves to INPUTDEV_PAD in the sibling functions (it matches
+ * none of their strcmps, so it falls through to the "pad"/"auto"
+ * default) and (b) is true here. */
+static bool p1_pro_controller_from_option(void)
+{
+   struct retro_variable var;
+
+   var.key   = "virtualjaguar_p1_device";
+   var.value = NULL;
+   return (get_variable_pertitle(&var) && var.value
+           && !strcmp(var.value, "pad_pro"));
+}
+
+static bool p2_pro_controller_from_option(void)
+{
+   struct retro_variable var;
+
+   var.key   = "virtualjaguar_p2_device";
+   var.value = NULL;
+   return (get_variable_pertitle(&var) && var.value
+           && !strcmp(var.value, "pad_pro"));
+}
+
 /* Per-axis tuning option readers (#439).
  *
  * Deliberately thin: the clamps that decide what is a legal dead zone,
@@ -2404,6 +2447,18 @@ static void check_variables(void)
       apply_port_device(0, p1, tap1);
    }
 
+   /* Pro Controller preset (#514).  Independent of the frontend-forced
+    * precedence above -- no RETRO_DEVICE subclass currently asks for a
+    * Pro Controller, so this is core-option-only -- but still gated on
+    * the port actually being a standard pad: a port the frontend or
+    * option has moved to the mouse/rotary/analog/driving/paddle/lightgun
+    * device has no RetroPad-to-Jaguar-key mapping for this preset to
+    * affect. */
+   pro_controller[0] = (port_device_active[0] == INPUTDEV_PAD)
+                        && p1_pro_controller_from_option();
+   pro_controller[1] = (port_device_active[1] == INPUTDEV_PAD)
+                        && p2_pro_controller_from_option();
+
    var.key   = "virtualjaguar_mouse_sensitivity";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
@@ -2752,15 +2807,51 @@ static void update_input(void)
          joypad0Buttons[BUTTON_PAUSE] = 0xff;
       if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
          joypad0Buttons[BUTTON_OPTION] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0)? 1 : 0))
+      /* Pro Controller preset (#514): X/L1/R1/L2/R2 target the five
+       * aliased keypad slots (9/4/6/8/7 -- docs/teamtap-procontroller-
+       * spike.md section 9.4/9.5) instead of the legacy Numpad 0-4
+       * bindings below.  pro_controller[player] defaults false, so the
+       * else branch is verbatim the pre-existing mapping -- byte-
+       * identical output with the preset off.  The keyboard fallbacks
+       * (0-4 keys) are split out unchanged directly below: they are a
+       * literal keypad-digit shortcut, not an alias of these RetroPad
+       * buttons, so they keep hitting BUTTON_0..BUTTON_4 regardless of
+       * the preset. */
+      if (pro_controller[0])
+      {
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad0Buttons[BUTTON_9] = 0xff;   /* Pro X -- keypad 9 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad0Buttons[BUTTON_4] = 0xff;   /* Pro Left shoulder -- keypad 4 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad0Buttons[BUTTON_6] = 0xff;   /* Pro Right shoulder -- keypad 6 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad0Buttons[BUTTON_8] = 0xff;   /* Pro Y -- keypad 8 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad0Buttons[BUTTON_7] = 0xff;   /* Pro Z -- keypad 7 */
+      }
+      else
+      {
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad0Buttons[BUTTON_0] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad0Buttons[BUTTON_1] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad0Buttons[BUTTON_2] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad0Buttons[BUTTON_3] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad0Buttons[BUTTON_4] = 0xff;
+      }
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0))
          joypad0Buttons[BUTTON_0] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1))
          joypad0Buttons[BUTTON_1] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2))
          joypad0Buttons[BUTTON_2] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3))
          joypad0Buttons[BUTTON_3] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4))
          joypad0Buttons[BUTTON_4] = 0xff;
       if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
          joypad0Buttons[BUTTON_5] = 0xff;
@@ -2795,15 +2886,44 @@ static void update_input(void)
          joypad1Buttons[BUTTON_PAUSE] = 0xff;
       if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
          joypad1Buttons[BUTTON_OPTION] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p)? 1 : 0))
+      /* Pro Controller preset (#514) -- port 2, same shape as port 1
+       * above.  Keyboard fallbacks (p/q/w/e/r) keep hitting the literal
+       * keypad digits regardless of the preset, same reasoning as port 1. */
+      if (pro_controller[1])
+      {
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad1Buttons[BUTTON_9] = 0xff;   /* Pro X -- keypad 9 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad1Buttons[BUTTON_4] = 0xff;   /* Pro Left shoulder -- keypad 4 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad1Buttons[BUTTON_6] = 0xff;   /* Pro Right shoulder -- keypad 6 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad1Buttons[BUTTON_8] = 0xff;   /* Pro Y -- keypad 8 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad1Buttons[BUTTON_7] = 0xff;   /* Pro Z -- keypad 7 */
+      }
+      else
+      {
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad1Buttons[BUTTON_0] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad1Buttons[BUTTON_1] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad1Buttons[BUTTON_2] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad1Buttons[BUTTON_3] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad1Buttons[BUTTON_4] = 0xff;
+      }
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p))
          joypad1Buttons[BUTTON_0] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q))
          joypad1Buttons[BUTTON_1] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w))
          joypad1Buttons[BUTTON_2] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e))
          joypad1Buttons[BUTTON_3] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r))
          joypad1Buttons[BUTTON_4] = 0xff;
       if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
          joypad1Buttons[BUTTON_5] = 0xff;
@@ -4777,6 +4897,8 @@ void retro_deinit(void)
    port_device_active[1]   = INPUTDEV_PAD;
    inputdev_live[0]        = false;
    inputdev_live[1]        = false;
+   pro_controller[0]       = false;
+   pro_controller[1]       = false;
    /* 68K register traceback rings (#540): off is the shipped default and a
     * resident core must go back to it.  A harness that armed the flag
     * cannot dlclose the core on iOS, so leaving it set would make the next

@@ -219,6 +219,35 @@ The "Acid suite (linux x86_64)" job can show `conclusion: failure` for two unrel
 - `make -C test/acid test` exits non-zero by design (returns FAIL count). The job uses `set +e` and gates on `check-baseline.py` instead. Real regression = `Regressions: N` (N>0) in `acid-summary.txt`.
 - Job conclusion `failure` with `OK: no regressions` in the step output = the artifact-upload step timed out (`Operation could not be completed within the specified time`). Re-run the job; no code action needed.
 
+## Every PR must be linked to an issue — and a `Closes #N` will NOT do it
+
+**Hard rule: link the PR to its issue in the GitHub *Development* panel
+(right sidebar → gear icon → pick the issue). A closing keyword in the body
+is not a substitute and does not work here.**
+
+GitHub creates the linked-issue relationship from a closing keyword only
+when the PR targets the repository's **default branch**. This repo's default
+is `master` and essentially every PR targets `develop`, so `Closes #N` on a
+PR here creates **no link at all** — not merely "no auto-close", which is
+how this was previously (and wrongly) documented.
+
+Measured 2026-08-20: PRs #537, #539, #542, #544, #545 and #547 all carried
+`Closes #N` in the body; every one reported `closingIssuesReferences: []`.
+The only PR with a real link was #546, linked by hand in the UI.
+
+It went unnoticed for months because **timeline cross-references still
+appear** — the issue looks connected while its Development panel stays
+empty, so the issue never shows which release or pre-release tag contains
+the work. That tag is the whole reason to link.
+
+- Check a PR: `gh pr view N --json closingIssuesReferences --jq '.closingIssuesReferences | length'` — `0` means unlinked.
+- **There is no public API to create the link.** It must be done in the web
+  UI; do not burn time looking for a `gh` flag or GraphQL mutation.
+- CI enforces it: `.github/workflows/pr-issue-link.yml` fails any PR with no
+  linked issue. Genuinely issue-less PR → add the `no-issue` label.
+- Still close the issue by hand when the PR merges (keywords don't fire on
+  `develop` either) — see the release-process notes.
+
 ## GitHub Copilot PR reviews
 
 - List unresolved threads: `gh api graphql -f query='{repository(owner:"libretro",name:"virtualjaguar-libretro"){pullRequest(number:N){reviewThreads(first:30){nodes{id isResolved comments(first:1){nodes{id author{login} body}}}}}}}'`

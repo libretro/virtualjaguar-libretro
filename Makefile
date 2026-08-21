@@ -1006,7 +1006,7 @@ clean:
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
-		test/tools/paddle_decode_test \
+		test/tools/paddle_decode_test test/tools/procontroller_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		test/test_quadrature test/test_axistune \
@@ -1078,7 +1078,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
-		test/tools/paddle_decode_test \
+		test/tools/paddle_decode_test test/tools/procontroller_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
@@ -1470,6 +1470,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# its calibrator implies, the joystick matrix staying bit-identical to
 	@# a pad, and the latched-conversion savestate.
 	./test/tools/paddle_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Pro Controller (#514): the five extra buttons (X/Y/Z fire, Left/Right
+	@# shoulder) alias onto keypad 9/8/7/4/6 -- Atari's own SDK header and
+	@# developer newsletter, docs/teamtap-procontroller-spike.md section 9,
+	@# NOT the TR10 manual, which never mentions the device.  No decode
+	@# change was needed (src/jerry/joystick.c is untouched), so this
+	@# register-level suite is what pins the claim: pressing each of the
+	@# five slots clears exactly the predicted $F14000 bit on its own row
+	@# and moves nothing else, on both ports.
+	./test/tools/procontroller_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Light gun (#438).  The register-level half (LPH/LPV transform,
 	@# off-screen freeze, and the 1x-vs-2x identity that keeps the
 	@# internal-resolution option out of the aim) runs on the in-tree public
@@ -1994,6 +2003,13 @@ test/tools/paddle_decode_test: test/tools/paddle_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/paddle_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/procontroller_decode_test: test/tools/procontroller_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/procontroller_decode_test.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
