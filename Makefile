@@ -1205,10 +1205,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Fountain (#469): dummy-cart vector park always (CI).  Live jagcrypt
 	@# ROM is public but not vendored -- ledger a skip for that arm only.
 	./test/test_fountain_crash ./$(TARGET) --bios --quiet
-	@if [ -f /tmp/fountain_vj.j64 ]; then \
-		./test/test_fountain_crash ./$(TARGET) /tmp/fountain_vj.j64 --bios --frames 180 --option virtualjaguar_pal=enabled --quiet; \
+	@# Prefer the pinned JaguarDemos clone (test/jaguar-demos/run.sh fetch,
+	@# gitignored like test/roms/private) over /tmp.  The /tmp path alone
+	@# meant this arm skipped essentially always -- nothing populates it and
+	@# it does not survive a reboot -- so a merged crash fix sat unguarded.
+	@FOUNTAIN=""; \
+	for f in test/vendor/JaguarDemos/256/Outline2026/Fountain/vj.j64 \
+	         /tmp/fountain_vj.j64; do \
+		[ -f "$$f" ] && FOUNTAIN="$$f" && break; \
+	done; \
+	if [ -n "$$FOUNTAIN" ]; then \
+		./test/test_fountain_crash ./$(TARGET) "$$FOUNTAIN" --bios --frames 180 --option virtualjaguar_pal=enabled --quiet; \
 	else \
-		bash scripts/test-skip.sh record "Fountain live abort (#469)" "no /tmp/fountain_vj.j64"; \
+		bash scripts/test-skip.sh record "Fountain live abort (#469)" "no Fountain ROM (run: bash test/jaguar-demos/run.sh fetch)"; \
 	fi
 	@# test_audio_pipeline takes an OPTIONAL positional ROM; without it, its
 	@# onset check and its BIOS-vs-HLE comparison skip unconditionally --
