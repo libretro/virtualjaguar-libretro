@@ -131,6 +131,17 @@
  * flag to tune, because there is nothing left for a flag to tune.
  */
 
+/* getloadavg() is a BSD extension.  glibc declares it in <stdlib.h>, but
+ * hides it under -std=c99, which defines __STRICT_ANSI__ -- so this must be
+ * defined BEFORE any include or the declaration never appears and the call
+ * compiles as implicit-int (a hard error under Clang's C99+).  macOS declares
+ * it unconditionally, which is why this only ever broke on Linux CI.
+ * _BSD_SOURCE covers glibc older than 2.19. */
+#ifdef __linux__
+#define _DEFAULT_SOURCE 1
+#define _BSD_SOURCE 1
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,8 +154,9 @@
 #ifdef __linux__
 #include <unistd.h>
 #endif
-/* getloadavg() (POSIX-ish; Linux glibc and macOS both declare it in
- * <stdlib.h>, already included above) backs the load/core diagnostic.  It
+/* getloadavg() (a BSD extension; declared in <stdlib.h>, already included
+ * above -- on glibc only because of the _DEFAULT_SOURCE define at the top of
+ * this file, see the comment there) backs the load/core diagnostic.  It
  * also needs sysconf() for the core count, which unistd.h provides on Linux
  * above; widen that to macOS too rather than duplicating the include guard
  * per platform. */
