@@ -504,6 +504,68 @@ int main(int argc, char **argv)
             printf("padtest_probe: InputDevAnyAttached()=%d\n", any_attached());
     }
 
+    /* Direct-register discriminator: replicate padtest's own two probes by
+     * poking $F14000/$F14002 through JoystickWriteWord()/JoystickReadWord()
+     * (exported under TEST_EXPORTS), bypassing BOTH the 68K and padtest's
+     * own (for a bare bank-switching device, broken) decode entirely.  This
+     * answers the question InputDevGetType()/InputDevAnyAttached() cannot:
+     * not "does the core believe a 6D is attached" but "what does the core
+     * actually put on the bus when the exact nibbles padtest uses are
+     * written".
+     *
+     * Probe 1 -- padtest's Team-Tap-detect read: nibble $A on port 1
+     * (sockets_row_codes[3][1]=0x5A, low nibble = socket 3 row 1).  This is
+     * the ONLY probe detect_ctrl() branches on; it must read cbits_mask
+     * (JOYBUTS bit 0) SET for "no adapter" (padtest's else branch, observed
+     * as STDPAD) or CLEAR for "adapter present" (padtest's per-socket scan,
+     * which is what reaches get_banked_type()).
+     *
+     * Probe 2 -- padtest's own get_basic_type(port,0) BANKED signature:
+     * row2 (nibble $B) must read C-bit CLEAR and row3 (nibble $7) must read
+     * C-bit SET for a bank-switching device to be recognised as BANKED
+     * *if* detect_ctrl() ever called it on socket 0.  This is independent
+     * of probe 1 and tells us whether our 6D's own identification is
+     * correct on the socket it actually occupies. */
+    {
+        typedef void (*write_fn)(uint32_t, uint16_t);
+        typedef uint16_t (*read_fn)(uint32_t);
+        write_fn wr = (write_fn)harness_dlsym(&cfg, "JoystickWriteWord");
+        read_fn  rd = (read_fn)harness_dlsym(&cfg, "JoystickReadWord");
+
+        if (wr && rd)
+        {
+            uint16_t joybuts;
+
+            /* Probe 1: socket 3 row 1 (Team-Tap detect nibble, port1=$A). */
+            wr(0, (uint16_t)(0x8000 | 0x5A));
+            joybuts = rd(2);
+            printf("padtest_probe: probe1 (socket3/row1, TeamTap-detect) "
+                   "JOYBUTS=0x%04X bit0(cbits_mask[port1])=%d "
+                   "-> padtest takes the %s branch\n",
+                   joybuts, joybuts & 1,
+                   (joybuts & 1) ? "STDPAD/hardcode (else)" : "per-socket scan (if)");
+
+            /* Probe 2: socket 0 row 2 (nibble $B) -- BANKED needs C-bit 0. */
+            wr(0, (uint16_t)(0x8000 | 0xDB));
+            joybuts = rd(2);
+            printf("padtest_probe: probe2a (socket0/row2, nibble $B) "
+                   "JOYBUTS=0x%04X bit0=%d (BANKED needs 0)\n",
+                   joybuts, joybuts & 1);
+
+            /* Probe 2: socket 0 row 3 (nibble $7) -- BANKED needs C-bit 1. */
+            wr(0, (uint16_t)(0x8000 | 0xE7));
+            joybuts = rd(2);
+            printf("padtest_probe: probe2b (socket0/row3, nibble $7) "
+                   "JOYBUTS=0x%04X bit0=%d (BANKED needs 1)\n",
+                   joybuts, joybuts & 1);
+        }
+        else
+        {
+            fprintf(stderr, "padtest_probe: JoystickWriteWord/ReadWord not "
+                            "exported -- build the core with TEST_EXPORTS=1\n");
+        }
+    }
+
     if (g_sc.use_teamtap)
     {
         typedef bool (*get_tap_fn)(int);
