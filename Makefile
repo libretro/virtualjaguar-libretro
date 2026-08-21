@@ -2251,6 +2251,7 @@ endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
         runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        roms-manifest roms-publish roms-fetch roms-verify \
         jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
 
@@ -2453,6 +2454,31 @@ cue2cdi:
 	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
 
 # ---------------------------------------------------------------------------
+# Tier-1 private ROM store (scripts/rom-store.sh).
+#
+# The ~22 MB subset of the private corpus that this suite actually asks for
+# -- every entry in test/roms/tier1.patterns is copied from a real find-rom.sh
+# call site below, so the list cannot drift from the tests.  CI fetches it
+# from a private S3-compatible bucket and points ROMS_PRIVATE_ROOT at the
+# result; developers with their own corpus set ROMS_PRIVATE_ROOT and never
+# fetch.  See docs/test-rom-store.md.
+#
+# roms-fetch exits 77 when no store is configured.  That is a SKIP, and it is
+# deliberately NOT 0: a silent "fetched nothing" is how a suite ends up green
+# while testing none of the titles that catch regressions.
+.PHONY: roms-manifest roms-publish roms-fetch roms-verify
+roms-manifest:
+	bash scripts/rom-store.sh manifest
+
+roms-publish:
+	bash scripts/rom-store.sh publish
+
+roms-fetch:
+	bash scripts/rom-store.sh fetch
+
+roms-verify:
+	bash scripts/rom-store.sh verify
+
 # JaguarDemos corpus (https://codeberg.org/42Bastian/JaguarDemos)
 #
 # On-demand clone + cart_boot_probe sweep.  NOT part of `make test`.

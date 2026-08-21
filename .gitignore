@@ -177,3 +177,4 @@ test/tools/blitter_static_leak
 test/tools/voicemodem_pair
 /test/tools/netlink_discover_probe
 /test/tools/netlink_rebuild_witness
+test/roms/tier1/
