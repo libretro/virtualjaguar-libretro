@@ -17,7 +17,7 @@ GPU and DSP share the same RISC ISA (with DSP having a few extra instructions). 
 - **GPU**: Located in TOM. 4 KB local RAM ($F03000-$F03FFF, 1024 x 32-bit). 64 registers (2 banks of 32, selected by REGPAGE bit in G_FLAGS). 5 interrupt sources.
 - **DSP**: Located in JERRY. 8 KB local RAM ($F1B000-$F1BFFF). 8 KB wave table ROM ($F1D000-$F1DFFF, read-only). 64 registers (2 banks of 32). 6 interrupt sources.
 
-Source: `src/tom/gpu.c`, `src/jerry/dsp.c`
+Derived from: `src/tom/gpu.c`, `src/jerry/dsp.c` -- NOT verified against the JTRM
 
 ---
 
@@ -43,7 +43,8 @@ MOVEI is the only 32-bit instruction -- the 16-bit instruction word is followed 
 
 The `MOVEI` instruction occupies 3 pipeline slots (instruction word + 2 data words).
 
-Source: `src/tom/gpu.c` (GPU pipeline implementation)
+Derived from: `src/tom/gpu.c` (GPU pipeline implementation) -- NOT verified
+against the JTRM
 
 ---
 
@@ -89,7 +90,7 @@ Vectors at offsets in DSP local RAM:
 
 When an interrupt fires: PC is saved, REGPAGE may swap (implementation-dependent), execution jumps to the vector address in local RAM. The ISR must clear the interrupt latch via the FLAGS clear bits.
 
-Source: `src/tom/gpu.c`, `src/jerry/dsp.c`
+Derived from: `src/tom/gpu.c`, `src/jerry/dsp.c` -- NOT verified against the JTRM
 
 ---
 
@@ -201,7 +202,8 @@ The MAC unit enables systolic matrix operations. IMULTN starts a chain, IMACN ac
 
 **For DSP**: The MAC accumulator is 40 bits (D_MACHI at $F1A120 holds bits 32-39). This prevents overflow during audio DSP chains.
 
-Source: `src/jerry/dsp_acc40.h`, `test/test_dsp_mac40.c`
+Derived from: `src/jerry/dsp_acc40.h`, `test/test_dsp_mac40.c` -- NOT verified
+against the JTRM
 
 ### Branch / Jump
 
@@ -252,7 +254,7 @@ ADDQMOD/SUBQMOD use D_MOD ($F1A118) as the modulo value. Essential for circular 
 | $1800  | Delta (impulse)          |
 | $1C00  | White noise              |
 
-Source: `src/jerry/wavetable.c`
+Derived from: `src/jerry/wavetable.c` -- NOT verified against the JTRM
 
 ---
 

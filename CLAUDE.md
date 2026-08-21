@@ -31,8 +31,13 @@ so they cost nothing until you open them).
 - **Host builds: prefix `DEVELOPER_DIR=/Library/Developer/CommandLineTools`** or macOS raises an
   App Management prompt on every `make`/`cc`. Don't `xcode-select --switch` globally (iOS
   cross-builds need Xcode).
-- **Hardware accuracy: verify clocks/registers against the JTRM, never source comments** (comments
-  have been wrong, e.g. PIT clock). Refs: `docs/jtrm-*.md`, `docs/atari-jaguar-1999/`.
+- **Hardware accuracy: verify clocks/registers against the JTRM PDFs directly, never source
+  comments** (comments have been wrong, e.g. PIT clock) **and never assume a `docs/jtrm-*.md` line
+  is JTRM-verified just because it lives in that file** — per-line provenance is a mix: check
+  whether the section's own `Source:`/`Derived from:` tag cites a manual page or just a source
+  file (issue #522). A `Derived from: ... NOT verified against the JTRM` tag is not sufficient
+  grounds for a hardware-accuracy decision; read the cited PDF page yourself. Refs:
+  `docs/jtrm-*.md`, `docs/atari-jaguar-1999/`.
 - **Audio/DSP changes (`src/jerry/dac.c`, `dsp.c`, HLE audio path in `src/core/jaguar.c`, DSP IRQ
   return logic) MUST clear BOTH `test_audio_clipping` AND `test_audio_presence`** — clipping alone
   misses the silencing-regression class (PR #170 lesson). Then verify in RetroArch. Detail:
