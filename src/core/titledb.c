@@ -128,13 +128,27 @@ static const TitleDBEntry titledb_table[] = {
       {
          { "virtualjaguar_internal_resolution", "2x" },
          { "virtualjaguar_true_color",          "enabled" },
-         /* NOT tagged with virtualjaguar_blit_memo yet -- see
-          * docs/blit-memo.md.  AvP is the memo's best-evidenced title
-          * (710,433 verify checks, 0 divergences, bit-identical A/B
-          * over 8,000 frames) but that covers the scenes one fixture
-          * reaches, and the corpus sweep is unfinished.  Tagging here
-          * turns the memo ON by default for every AvP user, so it
-          * waits for the full sweep plus a device check. */
+         /* Deliberately NOT tagged with virtualjaguar_blit_memo -- issue
+          * #411 evaluated this to a conclusion, not an oversight.
+          * Soundness is clean: the #414 corpus sweep (64 titles, 19
+          * clean over 2,546,482 checks, 0 divergences) plus a re-verify
+          * from the #435 corridor gameplay savestate (449,109 checks, 0
+          * divergences, 0 dirty; independently reproduced 2026-08-21)
+          * both pass. The arena-thrash worry is also resolved: 0
+          * arena-full flushes across 1800 idle frames from that same
+          * state (99.4% hit rate); flushing is a moving-content-only
+          * effect and does not reproduce idle, so BM_SH_ARENA_RECS
+          * (400,000, ~+9.6 MB) should not be raised on AvP's account.
+          * But the *benefit* doesn't clear the bar: idle-state-only,
+          * load-immune instructions-retired A/B gives 160.901G ->
+          * 150.835G (-6.26%, ~150x noise floor), which is only ~2%
+          * total idle CPU once GPU RISC time (untouched by the memo)
+          * is counted -- against +9.6 MB of shadow arena whenever a
+          * surface is active, which the iOS memory budget can't
+          * absorb. See issue #411's final two comments (2026-08-15/16)
+          * for the full measurement and the "do not tag" recommendation.
+          * virtualjaguar_blit_memo remains available as a manual
+          * per-user option. */
          { NULL, NULL }
       }
    },
