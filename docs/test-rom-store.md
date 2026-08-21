@@ -36,41 +36,84 @@ just grows the download.
 22 MB fits GitHub's 10 GB Actions cache with four orders of magnitude spare, so
 steady-state CI egress is effectively zero — only a manifest change re-downloads.
 
-## Why R2
+## Choosing a backend
 
-Any S3-compatible store works; nothing about the tooling is R2-specific.
-Cloudflare R2 is the recommended default for one reason: **zero egress fees**.
-CI is an egress-shaped workload — it downloads far more than it stores — which
-is exactly where per-GB bandwidth pricing bills you for a corpus that costs
-cents to store. 22 MB on R2 rounds to free; the full 24 GB would be ~$0.36/mo.
+Two are supported. `rom-store.sh` picks GitHub when `VJ_ROM_GH_REPO` is set,
+otherwise S3.
 
-Avoid GitHub LFS for this. Its bandwidth is sold in $5 / 50 GB packs, and a
-CI-shaped workload burns packs fast.
+### GitHub release asset (simplest, free)
 
-**The bucket must be private.** These are commercial ROMs and a BIOS image.
-`rom-store.sh` never creates a bucket, never sets an ACL, and never prints a
-credential.
+One zip attached to a release in a **private** repo, moved with `gh`. Free,
+one secret, and `gh` is already on every runner. At 22 MB nothing is near a
+limit (100 MB/file, 2 GB/asset).
+
+A release **asset**, not files committed to the repo: git keeps every version
+of a binary forever, so re-dumping a 4 MB ROM would add 4 MB to every clone
+permanently, while an asset is replaced in place.
+
+This is **not** the GitHub LFS path, whose bandwidth is sold in $5/50 GB packs.
+Regular git operations and release assets are not metered that way.
+
+### S3-compatible (Cloudflare R2 etc.)
+
+Zero egress on R2, ~$0.36/mo for the entire 24 GB corpus. Worth it when the
+corpus outgrows what belongs on GitHub — Tier 2 CD images are GB-scale, where
+asset and repo ceilings bite long before R2's economics do.
+
+### The risk that is not about cost
+
+These are commercial ROMs plus a BIOS image. Hosting them on GitHub is a
+takedown surface, and **a strike lands on the account or org, not just the
+file**. Atari SA holds the Jaguar IP and does act on it. If you use the GitHub
+backend, prefer a **personal account over the org that hosts the emulator
+itself** — losing a scratch ROM repo is an inconvenience; a strike against the
+project's org is not.
+
+Either way the repo/bucket must be **private**. `rom-store.sh` never creates a
+bucket, never sets an ACL, and never prints a credential.
 
 ## One-time setup
 
-1. Create a **private** R2 bucket (Cloudflare dashboard → R2 → Create bucket),
-   e.g. `vj-test-roms`.
-2. Create an R2 API token scoped to **that bucket only**, with Object
-   Read & Write. Note the Access Key ID, Secret Access Key, and your account
-   ID — the endpoint is `https://<account-id>.r2.cloudflarestorage.com`.
-3. Publish from a machine that has the full corpus:
+### GitHub backend
+
+1. Create a **private** repo, e.g. `JoeMatt/vj-test-roms`. It needs no content;
+   the ROMs live in a release asset.
+2. Publish from a machine that has the full corpus:
+
+   ```bash
+   export VJ_ROM_GH_REPO=JoeMatt/vj-test-roms
+   export GH_TOKEN=...              # or just be logged in: gh auth login
+   make roms-manifest               # regenerate from your local corpus
+   make roms-publish                # creates the release, uploads tier1.zip
+   ```
+
+3. Add two repository secrets. `VJ_ROM_GH_TOKEN` must be a **fine-grained PAT
+   with read-only Contents** on the ROM repo — the built-in `GITHUB_TOKEN` is
+   scoped to this repository and cannot read another private one (it fails as
+   a 404, not a permission error):
+
+   ```bash
+   gh secret set VJ_ROM_GH_REPO  --repo libretro/virtualjaguar-libretro
+   gh secret set VJ_ROM_GH_TOKEN --repo libretro/virtualjaguar-libretro
+   ```
+
+### S3 / R2 backend
+
+1. Create a **private** R2 bucket (Cloudflare dashboard → R2), e.g.
+   `vj-test-roms`.
+2. Create an R2 API token scoped to that bucket, Object Read & Write. The
+   endpoint is `https://<account-id>.r2.cloudflarestorage.com`.
+3. Publish:
 
    ```bash
    export VJ_ROM_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
    export VJ_ROM_BUCKET=vj-test-roms
-   export VJ_ROM_KEY=...            # R2 access key id
-   export VJ_ROM_SECRET=...         # R2 secret access key
-   make roms-manifest               # regenerate from your local corpus
-   make roms-publish
+   export VJ_ROM_KEY=... VJ_ROM_SECRET=...
+   make roms-manifest && make roms-publish
    ```
 
-4. Add four repository secrets so CI can read the bucket. Use a **read-only**
-   token here, not the read-write one used to publish:
+4. Add four secrets, using a **read-only** token for CI rather than the one
+   used to publish:
 
    ```bash
    gh secret set VJ_ROM_ENDPOINT --repo libretro/virtualjaguar-libretro
@@ -80,7 +123,7 @@ credential.
    ```
 
 Secrets are unavailable to fork PRs by design. The fetch step is best-effort
-and those runs simply skip the ROM-gated checks, exactly as they do today.
+and those runs skip the ROM-gated checks, exactly as they do today.
 
 ## Daily use
 
@@ -104,6 +147,10 @@ ROMS_PRIVATE_ROOT=test/roms/tier1 make test
   never be picked up by a later run as a valid cached copy.
 - **Fetch is idempotent and offline-clean.** If every file is already present
   and hashes match, the store is not contacted at all.
+- **The GitHub backend verifies the archive after unpacking, into a staging
+  tree first.** A half-extracted or tampered zip is rejected (`fetched archive
+  does not match the manifest`, exit 1) rather than being left in place where
+  the next run's fast path would treat it as a verified corpus.
 - **`manifest` and `publish` share one resolver.** They both walk
   `tier1.patterns`; neither re-derives a source path by globbing a manifest
   basename. That is not hypothetical tidiness — the first version did re-glob,

@@ -33,7 +33,30 @@
 #   scripts/rom-store.sh fetch      # download + verify into $VJ_ROM_DEST
 #   scripts/rom-store.sh verify     # hash-check what is already on disk
 #
-# ENV
+# BACKENDS
+#   VJ_ROM_BACKEND=github  (default when VJ_ROM_GH_REPO is set)
+#       One zip attached to a release in a PRIVATE GitHub repo, moved with the
+#       `gh` CLI.  Free, one secret, and `gh` is already on every runner.
+#       A release ASSET rather than files committed to the repo: git keeps
+#       every version of a binary forever, so re-dumping a 4 MB ROM would add
+#       4 MB to every clone permanently, while an asset is replaced in place.
+#       Right for Tier 1 (22 MB).  Wrong for Tier 2: CD images are GB-scale,
+#       and asset/repo ceilings bite long before R2's economics do.
+#
+#   VJ_ROM_BACKEND=s3      (default otherwise)
+#       Any S3-compatible store.  R2 recommended for zero egress.
+#
+#   Hosting commercial ROMs plus a BIOS image on GitHub is a takedown surface,
+#   and a strike lands on the ACCOUNT, not the file.  Prefer a personal
+#   account over an org that hosts the emulator itself.
+#
+# ENV (github backend)
+#   VJ_ROM_GH_REPO   owner/repo of the private ROM repo
+#   VJ_ROM_GH_TAG    release tag holding the asset   (default: tier1)
+#   VJ_ROM_GH_ASSET  asset filename                  (default: tier1.zip)
+#   GH_TOKEN         token with read access (write, to publish)
+#
+# ENV (s3 backend)
 #   VJ_ROM_ENDPOINT  S3 endpoint URL. R2: https://<account>.r2.cloudflarestorage.com
 #   VJ_ROM_BUCKET    bucket name
 #   VJ_ROM_KEY       access key id      (GitHub secret)
@@ -58,6 +81,15 @@ DEST="${VJ_ROM_DEST:-$REPO/test/roms/tier1}"
 case "$DEST" in /*) ;; *) DEST="$REPO/$DEST" ;; esac
 PREFIX="${VJ_ROM_PREFIX:-tier1}"
 REGION="${VJ_ROM_REGION:-auto}"
+GH_REPO="${VJ_ROM_GH_REPO:-}"
+GH_TAG="${VJ_ROM_GH_TAG:-tier1}"
+GH_ASSET="${VJ_ROM_GH_ASSET:-tier1.zip}"
+# Infer the backend so a caller that sets only the GitHub vars does not also
+# have to remember to say so.
+BACKEND="${VJ_ROM_BACKEND:-}"
+if [ -z "$BACKEND" ]; then
+  if [ -n "$GH_REPO" ]; then BACKEND=github; else BACKEND=s3; fi
+fi
 
 die()  { echo "rom-store: $*" >&2; exit 1; }
 note() { echo "rom-store: $*"; }
@@ -75,8 +107,67 @@ filesize() { wc -c < "$1" | tr -d ' '; }
 
 # ------------------------------------------------------------------ store ---
 store_configured() {
-  [ -n "${VJ_ROM_ENDPOINT:-}" ] && [ -n "${VJ_ROM_BUCKET:-}" ] &&
-  [ -n "${VJ_ROM_KEY:-}" ] && [ -n "${VJ_ROM_SECRET:-}" ]
+  case "$BACKEND" in
+    github) [ -n "$GH_REPO" ] && [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ] ;;
+    *)      [ -n "${VJ_ROM_ENDPOINT:-}" ] && [ -n "${VJ_ROM_BUCKET:-}" ] &&
+            [ -n "${VJ_ROM_KEY:-}" ] && [ -n "${VJ_ROM_SECRET:-}" ] ;;
+  esac
+}
+
+gh_cli() {
+  command -v gh >/dev/null 2>&1 || die "gh CLI not found (brew install gh)"
+  GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh "$@"
+}
+
+# The whole Tier-1 set travels as ONE zip: nine separate release assets would
+# be nine round trips and nine chances to end up half-updated, and at 22 MB
+# there is nothing to gain from partial transfers.
+gh_publish() {
+  local staging zip src rel n=0
+  staging=$(mktemp -d "${TMPDIR:-/tmp}/vjroms.XXXXXX")
+  zip="$staging/$GH_ASSET"
+  mkdir -p "$staging/pack"
+  while IFS=$'\t' read -r src rel; do
+    [ -n "${rel:-}" ] || continue
+    mkdir -p "$staging/pack/$(dirname "$rel")"
+    cp "$src" "$staging/pack/$rel"
+    n=$((n + 1))
+  done < <(resolve_patterns) || { command rm -rf "$staging"; die "local corpus is incomplete; cannot publish"; }
+  ( cd "$staging/pack" && zip -q -r -X "$zip" . ) || { command rm -rf "$staging"; die "zip failed"; }
+  note "packed $n file(s) -> $GH_ASSET ($(filesize "$zip") bytes)"
+  # Create the release on first publish; --clobber replaces the asset after.
+  gh_cli release view "$GH_TAG" --repo "$GH_REPO" >/dev/null 2>&1 || {
+    note "creating release $GH_TAG in $GH_REPO"
+    gh_cli release create "$GH_TAG" --repo "$GH_REPO" \
+        --title "Tier-1 test ROMs" \
+        --notes "Tier-1 private test corpus. Contents and hashes: test/roms/tier1.manifest" \
+      >/dev/null || { command rm -rf "$staging"; die "could not create release $GH_TAG"; }
+  }
+  gh_cli release upload "$GH_TAG" "$zip" --repo "$GH_REPO" --clobber >/dev/null \
+    || { command rm -rf "$staging"; die "asset upload failed"; }
+  command rm -rf "$staging"
+  note "published $n file(s) to $GH_REPO release $GH_TAG ($GH_ASSET)"
+}
+
+gh_fetch() {
+  local staging
+  staging=$(mktemp -d "${TMPDIR:-/tmp}/vjroms.XXXXXX")
+  note "get $GH_REPO release $GH_TAG :: $GH_ASSET"
+  gh_cli release download "$GH_TAG" --repo "$GH_REPO" --pattern "$GH_ASSET" \
+      --dir "$staging" --clobber >/dev/null \
+    || { command rm -rf "$staging"; die "release download failed ($GH_REPO $GH_TAG)"; }
+  command -v unzip >/dev/null 2>&1 || { command rm -rf "$staging"; die "unzip not found"; }
+  # Unpack to a staging tree, NOT straight over DEST: the per-file hash check
+  # in cmd_verify below is what decides these are good, and a half-extracted
+  # archive must never be able to masquerade as a verified corpus.
+  unzip -qo "$staging/$GH_ASSET" -d "$staging/pack" \
+    || { command rm -rf "$staging"; die "unzip failed"; }
+  mkdir -p "$DEST"
+  ( cd "$staging/pack" && find . -type f -print0 | while IFS= read -r -d '' f; do
+      mkdir -p "$DEST/$(dirname "${f#./}")"
+      mv -f "$f" "$DEST/${f#./}"
+    done )
+  command rm -rf "$staging"
 }
 
 # aws CLI is the transport: it is the one S3 client already present on GitHub
@@ -140,6 +231,7 @@ cmd_manifest() {
 cmd_publish() {
   [ -f "$MANIFEST" ] || die "no manifest -- run: $0 manifest"
   store_configured || { note "SKIP: store not configured (see ENV in $0)"; exit 77; }
+  if [ "$BACKEND" = github ]; then gh_publish; return; fi
   local src rel n=0 want
   while IFS=$'\t' read -r src rel; do
     [ -n "${rel:-}" ] || continue
@@ -167,11 +259,28 @@ cmd_fetch() {
     return 0
   fi
   store_configured || {
-    note "SKIP: store not configured -- set VJ_ROM_ENDPOINT / VJ_ROM_BUCKET /"
-    note "      VJ_ROM_KEY / VJ_ROM_SECRET.  Local devs with their own corpus"
-    note "      should point ROMS_PRIVATE_ROOT at it and skip this entirely."
+    # Name the variables for the backend actually in play. Telling a GitHub
+    # user to set VJ_ROM_KEY sends them looking for a credential that has no
+    # bearing on why their fetch skipped.
+    if [ "$BACKEND" = github ]; then
+      note "SKIP: store not configured -- set VJ_ROM_GH_REPO and GH_TOKEN."
+    else
+      note "SKIP: store not configured -- set VJ_ROM_ENDPOINT / VJ_ROM_BUCKET /"
+      note "      VJ_ROM_KEY / VJ_ROM_SECRET."
+    fi
+    note "      Local devs with their own corpus should point"
+    note "      ROMS_PRIVATE_ROOT at it and skip this entirely."
     exit 77
   }
+  if [ "$BACKEND" = github ]; then
+    gh_fetch
+    if cmd_verify; then
+      note "fetch complete -> $DEST"
+      note "point the suite at it with:  ROMS_PRIVATE_ROOT=$DEST"
+      return 0
+    fi
+    die "fetched archive does not match the manifest"
+  fi
   while read -r hash size rel; do
     [ -n "${rel:-}" ] || continue
     dst="$DEST/$rel"

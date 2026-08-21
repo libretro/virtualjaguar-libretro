@@ -255,6 +255,16 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       continue-on-error: true
       env:
+        # Two backends; rom-store.sh picks whichever is configured (GitHub
+        # wins when VJ_ROM_GH_REPO is set). Set one group of secrets, not both.
+        #
+        # GitHub backend: VJ_ROM_GH_TOKEN must be a fine-grained PAT with
+        # read-only Contents on the ROM repo. The built-in GITHUB_TOKEN cannot
+        # be used -- it is scoped to THIS repository and cannot read another
+        # private one, which fails as a 404 rather than a permission error.
+        VJ_ROM_GH_REPO: ${{ secrets.VJ_ROM_GH_REPO }}
+        GH_TOKEN: ${{ secrets.VJ_ROM_GH_TOKEN }}
+        # S3 backend (Cloudflare R2 etc.)
         VJ_ROM_ENDPOINT: ${{ secrets.VJ_ROM_ENDPOINT }}
         VJ_ROM_BUCKET: ${{ secrets.VJ_ROM_BUCKET }}
         VJ_ROM_KEY: ${{ secrets.VJ_ROM_KEY }}
