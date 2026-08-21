@@ -48,14 +48,14 @@ jobs:
 
           # `no-issue` opt-out.
           if gh pr view "$PR" --repo "$REPO" --json labels \
-               --jq '.labels[].name' | grep -qx 'no-issue'; then
+                --jq '.labels[].name' | grep -qx 'no-issue'; then
             echo "::notice::'no-issue' label present -- skipping the linked-issue check."
             exit 0
           fi
 
           linked=$(gh pr view "$PR" --repo "$REPO" \
-                     --json closingIssuesReferences \
-                     --jq '.closingIssuesReferences | length')
+                      --json closingIssuesReferences \
+                      --jq '.closingIssuesReferences | length')
 
           if [ "$linked" -gt 0 ]; then
             gh pr view "$PR" --repo "$REPO" --json closingIssuesReferences \
