@@ -495,7 +495,8 @@ static CHDR_INLINE void put_bigendian_uint48(uint8_t *base, uint64_t value)
 
 static CHDR_INLINE uint32_t get_bigendian_uint32_t(const uint8_t *base)
 {
-	return (base[0] << 24) | (base[1] << 16) | (base[2] << 8) | base[3];
+	return ((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+			((uint32_t)base[2] << 8) | (uint32_t)base[3];
 }
 
 /*-------------------------------------------------
