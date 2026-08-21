@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE 1   /* glibc: expose setenv under c99 */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
