@@ -601,9 +601,11 @@ the console's row select goes from row 3 back to row 0.
 A RetroPad exposes exactly six analog signals a frontend can reasonably
 route — two sticks and the two shoulder pairs — so the six DOF map one to one
 with nothing doubled up. The shoulder pairs are read as analog *buttons*, so
-a frontend that reports real pressure gives you proportional roll and thrust
-and one that does not gives you clean digital roll and thrust; you never lose
-the axis. **This pairing is our choice, not a specification** — TR10 defines
+a frontend that reports real pressure gives you proportional roll and thrust.
+A frontend that does not answers zero for a shoulder you are holding, so the
+core promotes any zero analog read whose digital button is *down* to full
+deflection: you get on/off roll and thrust instead of proportional, and never
+a dead axis. **This pairing is our choice, not a specification** — TR10 defines
 what the six values mean to the machine and says nothing about what a human
 holds. Expect to want it different, and say so on the issue.
 

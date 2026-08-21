@@ -3070,8 +3070,13 @@ static void update_input(void)
          if (t == INPUTDEV_6D)
          {
             int32_t  ax[INPUTDEV_6D_AXES];
+            int32_t  sh[4];   /* L2, R2, L, R -- see the fallback below */
             uint32_t sw = 0;
             int      i;
+            static const unsigned sh_id[4] = {
+               RETRO_DEVICE_ID_JOYPAD_L2, RETRO_DEVICE_ID_JOYPAD_R2,
+               RETRO_DEVICE_ID_JOYPAD_L,  RETRO_DEVICE_ID_JOYPAD_R
+            };
 
             ax[INPUTDEV_6D_X]  = (int32_t)input_state_cb(player,
                      RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
@@ -3085,20 +3090,26 @@ static void update_input(void)
             ax[INPUTDEV_6D_TZ] = (int32_t)input_state_cb(player,
                      RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
                      RETRO_DEVICE_ID_ANALOG_Y);
-            ax[INPUTDEV_6D_Z]  =
-                 (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
-                     RETRO_DEVICE_INDEX_ANALOG_BUTTON,
-                     RETRO_DEVICE_ID_JOYPAD_R2)
-               - (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
-                     RETRO_DEVICE_INDEX_ANALOG_BUTTON,
-                     RETRO_DEVICE_ID_JOYPAD_L2);
-            ax[INPUTDEV_6D_TY] =
-                 (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
-                     RETRO_DEVICE_INDEX_ANALOG_BUTTON,
-                     RETRO_DEVICE_ID_JOYPAD_R)
-               - (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
-                     RETRO_DEVICE_INDEX_ANALOG_BUTTON,
-                     RETRO_DEVICE_ID_JOYPAD_L);
+            /* The two shoulder pairs, read as ANALOG BUTTONS so a
+             * frontend with real pressure gives proportional thrust and
+             * roll.  DIGITAL FALLBACK, and it is not optional: a
+             * frontend that does not implement analog-button reads
+             * answers 0 for a shoulder that is being held, which would
+             * leave Z and TY permanently at rest -- two of the six DOF
+             * silently dead, not merely non-proportional.  So a zero
+             * analog read on a button the digital mask says is DOWN is
+             * promoted to full scale.  Same shape as the driving skin's
+             * `if (r2 || l2)` fallback. */
+            for (i = 0; i < 4; i++)
+            {
+               sh[i] = (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
+                          RETRO_DEVICE_INDEX_ANALOG_BUTTON, sh_id[i]);
+               if (sh[i] == 0 && (ret[player] & (1 << sh_id[i])))
+                  sh[i] = 32767;
+            }
+
+            ax[INPUTDEV_6D_Z]  = sh[1] - sh[0];   /* R2 - L2 */
+            ax[INPUTDEV_6D_TY] = sh[3] - sh[2];   /* R  - L  */
 
             for (i = 0; i < INPUTDEV_6D_AXES; i++)
             {
