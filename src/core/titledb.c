@@ -44,6 +44,26 @@
  * shaded 1.70M/2400f=708/f (cleared), QUALIFY16 13/2400f=0.005/f (below
  * threshold) -> true_color only.
  *
+ * issue #551 -- the true_color threshold above (shaded blits/frame) is a
+ * blitter-*activity* proxy; the option it drives affects gouraud
+ * *precision* in CRY 16bpp only, which is a different property a title
+ * can clear the threshold on without ever banding visibly. Every
+ * true_color=enabled row was re-measured against the deterministic A/B
+ * pixel-diff pipeline in docs/true-color-ab-captures.md (same ROM, same
+ * scripted input, same frame, only virtualjaguar_true_color toggled;
+ * TOMGetVideoMode() probed rather than assumed). Rows that measured a
+ * real difference kept their pair with the measurement noted alongside
+ * it; rows that measured 0.0000% lost the pair (Alien vs Predator, Doom
+ * retail, Missile Command 3D) or lost the whole row when true_color was
+ * their only pair (Kasumi Ninja -- and its qualifying scene turned out
+ * to render in TOM's VARMOD mixed CRY/RGB16 mode, which the true-color
+ * shadow-fb path does not even hook). Rows with no CRC-matching ROM in
+ * the private corpus (Skyhammer; the 9-row Doom EX family) were left
+ * untouched and are NOT claimed to be either good or null -- absence of
+ * measurement is not evidence of nullity. The internal_resolution
+ * (QUALIFY16) pairs are a different heuristic and were out of scope for
+ * this pass; none were touched.
+ *
  * ------------------------------------------------------------------
  * hooks[] authoring checklist (issue #370, docs/enhancement-hooks.md)
  *
@@ -119,15 +139,24 @@
  * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
-   /* Alien vs Predator (retail) — 2x internal resolution + true color.
+   /* Alien vs Predator (retail) — 2x internal resolution.
     * Evidence: docs/avp-renderer-analysis.md (Stage 2 A/B, frame 6000),
     * docs/hires-stage0-census.md (census GO), shipped in v3.2.0.
-    * CRCs: Alien vs Predator (World) from src/core/filedb.c line 106. */
+    * CRCs: Alien vs Predator (World) from src/core/filedb.c line 106.
+    *
+    * virtualjaguar_true_color REMOVED (issue #551): the census threshold
+    * (shaded blits/frame) is a blitter-activity proxy, not a predictor
+    * of visible gouraud banding.  Re-measured with the deterministic A/B
+    * pipeline (docs/true-color-ab-captures.md):
+    * `--press 3300:a 3600:a 3900:a 4200:a 4500:a 5000:a`, shots f5200 and
+    * f6000, TOMGetVideoMode()==0 (CRY, live) at both -- 0.0000% changed
+    * pixels either frame (78240 px, unique colors 8698/8701 identical
+    * off vs on).  Was also the row PR #554's original measurement
+    * flagged null; this repeats it against the exact CRC-matched ROM. */
    {
       0xDC187F82, "Alien vs Predator",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          /* NOT tagged with virtualjaguar_blit_memo yet -- see
           * docs/blit-memo.md.  AvP is the memo's best-evidenced title
           * (710,433 verify checks, 0 divergences, bit-identical A/B
@@ -142,7 +171,12 @@ static const TitleDBEntry titledb_table[] = {
    /* Cybermorph (retail, Rev 1) — true color kills gouraud banding.
     * Evidence: site/assets/truecolor_ab_cybermorph.png (committed A/B),
     * docs/true-color-shadowfb-design.md.
-    * CRC: Cybermorph (World) (Rev 1) from src/core/filedb.c line 94. */
+    * CRC: Cybermorph (World) (Rev 1) from src/core/filedb.c line 94.
+    *
+    * Re-measured (issue #551, docs/true-color-ab-captures.md pipeline):
+    * `--press 200:a 400:a 600:a 900:a 1200:a`, shot f1400,
+    * TOMGetVideoMode()==0 (CRY) -- 39.0440% changed pixels (30548/78240),
+    * unique colors 303 -> 498.  Confirms the shipped figure; KEEP. */
    {
       0xBDE67498, "Cybermorph",
       {
@@ -154,7 +188,13 @@ static const TitleDBEntry titledb_table[] = {
    /* Cybermorph (retail, Rev 2) — true color kills gouraud banding.
     * Evidence: site/assets/truecolor_ab_cybermorph.png (committed A/B),
     * docs/true-color-shadowfb-design.md.
-    * CRC: Cybermorph (World) (Rev 2) from src/core/filedb.c line 115. */
+    * CRC: Cybermorph (World) (Rev 2) from src/core/filedb.c line 115.
+    *
+    * Re-measured (issue #551, docs/true-color-ab-captures.md pipeline)
+    * against the Rev 2 dump itself (not inherited from Rev 1): identical
+    * result -- `--press 200:a 400:a 600:a 900:a 1200:a`, shot f1400,
+    * TOMGetVideoMode()==0 (CRY), 39.0440% changed pixels (30548/78240),
+    * unique colors 303 -> 498.  KEEP. */
    {
       0xECF854E7, "Cybermorph",
       {
@@ -169,7 +209,13 @@ static const TitleDBEntry titledb_table[] = {
     * copy as "Aircars (beta)"; policy applies the result to every
     * retail revision, so it is applied here to the plain "(World)" row.
     * CRC: Air Cars (World) from src/core/filedb.c line 50.
-    * (Excluded: 0xCBFD822A "Air Cars (World) (alt)" is FF_BAD_DUMP.) */
+    * (Excluded: 0xCBFD822A "Air Cars (World) (alt)" is FF_BAD_DUMP.)
+    *
+    * Re-measured (issue #551, docs/true-color-ab-captures.md pipeline):
+    * `--press 200:a 500:a 800:a 1100:a 1400:a 1700:a 2000:a 2300:a 2600:a
+    * 2900:a 3200:a`, shots f2600/f3200/f3800 (cockpit gameplay, terrain
+    * gradient), TOMGetVideoMode()==0 (CRY) at f2600 -- 34.07% / 42.88% /
+    * 35.03% changed pixels.  KEEP. */
    {
       0x40E1A1D0, "Air Cars",
       {
@@ -178,15 +224,29 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Doom (retail) — true color + 2x: census row "Doom" 2400f,
+   /* Doom (retail) — 2x internal resolution: census row "Doom" 2400f,
     * shaded 445.8/f (>=10), QUALIFY16 433.3/f (>=5), scene: gameplay
     * (E1M1).
-    * CRC: Doom (World) from src/core/filedb.c line 62. */
+    * CRC: Doom (World) from src/core/filedb.c line 62.
+    *
+    * virtualjaguar_true_color REMOVED (issue #551): re-measured with the
+    * deterministic A/B pipeline (docs/true-color-ab-captures.md) against
+    * the CRC-matched dump (corpus file is catalogued as "Doom - Evil
+    * Unleashed (1994).jag" -- Doom: Evil Unleashed is the actual retail
+    * title of Jaguar Doom, not an alias or hack -- CRC32 0x5E2CDBC0
+    * confirms it is this row's own retail Doom, verified via
+    * TitleDBContentCRC()) --
+    * `--press 300:a 500:a 700:a`, shots f900/f1600, TOMGetVideoMode()==0
+    * (CRY) both -- 0.0000% changed pixels either frame (unique colors
+    * 275/269 identical off vs on). NOTE: this is NOT the same ROM the
+    * true-color-ab-captures.md doc's original "Doom (World) EX.j64" null
+    * covered -- that file's CRC (0xEE7B84EB) matches no titledb row at
+    * all, retail or alias; this is a fresh, correctly CRC-matched
+    * measurement of the actual retail row. */
    {
       0x5E2CDBC0, "Doom",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -194,6 +254,17 @@ static const TitleDBEntry titledb_table[] = {
    /* Doom EX romhack family — alias rows inheriting Doom (0x5E2CDBC0)'s
     * pairs.  CRC = IPS patch applied to the verified retail dump;
     * boot-verified via cart_boot_probe (issue #409).
+    *
+    * issue #551 UNMEASURED, not re-qualified either way: the private
+    * corpus holds two built JagDoomEX images ("Doom (World) EX.j64",
+    * "Doom (World) EX 2.j64"), both CRC32 0xEE7B84EB -- neither matches
+    * any of the 9 CRCs below, so none of this family's true_color pairs
+    * could be A/B-measured this pass.  Left untouched per the issue's
+    * explicit rule: absence of measurement is not evidence of nullity.
+    * The retail Doom row above measured null with the identical engine,
+    * which is suggestive but not a substitute for measuring these exact
+    * builds -- do not use it to justify removing these rows without a
+    * matching dump.
     *
     * NO virtualjaguar_p2_device ROW HERE, and it is not an oversight
     * (#429, #428).  #429 proposed auto-selecting the ST/Amiga mouse for
@@ -306,7 +377,19 @@ static const TitleDBEntry titledb_table[] = {
    /* I-War (retail) — true color + 2x: census row "I-War" 2400f,
     * shaded 770.8/f (>=10), QUALIFY16 183.9/f (>=5), scene: gameplay
     * (DAMAGE CRITICAL).
-    * CRC: I-War (World) from src/core/filedb.c line 82. */
+    * CRC: I-War (World) from src/core/filedb.c line 82.
+    *
+    * Re-measured (issue #551, docs/true-color-ab-captures.md pipeline):
+    * `--press 300:a 1000:b 1400:a 1800:a 2200:a 2600:a`, shots f2800/
+    * f3200/f3600, TOMGetVideoMode()==0 (CRY) -- 33.69% / 34.64% / 31.05%
+    * changed pixels, unique colors roughly doubling (e.g. 457 -> 737 at
+    * f2800). KEEP -- a real, substantial difference. This corrects
+    * docs/true-color-ab-captures.md's earlier "I-War: gameplay not
+    * reached, not counted as null": that attempt used a generic mash-`a`
+    * ladder and stalled on menus; the ladder above (from
+    * docs/hires-stage0-census.md's already screenshot-verified sequence)
+    * reaches the DAMAGE CRITICAL gameplay scene the row was qualified on
+    * and shows true_color is clearly live there. */
    {
       0x97EB4651, "I-War",
       {
@@ -316,28 +399,62 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Kasumi Ninja (retail) — true color: census row "Kasumi Ninja" 2400f,
-    * shaded 383.7/f (>=10), QUALIFY16 0/f (<5), scene: "3D gauntlet walk
-    * (pre-fight)" — real engine rendering of a playable segment, not a
-    * menu/attract loop, so it qualifies under the policy's scene rule.
+   /* Kasumi Ninja (retail) — ROW REMOVED (issue #551).
+    *
+    * Previously: true color, on the strength of census row "Kasumi
+    * Ninja" 2400f, shaded 383.7/f (>=10), QUALIFY16 0/f (<5), scene:
+    * "3D gauntlet walk (pre-fight)".  true_color was this row's only
+    * pair, so removing it (evidence below) empties the row; deleted
+    * rather than left as a dead entry.
+    *
+    * Re-measured with the deterministic A/B pipeline
+    * (docs/true-color-ab-captures.md) at exactly that scene:
+    * `--press 200:a 500:a 800:a 1100:a`, shots f900/f1200/f2000 (the
+    * gauntlet corridor the row cites) -- 0.0000% changed pixels at all
+    * three (533 unique colors, identical off vs on).
+    *
+    * TOMGetVideoMode() at f1200 is 4, not 0 -- VARMOD-enabled mixed
+    * CRY/RGB16 mode (src/tom/tom.c TOMGetVideoMode(): VARMOD bit ->
+    * value 4, MODE bits 0), rendered by
+    * tom_render_16bpp_cry_rgb_mix_scanline().  The true-color shadow-fb
+    * substitution is wired into tom_render_16bpp_cry_scanline() only
+    * (video mode 0, plain CRY) -- the mix-mode renderer never checks
+    * shadowFBActive at all.  So this isn't merely "banding not visible
+    * here": the option's own rendering path cannot execute during the
+    * scene the row was qualified on.
+    *
+    * Checked further before deleting the row rather than just leaving a
+    * mode-4 pixel null (a mode-4 null alone would only prove the option
+    * is inert AT THIS SCENE, not that it never applies to the title, per
+    * the guide's own trap list): swept TOMGetVideoMode() every 15 frames
+    * from boot to frame 4000, through the gauntlet AND into the fight
+    * that follows it (`up:60` then repeated `b` presses). Mode 4 covers
+    * the entire run except one earlier window, mode 0, which is the
+    * "KASUMI NINJA / Press Fire to Start" title-attract screen (f210) --
+    * exactly the "menu"/"attract alone" case the top-of-file policy
+    * comment already excludes from qualifying a row. So mode 0 exists in
+    * this title, but never during anything that would qualify as a
+    * scene; the option's rendering path is unreachable for any content
+    * this row could legitimately be evidenced against.
     * CRC: Kasumi Ninja (World) from src/core/filedb.c line 32. */
-   {
-      0x0957A072, "Kasumi Ninja",
-      {
-         { "virtualjaguar_true_color", "enabled" },
-         { NULL, NULL }
-      }
-   },
 
-   /* Missile Command 3D (retail) — true color + 2x: census row
+   /* Missile Command 3D (retail) — 2x internal resolution: census row
     * "Missile Command 3D" 2400f, shaded 1650/f (>=10), QUALIFY16
     * 1866.7/f (>=5), scene: gameplay (Original 3D mode).
-    * CRC: Missile Command 3D (World) from src/core/filedb.c line 105. */
+    * CRC: Missile Command 3D (World) from src/core/filedb.c line 105.
+    *
+    * virtualjaguar_true_color REMOVED (issue #551): re-measured with the
+    * deterministic A/B pipeline (docs/true-color-ab-captures.md) --
+    * `--press 300:a 600:a 900:a 1200:a`, shots f1600/f2000/f2400,
+    * TOMGetVideoMode()==0 (CRY) -- 0.0000% changed pixels at all three
+    * frames (unique colors 1880/2725/1977 identical off vs on). This is
+    * the title with the widest census margin of any true_color row
+    * (1650 shaded blits/frame, 165x the >=10 threshold) and it is still
+    * a clean null. */
    {
       0xDA9C4162, "Missile Command 3D",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -347,7 +464,18 @@ static const TitleDBEntry titledb_table[] = {
     * (cockpit).
     * CRC: Skyhammer (World) from src/core/filedb.c line 51 (FF_ALPINE is
     * a dump-header-format flag, not a build-stage flag — this is the
-    * sole, FF_VERIFIED, untagged retail row for the title). */
+    * sole, FF_VERIFIED, untagged retail row for the title).
+    *
+    * issue #551 UNMEASURED: the private corpus's only Skyhammer file
+    * ("Skyhammer (World).j64") does not CRC-match this row -- its
+    * TitleDBContentCRC() is 0x3C044941, not 0x4471BFA0, so the harness
+    * loads it as an unrecognized dump rather than this entry. 0x3C044941
+    * does not appear anywhere in src/core/filedb.c either, so this is
+    * not a known alternate dump falling through to a different row --
+    * it is an image the filedb doesn't recognize at all. No A/B capture
+    * was possible against the actual CRC this row keys on. Left
+    * untouched per the issue's rule: absence of measurement is not
+    * evidence of nullity. */
    {
       0x4471BFA0, "Skyhammer",
       {
@@ -360,7 +488,12 @@ static const TitleDBEntry titledb_table[] = {
    /* Tempest 2000 (retail) — true color: census row "Tempest 2000" 2400f,
     * shaded 720.8/f (>=10), QUALIFY16 3.17/f (<5), scene: gameplay
     * (web).
-    * CRC: Tempest 2000 (World) from src/core/filedb.c line 68. */
+    * CRC: Tempest 2000 (World) from src/core/filedb.c line 68.
+    *
+    * Re-measured (issue #551, docs/true-color-ab-captures.md pipeline):
+    * `--press 200:a 500:a 800:a 1100:a 1400:a`, shots f1600/f1800/f2000
+    * (web gameplay, the gouraud-shaded funnel), TOMGetVideoMode()==0
+    * (CRY) -- 21.91% / 17.09% / 19.89% changed pixels. KEEP. */
    {
       0x6B2B95AD, "Tempest 2000",
       {

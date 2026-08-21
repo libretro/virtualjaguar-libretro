@@ -9,21 +9,28 @@
  * is fixed for the whole session at retro_load_game time, so each case
  * needs a fresh core load, exactly like a real frontend restart.
  *
- * Cases (see the Makefile `test:` target for the exact invocations):
+ * Cases (see the Makefile `test:` target for the exact invocations).
+ * Seed title is I-War (CRC 0x97EB4651) -- it was AvP through issue #551,
+ * which re-measured every true_color=enabled titledb row against pixel
+ * evidence; AvP's true_color pair measured null (0.0000% changed pixels,
+ * see src/core/titledb.c) and was removed, so AvP stopped carrying both
+ * keys (internal_resolution=2x AND true_color=enabled) this test needs
+ * to exercise both substitution paths at once. I-War kept both pairs
+ * after measuring a real 31-35% pixel difference:
  *
- *   1  AvP (CRC 0xDC187F82), default options -- the DB applies:
+ *   1  I-War, default options -- the DB applies:
  *      shadowHiresN == 2, and the core logs a [titledb] SUBSTITUTION line
  *      (keyed on the "(option at default)" marker, not the bare [titledb]
  *      tag -- the per-title-DB-miss line added for CRC-unlisted content
  *      also carries the [titledb] prefix, so the marker is what actually
  *      proves the substitution happened, not just that both options
  *      independently defaulted to the DB's values).
- *   2  AvP, virtualjaguar_pertitle_defaults=disabled -- stock: shadowHiresN
+ *   2  I-War, virtualjaguar_pertitle_defaults=disabled -- stock: shadowHiresN
  *      == 1 (disabling the gate must restore stock behaviour exactly).
- *   3  AvP, defaults disabled AND virtualjaguar_internal_resolution=2x set
+ *   3  I-War, defaults disabled AND virtualjaguar_internal_resolution=2x set
  *      explicitly -- manual choice still works with the DB off:
  *      shadowHiresN == 2.
- *   4  AvP, virtualjaguar_true_color=disabled (== its own registered
+ *   4  I-War, virtualjaguar_true_color=disabled (== its own registered
  *      default) with the DB on -- a default-VALUED option is
  *      indistinguishable from an untouched one by design (see CLAUDE.md's
  *      "Known limitation to document, not fix"), so the DB still
@@ -32,21 +39,21 @@
  *      SUBSTITUTION line is logged (no "(option at default)" marker), but
  *      the [titledb] MISS line ("no per-title entry for CRC32 ...") is
  *      logged instead; shadowHiresN == 1.
- *   6  AvP, then retro_unload_game() in the same process -- the titledb
+ *   6  I-War, then retro_unload_game() in the same process -- the titledb
  *      cache clears immediately: TitleDBTitleName() is non-NULL after load
  *      and NULL after unload, so a later option read cannot see stale
  *      per-title overrides from the previous content.
- *   7  AvP, default options, PLUS a programmatically-installed negative
+ *   7  I-War, default options, PLUS a programmatically-installed negative
  *      entry (issue #464) flagging virtualjaguar_true_color=enabled --
- *      the exact value AvP's own positive row would substitute at
+ *      the exact value I-War's own positive row would substitute at
  *      default. The substitution must be REFUSED (shadowFBActive == 0,
  *      stock value kept) while the unrelated internal_resolution key is
  *      unaffected (shadowHiresN == 2), and a [titledb] warning names the
  *      refusal. Installed via TitleDBSetNegativeForTest(), the same
  *      "no canary row in the shipped table" reasoning test_hook_gate uses
- *      for hooks[] -- it would otherwise make AvP's real DB row unsafe
+ *      for hooks[] -- it would otherwise make I-War's real DB row unsafe
  *      for every user, not just this test process.
- *   8  AvP, virtualjaguar_true_color=enabled set EXPLICITLY by the user,
+ *   8  I-War, virtualjaguar_true_color=enabled set EXPLICITLY by the user,
  *      PLUS the same negative entry as case 7 -- the user's choice must
  *      still be HONOURED (shadowFBActive != 0) because a negative entry
  *      may refuse a per-title DEFAULT but must never override an

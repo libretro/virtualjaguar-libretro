@@ -1605,35 +1605,43 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# hooks[] gate test below.
 	@# shadowHiresN is fixed for the whole session at retro_load_game
 	@# time, so each case is a separate process invocation -- exactly
-	@# like a real frontend restart.  The seed CRC (0xDC187F82) is
-	@# verified against the actual ROM bytes first: a corpus rip that
-	@# does not match the seed would otherwise make the test "pass"
-	@# without ever exercising the DB lookup it claims to test.
-	@avp=$$(bash scripts/find-rom.sh 'Alien vs Predator (1994).jag' '*Alien*Predator*.jag' '*Alien*Predator*.j64'); \
-	if [ -n "$$avp" ]; then \
-		avp_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$avp" 2>/dev/null); \
-		if [ "$$avp_crc" = "0xDC187F82" ]; then \
+	@# like a real frontend restart.  Seed title is I-War (CRC
+	@# 0x97EB4651), not AvP: issue #551 re-measured every
+	@# true_color=enabled titledb row against pixel evidence and AvP's
+	@# true_color pair measured null (0.0000% changed pixels) and was
+	@# removed, so AvP no longer carries both keys this test needs.
+	@# I-War kept both pairs (internal_resolution=2x AND
+	@# true_color=enabled) after measuring a real 31-35% pixel
+	@# difference -- see src/core/titledb.c's I-War row comment.  The
+	@# seed CRC is verified against the actual ROM bytes first: a
+	@# corpus rip that does not match the seed would otherwise make the
+	@# test "pass" without ever exercising the DB lookup it claims to
+	@# test.
+	@iwar=$$(bash scripts/find-rom.sh 'I-War (1995).jag' '*I-War*.jag' '*I-War*.j64'); \
+	if [ -n "$$iwar" ]; then \
+		iwar_crc=$$(python3 -c "import zlib,sys; print('0x%08X' % zlib.crc32(open(sys.argv[1],'rb').read()))" "$$iwar" 2>/dev/null); \
+		if [ "$$iwar_crc" = "0x97EB4651" ]; then \
 			rc=0; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 1 --quiet || rc=1; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 2 --quiet \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 1 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 2 --quiet \
 				--option virtualjaguar_pertitle_defaults=disabled || rc=1; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 3 --quiet \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 3 --quiet \
 				--option virtualjaguar_pertitle_defaults=disabled \
 				--option virtualjaguar_internal_resolution=2x || rc=1; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 4 --quiet \
 				--option virtualjaguar_true_color=disabled || rc=1; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 6 --quiet || rc=1; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 7 --quiet || rc=1; \
-			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 8 --quiet \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 6 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 7 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$iwar" --case 8 --quiet \
 				--option virtualjaguar_true_color=enabled || rc=1; \
 			exit $$rc; \
 		else \
-			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
-				"AvP ROM CRC $$avp_crc != 0xDC187F82 (seed mismatch)"; \
+			bash scripts/test-skip.sh record "Per-title defaults (I-War apply/disable/override)" \
+				"I-War ROM CRC $$iwar_crc != 0x97EB4651 (seed mismatch)"; \
 		fi; \
 	else \
-		bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
-			"no ROM matching 'Alien vs Predator*' in the private corpus"; \
+		bash scripts/test-skip.sh record "Per-title defaults (I-War apply/disable/override)" \
+			"no ROM matching 'I-War*' in the private corpus"; \
 	fi
 	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
