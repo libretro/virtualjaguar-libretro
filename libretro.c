@@ -274,6 +274,11 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
  * src/jerry/paddle.h) -- and it is the one with a released consumer,
  * BattleSphere. */
 #define RETRO_DEVICE_JAG_PADDLE          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
+/* The 6D controller (#538) is a fourth RETRO_DEVICE_ANALOG subclass: it
+ * is an absolute-stick device like the rest, and it wants BOTH sticks
+ * plus the analog shoulder pairs, so RETRO_DEVICE_ANALOG is the base
+ * type a frontend must bind for it to work at all. */
+#define RETRO_DEVICE_JAG_6D              RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 3)
 /* The light gun (#438) is a plain RETRO_DEVICE_LIGHTGUN, not a subclass:
  * there is only one Jaguar gun wiring and frontends bind their gun/mouse
  * pointer to the base type.  Port 1 only -- TR10 puts the LP pin there
@@ -411,6 +416,7 @@ static const char *inputdev_type_name(InputDevType t)
       case INPUTDEV_DRIVING:             return "Driving controller (bank-switching)";
       case INPUTDEV_LIGHTGUN:            return "light gun";
       case INPUTDEV_PADDLE:              return "Paddle / analog stick (motherboard ADC)";
+      case INPUTDEV_6D:                  return "6D controller (bank-switching)";
       default:                           break;
    }
    return "standard joypad";
@@ -436,7 +442,8 @@ static bool inputdev_is_analog_type(InputDevType t)
  * the same option group, because to the user it is the same wrist. */
 static bool inputdev_is_abs_stick_type(InputDevType t)
 {
-   return (inputdev_is_analog_type(t) || t == INPUTDEV_PADDLE);
+   return (inputdev_is_analog_type(t) || t == INPUTDEV_PADDLE
+           || t == INPUTDEV_6D);
 }
 
 /* Push the sensitivity ladder AND the per-axis tuning (#439) that belong to
@@ -1902,6 +1909,8 @@ static InputDevType p2_device_from_option(bool *teamtap)
          p2 = INPUTDEV_DRIVING;
       else if (!strcmp(var.value, "paddle"))
          p2 = INPUTDEV_PADDLE;
+      else if (!strcmp(var.value, "6d"))
+         p2 = INPUTDEV_6D;
       /* "pad" and "auto" (with no DB row) both mean pad. */
    }
 
@@ -1946,6 +1955,8 @@ static InputDevType p1_device_from_option(bool *teamtap)
          p1 = INPUTDEV_LIGHTGUN;
       else if (!strcmp(var.value, "paddle"))
          p1 = INPUTDEV_PADDLE;
+      else if (!strcmp(var.value, "6d"))
+         p1 = INPUTDEV_6D;
       /* "pad" and "auto" both mean pad. */
    }
 
@@ -3018,6 +3029,131 @@ static void update_input(void)
             continue;
          }
 
+         /* 6D controller (#538): TR10's three-bank advanced controller,
+          * six analog DOF and seven buttons plus Rezero.
+          *
+          * SIX DOF ONTO A RETROPAD.  A RetroPad exposes exactly six
+          * analog signals a frontend can reasonably route -- two sticks
+          * and the two analog-capable shoulder pairs -- so the mapping is
+          * one-to-one with nothing doubled up:
+          *
+          *   left stick X   -> X   (translate left / right)
+          *   left stick Y   -> Y   (translate up / down)
+          *   R2 - L2        -> Z   (translate fore / aft, "thrust")
+          *   right stick X  -> TX  (yaw, per TR10's naming)
+          *   R  - L         -> TY  (roll)
+          *   right stick Y  -> TZ  (pitch)
+          *
+          * The two shoulder pairs are read through
+          * RETRO_DEVICE_INDEX_ANALOG_BUTTON, which yields a real analog
+          * value on a frontend that has one and a clean 0 / 32767 on one
+          * that does not -- so the device degrades to digital roll and
+          * thrust rather than losing two DOF.  The bipolar difference is
+          * the same shape the driving skin already uses for its
+          * accelerator / brake pair.
+          *
+          * The pairing of DOF to host axis is a CHOICE, not a spec: TR10
+          * defines what the six values mean to the machine and says
+          * nothing about what a human holds.  Anyone testing this should
+          * expect to want it different.
+          *
+          * LIVENESS: same guardrail as the analog controller -- inert,
+          * and bit-identical to a pad, until some axis deflects past the
+          * shared threshold, because a centred stick is indistinguishable
+          * from "no analog routed at all".
+          *
+          * PAUSE AND OPTION ARE UNREACHABLE while this device is engaged,
+          * and that is the hardware, not an omission: the 6D bank tables
+          * have no Pause and no Option bit. TR10's answer is a physical
+          * joypad in the controller's DB15 passthrough, which has no
+          * emulated equivalent (inputdev.h). */
+         if (t == INPUTDEV_6D)
+         {
+            int32_t  ax[INPUTDEV_6D_AXES];
+            int32_t  sh[4];   /* L2, R2, L, R -- see the fallback below */
+            uint32_t sw = 0;
+            int      i;
+            static const unsigned sh_id[4] = {
+               RETRO_DEVICE_ID_JOYPAD_L2, RETRO_DEVICE_ID_JOYPAD_R2,
+               RETRO_DEVICE_ID_JOYPAD_L,  RETRO_DEVICE_ID_JOYPAD_R
+            };
+
+            ax[INPUTDEV_6D_X]  = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                     RETRO_DEVICE_ID_ANALOG_X);
+            ax[INPUTDEV_6D_Y]  = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                     RETRO_DEVICE_ID_ANALOG_Y);
+            ax[INPUTDEV_6D_TX] = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+                     RETRO_DEVICE_ID_ANALOG_X);
+            ax[INPUTDEV_6D_TZ] = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+                     RETRO_DEVICE_ID_ANALOG_Y);
+            /* The two shoulder pairs, read as ANALOG BUTTONS so a
+             * frontend with real pressure gives proportional thrust and
+             * roll.  DIGITAL FALLBACK, and it is not optional: a
+             * frontend that does not implement analog-button reads
+             * answers 0 for a shoulder that is being held, which would
+             * leave Z and TY permanently at rest -- two of the six DOF
+             * silently dead, not merely non-proportional.  So a zero
+             * analog read on a button the digital mask says is DOWN is
+             * promoted to full scale.  Same shape as the driving skin's
+             * `if (r2 || l2)` fallback. */
+            for (i = 0; i < 4; i++)
+            {
+               sh[i] = (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
+                          RETRO_DEVICE_INDEX_ANALOG_BUTTON, sh_id[i]);
+               if (sh[i] == 0 && (ret[player] & (1 << sh_id[i])))
+                  sh[i] = 32767;
+            }
+
+            ax[INPUTDEV_6D_Z]  = sh[1] - sh[0];   /* R2 - L2 */
+            ax[INPUTDEV_6D_TY] = sh[3] - sh[2];   /* R  - L  */
+
+            for (i = 0; i < INPUTDEV_6D_AXES; i++)
+            {
+               if (ax[i] > ANALOG_THRESHOLD || ax[i] < -ANALOG_THRESHOLD)
+               {
+                  if (!inputdev_live[player])
+                  {
+                     inputdev_live[player] = true;
+                     LOG_INF("[input] port %d: 6D controller is live, "
+                             "RetroPad released\n", player + 1);
+                  }
+                  break;
+               }
+            }
+
+            if (inputdev_live[player])
+            {
+               /* A-D on the same four face slots the analog controller
+                * uses; E / F on the stick clicks; G and Rezero on
+                * Start / Select, which are otherwise dead here because
+                * the device has no Pause or Option bit at all. */
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
+                  sw |= INPUTDEV_SW_A;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
+                  sw |= INPUTDEV_SW_B;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
+                  sw |= INPUTDEV_SW_C;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+                  sw |= INPUTDEV_SW_D;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_L3))
+                  sw |= INPUTDEV_SW_E;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_R3))
+                  sw |= INPUTDEV_SW_F;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
+                  sw |= INPUTDEV_SW_G;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
+                  sw |= INPUTDEV_SW_REZERO;
+
+               memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
+               InputDevFeed6D((int)player, ax, sw);
+            }
+            continue;
+         }
+
          /* Analog / driving controller (#437): an ABSOLUTE device fed
           * from RETRO_DEVICE_ANALOG, not the relative mouse path below.
           *
@@ -3325,6 +3461,9 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
          break;
       case RETRO_DEVICE_JAG_PADDLE:
          type = INPUTDEV_PADDLE;
+         break;
+      case RETRO_DEVICE_JAG_6D:
+         type = INPUTDEV_6D;
          break;
       /* A plain RETRO_DEVICE_ANALOG falls through to the pad on purpose
        * -- see the subclass definitions. */
@@ -4794,6 +4933,7 @@ void retro_init(void)
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
          { "Analog Stick (paddle ADC)", RETRO_DEVICE_JAG_PADDLE },
+         { "6D Controller (bank-switching)", RETRO_DEVICE_JAG_6D },
          { "Light Gun", RETRO_DEVICE_JAG_LIGHTGUN },
       };
       static const struct retro_controller_description port2_devices[] = {
@@ -4806,6 +4946,7 @@ void retro_init(void)
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
          { "Analog Stick (paddle ADC)",   RETRO_DEVICE_JAG_PADDLE },
+         { "6D Controller (bank-switching)", RETRO_DEVICE_JAG_6D },
       };
       /* Team Tap sockets: standard pads only.  TR10 permits an advanced
        * controller behind the adapter but allows only a plain controller

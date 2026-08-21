@@ -22,8 +22,8 @@ an analog or driving controller on the same six analog options.
 
 | Option | Values | Default |
 |---|---|---|
-| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
-| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching), Analog Stick (paddle ADC), 6D Controller (bank-switching) | Auto |
+| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching), Analog Stick (paddle ADC), 6D Controller (bank-switching) | Auto |
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
 | *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
 | *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
@@ -64,11 +64,12 @@ a deliberate result, not an unfinished switch.
 
 Your frontend can also select the device directly (RetroArch: *Controls →
 Port 1/2 → Device Type*), which offers the same devices as each port's
-*Controller Type* option: five on port 1 (Standard Joypad, Rotary, Light Gun,
-Analog Joystick, Driving Controller), seven on port 2 (Standard Joypad, the
-three mice, Rotary, Analog Joystick, Driving Controller) — everything except
-*Auto*,
-which is not a real device. A device set that way outranks the core option.
+*Controller Type* option: eight on port 1 (Standard Joypad, Team Tap, Rotary,
+Analog Joystick, Driving Controller, Analog Stick (paddle ADC), 6D Controller,
+Light Gun), ten on port 2 (Standard Joypad, Team Tap, the three mice, Rotary,
+Analog Joystick, Driving Controller, Analog Stick (paddle ADC), 6D Controller)
+— everything except *Auto*, which is not a real device. A device set that way
+outranks the core option.
 Setting the port back to *Joypad* or *None* releases that claim rather than
 forcing a pad — the core option decides again, immediately.
 
@@ -554,6 +555,127 @@ either way — a working report and a "does nothing new" report are both
 useful data, since no released title is currently confirmed to require this
 preset.
 
+## 6D controller (#538) — a best attempt, and we need testers
+
+Set *Port 1/2 > Controller Type* to **6D Controller (bank-switching)**.
+Default is *Auto*, which means a plain joypad — nothing changes until you
+choose it.
+
+**Read this first: nothing on earth is known to drive this controller.** It
+was specified by Atari and never released, no released or homebrew title is
+known to poll it, and there is therefore no software this implementation has
+ever been checked against. What ships here is a best attempt built from the
+*Jaguar Technical Reference V10* alone — pages 15, 16, 21, 22, 23 and 27–28.
+It is conformant to the manual (`test/tools/sixd_decode_test` asserts that,
+cell by cell) and **unvalidated against any real program**. Please do not
+read "supported" as "verified".
+
+### What the device is
+
+Six degrees of freedom — three translations *X*, *Y*, *Z* and three torques
+*TX*, *TY*, *TZ*, eight bits each — plus seven buttons **A–G** and a
+**Rezero** control. TR10 names the torques after aircraft axes: *Pitch* is
+TZ, *Yaw* is TX, *Roll* is TY. That is 55 bits, which does not fit the 24 a
+standard controller can return, so the device answers the ordinary `$F14000`
+row scan with **three banks** of data that advance automatically each time
+the console's row select goes from row 3 back to row 0.
+
+### Our interface
+
+| Host input | Degree of freedom |
+|---|---|
+| Left stick X | **X** — translate left / right |
+| Left stick Y | **Y** — translate up / down |
+| R2 − L2 (analog triggers) | **Z** — translate fore / aft, "thrust" |
+| Right stick X | **TX** — yaw |
+| R − L (analog shoulders) | **TY** — roll |
+| Right stick Y | **TZ** — pitch |
+
+| Host button | Jaguar |
+|---|---|
+| A / B / Y / X | **A / B / C / D** |
+| L3 / R3 (stick clicks) | **E / F** |
+| Start | **G** |
+| Select | **Rezero** |
+
+A RetroPad exposes exactly six analog signals a frontend can reasonably
+route — two sticks and the two shoulder pairs — so the six DOF map one to one
+with nothing doubled up. The shoulder pairs are read as analog *buttons*, so
+a frontend that reports real pressure gives you proportional roll and thrust.
+A frontend that does not answers zero for a shoulder you are holding, so the
+core promotes any zero analog read whose digital button is *down* to full
+deflection: you get on/off roll and thrust instead of proportional, and never
+a dead axis. **This pairing is our choice, not a specification** — TR10 defines
+what the six values mean to the machine and says nothing about what a human
+holds. Expect to want it different, and say so on the issue.
+
+The port stays a plain RetroPad until some axis actually deflects, the same
+liveness rule the mouse and the analog controller use, so a title that probes
+controller types once at boot only sees the 6D device if you move a stick
+first. Per-axis tuning uses the shared `virtualjaguar_analog_*` rows; with
+only two tuning slots for six DOF, the split is by *where the host value came
+from*: **X and TX** take the X-axis rows, **Y, Z, TY and TZ** take the Y-axis
+rows, so "X dead zone" still means "the dead zone on horizontal stick
+motion".
+
+### What we do NOT implement
+
+- **Pause and Option are unreachable while the device is engaged**, and that
+  is the hardware rather than an omission: the 6D bank tables contain no
+  Pause bit and no Option bit anywhere. TR10's answer is a physical joypad
+  plugged into a DB15 socket on the controller itself, relayed "as one of its
+  banks" — and the 6D layout has no spare bank for it. We did not invent one.
+- **The "output your last bank during controller identification" rule.** An
+  identification read is indistinguishable from a game read on the bus, so
+  there is nothing to detect. TR10's own driver recipe — read every bank into
+  a table, then find bank 0 by its flag bit — works regardless.
+- **The 100 µs row-0 validity rule**, which exists so a real microcontroller
+  ignores Boot ROM row codes. Inert in a model with no settling time.
+- **Settling delays** generally (~25 µs per row, ~200 µs extra per bank on an
+  analogue device). A compliant driver's delay loop simply spins over data
+  that is already valid.
+- **The ≤ 50 mA / ≤ 10 mA current budget** and the DB15 connector itself:
+  electrical and mechanical, nothing to emulate.
+
+### Two places TR10 is ambiguous, and what we chose
+
+1. **The X sign.** Page 23's prose says *"X is positive right to left"*; the
+   figure on that same page draws its horizontal axis arrow pointing to the
+   **right**. They contradict each other and the page settles nothing. We
+   follow the prose, so pushing the host stick right makes X *decrease*. This
+   is one negation in `InputDevFeed6D()` and one assertion in
+   `sixd_decode_test`; if anyone ever proves it the other way, it is a
+   two-line change.
+2. **The three torque signs.** *"Counter-clockwise when facing the positive
+   direction"* is a statement about a physical grip whose orientation
+   relative to the player is undefined. We pass the host values through
+   un-negated. That is a **named guess**, not a derivation.
+
+One more thing worth checking against silicon if it ever exists: in bank 0
+the buttons run **A, B, C, D** up the rows, but in bank 1 they run
+**Rezero, G, F, E** *down* them. That asymmetry is what the manual prints and
+we implement it as printed — it is the most likely place for the manual (or
+our reading of it) to be wrong.
+
+### Please test this, and tell us what you find
+
+There is no game to try, so what would help is:
+
+- **Homebrew.** Write something that scans the three banks the way TR10
+  describes, and tell us whether the values arrive where you expect. If you
+  are testing controller *detection*, remember to deflect an axis first —
+  otherwise the port honestly reports a standard joypad.
+- **Real hardware.** If a 6D prototype, or any device that implements this
+  protocol, actually exists somewhere, a capture of a working scan would
+  settle the X sign, the torque signs and the bank-1 button order in one go.
+- **The mapping.** If the stick / trigger / shoulder assignment above is
+  awkward for what you are building, say what you would rather have.
+
+File findings on
+[#538](https://github.com/libretro/virtualjaguar-libretro/issues/538) — a
+negative result ("I drove it and X came out backwards") is exactly as useful
+as a positive one, and much more likely.
+
 ## Already shipped
 
 The **Tempest rotary** (#436), the **analog / driving controllers** (#437),
@@ -562,6 +684,15 @@ Controller preset** (#514) have all shipped — see [Core
 options](#core-options) above. The two deliberate exclusions, "ADC-Reg" and
 the Jaguar VR head tracker, are recorded with their reasons in the analog
 section above; anything else still open lives on
+
+the **light gun** (#438), **per-axis tuning** (#439), the **paddle ADC**
+(#505), the **Team Tap** (#513) and the **6D controller** (#538) have all
+shipped — see
+[Core options](#core-options) above. The 6D controller is a *best attempt*
+with no software to validate it against, and its section says so at length.
+The one remaining deliberate exclusion, the Jaguar VR head tracker, is
+recorded with its reason in the analog section above; anything else still
+open lives on
 [#428](https://github.com/libretro/virtualjaguar-libretro/issues/428).
 
 ## See also
@@ -577,3 +708,12 @@ section above; anything else still open lives on
   ST/Amiga mouse
 - [#514](https://github.com/libretro/virtualjaguar-libretro/issues/514) —
   Pro Controller
+
+- [#538](https://github.com/libretro/virtualjaguar-libretro/issues/538) —
+  6D controller (file testing findings here)
+- [#522](https://github.com/libretro/virtualjaguar-libretro/issues/522) —
+  why the 6D section cites *Technical Reference V10* page numbers rather than
+  source files.  **Only V10 carries the controller chapter**: `Technical
+  Reference v8.pdf` and Atari's original `04 - Technical Reference.pdf` do
+  not, so anyone verifying against the wrong revision concludes the spec does
+  not exist

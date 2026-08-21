@@ -72,6 +72,7 @@ test/tools/rotary_decode_test
 test/tools/analog_decode_test
 test/tools/paddle_decode_test
 test/tools/procontroller_decode_test
+test/tools/sixd_decode_test
 test/tools/tuning_identity
 # vjtrace flight-recorder analyzer/smoke tools -- built on demand by
 # test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
