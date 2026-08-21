@@ -199,7 +199,12 @@ ROM=$(resolve_rom "$ROM_REQ") || {
   echo "  glob, e.g. IR_ROM='Alien vs Predator*'.  Private-corpus ROMs live" >&2
   echo "  under test/roms/private (a symlink; ROMS_PRIVATE_ROOT overrides)." >&2
   exit 1; }
-[ "$ROM" = "$ROM_REQ" ] || echo "ir_ab: ROM '$ROM_REQ' -> $ROM"
+# Report only a resolution that actually moved: a glob, or a path whose
+# symlinks were collapsed.  The plain repo-relative default resolves to the
+# same file and stays quiet.
+ROM_REQ_ABS="$ROM_REQ"
+case "$ROM_REQ_ABS" in /*) ;; *) ROM_REQ_ABS="$REPO/$ROM_REQ_ABS" ;; esac
+[ "$ROM" = "$ROM_REQ_ABS" ] || echo "ir_ab: ROM '$ROM_REQ' -> $ROM"
 
 # ---------------------------------------------------------------- work dir ---
 # Prepared on the host (needs git); the build+measure half needs no git at all,
