@@ -177,14 +177,19 @@ side.
 
 This is authentic — a real Voice Modem at 19200 baud was exactly this
 slow — so it is addressed as an **opt-in enhancement**, not a bug fix:
-core option `virtualjaguar_netlink_speed` (default Off) divides the
-character frame time by 2 or 4. The knob is a single one:
-`UARTFrameUsec()` in `src/jerry/uart.c` schedules both the TX drain and
-the RX arrival, and it takes the untouched stock branch whenever the
-option is off *or* no link transport is selected. It changes only *when*
-bytes appear, never which bytes or in what order, and is not part of the
-savestate (event.c already saves the remaining time of the queued UART
-callbacks). Both consoles should set it, to the same value — see
+core option `virtualjaguar_netlink_speed` (default Off; `auto`, #552)
+divides the character frame time by a fixed 4x once the two console
+instances negotiate that out-of-band and agree (see
+`docs/netlink-design.md`'s negotiation section) — never a magnitude the
+player picks, and never applied unilaterally by one side. The knob is a
+single one: `UARTFrameUsec()` in `src/jerry/uart.c` schedules both the TX
+drain and the RX arrival, and it takes the untouched stock branch
+whenever the option is off, no link transport is selected, or the peer
+has not (yet, or ever) confirmed. It changes only *when* bytes appear,
+never which bytes or in what order. Unlike the config-level "auto"
+request, the CONFIRMED divisor is machine-affecting the moment a peer
+agrees (it reschedules the event queue) and IS part of the savestate
+(`STATE_VERSION_TEAMTAP`/v13, extended in place) — see
 `docs/netlink-user-guide.md`.
 
 ## What the emulation does (src/jerry/voicemodem.c)

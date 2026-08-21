@@ -25,6 +25,15 @@
 #include "src/jerry/jlink.h"
 #include "src/jerry/jlink_tcp.h"
 
+/* #552: jlink.c's negotiation state machine calls into uart.c to read the
+   config intent and write the negotiated effective divisor.  This test
+   deliberately does not link uart.c (or the event.c/JERRY-stub chain it
+   drags in) -- it tests the TCP backend in isolation -- so stub the two
+   entry points minimally.  Real behavior is exercised end-to-end by
+   test/test_jlink_negotiate.c and unit-pinned by test/test_uart_loopback.c. */
+unsigned UARTWireSpeedupIntent(void) { return 0; }
+void UARTSetWireSpeedupEffective(unsigned divisor) { (void)divisor; }
+
 static int failures = 0;
 
 #define CHECK(cond, msg) \

@@ -48,8 +48,14 @@ static uint8_t uartTxShift;
 static uint8_t uartTxBusy;      /* shift register clocking out */
 static uint8_t uartRxBusy;      /* an RX frame is in flight */
 
-/* Wire-latency enhancement (#498).  1 = stock; see UARTSetWireSpeedup. */
-static unsigned uartWireSpeedup = 1;
+/* Wire-latency enhancement (#498/#552).  See uart.h for the Intent vs
+   Effective split -- Intent is config-derived and never saved; Effective
+   is what UARTFrameUsec() actually applies and IS saved (THE SHARP EDGE:
+   once negotiated at runtime it is machine-affecting state -- it changes
+   the deadlines SetCallbackTime() schedules for UARTRXCallback /
+   UARTTXCallback). */
+static unsigned uartWireSpeedupIntent = 0;      /* 0/1: user wants auto */
+static unsigned uartWireSpeedupEffective = 1;   /* 1 = stock; saved */
 
 /* One character frame in microseconds at the current divider. */
 static double UARTFrameUsec(void)
@@ -59,7 +65,7 @@ static double UARTFrameUsec(void)
       branch: with the enhancement off (or no link transport selected)
       the arithmetic must be textually identical to develop's, so
       option-off cannot perturb event scheduling by a rounding step. */
-   if (uartWireSpeedup <= 1 || JLinkMode() == JLINK_MODE_DISABLED)
+   if (uartWireSpeedupEffective <= 1 || JLinkMode() == JLINK_MODE_DISABLED)
    {
       double cyc = 11.0 * 16.0 * (double)((uint32_t)asiClk + 1u);
       return cyc * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC
@@ -67,37 +73,70 @@ static double UARTFrameUsec(void)
    }
    {
       double cyc = 11.0 * 16.0 * (double)((uint32_t)asiClk + 1u)
-                   / (double)uartWireSpeedup;
+                   / (double)uartWireSpeedupEffective;
       return cyc * (vjs.hardwareTypeNTSC ? RISC_CYCLE_IN_USEC
                                          : RISC_CYCLE_PAL_IN_USEC);
    }
 }
 
-/* Enhancement knob (#498).  Set from the libretro option layer, never
-   from emulated code, and deliberately outside the savestate: like
-   NTSC/PAL it is a runtime setting, and event.c saves the REMAINING time
-   of the queued UART callbacks rather than a rate, so a state captured
-   with the option on and reloaded with it off just plays out the one
-   already-scheduled character at its saved deadline and reschedules at
-   stock timing from there. */
-void UARTSetWireSpeedup(unsigned divisor)
+/* Config layer (#552).  Set from libretro.c's netlink_apply() on every
+   check_variables(), never from emulated code.  wantAuto == 0 also
+   immediately drops any negotiated Effective value back to stock: if the
+   user turns the enhancement off mid-session, the accelerated timing
+   must not linger just because a peer had earlier confirmed it -- and
+   this is the ONLY place UARTSetWireSpeedupEffective(1) needs calling
+   from the config side, since jlink.c's own reconciliation (JLinkFrameTick)
+   independently drops it to stock the instant the link is no longer a
+   confirmed, connected, single-peer "auto" session. */
+void UARTSetWireSpeedupIntent(unsigned wantAuto)
+{
+   uartWireSpeedupIntent = wantAuto ? 1u : 0u;
+   if (!uartWireSpeedupIntent)
+      uartWireSpeedupEffective = 1u;
+}
+
+unsigned UARTWireSpeedupIntent(void)
+{
+   return uartWireSpeedupIntent;
+}
+
+/* Negotiated value.  Written by jlink.c's out-of-band negotiation state
+   machine when a peer confirms it is also in "auto", and by the
+   savestate loader (UARTWireSpeedupStateLoad).  Never called from
+   emulated code. */
+void UARTSetWireSpeedupEffective(unsigned divisor)
 {
    if (divisor < 1u)
       divisor = 1u;
-   /* Upper clamp matches the largest value the option offers.  The option
-      layer never produces more, but a RetroArch .cfg is a text file a user
-      can put anything in, and an unbounded divisor drives the character
-      time toward zero -- tens of thousands of UART events per emulated
-      frame.  Raise this in step with the option's value list, never
-      independently. */
+   /* Clamp survives a hand-edited .cfg or a corrupt/hostile savestate --
+      an unbounded divisor drives the character time toward zero, tens of
+      thousands of UART events per emulated frame.  Raise this in step
+      with UART_WIRE_SPEEDUP_MAX, never independently. */
    if (divisor > UART_WIRE_SPEEDUP_MAX)
       divisor = UART_WIRE_SPEEDUP_MAX;
-   uartWireSpeedup = divisor;
+   uartWireSpeedupEffective = divisor;
 }
 
 unsigned UARTWireSpeedup(void)
 {
-   return uartWireSpeedup;
+   return uartWireSpeedupEffective;
+}
+
+size_t UARTWireSpeedupStateSave(uint8_t *buf)
+{
+   uint8_t *start = buf;
+   uint32_t v = (uint32_t)uartWireSpeedupEffective;
+   STATE_SAVE_VAR(buf, v);
+   return (size_t)(buf - start);
+}
+
+size_t UARTWireSpeedupStateLoad(const uint8_t *buf)
+{
+   const uint8_t *start = buf;
+   uint32_t v;
+   STATE_LOAD_VAR(buf, v);
+   UARTSetWireSpeedupEffective(v);
+   return (size_t)(buf - start);
 }
 
 static void UARTRaiseIRQ(void)
@@ -143,7 +182,7 @@ static void UARTKickRx(void)
 {
    if (uartRxBusy || !JLinkRxPending())
       return;
-   if (uartWireSpeedup > 1 && uartRxFull)
+   if (uartWireSpeedupEffective > 1 && uartRxFull)
       return;
    uartRxBusy = 1;
    SetCallbackTime(UARTRXCallback, UARTFrameUsec(), EVENT_JERRY);
@@ -307,17 +346,25 @@ void UARTReset(void)
    uartTxShift = 0;
    uartTxBusy = 0;
    uartRxBusy = 0;
+   /* A fresh per-game reset drops any prior negotiation -- the link (if
+      any) is about to be torn down and reopened by the caller, and a
+      stale Effective value would apply accelerated timing to a session
+      that never negotiated it.  Intent is untouched: it is config-owned
+      and JERRYInit() runs AFTER the option layer's check_variables()
+      pass, so clearing it here would silently discard the user's
+      setting (#552, same reasoning #498 already documented for the
+      single-value predecessor of this field). */
+   uartWireSpeedupEffective = 1;
 }
 
 void UARTDone(void)
 {
    UARTReset();
-   /* Teardown, not per-game reset: the option layer re-applies the divisor
-      on every check_variables(), and UARTReset() runs from JERRYInit()
-      AFTER that, so clearing it there would silently discard the setting.
-      Cleared here so the iOS "cores are never dlclosed, reset every static
-      in deinit" rule holds. */
-   uartWireSpeedup = 1;
+   /* Teardown, not per-game reset: cleared here (both halves) so the
+      iOS "cores are never dlclosed, reset every static in deinit" rule
+      holds -- UARTReset() above already dropped Effective, this adds
+      Intent. */
+   uartWireSpeedupIntent = 0;
    JLinkClose();
 }
 

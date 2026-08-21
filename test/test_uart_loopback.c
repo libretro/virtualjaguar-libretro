@@ -57,7 +57,12 @@ static void fresh(void)
 {
     InitializeEventList();
     UARTReset();
-    UARTSetWireSpeedup(1);        /* #498 enhancement off unless a test sets it */
+    /* #552: both halves off unless a test sets them -- UARTReset() only
+       drops Effective (mirrors production JERRYInit()), Intent is
+       config-owned and needs an explicit reset here so one test's
+       UARTSetWireSpeedupIntent(1) cannot leak into the next. */
+    UARTSetWireSpeedupIntent(0);
+    UARTSetWireSpeedupEffective(1);
     UARTSetLinkMode(JLINK_MODE_LOOPBACK);
     stubIrqMask = IRQ2_ASI;   /* J_ASYNENA on unless a test clears it */
     stubPending = 0;
@@ -249,7 +254,7 @@ static double frame_usec_at(unsigned speedup, int link_mode)
 {
     fresh();
     UARTSetLinkMode(link_mode);
-    UARTSetWireSpeedup(speedup);
+    UARTSetWireSpeedupEffective(speedup);
     UARTWriteWord(ASICLK, 0x56);
     UARTWriteWord(ASIDATA, 0x41);
     return GetTimeToNextEvent(EVENT_JERRY);
@@ -287,12 +292,12 @@ static void test_wire_speedup_ignored_without_link(void)
 static void test_wire_speedup_clamps(void)
 {
     fresh();
-    UARTSetWireSpeedup(0);
+    UARTSetWireSpeedupEffective(0);
     CHECK(UARTWireSpeedup() == 1, "divisor 0 clamps to 1");
     /* A RetroArch .cfg is a text file: the option layer never produces
        more than the option's largest value, but a hand-edited config can,
        and an unbounded divisor drives the character time toward zero. */
-    UARTSetWireSpeedup(100000);
+    UARTSetWireSpeedupEffective(100000);
     CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
           "absurd divisor clamps to UART_WIRE_SPEEDUP_MAX");
 }
@@ -304,7 +309,7 @@ static void test_wire_speedup_stream_identical(void)
 {
     uint16_t st;
     fresh();
-    UARTSetWireSpeedup(4);
+    UARTSetWireSpeedupEffective(4);
     UARTWriteWord(ASICLK, 0x56);
     UARTWriteWord(ASIDATA, 0x01);          /* -> shift */
     UARTWriteWord(ASIDATA, 0x02);          /* -> holding */
@@ -335,7 +340,7 @@ static void test_wire_speedup_no_overrun_loss(void)
 {
     uint16_t st;
     fresh();
-    UARTSetWireSpeedup(4);
+    UARTSetWireSpeedupEffective(4);
     UARTWriteWord(ASICLK, 0x56);
     UARTWriteWord(ASIDATA, 0x01);
     UARTWriteWord(ASIDATA, 0x02);
@@ -359,7 +364,7 @@ static void test_wire_speedup_no_overrun_loss(void)
 static void test_wire_speedup_link_drop_drains(void)
 {
     fresh();
-    UARTSetWireSpeedup(4);
+    UARTSetWireSpeedupEffective(4);
     UARTWriteWord(ASICLK, 0x56);
     UARTWriteWord(ASIDATA, 0x11);
     UARTWriteWord(ASIDATA, 0x22);
@@ -368,6 +373,108 @@ static void test_wire_speedup_link_drop_drains(void)
     pump(2);
     CHECK((UARTReadWord(ASISTAT) & ST_RBF) == 0,
           "link dropped: RX ring drained, nothing pending to hold");
+}
+
+/* #552: Intent (config request) and Effective (what UARTFrameUsec()
+   actually applies) are now two separate values -- this pins the split
+   itself, independent of jlink.c's negotiation state machine (which
+   never engages here; JLinkDiscActive() is never true for loopback). */
+static void test_wire_speedup_intent_effective_split(void)
+{
+    fresh();
+    CHECK(UARTWireSpeedupIntent() == 0, "intent defaults to 0 (off)");
+
+    /* Setting Effective directly (what a successful negotiation would
+       do) must NOT imply Intent -- they are independent variables. */
+    UARTSetWireSpeedupEffective(UART_WIRE_SPEEDUP_MAX);
+    CHECK(UARTWireSpeedupIntent() == 0,
+          "effective set does not retroactively set intent");
+    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
+          "effective set takes effect immediately");
+
+    /* Turning intent OFF must immediately drop a previously-negotiated
+       Effective back to stock -- #552's guide requirement: the user
+       disabling the enhancement mid-session must not leave accelerated
+       timing running just because a peer had earlier confirmed it. */
+    UARTSetWireSpeedupIntent(0);
+    CHECK(UARTWireSpeedup() == 1,
+          "intent off immediately drops a negotiated effective to stock");
+
+    /* Turning intent ON, by itself, must NOT raise Effective -- only
+       jlink.c's negotiation (or the savestate loader) may do that.  This
+       is the property that makes "auto" safe: wanting it is not the
+       same as having it. */
+    UARTSetWireSpeedupIntent(1);
+    CHECK(UARTWireSpeedupIntent() == 1, "intent on is recorded");
+    CHECK(UARTWireSpeedup() == 1,
+          "intent alone never raises effective -- negotiation must");
+}
+
+/* #552 THE SHARP EDGE: the negotiated Effective divisor changes
+   UARTFrameUsec()'s scheduling, so it must survive a save/load round
+   trip byte-for-byte, AND that survival must be observable in the actual
+   event-queue timing a loaded core would produce -- not just in the raw
+   getter. */
+static void test_wire_speedup_savestate_roundtrip(void)
+{
+    uint8_t buf[64];
+    size_t savedLen, loadedLen;
+    double stock = 11.0 * 16.0 * 87.0 * RISC_CYCLE_IN_USEC;
+    double t;
+
+    /* Side A: negotiate (simulated), save. */
+    fresh();
+    UARTSetLinkMode(JLINK_MODE_LOOPBACK);
+    UARTSetWireSpeedupIntent(1);
+    UARTSetWireSpeedupEffective(UART_WIRE_SPEEDUP_MAX);
+    savedLen = UARTWireSpeedupStateSave(buf);
+    CHECK(savedLen == 4, "state chunk is exactly one uint32 (4 bytes)");
+
+    /* Side B: a fresh core (or the same one reloading) -- Effective back
+       to stock, as UARTReset()/UARTDone() leave it. */
+    fresh();
+    UARTSetLinkMode(JLINK_MODE_LOOPBACK);
+    CHECK(UARTWireSpeedup() == 1, "fresh core: effective is stock before load");
+
+    loadedLen = UARTWireSpeedupStateLoad(buf);
+    CHECK(loadedLen == savedLen, "load consumes exactly what save wrote");
+    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
+          "negotiated effective survives save/load round trip");
+
+    /* Not just the getter -- the loaded value must actually change what
+       UARTFrameUsec() schedules, the whole reason this needed a state
+       version bump in the first place (#552 THE SHARP EDGE). */
+    UARTWriteWord(ASICLK, 0x56);
+    UARTWriteWord(ASIDATA, 0x41);
+    t = GetTimeToNextEvent(EVENT_JERRY);
+    CHECK(fabs(t - stock / (double)UART_WIRE_SPEEDUP_MAX) < 0.001,
+          "loaded effective value actually reschedules the UART callback");
+}
+
+/* #552: a state saved mid-negotiation must not silently re-apply a
+   speedup the option no longer requests once reloaded -- Intent is
+   config-derived and reapplied independently of the state blob, and
+   UARTSetWireSpeedupIntent(0) must win even over a just-loaded
+   Effective, exactly like the mid-session disable case above. */
+static void test_wire_speedup_savestate_load_then_intent_off(void)
+{
+    uint8_t buf[64];
+
+    fresh();
+    UARTSetWireSpeedupEffective(UART_WIRE_SPEEDUP_MAX);
+    UARTWireSpeedupStateSave(buf);
+
+    fresh();
+    UARTWireSpeedupStateLoad(buf);
+    CHECK(UARTWireSpeedup() == UART_WIRE_SPEEDUP_MAX,
+          "load restores the negotiated value first");
+
+    /* The option layer (libretro.c netlink_apply) calls this every
+       check_variables() regardless of state-load timing -- if the
+       CURRENT session's option reads "disabled", this must win. */
+    UARTSetWireSpeedupIntent(0);
+    CHECK(UARTWireSpeedup() == 1,
+          "current-session intent=off overrides a just-loaded negotiated value");
 }
 
 int main(void)
@@ -390,6 +497,9 @@ int main(void)
     test_wire_speedup_stream_identical();
     test_wire_speedup_no_overrun_loss();
     test_wire_speedup_link_drop_drains();
+    test_wire_speedup_intent_effective_split();
+    test_wire_speedup_savestate_roundtrip();
+    test_wire_speedup_savestate_load_then_intent_off();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }

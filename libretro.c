@@ -1045,6 +1045,13 @@ void retro_set_environment(retro_environment_t cb)
  * one and swallow the first UP/DOWN edge. */
 static int netlink_was_up = -1;
 
+/* Last logged wire-speedup value (#552), same file-scope-for-iOS reasoning
+ * as netlink_was_up: 1 = stock.  UARTWireSpeedup() itself already starts
+ * at 1, so no -1 sentinel is needed -- the first retro_run() call simply
+ * compares 1 to 1 and stays silent, which is correct (nothing to report
+ * yet at frame zero). */
+static unsigned netlink_was_speedup = 1;
+
 /* Discovered-host option list (task 4, #467).  netlink_last_rebuild_ms
  * paces SET_CORE_OPTIONS_V2 re-registration (a full RetroArch option-
  * manager teardown, see netlink_rebuild_host_options() below);
@@ -1309,7 +1316,7 @@ static void netlink_apply(int mode, const char *opt_value)
    const char *src = "default";
    int want_file = 0;
    int got_file = 0;
-   int speedup;                  /* #498 wire-latency divisor, 1 = stock */
+   int wantAuto;   /* #552: "auto" selected, 0/1 -- see UARTSetWireSpeedupIntent */
    /* OSD dedup state -- see netlink_osd_last_mode's declaration comment. */
    char narrate_host[128];
    int narrate_device;
@@ -1334,20 +1341,22 @@ static void netlink_apply(int mode, const char *opt_value)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
       JLinkSetWaitEnabled(strcmp(pvar.value, "disabled") != 0);
 
-   /* Wire-latency enhancement (#498).  Read raw, like netlink_wait and
-    * the mode itself: a per-title default has no business overriding a
-    * deliberately non-authentic timing choice the user made, and the
-    * setting is only meaningful in the same breath as the transport. */
+   /* Wire-latency enhancement (#498, replaced 2x/4x with "auto" in #552).
+    * Read raw, like netlink_wait and the mode itself: a per-title default
+    * has no business overriding a deliberately non-authentic timing
+    * choice the user made, and the setting is only meaningful in the
+    * same breath as the transport.  This sets INTENT only -- whether the
+    * emulated timing actually speeds up is decided by jlink.c's
+    * out-of-band negotiation with the peer (JLinkFrameTick), never here:
+    * the two values used to be the same thing when the option picked a
+    * magnitude directly, and #552 is exactly the split that stopped
+    * being true. */
    pvar.key = "virtualjaguar_netlink_speed";
    pvar.value = NULL;
-   speedup = 1;
+   wantAuto = 0;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
-   {
-      int n = atoi(pvar.value);      /* "disabled" -> 0 -> clamped to 1 */
-      if (n > 1)
-         speedup = n;
-   }
-   UARTSetWireSpeedup((unsigned)speedup);
+      wantAuto = (strcmp(pvar.value, "auto") == 0) ? 1 : 0;
+   UARTSetWireSpeedupIntent((unsigned)wantAuto);
 
    netlink_resolve_host(host, sizeof(host), &src, &want_file, &got_file);
 
@@ -1446,11 +1455,24 @@ static void netlink_apply(int mode, const char *opt_value)
     * that changes emulated timing has to announce itself, or a link bug
     * filed from an accelerated session reads as an emulation defect.
     * Only worth a line when it can actually take effect -- with no
-    * transport selected UARTFrameUsec() takes the stock branch anyway. */
-   if (speedup > 1 && mode != JLINK_MODE_DISABLED)
-      LOG_INF("[NETLINK] wire speed %dx -- emulated UART runs faster than "
-              "real hardware (enhancement; both consoles should match, and "
-              "link timing bug reports are only valid at Off)\n", speedup);
+    * transport selected UARTFrameUsec() takes the stock branch anyway.
+    * #552 replaced the 2x/4x value list with "auto": this line can only
+    * report what was REQUESTED, not what is actually running -- that is
+    * decided moment-to-moment by jlink.c's negotiation with the peer, so
+    * it says so rather than implying a speedup that may still be
+    * pending or may never arrive (peer too old, not in auto, or gone). */
+   if (wantAuto && mode != JLINK_MODE_DISABLED)
+   {
+      if (mode == JLINK_MODE_TCP_SERVER || mode == JLINK_MODE_TCP_CLIENT)
+         LOG_INF("[NETLINK] wire speed auto requested -- negotiating with "
+                 "the peer; runs faster than real hardware only once "
+                 "confirmed, and only while the link is up (link timing "
+                 "bug reports are only valid with this Off)\n");
+      else
+         LOG_INF("[NETLINK] wire speed auto requested, but frontend "
+                 "netplay has no channel to negotiate over -- staying at "
+                 "authentic hardware timing\n");
+   }
 
    /* The "From file" preset selected but no usable address in the file is
     * a silent 127.0.0.1 fallback -- the one that cost a debugging session. */
@@ -3598,6 +3620,24 @@ bool retro_serialize(void *data, size_t size)
     * blob for every state, silently. */
    buf += JoystickTeamTapStateSave(buf);
 
+   /* v13 (extended in place, #552): negotiated wire-speedup Effective
+    * value.  It is machine-affecting the instant a peer has confirmed it
+    * -- it changes UARTFrameUsec(), which schedules the UART TX/RX
+    * event-queue deadlines via SetCallbackTime() -- so a state saved
+    * mid-negotiation must restore it, or the reload silently reverts to
+    * stock timing while the option still reads "auto" and the peer (if
+    * still connected) keeps running the negotiated rate: exactly the
+    * DAC-registers-at-$F1A148 / hi-res-epoch class of silent determinism
+    * bug this project has shipped twice before.  Config Intent is NOT
+    * saved here, same as NTSC/PAL -- see uart.h.
+    *
+    * STRICTLY LAST, after Team Tap: same reasoning as Team Tap's own
+    * comment above -- every v12 AND pre-#552 v13 blob develop has
+    * written ends at the paddle or Team Tap chunk respectively, so
+    * appending here (rather than interleaving) keeps all of them
+    * loadable. */
+   buf += UARTWireSpeedupStateSave(buf);
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -3765,6 +3805,20 @@ bool retro_unserialize(const void *data, size_t size)
       buf += JoystickTeamTapStateLoad(buf);
    else
       JoystickTeamTapStateReset();
+
+   /* v13 (extended in place, #552): negotiated wire-speedup Effective
+    * value -- see the matching comment on the save side.  Older states
+    * (including a pre-#552 v13 blob, e.g. one written between the Team
+    * Tap merge and this one) carry no such field; falling back to stock
+    * here is exactly what a pre-#552 core was, and jlink.c's own
+    * per-frame reconciliation (JLinkNegTick) will re-derive the real
+    * value within one frame regardless -- this call only avoids running
+    * one frame on a stale Effective left over from whatever the session
+    * was doing before the load. */
+   if (version >= STATE_VERSION_TEAMTAP)
+      buf += UARTWireSpeedupStateLoad(buf);
+   else
+      UARTSetWireSpeedupEffective(1);
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -5061,6 +5115,10 @@ void retro_deinit(void)
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
    netlink_was_up          = -1;
+   /* #552 wire-speedup edge tracker: same reasoning -- a resident core
+    * would otherwise carry the previous session's "already confirmed"
+    * state into the next one and stay silent on the first negotiation. */
+   netlink_was_speedup     = 1;
    /* OSD narration dedup (task 5, #467): same iOS-no-dlclose reasoning --
     * a resident core would otherwise believe the new session's first
     * mode/device/host is identical to the previous session's last one and
@@ -5341,6 +5399,31 @@ void retro_run(void)
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
                     netlink_mode_name(JLinkMode()));
          netlink_was_up = up;
+      }
+   }
+
+   /* #552: report the OUTCOME of the auto negotiation jlink.c runs every
+    * JLinkFrameTick(), edge-only like the link up/down block just above.
+    * The request-time log line in netlink_apply() can only say "auto was
+    * asked for" -- confirmation (or the peer never answering) happens
+    * asynchronously, frames after any option changed, so it has to be
+    * caught here instead. */
+   {
+      unsigned curSpeedup = UARTWireSpeedup();
+      if (curSpeedup != netlink_was_speedup)
+      {
+         if (curSpeedup > 1)
+         {
+            LOG_INF("[NETLINK] wire speed auto CONFIRMED -- peer agreed, "
+                    "emulated UART now %ux faster than real hardware "
+                    "(link timing bug reports are only valid at Off)\n",
+                    curSpeedup);
+            netlink_osd("Link speed: auto (%ux)", curSpeedup);
+         }
+         else if (netlink_was_speedup > 1)
+            LOG_INF("[NETLINK] wire speed back to stock (link dropped, "
+                    "option changed, or peer no longer confirmed)\n");
+         netlink_was_speedup = curSpeedup;
       }
    }
 
