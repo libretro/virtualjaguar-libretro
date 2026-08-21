@@ -226,12 +226,25 @@ matching stream — Club Drive (394,581 misses) and Checkered Flag
 1. **Give thin titles real input fixtures**, especially Club Drive and
    Checkered Flag, which blit heavily but never repeated a stream under
    generic input. Also sweep the PD/homebrew remainder.
-2. **Tag titles.** AvP is the obvious first candidate — best-evidenced
-   of any title (710,433 checks, 0 divergences, bit-identical A/B over
-   8,000 frames) — and Doom, Kasumi Ninja, Towers II and Missile
-   Command 3D now have six-figure clean check counts too. One line each
-   in `src/core/titledb.c` once a device check is done. Tagging is what
+2. **Tag titles.** Doom, Kasumi Ninja, Towers II and Missile Command 3D
+   have six-figure clean check counts. One line each in
+   `src/core/titledb.c` once a device check is done. Tagging is what
    makes the feature do anything, so it should not sit undone for long.
+
+   **AvP is settled and is NOT a candidate — do not re-propose it.**
+   It is the best-evidenced title for *soundness* (710,433 checks, 0
+   divergences, bit-identical A/B over 8,000 frames; re-verified from
+   the #435 corridor state at 449,109 checks / 0 divergences / 0 dirty),
+   and the arena-thrash worry does not reproduce idle (0 flushes over
+   1,800 idle frames). But the *benefit* does not clear the cost: the
+   load-immune A/B gives −6.26% instructions retired on the idle steady
+   state, which is only ~2% of elapsed time because IPC drops 4.61 →
+   4.38 — the memo trades instruction-dense blitter work for
+   memory-store-bound replay — against +9.6 MB of shadow arena whenever
+   a surface is active, which the iOS budget cannot absorb. That figure
+   is also idle-only; no instructions-retired number exists for the
+   moving arm, which flushes and hits only 92%. See #411's closing
+   comments. `virtualjaguar_blit_memo` remains available manually.
 3. **Shrink the pool.** 4096 entries × 3,744 B = **14.6 MB**, too much
    for iOS. Most of an entry is two 768-byte state blobs and a 2 KB
    write log.
