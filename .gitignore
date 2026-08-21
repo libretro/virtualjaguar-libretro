@@ -137,6 +137,7 @@ test/vendor/
 /test/tools/hires_box_check
 /test/tools/hires_state_digest
 /test/tools/hires_shot
+/test/tools/padtest_probe
 test/tools/__pycache__/
 .build-config
 .link-mode

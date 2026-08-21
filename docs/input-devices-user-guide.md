@@ -470,6 +470,51 @@ Reports that the adapter is **inert** on a title that should support it are
 just as valuable as crash reports — that is the failure mode the tester ROM
 cannot catch.
 
+### Validated end-to-end against a second test ROM (2026-08-20)
+
+The Joypad-TeamTap Tester above proves detection only. A second, independent
+program closes that gap: **AtariJaguarPadtest**
+(<https://github.com/darthcloud/AtariJaguarPadtest>, Apache 2.0, release v1.0,
+`padtest.rom`, md5 `2e1663f2c8bc557f2f94229d8d73e7dc`), by darthcloud — the
+BlueRetro author and the same source as the *Technical Reference V10* used to
+implement #513/#538. It reads `$F14000` directly, does its own bank and
+socket-3 detection, and prints a live per-socket, per-button decode — a
+program driving the register set independently of anything in this repo.
+
+Crucially, it was run through the **real delivery path**
+(`update_input()` → `$F14000`/`$F14002`), not the register-level decode
+functions directly — a shared `test/harness`-based tool
+(`test/tools/padtest_probe.c`, not wired into `make test` because the ROM is
+private and unredistributable) stands in for the frontend, feeding known
+RetroPad state through `input_state_cb` exactly as RetroArch would.
+
+With *Team Tap* selected on Jaguar port 1 and one distinct direction held per
+player (socket 0 = Up, socket 1 = Down, socket 2 = Left, socket 3 = Right),
+padtest reported all four sockets as `STDPAD` and highlighted exactly the
+button fed to each — `^` on socket 0, `v` on socket 1, `<` on socket 2, `>`
+on socket 3, nothing else. Cross-checked against the core's own
+`joypad0Buttons[]` array (dumped via `harness_dlsym`) after the run: each
+socket's slot held exactly the fed direction and nothing else, and
+`JoystickGetTeamTap(0)` read true. **Two independent readers — padtest's own
+bus decode and a direct memory dump — agree exactly with what was fed.**
+This is the first full per-socket, per-button confirmation this feature has
+had; the PD tester above only ever exercised the detection bit.
+
+Two things noticed along the way are padtest's own documented known issues,
+not bugs in this core, and are recorded here so nobody re-files them:
+
+1. **Frame rate is terrible.** padtest re-detects every controller on every
+   single frame, by design — a real game does it once at boot.
+2. **Occasional single-glyph rendering misses**, reproduced here: holding Up
+   *and* A together on the plain-joypad path left `^` unhighlighted on
+   screen while `A` rendered correctly, on two separate runs. A direct
+   `joypad0Buttons[]` dump proved both bits were correctly set
+   (`U=255 A=255`) the whole time — the delivery was right and the glitch is
+   in padtest/JagStudio's own rendering (JagStudio does its own controller
+   polling that conflicts with padtest's main poll; the padtest author could
+   not disable it). Any single miss-highlighted glyph should be checked
+   against a memory dump before being read as a real defect.
+
 ## Pro Controller (#514)
 
 Set *Port 1/2 > Controller Type* to **Pro Controller (6-button)**. Default is
@@ -568,7 +613,12 @@ ever been checked against. What ships here is a best attempt built from the
 *Jaguar Technical Reference V10* alone — pages 15, 16, 21, 22, 23 and 27–28.
 It is conformant to the manual (`test/tools/sixd_decode_test` asserts that,
 cell by cell) and **unvalidated against any real program**. Please do not
-read "supported" as "verified".
+read "supported" as "verified". One published test ROM claims 6D support and
+was tried against this core's real delivery path in 2026-08; it turned out
+to be structurally unable to reach its own 6D decoder for a directly-attached
+device, so this remains unvalidated — see "Attempted validation against
+AtariJaguarPadtest" below for the full account and why it isn't the
+corroboration it looks like at first.
 
 ### What the device is
 
@@ -657,6 +707,94 @@ the buttons run **A, B, C, D** up the rows, but in bank 1 they run
 we implement it as printed — it is the most likely place for the manual (or
 our reading of it) to be wrong.
 
+### Attempted validation against AtariJaguarPadtest, and why it could not settle anything (2026-08-20)
+
+The same second test ROM used to validate Team Tap above —
+**AtariJaguarPadtest** (<https://github.com/darthcloud/AtariJaguarPadtest>,
+darthcloud, v1.0, `padtest.rom`, md5 `2e1663f2c8bc557f2f94229d8d73e7dc`) —
+also claims 6D support (its enum has a `SIXDPAD` case and a
+`print_6dpad_btns()` that prints `X`/`Y`/`Z`/`TX`/`TY`/`TZ` and the `A`–`G`
+buttons). It was run the same way, through `update_input()` via
+`test/tools/padtest_probe.c`, feeding a distinct nonzero value per axis
+(left stick, right stick, both shoulder pairs) and holding every 6D button.
+
+**It could not corroborate anything about this device, and the reason is a
+limitation in padtest itself, not in this core.** padtest's own
+`detect_ctrl()` only calls its bank-switching decoder
+(`get_basic_type()`/`get_banked_type()`) on **socket 1**, and only when a
+Team Tap is already detected on that port. Without a tap it hardcodes socket
+0 — the *only* socket a bank-switching device can ever occupy, on this core
+and on real hardware (TR10 itself: behind a tap, "software control of
+advanced features like … analogue/digital mode will not be possible") — to
+`STDPAD`, unconditionally:
+
+```c
+/* padtest.c, detect_ctrl(), the no-adapter branch */
+dev_type[i][0] = STDPAD;
+...
+dev_type[i][1] = get_basic_type(i, 1);   /* the ONLY socket ever checked */
+```
+
+Socket 1 is provably dead in this branch too: its row codes
+(`sockets_row_codes[1]`, low nibbles `$0`-`$3`) all decode to Team-Tap socket
+1 in this core's own tables, which read idle with no tap attached — matching
+the `S1: NONE` padtest prints in every screenshot below. So **padtest cannot
+reach its own SIXDPAD decode path for a directly-attached device under any
+core option this core offers**, because the one configuration where a
+bank-switching device can appear (no tap, socket 0) is exactly the one
+branch that never calls the decoder.
+
+This was confirmed three ways, not just inferred from source:
+
+1. **Ground truth, independent of padtest's rendering:** `InputDevGetType(0)`
+   read `9` (`INPUTDEV_6D`) and `InputDevAnyAttached()` read `1` throughout
+   — the core correctly selected and engaged the device every time.
+2. **Source**: the `detect_ctrl()` quote above.
+3. **Screen**: every 6D run printed `P0: S0: STDPAD`, never `SIXDPAD`, with a
+   handful of standard-pad glyphs (`O C B A` and some digits) lit up more or
+   less at random — padtest reading our bank-switching bit stream through
+   the *wrong* (plain-joypad) lookup table. Rerunning with the fed X axis
+   flipped (`+20500` → `-20500`) and separately with the two shoulder pairs
+   fed as pure digital presses instead of real analog pressure (see below)
+   produced **pixel-identical** screenshots outside the frame counter in
+   both cases (verified with a pixel diff, not by eye) — further evidence
+   that whatever padtest is showing here is not a meaningful decode of this
+   device, not evidence about the axes themselves.
+
+One narrower thing this run *does* show, independent of padtest's broken
+label: the two runs that fed Z (`R2 − L2`) and TY (`R − L`) as real analog
+pressure versus as **digital-only** presses (analog-button read forced to 0,
+only the `RETRO_DEVICE_ID_JOYPAD_MASK` bit set — the exact "frontend with no
+analog-button support" shape of the original #547 defect) produced
+byte-identical output at the bus. That is consistent with `update_input()`'s
+fallback (`if (sh[i]==0 && (ret&bit)) sh[i]=32767;`) carrying full-scale Z/TY
+across correctly even when only digital state is available — the specific
+failure class this whole validation effort exists to catch — but it is *not*
+the same as padtest confirming the values are numerically right, which it
+cannot do at all for this device. Treat it as "the fallback still fires and
+reaches the wire," not as "Z and TY read correctly."
+
+**Net effect on the two open ambiguities below: still open.** The X-sign
+question and the bank-1 button order are exactly as unresolved as before
+this session — padtest cannot see either one for a directly-attached device.
+The liveness gate (STDPAD until an axis deflects) still could not be
+isolated as a separate behaviour in this run, since `6D controller selected,
+nothing deflected` and `padtest can't decode this device at all` both print
+`STDPAD` and are indistinguishable on screen; don't read a `STDPAD` result
+here as proof the liveness gate fired, only as consistent with it. The
+`Rezero` button is additionally unverifiable through padtest by construction
+— its own button table (`btns_6d[]`) has only seven glyphs, `A`-`G`; Rezero
+has no glyph in the ROM's own display, tap present or not. Nothing here
+displays a torque *sign* either (`TX`/`TY`/`TZ` print as plain signed/unsigned
+magnitudes), so the torque-sign question is exactly as unresolvable as
+[`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md) and
+the section below already say.
+
+The tool (`test/tools/padtest_probe.c`) is still useful for the *next*
+attempt at this — a future BlueRetro-side or homebrew program that reads a
+6D controller correctly on socket 0 without a tap could be pointed at it and
+would get a real answer.
+
 ### Please test this, and tell us what you find
 
 There is no game to try, so what would help is:
@@ -664,7 +802,10 @@ There is no game to try, so what would help is:
 - **Homebrew.** Write something that scans the three banks the way TR10
   describes, and tell us whether the values arrive where you expect. If you
   are testing controller *detection*, remember to deflect an axis first —
-  otherwise the port honestly reports a standard joypad.
+  otherwise the port honestly reports a standard joypad. **AtariJaguarPadtest
+  is not this** — see the subsection above for why its own detection logic
+  can never reach a directly-attached bank-switching device; a new homebrew
+  program (or a fix to padtest upstream) is still needed.
 - **Real hardware.** If a 6D prototype, or any device that implements this
   protocol, actually exists somewhere, a capture of a working scan would
   settle the X sign, the torque signs and the bank-1 button order in one go.
