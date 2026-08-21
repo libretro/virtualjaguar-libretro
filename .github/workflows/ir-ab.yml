@@ -120,6 +120,14 @@ jobs:
           # busy the runner is.  That is the entire reason this job exists.
           IR_NO_CONTAINER: '1'
         run: |
+          # GitHub runs a `run:` block under `bash -e {0}`, and `set -uo
+          # pipefail` does NOT clear an -e that arrived via the shell
+          # invocation.  Without this explicit `set +e` the pipeline below
+          # aborts the step the instant ir_ab.sh exits non-zero, so the exit-2
+          # handling underneath is unreachable and the job goes red on exactly
+          # the tool-only PRs it means to let through.  That is why this job
+          # was red on #539, the PR that added it.
+          set +e
           set -uo pipefail
           # Exit 2 means "both arms produced a byte-identical library", which is
           # the EXPECTED outcome for a PR that only touches this workflow or

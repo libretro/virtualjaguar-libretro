@@ -6,7 +6,18 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PRESS_FILE=${PRESS_FILE:-"$ROOT/test/fixtures/avp_reach_gameplay.press"}
 VERIFY=${VERIFY:-"$ROOT/test/tools/cd_visual_verify"}
-AVP=${AVP:-"$ROOT/test/roms/private/ROMS/Alien vs Predator (1994).jag"}
+# Default resolves through scripts/find-rom.sh when the exact spelling is not
+# present, so a corpus that files AvP under another name is found rather than
+# reported missing.  An explicit AVP= still wins.
+AVP=${AVP:-}
+if [ -z "$AVP" ]; then
+  AVP="$ROOT/test/roms/private/ROMS/Alien vs Predator (1994).jag"
+  if [ ! -f "$AVP" ]; then
+    AVP=$( cd "$ROOT" && bash scripts/find-rom.sh \
+             'Alien vs Predator (1994)*' 'Alien vs Predator*' 2>/dev/null ) || AVP=""
+    case "$AVP" in ""|/*) ;; *) AVP="$ROOT/$AVP" ;; esac
+  fi
+fi
 # cd_visual_verify defaults system_dir to the CWD-relative "test/roms/private",
 # so pass an absolute one to keep this script runnable from anywhere.  It is
 # placed before "$@" and the harness takes the last --system-dir it sees, so a

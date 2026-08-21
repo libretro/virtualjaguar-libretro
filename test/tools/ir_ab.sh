@@ -54,7 +54,11 @@
 #   IR_ROM=test/roms/yarc.j64 test/tools/ir_ab.sh --profile
 #
 # Env knobs:
-#   IR_ROM        ROM to run           (default test/roms/jagniccc.j64)
+#   IR_ROM        ROM to run           (default test/roms/jagniccc.j64).
+#                 A path (absolute or repo-relative) OR a find-rom.sh glob:
+#                 IR_ROM='Alien vs Predator*' finds it in the private corpus
+#                 wherever that machine keeps it.  Resolved to a physical
+#                 path before the container mount -- see ROM PATH below.
 #   IR_FRAMES     frames per arm       (default 300; cachegrind is ~50-100x slow,
 #                                       so this costs ~3 min per arm.  Drop it
 #                                       for a quick --selftest; do NOT drop it
@@ -141,14 +145,66 @@ case "${1:-}" in
               shift 2 ;;
 esac
 
-ROM="${IR_ROM:-$REPO/test/roms/jagniccc.j64}"
-case "$ROM" in /*) ;; *) ROM="$REPO/$ROM" ;; esac
+ROM_REQ="${IR_ROM:-test/roms/jagniccc.j64}"
 FRAMES="${IR_FRAMES:-300}"
 JOBS="${IR_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 THRESHOLD="${IR_THRESHOLD:-0.5}"
 IMAGE="${IR_IMAGE:-vj-cachegrind}"
 
-[ -f "$ROM" ] || { echo "ir_ab: no ROM at $ROM (set IR_ROM)" >&2; exit 1; }
+# --------------------------------------------------------------- ROM path ---
+# IR_ROM is a path (absolute or repo-relative) OR a find-rom.sh glob.  The
+# glob form is what makes an invocation portable: the private corpus is laid
+# out differently on every machine, so `IR_ROM='Alien vs Predator*'` keeps
+# working where a hardcoded spelling silently stops matching -- the failure
+# mode scripts/find-rom.sh exists to prevent (it is how the Skyhammer
+# clipping sentinel went inert).
+#
+# The result is then resolved to a PHYSICAL path, and that is not cosmetic:
+# test/roms/private is a SYMLINK to a tree outside every checkout, and
+# `podman run -v` cannot create a bind mountpoint underneath a symlinked
+# path.  crun fails with
+#     creating `.../test/roms/private/ROMS/<title>.jag`: openat2
+#     `.../test/roms/private`: No such file or directory
+# so before this resolution NO private-corpus ROM could be measured at all.
+resolve_rom() {  # resolve_rom <path-or-glob> -> physical path on stdout
+  local r="$1" d b t hops=0
+  case "$r" in /*) ;; *) [ -f "$REPO/$r" ] && r="$REPO/$r" ;; esac
+  if [ ! -f "$r" ]; then
+    r=$( cd "$REPO" && bash scripts/find-rom.sh "$1" 2>/dev/null ) || return 1
+    [ -n "$r" ] || return 1
+    case "$r" in /*) ;; *) r="$REPO/$r" ;; esac
+  fi
+  [ -f "$r" ] || return 1
+  d=$(cd "$(dirname "$r")" && pwd -P) || return 1
+  b=$(basename "$r")
+  # ...and a symlinked FILE inside the corpus resolves too.  Bounded, so a
+  # symlink cycle reports rather than spins.
+  while [ -L "$d/$b" ]; do
+    hops=$((hops + 1))
+    [ "$hops" -gt 16 ] && { echo "ir_ab: symlink loop at $d/$b" >&2; return 1; }
+    t=$(readlink "$d/$b")
+    case "$t" in
+      /*) d=$(cd "$(dirname "$t")" && pwd -P) || return 1 ;;
+      *)  d=$(cd "$d/$(dirname "$t")" && pwd -P) || return 1 ;;
+    esac
+    b=$(basename "$t")
+  done
+  [ -f "$d/$b" ] || return 1
+  printf '%s/%s\n' "$d" "$b"
+}
+
+ROM=$(resolve_rom "$ROM_REQ") || {
+  echo "ir_ab: no ROM matching '$ROM_REQ'" >&2
+  echo "  IR_ROM takes a path (absolute or repo-relative) or a find-rom.sh" >&2
+  echo "  glob, e.g. IR_ROM='Alien vs Predator*'.  Private-corpus ROMs live" >&2
+  echo "  under test/roms/private (a symlink; ROMS_PRIVATE_ROOT overrides)." >&2
+  exit 1; }
+# Report only a resolution that actually moved: a glob, or a path whose
+# symlinks were collapsed.  The plain repo-relative default resolves to the
+# same file and stays quiet.
+ROM_REQ_ABS="$ROM_REQ"
+case "$ROM_REQ_ABS" in /*) ;; *) ROM_REQ_ABS="$REPO/$ROM_REQ_ABS" ;; esac
+[ "$ROM" = "$ROM_REQ_ABS" ] || echo "ir_ab: ROM '$ROM_REQ' -> $ROM"
 
 # ---------------------------------------------------------------- work dir ---
 # Prepared on the host (needs git); the build+measure half needs no git at all,
