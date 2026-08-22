@@ -262,6 +262,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_risc_idle_skip",
+      "DSP Idle-Loop Fast-Forward",
+      NULL,
+      "Speed-up: skip provably redundant iterations when the DSP is parked in a wait loop. Commercial titles leave the DSP spinning in a 3-5 instruction poll for most of every frame while it still interprets its full cycle budget; this fast-forwards those iterations instead, cutting DSP interpretation by 66-87% on the titles measured. Bit-exact by construction, not an approximation: the registers, flags, cycles charged and instruction count all end up exactly where interpreting them would have left them, so save states, run-ahead and netplay are unaffected. New in this release and off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. Ignored automatically when DRAM timing, GPU pipeline timing, a non-stock RISC clock scale or blit memoization is in use.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_dram_timing",
       "DRAM Timing (Experimental)",
       NULL,

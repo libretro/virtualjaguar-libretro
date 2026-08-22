@@ -2253,6 +2253,26 @@ static void check_variables(void)
          GPUPipeTimingReset();
    }
 
+   /* DSP idle-loop fast-forward (issue #569).  Bit-exact by
+    * construction -- see the safety theorem in src/jerry/dsp.c -- and
+    * the corpus A/B (Iron Soldier, AvP, Doom, Wolfenstein 3D, Tempest
+    * 2000, jagniccc, yarc, plus the CD titles Primal Rage and Battle
+    * Morph) is byte-identical on framebuffer, audio and periodic
+    * savestate digest with it off vs on.  It still ships OFF for one
+    * release cycle: the failure mode if an untested title does slip
+    * through is a silent audio/video divergence nobody can attribute,
+    * against a speed win a user can opt into with one toggle -- an
+    * asymmetry a nine-title corpus does not settle for a ~200-title
+    * library.  DSPExec re-checks the interacting options (dram timing,
+    * pipeline timing, clock scale, blit memo) itself, so the order the
+    * option loop reads them in does not matter. */
+   var.key = "virtualjaguar_risc_idle_skip";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+      vjs.riscIdleSkip = (strcmp(var.value, "enabled") == 0);
+   else
+      vjs.riscIdleSkip = false;
+
    /* DRAM timing: enabled/disabled only, covering BOTH halves of the
     * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
     * in jaguar.c).  The calibration scale is deliberately NOT a core
