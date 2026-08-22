@@ -243,8 +243,39 @@ double GetTimeToNextEvent(int type/*= EVENT_MAIN*/)
 // down to zero valid MAIN-side events at the same time. Flagged here so a
 // future change that stops re-arming one of these callbacks fails loudly
 // (a hang, easy to notice) rather than being masked by lucky residue.
+//
+// Re-derive the dispatch target fresh, right here, instead of trusting
+// nextEvent/nextEventJERRY as cached by an earlier GetTimeToNextEvent()
+// call. JaguarExecuteNew() (src/core/jaguar.c) caches both indices, THEN
+// runs guest code for that time slice (M68KExecuteWithStalls/GPUExec/
+// DSPExec), THEN calls HandleNextEvent() using the index cached before
+// that guest code ran. Guest register writes reachable inside that
+// window can synchronously call RemoveCallback() on THIS SAME list for
+// an unrelated callback -- ordinary gameplay, not an edge case:
+// TOMResetPIT() (src/tom/tom.c) removes TOMPITCallback from an ordinary
+// PIT-reprogramming write to $F00050-$F00053, and src/jerry/dac.c
+// removes JERRYI2SCallback on an SCLK write. RemoveCallback's
+// swap-last-into-hole can (a) relocate the event the stale cached index
+// pointed at to a different slot, leaving the cache pointing at a
+// stale/out-of-[0,count)-range slot, or (b) remove that cached event
+// outright, leaving the cache pointing at someone else's data entirely.
+// Either way, trusting the stale index here can dispatch the wrong
+// callback with the wrong eventTime, or corrupt bookkeeping for a
+// completely unrelated third event during this function's own
+// swap-removal step below (traced and reproduced in
+// scratch_stale_index_check.c). Calling GetTimeToNextEvent(type) again
+// here closes every mutation shape mid-slice guest code could produce,
+// not just the ones enumerated above, because it stops depending on any
+// value computed before that guest code ran. Cost: one extra scan of the
+// dispatched list, still bounded by its live count (small in practice --
+// measured 1-5 in real gameplay), not EVENT_LIST_SIZE, so this does not
+// reintroduce the O(32) cost this task removes; JaguarExecuteNew() already
+// pays two such scans per iteration (one per list) to size the slice, so
+// this adds a second scan of only the winning list, not a third list.
 void HandleNextEvent(int type/*= EVENT_MAIN*/)
 {
+   (void)GetTimeToNextEvent(type);
+
    if (type == EVENT_MAIN)
    {
       double elapsedTime;
