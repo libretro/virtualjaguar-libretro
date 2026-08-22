@@ -1057,7 +1057,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 # invocations get different values.
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -1107,6 +1107,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# relayed between them: no sockets, no ports, no ROM.
 	./test/test_voicemodem_netpacket ./$(TARGET)
 	./test/test_uart_loopback
+	@# #552: end-to-end wire-speedup negotiation against a hand-crafted
+	@# fake peer over real sockets -- proves the interop safety property
+	@# (a TCP-connected peer that never answers on the discovery port
+	@# never gets the emulated timing accelerated at it) that the pure
+	@# unit tests above cannot, since jlink.c is single-instance.
+	./test/test_jlink_negotiate
 	./test/test_uart_core ./$(TARGET)
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
@@ -1733,6 +1739,10 @@ test/test_voicemodem_netpacket: test/test_voicemodem_netpacket.c
 test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c -lm
+
+test/test_jlink_negotiate: test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c -lm
 
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \

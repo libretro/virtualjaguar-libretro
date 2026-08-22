@@ -24,13 +24,30 @@
  * adaptive inside the core, not user-tuned).
  *
  * Both roles also take --asiclk N (the ASICLK divider the synthetic cart
- * programs, default 1) and --speed disabled|2|4 (the #498
- * virtualjaguar_netlink_speed enhancement, this side only).  Together
- * they turn this tool into the wire-latency A/B: raise --asiclk until the
- * emulated character frame, not the 60 fps frame slot, sets the exchange
- * rate, then compare both-stock / one-side-fast / both-fast.  Because
- * --speed is per side, a mismatched pair is a first-class configuration
- * here -- see netlink_wire_speed_test.sh.
+ * programs, default 1) and --speed disabled|N (the #498/#552
+ * wire-speedup divisor, this side only, N clamped to
+ * UART_WIRE_SPEEDUP_MAX like the real mechanism).  Together they turn
+ * this tool into the wire-latency A/B: raise --asiclk until the emulated
+ * character frame, not the 60 fps frame slot, sets the exchange rate,
+ * then compare both-stock / both-fast.
+ *
+ * --speed drives VJ_FORCE_WIRE_SPEEDUP (a jlink.c test-only escape
+ * hatch), NOT the real virtualjaguar_netlink_speed core option: since
+ * #552 replaced the option's 2x/4x values with a negotiated "auto",
+ * getting a specific divisor to apply for real needs the PEER to
+ * confirm over the discovery-port protocol, and two real processes on
+ * ONE machine sharing 127.0.0.1's discovery port hit the SAME-HOST
+ * SO_REUSEPORT hazard documented on jlink.c's JLinkNegEligible() --
+ * unicast negotiation between sockets sharing a port cannot be relied
+ * on to cross over there, so real negotiation is not a dependable way
+ * to drive this A/B.  The escape hatch exercises UARTFrameUsec()'s
+ * divisor mechanism directly and unconditionally instead. One
+ * consequence: since it is unconditional, a MISMATCHED pair (one side
+ * forced, one side not) is no longer a meaningful configuration to test
+ * here -- #552 made that combination unreachable through the real
+ * option and negotiation anyway (a side only ever accelerates once its
+ * peer has confirmed the same), so netlink_wire_speed_test.sh no longer
+ * drives one.
  *
  * Exit 0 on pass, 1 on fail/error.  Driven by netlink_latency_test.sh
  * and netlink_wire_speed_test.sh.
@@ -201,13 +218,24 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: netlink_latency <core> --role echo|probe "
                         "[--port N] [--measure-sec N] [--min-rate X] "
                         "[--max-rate X] [--wait enabled|disabled] "
-                        "[--asiclk N] [--speed disabled|2|4]\n");
+                        "[--asiclk N] [--speed disabled|N]\n");
         return 1;
     }
 
     snprintf(port_env, sizeof(port_env), "VJ_NETLINK_PORT=%s", port);
     putenv(port_env);
     putenv((char *)"VJ_NETLINK_HOST=127.0.0.1");
+    /* See the file header comment: --speed drives the jlink.c test-only
+       VJ_FORCE_WIRE_SPEEDUP escape hatch, never the real
+       virtualjaguar_netlink_speed option (which is left at its "disabled"
+       default below -- #552 negotiation is not exercised by this tool). */
+    if (strcmp(speed_opt, "disabled") != 0 && atoi(speed_opt) > 1)
+    {
+        static char speed_env[64];
+        snprintf(speed_env, sizeof(speed_env), "VJ_FORCE_WIRE_SPEEDUP=%s",
+                 speed_opt);
+        putenv(speed_env);
+    }
 
     cfg.frames = 1;
     cfg.options[0].key = "virtualjaguar_netlink";
@@ -217,7 +245,7 @@ int main(int argc, char **argv)
     cfg.options[2].key = "virtualjaguar_netlink_wait";
     cfg.options[2].value = wait_opt;
     cfg.options[3].key = "virtualjaguar_netlink_speed";
-    cfg.options[3].value = speed_opt;
+    cfg.options[3].value = "disabled";
     cfg.num_options = 4;
 
     if (!harness_init_from_args(&cfg, argc, argv)) return 1;

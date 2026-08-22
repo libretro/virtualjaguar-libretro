@@ -74,8 +74,9 @@ Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
 
 ## Making link play feel snappier (optional, not authentic)
 
-*Network Link Wire Speed* (default **Off**) clocks the emulated serial
-port 2x or 4x faster than the real hardware ran it.
+*Network Link Wire Speed* (default **Off**, values **Off** / **Auto**)
+clocks the emulated serial port faster than the real hardware ran it, when
+the console on the other end agrees to.
 
 You do not need it to play. What it fixes is a specific feel: in a
 strictly lockstep title neither console can draw the next frame until the
@@ -90,12 +91,16 @@ That slowness is *real* — a Voice Modem or a JagLink cable behaved exactly
 this way — which is why this is off by default and labelled an
 enhancement rather than a fix.
 
-- **Set it on both consoles, to the same value.** Each side only speeds
-  up its own half of the exchange, so one side alone gives you part of
-  the improvement. A mismatched pair still plays correctly and stays in
-  sync; it just gets less benefit. (Verified, not assumed:
-  `test/tools/netlink_wire_speed_test.sh`.)
-- Start at 2x. Go to 4x if you still notice it.
+- **Set *Auto* on either or both consoles — there is nothing to match.**
+  The two cores agree on the speedup between themselves the moment the
+  link comes up. If the other side is running an older core, has this set
+  to *Off*, or never answers, this side quietly stays at authentic timing
+  instead of running ahead on its own — a mismatch is no longer something
+  you can accidentally create.
+- Only works over a direct *Network Link* (TCP host/client). Frontend
+  netplay (RetroArch's own netplay session) has no channel for the two
+  cores to negotiate over, so link play there always runs authentic
+  timing regardless of this setting.
 - If a game starts behaving oddly on the link, put it back to Off before
   reporting anything — link timing bug reports are only meaningful at
   Off.

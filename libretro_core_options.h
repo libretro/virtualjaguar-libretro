@@ -383,13 +383,12 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink_speed",
       "Network Link Wire Speed (Enhancement)",
       NULL,
-      "Clocks the emulated serial port faster than the real hardware did, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next. Ultra Vortek's Voice Modem mode settles at 19200 baud and swaps about ten bytes each way per frame, roughly 5.8 ms of pure wire time per direction, which is why you do not see your own move until the round trip completes. Not authentic -- a real Voice Modem or JagLink cable is exactly this slow -- so it is off by default. BOTH consoles should set it, and to the same value: each side only speeds up its own half of the exchange, so one side alone gives you part of the benefit. If a game starts dropping link data, step it back down. Ignored unless Network Link is actually selected.",
+      "Clocks the emulated serial port faster than the real hardware did, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next. Ultra Vortek's Voice Modem mode settles at 19200 baud and swaps about ten bytes each way per frame, roughly 5.8 ms of pure wire time per direction, which is why you do not see your own move until the round trip completes. Not authentic -- a real Voice Modem or JagLink cable is exactly this slow -- so it is off by default. 'Auto' has the two consoles agree on the speedup between themselves at link-up: nothing to match by hand, and if the other side is running an older core, isn't in Auto too, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client) -- frontend netplay (RetroArch's own netplay session) has no channel for the two cores to negotiate over and always runs authentic timing regardless of this setting. If a game starts dropping link data, turn this off. Ignored unless Network Link is actually selected.",
       NULL,
       "network",
       {
          { "disabled", "Off (authentic hardware timing)" },
-         { "2",        "2x faster" },
-         { "4",        "4x faster" },
+         { "auto",     "Auto (negotiated with peer)" },
          { NULL, NULL },
       },
       "disabled"

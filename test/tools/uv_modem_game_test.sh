@@ -65,11 +65,22 @@ MAPOPTS=(--option virtualjaguar_uart_device=voicemodem
 # Wire-speed enhancement (#498), per side, so this script doubles as the
 # safety gate for it: the whole point of the feature is that it may not
 # change anything the GAME can see, and the modem choreography plus the
-# pad-word counts below are the only end-to-end check that holds.  Set
-# both to prove the symmetric case, one to prove that a mismatched pair
-# still completes (it does -- it just gets less of the benefit).
-# "disabled" is the option's own default, so an unset run is the stock
-# baseline this has always measured.
+# pad-word counts below are the only end-to-end check that holds.
+# "disabled" is the option's own default, so an unset run (the one
+# `make test` actually exercises) is the stock baseline this has always
+# measured -- these two env vars are for a human to override manually.
+#
+# #552 replaced the option's 2x/4x values with a negotiated "auto":
+# VJ_UV_SPEED_SERVER/CLIENT=auto sets real intent on that side, but
+# whether it actually accelerates now depends on jlink.c's discovery-port
+# negotiation confirming with the peer -- which, for two real processes
+# on ONE machine sharing 127.0.0.1's discovery port, is not reliable (see
+# the SO_REUSEPORT hazard documented on jlink.c's JLinkNegEligible()).
+# There is no longer a numeric value this script can pass to force a
+# specific side's timing the way "2"/"4" used to -- the old "one side
+# faster, does the choreography still complete" question is what #552's
+# negotiation is designed to make structurally impossible to create by
+# accident in the first place, not a case to keep exercising here.
 SPEED_SRV="${VJ_UV_SPEED_SERVER:-disabled}"
 SPEED_CLI="${VJ_UV_SPEED_CLIENT:-disabled}"
 

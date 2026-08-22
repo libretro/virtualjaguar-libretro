@@ -68,7 +68,17 @@ extern "C" {
  *     adapter's own presence is NOT serialized: user configuration, like
  *     the input-device type (joystick.h).  develop only — first bump of
  *     the post-v3.4.0 cycle, so any other in-flight state change this
- *     cycle extends v13 in place rather than bumping again. */
+ *     cycle extends v13 in place rather than bumping again.
+ *     EXTENDED IN PLACE (still v13): #552 replaced the netlink speed
+ *     option's 2x/4x values with a negotiated "auto" and appended one
+ *     trailing uint32 — the negotiated wire-speedup Effective divisor —
+ *     strictly after the Team Tap chunk.  Unlike Team Tap's config-only
+ *     "auto" INTENT (never serialized, same as NTSC/PAL), the negotiated
+ *     value is machine-affecting the moment a peer confirms it: it
+ *     changes UARTFrameUsec(), which schedules the UART TX/RX
+ *     event-queue deadlines.  A pre-#552 v13 state (Team Tap only) reads
+ *     nothing here and the loader falls back to stock (1), which is
+ *     exactly what a pre-#552 core was — see UARTWireSpeedupStateLoad(). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
 #define STATE_VERSION   13
 /* Oldest layout retro_unserialize still accepts.  States between
