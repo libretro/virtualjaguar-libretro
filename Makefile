@@ -183,7 +183,7 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
-              OPT_LEVEL
+              OPT_LEVEL LTO
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
@@ -938,6 +938,99 @@ ifneq ($(platform),theos_ios)
    endif
 endif
 endif
+
+# ----------------------------------------------------------------
+# ELF visibility / symbol interposition (issue #569).
+#
+# GCC assumes symbol interposition per translation unit unless told
+# otherwise: every cross-file global in the hot interpreter loops
+# (gpu_reg, dsp_pc, the flag/counter externs the 68K/GPU/DSP headers
+# share) gets reloaded through the GOT, and every cross-file call
+# (JaguarReadLong &c.) goes through the PLT, because in principle a
+# symbol could be overridden by something loaded earlier in the
+# process. That is a real possibility for a handful of libc entry
+# points and essentially never true of this project's own internals --
+# the whole exported surface is already pinned to a fixed set by
+# $(LINK_SCRIPT) (link.T / link-test.T), so nothing outside libretro.c's
+# retro_* functions is meant to be interposable at all.
+#
+# GC_STYLE=gnu (set above, per platform block) identifies every target
+# that links through GNU ld with a --version-script, which is a
+# slightly WIDER set than "ELF": unix, qnx, rpi*, generic
+# arm64/aarch64, generic armv* are the real ELF/GNU-ld matrix this
+# block exists for, but the native `win` (MinGW) block also sets
+# GC_STYLE=gnu -- purely because MinGW's ld honours --version-script
+# and --gc-sections too, not because its output is ELF. `win`'s TARGET
+# is a PE/COFF .dll, and libretro.h's RETRO_API expands to
+# __attribute__((__dllexport__)) there (see libretro.h's RETRO_API
+# definition), not the visibility attribute -- so this block's whole
+# rationale (GOT/PLT indirection from ELF-style interposition,
+# RETRO_API surviving -fvisibility=hidden via inherited visibility)
+# does not apply to it, and `win` IS built in CI
+# (c-cpp.yml's MSYS2 job, release.yml). It is therefore excluded
+# outright, the same way `theos_ios` is excluded from the
+# --gc-sections block just above for an analogous "GC_STYLE says gnu
+# but the platform isn't the thing this flag is for" reason.
+#
+# GC_STYLE=macho (Apple ld64's two-level namespace already resolves
+# same-image symbols directly, so this is a Linux/Pi/Android win, not
+# a macOS one) and unset (STATIC_LINKING=1 archive targets, MSVC/Xbox,
+# Solaris ld, theos_ios, and classic_armv7_a7, which opts into its own
+# bespoke -flto=4 -fwhole-program pipeline in its platform block above
+# instead) are excluded by the outer ifeq itself.
+#
+# -fno-semantic-interposition is added UNGUARDED for the platforms this
+# repo actually builds and tests (unix, rpi*, generic arm64/aarch64,
+# generic armv*): this Makefile has no cc-option-style "does this flag
+# compile" probe anywhere (checked), GCC has accepted the flag since
+# 5.1 (2015), and Clang accepts and silently ignores it, so every
+# toolchain on those rows clears that bar. `qnx` is excluded from just
+# this one flag (but keeps -fvisibility=hidden and LTO=1 below): nothing
+# in .github/workflows/ or .gitlab-ci.yml builds it (checked), so its
+# toolchain floor is unverified, and QNX SDP 6.x's qcc wraps a gcc old
+# enough (4.x) that the flag can hard-error rather than no-op there.
+# -fvisibility=hidden has no such floor (GCC >= 4.0) and stays on for
+# qnx. `win` gets neither flag at all -- see above.
+#
+# -fvisibility=hidden is added for non-TEST_EXPORTS builds only.
+# TEST_EXPORTS=1 is the wide white-box test ABI: the harnesses dlsym()
+# internal symbols (see link-test.T / exports-test.list above), which
+# hiding at compile time would break even though the version script
+# still lists them. retro_* itself is unaffected either way -- every
+# entry point in libretro.c is declared RETRO_API in libretro.h, which
+# expands (libretro-common/include/libretro.h) to
+# __attribute__((visibility("default"))) on non-Windows GCC/Clang >= 4,
+# and a visibility attribute already present on an earlier declaration
+# governs the later definition regardless of -fvisibility's default.
+# Verified empirically at the .o level (see task report): retro_init
+# stays "external" under -fvisibility=hidden while an ordinary global
+# like videoBuffer drops to "private external" (ELF STV_HIDDEN's
+# Mach-O equivalent) -- the flag works, and RETRO_API is what exempts
+# retro_*.
+#
+# Neither flag is an -O, so neither can trip issue #516.
+ifeq ($(GC_STYLE),gnu)
+ifneq ($(platform),win)
+   ifneq ($(platform),qnx)
+      FLAGS += -fno-semantic-interposition
+   endif
+   ifneq ($(TEST_EXPORTS),1)
+      FLAGS += -fvisibility=hidden
+   endif
+
+   # Opt-in LTO (issue #569). Deliberately NOT default-on -- it wants an
+   # A/B on real Pi hardware first (test/tools/rpi_perf.sh exists for
+   # exactly that), same caution as the -O3 rollout above (#515/#516).
+   # `make LTO=1` (add `platform=rpi4_64` etc.) appends -flto to both
+   # the compile and link lines for every GC_STYLE=gnu target except
+   # `win` (see above).
+   ifeq ($(LTO),1)
+      FLAGS   += -flto
+      LDFLAGS += -flto
+   endif
+endif
+endif
+# ----------------------------------------------------------------
 
 LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic)

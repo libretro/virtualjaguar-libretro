@@ -38,7 +38,20 @@ include $(CORE_DIR)/Makefile.common
 # arch .c compiles. Without it blitter.c falls back to the scalar inline
 # set -- which links fine against the neon/sse2 vtable and just runs
 # slower, so nothing would catch its absence at build time.
-COREFLAGS := -DINLINE="inline" -D__LIBRETRO__ $(INCFLAGS) $(BLITTER_SIMD_DEFINE)
+#
+# -O3 -DNDEBUG -fvisibility=hidden -fno-stack-protector
+# -fomit-frame-pointer -fno-semantic-interposition: the release
+# optimisation/visibility flags from the desktop Makefile (issue #569),
+# added by hand because ndk-build never includes Makefile -- only
+# Makefile.common -- so without this line Android inherited none of
+# them and built at whatever default APP_OPTIM/-O ndk-build picks.
+# LOCAL_LDFLAGS below already pins the production link.T version
+# script, same as every other ELF target; -fvisibility=hidden is safe
+# alongside it because libretro.h declares every retro_* entry point
+# RETRO_API (visibility("default")), so those symbols stay exported.
+COREFLAGS := -DINLINE="inline" -D__LIBRETRO__ $(INCFLAGS) $(BLITTER_SIMD_DEFINE) \
+             -O3 -DNDEBUG -fvisibility=hidden -fno-stack-protector \
+             -fomit-frame-pointer -fno-semantic-interposition
 
 # libretro.c includes the generated src/core/version.h.  Generate it
 # at parse time -- ndk-build doesn't go through the project Makefile,

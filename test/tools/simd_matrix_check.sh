@@ -263,6 +263,68 @@ expect_tune tvos-arm64 -O3 - no
 expect_tune vita       -O2 - no
 
 echo
+
+# --- ELF visibility / interposition (issue #569) ----------------------------
+# -fno-semantic-interposition and -fvisibility=hidden must reach every
+# GC_STYLE=gnu release CFLAGS; -fvisibility=hidden must vanish under
+# TEST_EXPORTS=1 (the white-box harnesses dlsym() internal symbols), while
+# -fno-semantic-interposition -- codegen-only, no symbol-table effect -- stays
+# on regardless. Mach-O (osx) must get neither: ld64's two-level namespace
+# never had the interposition assumption to begin with.
+#
+# expect_vis <platform> <expect-hidden:yes|no> <expect-interposition:yes|no> [extra make vars...]
+expect_vis() {
+   local plat="$1" want_hidden="$2" want_interp="$3"; shift 3
+   local got cflags has_hidden has_interp label
+
+   checked=$((checked + 1))
+   label="$plat${1:+ $1}"
+   got="$(dump "$plat" "$@")"
+   cflags="$(printf '%s' "$got" | sed -n 's/.*CFLAGS=//p')"
+
+   if [ -z "$cflags" ]; then
+      printf 'FAIL  %-42s could not read CFLAGS\n' "$label"; fail=$((fail + 1)); return
+   fi
+
+   has_hidden="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -cE '^-fvisibility=hidden$')"
+   has_interp="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -cE '^-fno-semantic-interposition$')"
+
+   if [ "$want_hidden" = yes ] && [ "$has_hidden" -eq 0 ]; then
+      printf 'FAIL  %-42s missing -fvisibility=hidden\n' "$label"; fail=$((fail + 1)); return
+   fi
+   if [ "$want_hidden" = no ] && [ "$has_hidden" -ne 0 ]; then
+      printf 'FAIL  %-42s unexpectedly has -fvisibility=hidden (breaks TEST_EXPORTS dlsym)\n' "$label"
+      fail=$((fail + 1)); return
+   fi
+   if [ "$want_interp" = yes ] && [ "$has_interp" -eq 0 ]; then
+      printf 'FAIL  %-42s missing -fno-semantic-interposition\n' "$label"; fail=$((fail + 1)); return
+   fi
+   if [ "$want_interp" = no ] && [ "$has_interp" -ne 0 ]; then
+      printf 'FAIL  %-42s unexpectedly has -fno-semantic-interposition\n' "$label"
+      fail=$((fail + 1)); return
+   fi
+
+   [ "$VERBOSE" = 1 ] && printf 'ok    %-42s hidden=%s interp=%s\n' "$label" "$want_hidden" "$want_interp"
+   return 0
+}
+
+echo "simd_matrix_check: ELF visibility / interposition (issue #569)"
+expect_vis unix     yes yes
+expect_vis rpi4_64  yes yes
+expect_vis rpi1     yes yes
+expect_vis arm64    yes yes
+# TEST_EXPORTS=1: -fvisibility=hidden must disappear, interposition stays.
+expect_vis unix     no  yes TEST_EXPORTS=1
+expect_vis rpi4_64  no  yes TEST_EXPORTS=1
+# Mach-O is GC_STYLE=macho, not gnu -- neither flag belongs there.
+expect_vis osx      no  no
+# win (native MinGW) is GC_STYLE=gnu too, but that is a --version-script
+# convenience, not an ELF signal: TARGET is a PE/COFF .dll and RETRO_API
+# there expands to __attribute__((__dllexport__)), not the visibility
+# attribute, so it is explicitly excluded from both flags in the Makefile.
+expect_vis win       no  no
+
+echo
 if [ "$fail" -ne 0 ]; then
    echo "simd_matrix_check: FAILED ($fail of $checked rows)"
    exit 1
