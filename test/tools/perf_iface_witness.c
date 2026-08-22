@@ -56,7 +56,16 @@
 
 #include <libretro.h>
 
+/* Default run length.  Overridable as argv[3] so this binary doubles as a
+ * portable on-device profiler: it is a complete env-28 frontend in one file
+ * with no RetroArch dependency, which is the only way to get a
+ * per-subsystem breakdown on a Linux ARM box (Raspberry Pi) where the
+ * RetroArch capture path in test/tools/device_perf.sh does not apply.
+ * 120 frames is enough to ASSERT the plumbing; it is far too short to
+ * RANK subsystems on real content. */
 #define FRAMES 120
+
+static int g_frames = FRAMES;
 
 static int g_fail;
 
@@ -252,7 +261,7 @@ static uint64_t run_arm(void *lib, const char *rom, bool offer,
    {
       void_fn run = (void_fn)dlsym(lib, "retro_run");
       int i;
-      for (i = 0; i < FRAMES; i++)
+      for (i = 0; i < g_frames; i++)
          run();
    }
 
@@ -271,6 +280,7 @@ int main(int argc, char **argv)
 {
    const char *core = argc > 1 ? argv[1] : NULL;
    const char *rom  = argc > 2 ? argv[2] : "test/roms/yarc.j64";
+   const char *nfr  = argc > 3 ? argv[3] : NULL;
    void *lib;
    uint64_t hash_on, hash_off;
    int active_on = 0, reg_on = 0, leak_on = 0;
@@ -280,8 +290,20 @@ int main(int argc, char **argv)
 
    if (!core)
    {
-      fprintf(stderr, "usage: %s <core> [rom]\n", argv[0]);
+      fprintf(stderr, "usage: %s <core> [rom] [frames]\n", argv[0]);
       return 1;
+   }
+   if (nfr)
+   {
+      int n = atoi(nfr);
+      /* Reject rather than clamp: a typo'd frame count that silently ran
+       * 120 frames would be reported as a full-length profiling run. */
+      if (n <= 0)
+      {
+         fprintf(stderr, "frames must be a positive integer (got '%s')\n", nfr);
+         return 1;
+      }
+      g_frames = n;
    }
    probe = fopen(rom, "rb");
    if (!probe)
