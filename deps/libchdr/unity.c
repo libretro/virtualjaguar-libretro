@@ -35,6 +35,22 @@
 #include "deps/miniz-3.1.1/miniz.c"
 #include "deps/zstd-1.5.7/zstddeclib.c"
 
+/* snprintf shim for MSVC < 2015 (buildbot msvc05/10): libchdr_chd.c uses
+ * snprintf for the V1/V2 hard-disk metadata string, and those CRTs ship
+ * only _snprintf. Declared here rather than in the vendored sources so
+ * `src/` stays byte-identical to the upstream pin.
+ *
+ * Deliberately NOT `#include <compat/msvc.h>`: that header defines
+ * SIZE_MAX as _UI32_MAX when it is not already set, and dr_flac.h --
+ * pulled in by libchdr_flac.c below -- derives DRFLAC_SIZE_MAX from
+ * SIZE_MAX. On x64 that would quietly narrow it to 32 bits. Take the
+ * one declaration this TU needs and nothing else. */
+#if defined(_MSC_VER) && _MSC_VER < 1900
+#include <stddef.h>
+int c99_snprintf_retro__(char *s, size_t len, const char *format, ...);
+#define snprintf c99_snprintf_retro__
+#endif
+
 #include "src/libchdr_bitstream.c"
 #include "src/libchdr_cdrom.c"
 #include "src/libchdr_chd.c"
