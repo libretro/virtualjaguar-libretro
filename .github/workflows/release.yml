@@ -96,6 +96,85 @@ jobs:
             cxx: 'g++ -m32'
             multilib: true
 
+          # Raspberry Pi -- per-SoC tuned (issue #560).
+          #
+          # Cross-compiled on x86_64: -mcpu names a core to generate code FOR,
+          # it does not require running on one, so no Pi hardware is needed to
+          # produce these. The per-SoC flags live in the Makefile's rpi*
+          # platform blocks -- do not duplicate them here.
+          #
+          # rpi0 is deliberately absent: it is the same BCM2835/ARM1176 part
+          # as rpi1 and resolves to identical flags, so the rpi1 artifact
+          # serves both. Every other row is a genuinely distinct target.
+          #
+          # 32- and 64-bit rows for the same chip are BOTH needed: they are
+          # different userlands (Raspberry Pi OS ships both), and the 32-bit
+          # ones additionally carry -mfpu/-mfloat-abi, which aarch64 gcc
+          # rejects outright.
+          - platform: linux-rpi1-armv6
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi1
+            cross_arm: armhf
+
+          - platform: linux-rpi2-cortex-a7
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi2
+            cross_arm: armhf
+
+          - platform: linux-rpi3-cortex-a53
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi3
+            cross_arm: armhf
+
+          - platform: linux-rpi3_64-cortex-a53
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_extra: platform=rpi3_64
+            cross_arm: arm64
+
+          - platform: linux-rpi4-cortex-a72
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi4
+            cross_arm: armhf
+
+          - platform: linux-rpi4_64-cortex-a72
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_extra: platform=rpi4_64
+            cross_arm: arm64
+
+          - platform: linux-rpi5-cortex-a76
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi5
+            cross_arm: armhf
+
+          - platform: linux-rpi5_64-cortex-a76
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_extra: platform=rpi5_64
+            cross_arm: arm64
+
           # macOS
           - platform: macos-arm64
             artifact: virtualjaguar_libretro.dylib
@@ -193,6 +272,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
+      # Cross toolchain for the Raspberry Pi rows. Also provides the matching
+      # objcopy: the host x86_64 objcopy in the packaging step below cannot
+      # read an ARM ELF (Ubuntu's binutils is single-target), so the strip /
+      # split-debug step needs the prefixed one.
+      - name: Install ARM cross toolchain
+        if: matrix.config.cross_arm
+        run: |
+          set -e
+          sudo apt-get update
+          if [ "${{ matrix.config.cross_arm }}" = armhf ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          else
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
+
       - name: Set up MSYS2
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -259,9 +353,17 @@ jobs:
           OUT="virtualjaguar_libretro-${{ matrix.config.platform }}${EXT}"
           DBG="${OUT}.debug"
           cp "$SRC" "dist/${OUT}"
-          objcopy --only-keep-debug "dist/${OUT}" "dist/${DBG}"
-          objcopy --strip-debug --strip-unneeded "dist/${OUT}"
-          ( cd dist && objcopy --add-gnu-debuglink="${DBG}" "${OUT}" )
+          # A cross-built ARM core needs the cross objcopy -- Ubuntu's
+          # binutils is single-target, so the host one cannot read an ARM ELF
+          # and the split-debug step would fail (or, worse, be skipped).
+          case "${{ matrix.config.cross_arm }}" in
+            armhf) OBJCOPY=arm-linux-gnueabihf-objcopy ;;
+            arm64) OBJCOPY=aarch64-linux-gnu-objcopy ;;
+            *)     OBJCOPY=objcopy ;;
+          esac
+          "$OBJCOPY" --only-keep-debug "dist/${OUT}" "dist/${DBG}"
+          "$OBJCOPY" --strip-debug --strip-unneeded "dist/${OUT}"
+          ( cd dist && "$OBJCOPY" --add-gnu-debuglink="${DBG}" "${OUT}" )
           tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
           rm "dist/${DBG}"
 

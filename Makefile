@@ -48,8 +48,27 @@ endif
 # compilers again, and the Vita has real memory limits, so neither result
 # above says anything about them.  Measure before adding one.
 #
+# The rpi* targets are here by maintainer decision rather than by the
+# measurement protocol above: the Pi platform names identify the silicon
+# exactly, and every one of them is a small in-order or narrow out-of-order
+# core with no headroom to spare, which is the case -O3 helps most.  The
+# closest evidence we have is the +5.5% measured on macOS arm64 (#515) --
+# same ISA family, different compiler.  Re-measure on real hardware when a
+# Pi is available; test/tools/rpi_perf.sh exists for exactly that.
+#
+# -Ofast was considered and REJECTED for these.  Its headline implication is
+# -ffast-math, which #517 measured at ~0% here (the hot loops are integer;
+# the only floating point is a SAVESTATED I2S resampler and event
+# scheduling) and then removed globally as a latent determinism hazard.
+# Determinism is load-bearing in this tree -- run-ahead (#400), netplay, and
+# savestate compatibility all depend on it -- so -Ofast would reintroduce
+# exactly what #517 took out, for a measured-zero gain, on a platform people
+# run netplay on.  `make OPT_LEVEL=-Ofast platform=rpi4` still works if you
+# want to measure it.
+#
 # Override on the command line to test: `make OPT_LEVEL=-O2`.
-OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64
+OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64 \
+                    rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64
 # classic_armv7_a7 asks for -Ofast in its own platform block and always has.
 # It never took effect: the shared release branch appended -O2 afterwards and
 # the last -O wins, so the target silently built at -O2 (issue #516).  The
@@ -329,22 +348,71 @@ else ifneq (,$(filter arm64 aarch64,$(platform)))
 # NEON-capable running a 32-bit OS, but rpi1 and rpi0 are ARMv6 (ARM1176) with
 # no NEON at all, so they are deliberately absent from the NEON list.
 #
-# No -mcpu/-mtune and no -O level here.  Both are unmeasured on this hardware
-# and the standing rule from #515/#516/#517 is to measure first -- #516 is
-# precisely the case of an optimisation flag that looked applied and was not.
+# PER-SOC TUNING.  Unlike a generic ARM target, a Raspberry Pi platform name
+# identifies the silicon exactly, so -mcpu is a statement of fact rather than
+# a guess -- which is why these get it and `unix`/`armv7-*` do not.
+#
+#   rpi0 rpi1   BCM2835   ARM1176JZF-S  ARMv6 + VFPv2, NO NEON
+#   rpi2        BCM2836   Cortex-A7     ARMv7-A + NEON-VFPv4
+#   rpi3        BCM2837   Cortex-A53    ARMv8-A, 32-bit userland
+#   rpi4        BCM2711   Cortex-A72    ARMv8-A, 32-bit userland
+#   rpi5        BCM2712   Cortex-A76    ARMv8.2-A, 32-bit userland
+#   *_64        same parts, aarch64 userland
+#
+# -mcpu implies -mtune, so both are never passed.  -mfpu/-mfloat-abi are
+# 32-bit-ARM-only options -- aarch64 gcc ERRORS on them -- so they are gated
+# on the same 64-bit split as ARCH below, not appended blindly.
+#
+# rpi2 is the ambiguous one: board revision 1.2 shipped a BCM2837 (A53), but
+# the libretro `rpi2` name conventionally means the original A7 part, and A7
+# code runs on an A53 while the reverse is not true.  Kept at A7 on purpose.
+#
+# -O3 comes from OPT_O3_PLATFORMS at the top of this file, NOT from here --
+# see the #516 note there.  Appending an -O to CFLAGS in a platform block is
+# exactly the bug that made classic_armv7_a7 silently build at -O2 for years.
 else ifneq (,$(filter rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	GC_STYLE := gnu
+	ifneq (,$(filter rpi0 rpi1,$(platform)))
+		RPI_MCPU := arm1176jzf-s
+	else ifeq ($(platform),rpi2)
+		RPI_MCPU := cortex-a7
+	else ifneq (,$(filter rpi3 rpi3_64,$(platform)))
+		RPI_MCPU := cortex-a53
+	else ifneq (,$(filter rpi4 rpi4_64,$(platform)))
+		RPI_MCPU := cortex-a72
+	else
+		RPI_MCPU := cortex-a76
+	endif
+	CFLAGS += -mcpu=$(RPI_MCPU)
 	ifneq (,$(filter rpi3_64 rpi4_64 rpi5_64,$(platform)))
 		ARCH = aarch64
 	else
 		ARCH = arm
-		ifneq (,$(filter rpi2 rpi3 rpi4 rpi5,$(platform)))
+		# 32-bit only.  ARMv6 parts get plain VFP; everything else NEON, in
+		# the encoding its ISA level actually provides.
+		ifneq (,$(filter rpi0 rpi1,$(platform)))
+			# -marm is REQUIRED here, not a tuning choice.  Debian's armhf
+			# cross toolchain is --with-arch=armv7-a+fp and defaults to
+			# Thumb; ARMv6 has only Thumb-1, and GCC cannot pair Thumb-1
+			# with the hard-float VFP ABI:
+			#     sorry, unimplemented: Thumb-1 'hard-float' VFP ABI
+			# A native Pi 1 compiler defaults to ARM mode and never shows
+			# this, so it only bites cross-builds -- i.e. CI.  Verified in
+			# an arm-linux-gnueabihf container; A7/A53/A72/A76 build fine
+			# either way and are left on the Thumb-2 default.
+			CFLAGS += -marm -mfpu=vfp -mfloat-abi=hard
+		else ifeq ($(platform),rpi2)
+			CFLAGS += -mfpu=neon-vfpv4 -mfloat-abi=hard
+			HAVE_NEON = 1
+		else
+			CFLAGS += -mfpu=neon-fp-armv8 -mfloat-abi=hard
 			HAVE_NEON = 1
 		endif
 	endif
+	CXXFLAGS += $(CFLAGS)
 
 else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so

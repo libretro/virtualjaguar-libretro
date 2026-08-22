@@ -16,6 +16,47 @@ Output: `virtualjaguar_libretro.{dylib,so,dll}`. CI: `make -j4` on Ubuntu (GCC) 
 or `platform=`; `Makefile.common` lists sources. Flags: `-D__LIBRETRO__`, `-DMSB_FIRST`
 (big-endian).
 
+## ARM / Raspberry Pi targets
+
+The `rpi*` platform names identify the silicon exactly, so they carry real per-SoC
+tuning (issue #560). Everything is resolved in the Makefile's `rpi*` platform block —
+**never re-specify these on the command line**, and never append an `-O` in a platform
+block (that is the #516 bug: the last `-O` wins and a later `-O2` silently beat
+`-Ofast` for years).
+
+| platform | SoC | core | blitter | flags on top of `-O3` |
+| --- | --- | --- | --- | --- |
+| `rpi0` `rpi1` | BCM2835 | ARM1176JZF-S (ARMv6) | **scalar** | `-marm -mcpu=arm1176jzf-s -mfpu=vfp -mfloat-abi=hard` |
+| `rpi2` | BCM2836 | Cortex-A7 | neon | `-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard` |
+| `rpi3` / `rpi3_64` | BCM2837 | Cortex-A53 | neon | `-mcpu=cortex-a53` (+`-mfpu=neon-fp-armv8 -mfloat-abi=hard` on 32-bit) |
+| `rpi4` / `rpi4_64` | BCM2711 | Cortex-A72 | neon | `-mcpu=cortex-a72` (same 32-bit addition) |
+| `rpi5` / `rpi5_64` | BCM2712 | Cortex-A76 | neon | `-mcpu=cortex-a76` (same 32-bit addition) |
+
+Three traps, all verified in an `arm-linux-gnueabihf` container:
+
+- **`-mfpu` / `-mfloat-abi` are 32-bit-ARM only.** `aarch64-linux-gnu-gcc` hard-errors
+  (`unrecognized command-line option '-mfpu=neon-fp-armv8'`), so a `*_64` row that
+  acquires one does not build at all.
+- **`rpi0`/`rpi1` need `-marm`.** Debian's armhf cross toolchain is
+  `--with-arch=armv7-a+fp` and defaults to Thumb; ARMv6 only has Thumb-1, and GCC
+  cannot pair Thumb-1 with hard-float (`sorry, unimplemented: Thumb-1 'hard-float' VFP
+  ABI`). A native Pi 1 compiler defaults to ARM mode, so this bites cross-builds only.
+- **`rpi1` is scalar on purpose.** ARM1176 has no NEON. Do not "fix" it.
+
+`-Ofast` is deliberately **not** used: it implies `-ffast-math`, which #517 measured at
+~0% here and removed globally as a determinism hazard (run-ahead #400, netplay,
+savestate compat all depend on determinism). `make OPT_LEVEL=-Ofast platform=rpi4`
+still works if you want to measure it.
+
+`test/tools/simd_matrix_check.sh` (in `make test`) asserts all of the above — blitter,
+the *last* `-O`, the expected `-mcpu`, and that 32-bit-only flags stay off 64-bit rows.
+Release/nightly build all eight via `release.yml`'s matrix, cross-compiled on x86_64
+(`-mcpu` names a core to generate code *for*; it does not require running on one).
+
+> The libretro GitLab buildbot cannot do this: `libretro-infrastructure/ci-templates`
+> has no `rpi*` template (only `linux-aarch64.yml` for ARM Linux), so per-chipset Pi
+> cores would need a template added upstream.
+
 **Host builds: prefix `DEVELOPER_DIR=/Library/Developer/CommandLineTools`.** `xcode-select`
 points at Xcode.app, so bare `make`/`cc` resolve inside an app bundle → macOS raises an App
 Management prompt on every invocation (dozens per multi-agent run). Same Apple clang, no
