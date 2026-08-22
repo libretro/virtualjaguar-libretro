@@ -41,10 +41,14 @@ VERBOSE=0
 
 PROBE="$(mktemp -t vjsimd).mk"
 trap 'rm -f "$PROBE"' EXIT
-cat > "$PROBE" <<'EOF'
-vjsimd:
-	@echo "SIMD=$(notdir $(BLITTER_SIMD_SRC)) TARGET=$(notdir $(TARGET))"
-EOF
+# Built with printf rather than a heredoc on purpose: the recipe line needs a
+# leading TAB (make refuses anything else), and .editorconfig pins *.sh to
+# indent_style = space -- a literal tab in this file fails the CI lint. Single
+# quotes keep make's $(...) out of the shell's hands.
+{
+   printf 'vjsimd:\n'
+   printf '\t@echo "SIMD=$(notdir $(BLITTER_SIMD_SRC)) TARGET=$(notdir $(TARGET))"\n'
+} > "$PROBE"
 
 fail=0
 checked=0
