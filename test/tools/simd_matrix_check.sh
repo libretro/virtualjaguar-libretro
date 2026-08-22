@@ -65,7 +65,25 @@ dump() {
    # -n prints the *unexecuted* `echo "SIMD=... TARGET=..."` line, quotes and
    # all, so strip the quotes before matching or the first token anchors to a
    # `"` and silently never matches.
-   make -n -f Makefile -f "$PROBE" vjsimd platform="$plat" "$@" 2>/dev/null \
+   # `env -u MAKEFLAGS` is load-bearing, not tidiness.  GNU make passes
+   # command-line variables to sub-makes through MAKEFLAGS, and this script
+   # runs from inside `make test` -- so under `make coverage`, which invokes
+   # `$(MAKE) COVERAGE=1 TEST_EXPORTS=1 test`, the probe below would inherit
+   # COVERAGE=1 and see `FLAGS += --coverage -O0 -g` appended after the
+   # resolved level.  Every rpi row then reports "last -O is -O0", which is
+   # the Makefile behaving CORRECTLY for a coverage build and this check
+   # asking the wrong question.
+   #
+   # The question these assertions exist to answer is what a RELEASE build
+   # resolves to, so the probe must be independent of whatever axes the
+   # calling make happens to carry.  The explicit empty assignments pin the
+   # rest of BUILD_AXES for the same reason -- a future `make test` variant
+   # that sets DEBUG=1 would otherwise silently move the answer again.
+   env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL \
+      make -n -f Makefile -f "$PROBE" vjsimd platform="$plat" \
+           COVERAGE= DEBUG= TEST_EXPORTS= BENCH_PROFILE= BLITTER_TRACE= \
+           RELEASE_DEBUG_INFO= DEBUG_PRESENTATION= STATIC_LINKING= \
+           "$@" 2>/dev/null \
       | tr -d '"' | sed -n 's/.*\(SIMD=.*\)/\1/p' | head -1
 }
 
