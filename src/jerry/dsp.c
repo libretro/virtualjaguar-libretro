@@ -29,6 +29,8 @@
 #include "m68000/m68kinterface.h"
 #include "settings.h"
 #include "tom.h"
+#include "blit_memo.h"
+#include "bus_arbiter.h"
 #include "../core/vjtrace.h"
 #include "perf_iface.h"
 
@@ -1065,10 +1067,674 @@ void DSPSyncToM68K(void)
 	VJP_LEAVE(VJP_DSP_SYNC);
 }
 
+/* ==================================================================
+ * Cycle-exact idle-loop fast-forward   (issue #569, perf audit P1)
+ * ==================================================================
+ *
+ * Commercial titles park the DSP in a 3-5 instruction wait loop for
+ * 74-99.7% of every frame while it still burns its whole 26.6 MHz
+ * budget interpreting that loop (docs/perf-audit-2026-08.md, P1).  This
+ * skips the provably redundant iterations.  It is NOT an approximation:
+ * the registers, the flags, the PC, the cycles charged and
+ * dsp_exec_opcode_count all end up exactly where the interpreter would
+ * have left them.  Run-ahead, netplay and savestates depend on that.
+ *
+ * ---- SAFETY THEOREM (verified against this tree, not assumed) -------
+ *
+ * (Line numbers below are pre-patch, i.e. as of the parent commit, so
+ * they line up with the file this block was written against.)
+ *
+ * (1) Nothing else in the machine executes inside one DSPExec() call.
+ *     The slice budget is "time until the next scheduled event":
+ *     JaguarExecuteNew() (src/core/jaguar.c:1683-1752) computes
+ *     GetTimeToNextEvent(), runs the 68K and the GPU, then calls
+ *     DSPExec(DSPSliceRemaining()); SubtractEventTimes() and
+ *     HandleNextEvent() only run AFTER DSPExec returns.  The OP runs
+ *     from a halfline event, i.e. also outside.  DSPSyncToM68K()
+ *     (dsp.c:1045-1066) is a different, EARLIER DSPExec call with its
+ *     own budget, not a re-entry -- it bails on dsp_in_exec.
+ *
+ * (2) No DSP interrupt can be dispatched mid-call for an admitted body.
+ *     NOTE: unlike GPUExec, DSPExec has no slice-entry DSPHandleIRQs
+ *     call at all.  The only in-loop dispatch is the
+ *     `IMASKCleared && dspFlagsRetireDelay == 0` re-check at the top of
+ *     DSPExec's loop below, and IMASKCleared is set only by a
+ *     store to D_FLAGS (dsp.c:698) -- which the admission rule excludes.
+ *     The other entry point, DSPSetIRQLine -> DSPHandleIRQsNP
+ *     (dsp.c:925-935), is only ever reached from event callbacks, i.e.
+ *     between slices, per (1).  The probe additionally requires
+ *     IMASKCleared == false and dspFlagsRetireDelay == 0, so neither
+ *     the pending-IRQ path nor the D_FLAGS retire countdown is live.
+ *
+ * (3) The register banks cannot move.  dsp_reg / dsp_alternate_reg are
+ *     repointed only by DSPUpdateRegisterBanks(), reachable from a
+ *     D_FLAGS write (dsp.c:756) or from taking an interrupt
+ *     (dsp.c:911) -- both excluded by (2).  The probe records the bank
+ *     pointer at the first snapshot and re-checks it at the third.
+ *
+ * (4) DSP-side reads are pure.  The HLE sound-engine auto-ack in
+ *     DSPReadWord/DSPReadLong (dsp.c:423/484) and the DSPGO poll
+ *     auto-clear (dsp.c:526) are all gated `who == M68K`.  Reads of
+ *     main DRAM take JaguarReadLong's `addr < 0x800000` fast path
+ *     (src/core/jaguar.c:1131-1141) whose only side effects are
+ *     VJT_WATCH_RD (compiled out unless VJ_TRACE) and BlitMemoNoteRead
+ *     (gated on blitMemoRecording); both are hard gates below.
+ *     busArbiter is charged there only for `who == OP`.
+ *
+ * Therefore: if a loop body performs no store and reads only plain RAM,
+ * every value it reads is constant for the remainder of the call, and
+ * one iteration is a pure function of (register file, flags).
+ *
+ * ---- ADMISSION RULE ------------------------------------------------
+ *
+ * Candidate: a TAKEN backward (or self-targeting) `jr` whose target is
+ * at most 8 words behind, with the whole body inside DSP local RAM.
+ * Body = target .. jr inclusive, plus the inlined delay-slot
+ * instruction.  Static decode (register-independent) requires:
+ *   - every opcode on the whitelist below (no store of any kind, no
+ *     accumulator/latency opcode, no second branch);
+ *   - the decode walk lands exactly on the jr, so the body really is
+ *     straight-line (movei carries a 32-bit immediate, i.e. 3 words);
+ *   - no movei in the delay slot (its immediate would be fetched from
+ *     past the branch).
+ * Register-dependent checks are deliberately deferred to the third
+ * snapshot: control can enter a loop body part-way through, so at the
+ * first snapshot a register written only in the early part of the body
+ * may still hold pre-loop garbage, and a load EA computed from it would
+ * be meaningless.  After two complete iterations the head state is
+ * steady-state and the checks are authoritative.
+ *
+ * ---- FIXED-POINT PROOF ---------------------------------------------
+ *
+ * Snapshots S0/S1/S2 are taken at the loop head (immediately after the
+ * taken jr's delay slot) on three consecutive arrivals, driven from
+ * DSPExec's own loop -- the probe iterations are ordinary interpreted
+ * execution, so no semantics are duplicated anywhere.  Extrapolate only
+ * when all of:
+ *   - the branch was taken all three times and landed on the same head
+ *     from the same jr (a different loop appearing mid-probe aborts it);
+ *   - elementwise S2-S1 == S1-S0 across BOTH register banks;
+ *   - dsp_flag_z/n/c identical in S0, S1 and S2;
+ *   - the measured cycle cost of iteration 1 equals iteration 2 (taken
+ *     as the delta of `cycles`, never recomputed from
+ *     dsp_opcode_cycles[] -- the inlined delay slot is not charged);
+ *   - likewise the measured dsp_exec_opcode_count delta;
+ *   - every register with a NONZERO per-iteration delta is read and
+ *     written only by an addqt/subqt whose destination is that same
+ *     register.
+ *
+ * That last rule is what makes the branch unable to flip.  It is
+ * strictly stronger than "the last flag-setting instruction reads only
+ * zero-delta registers": addqt/subqt are the only admitted opcodes that
+ * write no flags (dsp_opcode_addqt/subqt above), so any flag-setting
+ * instruction is forced to read zero-delta operands, AND so is every
+ * load base and every shift/rotate count.  Proof that the loop is then
+ * affine forever: memory is constant by the theorem, so with all
+ * zero-delta registers holding their S1 values and the flags holding
+ * their S1 values, every instruction that does not touch a counter
+ * register recomputes exactly the iteration-1 result -- hence flags and
+ * zero-delta registers stay put -- while each counter register is only
+ * ever incremented by a constant.  So iteration k's state is
+ * S1 + (k-1)*delta for all k, and the branch condition never changes.
+ *
+ * Then n = (cycles_remaining / cost) - 1 (always leave one full
+ * iteration to execute normally), reg += n*delta, cycles -= n*cost,
+ * dsp_exec_opcode_count += n*opcodes (crash_detect's wedge predicate
+ * reads that counter -- src/core/crash_detect.c:470-482 -- so a skipped
+ * loop must still look like progress).  Flags and PC are already
+ * correct by construction.  Nothing else is touched.
+ *
+ * Exit is automatic: the I2S/timer callback that eventually changes the
+ * polled location runs between slices, the next probe fails, and normal
+ * interpretation resumes.  No savestate impact -- every byte of probe
+ * state is re-derived from scratch inside each DSPExec call.
+ */
+
+/* Longest body accepted, in 16-bit words (jr offset range [-8,-1]). */
+#define DSP_IDLE_MAX_BODY	8
+/* Body instruction slots: <= 7 before the jr, plus the delay slot. */
+#define DSP_IDLE_MAX_INSN	10
+/* Per-slice reject memo: without it a loop that fails the fixed-point
+ * test would be re-probed every three iterations for the whole slice. */
+#define DSP_IDLE_MEMO		16
+
+/* Effective addresses we will admit for a load: DSP local SRAM (the
+ * range DSPReadLong itself serves out of dsp_ram_8 -- $F1B000-$F1CFFF,
+ * note this is the full 8K, not the $F1BFFF the task brief quoted) or
+ * main DRAM below the 2 MB aperture, where JaguarReadLong is a plain
+ * GET32 of jaguarMainRAM. */
+#define DSP_IDLE_EA_OK(ea) \
+	(((ea) >= DSP_WORK_RAM_BASE && (ea) <= DSP_WORK_RAM_BASE + 0x1FFF) \
+	 || ((ea) < 0x200000))
+
+#define DSP_IDLE_FETCH(a) \
+	((uint16_t)(((uint16_t)dsp_ram_8[(a) - DSP_WORK_RAM_BASE] << 8) \
+	            | (uint16_t)dsp_ram_8[(a) - DSP_WORK_RAM_BASE + 1]))
+
+/* Option gate (libretro `virtualjaguar_risc_idle_skip`) lives in vjs. */
+/* Diagnostics: counted only on the cold probe path, never per opcode. */
+uint32_t dsp_idle_skip_fires   = 0;		/* successful extrapolations */
+uint32_t dsp_idle_skip_rejects = 0;		/* candidate loops turned down */
+uint32_t dsp_idle_skip_iters   = 0;		/* iterations actually skipped */
+uint32_t dsp_idle_skip_opcodes = 0;		/* opcodes NOT interpreted -- the
+										 * honest, host-independent measure:
+										 * dsp_exec_opcode_count is advanced
+										 * over a skip on purpose, so it does
+										 * NOT show the saving. */
+
+static int       idleProbeStage;		/* 0 = none, 1 = have S0, 2 = have S1 */
+static uint32_t  idleProbeHead;
+static uint32_t  idleProbeJr;
+static uint32_t *idleProbeBank;			/* dsp_reg at S0 -- see theorem (3) */
+static int32_t   idleProbeCyc0, idleProbeCyc1;
+static uint32_t  idleProbeOpc0, idleProbeOpc1;
+static uint32_t  idleProbeS0[64], idleProbeS1[64];
+static uint8_t   idleProbeFz0, idleProbeFn0, idleProbeFc0;
+static uint8_t   idleProbeFz1, idleProbeFn1, idleProbeFc1;
+
+static uint8_t   idleBodyIdx[DSP_IDLE_MAX_INSN];
+static uint8_t   idleBodyP1[DSP_IDLE_MAX_INSN];
+static uint8_t   idleBodyP2[DSP_IDLE_MAX_INSN];
+static uint32_t  idleBodyImm[DSP_IDLE_MAX_INSN];
+static int       idleBodyCount;
+
+static uint32_t  idleMemoHead[DSP_IDLE_MEMO];
+static uint32_t  idleMemoJr[DSP_IDLE_MEMO];
+static int       idleMemoCount;
+static int       idleMemoNext;
+
+/* Opcode whitelist.  Admit only what has been reasoned about; anything
+ * absent is rejected, including every store (45/46/47/49/50/60/61), the
+ * accumulator and long-latency opcodes (16-21, 23, 26, 54-56, 63, 32)
+ * and both branches (52/53 -- the loop's own jr is handled separately).
+ * sat32s (42) is rejected because it reads dsp_acc, which the snapshot
+ * does not model; sat16s (33) is a pure RN->RN saturate and is admitted.
+ * mirror (48) and move_pc (51) are pure too but are left out to keep the
+ * whitelist to opcodes the audit actually observed in wait loops. */
+static int dsp_idle_op_admitted(uint32_t idx)
+{
+	switch (idx)
+	{
+	case  0: case  1: case  2: case  3:		/* add addc addq addqt */
+	case  4: case  5: case  6: case  7:		/* sub subc subq subqt */
+	case  8: case  9: case 10: case 11:		/* neg and or xor */
+	case 12: case 13: case 14: case 15:		/* not btst bset bclr */
+	case 22:								/* abs */
+	case 24: case 25: case 27:				/* shlq shrq sharq */
+	case 28: case 29:						/* ror rorq */
+	case 30: case 31:						/* cmp cmpq */
+	case 33:								/* sat16s */
+	case 34: case 35: case 36: case 37:		/* move moveq moveta movefa */
+	case 38:								/* movei */
+	case 39: case 40: case 41:				/* loadb loadw load */
+	case 43: case 44:						/* load_r14/15_indexed */
+	case 57:								/* nop */
+	case 58: case 59:						/* load_r14/15_ri */
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+/* Register operands of an admitted opcode, as indices into the 64-entry
+ * snapshot (0..31 = dsp_reg_bank_0, 32..63 = dsp_reg_bank_1).  `cur` is
+ * the base of the bank dsp_reg points at, `alt` the other one -- the
+ * bank split matters: moveta writes ALTERNATE_RN and movefa reads
+ * ALTERNATE_RM, which is exactly what Iron Soldier's wait loop polls.
+ * *dst is -1 when the instruction writes no register. */
+static int dsp_idle_operands(uint32_t idx, uint32_t p1, uint32_t p2,
+                             int cur, int alt, int *src, int *nsrc, int *dst)
+{
+	*nsrc = 0;
+	*dst  = -1;
+
+	switch (idx)
+	{
+	case  0: case  1: case  4: case  5:		/* add addc sub subc */
+	case  9: case 10: case 11:				/* and or xor */
+	case 28:								/* ror  (RM = count) */
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
+		*dst = cur + (int)p2;
+		return 1;
+	case 30:								/* cmp -- flags only */
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case  2: case  3: case  6: case  7:		/* addq addqt subq subqt */
+	case  8: case 12: case 14: case 15:		/* neg not bset bclr */
+	case 22: case 24: case 25: case 27:		/* abs shlq shrq sharq */
+	case 29: case 33:						/* rorq sat16s */
+		src[(*nsrc)++] = cur + (int)p2;
+		*dst = cur + (int)p2;
+		return 1;
+	case 13: case 31:						/* btst cmpq -- flags only */
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case 34:								/* move   RN = RM */
+	case 39: case 40: case 41:				/* loadb loadw load: RM = base */
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 35: case 38:						/* moveq / movei -- immediate */
+		*dst = cur + (int)p2;
+		return 1;
+	case 36:								/* moveta  ALT_RN = RM */
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = alt + (int)p2;
+		return 1;
+	case 37:								/* movefa  RN = ALT_RM */
+		src[(*nsrc)++] = alt + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 43:								/* load_r14_indexed */
+		src[(*nsrc)++] = cur + 14;
+		*dst = cur + (int)p2;
+		return 1;
+	case 44:								/* load_r15_indexed */
+		src[(*nsrc)++] = cur + 15;
+		*dst = cur + (int)p2;
+		return 1;
+	case 58:								/* load_r14_ri */
+		src[(*nsrc)++] = cur + 14;
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 59:								/* load_r15_ri */
+		src[(*nsrc)++] = cur + 15;
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 57:								/* nop */
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static int dsp_idle_memo_hit(uint32_t head, uint32_t jr)
+{
+	int i;
+
+	for (i = 0; i < idleMemoCount; i++)
+		if (idleMemoHead[i] == head && idleMemoJr[i] == jr)
+			return 1;
+	return 0;
+}
+
+static void dsp_idle_memo_reject(uint32_t head, uint32_t jr)
+{
+	if (dsp_idle_memo_hit(head, jr))
+		return;
+	idleMemoHead[idleMemoNext] = head;
+	idleMemoJr[idleMemoNext]   = jr;
+	idleMemoNext = (idleMemoNext + 1) % DSP_IDLE_MEMO;
+	if (idleMemoCount < DSP_IDLE_MEMO)
+		idleMemoCount++;
+	dsp_idle_skip_rejects++;
+}
+
+/* Register-independent decode of target..jr plus the delay slot. */
+static int dsp_idle_decode(uint32_t head, uint32_t jrAddr)
+{
+	uint32_t pc = head;
+	uint16_t op;
+	uint32_t idx;
+	int n = 0;
+
+	idleBodyCount = 0;
+
+	while (pc < jrAddr)
+	{
+		if (n >= DSP_IDLE_MAX_BODY)
+			return 0;
+		op  = DSP_IDLE_FETCH(pc);
+		idx = (uint32_t)(op >> 10);
+		if (!dsp_idle_op_admitted(idx))
+			return 0;
+		idleBodyIdx[n] = (uint8_t)idx;
+		idleBodyP1[n]  = (uint8_t)((op >> 5) & 0x1F);
+		idleBodyP2[n]  = (uint8_t)(op & 0x1F);
+		idleBodyImm[n] = 0;
+		if (idx == 38)						/* movei: opcode + LSW + MSW */
+		{
+			if (pc + 6 > jrAddr)			/* immediate would overrun the jr */
+				return 0;
+			idleBodyImm[n] = (uint32_t)DSP_IDLE_FETCH(pc + 2)
+			               | ((uint32_t)DSP_IDLE_FETCH(pc + 4) << 16);
+			pc += 6;
+		}
+		else
+			pc += 2;
+		n++;
+	}
+
+	if (pc != jrAddr)						/* decode fell out of step */
+		return 0;
+
+	/* The inlined delay slot at jr+2 runs on every iteration too.  A
+	 * movei there would fetch its immediate from past the branch, so
+	 * reject it rather than model it. */
+	op  = DSP_IDLE_FETCH(jrAddr + 2);
+	idx = (uint32_t)(op >> 10);
+	if (idx == 38 || !dsp_idle_op_admitted(idx))
+		return 0;
+	idleBodyIdx[n] = (uint8_t)idx;
+	idleBodyP1[n]  = (uint8_t)((op >> 5) & 0x1F);
+	idleBodyP2[n]  = (uint8_t)(op & 0x1F);
+	idleBodyImm[n] = 0;
+	n++;
+
+	idleBodyCount = n;
+	return 1;
+}
+
+/* Register-dependent half of the admission rule, run at S2 where the
+ * head state is provably steady.  Walks the body tracking each
+ * register's known value so a load base written earlier in the same body
+ * (Doom's `movei #addr,r2 ; load (r2),r1`) resolves to the address the
+ * load will really use, not to whatever the head snapshot held. */
+static int dsp_idle_check_body(const uint32_t *delta, int cur, int alt)
+{
+	uint32_t kval[64];
+	uint8_t  kok[64];
+	int src[3];
+	int nsrc, dst, s, j, i;
+	uint32_t idx, p1, p2, ea;
+
+	for (i = 0; i < 32; i++)
+	{
+		kval[i]      = dsp_reg_bank_0[i];
+		kval[32 + i] = dsp_reg_bank_1[i];
+		kok[i]       = 1;
+		kok[32 + i]  = 1;
+	}
+
+	for (j = 0; j < idleBodyCount; j++)
+	{
+		idx = idleBodyIdx[j];
+		p1  = idleBodyP1[j];
+		p2  = idleBodyP2[j];
+
+		if (!dsp_idle_operands(idx, p1, p2, cur, alt, src, &nsrc, &dst))
+			return 0;
+
+		/* A register whose per-iteration delta is nonzero is a pure
+		 * counter: it may only be read, and only be written, by an
+		 * addqt/subqt targeting itself.  Those two are the only
+		 * admitted opcodes that touch no flag, so this forbids a
+		 * growing value from reaching a compare, a load address, a
+		 * shift count or anything else. */
+		for (s = 0; s < nsrc; s++)
+			if (delta[src[s]] != 0
+			    && !((idx == 3 || idx == 7) && src[s] == dst))
+				return 0;
+		if (dst >= 0 && delta[dst] != 0 && !(idx == 3 || idx == 7))
+			return 0;
+
+		/* Loads: the effective address must be provably plain RAM. */
+		switch (idx)
+		{
+		case 39:							/* loadb */
+		case 40:							/* loadw */
+			/* Outside local RAM these divert to JaguarReadByte /
+			 * JaguarReadWord, whose full TOM/JERRY decode is not
+			 * audited here; inside it they degenerate to a pure
+			 * DSPReadLong of the containing long. */
+			if (!kok[cur + (int)p1])
+				return 0;
+			ea = kval[cur + (int)p1];
+			if (!(ea >= DSP_WORK_RAM_BASE && ea <= DSP_WORK_RAM_BASE + 0x1FFF))
+				return 0;
+			break;
+		case 41:							/* load */
+			if (!kok[cur + (int)p1])
+				return 0;
+			ea = kval[cur + (int)p1] & 0xFFFFFFFC;
+			if (!DSP_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 43:							/* load_r14_indexed */
+			if (!kok[cur + 14])
+				return 0;
+			ea = (kval[cur + 14] & 0xFFFFFFFC)
+			   + (dsp_convert_zero[p1] << 2);
+			if (!DSP_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 44:							/* load_r15_indexed */
+			if (!kok[cur + 15])
+				return 0;
+			ea = (kval[cur + 15] & 0xFFFFFFFC)
+			   + (dsp_convert_zero[p1] << 2);
+			if (!DSP_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 58:							/* load_r14_ri */
+			if (!kok[cur + 14] || !kok[cur + (int)p1])
+				return 0;
+			ea = (kval[cur + 14] + kval[cur + (int)p1]) & 0xFFFFFFFC;
+			if (!DSP_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 59:							/* load_r15_ri */
+			if (!kok[cur + 15] || !kok[cur + (int)p1])
+				return 0;
+			ea = (kval[cur + 15] + kval[cur + (int)p1]) & 0xFFFFFFFC;
+			if (!DSP_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		default:
+			break;
+		}
+
+		/* Propagate what we can still prove about the destination. */
+		if (dst >= 0)
+		{
+			switch (idx)
+			{
+			case 38:						/* movei -- 32-bit immediate */
+				kval[dst] = idleBodyImm[j];
+				kok[dst]  = 1;
+				break;
+			case 35:						/* moveq -- RN = IMM_1 */
+				kval[dst] = p1;
+				kok[dst]  = 1;
+				break;
+			case 34: case 36: case 37:		/* move / moveta / movefa */
+				kval[dst] = kval[src[0]];
+				kok[dst]  = kok[src[0]];
+				break;
+			default:
+				kok[dst] = 0;
+				break;
+			}
+		}
+	}
+
+	return 1;
+}
+
+static void dsp_idle_snapshot(uint32_t *s)
+{
+	memcpy(s,      dsp_reg_bank_0, 32 * sizeof(uint32_t));
+	memcpy(s + 32, dsp_reg_bank_1, 32 * sizeof(uint32_t));
+}
+
+/* Give up on an in-flight probe.  When the loop that displaced it is a
+ * different one, memo the abandoned loop: otherwise two interleaved
+ * loops could restart each other forever without either reaching S2. */
+static void dsp_idle_probe_abandon(uint32_t head, uint32_t jr)
+{
+	if (idleProbeStage != 0
+	    && (idleProbeHead != head || idleProbeJr != jr))
+		dsp_idle_memo_reject(idleProbeHead, idleProbeJr);
+	idleProbeStage = 0;
+}
+
+/* Called from DSPExec immediately after a taken backward/self `jr`, with
+ * dsp_pc already at the loop head and the delay slot already executed.
+ * Returns the (possibly advanced) cycle budget. */
+static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
+{
+	uint32_t delta[64];
+	int32_t  cost, n;
+	uint32_t opcost;
+	int      cur, alt, i;
+
+	/* Whole body -- including the delay slot and its trailing byte --
+	 * must sit in DSP local SRAM, so every fetch is a pure dsp_ram_8
+	 * read and the PC-escape check in DSPExec is a no-op for it. */
+	if (head < DSP_WORK_RAM_BASE
+	    || jrAddr + 3 > DSP_WORK_RAM_BASE + 0x1FFF)
+	{
+		dsp_idle_probe_abandon(head, jrAddr);
+		return cycles;
+	}
+
+	/* Theorem (2): a pending IMASK clear or an un-retired D_FLAGS store
+	 * means interrupt state is in flight; do not extrapolate over it.
+	 * Both are transient (DSPExec dispatches the pending IRQ on its very
+	 * next iteration), so this is a reset, not a permanent reject. */
+	if (IMASKCleared || dspFlagsRetireDelay)
+	{
+		dsp_idle_probe_abandon(head, jrAddr);
+		return cycles;
+	}
+
+	/* A different loop showed up mid-probe.  Only then -- calling this
+	 * unconditionally would reset the probe of the loop we are actually
+	 * in the middle of measuring, and nothing would ever reach S2. */
+	if (idleProbeStage != 0
+	    && (idleProbeHead != head || idleProbeJr != jrAddr))
+		dsp_idle_probe_abandon(head, jrAddr);
+
+	if (dsp_idle_memo_hit(head, jrAddr))
+		return cycles;
+
+	if (idleProbeStage == 0)
+	{
+		if (!dsp_idle_decode(head, jrAddr))
+		{
+			dsp_idle_memo_reject(head, jrAddr);
+			return cycles;
+		}
+		dsp_idle_snapshot(idleProbeS0);
+		idleProbeFz0   = dsp_flag_z;
+		idleProbeFn0   = dsp_flag_n;
+		idleProbeFc0   = dsp_flag_c;
+		idleProbeCyc0  = cycles;
+		idleProbeOpc0  = dsp_exec_opcode_count;
+		idleProbeHead  = head;
+		idleProbeJr    = jrAddr;
+		idleProbeBank  = dsp_reg;
+		idleProbeStage = 1;
+		return cycles;
+	}
+
+	if (idleProbeStage == 1)
+	{
+		dsp_idle_snapshot(idleProbeS1);
+		idleProbeFz1   = dsp_flag_z;
+		idleProbeFn1   = dsp_flag_n;
+		idleProbeFc1   = dsp_flag_c;
+		idleProbeCyc1  = cycles;
+		idleProbeOpc1  = dsp_exec_opcode_count;
+		idleProbeStage = 2;
+		return cycles;
+	}
+
+	/* Stage 2: the live machine state is S2. */
+	idleProbeStage = 0;
+
+	/* Flags must have been identical at all THREE loop heads.  Comparing
+	 * only S0 against S2 would admit a two-iteration oscillation whose
+	 * third iteration behaves like neither probe. */
+	if (idleProbeFz1 != idleProbeFz0 || idleProbeFn1 != idleProbeFn0
+	    || idleProbeFc1 != idleProbeFc0
+	    || dsp_flag_z != idleProbeFz0 || dsp_flag_n != idleProbeFn0
+	    || dsp_flag_c != idleProbeFc0)
+	{
+		dsp_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Theorem (3): the bank pointers must not have moved. */
+	if (dsp_reg != idleProbeBank)
+	{
+		dsp_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Cost and opcode count measured, never recomputed: the inlined
+	 * delay slot is not charged by DSPExec's own `cycles -=`. */
+	cost = idleProbeCyc0 - idleProbeCyc1;
+	if (cost <= 0 || (idleProbeCyc1 - cycles) != cost)
+	{
+		dsp_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+	opcost = idleProbeOpc1 - idleProbeOpc0;
+	if (opcost == 0 || (dsp_exec_opcode_count - idleProbeOpc1) != opcost)
+	{
+		dsp_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Per-iteration register delta must be constant across both probes. */
+	for (i = 0; i < 32; i++)
+	{
+		delta[i]      = idleProbeS1[i] - idleProbeS0[i];
+		delta[32 + i] = idleProbeS1[32 + i] - idleProbeS0[32 + i];
+		if (dsp_reg_bank_0[i] - idleProbeS1[i] != delta[i])
+		{
+			dsp_idle_memo_reject(head, jrAddr);
+			return cycles;
+		}
+		if (dsp_reg_bank_1[i] - idleProbeS1[32 + i] != delta[32 + i])
+		{
+			dsp_idle_memo_reject(head, jrAddr);
+			return cycles;
+		}
+	}
+
+	cur = (dsp_reg == dsp_reg_bank_0) ? 0 : 32;
+	alt = 32 - cur;
+
+	if (!dsp_idle_check_body(delta, cur, alt))
+	{
+		dsp_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Always leave one full iteration to execute normally. */
+	n = (cycles / cost) - 1;
+	if (n <= 0)
+		return cycles;
+
+	for (i = 0; i < 32; i++)
+	{
+		if (delta[i])
+			dsp_reg_bank_0[i] += (uint32_t)n * delta[i];
+		if (delta[32 + i])
+			dsp_reg_bank_1[i] += (uint32_t)n * delta[32 + i];
+	}
+	cycles -= n * cost;
+	dsp_exec_opcode_count += (uint32_t)n * opcost;
+
+	dsp_idle_skip_fires++;
+	dsp_idle_skip_iters   += (uint32_t)n;
+	dsp_idle_skip_opcodes += (uint32_t)n * opcost;
+
+	return cycles;
+}
+
 /* DSP execution core */
 
 void DSPExec(int32_t cycles)
 {
+	int idleSkipActive;
+
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
 	{
@@ -1082,10 +1748,59 @@ void DSPExec(int32_t cycles)
 	dsp_releaseTimeSlice_flag = 0;
 	dsp_in_exec++;
 
+	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
+	 * per-instruction state the affine extrapolation does not model, so
+	 * any of them turns the whole thing off:
+	 *   - vjs.riscIdleSkip: the user-facing core option itself;
+	 *   - blitMemoMode / blitMemoRecording: the JaguarRead and JaguarWrite
+	 *     families note reads and writes for the memo (blit_memo.h:64-65,
+	 *     src/core/jaguar.c:1139), and skipping loads would change what
+	 *     the memo records;
+	 *   - riscClockScalePct != 100: the slice budget is rescaled per
+	 *     slice, so "cycles remaining" is no longer the same currency the
+	 *     measured per-iteration cost was charged in;
+	 *   - busArbiter.enabled (the dram_timing option): bus occupancy is
+	 *     accounted per access.  Belt-and-braces here -- dsp.c never
+	 *     touches busArbiter and JaguarReadLong charges it only for
+	 *     `who == OP` -- but a DSP-side arbiter charge added later must
+	 *     not silently invalidate this;
+	 *   - vjs.gpuPipelineTiming: the DSP has no pipeline-timing mode of
+	 *     its own (DSPExecP/DSPExecP2 are declared in dsp.h but never
+	 *     called), and this is the only pipeline-timing switch the
+	 *     frontend exposes -- a user who turns it on has asked for
+	 *     accuracy over speed, so honour it for the DSP too;
+	 *   - DSP_CTRL single-step / single-go: the slice is one instruction;
+	 *   - vjtrace armed or a memory watch installed (VJ_TRACE builds
+	 *     only): VJT_PCHIST_DSP in this loop and VJT_WATCH_RD on the
+	 *     DRAM read path are per-instruction / per-read side effects.
+	 *     This has to be a RUNTIME check, not `#ifdef VJ_TRACE`: the
+	 *     whole test ABI is built with -DVJ_TRACE (Makefile:158-161),
+	 *     so a compile-time gate would make every headless harness --
+	 *     including the A/B that proves this exact -- silently measure
+	 *     a disabled feature.  Both flags default off, so the cost is
+	 *     two loads per slice on trace builds and nothing at all on
+	 *     release builds. */
+	idleSkipActive = vjs.riscIdleSkip
+	              && !blitMemoMode && !blitMemoRecording
+	              && riscClockScalePct == 100
+	              && !busArbiter.enabled
+	              && !vjs.gpuPipelineTiming
+	              && !(dsp_control & 0x18);
+#ifdef VJ_TRACE
+	if (vjtrace_armed || vjtrace_nwatch)
+		idleSkipActive = 0;
+#endif
+	/* Probe + reject memo are re-derived from scratch every call, so
+	 * nothing here reaches a savestate and nothing survives a slice. */
+	idleProbeStage = 0;
+	idleMemoCount  = 0;
+	idleMemoNext   = 0;
+
 	while (cycles > 0 && DSP_RUNNING)
 	{
       uint16_t opcode;
       uint32_t index;
+      uint32_t pcThis;
 #ifdef VJ_TRACE
       VJT_PCHIST_DSP(dsp_pc);
 #endif
@@ -1134,6 +1849,8 @@ void DSPExec(int32_t cycles)
 			break;
 		}
 
+		pcThis = dsp_pc;
+
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
 		{
 			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
@@ -1148,6 +1865,14 @@ void DSPExec(int32_t cycles)
 		dsp_exec_opcode_count++;
 		dsp_executeOpcode(index);
 		cycles -= dsp_opcode_cycles[index];
+
+		/* Idle-loop fast-forward (issue #569).  A taken `jr` that landed
+		 * on or behind its own address, at most 8 words back, is the only
+		 * candidate; the unsigned difference rejects a not-taken jr
+		 * (pc = pcThis + 2) and every forward branch in one compare. */
+		if (idleSkipActive && index == 53
+		    && (uint32_t)(pcThis - dsp_pc) <= 14)
+			cycles = DSPIdleLoopProbe(cycles, dsp_pc, pcThis);
 
 		/* Age out a D_FLAGS store once the instruction that was already
 		 * behind it in the pipeline has run (see DSPWriteLong, D_FLAGS
