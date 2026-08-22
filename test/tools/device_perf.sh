@@ -99,6 +99,12 @@ resolve_platform() {
          MODULES="$RA_DIR/pkg/apple/tvOS/modules"
          SCHEME="RetroArch tvOS Release"
          SDK=appletvos
+         # xcodebuild -destination platform= uses the DESTINATION namespace,
+         # which is not the SDK name: appletvos/iphoneos are SDKs, tvOS/iOS
+         # are destinations. Deriving one from the other silently produces
+         # `platform=appletvos`, which xcodebuild rejects. Confirmed against
+         # `xcodebuild -showdestinations`, which prints `platform:tvOS`.
+         DEST_PLATFORM=tvOS
          ;;
       ios|iOS)
          MK_PLATFORM=ios-arm64
@@ -106,6 +112,7 @@ resolve_platform() {
          MODULES="$RA_DIR/pkg/apple/iOS/modules"
          SCHEME="RetroArch iOS Release"
          SDK=iphoneos
+         DEST_PLATFORM=iOS
          ;;
       *) die "platform must be 'tvos' or 'ios' (got: '${1:-}')" ;;
    esac
@@ -211,7 +218,7 @@ cmd_install() {
    ( cd "$RA_DIR" && xcodebuild \
         -project pkg/apple/RetroArch_iOS13.xcodeproj \
         -scheme "$SCHEME" \
-        -destination "platform=${SDK/iphoneos/iOS},name=$DEVICE" \
+        -destination "platform=$DEST_PLATFORM,name=$DEVICE" \
         -allowProvisioningUpdates \
         build ) || die "xcodebuild failed -- see output above"
 
