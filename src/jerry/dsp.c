@@ -1113,8 +1113,12 @@ void DSPSyncToM68K(void)
  *     pointer at the first snapshot and re-checks it at the third.
  *
  * (4) DSP-side reads are pure.  The HLE sound-engine auto-ack in
- *     DSPReadWord/DSPReadLong (dsp.c:423/484) and the DSPGO poll
- *     auto-clear (dsp.c:526) are all gated `who == M68K`.  Reads of
+ *     DSPReadWord/DSPReadLong (dsp.c:423/484) are gated `who == M68K`.
+ *     The DSPGO poll auto-clear (dsp.c:526) tests `who == M68K` on the
+ *     clearing branch but resets dspgo_poll_count on its `else`, so a
+ *     DSP-side read of $F1A114 would touch that counter -- unreachable
+ *     here, because the load-EA rule admits DSP local SRAM and DRAM
+ *     only, never DSP_CONTROL_RAM_BASE.  Reads of
  *     main DRAM take JaguarReadLong's `addr < 0x800000` fast path
  *     (src/core/jaguar.c:1131-1141) whose only side effects are
  *     VJT_WATCH_RD (compiled out unless VJ_TRACE) and BlitMemoNoteRead
@@ -1124,6 +1128,16 @@ void DSPSyncToM68K(void)
  * Therefore: if a loop body performs no store and reads only plain RAM,
  * every value it reads is constant for the remainder of the call, and
  * one iteration is a pure function of (register file, flags).
+ *
+ * NOTE the premise is about the instructions the machine ACTUALLY
+ * executed between two arrivals at the loop head, not about the ones the
+ * decoder walked.  Those are not the same thing for free: the probe is
+ * only hooked on a taken backward jr, so a not-taken jr, a `jump` or
+ * plain fall-through can carry execution back to `head` without the
+ * probe ever seeing it.  The opcode-count identity in the proof below
+ * (opcost == idleBodyCount + 1) is what closes that gap; without it a
+ * compound period containing an undecoded store could satisfy every
+ * other condition here.
  *
  * ---- ADMISSION RULE ------------------------------------------------
  *
@@ -1159,6 +1173,10 @@ void DSPSyncToM68K(void)
  *     as the delta of `cycles`, never recomputed from
  *     dsp_opcode_cycles[] -- the inlined delay slot is not charged);
  *   - likewise the measured dsp_exec_opcode_count delta;
+ *   - that measured opcode delta equals idleBodyCount + 1 EXACTLY, which
+ *     is the count only a straight-line traversal of the decoded body
+ *     can produce -- this is the executed-path check, see the comment at
+ *     the test itself;
  *   - every register with a NONZERO per-iteration delta is read and
  *     written only by an addqt/subqt whose destination is that same
  *     register.
@@ -1190,7 +1208,9 @@ void DSPSyncToM68K(void)
  * state is re-derived from scratch inside each DSPExec call.
  */
 
-/* Longest body accepted, in 16-bit words (jr offset range [-8,-1]). */
+/* Longest body accepted, in 16-bit words (jr offset range [-8,-1]).
+ * Belt-and-braces only: the caller's `pcThis - dsp_pc <= 14` filter
+ * already caps [head, jr) at 7 words, so this bound never binds. */
 #define DSP_IDLE_MAX_BODY	8
 /* Body instruction slots: <= 7 before the jr, plus the delay slot. */
 #define DSP_IDLE_MAX_INSN	10
@@ -1681,6 +1701,43 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 		return cycles;
 	}
 
+	/* EXECUTED-PATH CHECK.  Everything above pins what the *decoded* body
+	 * would do; this is what pins that the machine actually walked it.
+	 *
+	 * The probe only fires on a TAKEN backward jr, so an arrival at the
+	 * loop head says nothing about how the previous arrival got here: a
+	 * NOT-taken jr, a `jump`, or fall-through all reach `head` without
+	 * ever entering this function.  A compound period that happens to
+	 * have the same net register/flag effect -- e.g. a counter that
+	 * cycles 2 -> 1 (taken) -> 0 (not taken) -> a fall-through path that
+	 * resets it, containing an undecoded `store` -- would otherwise pass
+	 * every check above, because the decoded portion really is pure and
+	 * the deltas really are constant.  Eliding `n` copies of that store
+	 * (I2S LTXD/RTXD, a blitter command, a latch clear) is exactly the
+	 * silent divergence this whole design exists to prevent.
+	 *
+	 * dsp_exec_opcode_count is incremented in precisely three places --
+	 * DSPExec's main loop, and the inlined delay slots in
+	 * dsp_opcode_jump and dsp_opcode_jr -- so one traversal of a
+	 * branch-free admitted body charges, deterministically:
+	 *
+	 *     (idleBodyCount - 1)   body instructions before the jr
+	 *   + 1                     the loop-closing jr itself
+	 *   + 1                     its inlined delay slot
+	 *   = idleBodyCount + 1
+	 *
+	 * (idleBodyCount counts the decoded [head, jr) instructions -- movei
+	 * once, not three times -- plus the delay slot; the jr is not in the
+	 * array.)  Any other route from one arrival to the next must execute
+	 * the whole body AND at least one further instruction to get back,
+	 * so it costs strictly more.  Requiring exact equality therefore
+	 * admits the straight-line traversal and nothing else. */
+	if (opcost != (uint32_t)idleBodyCount + 1)
+	{
+		dsp_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
 	/* Per-iteration register delta must be constant across both probes. */
 	for (i = 0; i < 32; i++)
 	{
@@ -1756,9 +1813,15 @@ void DSPExec(int32_t cycles)
 	 *     families note reads and writes for the memo (blit_memo.h:64-65,
 	 *     src/core/jaguar.c:1139), and skipping loads would change what
 	 *     the memo records;
-	 *   - riscClockScalePct != 100: the slice budget is rescaled per
-	 *     slice, so "cycles remaining" is no longer the same currency the
-	 *     measured per-iteration cost was charged in;
+	 *   - riscClockScalePct != 100: strictly speaking this one is
+	 *     conservative rather than necessary -- SCALE_RISC_CYCLES is
+	 *     applied where the budget is handed out (jaguar.c), not inside
+	 *     DSPExec, so `cycles` here is already in the same currency the
+	 *     measured per-iteration cost was charged in.  It stays because
+	 *     the overclock presets (#378) are themselves an accuracy
+	 *     trade-off already under investigation, and stacking a second
+	 *     non-stock execution path underneath them is not something this
+	 *     change should do unasked;
 	 *   - busArbiter.enabled (the dram_timing option): bus occupancy is
 	 *     accounted per access.  Belt-and-braces here -- dsp.c never
 	 *     touches busArbiter and JaguarReadLong charges it only for

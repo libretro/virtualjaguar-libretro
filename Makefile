@@ -1212,6 +1212,7 @@ clean:
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
+		test/tools/dsp_idle_probe_falsify \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
@@ -1276,6 +1277,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
+		test/tools/dsp_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
@@ -1569,6 +1571,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# every STATE_SAVE_BUF; yarc.j64 is in-tree so this never skips, and
 	@# a real music-on title is used when the private corpus is present.
 	./test/tools/test_runahead_determinism ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# DSP idle-loop fast-forward (#569): the admission rule must reject a
+	@# compound period that hides an undecoded store behind a not-taken jr
+	@# plus a jump back to the loop head -- and must still fire on a
+	@# genuinely idle loop, so a silently-disabled feature cannot pass.
+	@# Hand-assembles both shapes into DSP RAM; needs no ROM but yarc.
+	./test/tools/dsp_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Texture dump mode (issue #369): identity-contract freeze vs the
 	@# committed golden list, determinism, fast/accurate engine
 	@# independence, machine inertness (fb hashes + savestate digests
@@ -2349,6 +2357,22 @@ test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_wedge_spin.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/dsp_idle_probe_falsify: test/tools/dsp_idle_probe_falsify.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/dsp_idle_probe_falsify.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Not built by `test`: an A/B measurement harness, not an assertion.  See
+# the header comment for how to drive an option sweep with it.
+test/tools/dsp_idle_ab: test/tools/dsp_idle_ab.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/dsp_idle_ab.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
