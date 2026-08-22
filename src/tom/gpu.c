@@ -509,7 +509,7 @@ INLINE static void gpu_opcode_pack(void);
 
 INLINE static void executeOpcode(uint32_t index);
 
-uint8_t gpu_opcode_cycles[64] =
+static const uint8_t gpu_opcode_cycles[64] =
 {
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1,
@@ -519,26 +519,6 @@ uint8_t gpu_opcode_cycles[64] =
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1
-};
-
-void (*gpu_opcode[64])()=
-{
-	gpu_opcode_add,					gpu_opcode_addc,				gpu_opcode_addq,				gpu_opcode_addqt,
-	gpu_opcode_sub,					gpu_opcode_subc,				gpu_opcode_subq,				gpu_opcode_subqt,
-	gpu_opcode_neg,					gpu_opcode_and,					gpu_opcode_or,					gpu_opcode_xor,
-	gpu_opcode_not,					gpu_opcode_btst,				gpu_opcode_bset,				gpu_opcode_bclr,
-	gpu_opcode_mult,				gpu_opcode_imult,				gpu_opcode_imultn,				gpu_opcode_resmac,
-	gpu_opcode_imacn,				gpu_opcode_div,					gpu_opcode_abs,					gpu_opcode_sh,
-	gpu_opcode_shlq,				gpu_opcode_shrq,				gpu_opcode_sha,					gpu_opcode_sharq,
-	gpu_opcode_ror,					gpu_opcode_rorq,				gpu_opcode_cmp,					gpu_opcode_cmpq,
-	gpu_opcode_sat8,				gpu_opcode_sat16,				gpu_opcode_move,				gpu_opcode_moveq,
-	gpu_opcode_moveta,				gpu_opcode_movefa,				gpu_opcode_movei,				gpu_opcode_loadb,
-	gpu_opcode_loadw,				gpu_opcode_load,				gpu_opcode_loadp,				gpu_opcode_load_r14_indexed,
-	gpu_opcode_load_r15_indexed,	gpu_opcode_storeb,				gpu_opcode_storew,				gpu_opcode_store,
-	gpu_opcode_storep,				gpu_opcode_store_r14_indexed,	gpu_opcode_store_r15_indexed,	gpu_opcode_move_pc,
-	gpu_opcode_jump,				gpu_opcode_jr,					gpu_opcode_mmult,				gpu_opcode_mtoi,
-	gpu_opcode_normi,				gpu_opcode_nop,					gpu_opcode_load_r14_ri,			gpu_opcode_load_r15_ri,
-	gpu_opcode_store_r14_ri,		gpu_opcode_store_r15_ri,		gpu_opcode_sat24,				gpu_opcode_pack,
 };
 
 static uint8_t gpu_ram_8[0x1000];
@@ -650,7 +630,7 @@ static int32_t gpuSliceSpent;
 #define SET_ZNC_ADD(a,b,r)	SET_N(r); SET_Z(r); SET_C_ADD(a,b)
 #define SET_ZNC_SUB(a,b,r)	SET_N(r); SET_Z(r); SET_C_SUB(a,b)
 
-uint32_t gpu_convert_zero[32] =
+static const uint32_t gpu_convert_zero[32] =
 	{ 32,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 };
 
 uint8_t * branch_condition_table = 0;
@@ -882,7 +862,7 @@ uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 		return 0;
 	}
 
-	return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset + 2, who);
+	return JaguarReadLong(offset, who);
 }
 
 // GPU byte access (write)
@@ -1505,11 +1485,7 @@ void GPUExec(int32_t cycles)
        * charged, via the same gpu_bus_stall channel as DRAM costs). */
       if (pipeTiming)
          GPUPipeCheckUse(index);
-#if 0
-      gpu_opcode[index]();
-#else
-       executeOpcode(index);
-#endif
+      executeOpcode(index);
       if (pipeTiming)
       {
          gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall
