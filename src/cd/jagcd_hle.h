@@ -26,6 +26,14 @@ bool JaguarCDHLEGPUDataPhase(void);
 /* True if HLE mode is active (set by JaguarCDHLEBoot on success). */
 bool JaguarCDHLEActive(void);
 
+/* JaguarCDHLEHook's own internal gate, exposed as a plain bool for
+ * jaguar.c's M68KInstructionHook outer guard -- a direct mirror of the
+ * "if (!hle_active) return false;" check at the top of JaguarCDHLEHook,
+ * not the more conservative JaguarCDHLEActive() compound (which also
+ * requires bootConfig.strategy == &cd_boot_strategy_hle). All writers
+ * live in jagcd_hle.c. */
+extern bool hle_active;
+
 /* Streamed CD_read transfer: CD_read arms a transfer that this tick
  * advances at the real double-speed drive rate (352,800 B/s).  Called
  * once per halfline from HalflineCallback when CD content is loaded.
