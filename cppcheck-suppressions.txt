@@ -25,8 +25,11 @@ shiftTooManyBits:src/tom/blitter.c
 
 # Pre-existing signed-int shift in the GPU shifter unit -- standard
 # C UB (shifting a signed 32-bit value by 31 lands in the sign bit).
-# Tracked for follow-up.
+# Tracked for follow-up.  The DSP shifter (dsp_opcode_sha, dsp.c) uses
+# the identical expression -- it was ported verbatim from the GPU
+# implementation (issue #569 P5) -- so it inherits the same suppression.
 shiftTooManyBitsSigned:src/tom/gpu.c
+shiftTooManyBitsSigned:src/jerry/dsp.c
 
 # Object Processor sign-extension idiom: cast to int8_t then >> 4 to
 # sign-extend a 4-bit nibble.  Implementation-defined under C89 but
