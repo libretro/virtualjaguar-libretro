@@ -81,19 +81,17 @@ static bool cart_boot(const struct retro_game_info *info)
     return true;
 }
 
-static bool cart_instruction_hook(uint32_t pc)
-{
-    (void)pc;
-    return false;
-}
-
 static void cart_reset(void)
 {
 }
 
+/* instruction_hook is NULL -- cart boot never traps any PC, and jaguar.c's
+ * M68KInstructionHook already NULL-checks bootConfig.strategy->instruction_hook
+ * before calling it, so this is identical to the always-false stub it
+ * replaces (see perf(68k) hook-chain guard, issue #569). */
 const CDBootStrategy cd_boot_strategy_cart = {
     "cart",
     cart_boot,
-    cart_instruction_hook,
+    NULL,
     cart_reset
 };

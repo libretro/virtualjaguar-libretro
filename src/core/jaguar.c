@@ -387,25 +387,39 @@ void M68KInstructionHook(void)
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
       return;
 
-   /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small set
-    * of magic PCs in cart ROM space resolve to BIOS routines emulated in
-    * jagcd_hle.c instead of executing the cart bytes.  Returns true if the
-    * hook handled the call (PC/registers updated). */
-   if (JaguarCDHLEHook(m68kPC))
-      return;
+   /* The three hooks below each do a cheap internal check and return
+    * false for the overwhelming majority of titles (plain cart games:
+    * no CD HLE, no Memory Track cart inserted, and -- since cart's
+    * strategy->instruction_hook is NULL -- no boot-strategy hook either).
+    * Gate on the same three conditions directly so that common case pays
+    * three plain reads and one branch instead of three cross-TU calls
+    * every single 68K instruction. Order inside the guard matches the
+    * original unconditional call order exactly (CD HLE, then Memory
+    * Track, then boot strategy) -- only the outer gate is new. */
+   if (hle_active || jaguarMemTrackInserted
+         || (bootConfig.strategy && bootConfig.strategy->instruction_hook))
+   {
+      /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small
+       * set of magic PCs in cart ROM space resolve to BIOS routines
+       * emulated in jagcd_hle.c instead of executing the cart bytes.
+       * Returns true if the hook handled the call (PC/registers
+       * updated). */
+      if (JaguarCDHLEHook(m68kPC))
+         return;
 
-   /* Memory Track NVM BIOS dispatcher ($2404) — active for CD content in
-    * BOTH boot modes; the module is RAM-resident on hardware, independent
-    * of which CD BIOS variant booted the disc. */
-   if (NVMBiosHook(m68kPC))
-      return;
+      /* Memory Track NVM BIOS dispatcher ($2404) — active for CD content
+       * in BOTH boot modes; the module is RAM-resident on hardware,
+       * independent of which CD BIOS variant booted the disc. */
+      if (NVMBiosHook(m68kPC))
+         return;
 
-   /* CD boot strategy hook (cart strategy is a no-op for cart games;
-    * HLE/BIOS strategies trap specific PCs to inject boot stubs, patch
-    * auth checks, etc.). */
-   if (bootConfig.strategy && bootConfig.strategy->instruction_hook
-         && bootConfig.strategy->instruction_hook(m68kPC))
-      return;
+      /* CD boot strategy hook (cart strategy has no instruction_hook;
+       * HLE/BIOS strategies trap specific PCs to inject boot stubs,
+       * patch auth checks, etc.). */
+      if (bootConfig.strategy && bootConfig.strategy->instruction_hook
+            && bootConfig.strategy->instruction_hook(m68kPC))
+         return;
+   }
 }
 
 /* Custom UAE 68000 read/write/IRQ functions */
