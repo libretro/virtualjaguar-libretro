@@ -1998,33 +1998,20 @@ INLINE static void dsp_opcode_rorq(void)
 
 INLINE static void dsp_opcode_sha(void)
 {
-	int32_t sRm=(int32_t)RM;
-	uint32_t _Rn=RN;
+	uint32_t res;
 
-	if (sRm<0)
+	if ((int32_t)RM < 0)
 	{
-		uint32_t shift=-sRm;
-		if (shift>=32) shift=32;
-		dsp_flag_c=(_Rn&0x80000000)>>31;
-		while (shift)
-		{
-			_Rn<<=1;
-			shift--;
-		}
+		res = ((int32_t)RM <= -32) ? 0 : (RN << -(int32_t)RM);
+		dsp_flag_c = RN >> 31;
 	}
 	else
 	{
-		uint32_t shift=sRm;
-		if (shift>=32) shift=32;
-		dsp_flag_c=_Rn&0x1;
-		while (shift)
-		{
-			_Rn=((int32_t)_Rn)>>1;
-			shift--;
-		}
+		res = ((int32_t)RM >= 32) ? ((int32_t)RN >> 31) : ((int32_t)RN >> (int32_t)RM);
+		dsp_flag_c = RN & 0x01;
 	}
-	RN = _Rn;
-	SET_ZN(RN);
+	RN = res;
+	SET_ZN(res);
 }
 
 
@@ -2038,32 +2025,16 @@ INLINE static void dsp_opcode_sharq(void)
 
 INLINE static void dsp_opcode_sh(void)
 {
-	int32_t sRm=(int32_t)RM;
-	uint32_t _Rn=RN;
-
-	if (sRm<0)
+	if (RM & 0x80000000)		/* Shift left */
 	{
-		uint32_t shift=(-sRm);
-		if (shift>=32) shift=32;
-		dsp_flag_c=(_Rn&0x80000000)>>31;
-		while (shift)
-		{
-			_Rn<<=1;
-			shift--;
-		}
+		dsp_flag_c = RN >> 31;
+		RN = ((int32_t)RM <= -32 ? 0 : RN << -(int32_t)RM);
 	}
-	else
+	else						/* Shift right */
 	{
-		uint32_t shift=sRm;
-		if (shift>=32) shift=32;
-		dsp_flag_c=_Rn&0x1;
-		while (shift)
-		{
-			_Rn>>=1;
-			shift--;
-		}
+		dsp_flag_c = RN & 0x01;
+		RN = (RM >= 32 ? 0 : RN >> RM);
 	}
-	RN = _Rn;
 	SET_ZN(RN);
 }
 
