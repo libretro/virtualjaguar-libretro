@@ -183,7 +183,7 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
-              OPT_LEVEL
+              OPT_LEVEL LTO
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
@@ -938,6 +938,79 @@ ifneq ($(platform),theos_ios)
    endif
 endif
 endif
+
+# ----------------------------------------------------------------
+# ELF visibility / symbol interposition (issue #569).
+#
+# GCC assumes symbol interposition per translation unit unless told
+# otherwise: every cross-file global in the hot interpreter loops
+# (gpu_reg, dsp_pc, the flag/counter externs the 68K/GPU/DSP headers
+# share) gets reloaded through the GOT, and every cross-file call
+# (JaguarReadLong &c.) goes through the PLT, because in principle a
+# symbol could be overridden by something loaded earlier in the
+# process. That is a real possibility for a handful of libc entry
+# points and essentially never true of this project's own internals --
+# the whole exported surface is already pinned to a fixed set by
+# $(LINK_SCRIPT) (link.T / link-test.T), so nothing outside libretro.c's
+# retro_* functions is meant to be interposable at all.
+#
+# GC_STYLE=gnu (set above, per platform block) already identifies
+# exactly the ELF/GNU-ld matrix -- unix, qnx, rpi*, generic
+# arm64/aarch64, generic armv* -- as opposed to GC_STYLE=macho (Apple
+# ld64's two-level namespace already resolves same-image symbols
+# directly, so this is a Linux/Pi/Android win, not a macOS one) or
+# unset (STATIC_LINKING=1 archive targets, MSVC/Xbox, Solaris ld,
+# theos_ios, and classic_armv7_a7, which opts into its own bespoke
+# -flto=4 -fwhole-program pipeline in its platform block above instead).
+#
+# -fno-semantic-interposition is added UNGUARDED for the platforms this
+# repo actually builds and tests (unix, rpi*, generic arm64/aarch64,
+# generic armv*): this Makefile has no cc-option-style "does this flag
+# compile" probe anywhere (checked), GCC has accepted the flag since
+# 5.1 (2015), and Clang accepts and silently ignores it, so every
+# toolchain on those rows clears that bar. `qnx` is excluded from just
+# this one flag: nothing in .github/workflows/ or .gitlab-ci.yml builds
+# it (checked), so its toolchain floor is unverified, and QNX SDP 6.x's
+# qcc wraps a gcc old enough (4.x) that the flag can hard-error rather
+# than no-op there. -fvisibility=hidden has no such floor (GCC >= 4.0)
+# and stays on for qnx.
+#
+# -fvisibility=hidden is added for non-TEST_EXPORTS builds only.
+# TEST_EXPORTS=1 is the wide white-box test ABI: the harnesses dlsym()
+# internal symbols (see link-test.T / exports-test.list above), which
+# hiding at compile time would break even though the version script
+# still lists them. retro_* itself is unaffected either way -- every
+# entry point in libretro.c is declared RETRO_API in libretro.h, which
+# expands (libretro-common/include/libretro.h) to
+# __attribute__((visibility("default"))) on non-Windows GCC/Clang >= 4,
+# and a visibility attribute already present on an earlier declaration
+# governs the later definition regardless of -fvisibility's default.
+# Verified empirically at the .o level (see task report): retro_init
+# stays "external" under -fvisibility=hidden while an ordinary global
+# like videoBuffer drops to "private external" (ELF STV_HIDDEN's
+# Mach-O equivalent) -- the flag works, and RETRO_API is what exempts
+# retro_*.
+#
+# Neither flag is an -O, so neither can trip issue #516.
+ifeq ($(GC_STYLE),gnu)
+   ifneq ($(platform),qnx)
+      FLAGS += -fno-semantic-interposition
+   endif
+   ifneq ($(TEST_EXPORTS),1)
+      FLAGS += -fvisibility=hidden
+   endif
+
+   # Opt-in LTO (issue #569). Deliberately NOT default-on -- it wants an
+   # A/B on real Pi hardware first (test/tools/rpi_perf.sh exists for
+   # exactly that), same caution as the -O3 rollout above (#515/#516).
+   # `make LTO=1` (add `platform=rpi4_64` etc.) appends -flto to both
+   # the compile and link lines for every GC_STYLE=gnu target.
+   ifeq ($(LTO),1)
+      FLAGS   += -flto
+      LDFLAGS += -flto
+   endif
+endif
+# ----------------------------------------------------------------
 
 LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic)

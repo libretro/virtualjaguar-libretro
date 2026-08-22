@@ -88,7 +88,8 @@ when it differs it deletes the library **and every object** before building. Bot
 full rebuild per flip (~21s at `-j8` without ccache).
 
 Stamp covers **every** compile-affecting switch (`BUILD_AXES`: `TEST_EXPORTS BENCH_PROFILE
-DEBUG BLITTER_TRACE COVERAGE RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform`).
+DEBUG BLITTER_TRACE COVERAGE RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
+OPT_LEVEL LTO`).
 **Adding a new CFLAGS-affecting switch means adding it to that list** — forgetting = silent
 chimera binary, not a build error. It stamps variable *names*, not `$(CFLAGS)` (`DEBUG=1`
 injects a per-second `-DBUILD_TIMESTAMP`, so stamping flags would flush every build).
@@ -105,6 +106,52 @@ the stamp tracked `TEST_EXPORTS` alone → `make DEBUG=1` after a release recomp
 (a "debug build" that was all `-O2`, no debug info); toggling `BENCH_PROFILE` recompiled nothing
 so `timing_probe` reported `timing_halfline_callbacks counter not found` (reads as broken tool,
 not ignored flag). `VJ_EXPECT_BUILD` can't catch either — git rev is identical across the flip.
+
+## ELF visibility / interposition / LTO (issue #569)
+
+Every ELF/GNU-ld release build (`unix`, `rpi*`, generic `arm64`/`aarch64`/`armv*`, Android
+via `jni/Android.mk`) now compiles with `-fno-semantic-interposition` and, for
+non-`TEST_EXPORTS` builds, `-fvisibility=hidden`. Mach-O targets (`osx`, `ios*`, `tvos*`)
+are untouched — Apple ld64's two-level namespace already resolves same-image symbols
+directly, so GCC's ELF-only interposition assumption never applied there. Gated on
+`GC_STYLE=gnu` in the `Makefile` (the same variable that already marks exactly the
+GNU-ld targets for `--gc-sections`), so no new platform list to keep in sync.
+`qnx` also has `GC_STYLE=gnu` and keeps `-fvisibility=hidden` (GCC ≥ 4.0), but is
+excluded from `-fno-semantic-interposition` (needs GCC ≥ 5.1): no CI or buildbot job
+builds `qnx` in this repo, so its toolchain floor is unverified, and QNX SDP 6.x's `qcc`
+is known to wrap an old enough GCC that the flag can hard-error instead of no-op.
+
+- **Why:** without these flags, GCC treats every cross-file global (`gpu_reg`, `dsp_pc`,
+  the flag/counter externs the hot interpreter headers share) and every cross-file call
+  (`JaguarReadLong` &c.) as potentially interposable, forcing GOT/PLT indirection per
+  emulated instruction. This project already pins its entire exported surface via
+  `$(LINK_SCRIPT)` (`link.T`/`link-test.T`), so nothing outside `libretro.c`'s `retro_*`
+  functions is meant to be interposable in the first place.
+- **`TEST_EXPORTS` is exempt from `-fvisibility=hidden`:** the white-box harnesses
+  `dlsym()` internal symbols (see Test ABI section above); hiding them at compile time
+  would break that even though the version script still lists them.
+  `-fno-semantic-interposition` still applies under `TEST_EXPORTS=1` — it only affects
+  codegen, not the symbol table.
+- **`retro_*` stays exported under `-fvisibility=hidden`:** `libretro.h` declares every
+  entry point `RETRO_API`, which expands to
+  `__attribute__((visibility("default")))` on non-Windows GCC/Clang ≥ 4. A visibility
+  attribute already present on an earlier declaration governs the later definition, so
+  `libretro.c`'s definitions (which never repeat `RETRO_API`) inherit it from the header
+  they include.
+- **`LTO=1` opt-in knob:** `make LTO=1` (combine with `platform=` as usual) appends
+  `-flto` to both compile and link lines for every `GC_STYLE=gnu` target. Deliberately
+  **not** default-on — it needs an A/B on real Pi hardware first
+  (`test/tools/rpi_perf.sh`), the same caution the `-O3` rollout used (#515/#516).
+  `classic_armv7_a7` is unaffected either way: it already runs its own
+  `-flto=4 -fwhole-program` pipeline in its platform block, independent of this knob.
+  `LTO` is in `BUILD_AXES` since it changes object content.
+- **Android (`jni/Android.mk`):** `ndk-build` never includes `Makefile`, only
+  `Makefile.common`, so it inherited none of the desktop optimisation flags. `COREFLAGS`
+  now also carries `-O3 -DNDEBUG -fvisibility=hidden -fno-stack-protector
+  -fomit-frame-pointer -fno-semantic-interposition` by hand.
+- **Issue #516 does not apply here:** neither `-fvisibility=hidden` nor
+  `-fno-semantic-interposition` is an `-O`, so neither can silently shift a platform's
+  resolved optimisation level.
 
 ## Build-identity guard (stale-binary protection)
 
