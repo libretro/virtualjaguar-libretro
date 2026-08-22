@@ -306,12 +306,60 @@ else ifeq ($(platform), qnx)
 	CXX = QCC -Vgcc_ntoarmv7le_cpp
 
 # ARM
+# Generic ARM64 Linux.  Same defect as the rpi* names below: `arm64` matched
+# no branch in this chain and fell through to the Windows fallback, so it
+# built a .dll against -lwinmm (issue #560).  Its SIMD selection was already
+# correct -- Makefile.common matches `arm64` by platform name -- which is
+# exactly why this went unnoticed: the blitter looked right in a variable
+# dump while the link line was for the wrong OS.
+else ifneq (,$(filter arm64 aarch64,$(platform)))
+	TARGET := $(TARGET_NAME)_libretro.so
+	fpic := -fPIC
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
+	ARCH = aarch64
+
+# Raspberry Pi.  These are the names libretro-super passes.  Before issue
+# #560 this project had no branch for any of them, so they fell all the way
+# through to the *Windows* fallback at the end of this chain and built
+# `virtualjaguar_libretro.dll` linked against -lwinmm -lws2_32.  Scalar SIMD
+# was the least of it.
+#
+# The 32-bit names describe the userland, not the silicon: rpi2..rpi5 are all
+# NEON-capable running a 32-bit OS, but rpi1 and rpi0 are ARMv6 (ARM1176) with
+# no NEON at all, so they are deliberately absent from the NEON list.
+#
+# No -mcpu/-mtune and no -O level here.  Both are unmeasured on this hardware
+# and the standing rule from #515/#516/#517 is to measure first -- #516 is
+# precisely the case of an optimisation flag that looked applied and was not.
+else ifneq (,$(filter rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64,$(platform)))
+	TARGET := $(TARGET_NAME)_libretro.so
+	fpic := -fPIC
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
+	ifneq (,$(filter rpi3_64 rpi4_64 rpi5_64,$(platform)))
+		ARCH = aarch64
+	else
+		ARCH = arm
+		ifneq (,$(filter rpi2 rpi3 rpi4 rpi5,$(platform)))
+			HAVE_NEON = 1
+		endif
+	endif
+
 else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	GC_STYLE := gnu
 	ARCH = arm
+	# A platform name that says "neon" is a promise about the target, and
+	# it is the only NEON signal these generic armv* names carry: ARCH=arm
+	# above matches none of the aarch64/arm64 rules in Makefile.common, so
+	# armv7-neon-hardfloat built the SCALAR blitter (issue #560).  Plain
+	# armv7/armv6 names stay scalar -- ARMv7's baseline is VFP, not NEON.
+	ifneq (,$(findstring neon,$(platform)))
+		HAVE_NEON = 1
+	endif
 
 # Nintendo Switch (libnx)
 else ifeq ($(platform), libnx)
@@ -1092,6 +1140,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# hidden on the other platform, where harness_dlsym silently returns
 	@# NULL.  Cheap, so it runs before anything links against that ABI.
 	@python3 scripts/check-export-lists.py
+	@# Which blitter each platform actually selects (issue #560).  Same
+	@# spirit as the export-list check above: a build-system assertion that
+	@# needs no core, so it runs before anything links.  It exists because
+	@# picking the WRONG blitter is silent -- scalar compiles, links, and
+	@# passes every functional test below; it is only slow, on hardware no
+	@# CI runner owns.  Uses `make -n` deliberately; see the script header.
+	@bash test/tools/simd_matrix_check.sh
 	./test/test_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
