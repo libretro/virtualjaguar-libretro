@@ -114,12 +114,22 @@ via `jni/Android.mk`) now compiles with `-fno-semantic-interposition` and, for
 non-`TEST_EXPORTS` builds, `-fvisibility=hidden`. Mach-O targets (`osx`, `ios*`, `tvos*`)
 are untouched — Apple ld64's two-level namespace already resolves same-image symbols
 directly, so GCC's ELF-only interposition assumption never applied there. Gated on
-`GC_STYLE=gnu` in the `Makefile` (the same variable that already marks exactly the
-GNU-ld targets for `--gc-sections`), so no new platform list to keep in sync.
-`qnx` also has `GC_STYLE=gnu` and keeps `-fvisibility=hidden` (GCC ≥ 4.0), but is
-excluded from `-fno-semantic-interposition` (needs GCC ≥ 5.1): no CI or buildbot job
-builds `qnx` in this repo, so its toolchain floor is unverified, and QNX SDP 6.x's `qcc`
-is known to wrap an old enough GCC that the flag can hard-error instead of no-op.
+`GC_STYLE=gnu` in the `Makefile`, the same variable that already marks the GNU-ld targets
+for `--gc-sections` — but `GC_STYLE=gnu` is a slightly *wider* set than "ELF", so two
+platforms are explicitly carved back out:
+
+- **`qnx`** also has `GC_STYLE=gnu` and keeps `-fvisibility=hidden` (GCC ≥ 4.0), but is
+  excluded from `-fno-semantic-interposition` (needs GCC ≥ 5.1): no CI or buildbot job
+  builds `qnx` in this repo, so its toolchain floor is unverified, and QNX SDP 6.x's `qcc`
+  is known to wrap an old enough GCC that the flag can hard-error instead of no-op.
+- **`win`** (native MinGW) also sets `GC_STYLE=gnu` purely because MinGW's `ld` honours
+  `--version-script`/`--gc-sections` too — not because its output is ELF. `win`'s `TARGET`
+  is a PE/COFF `.dll`, and `libretro.h`'s `RETRO_API` expands to
+  `__attribute__((__dllexport__))` there, not the visibility attribute, so this whole
+  block's rationale (ELF-style GOT/PLT interposition, `RETRO_API` surviving
+  `-fvisibility=hidden` via inherited visibility) doesn't apply — and `win` *is* built in
+  CI (`c-cpp.yml`'s MSYS2 job, `release.yml`). It is excluded outright from all three of
+  `-fno-semantic-interposition`, `-fvisibility=hidden`, and the `LTO=1` knob below.
 
 - **Why:** without these flags, GCC treats every cross-file global (`gpu_reg`, `dsp_pc`,
   the flag/counter externs the hot interpreter headers share) and every cross-file call
@@ -139,8 +149,8 @@ is known to wrap an old enough GCC that the flag can hard-error instead of no-op
   `libretro.c`'s definitions (which never repeat `RETRO_API`) inherit it from the header
   they include.
 - **`LTO=1` opt-in knob:** `make LTO=1` (combine with `platform=` as usual) appends
-  `-flto` to both compile and link lines for every `GC_STYLE=gnu` target. Deliberately
-  **not** default-on — it needs an A/B on real Pi hardware first
+  `-flto` to both compile and link lines for every `GC_STYLE=gnu` target except `win`
+  (see above). Deliberately **not** default-on — it needs an A/B on real Pi hardware first
   (`test/tools/rpi_perf.sh`), the same caution the `-O3` rollout used (#515/#516).
   `classic_armv7_a7` is unaffected either way: it already runs its own
   `-flto=4 -fwhole-program` pipeline in its platform block, independent of this knob.

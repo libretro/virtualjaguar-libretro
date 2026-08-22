@@ -318,6 +318,11 @@ expect_vis unix     no  yes TEST_EXPORTS=1
 expect_vis rpi4_64  no  yes TEST_EXPORTS=1
 # Mach-O is GC_STYLE=macho, not gnu -- neither flag belongs there.
 expect_vis osx      no  no
+# win (native MinGW) is GC_STYLE=gnu too, but that is a --version-script
+# convenience, not an ELF signal: TARGET is a PE/COFF .dll and RETRO_API
+# there expands to __attribute__((__dllexport__)), not the visibility
+# attribute, so it is explicitly excluded from both flags in the Makefile.
+expect_vis win       no  no
 
 echo
 if [ "$fail" -ne 0 ]; then

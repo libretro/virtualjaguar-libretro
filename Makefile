@@ -954,14 +954,30 @@ endif
 # $(LINK_SCRIPT) (link.T / link-test.T), so nothing outside libretro.c's
 # retro_* functions is meant to be interposable at all.
 #
-# GC_STYLE=gnu (set above, per platform block) already identifies
-# exactly the ELF/GNU-ld matrix -- unix, qnx, rpi*, generic
-# arm64/aarch64, generic armv* -- as opposed to GC_STYLE=macho (Apple
-# ld64's two-level namespace already resolves same-image symbols
-# directly, so this is a Linux/Pi/Android win, not a macOS one) or
-# unset (STATIC_LINKING=1 archive targets, MSVC/Xbox, Solaris ld,
-# theos_ios, and classic_armv7_a7, which opts into its own bespoke
-# -flto=4 -fwhole-program pipeline in its platform block above instead).
+# GC_STYLE=gnu (set above, per platform block) identifies every target
+# that links through GNU ld with a --version-script, which is a
+# slightly WIDER set than "ELF": unix, qnx, rpi*, generic
+# arm64/aarch64, generic armv* are the real ELF/GNU-ld matrix this
+# block exists for, but the native `win` (MinGW) block also sets
+# GC_STYLE=gnu -- purely because MinGW's ld honours --version-script
+# and --gc-sections too, not because its output is ELF. `win`'s TARGET
+# is a PE/COFF .dll, and libretro.h's RETRO_API expands to
+# __attribute__((__dllexport__)) there (see libretro.h's RETRO_API
+# definition), not the visibility attribute -- so this block's whole
+# rationale (GOT/PLT indirection from ELF-style interposition,
+# RETRO_API surviving -fvisibility=hidden via inherited visibility)
+# does not apply to it, and `win` IS built in CI
+# (c-cpp.yml's MSYS2 job, release.yml). It is therefore excluded
+# outright, the same way `theos_ios` is excluded from the
+# --gc-sections block just above for an analogous "GC_STYLE says gnu
+# but the platform isn't the thing this flag is for" reason.
+#
+# GC_STYLE=macho (Apple ld64's two-level namespace already resolves
+# same-image symbols directly, so this is a Linux/Pi/Android win, not
+# a macOS one) and unset (STATIC_LINKING=1 archive targets, MSVC/Xbox,
+# Solaris ld, theos_ios, and classic_armv7_a7, which opts into its own
+# bespoke -flto=4 -fwhole-program pipeline in its platform block above
+# instead) are excluded by the outer ifeq itself.
 #
 # -fno-semantic-interposition is added UNGUARDED for the platforms this
 # repo actually builds and tests (unix, rpi*, generic arm64/aarch64,
@@ -969,11 +985,12 @@ endif
 # compile" probe anywhere (checked), GCC has accepted the flag since
 # 5.1 (2015), and Clang accepts and silently ignores it, so every
 # toolchain on those rows clears that bar. `qnx` is excluded from just
-# this one flag: nothing in .github/workflows/ or .gitlab-ci.yml builds
-# it (checked), so its toolchain floor is unverified, and QNX SDP 6.x's
-# qcc wraps a gcc old enough (4.x) that the flag can hard-error rather
-# than no-op there. -fvisibility=hidden has no such floor (GCC >= 4.0)
-# and stays on for qnx.
+# this one flag (but keeps -fvisibility=hidden and LTO=1 below): nothing
+# in .github/workflows/ or .gitlab-ci.yml builds it (checked), so its
+# toolchain floor is unverified, and QNX SDP 6.x's qcc wraps a gcc old
+# enough (4.x) that the flag can hard-error rather than no-op there.
+# -fvisibility=hidden has no such floor (GCC >= 4.0) and stays on for
+# qnx. `win` gets neither flag at all -- see above.
 #
 # -fvisibility=hidden is added for non-TEST_EXPORTS builds only.
 # TEST_EXPORTS=1 is the wide white-box test ABI: the harnesses dlsym()
@@ -993,6 +1010,7 @@ endif
 #
 # Neither flag is an -O, so neither can trip issue #516.
 ifeq ($(GC_STYLE),gnu)
+ifneq ($(platform),win)
    ifneq ($(platform),qnx)
       FLAGS += -fno-semantic-interposition
    endif
@@ -1004,11 +1022,13 @@ ifeq ($(GC_STYLE),gnu)
    # A/B on real Pi hardware first (test/tools/rpi_perf.sh exists for
    # exactly that), same caution as the -O3 rollout above (#515/#516).
    # `make LTO=1` (add `platform=rpi4_64` etc.) appends -flto to both
-   # the compile and link lines for every GC_STYLE=gnu target.
+   # the compile and link lines for every GC_STYLE=gnu target except
+   # `win` (see above).
    ifeq ($(LTO),1)
       FLAGS   += -flto
       LDFLAGS += -flto
    endif
+endif
 endif
 # ----------------------------------------------------------------
 
