@@ -27,6 +27,16 @@
  * one blit), never an interpreter inner loop, so a perfectly-predicted
  * never-taken branch at that granularity is not measurable.
  *
+ * NOTE that "declines" is narrower than "counters are off".  RetroArch
+ * ACCEPTS env 28 unconditionally and gates on its own `perfcnt_enable`
+ * setting further in: registration is never gated, only start/stop and
+ * perf_log are (runloop.c).  So during ordinary RetroArch play vjPerfActive
+ * is 1, the branch above is taken, and each probe makes a real indirect call
+ * that returns immediately -- on the order of 2,000 per frame.  Still
+ * negligible at slice granularity, but it is not the zero described above,
+ * and it is why a capture with the setting off yields all-zero counters
+ * rather than an error.  docs/profiling.md spells out that trap.
+ *
  * ---------------------------------------------------------------------
  * READING THE NUMBERS -- these counters deliberately OVERLAP
  *

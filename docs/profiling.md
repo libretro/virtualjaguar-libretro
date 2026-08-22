@@ -27,6 +27,79 @@ offers the interface.
    retrieve off a locked-down device than reading them off the TV.
 3. **Settings → Logging → Log Verbosity → On** if you want the log copy.
 
+### Two traps that make a capture silently worthless
+
+Both were found by reading RetroArch's `runloop.c`, and neither announces
+itself — the failure looks like a working run.
+
+**1. `perfcnt_enable` is mandatory, and off means zero, not "off".**
+
+```
+runloop_performance_counter_register()  -- NEVER gated
+core_performance_counter_start/stop()   -- gated on perfcnt_enable
+runloop_perf_log()                      -- returns early if disabled
+```
+
+Registration always succeeds, so the core sets `vjPerfActive = 1`, every
+probe fires, and every counter stays at **zero**. A capture taken with the
+setting off is indistinguishable from a core whose instrumentation is
+broken. Set it in the menu, or put `perfcnt_enable = "true"` in
+`retroarch.cfg` — the scripts below do the latter.
+
+*Corollary for shipping builds:* under RetroArch the core's fast path is
+**not** the "never-taken branch" described in `perf_iface.h`. RetroArch
+accepts the interface even with counters disabled, so `vjPerfActive` is 1
+and each probe makes a real indirect call that returns immediately. That is
+~2,000 such calls per frame — negligible at slice granularity, but it is not
+zero, and it is only zero on frontends that actually *decline* env 28.
+
+**2. The log prints an AVERAGE, not a total.**
+
+```c
+#define PERF_LOG_FMT "[PERF] Avg (%s): %llu ticks, %llu runs.\n"
+```
+
+Total ticks = `avg × runs`. This matters more than it sounds: the blitter is
+few calls that are individually expensive and the GPU is very many cheap
+ones, so ranking by the printed figure **inverts the exact comparison the
+counters exist to make**. On `yarc.j64` the blitter's average is ~32× the
+GPU's while its total is ~4× *smaller*.
+
+### Automated capture
+
+Two scripts drive the whole loop and share one report parser, so the iOS/tvOS
+and Raspberry Pi paths print the same table.
+
+```bash
+# iOS / tvOS, through your own RetroArch checkout
+test/tools/device_perf.sh doctor                      # devices + build id
+test/tools/device_perf.sh build   tvos                # + build-identity assert
+test/tools/device_perf.sh install tvos -d "Bedroom"   # sign, inject, deploy
+test/tools/device_perf.sh cfg            -d "Bedroom" # perfcnt_enable=true
+test/tools/device_perf.sh capture        -d "Bedroom" # prints the manual step
+test/tools/device_perf.sh pull           -d "Bedroom" -o run.log
+test/tools/device_perf.sh report run.log --json run.json
+```
+
+```bash
+# Raspberry Pi (or any Linux ARM box you can ssh to)
+test/tools/rpi_perf.sh build --arch aarch64           # container; artefacts only
+test/tools/rpi_perf.sh doctor  pi@raspberrypi.local   # real-hardware gate
+test/tools/rpi_perf.sh deploy  pi@raspberrypi.local
+test/tools/rpi_perf.sh profile pi@raspberrypi.local --frames 1800
+```
+
+`rpi_perf.sh` runs `perf_iface_witness` on the Pi rather than RetroArch — it
+is a complete env-28 frontend in a single file, so it needs no frontend,
+no GUI and no config, and trap 1 above cannot apply to it.
+
+**It will refuse to report timings from emulated hardware.** `bench` and
+`profile` both gate on `doctor`, which requires a Raspberry Pi
+`/proc/device-tree/model` and a non-virtualised
+`systemd-detect-virt`. An aarch64 container on your Mac will build the core
+happily and produce entirely meaningless numbers; the gate exists because
+the dangerous outcome is not a wrong number, it is a *confident* one.
+
 ### The counters
 
 | Counter | What it brackets |
