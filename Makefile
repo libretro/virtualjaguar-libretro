@@ -1212,7 +1212,7 @@ clean:
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
-		test/tools/dsp_idle_probe_falsify \
+		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \

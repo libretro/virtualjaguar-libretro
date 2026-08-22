@@ -1,6 +1,9 @@
 /*
- * dsp_idle_ab.c -- scratch A/B determinism harness for the DSP idle-loop
- * fast-forward (issue #569).  NOT committed.
+ * dsp_idle_ab.c -- A/B determinism harness for the DSP idle-loop
+ * fast-forward (issue #569).  Built via `make test/tools/dsp_idle_ab`;
+ * not itself wired into `make test` (dsp_idle_probe_falsify is the
+ * committed, always-run regression guard -- this tool is for manual
+ * sweeps across titles/frame counts when re-validating the feature).
  *
  * Emits one CSV row per frame:
  *     frame,vhash,ahash,asamples,statehash

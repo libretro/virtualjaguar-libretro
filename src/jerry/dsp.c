@@ -1291,6 +1291,11 @@ static int dsp_idle_op_admitted(uint32_t idx)
 	case 57:								/* nop */
 	case 58: case 59:						/* load_r14/15_ri */
 		return 1;
+	/* 52 (jump) and 53 (jr) are deliberately absent: excluding every
+	 * PC-modifying opcode but the loop-closing jr itself is load-bearing
+	 * for the executed-path check below (idleBodyCount forces exactly
+	 * one route from head to jrAddr), not only for the store-freedom
+	 * this whitelist was originally written to guarantee. */
 	default:
 		return 0;
 	}
@@ -1716,10 +1721,12 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 	 * (I2S LTXD/RTXD, a blitter command, a latch clear) is exactly the
 	 * silent divergence this whole design exists to prevent.
 	 *
-	 * dsp_exec_opcode_count is incremented in precisely three places --
+	 * dsp_exec_opcode_count is incremented in three reachable places --
 	 * DSPExec's main loop, and the inlined delay slots in
-	 * dsp_opcode_jump and dsp_opcode_jr -- so one traversal of a
-	 * branch-free admitted body charges, deterministically:
+	 * dsp_opcode_jump and dsp_opcode_jr (a fourth site exists in the
+	 * pipelined DSP_jr, but that executor is dead code -- DSPExecP/
+	 * DSPExecP2 are declared and never defined) -- so one traversal of
+	 * a branch-free admitted body charges, deterministically:
 	 *
 	 *     (idleBodyCount - 1)   body instructions before the jr
 	 *   + 1                     the loop-closing jr itself
