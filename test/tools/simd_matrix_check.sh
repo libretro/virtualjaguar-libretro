@@ -9,9 +9,11 @@
 # notice.  This script is the thing that notices.
 #
 # What it caught when it was written:
-#   * platform=unix with an aarch64- cross CC -- the shipped "Linux 64-bit
-#     (ARM)" buildbot binary -- selected SCALAR on hardware where NEON is
-#     architecturally mandatory.
+#   * platform=unix with an aarch64- CROSS CC selected SCALAR on hardware
+#     where NEON is architecturally mandatory.  (Not the official ARM64
+#     Linux cores -- both build natively with plain gcc, so `uname -m`
+#     fired and they always had NEON.  This hit cross-builds: distro
+#     packagers, container cross-compiles.)
 #   * armv7-neon-hardfloat, a platform named after NEON, selected SCALAR.
 #   * every rpi* name fell through to the Windows branch and built a .dll.
 #
@@ -47,7 +49,7 @@ trap 'rm -f "$PROBE"' EXIT
 # quotes keep make's $(...) out of the shell's hands.
 {
    printf 'vjsimd:\n'
-   printf '\t@echo "SIMD=$(notdir $(BLITTER_SIMD_SRC)) TARGET=$(notdir $(TARGET))"\n'
+   printf '\t@echo "SIMD=$(notdir $(BLITTER_SIMD_SRC)) TARGET=$(notdir $(TARGET)) CFLAGS=$(CFLAGS)"\n'
 } > "$PROBE"
 
 fail=0
@@ -64,7 +66,7 @@ dump() {
    # all, so strip the quotes before matching or the first token anchors to a
    # `"` and silently never matches.
    make -n -f Makefile -f "$PROBE" vjsimd platform="$plat" "$@" 2>/dev/null \
-      | tr -d '"' | tr ' ' '\n' | grep -E '^(SIMD|TARGET)=' | tr '\n' ' '
+      | tr -d '"' | sed -n 's/.*\(SIMD=.*\)/\1/p' | head -1
 }
 
 # expect <expected-simd> <platform> [CC=...] -- '*' to skip the SIMD check
@@ -110,11 +112,71 @@ expect() {
    return 0
 }
 
+# expect_tune <platform> <expected-last-O> <expected-mcpu|-> <expect-32bit-fp:yes|no>
+#
+# Guards issue #516, which is a DIFFERENT failure from the SIMD one above and
+# needs its own assertion: classic_armv7_a7 asked for -Ofast in its platform
+# block for years and silently built at -O2, because the shared release branch
+# appended -O2 afterwards and the LAST -O wins.  Nothing noticed, because a
+# wrong -O level -- exactly like a wrong blitter -- compiles, links and passes
+# every functional test.
+#
+# So this asserts the resolved level is the last -O in CFLAGS, not merely
+# present, and that exactly one -O appears at all.
+#
+# It also asserts -mfpu/-mfloat-abi appear ONLY on 32-bit ARM: aarch64 gcc
+# hard-errors on them ("unrecognized command-line option '-mfpu=neon-fp-armv8'"),
+# so leaking one onto a *_64 row breaks that build outright.
+expect_tune() {
+   local plat="$1" want_o="$2" want_mcpu="$3" want_fp="$4"
+   local got cflags last_o n_o mcpu has_fp
+
+   checked=$((checked + 1))
+   got="$(dump "$plat")"
+   cflags="$(printf '%s' "$got" | sed -n 's/.*CFLAGS=//p')"
+
+   if [ -z "$cflags" ]; then
+      printf 'FAIL  %-42s could not read CFLAGS\n' "$plat"; fail=$((fail + 1)); return
+   fi
+
+   last_o="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -E '^-O' | tail -1)"
+   n_o="$(  printf '%s' "$cflags" | tr ' ' '\n' | grep -cE '^-O')"
+   mcpu="$( printf '%s' "$cflags" | tr ' ' '\n' | grep -E '^-mcpu=' | tail -1)"
+   has_fp="$(printf '%s' "$cflags" | tr ' ' '\n' | grep -cE '^-(mfpu=|mfloat-abi=)')"
+
+   if [ "$last_o" != "$want_o" ]; then
+      printf 'FAIL  %-42s last -O is %s, expected %s (issue #516)\n' "$plat" "${last_o:-none}" "$want_o"
+      fail=$((fail + 1)); return
+   fi
+   if [ "$n_o" -ne 1 ]; then
+      printf 'FAIL  %-42s %s -O flags in CFLAGS; expected exactly 1 (issue #516)\n' "$plat" "$n_o"
+      fail=$((fail + 1)); return
+   fi
+   if [ "$want_mcpu" = "-" ]; then
+      if [ -n "$mcpu" ]; then
+         printf 'FAIL  %-42s unexpected %s\n' "$plat" "$mcpu"; fail=$((fail + 1)); return
+      fi
+   elif [ "$mcpu" != "-mcpu=$want_mcpu" ]; then
+      printf 'FAIL  %-42s -mcpu is %s, expected -mcpu=%s\n' "$plat" "${mcpu:-none}" "$want_mcpu"
+      fail=$((fail + 1)); return
+   fi
+   if [ "$want_fp" = yes ] && [ "$has_fp" -eq 0 ]; then
+      printf 'FAIL  %-42s 32-bit ARM row is missing -mfpu/-mfloat-abi\n' "$plat"; fail=$((fail + 1)); return
+   fi
+   if [ "$want_fp" = no ] && [ "$has_fp" -ne 0 ]; then
+      printf 'FAIL  %-42s 64-bit row carries -mfpu/-mfloat-abi; aarch64 gcc rejects those\n' "$plat"
+      fail=$((fail + 1)); return
+   fi
+
+   [ "$VERBOSE" = 1 ] && printf 'ok    %-42s %s %s\n' "$plat" "$last_o" "${mcpu:-(no -mcpu)}"
+   return 0
+}
+
 echo "simd_matrix_check: blitter selection per platform (issue #560)"
 
-# --- the regression that shipped: cross-compiled ARM64 Linux ---------------
-# platform=unix + an aarch64 cross CC is .gitlab-ci.yml:44, "Linux 64-bit
-# (ARM)" -- the binary an actual Raspberry Pi user installs.
+# --- cross-compiled ARM64 Linux --------------------------------------------
+# Not what the official runners do (they are native), but what a distro
+# packager or a container cross-build does.
 expect neon   unix CC=aarch64-linux-gnu-gcc
 expect neon   unix CC=aarch64-none-linux-gnu-gcc
 # 32-bit armhf says nothing about NEON (VFP baseline, and ARMv6 parts exist),
@@ -160,6 +222,27 @@ case "$(uname -m 2>/dev/null)" in
    x86_64|i686|i386)     expect sse2   unix ;;
    *)                    expect '*'    unix ;;
 esac
+
+# --- per-SoC tuning and optimisation level (issues #560, #516) --------------
+# The Pi platform names identify the silicon exactly, so -mcpu is a fact here
+# rather than a guess. rpi0/rpi1 are ARMv6 (ARM1176, no NEON); the rest are
+# A7/A53/A72/A76.
+echo
+echo "simd_matrix_check: -O level and per-SoC tuning (issues #516, #560)"
+expect_tune rpi0     -O3 arm1176jzf-s yes
+expect_tune rpi1     -O3 arm1176jzf-s yes
+expect_tune rpi2     -O3 cortex-a7    yes
+expect_tune rpi3     -O3 cortex-a53   yes
+expect_tune rpi3_64  -O3 cortex-a53   no
+expect_tune rpi4     -O3 cortex-a72   yes
+expect_tune rpi4_64  -O3 cortex-a72   no
+expect_tune rpi5     -O3 cortex-a76   yes
+expect_tune rpi5_64  -O3 cortex-a76   no
+# The target #516 was actually about: -Ofast must survive to the end.
+expect_tune classic_armv7_a7 -Ofast - yes
+# Non-Pi ARM must NOT acquire -mcpu -- we do not know their silicon.
+expect_tune tvos-arm64 -O3 - no
+expect_tune vita       -O2 - no
 
 echo
 if [ "$fail" -ne 0 ]; then

@@ -126,15 +126,19 @@ else
 # Derive ARCH from the toolchain triple when the platform block did not set
 # it.  Issue #560.
 #
-# This is the case that reaches actual users.  The rules below key on
-# $(ARCH); the native `uname -m` fallback further down is deliberately
-# skipped for cross-compilers (BLITTER_CROSS_CC); and no platform block
-# sets ARCH for a generic `platform=unix` cross-build.  So the shipped
-# "Linux 64-bit (ARM)" buildbot binary -- .gitlab-ci.yml:44, built as
-# platform=unix with an aarch64- prefixed CC -- matched nothing and fell
-# through to the SCALAR blitter on hardware where NEON is architecturally
-# mandatory.  The guard written to prevent false detection was, by itself,
-# forcing the slow path.
+# The rules below key on $(ARCH); the native `uname -m` fallback further
+# down is deliberately skipped for cross-compilers (BLITTER_CROSS_CC); and
+# no platform block sets ARCH for a generic `platform=unix` cross-build.  So
+# a cross-compiled aarch64 build matched nothing and fell through to the
+# SCALAR blitter on hardware where NEON is architecturally mandatory.  The
+# guard written to prevent false detection was, by itself, forcing the slow
+# path.
+#
+# NOT the official Linux ARM64 cores, to be clear: both the GitLab buildbot
+# (ci-templates linux-aarch64.yml, `tags: aarch64`) and the GitHub
+# release/nightly matrix row build NATIVELY with plain `gcc`, so `uname -m`
+# fired and they always had NEON.  This hits cross-builds -- distro
+# packagers, container cross-compiles, anyone following a cross recipe.
 #
 # Only aarch64 is inferred.  A 32-bit arm-*-gnueabihf triple says nothing
 # about NEON (the armhf baseline is VFP; ARMv6 parts such as the Pi 1 and
