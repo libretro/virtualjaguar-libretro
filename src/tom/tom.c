@@ -1543,8 +1543,26 @@ void TOMExecHalfline(uint16_t halfline, bool render)
 
          // Clear line buffer with BG
          if (GET16(tomRam8, VMODE) & BGEN) // && (CRY or RGB16)...
-            for(i=0; i<720; i++)
-               *current_line_buffer++ = bgHI, *current_line_buffer++ = bgLO;
+         {
+            /* Widened from 1440 byte stores to 720 word stores (#569/P8).
+             * Write the first pixel byte-by-byte (same order as the loop
+             * this replaces: high byte, then low byte), then re-load it
+             * as a native 16-bit word and replicate that word the rest
+             * of the way. This is a raw RAM-to-RAM repeat, not an
+             * endian-corrected value, so it is safe on any host byte
+             * order -- see the paletteRAM16 comment in op.c for the same
+             * "OK for direct copies, not for endian-corrected data"
+             * pattern applied to this exact line buffer. */
+            uint16_t * current_line_buffer16 = (uint16_t *)current_line_buffer;
+            uint16_t bgPixel;
+
+            current_line_buffer[0] = bgHI;
+            current_line_buffer[1] = bgLO;
+            bgPixel = current_line_buffer16[0];
+
+            for (i = 1; i < 720; i++)
+               current_line_buffer16[i] = bgPixel;
+         }
 
          OPProcessList(halfline, render);
       }
