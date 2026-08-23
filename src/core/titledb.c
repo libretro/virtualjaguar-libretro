@@ -146,13 +146,21 @@ static const TitleDBEntry titledb_table[] = {
       0xDC187F82, "Alien vs Predator",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         /* NOT tagged with virtualjaguar_blit_memo yet -- see
+         /* Deliberately NOT tagged with virtualjaguar_blit_memo -- see
           * docs/blit-memo.md.  AvP is the memo's best-evidenced title
           * (710,433 verify checks, 0 divergences, bit-identical A/B
-          * over 8,000 frames) but that covers the scenes one fixture
-          * reaches, and the corpus sweep is unfinished.  Tagging here
-          * turns the memo ON by default for every AvP user, so it
-          * waits for the full sweep plus a device check. */
+          * over 8,000 frames) and the full 64-title corpus sweep is
+          * clean too, so this is not a soundness gap. It is declined
+          * on measured benefit: the memo only ever skips idle-window
+          * redundant blits, which are themselves ~15% of idle wall
+          * time at 2x, so the memo buys roughly -15% of that slice --
+          * about 2% of idle time, unmeasurable in RetroArch (issue
+          * #411). Tagging would turn it on by default for every AvP
+          * user for a gain that small, adding a 14.6MB entry pool +
+          * 9.6MB shadow arena (too much for iOS, open item 3) and an
+          * untested interaction with run-ahead/rollback (open item 6).
+          * Revisit only if the benefit is remeasured larger, or the
+          * memory/determinism costs come down. */
          { NULL, NULL }
       }
    },

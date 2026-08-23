@@ -226,12 +226,18 @@ matching stream — Club Drive (394,581 misses) and Checkered Flag
 1. **Give thin titles real input fixtures**, especially Club Drive and
    Checkered Flag, which blit heavily but never repeated a stream under
    generic input. Also sweep the PD/homebrew remainder.
-2. **Tag titles.** AvP is the obvious first candidate — best-evidenced
-   of any title (710,433 checks, 0 divergences, bit-identical A/B over
-   8,000 frames) — and Doom, Kasumi Ninja, Towers II and Missile
-   Command 3D now have six-figure clean check counts too. One line each
-   in `src/core/titledb.c` once a device check is done. Tagging is what
-   makes the feature do anything, so it should not sit undone for long.
+2. **Tagging AvP declined on measured benefit, not soundness.** AvP is
+   the best-evidenced title (710,433 checks, 0 divergences, bit-identical
+   A/B over 8,000 frames) and the corpus sweep is clean, but the memo only
+   skips idle-window redundant blits -- themselves ~15% of idle wall time
+   at 2x (see #411) -- so the -15%-of-that-slice effect measured above is
+   roughly 2% of idle time, unmeasurable in RetroArch. Tagging turns the
+   memo on by default for every AvP user for that gain, plus the 14.6MB
+   entry pool + 9.6MB shadow arena (item 3) and an untested run-ahead/
+   rollback interaction (item 6). Not tagged; revisit only if the benefit
+   is remeasured larger or those costs shrink. Doom, Kasumi Ninja, Towers
+   II and Missile Command 3D have six-figure clean check counts too but
+   have not been through this same cost/benefit pass.
 3. **Shrink the pool.** 4096 entries × 3,744 B = **14.6 MB**, too much
    for iOS. Most of an entry is two 768-byte state blobs and a 2 KB
    write log.
