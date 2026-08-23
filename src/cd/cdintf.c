@@ -19,6 +19,8 @@
 #endif
 #include <streams/file_stream.h>
 #include <streams/file_stream_transforms.h>
+#include <file/file_path.h>
+#include <vfs/vfs_implementation.h>
 #include "cdintf.h"
 #include "jaguar.h"
 #include "log.h"
@@ -180,6 +182,61 @@ static bool GetDirectoryFromPath(const char *path, char *dir, size_t dirSize)
 
    dir[0] = '\0';
    return false;
+}
+
+/* Redump-style CUE sheets and the actual extracted filename can differ
+ * only in letter case. NTFS (Windows) is case-insensitive, so the exact
+ * string from the sheet always resolves there; ext4 / SAF (Android) is
+ * case-sensitive and rfopen() on the literal path silently fails, which
+ * is why CDI (a single self-contained file, no external name reference)
+ * boots the same titles that CUE/BIN does not (#566). Only consulted
+ * when the exact-case path does not already exist. */
+static void FixBinFileCase(char *fullPath, size_t fullPathSize)
+{
+   char dir[4096];
+   char dirNoSep[4096];
+   const char *base;
+   size_t dirLen;
+   libretro_vfs_implementation_dir *d;
+
+   if (path_is_valid(fullPath))
+      return;
+
+   GetDirectoryFromPath(fullPath, dir, sizeof(dir));
+   base = fullPath + strlen(dir);
+
+   dirLen = strlen(dir);
+   if (dirLen >= sizeof(dirNoSep))
+      dirLen = sizeof(dirNoSep) - 1;
+   memcpy(dirNoSep, dir, dirLen);
+   dirNoSep[dirLen] = '\0';
+   if (dirLen > 0 && (dirNoSep[dirLen - 1] == '/' || dirNoSep[dirLen - 1] == '\\'))
+      dirNoSep[dirLen - 1] = '\0';
+   if (dirNoSep[0] == '\0')
+   {
+      dirNoSep[0] = '.';
+      dirNoSep[1] = '\0';
+   }
+
+   d = retro_vfs_opendir_impl(dirNoSep, false);
+   if (!d)
+      return;
+
+   while (retro_vfs_readdir_impl(d))
+   {
+      const char *name = retro_vfs_dirent_get_name_impl(d);
+      if (name && strcasecmp(name, base) == 0 && strcmp(name, base) != 0)
+      {
+         char candidate[4096];
+         snprintf(candidate, sizeof(candidate), "%s%s", dir, name);
+         if (path_is_valid(candidate))
+         {
+            snprintf(fullPath, fullPathSize, "%s", candidate);
+            break;
+         }
+      }
+   }
+   retro_vfs_closedir_impl(d);
 }
 
 static void CDIntfFinalizeSessions(void)
@@ -740,6 +797,8 @@ static bool ParseCueSheet(const char *cuePath)
                snprintf(currentBinFile, sizeof(currentBinFile), "%s%s", dir, binName);
             else
                snprintf(currentBinFile, sizeof(currentBinFile), "%s", binName);
+
+            FixBinFileCase(currentBinFile, sizeof(currentBinFile));
 
             // If we don't have a bin path set yet, set it as the primary
             if (!disc.binPath[0])
