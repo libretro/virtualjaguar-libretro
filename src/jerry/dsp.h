@@ -46,6 +46,13 @@ void DSPExecComp(int32_t cycles);
 
 extern uint32_t dsp_reg_bank_0[], dsp_reg_bank_1[];
 
+/* Idle-loop fast-forward diagnostics (issue #569).  Counted only on the
+ * cold probe path; read by test/tools, never by the emulator itself. */
+extern uint32_t dsp_idle_skip_fires;
+extern uint32_t dsp_idle_skip_rejects;
+extern uint32_t dsp_idle_skip_iters;
+extern uint32_t dsp_idle_skip_opcodes;
+
 // DSP interrupt numbers (in $F1A100, bits 4-8 & 16)
 
 enum { DSPIRQ_CPU = 0, DSPIRQ_SSI, DSPIRQ_TIMER0, DSPIRQ_TIMER1, DSPIRQ_EXT0, DSPIRQ_EXT1 };
