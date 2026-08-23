@@ -44,6 +44,21 @@
  * shaded 1.70M/2400f=708/f (cleared), QUALIFY16 13/2400f=0.005/f (below
  * threshold) -> true_color only.
  *
+ * Issue #551: the shaded-blit-count proxy for virtualjaguar_true_color
+ * does not predict a visible difference. Pixel-diffed A/B pairs (same
+ * ROM, same scripted input, same frame, only the option toggled) found
+ * three rows that clear the >=10 shaded-blits/frame threshold by wide
+ * margins and still produce 0.0000% changed pixels: Alien vs Predator
+ * (61-frame sweep, menu through moving gameplay), the Doom engine family
+ * (retail + every JagDoomEX romhack alias, which by policy share the
+ * retail row's pairs because they share the same renderer), and Missile
+ * Command 3D. true_color was dropped from those rows below; Cybermorph
+ * keeps it — it is the one row with a committed A/B screenshot actually
+ * showing the banding fix (39.04% pixels changed). The remaining
+ * true_color rows are unaudited against pixel evidence and are not
+ * claimed correct or incorrect by this pass — see #551 for the
+ * re-qualification this doesn't attempt.
+ *
  * ------------------------------------------------------------------
  * hooks[] authoring checklist (issue #370, docs/enhancement-hooks.md)
  *
@@ -119,15 +134,18 @@
  * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
-   /* Alien vs Predator (retail) — 2x internal resolution + true color.
+   /* Alien vs Predator (retail) — 2x internal resolution.
     * Evidence: docs/avp-renderer-analysis.md (Stage 2 A/B, frame 6000),
     * docs/hires-stage0-census.md (census GO), shipped in v3.2.0.
+    * true_color dropped per #551: pixel-diffed across a 61-frame sweep
+    * (menu through moving gameplay), 0.0000% pixels changed with the
+    * option toggled -- the shaded-blit-count heuristic that qualified it
+    * (113/f) does not predict a visible difference here.
     * CRCs: Alien vs Predator (World) from src/core/filedb.c line 106. */
    {
       0xDC187F82, "Alien vs Predator",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          /* NOT tagged with virtualjaguar_blit_memo yet -- see
           * docs/blit-memo.md.  AvP is the memo's best-evidenced title
           * (710,433 verify checks, 0 divergences, bit-identical A/B
@@ -178,15 +196,17 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Doom (retail) — true color + 2x: census row "Doom" 2400f,
-    * shaded 445.8/f (>=10), QUALIFY16 433.3/f (>=5), scene: gameplay
-    * (E1M1).
+   /* Doom (retail) — 2x: census row "Doom" 2400f, shaded 445.8/f (>=10),
+    * QUALIFY16 433.3/f (>=5), scene: gameplay (E1M1).
+    * true_color dropped per #551: pixel-diffed as "Doom (World) EX",
+    * 0.0000% pixels changed with the option toggled -- the shaded-blit
+    * heuristic clears by a wide margin and still predicts nothing
+    * visible here.
     * CRC: Doom (World) from src/core/filedb.c line 62. */
    {
       0x5E2CDBC0, "Doom",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -222,7 +242,6 @@ static const TitleDBEntry titledb_table[] = {
       0x754096DB, "Doom EX (JagDoomEX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -230,7 +249,6 @@ static const TitleDBEntry titledb_table[] = {
       0x4643E9DB, "Doom EX (JagDoomEX 2)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -238,7 +256,6 @@ static const TitleDBEntry titledb_table[] = {
       0x35743B9C, "Doom EX (JagDoomEX 3)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -246,7 +263,6 @@ static const TitleDBEntry titledb_table[] = {
       0xAD6B68BA, "Doom EX (JagDoomEX 4)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -254,7 +270,6 @@ static const TitleDBEntry titledb_table[] = {
       0xC4F4CACF, "Doom EX (JagDoomEX 5)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -262,7 +277,6 @@ static const TitleDBEntry titledb_table[] = {
       0x1F4EE4A5, "Doom EX (JagDoomEX 6)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -270,7 +284,6 @@ static const TitleDBEntry titledb_table[] = {
       0x013A5359, "Doom EX (spectral)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -278,7 +291,6 @@ static const TitleDBEntry titledb_table[] = {
       0xB92D1CA3, "Doom EX (transparent)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -286,7 +298,6 @@ static const TitleDBEntry titledb_table[] = {
       0xEA12E234, "Doom EX (JagDoom2EX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -329,15 +340,17 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Missile Command 3D (retail) — true color + 2x: census row
-    * "Missile Command 3D" 2400f, shaded 1650/f (>=10), QUALIFY16
-    * 1866.7/f (>=5), scene: gameplay (Original 3D mode).
+   /* Missile Command 3D (retail) — 2x: census row "Missile Command 3D"
+    * 2400f, shaded 1650/f (>=10), QUALIFY16 1866.7/f (>=5), scene:
+    * gameplay (Original 3D mode).
+    * true_color dropped per #551: pixel-diffed, 0.0000% pixels changed
+    * with the option toggled -- the shaded-blit heuristic clears by a
+    * wide margin and still predicts nothing visible here.
     * CRC: Missile Command 3D (World) from src/core/filedb.c line 105. */
    {
       0xDA9C4162, "Missile Command 3D",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
