@@ -1,0 +1,15 @@
+# Scoped to docker/jaguar-toolchain.Dockerfile (BuildKit convention:
+# <dockerfile-name>.dockerignore applies only to that build; classic
+# (non-BuildKit) docker build ignores this file and falls back to a root
+# .dockerignore if one exists -- there isn't one here, so on classic builders
+# the full repo tree is still sent as context. Harmless either way (the
+# builder stage only COPYs tools/jaguar-toolchain/{PIN,setup.sh}), just a
+# bigger context tarball than necessary.
+*
+# Docker's dockerignore matcher won't resurrect a file via `!` if a parent
+# directory is already excluded by `*` -- so every path segment needs its
+# own negation, not just the leaf files.
+!tools
+!tools/jaguar-toolchain
+!tools/jaguar-toolchain/PIN
+!tools/jaguar-toolchain/setup.sh
