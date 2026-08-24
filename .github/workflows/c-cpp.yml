@@ -245,7 +245,7 @@ jobs:
     # exactly as it does today.
     - name: Cache Tier-1 ROMs
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: test/roms/tier1
         key: vj-roms-tier1-${{ hashFiles('test/roms/tier1.manifest') }}
