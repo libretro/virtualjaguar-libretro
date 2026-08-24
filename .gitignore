@@ -122,6 +122,12 @@ test/acid/tests/**/*.jag
 # pinning 23 MiB of demo sources into every core clone is unnecessary when
 # CI/local fetch can check out one SHA.
 test/vendor/
+
+# On-demand Jaguar assembler toolchain clones (see
+# tools/jaguar-toolchain/PIN / setup.sh fetch). Same rationale as
+# test/vendor/ above: pinned SHAs make the sources reproducible without
+# vendoring them into this repo's history.
+/tools/vendor/
 /test/tools/test_frame_timing
 /test/tools/audio_timeline
 /test/tools/cd_visual_verify
