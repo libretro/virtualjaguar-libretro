@@ -66,6 +66,12 @@ cmd_fetch() {
 }
 
 have_jag_toolchain() {
+    local toolchain_env="${REPO_ROOT}/tools/vendor/jaguar-toolchain"
+    if [ -d "${toolchain_env}" ] && [ -z "${BJL_ROOT:-}" ]; then
+        # Local toolchain fetched/built by tools/jaguar-toolchain/setup.sh
+        # but not yet sourced into this shell -- source it now.
+        eval "$("${REPO_ROOT}/tools/jaguar-toolchain/setup.sh" env 2>/dev/null)" || true
+    fi
     command -v lyxass >/dev/null 2>&1 \
         && command -v rmac >/dev/null 2>&1 \
         && command -v rln >/dev/null 2>&1 \

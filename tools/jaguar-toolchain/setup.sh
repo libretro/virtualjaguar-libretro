@@ -132,9 +132,16 @@ cmd_build() {
     echo "==> all tools built"
 }
 
+cmd_env() {
+    local bjl_root="${VENDOR_DIR}/new_bjl"
+    echo "export PATH=\"${VENDOR_DIR}/rmac:${VENDOR_DIR}/rln:${VENDOR_DIR}/lyxass:${VENDOR_DIR}/pc_jagcrypt:\${PATH}\""
+    echo "export BJL_ROOT=\"${bjl_root}\""
+}
+
 case "${1:-}" in
     fetch) cmd_fetch ;;
     build) cmd_build ;;
+    env) cmd_env ;;
     *)
         echo "usage: $0 {fetch|build|env}" >&2
         exit 2
