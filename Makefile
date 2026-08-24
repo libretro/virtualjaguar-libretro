@@ -2118,6 +2118,7 @@ endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
         runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-toolchain-fetch jaguar-toolchain-build \
         jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
 
@@ -2304,6 +2305,13 @@ jaguar-demos-fetch:
 
 jaguar-demos-build: jaguar-demos-fetch
 	bash test/jaguar-demos/run.sh build
+
+.PHONY: jaguar-toolchain-fetch jaguar-toolchain-build
+jaguar-toolchain-fetch:
+	bash tools/jaguar-toolchain/setup.sh fetch
+
+jaguar-toolchain-build: jaguar-toolchain-fetch
+	bash tools/jaguar-toolchain/setup.sh build
 
 jaguar-demos-smoke jaguar-demos: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 jaguar-demos-smoke jaguar-demos:
