@@ -14,6 +14,18 @@
 #define VC_VAD_HANG_FRAMES 8
 #define VC_MIC_PULL_MAX    320   /* up to 40 ms of 8 kHz per video frame */
 
+typedef struct
+{
+   uint32_t senderId;
+   int      inUse;
+   uint32_t lastMs;
+   int16_t  samples[VC_JITTER_SAMPLES];
+   unsigned head;
+   unsigned count;
+   uint16_t expectSeq;
+   int      haveExpect;
+} VoiceChatStream;
+
 static int vcEnabled = 0;
 static int vcGate = VC_GATE_OPEN_MIC;
 static unsigned vcPttKey = 0;
@@ -21,6 +33,7 @@ static unsigned vcVolume = 50;
 static unsigned vcVadThresh = 400;
 static int vcMonitor = 0;
 static VoiceChatMicReadFn vcMicRead = NULL;
+static VoiceChatNetSendFn vcNetSend = NULL;
 
 static uint32_t vcSenderId = 0;
 static int vcSenderIdReady = 0;
@@ -29,11 +42,7 @@ static char vcPeerAddr[VC_PEER_ADDR_MAX];
 static uint32_t vcLastKeepaliveMs = 0;
 static uint32_t vcLastVoiceMs = 0;
 
-static int16_t vcJitter[VC_JITTER_SAMPLES];
-static unsigned vcJitHead = 0;
-static unsigned vcJitCount = 0;
-static uint16_t vcJitExpectSeq = 0;
-static int vcJitHaveExpect = 0;
+static VoiceChatStream vcStreams[VC_MAX_SPEAKERS];
 
 static int16_t vcMonRing[VC_FRAME_SAMPLES];
 static unsigned vcMonCount = 0;
@@ -173,6 +182,8 @@ static uint32_t VoiceChatEnsureSenderId(void)
 
 void VoiceChatReset(void)
 {
+   unsigned i;
+
    vcEnabled = 0;
    vcGate = VC_GATE_OPEN_MIC;
    vcPttKey = 0;
@@ -180,33 +191,38 @@ void VoiceChatReset(void)
    vcVadThresh = 400;
    vcMonitor = 0;
    vcMicRead = NULL;
+   vcNetSend = NULL;
    vcSenderId = 0;
    vcSenderIdReady = 0;
    vcTxSeq = 0;
    vcPeerAddr[0] = '\0';
    vcLastKeepaliveMs = 0;
    vcLastVoiceMs = 0;
-   vcJitHead = 0;
-   vcJitCount = 0;
-   vcJitExpectSeq = 0;
-   vcJitHaveExpect = 0;
    vcMonCount = 0;
    vcVadOpen = 0;
    vcVadHang = 0;
    vcMicAccumN = 0;
-   memset(vcJitter, 0, sizeof(vcJitter));
+   memset(vcStreams, 0, sizeof(vcStreams));
    memset(vcMonRing, 0, sizeof(vcMonRing));
    memset(vcMicAccum, 0, sizeof(vcMicAccum));
+   for (i = 0; i < VC_MAX_SPEAKERS; i++)
+      vcStreams[i].inUse = 0;
 }
 
 void VoiceChatSetEnabled(int enabled)
 {
+   unsigned i;
+
    vcEnabled = enabled ? 1 : 0;
    if (!vcEnabled)
    {
-      vcJitHead = 0;
-      vcJitCount = 0;
-      vcJitHaveExpect = 0;
+      for (i = 0; i < VC_MAX_SPEAKERS; i++)
+      {
+         vcStreams[i].inUse = 0;
+         vcStreams[i].head = 0;
+         vcStreams[i].count = 0;
+         vcStreams[i].haveExpect = 0;
+      }
       vcMicAccumN = 0;
       vcMonCount = 0;
       vcVadOpen = 0;
@@ -256,6 +272,11 @@ void VoiceChatSetMicRead(VoiceChatMicReadFn fn)
    vcMicRead = fn;
 }
 
+void VoiceChatSetNetSend(VoiceChatNetSendFn fn)
+{
+   vcNetSend = fn;
+}
+
 void VoiceChatSetSenderId(uint32_t id)
 {
    vcSenderId = id ? id : 1;
@@ -278,66 +299,149 @@ const char *VoiceChatPeerAddr(void)
    return vcPeerAddr;
 }
 
-/* ---- Jitter buffer --------------------------------------------------- */
+/* ---- Jitter buffer (per-sender, up to VC_MAX_SPEAKERS) ---------------- */
 
-void VoiceChatJitterPush(const int16_t pcm[VC_FRAME_SAMPLES], uint16_t seq)
+static VoiceChatStream *VoiceChatFindStream(uint32_t senderId, int claim)
+{
+   unsigned i;
+   unsigned freeIdx;
+   unsigned staleIdx;
+   uint32_t staleMs;
+   uint32_t now;
+
+   freeIdx = VC_MAX_SPEAKERS;
+   staleIdx = 0;
+   staleMs = 0xFFFFFFFFu;
+   now = JLinkNowMs();
+
+   for (i = 0; i < VC_MAX_SPEAKERS; i++)
+   {
+      if (vcStreams[i].inUse && vcStreams[i].senderId == senderId)
+      {
+         vcStreams[i].lastMs = now;
+         return &vcStreams[i];
+      }
+      if (!vcStreams[i].inUse && freeIdx == VC_MAX_SPEAKERS)
+         freeIdx = i;
+      if (vcStreams[i].inUse && vcStreams[i].lastMs < staleMs)
+      {
+         staleMs = vcStreams[i].lastMs;
+         staleIdx = i;
+      }
+   }
+
+   if (!claim)
+      return NULL;
+
+   if (freeIdx < VC_MAX_SPEAKERS)
+      i = freeIdx;
+   else
+      i = staleIdx; /* reclaim least-recently-active */
+
+   memset(&vcStreams[i], 0, sizeof(vcStreams[i]));
+   vcStreams[i].inUse = 1;
+   vcStreams[i].senderId = senderId;
+   vcStreams[i].lastMs = now;
+   return &vcStreams[i];
+}
+
+static void VoiceChatStreamPush(VoiceChatStream *st,
+                                const int16_t pcm[VC_FRAME_SAMPLES],
+                                uint16_t seq)
 {
    unsigned i;
 
-   if (!pcm)
+   if (!st || !pcm)
       return;
 
-   /* Drop late / duplicate: if we already have an expectation and this
-    * seq is older than expect (wrapping-aware half-window), skip. */
-   if (vcJitHaveExpect)
+   if (st->haveExpect)
    {
-      int16_t delta = (int16_t)(seq - vcJitExpectSeq);
+      int16_t delta = (int16_t)(seq - st->expectSeq);
       if (delta < 0)
          return;
-      /* Fill gaps with silence so MixInto stays continuous. */
-      while (delta > 0 && vcJitCount + VC_FRAME_SAMPLES <= VC_JITTER_SAMPLES)
+      while (delta > 0 && st->count + VC_FRAME_SAMPLES <= VC_JITTER_SAMPLES)
       {
          for (i = 0; i < VC_FRAME_SAMPLES; i++)
          {
-            unsigned idx = (vcJitHead + vcJitCount) % VC_JITTER_SAMPLES;
-            vcJitter[idx] = 0;
-            vcJitCount++;
+            unsigned idx = (st->head + st->count) % VC_JITTER_SAMPLES;
+            st->samples[idx] = 0;
+            st->count++;
          }
-         vcJitExpectSeq++;
+         st->expectSeq++;
          delta--;
       }
    }
 
-   if (vcJitCount + VC_FRAME_SAMPLES > VC_JITTER_SAMPLES)
+   if (st->count + VC_FRAME_SAMPLES > VC_JITTER_SAMPLES)
    {
-      /* Overflow: drop oldest frame. */
-      vcJitHead = (vcJitHead + VC_FRAME_SAMPLES) % VC_JITTER_SAMPLES;
-      vcJitCount -= VC_FRAME_SAMPLES;
+      st->head = (st->head + VC_FRAME_SAMPLES) % VC_JITTER_SAMPLES;
+      st->count -= VC_FRAME_SAMPLES;
    }
 
    for (i = 0; i < VC_FRAME_SAMPLES; i++)
    {
-      unsigned idx = (vcJitHead + vcJitCount) % VC_JITTER_SAMPLES;
-      vcJitter[idx] = pcm[i];
-      vcJitCount++;
+      unsigned idx = (st->head + st->count) % VC_JITTER_SAMPLES;
+      st->samples[idx] = pcm[i];
+      st->count++;
    }
-   vcJitExpectSeq = (uint16_t)(seq + 1);
-   vcJitHaveExpect = 1;
+   st->expectSeq = (uint16_t)(seq + 1);
+   st->haveExpect = 1;
+}
+
+static int VoiceChatStreamPop(VoiceChatStream *st, int16_t *out)
+{
+   if (!st || !st->inUse || st->count == 0 || !out)
+      return 0;
+   *out = st->samples[st->head];
+   st->head = (st->head + 1) % VC_JITTER_SAMPLES;
+   st->count--;
+   return 1;
+}
+
+void VoiceChatJitterPushFrom(uint32_t senderId,
+                             const int16_t pcm[VC_FRAME_SAMPLES],
+                             uint16_t seq)
+{
+   VoiceChatStream *st = VoiceChatFindStream(senderId, 1);
+   VoiceChatStreamPush(st, pcm, seq);
+}
+
+void VoiceChatJitterPush(const int16_t pcm[VC_FRAME_SAMPLES], uint16_t seq)
+{
+   /* Default stream (senderId 0) for unit tests / single-peer helpers. */
+   VoiceChatJitterPushFrom(0, pcm, seq);
 }
 
 int VoiceChatJitterPop(int16_t *out)
 {
-   if (vcJitCount == 0 || !out)
+   VoiceChatStream *st = VoiceChatFindStream(0, 0);
+   if (!st)
       return 0;
-   *out = vcJitter[vcJitHead];
-   vcJitHead = (vcJitHead + 1) % VC_JITTER_SAMPLES;
-   vcJitCount--;
-   return 1;
+   return VoiceChatStreamPop(st, out);
 }
 
 unsigned VoiceChatJitterCount(void)
 {
-   return vcJitCount;
+   unsigned i;
+   unsigned total = 0;
+   for (i = 0; i < VC_MAX_SPEAKERS; i++)
+   {
+      if (vcStreams[i].inUse)
+         total += vcStreams[i].count;
+   }
+   return total;
+}
+
+unsigned VoiceChatActiveSpeakers(void)
+{
+   unsigned i;
+   unsigned n = 0;
+   for (i = 0; i < VC_MAX_SPEAKERS; i++)
+   {
+      if (vcStreams[i].inUse)
+         n++;
+   }
+   return n;
 }
 
 /* ---- TX helpers ------------------------------------------------------ */
@@ -370,6 +474,15 @@ static void VoiceChatSendFrame(uint8_t flags, const int16_t pcm[VC_FRAME_SAMPLES
                           VoiceChatEnsureSenderId(), mulaw);
    if (!n)
       return;
+
+   /* Netpacket path (#585): registered sink + netplay mode. No peer
+    * address needed — the frontend delivers by client_id. */
+   if (vcNetSend && JLinkMode() == JLINK_MODE_NETPACKET)
+   {
+      if (vcNetSend(pkt, n) && !isKeepalive)
+         vcLastVoiceMs = JLinkNowMs();
+      return;
+   }
 
    peer = vcPeerAddr;
    if (!peer[0] && JLinkMode() == JLINK_MODE_TCP_CLIENT)
@@ -506,17 +619,18 @@ void VoiceChatOnRaw(const uint8_t *buf, size_t len,
 
    for (i = 0; i < VC_FRAME_SAMPLES; i++)
       pcm[i] = VoiceChatMuLawDecode(mulaw[i]);
-   VoiceChatJitterPush(pcm, seq);
+   VoiceChatJitterPushFrom(senderId, pcm, seq);
 }
 
 void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
 {
    unsigned i;
+   unsigned s;
    int vol;
    int mixed;
    int16_t *stereo;
    int left, right;
-   int16_t holdFar;
+   int16_t holdFar[VC_MAX_SPEAKERS];
    int16_t holdMon;
    unsigned monIdx;
 
@@ -527,7 +641,8 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
 
    vol = (int)vcVolume;
    stereo = (int16_t *)buf;
-   holdFar = 0;
+   for (s = 0; s < VC_MAX_SPEAKERS; s++)
+      holdFar[s] = 0;
    holdMon = 0;
    monIdx = 0;
 
@@ -536,8 +651,16 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
       /* 6× upsample: one 8 kHz sample every VC_UPSAMPLE output pairs. */
       if ((i % VC_UPSAMPLE) == 0)
       {
-         if (!VoiceChatJitterPop(&holdFar))
-            holdFar = 0;
+         for (s = 0; s < VC_MAX_SPEAKERS; s++)
+         {
+            if (!vcStreams[s].inUse)
+            {
+               holdFar[s] = 0;
+               continue;
+            }
+            if (!VoiceChatStreamPop(&vcStreams[s], &holdFar[s]))
+               holdFar[s] = 0;
+         }
          if (vcMonitor && monIdx < vcMonCount)
          {
             holdMon = vcMonRing[monIdx];
@@ -547,7 +670,9 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
             holdMon = 0;
       }
 
-      mixed = ((int)holdFar * vol) / 100;
+      mixed = 0;
+      for (s = 0; s < VC_MAX_SPEAKERS; s++)
+         mixed += ((int)holdFar[s] * vol) / 100;
       if (vcMonitor)
          mixed += ((int)holdMon * vol) / 100;
 

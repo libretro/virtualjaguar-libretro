@@ -47,7 +47,8 @@
 #include <libretro.h>
 
 #define ROM_SIZE     131072
-#define INBOX_SIZE   4096
+#define INBOX_PKTS   64
+#define INBOX_PKTMAX 512
 #define RXQ_SIZE     256
 #define MAX_FRAMES   3000
 #define CONNECT_TRIES 200
@@ -98,9 +99,12 @@ typedef struct
    struct retro_netpacket_callback np;
    int      np_registered;
 
-   /* packets the peer sent us, awaiting delivery into this core */
-   uint8_t  inbox[INBOX_SIZE];
-   size_t   inbox_len;
+   /* Packet queue (not a byte concat): vjag-netlink-2 framing is
+    * self-delimiting only when receive() is called once per packet. */
+   uint8_t  inbox[INBOX_PKTS][INBOX_PKTMAX];
+   size_t   inbox_len[INBOX_PKTS];
+   unsigned inbox_head;
+   unsigned inbox_count;
    int      inbox_overflow;
 
    unsigned pkts_out;
@@ -177,6 +181,8 @@ static void send_common(int from, int flags, const void *buf, size_t len,
 {
    instance *src = &inst[from];
    instance *dst = &inst[from ^ 1];
+   unsigned slot;
+
    if ((flags & RETRO_NETPACKET_RELIABLE) == 0)
       src->flags_ok = 0;
    if (client_id != RETRO_NETPACKET_BROADCAST)
@@ -185,13 +191,15 @@ static void send_common(int from, int flags, const void *buf, size_t len,
    src->bytes_out += (unsigned)len;
    if (!buf || !len)
       return;
-   if (dst->inbox_len + len > INBOX_SIZE)
+   if (dst->inbox_count >= INBOX_PKTS || len > INBOX_PKTMAX)
    {
       dst->inbox_overflow = 1;
       return;
    }
-   memcpy(dst->inbox + dst->inbox_len, buf, len);
-   dst->inbox_len += len;
+   slot = (dst->inbox_head + dst->inbox_count) % INBOX_PKTS;
+   memcpy(dst->inbox[slot], buf, len);
+   dst->inbox_len[slot] = len;
+   dst->inbox_count++;
 }
 
 static void send0(int f, const void *b, size_t l, uint16_t c)
@@ -202,16 +210,25 @@ static void send1(int f, const void *b, size_t l, uint16_t c)
 /* Hand this instance everything the peer has sent so far.  Snapshot,
    clear, THEN call receive(): the callback runs inside the core and can
    re-enter this function through poll_receive, and a packet delivered
-   twice would corrupt the inter-modem frame stream. */
+   twice would corrupt the inter-modem frame stream.  Deliver one
+   framed packet per receive() call (vjag-netlink-2). */
 static void deliver_inbox(instance *in)
 {
-   uint8_t buf[INBOX_SIZE];
-   size_t len = in->inbox_len;
-   if (!len || !in->np.receive)
+   uint8_t buf[INBOX_PKTMAX];
+   size_t len;
+   unsigned head;
+
+   if (!in->np.receive)
       return;
-   memcpy(buf, in->inbox, len);
-   in->inbox_len = 0;
-   in->np.receive(buf, len, (uint16_t)(in->idx ^ 1));
+   while (in->inbox_count > 0)
+   {
+      head = in->inbox_head;
+      len = in->inbox_len[head];
+      memcpy(buf, in->inbox[head], len);
+      in->inbox_head = (in->inbox_head + 1) % INBOX_PKTS;
+      in->inbox_count--;
+      in->np.receive(buf, len, (uint16_t)(in->idx ^ 1));
+   }
 }
 
 static void poll_recv0(void) { deliver_inbox(&inst[0]); }

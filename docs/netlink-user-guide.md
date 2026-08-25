@@ -33,6 +33,10 @@ Notes:
   itself is symmetric.
 - Known issue: with some RetroArch builds the `--connect` **command line
   flag** silently does nothing — use the Netplay menu instead.
+- **Voice chat** (core option *Voice Chat*) works over netplay when both
+  sides enable it and run a core that speaks `vjag-netlink-2`. If the peer
+  never confirms voice, the game link stays data-only. Cores still on
+  `vjag-netlink-1` cannot join a `vjag-netlink-2` session (update both).
 
 ## Option B: Direct TCP (any frontend on a platform with sockets)
 

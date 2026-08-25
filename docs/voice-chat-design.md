@@ -66,16 +66,15 @@ Availability follows `JLinkDiscActive()` (TCP host / TCP client only):
 
 | Mode | Voice |
 |------|-------|
-| TCP host / TCP client | Works |
-| Netpacket (RetroArch netplay) | Unavailable in #584 — follow-up: `docs/voice-chat-netplay-design.md` |
+| TCP host / TCP client | Works — `VJVC` on discovery UDP :42170 |
+| Netpacket (RetroArch netplay) | Works — framed `vjag-netlink-2` (`NP_VOICE` + hello negotiate); see `docs/voice-chat-netplay-design.md` |
 | Loopback | No peer; local mic monitor still works for a mic check |
 
-Netpacket was deferred in #584: its payloads had no framing, so
-multiplexing would break wire compat with 3.4.x peers, and the core
-never sees a peer IP to dial a UDP side channel. **Follow-up (accepted
-break):** frame the netpacket pipe (`vjag-netlink-2`), negotiate voice
-capability, carry `VJVC` as unreliable packets — see
-`docs/voice-chat-netplay-design.md`.
+Netpacket voice (#585) frames every netpacket payload with a type byte
+(`NP_UART` / `NP_VOICE` / `NP_VOICE_HELLO`), bumps `protocol_version` to
+`vjag-netlink-2` (intentional break with 3.4.x peers), and auto-negotiates
+voice capability. If the peer never confirms, the session stays data-only.
+TCP discovery-UDP voice from #584 is unchanged.
 
 ## Wire format
 

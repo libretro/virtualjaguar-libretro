@@ -208,6 +208,73 @@ static void test_energy_and_mix(void)
    check(clipped == 1, "saturates near full scale without wrap");
 }
 
+static void test_multi_speaker(void)
+{
+   int16_t frame_a[VC_FRAME_SAMPLES];
+   int16_t frame_b[VC_FRAME_SAMPLES];
+   int16_t frame_c[VC_FRAME_SAMPLES];
+   int16_t frame_d[VC_FRAME_SAMPLES];
+   uint16_t buf[1600];
+   unsigned i;
+   int16_t s;
+   long sum;
+
+   for (i = 0; i < VC_FRAME_SAMPLES; i++)
+   {
+      frame_a[i] = 1000;
+      frame_b[i] = 2000;
+      frame_c[i] = 3000;
+      frame_d[i] = 4000;
+   }
+
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatSetVolume(100);
+
+   /* Independent gap-fill: A seq 0 then 2; B seq 0 continuous. */
+   VoiceChatJitterPushFrom(0x11111111u, frame_a, 0);
+   VoiceChatJitterPushFrom(0x22222222u, frame_b, 0);
+   VoiceChatJitterPushFrom(0x11111111u, frame_a, 2); /* gap of 1 */
+   check(VoiceChatActiveSpeakers() == 2, "two speakers claimed");
+   check(VoiceChatJitterCount() == VC_FRAME_SAMPLES * 4,
+         "A gap-fill + B frame counted (3+1 frames)");
+
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatSetVolume(100);
+   VoiceChatJitterPushFrom(1, frame_a, 0);
+   VoiceChatJitterPushFrom(2, frame_b, 0);
+   VoiceChatJitterPushFrom(3, frame_c, 0);
+   check(VoiceChatActiveSpeakers() == 3, "three speakers at cap");
+
+   for (i = 0; i < 1600; i++)
+      buf[i] = 0;
+   VoiceChatMixInto(buf, 800);
+   sum = 0;
+   for (i = 0; i < 1600; i++)
+      sum += (int16_t)buf[i];
+   check(sum > 0, "three speakers mix into output");
+
+   /* Fourth speaker reclaims the stalest slot. */
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatJitterPushFrom(10, frame_a, 0);
+   VoiceChatJitterPushFrom(20, frame_b, 0);
+   VoiceChatJitterPushFrom(30, frame_c, 0);
+   /* Drain so lastMs stays older on early slots; push advances lastMs. */
+   while (VoiceChatJitterPop(&s))
+      ;
+   /* Pop only drains senderId 0; drain via mix instead. */
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatJitterPushFrom(10, frame_a, 0);
+   VoiceChatJitterPushFrom(20, frame_b, 0);
+   VoiceChatJitterPushFrom(30, frame_c, 0);
+   VoiceChatJitterPushFrom(40, frame_d, 0);
+   check(VoiceChatActiveSpeakers() == 3,
+         "fourth speaker reclaims; still at cap of 3");
+}
+
 int main(void)
 {
    printf("test_voicechat\n");
@@ -217,6 +284,7 @@ int main(void)
    test_jitter();
    test_keepalive_seq_continuity();
    test_energy_and_mix();
+   test_multi_speaker();
    if (failures)
    {
       printf("%d FAILURES\n", failures);

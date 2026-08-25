@@ -367,9 +367,13 @@ until the frontend starts a netplay session; `start()` takes over the link
 (saving the option-configured mode, restored on `stop()`), TX batches go
 out once per frame as `RELIABLE|FLUSH_HINT` broadcasts (multi-console
 CatNet sessions work over netplay for free), received payloads feed the
-shared RX ring. Protocol version pinned as `vjag-netlink-1` so frontends
-refuse cross-incompatible core pairings. **No core option required** —
-stock settings + RetroArch's normal netplay UI just work.
+shared RX ring. Protocol version pinned as `vjag-netlink-2` (#585): every
+payload carries a 1-byte type (`NP_UART` / `NP_VOICE` / `NP_VOICE_HELLO`).
+Older cores advertising `vjag-netlink-1` are refused by the frontend
+protocol check — intentional break. Host-side voice rides `NP_VOICE` after
+a hello/ack negotiate (falls back to data-only). **No core option required**
+for the link itself — stock settings + RetroArch's normal netplay UI just
+work; enable *Voice Chat* on both sides for talk.
 
 Validation:
 - `test_jlink_netpacket` — a self-contained fake frontend exercising the
