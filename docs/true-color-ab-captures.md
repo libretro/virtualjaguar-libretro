@@ -155,6 +155,92 @@ in-flight gameplay. I-War's menu flow needs a different input sequence than
 the generic "mash `a`" ladder that worked for the other titles here. Not
 tested further this pass — report as unreached, not as a measured zero.
 
+## Issue #529 follow-up: Iron Soldier 2 and Battle Morph
+
+The rows above were captured for issue #506's narrower scope. Issue #529
+(the general CRY/RGB16 -> RGB888 "true color" ask) separately named Iron
+Soldier 2 and Battle Morph as the titles with the "biggest visual win" —
+neither had ever been measured or given a titledb row. Re-verified with the
+exact same method as the rest of this document (same four held-constant
+options, same PPM pixel-diff, same `TOMGetVideoMode()` probe).
+
+### Iron Soldier 2 (World).j64 — 0.0000%, real gameplay, 4-frame sweep
+
+Press ladder to reach in-mission, standing-in-city 3D gameplay from a cold
+boot (main menu -> mission-select gallery -> mission briefing -> weapon
+loadout -> gameplay; every screen confirms with `b`, not `a` — `a` alone
+never advances any menu in this title, which is why an early attempt mashing
+just `a` sat on the main menu forever):
+
+```
+--press 1250:b:20 --press 1700:b:20 --press 1900:b:20
+--press 2300:right:10 --press 2330:right:10 --press 2360:right:10 --press 2390:right:10
+--press 2420:right:10 --press 2450:right:10 --press 2480:right:10 --press 2510:right:10
+--press 2600:b:20 --press 3000:left:40 --press 3200:left:40
+```
+
+The eight `right` presses at 2300-2510 walk the weapon-loadout cursor off
+the end of the 8-slot weapon grid onto the screen's EXIT icon (confirmed by
+screenshot — the icon lights up green only after the 8th `right`); `b` at
+2600 then exits the loadout into gameplay. The two `left` turns at
+3000/3200 rotate the mech in place from a city-block view to a desert/road
+view, giving two distinct shaded scenes without needing forward-movement
+collision logic.
+
+Shot frames 2900 (city buildings, cockpit HUD), 3100 (same, slightly
+different lighting), 3300 and 3500 (post-turn desert/road view) — all
+confirmed real gameplay by screenshot (mech cockpit frame, shaded 3D
+buildings/terrain, live radar), not a menu or static screen.
+
+| frame | video mode | unique colors off | unique colors on | changed pixels |
+|---|---|---|---|---|
+| 2900 | 0 (CRY) | 938 | 938 | 0 / 78240 = 0.0000% |
+| 3100 | 0 (CRY) | 999 | 999 | 0 / 78240 = 0.0000% |
+| 3300 | 0 (CRY) | 1013 | 1013 | 0 / 78240 = 0.0000% |
+| 3500 | 0 (CRY) | 1014 | 1014 | 0 / 78240 = 0.0000% |
+
+All four sampled frames confirmed CRY mode (not RGB16/mixed) via
+`TOMGetVideoMode()` at the exact shot frame. Maximum diff across the sweep
+was 0.0000% — the same null pattern as AvP/MC3D/Doom above. No titledb row
+added (CRC `0xD6C19E34`, `src/core/filedb.c` line 103, available if this is
+ever re-measured and comes back positive).
+
+Reproduce with:
+
+```bash
+./test/tools/hires_shot ./virtualjaguar_libretro.dylib \
+  "test/roms/private/ROMS/Iron Soldier 2 (World).j64" \
+  --option virtualjaguar_internal_resolution=1x \
+  --option virtualjaguar_usefastblitter=disabled \
+  --option virtualjaguar_pertitle_defaults=disabled \
+  --option virtualjaguar_true_color=<disabled|enabled> \
+  --press 1250:b:20 --press 1700:b:20 --press 1900:b:20 \
+  --press 2300:right:10 --press 2330:right:10 --press 2360:right:10 --press 2390:right:10 \
+  --press 2420:right:10 --press 2450:right:10 --press 2480:right:10 --press 2510:right:10 \
+  --press 2600:b:20 --press 3000:left:40 --press 3200:left:40 \
+  --frames 3601 --shot 2900 --shot 3100 --shot 3300 --shot 3500 \
+  --out-prefix /tmp/is2/<label>
+```
+
+### Battle Morph (USA).cue — not measured this pass
+
+Battle Morph is CD-only. `libretro.c`'s `retro_load_game()` explicitly skips
+the titledb CRC match for CD content (`is_cd_content` guard, comment: "v1
+only covers cartridge CRCs") — **no titledb row is possible for Battle
+Morph regardless of measurement outcome**, positive or null. Any result here
+could only ever be recorded in this document, never shipped as an
+enhancement default, which caps how much this is worth chasing.
+
+The two committed savestates under
+`test/roms/private/Jaguar CD/BinCue/Battle Morph (USA)/*.state*` are stale —
+both rejected by `retro_unserialize` (`core state is 616071/569044 bytes,
+core expects 2621440`), i.e. from a savestate format predating the current
+version, so a cold CD boot would be needed to reach gameplay. Not attempted
+this pass (CD boot + reaching a shaded gameplay scene from cold is
+meaningfully more setup than Iron Soldier 2's cart boot was, for a result
+that can only ever be documentation) — report as unmeasured, not as a null,
+same convention as I-War's entry above this pass didn't repeat.
+
 ## Texture replacement (#528 tier 1) — blocked, no pack exists
 
 Searched for an actual texture-replacement pack to pair a "before" capture
