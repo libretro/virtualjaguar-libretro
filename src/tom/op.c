@@ -29,6 +29,26 @@
 #define BLEND_Y(dst, src)	op_blend_y[(((uint16_t)dst<<8)) | ((uint16_t)(src))]
 #define BLEND_CR(dst, src)	op_blend_cr[(((uint16_t)dst)<<8) | ((uint16_t)(src))]
 
+/* Real Jaguar TOM RAM (tomRam8[] in tom.c) is a fixed 0x4000-byte array. */
+#define TOM_RAM_BYTES 0x4000
+
+/* Issue #565: in OPProcessFixedBitmap, a REFLECT-mode object walks
+ * currentLineBuffer backward (lbufDelta < 0) with no lower bound once
+ * inside the per-pixel store loops below.  The phrase-granular clipping
+ * earlier in that function only promises "at most 8 bytes" of overstep for
+ * the ordinary partially-offscreen case (see the comment above
+ * lbufAddress); it does not protect against a garbage/transient
+ * object-list phrase.  Observed via `virtualjaguar_risc_clock_scale=2x`
+ * against Club Drive: the write pointer walked ~3 KB behind tomRam8[0] and
+ * stomped an unrelated global, aborting the process on the next free() of
+ * that corrupted pointer (dsp_pc_escape in the same log was a red herring
+ * -- an unrelated, self-contained DSP PC excursion the DSP's own execute
+ * loop already drains safely).  Real TOM's LBUF is a small, fixed-size
+ * RAM; clamp writes to tomRam8's own bounds so a bad object can only
+ * glitch a line, never corrupt host memory. */
+#define OP_LBUF_IN_BOUNDS(ptr, nbytes) \
+   ((ptr) >= tomRam8 && (ptr) + (nbytes) <= tomRam8 + TOM_RAM_BYTES)
+
 #define OBJECT_TYPE_BITMAP	0					// 000
 #define OBJECT_TYPE_SCALE	1					// 001
 #define OBJECT_TYPE_GPU		2					// 010
@@ -944,7 +964,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
                if (flagTRANS && (paletteRAM16[index | bit] == 0))
 #endif
                   ;	// Do nothing...
-               else
+               else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 2))
                {
                   if (!flagRMW)
                      //Optimize: Set palleteRAM16 to beginning of palette RAM + index*2 and use only [bit] as index...
@@ -1001,7 +1021,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
                if (flagTRANS && (paletteRAM16[index | bits] == 0))
 #endif
                   ;	// Do nothing...
-               else
+               else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 2))
                {
                   if (!flagRMW)
                      *(uint16_t *)currentLineBuffer = paletteRAM16[index | bits];
@@ -1052,7 +1072,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
                if (flagTRANS && (paletteRAM16[index | bits] == 0))
 #endif
                   ;	// Do nothing...
-               else
+               else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 2))
                {
                   if (!flagRMW)
                      *(uint16_t *)currentLineBuffer = paletteRAM16[index | bits];
@@ -1104,7 +1124,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
                if (flagTRANS && (paletteRAM16[bits] == 0))
 #endif
                   ;	// Do nothing...
-               else
+               else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 2))
                {
                   if (!flagRMW)
                      *(uint16_t *)currentLineBuffer = paletteRAM16[bits];
@@ -1156,7 +1176,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
             if (flagTRANS && ((bitsLo | bitsHi) == 0))
                //				if (flagTRANS && (bitsHi == 0x88) && (bitsLo == 0x00))
                ;	// Do nothing...
-            else
+            else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 2))
             {
                if (!flagRMW)
                {
@@ -1221,7 +1241,7 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
 
             if (flagTRANS && (bits3 | bits2 | bits1 | bits0) == 0)
                ;	// Do nothing...
-            else
+            else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 4))
                *currentLineBuffer = bits3,
                   *(currentLineBuffer + 1) = bits2,
                   *(currentLineBuffer + 2) = bits1,
