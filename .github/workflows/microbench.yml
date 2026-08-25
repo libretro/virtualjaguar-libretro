@@ -20,6 +20,7 @@ on:
       - 'test/tools/test_microbench_*'
       - 'test/harness/**'
       - 'Makefile'
+      - 'Makefile.common'
       - '.github/workflows/microbench.yml'
   push:
     branches: [develop, master]
@@ -28,6 +29,7 @@ on:
       - 'test/tools/test_microbench_*'
       - 'test/harness/**'
       - 'Makefile'
+      - 'Makefile.common'
       - '.github/workflows/microbench.yml'
   workflow_dispatch:
 

@@ -410,15 +410,31 @@ before its `.run` directive, while still exiting 0 and still writing a
 
 `.github/workflows/microbench.yml` runs `make microbench` on `ubuntu-latest`
 for every PR/push (to `develop`/`master`) that touches `test/microbench/**`,
-`test/tools/test_microbench_*`, `test/harness/**`, or the `Makefile`, plus
-`workflow_dispatch`. Same shape as `jaguar-demos.yml`'s smoke job: build the
-core with `TEST_EXPORTS=1`, run the target, tee the log to the step summary,
-upload it as an artefact on any outcome. It path-filters on
-`test/microbench/**` and `test/tools/test_microbench_*` specifically --
+`test/tools/test_microbench_*`, `test/harness/**`, `Makefile`, or
+`Makefile.common`, plus `workflow_dispatch`. Same shape as `jaguar-demos.yml`'s
+smoke job: build the core with `TEST_EXPORTS=1`, run the target, tee the log
+to the step summary, upload it as an artefact on any outcome. It path-filters
+on `test/microbench/**` and `test/tools/test_microbench_*` specifically --
 **not** `tools/jaguar-toolchain/**` -- because the whole point of committing
-the `.j64` images is that this job never has to build or invoke the
-assembler toolchain; `make microbench` only calls `make jaguar-toolchain-*`
-if you ask it to (see `build.sh`), and the CI job never does.
+the `.j64` images is that this job never has to build or invoke the assembler
+toolchain: `make microbench` builds the core plus the five
+`test_microbench_*` tools and runs each against its committed `.j64`, and
+nothing in that path touches `tools/jaguar-toolchain/`, `rmac`, `rln`, or
+`lyxass` (verified by grepping the `microbench` target and its tool build
+rules in the `Makefile`). `test/microbench/build.sh` is the only thing that
+calls into the toolchain, and it's a manual regeneration step CI never runs.
+
+**What this job does NOT cover.** The path filter deliberately omits
+`src/**`, so a change to `src/tom/gpu.c`, `src/jerry/dsp.c`, or any other
+emulation-accuracy source does not trigger this workflow -- see
+`jaguar-demos.yml`/`c-cpp.yml` for the jobs that build+test on `src/**`
+changes. Even when it does run, these tools assert on **iteration count**,
+not wall-clock or cycle-count -- `done=1` just means the fixed loop finished
+inside the frame budget (600/1200 frames against a measured 86-114 default).
+That makes this a "did the engine still run to completion in a sane window"
+smoke check, not a performance regression gate; a change that quietly halves
+or doubles a `done_frame` without ever exceeding the budget will not fail
+here.
 
 ## How to add a 6th ROM
 
