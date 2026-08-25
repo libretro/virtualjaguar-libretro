@@ -10,7 +10,7 @@ single-engine isolation or an exact, deterministic termination.
 | `bench68k.j64` | 68000 only | `$C0DE0068` | shipped (task 1) |
 | `benchgpu_arith.j64` | GPU, arithmetic-heavy | `$C0DE0A01` | shipped (task 2) |
 | `benchgpu_branch.j64` | GPU, branch-heavy | `$C0DE0B02` | shipped (task 3) |
-| `benchdsp.j64` | DSP | `$C0DE0D53` | task 4 |
+| `benchdsp.j64` | DSP | `$C0DE0D53` | shipped (task 4) |
 | `benchblit.j64` | blitter | `$C0DE0B17` | task 5 |
 
 Run them:
@@ -267,6 +267,32 @@ pipeline timing punishes" intuition #536 set out to test, and is worth
 knowing before using either ROM as a stand-in for real branch-misprediction
 cost. The tools use the same **600** budget as the other ROMs for both
 ROMs; it clears the highest measured frame (172) with ~3.5x margin.
+
+Measured for `benchdsp.j64` (2,000,000 iterations, identical 20-instruction
+body to `benchgpu_arith.j64` for a direct GPU-vs-DSP interpreter comparison
+at the same clock):
+
+| configuration | done_frame |
+|---|---|
+| harness defaults | 86 |
+| `gpu_pipeline_timing=enabled` | 86 |
+| `dram_timing=enabled` | 86 |
+| both | 86 |
+
+Same default completion frame as `benchgpu_arith.j64` (both 86, both engines
+run this identical body at the same ~26.6 MHz full-system clock), **but the
+DSP does not respond to `gpu_pipeline_timing` the way the GPU does** -- all
+four configurations above were re-run directly against this ROM (not
+inferred from the GPU table). This isn't a coincidence of this workload:
+`src/jerry/dsp.c`'s `DSPExec()` comment block states outright that "the DSP
+has no pipeline-timing mode of its own (`DSPExecP`/`DSPExecP2` are declared
+in `dsp.h` but never called)" -- `gpu_pipeline_timing` only gates the DSP's
+*idle-skip fast-forward* path (irrelevant here, since this loop never idles)
+and adds no per-instruction cost model for the DSP the way `GPUPipeCheckUse()`
+does for the GPU. `dram_timing` doesn't move it either, for the same reason
+as the GPU ROM: the hot loop runs entirely out of DSP local RAM and touches
+external memory only for its two sentinel STOREs. The tool uses the same
+**600** budget as the other four ROMs; it clears 86 with ~7x margin.
 
 ---
 
