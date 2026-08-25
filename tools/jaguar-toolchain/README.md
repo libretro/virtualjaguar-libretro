@@ -18,6 +18,15 @@ make jaguar-toolchain-build   # fetch + build everything
 eval "$(tools/jaguar-toolchain/setup.sh env)"   # add to PATH, set BJL_ROOT
 ```
 
+`smoke/hello68k.s` and `smoke/hellogpu.s` are the minimal
+does-the-toolchain-work sources CI assembles on every change here (see
+`.github/workflows/jaguar-toolchain.yml`). Their header comments record
+the non-obvious syntax each assembler actually requires — notably that
+rmac rejects `.org` in a 68K section (the address goes on `rln -a`) and
+that lyxass emits **nothing** for code placed before its `.run`
+directive, while still exiting 0. Read them before writing new Jaguar
+assembly here.
+
 Once built, `test/jaguar-demos/run.sh`'s `have_jag_toolchain()` finds
 this automatically — `make jaguar-demos-build` starts actually building
 demos from source instead of skipping.
