@@ -42,7 +42,20 @@ set -u
 here="$(cd "$(dirname "$0")/../.." && pwd)"
 core="${1:-$here/virtualjaguar_libretro.dylib}"
 [ -f "$core" ] || core="$here/virtualjaguar_libretro.so"
-rom="${2:-$here/test/roms/private/ROMS/Doom - Evil Unleashed (1994).jag}"
+# Corpus spellings differ per machine, and this script reports a MISSING rom
+# as exit 77 = SKIP.  A hardcoded default therefore turns "your Doom is called
+# something else" into a silently green gate -- the same way the Skyhammer
+# clipping sentinel went inert looking for "Skyhammer_(1999).jag".  Fall back
+# to the shared lookup before concluding the corpus has no Doom.
+rom="${2:-}"
+if [ -z "$rom" ]; then
+    rom="$here/test/roms/private/ROMS/Doom - Evil Unleashed (1994).jag"
+    if [ ! -f "$rom" ]; then
+        rom=$( cd "$here" && bash scripts/find-rom.sh \
+                 'Doom - Evil Unleashed*' 'Doom (World)*' 'Doom*' 2>/dev/null ) || rom=""
+        case "$rom" in ""|/*) ;; *) rom="$here/$rom" ;; esac
+    fi
+fi
 frames="${3:-1500}"
 scales="${VJ_SCALES:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16}"
 window="${VJ_WINDOW:-300}"

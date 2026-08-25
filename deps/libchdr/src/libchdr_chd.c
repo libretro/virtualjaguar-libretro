@@ -495,7 +495,8 @@ static CHDR_INLINE void put_bigendian_uint48(uint8_t *base, uint64_t value)
 
 static CHDR_INLINE uint32_t get_bigendian_uint32_t(const uint8_t *base)
 {
-	return (base[0] << 24) | (base[1] << 16) | (base[2] << 8) | base[3];
+	return ((uint32_t)base[0] << 24) | ((uint32_t)base[1] << 16) |
+			((uint32_t)base[2] << 8) | (uint32_t)base[3];
 }
 
 /*-------------------------------------------------
@@ -1554,6 +1555,7 @@ static chd_error header_read(chd_file *chd)
 	};
 
 	uint8_t rawheader[CHD_MAX_HEADER_SIZE];
+	chd_header *header;
 
 	/* punt if NULL */
 	if (chd == NULL)
@@ -1572,7 +1574,7 @@ static chd_error header_read(chd_file *chd)
 		return CHDERR_INVALID_DATA;
 
 	/* extract the direct data */
-	chd_header *header = &chd->header;
+	header = &chd->header;
 	memset(header, 0, sizeof(*header));
 	header->length  = get_bigendian_uint32_t(&rawheader[8]);
 	header->version = get_bigendian_uint32_t(&rawheader[12]);

@@ -315,7 +315,32 @@ uint32_t d5Queue[0x400];
 uint32_t d6Queue[0x400];
 uint32_t d7Queue[0x400];
 uint32_t pcQPtr = 0;
+
+/* When set, M68KInstructionHook() also fills the 16 D0-D7/A0-A7 traceback
+ * rings alongside pcQueue.  Default OFF, and that default is the point
+ * (issue #540): filling them costs 16 register fetches plus 16 scattered
+ * stores on EVERY emulated 68K instruction, and NOTHING in the core reads
+ * them -- vjtrace_backtrace() and test/tools/cd_wedge_probe.c both read
+ * pcQueue only, and the 16 register rings are not even exported from the
+ * shipped ABI (only pcQueue/pcQPtr/a6Queue/d0Queue are, and only in the
+ * TEST_EXPORTS list), so a production build cannot observe them at all.
+ *
+ * Their one reader is test/test_wmcj_debug.c, which flips this on before
+ * the first retro_run().  Set it at init, NOT mid-run: pcQPtr advances
+ * either way, so flipping during emulation leaves the register rings a
+ * mix of zeros and live data while pcQueue stays continuous -- a
+ * traceback dump would silently misalign the two. */
 bool startM68KTracing = false;
+
+/* Indexed by the m68k_register_t values M68K_REG_D0..M68K_REG_A7 (0..15),
+ * which is exactly the layout of regs.regs[] (src/m68000/cpudefs.h).  The
+ * rings stay 17 separate symbols rather than one array of structs because
+ * cd_wedge_probe/test_wmcj_debug dlsym them by name. */
+static uint32_t * const m68kRegQueue[16] =
+{
+   d0Queue, d1Queue, d2Queue, d3Queue, d4Queue, d5Queue, d6Queue, d7Queue,
+   a0Queue, a1Queue, a2Queue, a3Queue, a4Queue, a5Queue, a6Queue, a7Queue
+};
 
 /* Halfline-rate 68K PC sampler (BENCH_PROFILE only).  524 samples per
  * field is enough to tell WHICH wait a title's frame loop is parked in
@@ -339,52 +364,62 @@ static bool start = false;
 void M68KInstructionHook(void)
 {
    unsigned i;
-   uint32_t m68kPC = m68k_get_reg(NULL, M68K_REG_PC);
+   /* regs.pc is literally what m68k_get_reg(NULL, M68K_REG_PC) returns
+    * (see m68k_get_reg in src/m68000/m68kinterface.c) -- read it here
+    * instead, because this hook runs once per emulated 68K instruction
+    * and a cross-TU call is not free at that rate. */
+   uint32_t m68kPC = regs.pc;
 
    // For tracebacks...
-   // Ideally, we'd save all the registers as well...
    pcQueue[pcQPtr] = m68kPC;
-   a0Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A0);
-   a1Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A1);
-   a2Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A2);
-   a3Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A3);
-   a4Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A4);
-   a5Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A5);
-   a6Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A6);
-   a7Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_A7);
-   d0Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D0);
-   d1Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D1);
-   d2Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D2);
-   d3Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D3);
-   d4Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D4);
-   d5Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D5);
-   d6Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D6);
-   d7Queue[pcQPtr] = m68k_get_reg(NULL, M68K_REG_D7);
+
+   /* The other 16 registers only when someone is actually going to read
+    * them -- see startM68KTracing above. */
+   if (startM68KTracing)
+   {
+      for (i = 0; i < 16; i++)
+         m68kRegQueue[i][pcQPtr] = regs.regs[i];
+   }
+
    pcQPtr++;
    pcQPtr &= 0x3FF;
 
    if (m68kPC & 0x01)		// Oops! We're fetching an odd address!
       return;
 
-   /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small set
-    * of magic PCs in cart ROM space resolve to BIOS routines emulated in
-    * jagcd_hle.c instead of executing the cart bytes.  Returns true if the
-    * hook handled the call (PC/registers updated). */
-   if (JaguarCDHLEHook(m68kPC))
-      return;
+   /* The three hooks below each do a cheap internal check and return
+    * false for the overwhelming majority of titles (plain cart games:
+    * no CD HLE, no Memory Track cart inserted, and -- since cart's
+    * strategy->instruction_hook is NULL -- no boot-strategy hook either).
+    * Gate on the same three conditions directly so that common case pays
+    * three plain reads and one branch instead of three cross-TU calls
+    * every single 68K instruction. Order inside the guard matches the
+    * original unconditional call order exactly (CD HLE, then Memory
+    * Track, then boot strategy) -- only the outer gate is new. */
+   if (hle_active || jaguarMemTrackInserted
+         || (bootConfig.strategy && bootConfig.strategy->instruction_hook))
+   {
+      /* CD HLE jump-table dispatch.  When CD HLE BIOS is active, a small
+       * set of magic PCs in cart ROM space resolve to BIOS routines
+       * emulated in jagcd_hle.c instead of executing the cart bytes.
+       * Returns true if the hook handled the call (PC/registers
+       * updated). */
+      if (JaguarCDHLEHook(m68kPC))
+         return;
 
-   /* Memory Track NVM BIOS dispatcher ($2404) — active for CD content in
-    * BOTH boot modes; the module is RAM-resident on hardware, independent
-    * of which CD BIOS variant booted the disc. */
-   if (NVMBiosHook(m68kPC))
-      return;
+      /* Memory Track NVM BIOS dispatcher ($2404) — active for CD content
+       * in BOTH boot modes; the module is RAM-resident on hardware,
+       * independent of which CD BIOS variant booted the disc. */
+      if (NVMBiosHook(m68kPC))
+         return;
 
-   /* CD boot strategy hook (cart strategy is a no-op for cart games;
-    * HLE/BIOS strategies trap specific PCs to inject boot stubs, patch
-    * auth checks, etc.). */
-   if (bootConfig.strategy && bootConfig.strategy->instruction_hook
-         && bootConfig.strategy->instruction_hook(m68kPC))
-      return;
+      /* CD boot strategy hook (cart strategy has no instruction_hook;
+       * HLE/BIOS strategies trap specific PCs to inject boot stubs,
+       * patch auth checks, etc.). */
+      if (bootConfig.strategy && bootConfig.strategy->instruction_hook
+            && bootConfig.strategy->instruction_hook(m68kPC))
+         return;
+   }
 }
 
 /* Custom UAE 68000 read/write/IRQ functions */

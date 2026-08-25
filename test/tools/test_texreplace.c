@@ -26,6 +26,41 @@
  *                        shadow line buffer the scanline renderer
  *                        reads.
  *   5. determinism       two identical pack runs agree on everything.
+ *   6. hires_machine_inert  the FOUR-WAY identity gate for tier 3
+ *                        (>1x pack art): {1x, 2x} x {pack, no pack}
+ *                        all agree on savestate digests and on every
+ *                        battery destination, so neither the
+ *                        resolution option nor a pack -- nor the two
+ *                        together -- is observable to the machine.
+ *                        Also asserts the Nx replacement plane stays
+ *                        inert at 2x with no pack.
+ *   7. hires_pack_presents  at 2x the Nx surface DELIVERS the art:
+ *                        ShadowHiresLineFromRAM (the function op.c
+ *                        calls per 16bpp pixel) lands the expected
+ *                        per-SUBPIXEL RGB in the Nx line replacement
+ *                        plane the scanline renderer reads -- for 2x
+ *                        art at its own resolution, for 1x art
+ *                        replicated, and for nothing at all where the
+ *                        dimensions do not match -- and the 1x
+ *                        representative recorded per replaced word is
+ *                        the pack's TOP-LEFT subpixel, which is what a
+ *                        hi-res resolve miss degrades to.
+ *   8. hires_determinism  two identical 2x pack runs agree.
+ *   9. hires_static_persist (#528) a tile blitted ONCE and then left
+ *                        alone still delivers its Nx art after real
+ *                        presented frames have carried the frame epoch
+ *                        past HIRES_EPOCH_WINDOW.  The epoch is not
+ *                        faked: harness_step drives retro_run, which
+ *                        drives ShadowHiresFrameTick.  Guarded by a
+ *                        precondition that the destination RAM is
+ *                        byte-unchanged across those frames, so "art
+ *                        gone" can only mean expiry.
+ *  10. rgb16_presents   (#528) the RGB16-direct scanout paths present
+ *                        the pack -- 1x and Nx through the same seam
+ *                        (TomLinePackRGB) -- and present ONLY the pack:
+ *                        a true-color CRY reconstruction in the same
+ *                        shadow line plane must never substitute on an
+ *                        RGB16 scanout.
  *
  * The synthetic pack is built from FIRST PRINCIPLES: the test computes
  * each battery tile's identity hash from the documented contract
@@ -54,6 +89,10 @@
 #include <unistd.h>
 
 #include "../harness/harness.h"
+/* Real header, not mirrored constants: the Nx line-plane index formula
+ * and the replacement-entry encoding are exactly what the OP and the
+ * scanline renderer use, so a change there must break this test. */
+#include "../../src/tom/shadowfb.h"
 
 /* src/core/crc32.c (compiled into this binary): zlib/PNG CRC-32. */
 int crc32_calcCheckSum(unsigned char *data, unsigned int length);
@@ -123,9 +162,31 @@ static void pack_rgb(unsigned tile, unsigned x, unsigned y, uint8_t *rgb)
     rgb[2] = (uint8_t)((x * 13u + y * 3u + tile) & 0xFF);
 }
 
-static int pack_alpha_hole(const bat_tile *t, unsigned x, unsigned y)
+/* Author alpha ("keep the game's pixel") in PNG coordinates: the two
+ * opposite corners of whatever size the PNG is. */
+static int pack_hole_at(unsigned tile, unsigned pw, unsigned ph,
+                        unsigned X, unsigned Y)
 {
-    return (x == 0 && y == 0) || (x == t->w - 1 && y == t->h - 1);
+    if (tiles[tile].pack_kind != PK_RGBA)
+        return 0;
+    return (X == 0 && Y == 0) || (X == pw - 1 && Y == ph - 1);
+}
+
+/* One battery tile in the 2x pack is deliberately left at 1x art: at Nx
+ * the hi-res line entry wins wherever it hits, so 1x art must be
+ * replicated into the Nx surface or it would be MASKED outright. */
+#define HIRES_1X_TILE 2u
+
+/* PNG scale for this tile in this pack.  PK_DIMS must stay invalid in
+ * BOTH packs -- at 2x the old "twice the dumped size" mismatch is a
+ * legal tier-3 entry, so it becomes 3x there. */
+static unsigned pack_scale(unsigned tile, int hires)
+{
+    if (tiles[tile].pack_kind == PK_DIMS)
+        return hires ? 3u : 2u;
+    if (hires && tile != HIRES_1X_TILE)
+        return 2u;
+    return 1u;
 }
 
 /* Identity-contract hash, implemented independently of the core.  For
@@ -281,8 +342,10 @@ static int write_png(const char *path, unsigned w, unsigned h,
     return 1;
 }
 
-/* Build the synthetic pack under <sysdir>/vj_texpacks/<crc8>/. */
-static int build_pack(const char *sysdir, uint32_t crc)
+/* Build the synthetic pack under <sysdir>/vj_texpacks/<crc8>/.
+ * hires != 0 builds the tier-3 pack: 2x art for every replaceable tile
+ * except HIRES_1X_TILE (1x art, which must replicate). */
+static int build_pack(const char *sysdir, uint32_t crc, int hires)
 {
     char dir[1200], path[1400];
     unsigned tile;
@@ -295,16 +358,13 @@ static int build_pack(const char *sysdir, uint32_t crc)
     for (tile = 0; tile < N_TILES; tile++) {
         const bat_tile *t = &tiles[tile];
         uint64_t key = tile_hash(tile);
-        unsigned pw = t->w, ph = t->h, ctype = 2, ch;
+        unsigned s = pack_scale(tile, hires);
+        unsigned pw = t->w * s, ph = t->h * s, ctype = 2, ch;
         uint8_t *raw;
         unsigned x, y;
         int ok;
 
         switch (t->pack_kind) {
-            case PK_DIMS:
-                pw = t->w * 2;    /* deliberately wrong */
-                ph = t->h * 2;
-                break;
             case PK_RGBA:
                 ctype = 6;
                 break;
@@ -330,7 +390,7 @@ static int build_pack(const char *sysdir, uint32_t crc)
                     p[1] = rgb[1];
                     p[2] = rgb[2];
                     if (ctype == 6)
-                        p[3] = pack_alpha_hole(t, x, y) ? 0x00 : 0xFF;
+                        p[3] = pack_hole_at(tile, pw, ph, x, y) ? 0x00 : 0xFF;
                 }
             }
         snprintf(path, sizeof(path), "%s/%08x%08x.png", dir,
@@ -398,6 +458,29 @@ typedef struct {
     unsigned hits[N_TILES];        /* dest words resolving to pack RGB  */
     unsigned wrong_rgb[N_TILES];   /* resolved but with the WRONG RGB   */
     unsigned line_rgb_ok;          /* presentation_path sample result   */
+    /* Tier 3 (>1x pack art on the Nx surface). */
+    int      hires_active;         /* shadowHiresActive                 */
+    int      hires_n;              /* shadowHiresN                      */
+    int      repl_active;          /* shadowHiresReplActive             */
+    unsigned hi_words[N_TILES];    /* stock words with a pack block     */
+    unsigned hi_sub_ok[N_TILES];   /* subpixels carrying the right RGB  */
+    unsigned hi_sub_bad[N_TILES];  /* subpixels carrying the WRONG RGB  */
+    unsigned hi_sub_hole[N_TILES]; /* subpixels left to the stock pixel */
+    /* Issue #528. */
+    unsigned post_frames;          /* frames stepped between the battery
+                                    * blits and the probes (ages the Nx
+                                    * epoch for the static-content gate) */
+    uint64_t dest_hash2[N_TILES];  /* battery destination RAM re-hashed
+                                    * AT PROBE TIME: proves the emulated
+                                    * game did not stomp the tiles while
+                                    * post_frames were stepped, so "art
+                                    * gone" can only mean it aged out    */
+    int      repl_1x_active;       /* shadowFBReplActive after battery   */
+    unsigned rgb16_ok;             /* pack words TomLinePackRGB delivers */
+    unsigned rgb16_bad;            /* ...delivers with the WRONG RGB     */
+    unsigned rgb16_false;          /* NON-pack line entries it wrongly
+                                    * claimed (a CRY reconstruction must
+                                    * never present on an RGB16 scanout) */
 } run_result;
 
 static run_result *g_cur;
@@ -516,7 +599,7 @@ static int run_battery(harness_config *cfg, run_result *out)
 
 /* Probe the shadow framebuffer against the expected pack art.  Runs in
  * every run (in off / no-pack runs everything must miss). */
-static void probe_shadow(harness_config *cfg, run_result *out)
+static void probe_shadow(harness_config *cfg, run_result *out, int hires)
 {
     sfb_lookup_fn lookup =
         (sfb_lookup_fn)harness_dlsym(cfg, "ShadowFBLookup");
@@ -537,6 +620,9 @@ static void probe_shadow(harness_config *cfg, run_result *out)
 
     for (tile = 0; tile < N_TILES; tile++) {
         const bat_tile *t = &tiles[tile];
+        /* The 1x entry of a stock word is the pack's TOP-LEFT subpixel
+         * -- at 2x that is PNG coordinate (x*s, y*s). */
+        unsigned s = pack_scale(tile, hires);
         if (t->psize != 4)
             continue;                /* shadow words are 16bpp only */
         for (y = 0; y < t->h; y++)
@@ -549,7 +635,7 @@ static void probe_shadow(harness_config *cfg, run_result *out)
                 uint8_t exp[3];
                 if (!lookup(daddr, cur16, &rgb))
                     continue;
-                pack_rgb(tile, x, y, exp);
+                pack_rgb(tile, x * s, y * s, exp);
                 if (rgb == (((uint32_t)exp[0] << 16)
                           | ((uint32_t)exp[1] << 8) | exp[2]))
                     out->hits[tile]++;
@@ -562,22 +648,240 @@ static void probe_shadow(harness_config *cfg, run_result *out)
      * 16bpp renderer calls and read the line-buffer RGB the scanline
      * renderer would present.  Sample: tile 0, pixel (2, 3). */
     {
+        unsigned s = pack_scale(0, hires);
         uint32_t daddr = tile_dst(0) + (3 * tiles[0].w + 2) * 2;
         uint16_t cur16 = (uint16_t)(((uint16_t)ram[daddr & 0x1FFFFF] << 8)
                                   | ram[(daddr + 1) & 0x1FFFFF]);
         uint8_t exp[3];
         line_fn(7, daddr, cur16);
-        pack_rgb(0, 2, 3, exp);
+        pack_rgb(0, 2 * s, 3 * s, exp);
         out->line_rgb_ok = (line_rgb[7] == (((uint32_t)exp[0] << 16)
                                           | ((uint32_t)exp[1] << 8)
                                           | exp[2])) ? 1 : 0;
     }
 }
 
+/* ---------- issue #528: the RGB16-direct presentation seam ----------
+ *
+ * TomLinePackRGB is the ONE function both RGB16-direct renderers (1x
+ * tom_render_16bpp_rgb_scanline and Nx tom_render_16bpp_rgb_scanline_hires)
+ * call per presented pixel, so driving it is the RGB16 analogue of gate
+ * 4 driving ShadowFBLineFromRAM.
+ *
+ * Two halves, and the second is the one that matters:
+ *   - pack words must be DELIVERED with the author's RGB;
+ *   - non-pack shadow entries must NOT be.  A true-color CRY
+ *     reconstruction is a decomposition of the 16-bit word through the
+ *     chroma tables; presenting it on a word TOM is scanning out as
+ *     RGB16 would show a colour nothing ever drew.  "Substitute
+ *     whenever the shadow line hits" would pass the first half and fail
+ *     this one. */
+typedef int (*tom_pack_fn)(int, uint16_t, uint32_t *);
+
+static void probe_rgb16(harness_config *cfg, run_result *out, int hires)
+{
+    tom_pack_fn pack_fn = (tom_pack_fn)harness_dlsym(cfg, "TomLinePackRGB");
+    sfb_line_fn line_fn =
+        (sfb_line_fn)harness_dlsym(cfg, "ShadowFBLineFromRAM");
+    int *ra = (int *)harness_dlsym(cfg, "shadowFBReplActive");
+    void *ram_sym = harness_dlsym(cfg, "jaguarMainRAM");
+    uint8_t *ram;
+    unsigned tile, x, y;
+    const int idx = 11;                 /* arbitrary line slot */
+
+    if (!pack_fn || !line_fn || !ra || !ram_sym)
+        return;
+    out->repl_1x_active = *ra;
+    ram = *(uint8_t **)ram_sym;
+
+    for (tile = 0; tile < N_TILES; tile++) {
+        const bat_tile *t = &tiles[tile];
+        unsigned s = pack_scale(tile, hires);
+        unsigned pw = t->w * s, ph = t->h * s;
+        if (t->psize != 4)
+            continue;
+        for (y = 0; y < t->h; y++)
+            for (x = 0; x < t->w; x++) {
+                uint32_t daddr = tile_dst(tile) + (y * t->w + x) * 2;
+                uint16_t cur16 =
+                    (uint16_t)(((uint16_t)ram[daddr & 0x1FFFFF] << 8)
+                             | ram[(daddr + 1) & 0x1FFFFF]);
+                uint32_t got = 0;
+                uint8_t exp[3];
+                int want;
+                /* Populate the line slot exactly as op.c does, then ask
+                 * the renderer's seam what it would present. */
+                line_fn(idx, daddr, cur16);
+                /* A pack word is one whose 1x representative (the
+                 * TOP-LEFT subpixel) is not an author alpha hole -- the
+                 * same rule expect_1x_hits() derives independently. */
+                want = out->repl_1x_active
+                     && (s == 1 || (hires && s == 2))
+                     && !pack_hole_at(tile, pw, ph, x * s, y * s);
+                if (!pack_fn(idx, cur16, &got)) {
+                    if (want)
+                        out->rgb16_bad++;   /* pack art not delivered */
+                    continue;
+                }
+                if (!want) {
+                    out->rgb16_false++;     /* non-pack entry claimed */
+                    continue;
+                }
+                pack_rgb(tile, x * s, y * s, exp);
+                if (got == (0xFF000000u | ((uint32_t)exp[0] << 16)
+                          | ((uint32_t)exp[1] << 8) | exp[2]))
+                    out->rgb16_ok++;
+                else
+                    out->rgb16_bad++;
+            }
+    }
+}
+
+/* ---------- expectations, from the same first principles ---------- */
+
+/* Words whose 1x shadow entry must carry pack RGB.  The 1x
+ * representative of a stock word is the pack's TOP-LEFT subpixel, so at
+ * 2x a hole there means no 1x entry (the Nx block still stores). */
+static unsigned expect_1x_hits(unsigned tile, int hires)
+{
+    const bat_tile *t = &tiles[tile];
+    unsigned s = pack_scale(tile, hires);
+    unsigned pw, ph, x, y, c = 0;
+
+    if (t->psize != 4)
+        return 0;                       /* non-16bpp: future tier */
+    if (s != 1 && !(hires && s == 2))
+        return 0;                       /* dimension mismatch */
+    pw = t->w * s;
+    ph = t->h * s;
+    for (y = 0; y < t->h; y++)
+        for (x = 0; x < t->w; x++)
+            if (!pack_hole_at(tile, pw, ph, x * s, y * s))
+                c++;
+    return c;
+}
+
+/* Nx expectations: stock words carrying a pack block, and the split of
+ * their subpixels into replaced / left-to-the-game. */
+static void expect_hires(unsigned tile, int n, unsigned *words,
+                         unsigned *ok, unsigned *hole)
+{
+    const bat_tile *t = &tiles[tile];
+    unsigned s = pack_scale(tile, 1);
+    unsigned pw, ph, x, y, sy, sx;
+
+    *words = *ok = *hole = 0;
+    if (t->psize != 4)
+        return;
+    if (s != 1 && s != (unsigned)n)
+        return;                         /* dimension mismatch */
+    pw = t->w * s;
+    ph = t->h * s;
+    for (y = 0; y < t->h; y++)
+        for (x = 0; x < t->w; x++) {
+            unsigned o = 0, h = 0;
+            for (sy = 0; sy < (unsigned)n; sy++)
+                for (sx = 0; sx < (unsigned)n; sx++) {
+                    unsigned X = (s > 1) ? x * s + sx : x;
+                    unsigned Y = (s > 1) ? y * s + sy : y;
+                    if (pack_hole_at(tile, pw, ph, X, Y))
+                        h++;
+                    else
+                        o++;
+                }
+            if (o) {
+                (*words)++;
+                *ok   += o;
+                *hole += h;
+            }
+        }
+}
+
+/* ---------- tier 3 probe: the Nx surface ---------- */
+
+typedef int (*hires_line_fn)(int, uint32_t, uint16_t);
+
+/* Drive the exact function op.c calls per 16bpp pixel at Nx
+ * (ShadowHiresLineFromRAM) and read the Nx line replacement plane the
+ * scanline renderer reads.  This is the tier-3 analogue of
+ * presentation_path: it asserts the art is DELIVERED, not merely
+ * stored -- the hi-res failure mode that produces no other symptom. */
+static void probe_shadow_hires(harness_config *cfg, run_result *out,
+                               int hires)
+{
+    hires_line_fn line_fn =
+        (hires_line_fn)harness_dlsym(cfg, "ShadowHiresLineFromRAM");
+    int *act = (int *)harness_dlsym(cfg, "shadowHiresActive");
+    int *nsym = (int *)harness_dlsym(cfg, "shadowHiresN");
+    int *ra  = (int *)harness_dlsym(cfg, "shadowHiresReplActive");
+    uint32_t **lrepl = (uint32_t **)harness_dlsym(cfg, "shadowHiresLineRepl");
+    void *ram_sym = harness_dlsym(cfg, "jaguarMainRAM");
+    uint8_t *ram;
+    uint32_t *repl;
+    int n;
+    const int idx = 3;                  /* arbitrary line slot */
+    unsigned tile, x, y, sy, sx;
+
+    if (!line_fn || !act || !nsym || !ra || !lrepl || !ram_sym)
+        return;
+    out->hires_active = *act;
+    out->hires_n      = *nsym;
+    out->repl_active  = *ra;
+    if (!*act || !*lrepl)
+        return;
+    n    = *nsym;
+    repl = *lrepl;
+    ram  = *(uint8_t **)ram_sym;
+
+    for (tile = 0; tile < N_TILES; tile++) {
+        const bat_tile *t = &tiles[tile];
+        unsigned s = pack_scale(tile, hires);
+        if (t->psize != 4)
+            continue;
+        for (y = 0; y < t->h; y++)
+            for (x = 0; x < t->w; x++) {
+                uint32_t daddr = tile_dst(tile) + (y * t->w + x) * 2;
+                uint16_t cur16 =
+                    (uint16_t)(((uint16_t)ram[daddr & 0x1FFFFF] << 8)
+                             | ram[(daddr + 1) & 0x1FFFFF]);
+                unsigned any = 0;
+                line_fn(idx, daddr, cur16);
+                for (sy = 0; sy < (unsigned)n; sy++)
+                    for (sx = 0; sx < (unsigned)n; sx++) {
+                        uint32_t v = repl[((uint32_t)sy * SHADOWFB_LINE_PIXELS
+                                           + (uint32_t)idx) * (uint32_t)n + sx];
+                        unsigned X, Y;
+                        uint8_t exp[3];
+                        if (!(v & SHADOWFB_HIRES_REPL_VALID)) {
+                            out->hi_sub_hole[tile]++;
+                            continue;
+                        }
+                        any = 1;
+                        X = (s > 1) ? x * s + sx : x;
+                        Y = (s > 1) ? y * s + sy : y;
+                        pack_rgb(tile, X, Y, exp);
+                        if ((v & 0x00FFFFFFu) == (((uint32_t)exp[0] << 16)
+                                                | ((uint32_t)exp[1] << 8)
+                                                | exp[2]))
+                            out->hi_sub_ok[tile]++;
+                        else
+                            out->hi_sub_bad[tile]++;
+                    }
+                if (any)
+                    out->hi_words[tile]++;
+                else
+                    /* No block here: the N*N "holes" just counted are
+                     * the absence of a block, not author alpha. */
+                    out->hi_sub_hole[tile] -= (unsigned)(n * n);
+            }
+    }
+}
+
 /* ---------- one emulation run ---------- */
 
 static int do_run(const char *core, const char *rom, unsigned frames,
-                  int replace_on, const char *sysdir, run_result *out)
+                  int replace_on, int hires, const char *sysdir,
+                  unsigned post_frames, run_result *out)
 {
     harness_config cfg = HARNESS_CONFIG_DEFAULT;
     unsigned i;
@@ -585,6 +889,7 @@ static int do_run(const char *core, const char *rom, unsigned frames,
     crc_fn crc_get;
 
     memset(out, 0, sizeof(*out));
+    out->post_frames = post_frames;
     cfg.core_path  = core;
     cfg.rom_path   = rom;
     cfg.frames     = frames;
@@ -600,6 +905,12 @@ static int do_run(const char *core, const char *rom, unsigned frames,
     cfg.num_options++;
     cfg.options[cfg.num_options].key   = "virtualjaguar_texture_dump";
     cfg.options[cfg.num_options].value = "disabled";
+    cfg.num_options++;
+    /* Tier 3: the Nx shadow surface the >1x pack art rides.  Applied at
+     * content load (the option is restart-scoped), which is why every
+     * run sets it explicitly rather than toggling mid-run. */
+    cfg.options[cfg.num_options].key   = "virtualjaguar_internal_resolution";
+    cfg.options[cfg.num_options].value = hires ? "2x" : "1x";
     cfg.num_options++;
     cfg.video_callback = video_cb;
 
@@ -639,7 +950,27 @@ static int do_run(const char *core, const char *rom, unsigned frames,
         harness_shutdown(&cfg);
         return 0;
     }
-    probe_shadow(&cfg, out);
+    /* Issue #528: step real presented frames between the battery blits
+     * and the probes.  Nothing is faked -- harness_step drives
+     * retro_run, which drives ShadowHiresFrameTick, which is the ONLY
+     * thing that advances the epoch.  post_frames must clear
+     * HIRES_EPOCH_WINDOW (16) and stay far from the 256-frame epoch
+     * wrap, which clears every tag for an unrelated reason. */
+    if (post_frames) {
+        void *ram_sym = harness_dlsym(&cfg, "jaguarMainRAM");
+        uint8_t *ram = ram_sym ? *(uint8_t **)ram_sym : NULL;
+        unsigned t;
+        for (i = 0; i < post_frames; i++)
+            harness_step(&cfg);
+        if (ram)
+            for (t = 0; t < N_TILES; t++)
+                out->dest_hash2[t] =
+                    fnv1a(FNV_OFFSET, ram + (tile_dst(t) & 0x1FFFFF),
+                          tile_bytes(&tiles[t]));
+    }
+    probe_shadow(&cfg, out, hires);
+    probe_shadow_hires(&cfg, out, hires);
+    probe_rgb16(&cfg, out, hires);
 
     harness_shutdown(&cfg);
     unlink(state_path);
@@ -647,6 +978,36 @@ static int do_run(const char *core, const char *rom, unsigned frames,
 }
 
 /* ---------- comparisons ---------- */
+
+/* Cross-resolution comparison: savestate digests + every battery blit's
+ * destination RAM.  Framebuffer hashes are deliberately NOT compared --
+ * a 2x run presents twice the pixels by design, and the claim under
+ * test is that the EMULATED MACHINE cannot observe either enhancement,
+ * which is exactly what these two carry. */
+static int machine_equal_state(const run_result *a, const run_result *b,
+                               const char *an, const char *bn,
+                               char *why, size_t why_size)
+{
+    unsigned t;
+    if (!a->digest_mid || !a->digest_end || !b->digest_mid || !b->digest_end) {
+        snprintf(why, why_size, "savestate capture failed (%s/%s)", an, bn);
+        return 0;
+    }
+    if (a->digest_mid != b->digest_mid || a->digest_end != b->digest_end) {
+        snprintf(why, why_size, "%s vs %s: savestate digest differs "
+                 "(@mid: %d, @end: %d)", an, bn,
+                 a->digest_mid != b->digest_mid,
+                 a->digest_end != b->digest_end);
+        return 0;
+    }
+    for (t = 0; t < N_TILES; t++)
+        if (a->dest_hash[t] != b->dest_hash[t]) {
+            snprintf(why, why_size, "%s vs %s: battery tile %u destination "
+                     "RAM differs", an, bn, t);
+            return 0;
+        }
+    return 1;
+}
 
 static int machine_equal(const run_result *a, const run_result *b,
                          unsigned frames, char *why, size_t why_size)
@@ -685,12 +1046,14 @@ int main(int argc, char **argv)
     unsigned frames;
     int i;
     run_result *ro, *rn, *rp, *rq;
-    char dir_o[64], dir_n[64], dir_p[64];
-    harness_result results[8];
+    run_result *rh, *rH, *rI, *rJ;
+    char dir_o[64], dir_n[64], dir_p[64], dir_h[64];
+    harness_result results[14];
     unsigned nres = 0;
     int failed = 0;
     static char d_nopack[224], d_inert[224], d_pres[320], d_line[128],
-                d_det[224];
+                d_det[224], d_hinert[320], d_hpres[512], d_hdet[224],
+                d_stat[448], d_rgb[384];
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--json"))
@@ -719,7 +1082,11 @@ int main(int argc, char **argv)
     rn = (run_result *)calloc(1, sizeof(run_result));
     rp = (run_result *)calloc(1, sizeof(run_result));
     rq = (run_result *)calloc(1, sizeof(run_result));
-    if (!ro || !rn || !rp || !rq) {
+    rh = (run_result *)calloc(1, sizeof(run_result));
+    rH = (run_result *)calloc(1, sizeof(run_result));
+    rI = (run_result *)calloc(1, sizeof(run_result));
+    rJ = (run_result *)calloc(1, sizeof(run_result));
+    if (!ro || !rn || !rp || !rq || !rh || !rH || !rI || !rJ) {
         fprintf(stderr, "FAIL: out of memory\n");
         return 1;
     }
@@ -727,25 +1094,52 @@ int main(int argc, char **argv)
     snprintf(dir_o, sizeof(dir_o), "/tmp/vj_texrep_o_%d", (int)getpid());
     snprintf(dir_n, sizeof(dir_n), "/tmp/vj_texrep_n_%d", (int)getpid());
     snprintf(dir_p, sizeof(dir_p), "/tmp/vj_texrep_p_%d", (int)getpid());
+    snprintf(dir_h, sizeof(dir_h), "/tmp/vj_texrep_h_%d", (int)getpid());
     mkdir(dir_o, 0777);
     mkdir(dir_n, 0777);
     mkdir(dir_p, 0777);
+    mkdir(dir_h, 0777);
 
     /* Run O: replacement disabled (the machine baseline). */
-    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 0, dir_o, ro))
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 0, 0, dir_o, 0, ro))
         goto run_fail;
     /* Run N: enabled, but no pack directory exists in this sysdir. */
-    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, dir_n, rn))
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, 0, dir_n, 0, rn))
         goto run_fail;
     /* Build the synthetic pack from first principles, then run P
      * (enabled, pack present) twice for determinism. */
-    if (!build_pack(dir_p, ro->crc)) {
+    if (!build_pack(dir_p, ro->crc, 0)) {
         fprintf(stderr, "FAIL: could not build the synthetic pack\n");
         goto run_fail;
     }
-    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, dir_p, rp))
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, 0, dir_p, 0, rp))
         goto run_fail;
-    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, dir_p, rq))
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, 0, dir_p, 0, rq))
+        goto run_fail;
+
+    /* Tier 3: internal resolution 2x, with no pack (H) and with a 2x
+     * pack (I, run twice).  dir_o never gains a pack, so it doubles as
+     * the no-pack sysdir for the 2x baseline. */
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 0, 1, dir_o, 0, rh))
+        goto run_fail;
+    if (!build_pack(dir_h, ro->crc, 1)) {
+        fprintf(stderr, "FAIL: could not build the synthetic 2x pack\n");
+        goto run_fail;
+    }
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, 1, dir_h, 0, rH))
+        goto run_fail;
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, 1, dir_h, 0, rI))
+        goto run_fail;
+    /* Run J (issue #528): the same 2x pack run, but with REAL presented
+     * frames stepped between the battery blits and the probes -- past
+     * HIRES_EPOCH_WINDOW (16), nowhere near the 256-frame epoch wrap.
+     * This is what the existing battery could never see: it blits after
+     * the frame loop and probes at the current epoch, so nothing ever
+     * ages.  Nothing here fakes the epoch; harness_step drives
+     * retro_run, which is the only thing that advances it. */
+#define POST_FRAMES 24u
+    if (!do_run(argcfg.core_path, argcfg.rom_path, frames, 1, 1, dir_h,
+                POST_FRAMES, rJ))
         goto run_fail;
 
     /* Gate 1: no pack -> bit-identical machine AND gate off. */
@@ -791,10 +1185,14 @@ int main(int argc, char **argv)
         snprintf(d_pres, sizeof(d_pres), "gate=%d shadow=%d hits:",
                  rp->gate, rp->shadow_active);
         for (t = 0; t < N_TILES; t++) {
-            if (rp->hits[t] != tiles[t].expect_hits || rp->wrong_rgb[t])
+            /* Two independent expectations must agree: the hand-written
+             * per-tile count in tiles[] and the one derived from the
+             * pack-generation rules (which is what the 2x gates use). */
+            unsigned want = expect_1x_hits(t, 0);
+            if (want != tiles[t].expect_hits || rp->hits[t] != want
+                || rp->wrong_rgb[t])
                 ok = 0;
-            snprintf(frag, sizeof(frag), " t%u=%u/%u", t, rp->hits[t],
-                     tiles[t].expect_hits);
+            snprintf(frag, sizeof(frag), " t%u=%u/%u", t, rp->hits[t], want);
             strncat(d_pres, frag, sizeof(d_pres) - strlen(d_pres) - 1);
             if (rp->wrong_rgb[t]) {
                 snprintf(frag, sizeof(frag), "(%u wrong)", rp->wrong_rgb[t]);
@@ -844,6 +1242,211 @@ int main(int argc, char **argv)
         nres++;
     }
 
+    /* Gate 6 (tier 3): the FOUR-WAY identity gate.  {1x, 2x} x {pack,
+     * no pack} must agree on savestate digests and on every battery
+     * destination -- i.e. neither the resolution option nor a texture
+     * pack is observable to the emulated machine, alone or together. */
+    {
+        char why[224];
+        int ok = 1;
+        if (ok) ok = machine_equal_state(ro, rh, "1x-off", "2x-off",
+                                         why, sizeof(why));
+        if (ok) ok = machine_equal_state(ro, rp, "1x-off", "1x-pack",
+                                         why, sizeof(why));
+        if (ok) ok = machine_equal_state(ro, rH, "1x-off", "2x-pack",
+                                         why, sizeof(why));
+        if (ok && rh->hires_active != 1) {
+            ok = 0;
+            snprintf(why, sizeof(why), "2x run did not activate the hi-res "
+                     "surface (shadowHiresActive=%d, N=%d)",
+                     rh->hires_active, rh->hires_n);
+        }
+        if (ok && rh->repl_active != 0) {
+            ok = 0;
+            snprintf(why, sizeof(why), "shadowHiresReplActive=%d at 2x with "
+                     "no pack (want 0)", rh->repl_active);
+        }
+        if (ok)
+            snprintf(why, sizeof(why), "1x/2x x pack/no-pack: digests + %u "
+                     "battery destinations identical across all four; "
+                     "N=%d, repl plane inert without a pack",
+                     (unsigned)N_TILES, rh->hires_n);
+        snprintf(d_hinert, sizeof(d_hinert), "%s", why);
+        results[nres].status = ok ? "PASS" : "FAIL";
+        results[nres].name   = "hires_machine_inert";
+        results[nres].detail = d_hinert;
+        if (!ok) failed = 1;
+        nres++;
+    }
+
+    /* Gate 7 (tier 3): the Nx surface DELIVERS the pack art.  Driven
+     * through ShadowHiresLineFromRAM -- the function op.c calls per
+     * 16bpp pixel -- and read out of the Nx line replacement plane the
+     * scanline renderer reads. */
+    {
+        int ok = (rH->hires_active == 1) && (rH->repl_active == 1);
+        unsigned t;
+        char frag[112];
+        snprintf(d_hpres, sizeof(d_hpres), "N=%d repl=%d words:",
+                 rH->hires_n, rH->repl_active);
+        for (t = 0; t < N_TILES; t++) {
+            unsigned w = 0, o = 0, h = 0;
+            /* The 1x representative recorded alongside every Nx block
+             * is the pack's TOP-LEFT subpixel -- what a hi-res resolve
+             * miss (epoch expiry, unshadowed page) degrades to.  Assert
+             * it explicitly: bottom-right, an average, or storing
+             * nothing would otherwise pass every other gate here. */
+            unsigned lo = expect_1x_hits(t, 1);
+            expect_hires(t, rH->hires_n ? rH->hires_n : 1, &w, &o, &h);
+            if (rH->hi_words[t] != w || rH->hi_sub_ok[t] != o
+                || rH->hi_sub_bad[t] || rH->hi_sub_hole[t] != h
+                || rH->hits[t] != lo || rH->wrong_rgb[t])
+                ok = 0;
+            snprintf(frag, sizeof(frag), " t%u=%u/%u(%u/%u sub,%u/%u 1x%s)",
+                     t, rH->hi_words[t], w, rH->hi_sub_ok[t], o,
+                     rH->hits[t], lo,
+                     (rH->hi_sub_bad[t] || rH->wrong_rgb[t]) ? ",WRONG" : "");
+            strncat(d_hpres, frag, sizeof(d_hpres) - strlen(d_hpres) - 1);
+        }
+        if (ok && !rH->line_rgb_ok) {
+            ok = 0;
+            snprintf(d_hpres, sizeof(d_hpres), "the 1x presentation path "
+                     "does not carry pack art at 2x");
+        }
+        /* The 1x-art tile proves replication: without it the Nx line
+         * entry would win and mask the pack outright. */
+        if (ok && rH->hi_words[HIRES_1X_TILE] == 0) {
+            ok = 0;
+            snprintf(d_hpres, sizeof(d_hpres),
+                     "1x pack art was not replicated into the Nx surface");
+        }
+        results[nres].status = ok ? "PASS" : "FAIL";
+        results[nres].name   = "hires_pack_presents";
+        results[nres].detail = d_hpres;
+        if (!ok) failed = 1;
+        nres++;
+    }
+
+    /* Gate 8 (tier 3): two identical 2x pack runs agree on everything. */
+    {
+        char why[224];
+        int ok = machine_equal(rH, rI, frames, why, sizeof(why));
+        unsigned t;
+        for (t = 0; t < N_TILES && ok; t++)
+            if (rH->hi_words[t] != rI->hi_words[t]
+                || rH->hi_sub_ok[t] != rI->hi_sub_ok[t]
+                || rH->hi_sub_bad[t] != rI->hi_sub_bad[t]
+                || rH->hi_sub_hole[t] != rI->hi_sub_hole[t]) {
+                ok = 0;
+                snprintf(why, sizeof(why), "Nx pack blocks differ on tile %u",
+                         t);
+            }
+        snprintf(d_hdet, sizeof(d_hdet), "%s", why);
+        results[nres].status = ok ? "PASS" : "FAIL";
+        results[nres].name   = "hires_determinism";
+        results[nres].detail = d_hdet;
+        if (!ok) failed = 1;
+        nres++;
+    }
+
+    /* Gate 9 (issue #528): STATIC content keeps its Nx pack art.
+     *
+     * A tile blitted once and left on screen -- HUD, menu, title card --
+     * used to show crisp Nx art for HIRES_EPOCH_WINDOW frames and then
+     * age out to the 1x representative: flat blocky colour.  Run J
+     * blits the battery, steps POST_FRAMES real presented frames, and
+     * then asks the Nx surface for the same art run H got at age zero.
+     *
+     * The precondition is checked FIRST and is not optional: if the
+     * emulated game wrote to the battery destinations during those
+     * frames, "the art is gone" would mean a coherence miss, not
+     * expiry, and the gate would be measuring the wrong thing.
+     * dest_hash2 is the destination RAM re-hashed at probe time. */
+    {
+        int ok = 1;
+        unsigned t;
+        char frag[96];
+        for (t = 0; t < N_TILES && ok; t++)
+            if (rJ->dest_hash2[t] != rJ->dest_hash[t]) {
+                ok = 0;
+                snprintf(d_stat, sizeof(d_stat),
+                         "precondition failed: the game overwrote battery "
+                         "tile %u during the %u aged frames -- this gate "
+                         "cannot distinguish expiry from a coherence miss",
+                         t, rJ->post_frames);
+            }
+        if (ok && (rJ->hires_active != 1 || rJ->repl_active != 1)) {
+            ok = 0;
+            snprintf(d_stat, sizeof(d_stat), "2x pack run did not arm "
+                     "(hires=%d repl=%d)", rJ->hires_active,
+                     rJ->repl_active);
+        }
+        if (ok) {
+            snprintf(d_stat, sizeof(d_stat),
+                     "after %u presented frames (window=16), RAM unchanged; "
+                     "Nx words:", rJ->post_frames);
+            for (t = 0; t < N_TILES; t++) {
+                if (rJ->hi_words[t]   != rH->hi_words[t]
+                    || rJ->hi_sub_ok[t]  != rH->hi_sub_ok[t]
+                    || rJ->hi_sub_bad[t] || rJ->hi_sub_hole[t] != rH->hi_sub_hole[t])
+                    ok = 0;
+                snprintf(frag, sizeof(frag), " t%u=%u/%u(%u/%u sub%s)",
+                         t, rJ->hi_words[t], rH->hi_words[t],
+                         rJ->hi_sub_ok[t], rH->hi_sub_ok[t],
+                         rJ->hi_sub_bad[t] ? ",WRONG" : "");
+                strncat(d_stat, frag, sizeof(d_stat) - strlen(d_stat) - 1);
+            }
+        }
+        results[nres].status = ok ? "PASS" : "FAIL";
+        results[nres].name   = "hires_static_persist";
+        results[nres].detail = d_stat;
+        if (!ok) failed = 1;
+        nres++;
+    }
+
+    /* Gate 10 (issue #528): the RGB16-direct paths present the pack --
+     * and present ONLY the pack.
+     *
+     * Driven through TomLinePackRGB, the one seam both the 1x and the
+     * Nx RGB16 renderers call per presented pixel.  Wired at both
+     * resolutions together on purpose: half of it would make a pack look
+     * different at 2x than at 1x for a reason unrelated to resolution.
+     *
+     * rgb16_false is the half that carries the correctness claim -- a
+     * true-color CRY reconstruction sitting in the same shadow line
+     * plane must NOT present on an RGB16 scanout, so "substitute
+     * whenever the line entry hits" fails here while passing everything
+     * else. */
+    {
+        int ok = 1;
+        unsigned want1 = 0, want2 = 0, t;
+        for (t = 0; t < N_TILES; t++) {
+            want1 += expect_1x_hits(t, 0);
+            want2 += expect_1x_hits(t, 1);
+        }
+        if (rn->repl_1x_active != 0 || rn->rgb16_ok || rn->rgb16_false)
+            ok = 0;
+        if (rp->repl_1x_active != 1 || rp->rgb16_ok != want1
+            || rp->rgb16_bad || rp->rgb16_false)
+            ok = 0;
+        if (rH->repl_1x_active != 1 || rH->rgb16_ok != want2
+            || rH->rgb16_bad || rH->rgb16_false)
+            ok = 0;
+        snprintf(d_rgb, sizeof(d_rgb),
+                 "TomLinePackRGB: 1x %u/%u delivered (%u wrong, %u "
+                 "non-pack entries wrongly claimed); 2x %u/%u (%u wrong, "
+                 "%u wrongly claimed); no-pack run inert "
+                 "(shadowFBReplActive=%d, %u claims)",
+                 rp->rgb16_ok, want1, rp->rgb16_bad, rp->rgb16_false,
+                 rH->rgb16_ok, want2, rH->rgb16_bad, rH->rgb16_false,
+                 rn->repl_1x_active, rn->rgb16_ok + rn->rgb16_false);
+        results[nres].status = ok ? "PASS" : "FAIL";
+        results[nres].name   = "rgb16_presents";
+        results[nres].detail = d_rgb;
+        if (!ok) failed = 1;
+        nres++;
+    }
+
     {
         harness_config rcfg = HARNESS_CONFIG_DEFAULT;
         rcfg.json_output = json;
@@ -854,7 +1457,9 @@ int main(int argc, char **argv)
     rm_rf_pack(dir_o);
     rm_rf_pack(dir_n);
     rm_rf_pack(dir_p);
+    rm_rf_pack(dir_h);
     free(ro); free(rn); free(rp); free(rq);
+    free(rh); free(rH); free(rI); free(rJ);
     return failed ? 1 : 0;
 
 run_fail:
@@ -862,6 +1467,8 @@ run_fail:
     rm_rf_pack(dir_o);
     rm_rf_pack(dir_n);
     rm_rf_pack(dir_p);
+    rm_rf_pack(dir_h);
     free(ro); free(rn); free(rp); free(rq);
+    free(rh); free(rH); free(rI); free(rJ);
     return 1;
 }

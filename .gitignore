@@ -54,6 +54,8 @@ tools/jagcd/jagcd-chd-check
 tools/jagcd/chdman
 tools/jagcd/*.exe
 test/tools/blit_memo_verify
+test/tools/dsp_idle_ab
+test/tools/dsp_idle_probe_falsify
 test/tools/i2s_lag_probe
 test/tools/test_memory_map
 test/tools/test_op_gpu_object
@@ -65,9 +67,14 @@ test/tools/netlink_pair
 test/tools/perf_iface_witness
 test/tools/netlink_game
 test/tools/joymatrix_identity
+test/tools/teamtap_rom_probe
+test/tools/teamtap_ports
 test/tools/mouse_decode_test
 test/tools/rotary_decode_test
 test/tools/analog_decode_test
+test/tools/paddle_decode_test
+test/tools/procontroller_decode_test
+test/tools/sixd_decode_test
 test/tools/tuning_identity
 # vjtrace flight-recorder analyzer/smoke tools -- built on demand by
 # test/tools/vjtrace_selftest.sh (and by hand per each tool's own header
@@ -138,6 +145,7 @@ test/vendor/
 /test/tools/hires_box_check
 /test/tools/hires_state_digest
 /test/tools/hires_shot
+/test/tools/padtest_probe
 test/tools/__pycache__/
 .build-config
 .link-mode
@@ -177,3 +185,4 @@ test/tools/blitter_static_leak
 test/tools/voicemodem_pair
 /test/tools/netlink_discover_probe
 /test/tools/netlink_rebuild_witness
+test/roms/tier1/

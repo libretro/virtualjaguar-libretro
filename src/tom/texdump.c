@@ -39,6 +39,8 @@
 
 #include "texdump.h"
 
+#include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

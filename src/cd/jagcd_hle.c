@@ -98,7 +98,11 @@
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 
-static bool hle_active = false;
+/* Non-static: jaguar.c's M68KInstructionHook reads this directly as the
+ * outer guard for the CD-HLE hook, mirroring JaguarCDHLEHook's own internal
+ * gate exactly (see perf(68k) hook-chain guard, issue #569). All writers
+ * remain in this file. */
+bool hle_active = false;
 
 /* Saved from the last CD_read call so CD_poll can report completion. */
 static uint32_t hle_read_dest      = 0;

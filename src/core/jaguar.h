@@ -39,6 +39,10 @@ extern bool jaguarCartInserted;
 extern bool jaguarMemTrackInserted;
 extern bool bpmActive;
 extern uint32_t bpmAddress1;
+/* Fills the 16 D0-D7/A0-A7 traceback rings in M68KInstructionHook().
+ * Default off -- see the comment on its definition in jaguar.c (#540).
+ * Exported in the test ABI only; set it before the first retro_run(). */
+extern bool startM68KTracing;
 
 #ifdef __cplusplus
 extern "C" {

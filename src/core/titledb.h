@@ -23,6 +23,45 @@ typedef struct {
 #define TITLEDB_MAX_PAIRS 4
 
 /*
+ * Negative / known-bad entries (issue #464) -- the half of the per-title
+ * surface pairs[] cannot express: "this setting is known to BREAK this
+ * title", not "apply this setting to this title".
+ *
+ * Behaviour on match (decided in libretro.c's get_variable_pertitle(),
+ * not here -- this file only ANSWERS "is this value unsafe?"):
+ *
+ *   - If the value in question is a per-title DEFAULT substitution
+ *     (pairs[] or otherwise) -- i.e. the user left the option untouched --
+ *     the substitution is REFUSED and a warning is logged. A per-title
+ *     default must never be allowed to be unsafe; refusing it costs the
+ *     user nothing they asked for.
+ *   - If the value in question is the user's own EXPLICIT choice, it is
+ *     always HONOURED -- refusing it would violate the DB's one hard rule
+ *     ("user-set values always win") -- but a warning is still logged so
+ *     a bug report against that title starts from the right hypothesis.
+ *
+ * `value` is either an exact string to match, or the sentinel
+ * TITLEDB_NEG_ANY_NONDEFAULT ("*"), meaning "any value other than this
+ * option's own registered default is unsafe" -- the natural shape for an
+ * enhancement slider like a clock-scale preset, where every non-1x step
+ * is the thing being called unsafe, not one specific step.
+ *
+ * Evidence bar (mirrors the hooks[] checklist in titledb.c): a negative
+ * row requires the SAME corpus-grade evidence positive rows do -- a
+ * reproduced, headless-confirmed regression tying the specific value to
+ * the specific title, not a hypothesis awaiting artifacts. A bug report
+ * alone, or a plausible mechanism that hasn't been isolated from every
+ * other explanation, does not clear the bar. See docs/enhancement-hooks.md.
+ */
+typedef struct {
+   const char *key;     /* core option key */
+   const char *value;   /* exact unsafe value, or TITLEDB_NEG_ANY_NONDEFAULT */
+} TitleDBNegativePair;
+
+#define TITLEDB_MAX_NEGATIVE_PAIRS 4
+#define TITLEDB_NEG_ANY_NONDEFAULT "*"
+
+/*
  * Enhancement hooks (issue #370) — the half of the per-title surface a
  * {key, value} string pair cannot carry: writes into emulated memory.
  *
@@ -72,6 +111,14 @@ typedef struct {
                                           * Omitted from an initializer =
                                           * zero-filled by C89 6.5.7, i.e.
                                           * TITLEDB_HOOK_NONE. */
+   TitleDBNegativePair negative[TITLEDB_MAX_NEGATIVE_PAIRS];
+                                          /* terminated by a {NULL, NULL}
+                                           * pair. Omitted from an
+                                           * initializer = zero-filled by
+                                           * C89 6.5.7, i.e. no negative
+                                           * rows -- every existing entry's
+                                           * initializer stays valid
+                                           * unchanged. */
 } TitleDBEntry;
 
 /* Load content for CRC lookup; NULL/0 clears. */
@@ -86,6 +133,17 @@ uint32_t TitleDBContentCRC(void);
 
 /* Lookup: return the preset value for a key in the loaded content, or NULL. */
 const char *TitleDBOverride(const char *key);
+
+/* Negative-entry lookup (issue #464): does the loaded content's row mark
+ * `key`=`value` as known-bad?  `option_default` is the key's registered
+ * core-option default, as already resolved by the caller -- this function
+ * does no option-system lookups of its own, so titledb.c stays linkable
+ * standalone (test/test_titledb links only titledb.c + crc32.c, no core).
+ * Returns non-zero on a match: either an exact {key, value} negative row,
+ * or a {key, TITLEDB_NEG_ANY_NONDEFAULT} row where value != option_default.
+ * No match (including no content loaded) returns 0. */
+int TitleDBUnsafeValue(const char *key, const char *value,
+                        const char *option_default);
 
 /* Return the title name of the loaded content match, or NULL. */
 const char *TitleDBTitleName(void);
@@ -108,6 +166,14 @@ const TitleDBHook *TitleDBHooks(int *count);
  * VJTRACE_HOOKED_OBJS mode-transition delete list; hiding it at link time
  * costs a few bytes and no build-mode hazard. */
 void TitleDBSetHooksForTest(const TitleDBHook *hooks, int count);
+
+/* Test-only: install a negative-pair array that TitleDBUnsafeValue()
+ * consults regardless of CRC match; NULL restores normal table lookup.
+ * Mirrors TitleDBSetHooksForTest() -- same reasoning, same "no canary row
+ * in the shipped table" motivation. Array need not be kind-terminated the
+ * way hooks are; pass the exact element count. A {NULL, NULL}-terminated
+ * array also works since the scan stops at a NULL key either way. */
+void TitleDBSetNegativeForTest(const TitleDBNegativePair *pairs, int count);
 
 /* Test-only introspection: the raw table. */
 const TitleDBEntry *TitleDBTable(int *count);

@@ -44,6 +44,21 @@
  * shaded 1.70M/2400f=708/f (cleared), QUALIFY16 13/2400f=0.005/f (below
  * threshold) -> true_color only.
  *
+ * Issue #551: the shaded-blit-count proxy for virtualjaguar_true_color
+ * does not predict a visible difference. Pixel-diffed A/B pairs (same
+ * ROM, same scripted input, same frame, only the option toggled) found
+ * three rows that clear the >=10 shaded-blits/frame threshold by wide
+ * margins and still produce 0.0000% changed pixels: Alien vs Predator
+ * (61-frame sweep, menu through moving gameplay), the Doom engine family
+ * (retail + every JagDoomEX romhack alias, which by policy share the
+ * retail row's pairs because they share the same renderer), and Missile
+ * Command 3D. true_color was dropped from those rows below; Cybermorph
+ * keeps it — it is the one row with a committed A/B screenshot actually
+ * showing the banding fix (39.04% pixels changed). The remaining
+ * true_color rows are unaudited against pixel evidence and are not
+ * claimed correct or incorrect by this pass — see #551 for the
+ * re-qualification this doesn't attempt.
+ *
  * ------------------------------------------------------------------
  * hooks[] authoring checklist (issue #370, docs/enhancement-hooks.md)
  *
@@ -79,24 +94,73 @@
  * gated off by default and CI-covered; rows land as data once a
  * behaviour has been researched to the standard above.
  * ------------------------------------------------------------------
+ *
+ * negative[] authoring checklist (issue #464)
+ *
+ * A negative row ("this setting is known-bad for this title") is
+ * admissible only when ALL of the following hold.  test_titledb enforces
+ * the mechanical half; the rest is review, exactly like hooks[] above.
+ *
+ *  1. The regression was REPRODUCED and CONFIRMED, not hypothesized.  A
+ *     bug report that names a suspect option is not evidence by itself --
+ *     see issue #463 (Cybermorph, RISC overclock): a full headless
+ *     investigation left it at "the deciding experiment has not been
+ *     run" and the issue stays `blocked` pending reporter artifacts. That
+ *     is the bar this checklist enforces: a plausible mechanism is not a
+ *     confirmed one, and a negative row is a stronger claim than a
+ *     positive one, because it changes what the user is prevented from
+ *     doing.
+ *  2. The evidence isolates the SPECIFIC value from every other
+ *     explanation (emulator regression, other timing models, input
+ *     class) the same way #463's own investigation did before it
+ *     stalled -- byte-identical framebuffers vs a known-good baseline,
+ *     the suspect option demonstrably live (changes something), every
+ *     other candidate ruled out.
+ *  3. The comment cites the evidence the way every positive row does: a
+ *     doc, a committed measurement, or an issue with the reproduction
+ *     already closed out -- never "reported by a user" alone.
+ *  4. `TITLEDB_NEG_ANY_NONDEFAULT` ("*") is for a genuinely monotonic
+ *     class of unsafe values (e.g. "any overclock breaks this title's
+ *     frame-coupled physics"), not a shortcut to avoid enumerating which
+ *     specific values were actually tested.  If only some non-default
+ *     values were confirmed bad, list them individually.
+ *  5. No key may appear in both pairs[] and negative[] of the same row --
+ *     a row that both applies X and calls X unsafe is a table bug.
+ *
+ * The table currently ships ZERO negative rows.  The mechanism is the
+ * deliverable for issue #464; rows land once a title clears the bar
+ * above.  See docs/enhancement-hooks.md for the settings-vs-patches
+ * discriminator and this section's evidence bar restated for authors.
+ * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
-   /* Alien vs Predator (retail) — 2x internal resolution + true color.
+   /* Alien vs Predator (retail) — 2x internal resolution.
     * Evidence: docs/avp-renderer-analysis.md (Stage 2 A/B, frame 6000),
     * docs/hires-stage0-census.md (census GO), shipped in v3.2.0.
+    * true_color dropped per #551: pixel-diffed across a 61-frame sweep
+    * (menu through moving gameplay), 0.0000% pixels changed with the
+    * option toggled -- the shaded-blit-count heuristic that qualified it
+    * (113/f) does not predict a visible difference here.
     * CRCs: Alien vs Predator (World) from src/core/filedb.c line 106. */
    {
       0xDC187F82, "Alien vs Predator",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
-         /* NOT tagged with virtualjaguar_blit_memo yet -- see
+         /* Deliberately NOT tagged with virtualjaguar_blit_memo -- see
           * docs/blit-memo.md.  AvP is the memo's best-evidenced title
           * (710,433 verify checks, 0 divergences, bit-identical A/B
-          * over 8,000 frames) but that covers the scenes one fixture
-          * reaches, and the corpus sweep is unfinished.  Tagging here
-          * turns the memo ON by default for every AvP user, so it
-          * waits for the full sweep plus a device check. */
+          * over 8,000 frames) and the full 64-title corpus sweep is
+          * clean too, so this is not a soundness gap. It is declined
+          * on measured benefit: the memo only ever skips idle-window
+          * redundant blits, which are themselves ~15% of idle wall
+          * time at 2x, so the memo buys roughly -15% of that slice --
+          * about 2% of idle time, unmeasurable in RetroArch (issue
+          * #411). Tagging would turn it on by default for every AvP
+          * user for a gain that small, adding a 14.6MB entry pool +
+          * 9.6MB shadow arena (too much for iOS, open item 3) and an
+          * untested interaction with run-ahead/rollback (open item 6).
+          * Revisit only if the benefit is remeasured larger, or the
+          * memory/determinism costs come down. */
          { NULL, NULL }
       }
    },
@@ -140,15 +204,17 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Doom (retail) — true color + 2x: census row "Doom" 2400f,
-    * shaded 445.8/f (>=10), QUALIFY16 433.3/f (>=5), scene: gameplay
-    * (E1M1).
+   /* Doom (retail) — 2x: census row "Doom" 2400f, shaded 445.8/f (>=10),
+    * QUALIFY16 433.3/f (>=5), scene: gameplay (E1M1).
+    * true_color dropped per #551: pixel-diffed as "Doom (World) EX",
+    * 0.0000% pixels changed with the option toggled -- the shaded-blit
+    * heuristic clears by a wide margin and still predicts nothing
+    * visible here.
     * CRC: Doom (World) from src/core/filedb.c line 62. */
    {
       0x5E2CDBC0, "Doom",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -184,7 +250,6 @@ static const TitleDBEntry titledb_table[] = {
       0x754096DB, "Doom EX (JagDoomEX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -192,7 +257,6 @@ static const TitleDBEntry titledb_table[] = {
       0x4643E9DB, "Doom EX (JagDoomEX 2)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -200,7 +264,6 @@ static const TitleDBEntry titledb_table[] = {
       0x35743B9C, "Doom EX (JagDoomEX 3)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -208,7 +271,6 @@ static const TitleDBEntry titledb_table[] = {
       0xAD6B68BA, "Doom EX (JagDoomEX 4)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -216,7 +278,6 @@ static const TitleDBEntry titledb_table[] = {
       0xC4F4CACF, "Doom EX (JagDoomEX 5)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -224,7 +285,6 @@ static const TitleDBEntry titledb_table[] = {
       0x1F4EE4A5, "Doom EX (JagDoomEX 6)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -232,7 +292,6 @@ static const TitleDBEntry titledb_table[] = {
       0x013A5359, "Doom EX (spectral)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -240,7 +299,6 @@ static const TitleDBEntry titledb_table[] = {
       0xB92D1CA3, "Doom EX (transparent)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -248,7 +306,6 @@ static const TitleDBEntry titledb_table[] = {
       0xEA12E234, "Doom EX (JagDoom2EX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -291,15 +348,17 @@ static const TitleDBEntry titledb_table[] = {
       }
    },
 
-   /* Missile Command 3D (retail) — true color + 2x: census row
-    * "Missile Command 3D" 2400f, shaded 1650/f (>=10), QUALIFY16
-    * 1866.7/f (>=5), scene: gameplay (Original 3D mode).
+   /* Missile Command 3D (retail) — 2x: census row "Missile Command 3D"
+    * 2400f, shaded 1650/f (>=10), QUALIFY16 1866.7/f (>=5), scene:
+    * gameplay (Original 3D mode).
+    * true_color dropped per #551: pixel-diffed, 0.0000% pixels changed
+    * with the option toggled -- the shaded-blit heuristic clears by a
+    * wide margin and still predicts nothing visible here.
     * CRC: Missile Command 3D (World) from src/core/filedb.c line 105. */
    {
       0xDA9C4162, "Missile Command 3D",
       {
          { "virtualjaguar_internal_resolution", "2x" },
-         { "virtualjaguar_true_color",          "enabled" },
          { NULL, NULL }
       }
    },
@@ -357,6 +416,10 @@ static uint32_t content_crc = 0;
 /* Test-only hook override; see TitleDBSetHooksForTest in titledb.h. */
 static const TitleDBHook *hooks_override = NULL;
 static int hooks_override_count = 0;
+
+/* Test-only negative-pair override; see TitleDBSetNegativeForTest below. */
+static const TitleDBNegativePair *negative_override = NULL;
+static int negative_override_count = 0;
 
 /*
  * Internal: set the CRC directly.
@@ -435,6 +498,53 @@ const char *TitleDBOverride(const char *key)
 }
 
 /*
+ * Negative-entry lookup (issue #464): does the loaded content's row mark
+ * key=value (or key="any non-default value") as known-bad?  Pure string
+ * comparison only -- no option-system calls -- so this file keeps linking
+ * standalone in test/test_titledb (titledb.c + crc32.c, no core).
+ * The test override, when installed, wins regardless of CRC match, same
+ * as TitleDBHooks()'s hooks_override.
+ */
+int TitleDBUnsafeValue(const char *key, const char *value,
+                        const char *option_default)
+{
+   const TitleDBNegativePair *neg;
+   int count;
+   int i;
+
+   if (key == NULL || value == NULL)
+      return 0;
+
+   if (negative_override != NULL)
+   {
+      neg = negative_override;
+      count = negative_override_count;
+   }
+   else if (current != NULL)
+   {
+      neg = current->negative;
+      count = TITLEDB_MAX_NEGATIVE_PAIRS;
+   }
+   else
+      return 0;
+
+   for (i = 0; i < count && neg[i].key != NULL; i++)
+   {
+      if (strcmp(neg[i].key, key) != 0)
+         continue;
+      if (strcmp(neg[i].value, TITLEDB_NEG_ANY_NONDEFAULT) == 0)
+      {
+         if (option_default == NULL || strcmp(value, option_default) != 0)
+            return 1;
+      }
+      else if (strcmp(neg[i].value, value) == 0)
+         return 1;
+   }
+
+   return 0;
+}
+
+/*
  * Return the title name of the loaded content match, or NULL.
  */
 const char *TitleDBTitleName(void)
@@ -479,6 +589,22 @@ void TitleDBSetHooksForTest(const TitleDBHook *hooks, int count)
    }
    hooks_override = hooks;
    hooks_override_count = count;
+}
+
+/*
+ * Test-only: install a negative-pair array TitleDBUnsafeValue() consults
+ * regardless of CRC match.  NULL restores normal table lookup.
+ */
+void TitleDBSetNegativeForTest(const TitleDBNegativePair *pairs, int count)
+{
+   if (pairs == NULL || count <= 0)
+   {
+      negative_override = NULL;
+      negative_override_count = 0;
+      return;
+   }
+   negative_override = pairs;
+   negative_override_count = count;
 }
 
 /*

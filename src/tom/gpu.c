@@ -509,7 +509,7 @@ INLINE static void gpu_opcode_pack(void);
 
 INLINE static void executeOpcode(uint32_t index);
 
-uint8_t gpu_opcode_cycles[64] =
+static const uint8_t gpu_opcode_cycles[64] =
 {
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1,
@@ -519,26 +519,6 @@ uint8_t gpu_opcode_cycles[64] =
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1,
 	1,  1,  1,  1,  1,  1,  1,  1
-};
-
-void (*gpu_opcode[64])()=
-{
-	gpu_opcode_add,					gpu_opcode_addc,				gpu_opcode_addq,				gpu_opcode_addqt,
-	gpu_opcode_sub,					gpu_opcode_subc,				gpu_opcode_subq,				gpu_opcode_subqt,
-	gpu_opcode_neg,					gpu_opcode_and,					gpu_opcode_or,					gpu_opcode_xor,
-	gpu_opcode_not,					gpu_opcode_btst,				gpu_opcode_bset,				gpu_opcode_bclr,
-	gpu_opcode_mult,				gpu_opcode_imult,				gpu_opcode_imultn,				gpu_opcode_resmac,
-	gpu_opcode_imacn,				gpu_opcode_div,					gpu_opcode_abs,					gpu_opcode_sh,
-	gpu_opcode_shlq,				gpu_opcode_shrq,				gpu_opcode_sha,					gpu_opcode_sharq,
-	gpu_opcode_ror,					gpu_opcode_rorq,				gpu_opcode_cmp,					gpu_opcode_cmpq,
-	gpu_opcode_sat8,				gpu_opcode_sat16,				gpu_opcode_move,				gpu_opcode_moveq,
-	gpu_opcode_moveta,				gpu_opcode_movefa,				gpu_opcode_movei,				gpu_opcode_loadb,
-	gpu_opcode_loadw,				gpu_opcode_load,				gpu_opcode_loadp,				gpu_opcode_load_r14_indexed,
-	gpu_opcode_load_r15_indexed,	gpu_opcode_storeb,				gpu_opcode_storew,				gpu_opcode_store,
-	gpu_opcode_storep,				gpu_opcode_store_r14_indexed,	gpu_opcode_store_r15_indexed,	gpu_opcode_move_pc,
-	gpu_opcode_jump,				gpu_opcode_jr,					gpu_opcode_mmult,				gpu_opcode_mtoi,
-	gpu_opcode_normi,				gpu_opcode_nop,					gpu_opcode_load_r14_ri,			gpu_opcode_load_r15_ri,
-	gpu_opcode_store_r14_ri,		gpu_opcode_store_r15_ri,		gpu_opcode_sat24,				gpu_opcode_pack,
 };
 
 static uint8_t gpu_ram_8[0x1000];
@@ -650,7 +630,7 @@ static int32_t gpuSliceSpent;
 #define SET_ZNC_ADD(a,b,r)	SET_N(r); SET_Z(r); SET_C_ADD(a,b)
 #define SET_ZNC_SUB(a,b,r)	SET_N(r); SET_Z(r); SET_C_SUB(a,b)
 
-uint32_t gpu_convert_zero[32] =
+static const uint32_t gpu_convert_zero[32] =
 	{ 32,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 };
 
 uint8_t * branch_condition_table = 0;
@@ -882,7 +862,7 @@ uint32_t GPUReadLong(uint32_t offset, uint32_t who/*=UNKNOWN*/)
 		return 0;
 	}
 
-	return (JaguarReadWord(offset, who) << 16) | JaguarReadWord(offset + 2, who);
+	return JaguarReadLong(offset, who);
 }
 
 // GPU byte access (write)
@@ -1428,6 +1408,22 @@ void GPUSyncToM68K(void)
 
 void GPUExec(int32_t cycles)
 {
+   /* Slice-invariant settings, cached in locals for the exec loop (issue
+    * #532).  Both are written ONLY by check_variables() in libretro.c --
+    * never by emulation code -- so they cannot change while this loop runs.
+    * executeOpcode() is an opaque call, so without these locals the compiler
+    * must assume the call clobbers both globals and reloads them on every
+    * emulated instruction (two `ldrb` of vjs.gpuPipelineTiming plus a
+    * GOT-indirect reload of riscClockScalePct per opcode on arm64).
+    *
+    * Cached at slice ENTRY, not once at init: a mid-run option change goes
+    * through check_variables() between retro_run() calls, so the next slice
+    * picks the new value up.  Re-entrant runs (the OP executes the GPU
+    * inline from a halfline callback, see op.c) re-read on each entry for
+    * the same reason. */
+   int      pipeTiming;
+   uint32_t riscScale;
+
    if (!GPU_RUNNING)
       return;
 
@@ -1455,6 +1451,9 @@ void GPUExec(int32_t cycles)
    gpu_releaseTimeSlice_flag = 0;
    gpu_in_exec++;
    gpuExecSliceBudget = cycles;
+
+   pipeTiming = vjs.gpuPipelineTiming ? 1 : 0;
+   riscScale  = riscClockScalePct;
 
    while (cycles > 0 && GPU_RUNNING)
    {
@@ -1484,14 +1483,10 @@ void GPUExec(int32_t cycles)
       /* Pipeline model: stall for pending load results / RAW interlock
        * BEFORE the opcode runs (results are unchanged; only time is
        * charged, via the same gpu_bus_stall channel as DRAM costs). */
-      if (vjs.gpuPipelineTiming)
+      if (pipeTiming)
          GPUPipeCheckUse(index);
-#if 0
-      gpu_opcode[index]();
-#else
-       executeOpcode(index);
-#endif
-      if (vjs.gpuPipelineTiming)
+      executeOpcode(index);
+      if (pipeTiming)
       {
          gpu_pipe_clock += (uint64_t)gpu_opcode_cycles[index] + gpu_bus_stall
                          + gpu_pipe_core_stall;
@@ -1519,10 +1514,10 @@ void GPUExec(int32_t cycles)
        * (see the domain note at its declaration): deduct it unscaled
        * in both branches.  Only gpu_bus_stall -- wall-time memory
        * latency -- goes through the scale conversion. */
-      if (riscClockScalePct != 100u && gpu_bus_stall != 0)
+      if (riscScale != 100u && gpu_bus_stall != 0)
       {
          uint32_t stall_scaled;
-         gpu_stall_scale_accum += gpu_bus_stall * riscClockScalePct;
+         gpu_stall_scale_accum += gpu_bus_stall * riscScale;
          stall_scaled = gpu_stall_scale_accum / 100u;
          gpu_stall_scale_accum %= 100u;
          cycles -= gpu_opcode_cycles[index] + (int32_t)stall_scaled

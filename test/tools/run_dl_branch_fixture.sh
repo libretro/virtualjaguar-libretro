@@ -24,7 +24,18 @@ case "${1:-}" in
 esac
 
 PROBE=${PROBE:-"$ROOT/test/tools/fmv_seek_probe"}
-DISC=${DISC:-"$ROOT/test/roms/private/Jaguar CD/BinCue/Dragon's Lair (USA)/Dragon's Lair (USA).cue"}
+# Disc images nest inconsistently ("<Title>/<Title>/*.cue" after the iCloud
+# restore, one level shallower before it), so resolve through find-rom.sh
+# rather than pinning one layout.  An explicit DISC= still wins.
+DISC=${DISC:-}
+if [ -z "$DISC" ]; then
+  DISC="$ROOT/test/roms/private/Jaguar CD/BinCue/Dragon's Lair (USA)/Dragon's Lair (USA).cue"
+  if [ ! -f "$DISC" ]; then
+    DISC=$( cd "$ROOT" && bash scripts/find-rom.sh \
+              "Dragon's Lair (USA).cue" "Dragon's Lair*.cue" 2>/dev/null ) || DISC=""
+    case "$DISC" in ""|/*) ;; *) DISC="$ROOT/$DISC" ;; esac
+  fi
+fi
 SYSTEM_DIR=${SYSTEM_DIR:-"$ROOT/test/roms/private"}
 BRANCH_MIN_DELTA=${BRANCH_MIN_DELTA:-100000}
 OUTDIR=${OUTDIR:-/tmp/dl_branch_$$}

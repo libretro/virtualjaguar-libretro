@@ -10,6 +10,13 @@ Cross-reference source files:
 `src/jerry/jerry.c`, `src/jerry/dsp.c`, `src/jerry/joystick.c`,
 `src/core/vjag_memory.c`
 
+**Provenance note (issue #522):** unlike the other `jtrm-*.md` files, entries here carry no
+per-line `Source:`/`Derived from:` tags -- the header above declares the whole file "synthesized
+from" both the manual and the source files listed, without saying which register entry came from
+which. That is not a per-line audit; addresses have not been individually re-checked against the
+PDFs for this pass. Treat any single entry with the same caution as a `Derived from: ... NOT
+verified against the JTRM` line elsewhere in this doc set until it has been checked.
+
 Clock rates (JTRM-authoritative):
 - NTSC system clock: 26.590906 MHz
 - PAL system clock: 26.593900 MHz

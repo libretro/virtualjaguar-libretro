@@ -41,6 +41,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "uart.h"
 #include "joystick.h"
 #include "inputdev.h"
+#include "paddle.h"
 #include "settings.h"
 #include "shadowfb.h"
 #include "blit_memo.h"
@@ -266,22 +267,67 @@ static uint8_t *joypad_buttons[2] = { joypad0Buttons, joypad1Buttons };
  * them.  Only the explicit subclasses attach it. */
 #define RETRO_DEVICE_JAG_ANALOG          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 0)
 #define RETRO_DEVICE_JAG_DRIVING         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 1)
+/* The early-board paddle / analog stick (#505) is a third
+ * RETRO_DEVICE_ANALOG subclass, for the same reason: an absolute stick.
+ * It is a COMPLETELY DIFFERENT DEVICE from the two above -- those answer
+ * the $F14000 matrix, this one feeds the motherboard ADC at $F17C00 (see
+ * src/jerry/paddle.h) -- and it is the one with a released consumer,
+ * BattleSphere. */
+#define RETRO_DEVICE_JAG_PADDLE          RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 2)
+/* The 6D controller (#538) is a fourth RETRO_DEVICE_ANALOG subclass: it
+ * is an absolute-stick device like the rest, and it wants BOTH sticks
+ * plus the analog shoulder pairs, so RETRO_DEVICE_ANALOG is the base
+ * type a frontend must bind for it to work at all. */
+#define RETRO_DEVICE_JAG_6D              RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_ANALOG, 3)
 /* The light gun (#438) is a plain RETRO_DEVICE_LIGHTGUN, not a subclass:
  * there is only one Jaguar gun wiring and frontends bind their gun/mouse
  * pointer to the base type.  Port 1 only -- TR10 puts the LP pin there
  * and nowhere else (inputdev.h). */
 #define RETRO_DEVICE_JAG_LIGHTGUN        RETRO_DEVICE_LIGHTGUN
+/* The Team Tap (#513) is a RETRO_DEVICE_JOYPAD subclass, not one of the
+ * MOUSE/ANALOG families: everything behind it is a standard Jaguar pad
+ * (TR10 -- the adapter rewrites sockets 1-3 row codes into socket-0 codes
+ * so "those controllers will only see socket 0 row codes"), so the port
+ * really is carrying joypads.  It is NOT an InputDevType: the device
+ * layer models one peripheral per PORT, and the tap is a row-decode
+ * change that leaves four ordinary pads on the far side.  Offered on both
+ * ports -- TR10 allows one adapter per port, eight pads total. */
+#define RETRO_DEVICE_JAG_TEAMTAP         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 0)
 
 /* Device the frontend explicitly selected via
  * retro_set_controller_port_device, or INPUTDEV_PAD when it never did.
  * An explicit frontend selection outranks the core option (a frontend
  * that sets a port device is making a deliberate statement); otherwise
- * the option decides.  Not serialized: option/frontend derived. */
+ * the option decides.  Not serialized: option/frontend derived.
+ *
+ * The Team Tap rides alongside as a bool rather than an InputDevType
+ * value, but is resolved by the SAME code at every step -- one option
+ * key, one frontend claim, one apply_port_device().  Splitting the two
+ * resolutions is the bug apply_port_device() already documents: a fact
+ * about a port derived in two places leaves the port running on the
+ * stale one until something unrelated happens to fix it. */
 static InputDevType port_device_frontend[2] = { INPUTDEV_PAD, INPUTDEV_PAD };
+static bool         port_teamtap_frontend[2]= { false, false };
 static bool         port_device_forced[2]   = { false, false };
+/* Pro Controller preset (#514).  The device is electrically an ordinary
+ * standard pad -- its five extra buttons alias onto keypad 4/6/7/8/9, a
+ * fact recovered from Atari's own SDK header and developer newsletter
+ * (docs/teamtap-procontroller-spike.md section 9), NOT from the TR10
+ * manual set, which never mentions the device at all.  There is no new
+ * controller-type identifier and no new register surface for
+ * SET_CONTROLLER_INFO/InputDevType to dispatch on, so unlike the mouse,
+ * rotary, analog/driving and paddle above this does not get its own
+ * InputDevType: it rides the ordinary INPUTDEV_PAD resolved by
+ * p1_device_from_option()/p2_device_from_option(), and this flag only
+ * decides which five RetroPad buttons update_input()'s legacy pad path
+ * targets.  Selected via the SAME "Controller Type" option as every
+ * other per-port device ("pad_pro"), default off, so an unmodified pad
+ * is untouched -- see p1_pro_controller_from_option(). */
+static bool         pro_controller[2]       = { false, false };
 /* Device actually attached, so the resolution is logged only when it
  * changes rather than on every check_variables() call. */
 static InputDevType port_device_active[2]   = { INPUTDEV_PAD, INPUTDEV_PAD };
+static bool         port_teamtap_active[2]  = { false, false };
 static bool         show_mouse_options      = true;
 static bool         show_rotary_options     = true;
 /* Sensitivity ladders, Q8 (256 == 1.0).  Kept separate because a spinner
@@ -369,6 +415,8 @@ static const char *inputdev_type_name(InputDevType t)
       case INPUTDEV_ANALOG:              return "Analog joystick (bank-switching)";
       case INPUTDEV_DRIVING:             return "Driving controller (bank-switching)";
       case INPUTDEV_LIGHTGUN:            return "light gun";
+      case INPUTDEV_PADDLE:              return "Paddle / analog stick (motherboard ADC)";
+      case INPUTDEV_6D:                  return "6D controller (bank-switching)";
       default:                           break;
    }
    return "standard joypad";
@@ -384,6 +432,18 @@ static bool inputdev_is_mouse_type(InputDevType t)
 static bool inputdev_is_analog_type(InputDevType t)
 {
    return (t == INPUTDEV_ANALOG || t == INPUTDEV_DRIVING);
+}
+
+/* Absolute-stick devices, i.e. everything sourced from RETRO_DEVICE_ANALOG
+ * and tuned through the shared absolute path.  The paddle (#505) reaches
+ * the machine by a completely different route from the two bank-switching
+ * types -- hence the separate predicate above, which must keep meaning
+ * "answers the $F14000 matrix" -- but it wants the SAME tuning ladder and
+ * the same option group, because to the user it is the same wrist. */
+static bool inputdev_is_abs_stick_type(InputDevType t)
+{
+   return (inputdev_is_analog_type(t) || t == INPUTDEV_PADDLE
+           || t == INPUTDEV_6D);
 }
 
 /* Push the sensitivity ladder AND the per-axis tuning (#439) that belong to
@@ -404,7 +464,7 @@ static bool inputdev_is_analog_type(InputDevType t)
  * property: its initialiser has to be a safe value, not a sentinel. */
 static void apply_port_tuning(int port)
 {
-   if (inputdev_is_analog_type(InputDevGetType(port)))
+   if (inputdev_is_abs_stick_type(InputDevGetType(port)))
    {
       /* The analog device has no sensitivity ladder (see the statics),
        * but the port scale is still pinned to unity so an analog ->
@@ -437,13 +497,35 @@ static void apply_port_tuning(int port)
    }
 }
 
-static void apply_port_device(int port, InputDevType type)
+static void apply_port_device(int port, InputDevType type, bool teamtap)
 {
    InputDevSetType(port, type);
 
    /* Read back: InputDevSetType refuses a mouse on port 1, so the
     * resolved type is whatever it actually accepted. */
    type = InputDevGetType(port);
+
+   /* A Team Tap and a non-pad peripheral are the same physical socket, so
+    * they are mutually exclusive and the device wins (nothing can select
+    * both through the option -- one key, one value -- but a frontend
+    * claim and the option can arrive from different directions).  TR10
+    * puts standard controllers behind the adapter only: reads work, but
+    * "software control of advanced features like rumble motors, force
+    * feedback and analogue/digital mode will not be possible", so a
+    * mouse or rotary in a tap socket is a deliberate non-goal.  Resolving
+    * it here, in the one function both callers go through, is what stops
+    * the two from ever disagreeing. */
+   if (type != INPUTDEV_PAD)
+      teamtap = false;
+
+   JoystickSetTeamTap(port, teamtap);
+
+   if (teamtap != port_teamtap_active[port])
+   {
+      port_teamtap_active[port] = teamtap;
+      LOG_INF("[input] port %d: Team Tap %s\n", port + 1,
+              teamtap ? "attached (4 sockets)" : "detached");
+   }
 
    if (type != port_device_active[port])
    {
@@ -781,8 +863,8 @@ static bool update_option_visibility(void)
       };
       bool show_analog_prev = show_analog_options;
 
-      show_analog_options = (inputdev_is_analog_type(InputDevGetType(0))
-                             || inputdev_is_analog_type(InputDevGetType(1)));
+      show_analog_options = (inputdev_is_abs_stick_type(InputDevGetType(0))
+                             || inputdev_is_abs_stick_type(InputDevGetType(1)));
 
       if (force || show_analog_options != show_analog_prev)
       {
@@ -962,6 +1044,13 @@ void retro_set_environment(retro_environment_t cb)
  * function-local would carry the previous session's state into the next
  * one and swallow the first UP/DOWN edge. */
 static int netlink_was_up = -1;
+
+/* Last logged wire-speedup value (#552), same file-scope-for-iOS reasoning
+ * as netlink_was_up: 1 = stock.  UARTWireSpeedup() itself already starts
+ * at 1, so no -1 sentinel is needed -- the first retro_run() call simply
+ * compares 1 to 1 and stays silent, which is correct (nothing to report
+ * yet at frame zero). */
+static unsigned netlink_was_speedup = 1;
 
 /* Discovered-host option list (task 4, #467).  netlink_last_rebuild_ms
  * paces SET_CORE_OPTIONS_V2 re-registration (a full RetroArch option-
@@ -1227,6 +1316,7 @@ static void netlink_apply(int mode, const char *opt_value)
    const char *src = "default";
    int want_file = 0;
    int got_file = 0;
+   int wantAuto;   /* #552: "auto" selected, 0/1 -- see UARTSetWireSpeedupIntent */
    /* OSD dedup state -- see netlink_osd_last_mode's declaration comment. */
    char narrate_host[128];
    int narrate_device;
@@ -1250,6 +1340,23 @@ static void netlink_apply(int mode, const char *opt_value)
    pvar.value = NULL;
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
       JLinkSetWaitEnabled(strcmp(pvar.value, "disabled") != 0);
+
+   /* Wire-latency enhancement (#498, replaced 2x/4x with "auto" in #552).
+    * Read raw, like netlink_wait and the mode itself: a per-title default
+    * has no business overriding a deliberately non-authentic timing
+    * choice the user made, and the setting is only meaningful in the
+    * same breath as the transport.  This sets INTENT only -- whether the
+    * emulated timing actually speeds up is decided by jlink.c's
+    * out-of-band negotiation with the peer (JLinkFrameTick), never here:
+    * the two values used to be the same thing when the option picked a
+    * magnitude directly, and #552 is exactly the split that stopped
+    * being true. */
+   pvar.key = "virtualjaguar_netlink_speed";
+   pvar.value = NULL;
+   wantAuto = 0;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &pvar) && pvar.value)
+      wantAuto = (strcmp(pvar.value, "auto") == 0) ? 1 : 0;
+   UARTSetWireSpeedupIntent((unsigned)wantAuto);
 
    netlink_resolve_host(host, sizeof(host), &src, &want_file, &got_file);
 
@@ -1342,6 +1449,29 @@ static void netlink_apply(int mode, const char *opt_value)
          netlink_osd("Network Link: %s (%s), port %d",
                      netlink_mode_name(mode),
                      netlink_device_label(JLinkDevice()), port);
+   }
+
+   /* Same contract as the [CLOCK] non-stock-scale line: an enhancement
+    * that changes emulated timing has to announce itself, or a link bug
+    * filed from an accelerated session reads as an emulation defect.
+    * Only worth a line when it can actually take effect -- with no
+    * transport selected UARTFrameUsec() takes the stock branch anyway.
+    * #552 replaced the 2x/4x value list with "auto": this line can only
+    * report what was REQUESTED, not what is actually running -- that is
+    * decided moment-to-moment by jlink.c's negotiation with the peer, so
+    * it says so rather than implying a speedup that may still be
+    * pending or may never arrive (peer too old, not in auto, or gone). */
+   if (wantAuto && mode != JLINK_MODE_DISABLED)
+   {
+      if (mode == JLINK_MODE_TCP_SERVER || mode == JLINK_MODE_TCP_CLIENT)
+         LOG_INF("[NETLINK] wire speed auto requested -- negotiating with "
+                 "the peer; runs faster than real hardware only once "
+                 "confirmed, and only while the link is up (link timing "
+                 "bug reports are only valid with this Off)\n");
+      else
+         LOG_INF("[NETLINK] wire speed auto requested, but frontend "
+                 "netplay has no channel to negotiate over -- staying at "
+                 "authentic hardware timing\n");
    }
 
    /* The "From file" preset selected but no usable address in the file is
@@ -1659,11 +1789,69 @@ static const char *core_option_default(const char *key)
    return NULL;
 }
 
-/* GET_VARIABLE with per-title defaults (issue #368): when the frontend's
- * value equals the option's registered default (the user never touched it)
- * and the loaded title has a DB entry for this key, substitute the DB
- * value. A user-set non-default value always wins. Logs once per
- * substitution via LOG_INF. */
+/* Known-bad (negative-entry, issue #464) warnings: latched per option key
+ * for the lifetime of the loaded content, not per read -- check_variables()
+ * re-reads every option on load AND on every frontend variable-update
+ * notification, so an unlatched warning would spam the log once per
+ * option-menu visit for the whole session. Reset alongside every other
+ * per-load titledb static: retro_load_game(), retro_unload_game() and
+ * retro_deinit() (iOS cannot dlclose a core, so statics must be reset by
+ * hand, not left to process teardown -- same reasoning as
+ * hook_restart_notice_logged next to each of these resets). */
+#define TITLEDB_NEG_WARN_MAX 8
+static char negative_warned_keys[TITLEDB_NEG_WARN_MAX][64];
+static int  negative_warned_count = 0;
+
+static void titledb_reset_negative_warnings(void)
+{
+   negative_warned_count = 0;
+}
+
+/* Returns true if `key` was already warned about this load (and marks it
+ * warned if not). A full latch table degrades to "warn every time" for
+ * keys past TITLEDB_NEG_WARN_MAX rather than crashing or dropping the
+ * warning -- there are a handful of core options total, so 8 slots is
+ * generous headroom, not a hard cap that matters in practice. */
+static bool titledb_negative_warn_seen(const char *key)
+{
+   int i;
+   size_t len;
+
+   for (i = 0; i < negative_warned_count; i++)
+      if (!strcmp(negative_warned_keys[i], key))
+         return true;
+
+   if (negative_warned_count < TITLEDB_NEG_WARN_MAX)
+   {
+      len = strlen(key);
+      if (len >= sizeof(negative_warned_keys[0]))
+         len = sizeof(negative_warned_keys[0]) - 1;
+      memcpy(negative_warned_keys[negative_warned_count], key, len);
+      negative_warned_keys[negative_warned_count][len] = '\0';
+      negative_warned_count++;
+   }
+   return false;
+}
+
+/* GET_VARIABLE with per-title defaults (issue #368) and known-bad refusal
+ * (issue #464).
+ *
+ * Positive path (#368, unchanged): when the frontend's value equals the
+ * option's registered default (the user never touched it) and the loaded
+ * title has a DB entry for this key, substitute the DB value. Logs once
+ * per read via LOG_INF.
+ *
+ * Negative path (#464): a per-title DEFAULT substitution must never be
+ * unsafe, so it is refused (with a warning) if TitleDBUnsafeValue() flags
+ * it -- the option falls back to whatever the frontend/registered default
+ * already gave it, exactly as if this title had no DB row at all. A
+ * user's own EXPLICIT choice is always honoured -- refusing it would
+ * break the DB's one hard rule ("user-set values always win") -- but a
+ * matching negative entry still logs a warning, latched once per key per
+ * load, so a bug report against that title starts from the right
+ * hypothesis instead of a multi-session investigation (see #463). Gated
+ * by the same pertitle_enabled switch as the positive path: one feature,
+ * one on/off knob, documented in docs/enhancement-hooks.md. */
 static bool get_variable_pertitle(struct retro_variable *var)
 {
    bool ok = environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value;
@@ -1672,18 +1860,32 @@ static bool get_variable_pertitle(struct retro_variable *var)
    if (!pertitle_enabled)
       return ok;
 
-   ovr = TitleDBOverride(var->key);
-   if (!ovr)
-      return ok;
-
    def = core_option_default(var->key);
-   if (!ok || (def && !strcmp(var->value, def)))
+   ovr = TitleDBOverride(var->key);
+
+   if (ovr && (!ok || (def && !strcmp(var->value, def))))
    {
+      if (TitleDBUnsafeValue(var->key, ovr, def))
+      {
+         if (!titledb_negative_warn_seen(var->key))
+            LOG_WRN("[titledb] %s: %s=%s is known-bad for this title -- "
+                    "refusing the per-title default, staying at %s\n",
+                    TitleDBTitleName(), var->key, ovr,
+                    def ? def : "(unset)");
+         return ok;
+      }
       LOG_INF("[titledb] %s: %s=%s (option at default)\n",
               TitleDBTitleName(), var->key, ovr);
       var->value = ovr;
       return true;
    }
+
+   if (ok && TitleDBUnsafeValue(var->key, var->value, def)
+       && !titledb_negative_warn_seen(var->key))
+      LOG_WRN("[titledb] %s: %s=%s is known-bad for this title "
+              "(explicit user choice honored)\n",
+              TitleDBTitleName(), var->key, var->value);
+
    return ok;
 }
 
@@ -1700,16 +1902,22 @@ static bool get_variable_pertitle(struct retro_variable *var)
  * so it degrades to a plain GET_VARIABLE.  The "auto -> per-title DB" leg
  * of the documented precedence genuinely cannot fire on that early call;
  * the check_variables() during retro_load_game() resolves it properly. */
-static InputDevType p2_device_from_option(void)
+static InputDevType p2_device_from_option(bool *teamtap)
 {
    struct retro_variable var;
    InputDevType p2 = INPUTDEV_PAD;
+
+   /* One option key resolves BOTH the peripheral and the adapter, so the
+    * two can never be selected together (#513). */
+   *teamtap = false;
 
    var.key   = "virtualjaguar_p2_device";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (!strcmp(var.value, "mouse_st"))
+      if (!strcmp(var.value, "teamtap"))
+         *teamtap = true;
+      else if (!strcmp(var.value, "mouse_st"))
          p2 = INPUTDEV_MOUSE_ST;
       else if (!strcmp(var.value, "mouse_amiga"))
          p2 = INPUTDEV_MOUSE_AMIGA_ON_ST;
@@ -1721,6 +1929,10 @@ static InputDevType p2_device_from_option(void)
          p2 = INPUTDEV_ANALOG;
       else if (!strcmp(var.value, "driving"))
          p2 = INPUTDEV_DRIVING;
+      else if (!strcmp(var.value, "paddle"))
+         p2 = INPUTDEV_PADDLE;
+      else if (!strcmp(var.value, "6d"))
+         p2 = INPUTDEV_6D;
       /* "pad" and "auto" (with no DB row) both mean pad. */
    }
 
@@ -1742,16 +1954,20 @@ static InputDevType p2_device_from_option(void)
  * selecting one removes Up and Down from row 0, so a player using a pad on
  * that title would lose menu navigation entirely.  That is a functional
  * break, not a preference, so the rotary is opt-in always. */
-static InputDevType p1_device_from_option(void)
+static InputDevType p1_device_from_option(bool *teamtap)
 {
    struct retro_variable var;
    InputDevType p1 = INPUTDEV_PAD;
+
+   *teamtap = false;
 
    var.key   = "virtualjaguar_p1_device";
    var.value = NULL;
    if (get_variable_pertitle(&var) && var.value)
    {
-      if (!strcmp(var.value, "rotary"))
+      if (!strcmp(var.value, "teamtap"))
+         *teamtap = true;
+      else if (!strcmp(var.value, "rotary"))
          p1 = INPUTDEV_ROTARY;
       else if (!strcmp(var.value, "analog"))
          p1 = INPUTDEV_ANALOG;
@@ -1759,10 +1975,42 @@ static InputDevType p1_device_from_option(void)
          p1 = INPUTDEV_DRIVING;
       else if (!strcmp(var.value, "lightgun"))
          p1 = INPUTDEV_LIGHTGUN;
+      else if (!strcmp(var.value, "paddle"))
+         p1 = INPUTDEV_PADDLE;
+      else if (!strcmp(var.value, "6d"))
+         p1 = INPUTDEV_6D;
       /* "pad" and "auto" both mean pad. */
    }
 
    return p1;
+}
+
+/* Pro Controller preset readers (#514), same contract and same option
+ * ("virtualjaguar_p1_device" / "_p2_device") as p1_device_from_option() /
+ * p2_device_from_option() above -- deliberately re-reading rather than
+ * threading an out-parameter through those two, so a caller that only
+ * wants the InputDevType is unaffected.  "pad_pro" is the one value that
+ * both (a) resolves to INPUTDEV_PAD in the sibling functions (it matches
+ * none of their strcmps, so it falls through to the "pad"/"auto"
+ * default) and (b) is true here. */
+static bool p1_pro_controller_from_option(void)
+{
+   struct retro_variable var;
+
+   var.key   = "virtualjaguar_p1_device";
+   var.value = NULL;
+   return (get_variable_pertitle(&var) && var.value
+           && !strcmp(var.value, "pad_pro"));
+}
+
+static bool p2_pro_controller_from_option(void)
+{
+   struct retro_variable var;
+
+   var.key   = "virtualjaguar_p2_device";
+   var.value = NULL;
+   return (get_variable_pertitle(&var) && var.value
+           && !strcmp(var.value, "pad_pro"));
 }
 
 /* Per-axis tuning option readers (#439).
@@ -2005,6 +2253,26 @@ static void check_variables(void)
          GPUPipeTimingReset();
    }
 
+   /* DSP idle-loop fast-forward (issue #569).  Bit-exact by
+    * construction -- see the safety theorem in src/jerry/dsp.c -- and
+    * the corpus A/B (Iron Soldier, AvP, Doom, Wolfenstein 3D, Tempest
+    * 2000, jagniccc, yarc, plus the CD titles Primal Rage and Battle
+    * Morph) is byte-identical on framebuffer, audio and periodic
+    * savestate digest with it off vs on.  It still ships OFF for one
+    * release cycle: the failure mode if an untested title does slip
+    * through is a silent audio/video divergence nobody can attribute,
+    * against a speed win a user can opt into with one toggle -- an
+    * asymmetry a nine-title corpus does not settle for a ~200-title
+    * library.  DSPExec re-checks the interacting options (dram timing,
+    * pipeline timing, clock scale, blit memo) itself, so the order the
+    * option loop reads them in does not matter. */
+   var.key = "virtualjaguar_risc_idle_skip";
+   var.value = NULL;
+   if (get_variable_pertitle(&var) && var.value)
+      vjs.riscIdleSkip = (strcmp(var.value, "enabled") == 0);
+   else
+      vjs.riscIdleSkip = false;
+
    /* DRAM timing: enabled/disabled only, covering BOTH halves of the
     * symmetric self-cost model (GPU stalls in gpu.c, 68K wait-states
     * in jaguar.c).  The calibration scale is deliberately NOT a core
@@ -2211,19 +2479,38 @@ static void check_variables(void)
     * Port 1 (#436) follows the same precedence, but offers pad or rotary
     * only and will never get a titledb row -- see p1_device_from_option. */
    {
-      InputDevType p1 = p1_device_from_option();
-      InputDevType p2 = p2_device_from_option();
+      bool tap1 = false, tap2 = false;
+      InputDevType p1 = p1_device_from_option(&tap1);
+      InputDevType p2 = p2_device_from_option(&tap2);
 
       if (port_device_forced[1])
-         p2 = port_device_frontend[1];
+      {
+         p2   = port_device_frontend[1];
+         tap2 = port_teamtap_frontend[1];
+      }
 
-      apply_port_device(1, p2);
+      apply_port_device(1, p2, tap2);
 
       if (port_device_forced[0])
-         p1 = port_device_frontend[0];
+      {
+         p1   = port_device_frontend[0];
+         tap1 = port_teamtap_frontend[0];
+      }
 
-      apply_port_device(0, p1);
+      apply_port_device(0, p1, tap1);
    }
+
+   /* Pro Controller preset (#514).  Independent of the frontend-forced
+    * precedence above -- no RETRO_DEVICE subclass currently asks for a
+    * Pro Controller, so this is core-option-only -- but still gated on
+    * the port actually being a standard pad: a port the frontend or
+    * option has moved to the mouse/rotary/analog/driving/paddle/lightgun
+    * device has no RetroPad-to-Jaguar-key mapping for this preset to
+    * affect. */
+   pro_controller[0] = (port_device_active[0] == INPUTDEV_PAD)
+                        && p1_pro_controller_from_option();
+   pro_controller[1] = (port_device_active[1] == INPUTDEV_PAD)
+                        && p2_pro_controller_from_option();
 
    var.key   = "virtualjaguar_mouse_sensitivity";
    var.value = NULL;
@@ -2350,6 +2637,94 @@ static void check_variables(void)
    update_option_visibility();
 }
 
+/* Team Tap sockets 1-3 (#513).
+ *
+ * Everything behind the adapter is an ordinary standard pad, so this is
+ * the plain default RetroPad layout -- byte for byte the mapping the
+ * non-remapped socket-0 branch below uses.
+ *
+ * FIXED, and deliberately so.  The per-port remap tables
+ * (jag_retropad[2][...], enable_alt_inputs) and the numpad-to-keyboard
+ * option (numpad_to_kb[2]) are indexed by PORT and exist because
+ * RetroArch's own Controls menu cannot reach four of the keypad keys (7,
+ * 8, 9 and the two symbol keys).  Growing them to eight sockets would
+ * mean eight copies of every per-port remap option in
+ * libretro_core_options.h for a device most users will never plug in;
+ * pads 3-8 remap through the frontend's Controls menu instead, which
+ * reaches everything in this table.  Documented in
+ * docs/input-devices-user-guide.md. */
+static const struct { unsigned char id; unsigned char slot; } teamtap_map[] = {
+   { RETRO_DEVICE_ID_JOYPAD_UP,     BUTTON_U },
+   { RETRO_DEVICE_ID_JOYPAD_DOWN,   BUTTON_D },
+   { RETRO_DEVICE_ID_JOYPAD_LEFT,   BUTTON_L },
+   { RETRO_DEVICE_ID_JOYPAD_RIGHT,  BUTTON_R },
+   { RETRO_DEVICE_ID_JOYPAD_A,      BUTTON_A },
+   { RETRO_DEVICE_ID_JOYPAD_B,      BUTTON_B },
+   { RETRO_DEVICE_ID_JOYPAD_Y,      BUTTON_C },
+   { RETRO_DEVICE_ID_JOYPAD_SELECT, BUTTON_PAUSE },
+   { RETRO_DEVICE_ID_JOYPAD_START,  BUTTON_OPTION },
+   { RETRO_DEVICE_ID_JOYPAD_X,      BUTTON_0 },
+   { RETRO_DEVICE_ID_JOYPAD_L,      BUTTON_1 },
+   { RETRO_DEVICE_ID_JOYPAD_R,      BUTTON_2 },
+   { RETRO_DEVICE_ID_JOYPAD_L2,     BUTTON_3 },
+   { RETRO_DEVICE_ID_JOYPAD_R2,     BUTTON_4 },
+   { RETRO_DEVICE_ID_JOYPAD_L3,     BUTTON_5 },
+   { RETRO_DEVICE_ID_JOYPAD_R3,     BUTTON_6 }
+};
+
+/* Which frontend port drives which (Jaguar port, tap socket).
+ *
+ * Ports 1 and 2 keep their existing meaning -- socket 0 of Jaguar port 1
+ * and 2 -- so nothing an existing user has bound moves.  The extra
+ * sockets are appended after them, port 1's first.  With one tap on
+ * Jaguar port 1 the four players are therefore on FRONTEND ports 1, 3, 4
+ * and 5, which is the sort of thing that generates a bug report unless
+ * it is written down: docs/input-devices-user-guide.md carries the
+ * table. */
+static const unsigned teamtap_user[2][3] = { { 2, 3, 4 }, { 5, 6, 7 } };
+
+static void update_teamtap_input(void)
+{
+   unsigned port, socket, i;
+
+   for (port = 0; port < 2; port++)
+   {
+      uint8_t *buttons;
+
+      if (!JoystickGetTeamTap((int)port))
+         continue;
+
+      buttons = joypad_buttons[port];
+
+      for (socket = 1; socket < JOYPAD_SOCKETS; socket++)
+      {
+         unsigned  user = teamtap_user[port][socket - 1];
+         uint8_t  *slot = buttons + socket * JOYPAD_SOCKET_SLOTS;
+         /* Unsigned, unlike the int16_t the socket-0 path carries: R3 is
+          * bit 15, so a signed accumulator would go negative there and
+          * the comparison below would be reasoning about sign extension
+          * for no reason. */
+         uint32_t  ret  = 0;
+
+         if (libretro_supports_bitmasks)
+            ret = (uint32_t)(uint16_t)input_state_cb(user, RETRO_DEVICE_JOYPAD,
+                                                     0,
+                                                     RETRO_DEVICE_ID_JOYPAD_MASK);
+         else
+         {
+            for (i = RETRO_DEVICE_ID_JOYPAD_B;
+                 i <= RETRO_DEVICE_ID_JOYPAD_R3; ++i)
+               if (input_state_cb(user, RETRO_DEVICE_JOYPAD, 0, i))
+                  ret |= (uint32_t)1 << i;
+         }
+
+         for (i = 0; i < ARRAY_SIZE(teamtap_map); i++)
+            if (ret & ((uint32_t)1 << teamtap_map[i].id))
+               slot[teamtap_map[i].slot] = 0xff;
+      }
+   }
+}
+
 static void update_input(void)
 {
    unsigned i;
@@ -2361,7 +2736,14 @@ static void update_input(void)
    ret[0] = ret[1] = 0;
    input_poll_cb();
 
-   for(i=BUTTON_FIRST;i<=BUTTON_LAST;i++){
+   /* Clear ALL FOUR SOCKETS per port, unconditionally -- not just the
+    * socket-0 slots [0..20] this loop used to cover, and not gated on
+    * whether a tap is currently attached.  A conditional clear would
+    * leave a pad in socket 2 latching its last press forever the moment
+    * the adapter was detached, and would give the feature two clear
+    * paths to keep in step.  Still bit-identical with no tap selected:
+    * the decode never reads above slot 20 then. */
+   for (i = 0; i < JOYPAD_BUTTON_SLOTS; i++){
        joypad0Buttons[i] = 0x00;
        joypad1Buttons[i] = 0x00;
    }
@@ -2478,15 +2860,51 @@ static void update_input(void)
          joypad0Buttons[BUTTON_PAUSE] = 0xff;
       if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
          joypad0Buttons[BUTTON_OPTION] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0)? 1 : 0))
+      /* Pro Controller preset (#514): X/L1/R1/L2/R2 target the five
+       * aliased keypad slots (9/4/6/8/7 -- docs/teamtap-procontroller-
+       * spike.md section 9.4/9.5) instead of the legacy Numpad 0-4
+       * bindings below.  pro_controller[player] defaults false, so the
+       * else branch is verbatim the pre-existing mapping -- byte-
+       * identical output with the preset off.  The keyboard fallbacks
+       * (0-4 keys) are split out unchanged directly below: they are a
+       * literal keypad-digit shortcut, not an alias of these RetroPad
+       * buttons, so they keep hitting BUTTON_0..BUTTON_4 regardless of
+       * the preset. */
+      if (pro_controller[0])
+      {
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad0Buttons[BUTTON_9] = 0xff;   /* Pro X -- keypad 9 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad0Buttons[BUTTON_4] = 0xff;   /* Pro Left shoulder -- keypad 4 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad0Buttons[BUTTON_6] = 0xff;   /* Pro Right shoulder -- keypad 6 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad0Buttons[BUTTON_8] = 0xff;   /* Pro Y -- keypad 8 */
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad0Buttons[BUTTON_7] = 0xff;   /* Pro Z -- keypad 7 */
+      }
+      else
+      {
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad0Buttons[BUTTON_0] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad0Buttons[BUTTON_1] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad0Buttons[BUTTON_2] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad0Buttons[BUTTON_3] = 0xff;
+         if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad0Buttons[BUTTON_4] = 0xff;
+      }
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0))
          joypad0Buttons[BUTTON_0] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1))
          joypad0Buttons[BUTTON_1] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2))
          joypad0Buttons[BUTTON_2] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3))
          joypad0Buttons[BUTTON_3] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4))
          joypad0Buttons[BUTTON_4] = 0xff;
       if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
          joypad0Buttons[BUTTON_5] = 0xff;
@@ -2521,15 +2939,44 @@ static void update_input(void)
          joypad1Buttons[BUTTON_PAUSE] = 0xff;
       if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
          joypad1Buttons[BUTTON_OPTION] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p)? 1 : 0))
+      /* Pro Controller preset (#514) -- port 2, same shape as port 1
+       * above.  Keyboard fallbacks (p/q/w/e/r) keep hitting the literal
+       * keypad digits regardless of the preset, same reasoning as port 1. */
+      if (pro_controller[1])
+      {
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad1Buttons[BUTTON_9] = 0xff;   /* Pro X -- keypad 9 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad1Buttons[BUTTON_4] = 0xff;   /* Pro Left shoulder -- keypad 4 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad1Buttons[BUTTON_6] = 0xff;   /* Pro Right shoulder -- keypad 6 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad1Buttons[BUTTON_8] = 0xff;   /* Pro Y -- keypad 8 */
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad1Buttons[BUTTON_7] = 0xff;   /* Pro Z -- keypad 7 */
+      }
+      else
+      {
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+            joypad1Buttons[BUTTON_0] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+            joypad1Buttons[BUTTON_1] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+            joypad1Buttons[BUTTON_2] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2))
+            joypad1Buttons[BUTTON_3] = 0xff;
+         if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
+            joypad1Buttons[BUTTON_4] = 0xff;
+      }
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p))
          joypad1Buttons[BUTTON_0] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q))
          joypad1Buttons[BUTTON_1] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w))
          joypad1Buttons[BUTTON_2] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e))
          joypad1Buttons[BUTTON_3] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r)? 1 : 0))
+      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r))
          joypad1Buttons[BUTTON_4] = 0xff;
       if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
          joypad1Buttons[BUTTON_5] = 0xff;
@@ -2589,6 +3036,165 @@ static void update_input(void)
 
          if (t == INPUTDEV_PAD)
             continue;
+
+         /* Paddle / early-board ADC stick (#505): an ABSOLUTE device like
+          * the two below, but it drives the motherboard converter at
+          * $F17C00 and nothing on the $F14000 matrix, so this branch is
+          * the whole integration -- no liveness latch and no pad
+          * suppression.
+          *
+          * NO LIVENESS LATCH is the deliberate difference from the branch
+          * below.  That one exists because an engaged analog controller
+          * STEALS the port's matrix from a pad the frontend may really be
+          * routing; the paddle steals nothing (the pots are separate
+          * connector pins, so the digital pad on this port stays fully
+          * live).  And gating on a deflection would break the one shipped
+          * consumer: BattleSphere's calibrator asks the player to align a
+          * crosshair with the stick CENTRED, which an un-engaged device
+          * reading the $00 rail could never satisfy.  A frontend with no
+          * analog routed reports 0/0, which is centre -- exactly what a
+          * plugged-in, untouched stick reads.
+          *
+          * Buttons are not read here at all: the paddle's switches are
+          * the ordinary pad's, already decoded by joystick.c. */
+         if (t == INPUTDEV_PADDLE)
+         {
+            InputDevFeedPaddle((int)player,
+                               (int32_t)input_state_cb(player,
+                                  RETRO_DEVICE_ANALOG,
+                                  RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                                  RETRO_DEVICE_ID_ANALOG_X),
+                               (int32_t)input_state_cb(player,
+                                  RETRO_DEVICE_ANALOG,
+                                  RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                                  RETRO_DEVICE_ID_ANALOG_Y));
+            continue;
+         }
+
+         /* 6D controller (#538): TR10's three-bank advanced controller,
+          * six analog DOF and seven buttons plus Rezero.
+          *
+          * SIX DOF ONTO A RETROPAD.  A RetroPad exposes exactly six
+          * analog signals a frontend can reasonably route -- two sticks
+          * and the two analog-capable shoulder pairs -- so the mapping is
+          * one-to-one with nothing doubled up:
+          *
+          *   left stick X   -> X   (translate left / right)
+          *   left stick Y   -> Y   (translate up / down)
+          *   R2 - L2        -> Z   (translate fore / aft, "thrust")
+          *   right stick X  -> TX  (yaw, per TR10's naming)
+          *   R  - L         -> TY  (roll)
+          *   right stick Y  -> TZ  (pitch)
+          *
+          * The two shoulder pairs are read through
+          * RETRO_DEVICE_INDEX_ANALOG_BUTTON, which yields a real analog
+          * value on a frontend that has one and a clean 0 / 32767 on one
+          * that does not -- so the device degrades to digital roll and
+          * thrust rather than losing two DOF.  The bipolar difference is
+          * the same shape the driving skin already uses for its
+          * accelerator / brake pair.
+          *
+          * The pairing of DOF to host axis is a CHOICE, not a spec: TR10
+          * defines what the six values mean to the machine and says
+          * nothing about what a human holds.  Anyone testing this should
+          * expect to want it different.
+          *
+          * LIVENESS: same guardrail as the analog controller -- inert,
+          * and bit-identical to a pad, until some axis deflects past the
+          * shared threshold, because a centred stick is indistinguishable
+          * from "no analog routed at all".
+          *
+          * PAUSE AND OPTION ARE UNREACHABLE while this device is engaged,
+          * and that is the hardware, not an omission: the 6D bank tables
+          * have no Pause and no Option bit. TR10's answer is a physical
+          * joypad in the controller's DB15 passthrough, which has no
+          * emulated equivalent (inputdev.h). */
+         if (t == INPUTDEV_6D)
+         {
+            int32_t  ax[INPUTDEV_6D_AXES];
+            int32_t  sh[4];   /* L2, R2, L, R -- see the fallback below */
+            uint32_t sw = 0;
+            int      i;
+            static const unsigned sh_id[4] = {
+               RETRO_DEVICE_ID_JOYPAD_L2, RETRO_DEVICE_ID_JOYPAD_R2,
+               RETRO_DEVICE_ID_JOYPAD_L,  RETRO_DEVICE_ID_JOYPAD_R
+            };
+
+            ax[INPUTDEV_6D_X]  = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                     RETRO_DEVICE_ID_ANALOG_X);
+            ax[INPUTDEV_6D_Y]  = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                     RETRO_DEVICE_ID_ANALOG_Y);
+            ax[INPUTDEV_6D_TX] = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+                     RETRO_DEVICE_ID_ANALOG_X);
+            ax[INPUTDEV_6D_TZ] = (int32_t)input_state_cb(player,
+                     RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT,
+                     RETRO_DEVICE_ID_ANALOG_Y);
+            /* The two shoulder pairs, read as ANALOG BUTTONS so a
+             * frontend with real pressure gives proportional thrust and
+             * roll.  DIGITAL FALLBACK, and it is not optional: a
+             * frontend that does not implement analog-button reads
+             * answers 0 for a shoulder that is being held, which would
+             * leave Z and TY permanently at rest -- two of the six DOF
+             * silently dead, not merely non-proportional.  So a zero
+             * analog read on a button the digital mask says is DOWN is
+             * promoted to full scale.  Same shape as the driving skin's
+             * `if (r2 || l2)` fallback. */
+            for (i = 0; i < 4; i++)
+            {
+               sh[i] = (int32_t)input_state_cb(player, RETRO_DEVICE_ANALOG,
+                          RETRO_DEVICE_INDEX_ANALOG_BUTTON, sh_id[i]);
+               if (sh[i] == 0 && (ret[player] & (1 << sh_id[i])))
+                  sh[i] = 32767;
+            }
+
+            ax[INPUTDEV_6D_Z]  = sh[1] - sh[0];   /* R2 - L2 */
+            ax[INPUTDEV_6D_TY] = sh[3] - sh[2];   /* R  - L  */
+
+            for (i = 0; i < INPUTDEV_6D_AXES; i++)
+            {
+               if (ax[i] > ANALOG_THRESHOLD || ax[i] < -ANALOG_THRESHOLD)
+               {
+                  if (!inputdev_live[player])
+                  {
+                     inputdev_live[player] = true;
+                     LOG_INF("[input] port %d: 6D controller is live, "
+                             "RetroPad released\n", player + 1);
+                  }
+                  break;
+               }
+            }
+
+            if (inputdev_live[player])
+            {
+               /* A-D on the same four face slots the analog controller
+                * uses; E / F on the stick clicks; G and Rezero on
+                * Start / Select, which are otherwise dead here because
+                * the device has no Pause or Option bit at all. */
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_A))
+                  sw |= INPUTDEV_SW_A;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_B))
+                  sw |= INPUTDEV_SW_B;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_Y))
+                  sw |= INPUTDEV_SW_C;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_X))
+                  sw |= INPUTDEV_SW_D;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_L3))
+                  sw |= INPUTDEV_SW_E;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_R3))
+                  sw |= INPUTDEV_SW_F;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_START))
+                  sw |= INPUTDEV_SW_G;
+               if (ret[player] & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT))
+                  sw |= INPUTDEV_SW_REZERO;
+
+               memset(joypad_buttons[player], 0x00, BUTTON_LAST + 1);
+               InputDevFeed6D((int)player, ax, sw);
+            }
+            continue;
+         }
 
          /* Analog / driving controller (#437): an ABSOLUTE device fed
           * from RETRO_DEVICE_ANALOG, not the relative mouse path below.
@@ -2786,6 +3392,14 @@ static void update_input(void)
          InputDevFeed((int)player, dx, dy, buttons);
       }
    }
+
+   /* Team Tap sockets 1-3 (#513).  LAST, after every socket-0 path
+    * including the non-pad suppression above, because those paths clear
+    * socket 0 wholesale (BUTTON_LAST + 1 bytes) and this must not be
+    * undone by one of them.  Inert unless a tap is attached, and
+    * apply_port_device() guarantees a tap and a non-pad device are never
+    * attached to the same port. */
+   update_teamtap_input();
 }
 
 /************************************
@@ -2852,12 +3466,22 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
 void retro_set_controller_port_device(unsigned port, unsigned device)
 {
    InputDevType type = INPUTDEV_PAD;
+   bool teamtap      = false;
 
+   /* Ports 2-7 are the Team Tap's extra sockets (#513).  They carry
+    * nothing but standard pads and the core reads them straight from
+    * input_state_cb, so there is no per-port device state for them --
+    * and every array in this file is sized 2.  The guard stays. */
    if (port > 1)
       return;
 
    switch (device)
    {
+      case RETRO_DEVICE_JAG_TEAMTAP:
+         /* The pad in socket 0 is still an ordinary pad. */
+         type    = INPUTDEV_PAD;
+         teamtap = true;
+         break;
       case RETRO_DEVICE_JAG_MOUSE_ST:
       case RETRO_DEVICE_MOUSE:  /* a plain mouse means the ST wiring */
          type = INPUTDEV_MOUSE_ST;
@@ -2877,6 +3501,12 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
       case RETRO_DEVICE_JAG_DRIVING:
          type = INPUTDEV_DRIVING;
          break;
+      case RETRO_DEVICE_JAG_PADDLE:
+         type = INPUTDEV_PADDLE;
+         break;
+      case RETRO_DEVICE_JAG_6D:
+         type = INPUTDEV_6D;
+         break;
       /* A plain RETRO_DEVICE_ANALOG falls through to the pad on purpose
        * -- see the subclass definitions. */
       case RETRO_DEVICE_JAG_LIGHTGUN:
@@ -2895,13 +3525,18 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
     * right after load, so forcing PAD here used to detach the mouse the
     * core option had just attached, for the whole session -- which is why
     * the feature was never seen working in a frontend. */
-   port_device_frontend[port] = type;
-   port_device_forced[port]   = (type != INPUTDEV_PAD);
+   port_device_frontend[port]  = type;
+   port_teamtap_frontend[port] = teamtap;
+   /* A Team Tap claim is as much a claim as a mouse: without it in this
+    * predicate, selecting the tap from the frontend's Controls menu would
+    * fall straight through to the option below and be discarded. */
+   port_device_forced[port]    = (type != INPUTDEV_PAD || teamtap);
 
-   if (type == INPUTDEV_PAD)
-      type = (port == 1) ? p2_device_from_option() : p1_device_from_option();
+   if (!port_device_forced[port])
+      type = (port == 1) ? p2_device_from_option(&teamtap)
+                         : p1_device_from_option(&teamtap);
 
-   apply_port_device((int)port, type);
+   apply_port_device((int)port, type, teamtap);
    update_option_visibility();
 }
 
@@ -2987,6 +3622,41 @@ bool retro_serialize(void *data, size_t size)
     * game reads at $F14000 -- so a state restored without them replays
     * different motion. */
    buf += InputDevStateSave(buf);
+
+   /* Paddle ADC chunk (#505): the latched MUX address and the completed
+    * conversion, which together decide what the next $F17C00 read
+    * returns.  Trailing, so a state written before it existed reads the
+    * zero fill below -- see paddle.h for why that needs no version bump. */
+   buf += PaddleStateSave(buf);
+
+   /* v13: Team Tap sockets 1-3 (#513).  What a pad behind the adapter
+    * holds is machine-visible at $F14000/$F14002 the instant the title
+    * selects that socket's row code, so a state without it replays
+    * different input -- the same class of bug as #400 and #479.
+    *
+    * STRICTLY LAST, and after the paddle chunk: the paddle landed first
+    * (#544) so every v12 blob develop already writes ends with it.
+    * Appending here keeps those loadable; interleaving would desync the
+    * blob for every state, silently. */
+   buf += JoystickTeamTapStateSave(buf);
+
+   /* v13 (extended in place, #552): negotiated wire-speedup Effective
+    * value.  It is machine-affecting the instant a peer has confirmed it
+    * -- it changes UARTFrameUsec(), which schedules the UART TX/RX
+    * event-queue deadlines via SetCallbackTime() -- so a state saved
+    * mid-negotiation must restore it, or the reload silently reverts to
+    * stock timing while the option still reads "auto" and the peer (if
+    * still connected) keeps running the negotiated rate: exactly the
+    * DAC-registers-at-$F1A148 / hi-res-epoch class of silent determinism
+    * bug this project has shipped twice before.  Config Intent is NOT
+    * saved here, same as NTSC/PAL -- see uart.h.
+    *
+    * STRICTLY LAST, after Team Tap: same reasoning as Team Tap's own
+    * comment above -- every v12 AND pre-#552 v13 blob develop has
+    * written ends at the paddle or Team Tap chunk respectively, so
+    * appending here (rather than interleaving) keeps all of them
+    * loadable. */
+   buf += UARTWireSpeedupStateSave(buf);
 
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
@@ -3130,6 +3800,45 @@ bool retro_unserialize(const void *data, size_t size)
       buf += InputDevStateLoad(buf);
    else
       InputDevReset();
+
+   /* Paddle ADC chunk (#505), mirroring retro_serialize.  Guarded by the
+    * same version as the input-device chunk it trails: on an older layout
+    * neither is present, and the converter is reset instead.  A v12 state
+    * written before this chunk existed reads the serializer's zero fill --
+    * MUX 0, result 0 -- which is what PaddleReset() would have set
+    * anyway. */
+   if (version >= STATE_VERSION_INPUT_DEVICES)
+      buf += PaddleStateLoad(buf);
+   else
+      PaddleReset();
+
+   /* v13: Team Tap sockets 1-3.  Older states carry none, so the pads
+    * behind the adapter come back released -- exactly what a pre-v13
+    * core was.  The adapter's own presence is never serialized (it is
+    * user configuration, see joystick.h), so a state saved with a tap
+    * loads into whatever the current session has selected.
+    *
+    * Order mirrors retro_serialize exactly -- paddle, then this.  A v12
+    * blob (which develop writes) stops after the paddle chunk and takes
+    * the reset branch here. */
+   if (version >= STATE_VERSION_TEAMTAP)
+      buf += JoystickTeamTapStateLoad(buf);
+   else
+      JoystickTeamTapStateReset();
+
+   /* v13 (extended in place, #552): negotiated wire-speedup Effective
+    * value -- see the matching comment on the save side.  Older states
+    * (including a pre-#552 v13 blob, e.g. one written between the Team
+    * Tap merge and this one) carry no such field; falling back to stock
+    * here is exactly what a pre-#552 core was, and jlink.c's own
+    * per-frame reconciliation (JLinkNegTick) will re-derive the real
+    * value within one frame regardless -- this call only avoids running
+    * one frame on a stale Effective left over from whatever the session
+    * was doing before the load. */
+   if (version >= STATE_VERSION_TEAMTAP)
+      buf += UARTWireSpeedupStateLoad(buf);
+   else
+      UARTSetWireSpeedupEffective(1);
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -3716,6 +4425,38 @@ bool retro_load_game(const struct retro_game_info *info)
       { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Right Analog X" },
       { 1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Right Analog Y" },
 
+      /* Team Tap sockets (#513), frontend ports 3-8.  Joypad only: the
+       * adapter carries standard controllers, and the analog rows above
+       * exist for the bank-switching device, which cannot be reached
+       * through a tap.  Labels match teamtap_map[] exactly -- the fixed
+       * default layout, since the per-port remap options are socket-0
+       * only (see teamtap_map). */
+#define JAG_TAP_DESC(p) \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "D-Pad Left" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "D-Pad Up" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "D-Pad Down" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "D-Pad Right" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "B" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "A" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "Numpad 0" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "C" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "Numpad 1" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "Numpad 3" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,     "Numpad 5" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "Numpad 2" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "Numpad 4" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,     "Numpad 6" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Pause" }, \
+      { p, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Option" }
+
+      JAG_TAP_DESC(2),
+      JAG_TAP_DESC(3),
+      JAG_TAP_DESC(4),
+      JAG_TAP_DESC(5),
+      JAG_TAP_DESC(6),
+      JAG_TAP_DESC(7),
+#undef JAG_TAP_DESC
+
       { 0 },
    };
 
@@ -3821,6 +4562,10 @@ bool retro_load_game(const struct retro_game_info *info)
          TitleHookSetEnabled(0);
       hook_restart_notice_logged = 0;
    }
+
+   /* Known-bad (#464) warning latch: a fresh load starts with none warned,
+    * even in-process on a platform that cannot dlclose (iOS). */
+   titledb_reset_negative_warnings();
 
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
@@ -4110,6 +4855,9 @@ void retro_unload_game(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* Known-bad negative entries (#464): same reasoning, same reset. */
+   TitleDBSetNegativeForTest(NULL, 0);
+   titledb_reset_negative_warnings();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -4241,27 +4989,62 @@ void retro_init(void)
     * Tempest 2000's CONTROLLER TYPE menu carries independent P1 and P2
     * toggles, so the rotary is offered on both.  The light gun (#438)
     * is port 1 only for the mirror-image reason: TR10 wires the light-pen
-    * input to that socket and nowhere else. */
+    * input to that socket and nowhere else.
+    *
+    * The Team Tap (#513) is offered on both ports, and its extra sockets
+    * are advertised as frontend ports 3-8 -- see teamtap_user[] for the
+    * mapping and why ports 1 and 2 keep their existing meaning.  Eight
+    * ports are advertised STATICALLY rather than re-pushed when a tap is
+    * selected: TR10 allows one adapter per port for eight pads total, so
+    * eight is the real maximum, and a frontend showing a few unbound
+    * ports is a far smaller cost than a dynamic SET_CONTROLLER_INFO that
+    * has to be re-pushed from two resolution paths. */
    {
       static const struct retro_controller_description port1_devices[] = {
          { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
+         { "Team Tap (4-player adaptor)", RETRO_DEVICE_JAG_TEAMTAP },
          { "Rotary (Tempest)", RETRO_DEVICE_JAG_ROTARY },
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
+         { "Analog Stick (paddle ADC)", RETRO_DEVICE_JAG_PADDLE },
+         { "6D Controller (bank-switching)", RETRO_DEVICE_JAG_6D },
          { "Light Gun", RETRO_DEVICE_JAG_LIGHTGUN },
       };
       static const struct retro_controller_description port2_devices[] = {
          { "Standard Joypad",             RETRO_DEVICE_JAG_PAD },
+         { "Team Tap (4-player adaptor)", RETRO_DEVICE_JAG_TEAMTAP },
          { "Atari ST / PS2 Mouse",        RETRO_DEVICE_JAG_MOUSE_ST },
          { "Amiga Mouse (ST adapter)",    RETRO_DEVICE_JAG_MOUSE_AMIGA },
          { "Amiga Mouse (Amiga adapter)", RETRO_DEVICE_JAG_MOUSE_AMIGA_AD },
          { "Rotary (Tempest)",            RETRO_DEVICE_JAG_ROTARY },
          { "Analog Joystick (bank-switching)", RETRO_DEVICE_JAG_ANALOG },
          { "Driving Controller (bank-switching)", RETRO_DEVICE_JAG_DRIVING },
+         { "Analog Stick (paddle ADC)",   RETRO_DEVICE_JAG_PADDLE },
+         { "6D Controller (bank-switching)", RETRO_DEVICE_JAG_6D },
       };
+      /* Team Tap sockets: standard pads only.  TR10 permits an advanced
+       * controller behind the adapter but allows only a plain controller
+       * READ through it, so the mouse / rotary / analog / gun entries
+       * would advertise a configuration the core deliberately does not
+       * model (see apply_port_device). */
+      static const struct retro_controller_description tap_devices[] = {
+         { "Standard Joypad", RETRO_DEVICE_JAG_PAD },
+      };
+      /* Counts are ARRAY_SIZE, never literals.  Two independent branches
+       * (the paddle #505 and this adapter) each appended one entry to
+       * these arrays while both carried the same hand-written literal, so
+       * a merge kept the literal and silently truncated the last device
+       * off each port's list -- a frontend-only symptom no build, lint or
+       * headless test can see. */
       static const struct retro_controller_info ports[] = {
-         { port1_devices, 5 },
-         { port2_devices, 7 },
+         { port1_devices, ARRAY_SIZE(port1_devices) },
+         { port2_devices, ARRAY_SIZE(port2_devices) },
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 3: Jag port 1, socket 1 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 4: Jag port 1, socket 2 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 5: Jag port 1, socket 3 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 6: Jag port 2, socket 1 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 7: Jag port 2, socket 2 */
+         { tap_devices,   ARRAY_SIZE(tap_devices) }, /* port 8: Jag port 2, socket 3 */
          { NULL, 0 },
       };
 
@@ -4320,6 +5103,7 @@ void retro_deinit(void)
     * the option-derived type/scale all go back to their load-time values
     * (iOS cannot dlclose a core). */
    InputDevShutdown();
+   PaddleShutdown();
    port_device_frontend[0] = INPUTDEV_PAD;
    port_device_frontend[1] = INPUTDEV_PAD;
    port_device_forced[0]   = false;
@@ -4328,10 +5112,33 @@ void retro_deinit(void)
    port_device_active[1]   = INPUTDEV_PAD;
    inputdev_live[0]        = false;
    inputdev_live[1]        = false;
+   pro_controller[0]       = false;
+   pro_controller[1]       = false;
+   /* 68K register traceback rings (#540): off is the shipped default and a
+    * resident core must go back to it.  A harness that armed the flag
+    * cannot dlclose the core on iOS, so leaving it set would make the next
+    * game silently pay 16 register stores per emulated 68K instruction
+    * with nothing in the log to explain where the frame rate went. */
+   startM68KTracing        = false;
+   /* Team Tap (#513): same reason -- a resident core would otherwise
+    * start the next session with the previous session's adapter still
+    * attached, and with port_teamtap_active[] agreeing, so nothing would
+    * ever log or clear it.  JoystickSetTeamTap() also releases the pads
+    * in sockets 1-3 on the way down. */
+   JoystickSetTeamTap(0, false);
+   JoystickSetTeamTap(1, false);
+   port_teamtap_frontend[0] = false;
+   port_teamtap_frontend[1] = false;
+   port_teamtap_active[0]   = false;
+   port_teamtap_active[1]   = false;
    /* Link-state edge tracker: same reason as the block above -- a resident
     * core would otherwise start the next session believing the previous
     * one's peer was still attached and skip the first UP edge. */
    netlink_was_up          = -1;
+   /* #552 wire-speedup edge tracker: same reasoning -- a resident core
+    * would otherwise carry the previous session's "already confirmed"
+    * state into the next one and stay silent on the first negotiation. */
+   netlink_was_speedup     = 1;
    /* OSD narration dedup (task 5, #467): same iOS-no-dlclose reasoning --
     * a resident core would otherwise believe the new session's first
     * mode/device/host is identical to the previous session's last one and
@@ -4417,6 +5224,9 @@ void retro_deinit(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* Known-bad negative entries (#464): same per-load re-arm as above. */
+   TitleDBSetNegativeForTest(NULL, 0);
+   titledb_reset_negative_warnings();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -4609,6 +5419,31 @@ void retro_run(void)
             LOG_INF("[NETLINK] %s open, waiting for peer...\n",
                     netlink_mode_name(JLinkMode()));
          netlink_was_up = up;
+      }
+   }
+
+   /* #552: report the OUTCOME of the auto negotiation jlink.c runs every
+    * JLinkFrameTick(), edge-only like the link up/down block just above.
+    * The request-time log line in netlink_apply() can only say "auto was
+    * asked for" -- confirmation (or the peer never answering) happens
+    * asynchronously, frames after any option changed, so it has to be
+    * caught here instead. */
+   {
+      unsigned curSpeedup = UARTWireSpeedup();
+      if (curSpeedup != netlink_was_speedup)
+      {
+         if (curSpeedup > 1)
+         {
+            LOG_INF("[NETLINK] wire speed auto CONFIRMED -- peer agreed, "
+                    "emulated UART now %ux faster than real hardware "
+                    "(link timing bug reports are only valid at Off)\n",
+                    curSpeedup);
+            netlink_osd("Link speed: auto (%ux)", curSpeedup);
+         }
+         else if (netlink_was_speedup > 1)
+            LOG_INF("[NETLINK] wire speed back to stock (link dropped, "
+                    "option changed, or peer no longer confirmed)\n");
+         netlink_was_speedup = curSpeedup;
       }
    }
 

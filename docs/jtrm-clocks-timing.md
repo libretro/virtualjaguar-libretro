@@ -34,7 +34,13 @@ SCLK, DAC sample rates, and other derived clocks.
 | CLK2 (video divider) | `$F10012` | system_clock / (2 * (N + 1)) |
 | CLK3 (chroma divider) | `$F10014` | system_clock / (2 * (N + 1)) |
 
-Source: `src/jerry/jerry.c`
+Derived from: `src/jerry/jerry.c` -- NOT verified against the JTRM. **DISAGREEMENT FOUND**
+(see issue #522 report): the manual describes CLK1/CLK2/CLK3 as PLL configuration
+registers marked "Do NOT Modify: For Information Only" with formulas
+`PCLKDIV = (N+1) * CHRDIV` (CLK1/CLK2) and `CHRDIV = chroma_osc / (N+1)` (CLK3) --
+not the `system_clock / (2*(N+1))` formula shown above, which is actually the JERRY
+SCLK ($F1A150) formula (Software Reference Manual v2.4 p.72). See
+`docs/atari-jaguar-1999/03 - Software Reference.pdf` pp. 69-70.
 
 ---
 
@@ -149,7 +155,15 @@ period = 11 * 101 / 26.590906 = 41.78 us  -->  ~23,936 Hz
 >
 > If you see `system_clock / 2` in PIT calculations, it is a bug.
 
-Source: `src/jerry/jerry.c`
+Source: Jaguar Software Reference Manual v2.4 pp. 69-71 "Programmable Timers"
+(`docs/atari-jaguar-1999/03 - Software Reference.pdf`) -- "The pre-scalers
+divide the processor clock by N + 1 ... these dividers divide the output from
+the corresponding pre-scalers by N + 1"; corroborated by the INT1/PIT
+description p.14 ("The system clock is divided by (one plus the value in the
+first register) ... The resulting frequency is divided by (one plus the value
+in the second register)"). Both confirm the full-system-clock rate -- the
+CRITICAL GOTCHA above is verified correct, not just asserted. Implementation
+`src/jerry/jerry.c`.
 
 ---
 
@@ -172,8 +186,8 @@ Source: `src/jerry/jerry.c`
 | MEMCON1 | `$F00000` | DRAM width (16/32/64-bit), speed, row size, BIGEND |
 | MEMCON2 | `$F00002` | ROMHI (remap ROM high), additional timing |
 
-Source: `src/core/vjag_memory.c` (header comment has full map),
-`src/core/jaguar.c` (dispatch logic)
+Derived from: `src/core/vjag_memory.c` (header comment has full map),
+`src/core/jaguar.c` (dispatch logic) -- NOT verified against the JTRM
 
 ---
 

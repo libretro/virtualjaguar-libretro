@@ -22,8 +22,8 @@ an analog or driving controller on the same six analog options.
 
 | Option | Values | Default |
 |---|---|---|
-| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
-| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching) | Auto |
+| *Port 1 > Controller Type* (`virtualjaguar_p1_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Rotary (Tempest), Light Gun, Analog Joystick (bank-switching), Driving Controller (bank-switching), Analog Stick (paddle ADC), 6D Controller (bank-switching) | Auto |
+| *Port 2 > Controller Type* (`virtualjaguar_p2_device`) | Auto (per-title default), Standard Joypad, Pro Controller (6-button), Team Tap (4-player adaptor), Atari ST / PS2 Mouse, Amiga Mouse (ST adapter), Amiga Mouse (Amiga adapter), Rotary (Tempest), Analog Joystick (bank-switching), Driving Controller (bank-switching), Analog Stick (paddle ADC), 6D Controller (bank-switching) | Auto |
 | *Port 2 > Mouse Sensitivity* (`virtualjaguar_mouse_sensitivity`) | 25% – 400% | 100% |
 | *Port 2 > Mouse Dead Zone (X)* (`virtualjaguar_mouse_deadzone_x`) | Off, 1 – 8 units | Off |
 | *Port 2 > Mouse Dead Zone (Y)* (`virtualjaguar_mouse_deadzone_y`) | Off, 1 – 8 units | Off |
@@ -64,13 +64,20 @@ a deliberate result, not an unfinished switch.
 
 Your frontend can also select the device directly (RetroArch: *Controls →
 Port 1/2 → Device Type*), which offers the same devices as each port's
-*Controller Type* option: five on port 1 (Standard Joypad, Rotary, Light Gun,
-Analog Joystick, Driving Controller), seven on port 2 (Standard Joypad, the
-three mice, Rotary, Analog Joystick, Driving Controller) — everything except
-*Auto*,
-which is not a real device. A device set that way outranks the core option.
+*Controller Type* option: eight on port 1 (Standard Joypad, Team Tap, Rotary,
+Analog Joystick, Driving Controller, Analog Stick (paddle ADC), 6D Controller,
+Light Gun), ten on port 2 (Standard Joypad, Team Tap, the three mice, Rotary,
+Analog Joystick, Driving Controller, Analog Stick (paddle ADC), 6D Controller)
+— everything except *Auto*, which is not a real device. A device set that way
+outranks the core option.
 Setting the port back to *Joypad* or *None* releases that claim rather than
 forcing a pad — the core option decides again, immediately.
+
+**Pro Controller (#514) is the one exception: core option only.** It does not
+appear in your frontend's *Controls → Device Type* list, because it is not a
+distinct RetroPad-shaped device the way the others are — see
+[Pro Controller](#pro-controller-514) below for why. Select it from the
+*Controller Type* core option on the port you want it on.
 
 ### Once a mouse is live, the port-2 RetroPad is disconnected
 
@@ -231,17 +238,61 @@ Facts to know before selecting one:
 
 Two neighbouring findings, recorded so they stay asked-and-answered:
 
-- **"ADC-Reg" (BigPEmu's third analog type) is out of scope as unsourced.**
-  Early *development* Jaguars had an 8-bit ADC on the motherboard (the
-  connector's PAD0X/PAD0Y/PAD1X/PAD1Y pins; GPIO5 `$F17C00-$F17FFF` is
-  labelled "Paddle Interface" in TRM rev 8) — but TR10 records it as
-  **deleted** from production hardware, no document we hold specifies the
-  register layout, and the only known software (the JANALOG.ABS test) targets
-  dev units. Emulating it would mean inventing register behaviour; if a
-  source surfaces, it can be added.
+- **The motherboard ADC is a different device and now has its own section**
+  (below). It used to be recorded here as out of scope for want of a register
+  spec; #505 settled the protocol from the software plus the converter's own
+  datasheet, so it is emulated.
 - **Head tracker (Jaguar VR):** a bank-switching type ID exists for it in
   TR10, but no released software uses it (Missile Command 3D was a
   prototype). Out of scope, per the epic.
+
+## Analog stick via the paddle ADC (#505)
+
+Set *Port 1/2 > Controller Type* to **Analog Stick (paddle ADC)**, or pick it
+for that port in your frontend's Controls menu. Default is *Auto*, which means
+a plain joypad — nothing changes until you choose it.
+
+**This is not the controller above.** TR10: *"Early versions of the Jaguar
+included an 8 bit ADC on the motherboard. This has been deleted — analogue
+controllers now require their own ADC chip."* The bank-switching controller is
+the replacement; this is the deleted part — an ADC0844 at U16 behind JERRY's
+GPIO5 decode at `$F17C00-$F17FFF`, labelled "Paddle Interface" in TRM rev 8,
+digitising the joystick connector's PAD0X/PAD0Y/PAD1X/PAD1Y pins. Two channels
+per socket, four in all.
+
+**It is the one analog interface a released game reads.** **BattleSphere** and
+**BattleSphere Gold** sample all four channels from a JERRY Timer 1 handler and
+consume the port-2 pair, in an *Analog Joystick Calibrator* screen and in GPU
+code. Club Drive writes the channel select and never reads it back. A sweep of
+822 cart and CD images found no other title touching the register.
+
+Facts to know before selecting it:
+
+- **The game needs its own setting too.** BattleSphere gates its analog support
+  behind *Gameplay Options → 2nd Controller: Analog Stick*, and reads the
+  motherboard ADC's port-2 channels — so select the paddle on **port 2** for
+  that game. Selecting the device in the core is necessary, not sufficient.
+- **Your pad keeps working.** The potentiometers are separate connector pins
+  from the switches, so unlike the bank-switching controller this device does
+  not take the port over: the RetroPad on a paddle port stays fully connected,
+  and there is no "deflect the stick to wake it up" rule. A centred stick reads
+  centre, which is what the calibrator screen asks you to align on.
+- **Off means a retail console.** A production Jaguar has no converter fitted
+  and reads `$FF` here; that is what the core reports whenever no paddle is
+  selected, and it is exactly what v3.4.0 shipped. Verified inert: BattleSphere
+  over 900 frames and Club Drive over 700 produce byte-identical frame-hash
+  logs with and without this feature compiled in.
+- **A socket without a paddle reads `$00`,** not `$FF` — "converter fitted,
+  nothing plugged into that pot line". So a paddle on port 1 alone leaves
+  BattleSphere's channels reading zero, as the hardware would.
+- Per-axis tuning shares the `virtualjaguar_analog_*` options with the
+  bank-switching controller — same absolute semantics, same units, so a dead
+  zone means the same thing on both. Y is **not** inverted here (it is on the
+  other device, per TR10): BattleSphere's calibrator uses the Y channel
+  directly as a screen coordinate, which grows downward.
+
+Verification is `test/tools/paddle_decode_test.c`, which drives the register
+through BattleSphere's own ISR sequence.
 
 ## Light gun (port 1)
 
@@ -275,20 +326,587 @@ homebrew calibration-and-shooting demo. It opens with a two-target calibration
 screen: point at each target and pull the trigger. Aiming near the bottom of
 the screen quits the program — that is the demo's own behaviour, not a bug.
 
+## Team Tap (4-player adaptor)
+
+Set *Port 1 > Controller Type* or *Port 2 > Controller Type* to **Team Tap
+(4-player adaptor)**, or pick *Team Tap* for that port in your frontend's
+Controls menu. Default is *Auto*, which means a plain joypad — nothing
+changes until you choose it, and there is no per-title auto-select.
+
+The Team Tap is Atari's four-socket adapter: one plugs into a controller
+port and gives it four controller sockets. The Jaguar's row-select lines
+address sixteen rows rather than four, and the adapter simply spreads those
+sixteen across its four sockets — which is why **everything behind it is an
+ordinary Jaguar joypad**. A pad in socket 2 has no idea the adapter is
+there.
+
+**One adapter per port, so up to eight pads.** You can select it on both
+ports independently.
+
+### Which frontend port is which player
+
+The pad you already use on Jaguar port 1 stays on frontend port 1, and port
+2's stays on frontend port 2, so nothing you have already bound moves. The
+extra sockets are appended after them:
+
+| Frontend port | Jaguar port | Tap socket |
+|---|---|---|
+| 1 | 1 | 0 (the pad plugged straight into the adapter's first socket) |
+| 2 | 2 | 0 |
+| 3 | 1 | 1 |
+| 4 | 1 | 2 |
+| 5 | 1 | 3 |
+| 6 | 2 | 1 |
+| 7 | 2 | 2 |
+| 8 | 2 | 3 |
+
+**So with one Team Tap on Jaguar port 1, your four players are on frontend
+ports 1, 3, 4 and 5** — not 1 to 4. Frontend port 2 is still Jaguar port 2,
+where a fifth pad would go.
+
+**If the extra pads do nothing, check that your frontend has actually
+assigned those ports.** The core advertises eight ports and reads all of
+them, but a frontend that leaves ports it has never been told about set to
+*None* reports no input for them. In RetroArch that is *Settings → Input →
+Port N Controls → Device Type = Standard Joypad*, plus binding a physical
+controller to the port.
+
+### Remapping the extra pads
+
+*Port N > Button Remapping* and *Numpad to Keyboard* apply to **socket 0
+only** — they exist because RetroArch's own Controls menu cannot reach four
+of the Jaguar keypad keys, and there are two of them, one per Jaguar port.
+Pads 3 to 8 use the fixed default layout (D-pad, A/B/C on A/B/Y, Option on
+Start, Pause on Select, keypad 0–6 on X/L/R/L2/R2/L3/R3) and are remapped
+from your frontend's own Controls menu, which reaches all of it.
+
+### Standard pads only
+
+A mouse, rotary, analog/driving controller or light gun cannot be put in a
+tap socket. That is a deliberate limit rather than an oversight: Atari's
+manual allows an advanced controller behind the adapter but permits only a
+plain controller *read* through it — "software control of advanced features
+like rumble motors, force feedback and analogue/digital mode will not be
+possible" — so the useful half of the combination does not exist on real
+hardware either. Selecting one of those devices on a port turns that port's
+Team Tap off.
+
+**Do not assume the light gun is unaffected by an adapter it is sharing.**
+The manual says the adapter's six input lines are wire-ORed across all four
+sockets, and the light-pen pin is one of those six. The pulse still reaches
+TOM, but it is not isolated from the other sockets' B0 line, and nobody has
+documented what a gun plus pads on one adapter actually does. This is why
+the core does not offer a gun in a tap socket.
+
+### Which titles use it
+
+**Known retail support is two titles**, and both come from the historical
+record rather than from anything this core has verified:
+
+| Title | Team Tap |
+|---|---|
+| *White Men Can't Jump* | **Required** for 3- and 4-player games |
+| *NBA Jam Tournament Edition* | Optional — supports it, does not need it |
+
+**Homebrew support is unestablished.** A static scan of 27 corpus ROMs
+produced no negative result: about half compose their row codes in a
+register, so the scan cannot tell whether they address a tap — and that half
+includes both titles above. So the table is what the hardware's documentation
+says, not a measurement we made.
+
+**No title in this list has been validated in-game here.** The only program
+confirmed to drive the adapter in this core is the PD **Joypad-TeamTap
+Tester** (Matthias Domin, 2000), which sweeps all sixteen row codes on both
+ports and prints its verdict on screen. With the option off it reports
+"TeamTap not found!" for both ports; with it on for a port, that port reads
+"TeamTap Found!". That proves the adapter answers detection correctly — it
+does not prove any game plays correctly through it.
+
+Turning the option on for a title that does not read the adapter is harmless:
+it changes nothing that title looks at.
+
+### Please test this and file what you find
+
+This shipped default-off, on a best-effort reconstruction of the protocol
+from Atari's manual, with exactly one PD tester as game-side evidence. That
+is a thin basis, and the fastest way to thicken it is people trying it.
+
+**What to try**
+
+1. *White Men Can't Jump* with a Team Tap on Jaguar port 1, three or four
+   players. This is the one title that **requires** the adapter, so it is
+   the strongest test available.
+2. *NBA Jam Tournament Edition*, same setup, three or four players.
+3. The **Joypad-TeamTap Tester** if you have it — the quickest sanity check
+   that the adapter is being seen at all.
+4. Homebrew or demos that advertise 4-player support. Nothing here is known
+   to work; a confirmed *working* title is as useful a report as a broken one.
+
+**What "working" looks like**
+
+- The title offers its 3- and 4-player modes instead of greying them out or
+  reporting no adapter.
+- All four pads move their own player, with no crosstalk — pressing a button
+  on pad 3 must not move player 1, 2 or 4.
+- Socket 0 (frontend port 1 or 2) behaves exactly as it did with no adapter
+  selected.
+- Nothing changes in a title that does not support the adapter.
+
+**What to include in an issue**
+
+Please open an issue at
+<https://github.com/libretro/virtualjaguar-libretro/issues> with:
+
+- the title and the dump you used;
+- which port the tap was on, and which frontend ports you bound;
+- what you expected and what happened — "player 3 mirrors player 1" is a far
+  more useful report than "4-player does not work";
+- your frontend and its version (RetroArch's port-assignment behaviour for
+  the advertised-but-unconfigured ports 3–8 is the least-verified part of
+  this feature);
+- your RetroArch log if anything crashed or hung.
+
+Reports that the adapter is **inert** on a title that should support it are
+just as valuable as crash reports — that is the failure mode the tester ROM
+cannot catch.
+
+### Validated end-to-end against a second test ROM (2026-08-20)
+
+The Joypad-TeamTap Tester above proves detection only. A second, independent
+program closes that gap: **AtariJaguarPadtest**
+(<https://github.com/darthcloud/AtariJaguarPadtest>, Apache 2.0, release v1.0,
+`padtest.rom`, md5 `2e1663f2c8bc557f2f94229d8d73e7dc`), by darthcloud — the
+BlueRetro author and the same source as the *Technical Reference V10* used to
+implement #513/#538. It reads `$F14000` directly, does its own bank and
+socket-3 detection, and prints a live per-socket, per-button decode — a
+program driving the register set independently of anything in this repo.
+
+Crucially, it was run through the **real delivery path**
+(`update_input()` → `$F14000`/`$F14002`), not the register-level decode
+functions directly — a shared `test/harness`-based tool
+(`test/tools/padtest_probe.c`, not wired into `make test` because the ROM is
+private and unredistributable) stands in for the frontend, feeding known
+RetroPad state through `input_state_cb` exactly as RetroArch would.
+
+With *Team Tap* selected on Jaguar port 1 and one distinct direction held per
+player (socket 0 = Up, socket 1 = Down, socket 2 = Left, socket 3 = Right),
+padtest reported all four sockets as `STDPAD` and highlighted exactly the
+button fed to each — `^` on socket 0, `v` on socket 1, `<` on socket 2, `>`
+on socket 3, nothing else. Cross-checked against the core's own
+`joypad0Buttons[]` array (dumped via `harness_dlsym`) after the run: each
+socket's slot held exactly the fed direction and nothing else, and
+`JoystickGetTeamTap(0)` read true. **Two independent readers — padtest's own
+bus decode and a direct memory dump — agree exactly with what was fed.**
+This is the first full per-socket, per-button confirmation this feature has
+had; the PD tester above only ever exercised the detection bit.
+
+Two things noticed along the way are padtest's own documented known issues,
+not bugs in this core, and are recorded here so nobody re-files them:
+
+1. **Frame rate is terrible.** padtest re-detects every controller on every
+   single frame, by design — a real game does it once at boot.
+2. **Occasional single-glyph rendering misses**, reproduced here: holding Up
+   *and* A together on the plain-joypad path left `^` unhighlighted on
+   screen while `A` rendered correctly, on two separate runs. A direct
+   `joypad0Buttons[]` dump proved both bits were correctly set
+   (`U=255 A=255`) the whole time — the delivery was right and the glitch is
+   in padtest/JagStudio's own rendering (JagStudio does its own controller
+   polling that conflicts with padtest's main poll; the padtest author could
+   not disable it). Any single miss-highlighted glyph should be checked
+   against a memory dump before being read as a real defect.
+
+## Pro Controller (#514)
+
+Set *Port 1/2 > Controller Type* to **Pro Controller (6-button)**. Default is
+*Auto*, which means a plain joypad — nothing changes until you choose it, and
+`test/tools/joymatrix_identity` and `test/tools/procontroller_decode_test`
+both assert the default is bit-identical to a core without this option.
+
+**What we implement.** The retail Pro Controller adds three fire buttons
+(X, Y, Z) and a pair of shoulder buttons to the standard three-button pad.
+Atari's own Jaguar SDK header (`jaguar.inc`, revision 8/08/95, *"added
+ProController equates"*) and its developer newsletter of the same week both
+say the same thing: those five extra buttons are **wired onto five existing
+numeric-keypad positions**, not a new device with its own identifier. To
+quote the newsletter directly — *"reading the new buttons is very simple,
+because they map directly to keys on the numeric keypad ... to see if the 'X'
+button is pressed, for example, you simply check the same bit as you would
+for the '9' key."* The full citation trail is
+[`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md)
+section 9 — the TR10 manual never mentions the device at all, which is why
+that spike originally left #514 blocked before the SDK source was found.
+
+| Pro Controller button | Aliased keypad key | Bound RetroPad button |
+|---|---|---|
+| Z (fire) | 7 | R2 |
+| Y (fire) | 8 | L2 |
+| X (fire) | 9 | X |
+| Left shoulder | 4 | L1 |
+| Right shoulder | 6 | R1 |
+
+A, B, C, Option and Pause keep their standard bindings (A, B, Y, Start,
+Select) — selecting Pro Controller only changes the five rows above.
+
+**Why this is a core option and not a frontend device type.** Every other
+device on this page (mouse, rotary, analog, driving, paddle, light gun) is a
+genuinely different piece of electronics with its own signal on the wire, so
+it gets its own `RETRO_DEVICE` subclass and shows up in your frontend's
+*Controls → Device Type* list. The Pro Controller has **no such thing to
+plug into**: register-for-register it is an ordinary standard pad, and the
+"six-button" part is entirely in which five keypad intersections the extra
+buttons happen to close. Exposing that as a separate frontend device would
+imply a plumbing distinction that does not exist, so it lives as a preset on
+the existing *Controller Type* option instead — see
+[`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md)
+section 9.7 for the reasoning in full.
+
+**Why this is opt-in, and will stay opt-in.** Because the aliasing is real
+hardware, not an emulation shortcut, a title that reads its own keypad —
+weapon select, level codes, a menu shortcut on `7`/`8`/`9`/`4`/`6` — cannot
+tell a genuine keypad press from a Pro Controller press pressing the "same"
+button; on real silicon those are the identical electrical event. With Pro
+Controller selected, pressing RetroPad X/Y/L1/R1/L2/R2 on a title that never
+heard of the Pro Controller will register as those keypad digits. Leave the
+option on *Standard Joypad* unless a game specifically wants the extra
+buttons.
+
+**Coverage is register-level, not game-verified.** No detection method for
+the Pro Controller was ever published — not by Atari, not since. A game
+cannot ask the console "is a Pro Controller attached," so no title can be
+shown to *require* this preset, and the retail catalogue includes no
+confirmed Pro-Controller-only game in this project's testing so far.
+`test/tools/procontroller_decode_test.c` proves the register-level claim
+above — pressing each of the five slots clears exactly the predicted
+`$F14000` bit on its own row and moves nothing else, on both ports — but
+that is a unit-level guarantee about the matrix decode, not evidence any
+specific game reacts correctly to it.
+
+**Call for testing.** If you own a Jaguar title that specifically advertises
+Pro Controller support (packaging, in-game controls screen, or a manual
+"ProController / Standard" menu — community reports say some titles offer
+one), please try this option and tell us what you find:
+
+- Does the game's own controls screen show the Pro Controller's extra
+  buttons responding?
+- Does gameplay actually change (a fire button doing something a standard
+  pad's A/B/C could not), or does the game merely read the same keypad keys
+  it would from a standard pad's numeric entry?
+- Did you find a game that reacts *incorrectly* — buttons landing on the
+  wrong function, or a standard-pad-only game visibly confused by phantom
+  keypad presses when this option is on?
+
+File an issue on the tracker with the game, region and what you observed
+either way — a working report and a "does nothing new" report are both
+useful data, since no released title is currently confirmed to require this
+preset.
+
+## 6D controller (#538) — a best attempt, and we need testers
+
+Set *Port 1/2 > Controller Type* to **6D Controller (bank-switching)**.
+Default is *Auto*, which means a plain joypad — nothing changes until you
+choose it.
+
+**Read this first: nothing on earth is known to drive this controller.** It
+was specified by Atari and never released, no released or homebrew title is
+known to poll it, and there is therefore no software this implementation has
+ever been checked against. What ships here is a best attempt built from the
+*Jaguar Technical Reference V10* alone — pages 15, 16, 21, 22, 23 and 27–28.
+It is conformant to the manual (`test/tools/sixd_decode_test` asserts that,
+cell by cell) and **unvalidated against any real program**. Please do not
+read "supported" as "verified". One published test ROM claims 6D support and
+was tried against this core's real delivery path in 2026-08; direct register
+reads (bypassing its own broken gating) confirmed this core correctly
+identifies a 6D controller on the bus per TR10's own C2/C3 scheme, but the
+test ROM is structurally unable to reach its 6D *payload* decoder for a
+directly-attached device, so the axis/button data itself remains
+unvalidated — see "Attempted validation against
+AtariJaguarPadtest" below for the full account and why it isn't the
+corroboration it looks like at first.
+
+### What the device is
+
+Six degrees of freedom — three translations *X*, *Y*, *Z* and three torques
+*TX*, *TY*, *TZ*, eight bits each — plus seven buttons **A–G** and a
+**Rezero** control. TR10 names the torques after aircraft axes: *Pitch* is
+TZ, *Yaw* is TX, *Roll* is TY. That is 55 bits, which does not fit the 24 a
+standard controller can return, so the device answers the ordinary `$F14000`
+row scan with **three banks** of data that advance automatically each time
+the console's row select goes from row 3 back to row 0.
+
+### Our interface
+
+| Host input | Degree of freedom |
+|---|---|
+| Left stick X | **X** — translate left / right |
+| Left stick Y | **Y** — translate up / down |
+| R2 − L2 (analog triggers) | **Z** — translate fore / aft, "thrust" |
+| Right stick X | **TX** — yaw |
+| R − L (analog shoulders) | **TY** — roll |
+| Right stick Y | **TZ** — pitch |
+
+| Host button | Jaguar |
+|---|---|
+| A / B / Y / X | **A / B / C / D** |
+| L3 / R3 (stick clicks) | **E / F** |
+| Start | **G** |
+| Select | **Rezero** |
+
+A RetroPad exposes exactly six analog signals a frontend can reasonably
+route — two sticks and the two shoulder pairs — so the six DOF map one to one
+with nothing doubled up. The shoulder pairs are read as analog *buttons*, so
+a frontend that reports real pressure gives you proportional roll and thrust.
+A frontend that does not answers zero for a shoulder you are holding, so the
+core promotes any zero analog read whose digital button is *down* to full
+deflection: you get on/off roll and thrust instead of proportional, and never
+a dead axis. **This pairing is our choice, not a specification** — TR10 defines
+what the six values mean to the machine and says nothing about what a human
+holds. Expect to want it different, and say so on the issue.
+
+The port stays a plain RetroPad until some axis actually deflects, the same
+liveness rule the mouse and the analog controller use, so a title that probes
+controller types once at boot only sees the 6D device if you move a stick
+first. Per-axis tuning uses the shared `virtualjaguar_analog_*` rows; with
+only two tuning slots for six DOF, the split is by *where the host value came
+from*: **X and TX** take the X-axis rows, **Y, Z, TY and TZ** take the Y-axis
+rows, so "X dead zone" still means "the dead zone on horizontal stick
+motion".
+
+### What we do NOT implement
+
+- **Pause and Option are unreachable while the device is engaged**, and that
+  is the hardware rather than an omission: the 6D bank tables contain no
+  Pause bit and no Option bit anywhere. TR10's answer is a physical joypad
+  plugged into a DB15 socket on the controller itself, relayed "as one of its
+  banks" — and the 6D layout has no spare bank for it. We did not invent one.
+- **The "output your last bank during controller identification" rule.** An
+  identification read is indistinguishable from a game read on the bus, so
+  there is nothing to detect. TR10's own driver recipe — read every bank into
+  a table, then find bank 0 by its flag bit — works regardless.
+- **The 100 µs row-0 validity rule**, which exists so a real microcontroller
+  ignores Boot ROM row codes. Inert in a model with no settling time.
+- **Settling delays** generally (~25 µs per row, ~200 µs extra per bank on an
+  analogue device). A compliant driver's delay loop simply spins over data
+  that is already valid.
+- **The ≤ 50 mA / ≤ 10 mA current budget** and the DB15 connector itself:
+  electrical and mechanical, nothing to emulate.
+
+### Two places TR10 is ambiguous, and what we chose
+
+1. **The X sign.** Page 23's prose says *"X is positive right to left"*; the
+   figure on that same page draws its horizontal axis arrow pointing to the
+   **right**. They contradict each other and the page settles nothing. We
+   follow the prose, so pushing the host stick right makes X *decrease*. This
+   is one negation in `InputDevFeed6D()` and one assertion in
+   `sixd_decode_test`; if anyone ever proves it the other way, it is a
+   two-line change.
+2. **The three torque signs.** *"Counter-clockwise when facing the positive
+   direction"* is a statement about a physical grip whose orientation
+   relative to the player is undefined. We pass the host values through
+   un-negated. That is a **named guess**, not a derivation.
+
+One more thing worth checking against silicon if it ever exists: in bank 0
+the buttons run **A, B, C, D** up the rows, but in bank 1 they run
+**Rezero, G, F, E** *down* them. That asymmetry is what the manual prints and
+we implement it as printed — it is the most likely place for the manual (or
+our reading of it) to be wrong.
+
+### Attempted validation against AtariJaguarPadtest, and why it could not settle anything (2026-08-20)
+
+The same second test ROM used to validate Team Tap above —
+**AtariJaguarPadtest** (<https://github.com/darthcloud/AtariJaguarPadtest>,
+darthcloud, v1.0, `padtest.rom`, md5 `2e1663f2c8bc557f2f94229d8d73e7dc`) —
+also claims 6D support (its enum has a `SIXDPAD` case and a
+`print_6dpad_btns()` that prints `X`/`Y`/`Z`/`TX`/`TY`/`TZ` and the `A`–`G`
+buttons). It was run the same way, through `update_input()` via
+`test/tools/padtest_probe.c`, feeding a distinct nonzero value per axis
+(left stick, right stick, both shoulder pairs) and holding every 6D button.
+
+**It could not corroborate anything about this device on screen, and — this
+took a second pass to establish properly — that is a limitation in padtest
+itself, not in this core's delivery.** The first pass here stopped one step
+too early: it showed padtest's `detect_ctrl()` gates its bank-switching
+decoder behind a Team-Tap-presence check and inferred from that alone that
+the core must be blocked out. That inference needed the missing half —
+proof that this core drives the *specific bits padtest actually reads*
+correctly on socket 0 — which arrived by bypassing padtest's rendering
+altogether and reading the register directly.
+
+**What `detect_ctrl()` does, precisely** (padtest.c):
+
+```c
+if (!(rows[0][3][1] & cbits_mask[i])) {        /* Team Tap present? */
+    for (j = 0; j < MAX_SOCKET; j++) {          /* scans ALL FOUR sockets, */
+        dev_type[i][j] = get_basic_type(i, j);  /* including socket 0 */
+        if (dev_type[i][j] == BANKED)
+            dev_type[i][j] = get_banked_type(i, j);
+    }
+} else {                                        /* no Team Tap: */
+    dev_type[i][0] = STDPAD;                    /* socket 0 hardcoded, */
+    ...
+    dev_type[i][1] = get_basic_type(i, 1);      /* socket 1 checked instead */
+}
+```
+
+`rows[0][3][1]` is TR10's own Team-Tap-presence probe (p.18: "inquire the
+status of Row 1 of controller socket #3" — diode D21). It is read from
+**socket 3**, a completely different matrix position from a device's own
+type identification, which TR10 p.15–16 defines as the C2/C3 bits returned
+by **that same controller's own row 2 and row 3** — nothing to do with
+socket 3 or the adapter at all. So there are two independent questions:
+does the presence probe correctly read "no adapter" (it does — none is
+attached), and separately, does our 6D correctly assert the Bank-Switching
+C2/C3 signature (`01`, TR10 p.16) on its own socket 0? The second question
+is the one that actually decides whether explanation (a) — padtest never
+looks — or (b) — the core doesn't drive the bits — is true, and it cannot
+be answered by reading padtest's screen, because padtest's own code never
+asks it for socket 0 without a tap. So `padtest_probe` was extended to poke
+`$F14000`/`$F14002` directly through the exported `JoystickWriteWord()` /
+`JoystickReadWord()`, replaying padtest's own exact row-select writes and
+reading the exact bits it would — with 68K, padtest's rendering, and
+padtest's broken gating all removed from the path entirely:
+
+| Probe (padtest's own nibble) | What it means (TR10 p.15–16, p.18) | 6D on socket 0, no tap | Team Tap, plain pads | Standard pad, no tap |
+|---|---|---|---|---|
+| Socket 3 / row 1 (nibble `$A`) | Team-Tap-presence (D21) | `JOYBUTS` bit0 = **1** ("no adapter" — correct, none attached) | bit0 = **0** ("adapter present" — correct) | bit0 = **1** (correct) |
+| Socket 0 / row 2 (nibble `$B`) | C2 (must be 0 for Bank Switching) | bit0 = **0** ✔ matches TR10 `01` | bit0 = 1 (plain pad, correctly *not* BANKED) | bit0 = 1 (correctly not BANKED) |
+| Socket 0 / row 3 (nibble `$7`) | C3 (must be 1 for Bank Switching) | bit0 = **1** ✔ matches TR10 `01` | bit0 = 1 | bit0 = 1 |
+
+**The 6D controller asserts the exact TR10 `01` Bank-Switching identifier
+(C2=0, C3=1) on socket 0, bit for bit, independent of padtest and
+independent of whether a Team Tap is attached.** That settles it:
+explanation **(a)**. This core drives the bus correctly; padtest's
+`detect_ctrl()` genuinely never asks socket 0 the question that would find
+it, because its per-socket scan (which DOES cover socket 0, see the
+`for (j...)` loop above) is entirely gated behind the unrelated
+Team-Tap-presence bit — a padtest implementation gap, not something TR10
+requires. TR10 p.16 says the opposite of what padtest does here: *"software
+must scan all possible controller positions … to determine which types of
+controller are currently connected"* — unconditionally, not gated behind
+adapter detection. (Read as page images per `docs/agent/00-COMMON.md`;
+`pdftotext` reorders this table's columns.)
+
+Socket 1 — the one socket padtest *does* check without a tap — is separately
+provably dead: its row codes (`sockets_row_codes[1]`, low nibbles `$0`-`$3`)
+all decode to Team-Tap socket 1 in this core's own tables, which reads idle
+with no tap attached — matching the `S1: NONE` padtest prints in every
+screenshot below. So the one socket padtest's no-tap branch does probe was
+never going to find anything either way.
+
+The on-screen symptom is exactly what this implies: every 6D run printed
+`P0: S0: STDPAD`, never `SIXDPAD`, with a handful of standard-pad glyphs
+(`O C B A` and some digits) lit up more or less at random — padtest reading
+our bank-switching bit stream through the *wrong* (plain-joypad) lookup
+table, because it never even asked whether socket 0 was a bank-switching
+device. Rerunning with the fed X axis flipped (`+20500` → `-20500`) and
+separately with the two shoulder pairs fed as pure digital presses instead
+of real analog pressure (see below) produced **pixel-identical**
+screenshots outside the frame counter in both cases (verified with a pixel
+diff, not by eye) — consistent with the STDPAD glyphs it does show being
+driven mostly by the (unvarying, in these two runs) button state rather
+than the axes, further confirming the screen output here is not a
+meaningful decode of this device.
+
+One narrower thing the pixel-identical pair *does* show, independent of
+padtest's broken label: the two runs that fed Z (`R2 − L2`) and TY
+(`R − L`) as real analog pressure versus as **digital-only** presses
+(analog-button read forced to 0, only the `RETRO_DEVICE_ID_JOYPAD_MASK` bit
+set — the exact "frontend with no analog-button support" shape of the
+original #547 defect) produced byte-identical output at the bus. That is
+consistent with `update_input()`'s fallback
+(`if (sh[i]==0 && (ret&bit)) sh[i]=32767;`) carrying full-scale Z/TY across
+correctly even when only digital state is available — the specific failure
+class this whole validation effort exists to catch — but it is *not* the
+same as padtest confirming the values are numerically right, which it
+cannot do at all for this device. Treat it as "the fallback still fires and
+reaches the wire," not as "Z and TY read correctly."
+
+**Net effect on the two open ambiguities below: still open, but for a
+narrower reason now.** This session confirmed the core correctly identifies
+itself as a Bank-Switching / 6D device on the bus (TR10 C2/C3, independently
+verified) — that part is no longer in doubt. What remains unconfirmed is the
+*payload*: the X sign and the bank-1 button order are properties of the
+data bytes inside the banks, which padtest's own decode never reaches for
+this device regardless of identification, so this session could not read
+them off its screen. The liveness gate (STDPAD until an axis deflects)
+likewise could not be isolated as a separate behaviour here, since `6D
+selected, nothing deflected` and `6D selected and live, but padtest can't
+decode the payload` both print `STDPAD`; don't read a `STDPAD` result as
+proof the liveness gate specifically fired, only as consistent with it. The
+`Rezero` button is additionally unverifiable through padtest by
+construction — its own button table (`btns_6d[]`) has only seven glyphs,
+`A`-`G`; Rezero has no glyph in the ROM's own display, tap present or not.
+Nothing here displays a torque *sign* either (`TX`/`TY`/`TZ` print as plain
+signed/unsigned magnitudes), so the torque-sign question is exactly as
+unresolvable as
+[`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md) and
+the section below already say.
+
+The tool (`test/tools/padtest_probe.c`) is still useful for the *next*
+attempt at this — a future BlueRetro-side or homebrew program that reads a
+6D controller correctly on socket 0 without a tap could be pointed at it and
+would get a real answer.
+
+### Please test this, and tell us what you find
+
+There is no game to try, so what would help is:
+
+- **Homebrew.** Write something that scans the three banks the way TR10
+  describes, and tell us whether the values arrive where you expect. If you
+  are testing controller *detection*, remember to deflect an axis first —
+  otherwise the port honestly reports a standard joypad. **AtariJaguarPadtest
+  is not this** — see the subsection above: it confirmed this core's TR10
+  device *identification* is correct on the bus, but its own decoder never
+  reaches a directly-attached device's axis/button *payload*. A new homebrew
+  program (or a fix to padtest upstream) is still needed for that half.
+- **Real hardware.** If a 6D prototype, or any device that implements this
+  protocol, actually exists somewhere, a capture of a working scan would
+  settle the X sign, the torque signs and the bank-1 button order in one go.
+- **The mapping.** If the stick / trigger / shoulder assignment above is
+  awkward for what you are building, say what you would rather have.
+
+File findings on
+[#538](https://github.com/libretro/virtualjaguar-libretro/issues/538) — a
+negative result ("I drove it and X came out backwards") is exactly as useful
+as a positive one, and much more likely.
+
 ## Already shipped
 
 The **Tempest rotary** (#436), the **analog / driving controllers** (#437),
-the **light gun** (#438) and **per-axis tuning** (#439) have all shipped —
-see [Core options](#core-options) above. The two deliberate exclusions,
-"ADC-Reg" and the Jaguar VR head tracker, are recorded with their reasons in
-the analog section above; anything else still open lives on
+the **light gun** (#438), **per-axis tuning** (#439) and the **Pro
+Controller preset** (#514) have all shipped — see [Core
+options](#core-options) above. The two deliberate exclusions, "ADC-Reg" and
+the Jaguar VR head tracker, are recorded with their reasons in the analog
+section above; anything else still open lives on
+
+the **light gun** (#438), **per-axis tuning** (#439), the **paddle ADC**
+(#505), the **Team Tap** (#513) and the **6D controller** (#538) have all
+shipped — see
+[Core options](#core-options) above. The 6D controller is a *best attempt*
+with no software to validate it against, and its section says so at length.
+The one remaining deliberate exclusion, the Jaguar VR head tracker, is
+recorded with its reason in the analog section above; anything else still
+open lives on
 [#428](https://github.com/libretro/virtualjaguar-libretro/issues/428).
 
 ## See also
 
 - [`docs/jaguar-mouse-adapter-mapping.md`](jaguar-mouse-adapter-mapping.md) —
   the sourced pin → register-bit mapping this is built from
+- [`docs/teamtap-procontroller-spike.md`](teamtap-procontroller-spike.md) —
+  the Pro Controller (and Team Tap) source spike, including the SDK/devnews
+  citations behind the keypad-aliasing table above
 - [#428](https://github.com/libretro/virtualjaguar-libretro/issues/428) —
   input-devices epic
 - [#429](https://github.com/libretro/virtualjaguar-libretro/issues/429) —
   ST/Amiga mouse
+- [#514](https://github.com/libretro/virtualjaguar-libretro/issues/514) —
+  Pro Controller
+
+- [#538](https://github.com/libretro/virtualjaguar-libretro/issues/538) —
+  6D controller (file testing findings here)
+- [#522](https://github.com/libretro/virtualjaguar-libretro/issues/522) —
+  why the 6D section cites *Technical Reference V10* page numbers rather than
+  source files.  **Only V10 carries the controller chapter**: `Technical
+  Reference v8.pdf` and Atari's original `04 - Technical Reference.pdf` do
+  not, so anyone verifying against the wrong revision concludes the spec does
+  not exist

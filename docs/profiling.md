@@ -27,6 +27,79 @@ offers the interface.
    retrieve off a locked-down device than reading them off the TV.
 3. **Settings → Logging → Log Verbosity → On** if you want the log copy.
 
+### Two traps that make a capture silently worthless
+
+Both were found by reading RetroArch's `runloop.c`, and neither announces
+itself — the failure looks like a working run.
+
+**1. `perfcnt_enable` is mandatory, and off means zero, not "off".**
+
+```
+runloop_performance_counter_register()  -- NEVER gated
+core_performance_counter_start/stop()   -- gated on perfcnt_enable
+runloop_perf_log()                      -- returns early if disabled
+```
+
+Registration always succeeds, so the core sets `vjPerfActive = 1`, every
+probe fires, and every counter stays at **zero**. A capture taken with the
+setting off is indistinguishable from a core whose instrumentation is
+broken. Set it in the menu, or put `perfcnt_enable = "true"` in
+`retroarch.cfg` — the scripts below do the latter.
+
+*Corollary for shipping builds:* under RetroArch the core's fast path is
+**not** the "never-taken branch" described in `perf_iface.h`. RetroArch
+accepts the interface even with counters disabled, so `vjPerfActive` is 1
+and each probe makes a real indirect call that returns immediately. That is
+~2,000 such calls per frame — negligible at slice granularity, but it is not
+zero, and it is only zero on frontends that actually *decline* env 28.
+
+**2. The log prints an AVERAGE, not a total.**
+
+```c
+#define PERF_LOG_FMT "[PERF] Avg (%s): %llu ticks, %llu runs.\n"
+```
+
+Total ticks = `avg × runs`. This matters more than it sounds: the blitter is
+few calls that are individually expensive and the GPU is very many cheap
+ones, so ranking by the printed figure **inverts the exact comparison the
+counters exist to make**. On `yarc.j64` the blitter's average is ~32× the
+GPU's while its total is ~4× *smaller*.
+
+### Automated capture
+
+Two scripts drive the whole loop and share one report parser, so the iOS/tvOS
+and Raspberry Pi paths print the same table.
+
+```bash
+# iOS / tvOS, through your own RetroArch checkout
+test/tools/device_perf.sh doctor                      # devices + build id
+test/tools/device_perf.sh build   tvos                # + build-identity assert
+test/tools/device_perf.sh install tvos -d "Bedroom"   # sign, inject, deploy
+test/tools/device_perf.sh cfg            -d "Bedroom" # perfcnt_enable=true
+test/tools/device_perf.sh capture        -d "Bedroom" # prints the manual step
+test/tools/device_perf.sh pull           -d "Bedroom" -o run.log
+test/tools/device_perf.sh report run.log --json run.json
+```
+
+```bash
+# Raspberry Pi (or any Linux ARM box you can ssh to)
+test/tools/rpi_perf.sh build --arch aarch64           # container; artefacts only
+test/tools/rpi_perf.sh doctor  pi@raspberrypi.local   # real-hardware gate
+test/tools/rpi_perf.sh deploy  pi@raspberrypi.local
+test/tools/rpi_perf.sh profile pi@raspberrypi.local --frames 1800
+```
+
+`rpi_perf.sh` runs `perf_iface_witness` on the Pi rather than RetroArch — it
+is a complete env-28 frontend in a single file, so it needs no frontend,
+no GUI and no config, and trap 1 above cannot apply to it.
+
+**It will refuse to report timings from emulated hardware.** `bench` and
+`profile` both gate on `doctor`, which requires a Raspberry Pi
+`/proc/device-tree/model` and a non-virtualised
+`systemd-detect-virt`. An aarch64 container on your Mac will build the core
+happily and produce entirely meaningless numbers; the gate exists because
+the dangerous outcome is not a wrong number, it is a *confident* one.
+
 ### The counters
 
 | Counter | What it brackets |
@@ -90,6 +163,19 @@ vj_gpu_sync      calls=0       total=0           <- this title never syncs
 vj_dsp_sync      calls=0       total=0
 ```
 
+> **Benchmark-ROM caveat (#533).** `yarc.j64` is an *amplifier*, not a
+> benchmark: 73.3% of its GPU time is `jr` (a spin loop) and its DSP share is
+> ~0.08%, so a DSP or blitter change measures as "no effect" on it. The #532
+> GPU hoist scored −4.33% on yarc against −3.77% on jagniccc — same change,
+> and the gap is that bias. Use yarc to make a GPU-loop effect *visible*;
+> never to *size* one. The figures on this page taken on yarc are still valid
+> for what they measured, but are not a whole-core picture.
+>
+> `make benchmark` now defaults to `jagniccc.j64` @ 900 frames with a **300-frame
+> warmup** — the warmup matters, because jagniccc is still in BIOS boot (zero
+> GPU-interpreter instructions) at 90 frames. Use `test/tools/ir_ab.sh --profile`
+> to check any ROM/window before trusting it.
+
 ### Adding a counter
 
 Add a slot to the enum in [`src/core/perf_iface.h`](../src/core/perf_iface.h),
@@ -104,7 +190,8 @@ nothing for the rest of the session. `perf_iface_witness` gates that.
 Wall-clock baseline you can run on every commit:
 
 ```bash
-make benchmark                              # default: yarc.j64, 600 frames, fast blitter
+make benchmark                              # default: jagniccc.j64, 900 frames, 300 warmup
+make benchmark BENCH_ROM=test/roms/yarc.j64 # GPU-loop amplifier -- see the caveat below
 make benchmark BENCH_FRAMES=3000            # longer run (smoother numbers)
 make benchmark BENCH_BLITTER=accurate       # A/B against the "accurate" path.  Measured
                                              # on arm64 (#511): fast is never slower, and
@@ -118,6 +205,57 @@ Reports `Frames/sec`, `Time/frame`, total wall time.  Boots the core via `dlopen
 **Use it as a delta**: capture baseline before your change, run again after.  Don't trust absolute numbers across hosts (CPU, thermals, scheduler, big.LITTLE pinning).  Do trust same-host commit-to-commit deltas.
 
 > The harness lives at `test/tools/test_benchmark.c`.  Read it if you want to measure something specific (per-subsystem timing, only-DSP, etc.) — it's <400 lines.
+
+## Load-proof A/B — `test/tools/ir_ab.sh` (instruction counts)
+
+`make benchmark` and `opt_ab.sh` measure wall time, so they need a quiet host — and that dependency has produced two wrong answers.  #515 measured `-O3` at **+12.5% sequentially and −11.7% interleaved from the same two binaries**, minutes apart; #520's timing phase was **blocked outright** (load 19.08 on 12 cores) and never ran.
+
+`ir_ab.sh` sidesteps the problem by counting work instead of timing it.  The emulator is deterministic, so a fixed ROM and frame count is a fixed number of instructions, and `valgrind --tool=cachegrind` counts exactly that in simulation — **bit-identical** run to run.  It needs no privileges (unlike `perf stat`, which hosted CI runners lock down), so it works on a busy dev box and on a free GitHub runner.
+
+```bash
+test/tools/ir_ab.sh 'OPT_LEVEL=-O2' 'OPT_LEVEL=-O3'   # flag flip (opt_ab.sh's convention)
+test/tools/ir_ab.sh --ref libretro/develop HEAD        # source change / PR vs base
+test/tools/ir_ab.sh --selftest                         # instrument check: Ir must be IDENTICAL
+IR_ROM=test/roms/yarc.j64 test/tools/ir_ab.sh --profile   # where does this ROM's Ir go?
+```
+
+No valgrind on the host?  On macOS the script re-execs itself inside a Linux container (podman or docker) automatically; only `$WORK` and the ROM cross the boundary.
+
+**Deliberately no load-average gate.**  `opt_ab.sh` refuses above one load per core and is right to — it measures a clock.  Ir does not depend on how busy the machine is, and that is the entire point.  Don't add one back.
+
+### Validated, not assumed
+
+| property | how | result |
+|---|---|---|
+| Determinism | same source both arms (`--selftest`) | Ir **identical**: 1,633,893,288 twice.  I1/D1/LL miss counts identical too. |
+| Sensitivity | throwaway commit adding one `volatile` increment per emulated GPU opcode | **+1.815%** (+159,337,672 Ir), correctly signed |
+
+The sensitivity control is the one that matters: an instrument that has never shown it can *detect* a change will report "no change" forever and look perfectly healthy.  It also calibrates the tool — the added waste is ~3 instructions per GPU opcode, putting yarc@90 at roughly **53.1 million** GPU opcodes, which turns later deltas into per-instruction arithmetic rather than percentages.  (Treat that as a calibration figure, not an exact count: 159,337,672 / 3 is not an integer, so the per-opcode cost is not exactly 3 on every path — the compiler is free to fold the increment differently depending on surrounding code.)
+
+### What Ir is not
+
+Ir is **not wall time**.  It models neither branch prediction nor ILP nor real cache behaviour (the simulated D1/LL columns close only part of that gap).  A change can legitimately *raise* Ir and still be faster (inlining, unrolling), and removing dependent loads helps latency more than it helps instruction count — so a small Ir delta there **understates** the win.  This is a gate and a regression detector; wall-clock confirmation still belongs on real hardware.
+
+Absolute Ir is architecture-specific — an arm64 container and an x86_64 runner disagree by construction.  Only the within-run A/B delta means anything.  The Ir denominator also includes the measuring harness (`frame_hash_ab`'s own hashing is ~4.4% of total on the default workload), so an `ir_ab` percentage is a share of *emulator plus instrument*, not directly comparable to a sampling profiler's "% of process time".
+
+### Picking the ROM is part of the measurement (#533)
+
+`--profile` gives per-function Ir for one workload with no source changes and no sampling bias.  Measured:
+
+| workload | GPU interp | DSP interp | blitter | 68K | total Ir |
+|---|---|---|---|---|---|
+| `jagniccc.j64` @ 90 | **0%** | 0% | 0% | ~38% | 1.6e9 |
+| `jagniccc.j64` @ 300 | 38.6% | 22.3% | 7.1% | ~5.9% | 19.5e9 |
+| `jagniccc.j64` @ 600 | 40.2% | 23.7% | 10.3% | ~2% | 52.3e9 |
+| `yarc.j64` @ 90 | **71.2%** | 0.08% | 17.5% | ~0% | 8.8e9 |
+
+`jagniccc.j64` is the Jaguar port of Leonard/Oxygene's **NICCC 2000** ST demo (`test/vendor/JaguarDemos/jagniccc2000`), and it renders on the GPU with the 68K parked in `stop #$2000` — but only *after* its boot window.  At 90 frames it is still in BIOS boot and executes **zero** GPU-interpreter instructions, which is exactly the shape of an inert gate.  At 300 it reaches the steady-state mix, which is why that is the default here and in CI.
+
+`yarc.j64` is the GPU amplifier, but note #533's point: its opcode mix is `jr`-heavy, so per-instruction *loop overhead* is an unusually large share of its GPU time and a loop-bookkeeping change scores high on it relative to a real game.  Use it to make a GPU-loop effect visible, not to size it.
+
+### In CI
+
+`.github/workflows/ir-ab.yml` runs the A/B on PRs touching `src/tom/gpu.c`, `src/tom/blitter.c`, `src/tom/op.c`, `src/jerry/dsp.c`, `src/m68000/**` or the Makefiles, and reports the delta as a job summary.  Because the variance is zero the flagging threshold is tight (0.5%), but the job is **advisory, not blocking** — see "what Ir is not" above.  Flip `IR_GATE: '1'` if that policy ever changes.
 
 ## macOS — Instruments / `sample`
 
