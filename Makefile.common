@@ -59,6 +59,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/jlink_discover.c \
 	$(CORE_DIR)/src/jerry/jlink_netpacket.c \
 	$(CORE_DIR)/src/jerry/voicemodem.c \
+	$(CORE_DIR)/src/jerry/voicechat.c \
 	$(CORE_DIR)/src/jerry/uart.c \
 	$(CORE_DIR)/src/tom/op.c \
 	$(CORE_DIR)/src/tom/shadowfb.c \

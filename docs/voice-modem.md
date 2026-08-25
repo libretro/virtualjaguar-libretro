@@ -206,6 +206,13 @@ modem is rate-agnostic. Modem session state is host-side (like jlink's
 sockets) and deliberately not serialized in savestates: loading a state
 mid-call behaves as a pulled phone line.
 
+**Host-side voice chat** (the JVM's actual selling point — simultaneous
+voice + data) is a separate, opt-in feature that never touches this UART
+protocol or the emulated machine: see `docs/voice-chat-design.md`
+(issue #485). DTMF *tone audio* remains out of scope here and there —
+tones never reached the TV on real hardware; functional DTMF signalling
+(`$8A2n` / `$6800`) is already enough for Ultra Vortek.
+
 ## Troubleshooting a call that never connects
 
 Ultra Vortek prints INITIALIZING VOICE MODEM *before* any reply arrives, so

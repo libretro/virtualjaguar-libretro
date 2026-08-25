@@ -335,12 +335,99 @@ static void cb_log(enum retro_log_level level, const char *fmt, ...)
 
 static struct retro_log_callback log_cb_struct = { cb_log };
 
+/* ---- Synthetic microphone (#485) ------------------------------------ */
+
+struct retro_microphone {
+    int active;
+    unsigned phase;   /* free-running phase for a ~440 Hz tone at 8 kHz */
+};
+
+static struct retro_microphone g_synth_mic;
+
+static retro_microphone_t *synth_open_mic(const retro_microphone_params_t *params)
+{
+    (void)params;
+    memset(&g_synth_mic, 0, sizeof(g_synth_mic));
+    g_synth_mic.active = 0;
+    return &g_synth_mic;
+}
+
+static void synth_close_mic(retro_microphone_t *microphone)
+{
+    if (microphone)
+        microphone->active = 0;
+}
+
+static bool synth_get_params(const retro_microphone_t *microphone,
+                             retro_microphone_params_t *params)
+{
+    if (!microphone || !params)
+        return false;
+    params->rate = 8000;
+    return true;
+}
+
+static bool synth_set_mic_state(retro_microphone_t *microphone, bool state)
+{
+    if (!microphone)
+        return false;
+    microphone->active = state ? 1 : 0;
+    return true;
+}
+
+static bool synth_get_mic_state(const retro_microphone_t *microphone)
+{
+    return microphone && microphone->active;
+}
+
+static int synth_read_mic(retro_microphone_t *microphone,
+                          int16_t *samples, size_t num_samples)
+{
+    size_t i;
+    if (!microphone || !samples)
+        return -1;
+    if (!microphone->active) {
+        /* Contract: disabled mic returns -1. */
+        return -1;
+    }
+    /* Soft 440 Hz-ish square-ish tone via a saw phase — enough energy for
+     * VAD and presence checks without needing a real sine table. */
+    for (i = 0; i < num_samples; i++) {
+        int16_t s = (int16_t)(((microphone->phase & 0x1F) < 16) ? 4000 : -4000);
+        samples[i] = s;
+        microphone->phase++;
+    }
+    return (int)num_samples;
+}
+
+static struct retro_microphone_interface g_synth_mic_iface = {
+    RETRO_MICROPHONE_INTERFACE_VERSION,
+    synth_open_mic,
+    synth_close_mic,
+    synth_get_params,
+    synth_set_mic_state,
+    synth_get_mic_state,
+    synth_read_mic
+};
+
 static bool cb_environment(unsigned cmd, void *data)
 {
     switch (cmd) {
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
         *(struct retro_log_callback *)data = log_cb_struct;
         return true;
+    case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE:
+        if (!data || !active_cfg || !active_cfg->mic_tone)
+            return false;
+        {
+            struct retro_microphone_interface *iface =
+                (struct retro_microphone_interface *)data;
+            unsigned want = iface->interface_version;
+            *iface = g_synth_mic_iface;
+            if (want && want < RETRO_MICROPHONE_INTERFACE_VERSION)
+                iface->interface_version = want;
+            return true;
+        }
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
     case RETRO_ENVIRONMENT_SET_VARIABLES:
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
@@ -410,6 +497,8 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->use_bios = 1;
         } else if (strcmp(argv[i], "--quiet") == 0) {
             cfg->quiet = 1;
+        } else if (strcmp(argv[i], "--mic-tone") == 0) {
+            cfg->mic_tone = 1;
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             cfg->frames = (unsigned)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--snapshot-interval") == 0 && i + 1 < argc) {

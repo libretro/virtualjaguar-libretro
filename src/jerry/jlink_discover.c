@@ -347,7 +347,11 @@ int JLinkDiscActive(void)
 
 int JLinkDiscPoll(uint32_t now_ms)
 {
-   uint8_t  pkt[JLINK_DISC_PKT_LEN];
+   /* Buffer must fit voice-chat datagrams (VC_PKT_LEN=172) as well as
+    * 40-byte beacons and 12-byte negotiation packets.  Beacons still
+    * decode only at exact JLINK_DISC_PKT_LEN; oversized datagrams reach
+    * the raw handler whole instead of being silently truncated. */
+   uint8_t  pkt[256];
    struct sockaddr_in from;
    char     addr[JLINK_DISC_ADDR_MAX];
    char     name[JLINK_DISC_NAME_MAX];
@@ -385,7 +389,7 @@ int JLinkDiscPoll(uint32_t now_ms)
       if (!JLinkDiscDecode(pkt, (size_t)n, &dev, &port, name, sizeof(name)))
       {
          /* Not a beacon -- offer it to a registered second protocol
-            (#552) before dropping it, exactly like an out-of-spec or
+            (#552 / #485) before dropping it, exactly like an out-of-spec or
             hostile packet always has been dropped here. */
          if (discRawHandler)
          {

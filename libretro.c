@@ -38,6 +38,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "jlink.h"
 #include "jlink_discover.h"
 #include "jlink_netpacket.h"
+#include "voicechat.h"
 #include "uart.h"
 #include "joystick.h"
 #include "inputdev.h"
@@ -223,6 +224,9 @@ static bool show_texture_replace   = true;
  * reads them. */
 static bool show_netlink_host      = true;
 static bool show_netlink_port      = true;
+/* Voice-chat dependent options (#485): hidden while the master switch
+ * is off so the network category stays quiet by default. */
+static bool show_voice_chat_opts   = true;
 /* One-shot "push every managed key regardless of its cached show_* prev"
  * flag (task 4, #467).  update_option_visibility() normally only
  * re-pushes SET_CORE_OPTIONS_DISPLAY for a group when that group's
@@ -959,6 +963,37 @@ static bool update_option_visibility(void)
       }
    }
 
+   /* Voice chat dependent options (#485): hide the sub-keys while the
+    * master switch is off. */
+   {
+      static const char * const voice_keys[] = {
+         "virtualjaguar_voice_chat_gate",
+         "virtualjaguar_voice_chat_ptt_key",
+         "virtualjaguar_voice_chat_volume",
+         "virtualjaguar_voice_chat_vad",
+         "virtualjaguar_voice_chat_monitor",
+      };
+      bool show_voice_prev = show_voice_chat_opts;
+
+      var.key = "virtualjaguar_voice_chat";
+      var.value = NULL;
+      environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var);
+      show_voice_chat_opts = (var.value
+                              && strcmp(var.value, "enabled") == 0);
+
+      if (force || show_voice_chat_opts != show_voice_prev)
+      {
+         option_display.visible = show_voice_chat_opts;
+         for (i = 0; i < ARRAY_SIZE(voice_keys); i++)
+         {
+            option_display.key = voice_keys[i];
+            environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,
+                       &option_display);
+         }
+         updated = true;
+      }
+   }
+
    return updated;
 }
 
@@ -976,6 +1011,83 @@ static const struct retro_netpacket_callback netpacket_cb = {
    NULL,                /* disconnected */
    "vjag-netlink-1"     /* protocol_version */
 };
+
+/* ---- Voice chat (#485): frontend mic + host-side mix ------------------- */
+static struct retro_microphone_interface vj_mic_iface;
+static retro_microphone_t *vj_mic = NULL;
+static int vj_mic_iface_ok = 0;
+static int vj_mic_unavailable_logged = 0;
+static int vj_voice_want = 0;          /* option asks for voice chat */
+static int vj_voice_netpacket_logged = 0;
+
+static int voicechat_mic_read(int16_t *samples, size_t num)
+{
+   if (!vj_mic || !vj_mic_iface.read_mic)
+      return -1;
+   return vj_mic_iface.read_mic(vj_mic, samples, num);
+}
+
+static void voicechat_close_mic(void)
+{
+   if (vj_mic && vj_mic_iface.close_mic)
+      vj_mic_iface.close_mic(vj_mic);
+   vj_mic = NULL;
+}
+
+static void voicechat_ensure_mic(void)
+{
+   struct retro_microphone_params params;
+
+   if (!vj_voice_want)
+   {
+      voicechat_close_mic();
+      return;
+   }
+   if (!vj_mic_iface_ok || !vj_mic_iface.open_mic)
+   {
+      if (!vj_mic_unavailable_logged)
+      {
+         LOG_INF("[VOICE] microphone interface unavailable -- "
+                 "receive-only voice chat (data netplay unchanged)\n");
+         vj_mic_unavailable_logged = 1;
+      }
+      return;
+   }
+   if (vj_mic)
+      return;
+
+   params.rate = VC_RATE_HZ;
+   vj_mic = vj_mic_iface.open_mic(&params);
+   if (!vj_mic)
+   {
+      if (!vj_mic_unavailable_logged)
+      {
+         LOG_INF("[VOICE] open_mic failed -- receive-only voice chat\n");
+         vj_mic_unavailable_logged = 1;
+      }
+      return;
+   }
+   if (vj_mic_iface.set_mic_state)
+      vj_mic_iface.set_mic_state(vj_mic, true);
+   VoiceChatSetMicRead(voicechat_mic_read);
+}
+
+static unsigned voicechat_ptt_key_from_str(const char *s)
+{
+   if (!s)
+      return RETROK_v;
+   if (!strcmp(s, "c"))
+      return RETROK_c;
+   if (!strcmp(s, "space"))
+      return RETROK_SPACE;
+   if (!strcmp(s, "tab"))
+      return RETROK_TAB;
+   if (!strcmp(s, "lctrl"))
+      return RETROK_LCTRL;
+   if (!strcmp(s, "grave"))
+      return RETROK_BACKQUOTE;
+   return RETROK_v;
+}
 
 void retro_set_environment(retro_environment_t cb)
 {
@@ -1004,6 +1116,16 @@ void retro_set_environment(retro_environment_t cb)
    vfs_iface_info.iface                      = NULL;
    if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
       filestream_vfs_init(&vfs_iface_info);
+
+   /* Microphone interface (#485): experimental env 75. Failure is
+    * non-fatal -- voice stays receive-capable / data-only. */
+   memset(&vj_mic_iface, 0, sizeof(vj_mic_iface));
+   vj_mic_iface.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+   vj_mic_iface_ok = 0;
+   if (cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, &vj_mic_iface)
+       && vj_mic_iface.interface_version > 0
+       && vj_mic_iface.open_mic)
+      vj_mic_iface_ok = 1;
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 
@@ -2365,6 +2487,77 @@ static void check_variables(void)
       netlink_apply(netlink_resolve_mode(var.value), var.value);
    else
       netlink_apply(JLINK_MODE_DISABLED, NULL);
+
+   /* Voice chat (#485): host-side, out-of-band. Default off. */
+   {
+      int want = 0;
+      int gate = VC_GATE_OPEN_MIC;
+      unsigned vol = 50;
+      unsigned vad = 400;
+      int mon = 0;
+      unsigned ptt = RETROK_v;
+
+      var.key = "virtualjaguar_voice_chat";
+      var.value = NULL;
+      if (get_variable_pertitle(&var) && var.value
+          && strcmp(var.value, "enabled") == 0)
+         want = 1;
+
+      var.key = "virtualjaguar_voice_chat_gate";
+      var.value = NULL;
+      if (get_variable_pertitle(&var) && var.value
+          && strcmp(var.value, "push_to_talk") == 0)
+         gate = VC_GATE_PTT;
+
+      var.key = "virtualjaguar_voice_chat_ptt_key";
+      var.value = NULL;
+      if (get_variable_pertitle(&var) && var.value)
+         ptt = voicechat_ptt_key_from_str(var.value);
+
+      var.key = "virtualjaguar_voice_chat_volume";
+      var.value = NULL;
+      if (get_variable_pertitle(&var) && var.value)
+         vol = (unsigned)atoi(var.value);
+
+      var.key = "virtualjaguar_voice_chat_vad";
+      var.value = NULL;
+      if (get_variable_pertitle(&var) && var.value)
+         vad = (unsigned)atoi(var.value);
+
+      var.key = "virtualjaguar_voice_chat_monitor";
+      var.value = NULL;
+      if (get_variable_pertitle(&var) && var.value
+          && strcmp(var.value, "enabled") == 0)
+         mon = 1;
+
+      vj_voice_want = want;
+      VoiceChatSetEnabled(want);
+      VoiceChatSetGate(gate);
+      VoiceChatSetPTTKey(ptt);
+      VoiceChatSetVolume(vol);
+      VoiceChatSetVadThreshold(vad);
+      VoiceChatSetMonitor(mon);
+      VoiceChatSetMicRead(voicechat_mic_read);
+
+      if (want
+          && (JLinkMode() == JLINK_MODE_NETPACKET
+              || JLinkNPActive()))
+      {
+         if (!vj_voice_netpacket_logged)
+         {
+            LOG_INF("[VOICE] unavailable under RetroArch netplay "
+                    "(no peer address) -- data-only\n");
+            vj_voice_netpacket_logged = 1;
+         }
+      }
+      else
+         vj_voice_netpacket_logged = 0;
+
+      if (want)
+         voicechat_ensure_mic();
+      else
+         voicechat_close_mic();
+   }
 
    var.key = "virtualjaguar_bios";
    var.value = NULL;
@@ -4844,6 +5037,12 @@ void retro_unload_game(void)
     * and log the session summary; the next load's check_variables() +
     * TexReplaceContentLoaded() reload if the option is still on. */
    TexReplaceShutdown();
+   /* Voice chat (#485): close mic and clear host-side buffers. */
+   voicechat_close_mic();
+   VoiceChatReset();
+   vj_voice_want = 0;
+   vj_mic_unavailable_logged = 0;
+   vj_voice_netpacket_logged = 0;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -5099,6 +5298,12 @@ void retro_deinit(void)
    /* Texture replacement (#369): free the pack map, reset every static. */
    TexReplaceShutdown();
    show_texture_replace = true;
+   voicechat_close_mic();
+   VoiceChatReset();
+   vj_voice_want = 0;
+   vj_mic_unavailable_logged = 0;
+   vj_voice_netpacket_logged = 0;
+   show_voice_chat_opts = true;
    /* Non-pad input devices: encoders, phases, attach mask, armed flag and
     * the option-derived type/scale all go back to their load-time values
     * (iOS cannot dlclose a core). */
@@ -5389,6 +5594,16 @@ void retro_run(void)
    JLinkPoll();
    UARTPoll();
 
+   /* Host-side voice chat (#485): capture/gate/send. Never touches the
+    * emulated UART. PTT is read from the keyboard device. */
+   {
+      int ptt = 0;
+      unsigned key = VoiceChatPTTKey();
+      if (VoiceChatEnabled() && key && input_state_cb)
+         ptt = input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, key) ? 1 : 0;
+      VoiceChatFrameTick(ptt);
+   }
+
    /* Log link up/down edges.  JLinkConnected() already abstracts TCP and
     * netpacket, so this reports the one fact a user debugging "it says it
     * has a modem but won't dial" needs and previously could not get from
@@ -5487,6 +5702,13 @@ void retro_run(void)
    DACPrepareFrame(vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
    JaguarExecuteNew();
    cheat_apply_all();
+   /* Mix far-end voice into sampleBuffer after emulation, before the
+    * frontend batch submit -- dac.c untouched; not in any savestate. */
+   {
+      unsigned pairs = (unsigned)((vjs.hardwareTypeNTSC == 1 ? BUFNTSC
+                                                            : BUFPAL) / 2);
+      VoiceChatMixInto(sampleBuffer, pairs);
+   }
    SoundCallback(NULL, sampleBuffer, vjs.hardwareTypeNTSC == 1 ? BUFNTSC : BUFPAL);
 
    /* Give every presented row defined content.

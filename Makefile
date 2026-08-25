@@ -1211,7 +1211,7 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
-		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
+		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
@@ -1267,7 +1267,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 # invocations get different values.
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -1283,7 +1283,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
@@ -1316,6 +1316,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_jlink
 	./test/test_jlink_tcp
 	./test/test_jlink_discover
+	./test/test_voicechat
 	./test/test_jlink_netpacket ./$(TARGET)
 	@# The voice modem over the OTHER transport (#494).  voicemodem_pair
 	@# and uv_modem_game_test both drive TCP; this is the only check on
@@ -1345,6 +1346,8 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	   else exit $$rc; fi; \
 	 fi
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
+	bash test/tools/voicechat_pair_test.sh
+	./test/tools/test_voicechat_inertness ./$(TARGET) test/roms/yarc.j64 --quiet
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
 	@# Wire-speed enhancement (#498).  Three real core pairs whose only
 	@# difference is each side's virtualjaguar_netlink_speed, so the
@@ -1940,17 +1943,32 @@ test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
 
-test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c
 
-test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/jlink.h src/jerry/jlink_tcp.h
+test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/jerry/jlink.h src/jerry/jlink_tcp.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c
 
 test/test_jlink_discover: test/test_jlink_discover.c src/jerry/jlink_discover.c src/jerry/jlink_discover.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_jlink_discover.c src/jerry/jlink_discover.c
+
+test/test_voicechat: test/test_voicechat.c src/jerry/voicechat.c src/jerry/voicechat.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_voicechat.c src/jerry/voicechat.c
+
+test/tools/voicechat_pair: test/tools/voicechat_pair.c src/jerry/voicechat.c src/jerry/jlink_discover.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/voicechat_pair.c src/jerry/voicechat.c src/jerry/jlink_discover.c
+
+test/tools/test_voicechat_inertness: test/tools/test_voicechat_inertness.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_voicechat_inertness.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
 test/test_jlink_netpacket: test/test_jlink_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
@@ -1960,13 +1978,13 @@ test/test_voicemodem_netpacket: test/test_voicemodem_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_voicemodem_netpacket.c -ldl
 
-test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c
+test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c -lm
+		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c -lm
 
-test/test_jlink_negotiate: test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c
+test/test_jlink_negotiate: test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c -lm
+		-o $@ test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c -lm
 
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
