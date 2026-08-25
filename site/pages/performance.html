@@ -34,7 +34,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Subsystem</th><th>Share of frame time</th></tr></thead>
       <tbody>
-        <tr><td><strong>DSP</strong></td><td><strong>50-67%</strong> (Iron Soldier 67%, Alien vs Predator 63%)</td></tr>
+        <tr><td><strong>DSP</strong></td><td><strong>33-67%</strong>, the top cost on every title measured. 50-67% on the DSP-heavy ones (Iron Soldier 67%, Alien vs Predator 63%), about 33% on Skyhammer</td></tr>
         <tr><td>GPU</td><td>large, title-dependent. Around 24% on Skyhammer</td></tr>
         <tr><td>Blitter (fast)</td><td>5-17%</td></tr>
         <tr><td>Blitter (accurate)</td><td>up to about 34% on Alien vs Predator</td></tr>
@@ -45,9 +45,12 @@
 
     <p>
       <strong>The DSP sits in a 3-5 instruction wait loop for 90-99.7% of
-      every frame</strong> on the titles measured, while still interpreting
-      its full 26.6&nbsp;MHz budget: hundreds of thousands of opcodes per
-      frame, spinning. The 68000 and the Object Processor are noise.
+      every frame</strong> on the titles measured, while the emulator
+      interprets 416k-590k opcodes per frame doing it. That is more than real
+      silicon could retire in a frame (about 443k cycles at 26.59&nbsp;MHz
+      over a 60.05&nbsp;Hz field), because pipeline hazards are not modelled.
+      So it is interpreter work, not a hardware budget, which is exactly why
+      skipping it is free. The 68000 and the Object Processor are noise.
     </p>
     <p class="footnote">
       Host profiles on desktop arm64, not device measurements. No on-device
@@ -63,8 +66,10 @@
     <ol>
       <li><strong>Turn off Per-Title Enhancement Defaults.</strong> If your
           game is recognised, it is rendering at 2x and/or full-precision
-          Gouraud right now, worth about 30% of the frame on Alien vs
-          Predator. On a low-end device this is step one, not step three.</li>
+          Gouraud right now. 2x and true color together measured about 30% of
+          the frame on Alien vs Predator; its shipped preset is 2x only, so
+          disabling it recovers that share rather than the whole 30%. On a
+          low-end device this is step one, not step three.</li>
       <li><strong>Internal Resolution 1x, True Color off.</strong> The manual
           version of step 1, if you want to keep per-title defaults
           elsewhere.</li>
@@ -147,7 +152,7 @@
       This page is the short version. The complete guide lives in the
       repository: every option, a restart-required table, a symptom to setting
       troubleshooting table, and the evidence behind each figure above.
-      <a href="{{REPO}}/blob/master/docs/settings-and-performance-guide.md">settings-and-performance-guide.md</a>.
+      <a href="{{REPO}}/blob/develop/docs/settings-and-performance-guide.md">settings-and-performance-guide.md</a>.
     </p>
   </div>
 </section>

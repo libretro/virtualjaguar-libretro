@@ -198,8 +198,9 @@
       </div>
       <figcaption>
         Same ROM, same (empty) input. Only the options differ: 2x plus true
-        colour, the exact preset the per-title database applies for Doom and
-        both JagDoomEX CRCs.
+        colour, both set by hand for this capture. The per-title database
+        applies 2x alone to Doom and the JagDoomEX CRCs; true colour was
+        dropped from those rows once a pixel diff measured it at 0.0000%.
       </figcaption>
     </figure>
 
@@ -391,8 +392,9 @@
   <div class="win-body">
     <p>
       <code>virtualjaguar_pertitle_defaults</code>, default on, applies
-      known-safe presets for recognized games: 2x plus true colour for Doom
-      and Alien vs Predator, true colour for Cybermorph, and more as titles
+      known-safe presets for recognized games: 2x for Doom and Alien vs
+      Predator, true colour for Cybermorph, 2x plus true colour for I-War
+      and Skyhammer, and more as titles
       are verified. A preset only touches options you have left at their
       defaults. Any option you set yourself always wins. Disable it for stock
       behaviour on every title.
@@ -418,8 +420,9 @@
       would-be skip and checks it.
     </p>
     <p>
-      Enabled per title via the enhancement database. 2,546,482 corpus
-      verifications, zero divergences.
+      Enabled per title via the enhancement database, which currently carries
+      no rows for it: the mechanism ships ahead of the data, so nothing turns
+      it on by default. 2,546,482 corpus verifications, zero divergences.
     </p>
     <div class="evidence">
       <a href="{{REPO}}/blob/develop/docs/blit-memo.md">docs/blit-memo.md</a>
