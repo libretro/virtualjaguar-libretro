@@ -170,7 +170,10 @@ static struct
    uint32_t reqTotal;   /* bytes requested by the game (A1 - A0) */
    uint32_t written;    /* bytes delivered so far */
    uint32_t accFrac;    /* 16.16 fractional byte budget accumulator */
-   uint32_t d1;         /* sentinel word (for the GPU data area) */
+   uint32_t d1;         /* sentinel word from the arming CD_read.  No longer
+                         * written to the GPU data area (#564 -- see the
+                         * statusBase+16 comment below); kept for callers
+                         * that may want it later (currently unread). */
    uint32_t statusBase; /* transfer-status struct base, LATCHED at arm time.
                          * All in-flight status writes (StreamTick / Finish)
                          * use this, never the live hle_gpu_data_base: a
@@ -1058,7 +1061,24 @@ hle_cd_read_post_scan:
        * zeroes it ($366A move.l #0,(a2)+) and boot stubs ABORT the load
        * when CD_poll hands it back nonzero in A1 (Baldies $4DA2). */
       GPUWriteLong(hleStream.statusBase + 8,  0, 0);
-      GPUWriteLong(hleStream.statusBase + 16, d1, 0);
+      /* [+16] is intentionally NOT written (#564).  World Tour Racing's
+       * FMV player uploads its own GPU-resident decoder to the same
+       * address it passed as A0 to the ISR-setup call, and that worker
+       * keeps a live jump/pointer table starting 16 bytes in -- confirmed
+       * with gpu_disasm_dump: the bytes at base+16 read as inert garbage
+       * before the player uploads there, then as real executing GPU code
+       * (movei/jump-table dispatch) afterward, at exactly the base each
+       * CD_read latches into hleStream.statusBase.  Writing here landed
+       * mid-upload/mid-execution and clobbered a table slot the decoder
+       * jumps through moments later, corrupting the GPU program and
+       * wedging the FMV about one second in -- matching the reported
+       * symptom exactly (ablation-confirmed: dropping only this write
+       * fixes it, dropping +0/+4/+8 as well breaks WTR audio+video from
+       * frame 0 instead).  No boot stub or CD_poll path reads this offset
+       * back: HLEHandleCDPoll's hleStream.active branch never touches GPU
+       * RAM at all, and its one GPU-RAM read (the cold no-ISR-setup-yet
+       * fallback) only reads +0/+8 -- no title's comment in this file
+       * claims +16 either. */
    }
 
    HLE_LOG("CD_read: streaming %u bytes to $%06X-$%06X from LBA %u offset %u\n",
@@ -1091,7 +1111,6 @@ static void HLEStreamFinish(void)
    uint32_t destAddr  = hleStream.dest;
    uint32_t byteCount = hleStream.total;     /* delivered (long-rounded) */
    uint32_t reqCount  = hleStream.reqTotal;  /* game's A1 - A0 */
-   uint32_t d1        = hleStream.d1;
 
    hleStream.active  = false;
 
@@ -1222,7 +1241,7 @@ static void HLEStreamFinish(void)
       GPUWriteLong(hleStream.statusBase + 4,  destAddr + reqCount, 0);
       /* [+8] = error status, 0 on success — see the arm-time comment. */
       GPUWriteLong(hleStream.statusBase + 8,  0, 0);
-      GPUWriteLong(hleStream.statusBase + 16, d1, 0);
+      /* [+16] intentionally not written — see the arm-time comment (#564). */
    }
 
    /* No DSP-RAM completion flag: completion is visible through the GPU
