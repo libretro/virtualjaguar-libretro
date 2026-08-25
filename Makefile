@@ -2156,6 +2156,18 @@ test/tools/test_hook_gate: test/tools/test_hook_gate.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
+# Purpose-built microbenchmark ROM assertions (#536).  Each tool boots its
+# committed .j64 from test/microbench/ and asserts the exercised engine
+# reached its fixed iteration count, reporting the frame it finished on.
+# Needs the wide test ABI for the jaguarMainRAM export.  Tasks 2-5 of the
+# plan add test_microbench_gpu_arith / _gpu_branch / _dsp / _blit here.
+test/tools/test_microbench_68k: test/tools/test_microbench_68k.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_68k.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 # $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
 # the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
 test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
@@ -2501,6 +2513,7 @@ endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
         runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-toolchain-fetch jaguar-toolchain-build \
         roms-manifest roms-publish roms-fetch roms-verify \
         jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
@@ -2609,6 +2622,32 @@ benchmark:
 acid:
 	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 	$(MAKE) -C test/acid test CORE=$(abspath $(TARGET))
+
+# `make microbench` -- run the purpose-built microbenchmark ROMs (#536).
+# Builds the core with the wide test ABI (the tools read jaguarMainRAM),
+# builds every test_microbench_* tool, and runs each against its committed
+# .j64.  The ROMs are committed, so this needs no assembler; regenerate
+# them with test/microbench/build.sh only after editing a .s source.
+#
+# Each run prints a MICROBENCH line whose done_frame is the completion
+# frame -- the number these ROMs exist to produce.  Tasks 2-5 of the plan
+# append their pairs to MICROBENCH_TOOLS / MICROBENCH_ROMS below.
+MICROBENCH_TOOLS := test/tools/test_microbench_68k
+MICROBENCH_ROMS  := test/microbench/bench68k.j64
+
+.PHONY: microbench
+microbench: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+microbench:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(MAKE) TEST_EXPORTS=1 $(MICROBENCH_TOOLS)
+	@set -e; \
+	tools="$(MICROBENCH_TOOLS)"; roms="$(MICROBENCH_ROMS)"; \
+	set -- $$roms; \
+	for t in $$tools; do \
+		rom="$$1"; shift; \
+		echo "==> $$t $$rom"; \
+		./$$t ./$(TARGET) "$$rom"; \
+	done
 
 # `make dsp-diag` -- DSP audio diagnostic.  Builds core with TEST_EXPORTS=1,
 # compiles the harness + DSP probe, then runs the diagnostic against a ROM.
@@ -2744,6 +2783,13 @@ jaguar-demos-fetch:
 
 jaguar-demos-build: jaguar-demos-fetch
 	bash test/jaguar-demos/run.sh build
+
+.PHONY: jaguar-toolchain-fetch jaguar-toolchain-build
+jaguar-toolchain-fetch:
+	bash tools/jaguar-toolchain/setup.sh fetch
+
+jaguar-toolchain-build: jaguar-toolchain-fetch
+	bash tools/jaguar-toolchain/setup.sh build
 
 jaguar-demos-smoke jaguar-demos: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 jaguar-demos-smoke jaguar-demos:

@@ -1,0 +1,21 @@
+# Scoped to docker/jaguar-toolchain.Dockerfile (BuildKit convention:
+# <dockerfile-name>.dockerignore applies only to that build; classic
+# (non-BuildKit) docker build ignores this file and falls back to a root
+# .dockerignore if one exists -- there isn't one here, so on classic builders
+# the full repo tree is still sent as context. Harmless either way (the
+# builder stage only COPYs tools/jaguar-toolchain/{PIN,setup.sh}), just a
+# bigger context tarball than necessary.
+*
+# A bare `*` only matches root-level entries (Go's filepath.Match, no `/`
+# crossing) -- it never excludes anything *inside* a directory. So `!tools`
+# alone leaves the entire tools/ tree included (nothing under it was ever
+# excluded to begin with). Getting back to "only these two files" needs an
+# exclude/re-include pair at every level: exclude the directory's contents
+# with a trailing `/*`, then re-include the one child that continues the
+# path, one level at a time down to the two leaf files.
+!tools
+tools/*
+!tools/jaguar-toolchain
+tools/jaguar-toolchain/*
+!tools/jaguar-toolchain/PIN
+!tools/jaguar-toolchain/setup.sh

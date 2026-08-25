@@ -1,0 +1,28 @@
+# Pinned Jaguar assembler toolchain sources.
+# Refresh: bump SHA after reviewing upstream, then re-run
+#   tools/jaguar-toolchain/setup.sh fetch && tools/jaguar-toolchain/setup.sh build
+
+[rmac]
+URL=https://github.com/mwenge/rmac.git
+REF=master
+SHA=50e66ea
+
+[rln]
+URL=http://tiddly.mooo.com:5000/rln/rln.git
+REF=master
+SHA=a617009
+
+[lyxass]
+URL=https://github.com/42Bastian/lyxass.git
+REF=main
+SHA=7bc8ad1
+
+[pc_jagcrypt]
+URL=https://github.com/cubanismo/pc_jagcrypt.git
+REF=master
+SHA=2673f28
+
+[new_bjl]
+URL=https://github.com/42Bastian/new_bjl.git
+REF=main
+SHA=443e37c
