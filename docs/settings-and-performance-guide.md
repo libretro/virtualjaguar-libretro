@@ -180,8 +180,8 @@ mid-game save states) found the cost concentrated in one place:
 
 | Subsystem | Share of frame time |
 |---|---|
-| **DSP** | **50–67%** (Iron Soldier 67%, Alien vs Predator 63%) |
-| **GPU** | large and title-dependent — e.g. ~24% on Skyhammer alongside ~33% DSP |
+| **DSP** | **33–67%**, and it is the top cost on every title measured — **50–67%** on the DSP-heavy ones (Iron Soldier 67%, Alien vs Predator 63%), ~33% on Skyhammer |
+| **GPU** | large and title-dependent — e.g. ~24% on Skyhammer |
 | Blitter (fast) | 5–17% |
 | Blitter (accurate) | up to ~34% on Alien vs Predator |
 | Object Processor | ~1% |
@@ -343,7 +343,15 @@ pacing are entirely your frontend's responsibility.
 Practical consequences:
 
 - The core advertises **60.05445 fps / 48043.6 Hz** (NTSC) and **50.08013 fps /
-  48076.9 Hz** (PAL). These are the Jaguar's real field rates, not 60/50.
+  48076.9 Hz** (PAL). These are the Jaguar's real field rates, not 60/50, and
+  they are derived rather than hard-coded: a non-interlaced field is 524
+  halflines NTSC / 624 PAL (`VJ_HALFLINES_PER_FIELD_*` in `src/core/jaguar.h`),
+  so the rate falls out as `1e6 / (halflines × halfline_µs)`. The sample rate
+  follows from it in `retro_get_system_av_info()` — the core hands the frontend
+  a fixed batch of pairs exactly once per field, so the true output rate *is*
+  pairs × field rate. Advertising a flat 48000 against the corrected fps would
+  over-deliver by ~0.09% forever and slowly drain or overfill the frontend's
+  audio buffer.
 - **Fast-forward doing nothing is usually a RetroArch setting**, not a core bug.
   Check *Frame Throttle → Fast-Forward Ratio* (1.0× means no speed-up),
   `vrr_runloop_enable`, and that audio sync goes non-blocking during
@@ -444,7 +452,7 @@ Changing these mid-game does nothing visible. Reload the content.
 |---|---|
 | `internal_resolution` | Internal Resolution |
 | `pal` | PAL |
-| `bios_type` | Cart BIOS Type |
+| `bios_type` | Cart BIOS Type — *which* boot ROM (Series K / Model M / Custom) |
 | `cd_bios_type` | CD BIOS Type |
 | `cd_boot_mode` | CD Boot Mode |
 | `memory_track` | Memory Track |
@@ -504,7 +512,7 @@ timing models, idle-skip, CD read speed — takes effect immediately.
 | `risc_clock_scale` | 1x | a GPU-bound game stutters — **and never with idle-skip** |
 | `risc_idle_skip` | **off** | you want the single biggest speed-up available |
 | `dram_timing` / `gpu_pipeline_timing` / `blitter_timing` | off | accuracy investigation only |
-| `bios` (cartridges) | HLE | a cartridge needs the real boot ROM |
+| `bios` (cartridges) | HLE | a cartridge needs the real boot ROM. *Distinct from* `bios_type`, which picks **which** ROM once this is set to Real |
 | `cd_boot_mode` | HLE | a CD game hangs or an FMV freezes (restart) |
 | `cd_read_speed` | 2x | loads feel slow — and revert if anything hangs |
 | `memory_track` | **on** | leave it on |
