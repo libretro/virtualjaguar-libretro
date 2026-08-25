@@ -28,6 +28,7 @@
  *      indistinguishable from an untouched one by design (see CLAUDE.md's
  *      "Known limitation to document, not fix"), so the DB still
  *      substitutes "enabled": shadowHiresN == 2 AND shadowFBActive != 0.
+ *      Driven by the SYNTHETIC row below, not AvP's shipped one (#590).
  *   5  Non-DB ROM (test/roms/yarc.j64) -- no CRC match, so no [titledb]
  *      SUBSTITUTION line is logged (no "(option at default)" marker), but
  *      the [titledb] MISS line ("no per-title entry for CRC32 ...") is
@@ -45,7 +46,8 @@
  *      refusal. Installed via TitleDBSetNegativeForTest(), the same
  *      "no canary row in the shipped table" reasoning test_hook_gate uses
  *      for hooks[] -- it would otherwise make AvP's real DB row unsafe
- *      for every user, not just this test process.
+ *      for every user, not just this test process.  The POSITIVE row it
+ *      refuses is synthetic too, see below.
  *   8  AvP, virtualjaguar_true_color=enabled set EXPLICITLY by the user,
  *      PLUS the same negative entry as case 7 -- the user's choice must
  *      still be HONOURED (shadowFBActive != 0) because a negative entry
@@ -75,10 +77,30 @@
 #include "../harness/harness.h"
 #include "../../src/core/titledb.h"
 
-/* Cases 7/8 (issue #464): a fixed negative row flagging AvP's own
- * true_color positive default as known-bad, installed programmatically
- * so the shipped table stays clean (see the case-7 header comment). */
+/* Cases 7/8 (issue #464): a fixed negative row flagging the true_color
+ * positive default as known-bad, installed programmatically so the shipped
+ * table stays clean (see the case-7 header comment). */
 static TitleDBNegativePair negative_true_color[2];
+
+/* Cases 4/7 (issue #590): the POSITIVE row those two cases assert against,
+ * installed programmatically instead of read out of the shipped table.
+ *
+ * Both cases used to lean on Alien vs Predator's real row carrying a
+ * virtualjaguar_true_color pair.  #551 removed that pair after a pixel-diffed
+ * A/B found it changed nothing for AvP, and both cases have been failing on
+ * clean develop ever since -- the fixture was asserting a fact about the
+ * shipped table, not the behaviour it claims to test.  A synthetic row keeps
+ * the contract (a default-VALUED option is still substituted; a negative
+ * entry refuses that substitution while an unrelated key is untouched) true
+ * no matter how the shipped table evolves.
+ *
+ * It must carry BOTH keys: TitleDBSetPairsForTest() replaces the table
+ * lookup outright, so internal_resolution would otherwise read as "no
+ * per-title entry" and case 7's unrelated-key assertion would fail.
+ * true_color stays the substituted key so the Makefile's existing
+ * `--option virtualjaguar_true_color=disabled` on case 4 is still the
+ * default-valued option under test. */
+static TitleDBPair synthetic_pairs[3];
 
 /* ----------------------------------------------------------------
  * stderr capture: redirect around the core load so the [titledb]
@@ -204,6 +226,27 @@ int main(int argc, char **argv)
     if (!cfg.rom_path) {
         fprintf(stderr, "test_pertitle_db: no ROM path given\n");
         return 1;
+    }
+
+    /* Cases 4/7 (issue #590): install the synthetic positive row BEFORE
+     * harness_load_rom(), same ordering reason as the negative row below. */
+    if (case_num == 4 || case_num == 7) {
+        void (*set_pairs)(const TitleDBPair *, int);
+
+        set_pairs = (void (*)(const TitleDBPair *, int))
+            harness_dlsym(&cfg, "TitleDBSetPairsForTest");
+        if (!set_pairs) {
+            fprintf(stderr, "test_pertitle_db: TitleDBSetPairsForTest not "
+                            "exported -- rebuild with `make TEST_EXPORTS=1`\n");
+            return 1;
+        }
+        synthetic_pairs[0].key   = "virtualjaguar_internal_resolution";
+        synthetic_pairs[0].value = "2x";
+        synthetic_pairs[1].key   = "virtualjaguar_true_color";
+        synthetic_pairs[1].value = "enabled";
+        synthetic_pairs[2].key   = NULL;
+        synthetic_pairs[2].value = NULL;
+        set_pairs(synthetic_pairs, 2);
     }
 
     /* Cases 7/8 (issue #464): install the negative row BEFORE

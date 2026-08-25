@@ -175,6 +175,24 @@ void TitleDBSetHooksForTest(const TitleDBHook *hooks, int count);
  * array also works since the scan stops at a NULL key either way. */
 void TitleDBSetNegativeForTest(const TitleDBNegativePair *pairs, int count);
 
+/* Test-only: install a positive-pair array that TitleDBOverride() answers
+ * from regardless of CRC match; NULL restores normal table lookup.  Pass
+ * the exact element count (a {NULL, NULL} terminator also stops the scan).
+ *
+ * Mirrors TitleDBSetHooksForTest()/TitleDBSetNegativeForTest(), and exists
+ * for the same reason plus one more (issue #590): a per-title-defaults test
+ * that asserts against a REAL shipped row breaks every time that row is
+ * legitimately edited -- test_pertitle_db cases 4 and 7 were left failing on
+ * clean develop when #551 removed AvP's virtualjaguar_true_color pair.  A
+ * synthetic row keeps the contract under test (default-valued option is
+ * substituted; a negative entry refuses that substitution) independent of
+ * what the shipped table happens to say this month.
+ *
+ * The override REPLACES the table lookup: with one installed, a key that is
+ * not in the array reads as "no per-title entry" even if the loaded title's
+ * real row has one.  So a fixture must carry every key its case exercises. */
+void TitleDBSetPairsForTest(const TitleDBPair *pairs, int count);
+
 /* Test-only introspection: the raw table. */
 const TitleDBEntry *TitleDBTable(int *count);
 

@@ -2060,6 +2060,83 @@ static bool titledb_negative_warn_seen(const char *key)
    return false;
 }
 
+/* Compounding-settings warning (issue #595).
+ *
+ * The DSP idle-loop fast-forward (virtualjaguar_risc_idle_skip) is the
+ * largest speed lever the core has (66-87% less DSP interpretation on the
+ * titles measured, #569), and DSPExec() gates it off entirely whenever
+ * certain other options are active -- see the gate comment at the top of
+ * DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
+ * a borderline-slow title pays the overclock's own cost AND silently
+ * forfeits the bigger win: it reads as "overclocking made it much slower"
+ * with nothing anywhere to explain why.  Name the suppressor in the log.
+ *
+ * Warn, never override.  User-set values always win -- the same hard rule
+ * get_variable_pertitle() honours for known-bad titledb entries -- so this
+ * only reports the conflict; nothing here changes a setting.
+ *
+ * The list mirrors the gate EXACTLY, and two plausible-looking options are
+ * deliberately absent because they are not in it: the M68K clock scale
+ * (m68kClockScalePct appears in the DSP's budget arithmetic but not in the
+ * gate) and Blitter Bus Timing (vjs.blitterTiming never reaches
+ * busArbiter.enabled -- only virtualjaguar_dram_timing sets that).  Warning
+ * on either would be a false positive on the most likely overclock
+ * combination of all.  The vjtrace/watchpoint suppressor is omitted too: it
+ * is dev-facing and can be armed long after check_variables() has run.
+ *
+ * Latched once per load, exactly like the [titledb] known-bad warnings
+ * above and reset in the same three places -- check_variables() re-reads
+ * every option on every frontend variable-update notification, so an
+ * unlatched warning would fire once per option-menu visit for a whole
+ * session. */
+static int perf_conflict_warned = 0;
+
+static void perf_conflict_reset(void)
+{
+   perf_conflict_warned = 0;
+}
+
+static void perf_conflict_append(char *buf, size_t cap, const char *what)
+{
+   size_t used = strlen(buf);
+
+   if (used + 2 >= cap)
+      return;
+   if (used > 0)
+   {
+      strncat(buf, ", ", cap - used - 1);
+      used += 2;
+   }
+   strncat(buf, what, cap - used - 1);
+}
+
+static void perf_warn_idle_skip_suppressed(void)
+{
+   char who[192];
+
+   if (perf_conflict_warned || !vjs.riscIdleSkip)
+      return;
+
+   who[0] = '\0';
+   if (riscClockScalePct != 100)
+      perf_conflict_append(who, sizeof(who), "virtualjaguar_risc_clock_scale");
+   if (busArbiter.enabled)
+      perf_conflict_append(who, sizeof(who), "virtualjaguar_dram_timing");
+   if (vjs.gpuPipelineTiming)
+      perf_conflict_append(who, sizeof(who), "virtualjaguar_gpu_pipeline_timing");
+   if (blitMemoMode != BLIT_MEMO_OFF || blitMemoRecording)
+      perf_conflict_append(who, sizeof(who), "virtualjaguar_blit_memo");
+
+   if (who[0] == '\0')
+      return;
+
+   LOG_WRN("[perf] virtualjaguar_risc_idle_skip is enabled but suppressed by: "
+           "%s -- the DSP idle-loop fast-forward is doing nothing, so this "
+           "combination can run slower than idle-skip alone. Your settings "
+           "are honored, not overridden.\n", who);
+   perf_conflict_warned = 1;
+}
+
 /* GET_VARIABLE with per-title defaults (issue #368) and known-bad refusal
  * (issue #464).
  *
@@ -2600,6 +2677,15 @@ static void check_variables(void)
    if (m68kClockScalePct != 100 || riscClockScalePct != 100)
       LOG_INF("[CLOCK] Non-stock clock scales active: M68K %u%%, RISC %u%% (enhancement mode; timing-sensitive bug reports are only valid at 1x)\n",
               (unsigned)m68kClockScalePct, (unsigned)riscClockScalePct);
+
+   /* Compounding-settings check (#595).  Must come AFTER the clock scales
+    * and the timing models above: at the idle-skip read site those globals
+    * still hold the previous call's values.  Skipped on the load path,
+    * where blitMemoMode is not resolved yet (BlitMemoSetMode() cannot tell
+    * cartridge from CD content until ResolveBootConfig has run) --
+    * retro_load_game() makes the call itself once it can. */
+   if (content_loaded)
+      perf_warn_idle_skip_suppressed();
 
    var.key = "virtualjaguar_uart_device";
    var.value = NULL;
@@ -4888,6 +4974,8 @@ bool retro_load_game(const struct retro_game_info *info)
    /* Known-bad (#464) warning latch: a fresh load starts with none warned,
     * even in-process on a platform that cannot dlclose (iOS). */
    titledb_reset_negative_warnings();
+   /* Compounding-settings (#595) warning latch: same reasoning, same reset. */
+   perf_conflict_reset();
 
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
@@ -4993,6 +5081,12 @@ bool retro_load_game(const struct retro_game_info *info)
     * write hooks instead of charging CD titles for a memo that can never
     * hit. */
    BlitMemoSetMode(blit_memo_requested);
+
+   /* Now that every input to the idle-skip gate is resolved, report a
+    * combination that silently cancels the biggest speed lever (#595).
+    * check_variables() skipped this on the load path for exactly this
+    * reason; the latch keeps later option reads from repeating it. */
+   perf_warn_idle_skip_suppressed();
 
    /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
     * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
@@ -5191,6 +5285,10 @@ void retro_unload_game(void)
    /* Known-bad negative entries (#464): same reasoning, same reset. */
    TitleDBSetNegativeForTest(NULL, 0);
    titledb_reset_negative_warnings();
+   /* Synthetic positive row (#590) and the compounding-settings (#595)
+    * warning latch: same reasoning, same reset. */
+   TitleDBSetPairsForTest(NULL, 0);
+   perf_conflict_reset();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -5571,6 +5669,10 @@ void retro_deinit(void)
    /* Known-bad negative entries (#464): same per-load re-arm as above. */
    TitleDBSetNegativeForTest(NULL, 0);
    titledb_reset_negative_warnings();
+   /* Synthetic positive row (#590) and the compounding-settings (#595)
+    * warning latch: same per-load re-arm as above. */
+   TitleDBSetPairsForTest(NULL, 0);
+   perf_conflict_reset();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;

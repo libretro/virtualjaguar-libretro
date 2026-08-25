@@ -158,7 +158,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_internal_resolution",
       "Internal Resolution (Restart Required)",
       NULL,
-      "Render internally at a multiple of the Jaguar's native resolution. Applied when content is loaded; changing it mid-game takes effect on restart. The game-visible framebuffer and all emulation timing are unchanged. Combines with True Color.",
+      "Render internally at a multiple of the Jaguar's native resolution. Applied when content is loaded; changing it mid-game takes effect on restart. Presentation only: the game-visible framebuffer and all emulation timing are unchanged. Combines with True Color.",
       NULL,
       "video",
       {
@@ -172,7 +172,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_widescreen",
       "Widescreen (Stretch to 16:9)",
       NULL,
-      "Report a 16:9 aspect ratio to the frontend instead of the Jaguar's native 4:3, for a cosmetic horizontal stretch. The Jaguar has no wider display mode, so this changes only the aspect metadata used to letterbox/scale the picture -- the emulated framebuffer is identical either way. Off by default.",
+      "Report a 16:9 aspect ratio to the frontend instead of the Jaguar's native 4:3, for a cosmetic horizontal stretch -- the console has no wider display mode. Presentation only: the emulated framebuffer is identical either way. Off by default.",
       NULL,
       "video",
       {
@@ -186,7 +186,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_pertitle_defaults",
       "Per-Title Enhancement Defaults",
       NULL,
-      "Apply known-safe enhancement presets automatically for recognized games (e.g. internal resolution or true color for titles verified to benefit). A preset only applies to options you have left at their default value -- any option you change yourself always wins. Disable for stock behaviour on every title.",
+      "Apply known-safe enhancement presets automatically for recognized games (e.g. internal resolution or true color where a title is verified to benefit). A preset only applies to options you left at their default value; anything you set yourself always wins. Disable for stock behaviour on every title.",
       NULL,
       "video",
       {
@@ -200,7 +200,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_enhancement_hooks",
       "Per-Title Enhancement Hooks",
       NULL,
-      "Apply per-game byte patches from the enhancement database to the loaded cartridge image at load time (game-side fixes that no core option can express). Off by default. Each patch verifies the bytes it expects to find and refuses to write anything if they differ, so it can never corrupt a dump it was not written for. Cartridge content only; a change takes effect on restart.",
+      "Apply per-game byte patches from the enhancement database to the loaded cartridge image (game-side fixes that no core option can express). Off by default. Each patch verifies the bytes it expects and writes nothing if they differ, so it cannot corrupt a dump it was not written for. Cartridge content only; takes effect on restart.",
       NULL,
       "video",
       {
@@ -214,7 +214,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_blit_memo",
       "Blit Memoization (Per-Title)",
       NULL,
-      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render an identical scene every engine cycle while the player is idle). Output is bit-identical by construction; enabled per title via the enhancement database. Verify mode never skips - it executes every would-be skip and logs any divergence (for validating new titles). Not available for CD content.",
+      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render the same scene every engine cycle while the player is idle). Output is bit-identical by construction. Enabled per title via the enhancement database; not available for CD content. 'Verify' never skips -- it runs every would-be skip and logs any divergence, for validating new titles. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
       "video",
       {
@@ -246,7 +246,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,
-      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix: it can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. If an overclocked game misbehaves, try enabling the timing models below. Report bugs only at 1x.",
+      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix: it can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. If an overclocked game misbehaves, try the timing models below. Report bugs only at 1x.",
       NULL,
       "timing",
       {
@@ -263,7 +263,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_clock_scale",
       "RISC (GPU/DSP) Clock Scale (Overclock)",
       NULL,
-      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing. If an overclocked game misbehaves, try enabling the timing models below. Report bugs only at 1x.",
+      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the timing models below. Report bugs only at 1x. Anything other than 1x also switches OFF DSP Idle-Loop Fast-Forward, so with that enabled the result can end up SLOWER than stock -- the M68K scale above does not have that side effect.",
       NULL,
       "timing",
       {
@@ -279,7 +279,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_idle_skip",
       "DSP Idle-Loop Fast-Forward",
       NULL,
-      "Speed-up: skip provably redundant iterations when the DSP is parked in a wait loop. Commercial titles leave the DSP spinning in a 3-5 instruction poll for most of every frame while it still interprets its full cycle budget; this fast-forwards those iterations instead, cutting DSP interpretation by 66-87% on the titles measured. Bit-exact by construction, not an approximation: the registers, flags, cycles charged and instruction count all end up exactly where interpreting them would have left them, so save states, run-ahead and netplay are unaffected. New in this release and off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. Ignored automatically when DRAM timing, GPU pipeline timing, a non-stock RISC clock scale or blit memoization is in use.",
+      "Fast-forward the DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. Off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: a non-stock RISC Clock Scale, DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The M68K clock scale and Blitter Bus Timing do not affect it.",
       NULL,
       "timing",
       {
@@ -293,7 +293,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_dram_timing",
       "DRAM Timing (Experimental)",
       NULL,
-      "Charge the GPU and 68000 realistic DRAM access time once they leave their local buses, pacing hardware-timed games (Doom-class) closer to real hardware. Each processor pays only its own costs, so relative CPU/GPU timing is preserved. Still being calibrated.",
+      "Charge the GPU and 68000 realistic DRAM access time once they leave their local buses, pacing hardware-timed games (Doom-class) closer to real hardware. Each processor pays only its own costs, so relative CPU/GPU timing is preserved. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
       "timing",
       {
@@ -307,7 +307,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_gpu_pipeline_timing",
       "GPU Pipeline Timing (Experimental)",
       NULL,
-      "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board, and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated.",
+      "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
       "timing",
       {
@@ -335,7 +335,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink",
       "Network Link",
       NULL,
-      "How this console's serial port reaches another player. 'Automatic' uses your frontend's netplay session when one is running -- nothing to configure, no addresses to type -- and otherwise stays idle. 'TCP Host'/'TCP Client' link two emulators directly without netplay; the client picks a host below, and hosts on your LAN are found automatically. 'Loopback' echoes back to this console for testing link-detect menus with no partner.",
+      "How this console's serial port reaches another player. 'Automatic' uses your frontend's netplay session when one is running -- nothing to configure -- and otherwise stays idle. 'TCP Host'/'TCP Client' link two emulators directly without netplay; the client picks a host below, and LAN hosts are found automatically. 'Loopback' echoes back to this console, for testing link-detect menus with no partner.",
       NULL,
       "network",
       {
@@ -352,7 +352,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_uart_device",
       "Network Link Device",
       NULL,
-      "What is plugged into the serial port. 'JagLink / CatBox' is the raw cable used by BattleSphere, AirCars and Doom. 'Voice Modem' emulates the Jaguar Voice Modem for Ultra Vortek's phone-line versus mode: type 911 on the numpad at the title screen, then one player dials (any number) and the other answers -- the 'call' is carried over the Network Link transport selected above.",
+      "What is plugged into the serial port. 'JagLink / CatBox' is the raw cable used by BattleSphere, AirCars and Doom. 'Voice Modem' emulates the Jaguar Voice Modem for Ultra Vortek's phone-line versus mode: type 911 on the numpad at the title screen, then one player dials any number and the other answers -- the call rides the Network Link transport selected above.",
       NULL,
       "network",
       {
@@ -411,7 +411,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink_speed",
       "Network Link Wire Speed (Enhancement)",
       NULL,
-      "Clocks the emulated serial port faster than the real hardware did, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next. Ultra Vortek's Voice Modem mode settles at 19200 baud and swaps about ten bytes each way per frame, roughly 5.8 ms of pure wire time per direction, which is why you do not see your own move until the round trip completes. Not authentic -- a real Voice Modem or JagLink cable is exactly this slow -- so it is off by default. 'Auto' has the two consoles agree on the speedup between themselves at link-up: nothing to match by hand, and if the other side is running an older core, isn't in Auto too, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client) -- frontend netplay (RetroArch's own netplay session) has no channel for the two cores to negotiate over and always runs authentic timing regardless of this setting. If a game starts dropping link data, turn this off. Ignored unless Network Link is actually selected.",
+      "Clocks the emulated serial port faster than real hardware, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next -- at authentic speed (Ultra Vortek's Voice Modem mode settles at 19200 baud, about 5.8 ms of wire time each way per frame) you do not see your own move until the round trip completes. Off by default because a real Voice Modem or JagLink cable is exactly that slow. 'Auto' has the two consoles agree the speed-up between themselves at link-up: nothing to match by hand, and if the peer runs an older core, is not in Auto, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client): frontend netplay has no channel for the two cores to negotiate over and always runs authentic timing. If a game starts dropping link data, turn this off.",
       NULL,
       "network",
       {
@@ -425,7 +425,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_voice_chat",
       "Voice Chat (Host-Side)",
       NULL,
-      "Opt-in voice channel over the Network Link -- the Jaguar Voice Modem's real selling point of simultaneous voice + data. This is NOT emulation: voice never entered the Jaguar; the console only issued audio-path control words. Capture uses the frontend microphone API when available. Default off so mic capture never starts unasked. Works over TCP Host/Client (discovery UDP) and over RetroArch netplay when both sides enable the option and speak vjag-netlink-2 (auto-negotiated; falls back to data-only if the peer never confirms). See docs/voice-chat-design.md and docs/voice-chat-netplay-design.md.",
+      "Opt-in voice channel over the Network Link -- the Jaguar Voice Modem's real selling point of simultaneous voice and data. NOT emulation: voice never entered the Jaguar, which only issued audio-path control words. Capture uses the frontend microphone API where available. Off by default so mic capture never starts unasked. Works over TCP Host/Client and over RetroArch netplay when both sides enable the option (auto-negotiated; falls back to data-only if the peer never confirms).",
       NULL,
       "network",
       {
@@ -517,7 +517,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_trace",
       "CD Trace (Diagnostic)",
       NULL,
-      "Records DSA command/response traffic and seek/FIFO transitions to a bounded ring buffer, dumped to the RetroArch log when the cd_seek_wedge watchdog fires (or on request by test harnesses). Diagnostic only -- intended for troubleshooting Jaguar CD boot/data-transfer bugs, not for normal play. Can also be forced on headlessly via the VJ_CD_TRACE=1 environment variable.",
+      "Record CD command/response traffic and seek/FIFO transitions to a bounded ring buffer, dumped to the RetroArch log when the cd_seek_wedge watchdog fires. For troubleshooting Jaguar CD boot and data-transfer bugs, not for normal play. Can also be forced on headlessly with the VJ_CD_TRACE=1 environment variable.",
       NULL,
       "diagnostics",
       {
@@ -531,7 +531,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios",
       "BIOS (Cartridges)",
       NULL,
-      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself, which lets most commercial titles boot faster and skips the boot animation. 'Real' runs the actual Jaguar boot ROM, which some titles require. Both boot ROM images are built into the core, so neither setting needs a file; the one exception is an optional jagboot_m.rom in the system directory, which overrides the embedded Model-M image. GPU-only/jagcrypt carts (BootIntro demos) auto-enable the real boot ROM even when this is set to HLE -- they contain no 68K program for HLE to start. Ignored for CD content: there, 'CD Boot Mode' decides and turns the boot ROM on or off to match.",
+      "Which BIOS a CARTRIDGE boots with. 'HLE' has the core emulate the BIOS setup and services itself: most commercial titles boot faster and the boot animation is skipped. 'Real' runs the actual Jaguar boot ROM, which some titles require. Both boot ROM images are built into the core, so neither setting needs a file. GPU-only/jagcrypt carts (BootIntro demos) turn the real boot ROM on even when this is set to HLE -- they contain no 68K program for HLE to start. Ignored for CD content: 'CD Boot Mode' decides there.",
       NULL,
       "bios_boot",
       {
@@ -545,7 +545,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_bios_type",
       "Cart BIOS Type (Restart)",
       NULL,
-      "Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart auto-enables the boot ROM. 'Series K' is the original Jaguar. 'Model M' is the later revision (patch address $4804) that most size-coded BootIntros are built for. Both images are built into the core. 'Custom' loads a 128 KB image from the system directory: jagboot.rom, boot.rom, boot0.rom, or a named '[BIOS] Atari Jaguar...' file, identified by checksum and logged; falls back to Series K if none is found. A jagboot_m.rom in the system directory overrides the embedded Model-M image. Ignored for CD content.",
+      "Which console boot ROM a CARTRIDGE uses when 'BIOS (Cartridges)' is Real, or when a GPU-only/jagcrypt cart turns the boot ROM on. 'Series K' is the original Jaguar; 'Model M' is the later revision (patch address $4804) most size-coded BootIntros are built for. Both are built into the core. 'Custom' loads a 128 KB image from the system directory (jagboot.rom, boot.rom, boot0.rom, or a named '[BIOS] Atari Jaguar...' file), identified by checksum and logged, falling back to Series K if none is found. A jagboot_m.rom in the system directory replaces the built-in Model M image. Ignored for CD content.",
       NULL,
       "bios_boot",
       {
@@ -560,7 +560,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_texture_dump",
       "Texture Dump Mode",
       NULL,
-      "Write every unique blitter source tile the title uses to <system dir>/vj_texdump/<cart CRC32>/ as a PNG preview plus a manifest row, for HD texture pack authoring (issue #369). Tiles are identified by a hash of their raw source bytes only -- the palette is advisory metadata, never identity. Takes effect immediately, no restart needed. Developer-facing: leave disabled for normal play.",
+      "Write every unique blitter source tile the title uses to <system dir>/vj_texdump/<cart CRC32>/ as a PNG preview plus a manifest row, for HD texture pack authoring. Tiles are identified by a hash of their raw source bytes; the palette is advisory metadata, never identity. Takes effect immediately, no restart needed. Developer-facing: leave disabled for normal play.",
       NULL,
       "diagnostics",
       {
@@ -589,7 +589,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_texture_replace",
       "Texture Replacement",
       NULL,
-      "Present community texture-pack art in place of the title's own blitter tiles (issue #369). Packs live in <system dir>/vj_texpacks/<cart CRC32>/, named by the same hashes Texture Dump Mode writes. Presentation-only: the emulated machine, savestates and netplay are bit-identical with or without a pack. Shown only when a pack directory exists for the loaded title.",
+      "Present community texture-pack art in place of the title's own blitter tiles. Packs live in <system dir>/vj_texpacks/<cart CRC32>/, named by the same hashes Texture Dump Mode writes. Presentation only: the emulated machine, save states and netplay are bit-identical with or without a pack. Shown only when a pack directory exists for the loaded title.",
       NULL,
       "video",
       {
@@ -603,7 +603,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_jgd",
       "Jaguar GameDrive (Restart)",
       NULL,
-      "Emulate the Jaguar GameDrive (JagGD) flash cartridge: its detection/install interface and 1 MB bank switching of up to 16 MB of cart SDRAM. 'Auto' turns it on only for ROM images larger than the 6 MB cartridge window. 'Enabled' forces it on for smaller images too, for GD-locked homebrew that refuses to boot without the cart (equivalent to BigPEmu's Force JGD). Without it, GD-locked titles hang at boot exactly as on a stock console.",
+      "Emulate the Jaguar GameDrive (JagGD) flash cartridge: its detection/install interface and 1 MB bank switching over up to 16 MB of cart SDRAM. 'Auto' turns it on only for ROM images larger than the 6 MB cartridge window. 'Enabled' forces it on for smaller images too, for GD-locked homebrew that refuses to boot without the cart (BigPEmu calls this Force JGD). Without it, GD-locked titles hang at boot exactly as on a stock console.",
       NULL,
       "bios_boot",
       {
@@ -632,7 +632,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_bios_type",
       "CD BIOS Type (Restart)",
       NULL,
-      "Which CD BIOS the real-BIOS boot path uses. 'Retail' is the standard consumer BIOS; 'Developer' is the dev-kit BIOS, which applies less strict disc checks and can boot images the retail BIOS refuses. Both are built into the core, so no files are required. CD BIOS ROM files in the system directory are preferred over the embedded images, and this selection picks which file wins when both types are present. Only has an effect when 'CD Boot Mode' is 'Real BIOS' or 'Auto' -- the HLE boot path never runs a CD BIOS.",
+      "Which CD BIOS the real-BIOS boot path uses. 'Retail' is the standard consumer BIOS; 'Developer' is the dev-kit BIOS, which applies less strict disc checks and can boot images the retail BIOS refuses. Both are built into the core, so no files are required; a CD BIOS ROM file in the system directory is preferred over the built-in image, and this setting picks which file wins when both types are present. Only has an effect when 'CD Boot Mode' is 'Real BIOS' or 'Auto' -- the HLE boot path never runs a CD BIOS.",
       NULL,
       "cdrom",
       {
@@ -646,7 +646,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_boot_mode",
       "CD Boot Mode (Restart)",
       NULL,
-      "How Jaguar CD discs boot. This OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly and runs with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS and forces the boot ROM on: more faithful, still experimental. It prefers a CD BIOS ROM file from the system directory (searched under several common names, and in Atari - Jaguar / Atari - Jaguar CD / jaguar / jaguarcd sub-folders) and otherwise uses the embedded image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If a real-BIOS mode is chosen but no CD BIOS can be staged at all, the core falls back to HLE rather than failing.",
+      "How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, still experimental. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing.",
       NULL,
       "cdrom",
       {
@@ -661,7 +661,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_read_speed",
       "CD Read Speed (HLE Boot Mode Only)",
       NULL,
-      "Data-transfer rate for Jaguar CD reads in HLE boot mode. '2x' matches the real drive (300 KB/s) and is hardware-accurate. Higher speeds shorten load times but may break timing-sensitive titles (some games rely on the drive rate for code overlays, music cues, and load handshakes); 'Instant' completes each read in one tick and is the most likely to cause hangs. BIOS boot mode always uses the accurate rate. Applied per-read: a transfer already in flight keeps the speed it started with.",
+      "Data-transfer rate for Jaguar CD reads in HLE boot mode. '2x' matches the real drive (300 KB/s) and is hardware-accurate. Higher speeds shorten load times but may break titles that pace code overlays, music cues or load handshakes off the drive rate; 'Instant' completes each read in one tick and is the most likely to hang. Real-BIOS boot always uses the accurate rate. Applied per read: a transfer already in flight keeps the speed it started with.",
       NULL,
       "cdrom",
       {
