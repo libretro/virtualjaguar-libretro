@@ -5,12 +5,12 @@
  *
  * Boots the ROM, watches the reserved sentinel block in main RAM once per
  * rendered frame, and asserts the DSP reached its fixed iteration count.
- * The 68K bootstrap only copies the DSP program into DSP local RAM and
- * kicks DSPGO -- the START/DONE/COUNT sentinels here are all written by
- * the DSP itself (STORE to an external main-RAM address is a normal DSP
- * instruction, no 68K involvement, same as the GPU tools this mirrors),
- * so a working run of this tool is also proof the DSP can address main
- * RAM directly.
+ * The 68K bootstrap writes the START sentinel, copies the DSP program into
+ * DSP local RAM, and kicks DSPGO -- the DONE/COUNT sentinels here are
+ * written by the DSP itself (STORE to an external main-RAM address is a
+ * normal DSP instruction, no 68K involvement, same as the GPU tools this
+ * mirrors), so a working run of this tool is also proof the DSP can
+ * address main RAM directly.
  *
  * Emits one machine-parseable line before the PASS/FAIL verdict:
  *

@@ -7,9 +7,9 @@
  * magic, and the expected count -- see that file's header for the full
  * rationale (boots the ROM, watches the reserved sentinel block in main RAM
  * once per rendered frame, asserts the GPU reached its fixed iteration
- * count). The 68K bootstrap only copies the GPU program into GPU local RAM
- * and kicks GPUGO -- the START/DONE/COUNT sentinels here are all written by
- * the GPU itself.
+ * count). The 68K bootstrap writes the START sentinel, copies the GPU
+ * program into GPU local RAM, and kicks GPUGO -- the DONE/COUNT sentinels
+ * here are written by the GPU itself.
  *
  * Emits one machine-parseable line before the PASS/FAIL verdict:
  *

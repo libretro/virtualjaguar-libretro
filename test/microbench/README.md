@@ -10,8 +10,8 @@ single-engine isolation or an exact, deterministic termination.
 | `bench68k.j64` | 68000 only | pure 68K loop throughput (`addq.l`/`subq.l`/`bne.s`) fetching from cart ROM | `$C0DE0068` | shipped (task 1) |
 | `benchgpu_arith.j64` | GPU, arithmetic-heavy | back-to-back ALU ops (`add`/`sub`/`and`/`or`) out of GPU local RAM -- the write-back port conflict rule's worst case | `$C0DE0A01` | shipped (task 2) |
 | `benchgpu_branch.j64` | GPU, branch-heavy | control flow (`JR`/`NOP` delay-slot pairs, taken `JUMP`) out of GPU local RAM -- structurally immune to the write-back conflict that hits the arith ROM | `$C0DE0B02` | shipped (task 3) |
-| `benchdsp.j64` | DSP | the same 20-instruction ALU body as `benchgpu_arith.j64`, run on the DSP interpreter instead of the GPU's -- a direct same-clock GPU-vs-DSP comparison, and proof the DSP has no `gpu_pipeline_timing`-equivalent cost model | `$C0DE0D53` | shipped (task 4) |
-| `benchblit.j64` | blitter | fixed-count 32x32 8bpp PATDSEL solid-fill launches to main RAM -- the only ROM whose hot path touches external memory every iteration, so it responds to `dram_timing` and `virtualjaguar_blitter_timing` where the other four don't | `$C0DE0B17` | shipped (task 5) |
+| `benchdsp.j64` | DSP | the same 20-instruction ALU body as `benchgpu_arith.j64`, run on the DSP interpreter instead of the GPU's -- a direct same-clock GPU-vs-DSP comparison, and proof the DSP has no `virtualjaguar_gpu_pipeline_timing`-equivalent cost model | `$C0DE0D53` | shipped (task 4) |
+| `benchblit.j64` | blitter | fixed-count 32x32 8bpp PATDSEL solid-fill launches to main RAM -- the only ROM whose hot path touches external memory every iteration, so it responds to `virtualjaguar_dram_timing` and `virtualjaguar_blitter_timing` where the other four don't | `$C0DE0B17` | shipped (task 5) |
 
 Run them:
 
@@ -156,14 +156,14 @@ Measured for `bench68k.j64` (1,000,000 iterations):
 | configuration | done_frame |
 |---|---|
 | harness defaults | 114 |
-| `gpu_pipeline_timing=enabled` | 114 |
+| `virtualjaguar_gpu_pipeline_timing=enabled` | 114 |
 | PAL | 114 |
-| `dram_timing=enabled` | 128 |
+| `virtualjaguar_dram_timing=enabled` | 128 |
 | both + `VJ_DRAM_SCALE=8` | 228 |
 | both + `VJ_DRAM_SCALE=12` | 288 |
 | both + `VJ_DRAM_SCALE=16` | 350 |
 
-`dram_timing` and `gpu_pipeline_timing` both default to `disabled`, so the
+`virtualjaguar_dram_timing` and `virtualjaguar_gpu_pipeline_timing` both default to `disabled`, so the
 default path is 114. The tools use **600** — clears the slowest measured
 configuration with ~1.7x margin, at about a second of wall time.
 
@@ -175,7 +175,7 @@ Sanity check on 114: the 3-instruction body costs a nominal 26 cycles on a
 comment and the tool's budget block.**
 
 Measured for `benchgpu_arith.j64` (2,000,000 iterations). **Correction
-(fix round 1, 2026-08-24): the `gpu_pipeline_timing=enabled` row below was
+(fix round 1, 2026-08-24): the `virtualjaguar_gpu_pipeline_timing=enabled` row below was
 previously published as `86` (flat, no response). That was never re-measured
 after being copied from an earlier draft of this table -- a direct run shows
 it moves to `172`, a ~100% jump, the largest relative move of any
@@ -184,17 +184,17 @@ configuration tested against this ROM:**
 | configuration | done_frame |
 |---|---|
 | harness defaults | 86 |
-| `gpu_pipeline_timing=enabled` | 172 |
-| `dram_timing=enabled` | 86 |
+| `virtualjaguar_gpu_pipeline_timing=enabled` | 172 |
+| `virtualjaguar_dram_timing=enabled` | 86 |
 | PAL | 86 |
 | both + `VJ_DRAM_SCALE=8` | 172 |
 | both + `VJ_DRAM_SCALE=12` | 172 |
 | both + `VJ_DRAM_SCALE=16` | 172 |
 
-`dram_timing` alone doesn't move this ROM: the 2M-iteration hot loop runs
+`virtualjaguar_dram_timing` alone doesn't move this ROM: the 2M-iteration hot loop runs
 entirely out of GPU local RAM and touches external memory only for its two
 sentinel STOREs, and `VJ_DRAM_SCALE` only scales external-memory latency.
-`gpu_pipeline_timing` is the mover, and it roughly *doubles* the completion
+`virtualjaguar_gpu_pipeline_timing` is the mover, and it roughly *doubles* the completion
 frame -- see the explanation after the branch-ROM table below, which covers
 both ROMs together. The tools use the same **600** budget as `bench68k.j64`
 for consistency across the five ROMs; it clears 172 with ~3.5x margin.
@@ -206,41 +206,49 @@ JR/NOP pairs + ADDQ + SUBQ + 1 JUMP/NOP loop closer, ~90% branch dispatch):
 | configuration | done_frame |
 |---|---|
 | harness defaults | 91 |
-| `dram_timing=enabled` | 91 |
+| `virtualjaguar_dram_timing=enabled` | 91 |
 | PAL | 91 |
-| `gpu_pipeline_timing=enabled` | 113 |
+| `virtualjaguar_gpu_pipeline_timing=enabled` | 113 |
 | both + `VJ_DRAM_SCALE=8` | 113 |
 | both + `VJ_DRAM_SCALE=12` | 113 |
 | both + `VJ_DRAM_SCALE=16` | 113 |
 
-### `gpu_pipeline_timing` response: arith moves MORE than branch, not less
+### `virtualjaguar_gpu_pipeline_timing` response: arith moves MORE than branch, not less
 
 An earlier draft of this document (and `task-3-report.md`) claimed
 `benchgpu_arith.j64` stayed flat under every configuration including
-`gpu_pipeline_timing`, and that only `benchgpu_branch.j64` responded to it.
+`virtualjaguar_gpu_pipeline_timing`, and that only `benchgpu_branch.j64` responded to it.
 **That was false and came from an unverified copy of the arith row above.**
 Directly measured, both ROMs respond, and arith responds *more*, both in
 absolute frames (+86 vs. +22) and relative terms (+100% vs. +24%):
 
-| ROM | defaults | `gpu_pipeline_timing=enabled` | delta |
+| ROM | defaults | `virtualjaguar_gpu_pipeline_timing=enabled` | delta |
 |---|---|---|---|
 | `benchgpu_arith.j64` | 86 | 172 | +86 frames (+100%) |
 | `benchgpu_branch.j64` | 91 | 113 | +22 frames (+24%) |
 
-`dram_timing` alone still doesn't move either ROM (both loops run entirely
+`virtualjaguar_dram_timing` alone still doesn't move either ROM (both loops run entirely
 out of GPU local RAM), and `VJ_DRAM_SCALE` has no further effect once
-`gpu_pipeline_timing` is already enabled for either ROM -- confirming the
+`virtualjaguar_gpu_pipeline_timing` is already enabled for either ROM -- confirming the
 extra cost in both cases comes from the pipeline model's internal-RISC-time
 accounting, not from DRAM access latency.
 
 The mechanism (read from `src/tom/gpu.c` `GPUPipeCheckUse()`, not guessed):
-`gpu_pipeline_timing` implements a **write-back port conflict** rule off the
-JTRM's "Register Write-Back" section -- the GPU register bank is dual-port,
-so back-to-back register-writing instructions can only avoid a 1-cycle stall
-when the second instruction's *sole* read target is the first instruction's
-write-back register. Any instruction that reads **two** registers, neither of
-which is the previous instruction's destination, pays the stall
-unconditionally (`gpu.c` around the "Write-back port conflict" comment).
+`virtualjaguar_gpu_pipeline_timing` implements two interlocks off the JTRM's
+"Register Write-Back" section, checked in order. First, an **ALU RAW
+interlock**: if either of the instruction's register reads targets the
+*previous* instruction's write-back destination, that read isn't ready yet
+and the instruction stalls 1 cycle -- this is the common case, since reading
+a value the instruction immediately before you just produced is exactly what
+chained ALU code does. Only if that check doesn't fire does the second rule
+apply: a **write-back port conflict** -- the GPU register bank is dual-port,
+so an instruction that reads **two** registers, *neither* of which is the
+previous instruction's destination, still can't have both reads serviced
+alongside the pending write-back and pays the same 1-cycle stall. The only
+way to dodge both is to read **fewer than two** registers and, if you read
+one, have it not be the previous instruction's destination -- back-to-back
+register-writing ALU code essentially never satisfies that (`gpu.c` around
+the "ALU RAW interlock" / "Write-back port conflict" comments).
 
 - **`benchgpu_arith.j64`'s** loop body is 16 back-to-back ALU ops
   (`add`/`sub`/`and`/`or`), each of which both reads two registers and writes
@@ -262,7 +270,7 @@ unconditionally (`gpu.c` around the "Write-back port conflict" comment).
   JR/JUMP -- smaller, less frequent charges, which is why the ROM moves by
   22 frames instead of 86.
 
-In short: `gpu_pipeline_timing`'s dominant cost in this model is a per-ALU-op
+In short: `virtualjaguar_gpu_pipeline_timing`'s dominant cost in this model is a per-ALU-op
 register-bank contention charge, not a branch-misprediction charge -- so a
 tightly-chained ALU body (arith) is the *worse* case for it, and a
 control-flow-heavy body built from register-free JR/NOP pairs (branch) is
@@ -279,21 +287,21 @@ at the same clock):
 | configuration | done_frame |
 |---|---|
 | harness defaults | 86 |
-| `gpu_pipeline_timing=enabled` | 86 |
-| `dram_timing=enabled` | 86 |
+| `virtualjaguar_gpu_pipeline_timing=enabled` | 86 |
+| `virtualjaguar_dram_timing=enabled` | 86 |
 | both | 86 |
 
 Same default completion frame as `benchgpu_arith.j64` (both 86, both engines
 run this identical body at the same ~26.6 MHz full-system clock), **but the
-DSP does not respond to `gpu_pipeline_timing` the way the GPU does** -- all
+DSP does not respond to `virtualjaguar_gpu_pipeline_timing` the way the GPU does** -- all
 four configurations above were re-run directly against this ROM (not
 inferred from the GPU table). This isn't a coincidence of this workload:
 `src/jerry/dsp.c`'s `DSPExec()` comment block states outright that "the DSP
 has no pipeline-timing mode of its own (`DSPExecP`/`DSPExecP2` are declared
-in `dsp.h` but never called)" -- `gpu_pipeline_timing` only gates the DSP's
+in `dsp.h` but never called)" -- `virtualjaguar_gpu_pipeline_timing` only gates the DSP's
 *idle-skip fast-forward* path (irrelevant here, since this loop never idles)
 and adds no per-instruction cost model for the DSP the way `GPUPipeCheckUse()`
-does for the GPU. `dram_timing` doesn't move it either, for the same reason
+does for the GPU. `virtualjaguar_dram_timing` doesn't move it either, for the same reason
 as the GPU ROM: the hot loop runs entirely out of DSP local RAM and touches
 external memory only for its two sentinel STOREs. The tool uses the same
 **600** budget as the other four ROMs; it clears 86 with ~7x margin.
@@ -304,17 +312,17 @@ companion GPU/DSP source and no per-loop table like the previous three).
 Unlike the other four ROMs, its fill destination (`$020000`, the benchmark
 work buffer) is **main RAM**, so — checked directly, not assumed by analogy
 with the GPU/DSP ROMs whose hot loops never leave local RAM — it responds to
-`dram_timing` on its own, `virtualjaguar_blitter_timing` dominates, and the
+`virtualjaguar_dram_timing` on its own, `virtualjaguar_blitter_timing` dominates, and the
 combination can exceed the other ROMs' 600-frame budget:
 
 | configuration | done_frame |
 |---|---|
 | harness defaults | 87 |
-| `gpu_pipeline_timing=enabled` | 87 |
+| `virtualjaguar_gpu_pipeline_timing=enabled` | 87 |
 | PAL | 87 |
-| `dram_timing=enabled` | 101 |
-| `blitter_timing=enabled` | 434 |
-| `dram_timing` + `blitter_timing` + `gpu_pipeline_timing` | 458 |
+| `virtualjaguar_dram_timing=enabled` | 101 |
+| `virtualjaguar_blitter_timing=enabled` | 434 |
+| `virtualjaguar_dram_timing` + `virtualjaguar_blitter_timing` + `virtualjaguar_gpu_pipeline_timing` | 458 |
 | all three + `VJ_DRAM_SCALE=8` | 564 |
 | all three + `VJ_DRAM_SCALE=12` | 607 |
 | all three + `VJ_DRAM_SCALE=16` (worst measured) | 631 |
@@ -323,7 +331,7 @@ combination can exceed the other ROMs' 600-frame budget:
 run) is the mover by a wide margin — it is the option that charges the
 blit's own bus-occupancy cost (`BlitDurationSysclks()` in
 `src/tom/blitter_mmio.c`; the "Fixed setup" comment in `benchblit.s` covers
-where that cost lands). `gpu_pipeline_timing` never moves this ROM at all
+where that cost lands). `virtualjaguar_gpu_pipeline_timing` never moves this ROM at all
 (it gates GPU/DSP RISC-instruction pipeline accounting; nothing here runs on
 either processor). Because 631 exceeds the other ROMs' 600-frame budget,
 `test_microbench_blit`'s `MB_FRAME_BUDGET` is **1200**, not 600 — a
@@ -461,10 +469,28 @@ in the harness or the Makefile beyond adding one more of each.
    `test_microbench_gpu_arith.c` if it's a GPU/DSP payload) to
    `test/tools/test_microbench_NNN.c`, and update: the DONE magic, expected
    iteration count, and `MB_FRAME_BUDGET` (measure the real completion frame
-   across at least harness defaults, `dram_timing=enabled`,
-   `gpu_pipeline_timing=enabled`, and PAL before picking a budget -- see the
+   across at least harness defaults, `virtualjaguar_dram_timing=enabled`,
+   `virtualjaguar_gpu_pipeline_timing=enabled`, and PAL before picking a budget -- see the
    "Frame budget" tables above for the methodology and how much headroom the
-   existing five carry).
+   existing five carry). **The harness's `--option` flag silently ignores any
+   key it doesn't recognize** -- there is no error, no warning, and the
+   `done_frame` comes back identical to the default run, which is
+   indistinguishable from "this ROM doesn't respond to the option." This is
+   exactly what produced the false `gpu_pipeline_timing=86` (flat) claim
+   fixed in commit `10c9a62`: the option name was missing its
+   `virtualjaguar_` prefix. Always pass the **full, prefixed** core option
+   key, e.g.:
+
+   ```bash
+   ./test/tools/test_microbench_NNN ./virtualjaguar_libretro.dylib \
+       test/microbench/benchNNN.j64 \
+       --option virtualjaguar_gpu_pipeline_timing=enabled
+   ```
+
+   and confirm at least one row of your frame-budget table actually moves
+   off the default `done_frame` before publishing a table where it doesn't
+   -- a flat row you haven't independently verified is more likely a typo'd
+   option key than a genuinely inert configuration.
 4. **Wire the Makefile.** Add a `test/tools/test_microbench_NNN` build rule
    next to the other five (same recipe shape, `test/tools/test_microbench_68k`
    is the template), and append the new tool + `.j64` to

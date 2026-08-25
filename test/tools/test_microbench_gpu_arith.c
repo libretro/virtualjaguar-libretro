@@ -5,11 +5,11 @@
  *
  * Boots the ROM, watches the reserved sentinel block in main RAM once per
  * rendered frame, and asserts the GPU reached its fixed iteration count.
- * The 68K bootstrap only copies the GPU program into GPU local RAM and
- * kicks GPUGO -- the START/DONE/COUNT sentinels here are all written by
- * the GPU itself (STORE to an external main-RAM address is a normal GPU
- * instruction, no 68K involvement), so a working run of this tool is also
- * proof the GPU can address main RAM directly.
+ * The 68K bootstrap writes the START sentinel, copies the GPU program into
+ * GPU local RAM, and kicks GPUGO -- the DONE/COUNT sentinels here are
+ * written by the GPU itself (STORE to an external main-RAM address is a
+ * normal GPU instruction, no 68K involvement), so a working run of this
+ * tool is also proof the GPU can address main RAM directly.
  *
  * Emits one machine-parseable line before the PASS/FAIL verdict:
  *
