@@ -130,6 +130,14 @@ static int hook_restart_notice_logged = 0;
 static bool widescreen_enabled          = false;
 static bool widescreen_geometry_pending = false;
 
+/* Title-scoped, so it has to be re-armed per load exactly like the
+ * titledb warning latches -- iOS cannot dlclose the core (#605). */
+static void widescreen_reset(void)
+{
+   widescreen_enabled          = false;
+   widescreen_geometry_pending = false;
+}
+
 #ifdef VJ_TRACE
 /* vjtrace per-session frame counter (see the use site in retro_run()).
  * File-scope, not a retro_run()-local static, so retro_unload_game()/
@@ -4976,6 +4984,10 @@ bool retro_load_game(const struct retro_game_info *info)
    titledb_reset_negative_warnings();
    /* Compounding-settings (#595) warning latch: same reasoning, same reset. */
    perf_conflict_reset();
+   /* Widescreen (#530/#605): clear BEFORE the check_variables() below, so
+    * this load latches its own aspect rather than inheriting the previous
+    * title's on a core that was never dlclosed. */
+   widescreen_reset();
 
    /* Internal resolution (hi-res Stage 1, see shadowfb.h): read ONCE at
     * content load -- SET_GEOMETRY cannot grow past the advertised maximum,
@@ -5087,6 +5099,16 @@ bool retro_load_game(const struct retro_game_info *info)
     * check_variables() skipped this on the load path for exactly this
     * reason; the latch keeps later option reads from repeating it. */
    perf_warn_idle_skip_suppressed();
+
+   /* Widescreen (#605): the check_variables() above latched this load's
+    * aspect, and the frontend queries retro_get_system_av_info() after
+    * retro_load_game() returns -- so it already has the right geometry.
+    * Leaving the flag armed made the first retro_run() fire a
+    * value-identical SET_GEOMETRY on the very frame that submits the
+    * first video_cb, which is the frontend-reallocates-and-drops-a-frame
+    * case the geometry-change comment in retro_run() warns about.  Only
+    * a genuine mid-session toggle should notify. */
+   widescreen_geometry_pending = false;
 
    /* Open the disc image BEFORE JaguarInit() so CDROMInit -> CDIntfInit ->
     * CDIntfIsImageLoaded sees the disc and haveCDGoodness is set correctly. */
@@ -5289,6 +5311,13 @@ void retro_unload_game(void)
     * warning latch: same reasoning, same reset. */
    TitleDBSetPairsForTest(NULL, 0);
    perf_conflict_reset();
+   /* Widescreen (#530) is title-scoped like everything above and was
+    * missed when it landed (#605).  iOS never dlcloses the core, so
+    * leaving these set lets a 16:9 title hand its aspect ratio to the
+    * next one: retro_get_system_av_info() can be called before the new
+    * session's first check_variables(), and that is the negotiation
+    * that sizes the frontend's first render target. */
+   widescreen_reset();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
@@ -5673,6 +5702,8 @@ void retro_deinit(void)
     * warning latch: same per-load re-arm as above. */
    TitleDBSetPairsForTest(NULL, 0);
    perf_conflict_reset();
+   /* Widescreen (#530/#605): same per-load re-arm as above. */
+   widescreen_reset();
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
