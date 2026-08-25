@@ -8,7 +8,7 @@ single-engine isolation or an exact, deterministic termination.
 | ROM | engine | DONE magic | status |
 |---|---|---|---|
 | `bench68k.j64` | 68000 only | `$C0DE0068` | shipped (task 1) |
-| `benchgpu_arith.j64` | GPU, arithmetic-heavy | `$C0DE0A01` | task 2 |
+| `benchgpu_arith.j64` | GPU, arithmetic-heavy | `$C0DE0A01` | shipped (task 2) |
 | `benchgpu_branch.j64` | GPU, branch-heavy | `$C0DE0B02` | task 3 |
 | `benchdsp.j64` | DSP | `$C0DE0D53` | task 4 |
 | `benchblit.j64` | blitter | `$C0DE0B17` | task 5 |
@@ -169,6 +169,28 @@ Sanity check on 114: the 3-instruction body costs a nominal 26 cycles on a
 
 **If you change an `ITERATIONS` value, re-measure and update both the `.s`
 comment and the tool's budget block.**
+
+Measured for `benchgpu_arith.j64` (2,000,000 iterations):
+
+| configuration | done_frame |
+|---|---|
+| harness defaults | 86 |
+| `gpu_pipeline_timing=enabled` | 86 |
+| `dram_timing=enabled` | 86 |
+| PAL | 86 |
+| both + `VJ_DRAM_SCALE=8` | 172 |
+| both + `VJ_DRAM_SCALE=12` | 172 |
+| both + `VJ_DRAM_SCALE=16` | 172 |
+
+Unlike `bench68k.j64`, `dram_timing` alone doesn't move this ROM at all: the
+2M-iteration hot loop runs entirely out of GPU local RAM and touches external
+memory only for its two sentinel STOREs. The `VJ_DRAM_SCALE` jump to 172 (and
+then flat regardless of scale) comes from the fixed-size 68K copy loop that
+moves the ~110-byte GPU blob from cart ROM (external, DRAM-timed) into GPU
+local RAM before GPUGO -- a bounded one-time cost, not something that grows
+with the scale knob the way `bench68k.j64`'s every-instruction-fetch-from-cart
+cost does. The tools use the same **600** budget as `bench68k.j64` for
+consistency across the five ROMs; it clears 172 with ~3.5x margin.
 
 ---
 

@@ -2159,12 +2159,19 @@ test/tools/test_hook_gate: test/tools/test_hook_gate.c \
 # Purpose-built microbenchmark ROM assertions (#536).  Each tool boots its
 # committed .j64 from test/microbench/ and asserts the exercised engine
 # reached its fixed iteration count, reporting the frame it finished on.
-# Needs the wide test ABI for the jaguarMainRAM export.  Tasks 2-5 of the
-# plan add test_microbench_gpu_arith / _gpu_branch / _dsp / _blit here.
+# Needs the wide test ABI for the jaguarMainRAM export.  Tasks 3-5 of the
+# plan add test_microbench_gpu_branch / _dsp / _blit here.
 test/tools/test_microbench_68k: test/tools/test_microbench_68k.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_microbench_68k.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_microbench_gpu_arith: test/tools/test_microbench_gpu_arith.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_gpu_arith.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -2630,10 +2637,12 @@ acid:
 # them with test/microbench/build.sh only after editing a .s source.
 #
 # Each run prints a MICROBENCH line whose done_frame is the completion
-# frame -- the number these ROMs exist to produce.  Tasks 2-5 of the plan
+# frame -- the number these ROMs exist to produce.  Tasks 3-5 of the plan
 # append their pairs to MICROBENCH_TOOLS / MICROBENCH_ROMS below.
-MICROBENCH_TOOLS := test/tools/test_microbench_68k
-MICROBENCH_ROMS  := test/microbench/bench68k.j64
+MICROBENCH_TOOLS := test/tools/test_microbench_68k \
+                     test/tools/test_microbench_gpu_arith
+MICROBENCH_ROMS  := test/microbench/bench68k.j64 \
+                     test/microbench/benchgpu_arith.j64
 
 .PHONY: microbench
 microbench: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
