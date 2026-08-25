@@ -197,7 +197,10 @@ The campaign itself lands in **v4.0.0**.
   same channel-select without ever reading it back. That interface is **not
   emulated**: this release reads `$F17C00` as `0xFF`, matching a production
   console with no ADC fitted (A/B-verified inert on BattleSphere across 900
-  frames and Club Drive across 700). Emulating the ADC itself, and with it
+  frames and Club Drive across 700). *(Corrected 2026-08-19: this note
+  originally said `0x0000`; the shipped v3.4.0 code always returned `0xFF`
+  — the tagged behavior is unchanged, only this description was wrong.
+  See f2d8457.)* Emulating the ADC itself, and with it
   BattleSphere's analog stick, is #505.
 
 ## Downloads

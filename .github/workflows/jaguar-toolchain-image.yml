@@ -27,6 +27,12 @@ on:
 jobs:
   publish:
     name: Build + push toolchain image
+    # workflow_dispatch has no branch restriction of its own -- without this,
+    # a manual dispatch from any branch would push :latest, contradicting the
+    # push-trigger's develop-only guard above and the invariant this file
+    # claims ("a tagged image from an unmerged branch would be
+    # indistinguishable from a real one at :latest").
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

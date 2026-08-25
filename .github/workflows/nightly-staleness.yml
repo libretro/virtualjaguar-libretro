@@ -50,13 +50,28 @@ jobs:
 
           # A missing nightly release is itself the fault condition -- that is
           # what "the nightly stopped publishing" looks like from outside.
-          if ! REL=$(gh api "repos/${REPO}/releases/tags/nightly" 2>/dev/null); then
+          if ! gh api "repos/${REPO}/releases/tags/nightly" >/dev/null 2>&1; then
             echo "::error::No 'nightly' release exists. The nightly publish in release.yml is not running at all. See #508."
             exit 1
           fi
 
-          NIGHTLY_DATE=$(echo "$REL" | jq -r '.published_at // .created_at')
-          echo "nightly     : published ${NIGHTLY_DATE}"
+          # NOT the release object's published_at/created_at: release.yml's
+          # "Publish rolling prerelease" step updates the SAME release in
+          # place (gh release edit --clobber) rather than recreating it, so
+          # those timestamps are stamped once at first publish and never
+          # move again -- comparing against them would make LAG_HOURS grow
+          # forever and fail this check on every run after the first
+          # GRACE_HOURS, regardless of how current the nightly actually is.
+          # The signal that DOES move every run is the `nightly` tag itself:
+          # the preceding "Move the rolling tag" step force-updates
+          # refs/tags/nightly to point at GITHUB_SHA on every publish, so the
+          # tag's target commit date is the true "last published" time.
+          if ! TAG_SHA=$(gh api "repos/${REPO}/git/refs/tags/nightly" --jq '.object.sha' 2>/dev/null) || [ -z "$TAG_SHA" ]; then
+            echo "::error::'nightly' release exists but its tag ref is missing. See #508."
+            exit 1
+          fi
+          NIGHTLY_DATE=$(gh api "repos/${REPO}/commits/${TAG_SHA}" --jq '.commit.committer.date')
+          echo "nightly     : tag points at ${TAG_SHA:0:7}, committed ${NIGHTLY_DATE}"
 
           DEV_EPOCH=$(date -u -d "$DEV_DATE" +%s)
           NIGHTLY_EPOCH=$(date -u -d "$NIGHTLY_DATE" +%s)
