@@ -411,7 +411,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_voice_chat",
       "Voice Chat (Host-Side)",
       NULL,
-      "Opt-in voice channel over the Network Link discovery socket -- the Jaguar Voice Modem's real selling point of simultaneous voice + data. This is NOT emulation: voice never entered the Jaguar; the console only issued audio-path control words. Capture uses the frontend microphone API when available. Default off so mic capture never starts unasked. Requires Network Link in TCP Host or TCP Client mode (unavailable under RetroArch netplay -- no peer address is exposed to the core). See docs/voice-chat-design.md.",
+      "Opt-in voice channel over the Network Link -- the Jaguar Voice Modem's real selling point of simultaneous voice + data. This is NOT emulation: voice never entered the Jaguar; the console only issued audio-path control words. Capture uses the frontend microphone API when available. Default off so mic capture never starts unasked. Works over TCP Host/Client (discovery UDP) and over RetroArch netplay when both sides enable the option and speak vjag-netlink-2 (auto-negotiated; falls back to data-only if the peer never confirms). See docs/voice-chat-design.md and docs/voice-chat-netplay-design.md.",
       NULL,
       "network",
       {

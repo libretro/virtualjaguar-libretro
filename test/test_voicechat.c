@@ -16,7 +16,8 @@ int JLinkMode(void) { return 0; }
 int JLinkDiscActive(void) { return 0; }
 int JLinkDiscPort(void) { return 42170; }
 const char *JLinkGetTCPHost(void) { return "127.0.0.1"; }
-uint32_t JLinkNowMs(void) { return 1000; }
+static uint32_t g_now_ms = 1000;
+uint32_t JLinkNowMs(void) { return g_now_ms; }
 int JLinkDiscSendTo(const uint8_t *buf, size_t len,
                     const char *to_addr, int to_port)
 {
@@ -208,6 +209,73 @@ static void test_energy_and_mix(void)
    check(clipped == 1, "saturates near full scale without wrap");
 }
 
+static void test_multi_speaker(void)
+{
+   int16_t frame_a[VC_FRAME_SAMPLES];
+   int16_t frame_b[VC_FRAME_SAMPLES];
+   int16_t frame_c[VC_FRAME_SAMPLES];
+   int16_t frame_d[VC_FRAME_SAMPLES];
+   uint16_t buf[1600];
+   unsigned i;
+   long sum;
+
+   for (i = 0; i < VC_FRAME_SAMPLES; i++)
+   {
+      frame_a[i] = 1000;
+      frame_b[i] = 2000;
+      frame_c[i] = 3000;
+      frame_d[i] = 4000;
+   }
+
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatSetVolume(100);
+
+   /* Independent gap-fill: A seq 0 then 2; B seq 0 continuous. */
+   VoiceChatJitterPushFrom(0x11111111u, frame_a, 0);
+   VoiceChatJitterPushFrom(0x22222222u, frame_b, 0);
+   VoiceChatJitterPushFrom(0x11111111u, frame_a, 2); /* gap of 1 */
+   check(VoiceChatActiveSpeakers() == 2, "two speakers claimed");
+   check(VoiceChatJitterCount() == VC_FRAME_SAMPLES * 4,
+         "A gap-fill + B frame counted (3+1 frames)");
+
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatSetVolume(100);
+   VoiceChatJitterPushFrom(1, frame_a, 0);
+   VoiceChatJitterPushFrom(2, frame_b, 0);
+   VoiceChatJitterPushFrom(3, frame_c, 0);
+   check(VoiceChatActiveSpeakers() == 3, "three speakers at cap");
+
+   for (i = 0; i < 1600; i++)
+      buf[i] = 0;
+   VoiceChatMixInto(buf, 800);
+   sum = 0;
+   for (i = 0; i < 1600; i++)
+      sum += (int16_t)buf[i];
+   check(sum > 0, "three speakers mix into output");
+
+   /* Fourth speaker reclaims the least-recently-active slot. Advance
+    * the stub clock between claims so lastMs differs; sender 10 is
+    * oldest and must be the one evicted. */
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   g_now_ms = 1000;
+   VoiceChatJitterPushFrom(10, frame_a, 0);
+   g_now_ms = 2000;
+   VoiceChatJitterPushFrom(20, frame_b, 0);
+   g_now_ms = 3000;
+   VoiceChatJitterPushFrom(30, frame_c, 0);
+   g_now_ms = 4000;
+   VoiceChatJitterPushFrom(40, frame_d, 0);
+   check(VoiceChatActiveSpeakers() == 3,
+         "fourth speaker reclaims; still at cap of 3");
+   check(!VoiceChatHasSpeaker(10), "oldest speaker (10) was reclaimed");
+   check(VoiceChatHasSpeaker(20) && VoiceChatHasSpeaker(30)
+             && VoiceChatHasSpeaker(40),
+         "newer speakers 20/30/40 kept");
+}
+
 int main(void)
 {
    printf("test_voicechat\n");
@@ -217,6 +285,7 @@ int main(void)
    test_jitter();
    test_keepalive_seq_continuity();
    test_energy_and_mix();
+   test_multi_speaker();
    if (failures)
    {
       printf("%d FAILURES\n", failures);

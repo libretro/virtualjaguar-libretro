@@ -1,7 +1,7 @@
 # Design: Voice chat over RetroArch netplay (#585)
 
 **Date:** 2026-08-25
-**Status:** design for review — not implemented
+**Status:** IMPLEMENTED (#585)
 **Issue:** [#585](https://github.com/libretro/virtualjaguar-libretro/issues/585)
 **Parent:** [#485](https://github.com/libretro/virtualjaguar-libretro/issues/485) / PR #584 (UDP discovery path, TCP only)
 **Intent:** next PR after #584 — make host-side voice work inside a RetroArch
@@ -18,12 +18,12 @@ netplay session via the netpacket interface (env 78).
   `protocol_version` / framing the netpacket pipe is acceptable. Do not spend
   effort preserving `vjag-netlink-1` unframed payloads for voice multiplexing.
 
-## What exists today (after #584)
+## Availability (after #585)
 
 | Path | Voice |
 |------|-------|
 | TCP host / TCP client | Works — `VJVC` on discovery UDP :42170 |
-| RetroArch netplay (`JLINK_MODE_NETPACKET`) | **Unavailable** — core never sees a peer IP; mic gated off; log once |
+| RetroArch netplay (`JLINK_MODE_NETPACKET`) | Works — framed `vjag-netlink-2` + hello negotiate |
 | Loopback | Local mic monitor only |
 
 Voice is still **host-side only** (zero emulated state). That invariant must

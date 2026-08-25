@@ -1009,7 +1009,7 @@ static const struct retro_netpacket_callback netpacket_cb = {
    JLinkNPPoll,
    NULL,                /* connected */
    NULL,                /* disconnected */
-   "vjag-netlink-1"     /* protocol_version */
+   "vjag-netlink-2"     /* protocol_version */
 };
 
 /* ---- Voice chat (#485): frontend mic + host-side mix ------------------- */
@@ -1019,7 +1019,6 @@ static int vj_mic_iface_ok = 0;
 static int vj_mic_unavailable_logged = 0;
 static int vj_voice_want = 0;          /* option asks for voice chat */
 static int vj_voice_monitor = 0;       /* local mic-check mix */
-static int vj_voice_netpacket_logged = 0;
 
 static int voicechat_mic_read(int16_t *samples, size_t num)
 {
@@ -1047,14 +1046,16 @@ static void voicechat_ensure_mic(void)
       return;
    }
 
-   /* Mic capture only when we can TX to a peer (TCP + discovery) or when
-    * local monitor is on for a mic check. Opening the mic under netplay /
-    * disabled netlink leaves the OS indicator on while we discard samples. */
+   /* Mic capture only when we can TX to a peer (TCP + discovery, or
+    * netplay after voice hello confirms) or when local monitor is on
+    * for a mic check. Opening the mic while voice cannot TX leaves the
+    * OS indicator on while we discard samples. */
    mode = JLinkMode();
-   can_tx = JLinkDiscActive()
-            && (mode == JLINK_MODE_TCP_SERVER
-                || mode == JLINK_MODE_TCP_CLIENT)
-            && !JLinkNPActive();
+   can_tx = (JLinkDiscActive()
+             && (mode == JLINK_MODE_TCP_SERVER
+                 || mode == JLINK_MODE_TCP_CLIENT)
+             && !JLinkNPActive())
+            || (JLinkNPActive() && JLinkNPVoiceReady());
    if (!can_tx && !vj_voice_monitor)
    {
       voicechat_close_mic();
@@ -2557,20 +2558,7 @@ static void check_variables(void)
       VoiceChatSetVadThreshold(vad);
       VoiceChatSetMonitor(mon);
       VoiceChatSetMicRead(voicechat_mic_read);
-
-      if (want
-          && (JLinkMode() == JLINK_MODE_NETPACKET
-              || JLinkNPActive()))
-      {
-         if (!vj_voice_netpacket_logged)
-         {
-            LOG_INF("[VOICE] unavailable under RetroArch netplay "
-                    "(no peer address) -- data-only\n");
-            vj_voice_netpacket_logged = 1;
-         }
-      }
-      else
-         vj_voice_netpacket_logged = 0;
+      JLinkNPSetVoiceWant(want);
 
       if (want)
          voicechat_ensure_mic();
@@ -5059,10 +5047,10 @@ void retro_unload_game(void)
    /* Voice chat (#485): close mic and clear host-side buffers. */
    voicechat_close_mic();
    VoiceChatReset();
+   JLinkNPSetVoiceWant(0);
    vj_voice_want = 0;
    vj_voice_monitor = 0;
    vj_mic_unavailable_logged = 0;
-   vj_voice_netpacket_logged = 0;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -5320,10 +5308,10 @@ void retro_deinit(void)
    show_texture_replace = true;
    voicechat_close_mic();
    VoiceChatReset();
+   JLinkNPSetVoiceWant(0);
    vj_voice_want = 0;
    vj_voice_monitor = 0;
    vj_mic_unavailable_logged = 0;
-   vj_voice_netpacket_logged = 0;
    show_voice_chat_opts = true;
    /* Non-pad input devices: encoders, phases, attach mask, armed flag and
     * the option-derived type/scale all go back to their load-time values
@@ -5629,6 +5617,7 @@ void retro_run(void)
          voicechat_close_mic();
       if (VoiceChatEnabled() && key && input_state_cb)
          ptt = input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, key) ? 1 : 0;
+      JLinkNPVoiceTick();
       VoiceChatFrameTick(ptt);
    }
 
