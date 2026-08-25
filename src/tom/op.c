@@ -1917,9 +1917,18 @@ void OPProcessScaledBitmap(uint64_t p0, uint64_t p1, uint64_t p2, bool render)
             uint8_t bits3 = pixels >> 56, bits2 = pixels >> 48,
                     bits1 = pixels >> 40, bits0 = pixels >> 32;
 
+            /* Bounds-clamped for the same reason the fixed-bitmap stores
+             * are (#565, and the OP_LBUF_IN_BOUNDS comment above): this
+             * loop runs on the raw phrase `iwidth`, not on the clamped
+             * visibleDestPixels the 1-16 BPP branches above bound
+             * themselves with, and lbufDelta sign-extends OPFLAG_REFLECT
+             * -- so a reflected object with a garbage iwidth walks
+             * backward out of tomRam8 with nothing to stop it.  Four
+             * bytes per store here rather than two, so it leaves the
+             * buffer faster than the case that actually crashed. */
             if (flagTRANS && (bits3 | bits2 | bits1 | bits0) == 0)
                ;	// Do nothing...
-            else
+            else if (OP_LBUF_IN_BOUNDS(currentLineBuffer, 4))
                *currentLineBuffer = bits3,
                   *(currentLineBuffer + 1) = bits2,
                   *(currentLineBuffer + 2) = bits1,
