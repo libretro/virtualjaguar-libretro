@@ -38,6 +38,19 @@ jobs:
           install: >-
             git make python zip
             mingw-w64-x86_64-gcc mingw-w64-x86_64-python
+            mingw-w64-x86_64-ccache
+
+      # Windows-only: every one of the thousands of .o files this build
+      # writes gets scanned on write by Defender's real-time monitor, and
+      # that (plus MSYS2's inherently heavier per-process spawn cost vs.
+      # Linux/macOS) is why this same build takes ~2.2x as long on this
+      # runner as on ubuntu-latest for identical work. The runner is
+      # single-use and disposable, so disabling scanning for it costs
+      # nothing.
+      - name: Exclude build path from Windows Defender
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
 
       # MAME's genie pass generates the full OSD project set even with
       # EMULATOR=0 TOOLS=1, so it still probes for SDL. The hosted runner
@@ -53,11 +66,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libsdl2-dev libsdl2-ttf-dev libasound2-dev \
-            libfontconfig1-dev libpulse-dev
+            libfontconfig1-dev libpulse-dev ccache
 
       - name: Install chdman build dependencies (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install sdl2 sdl2_ttf || true
+        run: brew install sdl2 sdl2_ttf ccache || true
 
       - name: Read chdman pin
         id: pin
@@ -65,6 +78,21 @@ jobs:
           PIN=$(grep -E '^[0-9a-f]{7,}' tools/jagcd/CHDMAN_PIN | tail -n 1)
           echo "sha=$PIN" >> "$GITHUB_OUTPUT"
           echo "pin=$PIN"
+
+      # MAME's own tree is fully rebuilt from scratch every run today --
+      # ccache is content-hashed (unlike a raw object-file cache, immune
+      # to git's clone-time mtime reset forcing spurious rebuilds), so a
+      # run against an unchanged CHDMAN_PIN (most nightlies) restores
+      # near-total cache hits and finishes in a couple of minutes instead
+      # of 10-25. restore-keys lets a pin BUMP still seed from the prior
+      # pin's cache for whatever object code didn't change.
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ${{ matrix.os }}-chdman-ccache-${{ steps.pin.outputs.sha }}
+          restore-keys: |
+            ${{ matrix.os }}-chdman-ccache-
 
       - name: Clone MAME at pin
         run: |
@@ -80,10 +108,14 @@ jobs:
       # chdman has no Qt dependency -- only the (excluded) debugger does.
       - name: Build chdman
         working-directory: mame
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 600M
         run: |
           make -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) \
             TOOLS=1 EMULATOR=0 NOWERROR=1 PRECOMPILE=0 REGENIE=1 \
-            USE_QTDEBUG=0
+            USE_QTDEBUG=0 CC="ccache gcc" CXX="ccache g++"
+          ccache -s || true
 
       - name: Build jagcd-chd-check
         run: |
