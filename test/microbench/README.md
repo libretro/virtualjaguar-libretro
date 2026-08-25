@@ -9,7 +9,7 @@ single-engine isolation or an exact, deterministic termination.
 |---|---|---|---|
 | `bench68k.j64` | 68000 only | `$C0DE0068` | shipped (task 1) |
 | `benchgpu_arith.j64` | GPU, arithmetic-heavy | `$C0DE0A01` | shipped (task 2) |
-| `benchgpu_branch.j64` | GPU, branch-heavy | `$C0DE0B02` | task 3 |
+| `benchgpu_branch.j64` | GPU, branch-heavy | `$C0DE0B02` | shipped (task 3) |
 | `benchdsp.j64` | DSP | `$C0DE0D53` | task 4 |
 | `benchblit.j64` | blitter | `$C0DE0B17` | task 5 |
 
@@ -191,6 +191,35 @@ local RAM before GPUGO -- a bounded one-time cost, not something that grows
 with the scale knob the way `bench68k.j64`'s every-instruction-fetch-from-cart
 cost does. The tools use the same **600** budget as `bench68k.j64` for
 consistency across the five ROMs; it clears 172 with ~3.5x margin.
+
+Measured for `benchgpu_branch.j64` (2,000,000 iterations, 21-instruction
+body -- see the `.s` for the exact composition: 1 CMPQ + 8 not-taken
+JR/NOP pairs + ADDQ + SUBQ + 1 JUMP/NOP loop closer, ~90% branch dispatch):
+
+| configuration | done_frame |
+|---|---|
+| harness defaults | 91 |
+| `dram_timing=enabled` | 91 |
+| PAL | 91 |
+| `gpu_pipeline_timing=enabled` | 113 |
+| both + `VJ_DRAM_SCALE=8` | 113 |
+| both + `VJ_DRAM_SCALE=12` | 113 |
+| both + `VJ_DRAM_SCALE=16` | 113 |
+
+This is exactly the dispatch-vs-body signal #536 was written to surface:
+`benchgpu_arith.j64`'s completion frame (86) is **flat across every
+configuration**, `dram_timing` and `gpu_pipeline_timing` included. This
+ROM's is not -- `gpu_pipeline_timing=enabled` alone moves it from 91 to
+113 (a ~24% jump) despite touching main RAM no more often than the
+arithmetic ROM (two sentinel STOREs each). Same local-RAM hot loop, same
+iteration count, same external-memory footprint; the only structural
+difference is 8 conditional JR/NOP pairs per iteration in place of 14 ALU
+ops. `dram_timing` alone still doesn't move either ROM (both loops run
+entirely out of GPU local RAM), and `VJ_DRAM_SCALE` has no further effect
+once `gpu_pipeline_timing` is already enabled -- the extra cost here comes
+from the pipeline model charging for control-flow dispatch, not from DRAM
+access latency. The tools use the same **600** budget as the other ROMs;
+it clears 113 with ~5.3x margin.
 
 ---
 
