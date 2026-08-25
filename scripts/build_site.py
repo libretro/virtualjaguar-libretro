@@ -191,6 +191,23 @@ def last_modified(paths, fallback, shallow):
 
 # ---------------------------------------------------------------- CD matrix
 
+DASH_RE = re.compile("[—–]")
+
+
+def normalize_dashes(s):
+    """Em/en dash -> hyphen, for text arriving from the generated matrices.
+
+    The site's copy standard is zero em-dashes, and it has to hold for cells
+    the sweep tools wrote as much as for prose someone typed: cart_boot_matrix
+    emits notes like "black video (headless -- undetermined)", which reach the
+    reader through a title= tooltip.  Normalizing here rather than editing
+    docs/cart-boot-matrix.md keeps that file exactly as its generator wrote it
+    -- the compatibility page's whole claim is that nothing on it was typed by
+    hand.  This changes punctuation only; no cell's meaning moves.
+    """
+    return DASH_RE.sub("-", s)
+
+
 def split_md_row(line):
     """Split a markdown table row into cells (outer pipes optional)."""
     line = line.strip()
@@ -259,7 +276,8 @@ def parse_cd_matrix(path):
                 % (i + 1, path, len(cells), len(EXPECTED_HEADER), lines[i]))
         for m in BUILD_STAMP_RE.finditer(lines[i]):
             build_ids.add(m.group(1))
-        cells = [BUILD_STAMP_RE.sub("", c).strip() for c in cells]
+        cells = [normalize_dashes(BUILD_STAMP_RE.sub("", c).strip())
+                 for c in cells]
         title, mode, score, stage, watchdog, evidence = cells
         if mode not in ("hle", "bios"):
             die("row %d in %s: unknown Mode %r (expected 'hle' or 'bios')"
@@ -380,7 +398,7 @@ def parse_cart_matrix(path):
                 % (i + 1, path, len(cells), len(CART_EXPECTED_HEADER),
                    lines[i]))
         title, hle_stage, hle_notes, bios_stage, bios_notes = \
-            [c.strip() for c in cells]
+            [normalize_dashes(c.strip()) for c in cells]
         if not title:
             die("row %d in %s: empty Title" % (i + 1, path))
         for st in (hle_stage, bios_stage):
