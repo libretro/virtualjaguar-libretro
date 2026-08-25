@@ -5,19 +5,23 @@ Small, single-engine Jaguar cartridges with a **fixed iteration count** and a
 after auditing the public ROM corpus (jagniccc/yarc): real titles never give
 single-engine isolation or an exact, deterministic termination.
 
-| ROM | engine | DONE magic | status |
-|---|---|---|---|
-| `bench68k.j64` | 68000 only | `$C0DE0068` | shipped (task 1) |
-| `benchgpu_arith.j64` | GPU, arithmetic-heavy | `$C0DE0A01` | shipped (task 2) |
-| `benchgpu_branch.j64` | GPU, branch-heavy | `$C0DE0B02` | shipped (task 3) |
-| `benchdsp.j64` | DSP | `$C0DE0D53` | shipped (task 4) |
-| `benchblit.j64` | blitter | `$C0DE0B17` | shipped (task 5) |
+| ROM | engine | what it isolates | DONE magic | status |
+|---|---|---|---|---|
+| `bench68k.j64` | 68000 only | pure 68K loop throughput (`addq.l`/`subq.l`/`bne.s`) fetching from cart ROM | `$C0DE0068` | shipped (task 1) |
+| `benchgpu_arith.j64` | GPU, arithmetic-heavy | back-to-back ALU ops (`add`/`sub`/`and`/`or`) out of GPU local RAM -- the write-back port conflict rule's worst case | `$C0DE0A01` | shipped (task 2) |
+| `benchgpu_branch.j64` | GPU, branch-heavy | control flow (`JR`/`NOP` delay-slot pairs, taken `JUMP`) out of GPU local RAM -- structurally immune to the write-back conflict that hits the arith ROM | `$C0DE0B02` | shipped (task 3) |
+| `benchdsp.j64` | DSP | the same 20-instruction ALU body as `benchgpu_arith.j64`, run on the DSP interpreter instead of the GPU's -- a direct same-clock GPU-vs-DSP comparison, and proof the DSP has no `gpu_pipeline_timing`-equivalent cost model | `$C0DE0D53` | shipped (task 4) |
+| `benchblit.j64` | blitter | fixed-count 32x32 8bpp PATDSEL solid-fill launches to main RAM -- the only ROM whose hot path touches external memory every iteration, so it responds to `dram_timing` and `virtualjaguar_blitter_timing` where the other four don't | `$C0DE0B17` | shipped (task 5) |
 
 Run them:
 
 ```bash
 make microbench          # builds the core (TEST_EXPORTS=1) + tools, runs all
 ```
+
+CI runs `make microbench` on every PR/push touching `test/microbench/**` or
+`test/tools/test_microbench_*` (`.github/workflows/microbench.yml`) --
+see "CI" below.
 
 Each tool prints one machine-parseable line; `done_frame` is the point of the
 exercise:
@@ -399,6 +403,63 @@ loader copy from `blob+12`.
 The other lyxass trap from that same file: it emits **nothing** for code placed
 before its `.run` directive, while still exiting 0 and still writing a
 12-byte-header file. Put `.run` after `.org` and before the first instruction.
+
+---
+
+## CI
+
+`.github/workflows/microbench.yml` runs `make microbench` on `ubuntu-latest`
+for every PR/push (to `develop`/`master`) that touches `test/microbench/**`,
+`test/tools/test_microbench_*`, `test/harness/**`, or the `Makefile`, plus
+`workflow_dispatch`. Same shape as `jaguar-demos.yml`'s smoke job: build the
+core with `TEST_EXPORTS=1`, run the target, tee the log to the step summary,
+upload it as an artefact on any outcome. It path-filters on
+`test/microbench/**` and `test/tools/test_microbench_*` specifically --
+**not** `tools/jaguar-toolchain/**` -- because the whole point of committing
+the `.j64` images is that this job never has to build or invoke the
+assembler toolchain; `make microbench` only calls `make jaguar-toolchain-*`
+if you ask it to (see `build.sh`), and the CI job never does.
+
+## How to add a 6th ROM
+
+Follow Task 1-5's pattern exactly; nothing here is per-engine special-cased
+in the harness or the Makefile beyond adding one more of each.
+
+1. **Source.** Write `test/microbench/benchNNN.s` (68K-only, following
+   `bench68k.s`), or `benchNNN.s` + `benchNNN_gpu.s`/`benchNNN_dsp.s` (68K
+   bootstrap + RISC payload, following `benchgpu_arith.s` /
+   `benchgpu_arith_gpu.s`). Start from `.include "cartboot.inc"` -- do not
+   hand-roll the cart header. Pick a fixed `ITERATIONS` and a **new** DONE
+   magic (`$C0DE0xxx` convention; don't reuse one of the five above) written
+   to `MB_SENT_DONE` (`$010004`) after the count at `MB_SENT_COUNT`
+   (`$010008`), per the sentinel convention above. Any working buffer goes at
+   `$020000` or above, never in `$010000-$01000F`.
+2. **Assemble + commit the `.j64`.** Add `benchNNN.s` (and any RISC
+   companion) to the loop in `build.sh`, then run it (needs the toolchain:
+   `make jaguar-toolchain-build && eval "$(tools/jaguar-toolchain/setup.sh env)"`)
+   and commit the resulting `benchNNN.j64` alongside the source. CI never
+   assembles -- if the committed `.j64` and the `.s` it should come from
+   diverge, nothing catches that automatically, so regenerate and diff
+   before committing.
+3. **Harness tool.** Copy `test/tools/test_microbench_68k.c` (or
+   `test_microbench_gpu_arith.c` if it's a GPU/DSP payload) to
+   `test/tools/test_microbench_NNN.c`, and update: the DONE magic, expected
+   iteration count, and `MB_FRAME_BUDGET` (measure the real completion frame
+   across at least harness defaults, `dram_timing=enabled`,
+   `gpu_pipeline_timing=enabled`, and PAL before picking a budget -- see the
+   "Frame budget" tables above for the methodology and how much headroom the
+   existing five carry).
+4. **Wire the Makefile.** Add a `test/tools/test_microbench_NNN` build rule
+   next to the other five (same recipe shape, `test/tools/test_microbench_68k`
+   is the template), and append the new tool + `.j64` to
+   `MICROBENCH_TOOLS`/`MICROBENCH_ROMS` in the `microbench` target.
+5. **Document it.** Add a row to the ROM table at the top of this file (what
+   it isolates, DONE magic), and a "Measured for `benchNNN.j64`" frame-budget
+   table in the style of the existing five if the numbers are interesting.
+6. **Verify.** `make microbench` must still exit 0 with all six PASS lines.
+   No CI change is needed -- `.github/workflows/microbench.yml`'s path
+   filters already cover any new file under `test/microbench/` or a
+   `test/tools/test_microbench_*` name.
 
 ---
 

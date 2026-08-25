@@ -1,0 +1,78 @@
+name: Microbenchmark ROMs
+
+# Runs the five purpose-built microbenchmark ROMs (issue #536): one
+# single-engine cartridge each for the 68000, GPU (arithmetic-heavy),
+# GPU (branch-heavy), DSP and blitter, with a fixed iteration count and a
+# harness-assertable completion marker (see test/microbench/README.md).
+#
+# The .j64 images are committed, so this job never needs the Jaguar
+# assembler toolchain (tools/jaguar-toolchain/) -- `make microbench` only
+# builds the core + the test_microbench_* harness tools and runs each
+# tool against its already-built ROM. Regenerating a .j64 after editing a
+# .s source is a local step (test/microbench/build.sh), not something CI
+# does.
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - 'test/microbench/**'
+      - 'test/tools/test_microbench_*'
+      - 'test/harness/**'
+      - 'Makefile'
+      - '.github/workflows/microbench.yml'
+  push:
+    branches: [develop, master]
+    paths:
+      - 'test/microbench/**'
+      - 'test/tools/test_microbench_*'
+      - 'test/harness/**'
+      - 'Makefile'
+      - '.github/workflows/microbench.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: microbench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  run:
+    name: Microbench ROM assertions (linux x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Run microbenchmark ROM assertions
+        id: run
+        run: |
+          set -euxo pipefail
+          set +e
+          make microbench > microbench-results.log 2>&1
+          rc=$?
+          set -e
+          tail -60 microbench-results.log
+          exit $rc
+
+      - name: Post summary
+        if: always()
+        run: |
+          {
+            echo "## Microbenchmark ROMs"
+            echo
+            echo "\`\`\`"
+            tail -60 microbench-results.log 2>/dev/null || echo "(no log)"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: microbench-results
+          path: microbench-results.log
+          retention-days: 14
+          if-no-files-found: ignore
