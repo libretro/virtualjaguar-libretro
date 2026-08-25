@@ -1,0 +1,48 @@
+name: Publish Jaguar toolchain image
+
+# Publishes the pinned Jaguar cross-development toolchain (rmac/rln/lyxass/
+# pc_jagcrypt, built from docker/jaguar-toolchain.Dockerfile) to GHCR so it
+# can be `docker pull`ed with no build step, instead of every consumer
+# rebuilding it from tools/jaguar-toolchain/PIN. Separate from
+# jaguar-toolchain.yml (Task 8), which builds + smoke-tests the toolchain on
+# every PR/push but never pushes an image — that workflow validates the
+# Dockerfile, this one ships it.
+#
+# Push-triggered only on develop: a tagged image from an unmerged branch
+# would be indistinguishable from a real one at :latest. workflow_dispatch
+# covers a manual re-publish (e.g. after a registry issue) without needing a
+# new commit.
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'tools/jaguar-toolchain/PIN'
+      - 'docker/jaguar-toolchain.Dockerfile'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Build + push toolchain image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # checkout only
+      packages: write   # push the image to GHCR
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/jaguar-toolchain.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/libretro/virtualjaguar-libretro-jaguar-toolchain:latest
+            ghcr.io/libretro/virtualjaguar-libretro-jaguar-toolchain:${{ github.sha }}
