@@ -6,10 +6,16 @@
 # builder stage only COPYs tools/jaguar-toolchain/{PIN,setup.sh}), just a
 # bigger context tarball than necessary.
 *
-# Docker's dockerignore matcher won't resurrect a file via `!` if a parent
-# directory is already excluded by `*` -- so every path segment needs its
-# own negation, not just the leaf files.
+# A bare `*` only matches root-level entries (Go's filepath.Match, no `/`
+# crossing) -- it never excludes anything *inside* a directory. So `!tools`
+# alone leaves the entire tools/ tree included (nothing under it was ever
+# excluded to begin with). Getting back to "only these two files" needs an
+# exclude/re-include pair at every level: exclude the directory's contents
+# with a trailing `/*`, then re-include the one child that continues the
+# path, one level at a time down to the two leaf files.
 !tools
+tools/*
 !tools/jaguar-toolchain
+tools/jaguar-toolchain/*
 !tools/jaguar-toolchain/PIN
 !tools/jaguar-toolchain/setup.sh

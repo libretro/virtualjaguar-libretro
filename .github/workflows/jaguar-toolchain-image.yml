@@ -20,6 +20,8 @@ on:
       - 'tools/jaguar-toolchain/PIN'
       - 'tools/jaguar-toolchain/setup.sh'
       - 'docker/jaguar-toolchain.Dockerfile'
+      - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
+      - '.github/workflows/jaguar-toolchain-image.yml'
   workflow_dispatch:
 
 jobs:

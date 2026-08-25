@@ -18,12 +18,14 @@ on:
     paths:
       - 'tools/jaguar-toolchain/**'
       - 'docker/jaguar-toolchain.Dockerfile'
+      - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
       - '.github/workflows/jaguar-toolchain.yml'
   push:
     branches: [develop, master]
     paths:
       - 'tools/jaguar-toolchain/**'
       - 'docker/jaguar-toolchain.Dockerfile'
+      - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
       - '.github/workflows/jaguar-toolchain.yml'
   workflow_dispatch:
 
