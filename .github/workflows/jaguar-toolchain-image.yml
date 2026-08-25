@@ -4,9 +4,10 @@ name: Publish Jaguar toolchain image
 # pc_jagcrypt, built from docker/jaguar-toolchain.Dockerfile) to GHCR so it
 # can be `docker pull`ed with no build step, instead of every consumer
 # rebuilding it from tools/jaguar-toolchain/PIN. Separate from
-# jaguar-toolchain.yml (Task 8), which builds + smoke-tests the toolchain on
-# every PR/push but never pushes an image — that workflow validates the
-# Dockerfile, this one ships it.
+# jaguar-toolchain.yml (Task 8), which builds the Dockerfile on every PR/push
+# (via a no-push "Validate Dockerfile builds" step) and smoke-tests the
+# resulting image, but never pushes it anywhere — that workflow validates
+# the Dockerfile, this one ships it.
 #
 # Push-triggered only on develop: a tagged image from an unmerged branch
 # would be indistinguishable from a real one at :latest. workflow_dispatch
@@ -17,6 +18,7 @@ on:
     branches: [develop]
     paths:
       - 'tools/jaguar-toolchain/PIN'
+      - 'tools/jaguar-toolchain/setup.sh'
       - 'docker/jaguar-toolchain.Dockerfile'
   workflow_dispatch:
 
@@ -24,6 +26,7 @@ jobs:
   publish:
     name: Build + push toolchain image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read    # checkout only
       packages: write   # push the image to GHCR

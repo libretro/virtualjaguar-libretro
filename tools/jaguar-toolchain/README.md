@@ -29,7 +29,10 @@ assembly here.
 
 Once built, `test/jaguar-demos/run.sh`'s `have_jag_toolchain()` finds
 this automatically — `make jaguar-demos-build` starts actually building
-demos from source instead of skipping.
+demos from source instead of skipping. Toolchain discovery and the
+rmac/rln/lyxass build path are proven working end-to-end; most
+*individual* demo builds still fail downstream of that, for a reason
+unrelated to this setup — see the license/build-gap note below.
 
 ## Sources and licenses
 
@@ -40,9 +43,21 @@ demos from source instead of skipping.
 | pc_jagcrypt | github.com/cubanismo/pc_jagcrypt | no LICENSE file found upstream |
 | new_bjl | github.com/42Bastian/new_bjl | Unlicense (public domain) -- **credit 42Bastian on any use** |
 
+**BootIntro-style demos and the `jagcrypt -tursi` gap:** 38 of the 54
+JaguarDemos Makefiles invoke `jagcrypt -q -u -tursi` as a build step, and
+the pinned `cubanismo/pc_jagcrypt` (verified against its real upstream
+history) has never supported a `-tursi` flag. Those demos' individual
+builds fail downstream of this toolchain for that reason -- a real gap in
+the pinned `pc_jagcrypt` upstream, not a bug in the fetch/build/discovery
+wiring here. Demos that only need `rmac`/`rln`/`lyxass` (no `jagcrypt
+-tursi` step), and any future microbenchmark ROMs built for #536, are
+unaffected.
+
 ## Refreshing the pin
 
 1. Bump `SHA=` in `PIN` for the tool you're updating.
 2. `make jaguar-toolchain-fetch && make jaguar-toolchain-build`
-3. Confirm the built binaries still run (`rmac -v`, `lyxass`, `rln -v`).
+3. Confirm the built binaries still run (`rmac -v`, `lyxass`, `rln -v`,
+   `jagcrypt` -- pc_jagcrypt's built binary is named `jagcrypt`, not
+   `pc_jagcrypt`).
 4. Commit the `PIN` change.

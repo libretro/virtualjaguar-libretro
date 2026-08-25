@@ -27,12 +27,17 @@ on:
       - '.github/workflows/jaguar-toolchain.yml'
   workflow_dispatch:
 
+concurrency:
+  group: jaguar-toolchain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-and-smoke:
     name: Build toolchain + smoke assemble
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Fetch + build toolchain
         run: make jaguar-toolchain-build
@@ -41,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           eval "$(tools/jaguar-toolchain/setup.sh env)"
-          command -v rmac rln lyxass
+          for t in rmac rln lyxass; do command -v "$t"; done
 
           OUT="$(mktemp -d)"
 
@@ -75,3 +80,15 @@ jobs:
           test "$gpulen" != "00000000"
 
           echo "OK: rmac, rln and lyxass all produced real output"
+
+      - name: Validate Dockerfile builds
+        # No-push local build + smoke check.  This is the only place the
+        # Dockerfile (Task 7) is actually exercised -- jaguar-toolchain-image.yml
+        # (Task 9) builds+pushes the same file on develop but never validates it
+        # in CI beforehand, so a broken Dockerfile would only surface there,
+        # after already publishing (or failing to publish) to GHCR.
+        run: |
+          set -euo pipefail
+          docker build -f docker/jaguar-toolchain.Dockerfile -t jaguar-toolchain:ci .
+          docker run --rm jaguar-toolchain:ci bash -c \
+            'command -v rmac && command -v rln && command -v lyxass && ls "$BJL_ROOT/bin"'

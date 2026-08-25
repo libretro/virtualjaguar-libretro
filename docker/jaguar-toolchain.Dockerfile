@@ -38,6 +38,7 @@ RUN bash tools/jaguar-toolchain/setup.sh fetch \
     && bash tools/jaguar-toolchain/setup.sh build
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.description="Jaguar assembler toolchain (rmac/rln, lyxass, pc_jagcrypt, new_bjl). new_bjl and lyxass by 42Bastian Schick."
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bzip2 make git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
