@@ -11,7 +11,7 @@ single-engine isolation or an exact, deterministic termination.
 | `benchgpu_arith.j64` | GPU, arithmetic-heavy | `$C0DE0A01` | shipped (task 2) |
 | `benchgpu_branch.j64` | GPU, branch-heavy | `$C0DE0B02` | shipped (task 3) |
 | `benchdsp.j64` | DSP | `$C0DE0D53` | shipped (task 4) |
-| `benchblit.j64` | blitter | `$C0DE0B17` | task 5 |
+| `benchblit.j64` | blitter | `$C0DE0B17` | shipped (task 5) |
 
 Run them:
 
@@ -293,6 +293,61 @@ does for the GPU. `dram_timing` doesn't move it either, for the same reason
 as the GPU ROM: the hot loop runs entirely out of DSP local RAM and touches
 external memory only for its two sentinel STOREs. The tool uses the same
 **600** budget as the other four ROMs; it clears 86 with ~7x margin.
+
+Measured for `benchblit.j64` (150,000 launches of a 32x32 8bpp PATDSEL solid
+fill; see "The blitter ROM is 68K-only" below for why this one has no
+companion GPU/DSP source and no per-loop table like the previous three).
+Unlike the other four ROMs, its fill destination (`$020000`, the benchmark
+work buffer) is **main RAM**, so — checked directly, not assumed by analogy
+with the GPU/DSP ROMs whose hot loops never leave local RAM — it responds to
+`dram_timing` on its own, `virtualjaguar_blitter_timing` dominates, and the
+combination can exceed the other ROMs' 600-frame budget:
+
+| configuration | done_frame |
+|---|---|
+| harness defaults | 87 |
+| `gpu_pipeline_timing=enabled` | 87 |
+| PAL | 87 |
+| `dram_timing=enabled` | 101 |
+| `blitter_timing=enabled` | 434 |
+| `dram_timing` + `blitter_timing` + `gpu_pipeline_timing` | 458 |
+| all three + `VJ_DRAM_SCALE=8` | 564 |
+| all three + `VJ_DRAM_SCALE=12` | 607 |
+| all three + `VJ_DRAM_SCALE=16` (worst measured) | 631 |
+
+`virtualjaguar_blitter_timing` (default disabled, off in `make microbench`'s
+run) is the mover by a wide margin — it is the option that charges the
+blit's own bus-occupancy cost (`BlitDurationSysclks()` in
+`src/tom/blitter_mmio.c`; the "Fixed setup" comment in `benchblit.s` covers
+where that cost lands). `gpu_pipeline_timing` never moves this ROM at all
+(it gates GPU/DSP RISC-instruction pipeline accounting; nothing here runs on
+either processor). Because 631 exceeds the other ROMs' 600-frame budget,
+`test_microbench_blit`'s `MB_FRAME_BUDGET` is **1200**, not 600 — a
+deliberate, documented difference, not an oversight (see the tool's own
+comment).
+
+### The blitter ROM is 68K-only
+
+`benchblit.s` has no `benchblit_gpu.s`/`benchblit_dsp.s` companion and no
+lyxass pass. The blitter is a DMA engine addressed entirely through 68K
+writes to its MMIO register file (`$F02200-$F0229F`); there is no separate
+program to load onto another processor, so this ROM reuses Task 1's
+cart-boot shape directly (`bench68k.s`'s `.include "cartboot.inc"` followed
+by 68K code) rather than Tasks 2-4's 68K-bootstrap-plus-RISC-payload split.
+
+### IDLE poll is a no-op in this emulator — verified, not inferred
+
+`benchblit.s` polls `B_CMD`'s bit 0 between blit launches, matching the
+hardware-programming idiom in `docs/jtrm-blitter.md`'s "B_CMD Status"
+section. In **this core specifically**, that poll never actually waits:
+`src/tom/blitter_mmio.c`'s `BlitterReadByte` hard-codes the status byte at
+`COMMAND+3` to `$05` ("always idle/never stopped"), and `BlitterWriteWord`
+dispatches the fill synchronously (calls straight into `blitter_blit()` /
+`BlitterMidsummer2()`) before the write instruction that triggered it even
+retires — there is no modeled "blitter running in the background" state for
+a poll to observe. The poll is included because it is what real Jaguar code
+does and because the ROM should look like a plausible blit-launch loop, not
+because it changes this ROM's timing on this core.
 
 ---
 
