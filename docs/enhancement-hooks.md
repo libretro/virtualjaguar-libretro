@@ -29,6 +29,85 @@ exactly what this feature must not do.
 | A new controller type (e.g. a rotary) | Not a hook — an input device the core must implement. |
 | "Game X runs at the wrong speed / input repeats" | **Not a hook.** Those are emulator timing bugs. Papering over our own inaccuracy with a per-game patch is the failure mode this feature must never become; such a proposal is re-filed against the accuracy track (#319 / #408). |
 
+## Negative / known-bad entries (issue #464)
+
+`pairs[]` and `hooks[]` only let a title **opt in** to something. There was
+no way to record the opposite — "this setting is known to **break** this
+title" — until issue #464 added `negative[]` to `TitleDBEntry`
+(`src/core/titledb.h`). Same discriminator as the table above: a negative
+entry is still a `{key, value}` pair (settings, not bytes), it just means
+*refuse/warn* instead of *apply*.
+
+```c
+typedef struct {
+   const char *key;     /* core option key */
+   const char *value;   /* exact unsafe value, or TITLEDB_NEG_ANY_NONDEFAULT ("*") */
+} TitleDBNegativePair;
+```
+
+`value` is either an exact string (only that one setting is known-bad) or
+the sentinel `TITLEDB_NEG_ANY_NONDEFAULT` (`"*"`), meaning "every value
+other than this option's own registered default is unsafe" — the natural
+shape for an enhancement slider like a clock-scale preset, where every
+non-1x step is the thing being called unsafe, not one specific step.
+
+**Behaviour on match**, decided once in `libretro.c`'s
+`get_variable_pertitle()` and never per-row (this stays a policy, not a
+per-title knob):
+
+- A **per-title default substitution** (the value a `pairs[]` row, or any
+  other per-title mechanism, would apply because the user left the option
+  untouched) that matches a negative entry is **refused**, with a
+  `LOG_WRN`. A default must never be unsafe — refusing it costs the user
+  nothing they asked for, since they never asked for it.
+- The user's own **explicit** choice is **always honoured**, even if it
+  matches a negative entry — refusing it would break the DB's one hard
+  rule ("user-set values always win", already true for `pairs[]`). A
+  warning is still logged, latched once per option key per content load,
+  so a bug report against that title starts from the right hypothesis
+  instead of a multi-session investigation (see #463 below).
+- Gated by the same `virtualjaguar_pertitle_defaults` switch as the
+  positive path — one feature, one on/off knob. Disabling per-title
+  defaults silences both the substitution *and* the known-bad warning,
+  which is the same "disable per-title defaults" bug-report step the
+  clock-scale option text already asks for.
+
+**Evidence bar — stricter than a positive row, not looser.** A negative
+entry is a stronger claim than a positive one: it changes what a user is
+*prevented* from getting by default, and it is trivially easy to justify
+with a single bug report where the real cause was never isolated. The bar
+is the same corpus-grade evidence every `pairs[]`/`hooks[]` row already
+requires, restated for this shape in `src/core/titledb.c`'s `negative[]`
+authoring checklist:
+
+1. The regression was **reproduced and confirmed**, not hypothesized.
+2. The specific value is **isolated** from every other explanation
+   (emulator regression, a different timing model, an unrelated input
+   class) — not merely "the option was live" (it changed *something*),
+   but that changing it is what produced the specific symptom.
+3. The row's comment cites the evidence the way every positive row does —
+   a doc, a committed measurement, a closed-out reproduction — never "a
+   user reported it" alone.
+4. `TITLEDB_NEG_ANY_NONDEFAULT` is for a genuinely monotonic class of
+   unsafe values, not a shortcut for "didn't test every step".
+5. No key may appear in both `pairs[]` and `negative[]` of the same row
+   with the same value — a row that both applies X and calls X unsafe is
+   a table bug (`test/tools/test_titledb.c` asserts this mechanically).
+
+**Case in point — why the table ships zero negative rows.** Issue #463
+(Cybermorph, Codex level) is the motivating example: render-bound at stock
+clocks, +43% frame rate at RISC 1.5x, and a user report of "ship movement
+and altitude gone nuts" that reads like the exact symptom of a
+frame-coupled simulation getting overclocked along with the picture. That
+is a strong *hypothesis*. It is not evidence: every headless investigation
+(byte-identical framebuffers vs. `develop`, every timing model tried,
+14,400 fields with `crash_detect=verbose` and no signature) came back
+clean, and the deciding experiment — is Cybermorph's simulation actually
+frame-coupled? — has not been run. #463 sits `blocked` pending reporter
+artifacts. Shipping a negative row on a hypothesis is exactly the folklore
+this evidence bar exists to keep out; the mechanism lands in #464, the row
+lands only if and when #463 clears it.
+
 ## Using it
 
 Core option `virtualjaguar_enhancement_hooks`, **default `disabled`**.
@@ -152,6 +231,8 @@ A row is admissible only when all of the following hold:
 | `test/test_titledb` | Invariants over the **shipped** table: `len`, non-NULL `expect`/`patch`/`name`, no no-op hook, proper termination, no intra-row overlap, unique names, no row naming the gate key, nothing on the entry vector. Currently vacuous by design — it exists so the *first* row added is checked before it reaches a user. |
 | `test/tools/test_hook_gate` | End-to-end through the real core on `yarc.j64`: gate on patches and logs; gate off (the default) does not; a deliberate `expect[]` mismatch refuses and logs; the patch survives `retro_reset()` and a state round trip. |
 | `test/tools/hook_identity_ab.sh` | Stock-path identity: per-frame framebuffer-hash CSVs are byte-identical with the gate at its default, explicitly disabled, and explicitly enabled — plus a base-vs-base determinism control, because a nondeterministic run makes every other comparison meaningless. |
+| `test/test_titledb` (negative-entry section) | `TitleDBUnsafeValue()` lookup: no content, unknown content, exact-value match, wildcard (`"*"`) match against a caller-supplied default, the test-only override, and the shipped-table integrity checks (`negative[]` termination, key/value non-empty, no key=value shared with `pairs[]`, no duplicate within a row). |
+| `test/tools/test_pertitle_db --case 7/8` | End-to-end through the real core on AvP: a negative row on `virtualjaguar_true_color=enabled` (the value AvP's own `pairs[]` row would substitute at default) is **refused** with a logged warning when it would apply as a default (case 7), and **honoured** with a logged warning when the user sets it explicitly (case 8). Installed programmatically via `TitleDBSetNegativeForTest()`, same "no canary row in the shipped table" reasoning as the hooks gate test. |
 
 All four run on repo-resident public content, so all four gate CI — and
 `hook_identity_ab.sh` enforces that for itself by counting the ROMs it

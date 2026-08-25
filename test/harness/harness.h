@@ -60,6 +60,7 @@
  *     --snap FRAME            VJSN state snapshot at FRAME (repeatable)
  *     --snap-prefix BASE      Snapshot filename base (default vjt_snap)
  *     --mark FRAME:TAG        Inject a MARK event at FRAME (repeatable)
+ *     --mic-tone              Provide a synthetic 8 kHz mic tone (#485)
  *
  * ======================================================================
  * CORE OPTION OVERRIDE TABLE
@@ -252,6 +253,11 @@ typedef struct {
     int           want_fb_hash;
     uint32_t      last_fb_hash;
 
+    /* Synthetic microphone (#485): when non-zero, the environment callback
+     * answers GET_MICROPHONE_INTERFACE with a tone generator at 8 kHz so
+     * voice-chat paths can be exercised without a real frontend mic. */
+    int           mic_tone;
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -299,6 +305,7 @@ typedef struct {
     .num_mark_specs = 0, \
     .want_fb_hash = 0, \
     .last_fb_hash = 0, \
+    .mic_tone = 0, \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \

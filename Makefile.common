@@ -59,6 +59,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/jlink_discover.c \
 	$(CORE_DIR)/src/jerry/jlink_netpacket.c \
 	$(CORE_DIR)/src/jerry/voicemodem.c \
+	$(CORE_DIR)/src/jerry/voicechat.c \
 	$(CORE_DIR)/src/jerry/uart.c \
 	$(CORE_DIR)/src/tom/op.c \
 	$(CORE_DIR)/src/tom/shadowfb.c \
@@ -75,6 +76,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/core/cheat.c \
 	$(CORE_DIR)/src/core/crc32.c \
 	$(CORE_DIR)/src/core/perf_counters.c \
+	$(CORE_DIR)/src/core/perf_iface.c \
 	$(CORE_DIR)/src/core/crash_detect.c \
 	$(CORE_DIR)/src/core/event.c \
 	$(CORE_DIR)/src/jerry/eeprom.c \
@@ -95,6 +97,7 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/jerry/quadrature.c \
 	$(CORE_DIR)/src/jerry/axistune.c \
 	$(CORE_DIR)/src/jerry/inputdev.c \
+	$(CORE_DIR)/src/jerry/paddle.c \
 	$(CORE_DIR)/src/core/settings.c \
 	$(CORE_DIR)/src/core/memtrack.c \
 	$(CORE_DIR)/src/core/jaggd.c \
@@ -121,6 +124,33 @@ else ifeq ($(BLITTER_SIMD),neon)
 else ifeq ($(BLITTER_SIMD),scalar)
    BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_scalar.c
 else
+# Derive ARCH from the toolchain triple when the platform block did not set
+# it.  Issue #560.
+#
+# The rules below key on $(ARCH); the native `uname -m` fallback further
+# down is deliberately skipped for cross-compilers (BLITTER_CROSS_CC); and
+# no platform block sets ARCH for a generic `platform=unix` cross-build.  So
+# a cross-compiled aarch64 build matched nothing and fell through to the
+# SCALAR blitter on hardware where NEON is architecturally mandatory.  The
+# guard written to prevent false detection was, by itself, forcing the slow
+# path.
+#
+# NOT the official Linux ARM64 cores, to be clear: both the GitLab buildbot
+# (ci-templates linux-aarch64.yml, `tags: aarch64`) and the GitHub
+# release/nightly matrix row build NATIVELY with plain `gcc`, so `uname -m`
+# fired and they always had NEON.  This hits cross-builds -- distro
+# packagers, container cross-compiles, anyone following a cross recipe.
+#
+# Only aarch64 is inferred.  A 32-bit arm-*-gnueabihf triple says nothing
+# about NEON (the armhf baseline is VFP; ARMv6 parts such as the Pi 1 and
+# Zero have no NEON at all), so those keep falling through to scalar rather
+# than guessing.  Set HAVE_NEON=1 by hand for an armv7 toolchain you know.
+ifeq ($(ARCH),)
+ifneq (,$(findstring aarch64-,$(CC)))
+   ARCH := aarch64
+endif
+endif
+
 # ARM targets: prefer NEON when guaranteed or explicitly enabled.
 ifeq ($(HAVE_NEON), 1)
    BLITTER_SIMD_SRC := $(CORE_DIR)/src/tom/blitter_simd_neon.c

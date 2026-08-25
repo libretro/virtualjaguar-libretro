@@ -43,7 +43,13 @@ int main(void)
    {
       CHECK(t[i].crc32 != 0, "entry crc32 is non-zero");
       CHECK(t[i].name && t[i].name[0], "entry has a name");
-      CHECK(t[i].pairs[0].key != NULL, "entry has at least one pair");
+      /* A row may carry positive pairs[], negative[] entries (#464), or
+       * both -- but not neither, or it does nothing. Table ships zero
+       * negative rows today, so this is exactly the old "at least one
+       * pair" check for every row that exists right now; it only differs
+       * for a negative-only row, which none of them are yet. */
+      CHECK(t[i].pairs[0].key != NULL || t[i].negative[0].key != NULL,
+            "entry has at least one pair or negative entry");
 
       for (j = i + 1; j < count; j++)
          CHECK(t[i].crc32 != t[j].crc32, "no duplicate crc32 keys");
@@ -110,6 +116,30 @@ int main(void)
          }
       }
       (void)hooks_seen;
+
+      /* Negative / known-bad entries (issue #464).  The table ships zero
+       * negative rows today -- this loop is vacuous by design, same
+       * reasoning as the hooks[] loop above: it validates the FIRST row
+       * the moment one lands.  See the authoring checklist in
+       * src/core/titledb.c. */
+      for (j = 0; j < TITLEDB_MAX_NEGATIVE_PAIRS && t[i].negative[j].key; j++)
+      {
+         CHECK(strncmp(t[i].negative[j].key, "virtualjaguar_", 14) == 0,
+               "negative key is a core option key");
+         CHECK(t[i].negative[j].value && t[i].negative[j].value[0],
+               "negative value is non-empty");
+
+         for (k = 0; k < TITLEDB_MAX_PAIRS && t[i].pairs[k].key; k++)
+            CHECK(!(strcmp(t[i].pairs[k].key, t[i].negative[j].key) == 0
+                    && strcmp(t[i].pairs[k].value, t[i].negative[j].value) == 0),
+                  "no key=value both applied (pairs[]) and refused "
+                  "(negative[]) in the same row");
+
+         for (k = 0; k < j; k++)
+            CHECK(!(strcmp(t[i].negative[k].key, t[i].negative[j].key) == 0
+                    && strcmp(t[i].negative[k].value, t[i].negative[j].value) == 0),
+                  "no duplicate key=value negative entries within a row");
+      }
    }
 
    /* Lookup behaviour without content: no override. */
@@ -187,6 +217,64 @@ int main(void)
       }
       TitleDBSetHooksForTest(NULL, 0);
       CHECK(TitleDBHooks(&hcount) == NULL, "test setter clears back to normal");
+   }
+   TitleDBSetCRC(0);
+
+   /* Negative-entry lookup (issue #464): no content, unknown content, and
+    * the test-only override, mirroring the hooks coverage above -- the
+    * shipped table carries zero negative rows, so this is entirely
+    * exercised through TitleDBSetNegativeForTest(). */
+   {
+      static TitleDBNegativePair exact_bad[2];
+      static TitleDBNegativePair wildcard_bad[2];
+
+      CHECK(TitleDBUnsafeValue(NULL, "1.5x", "1x") == 0,
+            "NULL key -> not unsafe");
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", NULL, "1x") == 0,
+            "NULL value -> not unsafe");
+
+      TitleDBSetCRC(0);
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1.5x", "1x") == 0,
+            "no content, no override -> not unsafe");
+
+      TitleDBSetCRC(0x12345678);
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1.5x", "1x") == 0,
+            "unknown content, no override -> not unsafe");
+
+      /* Exact-value negative row: only the named value is flagged. */
+      exact_bad[0].key   = "virtualjaguar_risc_clock_scale";
+      exact_bad[0].value = "1.5x";
+      exact_bad[1].key   = NULL;
+      exact_bad[1].value = NULL;
+
+      TitleDBSetCRC(0);
+      TitleDBSetNegativeForTest(exact_bad, 1);
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1.5x", "1x") != 0,
+            "exact match -> unsafe");
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "2x", "1x") == 0,
+            "different value, exact-match row -> not unsafe");
+      CHECK(TitleDBUnsafeValue("virtualjaguar_m68k_clock_scale", "1.5x", "1x") == 0,
+            "different key -> not unsafe");
+      TitleDBSetNegativeForTest(NULL, 0);
+
+      /* Wildcard negative row: every non-default value is flagged, the
+       * default itself is exempt. */
+      wildcard_bad[0].key   = "virtualjaguar_risc_clock_scale";
+      wildcard_bad[0].value = TITLEDB_NEG_ANY_NONDEFAULT;
+      wildcard_bad[1].key   = NULL;
+      wildcard_bad[1].value = NULL;
+
+      TitleDBSetCRC(0);
+      TitleDBSetNegativeForTest(wildcard_bad, 1);
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1.5x", "1x") != 0,
+            "wildcard row, non-default value -> unsafe");
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "0.5x", "1x") != 0,
+            "wildcard row, any non-default value -> unsafe");
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1x", "1x") == 0,
+            "wildcard row, value == default -> not unsafe");
+      TitleDBSetNegativeForTest(NULL, 0);
+      CHECK(TitleDBUnsafeValue("virtualjaguar_risc_clock_scale", "1.5x", "1x") == 0,
+            "test setter clears back to normal");
    }
    TitleDBSetCRC(0);
 

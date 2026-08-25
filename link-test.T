@@ -27,6 +27,7 @@
       m68kPCSampleIdx;
       pcQueue;
       pcQPtr;
+      startM68KTracing;
       a6Queue;
       d0Queue;
       GPU*;
@@ -81,6 +82,7 @@
       shadowHiresResolveMissEpoch;
       shadowHiresResolveMissNoPage;
       shadowHiresN;
+      shadowHiresActive;
       shadowFBActive;
       blitMemo*;
       TitleDB*;
@@ -93,9 +95,23 @@
       ShadowFB*;
       shadowLineRGB;
       shadowLineTag;
+      /* RGB16-direct pack presentation (#528): the gate drives the seam
+       * both RGB16 renderers use.  TomLinePackRGB is NOT covered by
+       * TOM* -- the prefix differs in case. */
+      shadowFBReplActive;
+      TomLinePackRGB;
+      /* Nx surface probes: the tier-3 (>1x pack art) gates drive the OP's
+       * own resolve function and read the Nx line planes directly. */
+      ShadowHires*;
+      shadowHiresLineSub;
+      shadowHiresLineTag;
+      shadowHiresLineRepl;
+      shadowHiresReplActive;
       /* TitleHook* is NOT covered by TitleDB* -- the applier lives in its
        * own translation unit and its own name prefix. */
       TitleHook*;
       vjtrace_*;
+    VJPerf*;
+    vjPerfActive;
    local: *;
 };

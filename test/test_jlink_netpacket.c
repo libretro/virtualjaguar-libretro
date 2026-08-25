@@ -122,7 +122,8 @@ int main(int argc, char **argv)
     jlink_int_t jlink_mode;
     struct retro_game_info game;
     int i;
-    uint8_t rx_payload[2];
+    uint8_t rx_payload[3];
+    uint8_t junk[2];
 
     h = dlopen(core_path, RTLD_NOW);
     if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 1; }
@@ -150,7 +151,7 @@ int main(int argc, char **argv)
     CHECK(np_cb.start && np_cb.receive && np_cb.stop && np_cb.poll,
           "callback members populated");
     CHECK(np_cb.protocol_version
-              && !strcmp(np_cb.protocol_version, "vjag-netlink-1"),
+              && !strcmp(np_cb.protocol_version, "vjag-netlink-2"),
           "protocol version pinned");
 
     p_set_video_refresh(video_cb);
@@ -181,14 +182,15 @@ int main(int argc, char **argv)
     jerry_ww(0xF10034, 0x0000, 0);
     jerry_ww(0xF10030, 0x00A5, 0);
     jerry_ww(0xF10030, 0x005A, 0);
-    for (i = 0; i < 3 && sent_len < 2; i++)
+    for (i = 0; i < 3 && sent_len < 3; i++)
     {
         p_run();
         if (np_cb.poll)
             np_cb.poll();
     }
-    CHECK(sent_len == 2 && sent_data[0] == 0xA5 && sent_data[1] == 0x5A,
-          "TX bytes arrive at frontend send_fn in order");
+    CHECK(sent_len == 3 && sent_data[0] == 0x01
+              && sent_data[1] == 0xA5 && sent_data[2] == 0x5A,
+          "TX bytes arrive framed as NP_UART + payload");
     CHECK((sent_flags & RETRO_NETPACKET_RELIABLE) != 0,
           "TX uses RELIABLE flag");
     CHECK(sent_client == RETRO_NETPACKET_BROADCAST,
@@ -198,8 +200,10 @@ int main(int argc, char **argv)
        polls RBF at frame granularity, so back-to-back ring deliveries at
        fast baud would overrun exactly as hardware would. */
     jerry_ww(0xF10034, 0x0FFF, 0);
-    rx_payload[0] = 0xC3; rx_payload[1] = 0x3C;
-    np_cb.receive(rx_payload, 2, 1);
+    rx_payload[0] = 0x01; /* NP_UART */
+    rx_payload[1] = 0xC3;
+    rx_payload[2] = 0x3C;
+    np_cb.receive(rx_payload, 3, 1);
     for (i = 0; i < 6 && !(jerry_rw(0xF10032, 0) & 0x0080); i++)
         p_run();
     CHECK((jerry_rw(0xF10032, 0) & 0x0080) != 0, "receive(): RBF sets");
@@ -207,6 +211,15 @@ int main(int argc, char **argv)
     for (i = 0; i < 6 && !(jerry_rw(0xF10032, 0) & 0x0080); i++)
         p_run();
     CHECK((jerry_rw(0xF10030, 0) & 0xFF) == 0x3C, "receive(): 2nd byte");
+
+    /* Unknown type must not enter the UART ring. */
+    junk[0] = 0x7F;
+    junk[1] = 0xEE;
+    np_cb.receive(junk, 2, 1);
+    for (i = 0; i < 3; i++)
+        p_run();
+    CHECK((jerry_rw(0xF10032, 0) & 0x0080) == 0,
+          "unknown type dropped (RBF clear)");
 
     /* --- session ends --- */
     np_cb.stop();

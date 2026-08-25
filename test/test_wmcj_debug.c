@@ -31,6 +31,11 @@ static uint32_t *p_pcQueue;
 static uint32_t *p_pcQPtr;
 static uint32_t *p_a6Queue;
 static uint32_t *p_d0Queue;
+/* The 16 register traceback rings are filled only when the core's
+ * startM68KTracing flag is set -- default off, because filling them costs
+ * 16 register fetches per emulated 68K instruction (issue #540).  This
+ * tool is their only reader, so it turns them on itself. */
+static bool *p_startM68KTracing;
 
 /* DSP registers via TOM/JERRY read functions */
 static uint16_t (*p_JERRYReadWord)(uint32_t, uint32_t);
@@ -150,6 +155,7 @@ int main(int argc, char **argv)
    LOADSYM_OPT(handle, pcQPtr);
    LOADSYM_OPT(handle, a6Queue);
    LOADSYM_OPT(handle, d0Queue);
+   LOADSYM_OPT(handle, startM68KTracing);
    LOADSYM_OPT(handle, JERRYReadWord);
    LOADSYM_OPT(handle, JERRYReadByte);
    LOADSYM_OPT(handle, GPUReadLong);
@@ -164,6 +170,17 @@ int main(int argc, char **argv)
    p_retro_set_input_poll(input_poll);
    p_retro_set_input_state(input_state);
    p_retro_init();
+
+   /* Arm the register traceback rings BEFORE the first retro_run().  Not
+    * mid-run: pcQPtr advances whether or not tracing is on, so a late flip
+    * interleaves live registers with zeros against a continuous pcQueue. */
+   if (p_startM68KTracing)
+      *p_startM68KTracing = true;
+   else
+      fprintf(stderr,
+              "WARNING: core does not export startM68KTracing -- the A6/D0\n"
+              "         columns below will read $00000000 regardless of what\n"
+              "         the 68K actually held.  Rebuild with TEST_EXPORTS=1.\n");
 
    memset(&info, 0, sizeof(info));
    info.path = argv[argc - 1];

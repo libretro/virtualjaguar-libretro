@@ -45,6 +45,55 @@
  *      the runner.  If a future core change makes even a fast host approach
  *      12.5 ms, that is a real performance regression worth failing on.
  *
+ *      RECURRENCE (issue #421, 2026-08-20): the 0.75 bar above did NOT hold.
+ *      CI Linux i686 failed twice in one afternoon on #539 and #543, both on
+ *      commits that cannot affect pacing, both passing on retry / on an
+ *      unrelated same-base PR (#541), at roughly DOUBLE this file's
+ *      documented 8.41-9.60 ms i686 baseline:
+ *
+ *          #539   fastest 16.333 ms   mean 17.342 ms   slowest 17.659 ms
+ *          #543   fastest 17.967 ms   mean 19.295 ms   slowest 19.722 ms
+ *
+ *      DIAGNOSTICS ONLY -- two gates were tried here and both were rejected
+ *      before landing, because this file's own design already rules them
+ *      out; the detail string still prints both readings unconditionally
+ *      (pass, fail, whatever) so the next red i686 run carries evidence
+ *      instead of another guess.
+ *
+ *      Rejected: gating on the realtime multiple this file already prints
+ *      (originally 1.73x; 0.96x and 0.86x on the two recurrences above).
+ *      It is derived from the same retro_run() calls fastest_frame_beats_
+ *      realtime is judging.  Per THRESHOLD CALIBRATION above, a self-
+ *      throttling core sits at ~1.00x the frame period BY CONSTRUCTION --
+ *      on every host, not only a degraded one -- so any headroom threshold
+ *      above 1.0x would also skip that regression on a fast host, silently
+ *      disabling the exact bug class this assertion exists to catch.
+ *
+ *      Rejected: gating on CPU contention (Linux /proc/stat "steal" time,
+ *      or getloadavg() load/core -- the same signal test/tools/opt_ab.sh
+ *      uses to refuse a measurement).  Per the load-immunity design at the
+ *      top of this assertion ("load can only make frames slower, never
+ *      faster, so a busy host cannot turn this check red"), gating the
+ *      fastest-frame check on load works directly against why it measures
+ *      the FASTEST frame rather than the average in the first place.
+ *
+ *      Both readings are kept as unconditional diagnostics -- printed in
+ *      the detail string on every outcome -- because #539/#543 were *tight*
+ *      distributions (mean/slowest within ~8% of fastest), and this file's
+ *      history already shows tight-vs-wide does not reliably distinguish
+ *      contention from an honestly-slower host (that heuristic misread this
+ *      exact recurrence once already).  Tight-and-slow instead points at an
+ *      intrinsically weaker instance class or a 32-bit codegen regression --
+ *      something contention signals cannot see even in principle, since
+ *      they measure queue depth / stolen cycles, not per-instruction
+ *      throughput.  Open question: which one.  Read the steal and load
+ *      fields on the next red i686 run; if both read clean next to a
+ *      failing fastest-frame line, that corroborates "instance/codegen", not
+ *      contention, and points at a harder signal (e.g. a core-independent
+ *      CPU calibration benchmark with a per-architecture baseline) rather
+ *      than another gate on data this assertion already has reason to
+ *      distrust.
+ *
  *   2. audio_rate_contract
  *      Sample-frames handed to retro_audio_sample_batch over N frames must
  *      equal N * sample_rate / fps (within 1%).  A mismatch between the
@@ -76,7 +125,22 @@
  *
  * The --force-fail-* flags make the corresponding threshold impossible to
  * satisfy, so the failure path can be demonstrated without editing the file.
+ * CPU steal time (Linux) and load/core (Linux + macOS) are always read and
+ * printed in fastest_frame_beats_realtime's detail string -- see
+ * DIAGNOSTICS ONLY above -- but never gate PASS/FAIL/exit code; there is no
+ * flag to tune, because there is nothing left for a flag to tune.
  */
+
+/* getloadavg() is a BSD extension.  glibc declares it in <stdlib.h>, but
+ * hides it under -std=c99, which defines __STRICT_ANSI__ -- so this must be
+ * defined BEFORE any include or the declaration never appears and the call
+ * compiles as implicit-int (a hard error under Clang's C99+).  macOS declares
+ * it unconditionally, which is why this only ever broke on Linux CI.
+ * _BSD_SOURCE covers glibc older than 2.19. */
+#ifdef __linux__
+#define _DEFAULT_SOURCE 1
+#define _BSD_SOURCE 1
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,6 +150,22 @@
 
 #include "harness/harness.h"
 #include <libretro.h>
+
+#ifdef __linux__
+#include <unistd.h>
+#endif
+/* getloadavg() (a BSD extension; declared in <stdlib.h>, already included
+ * above -- on glibc only because of the _DEFAULT_SOURCE define at the top of
+ * this file, see the comment there) backs the load/core diagnostic.  It
+ * also needs sysconf() for the core count, which unistd.h provides on Linux
+ * above; widen that to macOS too rather than duplicating the include guard
+ * per platform. */
+#if defined(__linux__) || defined(__APPLE__)
+#define VJ_HAVE_GETLOADAVG 1
+#ifndef __linux__
+#include <unistd.h>
+#endif
+#endif
 
 /* Timing comes from harness_time_now() / harness_time_elapsed_sec(), which
  * are monotonic.  A wall clock (gettimeofday) must not be used here: the
@@ -122,6 +202,85 @@ static int instrumented_build(void)
     return (e && e[0] && strcmp(e, "0") != 0) ? 1 : 0;
 #endif
 }
+
+#ifdef __linux__
+/* /proc/stat's first line is the aggregate (all-CPU) counter row:
+ * "cpu  user nice system idle iowait irq softirq steal guest guest_nice".
+ * "steal" (8th field) is jiffies the hypervisor spent running OTHER tenants
+ * instead of us -- a host-contention signal the kernel maintains regardless
+ * of what this process does, so it can't be moved by the core's own timing.
+ * Returns 1 and fills *steal_jiffies on success, 0 if /proc/stat can't be
+ * read or doesn't parse (container without procfs, unexpected kernel, ...);
+ * the caller treats that exactly like "no signal", not like "host is fine". */
+static int read_cpu_steal_jiffies(unsigned long long *steal_jiffies)
+{
+    FILE *f;
+    char line[256];
+    unsigned long long user, nice_, system_, idle, iowait, irq, softirq, steal;
+    int n;
+
+    f = fopen("/proc/stat", "r");
+    if (!f)
+        return 0;
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+
+    n = sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+               &user, &nice_, &system_, &idle, &iowait, &irq, &softirq, &steal);
+    if (n < 8)
+        return 0;
+
+    *steal_jiffies = steal;
+    return 1;
+}
+
+/* Average per-core steal fraction over [before, after]: 0.0 = no steal at
+ * all, 1.0 = every core fully stolen for the whole window.  Returns -1.0
+ * (no signal) on any input that can't be trusted -- a clock going backwards,
+ * or sysconf() refusing to answer, must not be silently read as 0% steal. */
+static double compute_steal_fraction(unsigned long long before,
+                                      unsigned long long after,
+                                      double elapsed_sec)
+{
+    long clk_tck, ncpu;
+    double steal_sec;
+
+    if (after < before || elapsed_sec <= 0.0)
+        return -1.0;
+    clk_tck = sysconf(_SC_CLK_TCK);
+    ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (clk_tck <= 0 || ncpu <= 0)
+        return -1.0;
+    steal_sec = (double)(after - before) / (double)clk_tck;
+    return steal_sec / (elapsed_sec * (double)ncpu);
+}
+#endif /* __linux__ */
+
+#ifdef VJ_HAVE_GETLOADAVG
+/* System load average / online core count -- diagnostic only, see
+ * DIAGNOSTICS ONLY at the top of this file for why it does not gate this
+ * assertion.  Uses the same getloadavg() call test/tools/opt_ab.sh's
+ * `uptime`-based refusal is built on (there read as text and compared to
+ * core count; here read directly).  Works on macOS as well as Linux, unlike
+ * the CPU steal reading below.  Returns -1.0 (no signal) rather than 0.0
+ * when getloadavg() or sysconf() refuses to answer, so a lookup failure can
+ * never read as "host is idle". */
+static double read_load_per_core(void)
+{
+    double loadavg[1];
+    long ncpu;
+
+    if (getloadavg(loadavg, 1) != 1)
+        return -1.0;
+    ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncpu <= 0)
+        return -1.0;
+    return loadavg[0] / (double)ncpu;
+}
+#endif /* VJ_HAVE_GETLOADAVG */
 
 typedef struct {
     uint64_t t_prev;
@@ -171,9 +330,22 @@ int main(int argc, char **argv)
     /* 64-bit: --frames N is user-supplied, and total_samples can exceed
      * 32-bit long on LLP64 platforms for large N. */
     int64_t expected_samples, actual_samples;
-    char detail_throttle[320], detail_audio[256], detail_batch[160], detail_geom[224];
+    char detail_throttle[512], detail_audio[256], detail_batch[160], detail_geom[224];
+    char steal_note[64], load_note[64];
     int ok_throttle, ok_audio, ok_batch, ok_geom, all_ok;
     int i;
+    /* DIAGNOSTICS ONLY -- see the top-of-file comment.  -1.0 = no signal
+     * available (host lookup unavailable/unreadable); neither reading gates
+     * anything, they are only ever printed. */
+    double cpu_steal_fraction = -1.0;
+    double load_per_core = -1.0;
+#ifdef __linux__
+    unsigned long long cpu_steal_before = 0, cpu_steal_after = 0;
+    int have_cpu_steal_before = 0, have_cpu_steal_after = 0;
+#endif
+#ifdef VJ_HAVE_GETLOADAVG
+    double load_before = -1.0, load_after = -1.0;
+#endif
 
     cfg.frames = 300;
 
@@ -254,10 +426,36 @@ int main(int argc, char **argv)
     cfg.frame_callback = on_frame;
     cfg.frame_callback_data = &ft;
 
+#ifdef __linux__
+    have_cpu_steal_before = read_cpu_steal_jiffies(&cpu_steal_before);
+#endif
+#ifdef VJ_HAVE_GETLOADAVG
+    load_before = read_load_per_core();
+#endif
     t0 = harness_time_now();
     ft.t_prev = t0;
     harness_run(&cfg);
     elapsed = harness_time_elapsed_sec(t0, harness_time_now());
+#ifdef __linux__
+    have_cpu_steal_after = read_cpu_steal_jiffies(&cpu_steal_after);
+    if (have_cpu_steal_before && have_cpu_steal_after)
+        cpu_steal_fraction = compute_steal_fraction(cpu_steal_before,
+                                                      cpu_steal_after, elapsed);
+#endif
+#ifdef VJ_HAVE_GETLOADAVG
+    /* getloadavg() is a slow-moving 1-minute average, not a point sample,
+     * so a load spike arriving mid-run may only show up in the "after"
+     * reading (or only in "before", if it's already fading).  Take the
+     * higher of the two rather than either alone, so a contention window
+     * anywhere in [before, after] is not averaged away. */
+    load_after = read_load_per_core();
+    if (load_before >= 0.0 && load_after >= 0.0)
+        load_per_core = (load_after > load_before) ? load_after : load_before;
+    else if (load_after >= 0.0)
+        load_per_core = load_after;
+    else if (load_before >= 0.0)
+        load_per_core = load_before;
+#endif
 
     frame_period = 1.0 / av.timing.fps;
     realtime     = (double)cfg.frames * frame_period;
@@ -273,17 +471,36 @@ int main(int argc, char **argv)
     /* --- 1. fastest frame must clear the frame period --------------- */
     ok_throttle = (ft.usable_frames > 0)
                && (ft.min_frame < max_fastest_fraction * frame_period);
+    /* Diagnostics only -- see DIAGNOSTICS ONLY at the top of this file.
+     * Both readings go into every run's detail string on every outcome, so
+     * real CI output leaves evidence for the open "contention vs weaker
+     * instance/codegen" question instead of another guess; neither one
+     * gates PASS/FAIL/SKIP or the exit code. */
+    if (cpu_steal_fraction >= 0.0)
+        snprintf(steal_note, sizeof(steal_note),
+                 "cpu steal %.1f%%", cpu_steal_fraction * 100.0);
+    else
+        snprintf(steal_note, sizeof(steal_note),
+                 "cpu steal n/a (non-Linux or /proc/stat unreadable)");
+    if (load_per_core >= 0.0)
+        snprintf(load_note, sizeof(load_note),
+                 "load/core %.2f", load_per_core);
+    else
+        snprintf(load_note, sizeof(load_note),
+                 "load/core n/a (getloadavg unavailable)");
     snprintf(detail_throttle, sizeof(detail_throttle),
              "fastest frame %.3f ms must be < %.3f ms (%.2f x frame period "
              "%.3f ms); mean %.3f ms, slowest %.3f ms; %u/%u intervals usable; "
-             "%u frames in %.3fs (realtime %.3fs, %.2fx, %.1f eff. fps)",
+             "%u frames in %.3fs (realtime %.3fs, %.2fx, %.1f eff. fps); "
+             "%s; %s",
              ft.min_frame * 1000.0, max_fastest_fraction * frame_period * 1000.0,
              max_fastest_fraction, frame_period * 1000.0,
              mean_frame * 1000.0, ft.max_frame * 1000.0,
              ft.usable_frames, ft.timed_frames,
              cfg.frames, elapsed, realtime,
              (elapsed > 0.0) ? realtime / elapsed : 0.0,
-             (elapsed > 0.0) ? (double)cfg.frames / elapsed : 0.0);
+             (elapsed > 0.0) ? (double)cfg.frames / elapsed : 0.0,
+             steal_note, load_note);
 
     /* --- 2. audio-rate contract ------------------------------------- */
     expected_frames_f = (double)cfg.frames * av.timing.sample_rate / av.timing.fps;

@@ -1,0 +1,96 @@
+name: Jaguar toolchain
+
+# Fetches + builds the pinned Jaguar cross-development toolchain
+# (rmac/rln/lyxass/pc_jagcrypt, see tools/jaguar-toolchain/PIN) and proves
+# it can actually assemble something, so a PIN bump or a setup.sh change
+# that breaks the toolchain is caught here rather than in whatever future
+# test suite depends on it.
+#
+# The smoke assertions deliberately look past "the command exited 0":
+# lyxass exits 0 and still writes a 12-byte header-only file when nothing
+# was emitted (see the .run/Global.genesis note in smoke/hellogpu.s), so a
+# bare `test -s` would pass vacuously.  Both output checks below assert
+# actual assembled bytes.
+
+on:
+  pull_request:
+    branches: [develop, master]
+    paths:
+      - 'tools/jaguar-toolchain/**'
+      - 'docker/jaguar-toolchain.Dockerfile'
+      - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
+      - '.github/workflows/jaguar-toolchain.yml'
+  push:
+    branches: [develop, master]
+    paths:
+      - 'tools/jaguar-toolchain/**'
+      - 'docker/jaguar-toolchain.Dockerfile'
+      - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
+      - '.github/workflows/jaguar-toolchain.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: jaguar-toolchain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-smoke:
+    name: Build toolchain + smoke assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch + build toolchain
+        run: make jaguar-toolchain-build
+
+      - name: Smoke-assemble 68K and GPU sources
+        run: |
+          set -euo pipefail
+          eval "$(tools/jaguar-toolchain/setup.sh env)"
+          for t in rmac rln lyxass; do command -v "$t"; done
+
+          OUT="$(mktemp -d)"
+
+          # --- 68000: rmac -> rln -----------------------------------------
+          # -fb = BSD object format ("use this for Jaguar" per rmac's own
+          # usage text).  The load address goes on rln's command line
+          # (-a <text> <data> <bss>); rmac rejects .org in a 68K section
+          # without -fr.  -n drops the file header, leaving a raw image.
+          rmac -fb -o "$OUT/hello68k.o" tools/jaguar-toolchain/smoke/hello68k.s
+          rln -n -a 802000 x x -o "$OUT/hello68k.j64" "$OUT/hello68k.o"
+
+          test -s "$OUT/hello68k.j64"
+          # First instruction must be bra.s to self == 60 FE.
+          head68k="$(od -An -tx1 -N2 < "$OUT/hello68k.j64" | tr -d ' \n')"
+          echo "hello68k.j64 first 2 bytes: $head68k"
+          test "$head68k" = "60fe"
+
+          # --- GPU: lyxass -------------------------------------------------
+          lyxass -o "$OUT/hellogpu.o" tools/jaguar-toolchain/smoke/hellogpu.s
+
+          # lyxass writes a 12-byte BS94 header (magic, run address, code
+          # length).  Anything <= 12 bytes means it emitted zero code --
+          # which it does silently, with exit status 0, if `.run` is moved
+          # after the instructions.  Require real payload past the header.
+          gpusize="$(wc -c < "$OUT/hellogpu.o")"
+          echo "hellogpu.o size: $gpusize bytes"
+          test "$gpusize" -gt 12
+          # ...and the header's own code-length field must be non-zero.
+          gpulen="$(od -An -tx1 -j8 -N4 < "$OUT/hellogpu.o" | tr -d ' \n')"
+          echo "hellogpu.o code length field: 0x$gpulen"
+          test "$gpulen" != "00000000"
+
+          echo "OK: rmac, rln and lyxass all produced real output"
+
+      - name: Validate Dockerfile builds
+        # No-push local build + smoke check.  This is the only place the
+        # Dockerfile (Task 7) is actually exercised -- jaguar-toolchain-image.yml
+        # (Task 9) builds+pushes the same file on develop but never validates it
+        # in CI beforehand, so a broken Dockerfile would only surface there,
+        # after already publishing (or failing to publish) to GHCR.
+        run: |
+          set -euo pipefail
+          docker build -f docker/jaguar-toolchain.Dockerfile -t jaguar-toolchain:ci .
+          docker run --rm jaguar-toolchain:ci bash -c \
+            'command -v rmac && command -v rln && command -v lyxass && ls "$BJL_ROOT/bin"'

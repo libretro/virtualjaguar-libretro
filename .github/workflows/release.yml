@@ -1,23 +1,30 @@
 name: Release
 
-# Two publication paths share one build matrix:
+# Three publication paths share one build matrix:
 #   push tag v*        -> the `release` job: a real, permanent GitHub release
-#   push to develop    -> the `nightly` job: the rolling `nightly` prerelease
+#   push to develop    -> the `nightly` job, tag `nightly`
+#   push to release/** -> the same job, tag `prerelease` (issue #507)
 # The build/vita-build/switch-build jobs below are trigger-agnostic; only the
-# final publishing job differs.  The nightly tag is deliberately NOT named
-# v-anything so a CI-pushed tag can never re-enter the release path.
+# final publishing job differs.  Neither rolling tag is named v-anything, so a
+# CI-pushed tag can never re-enter the release path.
 #
-# workflow_dispatch exists ONLY to re-publish the nightly, so it must be run
-# with the branch set to `develop`.  GitHub defaults the branch picker to the
-# repo default (`master` here), and both publishing jobs are ref-gated, so a
-# dispatch left on the default would build all 16 targets and publish nothing.
+# The release/** lane exists because a release branch was otherwise invisible
+# until it was tagged: the code most in need of 16-platform coverage got none,
+# and the libretro buildbot only reacted after the tag, when a break becomes a
+# hotfix rather than a fix.
+#
+# workflow_dispatch exists ONLY to re-publish a rolling tag, so it must be run
+# with the branch set to `develop` or a `release/*` branch.  GitHub defaults
+# the branch picker to the repo default (`master` here), and every publishing
+# job is ref-gated, so a dispatch left on the default would build all 16
+# targets and publish nothing.
 # The `guard` job below fails that case immediately instead of burning the
 # matrix.  To test-build an arbitrary branch, use c-cpp.yml — it has its own
 # workflow_dispatch and runs on PRs.
 on:
   push:
     tags: ['v*']
-    branches: [develop]
+    branches: [develop, 'release/**']
   workflow_dispatch:
 
 permissions:
@@ -31,7 +38,7 @@ permissions:
 # record per commit: that record is their job, not this one's.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/develop' }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/release/') }}
 
 jobs:
   # ----------------------------------------------------------------
@@ -44,14 +51,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Refuse a dispatch that would publish nothing
-        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/') }}
         run: |
           # Built up in one variable because a ::error:: annotation has to be a
           # single line to render as one.
-          MSG="Run this workflow with the branch set to 'develop'."
-          MSG="$MSG Both publishing jobs are ref-gated (tags v* -> release,"
-          MSG="$MSG develop -> nightly), so a dispatch from '${GITHUB_REF_NAME}'"
-          MSG="$MSG would build all 16 targets and publish nothing."
+          MSG="Run this workflow with the branch set to 'develop' or a 'release/*' branch."
+          MSG="$MSG The publishing jobs are ref-gated (tags v* -> release,"
+          MSG="$MSG develop -> nightly, release/* -> prerelease), so a dispatch"
+          MSG="$MSG from '${GITHUB_REF_NAME}' would build all 16 targets and"
+          MSG="$MSG publish nothing."
           MSG="$MSG To test-build a branch, use the C/C++ CI workflow instead."
           echo "::error::$MSG"
           exit 1
@@ -87,6 +95,85 @@ jobs:
             cc: 'gcc -m32'
             cxx: 'g++ -m32'
             multilib: true
+
+          # Raspberry Pi -- per-SoC tuned (issue #560).
+          #
+          # Cross-compiled on x86_64: -mcpu names a core to generate code FOR,
+          # it does not require running on one, so no Pi hardware is needed to
+          # produce these. The per-SoC flags live in the Makefile's rpi*
+          # platform blocks -- do not duplicate them here.
+          #
+          # rpi0 is deliberately absent: it is the same BCM2835/ARM1176 part
+          # as rpi1 and resolves to identical flags, so the rpi1 artifact
+          # serves both. Every other row is a genuinely distinct target.
+          #
+          # 32- and 64-bit rows for the same chip are BOTH needed: they are
+          # different userlands (Raspberry Pi OS ships both), and the 32-bit
+          # ones additionally carry -mfpu/-mfloat-abi, which aarch64 gcc
+          # rejects outright.
+          - platform: linux-rpi1-armv6
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi1
+            cross_arm: armhf
+
+          - platform: linux-rpi2-cortex-a7
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi2
+            cross_arm: armhf
+
+          - platform: linux-rpi3-cortex-a53
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi3
+            cross_arm: armhf
+
+          - platform: linux-rpi3_64-cortex-a53
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_extra: platform=rpi3_64
+            cross_arm: arm64
+
+          - platform: linux-rpi4-cortex-a72
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi4
+            cross_arm: armhf
+
+          - platform: linux-rpi4_64-cortex-a72
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_extra: platform=rpi4_64
+            cross_arm: arm64
+
+          - platform: linux-rpi5-cortex-a76
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            make_extra: platform=rpi5
+            cross_arm: armhf
+
+          - platform: linux-rpi5_64-cortex-a76
+            artifact: virtualjaguar_libretro.so
+            os: ubuntu-latest
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            make_extra: platform=rpi5_64
+            cross_arm: arm64
 
           # macOS
           - platform: macos-arm64
@@ -185,6 +272,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib
 
+      # Cross toolchain for the Raspberry Pi rows. Also provides the matching
+      # objcopy: the host x86_64 objcopy in the packaging step below cannot
+      # read an ARM ELF (Ubuntu's binutils is single-target), so the strip /
+      # split-debug step needs the prefixed one.
+      - name: Install ARM cross toolchain
+        if: matrix.config.cross_arm
+        run: |
+          set -e
+          sudo apt-get update
+          if [ "${{ matrix.config.cross_arm }}" = armhf ]; then
+            sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          else
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          fi
+
       - name: Set up MSYS2
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -251,9 +353,17 @@ jobs:
           OUT="virtualjaguar_libretro-${{ matrix.config.platform }}${EXT}"
           DBG="${OUT}.debug"
           cp "$SRC" "dist/${OUT}"
-          objcopy --only-keep-debug "dist/${OUT}" "dist/${DBG}"
-          objcopy --strip-debug --strip-unneeded "dist/${OUT}"
-          ( cd dist && objcopy --add-gnu-debuglink="${DBG}" "${OUT}" )
+          # A cross-built ARM core needs the cross objcopy -- Ubuntu's
+          # binutils is single-target, so the host one cannot read an ARM ELF
+          # and the split-debug step would fail (or, worse, be skipped).
+          case "${{ matrix.config.cross_arm }}" in
+            armhf) OBJCOPY=arm-linux-gnueabihf-objcopy ;;
+            arm64) OBJCOPY=aarch64-linux-gnu-objcopy ;;
+            *)     OBJCOPY=objcopy ;;
+          esac
+          "$OBJCOPY" --only-keep-debug "dist/${OUT}" "dist/${DBG}"
+          "$OBJCOPY" --strip-debug --strip-unneeded "dist/${OUT}"
+          ( cd dist && "$OBJCOPY" --add-gnu-debuglink="${DBG}" "${OUT}" )
           tar -C dist -czf "dist/virtualjaguar_libretro-${{ matrix.config.platform }}-debug.tar.gz" "${DBG}"
           rm "dist/${DBG}"
 
@@ -567,7 +677,7 @@ jobs:
   # to a `workflow_run` trigger (see artifacts.yml for that idiom).
   # ----------------------------------------------------------------
   nightly:
-    name: Update nightly prerelease
+    name: Update rolling prerelease
     needs: [build, vita-build, switch-build, jagcd-tools]
     # Wait for the tools build, but do not REQUIRE it.  chdman is an
     # auxiliary desktop helper; the nightly's product is the 16 core
@@ -576,7 +686,9 @@ jobs:
     # builds (2026-08-18).  Tagged releases still require it below, because
     # there the tools zips are part of the deliverable.
     if: |
-      always() && github.ref == 'refs/heads/develop'
+      always()
+      && (github.ref == 'refs/heads/develop'
+          || startsWith(github.ref, 'refs/heads/release/'))
       && needs.build.result == 'success'
       && needs.vita-build.result == 'success'
       && needs.switch-build.result == 'success'
@@ -587,7 +699,14 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      TAG: nightly
+      # One rolling tag per lane.  Deliberately NOT a per-branch or per-PR
+      # tag that gets cleaned up on release: one rolling tag has a lifecycle
+      # the project already understands, needs no teardown step anyone can
+      # forget, and cannot orphan tags when a release branch is renamed or
+      # abandoned (issue #507).  Neither name matches the v* filter, so a
+      # CI-pushed tag can never re-enter the release path.
+      TAG: ${{ github.ref == 'refs/heads/develop' && 'nightly' || 'prerelease' }}
+      LANE: ${{ github.ref == 'refs/heads/develop' && 'Nightly' || 'Release candidate' }}
       # Must match issue #236's title exactly (including the emoji / [Release]
       # prefix added by hand). Label lookup is preferred; this is the
       # fallback if the nightly-tracker label is ever removed.
@@ -630,17 +749,17 @@ jobs:
           mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Prepare nightly body
+      - name: Prepare rolling release body
         id: prep_body
         run: |
           set -e
           SHA="${GITHUB_SHA}"
           SHORT_SHA="${SHA:0:7}"
-          BODY_FILE="$RUNNER_TEMP/nightly_body.md"
+          BODY_FILE="$RUNNER_TEMP/rolling_body.md"
           RUN_URL="${GITHUB_SERVER_URL}/${REPO}/actions/runs/${GITHUB_RUN_ID}"
           BASE_VERSION=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)
 
-          # Where the nightly tag pointed BEFORE this run — captured here
+          # Where the rolling tag pointed BEFORE this run — captured here
           # because the next step moves it.
           PREV_SHA=$(gh api "repos/${REPO}/git/refs/tags/${TAG}" --jq '.object.sha' 2>/dev/null || echo "")
 
@@ -652,24 +771,29 @@ jobs:
           [ -n "$CHANGES" ] || CHANGES=$(git log --oneline --no-merges -10)
 
           {
-            echo "### Nightly \`${SHORT_SHA}\` — \`${BASE_VERSION}\` development build"
+            echo "### ${LANE} \`${SHORT_SHA}\` — \`${BASE_VERSION}\` (\`${GITHUB_REF_NAME}\`)"
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| **Commit** | [\`${SHORT_SHA}\`](${GITHUB_SERVER_URL}/${REPO}/commit/${SHA}) |"
             echo "| **Built** | $(date -u '+%Y-%m-%d %H:%M UTC') |"
             echo "| **CI run** | [build log](${RUN_URL}) |"
-            echo "| **Branch** | \`develop\` |"
+            echo "| **Branch** | \`${GITHUB_REF_NAME}\` |"
             echo
-            P="> Automatic build of the \`develop\` tip, replaced on every push."
+            P="> Automatic build of the \`${GITHUB_REF_NAME}\` tip, replaced on every push."
             P="$P It compiled on all 16 targets; it has **not** been through the"
             P="$P test suite or any manual QA. For a stable build use the"
             P="$P [latest release](${GITHUB_SERVER_URL}/${REPO}/releases/latest)."
+            if [ "${TAG}" = "prerelease" ]; then
+              P="$P This is a RELEASE CANDIDATE from a release branch, not a release:"
+              P="$P it exists so the 16-platform matrix runs on the code about to"
+              P="$P ship, instead of first meeting it at the tag."
+            fi
             echo "$P"
             echo
-            echo "The core logs its identity as \`${BASE_VERSION} ${SHORT_SHA}\` at startup — quote that line when reporting a bug against a nightly."
+            echo "The core logs its identity as \`${BASE_VERSION} ${SHORT_SHA}\` at startup — quote that line when reporting a bug against this build."
             echo
-            echo "### Changes since the previous nightly"
+            echo "### Changes since the previous ${LANE,,}"
             echo
             echo '```'
             echo "${CHANGES}"
@@ -697,7 +821,7 @@ jobs:
           echo "body_file=$BODY_FILE" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Move nightly tag
+      - name: Move the rolling tag
         run: |
           set -e
           # -F (typed) for force so it serialises as a JSON boolean; -f would
@@ -707,10 +831,10 @@ jobs:
           gh api "repos/${REPO}/git/refs" \
             -X POST -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" >/dev/null
 
-      - name: Publish nightly prerelease
+      - name: Publish rolling prerelease
         run: |
           set -e
-          TITLE="Nightly ${{ steps.prep_body.outputs.short_sha }}"
+          TITLE="${LANE} ${{ steps.prep_body.outputs.short_sha }}"
           # Update in place rather than delete-and-recreate: asset names are
           # deterministic per platform, so --clobber replaces them without ever
           # leaving /releases/tag/nightly 404ing mid-run, and the release keeps
@@ -742,6 +866,10 @@ jobs:
           fi
 
       - name: Update pinned tracking issue
+        # develop only: issue #236 documents the NIGHTLY, and its title, label
+        # and prose are all nightly-specific.  A release-candidate publish has
+        # no tracking issue and must not rewrite that one (issue #507).
+        if: github.ref == 'refs/heads/develop'
         # Never fail the publish over the issue: the binaries are already out.
         continue-on-error: true
         run: |

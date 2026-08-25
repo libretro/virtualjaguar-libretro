@@ -30,6 +30,7 @@
 #include "shadowfb.h"
 #include "state.h"
 #include "blit_memo.h"
+#include "perf_iface.h"
 #include "../core/vjtrace.h"
 
 // Various conditional compilation goodies...
@@ -262,29 +263,29 @@ PERF_COUNTER(blitter_phrase_writes);
 // 1 bpp pixel read
 #define PIXEL_SHIFT_1(a)      (((~a##_x) >> 16) & 7)
 #define PIXEL_OFFSET_1(a)     (((((uint32_t)a##_y >> 16) * a##_width / 8) + (((uint32_t)a##_x >> 19) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 19) & 7))
-#define READ_PIXEL_1(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a), BLITTER) >> PIXEL_SHIFT_1(a)) & 0x01)
+#define READ_PIXEL_1(a)       ((blitter_read_byte(a##_addr+PIXEL_OFFSET_1(a)) >> PIXEL_SHIFT_1(a)) & 0x01)
 
 // 2 bpp pixel read
 #define PIXEL_SHIFT_2(a)      (((~a##_x) >> 15) & 6)
 #define PIXEL_OFFSET_2(a)     (((((uint32_t)a##_y >> 16) * a##_width / 4) + (((uint32_t)a##_x >> 18) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 18) & 7))
-#define READ_PIXEL_2(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a), BLITTER) >> PIXEL_SHIFT_2(a)) & 0x03)
+#define READ_PIXEL_2(a)       ((blitter_read_byte(a##_addr+PIXEL_OFFSET_2(a)) >> PIXEL_SHIFT_2(a)) & 0x03)
 
 // 4 bpp pixel read
 #define PIXEL_SHIFT_4(a)      (((~a##_x) >> 14) & 4)
 #define PIXEL_OFFSET_4(a)     (((((uint32_t)a##_y >> 16) * (a##_width/2)) + (((uint32_t)a##_x >> 17) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 17) & 7))
-#define READ_PIXEL_4(a)       ((JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a), BLITTER) >> PIXEL_SHIFT_4(a)) & 0x0f)
+#define READ_PIXEL_4(a)       ((blitter_read_byte(a##_addr+PIXEL_OFFSET_4(a)) >> PIXEL_SHIFT_4(a)) & 0x0f)
 
 // 8 bpp pixel read
 #define PIXEL_OFFSET_8(a)     (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~7)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 7))
-#define READ_PIXEL_8(a)       (JaguarReadByte(a##_addr+PIXEL_OFFSET_8(a), BLITTER))
+#define READ_PIXEL_8(a)       (blitter_read_byte(a##_addr+PIXEL_OFFSET_8(a)))
 
 // 16 bpp pixel read
 #define PIXEL_OFFSET_16(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~3)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 3))
-#define READ_PIXEL_16(a)       (JaguarReadWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), BLITTER))
+#define READ_PIXEL_16(a)       (blitter_read_word(a##_addr+(PIXEL_OFFSET_16(a)<<1)))
 
 // 32 bpp pixel read
 #define PIXEL_OFFSET_32(a)    (((((uint32_t)a##_y >> 16) * a##_width) + (((uint32_t)a##_x >> 16) & ~1)) * (1 + a##_pitch) + (((uint32_t)a##_x >> 16) & 1))
-#define READ_PIXEL_32(a)      (JaguarReadLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), BLITTER))
+#define READ_PIXEL_32(a)      (blitter_read_long(a##_addr+(PIXEL_OFFSET_32(a)<<2)))
 
 // pixel read
 #define READ_PIXEL(a,f) (\
@@ -297,13 +298,13 @@ PERF_COUNTER(blitter_phrase_writes);
 
 // 16 bpp z data read
 #define ZDATA_OFFSET_16(a)     (PIXEL_OFFSET_16(a) + a##_zoffs * 4)
-#define READ_ZDATA_16(a)       (JaguarReadWord(a##_addr+(ZDATA_OFFSET_16(a)<<1), BLITTER))
+#define READ_ZDATA_16(a)       (blitter_read_word(a##_addr+(ZDATA_OFFSET_16(a)<<1)))
 
 // z data read
 #define READ_ZDATA(a,f) (READ_ZDATA_16(a))
 
 // 16 bpp z data write
-#define WRITE_ZDATA_16(a,d)     {  JaguarWriteWord(a##_addr+(ZDATA_OFFSET_16(a)<<1), d, BLITTER); }
+#define WRITE_ZDATA_16(a,d)     {  blitter_write_word(a##_addr+(ZDATA_OFFSET_16(a)<<1), d); }
 
 // z data write
 #define WRITE_ZDATA(a,f,d) WRITE_ZDATA_16(a,d);
@@ -363,22 +364,22 @@ PERF_COUNTER(blitter_phrase_writes);
 	 (((f>>3)&0x07) == 5) ? (READ_RDATA_32(r,a,p)) : 0)
 
 // 1 bpp pixel write
-#define WRITE_PIXEL_1(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_1(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_1(a), BLITTER)&(~(0x01 << PIXEL_SHIFT_1(a))))|(d<<PIXEL_SHIFT_1(a)), BLITTER); }
+#define WRITE_PIXEL_1(a,d)       { blitter_write_byte(a##_addr+PIXEL_OFFSET_1(a), (blitter_read_byte(a##_addr+PIXEL_OFFSET_1(a))&(~(0x01 << PIXEL_SHIFT_1(a))))|(d<<PIXEL_SHIFT_1(a))); }
 
 // 2 bpp pixel write
-#define WRITE_PIXEL_2(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_2(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_2(a), BLITTER)&(~(0x03 << PIXEL_SHIFT_2(a))))|(d<<PIXEL_SHIFT_2(a)), BLITTER); }
+#define WRITE_PIXEL_2(a,d)       { blitter_write_byte(a##_addr+PIXEL_OFFSET_2(a), (blitter_read_byte(a##_addr+PIXEL_OFFSET_2(a))&(~(0x03 << PIXEL_SHIFT_2(a))))|(d<<PIXEL_SHIFT_2(a))); }
 
 // 4 bpp pixel write
-#define WRITE_PIXEL_4(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_4(a), (JaguarReadByte(a##_addr+PIXEL_OFFSET_4(a), BLITTER)&(~(0x0f << PIXEL_SHIFT_4(a))))|(d<<PIXEL_SHIFT_4(a)), BLITTER); }
+#define WRITE_PIXEL_4(a,d)       { blitter_write_byte(a##_addr+PIXEL_OFFSET_4(a), (blitter_read_byte(a##_addr+PIXEL_OFFSET_4(a))&(~(0x0f << PIXEL_SHIFT_4(a))))|(d<<PIXEL_SHIFT_4(a))); }
 
 // 8 bpp pixel write
-#define WRITE_PIXEL_8(a,d)       { JaguarWriteByte(a##_addr+PIXEL_OFFSET_8(a), d, BLITTER); }
+#define WRITE_PIXEL_8(a,d)       { blitter_write_byte(a##_addr+PIXEL_OFFSET_8(a), d); }
 
 // 16 bpp pixel write
-#define WRITE_PIXEL_16(a,d)     {  JaguarWriteWord(a##_addr+(PIXEL_OFFSET_16(a)<<1), d, BLITTER); }
+#define WRITE_PIXEL_16(a,d)     {  blitter_write_word(a##_addr+(PIXEL_OFFSET_16(a)<<1), d); }
 
 // 32 bpp pixel write
-#define WRITE_PIXEL_32(a,d)		{ JaguarWriteLong(a##_addr+(PIXEL_OFFSET_32(a)<<2), d, BLITTER); }
+#define WRITE_PIXEL_32(a,d)		{ blitter_write_long(a##_addr+(PIXEL_OFFSET_32(a)<<2), d); }
 
 // pixel write
 #define WRITE_PIXEL(a,f,d) {\
@@ -549,10 +550,19 @@ static void shadow_hires_sub_fast(shadowfb_sub *out, uint32_t cmd,
 // to optimize the blitter, then we may revisit it in the future...
 
 // Generic blit handler
-void blitter_generic(uint32_t cmd)
+static void blitter_generic(uint32_t cmd)
 {
    uint32_t srcdata, srczdata, dstdata, dstzdata, writedata, inhibit;
-   uint32_t bppSrc = (DSTA2 ? 1 << ((REG(A1_FLAGS) >> 3) & 0x07) : 1 << ((REG(A2_FLAGS) >> 3) & 0x07));
+   /* A1_FLAGS/A2_FLAGS are re-derived from blitter_ram on every textual
+    * use below (4 byte loads + shifts via the REG() macro).  Nothing in
+    * this function writes blitter_ram until the WREG() calls after the
+    * pixel loop -- the loop only mutates locals (a1_x/a1_y/a2_x/a2_y,
+    * gd_i/gd_c, z_i, colour_index, bitPos), never blitter_ram itself --
+    * so both registers are loop-invariant; hoist them once here instead
+    * of re-reading ~19 and ~17 times. */
+   uint32_t a1_flags = REG(A1_FLAGS);
+   uint32_t a2_flags = REG(A2_FLAGS);
+   uint32_t bppSrc = (DSTA2 ? 1 << ((a1_flags >> 3) & 0x07) : 1 << ((a2_flags >> 3) & 0x07));
 
    while (outer_loop--)
    {
@@ -578,37 +588,37 @@ void blitter_generic(uint32_t cmd)
             //				if (SRCEN)
             if (SRCEN || SRCENX)	// Not sure if this is correct... (seems to be...!)
             {
-               srcdata = READ_PIXEL(a2, REG(A2_FLAGS));
+               srcdata = READ_PIXEL(a2, a2_flags);
 
                if (SRCENZ)
-                  srczdata = READ_ZDATA(a2, REG(A2_FLAGS));
+                  srczdata = READ_ZDATA(a2, a2_flags);
                else if (cmd & 0x0001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
-                  srczdata = READ_RDATA(SRCZINT, a2, REG(A2_FLAGS), a2_phrase_mode);
+                  srczdata = READ_RDATA(SRCZINT, a2, a2_flags, a2_phrase_mode);
             }
             else	// Use SRCDATA register...
             {
-               srcdata = READ_RDATA(SRCDATA, a2, REG(A2_FLAGS), a2_phrase_mode);
+               srcdata = READ_RDATA(SRCDATA, a2, a2_flags, a2_phrase_mode);
 
                if (cmd & 0x0001C020)		// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
-                  srczdata = READ_RDATA(SRCZINT, a2, REG(A2_FLAGS), a2_phrase_mode);
+                  srczdata = READ_RDATA(SRCZINT, a2, a2_flags, a2_phrase_mode);
             }
 
             // load dst data and Z
             if (DSTEN)
             {
-               dstdata = READ_PIXEL(a1, REG(A1_FLAGS));
+               dstdata = READ_PIXEL(a1, a1_flags);
 
                if (DSTENZ)
-                  dstzdata = READ_ZDATA(a1, REG(A1_FLAGS));
+                  dstzdata = READ_ZDATA(a1, a1_flags);
                else
-                  dstzdata = READ_RDATA(DSTZ, a1, REG(A1_FLAGS), a1_phrase_mode);
+                  dstzdata = READ_RDATA(DSTZ, a1, a1_flags, a1_phrase_mode);
             }
             else
             {
-               dstdata = READ_RDATA(DSTDATA, a1, REG(A1_FLAGS), a1_phrase_mode);
+               dstdata = READ_RDATA(DSTDATA, a1, a1_flags, a1_phrase_mode);
 
                if (DSTENZ)
-                  dstzdata = READ_RDATA(DSTZ, a1, REG(A1_FLAGS), a1_phrase_mode);
+                  dstzdata = READ_RDATA(DSTZ, a1, a1_flags, a1_phrase_mode);
             }
 
             if (GOURZ)
@@ -656,14 +666,14 @@ void blitter_generic(uint32_t cmd)
                      if (srcdata == 0)
                         inhibit = 1;
                   }
-                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a2, a2_flags, a2_phrase_mode))
                      inhibit = 1;
                }
                else
                {
                   // compare destination pixel with pattern pixel
-                  if (dstdata == READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
-                     //						if (dstdata != READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
+                  if (dstdata == READ_RDATA(PATTERNDATA, a1, a1_flags, a1_phrase_mode))
+                     //						if (dstdata != READ_RDATA(PATTERNDATA, a1, a1_flags, a1_phrase_mode))
                      inhibit = 1;
                }
             }
@@ -689,7 +699,7 @@ void blitter_generic(uint32_t cmd)
                if (PATDSEL)
                {
                   // use pattern data for write data
-                  writedata = READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode);
+                  writedata = READ_RDATA(PATTERNDATA, a1, a1_flags, a1_phrase_mode);
                }
                else if (ADDDSEL)
                {
@@ -758,9 +768,9 @@ void blitter_generic(uint32_t cmd)
                //				if (/*a1_phrase_mode || BKGWREN ||*/ !inhibit)
             {
                // write to the destination
-               WRITE_PIXEL(a1, REG(A1_FLAGS), writedata);
+               WRITE_PIXEL(a1, a1_flags, writedata);
                if (DSTWRZ)
-                  WRITE_ZDATA(a1, REG(A1_FLAGS), srczdata);
+                  WRITE_ZDATA(a1, a1_flags, srczdata);
 
                /* True-color shadow store (see shadowfb.h): record the
                 * full-precision intensity for gouraud / intensity-shade
@@ -773,7 +783,7 @@ void blitter_generic(uint32_t cmd)
                 * all blit content reaches the Nx surface (design
                 * section 4). */
                if ((shadowFBActive || shadowHiresActive)
-                     && (((REG(A1_FLAGS) >> 3) & 0x07) == 4))
+                     && (((a1_flags >> 3) & 0x07) == 4))
                {
                   uint16_t sfb_frac = 0;
                   if (!inhibit && (GOURD || SRCSHADE))
@@ -809,33 +819,33 @@ void blitter_generic(uint32_t cmd)
             // load src data and Z
             if (SRCEN)
             {
-               srcdata = READ_PIXEL(a1, REG(A1_FLAGS));
+               srcdata = READ_PIXEL(a1, a1_flags);
                if (SRCENZ)
-                  srczdata = READ_ZDATA(a1, REG(A1_FLAGS));
+                  srczdata = READ_ZDATA(a1, a1_flags);
                else if (cmd & 0x0001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
-                  srczdata = READ_RDATA(SRCZINT, a1, REG(A1_FLAGS), a1_phrase_mode);
+                  srczdata = READ_RDATA(SRCZINT, a1, a1_flags, a1_phrase_mode);
             }
             else
             {
-               srcdata = READ_RDATA(SRCDATA, a1, REG(A1_FLAGS), a1_phrase_mode);
+               srcdata = READ_RDATA(SRCDATA, a1, a1_flags, a1_phrase_mode);
                if (cmd & 0x001C020)	// PATDSEL | TOPBEN | TOPNEN | DSTWRZ
-                  srczdata = READ_RDATA(SRCZINT, a1, REG(A1_FLAGS), a1_phrase_mode);
+                  srczdata = READ_RDATA(SRCZINT, a1, a1_flags, a1_phrase_mode);
             }
 
             // load dst data and Z
             if (DSTEN)
             {
-               dstdata = READ_PIXEL(a2, REG(A2_FLAGS));
+               dstdata = READ_PIXEL(a2, a2_flags);
                if (DSTENZ)
-                  dstzdata = READ_ZDATA(a2, REG(A2_FLAGS));
+                  dstzdata = READ_ZDATA(a2, a2_flags);
                else
-                  dstzdata = READ_RDATA(DSTZ, a2, REG(A2_FLAGS), a2_phrase_mode);
+                  dstzdata = READ_RDATA(DSTZ, a2, a2_flags, a2_phrase_mode);
             }
             else
             {
-               dstdata = READ_RDATA(DSTDATA, a2, REG(A2_FLAGS), a2_phrase_mode);
+               dstdata = READ_RDATA(DSTDATA, a2, a2_flags, a2_phrase_mode);
                if (DSTENZ)
-                  dstzdata = READ_RDATA(DSTZ, a2, REG(A2_FLAGS), a2_phrase_mode);
+                  dstzdata = READ_RDATA(DSTZ, a2, a2_flags, a2_phrase_mode);
             }
 
             if (GOURZ)
@@ -866,12 +876,12 @@ void blitter_generic(uint32_t cmd)
                      if (srcdata == 0)
                         inhibit = 1;
                   }
-                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a1, REG(A1_FLAGS), a1_phrase_mode))
+                  else if (srcdata == 0 || srcdata == READ_RDATA(PATTERNDATA, a1, a1_flags, a1_phrase_mode))
                      inhibit = 1;
                }
                else
                {
-                  if (dstdata == READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode))
+                  if (dstdata == READ_RDATA(PATTERNDATA, a2, a2_flags, a2_phrase_mode))
                      inhibit = 1;
                }
             }
@@ -888,7 +898,7 @@ void blitter_generic(uint32_t cmd)
                if (PATDSEL)
                {
                   // use pattern data for write data
-                  writedata = READ_RDATA(PATTERNDATA, a2, REG(A2_FLAGS), a2_phrase_mode);
+                  writedata = READ_RDATA(PATTERNDATA, a2, a2_flags, a2_phrase_mode);
                }
                else if (ADDDSEL)
                {
@@ -938,15 +948,15 @@ void blitter_generic(uint32_t cmd)
 
             if (/*a2_phrase_mode || */BKGWREN || !inhibit)
             {
-               WRITE_PIXEL(a2, REG(A2_FLAGS), writedata);
+               WRITE_PIXEL(a2, a2_flags, writedata);
 
                if (DSTWRZ)
-                  WRITE_ZDATA(a2, REG(A2_FLAGS), srczdata);
+                  WRITE_ZDATA(a2, a2_flags, srczdata);
 
                /* True-color + hi-res shadow stores, A2-destination twin
                 * of the A1 branch above (see shadowfb.h). */
                if ((shadowFBActive || shadowHiresActive)
-                     && (((REG(A2_FLAGS) >> 3) & 0x07) == 4))
+                     && (((a2_flags >> 3) & 0x07) == 4))
                {
                   uint16_t sfb_frac = 0;
                   if (!inhibit && (GOURD || SRCSHADE))
@@ -976,7 +986,7 @@ void blitter_generic(uint32_t cmd)
                      int sh2 = 0;
                      shadowfb_sub sblk[4];
                      if (shadowHiresN == 2 && !inhibit && SRCEN && !BCOMPEN
-                           && (((REG(A1_FLAGS) >> 3) & 0x07) == 4)
+                           && (((a1_flags >> 3) & 0x07) == 4)
                            && (SRCSHADE || (!GOURD && !PATDSEL)))
                      {
                         int32_t hx = 0, hy = 0, vx = 0, vy = 0;
@@ -1159,6 +1169,11 @@ void blitter_blit(uint32_t cmd)
 {
    uint32_t m, e;
    uint32_t pitchValue[4] = { 0, 1, 3, 2 };
+
+   /* One probe per blit, on the FAST engine's entry.  The accurate engine
+    * has its own below; both feed the same slot, so the counter reads as
+    * "time in the blitter" whichever engine the user selected. */
+   VJP_ENTER(VJP_BLITTER);
 
    VJT_EMIT(VJT_EV_BLIT_CMD, BLITTER, cmd, REG(A1_BASE));
 
@@ -1372,6 +1387,8 @@ void blitter_blit(uint32_t cmd)
    }
 
    blitter_generic(cmd);
+
+   VJP_LEAVE(VJP_BLITTER);
 }
 #endif
 /*******************************************************************************
@@ -2273,6 +2290,13 @@ void BlitterMidsummer2(void)
    a2addy = a1addy;							// A2 channel Y add bit is tied to A1's
 
    // Various state lines set up by user
+
+   /* The accurate engine's entry, placed after this function's long
+    * declaration block so the file stays C89-clean (scripts/c89-lint.sh
+    * rejects a statement before a declaration).  Same slot as
+    * blitter_blit's probe: only one engine runs for a given user setting,
+    * so the counter reads as "time in the blitter" either way. */
+   VJP_ENTER(VJP_BLITTER);
 
    phrase_mode = ((!dsta2 && a1addx == 0) || (dsta2 && a2addx == 0) ? true : false);	// From ACONTROL
 
@@ -4018,6 +4042,8 @@ fc_inner_done:
       }
    }
 #endif
+
+   VJP_LEAVE(VJP_BLITTER);
 }
 
 // Various pieces of the blitter puzzle are teased out here...

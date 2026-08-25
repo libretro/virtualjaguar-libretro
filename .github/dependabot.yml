@@ -14,7 +14,7 @@ updates:
       timezone: "America/New_York"
     open-pull-requests-limit: 5
     labels:
-      - "ci/cd :robot:"
+      - "ci"
       - "dependencies"
     commit-message:
       prefix: "ci"

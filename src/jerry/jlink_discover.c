@@ -15,6 +15,17 @@
 static JLinkPeer discPeers[JLINK_DISC_MAX_PEERS];
 static int       discPeerCount = 0;
 
+/* #552 raw-datagram hook.  Declared unconditionally (not inside the
+   JLINK_DISC_HAVE_NET guard below) so a caller on a socketless build can
+   still register a handler without an #ifdef -- it simply never fires
+   there, same as JLinkDiscActive() always returning 0 on that build. */
+static JLinkDiscRawFn discRawHandler = NULL;
+
+void JLinkDiscSetRawHandler(JLinkDiscRawFn fn)
+{
+   discRawHandler = fn;
+}
+
 size_t JLinkDiscEncode(uint8_t *buf, size_t cap, int device, int port,
                        const char *name)
 {
@@ -70,6 +81,43 @@ int JLinkDiscDecode(const uint8_t *buf, size_t len, int *device,
       memcpy(name, buf + 8, copy);
       name[copy] = '\0';
    }
+   return 1;
+}
+
+/* #552 negotiation codec -- pure, no sockets.  See jlink_discover.h for
+   why this deliberately does NOT share JLinkDiscEncode/Decode's magic or
+   length. */
+size_t JLinkNegEncode(uint8_t *buf, size_t cap, uint32_t senderId)
+{
+   if (!buf || cap < JLINK_NEG_PKT_LEN)
+      return 0;
+   memset(buf, 0, JLINK_NEG_PKT_LEN);
+   buf[0] = JLINK_NEG_MAGIC_0; buf[1] = JLINK_NEG_MAGIC_1;
+   buf[2] = JLINK_NEG_MAGIC_2; buf[3] = JLINK_NEG_MAGIC_3;
+   buf[4] = (uint8_t)JLINK_NEG_VERSION;
+   /* Bytes 5-7 stay zero (reserved).  senderId at 8-11, raw byte order --
+      never interpreted as a number, only ever memcmp'd against the
+      reader's own id (see jlink_discover.h), so there is no endianness
+      concern crossing hosts. */
+   buf[8]  = (uint8_t)(senderId & 0xFFu);
+   buf[9]  = (uint8_t)((senderId >> 8) & 0xFFu);
+   buf[10] = (uint8_t)((senderId >> 16) & 0xFFu);
+   buf[11] = (uint8_t)((senderId >> 24) & 0xFFu);
+   return JLINK_NEG_PKT_LEN;
+}
+
+int JLinkNegDecode(const uint8_t *buf, size_t len, uint32_t *senderId)
+{
+   if (!buf || len < JLINK_NEG_PKT_LEN)
+      return 0;
+   if (buf[0] != JLINK_NEG_MAGIC_0 || buf[1] != JLINK_NEG_MAGIC_1
+       || buf[2] != JLINK_NEG_MAGIC_2 || buf[3] != JLINK_NEG_MAGIC_3)
+      return 0;
+   if (buf[4] != JLINK_NEG_VERSION)
+      return 0;
+   if (senderId)
+      *senderId = (uint32_t)buf[8] | ((uint32_t)buf[9] << 8)
+                | ((uint32_t)buf[10] << 16) | ((uint32_t)buf[11] << 24);
    return 1;
 }
 
@@ -169,6 +217,7 @@ const JLinkPeer *JLinkDiscPeerAt(int i)
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <netdb.h>   /* getaddrinfo -- JLinkDiscSendTo (#552) */
 #endif
 
 static int      discSock       = -1;
@@ -187,8 +236,14 @@ static char     discSelfName[JLINK_DISC_NAME_MAX];
    run's beacon is silently consumed by the other run's listener.  The repo hit
    the same class before with a fixed 42171 (see netlink_pair_test.sh) and
    settled on PID-spread ports below 32768; this override is how the discovery
-   tests do the same without moving the shipped protocol port. */
-static int JLinkDiscPort(void)
+   tests do the same without moving the shipped protocol port.
+
+   Exposed (not static) since #552: jlink.c's negotiation hello/ack
+   (JLinkDiscSendTo) must target the SAME effective port this module
+   actually bound, or a VJ_DISC_PORT-isolated test would bind one port
+   while jlink.c dials the hardcoded 42170 -- silently talking to nobody
+   in an isolated test process, and pointlessly rigid for production too. */
+int JLinkDiscPort(void)
 {
    const char *e;
    int p;
@@ -292,7 +347,11 @@ int JLinkDiscActive(void)
 
 int JLinkDiscPoll(uint32_t now_ms)
 {
-   uint8_t  pkt[JLINK_DISC_PKT_LEN];
+   /* Buffer must fit voice-chat datagrams (VC_PKT_LEN=172) as well as
+    * 40-byte beacons and 12-byte negotiation packets.  Beacons still
+    * decode only at exact JLINK_DISC_PKT_LEN; oversized datagrams reach
+    * the raw handler whole instead of being silently truncated. */
+   uint8_t  pkt[256];
    struct sockaddr_in from;
    char     addr[JLINK_DISC_ADDR_MAX];
    char     name[JLINK_DISC_NAME_MAX];
@@ -328,7 +387,21 @@ int JLinkDiscPoll(uint32_t now_ms)
       if (n <= 0)
          break;
       if (!JLinkDiscDecode(pkt, (size_t)n, &dev, &port, name, sizeof(name)))
+      {
+         /* Not a beacon -- offer it to a registered second protocol
+            (#552 / #485) before dropping it, exactly like an out-of-spec or
+            hostile packet always has been dropped here. */
+         if (discRawHandler)
+         {
+            char rawAddr[JLINK_DISC_ADDR_MAX];
+            rawAddr[0] = '\0';
+            strncpy(rawAddr, inet_ntoa(from.sin_addr), JLINK_DISC_ADDR_MAX - 1);
+            rawAddr[JLINK_DISC_ADDR_MAX - 1] = '\0';
+            discRawHandler(pkt, (size_t)n, rawAddr,
+                           (int)ntohs(from.sin_port));
+         }
          continue;
+      }
       /* Ignore our own beacon.  Matched on name+port, not source IP:
          the same machine appears under different addresses depending on
          which interface the broadcast came back through.
@@ -353,11 +426,52 @@ int JLinkDiscPoll(uint32_t now_ms)
    return changed;
 }
 
+/* Unicast send on discSock, independent of discListenOnly -- a
+   listen-only client still needs to reach the host it is negotiating
+   with (#552).  to_addr may be a dotted-quad or a name; resolved with
+   getaddrinfo like jlink_tcp.c's client connect (duplicated rather than
+   shared: this file has no dependency on jlink_tcp.c today and the
+   resolve is ~10 lines, not worth a cross-file coupling for). */
+int JLinkDiscSendTo(const uint8_t *buf, size_t len,
+                    const char *to_addr, int to_port)
+{
+   struct addrinfo hints, *res;
+   struct sockaddr_in to;
+   int rc;
+
+   if (discSock < 0 || !buf || len == 0 || !to_addr || !to_addr[0])
+      return 0;
+
+   memset(&hints, 0, sizeof(hints));
+   hints.ai_family   = AF_INET;
+   hints.ai_socktype = SOCK_DGRAM;
+   res = NULL;
+   rc = getaddrinfo(to_addr, NULL, &hints, &res);
+   if (rc != 0 || !res)
+      return 0;
+
+   memset(&to, 0, sizeof(to));
+   to.sin_family = AF_INET;
+   to.sin_port   = htons((unsigned short)to_port);
+   to.sin_addr   = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
+   freeaddrinfo(res);
+
+   return sendto(discSock, (const char *)buf, (int)len, 0,
+                 (struct sockaddr *)&to, sizeof(to)) >= 0;
+}
+
 #else  /* no networking */
 
 int  JLinkDiscStart(int a, int b, int c) { (void)a; (void)b; (void)c; return 0; }
 void JLinkDiscStop(void) {}
 int  JLinkDiscPoll(uint32_t t) { (void)t; return 0; }
 int  JLinkDiscActive(void) { return 0; }
+int  JLinkDiscSendTo(const uint8_t *buf, size_t len, const char *to_addr,
+                     int to_port)
+{
+   (void)buf; (void)len; (void)to_addr; (void)to_port;
+   return 0;
+}
+int  JLinkDiscPort(void) { return JLINK_DISC_PORT; }
 
 #endif

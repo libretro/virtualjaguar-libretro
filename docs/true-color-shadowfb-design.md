@@ -2,7 +2,11 @@
 
 **Date:** 2026-08-07
 **Epic:** #338 (enhancement suite), track 3 ("true-color internal rendering")
-**Status:** design approved in-session; awaiting spec review
+**Status:** implemented and shipped in v3.2.0 (PR #341, `f7c8696`). Live in
+`src/tom/shadowfb.c`/`.h`, exposed as the `virtualjaguar_true_color` core
+option, savestate-covered (`src/core/state.h`), and given a per-title default
+in `src/core/titledb.c`. This document is the design rationale; it does not
+describe pending work.
 
 ## Problem
 

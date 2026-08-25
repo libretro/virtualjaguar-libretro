@@ -121,6 +121,119 @@
  * boot (or before the title's controller menu) to be identified.  Like
  * inputdev_live, engagement is host-routing-derived and NOT serialized.
  *
+ * THE 6D CONTROLLER IS THE SAME PROTOCOL WITH THREE BANKS (#538)
+ * ==============================================================
+ * TR10 p.22 "6D Controller": six degrees of freedom -- three translations
+ * X, Y, Z and three torques TX, TY, TZ, 8 bits each -- plus seven buttons
+ * A-G and a Rezero control.  "Three banks of data are required, as we
+ * define 55 bits of information: 8 bit values for each of the 6 degrees
+ * of freedom (8*6 = 48 bits of information), plus 7 buttons."
+ *
+ * Same wire, same clock, same identification field as #437's analog
+ * device -- only the bank count and the tables differ -- so this device
+ * shares that code path rather than forking it.  The J-line nibble map,
+ * transcribed from TR10 p.22 (the page was read as a rendered image;
+ * pdftotext scrambles that table's column order into a vertical jumble):
+ *
+ *            Row 0     Row 1     Row 2     Row 3
+ *   Bank 0   X0..X3    Y0..Y3    Z0..Z3    X4..X7
+ *   Bank 1   TX0..TX3  TY0..TY3  TZ0..TZ3  Y4..Y7
+ *   Bank 2   TX4..TX7  TY4..TY7  TZ4..TZ7  Z4..Z7
+ *
+ * There is NO FORMULA there -- row 3 of every bank carries the high
+ * nibble of a translation axis while rows 0-2 carry a coherent low/high
+ * triple -- so it is a literal table in inputdev.c, not a shift
+ * expression.  test/tools/sixd_decode_test.c feeds six pairwise-distinct
+ * nibbles precisely so a transposition cannot pass.
+ *
+ * B column (button column, $F14002 bit 1 / bit 3), active low:
+ *
+ *   Bank 0   Row 0 A      Row 1 B   Row 2 C   Row 3 D
+ *   Bank 1   Row 0 Rezero Row 1 G   Row 2 F   Row 3 E
+ *   Bank 2   Row 0 0      Row 1 1   Row 2 1   Row 3 1
+ *
+ * NOTE THE DESCENDING ORDER IN BANK 1: bank 0 runs A,B,C,D up the rows
+ * and bank 1 runs Rezero,G,F,E.  That is what TR10 prints, and it is
+ * implemented as printed rather than "corrected" -- it is the first thing
+ * a tester with real silicon should check.
+ *
+ * Bank 2's B column is the type identifier: TR10 p.16's "Data Returned
+ * from Last Bank" table reads rows 3,2,1,0, and 1,1,1,0 is "6D
+ * Controller" (1,1,1,1 is the analogue joystick / driving controller,
+ * which is why #437 had nothing to clear and this device must actively
+ * drive row 0 low).
+ *
+ * C column: identical to #437 -- row 0 is the bank-0 flag, rows 1-3 carry
+ * C1 = 1, C2 = 0, C3 = 1 ("Bank Switching"), and the C-row assignment is
+ * PORT-DEPENDENT (TR10 p.15's port-headed tables: port 1 reads C1/C2/C3
+ * in rows 1/2/3, port 2 reads C1/C3/C2).  The shared code clears C2 in
+ * row 2 on port 1 and row 3 on port 2 for both devices.
+ *
+ * TR10 SIGN CONVENTIONS, AND THE CONTRADICTION ON p.23
+ * ----------------------------------------------------
+ * p.23 states in prose: "X is positive right to left / Y is positive UP /
+ * Z is positive coming BACK (towards the user)", and "Torques are all
+ * positive in the COUNTER-CLOCKWISE direction, when facing the positive
+ * direction shown by the arrows above."
+ *
+ * THE FIGURE ON THAT SAME PAGE DISAGREES ABOUT X: its horizontal axis
+ * arrow points to the RIGHT of the page.  Nothing on the page resolves
+ * it, and no software exists to settle it empirically.  We follow the
+ * PROSE (+X = leftward), because it is an unambiguous sentence where the
+ * figure carries only a bare "+" glyph -- and because it is one negation
+ * to flip if a tester ever proves otherwise.  Recorded here, in
+ * docs/input-devices-user-guide.md and in the PR so the decision is
+ * checkable in isolation.
+ *
+ * Consequences for the host feed, all applied as the existing
+ * inputdev_analog_byte() `invert` flag:
+ *   X  host +right -> TR10 +left      : INVERTED
+ *   Y  host +down  -> TR10 +up        : INVERTED
+ *   Z  host +push away -> TR10 +back  : INVERTED
+ *   TX, TY, TZ                        : NOT inverted, see below
+ *
+ * The three torque signs are NOT derivable from the page.  "Counter-
+ * clockwise when facing the positive direction" is a geometric statement
+ * about a physical grip whose orientation relative to the player is
+ * undefined, and there is no software to check against.  They pass
+ * through unnegated and that is a NAMED GUESS, not a derivation.
+ *
+ * FOUR PROTOCOL RULES WE DELIBERATELY DO NOT IMPLEMENT
+ * ----------------------------------------------------
+ *   1. "During the Jaguars 'identifying connected controller' read
+ *      advance controllers must output their last bank" (TR10 p.21).  An
+ *      identification read is INDISTINGUISHABLE ON THE BUS from a game
+ *      read -- same addresses, same row codes -- so there is nothing to
+ *      detect.  The device simply presents whichever bank its row-3 ->
+ *      row-0 clock has reached, which is what TR10's own driver recipe
+ *      ("read all banks into a table, find bank 0 by the flag bit")
+ *      handles anyway.
+ *   2. The 100us Socket 0 / Row 0 validity rule (TR10 p.21), which exists
+ *      so a real microcontroller ignores Boot ROM row codes.  Inert in an
+ *      instant-response model; the emulated device has no settling time
+ *      to protect.
+ *   3. The <=50mA (<=10mA behind a 4-Player Adaptor) current budget
+ *      (TR10 p.21).  Electrical; nothing to emulate.
+ *   4. The DB15 female passthrough for Pause / Option (TR10 p.21).
+ *      Mechanical -- but it has a REAL consequence we inherit: the 6D
+ *      controller's three banks contain no Pause and no Option bit
+ *      anywhere, so on the emulated device those two buttons are
+ *      unreachable while it is engaged.  TR10's answer is a physical
+ *      joypad plugged into the controller and relayed "as one of its
+ *      banks", and the 6D bank tables have no slot for it.  We do not
+ *      invent a fourth bank.  Limitation, recorded, not fixed.
+ *
+ * Also inherited from #437 unchanged: no settling delays (TR10 p.28's
+ * ~25us per row, ~40us worst case, and ~200us extra per bank change for
+ * analogue digitisation -- a compliant driver's delay loop just spins
+ * over already-valid data), and an ideal 128-centred symmetric range
+ * where real hardware drifts.
+ *
+ * NO SOFTWARE ANYWHERE DRIVES THIS DEVICE.  It was never released; issue
+ * #538 frames it as completionism.  Its entire verification is the
+ * synthetic register-level suite in test/tools/sixd_decode_test.c.  Do
+ * not read "supported" as "game-verified" -- nothing has verified it.
+ *
  * PORT SCOPE
  * ==========
  * The mouse is a PORT 2 device only.  The adapter is vendor-documented as
@@ -130,7 +243,10 @@
  *
  * The rotary is offered on BOTH ports: TR10 documents the rotary matrix
  * for both, and Tempest 2000's hidden CONTROLLER TYPE menu carries
- * independent P1 and P2 toggles.
+ * independent P1 and P2 toggles.  The 6D controller is offered on both
+ * for the same reason as the analog device: TR10's advanced-controller
+ * chapter restricts neither socket, and its tables are printed with both
+ * ports' column labels.
  *
  * `port` here is 0 for Jaguar port 1 and 1 for Jaguar port 2, matching
  * joypad0Buttons / joypad1Buttons.
@@ -158,7 +274,9 @@ typedef enum
    INPUTDEV_ROTARY,              /* TR10 "Tempest" rotary (#436)                */
    INPUTDEV_ANALOG,              /* TR10 bank-switching analogue stick (#437)   */
    INPUTDEV_DRIVING,             /* same wire protocol, driving skin (#437)     */
-   INPUTDEV_LIGHTGUN             /* TR10 port-1 light gun (#438)                */
+   INPUTDEV_LIGHTGUN,            /* TR10 port-1 light gun (#438)                */
+   INPUTDEV_PADDLE,              /* early-board $F17C00 ADC stick (#505)        */
+   INPUTDEV_6D                   /* TR10 three-bank 6-DOF controller (#538)     */
 } InputDevType;
 
 void InputDevInit(void);
@@ -168,7 +286,15 @@ void InputDevShutdown(void);  /* retro_deinit: clear every static (iOS)     */
 /* Selection.  port is 0 (Jaguar port 1) or 1 (Jaguar port 2). */
 void         InputDevSetType(int port, InputDevType type);
 InputDevType InputDevGetType(int port);
-int          InputDevAnyAttached(void);  /* 0 => bit-identical to pad-only */
+/* Nonzero when any port holds something other than a plain pad -- the gate
+ * update_input() gets its per-frame host feed behind.
+ *
+ * ZERO STILL MEANS "bit-identical to pad-only", but note the mask now also
+ * covers a device the $F14000 matrix cannot see at all: the paddle (#505)
+ * is visible only at $F17C00, so a nonzero mask no longer implies the
+ * matrix has been perturbed.  With a paddle and nothing else attached the
+ * joystick matrix is byte-for-byte a pad's. */
+int          InputDevAnyAttached(void);
 
 /* Per-frame host feed, called from update_input() in libretro.c.  dx/dy
  * are libretro relative units; buttons is a bitmask of INPUTDEV_BTN_*. */
@@ -193,6 +319,60 @@ void InputDevFeed(int port, int32_t dx, int32_t dy, uint32_t buttons);
 #define INPUTDEV_SW_LEFT   0x40
 #define INPUTDEV_SW_RIGHT  0x80
 void InputDevFeedAnalog(int port, int32_t x, int32_t y, uint32_t switches);
+
+/* 6D controller feed (#538).  `axes` is SIX absolute int16 values in the
+ * libretro convention (-32768..32767) and in HOST orientation -- +X
+ * right, +Y down, +Z pushed away, torques +right / +down / +clockwise as
+ * the host sticks report them.  InputDevFeed6D applies the per-axis
+ * tuning and then TR10's sign conventions (see the header block: X, Y and
+ * Z are negated, the torques are not).  `switches` is a mask of
+ * INPUTDEV_SW_A..D plus the 6D-only INPUTDEV_SW_E/F/G/REZERO; the hat
+ * bits (UP/DOWN/LEFT/RIGHT) have no home on this device and are ignored.
+ * First call marks the device ENGAGED, same guardrail as #437.
+ *
+ * TWO TUNING SLOTS FOR SIX AXES.  The shared axistune layer stores one
+ * tune per port per host axis (X and Y), not per DOF, so the six DOF are
+ * split by WHERE THE HOST VALUE CAME FROM rather than by what it means:
+ * host-horizontal-derived axes (X, TX) take tune_x, everything else
+ * (Y, Z, TY, TZ) takes tune_y.  That way a user's "X dead zone" setting
+ * still means "the dead zone on the horizontal stick direction", which is
+ * the only reading that transfers from the other devices. */
+#define INPUTDEV_SW_E       0x0100
+#define INPUTDEV_SW_F       0x0200
+#define INPUTDEV_SW_G       0x0400
+#define INPUTDEV_SW_REZERO  0x0800
+
+#define INPUTDEV_6D_X   0
+#define INPUTDEV_6D_Y   1
+#define INPUTDEV_6D_Z   2
+#define INPUTDEV_6D_TX  3
+#define INPUTDEV_6D_TY  4
+#define INPUTDEV_6D_TZ  5
+#define INPUTDEV_6D_AXES 6
+void InputDevFeed6D(int port, const int32_t *axes, uint32_t switches);
+
+/* Paddle feed (#505) -- the early-board motherboard ADC at $F17C00, whose
+ * hardware model lives in paddle.h.  Same absolute int16 convention as
+ * InputDevFeedAnalog and the same shared per-axis tuning, so a user's
+ * dead zone / offset / response settings mean the same thing on both.
+ *
+ * IT ROUTES SOMEWHERE ELSE ENTIRELY.  #437's device answers the $F14000
+ * matrix; this one hands tuned ADC bytes to PaddleFeed() and touches the
+ * matrix not at all.  A paddle port therefore keeps its ordinary digital
+ * pad -- the pots are separate connector pins -- which is why
+ * INPUTDEV_PADDLE appears in no overlay in inputdev.c and why
+ * update_input does not blank its joypad_buttons[].
+ *
+ * Y IS NOT INVERTED HERE, and that divergence from InputDevFeedAnalog is
+ * deliberate rather than an oversight.  #437 inverts because TR10 defines
+ * its device's +Y as "pitch forward".  Nothing defines this one's, so the
+ * evidence is the only shipped consumer: BattleSphere's calibrator at
+ * $827DDC..$827E14 loads channel 3 ($1F9317) and channel 2 ($1F9316) and
+ * uses them DIRECTLY as the crosshair's screen Y and X.  Screen Y grows
+ * downward, so a rising ADC count is downward motion -- libretro's +Y,
+ * with no flip.  Do not "fix" this into agreement with the neighbouring
+ * call. */
+void InputDevFeedPaddle(int port, int32_t x, int32_t y);
 
 /* Sensitivity, Q8 (256 == 1.0), from the core options. */
 void InputDevSetScale(int port, int32_t scale_q8);
@@ -425,8 +605,19 @@ uint16_t InputDevOverlayF14002(uint16_t data, uint8_t row0, uint8_t row1);
  * which is inert unless an analog device is both selected and engaged,
  * and the first frame's feed overwrites the latches anyway.  Engagement
  * itself is host-routing-derived and deliberately NOT saved, same
- * argument as libretro.c's inputdev_live. */
-#define INPUTDEV_STATE_SIZE 51
+ * argument as libretro.c's inputdev_live.
+ *
+ * The 6D controller (#538) grows it again, by 7 bytes per port: its six
+ * latched axis bytes, and the switch mask widening from one byte to two
+ * (A-D and the hat fitted in eight bits; A-G plus Rezero do not).  Same
+ * argument as #437 -- the bank decides which of three tables a read
+ * decodes from, so a rollback that lost it would resynchronise a
+ * mid-scan driver onto the wrong bank -- and the same in-place extension
+ * of the develop-only v12 layout rather than a v13.  A pre-extension
+ * state loads these from the zero-fill tail: bank 0, zeroed axes, which
+ * is inert unless a 6D device is both selected and engaged, and the
+ * first frame's feed overwrites the latches. */
+#define INPUTDEV_STATE_SIZE 65
 size_t InputDevStateSave(uint8_t *buf);
 size_t InputDevStateLoad(const uint8_t *buf);
 

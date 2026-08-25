@@ -45,6 +45,14 @@ struct VJSettings
 	 * src/cd/jagcd_hle.c). */
 	uint32_t cdReadSpeed;
 
+	/* Cycle-exact DSP idle-loop fast-forward (issue #569, perf audit P1).
+	 * Skips provably redundant iterations of a wait loop inside one RISC
+	 * slice; bit-exact by construction (see the safety theorem in
+	 * src/jerry/dsp.c).  Added after the existing scalars, never before
+	 * them: test/test_hle_bios.c redeclares VJSettings with only the
+	 * first three fields and resolves it via dlsym. */
+	bool riscIdleSkip;
+
 	char jagBootPath[MAX_PATH];
 	char CDBootPath[MAX_PATH];
 	char alpineROMPath[MAX_PATH];

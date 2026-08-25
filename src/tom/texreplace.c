@@ -21,7 +21,7 @@
  *      pixel's RGB888 is stored into the true-color shadow
  *      framebuffer, tagged with that RAM value.  The OP's existing
  *      shadow presentation path (op.c -> ShadowFBLineFromRAM -> the
- *      CRY scanline renderer) then presents the pack art.
+ *      scanline renderer) then presents the pack art.
  *
  * The per-pixel witness makes wrong models harmless: transparent
  * (BCOMPEN/DCOMPEN) pixels, shaded/Gouraud outputs, non-rectangular
@@ -33,12 +33,31 @@
  * option off (or no pack present) the launch site pays one predictable
  * branch and the output is bit-identical to stock.
  *
+ * TIER 3 (>1x pack art, issue #369): when the internal-resolution
+ * shadow surface is up at Nx, step 3 additionally stores an N*N block
+ * of pack RGB per destination word into a parallel replacement plane
+ * on that surface (ShadowHiresStoreReplBlock).  Pack art may then be
+ * authored at exactly N times the dumped dimensions and is presented
+ * per SUBPIXEL by the Nx scanline renderer.  1x art is stored there
+ * too, replicated -- without that the Nx surface would MASK 1x packs,
+ * because its line entries win wherever they hit.
+ *
+ * RGB16-DIRECT SCANOUT (issue #528): presentation is no longer
+ * CRY-only.  Both 16bpp scanout modes present, at 1x and Nx together
+ * -- the store side never cared (it captures the raw destination word;
+ * TOM's video mode only decides how that word is INTERPRETED at
+ * scanout), so this was a missing consumer plus one tag bit,
+ * SHADOWFB_TAG_REPL, telling pack art apart from a true-color CRY
+ * reconstruction.  A CRY reconstruction must NOT present on an RGB16
+ * scanout; pack art is absolute RGB888 and is correct on either.  See
+ * TomLinePackRGB in tom.c and the SHADOWFB_TAG_REPL comment in
+ * shadowfb.h.
+ *
  * Known limits (documented in docs/texture-dump.md): presentation
- * requires the CRY 16bpp OP path (the dominant framebuffer case); the
- * shadow tag is value-checked, so a later NON-blit write of the same
- * 16-bit value to a replaced address keeps presenting pack RGB until
- * the next store to that word; indexed (<=8bpp) and >1x replacements
- * are future tiers.
+ * requires the 16bpp OP path; the shadow tag is value-checked, so a
+ * later NON-blit write of the same 16-bit value to a replaced address
+ * keeps presenting pack RGB until the next store to that word;
+ * indexed (<=8bpp) sources are a future tier.
  */
 
 #include "texreplace.h"
@@ -132,12 +151,17 @@ static TexDumpDesc tr_dst;
 static uint32_t    tr_cmd = 0;
 static uint32_t    tr_len = 0;
 static tr_entry   *tr_hit = NULL;
+/* Pack-art scale of the armed entry: 1 (dumped dimensions) or N (the
+ * active internal-resolution factor).  Tier 3, issue #369. */
+static uint32_t    tr_scale = 1;
 
 /* Stats for the unload summary line. */
 static uint32_t tr_stat_hits       = 0; /* armed launches               */
 static uint32_t tr_stat_stores     = 0; /* pixels stored to the shadow  */
 static uint32_t tr_stat_skip_dims  = 0; /* pack PNG dims != window dims */
 static uint32_t tr_stat_skip_tier  = 0; /* non-16bpp window hits        */
+static uint32_t tr_stat_hi_stores  = 0; /* Nx blocks stored (tier 3)    */
+static uint32_t tr_stat_hi_hits    = 0; /* armed launches at Nx art     */
 
 /* ---- pack map ------------------------------------------------------- */
 
@@ -596,18 +620,44 @@ int TexReplacePreBlit(void)
       tr_stat_skip_tier++;
       return 0;
    }
-   /* 1x contract: the pack PNG must match the dumped dimensions. */
-   if (e->w != tr_desc.inner || e->h != tr_desc.outer)
+   /* Dimension contract: EXACTLY the dumped size (1x art), or exactly
+    * N times it in both axes when the hi-res shadow surface is up
+    * (tier 3 -- the pack rides the Stage 2 Nx surface).  Nothing in
+    * between: an arbitrary resize has no defined mapping onto stock
+    * pixel words, and silently rescaling would make the pipeline's
+    * per-pixel straight-copy witness meaningless. */
+   tr_scale = 0;
+   if ((uint32_t)e->w == tr_desc.inner && (uint32_t)e->h == tr_desc.outer)
+      tr_scale = 1;
+   else if (shadowHiresActive && shadowHiresN > 1
+            && (uint32_t)e->w == tr_desc.inner * (uint32_t)shadowHiresN
+            && (uint32_t)e->h == tr_desc.outer * (uint32_t)shadowHiresN)
+      tr_scale = (uint32_t)shadowHiresN;
+   if (tr_scale == 0)
    {
       tr_stat_skip_dims++;
       if (!tr_dim_warned)
       {
          tr_dim_warned = 1;
-         LOG_INF("[TEXREPLACE] %016llx.png is %ux%u but the tile is "
-                 "%ux%u -- 1x replacements must keep the dumped size "
-                 "(further mismatches not logged)\n",
-                 (unsigned long long)e->key, (unsigned)e->w, (unsigned)e->h,
-                 (unsigned)tr_desc.inner, (unsigned)tr_desc.outer);
+         if (shadowHiresActive && shadowHiresN > 1)
+            LOG_INF("[TEXREPLACE] %016llx.png is %ux%u but the tile is "
+                    "%ux%u -- pack art must be exactly that, or exactly "
+                    "%ux%u (%dx, matching Internal Resolution) (further "
+                    "mismatches not logged)\n",
+                    (unsigned long long)e->key,
+                    (unsigned)e->w, (unsigned)e->h,
+                    (unsigned)tr_desc.inner, (unsigned)tr_desc.outer,
+                    (unsigned)(tr_desc.inner * (uint32_t)shadowHiresN),
+                    (unsigned)(tr_desc.outer * (uint32_t)shadowHiresN),
+                    shadowHiresN);
+         else
+            LOG_INF("[TEXREPLACE] %016llx.png is %ux%u but the tile is "
+                    "%ux%u -- pack art must keep the dumped size; larger "
+                    "art needs Internal Resolution at that same factor "
+                    "(further mismatches not logged)\n",
+                    (unsigned long long)e->key,
+                    (unsigned)e->w, (unsigned)e->h,
+                    (unsigned)tr_desc.inner, (unsigned)tr_desc.outer);
       }
       return 0;
    }
@@ -628,6 +678,8 @@ int TexReplacePreBlit(void)
 
    tr_hit = e;
    tr_stat_hits++;
+   if (tr_scale > 1)
+      tr_stat_hi_hits++;
    return 1;
 }
 
@@ -636,10 +688,26 @@ void TexReplacePostBlit(void)
    const TexDumpDesc *dd = &tr_dst;
    tr_entry *e = tr_hit;
    uint32_t r, c;
+   /* Nx block scratch.  Fixed at the compile-time maximum -- N is a
+    * runtime value and C89 has no VLAs. */
+   uint32_t blk[SHADOWFB_HIRES_MAX_N * SHADOWFB_HIRES_MAX_N];
+   uint32_t n;
 
    tr_hit = NULL;
    if (!e || !shadowFBActive)
       return;
+
+   /* Tier 3: with the Nx surface up, EVERY hit also writes an Nx block
+    * -- 1x art replicated N*N, Nx art at its own resolution.  Without
+    * this, hi-res would mask 1x packs outright: at Nx the hi-res line
+    * entry wins wherever it hits, and the 1x shadow only shows through
+    * on a miss. */
+   n = (shadowHiresActive && shadowHiresN > 1)
+     ? (uint32_t)shadowHiresN : 1u;
+   if (n > SHADOWFB_HIRES_MAX_N)
+      n = SHADOWFB_HIRES_MAX_N;
+   if (tr_scale > n)
+      return;                      /* Nx art, surface went away */
 
    for (r = 0; r < dd->outer; r++)
    {
@@ -647,13 +715,17 @@ void TexReplacePostBlit(void)
        * row-major (the 16bpp serialization appends each pixel's two
        * covering bytes; the sub-byte dedupe only applies below 8bpp). */
       const uint8_t *srow = tr_scratch + (size_t)r * dd->inner * 2;
-      const uint32_t *crow = e->conv + (size_t)r * e->w;
+      const uint32_t *crow = e->conv + (size_t)r * tr_scale * e->w;
       for (c = 0; c < dd->inner; c++)
       {
-         uint32_t daddr, conv;
+         uint32_t daddr, conv, sy, sx, opaque;
          uint16_t src16, cur16;
-         conv = crow[c];
-         if (conv & TR_CONV_SKIP)
+
+         /* The 1x representative of this stock word is the pack's
+          * top-left subpixel: predictable for authors and for the test
+          * gate, and never a colour the author did not draw. */
+         conv = crow[c * tr_scale];
+         if (n == 1 && (conv & TR_CONV_SKIP))
             continue;              /* author alpha: keep the stock pixel */
          src16 = (uint16_t)(((uint16_t)srow[c * 2] << 8) | srow[c * 2 + 1]);
          daddr = (dd->base + TexDumpPixelByteOffset(dd, c, r)) & 0xFFFFFF;
@@ -663,6 +735,38 @@ void TexReplacePostBlit(void)
                           | TexDumpRead8(daddr + 1));
          if (cur16 != src16)
             continue;              /* not a straight-copied pixel */
+
+         if (n > 1)
+         {
+            opaque = 0;
+            for (sy = 0; sy < n; sy++)
+            {
+               /* Nx art: this stock pixel's own N*N patch.  1x art
+                * (tr_scale == 1): the single pixel, replicated. */
+               const uint32_t *prow = e->conv
+                  + (size_t)(r * tr_scale + (tr_scale > 1 ? sy : 0)) * e->w;
+               for (sx = 0; sx < n; sx++)
+               {
+                  uint32_t p = prow[c * tr_scale + (tr_scale > 1 ? sx : 0)];
+                  if (p & TR_CONV_SKIP)
+                     blk[sy * n + sx] = 0;   /* fall through to stock */
+                  else
+                  {
+                     blk[sy * n + sx] = SHADOWFB_HIRES_REPL_VALID
+                                      | (p & 0x00FFFFFF);
+                     opaque++;
+                  }
+               }
+            }
+            if (opaque)
+            {
+               ShadowHiresStoreReplBlock(daddr, cur16, blk);
+               tr_stat_hi_stores++;
+            }
+            if (conv & TR_CONV_SKIP)
+               continue;           /* no 1x fallback colour to record */
+         }
+
          ShadowFBStoreRGB(daddr, cur16, conv);
          tr_stat_stores++;
       }
@@ -735,9 +839,11 @@ int TexReplaceHasEntries(void)
 void TexReplaceShutdown(void)
 {
    if (tr_stat_hits || tr_stat_skip_dims || tr_stat_skip_tier)
-      LOG_INF("[TEXREPLACE] session summary: %u armed launches, %u pixels "
-              "stored, %u dimension mismatches, %u non-16bpp hits\n",
-              (unsigned)tr_stat_hits, (unsigned)tr_stat_stores,
+      LOG_INF("[TEXREPLACE] session summary: %u armed launches (%u at Nx "
+              "art), %u pixels stored, %u Nx blocks stored, %u dimension "
+              "mismatches, %u non-16bpp hits\n",
+              (unsigned)tr_stat_hits, (unsigned)tr_stat_hi_hits,
+              (unsigned)tr_stat_stores, (unsigned)tr_stat_hi_stores,
               (unsigned)tr_stat_skip_dims, (unsigned)tr_stat_skip_tier);
    if (tr_tab)
    {
@@ -751,6 +857,11 @@ void TexReplaceShutdown(void)
        * pack pixels.  (No-op when the surface is already down.) */
       if (tr_stat_stores)
          ShadowFBInvalidate();
+      /* Same argument one surface up: an Nx replacement block outliving
+       * its pack would present orphaned pack art on a same-value
+       * coincidence in the next title. */
+      if (tr_stat_hi_stores)
+         ShadowHiresInvalidate();
    }
    free(tr_scratch);
    tr_tab     = NULL;
@@ -768,8 +879,11 @@ void TexReplaceShutdown(void)
    tr_hit = NULL;
    memset(&tr_desc, 0, sizeof(tr_desc));
    memset(&tr_dst, 0, sizeof(tr_dst));
+   tr_scale = 1;
    tr_stat_hits      = 0;
    tr_stat_stores    = 0;
    tr_stat_skip_dims = 0;
    tr_stat_skip_tier = 0;
+   tr_stat_hi_stores = 0;
+   tr_stat_hi_hits   = 0;
 }

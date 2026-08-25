@@ -33,6 +33,18 @@ Notes:
   itself is symmetric.
 - Known issue: with some RetroArch builds the `--connect` **command line
   flag** silently does nothing — use the Netplay menu instead.
+- **Voice chat** (core option *Voice Chat*) works over netplay when both
+  sides enable it and run a core that speaks `vjag-netlink-2`. If the peer
+  never confirms voice the link stays data-only — but the offer keeps
+  repeating, so turning Voice Chat on after the session is already up
+  still works. Cores still on `vjag-netlink-1` cannot join a
+  `vjag-netlink-2` session (update both).
+- The microphone has to reach the core too: in RetroArch, *Settings >
+  Audio > Microphone* must be On, the Microphone Device must not be
+  `null`, and the app needs OS microphone permission. When the core
+  cannot get a mic it says so once in the log (`[VOICE] frontend offers
+  no microphone interface`) and voice becomes receive-only — you still
+  hear the other player.
 
 ## Option B: Direct TCP (any frontend on a platform with sockets)
 
@@ -71,6 +83,45 @@ build an inert stub — the TCP modes silently do nothing there.
 Up to 8 units total (1 host + 7 clients) — enough for AirCars' CatNet.
 Desktop/testing shortcuts: environment variables `VJ_NETLINK_HOST` and
 `VJ_NETLINK_PORT` override both the options and the file.
+
+## Making link play feel snappier (optional, not authentic)
+
+*Network Link Wire Speed* (default **Off**, values **Off** / **Auto**)
+clocks the emulated serial port faster than the real hardware ran it, when
+the console on the other end agrees to.
+
+You do not need it to play. What it fixes is a specific feel: in a
+strictly lockstep title neither console can draw the next frame until the
+pad data has been swapped both ways, and the Jaguar's link is slow enough
+that the swap can outlast the frame it belongs to — so your own move shows
+up a frame late even on a perfect connection. Ultra Vortek's Voice Modem
+mode is the clearest case: it settles at 19200 baud and trades about ten
+bytes each way every frame, roughly 5.8 ms of pure wire time per
+direction against a 16.7 ms frame.
+
+That slowness is *real* — a Voice Modem or a JagLink cable behaved exactly
+this way — which is why this is off by default and labelled an
+enhancement rather than a fix.
+
+- **Set *Auto* on either or both consoles — there is nothing to match.**
+  The two cores agree on the speedup between themselves the moment the
+  link comes up. If the other side is running an older core, has this set
+  to *Off*, or never answers, this side quietly stays at authentic timing
+  instead of running ahead on its own — a mismatch is no longer something
+  you can accidentally create.
+- Only works over a direct *Network Link* (TCP host/client). Frontend
+  netplay (RetroArch's own netplay session) has no channel for the two
+  cores to negotiate over, so link play there always runs authentic
+  timing regardless of this setting.
+- If a game starts behaving oddly on the link, put it back to Off before
+  reporting anything — link timing bug reports are only meaningful at
+  Off.
+- The setting does nothing at all unless *Network Link* is actually
+  selected, so leaving it on will never affect a single-player session.
+
+This is a different knob from *Network Link Latency Hiding*, which deals
+with the **network** between the two machines. Wire Speed deals with the
+emulated **cable**, and helps even at zero network latency.
 
 ## Troubleshooting
 

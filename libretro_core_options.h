@@ -169,6 +169,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_widescreen",
+      "Widescreen (Stretch to 16:9)",
+      NULL,
+      "Report a 16:9 aspect ratio to the frontend instead of the Jaguar's native 4:3, for a cosmetic horizontal stretch. The Jaguar has no wider display mode, so this changes only the aspect metadata used to letterbox/scale the picture -- the emulated framebuffer is identical either way. Off by default.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_pertitle_defaults",
       "Per-Title Enhancement Defaults",
       NULL,
@@ -260,6 +274,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "1x"
+   },
+   {
+      "virtualjaguar_risc_idle_skip",
+      "DSP Idle-Loop Fast-Forward",
+      NULL,
+      "Speed-up: skip provably redundant iterations when the DSP is parked in a wait loop. Commercial titles leave the DSP spinning in a 3-5 instruction poll for most of every frame while it still interprets its full cycle budget; this fast-forwards those iterations instead, cutting DSP interpretation by 66-87% on the titles measured. Bit-exact by construction, not an approximation: the registers, flags, cycles charged and instruction count all end up exactly where interpreting them would have left them, so save states, run-ahead and netplay are unaffected. New in this release and off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. Ignored automatically when DRAM timing, GPU pipeline timing, a non-stock RISC clock scale or blit memoization is in use.",
+      NULL,
+      "timing",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
    },
    {
       "virtualjaguar_dram_timing",
@@ -378,6 +406,112 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
       "enabled"
+   },
+   {
+      "virtualjaguar_netlink_speed",
+      "Network Link Wire Speed (Enhancement)",
+      NULL,
+      "Clocks the emulated serial port faster than the real hardware did, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next. Ultra Vortek's Voice Modem mode settles at 19200 baud and swaps about ten bytes each way per frame, roughly 5.8 ms of pure wire time per direction, which is why you do not see your own move until the round trip completes. Not authentic -- a real Voice Modem or JagLink cable is exactly this slow -- so it is off by default. 'Auto' has the two consoles agree on the speedup between themselves at link-up: nothing to match by hand, and if the other side is running an older core, isn't in Auto too, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client) -- frontend netplay (RetroArch's own netplay session) has no channel for the two cores to negotiate over and always runs authentic timing regardless of this setting. If a game starts dropping link data, turn this off. Ignored unless Network Link is actually selected.",
+      NULL,
+      "network",
+      {
+         { "disabled", "Off (authentic hardware timing)" },
+         { "auto",     "Auto (negotiated with peer)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_voice_chat",
+      "Voice Chat (Host-Side)",
+      NULL,
+      "Opt-in voice channel over the Network Link -- the Jaguar Voice Modem's real selling point of simultaneous voice + data. This is NOT emulation: voice never entered the Jaguar; the console only issued audio-path control words. Capture uses the frontend microphone API when available. Default off so mic capture never starts unasked. Works over TCP Host/Client (discovery UDP) and over RetroArch netplay when both sides enable the option and speak vjag-netlink-2 (auto-negotiated; falls back to data-only if the peer never confirms). See docs/voice-chat-design.md and docs/voice-chat-netplay-design.md.",
+      NULL,
+      "network",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_voice_chat_gate",
+      "Voice Chat Transmit Gate",
+      NULL,
+      "'Open mic' transmits whenever the mic energy exceeds the VAD threshold (works on every frontend including mobile). 'Push to talk' transmits only while the configured keyboard key is held (desktop-oriented -- no RetroPad button is free).",
+      NULL,
+      "network",
+      {
+         { "open_mic",     "Open mic (VAD)" },
+         { "push_to_talk", "Push to talk (keyboard)" },
+         { NULL, NULL },
+      },
+      "open_mic"
+   },
+   {
+      "virtualjaguar_voice_chat_ptt_key",
+      "Voice Chat Push-to-Talk Key",
+      NULL,
+      "Keyboard key that opens the mic in Push-to-talk mode. Keys already claimed by the Jaguar keypad mapping are omitted.",
+      NULL,
+      "network",
+      {
+         { "v",     "V" },
+         { "c",     "C" },
+         { "space", "Space" },
+         { "tab",   "Tab" },
+         { "lctrl", "Left Ctrl" },
+         { "grave", "Backquote (`)" },
+         { NULL, NULL },
+      },
+      "v"
+   },
+   {
+      "virtualjaguar_voice_chat_volume",
+      "Voice Chat Volume",
+      NULL,
+      "Far-end (and optional local monitor) mix level into the game audio. Kept conservative by default so voice does not clip the DAC mix.",
+      NULL,
+      "network",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { NULL, NULL },
+      },
+      "50"
+   },
+   {
+      "virtualjaguar_voice_chat_vad",
+      "Voice Chat VAD Threshold",
+      NULL,
+      "Absolute-average energy gate for Open-mic mode. Raise if background noise keys the mic; lower if soft speech is cut off.",
+      NULL,
+      "network",
+      {
+         { "200",  "Low (200)" },
+         { "400",  "Medium (400)" },
+         { "800",  "High (800)" },
+         { "1600", "Very high (1600)" },
+         { NULL, NULL },
+      },
+      "400"
+   },
+   {
+      "virtualjaguar_voice_chat_monitor",
+      "Voice Chat Local Monitor",
+      NULL,
+      "Mix your own mic into the local audio output for a mic check. Does not change what is sent to the peer.",
+      NULL,
+      "network",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
    },
    {
       "virtualjaguar_cd_trace",
@@ -572,18 +706,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_p2_device",
       "Port 2 > Controller Type",
       "Controller Type",
-      "Which peripheral is plugged into controller port 2. 'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons stay on the RetroPad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first.",
+      "Which peripheral is plugged into controller port 2. " "'6D Controller' is Atari's unreleased six-degrees-of-freedom controller from the Technical Reference V10 -- three translations and three rotations, seven buttons and a Rezero control, over three banks. NO SOFTWARE ANYWHERE READS IT: the device was never shipped and this is a best attempt from the manual alone, unvalidated against any real program. Left stick translates left/right and up/down, right stick yaws and pitches, the L2/R2 triggers are fore/aft thrust and the L/R shoulders roll; A/B/C/D are the usual four face buttons, E/F are the stick clicks, and G/Rezero are Start/Select. Like the other bank-switching types the port stays a RetroPad until an axis actually moves. Note the real controller has NO Pause and NO Option button -- on hardware those come from a joypad plugged into the controller's own passthrough, which has no emulated equivalent, so both are unreachable while it is engaged. If you try this, please report what you find on the issue tracker. " "'Pro Controller' is the retail six-button pad: its X/Y/Z fire buttons and Left/Right shoulder buttons alias onto keypad 9/8/7/4/6 (Atari's own SDK header and developer newsletter, docs/teamtap-procontroller-spike.md section 9 -- the TR10 manual never mentions the device, because there is nothing new for it to document). Selecting this only changes which five RetroPad buttons update those five keypad slots; the port is still an ordinary RetroPad otherwise. Because the aliasing is real hardware behaviour, a title that reads its own keypad -- weapon select, level codes, menu shortcuts -- sees genuine keypad presses from X/Y/Z/L1/R1 while this is selected, so leave it on 'Standard Joypad' unless a game specifically wants the Pro Controller. No detection method was ever published, so no title can be confirmed to require it; see docs/input-devices-user-guide.md. " "'Team Tap (4-player adaptor)' is Atari's four-socket adapter: the pad you already use on this port stays as socket 0, and three more pads appear on RetroArch ports 6, 7 and 8. Everything behind the adapter is an ordinary Jaguar joypad -- the adapter rewrites the row codes so the pads never know it is there -- and titles detect it by reading socket 3, which is the one bit this adds. Known retail support is two titles: White Men Can't Jump, which needs it for 3 and 4 player games, and NBA Jam T.E., where it is optional; homebrew support is unestablished. It is inert for every other title, so leave it off unless you are playing one. Per-port button remapping and 'Numpad to Keyboard' apply to socket 0 only, so remap the extra pads from RetroArch's own Controls menu. " "'Atari ST / PS2 Mouse' is the wiring used by the AtariAge and Brewing Academy ST adapters and by PS/2 mouse adapters. 'Amiga Mouse (ST adapter)' is an Amiga mouse plugged into an ST-wired adapter -- this is what an in-game 'Atari / Amiga' selector normally chooses between. 'Amiga Mouse (Amiga adapter)' is the rarer dedicated adapter. A mouse asserts its state in every row scan, exactly as the real row-blind adapter does, so the port-2 RetroPad is disconnected while one is selected. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons stay on the RetroPad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first. 'Analog Stick (paddle ADC)' is a DIFFERENT device: the 8-bit converter fitted to early Jaguar motherboards, which production consoles do not have. It is the one analog interface a released game reads -- BattleSphere and BattleSphere Gold, which also need their own Gameplay Options > 2nd Controller set to Analog Stick. Driven by the left analog stick, and unlike the bank-switching types it leaves the RetroPad fully connected, because the stick's potentiometers are separate pins from the buttons. Leave it off unless a game asks for it: with no paddle selected the emulated console reports no converter fitted, exactly as real hardware does.",
       NULL,
       "input_p2",
       {
          { "auto",                "Auto (per-title default)" },
          { "pad",                 "Standard Joypad" },
+         { "teamtap",             "Team Tap (4-player adaptor)" },
+         { "pad_pro",             "Pro Controller (6-button)" },
          { "mouse_st",            "Atari ST / PS2 Mouse" },
          { "mouse_amiga",         "Amiga Mouse (ST adapter)" },
          { "mouse_amiga_adapter", "Amiga Mouse (Amiga adapter)" },
          { "rotary",              "Rotary (Tempest)" },
          { "analog",              "Analog Joystick (bank-switching)" },
          { "driving",             "Driving Controller (bank-switching)" },
+         { "paddle",              "Analog Stick (paddle ADC)" },
+         { "6d",                  "6D Controller (bank-switching)" },
          { NULL, NULL },
       },
       "auto"
@@ -592,16 +730,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_p1_device",
       "Port 1 > Controller Type",
       "Controller Type",
-      "Which peripheral is plugged into controller port 1. 'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons (A, B, C, Option, Pause and the keypad) stay on the RetroPad, which is what a real rotary has. 'Light Gun' is the port-1 light gun: the Jaguar wires its LP pin to port 1 only, so it is not offered on port 2. Aim with whatever your frontend maps to the light gun (mouse or Wiimote); the trigger reports as the Jaguar's B button, which is what Balloons reads, and Aux A / Aux B / Start / Select reach A / C / Option / Pause. Aiming off-screen stops the aim updating, exactly as a real gun stops seeing the beam. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first. There is no per-title default for any of these and there never will be -- selecting a rotary removes Up and Down and a gun repurposes B, so either would break the controls of anyone using a pad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
+      "Which peripheral is plugged into controller port 1. " "'6D Controller' is Atari's unreleased six-degrees-of-freedom controller from the Technical Reference V10 -- three translations and three rotations, seven buttons and a Rezero control, over three banks. NO SOFTWARE ANYWHERE READS IT: the device was never shipped and this is a best attempt from the manual alone, unvalidated against any real program. Left stick translates left/right and up/down, right stick yaws and pitches, the L2/R2 triggers are fore/aft thrust and the L/R shoulders roll; A/B/C/D are the usual four face buttons, E/F are the stick clicks, and G/Rezero are Start/Select. Like the other bank-switching types the port stays a RetroPad until an axis actually moves. Note the real controller has NO Pause and NO Option button -- on hardware those come from a joypad plugged into the controller's own passthrough, which has no emulated equivalent, so both are unreachable while it is engaged. If you try this, please report what you find on the issue tracker. " "'Pro Controller' is the retail six-button pad: its X/Y/Z fire buttons and Left/Right shoulder buttons alias onto keypad 9/8/7/4/6 (Atari's own SDK header and developer newsletter, docs/teamtap-procontroller-spike.md section 9 -- the TR10 manual never mentions the device, because there is nothing new for it to document). Selecting this only changes which five RetroPad buttons update those five keypad slots; the port is still an ordinary RetroPad otherwise. Because the aliasing is real hardware behaviour, a title that reads its own keypad -- weapon select, level codes, menu shortcuts -- sees genuine keypad presses from X/Y/Z/L1/R1 while this is selected, so leave it on 'Standard Joypad' unless a game specifically wants the Pro Controller. No detection method was ever published, so no title can be confirmed to require it; see docs/input-devices-user-guide.md. " "'Team Tap (4-player adaptor)' is Atari's four-socket adapter: the pad you already use on this port stays as socket 0, and three more pads appear on RetroArch ports 3, 4 and 5 -- so with one Team Tap on port 1 your four players are on RetroArch ports 1, 3, 4 and 5. Everything behind the adapter is an ordinary Jaguar joypad -- the adapter rewrites the row codes so the pads never know it is there -- and titles detect it by reading socket 3, which is the one bit this adds. Known retail support is two titles: White Men Can't Jump, which needs it for 3 and 4 player games, and NBA Jam T.E., where it is optional; homebrew support is unestablished. It is inert for every other title, so leave it off unless you are playing one. Per-port button remapping and 'Numpad to Keyboard' apply to socket 0 only, so remap the extra pads from RetroArch's own Controls menu. " "'Rotary (Tempest)' is the Tempest spinner: it removes Up and Down and reports wheel rotation on Left/Right instead, and is driven by relative mouse X. Its buttons (A, B, C, Option, Pause and the keypad) stay on the RetroPad, which is what a real rotary has. 'Light Gun' is the port-1 light gun: the Jaguar wires its LP pin to port 1 only, so it is not offered on port 2. Aim with whatever your frontend maps to the light gun (mouse or Wiimote); the trigger reports as the Jaguar's B button, which is what Balloons reads, and Aux A / Aux B / Start / Select reach A / C / Option / Pause. Aiming off-screen stops the aim updating, exactly as a real gun stops seeing the beam. 'Analog Joystick' and 'Driving Controller' are Atari's bank-switching analog device (one protocol, two skins) -- NO RELEASED TITLE reads it, so these exist for homebrew. Driven by the left analog stick (the driving skin also takes the L2/R2 triggers as brake/accelerator); the port stays a RetroPad until the stick actually moves, so a game that probes controller types at boot only sees the analog device if the stick is deflected first. 'Analog Stick (paddle ADC)' is a DIFFERENT device: the 8-bit converter fitted to early Jaguar motherboards, which production consoles do not have. It is the one analog interface a released game reads, though the known consumer (BattleSphere) uses port 2 for it. Driven by the left analog stick, and unlike the bank-switching types it leaves the RetroPad fully connected, because the stick's potentiometers are separate pins from the buttons. Leave it off unless a game asks for it: with no paddle selected the emulated console reports no converter fitted, exactly as real hardware does. There is no per-title default for any of these and there never will be -- selecting a rotary removes Up and Down and a gun repurposes B, so either would break the controls of anyone using a pad. Tempest 2000 hides its rotary support behind an unlock -- from SELECT GAME TYPE TO PLAY press Option on controller 1, then press Pause on BOTH controllers at once to reveal CONTROLLER TYPE. The unlock is saved to the game's EEPROM, so it is only needed once.",
       NULL,
       "input_p1",
       {
          { "auto",     "Auto (per-title default)" },
          { "pad",      "Standard Joypad" },
+         { "teamtap",  "Team Tap (4-player adaptor)" },
+         { "pad_pro",  "Pro Controller (6-button)" },
          { "rotary",   "Rotary (Tempest)" },
          { "lightgun", "Light Gun" },
          { "analog",   "Analog Joystick (bank-switching)" },
          { "driving",  "Driving Controller (bank-switching)" },
+         { "paddle",   "Analog Stick (paddle ADC)" },
+         { "6d",       "6D Controller (bank-switching)" },
          { NULL, NULL },
       },
       "auto"

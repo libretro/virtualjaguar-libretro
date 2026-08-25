@@ -1,0 +1,95 @@
+name: PR issue link
+
+# Every PR must be linked to an issue via the **Development** panel.
+#
+# WHY THIS EXISTS, and why a `Closes #N` in the body is not enough:
+#
+# GitHub only creates the linked-issue relationship from a closing keyword
+# when the PR targets the repository's DEFAULT branch.  This repo's default
+# is `master` and virtually every PR targets `develop`, so keywords here
+# create **no link at all** -- not just "no auto-close".
+#
+# Verified 2026-08-20: PRs #537, #539, #542, #544, #545 and #547 all carried
+# `Closes #N` and all reported zero linked issues; #546, linked by hand in
+# the Development panel, was the only one that reported one.  Timeline
+# cross-references still show up, which is exactly why this went unnoticed:
+# the issue *looks* connected while the Development panel stays empty, so
+# the issue never shows which release or pre-release tag contains the work.
+#
+# There is no public API to create that link, so it has to be done in the
+# UI -- this job's only job is to make forgetting it visible.
+#
+# Opt out for a genuinely issue-less PR by adding the `no-issue` label.
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-issue-link-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: PR is linked to an issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the Development panel for a linked issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # `no-issue` opt-out.
+          if gh pr view "$PR" --repo "$REPO" --json labels \
+                --jq '.labels[].name' | grep -qx 'no-issue'; then
+            echo "::notice::'no-issue' label present -- skipping the linked-issue check."
+            exit 0
+          fi
+
+          linked=$(gh pr view "$PR" --repo "$REPO" \
+                      --json closingIssuesReferences \
+                      --jq '.closingIssuesReferences | length')
+
+          if [ "$linked" -gt 0 ]; then
+            gh pr view "$PR" --repo "$REPO" --json closingIssuesReferences \
+              --jq '.closingIssuesReferences[] | "linked: #\(.number)"'
+            exit 0
+          fi
+
+          # Not linked.  If the body mentions an issue, name it in the error --
+          # that is the number the author almost certainly meant to link.
+          body=$(gh pr view "$PR" --repo "$REPO" --json body --jq '.body // ""')
+          guess=$(printf '%s' "$body" \
+                  | grep -oiE '(clos(e|es|ed)|fix(es|ed)?|resolv(e|es|ed))[[:space:]]+#[0-9]+' \
+                  | grep -oE '#[0-9]+' | head -1 || true)
+
+          {
+            echo "### ❌ This PR is not linked to an issue"
+            echo
+            echo "No entry in the **Development** panel."
+            if [ -n "$guess" ]; then
+              echo
+              echo "The body says it closes \`$guess\`, but **that keyword does nothing here**:"
+              echo "GitHub only creates the link when a PR targets the default branch"
+              echo "(\`master\`), and this PR targets \`develop\`."
+            fi
+            echo
+            echo "**Fix it in the UI:** open the PR → **Development** (right sidebar) →"
+            echo "gear icon → pick the issue. There is no public API for this, so it"
+            echo "cannot be automated."
+            echo
+            echo "Without the link the issue never shows which release or pre-release"
+            echo "tag contains the work, which is the whole point of linking."
+            echo
+            echo "Genuinely no issue? Add the \`no-issue\` label."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::PR #$PR has no linked issue. Link it in the Development panel, or add the 'no-issue' label."
+          exit 1

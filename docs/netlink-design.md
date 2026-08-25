@@ -3,11 +3,19 @@
 **Date:** 2026-07-31
 **Status:** COMPLETE — all four phases implemented and play-tested (Doom
 deathmatch confirmed full speed under RetroArch netplay after the sub-frame
-latency fix, PR #244). Known limitations: internet play is best-effort
-(localhost/LAN validated); BattleSphere Gold validated to the networked
-lobby, sustained dogfight play unverified; AirCars under *netpacket* netplay
-untested (its interrupt-driven RX does not hit the ASISTAT pump path — TCP
-mode fully validated); iOS/Provenance TCP mode not yet device-tested.
+latency fix, PR #244). Known limitations as of this writing: internet play
+is best-effort (localhost/LAN validated); BattleSphere Gold validated to the
+networked lobby, sustained dogfight play unverified; AirCars under
+*netpacket* netplay untested (its interrupt-driven RX does not hit the
+ASISTAT pump path — TCP mode fully validated); iOS/Provenance TCP mode not
+yet device-tested.
+
+**Since resolved (v3.4.0):** iOS TCP mode is device-tested and confirmed
+working. The setup/discovery/OSD-narration overhaul and a video-corruption
+fix (missing TOM interrupt gate on the JERRY UART IRQ, `ea42736`) both
+shipped in v3.4.0 — see `docs/netlink-ux-design.md` and
+`docs/netlink-user-guide.md` for current behaviour; treat those two as
+authoritative over this section for anything they cover.
 **Merged:** PR #250 / #263 lineage.
 
 ## Overview
@@ -359,14 +367,26 @@ until the frontend starts a netplay session; `start()` takes over the link
 (saving the option-configured mode, restored on `stop()`), TX batches go
 out once per frame as `RELIABLE|FLUSH_HINT` broadcasts (multi-console
 CatNet sessions work over netplay for free), received payloads feed the
-shared RX ring. Protocol version pinned as `vjag-netlink-1` so frontends
-refuse cross-incompatible core pairings. **No core option required** —
-stock settings + RetroArch's normal netplay UI just work.
+shared RX ring. Protocol version pinned as `vjag-netlink-2` (#585): every
+payload carries a 1-byte type (`NP_UART` / `NP_VOICE` / `NP_VOICE_HELLO`).
+Older cores advertising `vjag-netlink-1` are refused by the frontend
+protocol check — intentional break. Host-side voice rides `NP_VOICE` after
+a hello/ack negotiate (falls back to data-only). **No core option required**
+for the link itself — stock settings + RetroArch's normal netplay UI just
+work; enable *Voice Chat* on both sides for talk.
 
 Validation:
 - `test_jlink_netpacket` — a self-contained fake frontend exercising the
   full contract (registration, start/receive/stop, RELIABLE+broadcast
   flags, mode handoff and restore); in `make test`.
+- `test_voicemodem_netpacket` — the Voice Modem device over this same
+  transport (#494): the test is the netplay frontend *and* both players,
+  dlopening two private copies of the core (distinct files, so each image
+  gets its own statics) and relaying every packet between them while both
+  consoles are driven through the real Ultra Vortek modem choreography.
+  The other modem tests (`voicemodem_pair`, `uv_modem_game_test.sh`) all
+  run over TCP; this is the only coverage of the transport most users
+  actually get. No sockets, no ports, no ROM; in `make test`.
 - `test/tools/netlink_ra_matrix.sh` under **real RetroArch 1.22.2** on
   macOS: host + client instances of this core with Doom, netplay session
   established (`SET_NETPACKET_INTERFACE` accepted, "joined as player 2",
@@ -376,6 +396,180 @@ Validation:
 
 Frontend matrix: RetroArch ≥ 1.16 → netpacket netplay; any other frontend
 (Provenance, etc.) → TCP modes; every frontend → loopback/disabled.
+
+## Wire-latency enhancement (2026-08-20 addendum, #498)
+
+`UARTFrameUsec()` is the single choke point for the whole link's emulated
+latency — **both** the TX drain and the RX arrival schedule through it — so
+`virtualjaguar_netlink_speed` (default off; originally values 2 / 4,
+replaced by a negotiated `auto` in #552 below) divides exactly that one
+number. Three things about the shape are load-bearing:
+
+- **Gated on an active transport, evaluated per call.** With
+  `JLinkMode() == JLINK_MODE_DISABLED` the function takes a branch that is
+  textually develop's original expression, not a divide-by-one, so a stale
+  setting can never perturb a non-link session by a rounding step.
+  `"auto"` resolves to DISABLED until a netplay session actually exists,
+  so the gate is honest about the default. Not cached, so netpacket
+  takeover is followed automatically.
+- **The accelerated receiver applies back-pressure.** Stock hardware drops
+  the new byte when a character completes into a full RBF (an overrun) —
+  correct silicon, and preserved exactly when the option is off. But the
+  *reader's* polling rate belongs to the game, so dividing the character
+  time divides the reader's budget with it. Measured, not theorised: at 4x
+  with the plain hardware rule, Ultra Vortek's DSP-poll driver lost the
+  second byte of the `$B800` wake reply and the modem handshake never
+  completed — **0 pad words against 7044 stock**. With `UARTKickRx()`
+  refusing to start a character while RBF is unread, 4x completes normally
+  (6948). Without back-pressure, only 2x is shippable; with it, the byte
+  stream is provably unchanged and only timing moves.
+- **Not in the savestate — AS OF #498; #552 below changes this.** Like
+  NTSC/PAL the *config-level request* is a runtime setting and stays
+  outside the state blob. But once #552 lets the two sides *negotiate* a
+  value at runtime, the negotiated result is no longer purely config-
+  derived, and that part now IS serialized. See the #552 section.
+
+Symmetry was a documentation matter under #498, not a guard: a lockstep
+exchange is gated by the sum of both sides' clocking, so a mismatched pair
+still completes and stays in sync, it simply gets less of the benefit.
+Measured on the synthetic ping-pong cart at ASICLK 1999
+(`netlink_wire_speed_test.sh`), two independent runs: **16.9 / 22.6 / 52.5**
+and **16.4 / 25.0 / 49.9** exchanges per second for off-off, 4x-off, 4x-4x.
+One side alone lands between the two symmetric configurations, well short
+of half the benefit. Ultra Vortek's full-game pair completes the
+choreography in the mismatched configuration too (6972 pad words), and
+4x-4x reproduces across runs (6948, 6920) rather than being bimodal —
+which matters, because the pre-back-pressure failure was catastrophic (0),
+so a single pass would not have shown the margin. #552 removes the player's
+ability to create this mismatch in the first place (see below) — this
+measurement stays here as the historical justification for why that
+mattered enough to build negotiation instead of just better docs.
+
+Because the wall-clock ladder is measured off two paced processes, the
+ratio assertions are gated on the probe's own pacing telemetry and SKIP
+(loudly, through `scripts/test-skip.sh`) on a runner that could not hold
+its frame slots. The liveness assertions — every configuration, including
+the mismatched one, still exchanges — are unconditional failures.
+
+## Wire-speedup negotiation (2026-08-21 addendum, #552)
+
+Replaces the player-facing part of #498 above: `virtualjaguar_netlink_speed`
+is now `disabled` / `auto` only — no magnitude to pick, and no longer a
+coordination burden on two people who are, by definition, not at the same
+console. `auto` means the two *emulator instances* agree with each other
+at link-up, out-of-band, and fall back to stock timing if the peer
+rejects, does not understand the request, or does not answer. There is
+exactly one non-stock divisor now (`UART_WIRE_SPEEDUP_MAX`, still 4), so
+"negotiate" only ever has to answer one question — is the peer also in
+auto — not agree on a magnitude. A derive-from-shared-state approach
+(ASICLK, frame period) was considered first and rejected: `asiClk` is 0
+after reset and only becomes the game's value once the game writes it, so
+at link-up the two sides can legitimately disagree purely from boot skew
+— derivation is not symmetric at the moment negotiation needs it.
+
+**Channel: the LAN discovery beacon's UDP socket (`jlink_discover.c`,
+port 42170), not the TCP/netpacket data path.** Three candidates were
+weighed against one hard requirement — a negotiation message must never
+be mistakable for emulated UART bytes, in either direction, including on
+a peer that does not implement this:
+
+- **The raw byte pipe (TCP or netpacket) — rejected.** Both are pure byte
+  transports today with zero framing; a peer without #552 forwards
+  *everything* it receives straight into `jlinkRing`, which the UART reads
+  as real console traffic. Any negotiation bytes sent this way corrupt an
+  old peer's game state, not just fail to negotiate.
+- **The netpacket backend specifically — rejected for the same reason,**
+  plus it does not exist at all outside frontend netplay: the core only
+  ever sees a `client_id` from `RETRO_ENVIRONMENT_SET_NETPACKET_INTERFACE`,
+  never a peer address, so there is nowhere to address a control message
+  even if framing were safe.
+- **The discovery beacon socket — chosen.** It is a wholly separate
+  UDP port/protocol an old peer either doesn't bind (netpacket/loopback
+  sessions never start it) or, if bound (tcp_server/tcp_client, shipped
+  since #467/v3.4.0), rejects on sight: `JLinkDiscDecode()` requires an
+  exact magic + version + length match, so a differently-magicked packet
+  (`"VJNG"` vs the beacon's `"VJAG"`, `JLINK_NEG_PKT_LEN` = 8 vs
+  `JLINK_DISC_PKT_LEN` = 40) takes the same silent-drop path a corrupt or
+  hostile packet already took before #552 existed. Nothing negotiation-
+  related ever reaches `jlinkRing`.
+
+**Protocol** (`src/jerry/jlink.c`, `JLinkNegTick`/`JLinkNegOnRaw`; codec in
+`jlink_discover.c`): the TCP client already knows the server's address (it
+dialed it) and periodically sends a hello to the effective discovery port
+there until it gets one back or exhausts ~8 retries over ~4s. The server is
+purely reactive — it never needs the client's address ahead of time, because
+`recvfrom()` hands it over for free — and replies with its own packet as an
+ack the first time it sees one. Neither side raises
+`UARTWireSpeedupEffective` above 1 until it has *received* a decodable
+packet from the other, so the accelerated timing is never applied
+unilaterally — the asymmetric-benefit measurement above cannot recur by
+construction, not just by policy.
+
+Each packet carries a random per-session `senderId`, and a receiver ignores
+any incoming packet carrying its *own* id back — not part of the negotiation
+semantics, but required because two cores on one machine sharing the
+discovery port via `SO_REUSEPORT` (`jlink_discover.c`'s own documented
+dev/test topology) can otherwise receive their own outbound hello back and
+"confirm" against themselves. The beacon protocol already solved the
+analogous problem for itself (name+port self-filtering in `JLinkDiscPoll()`);
+this is the same class of fix for negotiation.
+
+**Measured limitation, not just closed as a theoretical risk: same-host
+negotiation usually does not confirm at all.** `test/test_jlink_negotiate.c`'s
+first cut modeled two cores on one machine exactly as `jlink_discover.c`
+documents — both wildcard-bound to the discovery port with `SO_REUSEPORT` —
+and measured the hello and the ack both hairpinning back to their own sender
+every time, never crossing over. `SO_REUSEPORT` load-balances a unicast
+datagram to exactly one member of the sharing group by an internal hash; it
+has no concept of "the other peer," so there is no guarantee — and this
+measurement suggests no reasonable expectation — that the hash ever picks
+the far side over the near side. The `senderId` self-filter above stops a
+hairpinned packet from being mistaken for a real confirmation (a safety
+fix), but it does not make same-host confirmation happen (not a liveness
+fix) — the practical result is that two cores dev-tested against each other
+on `127.0.0.1` with `auto` on will most likely sit at stock forever, which
+is safe (identical to "peer never answers") but is a real gap worth knowing
+about before spending time debugging "why won't auto confirm on localhost".
+Play across two different machines is unaffected — there is no shared
+`SO_REUSEPORT` group when the sending socket lives on a different host than
+the one being dialed. `test/test_jlink_negotiate.c` works around this for
+CI by having its fake peer send from an unbound socket that never joins the
+group, which is not something two real jlink.c instances on one machine can
+do (both bind the fixed discovery port by protocol design).
+
+**Scope, deliberately conservative:** only negotiates over a single TCP
+peer (`JLinkTCPPeerCount() == 1`). A CatNet-style multi-drop hub
+(`tcp_server` with more than one peer) would need every peer to agree, and
+there is no multi-party protocol here, so it stays stock. Frontend netplay
+(netpacket) also always stays stock — no address to negotiate with, as
+above. Loopback stays stock too (`JLinkDiscActive()` is never true there).
+These are real, current limitations, not merely unproven — say so in the
+option text rather than implying broader coverage.
+
+**Savestate: THE SHARP EDGE.** `uartWireSpeedupIntent` (the config
+request) stays out of the blob, unchanged from #498's reasoning above. But
+`uartWireSpeedupEffective` — the negotiated result — is now machine-
+affecting the instant a peer confirms it (it reschedules
+`UARTRXCallback`/`UARTTXCallback` through `UARTFrameUsec()`), so it is
+serialized: `STATE_VERSION_TEAMTAP` (v13, extended in place — see
+`src/core/state.h`), trailing chunk, strictly after Team Tap.
+`JLinkNegTick()` reconciles this every frame regardless of the loader: a
+restored Effective value survives only as long as the session is still
+eligible (still connected, still the SAME connection instance, intent
+still auto) — so a state saved mid-negotiation and reloaded with the peer
+gone reverts to stock within one frame rather than silently running
+ahead of a peer that no longer agrees.
+
+**Unproven, stated plainly rather than assumed:** #498's asymmetry
+question (does compressing wire time desync the two sides if only one
+enables it?) is *mostly* moot under #552 by construction — a side only
+applies the speedup after the peer proves it will too — but the brief
+window during negotiation, and the moment either side falls back after a
+mid-session peer loss, still exist. `test/test_uart_loopback.c` cannot
+prove or disprove this: it is one process talking to itself and
+structurally cannot model two peers at different divisors (same
+limitation the loopback transport has always had for this class of
+question).
 
 ## Decisions log
 

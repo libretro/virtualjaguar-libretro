@@ -234,9 +234,66 @@ jobs:
         COUNT=$(nm -gU "${{ matrix.config.artifact }}" | wc -l | tr -d ' ')
         echo "==> Production exports: ${COUNT} (all retro_*)"
 
+    # Tier-1 private ROM corpus (~22 MB) from a private S3-compatible bucket.
+    # Without it `make test` runs green while SKIPPING the audio pair, the
+    # clipping sentinels and every other check that needs a commercial ROM --
+    # a green run that tested none of the things that catch regressions.
+    #
+    # Cached on the manifest hash, so a hit costs no egress at all and only a
+    # manifest change re-downloads. Secrets are absent on fork PRs by design;
+    # the step is best-effort there and `make test` falls back to skipping,
+    # exactly as it does today.
+    - name: Cache Tier-1 ROMs
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      uses: actions/cache@v6
+      with:
+        path: test/roms/tier1
+        key: vj-roms-tier1-${{ hashFiles('test/roms/tier1.manifest') }}
+
+    - name: Fetch Tier-1 ROMs
+      id: roms
+      if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      continue-on-error: true
+      env:
+        # Two backends; rom-store.sh picks whichever is configured (GitHub
+        # wins when VJ_ROM_GH_REPO is set). Set one group of secrets, not both.
+        #
+        # GitHub backend: VJ_ROM_GH_TOKEN must be a fine-grained PAT with
+        # read-only Contents on the ROM repo. The built-in GITHUB_TOKEN cannot
+        # be used -- it is scoped to THIS repository and cannot read another
+        # private one, which fails as a 404 rather than a permission error.
+        VJ_ROM_GH_REPO: ${{ secrets.VJ_ROM_GH_REPO }}
+        GH_TOKEN: ${{ secrets.VJ_ROM_GH_TOKEN }}
+        # S3 backend (Cloudflare R2 etc.)
+        VJ_ROM_ENDPOINT: ${{ secrets.VJ_ROM_ENDPOINT }}
+        VJ_ROM_BUCKET: ${{ secrets.VJ_ROM_BUCKET }}
+        VJ_ROM_KEY: ${{ secrets.VJ_ROM_KEY }}
+        VJ_ROM_SECRET: ${{ secrets.VJ_ROM_SECRET }}
+      run: |
+        set +e
+        bash scripts/rom-store.sh fetch
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+          echo "roms=1" >> "$GITHUB_OUTPUT"
+        elif [ "$rc" -eq 77 ]; then
+          echo "::notice::Tier-1 ROM store not configured -- ROM-gated checks will skip."
+          echo "roms=0" >> "$GITHUB_OUTPUT"
+        else
+          # A configured store that FAILS is not the same as an absent one and
+          # must be visible, even though this step does not block the build.
+          echo "::warning::Tier-1 ROM fetch FAILED (rc=$rc) -- ROM-gated checks will skip."
+          echo "roms=0" >> "$GITHUB_OUTPUT"
+        fi
+        exit 0
+
     # Host/native toolchains only — skips cross-compile rows (e.g. aarch64 on x86 runner).
     - name: Run cheat engine unit tests
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
+      env:
+        # Only set when the fetch actually produced a verified tree. Pointing
+        # this at an empty directory would make find-rom.sh miss everything
+        # and turn every ROM-gated check into a silent skip.
+        ROMS_PRIVATE_ROOT: ${{ steps.roms.outputs.roms == '1' && 'test/roms/tier1' || '' }}
       run: make test CC="${{ matrix.config.cc }}"
 
     # Standalone libchdr + committed fixtures. No core dlopen, so this

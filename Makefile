@@ -27,6 +27,77 @@ ifeq ($(platform),)
 	endif
 endif
 
+# Optimisation level for release builds (ignored when DEBUG=1, and not used
+# by the MSVC branches, whose -O2 means something else entirely).
+#
+# MEASURED: macOS arm64, where -O3 is worth +5.5% (two interleaved A/B runs,
+# n=16 per arm, p ~ 0.025) for +49 KB of __TEXT, full test suite green.  See
+# issue #515, which also records the protocol, because the naive sequential
+# A/B reports +12.5% on a loaded host and is wrong by a sign.
+#
+# osx / ios-arm64 / ios9 / tvos-arm64 are that measurement plus the same
+# clang and the same architecture.
+#
+# unix / win are NOT covered by it -- GCC on x86_64 is a different compiler
+# and a different target.  They are enabled on the weaker grounds that they
+# are desktops with CPU headroom to spare, where a regression is cheap to
+# notice and cheap to revert.  If that bothers you, measure them; the
+# protocol on #515 is the whole recipe.
+#
+# Vita, Switch, 3DS, PSP and emscripten stay at -O2 deliberately: different
+# compilers again, and the Vita has real memory limits, so neither result
+# above says anything about them.  Measure before adding one.
+#
+# The rpi* targets are here by maintainer decision rather than by the
+# measurement protocol above: the Pi platform names identify the silicon
+# exactly, and every one of them is a small in-order or narrow out-of-order
+# core with no headroom to spare, which is the case -O3 helps most.  The
+# closest evidence we have is the +5.5% measured on macOS arm64 (#515) --
+# same ISA family, different compiler.  Re-measure on real hardware when a
+# Pi is available; test/tools/rpi_perf.sh exists for exactly that.
+#
+# -Ofast was considered and REJECTED for these.  Its headline implication is
+# -ffast-math, which #517 measured at ~0% here (the hot loops are integer;
+# the only floating point is a SAVESTATED I2S resampler and event
+# scheduling) and then removed globally as a latent determinism hazard.
+# Determinism is load-bearing in this tree -- run-ahead (#400), netplay, and
+# savestate compatibility all depend on it -- so -Ofast would reintroduce
+# exactly what #517 took out, for a measured-zero gain, on a platform people
+# run netplay on.  `make OPT_LEVEL=-Ofast platform=rpi4` still works if you
+# want to measure it.
+#
+# Override on the command line to test: `make OPT_LEVEL=-O2`.
+OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64 \
+                    rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64
+# classic_armv7_a7 asks for -Ofast in its own platform block and always has.
+# It never took effect: the shared release branch appended -O2 afterwards and
+# the last -O wins, so the target silently built at -O2 (issue #516).  The
+# level is resolved here instead, where it is both effective and stamped.
+#
+# NOTE (issue #517): -Ofast's headline implication is -ffast-math, which
+# used to be applied unconditionally to every non-MSVC build further down
+# and so added no new semantics here.  #517's audit measured that global
+# -ffast-math at ~0% (integer-only hot loops; the only floating point in
+# the tree is a savestated I2S resampler and event-scheduling code, neither
+# on a hot path) and removed it everywhere else as a latent determinism
+# hazard.  classic_armv7_a7 was left alone -- its -Ofast is longstanding,
+# and this is an ARM cross-compile target this repo cannot benchmark on x86
+# or arm64 hardware -- so it is now the ONLY platform that still ships
+# -ffast-math.  If that ever needs to change: -Ofast -fno-fast-math is
+# last-wins (same mechanism as the -O2/-O3 override above) and cancels just
+# the fast-math half while keeping -Ofast's other -O3-family optimizations.
+# Measure before touching; don't assume the null result here transfers.
+OPT_OFAST_PLATFORMS := classic_armv7_a7
+ifeq ($(origin OPT_LEVEL),undefined)
+   ifneq ($(filter $(platform),$(OPT_OFAST_PLATFORMS)),)
+      OPT_LEVEL := -Ofast
+   else ifneq ($(filter $(platform),$(OPT_O3_PLATFORMS)),)
+      OPT_LEVEL := -O3
+   else
+      OPT_LEVEL := -O2
+   endif
+endif
+
 # system platform
 system_platform = unix
 ifeq ($(shell uname -a),)
@@ -47,7 +118,7 @@ TARGET_NAME := virtualjaguar
 # Single source-of-truth for the human-readable version string.
 # Bumped by .github/workflows/version-bump.yml (greps this line).
 # Composed into CORE_VERSION in src/core/version.h, generated below.
-CORE_BASE_VERSION := v3.4.0
+CORE_BASE_VERSION := v3.5.0
 
 ifeq ($(DEBUG),1)
    CFLAGS += -DBUILD_TIMESTAMP="\"debug $(shell date -u +%Y-%m-%dT%H:%M:%SZ)\""
@@ -111,7 +182,8 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # name), so the comparison also stays free of shell quoting hazards --
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
-              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform
+              RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
+              OPT_LEVEL LTO
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
@@ -143,8 +215,8 @@ else ifeq ($(platform), classic_armv7_a7)
 	# --gc-sections belongs on the link line, not in CFLAGS; see the
 	# GC_STYLE block below for why this target sets it by hand.
 	LDFLAGS += -Wl,--gc-sections
-	CFLAGS += -Ofast \
-	-flto=4 -fwhole-program -fuse-linker-plugin \
+	# -Ofast lives in OPT_LEVEL above, not here -- see issue #516.
+	CFLAGS += -flto=4 -fwhole-program -fuse-linker-plugin \
 	-fdata-sections -ffunction-sections \
 	-fno-stack-protector -fno-ident -fomit-frame-pointer \
 	-falign-functions=1 -falign-jumps=1 -falign-loops=1 \
@@ -253,12 +325,109 @@ else ifeq ($(platform), qnx)
 	CXX = QCC -Vgcc_ntoarmv7le_cpp
 
 # ARM
+# Generic ARM64 Linux.  Same defect as the rpi* names below: `arm64` matched
+# no branch in this chain and fell through to the Windows fallback, so it
+# built a .dll against -lwinmm (issue #560).  Its SIMD selection was already
+# correct -- Makefile.common matches `arm64` by platform name -- which is
+# exactly why this went unnoticed: the blitter looked right in a variable
+# dump while the link line was for the wrong OS.
+else ifneq (,$(filter arm64 aarch64,$(platform)))
+	TARGET := $(TARGET_NAME)_libretro.so
+	fpic := -fPIC
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
+	ARCH = aarch64
+
+# Raspberry Pi.  These are the names libretro-super passes.  Before issue
+# #560 this project had no branch for any of them, so they fell all the way
+# through to the *Windows* fallback at the end of this chain and built
+# `virtualjaguar_libretro.dll` linked against -lwinmm -lws2_32.  Scalar SIMD
+# was the least of it.
+#
+# The 32-bit names describe the userland, not the silicon: rpi2..rpi5 are all
+# NEON-capable running a 32-bit OS, but rpi1 and rpi0 are ARMv6 (ARM1176) with
+# no NEON at all, so they are deliberately absent from the NEON list.
+#
+# PER-SOC TUNING.  Unlike a generic ARM target, a Raspberry Pi platform name
+# identifies the silicon exactly, so -mcpu is a statement of fact rather than
+# a guess -- which is why these get it and `unix`/`armv7-*` do not.
+#
+#   rpi0 rpi1   BCM2835   ARM1176JZF-S  ARMv6 + VFPv2, NO NEON
+#   rpi2        BCM2836   Cortex-A7     ARMv7-A + NEON-VFPv4
+#   rpi3        BCM2837   Cortex-A53    ARMv8-A, 32-bit userland
+#   rpi4        BCM2711   Cortex-A72    ARMv8-A, 32-bit userland
+#   rpi5        BCM2712   Cortex-A76    ARMv8.2-A, 32-bit userland
+#   *_64        same parts, aarch64 userland
+#
+# -mcpu implies -mtune, so both are never passed.  -mfpu/-mfloat-abi are
+# 32-bit-ARM-only options -- aarch64 gcc ERRORS on them -- so they are gated
+# on the same 64-bit split as ARCH below, not appended blindly.
+#
+# rpi2 is the ambiguous one: board revision 1.2 shipped a BCM2837 (A53), but
+# the libretro `rpi2` name conventionally means the original A7 part, and A7
+# code runs on an A53 while the reverse is not true.  Kept at A7 on purpose.
+#
+# -O3 comes from OPT_O3_PLATFORMS at the top of this file, NOT from here --
+# see the #516 note there.  Appending an -O to CFLAGS in a platform block is
+# exactly the bug that made classic_armv7_a7 silently build at -O2 for years.
+else ifneq (,$(filter rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64,$(platform)))
+	TARGET := $(TARGET_NAME)_libretro.so
+	fpic := -fPIC
+	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
+	GC_STYLE := gnu
+	ifneq (,$(filter rpi0 rpi1,$(platform)))
+		RPI_MCPU := arm1176jzf-s
+	else ifeq ($(platform),rpi2)
+		RPI_MCPU := cortex-a7
+	else ifneq (,$(filter rpi3 rpi3_64,$(platform)))
+		RPI_MCPU := cortex-a53
+	else ifneq (,$(filter rpi4 rpi4_64,$(platform)))
+		RPI_MCPU := cortex-a72
+	else
+		RPI_MCPU := cortex-a76
+	endif
+	CFLAGS += -mcpu=$(RPI_MCPU)
+	ifneq (,$(filter rpi3_64 rpi4_64 rpi5_64,$(platform)))
+		ARCH = aarch64
+	else
+		ARCH = arm
+		# 32-bit only.  ARMv6 parts get plain VFP; everything else NEON, in
+		# the encoding its ISA level actually provides.
+		ifneq (,$(filter rpi0 rpi1,$(platform)))
+			# -marm is REQUIRED here, not a tuning choice.  Debian's armhf
+			# cross toolchain is --with-arch=armv7-a+fp and defaults to
+			# Thumb; ARMv6 has only Thumb-1, and GCC cannot pair Thumb-1
+			# with the hard-float VFP ABI:
+			#     sorry, unimplemented: Thumb-1 'hard-float' VFP ABI
+			# A native Pi 1 compiler defaults to ARM mode and never shows
+			# this, so it only bites cross-builds -- i.e. CI.  Verified in
+			# an arm-linux-gnueabihf container; A7/A53/A72/A76 build fine
+			# either way and are left on the Thumb-2 default.
+			CFLAGS += -marm -mfpu=vfp -mfloat-abi=hard
+		else ifeq ($(platform),rpi2)
+			CFLAGS += -mfpu=neon-vfpv4 -mfloat-abi=hard
+			HAVE_NEON = 1
+		else
+			CFLAGS += -mfpu=neon-fp-armv8 -mfloat-abi=hard
+			HAVE_NEON = 1
+		endif
+	endif
+	CXXFLAGS += $(CFLAGS)
+
 else ifneq (,$(findstring armv,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.so
 	fpic := -fPIC
 	SHARED := -shared -Wl,--no-undefined -Wl,--version-script=$(LINK_SCRIPT)
 	GC_STYLE := gnu
 	ARCH = arm
+	# A platform name that says "neon" is a promise about the target, and
+	# it is the only NEON signal these generic armv* names carry: ARCH=arm
+	# above matches none of the aarch64/arm64 rules in Makefile.common, so
+	# armv7-neon-hardfloat built the SCALAR blitter (issue #560).  Plain
+	# armv7/armv6 names stay scalar -- ARMv7's baseline is VFP, not NEON.
+	ifneq (,$(findstring neon,$(platform)))
+		HAVE_NEON = 1
+	endif
 
 # Nintendo Switch (libnx)
 else ifeq ($(platform), libnx)
@@ -266,7 +435,11 @@ else ifeq ($(platform), libnx)
 	TARGET := $(TARGET_NAME)_libretro_$(platform).a
 	DEFINES := -DSWITCH=1 -D__SWITCH__
 	CFLAGS := $(DEFINES) -fPIE -I$(LIBNX)/include/ -ffunction-sections -fdata-sections -ftls-model=local-exec -specs=$(LIBNX)/switch.specs
-	CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd -ffast-math
+	# -ffast-math dropped here too (issue #517): the hot loops it could
+	# possibly speed up are integer-only regardless of target architecture,
+	# so the x86_64/arm64 A/B null result (see the FLAGS block below)
+	# generalizes here without needing a Switch-specific measurement.
+	CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
 	CXXFLAGS := $(ASFLAGS) $(CFLAGS)
 	STATIC_LINKING = 1
 
@@ -652,7 +825,7 @@ else
       CFLAGS   += -O2 -DNDEBUG
       CXXFLAGS += -O2 -DNDEBUG
    else
-      FLAGS    += -O2 -DNDEBUG
+      FLAGS    += $(OPT_LEVEL) -DNDEBUG
    endif
 endif
 
@@ -678,8 +851,27 @@ ifeq ($(COVERAGE),1)
    endif
 endif
 
+# -ffast-math removed (issue #517 audit): every hot loop in this core (68K,
+# GPU/DSP RISC interpreters, blitter) is integer-only, so it cannot speed
+# them up, and the A/B measurement confirmed no effect: interleaved
+# A/B/B/A, n=16 per arm, median 217.5 fps without vs 215.0 fps with
+# (-1.1%, i.e. fast-math was fractionally SLOWER), Mann-Whitney z=-0.60
+# p=0.5465 -- under the noise floor, report no effect.  To reproduce you
+# must first re-add a FASTMATH toggle (the audit used a temporary variable
+# in this block, added to BUILD_AXES so the flip flushes every object) and
+# then drive it with test/tools/opt_ab.sh; there is no standing knob,
+# because the flag no longer has two states worth switching between.
+# The only floating point in the tree that isn't test/trace-only is the I2S
+# resampler in src/jerry/dac.c (i2sPhase/i2sRateRatio, both in the
+# savestate) and event scheduling in src/core/event.c / src/tom/gpu.c
+# (riscUSec/consumed feeding EVENT_MAIN) -- both of those are emulated
+# state, and -ffast-math's reassociation/FMA-contraction/denormal-flushing
+# is host- and compiler-dependent, so it was a latent netplay/savestate
+# determinism hazard (same class as #400, #479) for zero measured benefit.
+# See axistune.c's header comment for the project's existing position on
+# host-dependent FP in emulated state.
 ifeq (,$(findstring msvc,$(platform)))
-FLAGS += -ffast-math -fomit-frame-pointer -fno-common
+   FLAGS += -fomit-frame-pointer -fno-common
 endif
 
 # ----------------------------------------------------------------
@@ -746,6 +938,99 @@ ifneq ($(platform),theos_ios)
    endif
 endif
 endif
+
+# ----------------------------------------------------------------
+# ELF visibility / symbol interposition (issue #569).
+#
+# GCC assumes symbol interposition per translation unit unless told
+# otherwise: every cross-file global in the hot interpreter loops
+# (gpu_reg, dsp_pc, the flag/counter externs the 68K/GPU/DSP headers
+# share) gets reloaded through the GOT, and every cross-file call
+# (JaguarReadLong &c.) goes through the PLT, because in principle a
+# symbol could be overridden by something loaded earlier in the
+# process. That is a real possibility for a handful of libc entry
+# points and essentially never true of this project's own internals --
+# the whole exported surface is already pinned to a fixed set by
+# $(LINK_SCRIPT) (link.T / link-test.T), so nothing outside libretro.c's
+# retro_* functions is meant to be interposable at all.
+#
+# GC_STYLE=gnu (set above, per platform block) identifies every target
+# that links through GNU ld with a --version-script, which is a
+# slightly WIDER set than "ELF": unix, qnx, rpi*, generic
+# arm64/aarch64, generic armv* are the real ELF/GNU-ld matrix this
+# block exists for, but the native `win` (MinGW) block also sets
+# GC_STYLE=gnu -- purely because MinGW's ld honours --version-script
+# and --gc-sections too, not because its output is ELF. `win`'s TARGET
+# is a PE/COFF .dll, and libretro.h's RETRO_API expands to
+# __attribute__((__dllexport__)) there (see libretro.h's RETRO_API
+# definition), not the visibility attribute -- so this block's whole
+# rationale (GOT/PLT indirection from ELF-style interposition,
+# RETRO_API surviving -fvisibility=hidden via inherited visibility)
+# does not apply to it, and `win` IS built in CI
+# (c-cpp.yml's MSYS2 job, release.yml). It is therefore excluded
+# outright, the same way `theos_ios` is excluded from the
+# --gc-sections block just above for an analogous "GC_STYLE says gnu
+# but the platform isn't the thing this flag is for" reason.
+#
+# GC_STYLE=macho (Apple ld64's two-level namespace already resolves
+# same-image symbols directly, so this is a Linux/Pi/Android win, not
+# a macOS one) and unset (STATIC_LINKING=1 archive targets, MSVC/Xbox,
+# Solaris ld, theos_ios, and classic_armv7_a7, which opts into its own
+# bespoke -flto=4 -fwhole-program pipeline in its platform block above
+# instead) are excluded by the outer ifeq itself.
+#
+# -fno-semantic-interposition is added UNGUARDED for the platforms this
+# repo actually builds and tests (unix, rpi*, generic arm64/aarch64,
+# generic armv*): this Makefile has no cc-option-style "does this flag
+# compile" probe anywhere (checked), GCC has accepted the flag since
+# 5.1 (2015), and Clang accepts and silently ignores it, so every
+# toolchain on those rows clears that bar. `qnx` is excluded from just
+# this one flag (but keeps -fvisibility=hidden and LTO=1 below): nothing
+# in .github/workflows/ or .gitlab-ci.yml builds it (checked), so its
+# toolchain floor is unverified, and QNX SDP 6.x's qcc wraps a gcc old
+# enough (4.x) that the flag can hard-error rather than no-op there.
+# -fvisibility=hidden has no such floor (GCC >= 4.0) and stays on for
+# qnx. `win` gets neither flag at all -- see above.
+#
+# -fvisibility=hidden is added for non-TEST_EXPORTS builds only.
+# TEST_EXPORTS=1 is the wide white-box test ABI: the harnesses dlsym()
+# internal symbols (see link-test.T / exports-test.list above), which
+# hiding at compile time would break even though the version script
+# still lists them. retro_* itself is unaffected either way -- every
+# entry point in libretro.c is declared RETRO_API in libretro.h, which
+# expands (libretro-common/include/libretro.h) to
+# __attribute__((visibility("default"))) on non-Windows GCC/Clang >= 4,
+# and a visibility attribute already present on an earlier declaration
+# governs the later definition regardless of -fvisibility's default.
+# Verified empirically at the .o level (see task report): retro_init
+# stays "external" under -fvisibility=hidden while an ordinary global
+# like videoBuffer drops to "private external" (ELF STV_HIDDEN's
+# Mach-O equivalent) -- the flag works, and RETRO_API is what exempts
+# retro_*.
+#
+# Neither flag is an -O, so neither can trip issue #516.
+ifeq ($(GC_STYLE),gnu)
+ifneq ($(platform),win)
+   ifneq ($(platform),qnx)
+      FLAGS += -fno-semantic-interposition
+   endif
+   ifneq ($(TEST_EXPORTS),1)
+      FLAGS += -fvisibility=hidden
+   endif
+
+   # Opt-in LTO (issue #569). Deliberately NOT default-on -- it wants an
+   # A/B on real Pi hardware first (test/tools/rpi_perf.sh exists for
+   # exactly that), same caution as the -O3 rollout above (#515/#516).
+   # `make LTO=1` (add `platform=rpi4_64` etc.) appends -flto to both
+   # the compile and link lines for every GC_STYLE=gnu target except
+   # `win` (see above).
+   ifeq ($(LTO),1)
+      FLAGS   += -flto
+      LDFLAGS += -flto
+   endif
+endif
+endif
+# ----------------------------------------------------------------
 
 LDFLAGS += $(fpic) $(SHARED)
 FLAGS += $(fpic)
@@ -926,9 +1211,12 @@ clean:
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
-		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/tools/i2s_lag_probe \
-		test/tools/joymatrix_identity test/tools/mouse_decode_test \
+		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
+		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
+		test/tools/joymatrix_identity test/tools/teamtap_ports \
+		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/paddle_decode_test test/tools/procontroller_decode_test test/tools/sixd_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		test/test_quadrature test/test_axistune \
@@ -979,7 +1267,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 # invocations get different values.
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_jlink_netpacket test/test_uart_loopback test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -989,16 +1277,19 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
+		test/tools/dsp_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/voicemodem_pair test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
+		test/tools/teamtap_ports \
 		test/test_quadrature test/test_axistune test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
+		test/tools/paddle_decode_test test/tools/procontroller_decode_test test/tools/sixd_decode_test \
 		test/tools/tuning_identity test/tools/test_lightgun \
 		test/tools/blitter_static_leak \
 		tools/jagcd/jagcd-chd-check
@@ -1012,14 +1303,39 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# hidden on the other platform, where harness_dlsym silently returns
 	@# NULL.  Cheap, so it runs before anything links against that ABI.
 	@python3 scripts/check-export-lists.py
+	@# Which blitter each platform actually selects (issue #560).  Same
+	@# spirit as the export-list check above: a build-system assertion that
+	@# needs no core, so it runs before anything links.  It exists because
+	@# picking the WRONG blitter is silent -- scalar compiles, links, and
+	@# passes every functional test below; it is only slow, on hardware no
+	@# CI runner owns.  Uses `make -n` deliberately; see the script header.
+	@bash test/tools/simd_matrix_check.sh
 	./test/test_dram_timing
 	./test/test_cheat
 	./test/test_event_queue
 	./test/test_jlink
 	./test/test_jlink_tcp
 	./test/test_jlink_discover
+	./test/test_voicechat
 	./test/test_jlink_netpacket ./$(TARGET)
+	@# The voice modem over the OTHER transport (#494).  voicemodem_pair
+	@# and uv_modem_game_test both drive TCP; this is the only check on
+	@# the netpacket path -- the one users get when they leave
+	@# virtualjaguar_netlink disabled and use RetroArch's own netplay.
+	@# Two private copies of the core, two netpacket sessions, packets
+	@# relayed between them: no sockets, no ports, no ROM.
+	./test/test_voicemodem_netpacket ./$(TARGET)
+	@# #585: host-side voice over framed vjag-netlink-2 netpacket (hello
+	@# negotiate + unreliable VJVC). Same two-copy relay pattern as the
+	@# voicemodem netpacket test; synthetic mic via env 78 mic iface.
+	./test/test_voice_netpacket ./$(TARGET)
 	./test/test_uart_loopback
+	@# #552: end-to-end wire-speedup negotiation against a hand-crafted
+	@# fake peer over real sockets -- proves the interop safety property
+	@# (a TCP-connected peer that never answers on the discovery port
+	@# never gets the emulated timing accelerated at it) that the pure
+	@# unit tests above cannot, since jlink.c is single-instance.
+	./test/test_jlink_negotiate
 	./test/test_uart_core ./$(TARGET)
 	./test/test_netlink_host ./$(TARGET)
 	bash test/tools/netlink_pair_test.sh ./$(TARGET)
@@ -1034,7 +1350,25 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	   else exit $$rc; fi; \
 	 fi
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
+	bash test/tools/voicechat_pair_test.sh
+	@# Voice-chat inertness (#485): yarc.j64 is the committed public fixture
+	@# (same as test_texdump).  Guard exit 77 anyway so a stripped checkout
+	@# ledgers a skip instead of failing make test.
+	@if ./test/tools/test_voicechat_inertness ./$(TARGET) test/roms/yarc.j64 --quiet; then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "Voice chat inertness (#485)" "yarc.j64 missing from test/roms/"; \
+	   else exit $$rc; fi; \
+	 fi
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
+	@# Wire-speed enhancement (#498).  Three real core pairs whose only
+	@# difference is each side's virtualjaguar_netlink_speed, so the
+	@# MISMATCHED pair is exercised as a first-class configuration: the
+	@# option's whole documented contract is "both sides, same value; one
+	@# side just gets less benefit", and nothing else would notice if a
+	@# one-sided setup actually stalled the link instead. Uses the same
+	@# below-ephemeral PID-spread port band as the witnesses below.
+	bash test/tools/netlink_wire_speed_test.sh ./$(TARGET)
 	@# Review-round-1 finding (task 4, #467): no other test runs a core in
 	@# a discovery-active mode long enough in REAL wall-clock time (not
 	@# frame count) for netlink_rebuild_host_options()'s 2s rate-limit
@@ -1048,6 +1382,21 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# concurrent `make test` runs cannot silently share the SO_REUSEPORT
 	@# socket and consume each other's beacons.
 	VJ_DISC_PORT=$$((23000 + ($$$$ % 4000))) ./test/tools/netlink_rebuild_witness ./$(TARGET)
+	@# Regression witness for #501: the device-mismatch warning used to be
+	@# dead code whenever the host came from <system>/vj_netlink.txt or
+	@# VJ_NETLINK_HOST, because the rebuild call site compared the RAW
+	@# option string ("vj_netlink.txt", a sentinel) against the peer
+	@# table's dotted-quad addresses. Runs the core in tcp_client with the
+	@# "From file" preset, injects one Voice Modem beacon, and asserts the
+	@# JagLink-vs-Voice-Modem warning actually reaches the OSD. Same
+	@# PID-spread discovery port as the rebuild witness above.
+	VJ_DISC_PORT=$$((27000 + ($$$$ % 4000))) ./test/tools/netlink_mismatch_witness ./$(TARGET)
+	@# Perf-interface plumbing (#510).  Nothing else in the suite answers
+	@# env 28, so without this the whole feature short-circuits at
+	@# `if (vjPerfActive)` and a broken registration would still be green.
+	@# Also the gate on probe balance: a VJP_ENTER region that gains an
+	@# early return silently wedges its slot off for the rest of a session.
+	./test/tools/perf_iface_witness ./$(TARGET) || test $$? -eq 77
 	@# Ultra Vortek Voice Modem (#481) end to end, the only retail JVM
 	@# title: two core instances drive the real ROM through 911 -> the
 	@# ANSWER/DIAL choreography -> the in-game lockstep data phase, gating
@@ -1237,6 +1586,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# every STATE_SAVE_BUF; yarc.j64 is in-tree so this never skips, and
 	@# a real music-on title is used when the private corpus is present.
 	./test/tools/test_runahead_determinism ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# DSP idle-loop fast-forward (#569): the admission rule must reject a
+	@# compound period that hides an undecoded store behind a not-taken jr
+	@# plus a jump back to the loop head -- and must still fire on a
+	@# genuinely idle loop, so a silently-disabled feature cannot pass.
+	@# Hand-assembles both shapes into DSP RAM; needs no ROM but yarc.
+	./test/tools/dsp_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Texture dump mode (issue #369): identity-contract freeze vs the
 	@# committed golden list, determinism, fast/accurate engine
 	@# independence, machine inertness (fb hashes + savestate digests
@@ -1318,6 +1673,12 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# an FNV digest measured on develop.  Committed before any device code
 	@# so later PRs are measured against a number that predates them.
 	./test/tools/joymatrix_identity ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Team Tap (#513): the two paths joymatrix_identity structurally
+	@# cannot reach -- update_teamtap_input()'s frontend-port -> socket
+	@# fill, and the trailing v13 state chunk.  That chunk is written
+	@# LAST, so one that writes nothing at all misaligns nothing and
+	@# passes test_state_compat and test_runahead_determinism unchanged.
+	./test/tools/teamtap_ports ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Cross-load static leak (#479): a fast-blitter session must not
 	@# contaminate the savestate of the accurate session that follows it
 	@# while the core stays resident (iOS cannot dlclose).  The run1-vs-run2
@@ -1347,6 +1708,23 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# immunity), the type ID bits, the engagement guardrail, the absolute
 	@# tuning semantics and the extended v12 savestate chunk.
 	./test/tools/analog_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Motherboard paddle ADC at $$F17C00 (#505): the three reading states
+	@# (no converter fitted / fitted but that socket empty / live axis),
+	@# the channel|4 single-ended MUX select, BattleSphere's own Timer 1
+	@# round robin landing each channel in its own slot, the UN-inverted Y
+	@# its calibrator implies, the joystick matrix staying bit-identical to
+	@# a pad, and the latched-conversion savestate.
+	./test/tools/paddle_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Pro Controller (#514): the five extra buttons (X/Y/Z fire, Left/Right
+	@# shoulder) alias onto keypad 9/8/7/4/6 -- Atari's own SDK header and
+	@# developer newsletter, docs/teamtap-procontroller-spike.md section 9,
+	@# NOT the TR10 manual, which never mentions the device.  No decode
+	@# change was needed (src/jerry/joystick.c is untouched), so this
+	@# register-level suite is what pins the claim: pressing each of the
+	@# five slots clears exactly the predicted $F14000 bit on its own row
+	@# and moves nothing else, on both ports.
+	./test/tools/procontroller_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
+	./test/tools/sixd_decode_test ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Light gun (#438).  The register-level half (LPH/LPV transform,
 	@# off-screen freeze, and the 1x-vs-2x identity that keeps the
 	@# internal-resolution option out of the aim) runs on the in-tree public
@@ -1465,6 +1843,11 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@rm -f $(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE)
 	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
 	@# user-override contract, driven through the real dlopen'd core.
+	@# Cases 7/8 extend this to the negative/known-bad entry class (#464):
+	@# refuse-the-default / honour-and-warn-the-user, via a
+	@# programmatically-installed row (TitleDBSetNegativeForTest) so the
+	@# shipped table stays at zero negative rows, same reasoning as the
+	@# hooks[] gate test below.
 	@# shadowHiresN is fixed for the whole session at retro_load_game
 	@# time, so each case is a separate process invocation -- exactly
 	@# like a real frontend restart.  The seed CRC (0xDC187F82) is
@@ -1485,6 +1868,9 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 4 --quiet \
 				--option virtualjaguar_true_color=disabled || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 6 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 7 --quiet || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 8 --quiet \
+				--option virtualjaguar_true_color=enabled || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \
@@ -1569,25 +1955,52 @@ test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_event_queue.c src/core/event.c
 
-test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+test/test_jlink: test/test_jlink.c src/jerry/jlink.c src/jerry/jlink.h src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+		-o $@ test/test_jlink.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c
 
-test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/jlink.h src/jerry/jlink_tcp.h
+test/test_jlink_tcp: test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/jerry/jlink.h src/jerry/jlink_tcp.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c
+		-o $@ test/test_jlink_tcp.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c
 
 test/test_jlink_discover: test/test_jlink_discover.c src/jerry/jlink_discover.c src/jerry/jlink_discover.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
 		-o $@ test/test_jlink_discover.c src/jerry/jlink_discover.c
 
+test/test_voicechat: test/test_voicechat.c src/jerry/voicechat.c src/jerry/voicechat.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_voicechat.c src/jerry/voicechat.c
+
+test/tools/voicechat_pair: test/tools/voicechat_pair.c src/jerry/voicechat.c src/jerry/jlink_discover.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/voicechat_pair.c src/jerry/voicechat.c src/jerry/jlink_discover.c
+
+test/tools/test_voicechat_inertness: test/tools/test_voicechat_inertness.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_voicechat_inertness.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
 test/test_jlink_netpacket: test/test_jlink_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/test_jlink_netpacket.c -ldl
 
-test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c
+test/test_voicemodem_netpacket: test/test_voicemodem_netpacket.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
-		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/core/event.c -lm
+		-o $@ test/test_voicemodem_netpacket.c -ldl
+
+test/test_voice_netpacket: test/test_voice_netpacket.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_voice_netpacket.c -ldl
+
+test/test_uart_loopback: test/test_uart_loopback.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_uart_loopback.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c -lm
+
+test/test_jlink_negotiate: test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/uart.h src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/test_jlink_negotiate.c src/jerry/uart.c src/jerry/jlink.c src/jerry/jlink_tcp.c src/jerry/jlink_netpacket.c src/jerry/jlink_discover.c src/jerry/voicemodem.c src/jerry/voicechat.c src/core/event.c -lm
 
 test/test_uart_core: test/test_uart_core.c test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) -Itest \
@@ -1628,6 +2041,19 @@ test/tools/netlink_discover_probe: test/tools/netlink_discover_probe.c src/jerry
 test/tools/netlink_rebuild_witness: test/tools/netlink_rebuild_witness.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/netlink_rebuild_witness.c -ldl
+
+# Same standalone-loader rationale as netlink_rebuild_witness above: this one
+# additionally needs SET_MESSAGE_EXT capture (the OSD text IS the assertion).
+test/tools/netlink_mismatch_witness: test/tools/netlink_mismatch_witness.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/netlink_mismatch_witness.c -ldl
+
+# Same standalone-loader shape, and for the same reason: this test must BE
+# the frontend (it supplies perf_register/perf_start/perf_stop itself), which
+# the shared harness cannot do.  See the file header.
+test/tools/perf_iface_witness: test/tools/perf_iface_witness.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/perf_iface_witness.c -ldl
 
 test/test_dram_timing: test/test_dram_timing.c src/core/bus_arbiter.c src/core/bus_arbiter.h
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_dram_timing.c src/core/bus_arbiter.c
@@ -1764,13 +2190,76 @@ test/tools/test_hook_gate: test/tools/test_hook_gate.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
+# Purpose-built microbenchmark ROM assertions (#536).  Each tool boots its
+# committed .j64 from test/microbench/ and asserts the exercised engine
+# reached its fixed iteration count, reporting the frame it finished on.
+# Needs the wide test ABI for the jaguarMainRAM export.
+test/tools/test_microbench_68k: test/tools/test_microbench_68k.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_68k.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_microbench_gpu_arith: test/tools/test_microbench_gpu_arith.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_gpu_arith.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_microbench_gpu_branch: test/tools/test_microbench_gpu_branch.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_gpu_branch.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_microbench_dsp: test/tools/test_microbench_dsp.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_dsp.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/test_microbench_blit: test/tools/test_microbench_blit.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_microbench_blit.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 # $F14000 / $F14002 identity guardrail (#428 input-devices track).  Needs
 # the wide test ABI's Joystick* / joypad0Buttons / joypad1Buttons exports.
 test/tools/joymatrix_identity: test/tools/joymatrix_identity.c \
-		src/jerry/inputdev.h \
+		src/jerry/inputdev.h src/jerry/joystick.h \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/joymatrix_identity.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Team Tap end-to-end probe (#513): reads the Joypad-TeamTap Tester's own
+# detection verdict out of main RAM.  NOT part of `make test` -- the ROM
+# is in the private corpus, so the tool exits 77 (skip) without it.  See
+# the file header for the invocation.
+test/tools/teamtap_rom_probe: test/tools/teamtap_rom_probe.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/teamtap_rom_probe.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+# Team Tap frontend plumbing + savestate chunk (#513).  Covers the two
+# paths joymatrix_identity structurally cannot: update_teamtap_input()'s
+# frontend-port -> socket fill, and the trailing v13 state chunk (which is
+# written last, so an empty one misaligns nothing and passes every other
+# state test).  Runs on the committed yarc.j64, so it IS part of `make test`.
+test/tools/teamtap_ports: test/tools/teamtap_ports.c \
+		src/jerry/joystick.h src/core/state.h \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/teamtap_ports.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -1815,6 +2304,27 @@ test/tools/analog_decode_test: test/tools/analog_decode_test.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/analog_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/paddle_decode_test: test/tools/paddle_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/paddle_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/procontroller_decode_test: test/tools/procontroller_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/procontroller_decode_test.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
+test/tools/sixd_decode_test: test/tools/sixd_decode_test.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/sixd_decode_test.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
 
@@ -1920,6 +2430,22 @@ test/tools/test_wedge_spin: test/tools/test_wedge_spin.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_wedge_spin.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+test/tools/dsp_idle_probe_falsify: test/tools/dsp_idle_probe_falsify.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/dsp_idle_probe_falsify.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Not built by `test`: an A/B measurement harness, not an assertion.  See
+# the header comment for how to drive an option sweep with it.
+test/tools/dsp_idle_ab: test/tools/dsp_idle_ab.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/dsp_idle_ab.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
@@ -2048,6 +2574,8 @@ endif
 
 .PHONY: clean test lint coverage benchmark acid dsp-diag frame-timing cue2cdi \
         runahead-determinism jaguar-demos jaguar-demos-fetch jaguar-demos-build \
+        jaguar-toolchain-fetch jaguar-toolchain-build \
+        roms-manifest roms-publish roms-fetch roms-verify \
         jaguar-demos-smoke jaguar-demos-full jaguar-demos-baseline
 endif
 
@@ -2089,9 +2617,40 @@ coverage:
 #   make benchmark BENCH_ROM=test/roms/private/Atari\ Karts.jag
 #   make benchmark BENCH_FRAMES=3000 BENCH_WARMUP=120
 #   make benchmark BENCH_BLITTER=accurate    # default: fast
-BENCH_ROM     ?= test/roms/yarc.j64
-BENCH_FRAMES  ?= 600
-BENCH_WARMUP  ?= 60
+#
+# ROM/window choice (issue #533).  Profiled with `test/tools/ir_ab.sh
+# --profile`, which reports where retired instructions actually go:
+#
+#   workload             GPU interp   DSP interp   blitter   68K
+#   jagniccc @ 90              0.0%         0.0%      0.0%   ~38%   <- BIOS boot
+#   jagniccc @ 300            38.6%        22.3%      7.1%   ~5.9%
+#   jagniccc @ 600            40.2%        23.7%     10.3%   ~2%
+#   yarc     @ 90             71.2%        0.08%     17.5%   ~0%
+#
+# yarc.j64 was the default and is a poor one: its GPU time is 73.3% `jr`
+# (a spin loop) and its DSP share is ~0.08%, so a DSP or blitter change
+# measures as no effect on it.  It is an *amplifier* for GPU-loop work --
+# the #532 hoist scored -4.33% on yarc vs -3.77% on jagniccc, same change.
+# Keep it for making a GPU-loop effect visible; do not use it to size one.
+#
+# jagniccc.j64 (the NICCC 2000 port -- a GPU program rasterising 75,340
+# precalculated polygons while the 68K sits in `stop #$2000`) is the only
+# public ROM that exercises GPU, DSP, blitter and 68K in real proportion.
+#
+# WARMUP IS LOAD-BEARING HERE, not a rounding knob: jagniccc executes
+# ZERO GPU-interpreter instructions at 90 frames because it is still in
+# BIOS boot.  Warming up only 60 frames would put most of the measured
+# window in boot code and quietly report the wrong thing.  300 clears it.
+# If you shorten BENCH_WARMUP, re-run `ir_ab.sh --profile` and confirm the
+# mix survives.
+#
+# Historical note: numbers recorded before this change (e.g. issue #515's
+# -O2/-O3 figures) were taken on yarc @ 600/60 and are NOT comparable to
+# the new default.  `make benchmark` is a same-host commit-to-commit tool
+# either way -- never compare across machines.
+BENCH_ROM     ?= test/roms/jagniccc.j64
+BENCH_FRAMES  ?= 900
+BENCH_WARMUP  ?= 300
 BENCH_BLITTER ?= fast
 # BENCH_PROFILE=1 enables src/core/perf_counters.h instrumentation and
 # wide-export ABI so test_benchmark can dlsym `perf_counters_dump`.
@@ -2124,6 +2683,39 @@ benchmark:
 acid:
 	$(MAKE) BENCH_PROFILE=1 TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 	$(MAKE) -C test/acid test CORE=$(abspath $(TARGET))
+
+# `make microbench` -- run the purpose-built microbenchmark ROMs (#536).
+# Builds the core with the wide test ABI (the tools read jaguarMainRAM),
+# builds every test_microbench_* tool, and runs each against its committed
+# .j64.  The ROMs are committed, so this needs no assembler; regenerate
+# them with test/microbench/build.sh only after editing a .s source.
+#
+# Each run prints a MICROBENCH line whose done_frame is the completion
+# frame -- the number these ROMs exist to produce.
+MICROBENCH_TOOLS := test/tools/test_microbench_68k \
+                     test/tools/test_microbench_gpu_arith \
+                     test/tools/test_microbench_gpu_branch \
+                     test/tools/test_microbench_dsp \
+                     test/tools/test_microbench_blit
+MICROBENCH_ROMS  := test/microbench/bench68k.j64 \
+                     test/microbench/benchgpu_arith.j64 \
+                     test/microbench/benchgpu_branch.j64 \
+                     test/microbench/benchdsp.j64 \
+                     test/microbench/benchblit.j64
+
+.PHONY: microbench
+microbench: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
+microbench:
+	$(MAKE) TEST_EXPORTS=1 -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+	$(MAKE) TEST_EXPORTS=1 $(MICROBENCH_TOOLS)
+	@set -e; \
+	tools="$(MICROBENCH_TOOLS)"; roms="$(MICROBENCH_ROMS)"; \
+	set -- $$roms; \
+	for t in $$tools; do \
+		rom="$$1"; shift; \
+		echo "==> $$t $$rom"; \
+		./$$t ./$(TARGET) "$$rom"; \
+	done
 
 # `make dsp-diag` -- DSP audio diagnostic.  Builds core with TEST_EXPORTS=1,
 # compiles the harness + DSP probe, then runs the diagnostic against a ROM.
@@ -2219,6 +2811,31 @@ cue2cdi:
 	$(CC) -O2 -Wall -std=c99 -o test/tools/cue2cdi test/tools/cue2cdi.c
 
 # ---------------------------------------------------------------------------
+# Tier-1 private ROM store (scripts/rom-store.sh).
+#
+# The ~22 MB subset of the private corpus that this suite actually asks for
+# -- every entry in test/roms/tier1.patterns is copied from a real find-rom.sh
+# call site below, so the list cannot drift from the tests.  CI fetches it
+# from a private S3-compatible bucket and points ROMS_PRIVATE_ROOT at the
+# result; developers with their own corpus set ROMS_PRIVATE_ROOT and never
+# fetch.  See docs/test-rom-store.md.
+#
+# roms-fetch exits 77 when no store is configured.  That is a SKIP, and it is
+# deliberately NOT 0: a silent "fetched nothing" is how a suite ends up green
+# while testing none of the titles that catch regressions.
+.PHONY: roms-manifest roms-publish roms-fetch roms-verify
+roms-manifest:
+	bash scripts/rom-store.sh manifest
+
+roms-publish:
+	bash scripts/rom-store.sh publish
+
+roms-fetch:
+	bash scripts/rom-store.sh fetch
+
+roms-verify:
+	bash scripts/rom-store.sh verify
+
 # JaguarDemos corpus (https://codeberg.org/42Bastian/JaguarDemos)
 #
 # On-demand clone + cart_boot_probe sweep.  NOT part of `make test`.
@@ -2234,6 +2851,13 @@ jaguar-demos-fetch:
 
 jaguar-demos-build: jaguar-demos-fetch
 	bash test/jaguar-demos/run.sh build
+
+.PHONY: jaguar-toolchain-fetch jaguar-toolchain-build
+jaguar-toolchain-fetch:
+	bash tools/jaguar-toolchain/setup.sh fetch
+
+jaguar-toolchain-build: jaguar-toolchain-fetch
+	bash tools/jaguar-toolchain/setup.sh build
 
 jaguar-demos-smoke jaguar-demos: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 jaguar-demos-smoke jaguar-demos:

@@ -1,0 +1,91 @@
+name: Nightly staleness check
+
+# The `nightly` prerelease stopped updating on 2026-08-16 and three days
+# passed before a human noticed (issue #508).  Nothing watched it: the
+# nightly job lives inside release.yml, and when release.yml fails there is
+# no signal beyond a red mark on a commit page nobody revisits.
+#
+# This is the missing watchdog.  It compares the published `nightly` release
+# against the tip of `develop` and fails loudly when they have drifted apart
+# for longer than the grace window.  A failing scheduled workflow mails the
+# repo owner, which is the whole point -- the alert has to arrive somewhere
+# rather than waiting to be looked for.
+#
+# It deliberately does NOT alert merely because the nightly is old.  A quiet
+# week on `develop` is not a fault; the nightly matching a develop that has
+# not moved is correct behaviour.  The fault condition is specifically
+# "develop moved, and the nightly did not follow".
+
+on:
+  schedule:
+    # 09:00 UTC daily -- a few hours after a typical late-evening merge, so a
+    # nightly broken overnight is reported the next morning rather than a day
+    # and a half later.
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Is the nightly keeping up with develop?
+    runs-on: ubuntu-latest
+    env:
+      # Hours develop may sit ahead of the nightly before this is a fault.
+      # A normal run takes well under an hour; 24 absorbs a transient runner
+      # outage and a re-run without crying wolf.
+      GRACE_HOURS: 24
+    steps:
+      - name: Compare nightly against develop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          DEV_SHA=$(gh api "repos/${REPO}/commits/develop" --jq '.sha')
+          DEV_DATE=$(gh api "repos/${REPO}/commits/develop" --jq '.commit.committer.date')
+          echo "develop tip : ${DEV_SHA:0:7} at ${DEV_DATE}"
+
+          # A missing nightly release is itself the fault condition -- that is
+          # what "the nightly stopped publishing" looks like from outside.
+          if ! gh api "repos/${REPO}/releases/tags/nightly" >/dev/null 2>&1; then
+            echo "::error::No 'nightly' release exists. The nightly publish in release.yml is not running at all. See #508."
+            exit 1
+          fi
+
+          # NOT the release object's published_at/created_at: release.yml's
+          # "Publish rolling prerelease" step updates the SAME release in
+          # place (gh release edit --clobber) rather than recreating it, so
+          # those timestamps are stamped once at first publish and never
+          # move again -- comparing against them would make LAG_HOURS grow
+          # forever and fail this check on every run after the first
+          # GRACE_HOURS, regardless of how current the nightly actually is.
+          # The signal that DOES move every run is the `nightly` tag itself:
+          # the preceding "Move the rolling tag" step force-updates
+          # refs/tags/nightly to point at GITHUB_SHA on every publish, so the
+          # tag's target commit date is the true "last published" time.
+          if ! TAG_SHA=$(gh api "repos/${REPO}/git/refs/tags/nightly" --jq '.object.sha' 2>/dev/null) || [ -z "$TAG_SHA" ]; then
+            echo "::error::'nightly' release exists but its tag ref is missing. See #508."
+            exit 1
+          fi
+          NIGHTLY_DATE=$(gh api "repos/${REPO}/commits/${TAG_SHA}" --jq '.commit.committer.date')
+          echo "nightly     : tag points at ${TAG_SHA:0:7}, committed ${NIGHTLY_DATE}"
+
+          DEV_EPOCH=$(date -u -d "$DEV_DATE" +%s)
+          NIGHTLY_EPOCH=$(date -u -d "$NIGHTLY_DATE" +%s)
+          LAG_HOURS=$(( (DEV_EPOCH - NIGHTLY_EPOCH) / 3600 ))
+
+          echo "develop is ${LAG_HOURS}h ahead of the last nightly publish (grace: ${GRACE_HOURS}h)"
+
+          # Negative lag means the nightly is newer than develop's tip, which
+          # is the healthy steady state.
+          if [ "$LAG_HOURS" -le "${GRACE_HOURS}" ]; then
+            echo "OK: nightly is keeping up."
+            exit 0
+          fi
+
+          RUN_URL="https://github.com/${REPO}/actions/workflows/release.yml"
+          echo "::error::Nightly is ${LAG_HOURS}h behind develop (${DEV_SHA:0:7}, ${DEV_DATE}), past the ${GRACE_HOURS}h grace window. release.yml is most likely failing -- check ${RUN_URL}. See #508 for the 2026-08-18 precedent, where an auxiliary tools build withheld three days of good core binaries."
+          exit 1

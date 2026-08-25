@@ -81,14 +81,75 @@ def sh(args):
     return subprocess.run(args, capture_output=True, text=True).stdout
 
 
+def _source_priority(path):
+    """Lower sorts first. Actual C source/headers are what the system prompt's
+    house rules (C89, endianness, savestate layout, audio pair) are about --
+    on a PR too large to send whole, those are what must survive truncation,
+    not whatever a plain `git diff --name-only` (roughly path-alphabetical)
+    happens to list first. docs/.github/Makefile/dist sort ahead of src/ and
+    test/ purely alphabetically, which is exactly backwards for review value.
+    """
+    if path.startswith("src/") and (path.endswith(".c") or path.endswith(".h")):
+        return 0
+    if path.endswith(".c") or path.endswith(".h"):
+        return 1  # top-level sources, e.g. libretro.c
+    if path.startswith("test/"):
+        return 2
+    return 3  # docs, CI, build metadata, everything else
+
+
+def _order_files(names):
+    """Priority tier first; within a tier, directory then basename, so a
+    changed foo.c lands next to a changed foo.h (same basename) and next to
+    its other changed same-directory siblings -- a truncation cutoff drops
+    whole trailing directories instead of splitting one file's diff from its
+    header or scattering a module's changes across the cut line.
+    """
+    def key(n):
+        d, base = n.rsplit("/", 1) if "/" in n else ("", n)
+        stem = base.rsplit(".", 1)[0]
+        return (_source_priority(n), d, stem, base)
+    return sorted(names, key=key)
+
+
 def filtered_diff(base, head):
-    """Diff with generated/vendored paths dropped, so the model reads signal."""
+    """Diff with generated/vendored paths dropped, so the model reads signal.
+
+    Built one file at a time in priority order (source > tests > docs/CI) and
+    accumulated against MAX_DIFF_CHARS, rather than one `git diff` call
+    truncated by raw character count -- that used to cut wherever git's
+    path-alphabetical file order happened to land, which for a large PR meant
+    dropping every src/ change in favor of whatever docs/.github/Makefile
+    changes sorted first alphabetically. A file's diff is included whole or
+    not at all -- never sliced mid-hunk -- so a truncated review always ends
+    on a clean file boundary.
+
+    Returns (diff_text, skipped, omitted): `skipped` is generated/vendored
+    paths excluded on principle (SKIP_PREFIXES); `omitted` is files that would
+    have been reviewed but didn't fit the budget. Kept separate so the PR note
+    can say "N generated files excluded" and "budget cut before file X" as two
+    different, both useful, facts instead of one merged count.
+    """
     names = sh(["git", "diff", "--name-only", f"{base}...{head}"]).split()
     keep = [n for n in names if not n.startswith(SKIP_PREFIXES)]
-    dropped = len(names) - len(keep)
+    skipped = [n for n in names if n.startswith(SKIP_PREFIXES)]
     if not keep:
-        return "", dropped
-    return sh(["git", "diff", f"{base}...{head}", "--"] + keep), dropped
+        return "", skipped, []
+
+    budget = MAX_DIFF_CHARS
+    parts = []
+    omitted = []
+    for name in _order_files(keep):
+        file_diff = sh(["git", "diff", f"{base}...{head}", "--", name])
+        if not file_diff:
+            continue
+        if len(file_diff) > budget:
+            omitted.append(name)
+            continue
+        parts.append(file_diff)
+        budget -= len(file_diff)
+
+    return "".join(parts), skipped, omitted
 
 
 def call_kimi(base_url, key, key_id, model, system, user):
@@ -212,15 +273,10 @@ def main():
         return 0
 
     base, head = meta["baseRefOid"], meta["headRefOid"]
-    diff, dropped = filtered_diff(base, head)
+    diff, skipped, omitted = filtered_diff(base, head)
     if not diff.strip():
         print("nothing reviewable after filtering generated paths")
         return 0
-
-    truncated = False
-    if len(diff) > MAX_DIFF_CHARS:
-        diff = diff[:MAX_DIFF_CHARS]
-        truncated = True
 
     user = (
         f"Pull request: {meta['title']}\n"
@@ -228,8 +284,15 @@ def main():
         f"Description:\n{(meta.get('body') or '(none)')[:4000]}\n\n"
         f"Diff:\n```diff\n{diff}\n```"
     )
-    if truncated:
-        user += "\n\n(The diff was truncated; review what is shown and say so.)"
+    if omitted:
+        shown = ", ".join(omitted[:10])
+        more = f" and {len(omitted) - 10} more" if len(omitted) > 10 else ""
+        user += (
+            f"\n\n(The diff was truncated to fit context: {len(omitted)} "
+            f"changed file(s) did not fit and are NOT shown above -- "
+            f"{shown}{more}. Review what is shown and say so; do not imply "
+            "coverage of the omitted files.)"
+        )
 
     try:
         review = call_kimi(
@@ -326,10 +389,15 @@ def main():
         return 0
 
     note = ""
-    if dropped:
-        note += f"\n\n<sub>{dropped} generated/vendored file(s) excluded from review.</sub>"
-    if truncated:
-        note += "\n\n<sub>Diff truncated before review — large PR.</sub>"
+    if skipped:
+        note += f"\n\n<sub>{len(skipped)} generated/vendored file(s) excluded from review.</sub>"
+    if omitted:
+        names = ", ".join(f"`{n}`" for n in omitted[:10])
+        more = f" +{len(omitted) - 10} more" if len(omitted) > 10 else ""
+        note += (
+            f"\n\n<sub>Diff truncated before review — large PR. "
+            f"{len(omitted)} changed file(s) not reviewed: {names}{more}.</sub>"
+        )
 
     comment = f"## 🌙 Kimi review\n\n{review}{note}"
     p = "/tmp/kimi-review.md"

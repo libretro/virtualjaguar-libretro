@@ -2,7 +2,7 @@
 
 **Virtual Jaguar libretro** is an open-source **Atari Jaguar emulator** — cartridges *and* **Jaguar CD** — packaged as a **libretro core**, so it runs everywhere **RetroArch** runs.
 
-All four Jaguar processors are emulated (68000, GPU, DSP, Object Processor), plus the CD drive's BUTCH controller, the link port, the Memory Track cartridge and the Jaguar GameDrive. CI builds 16 platforms on every release tag. Every accuracy, performance and compatibility claim below links to the commit, pull request, test log or committed document behind it.
+All four Jaguar processors are emulated (68000, GPU, DSP, Object Processor), plus the CD drive's BUTCH controller, the link port, the Memory Track cartridge, the Jaguar GameDrive, and the controller-port peripherals — ST/Amiga mouse, Tempest rotary, analog and driving controllers, and the light gun. CI builds 16 platforms on every release tag. Every accuracy, performance and compatibility claim below links to the commit, pull request, test log or committed document behind it.
 
 [![C/C++ CI](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/libretro/virtualjaguar-libretro/actions/workflows/c-cpp.yml)
 [![Latest release](https://img.shields.io/github/v/release/libretro/virtualjaguar-libretro)](https://github.com/libretro/virtualjaguar-libretro/releases)
@@ -34,7 +34,8 @@ This is a libretro core, so the whole frontend feature set applies — and the c
 - **Jaguar CD, two ways.** CUE/BIN and CDI images boot through a high-level-emulated CD BIOS *or* through the real CD BIOS driving emulated BUTCH/DSA/FIFO hardware. Audio CDs play and the Virtual Light Machine visualizer works. ([v3.0.0 notes](docs/RELEASE_NOTES_v3.0.0.md) · [v3.1.0 notes](docs/RELEASE_NOTES_v3.1.0.md))
 - **Damaged-rip repair.** CDI images from the old V2 ripper that lost each track's leading bytes used to be rejected outright. The loader now classifies the boot track and repairs slides or head-loss at read time; when bytes are provably gone it logs a precise diagnosis instead of a black screen. ([PR #342](https://github.com/libretro/virtualjaguar-libretro/pull/342))
 - **JagLink / netlink link-cable networking.** The Jaguar's link-port serial hardware is emulated at the register level with a TCP transport and a multi-peer hub — Doom deathmatch over LAN validated end to end. ([user guide](docs/netlink-user-guide.md) · [design doc](docs/netlink-design.md))
-- **ST/Amiga mouse adapter.** The port-2 mouse adapter sold by AtariAge and The Brewing Academy (and its PS/2 variant) is emulated from a sourced pin-level mapping, including the fact that the real adapter is *row-blind* — all three wiring cases ship as selectable devices. Opt-in: with no mouse selected the controller register is bit-identical to before, proven by a test. ([user guide](docs/input-devices-user-guide.md) · [mapping](docs/jaguar-mouse-adapter-mapping.md) · [#429](https://github.com/libretro/virtualjaguar-libretro/issues/429))
+- **Controller-port peripherals, not just the pad.** The ST/Amiga mouse adapter sold by AtariAge and The Brewing Academy (and its PS/2 variant), emulated from a sourced pin-level mapping including the fact that the real adapter is *row-blind* — all three wiring cases ship as selectable devices. Plus the Tempest 2000 rotary, Atari's TR10 bank-switching analog and driving controllers, the port-1 light gun, and the early-board motherboard ADC at `$F17C00` that BattleSphere's analog stick actually reads — with per-axis dead zone, offset and response curves on every analog source. Every Jaguar controller Atari shipped is now emulated too: the **Team Tap** 4-player adapter (validated through the real bus against AtariJaguarPadtest), the **Pro Controller** six-button pad, and — best-effort, unvalidated against any known software — the **6D flight stick**'s six degrees of freedom. Every one is opt-in: with none selected the controller registers are bit-identical to before, proven by a test. ([user guide](docs/input-devices-user-guide.md) · [mouse mapping](docs/jaguar-mouse-adapter-mapping.md) · [light gun design](docs/lightgun-design.md) · [epic #428](https://github.com/libretro/virtualjaguar-libretro/issues/428))
+- **The Jaguar Voice Modem.** Ultra Vortek's modem netplay works — dial, answer and play a match — with the modem's command set derived from the game's own ROM rather than guessed. ([`voice-modem.md`](docs/voice-modem.md) · [#481](https://github.com/libretro/virtualjaguar-libretro/issues/481))
 - **Jaguar GameDrive (JagGD).** Detection plus full 16 MB bank switching (6×1 MB pages over 16 banks), implemented from RetroHQ's published GDBIOS bindings, so GD-locked homebrew boots. ([interface notes](docs/jgd-interface-notes.md) · v3.1.0 #312, #320)
 - **Memory Track saves.** The Jaguar CD's Memory Track cartridge is emulated — a flash window at `$900000` plus an HLE'd NVM BIOS module — so CD titles keep their saves, round-tripping through the frontend's `.srm`. ([`memory-track.md`](docs/memory-track.md) · [PR #259](https://github.com/libretro/virtualjaguar-libretro/pull/259))
 - **A crash watchdog that names the bug.** A runtime watchdog recognises hang and crash signatures (GPU/DSP program-counter escape, wedges, video stalls, CD seek wedges) and writes the diagnosis into your frontend log at the moment of failure — so a bug report points at the subsystem, not just "black screen". ([`crash_detect.c`](src/core/crash_detect.c))
@@ -165,14 +166,30 @@ Cartridge EEPROM/SRAM and the Jaguar CD Memory Track both go through the libretr
 
 ## BIOS
 
-**No BIOS files are required.** The Jaguar console boot ROM and both Jaguar CD BIOSes (retail and developer) are embedded in the core, so every boot mode works out of the box:
+**No BIOS files are required.** Both Jaguar console boot ROMs (Series K and Model M) and both Jaguar CD BIOSes (retail and developer) are embedded in the core, so every boot mode works out of the box. External images are supported as an *override* for people who want a specific revision — never as a requirement.
 
-- **Cartridges** — the `BIOS (Cartridges)` core option chooses between the HLE BIOS (default: the core performs the boot setup itself, skipping the boot animation) and the real boot ROM. The console boot ROM is always the embedded copy; it is never loaded from disk. The HLE BIOS reproduces hardware-equivalent post-boot state — MEMCON1, clocks, GPU auth magic, OLP, video-interrupt compare, exception vectors, TOM/JERRY timing — pinned by 219 checks in `test_hle_bios` across NTSC and PAL.
-- **CD discs** — the `CD Boot Mode` core option chooses between the HLE CD BIOS (default, recommended) and a real CD BIOS (`Real BIOS`, or `Auto`, which currently also boots the real BIOS). In the real-BIOS modes the `CD BIOS Type` option selects the retail or developer image.
+- **Cartridges** — `BIOS (Cartridges)` chooses between the HLE BIOS (default: the core performs the boot setup itself, skipping the boot animation) and the real boot ROM. The HLE BIOS reproduces hardware-equivalent post-boot state — MEMCON1, clocks, GPU auth magic, OLP, video-interrupt compare, exception vectors, TOM/JERRY timing — pinned by 219 checks in `test_hle_bios` across NTSC and PAL. GPU-only / jagcrypt carts (the BootIntro demos) auto-enable the real boot ROM even when this is set to HLE, because they contain no 68K program for the HLE path to start.
+- **CD discs** — `CD Boot Mode` chooses between the HLE CD BIOS (default, recommended) and a real CD BIOS (`Real BIOS`, or `Auto`, which currently also boots the real BIOS). This *overrides* the cartridge setting for CD content. If a real-BIOS mode is selected but no CD BIOS can be staged at all, the core falls back to HLE rather than failing.
+
+### Which boot ROM a cartridge uses
+
+`Cart BIOS Type` (restart required) picks the console boot ROM for the real-BIOS cartridge path:
+
+| Setting | Image |
+| --- | --- |
+| `Series K` (default) | The original Jaguar boot ROM. Embedded. |
+| `Model M` | The later revision (patch address `$4804`) most size-coded BootIntros target. Embedded, but an optional `jagboot_m.rom` in the `system` directory root replaces it. |
+| `Custom` | A 128 KB image loaded from the `system` directory — see below. |
+
+For `Custom`, the core searches these names, in this order, across `system/`, `system/Atari - Jaguar/` and `system/jaguar/`:
+
+`jagboot.rom` · `boot.rom` · `boot0.rom` · `[BIOS] Atari Jaguar (World).j64` · `[BIOS] Atari Jaguar Stubulator '94 (World).j64` · `[BIOS] Atari Jaguar Stubulator '93 (World).j64`
+
+**Filename priority beats directory depth** — a `jagboot.rom` two folders down wins over a `boot0.rom` in the root, because the filename is your explicit signal about which image you meant. If `Custom` is selected and nothing usable is found, the core logs a warning and falls back to the embedded Series K.
 
 ### Optional external CD BIOS override
 
-In the real-BIOS CD modes only (`CD Boot Mode` set to `Real BIOS` or `Auto`), a CD BIOS ROM file in the RetroArch `system` directory takes precedence over the embedded images — useful if you want to run a specific BIOS revision. The file must be exactly 256 KiB and can live directly in `system/` or in an `Atari - Jaguar/`, `Atari - Jaguar CD/`, `jaguar/`, or `jaguarcd/` sub-folder, under one of these names:
+In the real-BIOS CD modes only (`CD Boot Mode` = `Real BIOS` or `Auto`), a CD BIOS file in the `system` directory takes precedence over the embedded images. It must be exactly 256 KiB, and can sit in `system/` or in an `Atari - Jaguar/`, `Atari - Jaguar CD/`, `jaguar/` or `jaguarcd/` sub-folder, under one of these names:
 
 | Type | Accepted filenames |
 | --- | --- |
@@ -180,11 +197,29 @@ In the real-BIOS CD modes only (`CD Boot Mode` set to `Real BIOS` or `Auto`), a 
 | Developer | `[BIOS] Atari Jaguar Developer CD (World).j64` / `.rom` / `.bin` |
 | Generic | `jaguarcd_bios.bin`, `jagcd_bios.bin`, `jaguarcd.bin`, `jagcd.bin`, `Jaguar CD BIOS.rom`, `Jaguar CD BIOS.bin` |
 
-Selection is by filename only — the core does not verify which BIOS a file actually contains, so a mislabelled file will boot to a black screen (a truncated or wrong-console file falls back to the embedded BIOS with a log line). If real-BIOS CD boots misbehave, remove or rename any CD BIOS files in `system/` to fall back to the known-good embedded images.
+`CD BIOS Type` decides the *search order*, not just the embedded fallback: the selected type's filenames are tried first, then the generic names, then the other type's. A lone file of the "wrong" type still beats falling back to embedded — you put it there on purpose.
+
+### How an external image is identified
+
+**The filename only decides what gets tried, and in what order. The contents decide what is accepted.** Both loaders checksum what they read:
+
+| Outcome | Cartridge boot ROM (128 KB) | CD BIOS (256 KiB) |
+| --- | --- | --- |
+| **Recognized** | CRC32 matches one of four known dumps (Series K, Model M, Stubulator '93, Stubulator '94) — loaded, logged by name. | CRC32 matches the retail or developer dump — loaded, logged by its real revision. |
+| **Unrecognized** | Loaded anyway with a warning. Custom images are the whole point of this setting. | Accepted only if the run address at `$404` lands in `$800000–$840000`, with a warning naming the file as prime suspect if boot black-screens. |
+| **Rejected** | Wrong size, or a short read. | Wrong size, short read, or a run address outside that window. |
+
+So a genuine dump under the "wrong" name still loads and the log names the revision it actually is — but a file that is not a BIOS at all is refused rather than booted into a black screen. **Read the log line**: the core prints exactly which image it staged and where it came from at every boot.
+
+If real-BIOS boots misbehave, remove or rename any BIOS files in `system/` to fall back to the known-good embedded images.
 
 ---
 
 ## What's new
+
+### v3.4.0
+
+The peripheral wave: **mouse, Tempest rotary, TR10 analog and driving controllers and the port-1 light gun** all ship, with per-axis dead zone, offset and response tuning ([epic #428](https://github.com/libretro/virtualjaguar-libretro/issues/428)). **Ultra Vortek netplay over the emulated Jaguar Voice Modem** — dial, answer, play — plus automatic link mode and LAN host discovery so the link configures itself. **Texture dump and replacement tier 1** for HD pack authoring, **per-title enhancement hooks** (shipping with zero rows — the mechanism, not the data), and **cart boot-ROM selection** including custom external images. CHD session attribution and boot-header search fixed. [Full notes](docs/RELEASE_NOTES_v3.4.0.md).
 
 ### v3.3.0
 
@@ -255,6 +290,23 @@ Four processors on a unified, big-endian memory map:
 | **Object Processor** | Sprite/bitmap display list ([`src/tom/op.c`](src/tom/op.c)) |
 | **TOM / JERRY** | Video + blitter / audio, timers, EEPROM, UART |
 | **BUTCH** | Jaguar CD controller ([`src/cd/`](src/cd)) |
+
+Plus the peripherals that hang off it:
+
+| Peripheral | Status |
+| --- | --- |
+| Standard joypad (both ports) | Emulated |
+| ST / Amiga mouse adapter (all three wirings) | Emulated, port 2 |
+| Tempest 2000 rotary | Emulated, either port |
+| TR10 analog joystick / driving controller | Emulated, either port — no released title reads it, so it exists for homebrew |
+| Light gun | Emulated, port 1 (the Jaguar wires the `LP` pin to port 1 only) |
+| Jaguar Voice Modem | Emulated, over the netlink transport |
+| JagLink / CatBox link cable | Emulated, TCP or RetroArch netplay |
+| Memory Track cartridge · Jaguar GameDrive | Emulated |
+| Team Tap (4-player adapter) | Emulated, validated through the real bus against AtariJaguarPadtest — [#513](https://github.com/libretro/virtualjaguar-libretro/issues/513) |
+| Pro Controller (six-button pad) | Emulated as a core-option preset (no published detection method exists to test against) — [#514](https://github.com/libretro/virtualjaguar-libretro/issues/514) |
+| 6D flight stick (six degrees of freedom) | Emulated from Technical Reference V10; unvalidated against any known real or homebrew software — [#538](https://github.com/libretro/virtualjaguar-libretro/issues/538) |
+| Motherboard paddle ADC (`$F17C00`, BattleSphere analog stick) | Emulated, either port — [#505](https://github.com/libretro/virtualjaguar-libretro/issues/505) |
 
 System clock 26.590906 MHz NTSC / 26.593900 MHz PAL. Full source map: [`docs/source-layout.md`](docs/source-layout.md).
 

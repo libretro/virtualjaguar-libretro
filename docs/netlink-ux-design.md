@@ -1,9 +1,13 @@
 # Network link setup: usable configuration for JagLink, CatBox and the Voice Modem
 
 **Date:** 2026-08-18
-**Status:** implemented (see `libretro.c`, `src/jerry/jlink.c`, `src/jerry/jlink_discover.c`)
-**Branch:** `feat/netlink-ux`, stacked on `release/v3.4.0`
-**Issues:** follows #481 (voice modem), #494 (netpacket untested)
+**Status:** implemented and shipped in v3.4.0 (see `libretro.c`,
+`src/jerry/jlink.c`, `src/jerry/jlink_discover.c`). Play-tested by the
+maintainer over both TCP and RetroArch netplay before release, including
+on iOS.
+**Issues:** follows #481 (voice modem, closed). #494 (netpacket path has no
+*automated* voicemodem test) stays open — deliberately: manual play-testing
+confirmed correctness, but nothing yet catches a netpacket regression in CI.
 
 ## Problem
 

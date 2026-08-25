@@ -1,0 +1,21 @@
+# Tier-1 test corpus -- the private ROMs the automated suite actually asks for.
+#
+# NOT a curated wishlist: every pattern set below is copied from a real
+# scripts/find-rom.sh call in the Makefile or in test/tools/*.sh, so this file
+# and the suite cannot drift into disagreeing about what "enough ROMs" means.
+# Adding a title here without a test that requests it just grows the download.
+#
+# Format:  one entry per line, patterns separated by '|', tried in order
+#          (same semantics as find-rom.sh arguments).
+# Lines starting with '#' and blank lines are ignored.
+#
+# Regenerate the manifest after editing:  make roms-manifest
+Iron Soldier (1994).jag|Iron Soldier (World)*.j64|Iron Soldier.jag
+Iron Soldier 2 (World).j64|Iron Soldier 2*.j64|Iron Soldier 2*.jag
+Super Burnout (1995).jag|Super Burnout*.jag|Super Burnout*.j64
+Atari Karts (1995).jag|Atari Karts*.jag|Atari Karts*.j64
+Skyhammer_(1999).jag|*skyhammer*.jag|*skyhammer*.j64|*skyhammer*.rom
+Doom - Evil Unleashed (1994).jag|Doom (World)*.j64|Doom.jag
+Alien vs Predator (1994).jag|*Alien*Predator*.jag|*Alien*Predator*.j64
+BALLOONS.BIN|Balloons*.bin|Balloon*.bin
+*BIOS* Atari Jaguar (World).j64

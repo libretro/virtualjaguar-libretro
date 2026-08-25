@@ -53,14 +53,34 @@ extern "C" {
  *     quadrature accumulator and phase are machine-visible — the phase IS
  *     what the game reads at $F14000 — so a state restored without them
  *     replays different motion.  Older states load with the encoders
- *     reset, which is what a pre-v12 core was.  develop only.
- *     EXTENDED IN PLACE (still v12, develop only, one bump per release):
- *     the analog / driving controller (#437) appended 5 bytes per port —
- *     bank, last row, latched ADC X/Y, switch mask — to the chunk; a
- *     pre-extension v12 state reads them from the zero-fill tail, which
- *     is inert (see inputdev.h). */
+ *     reset, which is what a pre-v12 core was.
+ *     EXTENDED IN PLACE (still v12, one bump per release): the analog /
+ *     driving controller (#437) appended 5 bytes per port — bank, last
+ *     row, latched ADC X/Y, switch mask — to the chunk; a pre-extension
+ *     v12 state reads them from the zero-fill tail, which is inert (see
+ *     inputdev.h).  v12 SHIPPED in v3.4.0 — this is the newest RELEASED
+ *     layout.  (The "develop only" tags that sat here were stale from
+ *     before that cut, the same way v8's and v9-v11's were before theirs.)
+ * v13: trailing Team Tap chunk (#513) — the pads in sockets 1-3 of each
+ *     port, 63 bytes per port.  What a pad behind the adapter holds is
+ *     machine-visible the instant a title selects that socket's row code,
+ *     so it has to be in the blob or run-ahead and netplay diverge.  The
+ *     adapter's own presence is NOT serialized: user configuration, like
+ *     the input-device type (joystick.h).  develop only — first bump of
+ *     the post-v3.4.0 cycle, so any other in-flight state change this
+ *     cycle extends v13 in place rather than bumping again.
+ *     EXTENDED IN PLACE (still v13): #552 replaced the netlink speed
+ *     option's 2x/4x values with a negotiated "auto" and appended one
+ *     trailing uint32 — the negotiated wire-speedup Effective divisor —
+ *     strictly after the Team Tap chunk.  Unlike Team Tap's config-only
+ *     "auto" INTENT (never serialized, same as NTSC/PAL), the negotiated
+ *     value is machine-affecting the moment a peer confirms it: it
+ *     changes UARTFrameUsec(), which schedules the UART TX/RX
+ *     event-queue deadlines.  A pre-#552 v13 state (Team Tap only) reads
+ *     nothing here and the loader falls back to stock (1), which is
+ *     exactly what a pre-#552 core was — see UARTWireSpeedupStateLoad(). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   12
+#define STATE_VERSION   13
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -136,6 +156,21 @@ extern "C" {
  * latches, and the emission-clock armed flag.  Older states load with
  * InputDevReset() -- encoders at phase 0, no button held. */
 #define STATE_VERSION_INPUT_DEVICES 12
+/* First version carrying the trailing Team Tap chunk (#513): the pads in
+ * sockets 1-3 of each port, 63 bytes per port.  What those pads hold is
+ * machine-visible at $F14000/$F14002 the instant a title selects one of
+ * their row codes, so it belongs in the blob for the same reason the
+ * hi-res epoch (#400) and the input-device encoders (#479) do -- run-ahead
+ * and netplay are what notice otherwise.
+ *
+ * APPENDED rather than folded into the joystick chunk, which sits in the
+ * middle of the blob: test/test_state_compat.c builds its legacy fixtures
+ * by locating module blocks in a live state and splicing, so a mid-blob
+ * size change invalidates every one of them.  Older states load with
+ * JoystickTeamTapStateReset() -- sockets 1-3 released, which is exactly
+ * what a pre-v13 core was.  The adapter's own presence is NOT serialized
+ * (it is user configuration; see joystick.h). */
+#define STATE_VERSION_TEAMTAP 13
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
@@ -194,6 +229,12 @@ size_t CDROMStateLoad(const uint8_t *buf, uint32_t stateVersion);
 
 size_t JoystickStateSave(uint8_t *buf);
 size_t JoystickStateLoad(const uint8_t *buf);
+
+/* Team Tap sockets 1-3 (v13 trailing chunk); the caller gates the load on
+ * STATE_VERSION_TEAMTAP and calls JoystickTeamTapStateReset() below it. */
+size_t JoystickTeamTapStateSave(uint8_t *buf);
+size_t JoystickTeamTapStateLoad(const uint8_t *buf);
+void   JoystickTeamTapStateReset(void);
 
 size_t MTStateSave(uint8_t *buf);
 size_t MTStateLoad(const uint8_t *buf, uint32_t version);

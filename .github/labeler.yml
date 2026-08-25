@@ -90,7 +90,7 @@ build:
       - 'scripts/**'
       - 'jni/Android.mk'
 
-"ci/cd :robot:":
+ci:
   - changed-files:
     - any-glob-to-any-file:
       - '.github/workflows/**'
@@ -104,7 +104,7 @@ build:
       - 'gcovr.cfg'
       - 'codecov.yml'
 
-":book: documentation":
+documentation:
   - changed-files:
     - any-glob-to-any-file:
       - '**/*.md'

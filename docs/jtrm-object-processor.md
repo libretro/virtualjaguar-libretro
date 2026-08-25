@@ -14,7 +14,7 @@ The Object Processor is a DMA-driven display engine in TOM. It traverses a linke
 
 The OP runs at the system bus clock and processes objects between HDB (horizontal display begin) and HDE (horizontal display end) for each scanline between VDB (vertical display begin) and VDE (vertical display end).
 
-Source: `src/tom/op.c`
+Derived from: `src/tom/op.c` -- NOT verified against the JTRM
 
 ## Object Types
 
@@ -356,4 +356,4 @@ Lower bit depths use a CLUT (colour lookup table) in TOM. The INDEX field in BIT
 
 9. **Scaled objects and REMAINDER**: For scaled objects, the REMAINDER field must be managed correctly. The OP writes back the updated REMAINDER to the object in RAM after each scanline. This means objects in ROM won't scale correctly (they need to be in RAM for writeback).
 
-Source: `src/tom/op.c`, `src/tom/tom.c`
+Derived from: `src/tom/op.c`, `src/tom/tom.c` -- NOT verified against the JTRM

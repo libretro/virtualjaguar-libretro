@@ -49,6 +49,28 @@
  * value is a varying non-zero, so a change from truthiness to `== 1` also
  * trips the digest.
  *
+ * WHAT THE TEAM TAP ADDS (#513)
+ * =============================
+ * The Team Tap resolves the twelve row codes the tables above answered
+ * with 0xFF, so it is exactly the class of change this file exists to
+ * bound.  Four things are asserted about it, and the first is the point
+ * of the whole file:
+ *
+ *   - the three digests above must come out UNCHANGED with no tap
+ *     selected, which is the acceptance condition #513 inherits from
+ *     #446.  run_sweep() and BUTTON_SLOTS are therefore left exactly as
+ *     they were -- widening them to cover sockets 1-3 would move the
+ *     constants and destroy the very proof that is wanted.  The tap
+ *     sweep is a SEPARATE function with its own constant.
+ *   - detaching a tap must restore that identity (assertion 5), so a
+ *     session that toggled one is not left permanently perturbed.
+ *   - the detection probe must answer BOTH ways, tested the way the
+ *     Joypad-TeamTap Tester (Domin, 2000) tests it: write $81FA and read
+ *     JOYBUTS bit 0 for port 1, write $815F and read bit 2 for port 2.
+ *   - the pads behind the adapter must actually be READABLE, or a tap
+ *     that decoded to nothing at all would pass everything above.  Same
+ *     gap the fourth mouse assertion below exists to close.
+ *
  * THREE ASSERTIONS
  * ================
  *   full digest  -- everything above.  "Nothing changed at all."
@@ -89,6 +111,9 @@
 /* For InputDevType: dlsym'd pointers must carry the real signature, or
  * UBSan -fsanitize=function aborts the suite on a type mismatch. */
 #include "../../src/jerry/inputdev.h"
+/* For JOYPAD_* and the BUTTON_* slot enum, and the same signature rule
+ * again for JoystickSetTeamTap's `bool` parameter (#513). */
+#include "../../src/jerry/joystick.h"
 #include "settings.h"
 
 /* ---- sweep parameters (part of the digest's definition) ------------- */
@@ -122,6 +147,24 @@ static const uint8_t sweep_hi_bytes[4] = { 0x00, 0x01, 0x80, 0x81 };
  * `phase_seen != 0x0F`, which reads $D under the inversion.  This digest
  * folds the raw register words, so a constant phase offset moves it. */
 #define EXPECT_DIGEST_FULL_WITH_MOUSE 0x5E1858EAu
+
+/* Fifth sweep (#513): the same register domain with a Team Tap on BOTH
+ * ports and all four sockets of each port seeded.  Like the mouse digest
+ * this is measured on the feature, not on develop -- develop cannot
+ * produce it.  It is what stops a tap that decodes to the wrong socket,
+ * the wrong row, or nothing at all from passing: every other tap
+ * assertion below tests one bit or one button, and a table with two
+ * entries transposed would satisfy them all. */
+#define EXPECT_DIGEST_TEAMTAP 0x480880C4u
+
+/* Detection probe, verbatim from the Joypad-TeamTap Tester (Domin, 2000)
+ * at file offsets 0x272 / 0x2F2: socket 3 row 1 on the port under test,
+ * the other port's nibble parked at $F.  TR10: bit CLEAR means an adaptor
+ * is present. */
+#define TAP_PROBE_P1 0x81FAu     /* port-1 nibble $A, port 2 parked */
+#define TAP_PROBE_P2 0x815Fu     /* port-2 nibble $5, port 1 parked */
+#define TAP_DETECT_BIT_P1 0x0001u  /* JOYBUTS B0 */
+#define TAP_DETECT_BIT_P2 0x0004u  /* JOYBUTS B2 */
 
 /* ---- FNV-1a ---------------------------------------------------------- */
 
@@ -226,18 +269,113 @@ static void run_sweep(uint32_t *out_full, uint32_t *out_port1,
    *out_reads = reads;
 }
 
+/* ---- the Team Tap sweep (#513) --------------------------------------
+ *
+ * A SEPARATE function, deliberately.  run_sweep() above and its three
+ * constants are the identity proof; the moment its loop bounds change,
+ * those constants move and the proof is gone.  This one seeds all
+ * JOYPAD_BUTTON_SLOTS (84) slots per port instead of the socket-0 21,
+ * and is only ever run with taps attached.
+ *
+ * Seeding sockets 1-3 is the load-bearing part.  Without it a tap that
+ * resolved every non-socket-0 code to an all-released socket would fold
+ * exactly the same bytes as one that resolved them correctly. */
+static void run_teamtap_sweep(uint32_t *out_full, unsigned long *out_reads)
+{
+   uint32_t digest     = FNV1A_OFFSET;
+   unsigned long reads = 0;
+   int ntsc_idx;
+   unsigned hi_idx, lo, vec, slot, off;
+
+   rng_state = SWEEP_SEED;
+
+   for (ntsc_idx = 0; ntsc_idx < 2; ntsc_idx++)
+   {
+      p_vjs->hardwareTypeNTSC = (ntsc_idx == 0) ? true : false;
+
+      for (hi_idx = 0; hi_idx < 4; hi_idx++)
+      {
+         for (lo = 0; lo < SWEEP_ROW_BYTES; lo++)
+         {
+            uint16_t word = (uint16_t)(((uint16_t)sweep_hi_bytes[hi_idx] << 8)
+                                       | (uint16_t)lo);
+
+            for (vec = 0; vec < SWEEP_VECTORS; vec++)
+            {
+               for (slot = 0; slot < JOYPAD_BUTTON_SLOTS; slot++)
+               {
+                  uint32_t r0 = rng_next();
+                  uint32_t r1 = rng_next();
+                  p_joypad0Buttons[slot] = (r0 & 1u)
+                     ? (uint8_t)(1u + ((r0 >> 1) & 0x7Fu)) : (uint8_t)0;
+                  p_joypad1Buttons[slot] = (r1 & 1u)
+                     ? (uint8_t)(1u + ((r1 >> 1) & 0x7Fu)) : (uint8_t)0;
+               }
+
+               p_JoystickWriteWord(0, word);
+
+               for (off = 0; off < 4; off++)
+               {
+                  fold_word(&digest, p_JoystickReadWord(off));
+                  reads++;
+               }
+            }
+         }
+      }
+   }
+
+   *out_full  = digest;
+   *out_reads = reads;
+}
+
+/* Run the tester ROM's detection probe on one port and report whether the
+ * detect bit came back SET (1 = "no adaptor", per TR10). */
+static int tap_probe_bit_set(int port)
+{
+   p_JoystickWriteWord(0, (uint16_t)(port == 0 ? TAP_PROBE_P1
+                                               : TAP_PROBE_P2));
+   return (p_JoystickReadWord(2)
+           & (uint16_t)(port == 0 ? TAP_DETECT_BIT_P1 : TAP_DETECT_BIT_P2))
+          ? 1 : 0;
+}
+
+/* Is a press in port 1's tap socket 2, row 0, visible at $F14000?
+ *
+ * Socket 2 row 0 is row code $4 on port 1 (the other nibble is parked at
+ * $F, which addresses socket 3 -- unreadable unless a tap is attached).
+ * Row 0's first line is BUTTON_U, which the read path drives on
+ * $F14000 bit 8, active low. */
+static int tap_socket2_up_visible(void)
+{
+   unsigned slot = 2u * JOYPAD_SOCKET_SLOTS + (unsigned)BUTTON_U;
+   uint16_t got;
+
+   memset(p_joypad0Buttons, 0, JOYPAD_BUTTON_SLOTS);
+   memset(p_joypad1Buttons, 0, JOYPAD_BUTTON_SLOTS);
+   p_joypad0Buttons[slot] = 0xFF;
+
+   p_JoystickWriteWord(0, 0x80F4u);
+   got = p_JoystickReadWord(0);
+
+   memset(p_joypad0Buttons, 0, JOYPAD_BUTTON_SLOTS);
+   return (got & 0x0100u) ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
    harness_config cfg = HARNESS_CONFIG_DEFAULT;
-   harness_result results[4];
+   harness_result results[12];
    unsigned num_results = 0;
    int print_only = 0;
    int i;
    int ok_full, ok_port1, ok_mouse_port1, ok_mouse_full;
+   int ok_tap_detect, ok_tap_isolated, ok_tap_readable;
+   int ok_tap_digest, ok_tap_restore;
 
    void (*p_InputDevSetType)(int, InputDevType);
    void (*p_InputDevReset)(void);
    void (*p_InputDevFeed)(int, int32_t, int32_t, uint32_t);
+   void (*p_JoystickSetTeamTap)(int, bool);
 
    uint32_t digest_full  = FNV1A_OFFSET;
    uint32_t digest_port1 = FNV1A_OFFSET;
@@ -247,10 +385,23 @@ int main(int argc, char **argv)
    uint32_t mouse_port1  = FNV1A_OFFSET;
    unsigned long mouse_reads = 0;
 
+   uint32_t tap_full     = FNV1A_OFFSET;
+   unsigned long tap_reads = 0;
+   uint32_t restore_full  = FNV1A_OFFSET;
+   uint32_t restore_port1 = FNV1A_OFFSET;
+   unsigned long restore_reads = 0;
+   int p1_off = 1, p1_on = 0, p2_off = 1, p2_on = 0;
+   int p2_while_p1_on = 0, sock_off = 1, sock_on = 0;
+
    char detail_full[192];
    char detail_port1[192];
    char detail_mouse[192];
    char detail_mouse_full[192];
+   char detail_tap_detect[192];
+   char detail_tap_isolated[192];
+   char detail_tap_readable[192];
+   char detail_tap_digest[192];
+   char detail_tap_restore[192];
 
    for (i = 1; i < argc; i++)
    {
@@ -301,6 +452,19 @@ int main(int argc, char **argv)
    p_InputDevReset   = (void (*)(void))harness_dlsym(&cfg, "InputDevReset");
    p_InputDevFeed    = (void (*)(int, int32_t, int32_t, uint32_t))
                           harness_dlsym(&cfg, "InputDevFeed");
+   p_JoystickSetTeamTap = (void (*)(int, bool))
+                          harness_dlsym(&cfg, "JoystickSetTeamTap");
+
+   if (!p_JoystickSetTeamTap)
+   {
+      fprintf(stderr,
+              "joymatrix_identity: JoystickSetTeamTap is not in the test "
+              "ABI, so the Team Tap assertions cannot run.  Since #513 it "
+              "is covered by the Joystick* wildcard in exports-test.list / "
+              "link-test.T.  Exiting 77 (skip), NOT 0.\n");
+      harness_shutdown(&cfg);
+      return 77;
+   }
 
    if (!p_InputDevSetType || !p_InputDevReset || !p_InputDevFeed)
    {
@@ -336,10 +500,48 @@ int main(int argc, char **argv)
    p_InputDevSetType(1, INPUTDEV_PAD);
    p_InputDevReset();
 
+   /* ---- Team Tap (#513) ---------------------------------------------
+    *
+    * The detection probe first, with NO tap, so the "no adaptor" answer
+    * is measured on the same build that has to produce the "adaptor
+    * present" one -- a test that only ever checked the present case
+    * would pass on a core that cleared the bit unconditionally. */
+   p1_off = tap_probe_bit_set(0);
+   p2_off = tap_probe_bit_set(1);
+   sock_off = tap_socket2_up_visible();
+
+   p_JoystickSetTeamTap(0, true);
+   p1_on          = tap_probe_bit_set(0);
+   /* Port 2's own probe, with a tap on port 1 ONLY: the two adapters are
+    * independent, so this must still report "no adaptor". */
+   p2_while_p1_on = tap_probe_bit_set(1);
+   sock_on        = tap_socket2_up_visible();
+
+   p_JoystickSetTeamTap(1, true);
+   p2_on = tap_probe_bit_set(1);
+
+   /* Fifth sweep: both taps attached, all four sockets seeded. */
+   run_teamtap_sweep(&tap_full, &tap_reads);
+
+   /* And detach, then re-run the ORIGINAL sweep: identity has to come
+    * back, or a session that ever selected a tap stays perturbed. */
+   p_JoystickSetTeamTap(0, false);
+   p_JoystickSetTeamTap(1, false);
+   memset(p_joypad0Buttons, 0, JOYPAD_BUTTON_SLOTS);
+   memset(p_joypad1Buttons, 0, JOYPAD_BUTTON_SLOTS);
+
+   run_sweep(&restore_full, &restore_port1, &restore_reads);
+
    ok_full        = (digest_full  == EXPECT_DIGEST_FULL);
    ok_port1       = (digest_port1 == EXPECT_DIGEST_PORT1);
    ok_mouse_port1 = (mouse_port1  == EXPECT_DIGEST_PORT1);
    ok_mouse_full  = (mouse_full   == EXPECT_DIGEST_FULL_WITH_MOUSE);
+   ok_tap_detect  = (p1_off == 1 && p1_on == 0 && p2_off == 1 && p2_on == 0);
+   ok_tap_isolated = (p2_while_p1_on == 1);
+   ok_tap_readable = (sock_off == 0 && sock_on == 1);
+   ok_tap_digest   = (tap_full == EXPECT_DIGEST_TEAMTAP);
+   ok_tap_restore  = (restore_full  == EXPECT_DIGEST_FULL
+                      && restore_port1 == EXPECT_DIGEST_PORT1);
 
    if (print_only)
    {
@@ -355,6 +557,12 @@ int main(int argc, char **argv)
              mouse_full);
       printf("joymatrix_identity: (port-1 bits with the mouse    = 0x%08X, "
              "must equal EXPECT_DIGEST_PORT1)\n", mouse_port1);
+      printf("joymatrix_identity: EXPECT_DIGEST_TEAMTAP         = 0x%08Xu"
+             "  (%lu reads, all %d slots/port seeded)\n",
+             tap_full, tap_reads, (int)JOYPAD_BUTTON_SLOTS);
+      printf("joymatrix_identity: (identity after detaching     = 0x%08X / "
+             "0x%08X, must equal FULL / PORT1)\n",
+             restore_full, restore_port1);
       harness_shutdown(&cfg);
       return 0;
    }
@@ -406,6 +614,56 @@ int main(int argc, char **argv)
    results[num_results].detail = detail_mouse_full;
    num_results++;
 
+   /* ---- Team Tap assertions (#513) ---------------------------------- */
+
+   sprintf(detail_tap_detect,
+           "socket 3 row 1: port 1 B0 %d->%d, port 2 B2 %d->%d "
+           "(TR10: 1 = no adaptor, 0 = adaptor present)",
+           p1_off, p1_on, p2_off, p2_on);
+   results[num_results].status = ok_tap_detect ? "PASS" : "FAIL";
+   results[num_results].name   = "teamtap_detect_probe";
+   results[num_results].detail = detail_tap_detect;
+   num_results++;
+
+   sprintf(detail_tap_isolated,
+           "port 2's detect bit with a tap on port 1 only: %d (expected 1)",
+           p2_while_p1_on);
+   results[num_results].status = ok_tap_isolated ? "PASS" : "FAIL";
+   results[num_results].name   = "teamtap_detect_per_port";
+   results[num_results].detail = detail_tap_isolated;
+   num_results++;
+
+   sprintf(detail_tap_readable,
+           "port 1 socket 2 row 0 Up at $F14000 bit 8: visible=%d without a "
+           "tap (expected 0), visible=%d with one (expected 1)",
+           sock_off, sock_on);
+   results[num_results].status = ok_tap_readable ? "PASS" : "FAIL";
+   results[num_results].name   = "teamtap_socket_readable";
+   results[num_results].detail = detail_tap_readable;
+   num_results++;
+
+   sprintf(detail_tap_digest,
+           "full digest with a Team Tap on both ports: 0x%08X "
+           "(expected 0x%08X); %lu reads, all %d slots/port seeded",
+           tap_full, (unsigned)EXPECT_DIGEST_TEAMTAP, tap_reads,
+           (int)JOYPAD_BUTTON_SLOTS);
+   results[num_results].status = ok_tap_digest ? "PASS" : "FAIL";
+   results[num_results].name   = "teamtap_full_digest";
+   results[num_results].detail = detail_tap_digest;
+   num_results++;
+
+   /* THE ACCEPTANCE CONDITION, restated as a second measurement: the two
+    * develop constants have to come back after the taps are detached. */
+   sprintf(detail_tap_restore,
+           "after detaching both taps: 0x%08X / 0x%08X "
+           "(expected 0x%08X / 0x%08X)",
+           restore_full, restore_port1,
+           (unsigned)EXPECT_DIGEST_FULL, (unsigned)EXPECT_DIGEST_PORT1);
+   results[num_results].status = ok_tap_restore ? "PASS" : "FAIL";
+   results[num_results].name   = "teamtap_detach_restores_identity";
+   results[num_results].detail = detail_tap_restore;
+   num_results++;
+
    harness_report(&cfg, results, num_results);
 
    if (!ok_mouse_port1 || !ok_mouse_full)
@@ -423,9 +681,19 @@ int main(int argc, char **argv)
               "deliberate, say so and re-baseline with --print in the same "
               "commit; do not silently update the constants.\n");
 
+   if (!ok_tap_detect || !ok_tap_isolated || !ok_tap_readable
+       || !ok_tap_digest)
+      fprintf(stderr,
+              "joymatrix_identity: the TEAM TAP decode changed (#513).  The "
+              "row-code/socket table lives in src/jerry/joystick.c and comes "
+              "from TR10 p.18; the detect bit is socket 3 row 1 only.  Fix "
+              "the decode, do not re-baseline the digest.\n");
+
    harness_shutdown(&cfg);
-   /* All four assertions gate the exit status.  (An earlier revision folded
+   /* Every assertion gates the exit status.  (An earlier revision folded
     * the mouse result into ok_port1 instead; a FAIL row that does not reach
     * the exit code is the skip-as-pass class wearing a different hat.) */
-   return (ok_full && ok_port1 && ok_mouse_port1 && ok_mouse_full) ? 0 : 1;
+   return (ok_full && ok_port1 && ok_mouse_port1 && ok_mouse_full
+           && ok_tap_detect && ok_tap_isolated && ok_tap_readable
+           && ok_tap_digest && ok_tap_restore) ? 0 : 1;
 }

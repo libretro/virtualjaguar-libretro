@@ -1,0 +1,59 @@
+name: Publish Jaguar toolchain image
+
+# Publishes the pinned Jaguar cross-development toolchain (rmac/rln/lyxass/
+# pc_jagcrypt, built from docker/jaguar-toolchain.Dockerfile) to GHCR so it
+# can be `docker pull`ed with no build step, instead of every consumer
+# rebuilding it from tools/jaguar-toolchain/PIN. Separate from
+# jaguar-toolchain.yml (Task 8), which builds the Dockerfile on every PR/push
+# (via a no-push "Validate Dockerfile builds" step) and smoke-tests the
+# resulting image, but never pushes it anywhere — that workflow validates
+# the Dockerfile, this one ships it.
+#
+# Push-triggered only on develop: a tagged image from an unmerged branch
+# would be indistinguishable from a real one at :latest. workflow_dispatch
+# covers a manual re-publish (e.g. after a registry issue) without needing a
+# new commit.
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'tools/jaguar-toolchain/PIN'
+      - 'tools/jaguar-toolchain/setup.sh'
+      - 'docker/jaguar-toolchain.Dockerfile'
+      - 'docker/jaguar-toolchain.Dockerfile.dockerignore'
+      - '.github/workflows/jaguar-toolchain-image.yml'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Build + push toolchain image
+    # workflow_dispatch has no branch restriction of its own -- without this,
+    # a manual dispatch from any branch would push :latest, contradicting the
+    # push-trigger's develop-only guard above and the invariant this file
+    # claims ("a tagged image from an unmerged branch would be
+    # indistinguishable from a real one at :latest").
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read    # checkout only
+      packages: write   # push the image to GHCR
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/jaguar-toolchain.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/libretro/virtualjaguar-libretro-jaguar-toolchain:latest
+            ghcr.io/libretro/virtualjaguar-libretro-jaguar-toolchain:${{ github.sha }}

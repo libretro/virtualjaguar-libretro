@@ -19,7 +19,7 @@ The Blitter is a 64-bit DMA engine in TOM that performs pixel-level operations. 
 
 The blitter operates in an inner/outer loop pattern. The inner loop processes pixels across a line; the outer loop steps to the next line. B_COUNT register sets both counts.
 
-Source: `src/tom/blitter.c`
+Derived from: `src/tom/blitter.c` -- NOT verified against the JTRM
 
 ## Address Generators
 

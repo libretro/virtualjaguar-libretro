@@ -163,6 +163,35 @@ pads are fed to the player slots (`$57E4`/`$57E8`, selected by `$57DB`).
 - Async `$A4` with bit 0 set (e.g. `$A401`) during a call = line drop →
   LOST PHONE CONNECTION.
 
+### Why the local player sees their own move late (issue #498)
+
+The data phase is ~10 console bytes per direction per frame (4 × `$F0xx`
++ the `$F301` marker). At the ASICLK = `$56` the driver settles on, one
+character frame is `11 × 16 × 87 = 15312` RISC cycles ≈ **576 µs**, so a
+packet is ~5.8 ms of pure wire time each way — against a 16.7 ms video
+frame, with `$57DD`'s strict lockstep meaning the local pad cannot be
+*displayed* until the whole exchange completes. The instinct is to blame
+the network; the arithmetic says the emulated cable is the choke point,
+and `TCP_NODELAY` plus the adaptive reply wait already cover the network
+side.
+
+This is authentic — a real Voice Modem at 19200 baud was exactly this
+slow — so it is addressed as an **opt-in enhancement**, not a bug fix:
+core option `virtualjaguar_netlink_speed` (default Off; `auto`, #552)
+divides the character frame time by a fixed 4x once the two console
+instances negotiate that out-of-band and agree (see
+`docs/netlink-design.md`'s negotiation section) — never a magnitude the
+player picks, and never applied unilaterally by one side. The knob is a
+single one: `UARTFrameUsec()` in `src/jerry/uart.c` schedules both the TX
+drain and the RX arrival, and it takes the untouched stock branch
+whenever the option is off, no link transport is selected, or the peer
+has not (yet, or ever) confirmed. It changes only *when* bytes appear,
+never which bytes or in what order. Unlike the config-level "auto"
+request, the CONFIRMED divisor is machine-affecting the moment a peer
+agrees (it reschedules the event queue) and IS part of the savestate
+(`STATE_VERSION_TEAMTAP`/v13, extended in place) — see
+`docs/netlink-user-guide.md`.
+
 ## What the emulation does (src/jerry/voicemodem.c)
 
 A virtual modem in front of the jlink transport (`virtualjaguar_uart_device
@@ -176,6 +205,13 @@ can never miss it. ASICLK is ignored — the UART already paces bytes; the
 modem is rate-agnostic. Modem session state is host-side (like jlink's
 sockets) and deliberately not serialized in savestates: loading a state
 mid-call behaves as a pulled phone line.
+
+**Host-side voice chat** (the JVM's actual selling point — simultaneous
+voice + data) is a separate, opt-in feature that never touches this UART
+protocol or the emulated machine: see `docs/voice-chat-design.md`
+(issue #485). DTMF *tone audio* remains out of scope here and there —
+tones never reached the TV on real hardware; functional DTMF signalling
+(`$8A2n` / `$6800`) is already enough for Ultra Vortek.
 
 ## Troubleshooting a call that never connects
 
