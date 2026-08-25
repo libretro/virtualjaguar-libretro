@@ -170,27 +170,30 @@ Sanity check on 114: the 3-instruction body costs a nominal 26 cycles on a
 **If you change an `ITERATIONS` value, re-measure and update both the `.s`
 comment and the tool's budget block.**
 
-Measured for `benchgpu_arith.j64` (2,000,000 iterations):
+Measured for `benchgpu_arith.j64` (2,000,000 iterations). **Correction
+(fix round 1, 2026-08-24): the `gpu_pipeline_timing=enabled` row below was
+previously published as `86` (flat, no response). That was never re-measured
+after being copied from an earlier draft of this table -- a direct run shows
+it moves to `172`, a ~100% jump, the largest relative move of any
+configuration tested against this ROM:**
 
 | configuration | done_frame |
 |---|---|
 | harness defaults | 86 |
-| `gpu_pipeline_timing=enabled` | 86 |
+| `gpu_pipeline_timing=enabled` | 172 |
 | `dram_timing=enabled` | 86 |
 | PAL | 86 |
 | both + `VJ_DRAM_SCALE=8` | 172 |
 | both + `VJ_DRAM_SCALE=12` | 172 |
 | both + `VJ_DRAM_SCALE=16` | 172 |
 
-Unlike `bench68k.j64`, `dram_timing` alone doesn't move this ROM at all: the
-2M-iteration hot loop runs entirely out of GPU local RAM and touches external
-memory only for its two sentinel STOREs. The `VJ_DRAM_SCALE` jump to 172 (and
-then flat regardless of scale) comes from the fixed-size 68K copy loop that
-moves the ~110-byte GPU blob from cart ROM (external, DRAM-timed) into GPU
-local RAM before GPUGO -- a bounded one-time cost, not something that grows
-with the scale knob the way `bench68k.j64`'s every-instruction-fetch-from-cart
-cost does. The tools use the same **600** budget as `bench68k.j64` for
-consistency across the five ROMs; it clears 172 with ~3.5x margin.
+`dram_timing` alone doesn't move this ROM: the 2M-iteration hot loop runs
+entirely out of GPU local RAM and touches external memory only for its two
+sentinel STOREs, and `VJ_DRAM_SCALE` only scales external-memory latency.
+`gpu_pipeline_timing` is the mover, and it roughly *doubles* the completion
+frame -- see the explanation after the branch-ROM table below, which covers
+both ROMs together. The tools use the same **600** budget as `bench68k.j64`
+for consistency across the five ROMs; it clears 172 with ~3.5x margin.
 
 Measured for `benchgpu_branch.j64` (2,000,000 iterations, 21-instruction
 body -- see the `.s` for the exact composition: 1 CMPQ + 8 not-taken
@@ -206,20 +209,64 @@ JR/NOP pairs + ADDQ + SUBQ + 1 JUMP/NOP loop closer, ~90% branch dispatch):
 | both + `VJ_DRAM_SCALE=12` | 113 |
 | both + `VJ_DRAM_SCALE=16` | 113 |
 
-This is exactly the dispatch-vs-body signal #536 was written to surface:
-`benchgpu_arith.j64`'s completion frame (86) is **flat across every
-configuration**, `dram_timing` and `gpu_pipeline_timing` included. This
-ROM's is not -- `gpu_pipeline_timing=enabled` alone moves it from 91 to
-113 (a ~24% jump) despite touching main RAM no more often than the
-arithmetic ROM (two sentinel STOREs each). Same local-RAM hot loop, same
-iteration count, same external-memory footprint; the only structural
-difference is 8 conditional JR/NOP pairs per iteration in place of 14 ALU
-ops. `dram_timing` alone still doesn't move either ROM (both loops run
-entirely out of GPU local RAM), and `VJ_DRAM_SCALE` has no further effect
-once `gpu_pipeline_timing` is already enabled -- the extra cost here comes
-from the pipeline model charging for control-flow dispatch, not from DRAM
-access latency. The tools use the same **600** budget as the other ROMs;
-it clears 113 with ~5.3x margin.
+### `gpu_pipeline_timing` response: arith moves MORE than branch, not less
+
+An earlier draft of this document (and `task-3-report.md`) claimed
+`benchgpu_arith.j64` stayed flat under every configuration including
+`gpu_pipeline_timing`, and that only `benchgpu_branch.j64` responded to it.
+**That was false and came from an unverified copy of the arith row above.**
+Directly measured, both ROMs respond, and arith responds *more*, both in
+absolute frames (+86 vs. +22) and relative terms (+100% vs. +24%):
+
+| ROM | defaults | `gpu_pipeline_timing=enabled` | delta |
+|---|---|---|---|
+| `benchgpu_arith.j64` | 86 | 172 | +86 frames (+100%) |
+| `benchgpu_branch.j64` | 91 | 113 | +22 frames (+24%) |
+
+`dram_timing` alone still doesn't move either ROM (both loops run entirely
+out of GPU local RAM), and `VJ_DRAM_SCALE` has no further effect once
+`gpu_pipeline_timing` is already enabled for either ROM -- confirming the
+extra cost in both cases comes from the pipeline model's internal-RISC-time
+accounting, not from DRAM access latency.
+
+The mechanism (read from `src/tom/gpu.c` `GPUPipeCheckUse()`, not guessed):
+`gpu_pipeline_timing` implements a **write-back port conflict** rule off the
+JTRM's "Register Write-Back" section -- the GPU register bank is dual-port,
+so back-to-back register-writing instructions can only avoid a 1-cycle stall
+when the second instruction's *sole* read target is the first instruction's
+write-back register. Any instruction that reads **two** registers, neither of
+which is the previous instruction's destination, pays the stall
+unconditionally (`gpu.c` around the "Write-back port conflict" comment).
+
+- **`benchgpu_arith.j64`'s** loop body is 16 back-to-back ALU ops
+  (`add`/`sub`/`and`/`or`), each of which both reads two registers and writes
+  a third (JTRM ISA classification 7 = reads-both-writes-dest in
+  `gpu_pipe_flags[]`). Consecutive pairs almost never share the prior
+  instruction's destination as an operand, so nearly every one of the 16 ALU
+  ops eats the 1-cycle write-back stall -- roughly +16 cycles on a ~20-cycle
+  nominal body, which is why the completion frame very nearly doubles (86 ->
+  172, and 172/86 = 2.00).
+- **`benchgpu_branch.j64`'s** loop body is dominated by JR and its
+  mandatory delay-slot NOP (16 of 21 instructions across the 8 not-taken
+  pairs). Both JR and NOP are classified as reading zero registers
+  (`gpu_pipe_flags[]` index 0 for both), so they structurally cannot trigger
+  the two-register-read write-back conflict -- only the loop's CMPQ, ADDQ,
+  and SUBQ (each of which reads at most one register per the same table) are
+  even eligible, and none of those pairings triggers the rule either. What
+  branch-heavy code does pay for instead is the JTRM's documented taken-JUMP
+  refill cost and the flags interlock between CMPQ and a conditional
+  JR/JUMP -- smaller, less frequent charges, which is why the ROM moves by
+  22 frames instead of 86.
+
+In short: `gpu_pipeline_timing`'s dominant cost in this model is a per-ALU-op
+register-bank contention charge, not a branch-misprediction charge -- so a
+tightly-chained ALU body (arith) is the *worse* case for it, and a
+control-flow-heavy body built from register-free JR/NOP pairs (branch) is
+comparatively cheap. This is the opposite of the "branch-heavy code is what
+pipeline timing punishes" intuition #536 set out to test, and is worth
+knowing before using either ROM as a stand-in for real branch-misprediction
+cost. The tools use the same **600** budget as the other ROMs for both
+ROMs; it clears the highest measured frame (172) with ~3.5x margin.
 
 ---
 
