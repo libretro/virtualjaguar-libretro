@@ -125,8 +125,19 @@ tags into a page fragment** — that is how tags drift apart page to page.
   gated behind `VJ_SITE_FX_FETCH=1`) to drive a VHS/particle hero effect.
   That pipeline was removed with the 1994-chrome redesign. If third-party
   effect code is ever wanted again, it must go back through a deploy-time
-  fetch — never vendored into this GPLv3 tree, because the Canvas UI
+  fetch, never vendored into this GPLv3 tree, because the Canvas UI
   Commons Clause forbids redistributing ported components.
+- **Copy standard: zero em dashes and zero en dashes**, anywhere the reader
+  can see, `<title>` and `title=` tooltips included. Use a hyphen. It is a
+  house style (the site is written in a flat 1994-readme register, and that
+  register is 7-bit ASCII), and it is fragile, because dashes arrive from
+  three directions: prose typed into a fragment, the layout template in
+  `build_site.py`, and the *generated* boot matrices. The third is handled
+  by `build_site.normalize_dashes()`, applied in both matrix parsers so the
+  rule holds however `cart_boot_matrix.sh` writes a note; the `.md` files
+  themselves are never hand-edited, since the compatibility page's whole
+  claim is that nothing on it was typed by hand. `check_site.py` fails the
+  build on any dash that gets through.
 
 `scripts/check_site.py` enforces all of the above against the built output:
 one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local
@@ -135,7 +146,8 @@ one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local
 that actually exists, JSON-LD that parses with the expected `@type` and no
 fabricated rating data, distinct titles and descriptions, a well-formed
 sitemap listing exactly the generated pages, and no tracker or external-asset
-reference. Add a check there when you add a guarantee here.
+reference, plus the zero-em-dash copy standard. Add a check there when you add
+a guarantee here.
 
 ## Official libretro documentation (link-only, on purpose)
 

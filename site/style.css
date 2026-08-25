@@ -66,15 +66,21 @@
    * generous; readability is protected separately by holding p/ul/ol to
    * 46rem inside it. */
   --measure: 72rem;
-  /* Impact leads on purpose.  It is the one condensed-heavy face that is
-   * actually present on essentially every Mac and Windows machine, and it
-   * is the register Jaguar box art shouted in.  Putting anything ahead of
-   * it means the h1 lands on whatever narrow-but-light face happens to be
-   * installed, and the one shout on the page comes out a whisper.  The tail
-   * carries --font-display-weight for hosts with no condensed face at all. */
+  /* Impact leads on purpose.  It is the one condensed-heavy face actually
+   * present on essentially every Mac and Windows machine, and it is the
+   * register Jaguar box art shouted in.  Putting anything ahead of it means
+   * the h1 lands on whatever narrow-but-light face happens to be installed
+   * and the one shout on the page comes out a whisper -- which is what the
+   * first cut of this stack did.
+   *
+   * The tail is the Linux path.  On a host with none of these the h1 lands
+   * on the default sans; `font-stretch: condensed` on h1 asks a variable or
+   * multi-width family to narrow, and where nothing obliges the headline
+   * simply renders wide and plain.  That degrades gracefully and is not
+   * worth a webfont, which this site does not get to have anyway. */
   --font-display: Impact, Haettenschweiler, "Franklin Gothic Demi Cond",
-    "Arial Narrow", "Liberation Sans Narrow", "DejaVu Sans Condensed",
-    sans-serif;
+    "Arial Narrow", "Liberation Sans Narrow", "Nimbus Sans Narrow",
+    "DejaVu Sans Condensed", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "DejaVu Sans Mono", "Liberation Mono", monospace;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -259,7 +265,8 @@ main {
 /* The one display shout per page. */
 h1 {
   font-family: var(--font-display);
-  font-weight: 400;
+  font-weight: 400;         /* Impact has one weight; 700 fakes an ugly bold */
+  font-stretch: condensed;  /* the fallback path; see --font-display */
   text-transform: uppercase;
   letter-spacing: 0.015em;
   font-size: clamp(2.3rem, 7vw, 3.9rem);
@@ -491,6 +498,32 @@ figure.smooth img { image-rendering: auto; }
  * panels to 110px each, which would destroy the thing being evidenced. */
 .shot.wide { margin-left: -1.1rem; margin-right: -1.1rem; }
 .shot.wide .well img { min-width: 42rem; }
+
+/* That scroll needs an affordance, because iOS Safari hides overflow
+ * scrollbars until they are touched: a phone reader would see panel one of
+ * three and no reason to believe the other two exist.  A chunky beveled
+ * always-visible scrollbar is the honest fix AND the period-correct one --
+ * 1994 scroll bars were exactly this, a raised thumb in a sunken track.
+ * This is an affordance on a real scroll region, not a decorative cue. */
+.shot.wide .well {
+  scrollbar-width: thin;
+  scrollbar-color: var(--red-fill) var(--code-bg);
+}
+.shot.wide .well::-webkit-scrollbar {
+  height: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.shot.wide .well::-webkit-scrollbar-track {
+  background: var(--code-bg);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.shot.wide .well::-webkit-scrollbar-thumb {
+  background: var(--red-fill);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+}
 
 figcaption {
   font-size: 0.86rem;
