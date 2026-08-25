@@ -169,6 +169,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
+      "virtualjaguar_widescreen",
+      "Widescreen (Stretch to 16:9)",
+      NULL,
+      "Report a 16:9 aspect ratio to the frontend instead of the Jaguar's native 4:3, for a cosmetic horizontal stretch. The Jaguar has no wider display mode, so this changes only the aspect metadata used to letterbox/scale the picture -- the emulated framebuffer is identical either way. Off by default.",
+      NULL,
+      "video",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_pertitle_defaults",
       "Per-Title Enhancement Defaults",
       NULL,

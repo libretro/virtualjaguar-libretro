@@ -123,6 +123,12 @@ static int hires_restart_notice_logged = 0;
  * keep, and would desync anything running), so the change is reported and
  * takes effect on restart. */
 static int hook_restart_notice_logged = 0;
+/* Widescreen aspect override (#530): presentation metadata only, the
+ * emulated framebuffer is untouched, so unlike the resolution/hooks
+ * options above this can apply live -- no restart notice needed, just a
+ * one-shot SET_GEOMETRY the next retro_run() sees this flag pending. */
+static bool widescreen_enabled          = false;
+static bool widescreen_geometry_pending = false;
 
 #ifdef VJ_TRACE
 /* vjtrace per-session frame counter (see the use site in retro_run()).
@@ -2274,6 +2280,29 @@ static void check_variables(void)
       }
    }
 
+   /* Widescreen aspect override (#530): global presentation option, no
+    * titledb pairs[] yet (Phase 1 -- see docs/enhancement-hooks.md for
+    * why this stays a plain option rather than a per-title default).
+    * Raw read, like texture_dump/texture_replace above: a stretch
+    * preference is a viewer choice, never a per-title substitution.
+    * Framebuffer contents are unaffected either way; only the geometry
+    * metadata handed to the frontend changes, so this can flip live --
+    * flag it and let retro_run() fire the actual SET_GEOMETRY once,
+    * rather than doing it here (retro_get_system_av_info() is defined
+    * later in this file; retro_run() already runs after it). */
+   var.key = "virtualjaguar_widescreen";
+   var.value = NULL;
+   {
+      bool ws_want = (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var)
+                      && var.value
+                      && strcmp(var.value, "enabled") == 0);
+      if (ws_want != widescreen_enabled)
+      {
+         widescreen_enabled = ws_want;
+         widescreen_geometry_pending = true;
+      }
+   }
+
    /* Enhancement hooks (issue #370) are applied ONCE at content load, so
     * this is compare-and-log only: never re-latch the gate here, or a
     * mid-session toggle would disagree with the bytes actually in ROM.
@@ -3659,8 +3688,13 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
     * declared maximum, which some video drivers clip or drop.  The nominal
     * size is carried by base_height above; this is the allocation bound. */
    info->geometry.max_height   = 256 * shadowHiresN;
-   /* Aspect ratio stays 4/3: Nx changes pixel count, not picture shape. */
-   info->geometry.aspect_ratio = 4.0 / 3.0;
+   /* Aspect ratio is 4/3 by construction (Nx changes pixel count, not
+    * picture shape) unless the widescreen option (#530) overrides the
+    * metadata for a cosmetic 16/9 stretch. Presentation-only: the
+    * framebuffer pixels this frame emits are identical either way, only
+    * how the frontend letterboxes/stretches them changes. */
+   info->geometry.aspect_ratio = widescreen_enabled ? (16.0 / 9.0)
+                                                     : (4.0 / 3.0);
 }
 
 void retro_set_controller_port_device(unsigned port, unsigned device)
@@ -5591,6 +5625,17 @@ void retro_run(void)
 
       JaguarSetScreenPitch(game_width);
 
+      retro_get_system_av_info(&g_av_info);
+      environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
+   }
+
+   /* Widescreen aspect toggle (#530): pixel dimensions never change, so
+    * the tomWidth/tomHeight check above never trips for this option --
+    * check_variables() flags the pending notify instead, fired here
+    * exactly once per actual change (not every frame). */
+   if (widescreen_geometry_pending)
+   {
+      widescreen_geometry_pending = false;
       retro_get_system_av_info(&g_av_info);
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &g_av_info);
    }
