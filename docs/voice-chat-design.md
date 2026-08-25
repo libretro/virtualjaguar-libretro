@@ -67,12 +67,15 @@ Availability follows `JLinkDiscActive()` (TCP host / TCP client only):
 | Mode | Voice |
 |------|-------|
 | TCP host / TCP client | Works |
-| Netpacket (RetroArch netplay) | Unavailable — no peer address exposed to the core; log once, data-only |
+| Netpacket (RetroArch netplay) | Unavailable in #584 — follow-up: `docs/voice-chat-netplay-design.md` |
 | Loopback | No peer; local mic monitor still works for a mic check |
 
-Netpacket was rejected for voice: its payloads have no framing today, so
+Netpacket was deferred in #584: its payloads had no framing, so
 multiplexing would break wire compat with 3.4.x peers, and the core
-never sees a peer IP to dial a side channel.
+never sees a peer IP to dial a UDP side channel. **Follow-up (accepted
+break):** frame the netpacket pipe (`vjag-netlink-2`), negotiate voice
+capability, carry `VJVC` as unreliable packets — see
+`docs/voice-chat-netplay-design.md`.
 
 ## Wire format
 
