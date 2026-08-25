@@ -42,9 +42,12 @@
 
 <p>
   The striking part: <strong>the DSP sits in a 3–5 instruction wait loop for
-  90–99.7% of every frame</strong> on the titles measured — while still
-  interpreting its full 26.6&nbsp;MHz budget, hundreds of thousands of opcodes
-  per frame, spinning. The 68000 and the Object Processor are noise.
+  90–99.7% of every frame</strong> on the titles measured, while the emulator
+  interprets 416k–590k opcodes per frame doing it. That is more than real
+  silicon could retire in a frame (~443k cycles at 26.59&nbsp;MHz over a
+  60.05&nbsp;Hz field) because pipeline hazards are not modelled — so it is
+  interpreter work, not a hardware budget, which is exactly why skipping it is
+  free. The 68000 and the Object Processor are noise.
 </p>
 <p class="footnote">
   Host profiles on desktop arm64, not device measurements. No on-device Apple TV
@@ -56,8 +59,9 @@
 <ol>
   <li><strong>Turn off Per-Title Enhancement Defaults.</strong> If your game is
       recognised, it is rendering at 2x and/or full-precision Gouraud right now —
-      worth ~30% of the frame on Alien vs Predator. On a low-end device this is
-      step one, not step three.</li>
+      2x and true color together measured ~30% of the frame on Alien vs Predator.
+      AvP's shipped preset is 2x only, so disabling it recovers that share rather
+      than the whole 30%. On a low-end device this is step one, not step three.</li>
   <li><strong>Internal Resolution 1x, True Color off</strong> — the manual
       version of step 1, if you want to keep per-title defaults elsewhere.</li>
   <li><strong>Turn on DSP Idle-Loop Fast-Forward.</strong> The biggest lever, and

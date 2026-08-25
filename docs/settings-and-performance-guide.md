@@ -141,10 +141,13 @@ Run-ahead is unaffected. You can turn them on and off freely without risking a
 save.
 
 **What they cost.** Internal Resolution and True Color are the only two
-enhancements with a real performance price, and it is not small: Alien vs
-Predator's own preset (2x + true color) was measured at roughly **30% of its
-frame time** on a desktop host. On a slow device, these are the first things to
-turn off — see §4.
+enhancements with a real performance price, and it is not small: **2x + true
+color together** were measured at roughly **30% of frame time** on Alien vs
+Predator on a desktop host. Note AvP's shipped preset is **2x only** — #551
+dropped true color from it after a pixel-diff found it changed 0.0000% of
+pixels — so disabling AvP's preset recovers the 2x share of that figure, not
+all of it. On a slow device these are still the first things to turn off; see
+§4.
 
 ### 3.1 Texture packs
 
@@ -189,8 +192,15 @@ mid-game save states) found the cost concentrated in one place:
 
 The striking finding: **the DSP is parked in a 3–5 instruction wait loop for
 90–99.7% of every frame** on the titles measured (Iron Soldier 99.7%, Doom 90%,
-Alien vs Predator 74%) — while still interpreting its full 26.6 MHz cycle
-budget, 416k–590k opcodes per frame, spinning. The GPU does the same thing on
+Alien vs Predator 74%) — while the emulator still interprets **416k–590k
+opcodes per frame** doing it (Iron Soldier 590k, AvP 532k, Doom 461k, niccc
+417k). Note those counts *exceed* what real silicon could retire in a frame:
+26.59 MHz over a 60.05 Hz field is ~443k cycles, and no Jaguar RISC instruction
+takes less than one. The emulated DSP outruns the hardware because pipeline
+hazards are not modelled ([#313](https://github.com/libretro/virtualjaguar-libretro/issues/313))
+— which is the same root cause behind titles that run too fast. So this is
+interpreter work being done, not a hardware cycle budget being filled, and
+that is precisely why skipping it is free. The GPU does the same thing on
 some titles (Alien vs Predator 80%, jagniccc 73%).
 
 Two consequences for you:
@@ -299,7 +309,7 @@ games, and they can break titles that depend on stock timing. If you file a bug,
 reproduce it at 1x first — a bug report from an overclocked session cannot be
 acted on.
 
-**Known bad cases** (all reported against overclock, all still open):
+**Known bad cases** (all reported against overclock; status per row):
 
 | Title | Setting | Symptom | Status |
 |---|---|---|---|
@@ -313,7 +323,8 @@ help — but note that two of them disable idle-skip, so you may be stacking cos
 ### 4.5 Low-end platforms
 
 Honest position first: **no on-device profile has been captured for the Apple TV
-/ A10X class yet.** Issue #509 remains open specifically for that. Every number
+/ A10X class yet.** Issue #601 tracks that capture (its parent epic #509 closed
+once every other child shipped). Every number
 in §4.1 is a desktop host profile. Anyone quoting per-subsystem device
 percentages for tvOS is quoting a projection.
 
