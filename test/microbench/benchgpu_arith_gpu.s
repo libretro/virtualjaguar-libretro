@@ -54,10 +54,8 @@ ITERATIONS      .equ    2000000
         .org    $F03000
         .run
 start:
-        movei   #MB_SENT_START,r14
-        movei   #MB_MAGIC_START,r0
-        store   r0,(r14)
-
+        ; MB_SENT_START/MB_MAGIC_START are written by the 68K at cart boot
+        ; (cartboot.inc convention, Task 1) -- do not write them again here.
         moveq   #0,r1                  ; iterations completed
         movei   #ITERATIONS,r2         ; countdown
 
