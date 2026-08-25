@@ -16,7 +16,8 @@ int JLinkMode(void) { return 0; }
 int JLinkDiscActive(void) { return 0; }
 int JLinkDiscPort(void) { return 42170; }
 const char *JLinkGetTCPHost(void) { return "127.0.0.1"; }
-uint32_t JLinkNowMs(void) { return 1000; }
+static uint32_t g_now_ms = 1000;
+uint32_t JLinkNowMs(void) { return g_now_ms; }
 int JLinkDiscSendTo(const uint8_t *buf, size_t len,
                     const char *to_addr, int to_port)
 {
@@ -216,7 +217,6 @@ static void test_multi_speaker(void)
    int16_t frame_d[VC_FRAME_SAMPLES];
    uint16_t buf[1600];
    unsigned i;
-   int16_t s;
    long sum;
 
    for (i = 0; i < VC_FRAME_SAMPLES; i++)
@@ -255,24 +255,25 @@ static void test_multi_speaker(void)
       sum += (int16_t)buf[i];
    check(sum > 0, "three speakers mix into output");
 
-   /* Fourth speaker reclaims the stalest slot. */
+   /* Fourth speaker reclaims the least-recently-active slot. Advance
+    * the stub clock between claims so lastMs differs; sender 10 is
+    * oldest and must be the one evicted. */
    VoiceChatReset();
    VoiceChatSetEnabled(1);
+   g_now_ms = 1000;
    VoiceChatJitterPushFrom(10, frame_a, 0);
+   g_now_ms = 2000;
    VoiceChatJitterPushFrom(20, frame_b, 0);
+   g_now_ms = 3000;
    VoiceChatJitterPushFrom(30, frame_c, 0);
-   /* Drain so lastMs stays older on early slots; push advances lastMs. */
-   while (VoiceChatJitterPop(&s))
-      ;
-   /* Pop only drains senderId 0; drain via mix instead. */
-   VoiceChatReset();
-   VoiceChatSetEnabled(1);
-   VoiceChatJitterPushFrom(10, frame_a, 0);
-   VoiceChatJitterPushFrom(20, frame_b, 0);
-   VoiceChatJitterPushFrom(30, frame_c, 0);
+   g_now_ms = 4000;
    VoiceChatJitterPushFrom(40, frame_d, 0);
    check(VoiceChatActiveSpeakers() == 3,
          "fourth speaker reclaims; still at cap of 3");
+   check(!VoiceChatHasSpeaker(10), "oldest speaker (10) was reclaimed");
+   check(VoiceChatHasSpeaker(20) && VoiceChatHasSpeaker(30)
+             && VoiceChatHasSpeaker(40),
+         "newer speakers 20/30/40 kept");
 }
 
 int main(void)

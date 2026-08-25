@@ -109,6 +109,8 @@ void VoiceChatJitterPushFrom(uint32_t senderId,
 int  VoiceChatJitterPop(int16_t *out);
 unsigned VoiceChatJitterCount(void);
 unsigned VoiceChatActiveSpeakers(void);
+/* Test hook: 1 if senderId currently owns a jitter slot. */
+int VoiceChatHasSpeaker(uint32_t senderId);
 
 #ifdef __cplusplus
 }

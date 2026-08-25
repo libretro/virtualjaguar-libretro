@@ -444,6 +444,17 @@ unsigned VoiceChatActiveSpeakers(void)
    return n;
 }
 
+int VoiceChatHasSpeaker(uint32_t senderId)
+{
+   unsigned i;
+   for (i = 0; i < VC_MAX_SPEAKERS; i++)
+   {
+      if (vcStreams[i].inUse && vcStreams[i].senderId == senderId)
+         return 1;
+   }
+   return 0;
+}
+
 /* ---- TX helpers ------------------------------------------------------ */
 
 static void VoiceChatSendFrame(uint8_t flags, const int16_t pcm[VC_FRAME_SAMPLES])

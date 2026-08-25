@@ -143,14 +143,12 @@ static void JLinkNPHandleHello(const uint8_t *body, size_t len,
 
    if (flags & JLINK_NP_HELLO_FLAG_WANT)
    {
+      /* Any WANT from a peer is enough to arm: we already replied with a
+         reliable ACK (above) or they already ACKed us. Waiting for an
+         extra ACK bit would only delay mic open. */
       JLinkNPAckedAdd(client_id);
-      /* Treat WANT as enough to arm once we have answered; an ACK bit
-         from them (or a reciprocal WANT) confirms bidirectional. */
-      if ((flags & JLINK_NP_HELLO_FLAG_ACK) || npAckedCount > 0)
-      {
-         npVoiceReady = 1;
-         npVoiceDataOnly = 0;
-      }
+      npVoiceReady = 1;
+      npVoiceDataOnly = 0;
    }
 }
 
@@ -277,24 +275,34 @@ void JLinkNPFlush(void)
       return;
    npTxBuf[0] = JLINK_NP_TYPE_UART;
    npSend(RETRO_NETPACKET_RELIABLE | RETRO_NETPACKET_FLUSH_HINT,
-          npTxBuf, (size_t)(npTxLen + 1), RETRO_NETPACKET_BROADCAST);
+          npTxBuf, (size_t)npTxLen + 1, RETRO_NETPACKET_BROADCAST);
    npTxLen = 0;
 }
 
 void JLinkNPSetVoiceWant(int want)
 {
+   uint32_t now;
+
    npVoiceWant = want ? 1 : 0;
    if (!npVoiceWant)
    {
       JLinkNPVoiceReset();
       return;
    }
+   /* check_variables may call this often — respect the same 500 ms
+      hello throttle as JLinkNPVoiceTick so option re-reads cannot spam
+      reliable broadcasts during the negotiate window. */
    if (npActive && !npVoiceReady && !npVoiceDataOnly)
    {
+      now = JLinkNowMs();
       if (npHelloStartMs == 0)
-         npHelloStartMs = JLinkNowMs();
-      JLinkNPSendHello(0);
-      npHelloLastMs = JLinkNowMs();
+         npHelloStartMs = now;
+      if (npHelloLastMs == 0
+          || (uint32_t)(now - npHelloLastMs) >= JLINK_NP_HELLO_RETRY_MS)
+      {
+         JLinkNPSendHello(0);
+         npHelloLastMs = now;
+      }
    }
 }
 
