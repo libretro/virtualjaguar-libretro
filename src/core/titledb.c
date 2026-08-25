@@ -421,6 +421,10 @@ static int hooks_override_count = 0;
 static const TitleDBNegativePair *negative_override = NULL;
 static int negative_override_count = 0;
 
+/* Test-only positive-pair override; see TitleDBSetPairsForTest below. */
+static const TitleDBPair *pairs_override = NULL;
+static int pairs_override_count = 0;
+
 /*
  * Internal: set the CRC directly.
  * Linear-scan the table to find a match.
@@ -478,12 +482,32 @@ void TitleDBSetContent(const uint8_t *data, size_t size)
 
 /*
  * Lookup: return the preset value for a key in the loaded content, or NULL.
+ * The test override, when installed, REPLACES the table lookup entirely
+ * (it wins regardless of CRC match and a miss in it does not fall back to
+ * the row), same as hooks_override/negative_override -- a fixture that
+ * half-consulted the shipped table would be exactly as fragile as the
+ * shipped-table dependency it exists to remove (issue #590).
  */
 const char *TitleDBOverride(const char *key)
 {
    int i;
 
-   if (current == NULL || key == NULL)
+   if (key == NULL)
+      return NULL;
+
+   if (pairs_override != NULL)
+   {
+      for (i = 0; i < pairs_override_count; i++)
+      {
+         if (pairs_override[i].key == NULL)
+            break;
+         if (strcmp(pairs_override[i].key, key) == 0)
+            return pairs_override[i].value;
+      }
+      return NULL;
+   }
+
+   if (current == NULL)
       return NULL;
 
    for (i = 0; i < TITLEDB_MAX_PAIRS; i++)
@@ -605,6 +629,22 @@ void TitleDBSetNegativeForTest(const TitleDBNegativePair *pairs, int count)
    }
    negative_override = pairs;
    negative_override_count = count;
+}
+
+/*
+ * Test-only: install a positive-pair array TitleDBOverride() answers from
+ * regardless of CRC match.  NULL restores normal table lookup.
+ */
+void TitleDBSetPairsForTest(const TitleDBPair *pairs, int count)
+{
+   if (pairs == NULL || count <= 0)
+   {
+      pairs_override = NULL;
+      pairs_override_count = 0;
+      return;
+   }
+   pairs_override = pairs;
+   pairs_override_count = count;
 }
 
 /*

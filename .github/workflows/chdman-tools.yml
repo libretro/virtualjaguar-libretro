@@ -87,7 +87,7 @@ jobs:
       # of 10-25. restore-keys lets a pin BUMP still seed from the prior
       # pin's cache for whatever object code didn't change.
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.ccache
           key: ${{ matrix.os }}-chdman-ccache-${{ steps.pin.outputs.sha }}
