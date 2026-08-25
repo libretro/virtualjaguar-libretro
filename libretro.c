@@ -1018,6 +1018,7 @@ static retro_microphone_t *vj_mic = NULL;
 static int vj_mic_iface_ok = 0;
 static int vj_mic_unavailable_logged = 0;
 static int vj_voice_want = 0;          /* option asks for voice chat */
+static int vj_voice_monitor = 0;       /* local mic-check mix */
 static int vj_voice_netpacket_logged = 0;
 
 static int voicechat_mic_read(int16_t *samples, size_t num)
@@ -1037,12 +1038,29 @@ static void voicechat_close_mic(void)
 static void voicechat_ensure_mic(void)
 {
    struct retro_microphone_params params;
+   int mode;
+   int can_tx;
 
    if (!vj_voice_want)
    {
       voicechat_close_mic();
       return;
    }
+
+   /* Mic capture only when we can TX to a peer (TCP + discovery) or when
+    * local monitor is on for a mic check. Opening the mic under netplay /
+    * disabled netlink leaves the OS indicator on while we discard samples. */
+   mode = JLinkMode();
+   can_tx = JLinkDiscActive()
+            && (mode == JLINK_MODE_TCP_SERVER
+                || mode == JLINK_MODE_TCP_CLIENT)
+            && !JLinkNPActive();
+   if (!can_tx && !vj_voice_monitor)
+   {
+      voicechat_close_mic();
+      return;
+   }
+
    if (!vj_mic_iface_ok || !vj_mic_iface.open_mic)
    {
       if (!vj_mic_unavailable_logged)
@@ -2531,6 +2549,7 @@ static void check_variables(void)
          mon = 1;
 
       vj_voice_want = want;
+      vj_voice_monitor = mon;
       VoiceChatSetEnabled(want);
       VoiceChatSetGate(gate);
       VoiceChatSetPTTKey(ptt);
@@ -5041,6 +5060,7 @@ void retro_unload_game(void)
    voicechat_close_mic();
    VoiceChatReset();
    vj_voice_want = 0;
+   vj_voice_monitor = 0;
    vj_mic_unavailable_logged = 0;
    vj_voice_netpacket_logged = 0;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
@@ -5301,6 +5321,7 @@ void retro_deinit(void)
    voicechat_close_mic();
    VoiceChatReset();
    vj_voice_want = 0;
+   vj_voice_monitor = 0;
    vj_mic_unavailable_logged = 0;
    vj_voice_netpacket_logged = 0;
    show_voice_chat_opts = true;
@@ -5595,10 +5616,17 @@ void retro_run(void)
    UARTPoll();
 
    /* Host-side voice chat (#485): capture/gate/send. Never touches the
-    * emulated UART. PTT is read from the keyboard device. */
+    * emulated UART. PTT is read from the keyboard device.  Re-evaluate
+    * mic open/close each frame so TCP+discovery becoming ready (or a
+    * netplay session taking over) does not leave the OS mic indicator
+    * stuck on or off. */
    {
       int ptt = 0;
       unsigned key = VoiceChatPTTKey();
+      if (vj_voice_want)
+         voicechat_ensure_mic();
+      else
+         voicechat_close_mic();
       if (VoiceChatEnabled() && key && input_state_cb)
          ptt = input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, key) ? 1 : 0;
       VoiceChatFrameTick(ptt);

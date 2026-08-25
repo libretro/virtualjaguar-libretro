@@ -1347,7 +1347,15 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	 fi
 	bash test/tools/voicemodem_pair_test.sh ./$(TARGET)
 	bash test/tools/voicechat_pair_test.sh
-	./test/tools/test_voicechat_inertness ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# Voice-chat inertness (#485): yarc.j64 is the committed public fixture
+	@# (same as test_texdump).  Guard exit 77 anyway so a stripped checkout
+	@# ledgers a skip instead of failing make test.
+	@if ./test/tools/test_voicechat_inertness ./$(TARGET) test/roms/yarc.j64 --quiet; then :; \
+	 else rc=$$?; \
+	   if [ $$rc -eq 77 ]; then \
+	     bash scripts/test-skip.sh record "Voice chat inertness (#485)" "yarc.j64 missing from test/roms/"; \
+	   else exit $$rc; fi; \
+	 fi
 	bash test/tools/netlink_latency_test.sh ./$(TARGET)
 	@# Wire-speed enhancement (#498).  Three real core pairs whose only
 	@# difference is each side's virtualjaguar_netlink_speed, so the

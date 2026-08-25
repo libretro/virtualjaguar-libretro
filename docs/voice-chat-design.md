@@ -98,9 +98,12 @@ issue #485's stated budget. Encode/decode is a table, not a compressor;
 compression is deferred until bandwidth proves a problem.
 
 Receive path: jitter buffer → 6× upsample to 48 kHz (exact ratio) with
-linear interpolation → saturating add into both channels of
-`sampleBuffer` immediately before `SoundCallback`. `dac.c` is untouched;
-`sampleBuffer` is not in any serialize path.
+zero-order hold (each 8 kHz sample repeated across six stereo pairs) →
+saturating add into both channels of `sampleBuffer` immediately before
+`SoundCallback`. `dac.c` is untouched; `sampleBuffer` is not in any
+serialize path. Linear interpolation is deliberately not used here —
+period-correct phone-line fidelity does not require it, and the hold
+matches what a simple µ-law path historically did.
 
 ## Gate modes
 

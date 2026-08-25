@@ -7,7 +7,6 @@
 #include "jlink_discover.h"
 
 #include <string.h>
-#include <stdlib.h>
 
 #define VC_JITTER_FRAMES   8
 #define VC_JITTER_SAMPLES  (VC_JITTER_FRAMES * VC_FRAME_SAMPLES)
@@ -28,6 +27,7 @@ static int vcSenderIdReady = 0;
 static uint16_t vcTxSeq = 0;
 static char vcPeerAddr[VC_PEER_ADDR_MAX];
 static uint32_t vcLastKeepaliveMs = 0;
+static uint32_t vcLastVoiceMs = 0;
 
 static int16_t vcJitter[VC_JITTER_SAMPLES];
 static unsigned vcJitHead = 0;
@@ -153,14 +153,19 @@ unsigned VoiceChatFrameEnergy(const int16_t *pcm, unsigned n)
 
 /* ---- Config ---------------------------------------------------------- */
 
+/* Local xorshift32 — never touch the process-global C PRNG (srand/rand),
+ * which the rest of the core / frontend may use for anything observable. */
 static uint32_t VoiceChatEnsureSenderId(void)
 {
    if (!vcSenderIdReady)
    {
-      srand((unsigned)(JLinkNowMs() ^ (uint32_t)(size_t)&vcSenderId));
-      vcSenderId = ((uint32_t)rand() << 16) ^ (uint32_t)rand();
-      if (vcSenderId == 0)
-         vcSenderId = 1;
+      uint32_t x = JLinkNowMs() ^ (uint32_t)(size_t)&vcSenderId;
+      if (x == 0)
+         x = 0xA5A5A5A5u;
+      x ^= x << 13;
+      x ^= x >> 17;
+      x ^= x << 5;
+      vcSenderId = x ? x : 1u;
       vcSenderIdReady = 1;
    }
    return vcSenderId;
@@ -180,6 +185,7 @@ void VoiceChatReset(void)
    vcTxSeq = 0;
    vcPeerAddr[0] = '\0';
    vcLastKeepaliveMs = 0;
+   vcLastVoiceMs = 0;
    vcJitHead = 0;
    vcJitCount = 0;
    vcJitExpectSeq = 0;
@@ -343,15 +349,25 @@ static void VoiceChatSendFrame(uint8_t flags, const int16_t pcm[VC_FRAME_SAMPLES
    size_t n;
    unsigned i;
    const char *peer;
+   uint16_t seq;
+   int isKeepalive;
 
    if (!pcm)
       return;
    for (i = 0; i < VC_FRAME_SAMPLES; i++)
       mulaw[i] = VoiceChatMuLawEncode(pcm[i]);
 
-   n = VoiceChatEncodePkt(pkt, sizeof(pkt), flags, vcTxSeq,
+   /* Keepalives must NOT consume the voice sequence: the receiver drops
+    * them before VoiceChatJitterPush, so advancing vcTxSeq here would
+    * open a one-frame gap the jitter filler turns into a 20 ms silence
+    * hole every keepalive interval during active speech. */
+   isKeepalive = (flags & VC_FLAG_KEEPALIVE) ? 1 : 0;
+   seq = vcTxSeq;
+   if (!isKeepalive)
+      vcTxSeq++;
+
+   n = VoiceChatEncodePkt(pkt, sizeof(pkt), flags, seq,
                           VoiceChatEnsureSenderId(), mulaw);
-   vcTxSeq++;
    if (!n)
       return;
 
@@ -363,6 +379,9 @@ static void VoiceChatSendFrame(uint8_t flags, const int16_t pcm[VC_FRAME_SAMPLES
    if (!JLinkDiscActive())
       return;
    JLinkDiscSendTo(pkt, n, peer, JLinkDiscPort());
+
+   if (!isKeepalive)
+      vcLastVoiceMs = JLinkNowMs();
 }
 
 static int VoiceChatGateOpen(int ptt_down, unsigned energy)
@@ -442,11 +461,15 @@ void VoiceChatFrameTick(int ptt_down)
    }
 
    /* Presence keepalive so a TCP server learns the client address even
-    * when the gate is closed. */
+    * when the gate is closed.  Suppressed when a real voice frame went
+    * out recently — voice packets already teach the peer address, and
+    * firing keepalives during speech is pointless. */
    now = JLinkNowMs();
    if (JLinkDiscActive()
        && (JLinkMode() == JLINK_MODE_TCP_CLIENT
            || JLinkMode() == JLINK_MODE_TCP_SERVER)
+       && (vcLastVoiceMs == 0
+           || (uint32_t)(now - vcLastVoiceMs) >= VC_KEEPALIVE_MS)
        && (vcLastKeepaliveMs == 0
            || (uint32_t)(now - vcLastKeepaliveMs) >= VC_KEEPALIVE_MS))
    {

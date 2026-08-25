@@ -137,6 +137,37 @@ static void test_jitter(void)
          "gap fill inserts silence frame");
 }
 
+static void test_keepalive_seq_continuity(void)
+{
+   /* Models the RX side of the keepalive fix: keepalives are dropped
+    * before VoiceChatJitterPush, so consecutive voice frames must arrive
+    * with unbroken seq (TX must not consume seq for keepalives).  Pushing
+    * 0 then 1 must not insert a silence gap. */
+   int16_t frame[VC_FRAME_SAMPLES];
+   int16_t s;
+   unsigned i;
+   unsigned silence = 0;
+
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   for (i = 0; i < VC_FRAME_SAMPLES; i++)
+      frame[i] = 1000;
+   VoiceChatJitterPush(frame, 0);
+   /* A keepalive would be dropped here — no JitterPush. */
+   for (i = 0; i < VC_FRAME_SAMPLES; i++)
+      frame[i] = 2000;
+   VoiceChatJitterPush(frame, 1);
+
+   check(VoiceChatJitterCount() == VC_FRAME_SAMPLES * 2,
+         "keepalive does not open a voice seq gap");
+   while (VoiceChatJitterPop(&s))
+   {
+      if (s == 0)
+         silence++;
+   }
+   check(silence == 0, "no silence inserted between contiguous voice seqs");
+}
+
 static void test_energy_and_mix(void)
 {
    int16_t loud[VC_FRAME_SAMPLES];
@@ -184,6 +215,7 @@ int main(void)
    test_pkt_roundtrip();
    test_pkt_rejects();
    test_jitter();
+   test_keepalive_seq_continuity();
    test_energy_and_mix();
    if (failures)
    {
