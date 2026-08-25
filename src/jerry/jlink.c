@@ -12,6 +12,7 @@
 #include "jlink_netpacket.h"
 #include "jlink_discover.h"
 #include "voicemodem.h"
+#include "voicechat.h"
 #include "state.h"
 #include "uart.h"   /* UARTWireSpeedupIntent/UARTSetWireSpeedupEffective (#552) */
 
@@ -548,6 +549,28 @@ static void JLinkNegOnRaw(const uint8_t *buf, size_t len,
       JLinkDiscSendTo(out, n, from_addr, from_port);
 }
 
+/* Magic-keyed dispatcher for every non-beacon datagram on the discovery
+   socket: VJNG -> wire-speed negotiation (#552), VJVC -> voice chat
+   (#485).  Unknown magics are ignored (same as a hostile packet). */
+static void JLinkDiscRawDispatch(const uint8_t *buf, size_t len,
+                                 const char *from_addr, int from_port)
+{
+   if (!buf || len < 4)
+      return;
+   if (buf[0] == JLINK_NEG_MAGIC_0 && buf[1] == JLINK_NEG_MAGIC_1
+       && buf[2] == JLINK_NEG_MAGIC_2 && buf[3] == JLINK_NEG_MAGIC_3)
+   {
+      JLinkNegOnRaw(buf, len, from_addr, from_port);
+      return;
+   }
+   if (buf[0] == VC_MAGIC_0 && buf[1] == VC_MAGIC_1
+       && buf[2] == VC_MAGIC_2 && buf[3] == VC_MAGIC_3)
+   {
+      VoiceChatOnRaw(buf, len, from_addr, from_port);
+      return;
+   }
+}
+
 /* Called every JLinkFrameTick -- reconciles negotiation state against
    the CURRENT connection every frame (not once at connect) so a state
    load, an option toggle, or a peer disconnect all take effect on the
@@ -585,7 +608,7 @@ static void JLinkNegTick(uint32_t nowMs)
       }
    }
 
-   JLinkDiscSetRawHandler(JLinkNegOnRaw);
+   JLinkDiscSetRawHandler(JLinkDiscRawDispatch);
 
    if (!JLinkNegEligible() || !connected)
    {

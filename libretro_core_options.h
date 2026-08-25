@@ -408,6 +408,98 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_voice_chat",
+      "Voice Chat (Host-Side)",
+      NULL,
+      "Opt-in voice channel over the Network Link discovery socket -- the Jaguar Voice Modem's real selling point of simultaneous voice + data. This is NOT emulation: voice never entered the Jaguar; the console only issued audio-path control words. Capture uses the frontend microphone API when available. Default off so mic capture never starts unasked. Requires Network Link in TCP Host or TCP Client mode (unavailable under RetroArch netplay -- no peer address is exposed to the core). See docs/voice-chat-design.md.",
+      NULL,
+      "network",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_voice_chat_gate",
+      "Voice Chat Transmit Gate",
+      NULL,
+      "'Open mic' transmits whenever the mic energy exceeds the VAD threshold (works on every frontend including mobile). 'Push to talk' transmits only while the configured keyboard key is held (desktop-oriented -- no RetroPad button is free).",
+      NULL,
+      "network",
+      {
+         { "open_mic",     "Open mic (VAD)" },
+         { "push_to_talk", "Push to talk (keyboard)" },
+         { NULL, NULL },
+      },
+      "open_mic"
+   },
+   {
+      "virtualjaguar_voice_chat_ptt_key",
+      "Voice Chat Push-to-Talk Key",
+      NULL,
+      "Keyboard key that opens the mic in Push-to-talk mode. Keys already claimed by the Jaguar keypad mapping are omitted.",
+      NULL,
+      "network",
+      {
+         { "v",     "V" },
+         { "c",     "C" },
+         { "space", "Space" },
+         { "tab",   "Tab" },
+         { "lctrl", "Left Ctrl" },
+         { "grave", "Backquote (`)" },
+         { NULL, NULL },
+      },
+      "v"
+   },
+   {
+      "virtualjaguar_voice_chat_volume",
+      "Voice Chat Volume",
+      NULL,
+      "Far-end (and optional local monitor) mix level into the game audio. Kept conservative by default so voice does not clip the DAC mix.",
+      NULL,
+      "network",
+      {
+         { "25",  "25%" },
+         { "50",  "50%" },
+         { "75",  "75%" },
+         { "100", "100%" },
+         { NULL, NULL },
+      },
+      "50"
+   },
+   {
+      "virtualjaguar_voice_chat_vad",
+      "Voice Chat VAD Threshold",
+      NULL,
+      "Absolute-average energy gate for Open-mic mode. Raise if background noise keys the mic; lower if soft speech is cut off.",
+      NULL,
+      "network",
+      {
+         { "200",  "Low (200)" },
+         { "400",  "Medium (400)" },
+         { "800",  "High (800)" },
+         { "1600", "Very high (1600)" },
+         { NULL, NULL },
+      },
+      "400"
+   },
+   {
+      "virtualjaguar_voice_chat_monitor",
+      "Voice Chat Local Monitor",
+      NULL,
+      "Mix your own mic into the local audio output for a mic check. Does not change what is sent to the peer.",
+      NULL,
+      "network",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
       "virtualjaguar_cd_trace",
       "CD Trace (Diagnostic)",
       NULL,
