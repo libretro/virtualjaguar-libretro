@@ -15,8 +15,10 @@ parses and is the expected @type.  Site-wide: titles and descriptions are
 distinct, sitemap.xml is well-formed and lists exactly the generated pages,
 robots.txt carries an absolute Sitemap: line, and no page references a
 tracker, an external asset, or any <script> other than JSON-LD blocks and
-deferred <script src> tags pointing at local vendored files under assets/js/
-that exist in the output (inline and external scripts stay hard failures).
+deferred <script src> tags pointing at local files under assets/js/ that
+exist in the output (inline and external scripts stay hard failures).  The
+site currently ships no script beyond JSON-LD; that allowance is the
+contract for future pages, not something in use.
 """
 
 import json
@@ -192,13 +194,12 @@ def check_page(out, name):
         check(bad not in text, "%s: references %r -- no trackers or external "
                                "assets are allowed" % (name, bad))
     # Scripts: JSON-LD blocks, or <script src> pointing at a LOCAL file
-    # under assets/js/ that exists in the output.  That covers both the
-    # committed originals (crt-fx.js, hero-fx.js) and the deploy-time
-    # generated canvas-ui-fx.js that scripts/fetch_site_fx.py may have
-    # written into the output under VJ_SITE_FX_FETCH=1 -- served
-    # first-party either way (see docs/site-maintenance.md).  External src
-    # and inline non-JSON-LD scripts remain hard failures: no CDNs, no
-    # trackers, no surprises.
+    # under assets/js/ that exists in the output.  The site currently ships
+    # NO script at all -- the period chrome is pure CSS -- so this loop
+    # normally has nothing to inspect; the rule stays as the contract for
+    # any future page that needs behaviour.  External src and inline
+    # non-JSON-LD scripts remain hard failures: no CDNs, no trackers, no
+    # surprises (see docs/site-maintenance.md).
     for m in re.finditer(r"<script([^>]*)>", text):
         attrs = m.group(1)
         if 'type="application/ld+json"' in attrs:

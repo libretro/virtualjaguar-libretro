@@ -110,30 +110,23 @@ tags into a page fragment** — that is how tags drift apart page to page.
   page** (the site title in the header is an `<a>`, not a heading — leave it
   that way), and descriptive `alt` on every image.
 - Still zero trackers, zero analytics, zero external assets *at runtime*.
-  The only `<script>` allowed on a page is `type="application/ld+json"` or a
-  **deferred `<script src>` pointing at a local file under
-  `site/assets/js/`** that exists in the output. Inline non-JSON-LD scripts
-  and external `src` remain hard failures.
-- **Committed** site JS must be original code written for this repository
-  (GPLv3) — never vendor third-party effect libraries into the repo: the
-  Canvas UI Commons Clause forbids redistributing ported components, and
-  mixing that license into a GPLv3 tree is a problem on its own
-  (`site/assets/js/crt-fx.js` and `hero-fx.js` are ours).
-- Third-party effects run only via **deploy-time fetch**:
-  `scripts/fetch_site_fx.py`, gated behind `VJ_SITE_FX_FETCH=1`, downloads
-  the pinned Canvas UI components, compiles them with esbuild, embeds the
-  upstream license text as a header (the license permits use "as part of a
-  website" and requires the notice), writes
-  `_site/assets/js/canvas-ui-fx.js` and injects its tag.  The source never
-  enters git; the served file is first-party.  ANY failure of that script
-  (flag unset, network, npx, compile) leaves the site on the committed
-  fallback — local builds stay offline and a broken fetch cannot blank the
-  hero or fail a deploy.
-- Effects are progressive enhancement only: the page must be complete and
-  readable with JS disabled; every failure path must leave the real DOM
-  content visible (fail closed — no class flips before a successful init).
-  `prefers-reduced-motion` gates the *animation* only — engines still render
-  one static styled frame.
+  **The site ships no JavaScript at all.** The only `<script>` on a page is
+  `type="application/ld+json"`. `check_site.py` still permits a deferred
+  `<script src>` pointing at a local file under `site/assets/js/`, so the
+  door is open if a future page genuinely needs behaviour; nothing uses it
+  today. Inline non-JSON-LD scripts and external `src` are hard failures.
+- The period chrome (bevels, dither, scanlines, the CRT bezel around the
+  hero capture) is **pure CSS in `site/style.css`** — gradients and borders,
+  no images, no canvas, no WebGL, no requests. Effects that need a runtime
+  do not belong here: this is a five-page evidence site, and every byte of
+  script is a byte that can fail in front of the reader.
+- Historical note: v3.4.0-era builds fetched and compiled third-party
+  Canvas UI WebGL components at deploy time (`scripts/fetch_site_fx.py`,
+  gated behind `VJ_SITE_FX_FETCH=1`) to drive a VHS/particle hero effect.
+  That pipeline was removed with the 1994-chrome redesign. If third-party
+  effect code is ever wanted again, it must go back through a deploy-time
+  fetch — never vendored into this GPLv3 tree, because the Canvas UI
+  Commons Clause forbids redistributing ported components.
 
 `scripts/check_site.py` enforces all of the above against the built output:
 one `<h1>`, `lang="en"`, descriptive `alt` on every image, every local
