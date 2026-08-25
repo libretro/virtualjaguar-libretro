@@ -12,7 +12,10 @@
 #define VC_JITTER_SAMPLES  (VC_JITTER_FRAMES * VC_FRAME_SAMPLES)
 #define VC_KEEPALIVE_MS    500
 #define VC_VAD_HANG_FRAMES 8
-#define VC_MIC_PULL_MAX    320   /* up to 40 ms of 8 kHz per video frame */
+/* Ceiling on one frame's pull: 40 ms of 8 kHz covers even a 25 Hz field
+   rate, and bounds the stack buffer.  It is a clamp, never the request. */
+#define VC_MIC_PULL_MAX    320
+#define VC_MIC_FPS_DEFAULT 60054 /* NTSC field rate x1000 (60.05445 Hz) */
 
 typedef struct
 {
@@ -52,6 +55,11 @@ static unsigned vcVadHang = 0;
 
 static int16_t vcMicAccum[VC_FRAME_SAMPLES];
 static unsigned vcMicAccumN = 0;
+
+static unsigned vcMicFpsMilli = VC_MIC_FPS_DEFAULT;
+static uint32_t vcMicPullAcc = 0;   /* millisample carry between frames */
+static unsigned vcMicFrames = 0;
+static unsigned vcTxFrames = 0;
 
 /* ---- µ-law (ITU-T G.711) --------------------------------------------- */
 
@@ -202,6 +210,10 @@ void VoiceChatReset(void)
    vcVadOpen = 0;
    vcVadHang = 0;
    vcMicAccumN = 0;
+   vcMicFpsMilli = VC_MIC_FPS_DEFAULT;
+   vcMicPullAcc = 0;
+   vcMicFrames = 0;
+   vcTxFrames = 0;
    memset(vcStreams, 0, sizeof(vcStreams));
    memset(vcMonRing, 0, sizeof(vcMonRing));
    memset(vcMicAccum, 0, sizeof(vcMicAccum));
@@ -224,6 +236,7 @@ void VoiceChatSetEnabled(int enabled)
          vcStreams[i].haveExpect = 0;
       }
       vcMicAccumN = 0;
+      vcMicPullAcc = 0;
       vcMonCount = 0;
       vcVadOpen = 0;
       vcVadHang = 0;
@@ -275,6 +288,27 @@ void VoiceChatSetMicRead(VoiceChatMicReadFn fn)
 void VoiceChatSetNetSend(VoiceChatNetSendFn fn)
 {
    vcNetSend = fn;
+}
+
+void VoiceChatSetMicFrameRate(unsigned fps_millihz)
+{
+   if (fps_millihz == 0)
+      return;
+   if (fps_millihz != vcMicFpsMilli)
+   {
+      vcMicFpsMilli = fps_millihz;
+      vcMicPullAcc = 0;
+   }
+}
+
+unsigned VoiceChatMicFrames(void)
+{
+   return vcMicFrames;
+}
+
+unsigned VoiceChatTxFrames(void)
+{
+   return vcTxFrames;
 }
 
 void VoiceChatSetSenderId(uint32_t id)
@@ -486,12 +520,23 @@ static void VoiceChatSendFrame(uint8_t flags, const int16_t pcm[VC_FRAME_SAMPLES
    if (!n)
       return;
 
-   /* Netpacket path (#585): registered sink + netplay mode. No peer
-    * address needed — the frontend delivers by client_id. */
-   if (vcNetSend && JLinkMode() == JLINK_MODE_NETPACKET)
+   /* Netpacket path (#585): the registered sink IS the netplay session --
+    * jlink_netpacket.c installs it in JLinkNPStart and clears it in
+    * JLinkNPStop.  Deliberately NOT also testing JLinkMode(): the netlink
+    * core option is re-applied on every check_variables(), and any value
+    * other than "auto" makes UARTSetLinkMode() close the link and leave
+    * JLinkMode() != JLINK_MODE_NETPACKET while the netplay session is
+    * still live.  That dropped every voice frame on the floor with no
+    * diagnostic.  No peer address needed -- the frontend delivers by
+    * client_id. */
+   if (vcNetSend)
    {
-      if (vcNetSend(pkt, n) && !isKeepalive)
-         vcLastVoiceMs = JLinkNowMs();
+      if (vcNetSend(pkt, n))
+      {
+         vcTxFrames++;
+         if (!isKeepalive)
+            vcLastVoiceMs = JLinkNowMs();
+      }
       return;
    }
 
@@ -503,6 +548,7 @@ static void VoiceChatSendFrame(uint8_t flags, const int16_t pcm[VC_FRAME_SAMPLES
    if (!JLinkDiscActive())
       return;
    JLinkDiscSendTo(pkt, n, peer, JLinkDiscPort());
+   vcTxFrames++;
 
    if (!isKeepalive)
       vcLastVoiceMs = JLinkNowMs();
@@ -556,6 +602,7 @@ void VoiceChatFrameTick(int ptt_down)
    int16_t pull[VC_MIC_PULL_MAX];
    int got;
    unsigned i;
+   unsigned want;
    uint32_t now;
    int16_t silence[VC_FRAME_SAMPLES];
 
@@ -569,7 +616,22 @@ void VoiceChatFrameTick(int ptt_down)
 
    if (vcMicRead)
    {
-      got = vcMicRead(pull, VC_MIC_PULL_MAX);
+      /* Ask for exactly one field's worth of 8 kHz mono, carrying the
+         fractional remainder so the long-run average is VC_RATE_HZ.  This
+         used to be a flat 320 samples (40 ms) per field, which at ~60 Hz
+         demanded 2.4x more audio than the device produces: the frontend's
+         mic FIFO could never satisfy it, and RetroArch's read_mic answers a
+         starved request with a full buffer of ZEROES (after 512 stalled
+         resampler passes, every field).  The result was an open mic that
+         recorded permanent silence -- VAD never tripped, so nothing was
+         ever transmitted -- plus the stall loop burned CPU each field. */
+      vcMicPullAcc += (uint32_t)VC_RATE_HZ * 1000u;
+      want = (unsigned)(vcMicPullAcc / vcMicFpsMilli);
+      vcMicPullAcc -= (uint32_t)want * vcMicFpsMilli;
+      if (want > VC_MIC_PULL_MAX)
+         want = VC_MIC_PULL_MAX;
+
+      got = want ? vcMicRead(pull, want) : 0;
       if (got > 0)
       {
          for (i = 0; i < (unsigned)got; i++)
@@ -577,6 +639,7 @@ void VoiceChatFrameTick(int ptt_down)
             vcMicAccum[vcMicAccumN++] = pull[i];
             if (vcMicAccumN >= VC_FRAME_SAMPLES)
             {
+               vcMicFrames++;
                VoiceChatProcessMicFrame(vcMicAccum, ptt_down);
                vcMicAccumN = 0;
             }

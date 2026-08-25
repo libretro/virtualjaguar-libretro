@@ -36,14 +36,20 @@ enum
    VC_GATE_PTT      = 1
 };
 
-/* Optional mic read: fill up to num mono int16 samples; return count or
- * -1 if unavailable. Registered by libretro.c from the frontend mic API. */
+/* Optional mic read: fill EXACTLY num mono int16 samples; return count or
+ * -1 if unavailable. Registered by libretro.c from the frontend mic API.
+ *
+ * "Exactly" is not a preference: RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE's
+ * read_mic is all-or-nothing (RetroArch spins its resampler until the FIFO
+ * can satisfy the whole request, then returns num or -1) -- it never returns
+ * a short count.  So the caller has to ask for one video frame's worth and
+ * no more; see VoiceChatSetMicFrameRate. */
 typedef int (*VoiceChatMicReadFn)(int16_t *samples, size_t num);
 
-/* Optional netpacket TX sink (#585). When set and the link is in
- * JLINK_MODE_NETPACKET, VoiceChatSendFrame routes through this instead
- * of the discovery UDP socket. Keeps voicechat.c free of a hard
- * dependency on jlink_netpacket.c (unit tests link voicechat alone). */
+/* Optional netpacket TX sink (#585). When set, VoiceChatSendFrame routes
+ * through this instead of the discovery UDP socket. Keeps voicechat.c free
+ * of a hard dependency on jlink_netpacket.c (unit tests link voicechat
+ * alone). */
 typedef int (*VoiceChatNetSendFn)(const uint8_t *pkt, size_t len);
 
 /* ---- Pure logic (unit-testable) -------------------------------------- */
@@ -79,6 +85,19 @@ void VoiceChatSetMonitor(int enabled);
 void VoiceChatSetMicRead(VoiceChatMicReadFn fn);
 void VoiceChatSetNetSend(VoiceChatNetSendFn fn);
 void VoiceChatSetSenderId(uint32_t id);   /* tests; 0 = lazy random */
+
+/* Video field rate in millihertz (e.g. 60054 for NTSC's 60.05445 Hz), used
+ * to size the per-frame mic pull at exactly VC_RATE_HZ / fps samples with
+ * the fractional remainder carried across frames.  Over-asking starves the
+ * frontend's mic FIFO -- RetroArch then returns a full buffer of SILENCE
+ * after 512 stalled resampler passes, which reads as a working mic that
+ * never hears anything.  0 is ignored. */
+void VoiceChatSetMicFrameRate(unsigned fps_millihz);
+
+/* Counters: 20 ms frames assembled from mic input, and frames the gate
+ * actually handed to a transport.  Both monotonic until VoiceChatReset. */
+unsigned VoiceChatMicFrames(void);
+unsigned VoiceChatTxFrames(void);
 
 /* Peer address for outbound unicast (dotted-quad or hostname). Cleared
  * on reset; also learned from inbound datagrams. */

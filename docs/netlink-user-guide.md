@@ -35,8 +35,16 @@ Notes:
   flag** silently does nothing — use the Netplay menu instead.
 - **Voice chat** (core option *Voice Chat*) works over netplay when both
   sides enable it and run a core that speaks `vjag-netlink-2`. If the peer
-  never confirms voice, the game link stays data-only. Cores still on
-  `vjag-netlink-1` cannot join a `vjag-netlink-2` session (update both).
+  never confirms voice the link stays data-only — but the offer keeps
+  repeating, so turning Voice Chat on after the session is already up
+  still works. Cores still on `vjag-netlink-1` cannot join a
+  `vjag-netlink-2` session (update both).
+- The microphone has to reach the core too: in RetroArch, *Settings >
+  Audio > Microphone* must be On, the Microphone Device must not be
+  `null`, and the app needs OS microphone permission. When the core
+  cannot get a mic it says so once in the log (`[VOICE] frontend offers
+  no microphone interface`) and voice becomes receive-only — you still
+  hear the other player.
 
 ## Option B: Direct TCP (any frontend on a platform with sockets)
 

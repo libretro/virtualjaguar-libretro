@@ -33,6 +33,104 @@ static void check(int cond, const char *what)
    else        printf("  ok: %s\n", what);
 }
 
+/* ---- Frontend microphone model (#585 regression) --------------------- */
+
+/* NTSC field rate x1000, matching JaguarGetFieldRateHz(). */
+#define TEST_FPS_MILLI 60054
+/* Most samples one field may legitimately ask for. */
+#define TEST_MAX_PULL  (((VC_RATE_HZ * 1000) + TEST_FPS_MILLI - 1) \
+                        / TEST_FPS_MILLI)
+
+/* Models RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE's read_mic faithfully,
+ * because the subtlety there is what broke voice over netplay: the call is
+ * ALL-OR-NOTHING (it never returns a short count), and a request the
+ * frontend's FIFO cannot satisfy comes back as a full buffer of SILENCE --
+ * RetroArch spins its resampler 512 times, gives up, and memsets.  A core
+ * that asks for more than one field's production therefore sees a mic that
+ * opens, reports success, and hears nothing forever. */
+static long mic_fifo = 0;         /* samples the device has banked */
+static unsigned mic_max_req = 0;  /* largest single request observed */
+static unsigned mic_starved = 0;  /* requests answered with silence */
+
+static int fake_mic_read(int16_t *samples, size_t num)
+{
+   size_t i;
+
+   if (num > mic_max_req)
+      mic_max_req = (unsigned)num;
+   if ((long)num > mic_fifo)
+   {
+      mic_starved++;
+      memset(samples, 0, num * sizeof(*samples));
+      return (int)num;
+   }
+   mic_fifo -= (long)num;
+   for (i = 0; i < num; i++)
+      samples[i] = (int16_t)((i & 1) ? 9000 : -9000);
+   return (int)num;
+}
+
+static unsigned net_sent = 0;
+
+static int fake_net_send(const uint8_t *pkt, size_t len)
+{
+   (void)pkt;
+   (void)len;
+   net_sent++;
+   return 1;
+}
+
+static void test_mic_pull_paces_to_field_rate(void)
+{
+   unsigned f;
+   long dev_acc = 0;
+   long avail;
+   unsigned frames;
+
+   VoiceChatReset();
+   VoiceChatSetEnabled(1);
+   VoiceChatSetGate(VC_GATE_OPEN_MIC);
+   VoiceChatSetVadThreshold(100);
+   VoiceChatSetVolume(100);
+   VoiceChatSetMicFrameRate(TEST_FPS_MILLI);
+   VoiceChatSetMicRead(fake_mic_read);
+   VoiceChatSetNetSend(fake_net_send);
+
+   mic_fifo = 0;
+   mic_max_req = 0;
+   mic_starved = 0;
+   net_sent = 0;
+
+   /* ~5 s of video.  The device banks exactly VC_RATE_HZ samples per
+    * second of fields, fractional part carried, so any over-asking by the
+    * core shows up immediately as starvation. */
+   for (f = 0; f < 300; f++)
+   {
+      dev_acc += (long)VC_RATE_HZ * 1000;
+      avail = dev_acc / TEST_FPS_MILLI;
+      dev_acc -= avail * TEST_FPS_MILLI;
+      mic_fifo += avail;
+      VoiceChatFrameTick(0);
+   }
+
+   frames = VoiceChatMicFrames();
+   check(mic_max_req <= (unsigned)TEST_MAX_PULL,
+         "never asks for more than one field of mic audio");
+   check(mic_starved == 0, "frontend mic FIFO is never starved");
+   /* 300 fields at 60.054 Hz is 4.996 s, so ~250 frames of 20 ms. */
+   check(frames >= 240 && frames <= 255,
+         "captures ~50 frames of 20 ms per second of video");
+   /* JLinkMode() is stubbed to 0 (link disabled) in this harness, so this
+    * also pins the fix for voice being dropped whenever the netlink option
+    * left JLinkMode() != JLINK_MODE_NETPACKET during a netplay session. */
+   check(net_sent == frames,
+         "every captured frame reaches the registered net sink");
+   check(VoiceChatTxFrames() == net_sent, "TX counter agrees with sink");
+
+   VoiceChatSetMicRead(NULL);
+   VoiceChatSetNetSend(NULL);
+}
+
 static void test_mulaw_roundtrip(void)
 {
    static const int16_t samples[] = {
@@ -286,6 +384,7 @@ int main(void)
    test_keepalive_seq_continuity();
    test_energy_and_mix();
    test_multi_speaker();
+   test_mic_pull_paces_to_field_rate();
    if (failures)
    {
       printf("%d FAILURES\n", failures);

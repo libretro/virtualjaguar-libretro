@@ -68,9 +68,18 @@ UDP address needed):
 - Only after bidirectional hello: arm TX (`VoiceChatSendFrame` →
   `npSend` with voice type) and RX (`JLinkNPReceive` demux →
   `VoiceChatOnRaw` / jitter).
-- If no ack within N frames / timeout: stay data-only, log once
-  (`[VOICE] peer has no voice chat — data-only`), leave mic closed unless
-  local monitor is on.
+- Nothing confirmed within the 5 s fast window: report data-only, and
+  keep offering `NP_VOICE_HELLO` every 2 s. The window decides when to
+  *report*, never when to stop trying — RetroArch opens a host session
+  before anyone connects, so the first seconds of hellos normally go to
+  an empty room, and a friend who joins a minute later still has to be
+  able to arm voice. (This latched permanently at first, so a host that
+  started before its peer could never turn voice on again.)
+- Mic capture opens as soon as the session is live and the option is on,
+  not after the handshake: waiting cost the first words after a peer
+  joined, and in the common host-then-wait flow the mic never opened at
+  all. TX stays gated — `JLinkNPSendVoice` drops frames until a peer
+  confirms.
 - Re-negotiate on reconnect / `JLinkNPStop` → `Start`.
 
 “Fallback to just work” = game link always works; voice is best-effort

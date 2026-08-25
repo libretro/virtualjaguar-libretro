@@ -1023,14 +1023,33 @@ static struct retro_microphone_interface vj_mic_iface;
 static retro_microphone_t *vj_mic = NULL;
 static int vj_mic_iface_ok = 0;
 static int vj_mic_unavailable_logged = 0;
+static int vj_mic_rate_logged = 0;
+static int vj_mic_read_fail_logged = 0;
+static uint32_t vj_mic_query_ms = 0;   /* rate-limit the interface re-query */
 static int vj_voice_want = 0;          /* option asks for voice chat */
 static int vj_voice_monitor = 0;       /* local mic-check mix */
+/* Last JLINK_NP_VOICE_* narrated; -1 so the first poll always reports. */
+static int vj_voice_np_state_logged = -1;
+static int vj_voice_tx_logged = 0;
 
 static int voicechat_mic_read(int16_t *samples, size_t num)
 {
+   int got;
+
    if (!vj_mic || !vj_mic_iface.read_mic)
       return -1;
-   return vj_mic_iface.read_mic(vj_mic, samples, num);
+   got = vj_mic_iface.read_mic(vj_mic, samples, num);
+   /* read_mic is all-or-nothing, so a negative here is a hard failure
+    * (driver gone, or the request exceeded the frontend's FIFO) and it
+    * will keep failing -- worth one line, since the symptom otherwise is
+    * an open mic that transmits nothing. */
+   if (got < 0 && !vj_mic_read_fail_logged)
+   {
+      LOG_WRN("[VOICE] frontend read_mic failed for %u samples -- no "
+              "capture this session\n", (unsigned)num);
+      vj_mic_read_fail_logged = 1;
+   }
+   return got;
 }
 
 static void voicechat_close_mic(void)
@@ -1038,6 +1057,39 @@ static void voicechat_close_mic(void)
    if (vj_mic && vj_mic_iface.close_mic)
       vj_mic_iface.close_mic(vj_mic);
    vj_mic = NULL;
+   vj_mic_rate_logged = 0;
+}
+
+/* Ask the frontend for the mic interface, until it says yes.
+ *
+ * Retried rather than asked once in retro_set_environment: RetroArch
+ * answers GET_MICROPHONE_INTERFACE from the live microphone driver and the
+ * Settings > Audio > Microphone toggle, neither of which is necessarily in
+ * its final state that early in core load -- and the user can switch
+ * microphone support on mid-session.  A one-shot query therefore latched
+ * "no mic" for the whole run.
+ *
+ * Rate-limited because RetroArch logs a line for every one of these calls,
+ * and the caller runs per frame. */
+#define VJ_MIC_REQUERY_MS 2000
+
+static void voicechat_query_mic_iface(void)
+{
+   uint32_t now;
+
+   if (vj_mic_iface_ok || !environ_cb)
+      return;
+   now = JLinkNowMs();
+   if (vj_mic_query_ms != 0
+       && (uint32_t)(now - vj_mic_query_ms) < VJ_MIC_REQUERY_MS)
+      return;
+   vj_mic_query_ms = now ? now : 1;
+   memset(&vj_mic_iface, 0, sizeof(vj_mic_iface));
+   vj_mic_iface.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, &vj_mic_iface)
+       && vj_mic_iface.interface_version > 0
+       && vj_mic_iface.open_mic)
+      vj_mic_iface_ok = 1;
 }
 
 static void voicechat_ensure_mic(void)
@@ -1052,49 +1104,81 @@ static void voicechat_ensure_mic(void)
       return;
    }
 
-   /* Mic capture only when we can TX to a peer (TCP + discovery, or
-    * netplay after voice hello confirms) or when local monitor is on
-    * for a mic check. Opening the mic while voice cannot TX leaves the
-    * OS indicator on while we discard samples. */
+   /* Mic capture whenever voice has somewhere to go: TCP + discovery, a
+    * live netplay session, or local monitor for a mic check.
+    *
+    * Netplay deliberately does NOT wait for JLinkNPVoiceReady().  A
+    * RetroArch host opens its session before anyone connects, so gating
+    * capture on the hello handshake meant the mic never opened at all in
+    * the ordinary "host, then wait for a friend" flow -- and once someone
+    * did join, the first words were lost while the device spun up.  TX is
+    * still gated: JLinkNPSendVoice drops frames until a peer confirms. */
    mode = JLinkMode();
    can_tx = (JLinkDiscActive()
              && (mode == JLINK_MODE_TCP_SERVER
                  || mode == JLINK_MODE_TCP_CLIENT)
              && !JLinkNPActive())
-            || (JLinkNPActive() && JLinkNPVoiceReady());
+            || JLinkNPActive();
    if (!can_tx && !vj_voice_monitor)
    {
       voicechat_close_mic();
       return;
    }
 
+   voicechat_query_mic_iface();
    if (!vj_mic_iface_ok || !vj_mic_iface.open_mic)
    {
       if (!vj_mic_unavailable_logged)
       {
-         LOG_INF("[VOICE] microphone interface unavailable -- "
-                 "receive-only voice chat (data netplay unchanged)\n");
+         LOG_WRN("[VOICE] frontend offers no microphone interface -- voice "
+                 "is receive-only (the data link is unaffected).  In "
+                 "RetroArch: Settings > Audio > Microphone must be On, the "
+                 "Microphone Device must not be 'null', and the build needs "
+                 "microphone support compiled in\n");
          vj_mic_unavailable_logged = 1;
       }
       return;
    }
-   if (vj_mic)
-      return;
 
-   params.rate = VC_RATE_HZ;
-   vj_mic = vj_mic_iface.open_mic(&params);
    if (!vj_mic)
    {
-      if (!vj_mic_unavailable_logged)
+      params.rate = VC_RATE_HZ;
+      vj_mic = vj_mic_iface.open_mic(&params);
+      if (!vj_mic)
       {
-         LOG_INF("[VOICE] open_mic failed -- receive-only voice chat\n");
-         vj_mic_unavailable_logged = 1;
+         if (!vj_mic_unavailable_logged)
+         {
+            LOG_WRN("[VOICE] open_mic failed -- receive-only voice chat "
+                    "(no capture device, or OS permission denied)\n");
+            vj_mic_unavailable_logged = 1;
+         }
+         return;
       }
-      return;
+      if (vj_mic_iface.set_mic_state
+          && !vj_mic_iface.set_mic_state(vj_mic, true))
+         LOG_WRN("[VOICE] set_mic_state failed -- capture will stay "
+                 "silent\n");
+      VoiceChatSetMicRead(voicechat_mic_read);
+      LOG_INF("[VOICE] microphone opened, asked for %d Hz mono\n",
+              VC_RATE_HZ);
    }
-   if (vj_mic_iface.set_mic_state)
-      vj_mic_iface.set_mic_state(vj_mic, true);
-   VoiceChatSetMicRead(voicechat_mic_read);
+
+   /* open_mic may hand back a handle whose device is still PENDING, in
+    * which case get_params fails until the frontend binds it -- so poll
+    * until it answers instead of reading the rate once at open.  A rate
+    * other than VC_RATE_HZ would mis-pitch the µ-law frames, and the
+    * frontend resamples to whatever we asked for, so a mismatch means
+    * something is wrong and should not be silent. */
+   if (!vj_mic_rate_logged && vj_mic_iface.get_params
+       && vj_mic_iface.get_params(vj_mic, &params))
+   {
+      vj_mic_rate_logged = 1;
+      if (params.rate != VC_RATE_HZ)
+         LOG_WRN("[VOICE] microphone active at %u Hz, expected %d Hz -- "
+                 "voice will be off-pitch\n", params.rate, VC_RATE_HZ);
+      else
+         LOG_INF("[VOICE] microphone active at %u Hz\n", params.rate);
+   }
 }
 
 static unsigned voicechat_ptt_key_from_str(const char *s)
@@ -1143,14 +1227,10 @@ void retro_set_environment(retro_environment_t cb)
       filestream_vfs_init(&vfs_iface_info);
 
    /* Microphone interface (#485): experimental env 75. Failure is
-    * non-fatal -- voice stays receive-capable / data-only. */
-   memset(&vj_mic_iface, 0, sizeof(vj_mic_iface));
-   vj_mic_iface.interface_version = RETRO_MICROPHONE_INTERFACE_VERSION;
+    * non-fatal -- voice stays receive-capable / data-only, and
+    * voicechat_ensure_mic re-asks later (see voicechat_query_mic_iface). */
    vj_mic_iface_ok = 0;
-   if (cb(RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE, &vj_mic_iface)
-       && vj_mic_iface.interface_version > 0
-       && vj_mic_iface.open_mic)
-      vj_mic_iface_ok = 1;
+   voicechat_query_mic_iface();
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
 
@@ -2862,6 +2942,14 @@ static void check_variables(void)
             jag_retropad[i][retropad_option_map[j].id] = get_button_id(var.value);
       }
    }
+
+   /* Voice chat pulls exactly one field's worth of mic audio per retro_run
+    * (see VoiceChatSetMicFrameRate), so it needs the same field rate the
+    * core advertises.  Set here at the end rather than in the voice block
+    * above, because the NTSC/PAL option this derives from is read further
+    * down in this same function. */
+   VoiceChatSetMicFrameRate((unsigned)(JaguarGetFieldRateHz() * 1000.0
+                                       + 0.5));
 
    update_option_visibility();
 }
@@ -5085,6 +5173,10 @@ void retro_unload_game(void)
    vj_voice_want = 0;
    vj_voice_monitor = 0;
    vj_mic_unavailable_logged = 0;
+   vj_mic_read_fail_logged = 0;
+   vj_mic_query_ms = 0;
+   vj_voice_np_state_logged = -1;
+   vj_voice_tx_logged = 0;
    video_buffer_alloc_pixels = VIDEO_BUFFER_PIXELS;
    hires_restart_notice_logged = 0;
 
@@ -5346,6 +5438,10 @@ void retro_deinit(void)
    vj_voice_want = 0;
    vj_voice_monitor = 0;
    vj_mic_unavailable_logged = 0;
+   vj_mic_read_fail_logged = 0;
+   vj_mic_query_ms = 0;
+   vj_voice_np_state_logged = -1;
+   vj_voice_tx_logged = 0;
    show_voice_chat_opts = true;
    /* Non-pad input devices: encoders, phases, attach mask, armed flag and
     * the option-derived type/scale all go back to their load-time values
@@ -5656,6 +5752,7 @@ void retro_run(void)
    {
       int ptt = 0;
       unsigned key = VoiceChatPTTKey();
+      int np_voice;
       if (vj_voice_want)
          voicechat_ensure_mic();
       else
@@ -5664,6 +5761,37 @@ void retro_run(void)
          ptt = input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, key) ? 1 : 0;
       JLinkNPVoiceTick();
       VoiceChatFrameTick(ptt);
+
+      /* Narrate the netplay voice handshake, edge-only.  Without this the
+       * three ways voice can fail to come up over netplay -- option off on
+       * one side, peer never answering, peer on the old protocol -- all
+       * look identical from the outside: no mic, no sound, no message. */
+      np_voice = JLinkNPVoiceState();
+      if (np_voice != vj_voice_np_state_logged)
+      {
+         vj_voice_np_state_logged = np_voice;
+         if (np_voice == JLINK_NP_VOICE_NEGOTIATING)
+            LOG_INF("[VOICE] netplay session up -- offering voice to "
+                    "peers\n");
+         else if (np_voice == JLINK_NP_VOICE_READY)
+            LOG_INF("[VOICE] peer confirmed voice -- talking over "
+                    "netplay\n");
+         else if (np_voice == JLINK_NP_VOICE_DATA_ONLY)
+            LOG_INF("[VOICE] no peer has confirmed voice yet -- link is "
+                    "data-only, still offering (enable Voice Chat on the "
+                    "other side too)\n");
+      }
+
+      /* One positive confirmation that capture reached the gate and went
+       * out.  Everything else about voice is a negative ("no interface",
+       * "no peer"), so without this there is no way to tell a working mic
+       * from one that opens and records silence. */
+      if (!vj_voice_tx_logged && VoiceChatTxFrames() > 0)
+      {
+         vj_voice_tx_logged = 1;
+         LOG_INF("[VOICE] transmitting -- %u frames captured, %u sent\n",
+                 VoiceChatMicFrames(), VoiceChatTxFrames());
+      }
    }
 
    /* Log link up/down edges.  JLinkConnected() already abstracts TCP and

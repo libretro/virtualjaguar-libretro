@@ -49,9 +49,16 @@ void JLinkNPQueueByte(uint8_t b);
 void JLinkNPFlush(void);
 void JLinkNPPumpReceive(void);
 
+/* Voice negotiate state, for the core's log lines. */
+#define JLINK_NP_VOICE_OFF         0  /* no session, or voice not enabled */
+#define JLINK_NP_VOICE_NEGOTIATING 1  /* hellos out, inside the fast window */
+#define JLINK_NP_VOICE_READY       2  /* a peer confirmed; TX armed */
+#define JLINK_NP_VOICE_DATA_ONLY   3  /* nobody confirmed yet; slow retry */
+
 /* Voice overlay (#585): capability negotiate + unreliable voice TX. */
 void JLinkNPSetVoiceWant(int want);
 int  JLinkNPVoiceReady(void);
+int  JLinkNPVoiceState(void);   /* JLINK_NP_VOICE_* */
 void JLinkNPVoiceTick(void);
 int  JLinkNPSendVoice(const uint8_t *pkt, size_t len);
 

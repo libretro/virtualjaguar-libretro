@@ -9,7 +9,6 @@
  * (NP_UART / NP_VOICE / NP_VOICE_HELLO).  Voice stays host-side; only
  * NP_UART bytes enter the UART ring.
  */
-#include <stdio.h>
 #include <string.h>
 #include "jlink.h"
 #include "jlink_netpacket.h"
@@ -21,6 +20,12 @@
 
 #define JLINK_NP_HELLO_RETRY_MS   500
 #define JLINK_NP_HELLO_TIMEOUT_MS 5000
+/* Retry interval once the fast window has elapsed.  The window decides when
+   to REPORT data-only, not when to stop trying: RetroArch opens a host
+   session before anybody connects, so the first 5 s of hellos are usually
+   broadcast to an empty room, and a friend who joins a minute later still
+   has to be able to arm voice. */
+#define JLINK_NP_HELLO_SLOW_MS    2000
 #define JLINK_NP_VOICE_PEERS_MAX  8
 
 static retro_netpacket_send_t npSend = NULL;
@@ -34,7 +39,6 @@ static uint32_t npTxLen = 0;   /* UART payload bytes (excludes type) */
 static int npVoiceWant = 0;
 static int npVoiceReady = 0;
 static int npVoiceDataOnly = 0;
-static int npVoiceLogged = 0;
 static uint32_t npHelloStartMs = 0;
 static uint32_t npHelloLastMs = 0;
 static uint32_t npLocalSenderId = 0;
@@ -63,7 +67,6 @@ static void JLinkNPVoiceReset(void)
 {
    npVoiceReady = 0;
    npVoiceDataOnly = 0;
-   npVoiceLogged = 0;
    npHelloStartMs = 0;
    npHelloLastMs = 0;
    npAckedCount = 0;
@@ -292,7 +295,7 @@ void JLinkNPSetVoiceWant(int want)
    /* check_variables may call this often — respect the same 500 ms
       hello throttle as JLinkNPVoiceTick so option re-reads cannot spam
       reliable broadcasts during the negotiate window. */
-   if (npActive && !npVoiceReady && !npVoiceDataOnly)
+   if (npActive && !npVoiceReady)
    {
       now = JLinkNowMs();
       if (npHelloStartMs == 0)
@@ -311,9 +314,21 @@ int JLinkNPVoiceReady(void)
    return npActive && npVoiceWant && npVoiceReady;
 }
 
+int JLinkNPVoiceState(void)
+{
+   if (!npActive || !npVoiceWant)
+      return JLINK_NP_VOICE_OFF;
+   if (npVoiceReady)
+      return JLINK_NP_VOICE_READY;
+   if (npVoiceDataOnly)
+      return JLINK_NP_VOICE_DATA_ONLY;
+   return JLINK_NP_VOICE_NEGOTIATING;
+}
+
 void JLinkNPVoiceTick(void)
 {
    uint32_t now;
+   uint32_t retry;
 
    if (!npActive || !npVoiceWant)
       return;
@@ -324,23 +339,20 @@ void JLinkNPVoiceTick(void)
    if (npHelloStartMs == 0)
       npHelloStartMs = now;
 
-   if (!npVoiceDataOnly
-       && (uint32_t)(now - npHelloStartMs) >= JLINK_NP_HELLO_TIMEOUT_MS)
+   /* Past the fast window the session reports data-only, but hellos keep
+      going out on the slow interval -- see JLINK_NP_HELLO_SLOW_MS.  This
+      used to latch permanently, so a host that started its session before
+      the other player joined could never arm voice again. */
+   if ((uint32_t)(now - npHelloStartMs) >= JLINK_NP_HELLO_TIMEOUT_MS)
    {
       npVoiceDataOnly = 1;
-      if (!npVoiceLogged)
-      {
-         fprintf(stderr, "[VOICE] peer has no voice chat -- data-only\n");
-         npVoiceLogged = 1;
-      }
-      return;
+      retry = JLINK_NP_HELLO_SLOW_MS;
    }
-
-   if (npVoiceDataOnly)
-      return;
+   else
+      retry = JLINK_NP_HELLO_RETRY_MS;
 
    if (npHelloLastMs == 0
-       || (uint32_t)(now - npHelloLastMs) >= JLINK_NP_HELLO_RETRY_MS)
+       || (uint32_t)(now - npHelloLastMs) >= retry)
    {
       JLinkNPSendHello(0);
       npHelloLastMs = now;
