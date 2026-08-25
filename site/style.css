@@ -1,55 +1,113 @@
-/* Virtual Jaguar libretro — site stylesheet.
- * Self-contained: no external fonts, JS, or trackers.
+/* Virtual Jaguar libretro -- site stylesheet.
+ * Self-contained: no external fonts, JS, images or trackers.  The site
+ * ships zero JavaScript; everything below is borders and gradients.
  *
- * Design: dark CRT-terminal foundation ("1994 Atari dealer kiosk, restored").
- * Jaguar red does real work: rules, hovers, glows, table headers.  Display
- * headings use a condensed system stack (Impact and friends) with
- * letterspacing; numerics and readouts are monospace.  DARK is the primary
- * theme; light is a competent fallback via prefers-color-scheme.  The page
- * texture (scanlines + vignette) is pure CSS gradients, dark theme only. */
+ * DESIGN: "distribution disk, 1994".  The page is a desktop; each section
+ * is a WINDOW with a striped title bar, hard 2px bevels and a solid drop
+ * shadow -- Windows 3.1 / GEM chrome, drawn with modern CSS.  There is no
+ * border-radius anywhere except the face of the one CRT, and no soft glow
+ * anywhere at all: 1994 UI had hard edges and solid shadows, and bloom is
+ * a 2015 signifier wearing a period costume.
+ *
+ * The Jaguar's identity is black and red.  Red is STRUCTURAL here -- title
+ * bars, rules, bevels, hazard stripes -- and never a glow.  Three reds do
+ * three measured jobs (see --red-* below) so every red/text pair clears
+ * WCAG AA with room, instead of one brand red squeaking past at 4.5:1.
+ *
+ * DARK is primary (the console was a black box).  LIGHT is not a fallback:
+ * it is the same bevel system rendered as a period desktop -- system gray,
+ * white highlights, near-white client areas.  One theme per render.
+ *
+ * Type: exactly one display "shout" per page (the h1, condensed caps, the
+ * register Jaguar box art used).  All chrome -- nav, title bars, tables,
+ * badges, numbers, captions -- is monospace, the readme/NFO register.
+ * Body prose is the system UI stack, because mono at length is fatiguing.
+ *
+ * Texture: a 2px dither checker on the header/footer bands and title bars
+ * (EGA-era 50% fill), and scanlines ONLY on the hero CRT.  Scanlines never
+ * cross body text, and never cross an A/B measurement figure -- those PNGs
+ * are evidence, and the design frames them, it does not filter them.
+ */
+
+/* ---------------------------------------------------------------- tokens */
 
 :root {
-  --bg: #0a0a0d;
-  --bg-alt: #121218;
-  --fg: #d9d9de;
-  --fg-muted: #9a9aa4;
-  --accent: #e52521;         /* Jaguar red — rules, fills, large text */
-  --accent-bright: #ff5c47;  /* links / small text on dark (AA 6.4:1) */
-  --accent-soft: #e5252120;
-  --accent-glow: rgba(229, 37, 33, 0.45);
-  --border: #26262e;
-  --good: #4ac26b;
-  --good-bg: #4ac26b1a;
-  --warn: #e3b341;
-  --warn-bg: #e3b3411a;
-  --bad: #ff7b72;
-  --bad-bg: #ff7b721a;
-  --code-bg: #1a1a22;
-  --max-width: 62rem;
-  --font-display: "Impact", "Haettenschweiler", "Franklin Gothic Medium",
-    "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas,
-    "Liberation Mono", monospace;
+  /* Surfaces: page (desktop) / window client area / inset well. */
+  --bg: #0b0b0e;
+  --panel: #16161b;
+  --well: #08080a;
+  --code-bg: #1e1e25;
+
+  --fg: #dcdce2;
+  --fg-dim: #9c9ca6;        /* 6.6:1 on --panel */
+
+  /* Three reds, three jobs.  Ratios measured against the surface each one
+   * actually sits on; none of them is asked to do a second job it fails. */
+  --red-bar:  #7a0f0d;      /* title-bar field; white text = 11.0:1 */
+  --red-fill: #c81a17;      /* buttons and filled badges; white = 5.8:1 */
+  --red-rule: #e52521;      /* borders, rules, hazard stripes; never text */
+  --red-link: #ff4438;      /* link and accent TEXT; 5.3:1 on --panel */
+  --red-wash: rgba(229, 37, 33, 0.10);
+
+  /* Bevels.  Themed, not hardcoded white/black: a highlight that reads on
+   * a black chassis disappears on a gray desktop. */
+  --bevel-hi: rgba(255, 255, 255, 0.16);
+  --bevel-lo: rgba(0, 0, 0, 0.80);
+  --line: #2b2b34;
+  --shadow: rgba(0, 0, 0, 0.55);
+  --dither: rgba(255, 255, 255, 0.045);
+
+  --good: #4ac26b;  --good-bg: rgba(74, 194, 107, 0.12);
+  --warn: #e3b341;  --warn-bg: rgba(227, 179, 65, 0.12);
+  --bad:  #ff7b72;  --bad-bg:  rgba(255, 123, 114, 0.12);
+
+  /* Window width, not prose width.  The compatibility matrices are 4-column
+   * and the hi-res diffs are three panels wide, so the frame has to be
+   * generous; readability is protected separately by holding p/ul/ol to
+   * 46rem inside it. */
+  --measure: 72rem;
+  /* Impact leads on purpose.  It is the one condensed-heavy face that is
+   * actually present on essentially every Mac and Windows machine, and it
+   * is the register Jaguar box art shouted in.  Putting anything ahead of
+   * it means the h1 lands on whatever narrow-but-light face happens to be
+   * installed, and the one shout on the page comes out a whisper.  The tail
+   * carries --font-display-weight for hosts with no condensed face at all. */
+  --font-display: Impact, Haettenschweiler, "Franklin Gothic Demi Cond",
+    "Arial Narrow", "Liberation Sans Narrow", "DejaVu Sans Condensed",
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
 }
 
+/* The period desktop.  Same chrome, system-gray surfaces: the bevels that
+ * read as machined black plastic in dark mode read as 1992 GUI in light. */
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f4f3f0;
-    --bg-alt: #ffffff;
-    --fg: #1c1c1e;
-    --fg-muted: #595960;
-    --accent: #c8102e;
-    --accent-bright: #b3140f;  /* links on light (AA 6.1:1) */
-    --accent-soft: #c8102e17;
-    --accent-glow: rgba(200, 16, 46, 0.18);
-    --border: #d9d7d2;
-    --good: #1a7f37;
-    --good-bg: #1a7f3714;
-    --warn: #9a6700;
-    --warn-bg: #9a670014;
-    --bad: #b42318;
-    --bad-bg: #b4231814;
-    --code-bg: #eceae6;
+    --bg: #b5b5ae;
+    --panel: #ecebe6;
+    --well: #dcdbd4;
+    --code-bg: #dcdbd4;
+
+    --fg: #16161a;
+    --fg-dim: #4e4e56;      /* 6.9:1 on --panel */
+
+    --red-bar:  #7a0f0d;    /* title bars stay theme-invariant, like a */
+    --red-fill: #c81a17;    /* real system chrome colour would */
+    --red-rule: #a81410;
+    --red-link: #a81410;    /* 6.4:1 on --panel */
+    --red-wash: rgba(168, 20, 16, 0.09);
+
+    --bevel-hi: #ffffff;
+    --bevel-lo: #74746d;
+    --line: #9a9a94;
+    --shadow: rgba(0, 0, 0, 0.30);
+    --dither: rgba(0, 0, 0, 0.05);
+
+    --good: #14622b;  --good-bg: rgba(20, 98, 43, 0.11);
+    --warn: #7a5100;  --warn-bg: rgba(122, 81, 0, 0.11);
+    --bad:  #b42318;  --bad-bg:  rgba(180, 35, 24, 0.10);
   }
 }
 
@@ -61,411 +119,563 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.6;
+  font-family: var(--font-body);
   font-size: 1rem;
+  line-height: 1.62;
 }
 
-/* CRT page texture: faint scanlines + corner shading.  Dark theme only —
- * disabled in light mode below.  Pure CSS, no images, no requests. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 2147483647;
-  background:
-    repeating-linear-gradient(0deg,
-      rgba(255, 255, 255, 0.016) 0 1px,
-      transparent 1px 3px);
+/* ------------------------------------------------------- shared surfaces */
+
+/* Raised and pressed, the whole system in two rules.  Everything that is a
+ * control or a panel gets one of these; nothing gets a blur. */
+.bevel-out {
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
 }
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 2147483646;
-  background: radial-gradient(ellipse 120% 90% at 50% 10%,
-    transparent 55%, rgba(0, 0, 0, 0.28));
-}
-@media (prefers-color-scheme: light) {
-  body::before, body::after { display: none; }
+.bevel-in {
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
 }
 
-a { color: var(--accent-bright); text-decoration: none; }
-a:hover {
+/* 2px checkerboard at 50% coverage -- the EGA/VGA way to make a tint out of
+ * two colours.  Kept faint; it is texture, never contrast. */
+.dither {
+  background-image:
+    repeating-conic-gradient(var(--dither) 0% 25%, transparent 0% 50%);
+  background-size: 4px 4px;
+}
+
+/* Diagonal hazard stripe.  Used exactly twice per page, as bookends under
+ * the header and above the footer. */
+.hazard {
+  height: 4px;
+  background-image: repeating-linear-gradient(135deg,
+    var(--red-rule) 0 6px, transparent 6px 12px);
+  background-color: var(--line);
+}
+
+a { color: var(--red-link); text-decoration: none; }
+a:hover, a:focus-visible {
   text-decoration: underline;
-  text-decoration-color: var(--accent);
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
 }
+a:focus-visible { outline: 2px solid var(--red-rule); outline-offset: 2px; }
 
 code, pre { font-family: var(--font-mono); font-size: 0.9em; }
-
-code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
-
+code { background: var(--code-bg); padding: 0.05em 0.3em; }
 pre {
   background: var(--code-bg);
   padding: 0.9rem 1.1rem;
-  border-radius: 4px;
   overflow-x: auto;
-  border: 1px solid var(--border);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
 }
 pre code { background: none; padding: 0; }
 
-/* ---- Header / nav ---- */
+/* ---------------------------------------------------- header / nav / foot */
 
 .site-header {
-  border-bottom: 2px solid var(--accent);
-  background: var(--bg-alt);
+  background: var(--panel);
+  background-image:
+    repeating-conic-gradient(var(--dither) 0% 25%, transparent 0% 50%);
+  background-size: 4px 4px;
+  border-bottom: 2px solid var(--bevel-lo);
+  box-shadow: inset 0 2px 0 var(--bevel-hi);
 }
 
 .site-header .inner {
-  max-width: var(--max-width);
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 0.8rem 1.25rem;
+  padding: 0.7rem 1.1rem;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem 1.5rem;
+  align-items: center;
+  gap: 0.6rem 1.4rem;
 }
 
 .site-title {
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: 1.25rem;
-  letter-spacing: 0.05em;
+  font-size: 1.3rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg);
+  line-height: 1.1;
 }
-.site-title .jag { color: var(--accent-bright); }
-.site-title:hover { text-decoration: none; }
+.site-title .jag { color: var(--red-link); }
+.site-title:hover, .site-title:focus-visible { text-decoration: none; }
 
-.site-nav { display: flex; flex-wrap: wrap; gap: 1.2rem; margin-left: auto; }
+/* Tabs, not links: raised by default, physically pressed when you are on
+ * that page.  This is what a 1992 tab control did, and it means the active
+ * state is legible without relying on colour alone. */
+.site-nav { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-left: auto; }
 .site-nav a {
-  color: var(--fg-muted);
+  color: var(--fg-dim);
+  background: var(--panel);
   font-family: var(--font-mono);
-  font-size: 0.82rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
+  padding: 0.28rem 0.6rem;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
 }
-.site-nav a:hover { color: var(--accent-bright); }
-.site-nav a.active { color: var(--accent-bright); }
+.site-nav a:hover { color: var(--fg); text-decoration: none; }
+.site-nav a.active {
+  color: var(--red-link);
+  background: var(--well);
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
 
-/* ---- Layout ---- */
+.site-footer {
+  background: var(--panel);
+  background-image:
+    repeating-conic-gradient(var(--dither) 0% 25%, transparent 0% 50%);
+  background-size: 4px 4px;
+  border-top: 2px solid var(--bevel-hi);
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+}
+.site-footer .inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 1.1rem 1.1rem 2rem;
+}
+.site-footer p { margin: 0 0 0.7rem; }
+.site-footer p:last-child { margin-bottom: 0; }
+
+/* ---------------------------------------------------------------- layout */
 
 main {
-  max-width: var(--max-width);
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 1.5rem 1.25rem 3rem;
+  padding: 1.6rem 1.1rem 3rem;
 }
 
+/* The one display shout per page. */
 h1 {
   font-family: var(--font-display);
   font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
-  font-size: clamp(2.4rem, 6vw, 4rem);
-  line-height: 1.08;
-  margin: 0.8rem 0 0.5rem;
-  text-shadow: 0 0 28px var(--accent-glow);
+  letter-spacing: 0.015em;
+  font-size: clamp(2.3rem, 7vw, 3.9rem);
+  line-height: 1.04;
+  margin: 0.2rem 0 0.6rem;
+}
+h1::after {
+  content: "";
+  display: block;
+  height: 4px;
+  margin-top: 0.55rem;
+  background-image: repeating-linear-gradient(135deg,
+    var(--red-rule) 0 6px, transparent 6px 12px);
+  background-color: var(--line);
 }
 
-h2 {
-  font-family: var(--font-display);
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 1.45rem;
-  margin-top: 2.4rem;
-  padding-left: 0.6rem;
-  border-left: 5px solid var(--accent);
+.lede {
+  font-size: 1.1rem;
+  color: var(--fg-dim);
+  max-width: 44rem;
+  margin: 0.8rem 0 1.4rem;
 }
 
-h3 { font-size: 1.05rem; margin-top: 1.6rem; }
+p { margin: 0 0 0.9rem; max-width: 46rem; }
+ul, ol { max-width: 46rem; }
+li { margin-bottom: 0.4rem; }
 
-.lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 46rem; }
+/* ---------------------------------------------------------- the window */
 
-.hero { padding: 1.6rem 0 0.5rem; }
+/* Every content section is a window on the desktop: raised client area,
+ * striped title bar, solid drop shadow.  The bar's right slot carries real
+ * metadata (a ship badge, a capture size) -- never a decorative glyph. */
+.win {
+  background: var(--panel);
+  margin: 1.8rem 0;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 3px 3px 0 var(--shadow);
+}
 
-.hero .kicker {
+.win > h2,
+.win-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  margin: 0;
+  padding: 0.34rem 0.6rem;
+  background-color: var(--red-bar);
+  /* GEM/TOS drew the active title as hairline stripes with the caption
+   * sitting in the field.  1px stripes at 3px pitch, inside one hue. */
+  background-image: repeating-linear-gradient(0deg,
+    rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
+  border-bottom: 2px solid var(--red-rule);
+  color: #fff;
   font-family: var(--font-mono);
-  text-transform: uppercase;
-  letter-spacing: 0.3em;
   font-size: 0.78rem;
   font-weight: 700;
-  color: var(--accent-bright);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.4;
 }
 
-.hero-actions { margin: 1.4rem 0 0.4rem; }
+.win-body { padding: 1rem 1.1rem 1.1rem; }
+.win-body > :last-child { margin-bottom: 0; }
 
-/* ---- Hero effects scaffolding ----
- * Real DOM content (the H1 span, the screenshot <img>) is always present and
- * is the no-JS/no-GL page.  Effect canvases overlay it: .fx-out is the
- * WebGL output (transparent until an engine draws), .fx-capture is the
- * hidden capture surface used by the html-in-canvas shim in hero-fx.js.
- * hero-fx.js adds .fx-on only after an engine successfully attaches; the
- * content then fades with opacity (kept in the accessibility tree). */
-
-.fx-capture {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  visibility: hidden;   /* keeps layout geometry, never painted */
+/* Badges sitting in a title bar are window metadata, so they drop the
+ * semantic colour coding (which would fight the red field) and become a
+ * plain chip.  White on bar+15% white is still ~9:1. */
+.win > h2 .badge,
+.win-bar .badge {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  border: 0;
+  font-size: 0.7rem;
 }
 
-.fx-out {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;       /* transparent until the effect actually draws */
-  pointer-events: none;
+h3 {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg);
+  margin: 1.7rem 0 0.6rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 2px solid var(--line);
+}
+h3 .badge { margin-left: 0.4rem; }
+
+/* Bare h2 outside a window (rare; a divider between window groups). */
+main > h2 {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin: 2.4rem 0 0.8rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid var(--line);
 }
 
-.fx-title { position: relative; }
-/* Block, not inline: the effect engine reads clientWidth off this element,
- * and inline elements report 0 (which would clamp the effect to a sliver). */
-.fx-title > span { display: block; }
-.fx-title.fx-on > span { opacity: 0; }
+/* --------------------------------------------------------- the manifest */
 
-.crt-frame { margin: 1.6rem 0 0; max-width: none; }
-.crt-screen {
-  position: relative;
-  border: 2px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: #101014;   /* tube color behind the barrel-distorted corners */
-  box-shadow: 0 0 48px var(--accent-glow),
-              0 0 4px rgba(0, 0, 0, 0.8);
+/* Packing list: mono key, prose value, evidence underneath.  Replaces the
+ * card wall -- a 1994 readme listed what was on the disk, it did not put
+ * twelve identical boxes in a grid. */
+.manifest {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(10rem, 14rem) 1fr;
 }
-.crt-screen img {
+.manifest > dt {
+  font-family: var(--font-mono);
+  font-size: 0.79rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--red-link);
+  padding: 0.85rem 1rem 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+.manifest > dd {
+  margin: 0;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--fg-dim);
+  font-size: 0.95rem;
+}
+.manifest > dt:first-of-type, .manifest > dd:first-of-type { border-top: 0; }
+.manifest > dd p { margin: 0 0 0.4rem; max-width: 40rem; }
+.manifest > dd p:last-child { margin-bottom: 0; }
+
+@media (max-width: 34rem) {
+  .manifest { grid-template-columns: 1fr; }
+  .manifest > dt { padding-bottom: 0.15rem; }
+  .manifest > dd { padding-top: 0.15rem; border-top: 0; }
+}
+
+/* Evidence citations under a manifest entry or a figure. */
+.src {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.02em;
+  color: var(--fg-dim);
+  margin: 0.35rem 0 0;
+}
+.src a { white-space: nowrap; }
+
+/* ---------------------------------------------------------- the readout */
+
+/* System-info panel: label left, value right, inset well, tabular figures.
+ * Replaces the glowing stat band. */
+.readout {
+  margin: 0;
+  background: var(--well);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+  font-family: var(--font-mono);
+  font-size: 0.83rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+}
+.readout > dt {
+  padding: 0.42rem 0.5rem 0.42rem 0.8rem;
+  color: var(--fg-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.74rem;
+  border-top: 1px solid var(--line);
+  align-self: center;
+}
+.readout > dd {
+  margin: 0;
+  padding: 0.42rem 0.8rem 0.42rem 0.5rem;
+  text-align: right;
+  color: var(--fg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--line);
+  align-self: center;
+  white-space: nowrap;
+}
+.readout > dt:first-of-type, .readout > dd:first-of-type { border-top: 0; }
+
+/* ---------------------------------------------------------- screenshots */
+
+/* A captured frame gets window chrome and an inset well, so it reads as an
+ * image in a viewer rather than as page decoration.  The pixels themselves
+ * are never filtered: these are measurements. */
+figure { margin: 1.4rem 0; }
+figure img {
   display: block;
   width: 100%;
   height: auto;
-  border: 0;
-  border-radius: 0;
   image-rendering: pixelated;
 }
-.crt-frame.fx-on img { opacity: 0; }
+figure.smooth img { image-rendering: auto; }
+
+.shot {
+  background: var(--panel);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+.shot > .win-bar { border-bottom-width: 2px; }
+.shot .well {
+  padding: 6px;
+  background: var(--well);
+  overflow-x: auto;
+}
+.shot figcaption {
+  padding: 0.6rem 0.8rem 0.75rem;
+  font-size: 0.86rem;
+  color: var(--fg-dim);
+  border-top: 1px solid var(--line);
+}
+.shot figcaption strong { color: var(--fg); }
+
+/* Wide three-panel diffs are up to 1816px of measured evidence, and they
+ * live INSIDE a window.  So they cancel the window body's padding to reach
+ * its full width -- never past its frame, which would look like a broken
+ * layout rather than a deliberate break-out.  The page measure carries the
+ * rest of the job: --measure is wide, and prose is held to 46rem inside it.
+ *
+ * On a phone the well SCROLLS at a legible size instead of shrinking three
+ * panels to 110px each, which would destroy the thing being evidenced. */
+.shot.wide { margin-left: -1.1rem; margin-right: -1.1rem; }
+.shot.wide .well img { min-width: 42rem; }
+
+figcaption {
+  font-size: 0.86rem;
+  color: var(--fg-dim);
+  margin-top: 0.45rem;
+}
+
+/* The one CRT.  A tube face is round even though the bezel is square, so
+ * this is the single place a radius is honest -- and the only place
+ * scanlines are drawn. */
+.crt-frame { margin: 1.5rem 0; }
+.crt-bezel {
+  padding: 12px;
+  background: var(--panel);
+  background-image:
+    repeating-conic-gradient(var(--dither) 0% 25%, transparent 0% 50%);
+  background-size: 4px 4px;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+.crt-screen {
+  position: relative;
+  background: #06060a;
+  border-radius: 7px / 9px;
+  overflow: hidden;
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+}
+.crt-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 130% 130% at 50% 50%,
+      transparent 62%, rgba(0, 0, 0, 0.42)),
+    repeating-linear-gradient(0deg,
+      rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px);
+}
 .crt-frame figcaption {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.05em;
-  color: var(--fg-muted);
-  margin-top: 0.5rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+  margin-top: 0.5rem;
 }
 
-/* ---- Cards / feature grid ---- */
-
-.grid {
+/* Side-by-side A/B captures. */
+.ab-pair {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
   gap: 1rem;
-  margin: 1.5rem 0;
+  align-items: start;
+  margin: 1.3rem 0;
 }
+.ab-pair .shot { margin: 0; }
 
-.card {
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1rem 1.15rem;
-  transition: border-color 120ms ease;
-}
-.card:hover { border-color: var(--accent); }
-.card h3 { margin: 0 0 0.4rem; font-size: 1.02rem; }
-.card p { margin: 0 0 0.5rem; font-size: 0.94rem; color: var(--fg-muted); }
-.card .src { font-size: 0.8rem; font-family: var(--font-mono); }
-.card .src a { white-space: nowrap; }
-
-/* ---- Badges ---- */
+/* ------------------------------------------------------------ badges */
 
 .badge {
   display: inline-block;
-  padding: 0.15em 0.6em;
-  border-radius: 3px;
+  padding: 0.1em 0.5em;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
+  border: 1px solid currentColor;
+  vertical-align: 0.08em;
 }
-.badge.good  { color: var(--good); background: var(--good-bg); }
-.badge.warn  { color: var(--warn); background: var(--warn-bg); }
-.badge.bad   { color: var(--bad);  background: var(--bad-bg); }
-.badge.plain { color: var(--fg-muted); background: var(--code-bg); }
-.badge.review{ color: var(--warn); background: var(--warn-bg); }
+.badge.good { color: var(--good); background: var(--good-bg); }
+.badge.warn { color: var(--warn); background: var(--warn-bg); }
+.badge.bad  { color: var(--bad);  background: var(--bad-bg); }
+.badge.plain { color: var(--fg-dim); background: var(--code-bg); }
 
-/* ---- Tables: terminal readouts ---- */
+/* -------------------------------------------------------------- tables */
 
+/* Terminal readouts.  The wrapper is an inset well so a table reads as
+ * data printed into the window, not as another raised panel. */
 .table-wrap {
   overflow-x: auto;
-  margin: 1rem 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  margin: 1.1rem 0;
+  background: var(--well);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
 }
+.win-body > .table-wrap:last-child { margin-bottom: 0; }
 
 table {
   border-collapse: collapse;
   width: 100%;
-  background: var(--bg-alt);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
 th, td {
   text-align: left;
-  padding: 0.55rem 0.8rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
 th {
+  position: sticky;
+  top: 0;
   background: var(--code-bg);
-  border-bottom: 2px solid var(--accent);
+  border-bottom: 2px solid var(--red-rule);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.71rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--accent-bright);
+  color: var(--fg);
   white-space: nowrap;
 }
 td { font-variant-numeric: tabular-nums; }
 td code { font-size: 0.85em; }
 tr:last-child td { border-bottom: none; }
-tr:hover td { background: var(--accent-soft); }
+tbody tr:hover td, table tr:hover td { background: var(--red-wash); }
+table tr:hover th { background: var(--code-bg); }
 
-.footnote, .caveat {
-  font-size: 0.88rem;
-  color: var(--fg-muted);
-}
+/* ---------------------------------------------------- notes / evidence */
 
-.caveat {
-  border-left: 3px solid var(--warn);
-  background: var(--warn-bg);
-  color: var(--fg);
-  padding: 0.7rem 1rem;
-  border-radius: 0 4px 4px 0;
+/* Two callouts, one shape: a thick coloured spine on an inset field.  The
+ * spine colour is the only difference, so they never compete. */
+.note, .evidence {
   margin: 1.2rem 0;
+  padding: 0.7rem 0.95rem;
+  font-size: 0.9rem;
+  background: var(--well);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--warn);
+  max-width: none;
 }
+.evidence { border-left-color: var(--red-rule); }
+.note > :last-child, .evidence > :last-child { margin-bottom: 0; }
+.note p, .evidence p { max-width: none; }
 
-.evidence {
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
-  padding: 0.7rem 1rem;
-  border-radius: 0 4px 4px 0;
-  margin: 1.2rem 0;
-  font-size: 0.92rem;
-}
-
-/* ---- Stats strip: big phosphor numbers ---- */
-
-.stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  margin: 1.6rem 0;
-}
-.stat {
-  flex: 1 1 10rem;
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
-  border-top: 2px solid var(--accent);
-  border-radius: 4px;
-  padding: 0.9rem 1rem;
-}
-.stat .n {
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: 2.6rem;
-  line-height: 1.1;
-  letter-spacing: 0.02em;
-  color: var(--accent-bright);
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 10px var(--accent-glow), 0 0 32px var(--accent-glow);
-}
-.stat .l { font-size: 0.85rem; color: var(--fg-muted); }
-
-/* ---- Images / A-B figures ---- */
-
-figure { margin: 1.4rem 0; }
-figure img {
-  max-width: 100%;
-  height: auto;
-  display: block;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  image-rendering: pixelated;
-}
-figure.smooth img { image-rendering: auto; }
-figcaption { font-size: 0.86rem; color: var(--fg-muted); margin-top: 0.45rem; }
-
-.ab-pair {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-  gap: 1rem;
-  align-items: start;
-}
-.ab-pair figure { margin: 0; }
-.ab-pair .label {
+.footnote {
   font-family: var(--font-mono);
-  font-weight: 700;
   font-size: 0.78rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent-bright);
-  margin-bottom: 0.35rem;
+  line-height: 1.65;
+  color: var(--fg-dim);
+  max-width: 48rem;
 }
 
-/* ---- Footer ---- */
+/* -------------------------------------------------------------- buttons */
 
-.site-footer {
-  border-top: 1px solid var(--border);
-  color: var(--fg-muted);
-  font-size: 0.85rem;
-}
-.site-footer .inner {
-  max-width: var(--max-width);
-  margin: 0 auto;
-  padding: 1.2rem 1.25rem 2rem;
-}
-
-/* ---- Buttons: chunky ---- */
+/* Raised control that physically depresses.  The whole motion budget of
+ * this site is 1px of travel on :active -- feedback, nothing else. */
+.actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.4rem 0 0.4rem; }
 
 .btn {
   display: inline-block;
-  background: var(--accent);
-  color: #fff;
+  background: var(--red-fill);
+  color: #fff;                        /* 5.8:1 on --red-fill */
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 0.88rem;
-  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  padding: 0.6rem 1.3rem;
-  border: 2px solid var(--accent);
-  border-radius: 3px;
-  margin: 0.4rem 0.6rem 0.4rem 0;
-  transition: box-shadow 120ms ease, background 120ms ease, color 120ms ease;
+  padding: 0.52rem 1.1rem;
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  box-shadow: 2px 2px 0 var(--shadow);
 }
-.btn:hover {
-  text-decoration: none;
-  background: var(--accent-bright);
-  border-color: var(--accent-bright);
-  box-shadow: 0 0 20px var(--accent-glow);
+.btn:hover, .btn:focus-visible { text-decoration: none; filter: brightness(1.12); }
+.btn:active {
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+  box-shadow: none;
+  transform: translate(2px, 2px);
 }
-.btn.secondary {
-  background: transparent;
-  color: var(--accent-bright);
-}
-.btn.secondary:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
+.btn.secondary { background: var(--panel); color: var(--red-link); }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn, .card { transition: none; }
+  .btn:active { transform: none; }
+}
+
+/* --------------------------------------------------------------- print */
+
+@media print {
+  body { background: #fff; color: #000; }
+  .site-header, .site-footer, .hazard { display: none; }
+  .win, .shot, .crt-bezel { box-shadow: none; border: 1px solid #000; }
+  .win > h2, .win-bar { background: #000; color: #fff; }
+  .crt-screen::after { display: none; }
+  a { color: #000; text-decoration: underline; }
+  main { max-width: none; }
 }

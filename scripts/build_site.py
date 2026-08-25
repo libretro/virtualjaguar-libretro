@@ -328,8 +328,11 @@ def render_cd_table(rows):
                 notes.append('<span title="%s"><code>%s</code> (%s)</span>'
                              % (html.escape(r["watchdog"], quote=True),
                                 html.escape(wd), mode))
+        # No em-dash anywhere the site renders: a plain hyphen is what a
+        # 1994 printout put in an empty cell, and it is the character the
+        # copy standard on every page uses.
         cells.append("<td>%s</td>" % (" &middot; ".join(notes) if notes
-                                      else "&mdash;"))
+                                      else "-"))
         out.append("<tr>%s</tr>" % "".join(cells))
     out.append("</table></div>")
     return "\n".join(out), len(order), n_good
@@ -439,8 +442,11 @@ def render_cart_table(rows):
                 notes.append('<span title="%s"><code>%s</code> (%s)</span>'
                              % (html.escape(r[notes_k], quote=True),
                                 html.escape(wd), mode))
+        # No em-dash anywhere the site renders: a plain hyphen is what a
+        # 1994 printout put in an empty cell, and it is the character the
+        # copy standard on every page uses.
         cells.append("<td>%s</td>" % (" &middot; ".join(notes) if notes
-                                      else "&mdash;"))
+                                      else "-"))
         out.append("<tr>%s</tr>" % "".join(cells))
     out.append("</table></div>")
     return "\n".join(out), len(rows), n_good
@@ -586,27 +592,37 @@ def layout(page_name, meta, body, nav_items, ctx):
                    % (page_href(fname), cls, html.escape(label)))
     # NOTE: the site title is an <a>, not a heading, on purpose -- every page
     # must have exactly one <h1> and it belongs to the page content.
+    #
+    # color-scheme is "dark light": dark is the primary theme (the console
+    # was a black box), light is a deliberate period-desktop variant, not a
+    # fallback.  The order tells the UA which one to paint before CSS lands.
+    #
+    # The two <div class="hazard"> bars are the page's only pure decoration:
+    # a diagonal red stripe bookending the content, drawn in CSS.  They are
+    # aria-hidden by being empty non-semantic divs.
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 %(headmeta)s
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="site-header"><div class="inner">
   <a class="site-title" href="./">Virtual <span class="jag">Jaguar</span> libretro</a>
-  <nav class="site-nav">%(nav)s</nav>
+  <nav class="site-nav" aria-label="Primary">%(nav)s</nav>
 </div></header>
+<div class="hazard"></div>
 <main>
 %(body)s
 </main>
+<div class="hazard"></div>
 <footer class="site-footer"><div class="inner">
   <p>
-    Virtual Jaguar libretro &mdash; GPLv3 &mdash;
-    <a href="%(repo)s">source on GitHub</a> &middot;
+    Virtual Jaguar libretro. GPLv3.
+    <a href="%(repo)s">Source on GitHub</a> &middot;
     <a href="%(repo)s#readme">README</a> &middot;
     <a href="%(repo)s/releases">releases</a> &middot;
     <a href="%(repo)s/releases/tag/nightly">nightly build</a> &middot;
@@ -616,13 +632,13 @@ def layout(page_name, meta, body, nav_items, ctx):
   <p>
     Core options, controls and file extensions are documented in the
     <a href="%(docs)s">official libretro documentation for this core</a> on
-    docs.libretro.com &mdash; that page is the reference manual; this site is
-    the project showcase.
+    docs.libretro.com. That page is the reference manual. This site is the
+    project showcase.
   </p>
   <p>
-    This site is generated from committed repository data by
-    <a href="%(repo)s/blob/develop/scripts/build_site.py">scripts/build_site.py</a>;
-    every claim links to its evidence.
+    Generated from committed repository data by
+    <a href="%(repo)s/blob/develop/scripts/build_site.py">scripts/build_site.py</a>.
+    Every claim links to its evidence.
   </p>
 </div></footer>
 </body>

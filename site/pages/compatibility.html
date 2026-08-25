@@ -1,115 +1,149 @@
-<!-- title: Compatibility — Virtual Jaguar libretro -->
+<!-- title: Compatibility | Virtual Jaguar libretro -->
 <!-- nav: Compatibility -->
 <!-- description: Jaguar CD and cartridge boot results per image for the Virtual Jaguar libretro core, generated from committed test logs rather than typed in by hand. -->
 
 <h1>Compatibility</h1>
 <p class="lede">
-  Generated from committed test logs. Nothing is typed by hand.
+  Generated from committed test logs. Nothing on this page is typed by hand.
 </p>
 
-<div class="caveat">
-  <span class="badge good">verified</span> in the test log &middot;
-  <span class="badge bad">known issue</span> in a committed doc &middot;
-  <span class="badge warn">not yet verified</span> no recorded result. "Verified" = <em>boots into game code headlessly</em>, on the
-  maintainer's disc images, at build {{COMPAT_BUILD_IDS}} &mdash; not a
-  completed-the-game certificate.
+<div class="note">
+  <p>
+    <span class="badge good">verified</span> means a result in the test log.
+    <span class="badge bad">known issue</span> means a failure recorded in a
+    committed doc. <span class="badge warn">not yet verified</span> means no
+    recorded result either way.
+  </p>
+  <p>
+    Verified is a narrow claim: <em>boots into game code headlessly</em>, on
+    the maintainer's disc images, at build {{COMPAT_BUILD_IDS}}. It is not a
+    certificate that the game can be completed.
+  </p>
 </div>
 
 <p class="footnote">
-  Manual: <a href="{{DOCS_URL}}">docs.libretro.com</a>. No BIOS files required
-  (<a href="{{REPO}}#bios">README: BIOS</a>). libretro's separate
-  <a href="{{DOCS_COMPAT_URL}}">community compatibility list</a> covers
-  cartridges.
+  Manual: <a href="{{DOCS_URL}}">docs.libretro.com</a>. No BIOS files are
+  required (<a href="{{REPO}}#bios">README: BIOS</a>). libretro keeps a
+  separate <a href="{{DOCS_COMPAT_URL}}">community compatibility list</a> that
+  covers cartridges.
 </p>
 
-<h2>Jaguar CD boot matrix</h2>
-<p>
-  Parsed from
-  <a href="{{REPO}}/blob/develop/docs/cd-boot-matrix.md"><code>docs/cd-boot-matrix.md</code></a>,
-  produced by
-  <a href="{{REPO}}/blob/develop/test/tools/cd_boot_matrix.sh"><code>cd_boot_matrix.sh</code></a>.
-  Each title runs in both modes: HLE and real BIOS.
-</p>
+<section class="win">
+  <h2>Jaguar CD boot matrix <span class="badge">generated</span></h2>
+  <div class="win-body">
+    <p>
+      Parsed from
+      <a href="{{REPO}}/blob/develop/docs/cd-boot-matrix.md"><code>docs/cd-boot-matrix.md</code></a>,
+      produced by
+      <a href="{{REPO}}/blob/develop/test/tools/cd_boot_matrix.sh"><code>cd_boot_matrix.sh</code></a>.
+      Every title runs in both modes, HLE and real BIOS.
+    </p>
 
-<div class="stats">
-  <div class="stat"><div class="n">{{COMPAT_N_TITLES}}</div><div class="l">disc images in the corpus</div></div>
-  <div class="stat"><div class="n">{{COMPAT_N_HLE_GOOD}}</div><div class="l">reach game code in HLE mode</div></div>
-  <div class="stat"><div class="n">{{COMPAT_N_BIOS_GOOD}}</div><div class="l">reach game code in real-BIOS mode</div></div>
-</div>
+    <dl class="readout">
+      <dt>Disc images in the corpus</dt>
+      <dd>{{COMPAT_N_TITLES}}</dd>
+      <dt>Reach game code, HLE mode</dt>
+      <dd>{{COMPAT_N_HLE_GOOD}}</dd>
+      <dt>Reach game code, real-BIOS mode</dt>
+      <dd>{{COMPAT_N_BIOS_GOOD}}</dd>
+    </dl>
 
-{{COMPAT_TABLE}}
+    {{COMPAT_TABLE}}
 
-<p class="footnote">
-  Notes are <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash
-  watchdog</a> signatures; a lone <code>cd_seek_wedge</code> or
-  <code>video_stall</code> beside a passing PC trace is often benign. The
-  stage column is the gate.
-</p>
+    <p class="footnote">
+      Notes carry <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash
+      watchdog</a> signatures. A lone <code>cd_seek_wedge</code> or
+      <code>video_stall</code> next to a passing PC trace is often benign. The
+      stage column is the gate.
+    </p>
+  </div>
+</section>
 
-<h2>Cartridge boot matrix</h2>
-<p>
-  Parsed from
-  <a href="{{REPO}}/blob/develop/docs/cart-boot-matrix.md"><code>docs/cart-boot-matrix.md</code></a>,
-  produced by
-  <a href="{{REPO}}/blob/develop/test/tools/cart_boot_matrix.sh"><code>cart_boot_matrix.sh</code></a>.
-  Each cartridge in the corpus runs headlessly in both boot modes; "boots and
-  runs" = final 68K PC executing game code at build {{CART_BUILD_IDS}}. Video
-  evidence and any crash-watchdog signatures are reported in the notes. Menu vs
-  in-game is not distinguished headlessly, and a "video undetermined" badge
-  means the title executes but headless video evidence is inconclusive
-  &mdash; not that it is broken.
-</p>
+<section class="win">
+  <h2>Cartridge boot matrix <span class="badge">generated</span></h2>
+  <div class="win-body">
+    <p>
+      Parsed from
+      <a href="{{REPO}}/blob/develop/docs/cart-boot-matrix.md"><code>docs/cart-boot-matrix.md</code></a>,
+      produced by
+      <a href="{{REPO}}/blob/develop/test/tools/cart_boot_matrix.sh"><code>cart_boot_matrix.sh</code></a>.
+      Every cartridge in the corpus runs headlessly in both boot modes.
+      &ldquo;Boots and runs&rdquo; means the final 68K PC is executing game
+      code at build {{CART_BUILD_IDS}}. Video evidence and any crash-watchdog
+      signature go in the notes.
+    </p>
+    <p>
+      Two limits worth stating plainly. Menu and in-game are not
+      distinguished headlessly. A &ldquo;video undetermined&rdquo; badge means
+      the title executes but the headless video evidence is inconclusive, not
+      that the title is broken.
+    </p>
 
-<div class="stats">
-  <div class="stat"><div class="n">{{CART_N_TITLES}}</div><div class="l">cartridge images in the corpus</div></div>
-  <div class="stat"><div class="n">{{CART_N_HLE_GOOD}}</div><div class="l">boot and run in HLE mode</div></div>
-  <div class="stat"><div class="n">{{CART_N_BIOS_GOOD}}</div><div class="l">boot and run in real-BIOS mode</div></div>
-</div>
+    <dl class="readout">
+      <dt>Cartridge images in the corpus</dt>
+      <dd>{{CART_N_TITLES}}</dd>
+      <dt>Boot and run, HLE mode</dt>
+      <dd>{{CART_N_HLE_GOOD}}</dd>
+      <dt>Boot and run, real-BIOS mode</dt>
+      <dd>{{CART_N_BIOS_GOOD}}</dd>
+    </dl>
 
-{{CART_TABLE}}
+    {{CART_TABLE}}
+  </div>
+</section>
 
-<h2>Cartridge highlights <span class="badge good">shipped in tagged releases</span></h2>
-<p>
-  Named, verified fixes from the release notes.
-</p>
+<section class="win">
+  <h2>Cartridge fixes <span class="badge">shipped in tagged releases</span></h2>
+  <div class="win-body">
+    <p>Named fixes from the release notes, each with the commit trail.</p>
 
-<div class="table-wrap"><table>
-  <tr><th>Title</th><th>What was fixed</th><th>Source</th></tr>
-  <tr><td>Doom</td><td>~2x speed brought down by bus-contention modeling</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration</a></td></tr>
-  <tr><td>Wolfenstein 3D</td><td>Missing game music (DSP <code>D_FLAGS</code> pipeline-stage correction)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
-  <tr><td>Tempest 2000</td><td>One-frame playfield collapse (#187)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
-  <tr><td>Alien vs Predator</td><td>Cyan/brown bars (#178); red background behind the shotgun (#267, #292)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
-  <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay — 14-byte group-0 bus-error frame, GPU <code>STOREP</code> masking (#138)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
-  <tr><td>Raiden</td><td>Music dying after saved-options corruption (EEPROM read race, #344); black screen on HLE fast-boot (#339)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td></tr>
-  <tr><td>Power Drive Rally</td><td>Sound freezing on a constant tone mid-game — GPU/DSP local RAM 16-bit-port latch (#355)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot; <a href="{{REPO}}/pull/363">PR #363</a></td></tr>
-  <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>Snow rendered wrong. Object Processor register write order is LSW-first, proven from the Flare netlists (#354)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a></td></tr>
-  <tr><td>Ultra Vortek</td><td>Video torn apart when the Voice Modem activates. UART IRQ was missing TOM&rsquo;s <code>C_JERENA</code> gate; 3.26 spurious interrupts/frame before, 0.999 after (#500)</td>
-      <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td></tr>
-</table></div>
+    <div class="table-wrap"><table>
+      <tr><th>Title</th><th>What was fixed</th><th>Source</th></tr>
+      <tr><td>Doom</td><td>Ran at roughly 2x speed. Brought down by bus-contention modelling.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v2.3.0.md">v2.3.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/doom-pace-calibration.md">calibration</a></td></tr>
+      <tr><td>Wolfenstein 3D</td><td>Missing game music. DSP <code>D_FLAGS</code> pipeline-stage correction.</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+      <tr><td>Tempest 2000</td><td>One-frame playfield collapse (#187).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a></td></tr>
+      <tr><td>Alien vs Predator</td><td>Cyan and brown bars (#178). Red background behind the shotgun (#267, #292).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td></tr>
+      <tr><td>Pitfall: The Mayan Adventure</td><td>Black screen in gameplay. 14-byte group-0 bus-error frame, plus GPU <code>STOREP</code> masking (#138).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0</a> &middot; <a href="{{REPO}}/pull/212">PR #212</a></td></tr>
+      <tr><td>Raiden</td><td>Music dying after saved-options corruption, an EEPROM read race (#344). Black screen on HLE fast-boot (#339).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td></tr>
+      <tr><td>Power Drive Rally</td><td>Sound freezing on a constant tone mid-game. GPU/DSP local RAM 16-bit-port latch (#355).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a> &middot; <a href="{{REPO}}/pull/363">PR #363</a></td></tr>
+      <tr><td>Val d&rsquo;Is&egrave;re Skiing</td><td>Snow rendered wrong. Object Processor register write order is LSW-first, proven from the Flare netlists (#354).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a></td></tr>
+      <tr><td>Ultra Vortek</td><td>Video torn apart when the Voice Modem activates. The UART IRQ was missing TOM&rsquo;s <code>C_JERENA</code> gate: 3.26 spurious interrupts per frame before, 0.999 after (#500).</td>
+          <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td></tr>
+    </table></div>
 
-<p class="footnote">
-  <strong>Tracked:</strong> render-bound game loops ~2x fast in Doom and
-  Hover Strike (<a href="{{REPO}}/issues/401">#401</a>; a real-hardware Doom
-  capture now anchors the v4.0.0 timing campaign) &middot; Battle Morph (CD)
-  too fast (<a href="{{REPO}}/issues/331">#331</a>).
-  <strong>Workaround:</strong> the non-default Fast blitter drops Iron
-  Soldier's briefing wireframe; keep Accurate
-  (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).
-</p>
+    <h3>Still open</h3>
+    <p class="footnote">
+      Render-bound game loops run about 2x fast in Doom and Hover Strike
+      (<a href="{{REPO}}/issues/401">#401</a>; a real-hardware Doom capture now
+      anchors the v4.0.0 timing campaign). Battle Morph on CD is too fast
+      (<a href="{{REPO}}/issues/331">#331</a>). The non-default Fast blitter
+      drops Iron Soldier's briefing wireframe; keep Accurate
+      (<a href="{{REPO}}/blob/develop/docs/cart-issue-triage.md">triage doc</a>).
+    </p>
+  </div>
+</section>
 
-<h3>Beyond the headless gate <span class="badge warn">help wanted</span></h3>
-<p>
-  The matrices above prove titles boot and execute; they cannot prove a game
-  plays correctly to the end. Report gameplay issues in
-  <a href="{{REPO}}/discussions">Discussions</a> with your frontend log &mdash;
-  the <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>
-  writes the failure signature into it.
-</p>
+<section class="win">
+  <h2>Beyond the headless gate <span class="badge">help wanted</span></h2>
+  <div class="win-body">
+    <p>
+      The matrices above prove that titles boot and execute. They cannot prove
+      a game plays correctly to the end, and no amount of headless sweeping
+      will change that.
+    </p>
+    <p>
+      Report gameplay issues in <a href="{{REPO}}/discussions">Discussions</a>
+      with your frontend log attached. The
+      <a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash watchdog</a>
+      writes the failure signature into it.
+    </p>
+  </div>
+</section>
