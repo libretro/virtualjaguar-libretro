@@ -74,16 +74,28 @@ states measured above were older versions that loaded with only a size warning.
 
 ROMs for all eight candidates are present in `jaguar-roms-private/ROMS/`.
 
-### Measured 2026-08-25
+### Measured 2026-08-25 — all eight candidates
 
-| Title | Savestate | Result |
-|---|---|---|
-| **Cybermorph** | `Cybermorph (1993).state1` | **CLEARS GATE 1** — +44.7% at RISC 1.5x, +72.8% at 2x |
-| Iron Soldier | `iron_soldier_v104_f2400.state` | Null — clock-insensitive, confirmed by underclock control |
-| Val D'Isere | `... (1994).state.auto` | **UNMEASURED** — near-static scene, needs a real gameplay state |
+Gate 1 is **complete**. One title passes.
 
-**Cybermorph is the first title to clear gate 1.** All seven cells, one 2400-frame window
-(saturation ceiling 2399):
+| Title | control 0.5x | RISC 1.5x | RISC 2x | verdict |
+|---|---:|---:|---:|---|
+| **Cybermorph** | −48.7% | **+44.7%** | **+72.8%** | **PASSES** |
+| I-War | −18.2% | +6.3% | +1.1% | fails — noise, non-monotonic |
+| Missile Command 3D | −0.2% | **−14.3%** | −11.2% | fails — overclock makes it *worse* |
+| Doom | ±0.0% | ±0.0% | ±0.0% | flat lock, 593/1800 |
+| Club Drive | ±0.0% | ±0.0% | ±0.0% | flat lock, 1471/1800 |
+| Iron Soldier | −0.9% | ±0.0% | ±0.0% | flat lock, 116/900 |
+| Super Burnout | SATURATED | SATURATED | SATURATED | unmeasurable — already at the ceiling |
+| Val D'Isere | ±0.0% | ±0.0% | ±0.0% | **unmeasured** — static savestate |
+
+**One pass in eight.** The structural-null hypothesis from #378 survives as the *general* rule —
+most Jaguar titles are paced by a field lock or their own frame cap, not by clock speed — but it
+is not universal, and Cybermorph is the counterexample that disproves the strong form of it.
+
+#### Cybermorph — PASSES
+
+All seven cells, one 2400-frame window (saturation ceiling 2399):
 
 | cell | transitions | ≈ fps | vs stock |
 |---|---:|---:|---:|
@@ -95,61 +107,69 @@ ROMs for all eight candidates are present in `jaguar-roms-private/ROMS/`.
 | RISC 1.5x, 68K 1.5x | 1994/2400 | ~50 | +46.7% |
 | RISC 2x, 68K 1.5x | 2311/2400 | ~58 | +70.1% |
 
-The 68K axis is inert (+0.2% on its own): this is a RISC-bound title, so only
-`risc_clock_scale` matters, and stacking the 68K scale on top adds nothing.
+The 68K axis is inert (+0.2% on its own): RISC-bound title, so only `risc_clock_scale` matters,
+and stacking the 68K scale on top adds nothing.
 
-**The control is what makes the rest trustworthy.** RISC 0.5x costs 48.7% — near-linear
-against the +44.7% that 1.5x gains — so the metric tracks clock speed in both directions on
-this title. Every figure above comes from the same 2400-frame window; nothing is spliced
-across window lengths.
+**The control is what makes the rest trustworthy.** RISC 0.5x costs 48.7% — near-linear against
+the +44.7% that 1.5x gains — so the metric tracks clock speed in both directions here. Every
+figure comes from the same 2400-frame window; nothing is spliced across window lengths.
 
-At 2x, 2349 of 2400 fields carry a new frame — Cybermorph is now presenting at essentially
-the display rate. That is a real ceiling rather than the trap-2 counter artefact, but it does
-mean **+72.8% is a floor on the 2x gain, not the exact figure**; the engine may have headroom
-the display cannot show.
+At 2x, 2349 of 2400 fields carry a new frame: it is presenting at essentially the display rate.
+That is a real ceiling rather than the trap-2 counter artefact, but it does mean **+72.8% is a
+floor on the 2x gain, not the exact figure**.
 
-> **Two blockers before this becomes a DB preset.** Cybermorph is *also* the title with the
-> open overclock crash report — #463, "Codex-level crash + erratic ship movement under
-> overclock", currently `blocked` for want of reporter artefacts. The one title measured to
-> benefit is the one with an unconfirmed overclock crash against it, so #463 has to be settled
-> first. And gate 2 still applies: a title can render more frames while its logic runs too
-> fast (#401). Play-test before writing a row.
+> **Two blockers before this becomes a DB preset.** Cybermorph is *also* the title with the open
+> overclock crash report — #463, "Codex-level crash + erratic ship movement under overclock",
+> `blocked` for want of reporter artefacts. The one title measured to benefit is the one with an
+> unconfirmed overclock crash against it, so #463 has to be settled first. And gate 2 still
+> applies: a title can render more frames while its logic runs too fast (#401).
 
-**Iron Soldier is a genuine null, and the control proves it.** 0.5x reads 115 against 1x's
-116 — halving the RISC clock costs it *nothing*, so it was never clock-bound at 1x. That fits
-the profile data: Iron Soldier is the extreme DSP case, 67% of frame time in the DSP with
-99.7% of that spinning in an idle loop. It needs **idle-skip**, not overclock.
+#### Missile Command 3D — fails, and interestingly
 
-> **Always run the underclock arm.** A flat 1x/1.5x/2x row is ambiguous — genuine cap, or dead
-> measurement? 0.5x separates them. Cybermorph's control (−48.7% at 0.5x, against +44.7% at
-> 1.5x) is what proves the metric was live for the whole sweep. `scripts/ocgrid.sh` runs this
-> arm unconditionally so it cannot be forgotten.
+The only title where overclocking is actively **harmful**: −14.3% at RISC 1.5x, −11.2% at 2x,
+while the 0.5x control is flat (−0.2%). Not compute-bound at stock, and giving the RISC more
+cycles *costs* presented frames. Worth a look on its own terms — a title that renders less when
+given more cycles suggests a timing-sensitive path, not merely an absent benefit.
 
-**Val D'Isere is not a null — it is unmeasured.** 15 transitions in 900 frames, identical even
-at 0.5x. That is one changed frame every ~60, i.e. a static or paused screen; the state is a
-`.state.auto` autosave that landed wherever the session ended. Needs a real gameplay save
-(see below).
+#### I-War — fails, capped at stock
 
-### Need a savestate — checklist
+Control drops cleanly (−18.2%), so the sweep is valid, but the gains are noise and
+non-monotonic: +6.3% at 1.5x, +1.1% at 2x, −3.7% at 2x with the 68K scale. Underclocking hurts
+while overclocking does nothing — the signature of a cap sitting at or just above stock.
 
-- [ ] **Doom** — `Doom - Evil Unleashed (1994).jag`
-      *Where:* in a level, walking down a corridor with at least one monster active.
-      **Not** the attract demo (its pace is the #401 subject and it desyncs across cycle
-      changes, so it is invalid evidence either way) and **not** the menu (its speed is the
-      game's own code — see #396 notes).
-- [ ] **Club Drive** — `Club Drive (1994).jag`
-      *Where:* mid-race, car moving, scenery scrolling.
-      **Note:** this title used to abort at `risc_clock_scale=2x` (`dsp_pc_escape`, #565).
-      That is **fixed** as of v3.5.0, so the 2x arm should now complete — if it dies, that is
-      a regression worth its own issue.
-- [ ] **I-War** — `I-War (1995).jag`
-      *Where:* in flight with geometry on screen. Earlier runs **saturated** here (600/600),
-      so favour a calmer stretch and consider `FRAMES=1800`.
-- [ ] **Missile Command 3D** — `Missile Command 3D (1995).jag`
-      *Where:* a wave in progress with incoming missiles.
-      Earlier runs were corrupted by generic input (halved at 1.5x) — a savestate fixes that.
-- [ ] **Super Burnout** — `Super Burnout (1995).jag`
-      *Where:* mid-race at speed.
+#### Doom, Club Drive, Iron Soldier — flat locks
+
+Identical counts in all seven cells, control included. Iron Soldier reads 115 at 0.5x against
+116 at 1x, so halving the clock costs it nothing.
+
+A flat control would normally void a sweep, and the script says so. It does not here, because
+the harness is demonstrably live on the same binary in the same session: Cybermorph, I-War and
+Missile Command 3D all responded. These are genuine caps, not dead measurements.
+
+**Doom's number is worth recording for #401.** 593/1800 is one new frame per 3.03 fields,
+**≈19.8 fps** — and real hardware Doom level 1 is ~20 renders/s typical. In *gameplay* we may
+be far closer to hardware than the attract demo suggests, where #434 measured us at 2.00
+fields/flip against hardware's 4.0. One savestate is not a calibration, and the demo and
+gameplay are different code paths, so this is a lead rather than a result.
+
+#### Super Burnout — unmeasurable, and the reason matters
+
+1799/1800 in every cell: every frame differs, so the counter is pinned to the ceiling and a gain
+has nowhere to show. Lengthening the window does **not** help — a title that renders a new frame
+every field is saturated at any window length.
+
+But the reason it saturates is itself the answer: **stock already presents at the display rate**,
+so there is no headroom for an overclock to deliver. Formally unmeasured by this metric;
+practically, there is nothing to win.
+
+#### Val D'Isere — the one still outstanding
+
+15 transitions in 900 frames, identical even at 0.5x — one changed frame every ~60, i.e. a
+static or paused screen. The state is a `.state.auto` autosave that landed wherever the session
+ended.
+
+- [ ] **Val D'Isere** — `Val D'Isere Skiing & Snowboarding (1994).jag`. Needs a real gameplay
+      save: mid-run down a slope, scenery moving, not the menu or a results screen.
 
 ### Already measured out — do not re-run
 

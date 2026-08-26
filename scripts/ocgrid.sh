@@ -30,7 +30,12 @@ STATE=$1; shift
 FRAMES=${FRAMES:-900}
 
 TMP=$(mktemp -d)
-trap 'command rm -rf "$TMP"' EXIT INT TERM
+# EXIT does the cleanup; INT/TERM must additionally *stop*. Without the
+# second trap a Ctrl-C killed only the current cell's frame_hash_ab (the
+# process group gets the signal), that cell was recorded FAILED, and the
+# sweep carried on through six more multi-minute cells.
+trap 'command rm -rf "$TMP"' EXIT
+trap 'exit 130' INT TERM
 
 emit() { printf '%s\n' "$*" | tee -a "$OUT"; }
 
@@ -64,7 +69,13 @@ for cell in $cells; do
     t=$(awk -F, 'NR>1{if(p!=""&&$6!=p)n++;p=$6}END{print n+0}' "$csv")
     n=$(awk 'NR>1' "$csv" | wc -l | tr -d ' ')
     printf '%s %s\n' "$t" "$n" > "$TMP/$tag.res"
-    [ "$cell" = "risc=1x,m68k=1x" ] && base=$t
+    # Only a MEASURED stock cell may become the baseline. A saturated one
+    # is pinned to the ceiling, so quoting other arms against it would
+    # print authoritative-looking percentages against a meaningless
+    # number -- the exact trap this script exists to make un-missable.
+    if [ "$cell" = "risc=1x,m68k=1x" ] && [ "$n" -gt 0 ] && [ "$t" -lt "$((n - 1))" ]; then
+        base=$t
+    fi
 done
 
 # --- phase 2: report --------------------------------------------------------
@@ -82,7 +93,7 @@ for cell in $cells; do
     elif [ "$t" -ge "$((n - 1))" ]; then
         v="SATURATED -- unmeasured, lengthen the window"
     elif [ -z "$base" ] || [ "$base" -eq 0 ]; then
-        v="no usable stock baseline -- static scene, re-save the state"
+        v="NO USABLE STOCK BASELINE -- stock cell saturated or static; nothing here is comparable"
     else
         v="$(awk -v a="$t" -v b="$base" 'BEGIN{printf "%+.1f%% vs stock", (a-b)*100.0/b}')"
         [ "$cell" = "risc=0.5x,m68k=1x" ] && v="$v   <- CONTROL: must drop, or the sweep is void"
