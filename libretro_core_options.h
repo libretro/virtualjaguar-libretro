@@ -118,9 +118,14 @@ struct retro_core_option_v2_category option_cats_us[] = {
       "Logging and watchdog aids for troubleshooting and bug reports."
    },
    {
-      "timing",
-      "Timing",
-      "Clock speed multipliers, then the experimental hardware-timing models."
+      "speed",
+      "Speed",
+      "Make the emulator faster. Two kinds, and the difference matters: the fast-forward options cost nothing (identical picture and sound, just less work), while the overclocks change what the game itself computes and can break it."
+   },
+   {
+      "accuracy",
+      "Hardware Timing (Experimental)",
+      "Make the emulator slower and more like real silicon. The opposite of Speed above: these exist because parts of the machine are modelled as free, which lets some games run too fast. Still being calibrated."
    },
    { NULL, NULL, NULL },
 };
@@ -211,21 +216,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
-      "virtualjaguar_blit_memo",
-      "Blit Memoization (Per-Title)",
-      NULL,
-      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render the same scene every engine cycle while the player is idle). Output is bit-identical by construction. Enabled per title via the enhancement database; not available for CD content. 'Verify' never skips -- it runs every would-be skip and logs any divergence, for validating new titles. Switches off DSP Idle-Loop Fast-Forward while enabled.",
-      NULL,
-      "video",
-      {
-         { "disabled", "Disabled" },
-         { "enabled",  "Enabled" },
-         { "verify",   "Verify (debug, no speedup)" },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "virtualjaguar_crash_detect",
       "Crash Detect",
       NULL,
@@ -240,15 +230,48 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "enabled"
    },
-   /* Clock speeds first, then the experimental timing models they interact
-    * with -- the toggles below are grouped under the two scales on purpose. */
+   /* Speed category, ordered by what a user should try first: the two
+    * free fast-forwards (identical output, less work), then the two
+    * overclocks, which change what the game computes and can break it.
+    * blit_memo lives here rather than under Video because it belongs to
+    * the same free-speedup class -- and because it silently switches off
+    * idle-skip, which is undiscoverable from a different category. */
+   {
+      "virtualjaguar_risc_idle_skip",
+      "DSP Idle-Loop Fast-Forward",
+      NULL,
+      "Fast-forward the DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. Off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: a non-stock RISC Clock Scale, DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The M68K clock scale and Blitter Bus Timing do not affect it.",
+      NULL,
+      "speed",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_blit_memo",
+      "Blit Memoization (Per-Title)",
+      NULL,
+      "Skip blits whose inputs are provably unchanged since an identical earlier blit (some titles re-render the same scene every engine cycle while the player is idle). Output is bit-identical by construction. Enabled per title via the enhancement database; not available for CD content. 'Verify' never skips -- it runs every would-be skip and logs any divergence, for validating new titles. Switches off DSP Idle-Loop Fast-Forward while enabled.",
+      NULL,
+      "speed",
+      {
+         { "disabled", "Disabled" },
+         { "enabled",  "Enabled" },
+         { "verify",   "Verify (debug, no speedup)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
    {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,
-      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix: it can smooth framerate-limited games (Doom, AvP, Checkered Flag) but may break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. If an overclocked game misbehaves, try the timing models below. Report bugs only at 1x.",
+      "Run the 68000 at a multiple of its stock ~13.3 MHz. An enhancement, not an accuracy fix, and it helps less often than you would think: AvP and Checkered Flag were both measured and neither gained anything (AvP is locked to one frame per 5 fields; Checkered Flag caps itself in software), because most Jaguar games are paced by a field lock or their own frame cap rather than by CPU speed. It may also break titles that depend on stock CPU timing. Timers and bus costs stay at stock speed. Overclocking the 68000 is the safer of the two scales: it does NOT cost you DSP Idle-Loop Fast-Forward. If an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x.",
       NULL,
-      "timing",
+      "speed",
       {
          { "0.5x", NULL },
          { "1x",   "1x (stock)" },
@@ -263,9 +286,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_risc_clock_scale",
       "RISC (GPU/DSP) Clock Scale (Overclock)",
       NULL,
-      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the timing models below. Report bugs only at 1x. Anything other than 1x also switches OFF DSP Idle-Loop Fast-Forward, so with that enabled the result can end up SLOWER than stock -- the M68K scale above does not have that side effect.",
+      "Run the GPU and DSP at a multiple of their stock ~26.6 MHz. An enhancement, not an accuracy fix: extra cycles can lift GPU-bound framerates. Audio pacing and timers stay at stock speed, so nothing pitch-shifts. May break titles that depend on stock RISC timing; if an overclocked game misbehaves, try the Hardware Timing options in their own category. Report bugs only at 1x. READ THIS FIRST: anything other than 1x switches OFF DSP Idle-Loop Fast-Forward, which is the larger speed-up on most titles -- so on a DSP-bound game this option makes you SLOWER overall, not faster. Try idle-skip on its own before reaching for this. The M68K scale does not have that side effect.",
       NULL,
-      "timing",
+      "speed",
       {
          { "0.5x", NULL },
          { "1x",   "1x (stock)" },
@@ -276,26 +299,12 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "1x"
    },
    {
-      "virtualjaguar_risc_idle_skip",
-      "DSP Idle-Loop Fast-Forward",
-      NULL,
-      "Fast-forward the DSP through provably redundant iterations of a wait loop -- the largest single speed-up the core offers (66-87% less DSP interpretation on the titles measured). Bit-exact by construction: registers, flags, cycles and instruction count land exactly where interpreting would have left them, so save states, run-ahead and netplay are unaffected. Off by default while the compatibility corpus grows -- if a title looks or sounds wrong with it on, turn it off and please report it. IMPORTANT: a non-stock RISC Clock Scale, DRAM Timing, GPU Pipeline Timing or Blit Memoization switches this off entirely, so turning one of those on costs you this speed-up on top of its own cost. The M68K clock scale and Blitter Bus Timing do not affect it.",
-      NULL,
-      "timing",
-      {
-         { "disabled", NULL },
-         { "enabled",  NULL },
-         { NULL, NULL },
-      },
-      "disabled"
-   },
-   {
       "virtualjaguar_dram_timing",
       "DRAM Timing (Experimental)",
       NULL,
       "Charge the GPU and 68000 realistic DRAM access time once they leave their local buses, pacing hardware-timed games (Doom-class) closer to real hardware. Each processor pays only its own costs, so relative CPU/GPU timing is preserved. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
-      "timing",
+      "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
@@ -309,7 +318,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Model the GPU's real instruction costs: the single external-memory gateway, the register score-board and ALU interlocks. The emulated GPU otherwise finishes renders 2-4x faster than silicon, which makes loops paced on render completion (Doom's menus and demo, Hover Strike) run too fast. Still being calibrated. Switches off DSP Idle-Loop Fast-Forward while enabled.",
       NULL,
-      "timing",
+      "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
@@ -323,7 +332,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "Charge the 68000 the bus time each blit really takes -- on hardware the blitter is the top-priority bus master and freezes the cacheless 68000 while it runs. Zero-time blits let games paced on blit completion (Doom's menus, Hover Strike) run too fast. Still being calibrated.",
       NULL,
-      "timing",
+      "accuracy",
       {
          { "disabled", NULL },
          { "enabled",  NULL },
