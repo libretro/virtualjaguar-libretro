@@ -7,6 +7,18 @@
  * uses to exercise the very same code the core runs.
  */
 
+#include "blitter_simd_arch.h"
+
+/* Compile this file at all?  Always yes for Makefile.common and
+ * ndk-build, which select exactly one arch file and pass a matching
+ * -DBLITTER_SIMD_NEON -- BLITTER_SIMD_BUILD_* is unconditionally true
+ * without BLITTER_SIMD_AUTODETECT, so the guard can never blank out
+ * the file they chose.  Under autodetect (the SwiftPM build, which
+ * hands every arch file to the compiler at once) exactly one of the
+ * three survives, and it is the same one blitter_simd.h selects for
+ * inlining -- both read blitter_simd_arch.h. */
+#if defined(BLITTER_SIMD_BUILD_NEON)
+
 /* Select our own arch before blitter_simd.h picks one.  This file IS
  * the neon implementation, so it must get the neon inline set even when
  * compiled standalone without the Makefile's -DBLITTER_SIMD_NEON --
@@ -55,3 +67,5 @@ const blitter_simd_ops_t blitter_simd_ops = {
    ops_byte_merge,
    ops_add16sat_x4
 };
+
+#endif /* BLITTER_SIMD_BUILD_NEON */
