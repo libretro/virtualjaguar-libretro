@@ -89,7 +89,49 @@ extern const blitter_simd_ops_t blitter_simd_ops;
  * added to SOURCES_C.  Builds that don't go through it (ndk-build, and
  * every MSVC target) get scalar, which is what those already selected.
  * A mismatch between the -D and the compiled .c is a hard compile error
- * rather than a silent slow path -- see blitter_simd_<arch>.c. */
+ * rather than a silent slow path -- see blitter_simd_<arch>.c.
+ *
+ * BLITTER_SIMD_AUTODETECT is the opt-in for build systems that compile
+ * the arch .c files by guard rather than by selection, and so cannot
+ * pass a matching -D.  The Swift Package Manager manifest used by the
+ * Provenance frontend is the case this exists for: it hands every
+ * blitter_simd_<arch>.c to the compiler at once and lets each file's
+ * own top-of-file arch guard blank out the ones that don't apply.
+ * Without a -D those builds fell through to the scalar branch below and
+ * inlined the scalar ops into BlitterMidsummer2 on hardware that has
+ * NEON -- the vtable was NEON, but the vtable is only used by
+ * test/test_blitter_simd.c, so nothing caught it.  That is a silent
+ * slow path of exactly the kind the paragraph above says cannot happen,
+ * and it is why the detection is spelled here, where the real target
+ * compiler evaluates it, rather than in the manifest, which is compiled
+ * for the host and would get the x86_64 simulator slice wrong.
+ *
+ * Deliberately opt-in: leaving it undefined keeps ndk-build and every
+ * MSVC target on the scalar path they select today, byte for byte. */
+#if !defined(BLITTER_SIMD_NEON) && !defined(BLITTER_SIMD_SSE2) \
+ && !defined(BLITTER_SIMD_SCALAR) && defined(BLITTER_SIMD_AUTODETECT)
+   /* NEON: mandatory on AArch64, opt-in on ARMv7-A.  __ARM_NEON is the
+    * ACLE spelling every GCC/Clang emits when NEON codegen is on;
+    * _M_ARM64 is MSVC's, where NEON is likewise mandatory. */
+#  if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__aarch64__) \
+   || defined(_M_ARM64) || defined(_M_ARM64EC)
+#    define BLITTER_SIMD_NEON 1
+   /* SSE2: architectural baseline on x86-64, so the 64-bit spellings need
+    * no further test.  On 32-bit x86 it is NOT baseline -- GCC and Clang
+    * only emit SSE2 under -msse2 (or an -march implying it), and MSVC only
+    * under /arch:SSE2.  Makefile.common can *add* -msse2 (see its "required
+    * on i686 / gcc -m32" rule); autodetect can only observe, so it must ask
+    * whether SSE2 is actually enabled rather than infer it from the arch.
+    * Testing __SSE2__ / _M_IX86_FP keeps a plain i386 build on the scalar
+    * fall-through instead of handing blitter_simd_sse2.c intrinsics its
+    * target cannot compile. */
+#  elif defined(__x86_64__) || defined(_M_X64) \
+     || (defined(__i386__) && defined(__SSE2__)) \
+     || (defined(_M_IX86) && defined(_M_IX86_FP) && _M_IX86_FP == 2)
+#    define BLITTER_SIMD_SSE2 1
+#  endif
+#endif
+
 #if defined(BLITTER_SIMD_NEON)
 #  include "blitter_simd_neon.h"
 #elif defined(BLITTER_SIMD_SSE2)
