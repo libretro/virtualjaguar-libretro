@@ -52,6 +52,10 @@ CART_MATRIX_MD = ROOT / "docs" / "cart-boot-matrix.md"
 MAKEFILE = ROOT / "Makefile"
 
 REPO_URL = "https://github.com/libretro/virtualjaguar-libretro"
+# raw.githubusercontent for the install one-liner; derived from REPO_URL so a
+# fork or rename cannot leave the curl command pointing at the wrong repo.
+RAW_URL = REPO_URL.replace("https://github.com/",
+                           "https://raw.githubusercontent.com/") + "/develop"
 
 # The canonical base for every absolute URL the site emits; for a given page
 # the <link rel=canonical>, og:url and the sitemap <loc> must come out
@@ -743,6 +747,7 @@ def main():
 
     subs = {
         "{{REPO}}": REPO_URL,
+        "{{RAW_URL}}": RAW_URL,
         "{{CORE_VERSION}}": html.escape(version),
         "{{DOCS_URL}}": LIBRETRO_DOCS,
         "{{DOCS_OPTIONS_URL}}": LIBRETRO_DOCS_OPTIONS,
