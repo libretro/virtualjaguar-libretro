@@ -110,10 +110,24 @@ extern const blitter_simd_ops_t blitter_simd_ops;
  * MSVC target on the scalar path they select today, byte for byte. */
 #if !defined(BLITTER_SIMD_NEON) && !defined(BLITTER_SIMD_SSE2) \
  && !defined(BLITTER_SIMD_SCALAR) && defined(BLITTER_SIMD_AUTODETECT)
-#  if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__aarch64__)
+   /* NEON: mandatory on AArch64, opt-in on ARMv7-A.  __ARM_NEON is the
+    * ACLE spelling every GCC/Clang emits when NEON codegen is on;
+    * _M_ARM64 is MSVC's, where NEON is likewise mandatory. */
+#  if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__aarch64__) \
+   || defined(_M_ARM64) || defined(_M_ARM64EC)
 #    define BLITTER_SIMD_NEON 1
-#  elif defined(__x86_64__) || defined(__i386__) \
-     || defined(_M_X64) || defined(_M_IX86)
+   /* SSE2: architectural baseline on x86-64, so the 64-bit spellings need
+    * no further test.  On 32-bit x86 it is NOT baseline -- GCC and Clang
+    * only emit SSE2 under -msse2 (or an -march implying it), and MSVC only
+    * under /arch:SSE2.  Makefile.common can *add* -msse2 (see its "required
+    * on i686 / gcc -m32" rule); autodetect can only observe, so it must ask
+    * whether SSE2 is actually enabled rather than infer it from the arch.
+    * Testing __SSE2__ / _M_IX86_FP keeps a plain i386 build on the scalar
+    * fall-through instead of handing blitter_simd_sse2.c intrinsics its
+    * target cannot compile. */
+#  elif defined(__x86_64__) || defined(_M_X64) \
+     || (defined(__i386__) && defined(__SSE2__)) \
+     || (defined(_M_IX86) && defined(_M_IX86_FP) && _M_IX86_FP == 2)
 #    define BLITTER_SIMD_SSE2 1
 #  endif
 #endif
