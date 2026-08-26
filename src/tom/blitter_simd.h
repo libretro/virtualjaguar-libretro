@@ -89,7 +89,35 @@ extern const blitter_simd_ops_t blitter_simd_ops;
  * added to SOURCES_C.  Builds that don't go through it (ndk-build, and
  * every MSVC target) get scalar, which is what those already selected.
  * A mismatch between the -D and the compiled .c is a hard compile error
- * rather than a silent slow path -- see blitter_simd_<arch>.c. */
+ * rather than a silent slow path -- see blitter_simd_<arch>.c.
+ *
+ * BLITTER_SIMD_AUTODETECT is the opt-in for build systems that compile
+ * the arch .c files by guard rather than by selection, and so cannot
+ * pass a matching -D.  The Swift Package Manager manifest used by the
+ * Provenance frontend is the case this exists for: it hands every
+ * blitter_simd_<arch>.c to the compiler at once and lets each file's
+ * own top-of-file arch guard blank out the ones that don't apply.
+ * Without a -D those builds fell through to the scalar branch below and
+ * inlined the scalar ops into BlitterMidsummer2 on hardware that has
+ * NEON -- the vtable was NEON, but the vtable is only used by
+ * test/test_blitter_simd.c, so nothing caught it.  That is a silent
+ * slow path of exactly the kind the paragraph above says cannot happen,
+ * and it is why the detection is spelled here, where the real target
+ * compiler evaluates it, rather than in the manifest, which is compiled
+ * for the host and would get the x86_64 simulator slice wrong.
+ *
+ * Deliberately opt-in: leaving it undefined keeps ndk-build and every
+ * MSVC target on the scalar path they select today, byte for byte. */
+#if !defined(BLITTER_SIMD_NEON) && !defined(BLITTER_SIMD_SSE2) \
+ && !defined(BLITTER_SIMD_SCALAR) && defined(BLITTER_SIMD_AUTODETECT)
+#  if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__aarch64__)
+#    define BLITTER_SIMD_NEON 1
+#  elif defined(__x86_64__) || defined(__i386__) \
+     || defined(_M_X64) || defined(_M_IX86)
+#    define BLITTER_SIMD_SSE2 1
+#  endif
+#endif
+
 #if defined(BLITTER_SIMD_NEON)
 #  include "blitter_simd_neon.h"
 #elif defined(BLITTER_SIMD_SSE2)
