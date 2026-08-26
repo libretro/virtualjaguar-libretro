@@ -503,6 +503,47 @@ jobs:
     - name: swift build
       run: swift build -v 2>&1 | tail -40
 
+    # The blind spot that let an `unsafeFlags` slip in: SwiftPM REFUSES to
+    # resolve a VERSIONED dependency on a package whose targets carry unsafe
+    # flags, but a package built as the ROOT (which `swift build` above does)
+    # is exempt -- so the restriction is invisible from inside the repo. This
+    # consumes the package the way a frontend actually would, by version tag,
+    # which is the only way to see it.
+    - name: a versioned consumer can build against this package
+      run: |
+        set -euo pipefail
+        work=$(mktemp -d)
+        # A tag on a throwaway clone; the real repo is untouched.
+        # Clone under the repo name: SwiftPM derives package identity from the
+        # URL's last path component, not from `name:` in the manifest.
+        git clone --quiet --no-hardlinks . "$work/virtualjaguar-libretro"
+        git -C "$work/virtualjaguar-libretro" -c user.email=ci@example.com -c user.name=CI tag -f 0.0.1
+        mkdir -p "$work/app/Sources/app"
+        echo 'print("ok")' > "$work/app/Sources/app/main.swift"
+        cat > "$work/app/Package.swift" <<PKG
+        // swift-tools-version:5.9
+        import PackageDescription
+        let package = Package(
+            name: "app",
+            dependencies: [.package(url: "$work/virtualjaguar-libretro", from: "0.0.1")],
+            targets: [.executableTarget(name: "app", dependencies: [
+                .product(name: "VirtualJaguar", package: "virtualjaguar-libretro")])]
+        )
+        PKG
+        cd "$work/app"
+        # `swift build`, NOT `swift package resolve`: resolve succeeds even with
+        # unsafe flags present -- the restriction is enforced when the dependency
+        # graph is loaded for a build. Verified both ways before relying on it.
+        if ! out=$(swift build 2>&1); then
+          echo "$out"
+          echo "::error::a versioned dependency on this package does not resolve."
+          echo "::error::If this says 'contains unsafe build flags', remove the .unsafeFlags"
+          echo "::error::from Package.swift -- they make the package unconsumable by any"
+          echo "::error::frontend pinning a release tag, which is the point of shipping it."
+          exit 1
+        fi
+        echo "OK: builds as a versioned dependency"
+
     - name: exactly one SIMD vtable, and it is not the scalar one
       run: |
         set -euo pipefail

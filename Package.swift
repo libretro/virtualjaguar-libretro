@@ -194,7 +194,16 @@ let package = Package(
                 .headerSearchPath("deps/lzma-25.01/include"),
                 .headerSearchPath("deps/miniz-3.1.1"),
                 .headerSearchPath("deps/zstd-1.5.7"),
-                .unsafeFlags(["-Wno-unused-function", "-Wno-unused-variable"]),
+                // No .unsafeFlags here, deliberately. SwiftPM REFUSES to resolve a
+                // versioned dependency (`from: "x.y.z"`) on any package whose
+                // targets carry unsafe flags -- only path and branch/revision
+                // dependencies are exempt. That would break the exact workflow
+                // this manifest exists to enable, and an in-repo `swift build`
+                // cannot detect it because the root package is exempt too.
+                // The flags only silenced unused-function/variable warnings in
+                // the unity TU; warnings are not worth that. The spm-consumer CI
+                // job resolves this package by version so the restriction is
+                // tested rather than remembered.
             ]
         ),
     ],

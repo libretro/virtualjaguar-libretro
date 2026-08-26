@@ -16,7 +16,11 @@
 # Usage: sh scripts/check-package-sources.sh
 # POSIX sh -- no bashisms.
 
-set -e
+# -u as well as -e: these guard scripts are copied from, and an unset variable
+# silently expanding to empty is exactly how a drift check starts passing on
+# nothing.  `command rm` because this repo's shells alias rm to `rm -i`, which
+# blocks forever with no tty.
+set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -25,7 +29,7 @@ cd "$ROOT"
 [ -f Package.swift ]   || { echo "check-package-sources: Package.swift not found" >&2; exit 1; }
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+trap 'command rm -rf "$TMP"' EXIT INT TERM
 
 # --- what Makefile.common says -------------------------------------------
 # Every $(CORE_DIR)/....c and $(LIBRETRO_COMM_DIR)/....c mentioned anywhere in
