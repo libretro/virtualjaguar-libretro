@@ -82,19 +82,28 @@ ROMs for all eight candidates are present in `jaguar-roms-private/ROMS/`.
 | Iron Soldier | `iron_soldier_v104_f2400.state` | Null — clock-insensitive, confirmed by underclock control |
 | Val D'Isere | `... (1994).state.auto` | **UNMEASURED** — near-static scene, needs a real gameplay state |
 
-**Cybermorph is the first title to clear gate 1.** 2400-frame window (ceiling 2399):
+**Cybermorph is the first title to clear gate 1.** All seven cells, one 2400-frame window
+(saturation ceiling 2399):
 
-| RISC scale | transitions | ≈ fps | vs stock |
+| cell | transitions | ≈ fps | vs stock |
 |---|---:|---:|---:|
-| 0.5x | 258/900 | — | −49.7% |
-| **1x (stock)** | **1359/2399** | **~34** | — |
-| 1.5x | 1967/2399 | ~49 | **+44.7%** |
-| 2x | 2349/2399 | ~59 | **+72.8%** |
+| RISC 0.5x (control) | 697/2400 | ~17 | **−48.7%** |
+| **RISC 1x, 68K 1x (stock)** | **1359/2400** | **~34** | — |
+| RISC 1.5x | 1967/2400 | ~49 | **+44.7%** |
+| RISC 2x | 2349/2400 | ~59 | **+72.8%** |
+| RISC 1x, 68K 1.5x | 1362/2400 | ~34 | +0.2% |
+| RISC 1.5x, 68K 1.5x | 1994/2400 | ~50 | +46.7% |
+| RISC 2x, 68K 1.5x | 2311/2400 | ~58 | +70.1% |
 
-The 68K axis is inert here (+0.6% at 1.5x): this is a RISC-bound title, so only
-`risc_clock_scale` matters.
+The 68K axis is inert (+0.2% on its own): this is a RISC-bound title, so only
+`risc_clock_scale` matters, and stacking the 68K scale on top adds nothing.
 
-At 2x, 2349 of 2399 fields carry a new frame — Cybermorph is now presenting at essentially
+**The control is what makes the rest trustworthy.** RISC 0.5x costs 48.7% — near-linear
+against the +44.7% that 1.5x gains — so the metric tracks clock speed in both directions on
+this title. Every figure above comes from the same 2400-frame window; nothing is spliced
+across window lengths.
+
+At 2x, 2349 of 2400 fields carry a new frame — Cybermorph is now presenting at essentially
 the display rate. That is a real ceiling rather than the trap-2 counter artefact, but it does
 mean **+72.8% is a floor on the 2x gain, not the exact figure**; the engine may have headroom
 the display cannot show.
@@ -112,8 +121,9 @@ the profile data: Iron Soldier is the extreme DSP case, 67% of frame time in the
 99.7% of that spinning in an idle loop. It needs **idle-skip**, not overclock.
 
 > **Always run the underclock arm.** A flat 1x/1.5x/2x row is ambiguous — genuine cap, or dead
-> measurement? 0.5x separates them. Cybermorph's control (0.5x = 258 against 1x's 513) is what
-> proves the metric was live for the whole sweep.
+> measurement? 0.5x separates them. Cybermorph's control (−48.7% at 0.5x, against +44.7% at
+> 1.5x) is what proves the metric was live for the whole sweep. `scripts/ocgrid.sh` runs this
+> arm unconditionally so it cannot be forgotten.
 
 **Val D'Isere is not a null — it is unmeasured.** 15 transitions in 900 frames, identical even
 at 0.5x. That is one changed frame every ~60, i.e. a static or paused screen; the state is a
@@ -156,12 +166,29 @@ at 0.5x. That is one changed frame every ~60, i.e. a static or paused screen; th
 FRAMES=900 scripts/ocgrid.sh out.txt "<rom path>" "<state path>"
 ```
 
-Six cells per title: {1x, 1.5x, 2x} RISC × {1x, 1.5x} 68K, each reported as a percentage
-against the stock cell.
+Results are written to `out.txt` and echoed to stdout. `CORE=` overrides the library path if
+you are not on macOS (`CORE=./virtualjaguar_libretro.so ...`).
+
+**Seven cells:** the six-cell grid — {1x, 1.5x, 2x} RISC × {1x, 1.5x} 68K — plus a **0.5x
+underclock control**, which the script always runs. Each is quoted as a percentage against
+the stock cell.
+
+The control is not optional and the script does not let you skip it. A flat 1x/1.5x/2x row
+cannot distinguish a real frame cap from a measurement that was never responding, and that
+ambiguity is the direct cause of both retracted tables on #378. **If 0.5x does not drop, the
+whole sweep is void** regardless of what the other arms say.
+
+The run is two-phase — every cell is measured before anything is printed — because the stock
+cell has to be known before the control can be quoted against it. There is no incremental
+output; a 7-cell 2400-frame sweep takes a few minutes.
 
 **Do not run this while anything else is building.** A concurrent `make` relinks
 `virtualjaguar_libretro.dylib` mid-sweep and the arms end up measuring different binaries.
 Check with `pgrep -f make` first.
+
+Host load does *not* matter here: the metric counts emulated framebuffer transitions, not
+wall-clock, so it is deterministic and load-immune. That is why this gate uses it rather than
+an fps measurement.
 
 ### Reading the output
 
