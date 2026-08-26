@@ -54,12 +54,22 @@ jobs:
         sed -i 's/^CORE_BASE_VERSION := v${{ steps.current.outputs.version }}$/CORE_BASE_VERSION := v${{ steps.next.outputs.version }}/' Makefile
         grep '^CORE_BASE_VERSION' Makefile
 
+    # src/core/version_fallback.h carries a deliberate copy of the version
+    # for build systems that cannot run scripts/gen-version-h.sh (SwiftPM).
+    # Nothing rewrites it at build time -- on purpose, see the header -- so
+    # the bump has to touch it here.  c-cpp.yml fails the build if the two
+    # ever diverge.
+    - name: Update version_fallback.h
+      run: |
+        sed -i 's/^#define CORE_BASE_VERSION "v${{ steps.current.outputs.version }}"$/#define CORE_BASE_VERSION "v${{ steps.next.outputs.version }}"/' src/core/version_fallback.h
+        grep '^#define CORE_BASE_VERSION' src/core/version_fallback.h
+
     - name: Commit, tag, and push
       if: ${{ !inputs.dry_run }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add Makefile
+        git add Makefile src/core/version_fallback.h
         git commit -m "Bump version to v${{ steps.next.outputs.version }}"
         git tag "v${{ steps.next.outputs.version }}"
         git push origin HEAD --tags

@@ -439,6 +439,37 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
+  version-fallback-sync:
+    name: version fallback in sync
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # src/core/version_fallback.h holds a deliberate copy of
+    # CORE_BASE_VERSION for build systems that cannot run
+    # scripts/gen-version-h.sh before compiling (the Provenance SwiftPM
+    # manifest).  Nothing rewrites it at build time on purpose -- the
+    # generator runs at Makefile *parse* time, so a generator that edited a
+    # tracked file would dirty the tree on every build and feed a false
+    # "-dirty" into scripts/build-id.sh and the VJ_EXPECT_BUILD guard.
+    #
+    # So the copy is checked rather than fixed, the same way the
+    # docs/cd-boot-matrix.md drift guard works: fail loudly, never quietly
+    # correct.  version-bump.yml updates both files on a release bump; this
+    # catches a hand edit that touched only one.
+    - name: CORE_BASE_VERSION matches the Makefile
+      run: |
+        set -euo pipefail
+        mk=$(sed -n 's/^CORE_BASE_VERSION[[:space:]]*:*=[[:space:]]*\(.*\)/\1/p' Makefile | head -1)
+        fb=$(sed -n 's/^#define CORE_BASE_VERSION "\(.*\)"$/\1/p' src/core/version_fallback.h | head -1)
+        if [ -z "$mk" ]; then echo "could not read CORE_BASE_VERSION from Makefile"; exit 1; fi
+        if [ -z "$fb" ]; then echo "could not read CORE_BASE_VERSION from src/core/version_fallback.h"; exit 1; fi
+        if [ "$mk" != "$fb" ]; then
+          echo "::error file=src/core/version_fallback.h::version_fallback.h says '$fb' but the Makefile says '$mk' -- update both."
+          exit 1
+        fi
+        echo "OK: both say $mk"
+
   msvc-check:
     name: MSVC ${{ matrix.arch }} compilation check
     runs-on: windows-latest
