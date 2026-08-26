@@ -59,7 +59,9 @@ static const char *type_names[VJT_EV__COUNT] = {
 };
 
 /* Index = enum value in src/core/vjag_memory.h:
- *   enum { UNKNOWN, JAGUAR, DSP, GPU, TOM, JERRY, M68K, BLITTER, OP, DEBUG }; */
+ *   enum { UNKNOWN, JAGUAR, DSP, GPU, TOM, JERRY, M68K, BLITTER, OP, DEBUGGER };
+ * The printed name below stays "DEBUG": it is the trace file's own text
+ * format, which people grep, and is not tied to the C identifier. */
 #define WHO_COUNT 10
 static const char *who_names[WHO_COUNT] = {
     "UNKNOWN", "JAGUAR", "DSP", "GPU", "TOM", "JERRY",

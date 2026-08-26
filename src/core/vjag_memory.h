@@ -55,8 +55,14 @@ extern uint8_t * sclk, sstat;
 extern uint32_t * smode;
 
 // Read/write tracing enumeration
+//
+// Index 9 is spelled DEBUGGER, not DEBUG, and must stay that way: Xcode's
+// stock Debug configuration sets GCC_PREPROCESSOR_DEFINITIONS = DEBUG=1, so
+// on any Xcode or SwiftPM consumer `DEBUG` arrives here already expanded to
+// `1` and the enumerator list fails to parse.  The wire value is unchanged
+// (9), and whoName[9] already read "Debugger".
 
-enum { UNKNOWN, JAGUAR, DSP, GPU, TOM, JERRY, M68K, BLITTER, OP, DEBUG };
+enum { UNKNOWN, JAGUAR, DSP, GPU, TOM, JERRY, M68K, BLITTER, OP, DEBUGGER };
 extern const char * whoName[10];
 
 // BIOS identification enum
