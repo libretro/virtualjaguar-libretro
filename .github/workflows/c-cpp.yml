@@ -445,8 +445,8 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
-  version-fallback-sync:
-    name: version fallback in sync
+  duplicated-lists-in-sync:
+    name: duplicated lists in sync
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
@@ -475,6 +475,49 @@ jobs:
           exit 1
         fi
         echo "OK: both say $mk"
+
+    # Package.swift repeats Makefile.common's source list, because SPM needs
+    # the file list in the manifest and cannot read a Makefile. Same posture as
+    # the check above: fail loudly, never auto-fix. The downstream Provenance
+    # wrapper kept its own copy of this list and drifted by 27 files over seven
+    # releases -- this is that lesson turned into a build failure.
+    - name: Package.swift sources match Makefile.common
+      run: sh scripts/check-package-sources.sh
+
+  spm-build:
+    name: SwiftPM build (macOS arm64)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # No Makefile target reads Package.swift, so without this job a manifest
+    # that does not even parse would merge unnoticed and only break the Apple
+    # frontend that consumes it. Building the package here is the only thing
+    # in CI that exercises it.
+    #
+    # This also covers the two things the source-list diff cannot see: that the
+    # arch guards resolve to exactly one blitter_simd_ops when all three
+    # variants are compiled together, and that libretro.c still compiles with
+    # no generated src/core/version.h (a fresh checkout has none -- the
+    # committed src/core/version_fallback.h is what makes that work).
+    - name: swift build
+      run: swift build -v 2>&1 | tail -40
+
+    - name: exactly one SIMD vtable, and it is not the scalar one
+      run: |
+        set -euo pipefail
+        B=$(find .build -type d -name 'virtualjaguar.build' | head -1)
+        [ -n "$B" ] || { echo "could not locate the build directory"; exit 1; }
+        total=0
+        for a in neon sse2 scalar; do
+          o="$B/src/tom/blitter_simd_$a.c.o"
+          n=0
+          [ -f "$o" ] && n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
+          echo "  blitter_simd_$a: $n"
+          total=$((total + n))
+        done
+        [ "$total" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops definition, found $total"; exit 1; }
+        echo "OK: exactly one vtable"
 
   msvc-check:
     name: MSVC ${{ matrix.arch }} compilation check
