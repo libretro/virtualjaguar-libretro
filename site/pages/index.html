@@ -190,6 +190,26 @@
       to <code>develop</code>, currently <code>v{{CORE_VERSION}}</code>. They
       are gated on compiling, not on the test suite.
     </p>
+    <p class="footnote">
+      <strong>Installing on Linux, a Raspberry Pi or macOS?</strong>
+      <a href="{{REPO}}/blob/develop/tools/install.sh"><code>tools/install.sh</code></a>
+      finds your frontend by reading RetroArch&rsquo;s own
+      <code>libretro_directory</code>, works out which build you need, backs up
+      the core it replaces and verifies the new one loads. It can also keep
+      itself updated.
+    </p>
+    <pre><code>curl -fsSL {{RAW_URL}}/tools/install.sh | sh</code></pre>
+    <p class="footnote">
+      Add <code>--dry-run</code> to see the plan without changing anything,
+      <code>--list</code> to just show what it found, or
+      <code>--channel nightly</code> for the bleeding edge.
+      Release builds are named by board <em>and</em> word size &mdash;
+      <code>rpi4</code> is 32-bit, <code>rpi4_64</code> is 64-bit &mdash; and
+      choosing by <code>uname&nbsp;-m</code> gets it wrong on the many Pi setups
+      running a 64-bit kernel with a 32-bit userland. The core has to match
+      RetroArch, not the kernel, so the script reads the word size out of the
+      RetroArch binary and refuses rather than guesses when they disagree.
+    </p>
   </div>
 </section>
 
