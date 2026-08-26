@@ -28,6 +28,8 @@
 #include <stdint.h>
 #include <boolean.h>
 
+#include "blitter_simd_arch.h"
+
 /* Portable always-inline, spelled to include the inline keyword itself
  * (MSVC's __forceinline IS the inline keyword for that compiler). */
 #if defined(_MSC_VER)
@@ -107,29 +109,22 @@ extern const blitter_simd_ops_t blitter_simd_ops;
  * for the host and would get the x86_64 simulator slice wrong.
  *
  * Deliberately opt-in: leaving it undefined keeps ndk-build and every
- * MSVC target on the scalar path they select today, byte for byte. */
+ * MSVC target on the scalar path they select today, byte for byte.
+ *
+ * The capability test itself lives in blitter_simd_arch.h, because the
+ * arch .c files need the same answer for their own guards and the two
+ * must never disagree -- see that header. */
 #if !defined(BLITTER_SIMD_NEON) && !defined(BLITTER_SIMD_SSE2) \
  && !defined(BLITTER_SIMD_SCALAR) && defined(BLITTER_SIMD_AUTODETECT)
-   /* NEON: mandatory on AArch64, opt-in on ARMv7-A.  __ARM_NEON is the
-    * ACLE spelling every GCC/Clang emits when NEON codegen is on;
-    * _M_ARM64 is MSVC's, where NEON is likewise mandatory. */
-#  if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(__aarch64__) \
-   || defined(_M_ARM64) || defined(_M_ARM64EC)
+#  if defined(BLITTER_SIMD_HAVE_NEON)
 #    define BLITTER_SIMD_NEON 1
-   /* SSE2: architectural baseline on x86-64, so the 64-bit spellings need
-    * no further test.  On 32-bit x86 it is NOT baseline -- GCC and Clang
-    * only emit SSE2 under -msse2 (or an -march implying it), and MSVC only
-    * under /arch:SSE2.  Makefile.common can *add* -msse2 (see its "required
-    * on i686 / gcc -m32" rule); autodetect can only observe, so it must ask
-    * whether SSE2 is actually enabled rather than infer it from the arch.
-    * Testing __SSE2__ / _M_IX86_FP keeps a plain i386 build on the scalar
-    * fall-through instead of handing blitter_simd_sse2.c intrinsics its
-    * target cannot compile. */
-#  elif defined(__x86_64__) || defined(_M_X64) \
-     || (defined(__i386__) && defined(__SSE2__)) \
-     || (defined(_M_IX86) && defined(_M_IX86_FP) && _M_IX86_FP == 2)
+#  elif defined(BLITTER_SIMD_HAVE_SSE2)
 #    define BLITTER_SIMD_SSE2 1
 #  endif
+   /* No else: a target with neither falls through to the scalar branch
+    * below, which is also the one blitter_simd_scalar.c compiles itself
+    * into under BLITTER_SIMD_BUILD_SCALAR.  Same macros, so the inline
+    * set and the vtable cannot disagree. */
 #endif
 
 #if defined(BLITTER_SIMD_NEON)
