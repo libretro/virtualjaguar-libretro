@@ -1,0 +1,127 @@
+<!-- title: Settings & Performance — Virtual Jaguar libretro -->
+<!-- nav: Performance -->
+<!-- description: Which of the core's forty-odd options actually matter, what to change when an Atari Jaguar game runs slow, and which settings quietly cancel each other out. -->
+
+<h1>Settings &amp; performance</h1>
+<p class="lede">
+  The core ships about forty options. Almost none of them need your attention —
+  but two of them interact in a way that can make a slow game slower.
+</p>
+
+<h2>The defaults are already the right answer</h2>
+<p>
+  Accurate blitter, stock clocks, every experimental timing model off, HLE BIOS,
+  and per-title enhancement defaults on — roughly twenty recognised games get a
+  visual upgrade that was verified safe for that specific title. If a game boots
+  and plays, you are done.
+</p>
+<p>
+  Four settings are worth knowing about: <strong>Blitter</strong>,
+  <strong>Internal Resolution</strong>, <strong>DSP Idle-Loop Fast-Forward</strong>,
+  and — for CD games — <strong>CD Boot Mode</strong>. Everything else is either a
+  diagnostic, a controller, or networking.
+</p>
+
+<h2>Where the frame time actually goes</h2>
+<p>
+  Profiling found the cost concentrated in one place, and it is not where
+  intuition puts it:
+</p>
+
+<div class="table-wrap"><table>
+  <thead><tr><th>Subsystem</th><th>Share of frame time</th></tr></thead>
+  <tbody>
+    <tr><td><strong>DSP</strong></td><td><strong>33–67%</strong>, the top cost on every title measured — 50–67% on the DSP-heavy ones (Iron Soldier 67%, Alien vs Predator 63%), ~33% on Skyhammer</td></tr>
+    <tr><td>GPU</td><td>large, title-dependent — ~24% on Skyhammer</td></tr>
+    <tr><td>Blitter (fast)</td><td>5–17%</td></tr>
+    <tr><td>Blitter (accurate)</td><td>up to ~34% on Alien vs Predator</td></tr>
+    <tr><td>Object Processor</td><td>~1%</td></tr>
+    <tr><td>68000</td><td>0.7–2.6%</td></tr>
+  </tbody>
+</table></div>
+
+<p>
+  The striking part: <strong>the DSP sits in a 3–5 instruction wait loop for
+  90–99.7% of every frame</strong> on the titles measured, while the emulator
+  interprets 416k–590k opcodes per frame doing it. That is more than real
+  silicon could retire in a frame (~443k cycles at 26.59&nbsp;MHz over a
+  60.05&nbsp;Hz field) because pipeline hazards are not modelled — so it is
+  interpreter work, not a hardware budget, which is exactly why skipping it is
+  free. The 68000 and the Object Processor are noise.
+</p>
+<p class="footnote">
+  Host profiles on desktop arm64, not device measurements. No on-device Apple TV
+  capture exists yet.
+</p>
+
+<h2>What to try when a game runs slow</h2>
+<p>In order. Stop as soon as it is fast enough.</p>
+<ol>
+  <li><strong>Turn off Per-Title Enhancement Defaults.</strong> If your game is
+      recognised, it is rendering at 2x and/or full-precision Gouraud right now —
+      2x and true color together measured ~30% of the frame on Alien vs Predator.
+      AvP's shipped preset is 2x only, so disabling it recovers that share rather
+      than the whole 30%. On a low-end device this is step one, not step three.</li>
+  <li><strong>Internal Resolution 1x, True Color off</strong> — the manual
+      version of step 1, if you want to keep per-title defaults elsewhere.</li>
+  <li><strong>Turn on DSP Idle-Loop Fast-Forward.</strong> The biggest lever, and
+      it is <strong>off by default</strong> — nobody gets it by accident.</li>
+  <li><strong>Blitter → Fast.</strong> Measured 1.21× typical, up to 1.58× on the
+      title that gains most. It breaks some games — wireframe artifacts, missing
+      geometry — so switch back the moment anything looks wrong.</li>
+  <li><strong>Only then consider overclocking</strong>, and read the next section
+      first, because it can make things worse.</li>
+</ol>
+<p>
+  There is no frame-skip option and no internal speed limiter. Pacing is entirely
+  your frontend's job.
+</p>
+
+<h2>The compounding trap <span class="badge warn">read this before overclocking</span></h2>
+<p>
+  <strong>DSP Idle-Loop Fast-Forward disables itself</strong> when any of these is
+  in effect:
+</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Setting</th><th>Value that disables idle-skip</th></tr></thead>
+  <tbody>
+    <tr><td>RISC (GPU/DSP) Clock Scale</td><td>anything other than <code>1x</code></td></tr>
+    <tr><td>DRAM Timing</td><td>enabled</td></tr>
+    <tr><td>GPU Pipeline Timing</td><td>enabled</td></tr>
+    <tr><td>Blit Memoization</td><td>enabled or verify</td></tr>
+  </tbody>
+</table></div>
+<p>
+  It stays active under <strong>M68K Clock Scale</strong> at any value, and under
+  <strong>Blitter Bus Timing</strong> — neither of those turns it off.
+</p>
+
+<p class="caveat">
+  <strong>Overclocking the RISC to make a slow game faster can make it slower.</strong>
+  Setting RISC Clock Scale to <code>2x</code> gives the GPU and DSP twice the
+  cycles — and simultaneously forfeits a 66–87% reduction in DSP work. On a
+  DSP-bound title you have traded the bigger win for the smaller one.
+</p>
+
+<p>
+  Since <strong>v3.5.1</strong> the core tells you: enable idle-skip alongside any
+  of the above and one <code>[perf]</code> line lands in your frontend log naming
+  the exact setting suppressing it. It warns only — your settings are always
+  honoured, never overridden.
+</p>
+
+<h2>Jaguar CD</h2>
+<p>
+  <strong>CD Boot Mode</strong> defaults to HLE, which is the fastest and most
+  broadly compatible path and needs no BIOS files. Switch to real BIOS if a disc
+  misbehaves — it is a different implementation of the same boot sequence, and a
+  handful of titles work under one and not the other.
+</p>
+
+<h2>Full guide</h2>
+<p>
+  This page is the short version. The complete guide — every option, a
+  restart-required table, a symptom&nbsp;→&nbsp;setting troubleshooting table, and
+  the evidence behind each figure above — lives in the repository:
+  <a href="{{REPO}}/blob/develop/docs/settings-and-performance-guide.md">settings-and-performance-guide.md</a>.
+</p>

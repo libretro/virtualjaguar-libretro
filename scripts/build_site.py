@@ -91,7 +91,7 @@ SHARE_IMAGE_ALT = (
 
 # Page order defines nav order.
 PAGES = ["index.html", "compatibility.html", "enhancements.html",
-         "why-this-core.html"]
+         "performance.html", "why-this-core.html"]
 
 EXPECTED_HEADER = ["Title", "Mode", "Score", "Stage", "Watchdog", "PC evidence"]
 CART_EXPECTED_HEADER = ["Title", "HLE", "HLE notes", "Real BIOS", "BIOS notes"]

@@ -312,6 +312,8 @@ System clock 26.590906 MHz NTSC / 26.593900 MHz PAL. Full source map: [`docs/sou
 
 **Known limitations:** the blitter is not fully cycle-accurate (a few games need fast mode) and GPU/DSP pipeline hazards are not yet modelled ([#313](https://github.com/libretro/virtualjaguar-libretro/issues/313)), which shows up as some titles running fast.
 
+**Running slow?** The defaults are tuned for compatibility, not speed, and the biggest available speedup ships off by default. See the [settings & performance tuning guide](docs/settings-and-performance-guide.md) — it covers which options actually matter, and which combinations quietly cancel each other out.
+
 ---
 
 ## Documentation and support
@@ -320,7 +322,7 @@ System clock 26.590906 MHz NTSC / 26.593900 MHz PAL. Full source map: [`docs/sou
 - **[GitHub Discussions](https://github.com/libretro/virtualjaguar-libretro/discussions)** — questions and compatibility reports. Bring your frontend log.
 - **[Issues](https://github.com/libretro/virtualjaguar-libretro/issues)** — confirmed bugs.
 - **[Releases](https://github.com/libretro/virtualjaguar-libretro/releases)** — tagged builds for 16 platforms. The rolling **[`nightly` prerelease](https://github.com/libretro/virtualjaguar-libretro/releases/tag/nightly)** is rebuilt from every push to `develop`; it is gated on *compiling*, not on the test suite — treat it as bleeding edge.
-- **[`docs/`](docs)** — the full document index: [network play setup](docs/netlink-user-guide.md), [input devices / mouse](docs/input-devices-user-guide.md), [file formats](docs/README), [source layout](docs/source-layout.md), [savestate compatibility](docs/savestate-compat.md), [ROM patches / soft patching](docs/rom-patches.md), [CD read speed](docs/cd-read-speed.md), [CD known issues](docs/cd-known-issues.md), [cartridge triage](docs/cart-issue-triage.md), [profiling](docs/profiling.md), [release process](docs/release-process.md), [changelog](docs/WHATSNEW), [TODO](docs/TODO), and the distilled JTRM hardware references (`docs/jtrm-*.md`).
+- **[`docs/`](docs)** — the full document index: [settings & performance tuning](docs/settings-and-performance-guide.md), [network play setup](docs/netlink-user-guide.md), [input devices / mouse](docs/input-devices-user-guide.md), [file formats](docs/README), [source layout](docs/source-layout.md), [savestate compatibility](docs/savestate-compat.md), [ROM patches / soft patching](docs/rom-patches.md), [CD read speed](docs/cd-read-speed.md), [CD known issues](docs/cd-known-issues.md), [cartridge triage](docs/cart-issue-triage.md), [profiling](docs/profiling.md), [release process](docs/release-process.md), [changelog](docs/WHATSNEW), [TODO](docs/TODO), and the distilled JTRM hardware references (`docs/jtrm-*.md`).
 - **[SECURITY.md](SECURITY.md)** — security policy and binary verification.
 
 ## Contributors
