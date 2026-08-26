@@ -13,10 +13,13 @@ every image, every local href/src resolves inside the output, no leftover
 Graph / Twitter card set present with an absolute image that exists, JSON-LD
 parses and is the expected @type.  Site-wide: titles and descriptions are
 distinct, sitemap.xml is well-formed and lists exactly the generated pages,
-robots.txt carries an absolute Sitemap: line, and no page references a
+robots.txt carries an absolute Sitemap: line, no page contains an em or en
+dash (house copy standard; use a hyphen), and no page references a
 tracker, an external asset, or any <script> other than JSON-LD blocks and
-deferred <script src> tags pointing at local vendored files under assets/js/
-that exist in the output (inline and external scripts stay hard failures).
+deferred <script src> tags pointing at local files under assets/js/ that
+exist in the output (inline and external scripts stay hard failures).  The
+site currently ships no script beyond JSON-LD; that allowance is the
+contract for future pages, not something in use.
 """
 
 import json
@@ -34,6 +37,9 @@ from build_site import PAGES, SITE_BASE, page_url  # noqa: E402
 FORBIDDEN = ("googletagmanager", "google-analytics", "gtag(", "plausible.io",
              "matomo", "cdn.jsdelivr", "unpkg.com", "cdnjs.cloudflare",
              "fonts.googleapis", "fonts.gstatic")
+
+# Em dash and en dash.  See the copy-standard check in check_page().
+DASH_RE = re.compile("[\u2014\u2013]")
 
 REQUIRED_META = ("og:type", "og:title", "og:description", "og:image",
                  "og:image:width", "og:image:height", "og:image:alt",
@@ -191,14 +197,26 @@ def check_page(out, name):
     for bad in FORBIDDEN:
         check(bad not in text, "%s: references %r -- no trackers or external "
                                "assets are allowed" % (name, bad))
+
+    # Copy standard: zero em/en dashes anywhere the reader can see, title
+    # attributes and <title> included.  It is a house style (a hyphen is what
+    # the 1994 readme voice this site is written in would have used) and it
+    # is fragile, because dashes arrive from three directions: prose someone
+    # types into a fragment, the layout template, and the generated boot
+    # matrices -- build_site.normalize_dashes covers the third.  Without a
+    # check the rule survives exactly until the next edit.
+    for m in DASH_RE.finditer(text):
+        s = max(0, m.start() - 45)
+        check(False, "%s: em/en dash in output, use a hyphen: ...%s..."
+              % (name, text[s:m.end() + 25].replace("\n", " ")))
+        break   # one report per page is enough to send someone looking
     # Scripts: JSON-LD blocks, or <script src> pointing at a LOCAL file
-    # under assets/js/ that exists in the output.  That covers both the
-    # committed originals (crt-fx.js, hero-fx.js) and the deploy-time
-    # generated canvas-ui-fx.js that scripts/fetch_site_fx.py may have
-    # written into the output under VJ_SITE_FX_FETCH=1 -- served
-    # first-party either way (see docs/site-maintenance.md).  External src
-    # and inline non-JSON-LD scripts remain hard failures: no CDNs, no
-    # trackers, no surprises.
+    # under assets/js/ that exists in the output.  The site currently ships
+    # NO script at all -- the period chrome is pure CSS -- so this loop
+    # normally has nothing to inspect; the rule stays as the contract for
+    # any future page that needs behaviour.  External src and inline
+    # non-JSON-LD scripts remain hard failures: no CDNs, no trackers, no
+    # surprises (see docs/site-maintenance.md).
     for m in re.finditer(r"<script([^>]*)>", text):
         attrs = m.group(1)
         if 'type="application/ld+json"' in attrs:

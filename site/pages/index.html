@@ -1,170 +1,211 @@
-<!-- title: Virtual Jaguar libretro — Atari Jaguar, everywhere RetroArch runs -->
+<!-- title: Virtual Jaguar libretro | Atari Jaguar, everywhere RetroArch runs -->
 <!-- nav: Home -->
 <!-- description: The open-source Atari Jaguar emulator core for RetroArch: Jaguar CD in two boot modes, every Jaguar controller, link play over TCP or netplay, HD texture packs, deterministic savestates, 16 platforms. -->
 
 <div class="hero">
-  <div class="kicker">libretro core &middot; open source &middot; GPLv3</div>
-  <h1 id="hero-title-frame" class="fx-title">
-    <span id="hero-title">Atari Jaguar, everywhere RetroArch runs.</span>
-    <canvas id="hero-title-src" class="fx-capture" aria-hidden="true"></canvas>
-    <canvas id="hero-title-fx" class="fx-out" aria-hidden="true"></canvas>
-  </h1>
+  <h1>Atari Jaguar, everywhere RetroArch runs.</h1>
   <p class="lede">
     68000, Tom, Jerry, two RISC coprocessors, the Object Processor, the CD
     drive, the link port, the modem. One core,
     <a href="{{REPO}}/blob/develop/.github/workflows/release.yml">16 CI-built platforms</a>.
   </p>
-  <figure class="crt-frame" id="hero-crt-frame">
-    <div class="crt-screen">
-      <img id="hero-shot" src="assets/cyber_on_850.png"
-           alt="Cybermorph gameplay captured in the core: the ship in transit over a dark horizon, cockpit HUD below"
-           width="326" height="240">
-      <canvas id="hero-src" class="fx-capture" aria-hidden="true"></canvas>
-      <canvas id="hero-crt" class="fx-out" aria-hidden="true"></canvas>
-    </div>
-    <figcaption>Cybermorph, in-core capture (true-color on).</figcaption>
-  </figure>
-  <p class="hero-actions">
+  <p class="actions">
     <a class="btn" href="{{REPO}}/releases">Download</a>
     <a class="btn secondary" href="compatibility.html">Compatibility</a>
     <a class="btn secondary" href="enhancements.html">Enhancements</a>
   </p>
+  <figure class="crt-frame">
+    <div class="crt-bezel">
+      <div class="crt-screen">
+        <img src="assets/cyber_on_850.png"
+             alt="Cybermorph gameplay captured in the core: the ship in transit over a dark horizon, cockpit HUD below"
+             width="326" height="240">
+      </div>
+    </div>
+    <figcaption>Cybermorph, in-core capture, true colour on.</figcaption>
+  </figure>
 </div>
 
-<div class="stats">
-  <div class="stat"><div class="n">16</div><div class="l">platforms per release (<a href="{{REPO}}/blob/develop/.github/workflows/release.yml">release.yml</a>)</div></div>
-  <div class="stat"><div class="n">4 + 1</div><div class="l">processors, plus the CD's BUTCH controller (<a href="{{REPO}}/blob/develop/docs/source-layout.md">source layout</a>)</div></div>
-  <div class="stat"><div class="n">v12</div><div class="l">savestate format; every released format loads (<a href="{{REPO}}/blob/develop/docs/savestate-compat.md">savestate-compat.md</a>)</div></div>
-</div>
+<section class="win">
+  <h2>System</h2>
+  <div class="win-body">
+    <dl class="readout">
+      <dt><a href="{{REPO}}/blob/develop/.github/workflows/release.yml">Platforms built per release</a></dt>
+      <dd>16</dd>
+      <dt><a href="{{REPO}}/blob/develop/docs/source-layout.md">Processors emulated</a></dt>
+      <dd>4 + BUTCH</dd>
+      <dt><a href="{{REPO}}/blob/develop/docs/savestate-compat.md">Savestate format (all older ones load)</a></dt>
+      <dd>v12</dd>
+      <dt><a href="{{REPO}}/blob/develop/docs/GPLv3">Licence</a></dt>
+      <dd>GPLv3</dd>
+    </dl>
+  </div>
+</section>
 
-<h2>What you get</h2>
+<section class="win">
+  <h2>What ships</h2>
+  <div class="win-body">
+    <dl class="manifest">
 
-<div class="grid">
-  <div class="card">
-    <h3>Jaguar CD, two ways</h3>
-    <p>CUE/BIN, CDI and CHD boot via an HLE CD BIOS or the real BIOS on
-    emulated BUTCH hardware. Audio CDs and the VLM work. CHD needs a
-    session-aware chdman; each release attaches one.</p>
-    <p class="src"><a href="compatibility.html">per-title matrix</a> &middot;
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a></p>
-  </div>
-  <div class="card">
-    <h3>RetroAchievements-ready</h3>
-    <p>Memory maps and achievement support, asserted in CI against the
-    rcheevos mapping.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/test/tools/test_memory_map.c">test_memory_map.c</a> &middot;
-      <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a></p>
-  </div>
-  <div class="card">
-    <h3>Deterministic savestates</h3>
-    <p>Byte-identical replay under RetroArch's run-ahead loop, verified by
-    harness.</p>
-    <p class="src"><a href="{{REPO}}/pull/327">PR #327</a> &middot;
-      <a href="{{REPO}}/blob/develop/test/tools/test_runahead_determinism.c">the test</a></p>
-  </div>
-  <div class="card">
-    <h3>Link play, self-configuring</h3>
-    <p>JagLink and CatBox serial at register level. Automatic mode rides a
-    RetroArch netplay session with nothing to type; direct TCP finds LAN
-    hosts by UDP beacon and lists them by name. Doom deathmatch validated,
-    and Ultra Vortek dials the emulated Voice Modem (press 911 at the
-    title screen).</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">user guide</a> &middot;
-      <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a></p>
-  </div>
-  <div class="card">
-    <h3>Jaguar GameDrive</h3>
-    <p>16&nbsp;MB bank switching from RetroHQ's GDBIOS bindings. GD-locked
-    homebrew boots.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a> &middot;
-      <a href="{{REPO}}/blob/develop/docs/jgd-interface-notes.md">interface notes</a></p>
-  </div>
-  <div class="card">
-    <h3>Memory Track saves</h3>
-    <p>The CD's save cartridge, emulated. CD saves persist.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/memory-track.md">memory-track.md</a> &middot;
-      <a href="{{REPO}}/pull/259">PR #259</a></p>
-  </div>
-  <div class="card">
-    <h3>Crash watchdog</h3>
-    <p>Failure signatures land in your frontend log, naming the broken
-    subsystem.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
-  </div>
-  <div class="card">
-    <h3>ROM patches</h3>
-    <p>Softpatching for cartridges (IPS and friends, frontend-applied) works
-    out of the box, and a curated known-patch catalogue documents target CRCs.
-    CD images load by path and are not softpatched.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/rom-patches.md">rom-patches.md</a></p>
-  </div>
-  <div class="card">
-    <h3>Peripherals</h3>
-    <p>ST/Amiga mouse (all three wirings), the Tempest 2000 rotary, the TR10
-    analog and driving protocol, and the port-1 lightgun. Per-axis dead zone,
-    offset and response tuning on every analog source. The Team Tap and the
-    Pro Controller are not emulated yet.</p>
-    <p class="src"><a href="{{REPO}}/issues/428">epic #428</a> &middot;
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0 notes</a></p>
-  </div>
-  <div class="card">
-    <h3>HD texture pipeline</h3>
-    <p>Dump every unique blit source as a hashed PNG, redraw it, drop it in
-    a pack directory. Replacement is presentation-only; savestates and
-    netplay stay bit-identical with or without a pack.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/texture-dump.md">texture-dump.md</a> &middot;
-      <a href="{{REPO}}/issues/369">#369</a></p>
-  </div>
-  <div class="card">
-    <h3>Boot ROM selection</h3>
-    <p>Series K or Model M (both embedded), or a custom image identified by
-    checksum. Unrecognized 128&nbsp;KB images still load, with a log
-    warning.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0 notes</a></p>
-  </div>
-  <div class="card">
-    <h3>Fully open source</h3>
-    <p>GPLv3, from Shamus Hammons' Virtual Jaguar. Hardware-referenced tests
-    gate&nbsp;CI.</p>
-    <p class="src"><a href="{{REPO}}/blob/develop/docs/GPLv3">license</a> &middot;
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">acid suite</a></p>
-  </div>
-</div>
+      <dt>Jaguar CD</dt>
+      <dd>
+        <p>CUE/BIN, CDI and CHD. Boots through an HLE CD BIOS or through the
+        real BIOS on emulated BUTCH hardware. Audio CDs and the VLM work.
+        CHD needs a session-aware chdman; every release attaches one.</p>
+        <p class="src"><a href="compatibility.html">per-title matrix</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">v3.0.0 notes</a></p>
+      </dd>
 
-<h2>Documentation and support</h2>
-<p>
-  Manual: <a href="{{DOCS_URL}}">official libretro docs</a> &mdash;
-  <a href="{{DOCS_OPTIONS_URL}}">core options</a>,
-  <a href="{{DOCS_CONTROLS_URL}}">controls</a>, extensions.
-  No BIOS files required (<a href="{{REPO}}#bios">README: BIOS</a>).
-  Reports: <a href="{{REPO}}/discussions">Discussions</a>. Bugs:
-  <a href="{{REPO}}/issues">Issues</a>.
-</p>
+      <dt>Controllers</dt>
+      <dd>
+        <p>ST and Amiga mouse in all three wirings, the Tempest 2000 rotary,
+        the TR10 analog and driving protocol, the port-1 lightgun. Dead zone,
+        offset and response are tunable per axis on every analog source. The
+        Team Tap and the Pro Controller are not emulated.</p>
+        <p class="src"><a href="{{REPO}}/issues/428">epic #428</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0 notes</a></p>
+      </dd>
 
-<h2>Recent releases</h2>
-<ul>
-  <li><strong>v3.4.0</strong> &mdash; the peripheral wave (mouse,
-      rotary, analog, driving, lightgun), Ultra Vortek netplay over the emulated Voice
-      Modem, self-configuring link with LAN discovery, texture dump +
-      replacement, boot-ROM selection, CHD.
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">Notes</a>.</li>
-  <li><strong>v3.3.0</strong> &mdash; hi-res completion (RGB16 renderer, scaled-sprite
-      + CLUT supersampling), Val d&rsquo;Is&egrave;re ground fix from the Flare
-      netlists, run-ahead determinism.
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">Notes</a>.</li>
-  <li><strong>v3.2.0</strong> &mdash; true-color rendering, 2&times; internal
-      resolution with blit supersampling, Raiden and Power Drive Rally fixes.
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">Notes</a>.</li>
-  <li><strong>v3.1.0</strong> &mdash; GameDrive, clock scales, audio-CD/VLM,
-      savestate compatibility.
-      <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">Notes</a>.</li>
-</ul>
+      <dt>Link play</dt>
+      <dd>
+        <p>JagLink and CatBox serial, at register level. Automatic mode rides
+        a RetroArch netplay session with nothing to type. Direct TCP finds LAN
+        hosts by UDP beacon and lists them by name. Doom deathmatch is
+        validated. Ultra Vortek dials the emulated Voice Modem: press 911 at
+        the title screen.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/netlink-user-guide.md">user guide</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/voice-modem.md">voice-modem.md</a></p>
+      </dd>
 
-<p class="footnote">
-  <a href="{{REPO}}/releases/tag/nightly">Nightlies</a> build on every push to
-  <code>develop</code> (currently <code>v{{CORE_VERSION}}</code>); gated on
-  compiling, not the test suite.
-</p>
+      <dt>Savestates</dt>
+      <dd>
+        <p>Byte-identical replay under RetroArch's run-ahead loop, checked by
+        a harness rather than asserted.</p>
+        <p class="src"><a href="{{REPO}}/pull/327">PR #327</a> &middot;
+          <a href="{{REPO}}/blob/develop/test/tools/test_runahead_determinism.c">the test</a></p>
+      </dd>
 
-<script src="assets/js/crt-fx.js" defer></script>
-<script src="assets/js/hero-fx.js" defer></script>
+      <dt>RetroAchievements</dt>
+      <dd>
+        <p>Memory maps and achievement support, asserted in CI against the
+        rcheevos mapping.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/test/tools/test_memory_map.c">test_memory_map.c</a> &middot;
+          <a href="{{REPO}}/blob/develop/test/tools/test_rcheevos_e2e.sh">test_rcheevos_e2e.sh</a></p>
+      </dd>
+
+      <dt>GameDrive</dt>
+      <dd>
+        <p>16&nbsp;MB bank switching against RetroHQ's GDBIOS bindings.
+        GD-locked homebrew boots.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0 notes</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/jgd-interface-notes.md">interface notes</a></p>
+      </dd>
+
+      <dt>Memory Track</dt>
+      <dd>
+        <p>The CD unit's save cartridge, emulated. CD saves persist.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/memory-track.md">memory-track.md</a> &middot;
+          <a href="{{REPO}}/pull/259">PR #259</a></p>
+      </dd>
+
+      <dt>HD textures</dt>
+      <dd>
+        <p>Dump every unique blit source as a hashed PNG, redraw it, drop it
+        in a pack directory. Replacement is presentation only. Savestates and
+        netplay stay bit-identical with or without a pack.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/texture-dump.md">texture-dump.md</a> &middot;
+          <a href="{{REPO}}/issues/369">#369</a></p>
+      </dd>
+
+      <dt>ROM patches</dt>
+      <dd>
+        <p>Cartridge softpatching (IPS and friends, applied by the frontend)
+        works out of the box, and a curated catalogue documents target CRCs.
+        CD images load by path and are not softpatched.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/rom-patches.md">rom-patches.md</a></p>
+      </dd>
+
+      <dt>Boot ROM</dt>
+      <dd>
+        <p>Series K or Model M, both embedded, or a custom image identified by
+        checksum. An unrecognized 128&nbsp;KB image still loads, with a log
+        warning.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0 notes</a></p>
+      </dd>
+
+      <dt>Crash watchdog</dt>
+      <dd>
+        <p>Failure signatures land in the frontend log, naming the subsystem
+        that broke.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/src/core/crash_detect.c">crash_detect.c</a></p>
+      </dd>
+
+      <dt>Source</dt>
+      <dd>
+        <p>GPLv3, descended from Shamus Hammons' Virtual Jaguar.
+        Hardware-referenced tests gate CI.</p>
+        <p class="src"><a href="{{REPO}}/blob/develop/docs/GPLv3">licence</a> &middot;
+          <a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.0.0.md">acid suite</a></p>
+      </dd>
+
+    </dl>
+  </div>
+</section>
+
+<section class="win">
+  <h2>Release log</h2>
+  <div class="win-body">
+    <div class="table-wrap"><table>
+      <tr><th>Version</th><th>What landed</th><th>Notes</th></tr>
+      <tr>
+        <td><strong>v3.4.0</strong></td>
+        <td>The peripheral wave: mouse, rotary, analog, driving, lightgun.
+            Ultra Vortek netplay over the emulated Voice Modem. Self-configuring
+            link with LAN discovery. Texture dump and replacement. Boot-ROM
+            selection. CHD.</td>
+        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.4.0.md">v3.4.0</a></td>
+      </tr>
+      <tr>
+        <td><strong>v3.3.0</strong></td>
+        <td>Hi-res completion: RGB16 renderer, scaled-sprite and CLUT
+            supersampling. Val d&rsquo;Is&egrave;re ground fix, taken from the
+            Flare netlists. Run-ahead determinism.</td>
+        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.3.0.md">v3.3.0</a></td>
+      </tr>
+      <tr>
+        <td><strong>v3.2.0</strong></td>
+        <td>True-colour rendering. 2x internal resolution with blit
+            supersampling. Raiden and Power Drive Rally fixes.</td>
+        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.2.0.md">v3.2.0</a></td>
+      </tr>
+      <tr>
+        <td><strong>v3.1.0</strong></td>
+        <td>GameDrive. Clock scales. Audio CD and VLM. Savestate
+            compatibility.</td>
+        <td><a href="{{REPO}}/blob/develop/docs/RELEASE_NOTES_v3.1.0.md">v3.1.0</a></td>
+      </tr>
+    </table></div>
+    <p class="footnote">
+      <a href="{{REPO}}/releases/tag/nightly">Nightlies</a> build on every push
+      to <code>develop</code>, currently <code>v{{CORE_VERSION}}</code>. They
+      are gated on compiling, not on the test suite.
+    </p>
+  </div>
+</section>
+
+<section class="win">
+  <h2>Documentation and support</h2>
+  <div class="win-body">
+    <p>
+      The manual is the <a href="{{DOCS_URL}}">official libretro
+      documentation</a>: <a href="{{DOCS_OPTIONS_URL}}">core options</a>,
+      <a href="{{DOCS_CONTROLS_URL}}">controls</a>, file extensions. No BIOS
+      files are required (<a href="{{REPO}}#bios">README: BIOS</a>).
+    </p>
+    <p>
+      Reports go in <a href="{{REPO}}/discussions">Discussions</a>, confirmed
+      bugs in <a href="{{REPO}}/issues">Issues</a>. Attach the frontend log:
+      the crash watchdog writes the failure signature into it.
+    </p>
+  </div>
+</section>
