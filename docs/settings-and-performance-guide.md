@@ -141,10 +141,13 @@ Run-ahead is unaffected. You can turn them on and off freely without risking a
 save.
 
 **What they cost.** Internal Resolution and True Color are the only two
-enhancements with a real performance price, and it is not small: Alien vs
-Predator's own preset (2x + true color) was measured at roughly **30% of its
-frame time** on a desktop host. On a slow device, these are the first things to
-turn off — see §4.
+enhancements with a real performance price, and it is not small: **2x + true
+color together** were measured at roughly **30% of frame time** on Alien vs
+Predator on a desktop host. Note AvP's shipped preset is **2x only** — #551
+dropped true color from it after a pixel-diff found it changed 0.0000% of
+pixels — so disabling AvP's preset recovers the 2x share of that figure, not
+all of it. On a slow device these are still the first things to turn off; see
+§4.
 
 ### 3.1 Texture packs
 
@@ -180,8 +183,8 @@ mid-game save states) found the cost concentrated in one place:
 
 | Subsystem | Share of frame time |
 |---|---|
-| **DSP** | **50–67%** (Iron Soldier 67%, Alien vs Predator 63%) |
-| **GPU** | large and title-dependent — e.g. ~24% on Skyhammer alongside ~33% DSP |
+| **DSP** | **33–67%**, and it is the top cost on every title measured — **50–67%** on the DSP-heavy ones (Iron Soldier 67%, Alien vs Predator 63%), ~33% on Skyhammer |
+| **GPU** | large and title-dependent — e.g. ~24% on Skyhammer |
 | Blitter (fast) | 5–17% |
 | Blitter (accurate) | up to ~34% on Alien vs Predator |
 | Object Processor | ~1% |
@@ -189,8 +192,15 @@ mid-game save states) found the cost concentrated in one place:
 
 The striking finding: **the DSP is parked in a 3–5 instruction wait loop for
 90–99.7% of every frame** on the titles measured (Iron Soldier 99.7%, Doom 90%,
-Alien vs Predator 74%) — while still interpreting its full 26.6 MHz cycle
-budget, 416k–590k opcodes per frame, spinning. The GPU does the same thing on
+Alien vs Predator 74%) — while the emulator still interprets **416k–590k
+opcodes per frame** doing it (Iron Soldier 590k, AvP 532k, Doom 461k, niccc
+417k). Note those counts *exceed* what real silicon could retire in a frame:
+26.59 MHz over a 60.05 Hz field is ~443k cycles, and no Jaguar RISC instruction
+takes less than one. The emulated DSP outruns the hardware because pipeline
+hazards are not modelled ([#313](https://github.com/libretro/virtualjaguar-libretro/issues/313))
+— which is the same root cause behind titles that run too fast. So this is
+interpreter work being done, not a hardware cycle budget being filled, and
+that is precisely why skipping it is free. The GPU does the same thing on
 some titles (Alien vs Predator 80%, jagniccc 73%).
 
 Two consequences for you:
@@ -299,7 +309,7 @@ games, and they can break titles that depend on stock timing. If you file a bug,
 reproduce it at 1x first — a bug report from an overclocked session cannot be
 acted on.
 
-**Known bad cases** (all reported against overclock, all still open):
+**Known bad cases** (all reported against overclock; status per row):
 
 | Title | Setting | Symptom | Status |
 |---|---|---|---|
@@ -313,7 +323,8 @@ help — but note that two of them disable idle-skip, so you may be stacking cos
 ### 4.5 Low-end platforms
 
 Honest position first: **no on-device profile has been captured for the Apple TV
-/ A10X class yet.** Issue #509 remains open specifically for that. Every number
+/ A10X class yet.** Issue #601 tracks that capture (its parent epic #509 closed
+once every other child shipped). Every number
 in §4.1 is a desktop host profile. Anyone quoting per-subsystem device
 percentages for tvOS is quoting a projection.
 
@@ -343,7 +354,15 @@ pacing are entirely your frontend's responsibility.
 Practical consequences:
 
 - The core advertises **60.05445 fps / 48043.6 Hz** (NTSC) and **50.08013 fps /
-  48076.9 Hz** (PAL). These are the Jaguar's real field rates, not 60/50.
+  48076.9 Hz** (PAL). These are the Jaguar's real field rates, not 60/50, and
+  they are derived rather than hard-coded: a non-interlaced field is 524
+  halflines NTSC / 624 PAL (`VJ_HALFLINES_PER_FIELD_*` in `src/core/jaguar.h`),
+  so the rate falls out as `1e6 / (halflines × halfline_µs)`. The sample rate
+  follows from it in `retro_get_system_av_info()` — the core hands the frontend
+  a fixed batch of pairs exactly once per field, so the true output rate *is*
+  pairs × field rate. Advertising a flat 48000 against the corrected fps would
+  over-deliver by ~0.09% forever and slowly drain or overfill the frontend's
+  audio buffer.
 - **Fast-forward doing nothing is usually a RetroArch setting**, not a core bug.
   Check *Frame Throttle → Fast-Forward Ratio* (1.0× means no speed-up),
   `vrr_runloop_enable`, and that audio sync goes non-blocking during
@@ -444,7 +463,7 @@ Changing these mid-game does nothing visible. Reload the content.
 |---|---|
 | `internal_resolution` | Internal Resolution |
 | `pal` | PAL |
-| `bios_type` | Cart BIOS Type |
+| `bios_type` | Cart BIOS Type — *which* boot ROM (Series K / Model M / Custom) |
 | `cd_bios_type` | CD BIOS Type |
 | `cd_boot_mode` | CD Boot Mode |
 | `memory_track` | Memory Track |
@@ -504,7 +523,7 @@ timing models, idle-skip, CD read speed — takes effect immediately.
 | `risc_clock_scale` | 1x | a GPU-bound game stutters — **and never with idle-skip** |
 | `risc_idle_skip` | **off** | you want the single biggest speed-up available |
 | `dram_timing` / `gpu_pipeline_timing` / `blitter_timing` | off | accuracy investigation only |
-| `bios` (cartridges) | HLE | a cartridge needs the real boot ROM |
+| `bios` (cartridges) | HLE | a cartridge needs the real boot ROM. *Distinct from* `bios_type`, which picks **which** ROM once this is set to Real |
 | `cd_boot_mode` | HLE | a CD game hangs or an FMV freezes (restart) |
 | `cd_read_speed` | 2x | loads feel slow — and revert if anything hangs |
 | `memory_track` | **on** | leave it on |
