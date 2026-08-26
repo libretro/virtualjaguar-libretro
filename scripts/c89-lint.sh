@@ -8,9 +8,15 @@
 
 set -e
 
-# libretro.c includes the generated src/core/version.h.  Make sure it
-# exists before we run -fsyntax-only -- this script is invoked from CI
-# and pre-commit hooks where `make` may not have run yet.
+# Generate src/core/version.h if it is missing -- this script is invoked
+# from CI and pre-commit hooks where `make` may not have run yet.
+#
+# libretro.c no longer *needs* it (it falls back to the committed
+# src/core/version_fallback.h when the generated header is absent), so this
+# is now a deliberate choice rather than a workaround: the Makefile build is
+# the one this lint is meant to model, and that build always has the
+# generated header.  Dropping these two lines would silently switch the lint
+# to the fallback path instead.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -f "$ROOT/src/core/version.h" ] || sh "$ROOT/scripts/gen-version-h.sh"
 

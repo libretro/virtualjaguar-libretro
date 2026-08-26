@@ -60,7 +60,31 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "titledb.h"
 #include "titlehook.h"
 #include "log.h"
-#include "version.h" /* generated; defines CORE_VERSION */
+/* CORE_VERSION.  scripts/gen-version-h.sh writes src/core/version.h with
+ * the short git rev in it; the Makefile and jni/Android.mk both run it at
+ * parse time, so for them the generated header exists and wins.  Build
+ * systems that cannot run a script before compiling (the Provenance
+ * SwiftPM manifest) have no version.h and used to fail on this include --
+ * they fall back to the committed defaults instead.
+ *
+ * Nested rather than `#if defined(__has_include) && __has_include(...)`:
+ * the standard says #if short-circuits, but older preprocessors that lack
+ * __has_include can still choke parsing the call in the right-hand
+ * operand.  Every compiler without __has_include here is Makefile-driven,
+ * so it takes the #else and finds the generated header. */
+#if defined(__has_include)
+#  if __has_include("version.h")
+#    define VJ_HAVE_GENERATED_VERSION_H 1
+#  endif
+#else
+#  define VJ_HAVE_GENERATED_VERSION_H 1
+#endif
+
+#ifdef VJ_HAVE_GENERATED_VERSION_H
+#include "version.h"          /* generated; defines CORE_VERSION */
+#else
+#include "version_fallback.h" /* committed defaults; same macros */
+#endif
 
 /* Samples (not pairs) handed to the frontend once per field.  These are
  * also the numerator of the advertised sample rate -- see
