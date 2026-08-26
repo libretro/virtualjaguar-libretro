@@ -74,26 +74,27 @@ states measured above were older versions that loaded with only a size warning.
 
 ROMs for all eight candidates are present in `jaguar-roms-private/ROMS/`.
 
-### Measured 2026-08-25 — all eight candidates
+### Measured 2026-08-25 — all candidates
 
 Gate 1 is **complete**. One title passes.
 
 | Title | control 0.5x | RISC 1.5x | RISC 2x | verdict |
 |---|---:|---:|---:|---|
-| **Cybermorph** | −48.7% | **+44.7%** | **+72.8%** | **PASSES** |
+| **Cybermorph (1993)** | −48.7% | **+44.7%** | **+72.8%** | **PASSES** |
+| **Cybermorph (1994 ROM)** | −40.6% | **+28.6%** | **+52.3%** | **PASSES** — independent confirmation |
 | I-War | −18.2% | +6.3% | +1.1% | fails — noise, non-monotonic |
 | Missile Command 3D | −0.2% | **−14.3%** | −11.2% | fails — overclock makes it *worse* |
 | Doom | ±0.0% | ±0.0% | ±0.0% | flat lock, 593/1800 |
 | Club Drive | ±0.0% | ±0.0% | ±0.0% | flat lock, 1471/1800 |
 | Iron Soldier | −0.9% | ±0.0% | ±0.0% | flat lock, 116/900 |
 | Super Burnout | SATURATED | SATURATED | SATURATED | unmeasurable — already at the ceiling |
-| Val D'Isere | ±0.0% | ±0.0% | ±0.0% | **unmeasured** — static savestate |
+| Val D'Isere | −1.6% | −1.6% | −1.6% | fails — RISC inert; 68K "gain" is an artefact |
 
-**One pass in eight.** The structural-null hypothesis from #378 survives as the *general* rule —
+**One title passes, on two independent ROM revisions.** The structural-null hypothesis from #378 survives as the *general* rule —
 most Jaguar titles are paced by a field lock or their own frame cap, not by clock speed — but it
 is not universal, and Cybermorph is the counterexample that disproves the strong form of it.
 
-#### Cybermorph — PASSES
+#### Cybermorph (1993) — PASSES
 
 All seven cells, one 2400-frame window (saturation ceiling 2399):
 
@@ -162,14 +163,53 @@ But the reason it saturates is itself the answer: **stock already presents at th
 so there is no headroom for an overclock to deliver. Formally unmeasured by this metric;
 practically, there is nothing to win.
 
-#### Val D'Isere — the one still outstanding
+#### Cybermorph 1994 ROM — PASSES, confirming the 1993 result
 
-15 transitions in 900 frames, identical even at 0.5x — one changed frame every ~60, i.e. a
-static or paused screen. The state is a `.state.auto` autosave that landed wherever the session
-ended.
+A different ROM revision (`Cybermorph_(1994).jag`), a different savestate, same
+conclusion: control −40.6%, **+28.6% at RISC 1.5x, +52.3% at 2x**, 68K axis inert
+(−1.4% on its own). Two independent ROMs now agree that this title is genuinely
+RISC-bound.
 
-- [ ] **Val D'Isere** — `Val D'Isere Skiing & Snowboarding (1994).jag`. Needs a real gameplay
-      save: mid-run down a slope, scenery moving, not the menu or a results screen.
+Its 2x cells read **1796/1800** and **1798/1800** — functionally pinned to the
+ceiling. See the guard note below; those two figures are floors, not measurements.
+
+#### Val D'Isere — FAILS, and it nearly fooled the method
+
+The new gameplay savestate is valid (193/1800 at stock, live and unsaturated —
+the old `.state.auto` was a static screen at 15/900). The result:
+
+| cell | transitions | vs stock |
+|---|---:|---:|
+| RISC 0.5x (control) | 190/1800 | −1.6% |
+| **stock** | 193/1800 | — |
+| RISC 1.5x / 2x | 190/1800 | −1.6% |
+| **68K 1.5x** | 224/1800 | **+16.1%** |
+
+The RISC axis is completely inert. The 68K column moving +16.1% looked like the
+first **68K-bound** title in the corpus — below the ≥20% bar, but qualitatively new.
+
+**It is not.** Sweeping the 68K axis with its own underclock arm:
+
+| m68k | 0.5x | 1x | 1.5x | 2x | 3x |
+|---|---:|---:|---:|---:|---:|
+| transitions | **240** | 193 | 224 | 189 | 190 |
+
+**Underclocking to 0.5x produces the *highest* count of all**, and the axis is
+non-monotonic throughout. That is not a compute bound — it is aliasing between
+the 68K rate and the render cadence shuffling *which* frames differ, not
+producing more of them. Val D'Isere fails.
+
+> **Method fix, and the reason for it.** The grid's control underclocks **RISC
+> only**, so on a title whose RISC axis is flat it proves nothing about the 68K
+> column. The `+16.1%` was reported as a real finding before the 68K control was
+> run, and the control retracted it. **If the 68K column moves while RISC is
+> flat, sweep the 68K axis separately including its own 0.5x arm before
+> believing it.** Recorded in `scripts/ocgrid.sh`.
+
+> **Second method fix: near-saturation.** The guard fired only at exactly
+> `n-1`, so Cybermorph 1994's 1796/1800 and 1798/1800 sailed through and printed
+> confident percentages while functionally pinned. The threshold is now **98% of
+> the ceiling**. Any figure at or above it is a floor, not a measurement.
 
 ### Already measured out — do not re-run
 

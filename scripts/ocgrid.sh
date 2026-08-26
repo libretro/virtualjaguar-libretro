@@ -11,13 +11,23 @@
 # previous frame -- starting from a gameplay savestate.  Two guards, both
 # earned the hard way (see docs/overclock-gate1-checklist.md):
 #
-#   * transitions == window length means the counter SATURATED.  That is
-#     UNMEASURED, not a null: every frame differed, so a gain has nowhere to
-#     show.  Reported as SATURATED, never as a number.
-#   * the 0.5x underclock arm runs FIRST and always.  A flat 1x/1.5x/2x row
-#     cannot distinguish a genuine frame cap from a dead measurement; if 0.5x
-#     does not drop, the metric was never responding and the whole sweep is
-#     void.  This is the control that both retracted result tables lacked.
+#   * transitions at or NEAR the window length means the counter SATURATED.
+#     That is UNMEASURED, not a null: nearly every frame differed, so a gain
+#     has nowhere left to show.  The threshold is 98% of the ceiling, not the
+#     exact ceiling -- Cybermorph's 1994 ROM read 1796/1800 and 1798/1800,
+#     which are functionally pinned but slipped past an exact-match test and
+#     printed confident percentages.  Reported as SATURATED, never a number.
+#   * a 0.5x underclock control always runs.  A flat 1x/1.5x/2x row cannot
+#     distinguish a genuine frame cap from a dead measurement; if 0.5x does
+#     not drop, the metric was never responding.  This is the control that
+#     both retracted result tables lacked.
+#
+#     LIMITATION: the control underclocks RISC only, so on a 68K-bound title
+#     it proves nothing.  If the 68K column moves while RISC is flat, sweep
+#     the 68K axis separately INCLUDING its own 0.5x arm before believing it.
+#     Val D'Isere looked like a +16.1% 68K win until that arm was run: 0.5x
+#     came back HIGHER than stock (240 vs 193) and the axis is non-monotonic,
+#     so the "gain" was clock/cadence aliasing, not throughput.
 #
 # CORE may be overridden for a non-macOS library name, e.g.
 #   CORE=./virtualjaguar_libretro.so scripts/ocgrid.sh ...
@@ -73,7 +83,8 @@ for cell in $cells; do
     # is pinned to the ceiling, so quoting other arms against it would
     # print authoritative-looking percentages against a meaningless
     # number -- the exact trap this script exists to make un-missable.
-    if [ "$cell" = "risc=1x,m68k=1x" ] && [ "$n" -gt 0 ] && [ "$t" -lt "$((n - 1))" ]; then
+    if [ "$cell" = "risc=1x,m68k=1x" ] && [ "$n" -gt 0 ] \
+       && [ "$t" -lt "$(( (n - 1) * 98 / 100 ))" ]; then
         base=$t
     fi
 done
@@ -90,8 +101,8 @@ for cell in $cells; do
     fi
     if [ "$n" -eq 0 ]; then
         v="NO FRAMES (state rejected? see checklist section 2)"
-    elif [ "$t" -ge "$((n - 1))" ]; then
-        v="SATURATED -- unmeasured, lengthen the window"
+    elif [ "$t" -ge "$(( (n - 1) * 98 / 100 ))" ]; then
+        v="SATURATED (>=98% of ceiling) -- unmeasured, lengthen the window"
     elif [ -z "$base" ] || [ "$base" -eq 0 ]; then
         v="NO USABLE STOCK BASELINE -- stock cell saturated or static; nothing here is comparable"
     else
