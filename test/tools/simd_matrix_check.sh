@@ -418,6 +418,10 @@ expect_lto ios-arm64 no
 # win (PE) and qnx stay excluded even with LTO=1.
 expect_lto win      no  LTO=1
 expect_lto qnx      no  LTO=1
+# gcov coverage forces LTO off (GCC computed-goto .L refs break LTO link),
+# even over an explicit LTO=1.
+expect_lto unix     no  COVERAGE=1
+expect_lto unix     no  COVERAGE=1 LTO=1
 
 echo
 if [ "$fail" -ne 0 ]; then

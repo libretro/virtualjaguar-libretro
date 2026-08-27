@@ -156,6 +156,10 @@ platforms are explicitly carved back out:
   `-flto=4 -fwhole-program` pipeline in its platform block. Host A/B numbers are
   indicative only — Linux/Pi CI + `test/tools/rpi_perf.sh` on device is the final
   arbiter. `LTO` is in `BUILD_AXES` since it changes object content.
+  **`COVERAGE=1` force-disables LTO** (even an explicit `LTO=1`): GCC's gcov
+  instrumentation turns the dsp.c/gpu.c computed-goto dispatch tables into
+  `.data.rel.local` arrays of `.L` label addresses that don't survive LTO
+  partitioning (`undefined reference to `.L106'` at link).
 - **iOS/tvOS `-mtune`:** `ios-arm64` adds `-mtune=apple-a10`, `tvos-arm64` adds
   `-mtune=apple-a8`. These are ISA-safe (scheduling only) for RetroArch's iOS 9 / A7
   and tvOS Apple TV HD / A8 floors. Do **not** default `-mcpu` there — that would emit

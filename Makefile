@@ -147,6 +147,16 @@ ifeq ($(origin LTO),undefined)
    endif
 endif
 
+# gcov + -flto is known-broken on GCC: the computed-goto dispatch tables in
+# dsp.c/gpu.c become .data.rel.local arrays of .L label addresses, and the
+# coverage instrumentation strands those local symbols across LTO partitions
+# ("undefined reference to `.L106'" at link).  Coverage wants unmerged,
+# per-line attribution anyway, so force LTO off -- even over an explicit
+# LTO=1 -- whenever COVERAGE=1.
+ifeq ($(COVERAGE),1)
+   override LTO := 0
+endif
+
 # Opt-in iOS -mcpu pin.  Empty by default: stock ios-arm64 is -mtune only
 # (ISA-safe for the RetroArch iOS 9 / A7 floor).  For an iOS 17+ deploy
 # that can assume A12+: `make platform=ios-arm64 IOS_MCPU=apple-a12`.
