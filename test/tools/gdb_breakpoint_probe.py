@@ -30,6 +30,39 @@ particular ROM's boot behaviour:
 This is deterministic and ROM-independent: steps 3-4 make the "what PC
 will the breakpoint hit at" question something WE decide, not something
 that depends on knowing a specific ROM's code layout.
+
+Two wire-level subtleties this script has to get right, both stemming
+from the fact that TCP is a byte stream with no message boundaries of
+its own:
+
+  - recv_packet() must extract exactly ONE "$...#cs" packet per call and
+    carry any trailing bytes over to the next call. GDBHalt() (see
+    src/debug/gdbtarget.c) can and does send its own reply back-to-back
+    with a reply the core's normal per-frame polling just sent for one
+    of OUR requests, and the two can arrive coalesced in a single
+    recv() -- observed directly: the boot-wait halt's unsolicited
+    "T05thread:1;" landing immediately behind the qSupported reply in
+    one chunk, corrupting the length used to check the SECOND packet's
+    checksum. A version of this script that re-created a fresh, empty
+    buffer on every call (rather than a buffer that persists across
+    calls) could parse two coalesced packets as one and raise a spurious
+    checksum-mismatch error under exactly that timing.
+  - cmd() must not mistake that same unsolicited notification for the
+    reply to whatever it just asked. GDBHalt() fires the instant the
+    68000's very first instruction executes under the boot-wait
+    one-shot, independent of what the client is doing on the wire at
+    that moment, so its "T05thread:..." packet can land ahead of,
+    behind, or interleaved with any of this script's own early
+    request/reply round trips (qSupported, QStartNoAckMode, even the
+    explicit '?' status query below). This is safe to always discard
+    transparently: per the RSP payload switch in src/debug/gdbstub.c,
+    '?' replies with the literal "S05" (never a 'T'-prefixed string),
+    and no other command this script sends (qSupported, QStartNoAckMode,
+    m/M/g/G, Z/z) can legitimately reply with anything 'T'-prefixed
+    either -- only an out-of-band stop notification ever does. So any
+    'T'-prefixed packet seen where this script asked something else is
+    unambiguously that notification arriving out of turn, never the
+    answer being waited for.
 """
 import socket
 import subprocess
@@ -57,24 +90,46 @@ def pack(payload: str) -> bytes:
     return b"$" + b + b"#" + ("%02x" % cksum(b)).encode()
 
 
-def recv_packet(sock, timeout=10.0) -> str:
+def recv_packet(sock, rxbuf: bytearray, timeout=10.0) -> str:
+    """Extracts exactly the FIRST complete "$...#cs" packet from rxbuf,
+    reading more off the socket only if rxbuf doesn't already hold one.
+    Leaves any bytes after that packet in rxbuf, untouched, for the next
+    call -- the start of a second, already-arrived packet (see the
+    module docstring) must never be consumed as part of this one."""
     sock.settimeout(timeout)
-    buf = b""
-    while b"#" not in buf or len(buf.split(b"#")[-1]) < 2:
+    while True:
+        dollar = rxbuf.find(b"$")
+        if dollar >= 0:
+            hash_at = rxbuf.find(b"#", dollar + 1)
+            if hash_at >= 0 and len(rxbuf) >= hash_at + 3:
+                body = bytes(rxbuf[dollar + 1 : hash_at])
+                want = int(rxbuf[hash_at + 1 : hash_at + 3], 16)
+                del rxbuf[: hash_at + 3]
+                if cksum(body) != want:
+                    raise RuntimeError(f"checksum mismatch: {body!r}")
+                return body.decode()
         chunk = sock.recv(4096)
         if not chunk:
             raise RuntimeError("stub closed the connection")
-        buf += chunk
-    body = buf[buf.index(b"$") + 1 : buf.rindex(b"#")]
-    want = int(buf[buf.rindex(b"#") + 1 : buf.rindex(b"#") + 3], 16)
-    if cksum(body) != want:
-        raise RuntimeError(f"checksum mismatch: {buf!r}")
-    return body.decode()
+        rxbuf.extend(chunk)
 
 
-def cmd(sock, payload: str, timeout=10.0) -> str:
+def cmd(sock, rxbuf: bytearray, payload: str, timeout=10.0) -> str:
+    """Sends payload and returns the reply meant for it, transparently
+    discarding a leading unsolicited stop-reply notification if one is
+    in the way (see the module docstring: GDBHalt()'s boot-wait
+    notification can land ahead of the real reply). Every command this
+    script sends via cmd() legitimately replies with something other
+    than a 'T'-prefixed stop-reply, so that shape is unambiguous noise
+    here -- the one command that DOES expect a 'T'-prefixed reply ('c',
+    to resume) is issued directly via sendall()/recv_packet() below, not
+    through cmd()."""
     sock.sendall(pack(payload))
-    return recv_packet(sock, timeout)
+    while True:
+        reply = recv_packet(sock, rxbuf, timeout)
+        if reply.startswith("T"):
+            continue
+        return reply
 
 
 def main() -> int:
@@ -116,33 +171,34 @@ def main() -> int:
         if s is None:
             sys.exit("could not connect to the core's GDB stub")
 
+        rxbuf = bytearray()
         s.sendall(b"+")
-        sup = cmd(s, "qSupported:multiprocess+")
+        sup = cmd(s, rxbuf, "qSupported:multiprocess+")
         assert "PacketSize=" in sup
 
-        assert cmd(s, "QStartNoAckMode") == "OK"
+        assert cmd(s, rxbuf, "QStartNoAckMode") == "OK"
 
         # We should already be halted (gdb_wait fired on the very first
         # M68KInstructionHook() call, before our connection even
         # existed -- its own unsolicited stop reply went to no one).
         # Confirm via '?' rather than assuming.
-        assert cmd(s, "?") == "S05"
+        assert cmd(s, rxbuf, "?") == "S05"
 
         # 0x60FE = BRA.S -2 (branch to self): a single-instruction,
         # two-byte infinite loop. Written to scratch RAM while nothing
         # is running to contend for it.
-        assert cmd(s, f"M{LOOP_ADDR:x},2:60fe") == "OK"
-        assert cmd(s, f"m{LOOP_ADDR:x},2") == "60fe", "write didn't stick before anything ran"
+        assert cmd(s, rxbuf, f"M{LOOP_ADDR:x},2:60fe") == "OK"
+        assert cmd(s, rxbuf, f"m{LOOP_ADDR:x},2") == "60fe", "write didn't stick before anything ran"
 
         # Read the current register file, then rewrite only the PC field
         # (the last 8 of the 144 hex chars: D0-D7, A0-A7, SR, PC) so we
         # don't disturb SR (interrupt mask / supervisor bit).
-        regs = cmd(s, "g")
+        regs = cmd(s, rxbuf, "g")
         assert len(regs) == 144, f"g returned {len(regs)} chars, want 144"
         new_regs = regs[:-8] + f"{LOOP_ADDR:08x}"
-        assert cmd(s, f"G{new_regs}") == "OK"
+        assert cmd(s, rxbuf, f"G{new_regs}") == "OK"
 
-        assert cmd(s, f"Z0,{LOOP_ADDR:x},2") == "OK"
+        assert cmd(s, rxbuf, f"Z0,{LOOP_ADDR:x},2") == "OK"
 
         # 'c' gets no immediate reply -- the eventual stop reply arrives
         # out of band, whenever the halted processor actually reports in.
@@ -152,18 +208,18 @@ def main() -> int:
         # Z0 we just armed there -- a REAL breakpoint hit, not the
         # one-shot that produced the original gdb_wait halt.
         s.sendall(pack("c"))
-        stop = recv_packet(s, timeout=15.0)
+        stop = recv_packet(s, rxbuf, timeout=15.0)
         assert stop.startswith("T05"), f"expected a T05 stop reply, got {stop!r}"
         assert "thread:1" in stop, f"expected thread 1 (68K) to report, got {stop!r}"
 
-        pc_regs = cmd(s, "g")
+        pc_regs = cmd(s, rxbuf, "g")
         halted_pc = pc_regs[-8:]
         assert halted_pc.lower() == f"{LOOP_ADDR:08x}", (
             f"halted at PC={halted_pc}, want {LOOP_ADDR:08x} -- the breakpoint "
             f"fired at the wrong address (or didn't fire and this is a stale "
             f"reply)")
 
-        assert cmd(s, f"z0,{LOOP_ADDR:x},2") == "OK"
+        assert cmd(s, rxbuf, f"z0,{LOOP_ADDR:x},2") == "OK"
         s.close()
 
         print("PASS: injected a real 68K instruction, redirected PC to it, "
