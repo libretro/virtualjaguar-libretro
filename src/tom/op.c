@@ -1251,6 +1251,22 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
          pixels <<= firstPix;
          data += pitch;
 
+#if defined(BLITTER_SIMD_HAVE_NEON)
+         /* Full 2-pixel phrase, no REFLECT, wholly inside LBUF.
+          * 24bpp has no RMW path and no shadow-FB hooks. Partial
+          * firstPix/i phrases keep the scalar loop below. */
+         if (!flagRMW && lbufDelta == 4
+               && OP_LBUF_IN_BOUNDS(currentLineBuffer, 8)
+               && i == 0 && firstPix == 0)
+         {
+            op_store_phrase_24bpp_neon(currentLineBuffer, pixels, flagTRANS);
+            currentLineBuffer += 8;
+            firstPix = 0;
+            i = 0;
+            continue;
+         }
+#endif
+
          while (i++ < 2)
          {
             // We don't use a 32-bit var here because of endian issues...!
