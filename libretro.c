@@ -4284,10 +4284,14 @@ bool retro_serialize(void *data, size_t size)
       }
    }
 
-   /* Zero-fill remaining bytes for deterministic on-disk save states.
-    * Rewind / run-ahead / rollback-netplay serialize every frame and
-    * never persist or compare slack, so skip the 350-450 KB memset
-    * there.  Query per call: RetroArch's savestate context is not
+   /* Zero-fill remaining bytes for deterministic save states.  Skip
+    * only for same-session run-ahead (SAME_INSTANCE / SAME_BINARY):
+    * those buffers never leave the process, are never compared, and
+    * serialize every frame.  Keep the memset for NORMAL (on-disk) and
+    * ROLLBACK_NETPLAY -- libretro.h 5718-5730: a rollback state "will
+    * almost certainly be loaded by a separate binary, device, and
+    * address space" and peers may CRC-compare the blob for desync
+    * detection.  Query per call: RetroArch's savestate context is not
     * session-stable (run-ahead and a user save interleave).  A frontend
     * that does not implement GET_SAVESTATE_CONTEXT leaves ss_ctx at
     * NORMAL and keeps the zero-fill. */
@@ -4295,8 +4299,7 @@ bool retro_serialize(void *data, size_t size)
    {
       ss_ctx = RETRO_SAVESTATE_CONTEXT_NORMAL;
       if (!(environ_cb(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &ss_ctx)
-            && (ss_ctx == RETRO_SAVESTATE_CONTEXT_ROLLBACK_NETPLAY
-                || ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE
+            && (ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE
                 || ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY)))
          memset(buf, 0, STATE_SIZE - written);
    }
