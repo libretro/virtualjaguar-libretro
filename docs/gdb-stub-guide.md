@@ -41,6 +41,24 @@ developer-facing, and never reachable from another machine.
 When the breakpoint hits, the emulator freezes exactly at that instruction — see "Halts freeze
 the frontend" below before you rely on this in a session you care about.
 
+### Faster: `tools/gdb/`
+
+Steps 4 onward above are exactly what [`tools/gdb/connect.sh`](../tools/gdb/connect.sh)
+(`connect.cmd` on Windows) automates: it finds a `gdb` on your machine (with a clear error if it
+can't — see "No shipped `m68k-elf-gdb`" below), and launches it pre-loaded with
+[`tools/gdb/jaguar.gdbinit`](../tools/gdb/jaguar.gdbinit) (sane `set` defaults plus `jconnect`,
+`jdisasm`, `jregs`, `jhalt`, `jtrace`, `jwatch` aliases over the `monitor` commands below) and
+[`tools/gdb/jaguar_gdb.py`](../tools/gdb/jaguar_gdb.py) (richer `jag-disasm`, `jag-regs`,
+`jag-trace`, `jag-halt`, `jag-watch`, `jag-info-registers` commands with argument checking and a
+pretty-printed, FLAGS-decoded register dump for the GPU/DSP threads). Run
+`tools/gdb/install.sh` once to add the same commands to your personal `~/.gdbinit` so they exist
+in every session, not just ones launched through `connect.sh`.
+
+LLDB works too — it speaks RSP as well, so `gdb-remote 127.0.0.1:2345` is LLDB's equivalent of
+`target remote`. [`tools/gdb/jaguar_lldb.py`](../tools/gdb/jaguar_lldb.py) is the same
+convenience layer reimplemented against LLDB's Python API; `tools/gdb/install.sh` installs it
+into `~/.lldbinit` too.
+
 ## The three targets (GDB threads)
 
 | GDB thread | Processor | What GDB knows about it |
@@ -199,3 +217,13 @@ implementation was actually verified against; please file an issue with what you
   while leaving the GPU running.
 - Tracepoints (`QTDP` and friends) and GDB's file-I/O extension (`vFile`) are not implemented, and
   the latter never will be — see the design doc's "Out of scope".
+- **A packet the stub doesn't implement gets no reply at all, not the empty `$#00` RSP defines
+  for "unsupported."** Verified with a real LLDB `gdb-remote` attach (proxied and logged
+  byte-for-byte while building `tools/gdb/`): LLDB's handshake sent `QThreadSuffixSupported`,
+  which this stub doesn't implement, got silence instead of `$#00`, and hung indefinitely rather
+  than treating it as "not supported" and moving on. This is plausibly why "no way to test
+  against a real gdb binary" turned out true beyond mere toolchain availability — real `gdb`
+  handshakes send other packets this stub doesn't recognize too (`qTStatus`, `qSymbol::`,
+  `vMustReplyEmpty`, whose entire purpose is checking exactly this). Tracked for a fix; until
+  then, a hang immediately after `target remote`/`gdb-remote` with no stop-reply is a known
+  symptom, not a sign your setup is wrong.
