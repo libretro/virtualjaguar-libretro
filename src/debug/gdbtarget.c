@@ -1143,6 +1143,14 @@ void GDBTargetResetState(void)
    gdbClientAttachEventPending = 0;
    gdbSession.threadG = 1;
    gdbSession.threadC = 1;
+   /* RSP mandates that every connection starts in ack mode: a new
+    * client's first reply must carry the leading '+' until IT has
+    * negotiated QStartNoAckMode itself. Leaving this latched from a
+    * dead client makes the next client's very first qSupported reply a
+    * protocol violation -- gdb/lldb block waiting for an ack that never
+    * comes. This mirrors GDBSessionInit() (src/debug/gdbstub.c), which
+    * only ever runs once per content load. */
+   gdbSession.noAckMode = 0;
 }
 
 void GDBTargetOpen(void)

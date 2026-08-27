@@ -197,8 +197,9 @@ void GDBHalt(int target, int reason, unsigned int pc);
  */
 void GDBMemWatchHit(unsigned int address, int isWrite);
 
-/* Disarms every breakpoint/watchpoint/step and resets thread/halt state,
- * without touching the socket. Called on client disconnect (mid-halt or
+/* Disarms every breakpoint/watchpoint/step and resets thread/halt state
+ * -- including ack mode, which RSP requires every new connection to
+ * start in -- without touching the socket. Called on client disconnect (mid-halt or
  * not), on halt-timeout auto-continue, and from the reset paths so a
  * fresh content load never inherits a previous session's armed state. */
 void GDBTargetResetState(void);
