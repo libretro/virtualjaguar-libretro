@@ -142,9 +142,18 @@ let package = Package(
             name: "virtualjaguar",
             dependencies: ["virtualjaguar-libretro-common", "virtualjaguar-libchdr"],
             path: ".",
-            // Directories owned by the other two targets. SPM rejects
-            // overlapping target paths without this.
-            exclude: ["libretro-common", "deps"],
+            // libretro-common and deps are owned by the other two targets;
+            // SPM rejects overlapping target paths without excluding them.
+            //
+            // tools/ is here for a different reason: SPM scans the whole target
+            // path for RESOURCES independently of the `sources` list above, and
+            // tools/vendor/jaguar-toolchain (fetched by tools/jaguar-toolchain/
+            // setup.sh, gitignored) ships a macOS helper .app carrying an
+            // English.lproj.  SPM reads that as a localized resource and fails
+            // the manifest with "defaultLocalization not set" -- so `swift
+            // build` breaks for anyone who has fetched the Jaguar toolchain,
+            // and only for them.
+            exclude: ["libretro-common", "deps", "tools"],
             sources: coreSources,
             publicHeadersPath: "src/core",
             cSettings: coreDefines + [
