@@ -16,8 +16,27 @@ name: PR issue link
 # the issue *looks* connected while the Development panel stays empty, so
 # the issue never shows which release or pre-release tag contains the work.
 #
-# There is no public API to create that link, so it has to be done in the
-# UI -- this job's only job is to make forgetting it visible.
+# WHAT CHANGED (2026-08-26)
+#
+# This job used to only *complain*, on the stated grounds that "there is no
+# public API to create that link, so it has to be done in the UI".  That is
+# no longer true -- and the cost of it being stale was that every new PR
+# went red on creation for a step that cannot be performed until after the
+# PR exists.
+#
+# The GraphQL mutation `addCloseIssueReferences` ("Adds one or more pull
+# requests as manually linked closing references on an issue") is exactly
+# the Development-panel link, and it is idempotent.  So this job now *makes*
+# the link from a tag in the PR body instead of demanding a manual step,
+# and only fails when there is no tag to act on.
+#
+# Tag the PR body with any of (case-insensitive):
+#
+#     Closes #123 / Fixes #123 / Resolves #123 / Refs #123
+#     <!-- link-issue: #123 -->      (invisible in the rendered body)
+#
+# The keyword forms still do nothing on GitHub's side; scripts/pr-link-issue.sh
+# is what gives them effect, and that script is also runnable by hand.
 #
 # Opt out for a genuinely issue-less PR by adding the `no-issue` label.
 
@@ -27,6 +46,7 @@ on:
 
 permissions:
   contents: read
+  issues: write          # addCloseIssueReferences mutates the ISSUE
   pull-requests: read
 
 concurrency:
@@ -38,52 +58,55 @@ jobs:
     name: PR is linked to an issue
     runs-on: ubuntu-latest
     steps:
-      - name: Check the Development panel for a linked issue
+      # pull_request_target: check out the BASE ref (the default for this
+      # event), never the PR head.  The script below runs with a write token,
+      # so it must be the trusted copy from the target branch and not a
+      # version the PR itself could have edited.
+      - uses: actions/checkout@v4
+
+      - name: Link the PR to its issue, or explain what is missing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          # `no-issue` opt-out.
           if gh pr view "$PR" --repo "$REPO" --json labels \
                 --jq '.labels[].name' | grep -qx 'no-issue'; then
             echo "::notice::'no-issue' label present -- skipping the linked-issue check."
             exit 0
           fi
 
-          linked=$(gh pr view "$PR" --repo "$REPO" \
-                      --json closingIssuesReferences \
-                      --jq '.closingIssuesReferences | length')
-
-          if [ "$linked" -gt 0 ]; then
-            gh pr view "$PR" --repo "$REPO" --json closingIssuesReferences \
-              --jq '.closingIssuesReferences[] | "linked: #\(.number)"'
+          # Already linked -> reports and exits 0.  Tag in the body -> links
+          # it and exits 0.  Neither -> exits non-zero, message on stderr.
+          if out=$(./scripts/pr-link-issue.sh "$PR" --repo "$REPO" 2>&1); then
+            echo "$out"
+            echo "✅ $out" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-
-          # Not linked.  If the body mentions an issue, name it in the error --
-          # that is the number the author almost certainly meant to link.
-          body=$(gh pr view "$PR" --repo "$REPO" --json body --jq '.body // ""')
-          guess=$(printf '%s' "$body" \
-                  | grep -oiE '(clos(e|es|ed)|fix(es|ed)?|resolv(e|es|ed))[[:space:]]+#[0-9]+' \
-                  | grep -oE '#[0-9]+' | head -1 || true)
+          echo "$out"
 
           {
             echo "### ❌ This PR is not linked to an issue"
             echo
-            echo "No entry in the **Development** panel."
-            if [ -n "$guess" ]; then
-              echo
-              echo "The body says it closes \`$guess\`, but **that keyword does nothing here**:"
-              echo "GitHub only creates the link when a PR targets the default branch"
-              echo "(\`master\`), and this PR targets \`develop\`."
-            fi
+            echo "No entry in the **Development** panel, and no link tag in the body"
+            echo "for CI to act on."
             echo
-            echo "**Fix it in the UI:** open the PR → **Development** (right sidebar) →"
-            echo "gear icon → pick the issue. There is no public API for this, so it"
-            echo "cannot be automated."
+            echo "**Fix it by editing the PR description** -- add one of:"
+            echo
+            echo '```'
+            echo "Closes #123        Fixes #123        Resolves #123        Refs #123"
+            echo "<!-- link-issue: #123 -->     (invisible in the rendered body)"
+            echo '```'
+            echo
+            echo "Editing the description re-runs this job, which will then create the"
+            echo "link for you. The Development panel by hand still works, and so does"
+            echo "\`scripts/pr-link-issue.sh $PR --repo $REPO\` from a terminal."
+            echo
+            echo "Note the keywords do **not** link on their own here: GitHub only honours"
+            echo "them when a PR targets the default branch (\`master\`), and this PR targets"
+            echo "\`develop\`. The tag is a marker for this job, not for GitHub."
             echo
             echo "Without the link the issue never shows which release or pre-release"
             echo "tag contains the work, which is the whole point of linking."
@@ -91,5 +114,5 @@ jobs:
             echo "Genuinely no issue? Add the \`no-issue\` label."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "::error::PR #$PR has no linked issue. Link it in the Development panel, or add the 'no-issue' label."
+          echo "::error::PR #$PR has no linked issue and no link tag in its body. Add 'Refs #N' to the description (that re-runs this job and creates the link), or add the 'no-issue' label."
           exit 1
