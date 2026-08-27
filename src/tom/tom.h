@@ -81,6 +81,24 @@ extern int32_t tomTimerCounter;
 extern uint32_t screenPitch;
 extern uint32_t * screenBuffer;
 
+/* RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE presentation-skip.
+ *
+ * Nonzero when the frontend has hinted (RETRO_AV_ENABLE_VIDEO clear) that it
+ * will discard this frame's video output -- set once per retro_run() in
+ * libretro.c, read by TOMExecHalfline().  It gates ONLY the final
+ * CRY/RGB16 -> host XRGB8888 store into screenBuffer (the
+ * scanline_render[]/tom_render_scanline_hires call and the border-colour
+ * fill), never the OP object-list dispatch or line-buffer writes that
+ * precede it in the same halfline: those touch tomRam8, which is real
+ * addressable Jaguar state (the OP line buffer at $F01800-$F01D9E, GPU
+ * synchronisation via OBF) a title could observe.  screenBuffer is a
+ * host-only presentation target no emulated processor can read back, so
+ * skipping stores into it changes nothing the machine can see. Default 0
+ * (render as normal), so a frontend that never calls the environment call
+ * -- or one that does and reports the bit set -- behaves exactly as
+ * before. */
+extern int tomSkipVideoPresent;
+
 #ifdef __cplusplus
 }
 #endif

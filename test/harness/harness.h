@@ -258,6 +258,15 @@ typedef struct {
      * voice-chat paths can be exercised without a real frontend mic. */
     int           mic_tone;
 
+    /* RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE presentation-skip test hook
+     * (--av-skip-video): when non-zero, the environment callback answers
+     * the call with RETRO_AV_ENABLE_VIDEO clear (audio bit still set), so
+     * a tool can A/B a run with the core's video-presentation-skip path
+     * active against one where it's not.  Default 0 leaves the call
+     * unanswered (returns false), matching every harness tool that
+     * predates this option -- see cb_environment() in harness.c. */
+    int           av_skip_video;
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -306,6 +315,7 @@ typedef struct {
     .want_fb_hash = 0, \
     .last_fb_hash = 0, \
     .mic_tone = 0, \
+    .av_skip_video = 0, \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \
