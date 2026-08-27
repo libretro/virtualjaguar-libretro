@@ -361,6 +361,29 @@ retro_log_printf_t vj_log_cb = NULL;
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
 
+/* Auto-frameskip (#684) -- the standard libretro pattern (gpsp/snes9x):
+ * when the frontend's audio buffer is draining, skip VIDEO PRESENTATION
+ * for a frame so a slow host catches up before the buffer underruns.
+ * Skipping reuses tomSkipVideoPresent, the same presentation-skip path
+ * RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE already drives from retro_run:
+ * emulation runs unabridged, only the host XRGB8888 store is bypassed, so
+ * this cannot desync savestates, run-ahead or netplay (#400).  NOTHING in
+ * this block may ever enter retro_serialize -- it is presentation-only
+ * host state.  Frontends that don't implement the buffer-status callback
+ * leave retro_audio_buff_active false and every mode degrades to
+ * "disabled". */
+static unsigned frameskip_type;             /* 0 off / 1 auto / 2 auto_threshold */
+static unsigned frameskip_threshold;        /* occupancy percent, type 2 only */
+static unsigned frameskip_max          = 3; /* cap on consecutive skips */
+static unsigned frameskip_counter;          /* consecutive skips so far */
+static int      frameskip_this_frame;       /* this retro_run skipped by frameskip */
+static int      frameskip_init_done;
+static bool     retro_audio_buff_active;
+static unsigned retro_audio_buff_occupancy;
+static bool     retro_audio_buff_underrun;
+static unsigned frameskip_audio_latency;
+static bool     update_audio_latency;
+
 /* CD content state. The Tier 1 weak symbols for external_cd_bios[] and
  * cd_bios_loaded_externally are overridden by the strong definitions below. */
 static bool jaguar_cd_mode = false;
@@ -375,6 +398,65 @@ void retro_set_audio_sample(retro_audio_sample_t cb) { (void)cb; }
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t cb) { audio_batch_cb = cb; }
 void retro_set_input_poll(retro_input_poll_t cb) { input_poll_cb = cb; }
 void retro_set_input_state(retro_input_state_t cb) { input_state_cb = cb; }
+
+/* Frontend-driven: RetroArch calls this once per output frame with the
+ * audio buffer's health.  Values are only trusted while active is true
+ * (active false = reporting unavailable, e.g. audio driver off). */
+static void retro_audio_buff_status_cb(bool active, unsigned occupancy,
+      bool underrun_likely)
+{
+   retro_audio_buff_active    = active;
+   retro_audio_buff_occupancy = occupancy;
+   retro_audio_buff_underrun  = underrun_likely;
+}
+
+/* (Un)register the buffer-status callback to match the current option.
+ * Called from check_variables() when the frameskip option changes (which
+ * covers both content load and a mid-session menu change).  On frontends
+ * that don't implement the environment call the registration fails,
+ * retro_audio_buff_active stays false, and every auto mode behaves as
+ * "disabled" -- never crashes, never skips blind.  When frameskip is on
+ * we also ask for ~6 frames of audio latency (rounded up to the frontend
+ * granularity of 32 ms) so the buffer has enough headroom for the
+ * occupancy reports to be meaningful; 0 restores frontend defaults.  The
+ * actual SET_MINIMUM_AUDIO_LATENCY call is deferred to retro_run() via
+ * update_audio_latency, matching gpsp -- the frontend re-inits its audio
+ * driver on that call, which is only safe between frames. */
+static void init_frameskip(void)
+{
+   if (frameskip_type > 0)
+   {
+      struct retro_audio_buffer_status_callback buf_status_cb;
+      buf_status_cb.callback = retro_audio_buff_status_cb;
+      if (!environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK,
+            &buf_status_cb))
+      {
+         LOG_WRN("[frameskip] frontend does not support the audio buffer "
+                 "status callback -- automatic frameskip disabled\n");
+         retro_audio_buff_active    = false;
+         retro_audio_buff_occupancy = 0;
+         retro_audio_buff_underrun  = false;
+         frameskip_audio_latency    = 0;
+      }
+      else
+      {
+         /* 6 frames of headroom at the current video standard. */
+         float frame_time_msec = 1000.0f
+               / (vjs.hardwareTypeNTSC == 1 ? 60.0f : 50.0f);
+         frameskip_audio_latency = (unsigned)((6.0f * frame_time_msec) + 0.5f);
+         frameskip_audio_latency = (frameskip_audio_latency + 0x1F) & ~0x1F;
+      }
+   }
+   else
+   {
+      environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, NULL);
+      retro_audio_buff_active    = false;
+      retro_audio_buff_occupancy = 0;
+      retro_audio_buff_underrun  = false;
+      frameskip_audio_latency    = 0;
+   }
+   update_audio_latency = true;
+}
 
 
 
@@ -2656,6 +2738,52 @@ static void check_variables(void)
       {
          widescreen_enabled = ws_want;
          widescreen_geometry_pending = true;
+      }
+   }
+
+   /* Auto frameskip (#684): raw read, like widescreen above -- a
+    * device-speed workaround is a viewer choice, never a per-title
+    * substitution.  Presentation-only; see the state block's comment near
+    * the top of this file.  init_frameskip() (which registers or
+    * unregisters the frontend buffer-status callback and re-arms the
+    * minimum-audio-latency request) only runs when the effective setting
+    * actually changed, so an unrelated option flip cannot thrash the
+    * frontend's audio driver. */
+   {
+      unsigned fs_prev_type      = frameskip_type;
+      unsigned fs_prev_threshold = frameskip_threshold;
+
+      var.key = "virtualjaguar_frameskip";
+      var.value = NULL;
+      frameskip_type      = 0;
+      frameskip_threshold = 0;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         if (strcmp(var.value, "auto") == 0)
+            frameskip_type = 1;
+         else if (strncmp(var.value, "auto_threshold_", 15) == 0)
+         {
+            frameskip_type      = 2;
+            frameskip_threshold = (unsigned)atoi(var.value + 15);
+         }
+      }
+
+      var.key = "virtualjaguar_frameskip_max";
+      var.value = NULL;
+      frameskip_max = 3;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      {
+         int fs_max = atoi(var.value);
+         if (fs_max >= 1 && fs_max <= 4)
+            frameskip_max = (unsigned)fs_max;
+      }
+
+      if (frameskip_type != fs_prev_type
+          || frameskip_threshold != fs_prev_threshold
+          || !frameskip_init_done)
+      {
+         frameskip_init_done = 1;
+         init_frameskip();
       }
    }
 
@@ -6259,6 +6387,54 @@ void retro_run(void)
       tomSkipVideoPresent = (av_enable_flags & RETRO_AV_ENABLE_VIDEO) ? 0 : 1;
    }
 
+   /* Auto frameskip (#684): decide whether THIS frame's presentation is
+    * skipped to let the audio buffer refill.  Rides the same
+    * tomSkipVideoPresent flag the GET_AUDIO_VIDEO_ENABLE block above just
+    * set -- when the frontend already discards this frame's video
+    * (fast-forward, run-ahead hidden frames) there is nothing left to
+    * skip, so the frameskip counter stands down and its cap starts fresh
+    * on the next presented frame.  retro_audio_buff_active is only true
+    * while a registered buffer-status callback is being fed by the
+    * frontend, so unsupported frontends never reach the verdict.
+    * frameskip_counter caps consecutive skips at frameskip_max so the
+    * screen can never freeze even with the buffer pinned at 0%.
+    * frameskip_this_frame is what video_cb consumes below: a
+    * frameskip-skipped frame is presented as a dupe (NULL), which the
+    * GET_AUDIO_VIDEO_ENABLE path must NOT do -- its discarded frames keep
+    * handing videoBuffer to the frontend exactly as before. */
+   frameskip_this_frame = 0;
+   if (frameskip_type > 0 && !tomSkipVideoPresent && retro_audio_buff_active)
+   {
+      int want_skip;
+      if (frameskip_type == 1)
+         want_skip = retro_audio_buff_underrun ? 1 : 0;
+      else
+         want_skip = (retro_audio_buff_occupancy < frameskip_threshold)
+               ? 1 : 0;
+
+      if (!want_skip || frameskip_counter >= frameskip_max)
+         frameskip_counter = 0;
+      else
+      {
+         frameskip_counter++;
+         frameskip_this_frame = 1;
+         tomSkipVideoPresent  = 1;
+      }
+   }
+   else
+      frameskip_counter = 0;
+
+   /* Deferred from init_frameskip(): tell the frontend how much audio
+    * buffering frameskip needs to see the drain coming (0 = restore its
+    * own default).  The frontend re-inits its audio driver on this call,
+    * so it fires once per option change, from retro_run, never per frame. */
+   if (update_audio_latency)
+   {
+      environ_cb(RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY,
+            &frameskip_audio_latency);
+      update_audio_latency = false;
+   }
+
    /* Apply pending geometry change BEFORE rendering this frame.  TOM's
     * scanline renderer reads tomWidth (pixels per row) and screenPitch
     * (line stride) live; if tomWidth grew but screenPitch is stale, later
@@ -6570,7 +6746,16 @@ void retro_run(void)
     * not eeprom_save_buf, so they do not need a flush. */
    mt_flush_save_buf();
 
-   video_cb(videoBuffer, game_width, game_height, game_width << 2);
+   /* A frameskip-skipped frame is handed to the frontend as NULL ("dupe
+    * last frame", the standard libretro frameskip contract -- gpsp does
+    * the same): videoBuffer was not rendered this frame, and NULL also
+    * spares the frontend a redundant texture upload -- part of the very
+    * cost frameskip exists to shed.  The GET_AUDIO_VIDEO_ENABLE skip path
+    * is deliberately NOT routed through this: the frontend told us it is
+    * discarding that video, and it keeps receiving videoBuffer exactly as
+    * it always has. */
+   video_cb(frameskip_this_frame ? NULL : videoBuffer,
+         game_width, game_height, game_width << 2);
 
 #ifdef DEBUG_PRESENTATION
    if (dbg_frame_counter < 5

@@ -266,6 +266,39 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_frameskip",
+      "Frameskip",
+      NULL,
+      "Skip presenting frames to avoid audio buffer under-run (crackling) on hardware too slow to render every frame. 'Auto' skips a frame when the frontend advises an under-run is likely; 'Auto (Threshold)' skips whenever the audio buffer occupancy falls below the chosen percentage (higher = skips earlier and more often). Presentation only: the emulated machine runs every frame in full either way, so save states, run-ahead and netplay are unaffected. Requires frontend support for audio buffer status reporting; without it, all values behave as Disabled.",
+      NULL,
+      "speed",
+      {
+         { "disabled",          "Disabled" },
+         { "auto",              "Auto" },
+         { "auto_threshold_15", "Auto (Threshold 15%)" },
+         { "auto_threshold_30", "Auto (Threshold 30%)" },
+         { "auto_threshold_45", "Auto (Threshold 45%)" },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_frameskip_max",
+      "Frameskip Maximum",
+      NULL,
+      "Cap on how many frames in a row Frameskip may skip before one is always presented, so the screen keeps moving even while the audio buffer stays low. Has no effect while Frameskip is disabled.",
+      NULL,
+      "speed",
+      {
+         { "1", NULL },
+         { "2", NULL },
+         { "3", NULL },
+         { "4", NULL },
+         { NULL, NULL },
+      },
+      "3"
+   },
+   {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,
