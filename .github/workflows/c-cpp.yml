@@ -445,8 +445,8 @@ jobs:
       if: ${{ !matrix.config.emscripten && !matrix.config.android && !matrix.config.cross && runner.os != 'Windows' }}
       run: make -j4 CC="${{ matrix.config.cc }}" CXX="${{ matrix.config.cxx }}" ${{ matrix.config.make_extra || '' }}
 
-  version-fallback-sync:
-    name: version fallback in sync
+  duplicated-lists-in-sync:
+    name: duplicated lists in sync
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
@@ -475,6 +475,90 @@ jobs:
           exit 1
         fi
         echo "OK: both say $mk"
+
+    # Package.swift repeats Makefile.common's source list, because SPM needs
+    # the file list in the manifest and cannot read a Makefile. Same posture as
+    # the check above: fail loudly, never auto-fix. The downstream Provenance
+    # wrapper kept its own copy of this list and drifted by 27 files over seven
+    # releases -- this is that lesson turned into a build failure.
+    - name: Package.swift sources match Makefile.common
+      run: sh scripts/check-package-sources.sh
+
+  spm-build:
+    name: SwiftPM build (macOS arm64)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # No Makefile target reads Package.swift, so without this job a manifest
+    # that does not even parse would merge unnoticed and only break the Apple
+    # frontend that consumes it. Building the package here is the only thing
+    # in CI that exercises it.
+    #
+    # This also covers the two things the source-list diff cannot see: that the
+    # arch guards resolve to exactly one blitter_simd_ops when all three
+    # variants are compiled together, and that libretro.c still compiles with
+    # no generated src/core/version.h (a fresh checkout has none -- the
+    # committed src/core/version_fallback.h is what makes that work).
+    - name: swift build
+      run: swift build -v 2>&1 | tail -40
+
+    # The blind spot that let an `unsafeFlags` slip in: SwiftPM REFUSES to
+    # resolve a VERSIONED dependency on a package whose targets carry unsafe
+    # flags, but a package built as the ROOT (which `swift build` above does)
+    # is exempt -- so the restriction is invisible from inside the repo. This
+    # consumes the package the way a frontend actually would, by version tag,
+    # which is the only way to see it.
+    - name: a versioned consumer can build against this package
+      run: |
+        set -euo pipefail
+        work=$(mktemp -d)
+        # A tag on a throwaway clone; the real repo is untouched.
+        # Clone under the repo name: SwiftPM derives package identity from the
+        # URL's last path component, not from `name:` in the manifest.
+        git clone --quiet --no-hardlinks . "$work/virtualjaguar-libretro"
+        git -C "$work/virtualjaguar-libretro" -c user.email=ci@example.com -c user.name=CI tag -f 0.0.1
+        mkdir -p "$work/app/Sources/app"
+        echo 'print("ok")' > "$work/app/Sources/app/main.swift"
+        cat > "$work/app/Package.swift" <<PKG
+        // swift-tools-version:5.9
+        import PackageDescription
+        let package = Package(
+            name: "app",
+            dependencies: [.package(url: "$work/virtualjaguar-libretro", from: "0.0.1")],
+            targets: [.executableTarget(name: "app", dependencies: [
+                .product(name: "VirtualJaguar", package: "virtualjaguar-libretro")])]
+        )
+        PKG
+        cd "$work/app"
+        # `swift build`, NOT `swift package resolve`: resolve succeeds even with
+        # unsafe flags present -- the restriction is enforced when the dependency
+        # graph is loaded for a build. Verified both ways before relying on it.
+        if ! out=$(swift build 2>&1); then
+          echo "$out"
+          echo "::error::a versioned dependency on this package does not resolve."
+          echo "::error::If this says 'contains unsafe build flags', remove the .unsafeFlags"
+          echo "::error::from Package.swift -- they make the package unconsumable by any"
+          echo "::error::frontend pinning a release tag, which is the point of shipping it."
+          exit 1
+        fi
+        echo "OK: builds as a versioned dependency"
+
+    - name: exactly one SIMD vtable, and it is not the scalar one
+      run: |
+        set -euo pipefail
+        B=$(find .build -type d -name 'virtualjaguar.build' | head -1)
+        [ -n "$B" ] || { echo "could not locate the build directory"; exit 1; }
+        total=0
+        for a in neon sse2 scalar; do
+          o="$B/src/tom/blitter_simd_$a.c.o"
+          n=0
+          [ -f "$o" ] && n=$(nm "$o" | grep -c '_blitter_simd_ops' || true)
+          echo "  blitter_simd_$a: $n"
+          total=$((total + n))
+        done
+        [ "$total" -eq 1 ] || { echo "::error::expected exactly 1 blitter_simd_ops definition, found $total"; exit 1; }
+        echo "OK: exactly one vtable"
 
   msvc-check:
     name: MSVC ${{ matrix.arch }} compilation check
