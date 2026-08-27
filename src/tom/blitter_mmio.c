@@ -7,6 +7,7 @@
 #include <string.h>
 #include "bus_arbiter.h"
 #include "gpu.h"
+#include "../core/log.h"
 #include "settings.h"
 #include "vjag_memory.h"
 
@@ -354,16 +355,28 @@ void BlitterWriteWord(uint32_t offset, uint16_t data, uint32_t who/*=UNKNOWN*/)
        * between frames, and so has no savestate surface at all. */
       static int blit_in_progress = 0;
 
-      /* Silent on purpose.  A warning here would be genuinely useful --
-       * a title that reaches this is misprogramming its destination --
-       * but this file is compiled STANDALONE by test/test_blitter_mmio,
-       * outside CFLAGS and without linking the core.  src/core/log.h
-       * needs -DINLINE and resolves to vj_log_cb, so including it turns
-       * that target into a link error.  Keeping blitter_mmio.c free of
-       * core dependencies is the existing design; do not add logging
-       * here without giving that test a stub. */
+      /* Warn once.  A title reaching this is misprogramming its blit
+       * destination and the user wants to know why the picture is wrong,
+       * but a runaway blit can arrive here on every pixel, so this must
+       * never become a per-pixel log.
+       *
+       * NOTE for anyone touching the includes: this file is also compiled
+       * STANDALONE by test/test_blitter_mmio, outside CFLAGS and without
+       * linking the core.  src/core/log.h needs -DINLINE (supplied by that
+       * Makefile rule) and resolves to vj_log_cb (stubbed in the test's
+       * existing stub block).  Both are required together. */
       if (blit_in_progress)
+      {
+         static int warned = 0;
+         if (!warned)
+         {
+            warned = 1;
+            LOG_WRN("[blitter] B_CMD written while a blit is running "
+                    "(destination overlaps $F022xx) -- refusing the nested "
+                    "blit; see issue #659\n");
+         }
          return;
+      }
 
       if (vjs.blitterTiming)
          busClks = BlitDurationSysclks();
