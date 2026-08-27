@@ -305,6 +305,19 @@ Five layers, in increasing cost:
    "-O3 +12.5%" once flipped to -11.7% when interleaved. **If the cost is not
    within noise, the shipped-by-default decision must be revisited rather than
    the number explained away.**
+
+   **Measured** (2026-08-27, idle host, load average 9-10 throughout, via
+   `test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_HOOKS=0' 'VJ_GDB_STUB_DISABLE_HOOKS=1' 12`,
+   12 quartets / 24 samples per arm): median delta +1.9% (hooks-disabled
+   nominally faster), Mann-Whitney p=0.50 — **not significant**, i.e. within
+   noise. The armed-flag hypothesis holds; shipped-by-default stands.
+   `opt_ab.sh` cannot take `CFLAGS=...` directly as one of its arms here — a
+   command-line `CFLAGS` assignment blocks every later `+=` in this Makefile
+   too (not only plain re-assignment), which silently drops the `-I`/`-D`
+   flags the build needs and fails it outright. The measurement instead used
+   a dedicated `VJ_GDB_STUB_DISABLE_HOOKS=1` make variable gating a `CFLAGS +=
+   -DVJ_GDB_STUB_DISABLE_HOOKS` line, added to the Makefile only for the
+   benchmark run and reverted immediately after.
 5. **End-to-end against real GDB.** Drive `m68k-elf-gdb` (from the toolchain in
    #581, if it ships gdb — otherwise a scripted RSP client) against a test ROM:
    attach, set a breakpoint at a known symbol, continue, assert the stop reply
