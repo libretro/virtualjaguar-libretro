@@ -249,6 +249,43 @@ TEST(read_memory_without_target_op_is_unsupported) {
     ASSERT_EQ(GDBHandlePacket(&g_sess, "m0,2", 4, reply, sizeof(reply)), 0);
 }
 
+/* ------------------------------------------------------------------ */
+/* Task 4: 68000 register serialisation                                */
+/* ------------------------------------------------------------------ */
+
+static int fake_read_regs(void *user, char *out, int outMax) {
+    /* d0=1, everything else 0, sr=0x2700, pc=0x802000 */
+    static const char *s =
+      "00000001" "00000000" "00000000" "00000000"
+      "00000000" "00000000" "00000000" "00000000"
+      "00000000" "00000000" "00000000" "00000000"
+      "00000000" "00000000" "00000000" "00000000"
+      "00002700" "00802000";
+    int n = (int)strlen(s);
+    (void)user;
+    if (n > outMax) return -1;
+    memcpy(out, s, (size_t)n);
+    return n;
+}
+
+TEST(read_registers_returns_144_hex_chars) {
+    char reply[512]; int n;
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    ops.readRegisters = fake_read_regs;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    n = GDBHandlePacket(&g_sess, "g", 1, reply, sizeof(reply));
+    ASSERT_EQ(n, 144);
+    ASSERT_EQ(memcmp(reply, "00000001", 8), 0);          /* d0 first */
+    ASSERT_EQ(memcmp(reply + 136, "00802000", 8), 0);    /* pc last  */
+}
+
+TEST(read_registers_without_target_op_is_unsupported) {
+    char reply[512];
+    setup_session();
+    ASSERT_EQ(GDBHandlePacket(&g_sess, "g", 1, reply, sizeof(reply)), 0);
+}
+
 int main(void) {
     SUITE("gdbstub framing");
     RUN(checksum_is_modulo_256_sum);
@@ -276,5 +313,7 @@ int main(void) {
     RUN(read_memory_wild_address_is_refused);
     RUN(read_memory_absurd_length_is_refused);
     RUN(read_memory_without_target_op_is_unsupported);
+    RUN(read_registers_returns_144_hex_chars);
+    RUN(read_registers_without_target_op_is_unsupported);
     return REPORT();
 }

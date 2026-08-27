@@ -217,6 +217,20 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
       return n;
    }
 
+   if (payLen == 1 && pay[0] == 'g')
+   {
+      int n;
+
+      if (!s->ops || !s->ops->readRegisters)
+         return 0;
+
+      n = s->ops->readRegisters(s->user, reply, replyMax);
+      if (n < 0)
+         return GDBCopyReply("E01", reply, replyMax);
+
+      return n;
+   }
+
    /* RSP: an empty reply means "I do not implement this packet". */
    return 0;
 }
