@@ -2105,10 +2105,14 @@ test/test_pit_clock_rate: test/test_pit_clock_rate.c \
 		src/jerry/jerry.c src/tom/tom.c
 	$(CC) -O2 -Wall -std=c99 -o $@ test/test_pit_clock_rate.c
 
+# -DINLINE=inline because this compiles a core source STANDALONE, outside
+# CFLAGS: blitter_mmio.c includes src/core/log.h, which declares
+# `static INLINE`, and every other build of that file gets INLINE from the
+# core's own -DINLINE="inline".  log.h's vj_log_cb is stubbed in the test.
 test/test_blitter_mmio: test/test_blitter_mmio.c src/tom/blitter_mmio.c \
 		src/tom/blitter_internal.h src/tom/blitter.h src/core/vjag_memory.h \
-		src/core/settings.h
-	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		src/core/settings.h src/core/log.h
+	$(CC) -O2 -Wall -std=c99 -DINLINE=inline $(INCFLAGS) \
 		-o $@ test/test_blitter_mmio.c src/tom/blitter_mmio.c
 
 test/test_tom_visible_window: test/test_tom_visible_window.c src/tom/tom.c \
