@@ -61,11 +61,26 @@ if [ -n "$existing" ]; then
    exit 0
 fi
 
+# Strip fenced code blocks and inline code spans before scanning.  A PR that
+# *documents* this feature quotes the tag syntax, and an unstripped scan
+# happily links the example: PR #644 explained the tags with `#123` in a
+# fenced block and got linked to issue #123 instead of the #643 tag at the
+# bottom of the same body.  Anything inside code is a sample, not an
+# instruction.
+strip_code() {
+   awk '
+      /^[[:space:]]*```/ { fence = !fence; next }
+      fence { next }
+      { gsub(/`[^`]*`/, ""); print }
+   '
+}
+
 # No issue given: scan the body for a link tag.  Hidden HTML-comment form
 # wins over the keyword forms, so a PR can point at one issue in prose and
 # link a different one deliberately.
 if [ -z "$ISSUE" ]; then
-   body=$(command gh pr view "$PR" --repo "$REPO" --json body --jq '.body // ""')
+   body=$(command gh pr view "$PR" --repo "$REPO" --json body --jq '.body // ""' \
+          | strip_code)
    ISSUE=$(printf '%s' "$body" \
            | grep -oiE '<!--[[:space:]]*link-issue:[[:space:]]*#?[0-9]+[[:space:]]*-->' \
            | grep -oE '[0-9]+' | head -1 || true)
