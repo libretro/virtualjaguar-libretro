@@ -1532,7 +1532,40 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    // Really, this value is somewhere around 507 for an NTSC Jaguar. But this
    // should work in a majority of cases, at least until we can figure it out properly.
    if (endingHalfline > GET16(tomRam8, VP))
+   {
       startingHalfline = 0;
+
+      /* A VDE past the end of the field is the documented "OP runs every
+       * line" idiom (JTRM: set VDE=$FFFF to work around the VDE-compare
+       * bug), not a request to run the object list through vertical
+       * blanking as well.  Left unclamped it does exactly that, and the
+       * extra passes are destructive rather than merely wasted: the OP
+       * decrements an object's HEIGHT and advances its DATA pointer on
+       * every pass that reaches it, so a pass landing after the game has
+       * rebuilt its list for the next field silently eats the first line
+       * of every object in it.
+       *
+       * Super Burnout (#632) is the case that exposed this.  It sets
+       * VDB=25, VDE=$7FF, VP=523, VBB=500, VI=521, and rebuilds the
+       * display list in its vertical-interrupt handler.  The OP then ran
+       * once more at halfline 522 -- 22 halflines into blanking, one
+       * halfline after VI -- consuming line 0 of the freshly written HUD
+       * object.  The visible result was the top scanline missing from the
+       * whole first HUD text row, so LAP rendered as LHP and POSITION as
+       * POSTTTON, identically on both blitters because the blitter was
+       * never involved.
+       *
+       * Clamping to VBB is the narrow reading: blanking begins there, so
+       * that is where the object list stops being displayed.  It applies
+       * only on this branch -- a title with a real in-range VDE keeps
+       * exactly the window it asked for, including one that deliberately
+       * extends past VBB. */
+      {
+         uint16_t vbb = GET16(tomRam8, VBB);
+         if (vbb > 0 && vbb < endingHalfline)
+            endingHalfline = vbb;
+      }
+   }
 
    if ((halfline >= startingHalfline) && (halfline < endingHalfline))
    {
