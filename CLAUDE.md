@@ -42,10 +42,13 @@ so they cost nothing until you open them).
   return logic) MUST clear BOTH `test_audio_clipping` AND `test_audio_presence`** — clipping alone
   misses the silencing-regression class (PR #170 lesson). Then verify in RetroArch. Detail:
   [`docs/agent/testing.md`](docs/agent/testing.md).
-- **Every PR must be linked to its issue in the GitHub Development panel (UI, by hand).** `Closes
-  #N` does NOT link on this repo — default branch is `master`, PRs target `develop`, so keywords
-  create no link. CI (`pr-issue-link.yml`) fails unlinked PRs; use the `no-issue` label to opt out.
-  Detail: [`docs/agent/github.md`](docs/agent/github.md).
+- **Every PR must be linked to its issue in the GitHub Development panel — put a link tag in the
+  PR body and CI makes the link.** `Closes #N` does NOT link by itself on this repo (default
+  branch is `master`, PRs target `develop`, so GitHub ignores the keyword), but
+  `pr-issue-link.yml` scans the body for `Closes/Fixes/Resolves/Refs #N` or
+  `<!-- link-issue: #N -->` and creates the link via `addCloseIssueReferences`. Same thing by
+  hand: `scripts/pr-link-issue.sh <pr> [issue]`. Unlinked and untagged PRs still fail CI; use the
+  `no-issue` label to opt out. Detail: [`docs/agent/github.md`](docs/agent/github.md).
 
 ## Data-safety rules (irreplaceable / can hang forever)
 

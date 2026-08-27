@@ -19,10 +19,32 @@ contains the work (that tag is the whole reason to link).
 
 - Check: `gh pr view N --json closingIssuesReferences --jq '.closingIssuesReferences | length'`
   — `0` = unlinked.
-- **No public API creates the link.** Web UI only; don't burn time on a `gh` flag or GraphQL
-  mutation.
-- CI enforces it: `.github/workflows/pr-issue-link.yml` fails any PR with no linked issue.
-  Genuinely issue-less PR → add the `no-issue` label.
+- **There IS a public API** — `addCloseIssueReferences` ("Adds one or more pull requests as
+  manually linked closing references on an issue"), idempotent. An earlier revision of this file
+  said "Web UI only; don't burn time on a GraphQL mutation", which was wrong and cost every new PR
+  a red check for a step that cannot be done until after the PR exists.
+
+  ```bash
+  scripts/pr-link-issue.sh <pr-number> [issue-number] [--repo owner/name]
+  ```
+
+  With no issue number it scans the PR body for a tag. Safe to re-run: already-linked is a no-op.
+- **Normal flow: tag the PR body, CI links it.** `.github/workflows/pr-issue-link.yml` runs on
+  `opened/edited/reopened/synchronize/labeled/unlabeled/ready_for_review`, finds the tag, and
+  creates the link. Accepted tags (case-insensitive):
+
+  ```
+  Closes #123    Fixes #123    Resolves #123    Refs #123
+  <!-- link-issue: #123 -->     (invisible in the rendered body)
+  ```
+
+  The hidden comment form wins over the keyword forms, so a PR can discuss one issue in prose and
+  link a different one deliberately. The keywords still do nothing on GitHub's own side here —
+  they are markers for this job.
+- Forgot the tag at creation? **Edit the description.** `edited` re-runs the job and it links then;
+  no need to push a commit. The job checks out the BASE ref, never the PR head, because it runs
+  `pull_request_target` with a write token.
+- Genuinely issue-less PR → add the `no-issue` label.
 - Still close the issue by hand when the PR merges (keywords don't fire on `develop`).
 
 ## GitHub Copilot PR reviews
