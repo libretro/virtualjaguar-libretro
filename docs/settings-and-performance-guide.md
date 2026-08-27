@@ -409,7 +409,7 @@ CD discs ignore the cartridge BIOS setting entirely. **CD Boot Mode**
 | Value | What it does |
 |---|---|
 | **HLE** (default) | The core emulates the CD BIOS services directly and runs with the console boot ROM off. Fastest and most broadly compatible. Start here. |
-| **Real BIOS** | Runs an actual CD BIOS with the boot ROM on. More faithful, still experimental. |
+| **Real BIOS** | Runs an actual CD BIOS with the boot ROM on. More faithful; verified clean across all 5 tested FMV titles (Dragon's Lair, Space Ace, BrainDead 13, Blue Lightning, Highlander) in 15,000-frame probes -- see `docs/fmv-bios-verify-notes.md`. |
 | **Auto** | Currently identical to Real BIOS. |
 
 No files are required for either. Both CD BIOS images are built into the core; a
@@ -418,6 +418,15 @@ present, and **CD BIOS Type** (`cd_bios_type`, Retail / Developer) picks which
 wins. The Developer BIOS applies less strict disc checks and can boot images the
 Retail BIOS refuses. If a real-BIOS mode is chosen and no CD BIOS can be staged
 at all, the core falls back to HLE rather than failing.
+
+**Audio-only (Red Book) CDs are a special case.** HLE synthesizes its boot
+stub from session-2 game data; a plain music CD has no such session, so HLE
+can never produce a boot for one. The core detects this from the disc's
+session layout (one session, versus two on every Jaguar CD data disc) and
+always routes that specific disc through the real CD BIOS -- whose own
+player front-end includes the Virtual Light Machine visualizer -- regardless
+of this setting. Every other disc, including the known-damaged CDI rips,
+is unaffected and still uses whichever mode you picked.
 
 **When to switch to Real BIOS.** HLE is more compatible overall, but it is a
 reimplementation, and a title occasionally trips over something HLE gets wrong
