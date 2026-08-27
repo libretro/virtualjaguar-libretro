@@ -1552,22 +1552,28 @@ void TOMExecHalfline(uint16_t halfline, bool render)
        * Super Burnout (#632) is the case that exposed this.  It sets
        * VDB=25, VDE=$7FF, VP=523, VBB=500, VI=521, and rebuilds the
        * display list in its vertical-interrupt handler.  The OP then ran
-       * once more at halfline 522 -- 22 halflines into blanking, one
-       * halfline after VI -- consuming line 0 of the freshly written HUD
-       * object.  The visible result was the top scanline missing from the
-       * whole first HUD text row, so LAP rendered as LHP and POSITION as
-       * POSTTTON, identically on both blitters because the blitter was
-       * never involved.
+       * once more at halfline 522 -- one halfline after VI -- consuming
+       * line 0 of the freshly written HUD object.  The visible result was
+       * the top scanline missing from the whole first HUD text row, so LAP
+       * rendered as LHP and POSITION as POSTTTON, identically on both
+       * blitters because the blitter was never involved.
        *
-       * Clamping to VBB is the narrow reading: blanking begins there, so
-       * that is where the object list stops being displayed.  It applies
-       * only on this branch -- a title with a real in-range VDE keeps
-       * exactly the window it asked for, including one that deliberately
-       * extends past VBB. */
+       * Clamp to the VISIBLE window, which is where the line-copy loop
+       * below stops reading: a pass at or past bottomVisible produces a
+       * line buffer nobody ever copies out, so declining to run it cannot
+       * change the picture, while running it can corrupt the next field.
+       *
+       * Not VBB.  Clamping to VBB was the first attempt and it was wrong:
+       * blanking begins before the display window ends on this hardware
+       * (NTSC VBB=500 against a visible window running to 511), so it cut
+       * the bottom three scanlines off every title using the VDE=$FFFF
+       * idiom -- about a third of the private corpus, including Hover
+       * Strike, JSSDemo and JagFest Demo.  "Only Super Burnout does this"
+       * was measured on five ROMs and did not survive 160. */
       {
-         uint16_t vbb = GET16(tomRam8, VBB);
-         if (vbb > 0 && vbb < endingHalfline)
-            endingHalfline = vbb;
+         uint16_t visible_end = TOMGetBottomVisible();
+         if (visible_end > 0 && visible_end < endingHalfline)
+            endingHalfline = visible_end;
       }
    }
 
