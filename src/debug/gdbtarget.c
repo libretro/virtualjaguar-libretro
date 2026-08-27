@@ -986,12 +986,23 @@ static int GDBPumpOnce(int *resumeRequested, int *resumeIsStep)
                                     reply, (int)sizeof(reply),
                                     &myResume, &myStep);
 
+         /* RSP: an EMPTY packet ("$#00") is how a stub says "I do not
+          * implement this".  Silence is not the same thing -- the client
+          * waits for a reply that never comes, which is what hung LLDB's
+          * attach.  GDBHandlePacket() returning 0 means exactly that,
+          * EXCEPT for c/s/vCont, which also return 0 but set myResume:
+          * there the next packet the client should see is the stop reply
+          * once the machine halts, not an empty one now. */
          if (replyLen > 0)
          {
             encLen = GDBEncodePacket(reply, replyLen, encoded,
                                      (int)sizeof(encoded));
             if (encLen > 0)
                GDBSockSend(encoded, encLen);
+         }
+         else if (replyLen == 0 && !myResume)
+         {
+            GDBSockSend("$#00", 4);
          }
 
          if (myResume)
@@ -1120,6 +1131,11 @@ void GDBTargetResetState(void)
    gdbWatchArmed    = 0;
    gdbWatchKindMask = 0;
    bpmActive        = false;
+
+   /* A fresh client always starts in ack mode: QStartNoAckMode is
+    * negotiated per connection.  Leaving this set meant the NEXT client
+    * connected expecting acks and got none, and stalled. */
+   gdbSession.noAckMode    = 0;
 
    gdbHaltedTarget         = -1;
    gdbRxLen                = 0;
