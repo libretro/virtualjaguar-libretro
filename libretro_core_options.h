@@ -685,13 +685,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_cd_boot_mode",
       "CD Boot Mode (Restart)",
       NULL,
-      "How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, still experimental. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing.",
+      "How Jaguar CD discs boot. OVERRIDES the 'BIOS (Cartridges)' setting for CD content. 'HLE' emulates the CD BIOS services directly with the console boot ROM off -- fastest and the most broadly compatible. 'Real BIOS' runs an actual CD BIOS with the boot ROM on: more faithful, and verified clean across all 5 tested FMV titles (Dragon's Lair, Space Ace, BrainDead 13, Blue Lightning, Highlander) in 15,000-frame probes. It prefers a CD BIOS ROM file from the system directory (several common names and the usual Jaguar / Jaguar CD sub-folders are searched) and otherwise uses the built-in image chosen by 'CD BIOS Type', so no files are required. 'Auto' is currently identical to 'Real BIOS'. If no CD BIOS can be staged at all, the core falls back to HLE rather than failing. Audio-only (Red Book) CDs always use the real BIOS regardless of this setting, since HLE has no game code to boot from.",
       NULL,
       "cdrom",
       {
          { "hle",  "HLE (Recommended)" },
          { "auto", "Auto (Real BIOS)" },
-         { "bios", "Real BIOS (Included, Experimental)" },
+         { "bios", "Real BIOS (Included)" },
          { NULL, NULL },
       },
       "hle"
