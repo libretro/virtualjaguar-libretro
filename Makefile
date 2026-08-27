@@ -1292,7 +1292,7 @@ test: export VJ_EXPECT_BUILD := $(shell ./scripts/build-id.sh)
 # invocations get different values.
 test: EEPROM_GEN_TOOL := /tmp/vj_gen_eeprom_test_rom_$(shell echo $$PPID)
 test: EEPROM_FIXTURE := /tmp/vj_eeprom_lifecycle_$(shell echo $$PPID).j64
-test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb \
+test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlink test/test_jlink_tcp test/test_jlink_discover test/test_voicechat test/test_jlink_netpacket test/test_voicemodem_netpacket test/test_voice_netpacket test/test_uart_loopback test/test_jlink_negotiate test/test_blitter_simd test/test_dsp_mac40 test/test_titledb test/test_titlehook test/test_biosdb test/tools/test_gdbstub_proto \
 		$(TARGET) test/test_m68k_ops test/test_m68k_irq_ssp test/test_gpu_ops test/test_dsp_ops \
 		test/test_dsp_unit test/test_hle_bios test/test_subsystem_init \
 		test/test_subsystem_timeline test/test_irq_cascade test/test_boot_patterns \
@@ -1456,6 +1456,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	./test/test_biosdb
 	./test/test_cart_bios_loader
 	./test/test_titlehook
+	./test/tools/test_gdbstub_proto
 	./test/test_m68k_ops
 	./test/test_m68k_irq_ssp
 	./test/test_gpu_ops
@@ -1975,6 +1976,13 @@ test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_titlehook.c src/core/titlehook.c \
 		src/core/titledb.c src/core/crc32.c
+
+# GDB Remote Serial Protocol engine (issue #652, Phase 1).  Pure protocol
+# unit tests: no emulator, no sockets. src/debug/gdbstub.c never calls
+# socket() and never dereferences a Jaguar global, so it links alone here.
+test/tools/test_gdbstub_proto: test/tools/test_gdbstub_proto.c src/debug/gdbstub.c
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_gdbstub_proto.c src/debug/gdbstub.c
 
 test/test_event_queue: test/test_event_queue.c src/core/event.c src/core/event.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
