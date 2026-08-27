@@ -451,6 +451,17 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
         *(const char **)data = "/tmp";
         return true;
+    case RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK:
+        /* Opt-in like --av-skip-video below: tools that predate this hook
+         * keep getting `false`, so the core treats the frontend as not
+         * supporting buffer-status reports (auto frameskip and the
+         * enhancement-profile watch then stand down, exactly as before). */
+        if (!active_cfg || !active_cfg->accept_audio_buf_cb)
+            return false;
+        active_cfg->audio_buf_cb = data
+            ? ((const struct retro_audio_buffer_status_callback *)data)->callback
+            : NULL;
+        return true;
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
         /* Only answer when a tool explicitly opted in (--av-skip-video);
          * otherwise fall through to `default: return false`, which is

@@ -299,6 +299,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "3"
    },
    {
+      "virtualjaguar_enhancement_profile",
+      "Enhancement Profile (Per-Title Defaults)",
+      NULL,
+      "Decide whether the per-title enhancement database may switch on expensive visual enhancements (Internal Resolution 2x, True Color) by default for recognized games. 'Quality' always applies them. 'Performance' never does. 'Auto' applies them on capable hardware, but suppresses them on 32-bit ARM devices and drops them early in a session if the audio buffer reports the machine cannot keep up (the same signal Frameskip uses). Only database-supplied DEFAULTS are affected: any option you set yourself always wins, whatever the profile says.",
+      NULL,
+      "speed",
+      {
+         { "auto",        "Auto" },
+         { "quality",     "Quality" },
+         { "performance", "Performance" },
+         { NULL, NULL },
+      },
+      "auto"
+   },
+   {
       "virtualjaguar_m68k_clock_scale",
       "M68K Clock Scale (Overclock)",
       NULL,

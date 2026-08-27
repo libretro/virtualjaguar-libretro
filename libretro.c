@@ -344,6 +344,17 @@ static bool     retro_audio_buff_underrun;
 static unsigned frameskip_audio_latency;
 static bool     update_audio_latency;
 
+/* Enhancement profile (P9, docs/perf-audit-2026-08.md): the 'auto' profile
+ * watches the same frontend audio-buffer signal frameskip consumes, so its
+ * registration rides init_frameskip() below.  What init_frameskip() last saw
+ * enhancement_watch_wanted() return, so check_variables() can re-run it when
+ * the answer changes without thrashing the frontend's audio driver on every
+ * unrelated option flip.  Full state + helpers live next to the titledb
+ * plumbing further down; this is host-side presentation state and must never
+ * enter retro_serialize, same rule as the frameskip block above. */
+static int enhancement_watch_registered;
+static int enhancement_watch_wanted(void);
+
 /* CD content state. The Tier 1 weak symbols for external_cd_bios[] and
  * cd_bios_loaded_externally are overridden by the strong definitions below. */
 static bool jaguar_cd_mode = false;
@@ -384,21 +395,34 @@ static void retro_audio_buff_status_cb(bool active, unsigned occupancy,
  * driver on that call, which is only safe between frames. */
 static void init_frameskip(void)
 {
-   if (frameskip_type > 0)
+   /* The enhancement-profile 'auto' watch (P9) shares this registration:
+    * it needs the buffer-status reports even while frameskip is disabled.
+    * It never asks for extra audio latency -- that request stays keyed to
+    * frameskip alone, because the frontend re-inits its audio driver on
+    * the deferred SET_MINIMUM_AUDIO_LATENCY call in retro_run(). */
+   int want_watch = enhancement_watch_wanted();
+
+   enhancement_watch_registered = want_watch;
+   if (frameskip_type > 0 || want_watch)
    {
       struct retro_audio_buffer_status_callback buf_status_cb;
       buf_status_cb.callback = retro_audio_buff_status_cb;
       if (!environ_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK,
             &buf_status_cb))
       {
-         LOG_WRN("[frameskip] frontend does not support the audio buffer "
-                 "status callback -- automatic frameskip disabled\n");
+         if (frameskip_type > 0)
+            LOG_WRN("[frameskip] frontend does not support the audio buffer "
+                    "status callback -- automatic frameskip disabled\n");
+         else
+            LOG_INF("[perf] frontend does not support the audio buffer "
+                    "status callback -- enhancement profile 'auto' keeps "
+                    "the per-title enhancement defaults\n");
          retro_audio_buff_active    = false;
          retro_audio_buff_occupancy = 0;
          retro_audio_buff_underrun  = false;
          frameskip_audio_latency    = 0;
       }
-      else
+      else if (frameskip_type > 0)
       {
          /* 6 frames of headroom at the current video standard. */
          float frame_time_msec = 1000.0f
@@ -406,6 +430,8 @@ static void init_frameskip(void)
          frameskip_audio_latency = (unsigned)((6.0f * frame_time_msec) + 0.5f);
          frameskip_audio_latency = (frameskip_audio_latency + 0x1F) & ~0x1F;
       }
+      else
+         frameskip_audio_latency = 0;
    }
    else
    {
@@ -2378,6 +2404,144 @@ static void perf_warn_idle_skip_suppressed(void)
    perf_conflict_warned = 1;
 }
 
+/* Enhancement profile (P9, docs/perf-audit-2026-08.md).
+ *
+ * The titledb enables expensive visual enhancements (internal resolution
+ * 2x, true color) by default for titles verified to benefit -- but the
+ * hi-res render + shadow path they turn on is ~30% of AvP's frame on the
+ * host, which is the difference between playable and not on slow devices.
+ * The profile decides whether those DB DEFAULTS may apply at all:
+ *
+ *   quality      apply them (the pre-profile behaviour, unchanged);
+ *   performance  never apply them;
+ *   auto         apply them on capable hosts; behave like 'performance'
+ *                when (a) the build targets 32-bit ARM -- there is no
+ *                per-platform define reaching C for the rpi / classic_armv7
+ *                makefile targets, so the compiler's own __arm__ /
+ *                __aarch64__ macros are the platform signal -- or (b) the
+ *                frontend's audio-buffer status reports underrun danger
+ *                for ENH_DEMOTE_UNDERRUN_FRAMES consecutive frames inside
+ *                the first ENH_WATCH_WINDOW_FRAMES of a session (the same
+ *                signal auto-frameskip consumes, #684).
+ *
+ * ONLY titledb-sourced defaults are affected.  get_variable_pertitle()
+ * substitutes a DB value only when the user left the option at its
+ * registered default, so an explicit user choice is out of this code's
+ * reach by construction -- the DB's one hard rule ("user-set values
+ * always win") holds for the profile too.
+ *
+ * The runtime demotion (b) is evaluated ONLY during the first
+ * ENH_WATCH_WINDOW_FRAMES of a loaded session, because dropping the
+ * internal resolution is a live geometry switch: confined to the first
+ * seconds it lands during boot logos/menus rather than mid-game, and a
+ * transient stall later in the session (shader compile, background task)
+ * can never yank the resolution out from under the player.  All of this
+ * is host-side presentation state -- never serialized. */
+#if defined(__arm__) && !defined(__aarch64__)
+#define ENHANCEMENT_PLATFORM_SLOW 1
+#else
+#define ENHANCEMENT_PLATFORM_SLOW 0
+#endif
+
+/* ~10 s NTSC watch window; demote after ~3 s of sustained underrun danger. */
+#define ENH_WATCH_WINDOW_FRAMES    600
+#define ENH_DEMOTE_UNDERRUN_FRAMES 180
+
+static int enhancement_profile_opt;      /* 0 auto / 1 quality / 2 performance */
+static int enhancement_auto_demoted;     /* runtime latch: 'auto' measured an
+                                          * overrun this load and demoted */
+static int enhancement_suppress_logged;  /* one [perf] line per load */
+static int titledb_enhancement_applied;  /* a DB enhancement default was
+                                          * substituted this load (arms the
+                                          * 'auto' watch: nothing applied ->
+                                          * nothing to demote) */
+static int hires_from_titledb;           /* this session's 2x came from the DB,
+                                          * not from the user (see the load-time
+                                          * latch in retro_load_game) */
+static unsigned enhancement_watch_frames;   /* frames since load, saturating
+                                             * at ENH_WATCH_WINDOW_FRAMES */
+static unsigned enhancement_underrun_run;   /* consecutive underrun frames */
+
+/* Per-load reset, same three call sites as titledb_reset_negative_warnings()
+ * (retro_load_game / retro_unload_game / retro_deinit -- iOS cannot dlclose
+ * a core, so statics must be reset by hand).  enhancement_profile_opt itself
+ * is re-read from the option, not reset here. */
+static void enhancement_profile_reset(void)
+{
+   enhancement_auto_demoted    = 0;
+   enhancement_suppress_logged = 0;
+   titledb_enhancement_applied = 0;
+   hires_from_titledb          = 0;
+   enhancement_watch_frames    = 0;
+   enhancement_underrun_run    = 0;
+}
+
+/* Raw read (never through get_variable_pertitle()), same reasoning as the
+ * pertitle gate: a DB row must not be able to pick its own profile.  Called
+ * at the top of check_variables() and once in retro_load_game() before the
+ * hires latch, which runs before check_variables(). */
+static void enhancement_profile_read(void)
+{
+   struct retro_variable var;
+   var.key   = "virtualjaguar_enhancement_profile";
+   var.value = NULL;
+   enhancement_profile_opt = 0;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      if (strcmp(var.value, "quality") == 0)
+         enhancement_profile_opt = 1;
+      else if (strcmp(var.value, "performance") == 0)
+         enhancement_profile_opt = 2;
+   }
+}
+
+/* The keys the profile governs: the expensive visual enhancements the perf
+ * audit measured.  Deliberately a curated list, not "every DB pair" -- a
+ * future compatibility row (e.g. a controller type) is not an enhancement
+ * and must keep applying whatever the profile says, and a future speedup
+ * row (blit_memo) would be exactly backwards to suppress on slow hosts. */
+static int enhancement_profile_governs(const char *key)
+{
+   return strcmp(key, "virtualjaguar_internal_resolution") == 0
+       || strcmp(key, "virtualjaguar_true_color") == 0;
+}
+
+/* Does the profile currently resolve to "suppress the DB enhancement
+ * defaults"?  On yes, *reason names why for the log line. */
+static int enhancement_profile_suppressing(const char **reason)
+{
+   if (enhancement_profile_opt == 1)
+      return 0;
+   if (enhancement_profile_opt == 2)
+   {
+      *reason = "performance profile selected";
+      return 1;
+   }
+#if ENHANCEMENT_PLATFORM_SLOW
+   *reason = "32-bit ARM host";
+   return 1;
+#else
+   if (enhancement_auto_demoted)
+   {
+      *reason = "measured frame-budget overrun";
+      return 1;
+   }
+   return 0;
+#endif
+}
+
+/* Should the 'auto' runtime watch be running?  Also consulted by
+ * init_frameskip() to decide whether the audio-buffer status callback
+ * must stay registered while frameskip itself is disabled. */
+static int enhancement_watch_wanted(void)
+{
+   return !ENHANCEMENT_PLATFORM_SLOW
+       && enhancement_profile_opt == 0
+       && !enhancement_auto_demoted
+       && titledb_enhancement_applied
+       && enhancement_watch_frames < ENH_WATCH_WINDOW_FRAMES;
+}
+
 /* GET_VARIABLE with per-title defaults (issue #368) and known-bad refusal
  * (issue #464).
  *
@@ -2408,6 +2572,35 @@ static bool get_variable_pertitle(struct retro_variable *var)
    def = core_option_default(var->key);
    ovr = TitleDBOverride(var->key);
 
+   /* Enhancement profile (P9): when the profile resolves to 'performance',
+    * a DB enhancement default is dropped HERE, before the substitution --
+    * exactly as if the title had no row for this key.  Explicit user
+    * choices never reach this branch (the substitution below only fires
+    * with the option at its registered default), so they are untouched. */
+   if (ovr && enhancement_profile_governs(var->key))
+   {
+      const char *why = NULL;
+      if (enhancement_profile_suppressing(&why))
+      {
+         if (!enhancement_suppress_logged)
+         {
+            const char *title = TitleDBTitleName();
+            if (enhancement_profile_opt == 2)
+               LOG_INF("[perf] enhancement profile 'performance': not "
+                       "applying %s's per-title enhancement defaults (%s). "
+                       "Options you set yourself are honored as always.\n",
+                       title ? title : "this title", why);
+            else
+               LOG_WRN("[perf] enhancement profile 'auto': not applying "
+                       "%s's per-title enhancement defaults (%s). Options "
+                       "you set yourself are honored as always.\n",
+                       title ? title : "this title", why);
+            enhancement_suppress_logged = 1;
+         }
+         ovr = NULL;
+      }
+   }
+
    if (ovr && (!ok || (def && !strcmp(var->value, def))))
    {
       if (TitleDBUnsafeValue(var->key, ovr, def))
@@ -2422,6 +2615,10 @@ static bool get_variable_pertitle(struct retro_variable *var)
       LOG_INF("[titledb] %s: %s=%s (option at default)\n",
               TitleDBTitleName(), var->key, ovr);
       var->value = ovr;
+      /* Arms the enhancement-profile 'auto' watch: a session where no DB
+       * enhancement default applied has nothing to demote. */
+      if (enhancement_profile_governs(var->key))
+         titledb_enhancement_applied = 1;
       return true;
    }
 
@@ -2619,6 +2816,10 @@ static void check_variables(void)
    else
       pertitle_enabled = true;
 
+   /* Enhancement profile (P9): raw read, before any get_variable_pertitle()
+    * call below consults it. */
+   enhancement_profile_read();
+
    var.key = "virtualjaguar_usefastblitter";
    var.value = NULL;
 
@@ -2740,7 +2941,11 @@ static void check_variables(void)
 
       if (frameskip_type != fs_prev_type
           || frameskip_threshold != fs_prev_threshold
-          || !frameskip_init_done)
+          || !frameskip_init_done
+          /* Enhancement profile (P9): the 'auto' watch rides this
+           * registration, so re-run when its answer changed (e.g. the
+           * profile option flipped mid-session). */
+          || enhancement_watch_wanted() != enhancement_watch_registered)
       {
          frameskip_init_done = 1;
          init_frameskip();
@@ -3325,6 +3530,54 @@ static void check_variables(void)
                                        + 0.5));
 
    update_option_visibility();
+}
+
+/* Enhancement profile (P9) runtime demotion: the 'auto' watch measured a
+ * sustained frame-budget overrun early in the session, so drop the
+ * titledb-sourced enhancement defaults NOW, once, at a frame boundary
+ * (called from retro_run() between the frameskip verdict and the pre-render
+ * geometry latch -- no halfline is mid-render there).
+ *
+ * True color re-resolves live through the check_variables() below, exactly
+ * like a user toggling the option.  Internal resolution is normally
+ * restart-only because SET_GEOMETRY cannot GROW past the advertised
+ * maximum (see the load-time latch in retro_load_game), but a demotion
+ * only ever SHRINKS 2x -> 1x, which stays inside the session's advertised
+ * maximum: ShadowHiresSetN(1) tears the hi-res arena down (the same
+ * teardown the load-time allocation-failure fallback uses), the memo cache
+ * is flushed because its recorded post-states are sized N*N, and zeroing
+ * videoWidth/videoHeight forces the existing pre-render geometry block in
+ * retro_run() to re-latch pitch + SET_GEOMETRY from TOM's current stock
+ * size before the next frame renders.  Presentation-only throughout:
+ * emulation state, savestates, run-ahead and netplay are unaffected.
+ *
+ * Only a DB-sourced 2x is dropped (hires_from_titledb): a user's explicit
+ * 2x is out of reach, per the profile's contract. */
+static void enhancement_auto_demote(void)
+{
+   enhancement_auto_demoted = 1;
+   LOG_WRN("[perf] enhancement profile 'auto': the audio buffer reported "
+           "underrun danger for %u consecutive frames -- dropping the "
+           "per-title enhancement defaults for this session (measured "
+           "frame-budget overrun). Set the Enhancement Profile option to "
+           "'quality' to keep them regardless.\n",
+           (unsigned)ENH_DEMOTE_UNDERRUN_FRAMES);
+   if (hires_from_titledb && shadowHiresN > 1)
+   {
+      LOG_WRN("[perf] internal resolution: per-title default %dx -> 1x\n",
+              shadowHiresN);
+      BlitMemoFlush();
+      ShadowHiresSetN(1);
+      /* Force the pre-render geometry block in retro_run() to re-latch
+       * game_width/game_height, the screen pitch and SET_GEOMETRY from
+       * TOM's current stock size. */
+      videoWidth  = 0;
+      videoHeight = 0;
+   }
+   /* Re-resolve every option with the suppression now active: true color
+    * (and any future live-applied enhancement default) falls back to the
+    * user's own value on this same code path a menu toggle would take. */
+   check_variables();
 }
 
 /* Team Tap sockets 1-3 (#513).
@@ -5272,6 +5525,12 @@ bool retro_load_game(const struct retro_game_info *info)
          pertitle_enabled = true;
    }
 
+   /* Enhancement profile (P9): per-load state reset, then a raw read for
+    * the same reason the gate above is raw -- the hires latch below runs
+    * before check_variables() and already consults the profile. */
+   enhancement_profile_reset();
+   enhancement_profile_read();
+
    /* Enhancement-hook gate (issue #370), latched HERE and nowhere else.
     * Read raw for the same reason the gate above is: otherwise a DB row
     * could carry {"virtualjaguar_enhancement_hooks","enabled"} in its own
@@ -5395,11 +5654,20 @@ bool retro_load_game(const struct retro_game_info *info)
    {
       struct retro_variable hires_var;
       int hires_n = 1;
+      int hires_raw_2x = 0;
+      /* Raw read first, so a DB-substituted 2x is distinguishable from a
+       * user-set one: the enhancement-profile 'auto' runtime demotion may
+       * only ever drop the DB's 2x, never the user's (P9). */
       hires_var.key = "virtualjaguar_internal_resolution";
+      hires_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &hires_var)
+          && hires_var.value && strcmp(hires_var.value, "2x") == 0)
+         hires_raw_2x = 1;
       hires_var.value = NULL;
       if (get_variable_pertitle(&hires_var)
           && hires_var.value && strcmp(hires_var.value, "2x") == 0)
          hires_n = 2;
+      hires_from_titledb = (hires_n == 2 && !hires_raw_2x);
       ShadowHiresSetN(hires_n);
       hires_restart_notice_logged = 0;
    }
@@ -5806,6 +6074,10 @@ void retro_unload_game(void)
     * warning latch: same reasoning, same reset. */
    TitleDBSetPairsForTest(NULL, 0);
    perf_conflict_reset();
+   /* Enhancement profile (P9): the runtime-demotion latch and its watch
+    * are title-scoped like everything above -- the next load re-evaluates
+    * from scratch. */
+   enhancement_profile_reset();
    /* Widescreen (#530) is title-scoped like everything above and was
     * missed when it landed (#605).  iOS never dlcloses the core, so
     * leaving these set lets a 16:9 title hand its aspect ratio to the
@@ -6243,6 +6515,10 @@ void retro_deinit(void)
     * warning latch: same per-load re-arm as above. */
    TitleDBSetPairsForTest(NULL, 0);
    perf_conflict_reset();
+   /* Enhancement profile (P9): same per-load re-arm as above; the option
+    * itself is re-read on the next load. */
+   enhancement_profile_reset();
+   enhancement_profile_opt = 0;
    /* Widescreen (#530/#605): same per-load re-arm as above. */
    widescreen_reset();
 
@@ -6430,6 +6706,33 @@ void retro_run(void)
    }
    else
       frameskip_counter = 0;
+
+   /* Enhancement profile 'auto' runtime watch (P9): evaluated ONLY during
+    * the first ENH_WATCH_WINDOW_FRAMES of a loaded session (see the state
+    * block's comment for why -- the demotion is a live geometry switch and
+    * must land during boot/menus, never mid-game).  Demote once when the
+    * frontend reports underrun danger for ENH_DEMOTE_UNDERRUN_FRAMES
+    * consecutive frames; retro_audio_buff_active is only true while a
+    * registered buffer-status callback is being fed, so frontends without
+    * the callback can never demote.  Sits between the frameskip verdict
+    * above (fresh buffer report) and the geometry block below, which
+    * applies the demotion's forced geometry re-latch this same frame,
+    * before rendering. */
+   if (enhancement_watch_frames < ENH_WATCH_WINDOW_FRAMES)
+   {
+      enhancement_watch_frames++;
+      if (enhancement_watch_wanted())
+      {
+         if (retro_audio_buff_active && retro_audio_buff_underrun)
+         {
+            enhancement_underrun_run++;
+            if (enhancement_underrun_run >= ENH_DEMOTE_UNDERRUN_FRAMES)
+               enhancement_auto_demote();
+         }
+         else
+            enhancement_underrun_run = 0;
+      }
+   }
 
    /* Deferred from init_frameskip(): tell the frontend how much audio
     * buffering frameskip needs to see the drain coming (0 = restore its
