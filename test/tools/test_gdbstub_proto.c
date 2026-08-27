@@ -165,6 +165,90 @@ TEST(halt_reason_reports_sigtrap) {
     ASSERT_STR(reply, "S05");
 }
 
+/* ------------------------------------------------------------------ */
+/* Task 3: bounds-checked memory reads                                 */
+/* ------------------------------------------------------------------ */
+
+static unsigned char fake_mem[256];
+
+static int fake_read_mem(void *user, unsigned int addr, int len,
+                         char *out, int outMax) {
+    static const char hx[] = "0123456789abcdef";
+    int i;
+    (void)user;
+    if (addr > sizeof(fake_mem) || len < 0) return -1;
+    if ((addr + (unsigned int)len) > sizeof(fake_mem)) return -1;  /* the invariant */
+    if ((len * 2) > outMax) return -1;
+    for (i = 0; i < len; i++) {
+        out[i*2]   = hx[(fake_mem[addr+i] >> 4) & 0xF];
+        out[i*2+1] = hx[fake_mem[addr+i] & 0xF];
+    }
+    return len * 2;
+}
+
+static void setup_mem_session(void) {
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    ops.readMemory = fake_read_mem;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    fake_mem[0] = 0xDE; fake_mem[1] = 0xAD;
+}
+
+TEST(parse_hex_u32_reads_value) {
+    unsigned int v = 0;
+    ASSERT_EQ(GDBParseHexU32("f00d", 4, &v), 4);
+    ASSERT_EQ((int)v, 0xF00D);
+}
+
+TEST(parse_hex_u32_rejects_non_hex) {
+    unsigned int v = 0;
+    ASSERT_EQ(GDBParseHexU32("zz", 2, &v), -1);
+}
+
+TEST(read_memory_returns_hex) {
+    char reply[256]; int n;
+    setup_mem_session();
+    n = GDBHandlePacket(&g_sess, "m0,2", 4, reply, sizeof(reply));
+    ASSERT_EQ(n, 4);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "dead");
+}
+
+TEST(read_memory_past_end_is_refused) {
+    char reply[256]; int n;
+    setup_mem_session();
+    /* 0xFF + 4 bytes overruns the 256-byte fake guest */
+    n = GDBHandlePacket(&g_sess, "mff,4", 5, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "E01");
+}
+
+TEST(read_memory_wild_address_is_refused) {
+    char reply[256]; int n;
+    setup_mem_session();
+    n = GDBHandlePacket(&g_sess, "mffffffff,4", 11, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "E01");
+}
+
+TEST(read_memory_absurd_length_is_refused) {
+    char reply[64]; int n;
+    setup_mem_session();
+    /* len would overflow the caller's reply buffer even if in range */
+    n = GDBHandlePacket(&g_sess, "m0,1000", 7, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "E01");
+}
+
+TEST(read_memory_without_target_op_is_unsupported) {
+    char reply[256];
+    setup_session();   /* ops.readMemory == NULL */
+    ASSERT_EQ(GDBHandlePacket(&g_sess, "m0,2", 4, reply, sizeof(reply)), 0);
+}
+
 int main(void) {
     SUITE("gdbstub framing");
     RUN(checksum_is_modulo_256_sum);
@@ -185,5 +269,12 @@ int main(void) {
     RUN(qsupported_advertises_packet_size);
     RUN(unknown_command_returns_empty_reply);
     RUN(halt_reason_reports_sigtrap);
+    RUN(parse_hex_u32_reads_value);
+    RUN(parse_hex_u32_rejects_non_hex);
+    RUN(read_memory_returns_hex);
+    RUN(read_memory_past_end_is_refused);
+    RUN(read_memory_wild_address_is_refused);
+    RUN(read_memory_absurd_length_is_refused);
+    RUN(read_memory_without_target_op_is_unsupported);
     return REPORT();
 }

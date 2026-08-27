@@ -62,6 +62,8 @@ int GDBExpandRLE(const char *in, int inLen, char *out, int outMax);
 int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
                     char *reply, int replyMax);
 
+int GDBParseHexU32(const char *s, int len, unsigned int *out);
+
 /* Implemented in gdbtarget.c (Task 4). Declared here so libretro.c needs
  * only this one header. */
 const struct GDBTargetOps *GDBJaguarOps(void);

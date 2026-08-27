@@ -123,6 +123,28 @@ int GDBExpandRLE(const char *in, int inLen, char *out, int outMax)
    return n;
 }
 
+int GDBParseHexU32(const char *s, int len, unsigned int *out)
+{
+   int i;
+   unsigned int v = 0;
+
+   if (len <= 0 || len > 8)
+      return -1;
+
+   for (i = 0; i < len; i++)
+   {
+      int d = GDBHexVal(s[i]);
+
+      if (d < 0)
+         return -1;
+
+      v = (v << 4) | (unsigned int)d;
+   }
+
+   *out = v;
+   return len;
+}
+
 void GDBSessionInit(struct GDBSession *s, const struct GDBTargetOps *ops,
                     void *user)
 {
@@ -159,6 +181,40 @@ int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
    {
       s->noAckMode = 1;
       return GDBCopyReply("OK", reply, replyMax);
+   }
+
+   if (pay[0] == 'm')
+   {
+      unsigned int addr = 0, len = 0;
+      int comma = -1;
+      int i, n;
+
+      if (!s->ops || !s->ops->readMemory)
+         return 0;
+
+      for (i = 1; i < payLen; i++)
+      {
+         if (pay[i] == ',')
+         {
+            comma = i;
+            break;
+         }
+      }
+
+      if (comma < 0)
+         return GDBCopyReply("E01", reply, replyMax);
+
+      if (GDBParseHexU32(pay + 1, comma - 1, &addr) < 0)
+         return GDBCopyReply("E01", reply, replyMax);
+
+      if (GDBParseHexU32(pay + comma + 1, payLen - comma - 1, &len) < 0)
+         return GDBCopyReply("E01", reply, replyMax);
+
+      n = s->ops->readMemory(s->user, addr, (int)len, reply, replyMax);
+      if (n < 0)
+         return GDBCopyReply("E01", reply, replyMax);
+
+      return n;
    }
 
    /* RSP: an empty reply means "I do not implement this packet". */
