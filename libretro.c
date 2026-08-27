@@ -59,6 +59,7 @@ int64_t rfread(void* buffer, size_t elem_size, size_t elem_count, RFILE* stream)
 #include "state.h"
 #include "titledb.h"
 #include "titlehook.h"
+#include "gdbstub.h"
 #include "log.h"
 /* CORE_VERSION.  scripts/gen-version-h.sh writes src/core/version.h with
  * the short git rev in it; the Makefile and jni/Android.mk both run it at
@@ -160,6 +161,151 @@ static void widescreen_reset(void)
 {
    widescreen_enabled          = false;
    widescreen_geometry_pending = false;
+}
+
+/* GDB remote debug stub (Phase 1, issue #652).  Developer-facing, off by
+ * default, latched once at content load exactly like the enhancement-hook
+ * gate above -- a "Restart" option must not be settable by a per-title DB
+ * row, so it is read raw via environ_cb, never through
+ * get_variable_pertitle().  File-scope statics, not retro_run()-local:
+ * iOS cannot dlclose the core, so a resident process must not carry a
+ * previous title's stub state (or half a buffered packet) into the next
+ * load -- reset alongside everything else in retro_unload_game() and
+ * retro_deinit(). */
+static bool gdb_stub_enabled     = false;
+static bool gdb_stub_socket_open = false;
+static int  gdb_stub_port        = 2345;
+static struct GDBSession gdb_session;
+static char gdb_rxbuf[GDB_PACKET_MAX];
+static int  gdb_rxlen = 0;
+
+/* Re-armed on every load/unload exactly like widescreen_reset() above:
+ * a fresh title must not inherit a half-received packet or a session
+ * struct pointed at the previous load's target ops. */
+static void gdb_stub_reset(void)
+{
+   gdb_stub_enabled     = false;
+   gdb_stub_socket_open = false;
+   gdb_stub_port        = 2345;
+   gdb_rxlen            = 0;
+}
+
+/* Serviced once per frame from the top of retro_run(), and only when the
+ * stub is enabled -- with no client attached this is one poll() and two
+ * cheap comparisons, bounded and non-blocking, per the design's "near-
+ * zero cost when disabled/idle" requirement.  Phase 1 has no breakpoints,
+ * so nothing here can block: every packet the engine understands gets an
+ * immediate reply, and the loop below terminates as soon as the receive
+ * buffer holds no further complete "$...#cs" packet. */
+static void gdb_stub_service(void)
+{
+   if (!gdb_stub_enabled || !gdb_stub_socket_open)
+      return;
+
+   GDBSockPoll();
+
+   /* Pull whatever is available into the tail of the accumulation
+    * buffer.  A single recv() rarely delivers more than one small RSP
+    * command, but nothing here assumes that -- partial packets are
+    * simply left in gdb_rxbuf for the next frame's call. */
+   for (;;)
+   {
+      int room = (int)sizeof(gdb_rxbuf) - gdb_rxlen;
+      int n;
+
+      if (room <= 0)
+      {
+         /* Buffer full with no packet boundary found: a malformed or
+          * hostile stream. Drop it and resync rather than wedging. */
+         gdb_rxlen = 0;
+         break;
+      }
+
+      n = GDBSockRecv(gdb_rxbuf + gdb_rxlen, room);
+      if (n < 0)
+      {
+         /* Client disconnected. */
+         gdb_rxlen = 0;
+         break;
+      }
+      if (n == 0)
+         break;
+
+      gdb_rxlen += n;
+   }
+
+   /* Dispatch every complete packet currently buffered. */
+   for (;;)
+   {
+      static char payload[GDB_PACKET_MAX];
+      static char reply[GDB_PACKET_MAX];
+      static char encoded[GDB_PACKET_MAX + 8];
+      int i;
+      int dollarAt = -1;
+      int hashAt   = -1;
+      int payLen, replyLen, encLen, consumed, remaining;
+
+      for (i = 0; i < gdb_rxlen; i++)
+      {
+         if (gdb_rxbuf[i] == '$')
+         {
+            dollarAt = i;
+            break;
+         }
+      }
+
+      if (dollarAt < 0)
+      {
+         /* No packet start in the buffer at all (e.g. a stray leading
+          * '+' ack byte with nothing after it yet): nothing to do. */
+         gdb_rxlen = 0;
+         break;
+      }
+
+      for (i = dollarAt + 1; i < gdb_rxlen; i++)
+      {
+         if (gdb_rxbuf[i] == '#')
+         {
+            hashAt = i;
+            break;
+         }
+      }
+
+      if (hashAt < 0 || (hashAt + 2) >= gdb_rxlen)
+      {
+         /* Incomplete packet: drop only the garbage before '$' (if any)
+          * so the scan above does not re-walk it every frame, and wait
+          * for more bytes next frame. */
+         if (dollarAt > 0)
+         {
+            remaining = gdb_rxlen - dollarAt;
+            memmove(gdb_rxbuf, gdb_rxbuf + dollarAt, (size_t)remaining);
+            gdb_rxlen = remaining;
+         }
+         break;
+      }
+
+      payLen = GDBDecodePacket(gdb_rxbuf + dollarAt, hashAt + 3 - dollarAt,
+                               payload, (int)sizeof(payload));
+      if (payLen >= 0)
+      {
+         replyLen = GDBHandlePacket(&gdb_session, payload, payLen,
+                                    reply, (int)sizeof(reply));
+         encLen = GDBEncodePacket(reply, replyLen, encoded,
+                                  (int)sizeof(encoded));
+         if (encLen > 0)
+            GDBSockSend(encoded, encLen);
+      }
+      /* A malformed packet (bad checksum, overflow) gets no reply at
+       * all here -- real GDB retransmits on a missing ack, and Phase 1
+       * does not implement the low-level +/- ack byte, so silence is
+       * the correct "I didn't understand that" for now. */
+
+      consumed  = hashAt + 3;
+      remaining = gdb_rxlen - consumed;
+      memmove(gdb_rxbuf, gdb_rxbuf + consumed, (size_t)remaining);
+      gdb_rxlen = remaining;
+   }
 }
 
 #ifdef VJ_TRACE
@@ -5018,6 +5164,70 @@ bool retro_load_game(const struct retro_game_info *info)
       hook_restart_notice_logged = 0;
    }
 
+   /* GDB remote debug stub (Phase 1, issue #652): same raw-read reasoning
+    * as the enhancement-hook gate immediately above -- a developer-facing
+    * "Restart" gate must not be settable by a per-title DB row. */
+   gdb_stub_reset();
+   {
+      struct retro_variable gdb_var;
+      struct retro_variable port_var;
+
+      gdb_var.key   = "virtualjaguar_gdb_stub";
+      gdb_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &gdb_var) && gdb_var.value)
+         gdb_stub_enabled = (strcmp(gdb_var.value, "enabled") == 0);
+
+      port_var.key   = "virtualjaguar_gdb_port";
+      port_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &port_var) && port_var.value)
+      {
+         /* The core-options UI only ever offers the four listed ports, so
+          * this only matters for a hand-edited config. atoi() on garbage
+          * returns 0, which GDBSockOpen() would take as "ask the OS for an
+          * ephemeral port" while the banner below kept reporting the
+          * bogus requested number -- reject it instead and keep the
+          * documented default. */
+         int parsed_port = atoi(port_var.value);
+         if (parsed_port > 0 && parsed_port <= 65535)
+            gdb_stub_port = parsed_port;
+      }
+
+      if (gdb_stub_enabled)
+      {
+         if (GDBSockOpen(gdb_stub_port) == 0)
+         {
+            struct retro_message_ext gdb_msg;
+            char gdb_msg_text[96];
+
+            gdb_stub_socket_open = true;
+            GDBSessionInit(&gdb_session, GDBJaguarOps(), NULL);
+
+            snprintf(gdb_msg_text, sizeof(gdb_msg_text),
+                     "GDB stub listening on 127.0.0.1:%d", gdb_stub_port);
+            memset(&gdb_msg, 0, sizeof(gdb_msg));
+            gdb_msg.msg      = gdb_msg_text;
+            gdb_msg.duration = 4000;
+            gdb_msg.priority = 2;
+            gdb_msg.level    = RETRO_LOG_INFO;
+            gdb_msg.target   = RETRO_MESSAGE_TARGET_OSD;
+            gdb_msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION;
+            gdb_msg.progress = -1;
+            environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &gdb_msg);
+            LOG_INF("[GDB] stub listening on 127.0.0.1:%d\n", gdb_stub_port);
+         }
+         else
+         {
+            /* Bind failure (port in use, a second core instance under
+             * run-ahead, or no BSD sockets on this target) is logged once
+             * and the stub stays disabled for this session -- it must
+             * never fail content load. */
+            gdb_stub_enabled = false;
+            LOG_WRN("[GDB] stub enabled but failed to open port %d -- "
+                    "disabled for this session\n", gdb_stub_port);
+         }
+      }
+   }
+
    /* Known-bad (#464) warning latch: a fresh load starts with none warned,
     * even in-process on a platform that cannot dlclose (iOS). */
    titledb_reset_negative_warnings();
@@ -5361,6 +5571,11 @@ void retro_unload_game(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* GDB stub (#652): close the listener/client so a stale socket does
+    * not linger into the next title, and re-latch the gate from the next
+    * load's option instead of carrying this session's state forward. */
+   GDBSockClose();
+   gdb_stub_reset();
    /* Known-bad negative entries (#464): same reasoning, same reset. */
    TitleDBSetNegativeForTest(NULL, 0);
    titledb_reset_negative_warnings();
@@ -5760,6 +5975,11 @@ void retro_deinit(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
+   /* GDB stub (#652): belt-and-suspenders, matching retro_unload_game() --
+    * a frontend that calls deinit without unload first must not leave a
+    * listener bound past process teardown. */
+   GDBSockClose();
+   gdb_stub_reset();
    /* Known-bad negative entries (#464): same per-load re-arm as above. */
    TitleDBSetNegativeForTest(NULL, 0);
    titledb_reset_negative_warnings();
@@ -5859,6 +6079,12 @@ static void dbg_dump_frame(void)
 void retro_run(void)
 {
    bool updated = false;
+
+   /* GDB stub (#652): serviced first and unconditionally cheap when
+    * disabled -- gdb_stub_service() itself early-returns before touching
+    * a single byte if the option is off, which is the whole point of the
+    * "near-zero cost when disabled" requirement in the design doc. */
+   gdb_stub_service();
 
 #ifdef VJ_TRACE
    /* Stamp the frame number BEFORE the machine runs, so every event

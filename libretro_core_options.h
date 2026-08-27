@@ -580,6 +580,36 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "disabled"
    },
    {
+      "virtualjaguar_gdb_stub",
+      "GDB Debug Stub (Restart)",
+      NULL,
+      "Open a GDB remote debugging server on localhost so a debugger can inspect the emulated machine. Developer-facing; leave disabled for normal play. The server only ever listens on 127.0.0.1 -- it is not reachable from another machine. Requires a restart.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_gdb_port",
+      "GDB Stub Port (Restart)",
+      NULL,
+      "TCP port for the GDB debug stub. Change this only if another program already uses the default. Requires a restart.",
+      NULL,
+      "diagnostics",
+      {
+         { "2345", NULL },
+         { "2346", NULL },
+         { "2347", NULL },
+         { "3333", NULL },
+         { NULL, NULL },
+      },
+      "2345"
+   },
+   {
       "virtualjaguar_texdump_16bpp",
       "Texture Dump: 16bpp Preview",
       NULL,

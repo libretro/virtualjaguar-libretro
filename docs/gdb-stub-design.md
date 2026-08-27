@@ -103,8 +103,12 @@ GDB threads map to processors:
 stop replies (`T05thread:N;`) name the thread that halted.
 
 Thread 1 is served with no target description at all, so GDB applies its own
-`m68k` architecture: full disassembly, source-level debugging with DWARF from
-`rln`, and backtraces come free.
+`m68k` architecture: full disassembly and backtraces come free. **Source-
+level debugging with DWARF does not** — see Open Question 2, answered during
+Phase 1 implementation: `rln` emits classic mc68k COFF, not ELF/DWARF, and its
+one debug-info flag (`-g`) produced byte-identical output to a build without
+it on a real test case. The honest claim is symbol-level (global symbol
+addresses via `rln -m`'s load map), not source-level.
 
 Threads 2 and 3 are served a custom description via `qXfer:features:read`,
 defining an `org.atari.jaguar.risc` feature with the 32 general registers and
@@ -304,7 +308,22 @@ Five layers, in increasing cost:
 5. **End-to-end against real GDB.** Drive `m68k-elf-gdb` (from the toolchain in
    #581, if it ships gdb — otherwise a scripted RSP client) against a test ROM:
    attach, set a breakpoint at a known symbol, continue, assert the stop reply
-   and PC, read a register, write memory, continue to exit.
+   and PC, read a register, write memory, continue to exit. **Answered during
+   Phase 1 implementation: it does not ship gdb** (see Open Question 1) — this
+   layer runs as `test/tools/gdb_attach_probe.py`, a scripted RSP client, for
+   as long as that remains true. It exercises attach, `qSupported`, halt
+   reason, register read, memory read, and bounds refusal; breakpoint/continue
+   coverage waits for Phase 2, where breakpoints exist to test.
+
+   **This is not merely a stand-in for gdb being unavailable.** Phase 1's
+   `GDBHandlePacket` never sends the low-level `+`/`-` acknowledgement byte a
+   real GDB client requires for every packet before `QStartNoAckMode` is
+   negotiated (and that negotiation itself needs one such ack to complete).
+   `gdb_attach_probe.py` passes without noticing this because it never checks
+   for an ack. A real `m68k-elf-gdb`, brought by the user per Open Question 1,
+   would stall on its very first `qSupported`. Implementing the ack byte is
+   Phase 2 work, tracked alongside breakpoints -- until then, the scripted
+   probe is the only client Phase 1 actually supports end to end.
 
 ## Out of scope
 
@@ -320,14 +339,43 @@ Five layers, in increasing cost:
 
 ## Open questions
 
-1. **Does the #581 toolchain include `m68k-elf-gdb`?** If not, test layer 5
-   needs a scripted RSP client instead, and the user-facing documentation needs
-   to tell people where to get a GDB that speaks m68k.
-2. **What DWARF, if any, does `rln` emit?** Source-level debugging of the 68K
-   is the headline benefit; if `rln` emits no usable debug info, the honest
-   claim is symbol-level, not source-level, and the docs must say so.
+1. **Does the #581 toolchain include `m68k-elf-gdb`?** **Answered 2026-08-26,
+   Phase 1 implementation: no.** `tools/jaguar-toolchain/PIN` pins exactly
+   five tools — `rmac`, `rln`, `lyxass`, `pc_jagcrypt`, `new_bjl` — and
+   `make jaguar-toolchain-build` was actually run to confirm: the built tree
+   (`tools/vendor/jaguar-toolchain/`) contains no `gdb` binary anywhere, and
+   none of the five tools is a debugger. There is no supported source of a
+   Jaguar-flavoured GDB in this repo's toolchain. Consequence: test layer 5 is
+   permanently a scripted RSP client (`test/tools/gdb_attach_probe.py`) rather
+   than a stopgap until gdb shows up, and the user-facing docs must tell
+   developers to bring their own `m68k-elf-gdb` (a stock `--target=m68k-elf`
+   GNU binutils/gdb build, e.g. from the m68k bare-metal toolchains
+   distributed for classic Mac/Amiga/Atari ST development, works against a
+   plain `m68k` architecture with no custom target description) rather than
+   implying this repo provides one.
+2. **What DWARF, if any, does `rln` emit?** **Answered 2026-08-26, Phase 1
+   implementation: none.** Verified by building the toolchain and actually
+   linking a test object: `rln -e` output identifies as `mc68k COFF object
+   not stripped` (`file`(1)) — a pre-ELF Atari-era object format, not ELF —
+   so `readelf -S` does not apply at all, and `objdump -h` (Xcode's
+   `llvm-objdump`) fails outright with "not recognized as a valid object
+   file" against it: no toolchain on this host can parse it as DWARF-bearing.
+   `rln`'s own `-g` flag ("output source-level debugging") produced a file
+   byte-for-byte identical (SHA-256) to the same link without `-g`, and
+   neither contains any string referencing the source filename or a
+   `.debug_*`-style section name. What Jaguar-era linking *does* give you is
+   `rln -m`'s load map: global symbol names resolved to segment-relative
+   addresses (confirmed working — see the TEXT/DATA/BSS-SEGMENT
+   RELOCATABLE SYMBOLS tables it printed for the smoke test). **Conclusion:
+   the honest claim is symbol-level debugging (breakpoints and reads by
+   symbol name/address, resolved from `rln -m`'s map or the object's own
+   symbol table), never source-level or line-level.** Every "source-level
+   debugging" claim in this document has been corrected accordingly; do not
+   reintroduce it without new evidence that some other tool in the chain
+   (not `rln`) emits real DWARF.
 3. **Register numbering for the RISC target descriptions.** Needs to be fixed
-   once and then never changed, since clients cache it.
+   once and then never changed, since clients cache it. Still open — GPU/DSP
+   threads are Phase 3, not Phase 1.
 
 ## Sequencing
 
