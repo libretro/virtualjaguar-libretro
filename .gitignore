@@ -72,6 +72,7 @@ test/tools/teamtap_ports
 test/tools/mouse_decode_test
 test/tools/rotary_decode_test
 test/tools/analog_decode_test
+test/tools/audio_wav_dump
 test/tools/paddle_decode_test
 test/tools/procontroller_decode_test
 test/tools/sixd_decode_test
