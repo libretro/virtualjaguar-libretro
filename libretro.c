@@ -245,6 +245,11 @@ static bool show_input_options = true;
  * the options menu is complete before any content is loaded (the type is
  * unknown then, and the user may be configuring ahead of loading). */
 static bool content_loaded         = false;
+/* No-content boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, issue #646):
+ * there is no cartridge, so there is no EEPROM chip for RETRO_MEMORY_SAVE_RAM
+ * to expose.  Gates retro_get_memory_size()/retro_get_memory_data() only --
+ * everything else keys off jaguar_cd_mode / jaguarCartInserted as before. */
+static bool no_game_active         = false;
 static bool show_cd_options        = true;
 static bool show_cart_bios_option  = true;
 /* 16bpp preview interpretation only matters while texture dump is on
@@ -1265,6 +1270,14 @@ void retro_set_environment(retro_environment_t cb)
    voicechat_query_mic_iface();
 
    environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS, &achievements);
+
+   /* No-content boot (issue #646): retro_load_game(NULL) boots the bare
+    * console -- real boot ROM, no cartridge, matching what a real Jaguar
+    * does with an empty cart slot.  See cd_boot_strategy_none. */
+   {
+      bool no_content = true;
+      environ_cb(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_content);
+   }
 
    /* CD extensions are declared path-loaded (env 65).  DELIBERATELY the
     * inverse of the usual pattern: hybrid cart+disc cores (Genesis Plus GX,
@@ -4900,10 +4913,12 @@ bool retro_load_game(const struct retro_game_info *info)
       { 0 },
    };
 
-   if (!info)
-      return false;
-
-   is_cd_content = info->path && (has_extension(info->path, "cue")
+   /* info == NULL is a no-content boot (RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME,
+    * issue #646): the bare console, no cartridge.  Handled by threading the
+    * NULL through every info-dependent branch below (is_cd_content is
+    * unconditionally false; apply_cart_bios_autodetect() already NULL-checks
+    * info on its own) rather than an early return. */
+   is_cd_content = info && info->path && (has_extension(info->path, "cue")
                                   || has_extension(info->path, "cdi")
                                   || has_extension(info->path, "chd")
                                   || has_extension(info->path, "iso"));
@@ -4934,7 +4949,7 @@ bool retro_load_game(const struct retro_game_info *info)
     * over disc bytes either way. v1 only covers cartridge CRCs, and hashing
     * a disc image would find nothing this table knows about while risking a
     * collision handing a CD title some cartridge's per-title overrides. */
-   if (info->data && !is_cd_content)
+   if (info && info->data && !is_cd_content)
    {
       TitleDBSetContent((const uint8_t *)info->data, info->size);
       /* A patched ROM (RetroArch soft patching, or a pre-patched dump)
@@ -5105,10 +5120,26 @@ bool retro_load_game(const struct retro_game_info *info)
       apply_cart_bios_autodetect(info);
 
    /* Resolve boot configuration — single source of truth for which
-    * strategy (cart / HLE / real BIOS) we will dispatch to below. */
-   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
-                     vjs.cdBootMode, vjs.useJaguarBIOS);
-   vjs.useJaguarBIOS = bootConfig.showBootROM;
+    * strategy (cart / HLE / real BIOS / no-content) we will dispatch to
+    * below.  ResolveBootConfig() only knows about cart/CD content, so a
+    * no-content boot (info == NULL, issue #646) is resolved directly:
+    * there is no 68K program anywhere for HLE to jump into, so the real
+    * boot ROM is the only sane strategy -- exactly what real hardware
+    * shows with an empty cart slot. */
+   if (!info)
+   {
+      vjs.useJaguarBIOS          = true;
+      bootConfig.isCDGame        = false;
+      bootConfig.showBootROM     = true;
+      bootConfig.cdBiosAvailable = false;
+      bootConfig.strategy        = &cd_boot_strategy_none;
+   }
+   else
+   {
+      ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                        vjs.cdBootMode, vjs.useJaguarBIOS);
+      vjs.useJaguarBIOS = bootConfig.showBootROM;
+   }
 
    /* check_variables() ran above, before bootConfig existed, so the blit
     * memo could not tell cartridge from CD content then.  Re-apply the
@@ -5185,7 +5216,7 @@ bool retro_load_game(const struct retro_game_info *info)
     * boot strategies handle their own JaguarReset() ordering internally
     * so the post-boot state is preserved.  We only need to do an extra
     * reset+reload here for the RAM-loaded path. */
-   if (!jaguarCartInserted && !jaguar_cd_mode)
+   if (info && !jaguarCartInserted && !jaguar_cd_mode)
    {
       JaguarReset();
       if (!JaguarLoadFile((uint8_t*)info->data, info->size))
@@ -5242,6 +5273,7 @@ bool retro_load_game(const struct retro_game_info *info)
 
    /* Content type is now known — refresh which options apply to it. */
    content_loaded = true;
+   no_game_active = (info == NULL);
    update_option_visibility();
 
    /* Memory Track NVM BIOS module: on hardware the CD BIOS boot installs
@@ -5271,6 +5303,7 @@ void retro_unload_game(void)
    cd_image_path[0]  = '\0';
    /* Content type is unknown again — restore the full option list. */
    content_loaded    = false;
+   no_game_active    = false;
    update_option_visibility();
    JaguarDone();
 
@@ -5422,6 +5455,9 @@ void *retro_get_memory_data(unsigned type)
       return jaguarMainRAM;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
+      /* No-content boot (#646): no cartridge means no EEPROM chip. */
+      if (no_game_active)
+         return NULL;
       /* Memory Track cart uses 128K NVRAM directly */
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return mtMem;
@@ -5437,6 +5473,11 @@ size_t retro_get_memory_size(unsigned type)
       return 0x200000;
    if (type == RETRO_MEMORY_SAVE_RAM)
    {
+      /* No-content boot (#646): no cartridge means no EEPROM chip -- report
+       * zero so frontends don't create a meaningless .srm for a bare BIOS
+       * session. */
+      if (no_game_active)
+         return 0;
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return MT_SAVE_SIZE;
       /* CD discs share the cart EEPROM with their CD-side EEPROM bank
