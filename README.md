@@ -276,6 +276,10 @@ Full contributor mechanics — branching, lint gates, commit style, pre-commit h
 
 Linux (x86_64, aarch64, i686) · macOS (Apple Silicon, Intel) · Windows (x64, x86) · Android (arm64-v8a, armeabi-v7a, x86_64, x86) · iOS · tvOS · WebAssembly · PS Vita · Nintendo Switch — 16 targets, defined in [`release.yml`](.github/workflows/release.yml). Other handhelds and consoles get the core through the libretro buildbot.
 
+### Debugging with GDB/LLDB
+
+The core can open a loopback-only GDB remote-serial-protocol socket (off by default, developer-facing) so a real `gdb` or `lldb` can set breakpoints, read/write registers and memory, and single-step across all three processors — 68000, GPU, and DSP. `tools/gdb/connect.sh` (`connect.cmd` on Windows) finds a debugger and launches it pre-configured; `tools/gdb/install.sh` adds the same convenience commands to your `~/.gdbinit`/`~/.lldbinit` permanently. Full walkthrough, the honest limits (symbol-level, not source-level; no GDB backend for the RISC ISA; a halt freezes the whole frontend), and the `monitor` command reference: [`docs/gdb-stub-guide.md`](docs/gdb-stub-guide.md).
+
 ---
 
 ## The machine being emulated
