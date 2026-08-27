@@ -5180,7 +5180,17 @@ bool retro_load_game(const struct retro_game_info *info)
       port_var.key   = "virtualjaguar_gdb_port";
       port_var.value = NULL;
       if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &port_var) && port_var.value)
-         gdb_stub_port = atoi(port_var.value);
+      {
+         /* The core-options UI only ever offers the four listed ports, so
+          * this only matters for a hand-edited config. atoi() on garbage
+          * returns 0, which GDBSockOpen() would take as "ask the OS for an
+          * ephemeral port" while the banner below kept reporting the
+          * bogus requested number -- reject it instead and keep the
+          * documented default. */
+         int parsed_port = atoi(port_var.value);
+         if (parsed_port > 0 && parsed_port <= 65535)
+            gdb_stub_port = parsed_port;
+      }
 
       if (gdb_stub_enabled)
       {

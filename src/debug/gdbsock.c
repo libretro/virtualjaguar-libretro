@@ -21,6 +21,9 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "ws2_32.lib")
+#endif
 typedef SOCKET gdb_sock_t;
 #define GDB_INVALID_SOCK  INVALID_SOCKET
 #define gdb_sock_valid(s) ((s) != INVALID_SOCKET)

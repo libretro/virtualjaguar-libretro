@@ -315,6 +315,16 @@ Five layers, in increasing cost:
    reason, register read, memory read, and bounds refusal; breakpoint/continue
    coverage waits for Phase 2, where breakpoints exist to test.
 
+   **This is not merely a stand-in for gdb being unavailable.** Phase 1's
+   `GDBHandlePacket` never sends the low-level `+`/`-` acknowledgement byte a
+   real GDB client requires for every packet before `QStartNoAckMode` is
+   negotiated (and that negotiation itself needs one such ack to complete).
+   `gdb_attach_probe.py` passes without noticing this because it never checks
+   for an ack. A real `m68k-elf-gdb`, brought by the user per Open Question 1,
+   would stall on its very first `qSupported`. Implementing the ack byte is
+   Phase 2 work, tracked alongside breakpoints -- until then, the scripted
+   probe is the only client Phase 1 actually supports end to end.
+
 ## Out of scope
 
 - **Tracepoints** (`QTDP` and the rest of GDB's tracepoint machinery).

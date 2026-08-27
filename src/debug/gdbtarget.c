@@ -8,11 +8,23 @@
  * that header's comment: Xcode's stock Debug configuration defines the
  * preprocessor macro DEBUG=1, which would otherwise mangle the enumerator
  * list on every Xcode/SwiftPM consumer. The wire value (9) is unchanged.
- * Verified non-perturbing: every who-gated side effect in the read path
- * (DSP HLE sound-engine auto-ack and DSPGO auto-clear in src/jerry/dsp.c,
- * the busArbiter OP charge in jaguar.c, the GPU/DSP-specific branches in
- * vjtrace.c) is gated on who == M68K / GPU / DSP / OP specifically, none
- * of which equals DEBUGGER (9), so a debugger read triggers none of them.
+ * Verified for RAM/ROM and for every who-GATED side effect this audit
+ * found (DSP HLE sound-engine auto-ack and DSPGO auto-clear in
+ * src/jerry/dsp.c, the busArbiter OP charge in jaguar.c, the GPU/DSP-
+ * specific branches in vjtrace.c): all of them test who == M68K / GPU /
+ * DSP / OP specifically, none of which equals DEBUGGER (9), so a
+ * debugger read triggers none of them.
+ *
+ * NOT claimed: that every memory-mapped register in the map is free of
+ * read side effects regardless of who asks. A handful of hardware
+ * registers are read-sensitive by design on real silicon (e.g. CD
+ * BUTCH+2's DSCNTRL ack semantics in src/cd/cdrom.c, reached only via
+ * the 16/32-bit read path, not the byte path this file calls) -- a
+ * debugger peeking at those would legitimately perturb interrupt/FIFO
+ * state exactly as touching them from any processor does. GDBReadMem68K
+ * reads one byte at a time via JaguarReadByte(), which for MMIO ranges
+ * is honest about that: it inherits whatever the byte-granular handler
+ * defines, same as the emulated machine's own 68K would see.
  */
 #include <string.h>
 #include "gdbstub.h"
