@@ -34,6 +34,7 @@ skip_file() {
         # scalar ops and the arch header would redefine every one). They are
         # checked, with the right define and target, by check_simd_arch below.
         src/tom/blitter_simd_neon.c|src/tom/blitter_simd_sse2.c) return 0 ;;
+        src/tom/tom_scan_simd_neon.h) return 0 ;;
         # Depends on rcheevos headers fetched at runtime by the e2e shell wrapper.
         test/tools/test_rcheevos_e2e.c) return 0 ;;
         # Diagnostic tools — not part of the libretro core build.

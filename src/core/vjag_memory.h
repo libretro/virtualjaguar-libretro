@@ -10,6 +10,14 @@
 #include <stdint.h>
 #include <string.h>
 
+/* C89-safe restrict.  Unlocks autovec on scanline src/dst independently of
+ * the NEON kernels; empty on compilers without a restrict spelling. */
+#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
+#  define VJ_RESTRICT __restrict
+#else
+#  define VJ_RESTRICT
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

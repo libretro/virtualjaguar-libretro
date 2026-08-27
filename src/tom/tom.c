@@ -254,6 +254,7 @@
 //	------------------------------------------------------------
 
 #include "tom.h"
+#include "tom_scan_simd_neon.h"
 
 #include <string.h>								// For memset()
 #include "blitter.h"
@@ -446,9 +447,9 @@ typedef void (render_xxx_scanline_fn)(uint32_t *);
 // Private function prototypes
 
 void tom_render_16bpp_cry_scanline(uint32_t * backbuffer);
-void tom_render_24bpp_scanline(uint32_t * backbuffer);
-void tom_render_16bpp_direct_scanline(uint32_t * backbuffer);
-void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer);
+void tom_render_24bpp_scanline(uint32_t * VJ_RESTRICT backbuffer);
+void tom_render_16bpp_direct_scanline(uint32_t * VJ_RESTRICT backbuffer);
+void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer);
 void tom_render_16bpp_cry_rgb_mix_scanline(uint32_t * backbuffer);
 uint16_t TOMIRQControlReg(void);
 
@@ -1224,12 +1225,12 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
 }
 
 // 24 BPP mode rendering
-void tom_render_24bpp_scanline(uint32_t * backbuffer)
+void tom_render_24bpp_scanline(uint32_t * VJ_RESTRICT backbuffer)
 {
    unsigned i;
    uint8_t s;
    uint16_t width = tomWidth;
-   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
    int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
@@ -1255,6 +1256,16 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 #endif
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 4, pwidth_scale);
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_neon_24bpp(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 4;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#endif
    while (width >= pwidth_scale)
    {
       uint32_t b;
@@ -1273,15 +1284,25 @@ void tom_render_24bpp_scanline(uint32_t * backbuffer)
 //Seems to me that this is NOT a valid mode--the JTRM seems to imply that you would need
 //extra hardware outside of the Jaguar console to support this!
 // 16 BPP direct mode rendering
-void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
+void tom_render_16bpp_direct_scanline(uint32_t * VJ_RESTRICT backbuffer)
 {
    uint8_t s;
    uint16_t width = tomWidth;
-   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
 
    width = tom_clamp_line_buffer_width(current_line_buffer, width, 2, pwidth_scale);
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_neon_16bpp_direct(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#endif
    while (width >= pwidth_scale)
    {
       uint16_t color = (*current_line_buffer++) << 8;
@@ -1308,12 +1329,12 @@ void tom_render_16bpp_direct_scanline(uint32_t * backbuffer)
  *
  * Only pack art substitutes here, never a true-color CRY
  * reconstruction; see TomLinePackRGB above. */
-void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
+void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer)
 {
    unsigned i;
    uint8_t s;
    uint16_t width = tomWidth;
-   uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+   uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
    uint8_t pwidth = ((GET16(tomRam8, VMODE) & PWIDTH) >> 9) + 1;
    uint8_t pwidth_scale = (pwidth >= 8) ? (pwidth / 4) : 1;
    int16_t startPos = GET16(tomRam8, HDB1) - (int16_t)TOMGetLeftVisibleHC();
@@ -1362,6 +1383,16 @@ void tom_render_16bpp_rgb_scanline(uint32_t * backbuffer)
       return;
    }
 
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_neon_16bpp_rgb(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#endif
    while (width >= pwidth_scale)
    {
       uint32_t color = (*current_line_buffer++) << 8;
@@ -1581,7 +1612,7 @@ void TOMExecHalfline(uint16_t halfline, bool render)
    {
       if (render)
       {
-         uint8_t * current_line_buffer = (uint8_t *)&tomRam8[0x1800];
+         uint8_t * VJ_RESTRICT current_line_buffer = (uint8_t *)&tomRam8[0x1800];
          uint8_t bgHI = tomRam8[BG], bgLO = tomRam8[BG + 1];
 
          // Clear line buffer with BG
@@ -1595,8 +1626,10 @@ void TOMExecHalfline(uint16_t halfline, bool render)
              * endian-corrected value, so it is safe on any host byte
              * order -- see the paletteRAM16 comment in op.c for the same
              * "OK for direct copies, not for endian-corrected data"
-             * pattern applied to this exact line buffer. */
-            uint16_t * current_line_buffer16 = (uint16_t *)current_line_buffer;
+             * pattern applied to this exact line buffer.
+             * No hand-written NEON: clang/gcc -O3 already emit dup+stp.
+             * VJ_RESTRICT helps autovec on other targets. */
+            uint16_t * VJ_RESTRICT current_line_buffer16 = (uint16_t *)current_line_buffer;
             uint16_t bgPixel;
 
             current_line_buffer[0] = bgHI;
