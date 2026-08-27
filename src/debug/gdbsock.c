@@ -159,6 +159,11 @@ int GDBSockSend(const char *buf, int len)
    return (int)send(gdbClient, buf, (size_t)len, 0);
 }
 
+int GDBSockHasClient(void)
+{
+   return gdb_sock_valid(gdbClient) ? 1 : 0;
+}
+
 #else /* no BSD sockets on this target */
 
 int  GDBSockOpen(int port) { (void)port; return -1; }
@@ -166,5 +171,6 @@ void GDBSockClose(void)    { }
 int  GDBSockPoll(void)     { return 0; }
 int  GDBSockRecv(char *buf, int max) { (void)buf; (void)max; return 0; }
 int  GDBSockSend(const char *buf, int len) { (void)buf; (void)len; return -1; }
+int  GDBSockHasClient(void) { return 0; }
 
 #endif /* GDB_HAVE_TCP */

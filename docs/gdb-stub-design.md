@@ -310,20 +310,34 @@ Five layers, in increasing cost:
    attach, set a breakpoint at a known symbol, continue, assert the stop reply
    and PC, read a register, write memory, continue to exit. **Answered during
    Phase 1 implementation: it does not ship gdb** (see Open Question 1) — this
-   layer runs as `test/tools/gdb_attach_probe.py`, a scripted RSP client, for
-   as long as that remains true. It exercises attach, `qSupported`, halt
-   reason, register read, memory read, and bounds refusal; breakpoint/continue
-   coverage waits for Phase 2, where breakpoints exist to test.
+   layer runs as scripted RSP clients under `test/tools/`, for as long as that
+   remains true.
 
    **This is not merely a stand-in for gdb being unavailable.** Phase 1's
-   `GDBHandlePacket` never sends the low-level `+`/`-` acknowledgement byte a
+   `GDBHandlePacket` never sent the low-level `+`/`-` acknowledgement byte a
    real GDB client requires for every packet before `QStartNoAckMode` is
    negotiated (and that negotiation itself needs one such ack to complete).
-   `gdb_attach_probe.py` passes without noticing this because it never checks
-   for an ack. A real `m68k-elf-gdb`, brought by the user per Open Question 1,
-   would stall on its very first `qSupported`. Implementing the ack byte is
-   Phase 2 work, tracked alongside breakpoints -- until then, the scripted
-   probe is the only client Phase 1 actually supports end to end.
+   Phase 1's `gdb_attach_probe.py` passed without noticing this because it
+   never checked for an ack — a real `m68k-elf-gdb` would have stalled on its
+   very first `qSupported`.
+
+   **Phase 2 closed that gap and extended this layer:**
+   `test/tools/gdb_attach_probe.py` now verifies a `+` precedes every reply in
+   ack mode, and that acks stop arriving after `QStartNoAckMode` — including
+   the off-by-one (the `OK` reply to `QStartNoAckMode` itself is still acked;
+   only packets after it are not). `test/tools/gdb_breakpoint_probe.py` is new:
+   it launches the core headlessly (via `test/tools/gdb_determinism_probe` as
+   a free-running host process), halts it at boot (`virtualjaguar_gdb_wait`),
+   injects a single real 68K instruction (`BRA.S *`, a branch-to-self loop)
+   into scratch RAM via `M`, redirects PC to it via `G`, arms a `Z0` there,
+   continues, and asserts the stop reply names thread 1 and a fresh register
+   read shows PC still at that exact address — a real breakpoint actually
+   halting real (if synthetic) execution, not just a protocol-level OK reply.
+   The gdb_wait halt is load-bearing, not just convenient: an early version of
+   this script picked an arbitrary "probably unused" RAM address without
+   halting first, and the ROM's own boot code overwrote the injected
+   instruction before the CPU fetched it, within a single frame — confirmed
+   by reading the address back and finding the ROM's own data there instead.
 
 ## Out of scope
 
@@ -373,19 +387,96 @@ Five layers, in increasing cost:
    debugging" claim in this document has been corrected accordingly; do not
    reintroduce it without new evidence that some other tool in the chain
    (not `rln`) emits real DWARF.
-3. **Register numbering for the RISC target descriptions.** Needs to be fixed
-   once and then never changed, since clients cache it. Still open — GPU/DSP
-   threads are Phase 3, not Phase 1.
+3. **Register numbering for the RISC target descriptions.** **Answered
+   2026-08-27, Phase 3 implementation: R0-R31 = index 0-31, PC = 32,
+   FLAGS = 33 (34 registers total), identical for the GPU and DSP
+   descriptions.** Fixed now — do not renumber; see "GPU/DSP register
+   files" below.
+
+## Phase 2/3 implementation notes (2026-08-27)
+
+Phases 2-4 landed together. A few things resolved or turned out different
+from how this document originally described them:
+
+- **The `ALPINE_FUNCTIONS` six-site claim ("Watchpoints") was verified
+  true, but not for the reason it looked true at first.** `ALPINE_FUNCTIONS`
+  is not a build-system flag passed by any Makefile target — it is
+  `#define`d unconditionally near the top of `src/core/jaguar.c` itself
+  (line 80), so the six `m68k_read/write_memory_{8,16,32}` sites really are
+  compiled into every build, exactly as this document said. (An earlier
+  pass at this implementation grepped only the Makefiles for
+  `-DALPINE_FUNCTIONS`, found nothing, and nearly reported this as a design-
+  doc inaccuracy before re-checking the source directly and finding the
+  `#define` in `jaguar.c`.) What *was* true is that the six sites were
+  functionally dead: `bpmActive` was default-`false` and nothing in the
+  tree ever set it, and the six sites' only consumer, `M68KDebugHalt()`,
+  sets `SPCFLAG_DEBUGGER`, which makes `m68k_execute()` return early
+  (unwind) rather than block — and nothing ever called the matching
+  `M68KDebugResume()`, so the pre-existing "feature" would have wedged the
+  68K forever if anything had ever armed it. The six sites now call
+  `GDBMemWatchHit()` instead of `M68KDebugHalt()`; this module is the
+  first and only thing that ever sets `bpmActive`/`bpmAddress1`.
+- **Single watchpoint slot, not a table.** "Watchpoints ride the existing
+  exported memory-access breakpoint vars" was implemented literally: one
+  slot, matching `bpmAddress1`'s singular shape. A second `Z2`/`Z3`/`Z4`
+  while one is already armed at a different address is refused (E01)
+  rather than silently displacing it or growing a table. Documented as a
+  known limitation in the user guide.
+- **Stepping does NOT use the 68K's `SPCFLAG_DEBUGGER` path**, contrary to
+  what this document originally specified. All three processors' stepping
+  (and `monitor halt <target>`, and the `gdb_wait` boot halt) share one
+  one-shot primitive on the same per-target breakpoint-table structure
+  `GDBCheckPC()` already uses: arm a flag that matches unconditionally on
+  that processor's very next instruction hook, consumed immediately on
+  match. Reasoning for the deviation: `SPCFLAG_DEBUGGER` makes
+  `m68k_execute()` return early to its *caller* rather than block in
+  place, so something outside the hook would have to notice "a step just
+  completed" and re-invoke `GDBHalt()` — an extra layer of scheduler
+  plumbing the one-shot primitive doesn't need, and which wasn't worth the
+  risk of getting subtly wrong under time pressure when a uniform
+  mechanism across all three processors was available and already
+  necessary for the GPU/DSP anyway. `SPCFLAG_DEBUGGER`/`M68KDebugHalt`/
+  `M68KDebugResume` remain unused by this module.
+- **GPU/DSP register/PC/flags accessors needed adding or un-gating.**
+  `GPUGetReg`/`GPUGetPC` predate this feature (issue #406) and were
+  already unconditional; `GPUGetFlags` and `DSPGetReg` existed but were
+  `#ifdef VJ_TRACE`-only and are now unconditional (matching `GPUGetReg`'s
+  existing precedent, not a new exception). `DSPGetPC`, and the write side
+  of all of these (`GPUSetReg`/`GPUSetPC`/`GPUSetFlags`/`DSPSetReg`/
+  `DSPSetPC`/`DSPSetFlags`), plus read-only `GPUGetControl`/`DSPGetControl`
+  for `monitor regs`, did not exist at all and were added. The writes are
+  raw pokes (like `m68k_set_reg`), not simulated MMIO writes, specifically
+  so that GDB setting PC or FLAGS does not also trigger a G_CTRL/D_CTRL-
+  style side effect (e.g. toggling GPUGO) as a surprise side effect of a
+  register-inspection action.
+- **The RISC disassembler is genuinely shared, not just "not duplicated
+  in spirit."** `src/debug/gdbdisasm.h` is a header-only module included
+  by both `src/debug/gdbtarget.c` (`monitor disasm`, live) and
+  `test/tools/gpu_disasm_dump.c` (offline, dlsym-based) — the latter was
+  refactored to drop its own inline copy of the mnemonic table and operand
+  decode logic in favour of the shared one.
+- **Multi-architecture GDB sessions (native m68k thread 1 + custom-
+  description threads 2/3 in one inferior) are implemented to the RSP
+  specification and covered by this repo's own scripted test client, but
+  never verified against a real `gdb` binary** — consistent with Open
+  Question 1's answer (no `m68k-elf-gdb` ships anywhere in this repo's
+  toolchain). Documented as an explicit caveat in the user guide rather
+  than claimed as verified.
 
 ## Sequencing
 
 Each phase is independently useful and independently abandonable.
 
 1. **Protocol layer + 68K target, no breakpoints.** Attach, read registers,
-   read memory, detach. Proves the transport and framing.
+   read memory, detach. Proves the transport and framing. **Shipped**
+   (issue #652, PR #662).
 2. **68K breakpoints, watchpoints and stepping**, on the armed-flag gate. Run
    test layer 4 here — this is the go/no-go for the whole shipped-by-default
-   premise.
-3. **GPU and DSP threads**, XML descriptions, `monitor disasm`.
+   premise. **Shipped** — see the PR for this phase for the perf
+   measurement's result and the machine load it was (or wasn't) taken
+   under; do not treat this document as the record of that number.
+3. **GPU and DSP threads**, XML descriptions, `monitor disasm`. **Shipped**,
+   with the multi-architecture-session caveat above.
 4. **Documentation**: a user guide covering attaching, the frontend-freeze
-   behaviour, and the RISC disassembly limitation.
+   behaviour, and the RISC disassembly limitation. **Shipped** as
+   `docs/gdb-stub-guide.md`.

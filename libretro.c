@@ -163,149 +163,65 @@ static void widescreen_reset(void)
    widescreen_geometry_pending = false;
 }
 
-/* GDB remote debug stub (Phase 1, issue #652).  Developer-facing, off by
- * default, latched once at content load exactly like the enhancement-hook
- * gate above -- a "Restart" option must not be settable by a per-title DB
+/* GDB remote debug stub (issue #652).  Developer-facing, off by default,
+ * latched once at content load exactly like the enhancement-hook gate
+ * above -- a "Restart" option must not be settable by a per-title DB
  * row, so it is read raw via environ_cb, never through
  * get_variable_pertitle().  File-scope statics, not retro_run()-local:
  * iOS cannot dlclose the core, so a resident process must not carry a
- * previous title's stub state (or half a buffered packet) into the next
- * load -- reset alongside everything else in retro_unload_game() and
- * retro_deinit(). */
+ * previous title's stub state into the next load -- reset alongside
+ * everything else in retro_unload_game() and retro_deinit().
+ *
+ * Phase 2 moved the session, receive buffer, breakpoint tables and the
+ * blocking halt loop into src/debug/gdbtarget.c (GDBTargetOpen/Close/
+ * ServicePoll/ResetState) -- this file now owns only what genuinely
+ * needs environ_cb: option parsing, the socket lifecycle, and the two
+ * OSD banners the design calls out ("shown when the stub is enabled and
+ * again when a client attaches -- both are moments we can still reach
+ * the frontend"). */
 static bool gdb_stub_enabled     = false;
 static bool gdb_stub_socket_open = false;
 static int  gdb_stub_port        = 2345;
-static struct GDBSession gdb_session;
-static char gdb_rxbuf[GDB_PACKET_MAX];
-static int  gdb_rxlen = 0;
+static bool gdb_stub_wait_at_boot = false;
+
+/* Defined further down, right after environ_cb itself is declared --
+ * forward-declared here so gdb_stub_service() below can call it. */
+static void gdb_stub_show_banner(const char *text);
 
 /* Re-armed on every load/unload exactly like widescreen_reset() above:
- * a fresh title must not inherit a half-received packet or a session
- * struct pointed at the previous load's target ops. */
+ * a fresh title must not inherit a previous session's socket or armed
+ * breakpoints. Does NOT call GDBTargetClose() itself -- callers that
+ * need the Jaguar-side state disarmed too (unload/deinit) call that
+ * explicitly, since a bind-failure path needs only the option flags
+ * reset, not a full target-state wipe of a target that was never
+ * opened. */
 static void gdb_stub_reset(void)
 {
-   gdb_stub_enabled     = false;
-   gdb_stub_socket_open = false;
-   gdb_stub_port        = 2345;
-   gdb_rxlen            = 0;
+   gdb_stub_enabled      = false;
+   gdb_stub_socket_open  = false;
+   gdb_stub_port         = 2345;
+   gdb_stub_wait_at_boot = false;
 }
 
 /* Serviced once per frame from the top of retro_run(), and only when the
- * stub is enabled -- with no client attached this is one poll() and two
- * cheap comparisons, bounded and non-blocking, per the design's "near-
- * zero cost when disabled/idle" requirement.  Phase 1 has no breakpoints,
- * so nothing here can block: every packet the engine understands gets an
- * immediate reply, and the loop below terminates as soon as the receive
- * buffer holds no further complete "$...#cs" packet. */
+ * stub is enabled -- with no client attached this is one poll() and a
+ * handful of cheap comparisons, bounded and non-blocking, per the
+ * design's "near-zero cost when disabled/idle" requirement. Firing a
+ * breakpoint does NOT return through here: GDBHalt() (src/debug/
+ * gdbtarget.c) blocks in place, deep inside JaguarExecuteNew(), and this
+ * function is simply never reached for the remainder of that retro_run()
+ * call. The "client attached" banner is fired here, on the edge
+ * GDBTargetServicePoll() reports, because this is the only place in the
+ * whole stub that can still reach environ_cb. */
 static void gdb_stub_service(void)
 {
    if (!gdb_stub_enabled || !gdb_stub_socket_open)
       return;
 
-   GDBSockPoll();
+   GDBTargetServicePoll();
 
-   /* Pull whatever is available into the tail of the accumulation
-    * buffer.  A single recv() rarely delivers more than one small RSP
-    * command, but nothing here assumes that -- partial packets are
-    * simply left in gdb_rxbuf for the next frame's call. */
-   for (;;)
-   {
-      int room = (int)sizeof(gdb_rxbuf) - gdb_rxlen;
-      int n;
-
-      if (room <= 0)
-      {
-         /* Buffer full with no packet boundary found: a malformed or
-          * hostile stream. Drop it and resync rather than wedging. */
-         gdb_rxlen = 0;
-         break;
-      }
-
-      n = GDBSockRecv(gdb_rxbuf + gdb_rxlen, room);
-      if (n < 0)
-      {
-         /* Client disconnected. */
-         gdb_rxlen = 0;
-         break;
-      }
-      if (n == 0)
-         break;
-
-      gdb_rxlen += n;
-   }
-
-   /* Dispatch every complete packet currently buffered. */
-   for (;;)
-   {
-      static char payload[GDB_PACKET_MAX];
-      static char reply[GDB_PACKET_MAX];
-      static char encoded[GDB_PACKET_MAX + 8];
-      int i;
-      int dollarAt = -1;
-      int hashAt   = -1;
-      int payLen, replyLen, encLen, consumed, remaining;
-
-      for (i = 0; i < gdb_rxlen; i++)
-      {
-         if (gdb_rxbuf[i] == '$')
-         {
-            dollarAt = i;
-            break;
-         }
-      }
-
-      if (dollarAt < 0)
-      {
-         /* No packet start in the buffer at all (e.g. a stray leading
-          * '+' ack byte with nothing after it yet): nothing to do. */
-         gdb_rxlen = 0;
-         break;
-      }
-
-      for (i = dollarAt + 1; i < gdb_rxlen; i++)
-      {
-         if (gdb_rxbuf[i] == '#')
-         {
-            hashAt = i;
-            break;
-         }
-      }
-
-      if (hashAt < 0 || (hashAt + 2) >= gdb_rxlen)
-      {
-         /* Incomplete packet: drop only the garbage before '$' (if any)
-          * so the scan above does not re-walk it every frame, and wait
-          * for more bytes next frame. */
-         if (dollarAt > 0)
-         {
-            remaining = gdb_rxlen - dollarAt;
-            memmove(gdb_rxbuf, gdb_rxbuf + dollarAt, (size_t)remaining);
-            gdb_rxlen = remaining;
-         }
-         break;
-      }
-
-      payLen = GDBDecodePacket(gdb_rxbuf + dollarAt, hashAt + 3 - dollarAt,
-                               payload, (int)sizeof(payload));
-      if (payLen >= 0)
-      {
-         replyLen = GDBHandlePacket(&gdb_session, payload, payLen,
-                                    reply, (int)sizeof(reply));
-         encLen = GDBEncodePacket(reply, replyLen, encoded,
-                                  (int)sizeof(encoded));
-         if (encLen > 0)
-            GDBSockSend(encoded, encLen);
-      }
-      /* A malformed packet (bad checksum, overflow) gets no reply at
-       * all here -- real GDB retransmits on a missing ack, and Phase 1
-       * does not implement the low-level +/- ack byte, so silence is
-       * the correct "I didn't understand that" for now. */
-
-      consumed  = hashAt + 3;
-      remaining = gdb_rxlen - consumed;
-      memmove(gdb_rxbuf, gdb_rxbuf + consumed, (size_t)remaining);
-      gdb_rxlen = remaining;
-   }
+   if (GDBSockHasClientAttachEvent())
+      gdb_stub_show_banner("GDB client attached -- halts will freeze this frontend");
 }
 
 #ifdef VJ_TRACE
@@ -357,6 +273,23 @@ static retro_input_state_t input_state_cb;
 static retro_environment_t environ_cb;
 retro_audio_sample_batch_t audio_batch_cb;
 retro_log_printf_t vj_log_cb = NULL;
+
+/* GDB stub OSD banner (issue #652) -- see the forward declaration and
+ * gdb_stub_service() above for why this lives here, after environ_cb. */
+static void gdb_stub_show_banner(const char *text)
+{
+   struct retro_message_ext gdb_msg;
+
+   memset(&gdb_msg, 0, sizeof(gdb_msg));
+   gdb_msg.msg      = text;
+   gdb_msg.duration = 4000;
+   gdb_msg.priority = 2;
+   gdb_msg.level    = RETRO_LOG_INFO;
+   gdb_msg.target   = RETRO_MESSAGE_TARGET_OSD;
+   gdb_msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION;
+   gdb_msg.progress = -1;
+   environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &gdb_msg);
+}
 
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
@@ -5196,13 +5129,16 @@ bool retro_load_game(const struct retro_game_info *info)
       hook_restart_notice_logged = 0;
    }
 
-   /* GDB remote debug stub (Phase 1, issue #652): same raw-read reasoning
-    * as the enhancement-hook gate immediately above -- a developer-facing
+   /* GDB remote debug stub (issue #652): same raw-read reasoning as the
+    * enhancement-hook gate immediately above -- a developer-facing
     * "Restart" gate must not be settable by a per-title DB row. */
    gdb_stub_reset();
    {
       struct retro_variable gdb_var;
       struct retro_variable port_var;
+      struct retro_variable wait_var;
+      struct retro_variable timeout_var;
+      int halt_timeout_seconds = 0;
 
       gdb_var.key   = "virtualjaguar_gdb_stub";
       gdb_var.value = NULL;
@@ -5224,28 +5160,48 @@ bool retro_load_game(const struct retro_game_info *info)
             gdb_stub_port = parsed_port;
       }
 
+      /* virtualjaguar_gdb_wait: halt at the very first 68K instruction so
+       * a developer can attach before anything has run -- see the design
+       * doc's note that debugging a boot-time fault is impossible if the
+       * machine has already run past it. Read here (not latched
+       * separately) since it only matters once, at this same load. */
+      wait_var.key   = "virtualjaguar_gdb_wait";
+      wait_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &wait_var) && wait_var.value)
+         gdb_stub_wait_at_boot = (strcmp(wait_var.value, "enabled") == 0);
+
+      /* virtualjaguar_gdb_halt_timeout: "off" (0) by default -- silently
+       * resuming a debugged machine is worse than a freeze for this
+       * audience, per the design doc. */
+      timeout_var.key   = "virtualjaguar_gdb_halt_timeout";
+      timeout_var.value = NULL;
+      if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &timeout_var) && timeout_var.value
+            && strcmp(timeout_var.value, "off") != 0)
+      {
+         int parsed_timeout = atoi(timeout_var.value);
+         if (parsed_timeout > 0)
+            halt_timeout_seconds = parsed_timeout;
+      }
+
       if (gdb_stub_enabled)
       {
          if (GDBSockOpen(gdb_stub_port) == 0)
          {
-            struct retro_message_ext gdb_msg;
             char gdb_msg_text[96];
 
             gdb_stub_socket_open = true;
-            GDBSessionInit(&gdb_session, GDBJaguarOps(), NULL);
+            GDBTargetOpen();
+            GDBTargetSetHaltTimeout(halt_timeout_seconds);
+            if (gdb_stub_wait_at_boot)
+               GDBTargetArmWaitAtBoot();
 
             snprintf(gdb_msg_text, sizeof(gdb_msg_text),
-                     "GDB stub listening on 127.0.0.1:%d", gdb_stub_port);
-            memset(&gdb_msg, 0, sizeof(gdb_msg));
-            gdb_msg.msg      = gdb_msg_text;
-            gdb_msg.duration = 4000;
-            gdb_msg.priority = 2;
-            gdb_msg.level    = RETRO_LOG_INFO;
-            gdb_msg.target   = RETRO_MESSAGE_TARGET_OSD;
-            gdb_msg.type     = RETRO_MESSAGE_TYPE_NOTIFICATION;
-            gdb_msg.progress = -1;
-            environ_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &gdb_msg);
-            LOG_INF("[GDB] stub listening on 127.0.0.1:%d\n", gdb_stub_port);
+                     "GDB stub listening on 127.0.0.1:%d -- halts will "
+                     "freeze this frontend", gdb_stub_port);
+            gdb_stub_show_banner(gdb_msg_text);
+            LOG_INF("[GDB] stub listening on 127.0.0.1:%d%s%s\n", gdb_stub_port,
+                    gdb_stub_wait_at_boot ? " (halting at boot)" : "",
+                    halt_timeout_seconds > 0 ? " (halt-timeout armed)" : "");
          }
          else
          {
@@ -5672,10 +5628,14 @@ void retro_unload_game(void)
    TitleHookSetEnabled(0);
    TitleDBSetHooksForTest(NULL, 0);
    hook_restart_notice_logged = 0;
-   /* GDB stub (#652): close the listener/client so a stale socket does
-    * not linger into the next title, and re-latch the gate from the next
-    * load's option instead of carrying this session's state forward. */
+   /* GDB stub (#652): close the listener/client and disarm every
+    * breakpoint/watchpoint/step (GDBTargetClose(), src/debug/
+    * gdbtarget.c) so a stale socket -- or worse, an armed breakpoint at
+    * an address that means nothing in the next title -- never lingers
+    * into the next load. Re-latch the gate from the next load's option
+    * instead of carrying this session's state forward. */
    GDBSockClose();
+   GDBTargetClose();
    gdb_stub_reset();
    /* Known-bad negative entries (#464): same reasoning, same reset. */
    TitleDBSetNegativeForTest(NULL, 0);
@@ -6098,8 +6058,9 @@ void retro_deinit(void)
    hook_restart_notice_logged = 0;
    /* GDB stub (#652): belt-and-suspenders, matching retro_unload_game() --
     * a frontend that calls deinit without unload first must not leave a
-    * listener bound past process teardown. */
+    * listener bound, or a breakpoint armed, past process teardown. */
    GDBSockClose();
+   GDBTargetClose();
    gdb_stub_reset();
    /* Known-bad negative entries (#464): same per-load re-arm as above. */
    TitleDBSetNegativeForTest(NULL, 0);
