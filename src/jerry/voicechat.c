@@ -5,8 +5,13 @@
 #include "voicechat.h"
 #include "jlink.h"
 #include "jlink_discover.h"
+#include "blitter_simd_arch.h"
 
 #include <string.h>
+
+#if defined(BLITTER_SIMD_HAVE_NEON)
+#include "voicechat_simd_neon.h"
+#endif
 
 #define VC_JITTER_FRAMES   8
 #define VC_JITTER_SAMPLES  (VC_JITTER_FRAMES * VC_FRAME_SAMPLES)
@@ -707,6 +712,9 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
    int16_t holdFar[VC_MAX_SPEAKERS];
    int16_t holdMon;
    unsigned monIdx;
+   unsigned remain;
+   unsigned n;
+   unsigned k;
 
    if (!vcEnabled || !buf || pairs == 0)
       return;
@@ -720,7 +728,7 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
    holdMon = 0;
    monIdx = 0;
 
-   for (i = 0; i < pairs; i++)
+   for (i = 0; i < pairs; )
    {
       /* 6× upsample: one 8 kHz sample every VC_UPSAMPLE output pairs. */
       if ((i % VC_UPSAMPLE) == 0)
@@ -750,18 +758,41 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
       if (vcMonitor)
          mixed += ((int)holdMon * vol) / 100;
 
-      left = (int)stereo[i * 2 + 0] + mixed;
-      right = (int)stereo[i * 2 + 1] + mixed;
-      if (left > 32767)
-         left = 32767;
-      if (left < -32768)
-         left = -32768;
-      if (right > 32767)
-         right = 32767;
-      if (right < -32768)
-         right = -32768;
-      stereo[i * 2 + 0] = (int16_t)left;
-      stereo[i * 2 + 1] = (int16_t)right;
+      /* mixed is constant for this upsample group. */
+      remain = VC_UPSAMPLE - (i % VC_UPSAMPLE);
+      if (remain > pairs - i)
+         remain = pairs - i;
+      n = remain;
+
+#if defined(BLITTER_SIMD_HAVE_NEON)
+      /* vqaddq_s16 matches the scalar clamp iff mixed fits in int16. */
+      if (mixed >= -32768 && mixed <= 32767)
+      {
+         while (n >= 4)
+         {
+            voicechat_mix_sat4(&stereo[i * 2], (int16_t)mixed);
+            i += 4;
+            n -= 4;
+         }
+      }
+#endif
+
+      for (k = 0; k < n; k++)
+      {
+         left = (int)stereo[i * 2 + 0] + mixed;
+         right = (int)stereo[i * 2 + 1] + mixed;
+         if (left > 32767)
+            left = 32767;
+         if (left < -32768)
+            left = -32768;
+         if (right > 32767)
+            right = 32767;
+         if (right < -32768)
+            right = -32768;
+         stereo[i * 2 + 0] = (int16_t)left;
+         stereo[i * 2 + 1] = (int16_t)right;
+         i++;
+      }
    }
    if (vcMonitor)
       vcMonCount = 0;

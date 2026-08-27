@@ -36,6 +36,7 @@ skip_file() {
         src/tom/blitter_simd_neon.c|src/tom/blitter_simd_sse2.c) return 0 ;;
         src/tom/op_simd_neon.h) return 0 ;;
         src/tom/tom_scan_simd_neon.h) return 0 ;;
+        src/jerry/voicechat_simd_neon.h) return 0 ;;
         # Depends on rcheevos headers fetched at runtime by the e2e shell wrapper.
         test/tools/test_rcheevos_e2e.c) return 0 ;;
         # Diagnostic tools — not part of the libretro core build.
