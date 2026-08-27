@@ -6354,7 +6354,13 @@ void retro_run(void)
     * idempotent on repeated netlink_apply() calls with unchanged
     * parameters, so this rebuild's own SET_CORE_OPTIONS_V2 -- even if it
     * causes the frontend to re-signal a variables update -- cannot wipe
-    * the peer table out from under itself. */
+    * the peer table out from under itself.
+    *
+    * Skip the clock query (and ConsumeChanged) when netlink is off and
+    * nothing is latched: JLinkNowMs() is a second per-frame
+    * clock_gettime on top of JLinkFrameTick.  A sticky dirty latch
+    * still enters so a change is delayed, never lost. */
+   if (JLinkMode() != JLINK_MODE_DISABLED || netlink_peers_dirty)
    {
       uint32_t disc_now = JLinkNowMs();
       if (JLinkDiscConsumeChanged())
