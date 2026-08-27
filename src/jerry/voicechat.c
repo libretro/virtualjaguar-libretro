@@ -11,6 +11,8 @@
 
 #if defined(BLITTER_SIMD_HAVE_NEON)
 #include "voicechat_simd_neon.h"
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+#include "voicechat_simd_sse2.h"
 #endif
 
 #define VC_JITTER_FRAMES   8
@@ -766,6 +768,17 @@ void VoiceChatMixInto(uint16_t *buf, unsigned pairs)
 
 #if defined(BLITTER_SIMD_HAVE_NEON)
       /* vqaddq_s16 matches the scalar clamp iff mixed fits in int16. */
+      if (mixed >= -32768 && mixed <= 32767)
+      {
+         while (n >= 4)
+         {
+            voicechat_mix_sat4(&stereo[i * 2], (int16_t)mixed);
+            i += 4;
+            n -= 4;
+         }
+      }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+      /* _mm_adds_epi16 matches the scalar clamp iff mixed fits in int16. */
       if (mixed >= -32768 && mixed <= 32767)
       {
          while (n >= 4)
