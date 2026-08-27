@@ -35,7 +35,9 @@ skip_file() {
         # checked, with the right define and target, by check_simd_arch below.
         src/tom/blitter_simd_neon.c|src/tom/blitter_simd_sse2.c) return 0 ;;
         src/tom/op_simd_neon.h) return 0 ;;
+        src/tom/op_simd_sse2.h) return 0 ;;
         src/tom/tom_scan_simd_neon.h) return 0 ;;
+        src/tom/tom_scan_simd_sse2.h) return 0 ;;
         src/jerry/voicechat_simd_neon.h) return 0 ;;
         # Depends on rcheevos headers fetched at runtime by the e2e shell wrapper.
         test/tools/test_rcheevos_e2e.c) return 0 ;;
@@ -69,7 +71,7 @@ CHECK_SIMD=0
 for f in $FILES; do
     [ -f "$f" ] || continue
     case "$f" in *.c) ;; *) continue ;; esac
-    case "$f" in src/tom/blitter.c|src/tom/blitter_simd_*.c) CHECK_SIMD=1 ;; esac
+    case "$f" in src/tom/blitter.c|src/tom/blitter_simd_*.c|src/tom/op.c|src/tom/tom.c) CHECK_SIMD=1 ;; esac
     if skip_file "$f"; then continue; fi
 
     if ! $CC $CFLAGS $INCLUDES $DEFINES "$f" 2>&1; then
@@ -90,6 +92,12 @@ done
 # Re-check blitter.c (and the arch's own .c) once per arch, cross-
 # targeting when the host can't do it natively.  A host that can't
 # cross-target says so out loud rather than passing silently.
+#
+# op.c and tom.c ride the same pass: they include the guard-selected
+# op_simd_<arch>.h / tom_scan_simd_<arch>.h fragments, which the default
+# loop only ever sees with the host's own capability macros.  Compiling
+# them per-arch is the only host-side syntax check the non-native
+# fragment header gets.
 check_simd_arch() {
     arch="$1"      # sse2 | neon
     define="$2"    # BLITTER_SIMD_SSE2 | BLITTER_SIMD_NEON
@@ -113,7 +121,8 @@ check_simd_arch() {
     rm -f "$probe_c"
 
     arch_failed=0
-    for f in src/tom/blitter.c "src/tom/blitter_simd_$arch.c"; do
+    for f in src/tom/blitter.c "src/tom/blitter_simd_$arch.c" \
+             src/tom/op.c src/tom/tom.c; do
         [ -f "$f" ] || continue
         if ! $cc $CFLAGS $target $INCLUDES $DEFINES "-D$define" "$f" 2>&1; then
             echo "C89 lint: $arch pass failed on $f"
