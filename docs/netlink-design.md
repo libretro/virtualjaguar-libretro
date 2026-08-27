@@ -69,7 +69,16 @@ automated testing.
   exists for Jaguar today; the TCP backend plus user-supplied tunneling
   (Tailscale etc.) is the interim story. A relay is a separate future project.
 - Modeling CatBox RS-232 DSP-port registers beyond the UART itself, MIDI, or
-  ComLynx cross-compatibility.
+  ComLynx cross-compatibility. On ComLynx specifically, so this stays
+  asked-and-answered (issue #638): the Jaguar's async serial *is* the
+  ComLynx-compatible port and `src/jerry/uart.c` already emulates it, so
+  nothing here is unimplemented. What is absent is Jaguar-to-Lynx
+  cross-console linking, and it stays absent because no adapter ever shipped
+  and no software on either machine is known to use it. It would also not be
+  a free reuse of this transport: the ComLynx cable ties RX and TX together
+  into a single-wire shared bus, so senders see their own transmission echoed
+  and peers daisy-chain onto one wire -- whereas the design below is
+  point-to-point.
 - Cycle-exact UART timing beyond baud-rate pacing (start/8-data/stop bit
   times); games rate-limit on TBE/RBF status, not on bit edges.
 
