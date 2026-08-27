@@ -33,6 +33,7 @@
 #include "bus_arbiter.h"
 #include "../core/vjtrace.h"
 #include "perf_iface.h"
+#include "gdbstub.h"
 
 // Seems alignment in loads & stores was off...
 #define DSP_CORRECT_ALIGNMENT
@@ -951,23 +952,62 @@ uint32_t DSPGetFlags(void)
 	return dsp_flags;
 }
 
-/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
- * VJ_TRACE; DSPGetReg is new-for-vjtrace surface (unlike GPU's
- * pre-existing #406 GPUGetReg, left unguarded elsewhere), so it
- * compiles out entirely in shipped/non-test builds rather than relying
- * solely on exports.list to hide it. */
-#ifdef VJ_TRACE
-/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose a DSP
- * register by index from the CURRENT bank, mirroring GPUGetReg in
- * src/tom/gpu.c. Not part of the shipped ABI (production link uses
- * exports.list, which does not have the _DSP* wildcard). */
+/* Write side of DSPGetFlags, added for the GDB stub (issue #652). A raw
+ * poke of dsp_flags -- see GPUSetFlags in src/tom/gpu.c for why this
+ * bypasses the D_FLAGS MMIO write path (interrupt-mask side effects a
+ * debugger write should not trigger as a side effect of merely wanting
+ * to see a different N/C/Z combination). */
+void DSPSetFlags(uint32_t v)
+{
+	dsp_flags = v;
+}
+
+/* DSPGetPC/DSPSetPC, added for the GDB stub (issue #652): dsp_pc had no
+ * accessor at all before this (GPU's equivalent, GPUGetPC, predates
+ * vjtrace -- issue #406). Raw poke on the write side, like GPUSetPC. */
+uint32_t DSPGetPC(void)
+{
+	return dsp_pc;
+}
+
+void DSPSetPC(uint32_t pc)
+{
+	dsp_pc = pc;
+}
+
+/* Diagnostic-only accessor, added for `monitor regs dsp` (the GDB stub,
+ * issue #652): the raw D_CTRL value, read-only -- see GPUGetControl in
+ * src/tom/gpu.c for why the write side is not exposed. */
+uint32_t DSPGetControl(void)
+{
+	return dsp_control;
+}
+
+/* Originally vjtrace-only (#408) and gated behind VJ_TRACE, like GPU's
+ * GPUGetReg was NOT (issue #406, pre-existing). The GDB stub (issue
+ * #652) needs DSPGetReg in every build (shipped-by-default, off by
+ * default -- see docs/gdb-stub-design.md), so it is unconditional now,
+ * matching GPUGetReg. This does not change the shipped dylib's exported
+ * symbol list -- production links still use exports.list, which never
+ * listed either accessor. */
 uint32_t DSPGetReg(int n)
 {
 	if (n < 0 || n > 31)
 		return 0;
 	return dsp_reg[n];
 }
-#endif /* VJ_TRACE */
+
+/* Write side of DSPGetReg, added for the GDB stub (issue #652). Pokes
+ * the ACTIVE bank directly, mirroring GPUSetReg's reasoning in
+ * src/tom/gpu.c: the $F1A000-range MMIO register window addresses both
+ * banks unconditionally by register number, which is NOT what "the
+ * current register file" means once REGPAGE has flipped. */
+void DSPSetReg(int n, uint32_t v)
+{
+	if (n < 0 || n > 31)
+		return;
+	dsp_reg[n] = v;
+}
 
 void DSPInit(void)
 {
@@ -1860,6 +1900,19 @@ void DSPExec(int32_t cycles)
 	if (vjtrace_armed || vjtrace_nwatch)
 		idleSkipActive = 0;
 #endif
+#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+	/* GDB stub (issue #652): DSPIdleLoopProbe() extrapolates the PC
+	 * forward over many idle-loop iterations without visiting each one,
+	 * exactly the class of per-instruction side effect the #569 idle-skip
+	 * gate list above already disables for (blit memo, busArbiter,
+	 * vjtrace watch). A DSP breakpoint or pending step would be stepped
+	 * clean over. This is a RUNTIME check, same reasoning as the VJ_TRACE
+	 * block above: gdbArmedDSP defaults to 0 and costs one load + branch
+	 * when nothing is armed. VJ_GDB_STUB_DISABLE_HOOKS exists only for
+	 * the Phase 2 A/B perf measurement. */
+	if (gdbArmedDSP)
+		idleSkipActive = 0;
+#endif
 	/* Probe + reject memo are re-derived from scratch every call, so
 	 * nothing here reaches a savestate and nothing survives a slice. */
 	idleProbeStage = 0;
@@ -1920,6 +1973,18 @@ void DSPExec(int32_t cycles)
 		}
 
 		pcThis = dsp_pc;
+
+#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+		/* GDB stub (issue #652): one load of a hot global, one
+		 * never-taken branch when no DSP breakpoint/step is armed -- see
+		 * docs/gdb-stub-design.md "Breakpoint detection". GDBHalt()
+		 * blocks in place (does not unwind this loop) until the client
+		 * continues, steps, or disconnects. VJ_GDB_STUB_DISABLE_HOOKS
+		 * exists only for the Phase 2 A/B perf measurement -- see the
+		 * comment in src/core/jaguar.c's M68KInstructionHook(). */
+		if (gdbArmedDSP && GDBCheckPC(GDB_TGT_DSP, pcThis))
+			GDBHalt(GDB_TGT_DSP, GDB_STOP_BREAKPOINT, pcThis);
+#endif
 
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
 		{

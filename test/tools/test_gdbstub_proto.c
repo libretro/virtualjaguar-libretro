@@ -139,11 +139,23 @@ static void setup_session(void) {
     GDBSessionInit(&g_sess, &ops, NULL);
 }
 
+/* Phase 2 added two out-parameters to GDBHandlePacket (resumeRequested/
+ * resumeIsStep, for c/s/vCont -- see gdbstub.h). Every pre-existing test
+ * below only cares about the reply, so this thin wrapper keeps them
+ * readable; the new tests that DO care about resume signalling call
+ * GDBHandlePacket directly. */
+static int TF_Handle(struct GDBSession *s, const char *pay, int payLen,
+                      char *reply, int replyMax) {
+    int resumeRequested = 0, resumeIsStep = 0;
+    return GDBHandlePacket(s, pay, payLen, reply, replyMax,
+                           &resumeRequested, &resumeIsStep);
+}
+
 TEST(qsupported_advertises_packet_size) {
     char reply[256];
     int n;
     setup_session();
-    n = GDBHandlePacket(&g_sess, "qSupported:multiprocess+", 24, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "qSupported:multiprocess+", 24, reply, sizeof(reply));
     ASSERT(n > 0);
     reply[n] = '\0';
     ASSERT(strstr(reply, "PacketSize=") != NULL);
@@ -152,14 +164,14 @@ TEST(qsupported_advertises_packet_size) {
 TEST(unknown_command_returns_empty_reply) {
     char reply[256];
     setup_session();
-    ASSERT_EQ(GDBHandlePacket(&g_sess, "zzUnknown", 9, reply, sizeof(reply)), 0);
+    ASSERT_EQ(TF_Handle(&g_sess, "zzUnknown", 9, reply, sizeof(reply)), 0);
 }
 
 TEST(halt_reason_reports_sigtrap) {
     char reply[256];
     int n;
     setup_session();
-    n = GDBHandlePacket(&g_sess, "?", 1, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "?", 1, reply, sizeof(reply));
     ASSERT(n > 0);
     reply[n] = '\0';
     ASSERT_STR(reply, "S05");
@@ -208,7 +220,7 @@ TEST(parse_hex_u32_rejects_non_hex) {
 TEST(read_memory_returns_hex) {
     char reply[256]; int n;
     setup_mem_session();
-    n = GDBHandlePacket(&g_sess, "m0,2", 4, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "m0,2", 4, reply, sizeof(reply));
     ASSERT_EQ(n, 4);
     reply[n] = '\0';
     ASSERT_STR(reply, "dead");
@@ -218,7 +230,7 @@ TEST(read_memory_past_end_is_refused) {
     char reply[256]; int n;
     setup_mem_session();
     /* 0xFF + 4 bytes overruns the 256-byte fake guest */
-    n = GDBHandlePacket(&g_sess, "mff,4", 5, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "mff,4", 5, reply, sizeof(reply));
     ASSERT(n > 0);
     reply[n] = '\0';
     ASSERT_STR(reply, "E01");
@@ -227,7 +239,7 @@ TEST(read_memory_past_end_is_refused) {
 TEST(read_memory_wild_address_is_refused) {
     char reply[256]; int n;
     setup_mem_session();
-    n = GDBHandlePacket(&g_sess, "mffffffff,4", 11, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "mffffffff,4", 11, reply, sizeof(reply));
     ASSERT(n > 0);
     reply[n] = '\0';
     ASSERT_STR(reply, "E01");
@@ -237,7 +249,7 @@ TEST(read_memory_absurd_length_is_refused) {
     char reply[64]; int n;
     setup_mem_session();
     /* len would overflow the caller's reply buffer even if in range */
-    n = GDBHandlePacket(&g_sess, "m0,1000", 7, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "m0,1000", 7, reply, sizeof(reply));
     ASSERT(n > 0);
     reply[n] = '\0';
     ASSERT_STR(reply, "E01");
@@ -246,7 +258,7 @@ TEST(read_memory_absurd_length_is_refused) {
 TEST(read_memory_without_target_op_is_unsupported) {
     char reply[256];
     setup_session();   /* ops.readMemory == NULL */
-    ASSERT_EQ(GDBHandlePacket(&g_sess, "m0,2", 4, reply, sizeof(reply)), 0);
+    ASSERT_EQ(TF_Handle(&g_sess, "m0,2", 4, reply, sizeof(reply)), 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -274,7 +286,7 @@ TEST(read_registers_returns_144_hex_chars) {
     memset(&ops, 0, sizeof(ops));
     ops.readRegisters = fake_read_regs;
     GDBSessionInit(&g_sess, &ops, NULL);
-    n = GDBHandlePacket(&g_sess, "g", 1, reply, sizeof(reply));
+    n = TF_Handle(&g_sess, "g", 1, reply, sizeof(reply));
     ASSERT_EQ(n, 144);
     ASSERT_EQ(memcmp(reply, "00000001", 8), 0);          /* d0 first */
     ASSERT_EQ(memcmp(reply + 136, "00802000", 8), 0);    /* pc last  */
@@ -283,10 +295,280 @@ TEST(read_registers_returns_144_hex_chars) {
 TEST(read_registers_without_target_op_is_unsupported) {
     char reply[512];
     setup_session();
-    ASSERT_EQ(GDBHandlePacket(&g_sess, "g", 1, reply, sizeof(reply)), 0);
+    ASSERT_EQ(TF_Handle(&g_sess, "g", 1, reply, sizeof(reply)), 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 2: register/memory writes, Z/z, c/s/vCont, qRcmd, threads     */
+/* ------------------------------------------------------------------ */
+
+static char last_written_hex[512];
+static int last_written_hex_len;
+
+static int fake_write_regs(void *user, const char *hex, int hexLen) {
+    (void)user;
+    if (hexLen < 144) return -1;
+    memcpy(last_written_hex, hex, (size_t)hexLen);
+    last_written_hex_len = hexLen;
+    return 0;
+}
+
+TEST(write_registers_calls_ops_and_replies_ok) {
+    char reply[64]; int n;
+    static struct GDBTargetOps ops;
+    char pay[1 + 144];
+    memset(&ops, 0, sizeof(ops));
+    ops.writeRegisters = fake_write_regs;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    pay[0] = 'G';
+    memset(pay + 1, '0', 144);
+    last_written_hex_len = 0;
+    n = TF_Handle(&g_sess, pay, (int)sizeof(pay), reply, sizeof(reply));
+    ASSERT_EQ(n, 2);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(last_written_hex_len, 144);
+}
+
+TEST(write_registers_without_target_op_is_unsupported) {
+    char reply[64];
+    char pay[1 + 144];
+    setup_session();
+    pay[0] = 'G';
+    memset(pay + 1, '0', 144);
+    ASSERT_EQ(TF_Handle(&g_sess, pay, (int)sizeof(pay), reply, sizeof(reply)), 0);
+}
+
+static unsigned char fake_write_mem_target[256];
+
+static int fake_write_mem(void *user, unsigned int addr, int len,
+                          const char *hex, int hexLen) {
+    static const char hx[] = "0123456789abcdef";
+    int i;
+    (void)user;
+    if (addr > sizeof(fake_write_mem_target) || len < 0) return -1;
+    if ((addr + (unsigned int)len) > sizeof(fake_write_mem_target)) return -1;
+    if (hexLen != len * 2) return -1;
+    for (i = 0; i < len; i++) {
+        const char *hi = strchr(hx, hex[i*2]);
+        const char *lo = strchr(hx, hex[i*2+1]);
+        if (!hi || !lo) return -1;
+        fake_write_mem_target[addr+i] = (unsigned char)(((hi - hx) << 4) | (lo - hx));
+    }
+    return 0;
+}
+
+static void setup_write_mem_session(void) {
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    ops.writeMemory = fake_write_mem;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    memset(fake_write_mem_target, 0, sizeof(fake_write_mem_target));
+}
+
+TEST(write_memory_writes_and_replies_ok) {
+    char reply[64]; int n;
+    setup_write_mem_session();
+    n = TF_Handle(&g_sess, "M0,2:dead", 9, reply, sizeof(reply));
+    ASSERT_EQ(n, 2);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(fake_write_mem_target[0], 0xDE);
+    ASSERT_EQ(fake_write_mem_target[1], 0xAD);
+}
+
+TEST(write_memory_length_mismatch_is_refused) {
+    char reply[64]; int n;
+    setup_write_mem_session();
+    /* len=2 promised, only 1 byte (2 hex chars) supplied */
+    n = TF_Handle(&g_sess, "M0,2:de", 7, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "E01");
+}
+
+static int fake_insert_break_calls;
+static int fake_insert_break_result = 0;
+
+static int fake_insert_break(void *user, int type, unsigned int addr, unsigned int kind) {
+    (void)user; (void)type; (void)addr; (void)kind;
+    fake_insert_break_calls++;
+    return fake_insert_break_result;
+}
+
+static int fake_remove_break_calls;
+
+static int fake_remove_break(void *user, int type, unsigned int addr, unsigned int kind) {
+    (void)user; (void)type; (void)addr; (void)kind;
+    fake_remove_break_calls++;
+    return 0;
+}
+
+static void setup_break_session(void) {
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    ops.insertBreak = fake_insert_break;
+    ops.removeBreak = fake_remove_break;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    fake_insert_break_calls = 0;
+    fake_remove_break_calls = 0;
+    fake_insert_break_result = 0;
+}
+
+TEST(insert_breakpoint_replies_ok) {
+    char reply[64]; int n;
+    setup_break_session();
+    n = TF_Handle(&g_sess, "Z0,1000,2", 9, reply, sizeof(reply));
+    ASSERT_EQ(n, 2);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(fake_insert_break_calls, 1);
+}
+
+TEST(insert_breakpoint_out_of_resources_is_e01) {
+    char reply[64]; int n;
+    setup_break_session();
+    fake_insert_break_result = -2;
+    n = TF_Handle(&g_sess, "Z1,2000,2", 9, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "E01");
+}
+
+TEST(remove_breakpoint_replies_ok) {
+    char reply[64]; int n;
+    setup_break_session();
+    n = TF_Handle(&g_sess, "z0,1000,2", 9, reply, sizeof(reply));
+    ASSERT_EQ(n, 2);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    ASSERT_EQ(fake_remove_break_calls, 1);
+}
+
+TEST(watchpoint_type_reaches_ops_too) {
+    char reply[64]; int n;
+    setup_break_session();
+    n = TF_Handle(&g_sess, "Z2,3000,4", 9, reply, sizeof(reply));
+    ASSERT_EQ(n, 2);
+    ASSERT_EQ(fake_insert_break_calls, 1);
+}
+
+TEST(breakpoint_without_target_op_is_unsupported) {
+    char reply[64];
+    setup_session();
+    ASSERT_EQ(TF_Handle(&g_sess, "Z0,1000,2", 9, reply, sizeof(reply)), 0);
+}
+
+TEST(continue_sets_resume_and_suppresses_reply) {
+    char reply[64];
+    int resumeRequested = 0, resumeIsStep = 1;
+    int n;
+    setup_session();
+    n = GDBHandlePacket(&g_sess, "c", 1, reply, sizeof(reply),
+                        &resumeRequested, &resumeIsStep);
+    ASSERT_EQ(n, 0);
+    ASSERT_EQ(resumeRequested, 1);
+    ASSERT_EQ(resumeIsStep, 0);
+}
+
+TEST(step_sets_resume_and_is_step) {
+    char reply[64];
+    int resumeRequested = 0, resumeIsStep = 0;
+    int n;
+    setup_session();
+    n = GDBHandlePacket(&g_sess, "s", 1, reply, sizeof(reply),
+                        &resumeRequested, &resumeIsStep);
+    ASSERT_EQ(n, 0);
+    ASSERT_EQ(resumeRequested, 1);
+    ASSERT_EQ(resumeIsStep, 1);
+}
+
+TEST(vcont_query_lists_continue_and_step) {
+    char reply[64]; int n;
+    setup_session();
+    n = TF_Handle(&g_sess, "vCont?", 6, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "vCont;c;s");
+}
+
+TEST(vcont_step_action_sets_resume_step) {
+    char reply[64];
+    int resumeRequested = 0, resumeIsStep = 0;
+    int n;
+    setup_session();
+    n = GDBHandlePacket(&g_sess, "vCont;s:1", 9, reply, sizeof(reply),
+                        &resumeRequested, &resumeIsStep);
+    ASSERT_EQ(n, 0);
+    ASSERT_EQ(resumeRequested, 1);
+    ASSERT_EQ(resumeIsStep, 1);
+}
+
+TEST(vcont_continue_action_sets_resume_not_step) {
+    char reply[64];
+    int resumeRequested = 0, resumeIsStep = 1;
+    int n;
+    setup_session();
+    n = GDBHandlePacket(&g_sess, "vCont;c", 7, reply, sizeof(reply),
+                        &resumeRequested, &resumeIsStep);
+    ASSERT_EQ(n, 0);
+    ASSERT_EQ(resumeRequested, 1);
+    ASSERT_EQ(resumeIsStep, 0);
+}
+
+static int fake_monitor_cmd(void *user, const char *cmd, char *out, int outMax) {
+    (void)user;
+    return snprintf(out, (size_t)outMax, "you said: %s", cmd);
+}
+
+TEST(qrcmd_decodes_hex_and_encodes_reply) {
+    /* "hi" hex-encoded is "6869" */
+    char reply[128]; int n;
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    ops.monitorCmd = fake_monitor_cmd;
+    GDBSessionInit(&g_sess, &ops, NULL);
+    n = TF_Handle(&g_sess, "qRcmd,6869", 10, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    /* Reply is hex-encoded text "you said: hi" -- spot-check it decodes
+     * to something containing "hi" without writing a second hex decoder
+     * in the test: just check the known hex prefix for "you said: h". */
+    ASSERT(strncmp(reply, "796f7520736169643a2068", 22) == 0);
+}
+
+TEST(qrcmd_without_monitor_op_is_unsupported) {
+    char reply[128];
+    setup_session();
+    ASSERT_EQ(TF_Handle(&g_sess, "qRcmd,6869", 10, reply, sizeof(reply)), 0);
+}
+
+TEST(thread_roster_is_fixed_at_three) {
+    char reply[64]; int n;
+    setup_session();
+    n = TF_Handle(&g_sess, "qfThreadInfo", 12, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "m1,2,3");
+    n = TF_Handle(&g_sess, "qsThreadInfo", 12, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "l");
+}
+
+TEST(hg_selects_thread_and_qc_reports_it) {
+    char reply[64]; int n;
+    setup_session();
+    n = TF_Handle(&g_sess, "Hg2", 3, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "OK");
+    n = TF_Handle(&g_sess, "qC", 2, reply, sizeof(reply));
+    reply[n] = '\0';
+    ASSERT_STR(reply, "QC2");
 }
 
 int main(void) {
+    int total_fail = 0;
+
     SUITE("gdbstub framing");
     RUN(checksum_is_modulo_256_sum);
     RUN(checksum_wraps_at_256);
@@ -315,5 +597,28 @@ int main(void) {
     RUN(read_memory_without_target_op_is_unsupported);
     RUN(read_registers_returns_144_hex_chars);
     RUN(read_registers_without_target_op_is_unsupported);
-    return REPORT();
+    total_fail += REPORT();
+
+    SUITE("gdbstub phase 2: writes, breakpoints, resume, monitor, threads");
+    RUN(write_registers_calls_ops_and_replies_ok);
+    RUN(write_registers_without_target_op_is_unsupported);
+    RUN(write_memory_writes_and_replies_ok);
+    RUN(write_memory_length_mismatch_is_refused);
+    RUN(insert_breakpoint_replies_ok);
+    RUN(insert_breakpoint_out_of_resources_is_e01);
+    RUN(remove_breakpoint_replies_ok);
+    RUN(watchpoint_type_reaches_ops_too);
+    RUN(breakpoint_without_target_op_is_unsupported);
+    RUN(continue_sets_resume_and_suppresses_reply);
+    RUN(step_sets_resume_and_is_step);
+    RUN(vcont_query_lists_continue_and_step);
+    RUN(vcont_step_action_sets_resume_step);
+    RUN(vcont_continue_action_sets_resume_not_step);
+    RUN(qrcmd_decodes_hex_and_encodes_reply);
+    RUN(qrcmd_without_monitor_op_is_unsupported);
+    RUN(thread_roster_is_fixed_at_three);
+    RUN(hg_selects_thread_and_qc_reports_it);
+    total_fail += REPORT();
+
+    return total_fail;
 }

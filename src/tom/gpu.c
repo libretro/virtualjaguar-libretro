@@ -38,6 +38,7 @@
 #include "../core/vjtrace.h"
 #include "../core/crash_detect.h"
 #include "perf_iface.h"
+#include "gdbstub.h"
 
 
 // Seems alignment in loads & stores was off...
@@ -690,10 +691,24 @@ uint32_t GPUGetPC(void)
 	return gpu_pc;
 }
 
+/* Diagnostic-only accessor, added for `monitor regs gpu` (the GDB stub,
+ * issue #652): the raw G_CTRL value (GPUGO, SINGLE_STEP, IMASK and the
+ * REGPAGE bit), read-only -- writing this is not exposed, since it is
+ * exactly the register real hardware uses to start/stop the RISC core
+ * and a debugger accidentally toggling GPUGO would be far more
+ * surprising than useful. */
+uint32_t GPUGetControl(void)
+{
+	return gpu_control;
+}
+
 /* Diagnostic-only accessor (issue #406 investigation): expose the active
  * register bank so test harnesses can inspect GPU register state without
  * a full savestate. Not part of the shipped ABI (production link uses
- * exports.list, which does not have the _GPU* wildcard). */
+ * exports.list, which does not have the _GPU* wildcard). Also used
+ * unconditionally by the GDB stub (src/debug/gdbtarget.c, issue #652)
+ * to serve GDB thread 2's register file -- see GPUSetReg below for the
+ * write side. */
 uint32_t GPUGetReg(int n)
 {
 	if (n < 0 || n > 31)
@@ -701,19 +716,27 @@ uint32_t GPUGetReg(int n)
 	return gpu_reg[n];
 }
 
-/* vjtrace_snapshot() (src/core/vjtrace.c) is itself compiled only under
- * VJ_TRACE, so its two supporting accessors below are guarded the same
- * way -- unlike GPUGetReg above (pre-existing, #406, left as-is), these
- * are new-for-vjtrace surface and the project convention is that all
- * new vjtrace-only code compiles out entirely in shipped/non-test
- * builds rather than relying solely on exports.list to hide it. */
-#ifdef VJ_TRACE
-/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose GPU
- * local work RAM (the REGSGPU/GPURAM sections of vjtrace_snapshot()).
- * Same not-in-shipped-ABI caveat as GPUGetReg above. */
-uint8_t * GPUGetRAM(void)
+/* Write side of GPUGetReg, added for the GDB stub (issue #652): "G"
+ * (write all registers) pokes the ACTIVE bank directly, exactly
+ * mirroring what GPUGetReg reads -- not the $F02000-$F020FF MMIO window,
+ * which addresses both banks unconditionally by register number and
+ * would silently write the wrong one whenever REGPAGE has bank_1
+ * active. A raw poke, like m68k_set_reg(): no side effects, same as any
+ * other debugger register write. */
+void GPUSetReg(int n, uint32_t v)
 {
-	return gpu_ram_8;
+	if (n < 0 || n > 31)
+		return;
+	gpu_reg[n] = v;
+}
+
+/* GPUGetPC's write counterpart, added for the GDB stub (issue #652). A
+ * raw poke of gpu_pc, not a simulated G_CTRL PC-latch write -- GDB
+ * setting PC must not also toggle GPUGO or any other control-register
+ * side effect. */
+void GPUSetPC(uint32_t pc)
+{
+	gpu_pc = pc;
 }
 
 /* Diagnostic-only accessor: raw GPU_FLAGS/control register value. Like
@@ -721,10 +744,35 @@ uint8_t * GPUGetRAM(void)
  * separately in gpu_flag_n/c/z for cheap RMW) are merged into gpu_flags
  * only on the $F02100 register-read path (see the case 0x00 block
  * above), so this can read one flag update stale mid-instruction --
- * snapshot-quality only, not for cycle-exact NCZ probes. */
+ * snapshot-quality only, not for cycle-exact NCZ probes.
+ *
+ * Originally vjtrace-only (#408) and gated behind VJ_TRACE; the GDB stub
+ * (issue #652) needs it in every build (shipped-by-default, off by
+ * default -- see docs/gdb-stub-design.md), so it is unconditional now.
+ * This does not change the shipped dylib's exported symbol list --
+ * production links still use exports.list, which never listed this. */
 uint32_t GPUGetFlags(void)
 {
 	return gpu_flags;
+}
+
+/* Write side of GPUGetFlags, added for the GDB stub (issue #652). A raw
+ * poke of gpu_flags -- see the GPUSetPC comment above for why this
+ * bypasses the G_FLAGS MMIO write path (interrupt-mask side effects a
+ * debugger write should not trigger as a side effect of merely wanting
+ * to see a different N/C/Z combination). */
+void GPUSetFlags(uint32_t v)
+{
+	gpu_flags = v;
+}
+
+#ifdef VJ_TRACE
+/* Diagnostic-only accessor (vjtrace #408 snapshot export): expose GPU
+ * local work RAM (the REGSGPU/GPURAM sections of vjtrace_snapshot()).
+ * Same not-in-shipped-ABI caveat as GPUGetReg above. */
+uint8_t * GPUGetRAM(void)
+{
+	return gpu_ram_8;
 }
 #endif /* VJ_TRACE */
 
@@ -1463,6 +1511,18 @@ void GPUExec(int32_t cycles)
 #ifdef VJ_TRACE
       VJT_PCHIST_GPU(gpu_pc);
 #endif
+#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+      /* GDB stub (issue #652): one load of a hot global, one never-taken
+       * branch when no GPU breakpoint/step is armed -- see
+       * docs/gdb-stub-design.md "Breakpoint detection". GDBHalt() blocks
+       * in place (does not unwind this loop) until the client continues,
+       * steps, or disconnects. VJ_GDB_STUB_DISABLE_HOOKS exists only for
+       * the Phase 2 A/B perf measurement -- see the comment in
+       * src/core/jaguar.c's M68KInstructionHook(). */
+      if (gdbArmedGPU && GDBCheckPC(GDB_TGT_GPU, gpu_pc))
+         GDBHalt(GDB_TGT_GPU, GDB_STOP_BREAKPOINT, gpu_pc);
+#endif
+
       if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
       {
          uint32_t off = gpu_pc - GPU_WORK_RAM_BASE;

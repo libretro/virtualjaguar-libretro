@@ -610,6 +610,36 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "2345"
    },
    {
+      "virtualjaguar_gdb_wait",
+      "GDB Stub: Halt At Boot (Restart)",
+      NULL,
+      "Halt the 68000 before its very first instruction and wait for a GDB client to attach, so a boot-time fault can be debugged instead of running to completion before you connect. Only takes effect while the GDB Debug Stub option above is enabled. Requires a restart.",
+      NULL,
+      "diagnostics",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+   {
+      "virtualjaguar_gdb_halt_timeout",
+      "GDB Stub: Halt Timeout",
+      NULL,
+      "If the machine is halted at a breakpoint with no client activity for this long, resume automatically and log it loudly, so a forgotten debug session does not look like a hang forever. 'Off' means a halt waits indefinitely -- the default, because silently resuming a debugged machine is worse than a freeze for the developers this option is for.",
+      NULL,
+      "diagnostics",
+      {
+         { "off", NULL },
+         { "30",  "30 seconds" },
+         { "60",  "60 seconds" },
+         { "300", "5 minutes" },
+         { NULL, NULL },
+      },
+      "off"
+   },
+   {
       "virtualjaguar_texdump_16bpp",
       "Texture Dump: 16bpp Preview",
       NULL,

@@ -45,6 +45,15 @@ void GPUWriteWord(uint32_t offset, uint16_t data, uint32_t who);
 void GPUWriteLong(uint32_t offset, uint32_t data, uint32_t who);
 
 uint32_t GPUGetPC(void);
+/* GDB stub accessors (issue #652): the active register bank, PC and
+ * flags register, read and write. See src/tom/gpu.c for why the writes
+ * are raw pokes rather than routed through the MMIO write path. */
+uint32_t GPUGetReg(int n);
+void GPUSetReg(int n, uint32_t v);
+void GPUSetPC(uint32_t pc);
+uint32_t GPUGetFlags(void);
+void GPUSetFlags(uint32_t v);
+uint32_t GPUGetControl(void);
 void GPUReleaseTimeslice(void);
 void GPUCPUINTCallback(void);
 void GPUResetStats(void);
