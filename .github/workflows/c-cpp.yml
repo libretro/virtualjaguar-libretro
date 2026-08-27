@@ -337,13 +337,19 @@ jobs:
           *)                 SIMD_SRC=src/tom/blitter_simd_scalar.c; EXTRA="-DBLITTER_SIMD_SCALAR" ;;
         esac
 
+        # -I libretro-common/include is required, not decorative: blitter_simd.h
+        # does `#include <boolean.h>`, and libretro-common owns that header.
+        # This compile used to resolve it by accident through src/core, which
+        # carried a stale duplicate copy; with that removed the include path has
+        # to name the real location. Makefile.common always passed this -I, so
+        # only these by-hand compiles were affected.
         echo "==> Testing ${SIMD_SRC}..."
-        $CC -O2 -Wall ${EXTRA} -I src -I src/core -I src/tom \
+        $CC -O2 -Wall ${EXTRA} -I src -I src/core -I src/tom -I libretro-common/include \
           -o test_blitter_simd test/test_blitter_simd.c ${SIMD_SRC}
         ./test_blitter_simd
 
         echo "==> Cross-checking against scalar..."
-        $CC -O2 -Wall -DBLITTER_SIMD_SCALAR -I src -I src/core -I src/tom \
+        $CC -O2 -Wall -DBLITTER_SIMD_SCALAR -I src -I src/core -I src/tom -I libretro-common/include \
           -o test_blitter_scalar test/test_blitter_simd.c src/tom/blitter_simd_scalar.c
         ./test_blitter_scalar
 
