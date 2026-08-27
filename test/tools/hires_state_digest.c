@@ -24,7 +24,7 @@
  * Honors VJ_EXPECT_BUILD (build-identity guard, see scripts/build-id.sh).
  */
 
-#include "harness.h"
+#include "../harness/harness.h"
 
 #include <stdio.h>
 #include <stdlib.h>

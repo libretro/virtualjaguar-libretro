@@ -341,6 +341,18 @@ What *is* known and actionable:
   expensive thing running.
 - **Then turn on idle-skip.** It removes work rather than doing it faster, which
   is exactly the shape of win a weak CPU needs.
+- **If audio still crackles, enable Frameskip** (`frameskip`, default
+  **disabled**). When the frontend reports its audio buffer draining, the core
+  skips *presenting* a frame — the scanline conversion and framebuffer copy —
+  while the emulated machine still runs that frame in full. `auto` skips only
+  when the frontend says an under-run is imminent; `auto_threshold_15/30/45`
+  skip earlier, whenever buffer occupancy falls below that percentage (45 =
+  most aggressive). **Frameskip Maximum** (`frameskip_max`, 1–4, default 3)
+  caps consecutive skips so the picture never freezes. Presentation-only:
+  save states, run-ahead and netplay are unaffected, and with it disabled the
+  output is bit-identical to previous releases. Needs a frontend new enough to
+  support audio buffer status reporting (RetroArch 1.9.1+); on older frontends
+  every value behaves as disabled.
 - **Fast blitter last**, because it costs correctness.
 - **Do not overclock on a device that is already struggling.** It asks for more
   work, not less — and it takes idle-skip away.
@@ -348,8 +360,10 @@ What *is* known and actionable:
 ### 4.6 Pacing, fast-forward and VRR
 
 **The core has no internal frame limiter.** It never sleeps, never blocks inside
-`retro_run()`, and does not register a frame-time or audio callback. Speed and
-pacing are entirely your frontend's responsibility.
+`retro_run()`, and does not register a frame-time callback. Speed and pacing
+are entirely your frontend's responsibility. (The one audio callback it can
+register — the buffer-status report driving `frameskip`, §4.5 — only sheds
+presentation work; it never slows or blocks the run loop.)
 
 Practical consequences:
 
@@ -491,7 +505,7 @@ timing models, idle-skip, CD read speed — takes effect immediately.
 | **Game runs too fast** (menus fly past, input feels doubled) | The emulated GPU finishes renders 2–4× faster than silicon, so loops paced on render or blit completion outrun hardware. This is a known accuracy gap, not your configuration. | Turn on `gpu_pipeline_timing` and/or `blitter_timing`. Both cost performance and are still being calibrated. Also confirm you have not left a clock scale above 1x. |
 | **Game runs slow** | See §4.2. | Per-title defaults off → 1x / true color off → idle-skip on → fast blitter. |
 | **Fast-forward does nothing** | Frontend setting, or no headroom left. | Check RetroArch's Fast-Forward Ratio and audio sync. If the title already runs near 16.7 ms/frame, there is nothing to gain. Also check the window is focused — a backgrounded window gets OS-throttled. |
-| **Audio crackles or drops out** | Usually frontend audio buffering. | Raise your frontend's audio latency first. If it started after you enabled `risc_idle_skip`, turn it back off and please report it — that is exactly the feedback the opt-in period exists for. |
+| **Audio crackles or drops out** | Usually frontend audio buffering, or the device cannot render every frame in time. | Raise your frontend's audio latency first. On hardware that is genuinely too slow, set `frameskip` = auto (§4.5) — it drops presentation, not emulation, when the buffer drains. If it started after you enabled `risc_idle_skip`, turn it back off and please report it — that is exactly the feedback the opt-in period exists for. |
 | **Audio pitch changed after overclocking** | Should not happen — timers and audio pacing stay at stock speed under both clock scales. | Report it. |
 | **Black screen on a CD game** | Boot path, or a bad rip. | Switch `cd_boot_mode` to Real BIOS and restart. If that fails too, try `cd_bios_type` = Developer. Check the log for `[CD-BOOTSTUB]` — "zero-filled" or "magic mismatch" means the image itself is an incomplete rip, and no setting will fix it. |
 | **CD game hangs after loading got faster** | `cd_read_speed` above 2x. | Set it back to 2x (accurate). |
@@ -531,6 +545,8 @@ timing models, idle-skip, CD read speed — takes effect immediately.
 | `m68k_clock_scale` | 1x | a 68K-bound game stutters (avoid 3x — see #460) |
 | `risc_clock_scale` | 1x | a GPU-bound game stutters — **and never with idle-skip** |
 | `risc_idle_skip` | **off** | you want the single biggest speed-up available |
+| `frameskip` | off | audio crackles on hardware too slow to render every frame |
+| `frameskip_max` | 3 | frameskip is on and you want a different smoothness/audio trade |
 | `dram_timing` / `gpu_pipeline_timing` / `blitter_timing` | off | accuracy investigation only |
 | `bios` (cartridges) | HLE | a cartridge needs the real boot ROM. *Distinct from* `bios_type`, which picks **which** ROM once this is set to Real |
 | `cd_boot_mode` | HLE | a CD game hangs or an FMV freezes (restart) |

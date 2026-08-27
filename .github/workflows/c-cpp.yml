@@ -787,16 +787,18 @@ jobs:
           # file that no longer exists and fails the whole job with
           # "no input files" / "expected exactly one compiler job".
           #
-          # blitter_simd_<arch>.{c,h} are all excluded. Only one arch is
-          # ever built, so the other two .c files aren't in
-          # compile_commands.json; and the .h files are include-only
-          # fragments that refuse to be compiled standalone (they
-          # #error unless blitter_simd.h pulled them in), so linting one
-          # directly is guaranteed to fail. They are covered instead by
+          # Every *_simd_<arch>.{c,h} fragment (blitter_simd_*, op_simd_*,
+          # tom_scan_simd_*, and any future src/jerry ones) is excluded.
+          # Only one arch is ever built, so the other arch .c files
+          # aren't in compile_commands.json; and the .h files are
+          # include-only fragments that cannot be linted standalone
+          # (blitter's #error unless blitter_simd.h pulled them in; the
+          # op/tom ones compile to nothing without their host .c's
+          # capability macros and includes). They are covered instead by
           # c89-lint's per-arch pass, which compiles them the way the
           # build does.
           FILES=$(git diff --name-only --diff-filter=d "$BASE"...HEAD -- '*.c' '*.h' \
-            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/tom/blitter_simd_(neon|sse2|scalar)\.(c|h)$)' \
+            | grep -Ev '^(src/m68000/|src/bios/jag.*\.c$|libretro-common/|src/core/version\.h$|src/(tom|jerry)/[a-z0-9_]+_simd_(neon|sse2|scalar)\.(c|h)$)' \
             | grep -E '^(src/|libretro\.c$)' || true)
           if [ -z "$FILES" ]; then
             echo "No relevant C files changed; skipping clang-tidy."
