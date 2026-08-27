@@ -101,6 +101,70 @@ TEST(encode_refuses_to_overflow_output) {
     ASSERT_EQ(GDBEncodePacket("OK", 2, out, sizeof(out)), -1);
 }
 
+/* ------------------------------------------------------------------ */
+/* Task 2: run-length decode and command dispatch                      */
+/* ------------------------------------------------------------------ */
+
+TEST(rle_expands_star_runs) {
+    char out[64];
+    /* '0' then '*' with ' ' (0x20 = 32) -> repeat previous 32-29 = 3 more */
+    int n = GDBExpandRLE("0* ", 3, out, sizeof(out));
+    ASSERT_EQ(n, 4);
+    out[n] = '\0';
+    ASSERT_STR(out, "0000");
+}
+
+TEST(rle_passes_through_plain_text) {
+    char out[64];
+    int n = GDBExpandRLE("qSupported", 10, out, sizeof(out));
+    ASSERT_EQ(n, 10);
+}
+
+TEST(rle_rejects_leading_star) {
+    char out[64];
+    ASSERT_EQ(GDBExpandRLE("* ", 2, out, sizeof(out)), -1);
+}
+
+TEST(rle_refuses_to_overflow_output) {
+    char out[4];
+    ASSERT_EQ(GDBExpandRLE("0*~", 3, out, sizeof(out)), -1);
+}
+
+/* --- dispatch --- */
+static struct GDBSession g_sess;
+
+static void setup_session(void) {
+    static struct GDBTargetOps ops;
+    memset(&ops, 0, sizeof(ops));
+    GDBSessionInit(&g_sess, &ops, NULL);
+}
+
+TEST(qsupported_advertises_packet_size) {
+    char reply[256];
+    int n;
+    setup_session();
+    n = GDBHandlePacket(&g_sess, "qSupported:multiprocess+", 24, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT(strstr(reply, "PacketSize=") != NULL);
+}
+
+TEST(unknown_command_returns_empty_reply) {
+    char reply[256];
+    setup_session();
+    ASSERT_EQ(GDBHandlePacket(&g_sess, "zzUnknown", 9, reply, sizeof(reply)), 0);
+}
+
+TEST(halt_reason_reports_sigtrap) {
+    char reply[256];
+    int n;
+    setup_session();
+    n = GDBHandlePacket(&g_sess, "?", 1, reply, sizeof(reply));
+    ASSERT(n > 0);
+    reply[n] = '\0';
+    ASSERT_STR(reply, "S05");
+}
+
 int main(void) {
     SUITE("gdbstub framing");
     RUN(checksum_is_modulo_256_sum);
@@ -114,5 +178,12 @@ int main(void) {
     RUN(decode_refuses_to_overflow_output);
     RUN(encode_wraps_payload_with_checksum);
     RUN(encode_refuses_to_overflow_output);
+    RUN(rle_expands_star_runs);
+    RUN(rle_passes_through_plain_text);
+    RUN(rle_rejects_leading_star);
+    RUN(rle_refuses_to_overflow_output);
+    RUN(qsupported_advertises_packet_size);
+    RUN(unknown_command_returns_empty_reply);
+    RUN(halt_reason_reports_sigtrap);
     return REPORT();
 }

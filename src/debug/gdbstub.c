@@ -1,4 +1,5 @@
 #include "gdbstub.h"
+#include <string.h>
 
 static int GDBHexVal(char c)
 {
@@ -81,4 +82,85 @@ int GDBEncodePacket(const char *payload, int len, char *out, int outMax)
    out[3 + len] = hexDigits[cs & 0xF];
 
    return len + 4;
+}
+
+int GDBExpandRLE(const char *in, int inLen, char *out, int outMax)
+{
+   int i;
+   int n = 0;
+
+   for (i = 0; i < inLen; i++)
+   {
+      if (in[i] == '*')
+      {
+         int repeat;
+         char prev;
+
+         if (n == 0 || (i + 1) >= inLen)
+            return -1;
+
+         repeat = (int)(unsigned char)in[i + 1] - 29;
+         if (repeat < 0)
+            return -1;
+
+         prev = out[n - 1];
+         if ((n + repeat) > outMax)
+            return -1;
+
+         while (repeat-- > 0)
+            out[n++] = prev;
+
+         i++;
+         continue;
+      }
+
+      if (n >= outMax)
+         return -1;
+
+      out[n++] = in[i];
+   }
+
+   return n;
+}
+
+void GDBSessionInit(struct GDBSession *s, const struct GDBTargetOps *ops,
+                    void *user)
+{
+   s->ops       = ops;
+   s->user      = user;
+   s->noAckMode = 0;
+}
+
+static int GDBCopyReply(const char *text, char *reply, int replyMax)
+{
+   int len = (int)strlen(text);
+
+   if (len > replyMax)
+      return 0;
+
+   memcpy(reply, text, (size_t)len);
+   return len;
+}
+
+int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
+                    char *reply, int replyMax)
+{
+   if (payLen <= 0)
+      return 0;
+
+   if (pay[0] == '?')
+      return GDBCopyReply("S05", reply, replyMax);
+
+   /* Matches both the bare "qSupported" and the "qSupported:xxx" form. */
+   if (payLen >= 10 && memcmp(pay, "qSupported", 10) == 0)
+      return GDBCopyReply("PacketSize=1000;QStartNoAckMode+", reply, replyMax);
+
+   if (payLen == 15 && memcmp(pay, "QStartNoAckMode", 15) == 0)
+   {
+      s->noAckMode = 1;
+      return GDBCopyReply("OK", reply, replyMax);
+   }
+
+   /* RSP: an empty reply means "I do not implement this packet". */
+   return 0;
 }

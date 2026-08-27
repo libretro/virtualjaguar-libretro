@@ -28,6 +28,44 @@ int GDBDecodePacket(const char *raw, int rawLen, char *out, int outMax);
  */
 int GDBEncodePacket(const char *payload, int len, char *out, int outMax);
 
+#define GDB_PACKET_MAX 4096
+
+/*
+ * What the engine needs from a target. Phase 1 uses only readRegisters
+ * and readMemory; later phases add the rest. Every function may be NULL,
+ * in which case the engine replies "unsupported" rather than crashing.
+ */
+struct GDBTargetOps
+{
+   /* Serialise the register file as GDB expects it, hex, no separators.
+    * Returns chars written, or -1. */
+   int (*readRegisters)(void *user, char *out, int outMax);
+
+   /* Read len guest bytes at addr into out as hex. MUST bounds-check addr
+    * against the emulated map and return -1 on any out-of-range access. */
+   int (*readMemory)(void *user, unsigned int addr, int len,
+                     char *out, int outMax);
+};
+
+struct GDBSession
+{
+   const struct GDBTargetOps *ops;
+   void *user;
+   int noAckMode;
+};
+
+void GDBSessionInit(struct GDBSession *s, const struct GDBTargetOps *ops,
+                    void *user);
+
+int GDBExpandRLE(const char *in, int inLen, char *out, int outMax);
+
+int GDBHandlePacket(struct GDBSession *s, const char *pay, int payLen,
+                    char *reply, int replyMax);
+
+/* Implemented in gdbtarget.c (Task 4). Declared here so libretro.c needs
+ * only this one header. */
+const struct GDBTargetOps *GDBJaguarOps(void);
+
 #ifdef __cplusplus
 }
 #endif
