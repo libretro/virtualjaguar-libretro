@@ -82,6 +82,14 @@ extern uint32_t gpu_reg_bank_0[], gpu_reg_bank_1[];
 extern uint32_t gpu_irq0_count;
 extern uint32_t gpu_irq3_count;
 
+/* Idle-loop fast-forward diagnostics (issue #569, GPU port).  Counted
+ * only on the cold probe path; read by test/tools, never by the
+ * emulator itself. */
+extern uint32_t gpu_idle_skip_fires;
+extern uint32_t gpu_idle_skip_rejects;
+extern uint32_t gpu_idle_skip_iters;
+extern uint32_t gpu_idle_skip_opcodes;
+
 #ifdef __cplusplus
 }
 #endif

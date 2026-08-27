@@ -2276,11 +2276,11 @@ static bool titledb_negative_warn_seen(const char *key)
 
 /* Compounding-settings warning (issue #595).
  *
- * The DSP idle-loop fast-forward (virtualjaguar_risc_idle_skip) is the
+ * The RISC idle-loop fast-forward (virtualjaguar_risc_idle_skip) is the
  * largest speed lever the core has (66-87% less DSP interpretation on the
- * titles measured, #569), and DSPExec() gates it off entirely whenever
- * certain other options are active -- see the gate comment at the top of
- * DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
+ * titles measured, #569, plus the GPU port), and DSPExec()/GPUExec() gate
+ * it off entirely whenever certain other options are active -- see the
+ * gate comment at the top of DSPExec() in src/jerry/dsp.c.  So a user who raises the RISC overclock on
  * a borderline-slow title pays the overclock's own cost AND silently
  * forfeits the bigger win: it reads as "overclocking made it much slower"
  * with nothing anywhere to explain why.  Name the suppressor in the log.
@@ -2345,7 +2345,7 @@ static void perf_warn_idle_skip_suppressed(void)
       return;
 
    LOG_WRN("[perf] virtualjaguar_risc_idle_skip is enabled but suppressed by: "
-           "%s -- the DSP idle-loop fast-forward is doing nothing, so this "
+           "%s -- the GPU/DSP idle-loop fast-forward is doing nothing, so this "
            "combination can run slower than idle-skip alone. Your settings "
            "are honored, not overridden.\n", who);
    perf_conflict_warned = 1;
@@ -2840,7 +2840,7 @@ static void check_variables(void)
          GPUPipeTimingReset();
    }
 
-   /* DSP idle-loop fast-forward (issue #569).  Bit-exact by
+   /* GPU/DSP idle-loop fast-forward (issue #569 + GPU port).  Bit-exact by
     * construction -- see the safety theorem in src/jerry/dsp.c -- and
     * the corpus A/B (Iron Soldier, AvP, Doom, Wolfenstein 3D, Tempest
     * 2000, jagniccc, yarc, plus the CD titles Primal Rage and Battle
@@ -2850,7 +2850,7 @@ static void check_variables(void)
     * through is a silent audio/video divergence nobody can attribute,
     * against a speed win a user can opt into with one toggle -- an
     * asymmetry a nine-title corpus does not settle for a ~200-title
-    * library.  DSPExec re-checks the interacting options (dram timing,
+    * library.  DSPExec/GPUExec re-check the interacting options (dram timing,
     * pipeline timing, clock scale, blit memo) itself, so the order the
     * option loop reads them in does not matter. */
    var.key = "virtualjaguar_risc_idle_skip";

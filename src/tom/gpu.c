@@ -35,6 +35,7 @@
 #include "tom.h"
 #include "event.h"
 #include "settings.h"
+#include "blit_memo.h"
 #include "../core/vjtrace.h"
 #include "../core/crash_detect.h"
 #include "perf_iface.h"
@@ -1452,6 +1453,672 @@ void GPUSyncToM68K(void)
    VJP_LEAVE(VJP_GPU_SYNC);
 }
 
+/* ==================================================================
+ * Cycle-exact idle-loop fast-forward   (issue #569, GPU port)
+ * ==================================================================
+ *
+ * Port of the DSP idle-loop fast-forward (src/jerry/dsp.c -- read the
+ * theorem/proof block there first; this comment only records what is
+ * DIFFERENT on the GPU).  Motivation and loop shapes:
+ * docs/perf-audit/mc3d-stall-attribution.md -- Missile Command 3D
+ * parks the GPU in a 3-instruction semaphore poll at $F03134 for 66.8%
+ * of all interpreted GPU instructions, jagniccc's $F03042 mailbox poll
+ * and yarc's $F03192 self-jr are ~100% of their GPU samples.  Same
+ * contract as the DSP: NOT an approximation -- registers, flags, PC,
+ * cycles charged and gpu_exec_opcode_count all end up exactly where
+ * the interpreter would have left them.
+ *
+ * ---- SAFETY THEOREM, GPU DELTAS (verified against this tree) --------
+ *
+ * (1) Nothing else in the machine executes inside one GPUExec() call.
+ *     Same scheduler argument as the DSP: JaguarExecuteNew() runs the
+ *     68K, then GPUExec, then DSPExec; events (OP halfline, timers,
+ *     I2S) are dispatched by HandleNextEvent AFTER the exec calls
+ *     return.  GPUSyncToM68K() is a different, EARLIER GPUExec call
+ *     with its own budget (it runs from 68K writes into GPU local RAM,
+ *     i.e. during the 68K's slice, never nested inside GPUExec).
+ *     MC3D's poll on main-RAM $9704 exits via a 68K write that can
+ *     therefore only land BETWEEN GPUExec calls: within one call the
+ *     polled word is constant, the loop is a fixed point for the rest
+ *     of the call's budget, and skipping to one-iteration-before-
+ *     budget-end is exact.  The probe state is reset at every GPUExec
+ *     entry, so a probe never spans two calls.
+ *
+ * (2) No GPU interrupt can be dispatched mid-call for an admitted
+ *     body.  STRONGER than the DSP case: GPUExec's only dispatch is
+ *     the GPUHandleIRQs() call at slice ENTRY, before the exec loop --
+ *     there is no in-loop IMASKCleared re-check because the GPU has no
+ *     D_FLAGS retire-delay analog; a G_FLAGS write that clears IMASK
+ *     dispatches synchronously INSIDE GPUWriteLong (case 0x00), which
+ *     only a store can reach, and the whitelist admits no store.
+ *     GPUSetIRQLine's other callers (tom.c timers, op.c, cdrom.c) all
+ *     run from event callbacks, i.e. between slices per (1).  So the
+ *     probe needs no IMASKCleared/retire-delay reset check at all.
+ *
+ * (3) The register banks cannot move.  gpu_reg / gpu_alternate_reg are
+ *     repointed only by GPUUpdateRegisterBanks(), reachable from a
+ *     G_FLAGS write (a store -- excluded) or from GPUHandleIRQs
+ *     (excluded by (2)).  The probe still records and re-checks the
+ *     bank pointer, same belt-and-braces as the DSP.
+ *
+ * (4) GPU-side reads of the admitted EA classes are pure.  GPU local
+ *     RAM ($F03000-$F03FFF, 4K -- not the DSP's 8K) is served straight
+ *     out of gpu_ram_8 by GPUReadLong with no side effect.  Main DRAM
+ *     below 2 MB takes JaguarReadLong's `addr < 0x800000` fast path
+ *     (src/core/jaguar.c), whose only side effects are VJT_WATCH_RD
+ *     (a hard gate below) and BlitMemoNoteRead (gated on
+ *     blitMemoRecording, a hard gate below); busArbiter is charged
+ *     there only for `who == OP`.  Register space ($F02000-$F020FF,
+ *     the MMIO view of the banks) and G_CTRL space are NOT admitted:
+ *     bank values change per iteration and the control decode has
+ *     side effects.
+ *
+ * ---- ADMISSION / PROOF DELTAS ---------------------------------------
+ *
+ * Identical to the DSP (three head snapshots S0/S1/S2 driven by
+ * ordinary interpreted iterations, elementwise-equal deltas across
+ * both banks, identical flags at all three heads, measured -- never
+ * recomputed -- cycle and opcode costs, nonzero-delta registers
+ * touched only by addqt/subqt onto themselves, EA checks deferred to
+ * S2) except for:
+ *
+ *   - THE EXECUTED-PATH IDENTITY IS opcost == idleBodyCount, NOT
+ *     idleBodyCount + 1.  gpu_exec_opcode_count is a liveness counter
+ *     incremented ONLY in GPUExec's main loop (see its declaration):
+ *     the delay slot inlined by gpu_opcode_jump/jr does NOT increment
+ *     it, unlike dsp_opcode_jump/jr.  One straight-line traversal of
+ *     the decoded body therefore charges (idleBodyCount - 1) body
+ *     instructions plus the loop-closing jr = idleBodyCount, with the
+ *     delay slot uncounted.  The soundness argument survives: any
+ *     OTHER route from one head arrival to the next executes the whole
+ *     body and the (not-taken) jr, then at least one further main-loop
+ *     -counted instruction to get back -- inlined delay slots are the
+ *     only uncounted instructions and they cannot BE the route (the
+ *     branch owning them is itself counted) -- so any compound period
+ *     costs strictly more than idleBodyCount and exact equality admits
+ *     the straight-line traversal and nothing else.  This is pinned by
+ *     test/tools/gpu_idle_probe_falsify.
+ *
+ *   - Load EA rules follow the GPU's own opcode semantics
+ *     (gpu_opcode_load* above), which differ from the DSP's in the
+ *     masking: loadb/loadw take the pure containing-long local read
+ *     only when the RAW address is inside local RAM (outside, they
+ *     divert to JaguarReadByte/Word, unaudited -- rejected); load
+ *     masks ~3 unconditionally; the indexed and ri forms do NOT mask
+ *     the base -- they test the RAW effective address for the local
+ *     range and mask only in that branch, so the admission check here
+ *     classifies the raw EA exactly as the opcode will.
+ *
+ *   - Delay-slot IRQ hazard (gpu_ds_irq_dispatched): an admitted body
+ *     contains no store, so its delay slot cannot dispatch an
+ *     interrupt and the probe can never be reached with gpu_pc
+ *     pointing at a vector from its own loop's delay slot.
+ *
+ * Extrapolation, exit and savestate behavior are the DSP's: n =
+ * (cycles / cost) - 1 iterations are applied as reg += n*delta,
+ * cycles -= n*cost, gpu_exec_opcode_count += n*opcost (crash_detect's
+ * gpu wedge predicate reads that counter), flags/PC already correct by
+ * construction; the write that ends the wait lands between slices, the
+ * next probe fails, interpretation resumes; no probe state survives a
+ * slice, so savestates are untouched.
+ */
+
+/* Longest body accepted, in 16-bit words (jr offset range [-8,-1]).
+ * Belt-and-braces only: the caller's `pcThis - gpu_pc <= 14` filter
+ * already caps [head, jr) at 7 words, so this bound never binds. */
+#define GPU_IDLE_MAX_BODY	8
+/* Body instruction slots: <= 7 before the jr, plus the delay slot. */
+#define GPU_IDLE_MAX_INSN	10
+/* Per-slice reject memo: without it a loop that fails the fixed-point
+ * test would be re-probed every three iterations for the whole slice. */
+#define GPU_IDLE_MEMO		16
+
+/* Effective addresses we will admit for a load: GPU local SRAM (the 4K
+ * range GPUReadLong itself serves out of gpu_ram_8) or main DRAM below
+ * the 2 MB aperture, where JaguarReadLong is a plain GET32 of
+ * jaguarMainRAM.  Register space $F02000-$F020FF stays excluded. */
+#define GPU_IDLE_EA_OK(ea) \
+	(((ea) >= GPU_WORK_RAM_BASE && (ea) <= GPU_WORK_RAM_BASE + 0xFFF) \
+	 || ((ea) < 0x200000))
+
+#define GPU_IDLE_FETCH(a) \
+	((uint16_t)(((uint16_t)gpu_ram_8[(a) - GPU_WORK_RAM_BASE] << 8) \
+	            | (uint16_t)gpu_ram_8[(a) - GPU_WORK_RAM_BASE + 1]))
+
+/* Option gate (libretro `virtualjaguar_risc_idle_skip`) lives in vjs. */
+/* Diagnostics: counted only on the cold probe path, never per opcode. */
+uint32_t gpu_idle_skip_fires   = 0;		/* successful extrapolations */
+uint32_t gpu_idle_skip_rejects = 0;		/* candidate loops turned down */
+uint32_t gpu_idle_skip_iters   = 0;		/* iterations actually skipped */
+uint32_t gpu_idle_skip_opcodes = 0;		/* opcodes NOT interpreted -- the
+										 * honest, host-independent measure:
+										 * gpu_exec_opcode_count is advanced
+										 * over a skip on purpose, so it does
+										 * NOT show the saving. */
+
+static int       idleProbeStage;		/* 0 = none, 1 = have S0, 2 = have S1 */
+static uint32_t  idleProbeHead;
+static uint32_t  idleProbeJr;
+static uint32_t *idleProbeBank;			/* gpu_reg at S0 -- see theorem (3) */
+static int32_t   idleProbeCyc0, idleProbeCyc1;
+static uint32_t  idleProbeOpc0, idleProbeOpc1;
+static uint32_t  idleProbeS0[64], idleProbeS1[64];
+static uint8_t   idleProbeFz0, idleProbeFn0, idleProbeFc0;
+static uint8_t   idleProbeFz1, idleProbeFn1, idleProbeFc1;
+
+static uint8_t   idleBodyIdx[GPU_IDLE_MAX_INSN];
+static uint8_t   idleBodyP1[GPU_IDLE_MAX_INSN];
+static uint8_t   idleBodyP2[GPU_IDLE_MAX_INSN];
+static uint32_t  idleBodyImm[GPU_IDLE_MAX_INSN];
+static int       idleBodyCount;
+
+static uint32_t  idleMemoHead[GPU_IDLE_MEMO];
+static uint32_t  idleMemoJr[GPU_IDLE_MEMO];
+static int       idleMemoCount;
+static int       idleMemoNext;
+
+/* Opcode whitelist -- the DSP's list transposed to the GPU dispatch
+ * table.  Indices 0-31 and 34-44/57-59 name the same operations on
+ * both processors; the divergent slots are 32/33 (GPU sat8/sat16 vs
+ * DSP subqmod/sat16s -- 33 is a pure RN->RN saturate on both and stays
+ * admitted, 32 differs and stays out), 42 (GPU loadp reads AND writes
+ * gpu_hidata, which the snapshot does not model -- rejected, where the
+ * DSP's 42 was sat32s rejected for reading the accumulator), 48 (GPU
+ * storep -- a store, out like every store) and 62/63 (GPU sat24/pack
+ * -- pure, but left out to keep the whitelist to opcodes wait loops
+ * actually use, same policy as the DSP's mirror/move_pc).  Both
+ * branches (52/53) are deliberately absent: excluding every
+ * PC-modifying opcode but the loop-closing jr itself is load-bearing
+ * for the executed-path check. */
+static int gpu_idle_op_admitted(uint32_t idx)
+{
+	switch (idx)
+	{
+	case  0: case  1: case  2: case  3:		/* add addc addq addqt */
+	case  4: case  5: case  6: case  7:		/* sub subc subq subqt */
+	case  8: case  9: case 10: case 11:		/* neg and or xor */
+	case 12: case 13: case 14: case 15:		/* not btst bset bclr */
+	case 22:								/* abs */
+	case 24: case 25: case 27:				/* shlq shrq sharq */
+	case 28: case 29:						/* ror rorq */
+	case 30: case 31:						/* cmp cmpq */
+	case 33:								/* sat16 */
+	case 34: case 35: case 36: case 37:		/* move moveq moveta movefa */
+	case 38:								/* movei */
+	case 39: case 40: case 41:				/* loadb loadw load */
+	case 43: case 44:						/* load_r14/15_indexed */
+	case 57:								/* nop */
+	case 58: case 59:						/* load_r14/15_ri */
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+/* Register operands of an admitted opcode, as indices into the 64-entry
+ * snapshot (0..31 = gpu_reg_bank_0, 32..63 = gpu_reg_bank_1).  `cur` is
+ * the base of the bank gpu_reg points at, `alt` the other one.  *dst is
+ * -1 when the instruction writes no register. */
+static int gpu_idle_operands(uint32_t idx, uint32_t p1, uint32_t p2,
+                             int cur, int alt, int *src, int *nsrc, int *dst)
+{
+	*nsrc = 0;
+	*dst  = -1;
+
+	switch (idx)
+	{
+	case  0: case  1: case  4: case  5:		/* add addc sub subc */
+	case  9: case 10: case 11:				/* and or xor */
+	case 28:								/* ror  (RM = count) */
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
+		*dst = cur + (int)p2;
+		return 1;
+	case 30:								/* cmp -- flags only */
+		src[(*nsrc)++] = cur + (int)p1;
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case  2: case  3: case  6: case  7:		/* addq addqt subq subqt */
+	case  8: case 12: case 14: case 15:		/* neg not bset bclr */
+	case 22: case 24: case 25: case 27:		/* abs shlq shrq sharq */
+	case 29: case 33:						/* rorq sat16 */
+		src[(*nsrc)++] = cur + (int)p2;
+		*dst = cur + (int)p2;
+		return 1;
+	case 13: case 31:						/* btst cmpq -- flags only */
+		src[(*nsrc)++] = cur + (int)p2;
+		return 1;
+	case 34:								/* move   RN = RM */
+	case 39: case 40: case 41:				/* loadb loadw load: RM = base */
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 35: case 38:						/* moveq / movei -- immediate */
+		*dst = cur + (int)p2;
+		return 1;
+	case 36:								/* moveta  ALT_RN = RM */
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = alt + (int)p2;
+		return 1;
+	case 37:								/* movefa  RN = ALT_RM */
+		src[(*nsrc)++] = alt + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 43:								/* load_r14_indexed */
+		src[(*nsrc)++] = cur + 14;
+		*dst = cur + (int)p2;
+		return 1;
+	case 44:								/* load_r15_indexed */
+		src[(*nsrc)++] = cur + 15;
+		*dst = cur + (int)p2;
+		return 1;
+	case 58:								/* load_r14_ri */
+		src[(*nsrc)++] = cur + 14;
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 59:								/* load_r15_ri */
+		src[(*nsrc)++] = cur + 15;
+		src[(*nsrc)++] = cur + (int)p1;
+		*dst = cur + (int)p2;
+		return 1;
+	case 57:								/* nop */
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static int gpu_idle_memo_hit(uint32_t head, uint32_t jr)
+{
+	int i;
+
+	for (i = 0; i < idleMemoCount; i++)
+		if (idleMemoHead[i] == head && idleMemoJr[i] == jr)
+			return 1;
+	return 0;
+}
+
+static void gpu_idle_memo_reject(uint32_t head, uint32_t jr)
+{
+	if (gpu_idle_memo_hit(head, jr))
+		return;
+	idleMemoHead[idleMemoNext] = head;
+	idleMemoJr[idleMemoNext]   = jr;
+	idleMemoNext = (idleMemoNext + 1) % GPU_IDLE_MEMO;
+	if (idleMemoCount < GPU_IDLE_MEMO)
+		idleMemoCount++;
+	gpu_idle_skip_rejects++;
+}
+
+/* Register-independent decode of target..jr plus the delay slot. */
+static int gpu_idle_decode(uint32_t head, uint32_t jrAddr)
+{
+	uint32_t pc = head;
+	uint16_t op;
+	uint32_t idx;
+	int n = 0;
+
+	idleBodyCount = 0;
+
+	while (pc < jrAddr)
+	{
+		if (n >= GPU_IDLE_MAX_BODY)
+			return 0;
+		op  = GPU_IDLE_FETCH(pc);
+		idx = (uint32_t)(op >> 10);
+		if (!gpu_idle_op_admitted(idx))
+			return 0;
+		idleBodyIdx[n] = (uint8_t)idx;
+		idleBodyP1[n]  = (uint8_t)((op >> 5) & 0x1F);
+		idleBodyP2[n]  = (uint8_t)(op & 0x1F);
+		idleBodyImm[n] = 0;
+		if (idx == 38)						/* movei: opcode + LSW + MSW */
+		{
+			if (pc + 6 > jrAddr)			/* immediate would overrun the jr */
+				return 0;
+			idleBodyImm[n] = (uint32_t)GPU_IDLE_FETCH(pc + 2)
+			               | ((uint32_t)GPU_IDLE_FETCH(pc + 4) << 16);
+			pc += 6;
+		}
+		else
+			pc += 2;
+		n++;
+	}
+
+	if (pc != jrAddr)						/* decode fell out of step */
+		return 0;
+
+	/* The inlined delay slot at jr+2 runs on every iteration too.  A
+	 * movei there would fetch its immediate from past the branch, so
+	 * reject it rather than model it. */
+	op  = GPU_IDLE_FETCH(jrAddr + 2);
+	idx = (uint32_t)(op >> 10);
+	if (idx == 38 || !gpu_idle_op_admitted(idx))
+		return 0;
+	idleBodyIdx[n] = (uint8_t)idx;
+	idleBodyP1[n]  = (uint8_t)((op >> 5) & 0x1F);
+	idleBodyP2[n]  = (uint8_t)(op & 0x1F);
+	idleBodyImm[n] = 0;
+	n++;
+
+	idleBodyCount = n;
+	return 1;
+}
+
+/* Register-dependent half of the admission rule, run at S2 where the
+ * head state is provably steady.  Walks the body tracking each
+ * register's known value so a load base written earlier in the same
+ * body (`movei #addr,r2 ; load (r2),r1`) resolves to the address the
+ * load will really use, not to whatever the head snapshot held. */
+static int gpu_idle_check_body(const uint32_t *delta, int cur, int alt)
+{
+	uint32_t kval[64];
+	uint8_t  kok[64];
+	int src[3];
+	int nsrc, dst, s, j, i;
+	uint32_t idx, p1, p2, ea;
+
+	for (i = 0; i < 32; i++)
+	{
+		kval[i]      = gpu_reg_bank_0[i];
+		kval[32 + i] = gpu_reg_bank_1[i];
+		kok[i]       = 1;
+		kok[32 + i]  = 1;
+	}
+
+	for (j = 0; j < idleBodyCount; j++)
+	{
+		idx = idleBodyIdx[j];
+		p1  = idleBodyP1[j];
+		p2  = idleBodyP2[j];
+
+		if (!gpu_idle_operands(idx, p1, p2, cur, alt, src, &nsrc, &dst))
+			return 0;
+
+		/* A register whose per-iteration delta is nonzero is a pure
+		 * counter: it may only be read, and only be written, by an
+		 * addqt/subqt targeting itself.  Those two are the only
+		 * admitted opcodes that touch no flag, so this forbids a
+		 * growing value from reaching a compare, a load address, a
+		 * shift count or anything else. */
+		for (s = 0; s < nsrc; s++)
+			if (delta[src[s]] != 0
+			    && !((idx == 3 || idx == 7) && src[s] == dst))
+				return 0;
+		if (dst >= 0 && delta[dst] != 0 && !(idx == 3 || idx == 7))
+			return 0;
+
+		/* Loads: the effective address must be provably plain RAM.
+		 * The EA classification mirrors each gpu_opcode_* body above
+		 * exactly -- see the admission-delta comment in the header
+		 * block for why the masking differs from the DSP's. */
+		switch (idx)
+		{
+		case 39:							/* loadb */
+		case 40:							/* loadw */
+			/* Pure containing-long local read only when the RAW
+			 * address is inside GPU local RAM; anywhere else these
+			 * divert to JaguarReadByte / JaguarReadWord, whose full
+			 * TOM/JERRY decode is not audited here. */
+			if (!kok[cur + (int)p1])
+				return 0;
+			ea = kval[cur + (int)p1];
+			if (!(ea >= GPU_WORK_RAM_BASE && ea <= GPU_WORK_RAM_BASE + 0xFFF))
+				return 0;
+			break;
+		case 41:							/* load -- masks ~3 always */
+			if (!kok[cur + (int)p1])
+				return 0;
+			ea = kval[cur + (int)p1] & 0xFFFFFFFC;
+			if (!GPU_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 43:							/* load_r14_indexed -- raw base */
+			if (!kok[cur + 14])
+				return 0;
+			ea = kval[cur + 14] + (gpu_convert_zero[p1] << 2);
+			if (!GPU_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 44:							/* load_r15_indexed */
+			if (!kok[cur + 15])
+				return 0;
+			ea = kval[cur + 15] + (gpu_convert_zero[p1] << 2);
+			if (!GPU_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 58:							/* load_r14_ri -- raw sum */
+			if (!kok[cur + 14] || !kok[cur + (int)p1])
+				return 0;
+			ea = kval[cur + 14] + kval[cur + (int)p1];
+			if (!GPU_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		case 59:							/* load_r15_ri */
+			if (!kok[cur + 15] || !kok[cur + (int)p1])
+				return 0;
+			ea = kval[cur + 15] + kval[cur + (int)p1];
+			if (!GPU_IDLE_EA_OK(ea))
+				return 0;
+			break;
+		default:
+			break;
+		}
+
+		/* Propagate what we can still prove about the destination. */
+		if (dst >= 0)
+		{
+			switch (idx)
+			{
+			case 38:						/* movei -- 32-bit immediate */
+				kval[dst] = idleBodyImm[j];
+				kok[dst]  = 1;
+				break;
+			case 35:						/* moveq -- RN = IMM_1 */
+				kval[dst] = p1;
+				kok[dst]  = 1;
+				break;
+			case 34: case 36: case 37:		/* move / moveta / movefa */
+				kval[dst] = kval[src[0]];
+				kok[dst]  = kok[src[0]];
+				break;
+			default:
+				kok[dst] = 0;
+				break;
+			}
+		}
+	}
+
+	return 1;
+}
+
+static void gpu_idle_snapshot(uint32_t *s)
+{
+	memcpy(s,      gpu_reg_bank_0, 32 * sizeof(uint32_t));
+	memcpy(s + 32, gpu_reg_bank_1, 32 * sizeof(uint32_t));
+}
+
+/* Give up on an in-flight probe.  When the loop that displaced it is a
+ * different one, memo the abandoned loop: otherwise two interleaved
+ * loops could restart each other forever without either reaching S2. */
+static void gpu_idle_probe_abandon(uint32_t head, uint32_t jr)
+{
+	if (idleProbeStage != 0
+	    && (idleProbeHead != head || idleProbeJr != jr))
+		gpu_idle_memo_reject(idleProbeHead, idleProbeJr);
+	idleProbeStage = 0;
+}
+
+/* Called from GPUExec immediately after a taken backward/self `jr`, with
+ * gpu_pc already at the loop head and the delay slot already executed.
+ * Returns the (possibly advanced) cycle budget. */
+static int32_t GPUIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
+{
+	uint32_t delta[64];
+	int32_t  cost, n;
+	uint32_t opcost;
+	int      cur, alt, i;
+
+	/* Whole body -- including the delay slot and its trailing byte --
+	 * must sit in GPU local SRAM, so every fetch is a pure gpu_ram_8
+	 * read (GPUExec's own fast path for this range). */
+	if (head < GPU_WORK_RAM_BASE
+	    || jrAddr + 3 > GPU_WORK_RAM_BASE + 0xFFF)
+	{
+		gpu_idle_probe_abandon(head, jrAddr);
+		return cycles;
+	}
+
+	/* No IMASKCleared / retire-delay reset here, deliberately: the GPU
+	 * dispatches an IMASK-clearing G_FLAGS write synchronously inside
+	 * the store itself, and no store is admitted -- see theorem (2). */
+
+	/* A different loop showed up mid-probe.  Only then -- calling this
+	 * unconditionally would reset the probe of the loop we are actually
+	 * in the middle of measuring, and nothing would ever reach S2. */
+	if (idleProbeStage != 0
+	    && (idleProbeHead != head || idleProbeJr != jrAddr))
+		gpu_idle_probe_abandon(head, jrAddr);
+
+	if (gpu_idle_memo_hit(head, jrAddr))
+		return cycles;
+
+	if (idleProbeStage == 0)
+	{
+		if (!gpu_idle_decode(head, jrAddr))
+		{
+			gpu_idle_memo_reject(head, jrAddr);
+			return cycles;
+		}
+		gpu_idle_snapshot(idleProbeS0);
+		idleProbeFz0   = gpu_flag_z;
+		idleProbeFn0   = gpu_flag_n;
+		idleProbeFc0   = gpu_flag_c;
+		idleProbeCyc0  = cycles;
+		idleProbeOpc0  = gpu_exec_opcode_count;
+		idleProbeHead  = head;
+		idleProbeJr    = jrAddr;
+		idleProbeBank  = gpu_reg;
+		idleProbeStage = 1;
+		return cycles;
+	}
+
+	if (idleProbeStage == 1)
+	{
+		gpu_idle_snapshot(idleProbeS1);
+		idleProbeFz1   = gpu_flag_z;
+		idleProbeFn1   = gpu_flag_n;
+		idleProbeFc1   = gpu_flag_c;
+		idleProbeCyc1  = cycles;
+		idleProbeOpc1  = gpu_exec_opcode_count;
+		idleProbeStage = 2;
+		return cycles;
+	}
+
+	/* Stage 2: the live machine state is S2. */
+	idleProbeStage = 0;
+
+	/* Flags must have been identical at all THREE loop heads.  Comparing
+	 * only S0 against S2 would admit a two-iteration oscillation whose
+	 * third iteration behaves like neither probe. */
+	if (idleProbeFz1 != idleProbeFz0 || idleProbeFn1 != idleProbeFn0
+	    || idleProbeFc1 != idleProbeFc0
+	    || gpu_flag_z != idleProbeFz0 || gpu_flag_n != idleProbeFn0
+	    || gpu_flag_c != idleProbeFc0)
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Theorem (3): the bank pointers must not have moved. */
+	if (gpu_reg != idleProbeBank)
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Cost and opcode count measured, never recomputed: the inlined
+	 * delay slot is not charged by GPUExec's own `cycles -=`. */
+	cost = idleProbeCyc0 - idleProbeCyc1;
+	if (cost <= 0 || (idleProbeCyc1 - cycles) != cost)
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+	opcost = idleProbeOpc1 - idleProbeOpc0;
+	if (opcost == 0 || (gpu_exec_opcode_count - idleProbeOpc1) != opcost)
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* EXECUTED-PATH CHECK -- see the header block for the full argument
+	 * and for why the GPU identity is idleBodyCount, NOT the DSP's
+	 * idleBodyCount + 1: gpu_exec_opcode_count is incremented only in
+	 * GPUExec's main loop, never for the delay slot gpu_opcode_jr/jump
+	 * inline.  One straight-line traversal charges the (idleBodyCount-1)
+	 * decoded body instructions plus the loop-closing jr; any other
+	 * route from head back to head must additionally execute at least
+	 * one more counted instruction, so exact equality admits the
+	 * straight-line traversal and nothing else.  Without this, a
+	 * compound period hiding an undecoded store behind a not-taken jr
+	 * would pass every other check -- pinned by
+	 * test/tools/gpu_idle_probe_falsify. */
+	if (opcost != (uint32_t)idleBodyCount)
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Per-iteration register delta must be constant across both probes. */
+	for (i = 0; i < 32; i++)
+	{
+		delta[i]      = idleProbeS1[i] - idleProbeS0[i];
+		delta[32 + i] = idleProbeS1[32 + i] - idleProbeS0[32 + i];
+		if (gpu_reg_bank_0[i] - idleProbeS1[i] != delta[i])
+		{
+			gpu_idle_memo_reject(head, jrAddr);
+			return cycles;
+		}
+		if (gpu_reg_bank_1[i] - idleProbeS1[32 + i] != delta[32 + i])
+		{
+			gpu_idle_memo_reject(head, jrAddr);
+			return cycles;
+		}
+	}
+
+	cur = (gpu_reg == gpu_reg_bank_0) ? 0 : 32;
+	alt = 32 - cur;
+
+	if (!gpu_idle_check_body(delta, cur, alt))
+	{
+		gpu_idle_memo_reject(head, jrAddr);
+		return cycles;
+	}
+
+	/* Always leave one full iteration to execute normally. */
+	n = (cycles / cost) - 1;
+	if (n <= 0)
+		return cycles;
+
+	for (i = 0; i < 32; i++)
+	{
+		if (delta[i])
+			gpu_reg_bank_0[i] += (uint32_t)n * delta[i];
+		if (delta[32 + i])
+			gpu_reg_bank_1[i] += (uint32_t)n * delta[32 + i];
+	}
+	cycles -= n * cost;
+	gpu_exec_opcode_count += (uint32_t)n * opcost;
+
+	gpu_idle_skip_fires++;
+	gpu_idle_skip_iters   += (uint32_t)n;
+	gpu_idle_skip_opcodes += (uint32_t)n * opcost;
+
+	return cycles;
+}
+
 // Main GPU execution core
 
 void GPUExec(int32_t cycles)
@@ -1471,6 +2138,7 @@ void GPUExec(int32_t cycles)
     * the same reason. */
    int      pipeTiming;
    uint32_t riscScale;
+   int      idleSkipActive;
 
    if (!GPU_RUNNING)
       return;
@@ -1503,10 +2171,41 @@ void GPUExec(int32_t cycles)
    pipeTiming = vjs.gpuPipelineTiming ? 1 : 0;
    riscScale  = riscClockScalePct;
 
+   /* Idle-loop fast-forward gates (issue #569, GPU port).  Same
+    * suppression list as DSPExec's -- every entry adds per-instruction
+    * state the affine extrapolation does not model, so any of them
+    * turns the whole thing off; see the rationale on each item there.
+    * The vjtrace/gdb checks are RUNTIME checks for the same reason as
+    * the DSP's: the test ABI is built with -DVJ_TRACE, and a compile-
+    * time gate would make every headless harness silently measure a
+    * disabled feature. */
+   idleSkipActive = vjs.riscIdleSkip
+                 && !blitMemoMode && !blitMemoRecording
+                 && riscClockScalePct == 100
+                 && !busArbiter.enabled
+                 && !vjs.gpuPipelineTiming
+                 && !(gpu_control & 0x18);
+#ifdef VJ_TRACE
+   if (vjtrace_armed || vjtrace_nwatch)
+      idleSkipActive = 0;
+#endif
+#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+   /* GDB stub (issue #652): a GPU breakpoint or pending step inside the
+    * loop would be stepped clean over -- same reasoning as DSPExec. */
+   if (gdbArmedGPU)
+      idleSkipActive = 0;
+#endif
+   /* Probe + reject memo are re-derived from scratch every call, so
+    * nothing here reaches a savestate and nothing survives a slice. */
+   idleProbeStage = 0;
+   idleMemoCount  = 0;
+   idleMemoNext   = 0;
+
    while (cycles > 0 && GPU_RUNNING)
    {
       uint16_t opcode;
       uint32_t index;
+      uint32_t pcThis;
       gpuExecSliceRemaining = cycles;
 #ifdef VJ_TRACE
       VJT_PCHIST_GPU(gpu_pc);
@@ -1522,6 +2221,8 @@ void GPUExec(int32_t cycles)
       if (gdbArmedGPU && GDBCheckPC(GDB_TGT_GPU, gpu_pc))
          GDBHalt(GDB_TGT_GPU, GDB_STOP_BREAKPOINT, gpu_pc);
 #endif
+
+      pcThis = gpu_pc;
 
       if (gpu_pc >= GPU_WORK_RAM_BASE && gpu_pc < GPU_WORK_RAM_BASE + 0x1000)
       {
@@ -1586,6 +2287,15 @@ void GPUExec(int32_t cycles)
       else
          cycles -= gpu_opcode_cycles[index] + (int32_t)gpu_bus_stall
                  + (int32_t)gpu_pipe_core_stall;
+
+      /* Idle-loop fast-forward (issue #569, GPU port).  A taken `jr`
+       * that landed on or behind its own address, at most 8 words back,
+       * is the only candidate; the unsigned difference rejects a
+       * not-taken jr (pc = pcThis + 2) and every forward branch in one
+       * compare. */
+      if (idleSkipActive && index == 53
+          && (uint32_t)(pcThis - gpu_pc) <= 14)
+         cycles = GPUIdleLoopProbe(cycles, gpu_pc, pcThis);
 
       /* Single-step barrier (G_CTRL SINGLE_STEP, bit 3): a running RISC core
        * that has just set SINGLE_STEP has entered single-step mode and stops
