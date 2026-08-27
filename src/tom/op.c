@@ -25,6 +25,7 @@
 #include "vjag_memory.h"
 #include "tom.h"
 #include "../core/vjtrace.h"
+#include "op_simd_neon.h"
 
 #define BLEND_Y(dst, src)	op_blend_y[(((uint16_t)dst<<8)) | ((uint16_t)(src))]
 #define BLEND_CR(dst, src)	op_blend_cr[(((uint16_t)dst)<<8) | ((uint16_t)(src))]
@@ -1162,6 +1163,23 @@ void OPProcessFixedBitmap(uint64_t p0, uint64_t p1, bool render)
          uint32_t sfbPhrase = data;
          pixels <<= firstPix;
          data += pitch;
+
+#if defined(BLITTER_SIMD_HAVE_NEON)
+         /* Full 4-pixel phrase, no RMW / REFLECT / shadow hooks, wholly
+          * inside LBUF. Partial firstPix/i phrases and every other mode
+          * keep the scalar loop below. */
+         if (!flagRMW && lbufDelta == 2
+               && !shadowFBActive && !shadowHiresActive
+               && OP_LBUF_IN_BOUNDS(currentLineBuffer, 8)
+               && i == 0 && firstPix == 0)
+         {
+            op_store_phrase_16bpp_neon(currentLineBuffer, pixels, flagTRANS);
+            currentLineBuffer += 8;
+            firstPix = 0;
+            i = 0;
+            continue;
+         }
+#endif
 
          while (i++ < 4)
          {
