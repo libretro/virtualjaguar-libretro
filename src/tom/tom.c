@@ -1196,6 +1196,9 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
    unsigned w = (tomWidth < 1024) ? tomWidth : 1024;
    uint32_t *dst;
    uint32_t px;
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   unsigned neon_done;
+#endif
 
    if (fn == tom_render_16bpp_cry_scanline)
    {
@@ -1209,13 +1212,39 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
       return;
    }
 
-   for (i = 0; i < w; i++)
-      tomHiresScratch[i] = backbuffer[i * n];
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   /* n==2 is Stage 1. Compiler autovec of the runtime-n loops only
+    * fires for n==1 (gather) or n>7 (expand); the common 2x path
+    * stays scalar without this. */
+   if (n == 2u)
+   {
+      neon_done = tom_scan_neon_hires_gather_n2(backbuffer, tomHiresScratch, w);
+      for (i = neon_done; i < w; i++)
+         tomHiresScratch[i] = backbuffer[i * n];
+   }
+   else
+#endif
+   {
+      for (i = 0; i < w; i++)
+         tomHiresScratch[i] = backbuffer[i * n];
+   }
    fn(tomHiresScratch);
    for (r = 0; r < n; r++)
    {
       dst = backbuffer + r * screenPitch;
-      for (i = 0; i < w; i++)
+#if defined(BLITTER_SIMD_HAVE_NEON)
+      if (n == 2u)
+      {
+         neon_done = tom_scan_neon_hires_expand_n2(tomHiresScratch, dst, w);
+         dst += neon_done * 2u;
+         i = neon_done;
+      }
+      else
+         i = 0;
+#else
+      i = 0;
+#endif
+      for (; i < w; i++)
       {
          px = tomHiresScratch[i];
          for (s = 0; s < n; s++)
