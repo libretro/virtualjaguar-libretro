@@ -41,6 +41,7 @@ skip_file() {
         deps/libchdr/*) return 0 ;;
         tools/jagcd/*) return 0 ;;
         # Builds against test/harness/, which is outside $INCLUDES; C99 harness.
+        test/tools/audio_wav_dump.c) return 0 ;;
         test/tools/fmv_seek_probe.c) return 0 ;;
         test/tools/frame_hash_ab.c) return 0 ;;
         test/tools/hires_box_check.c) return 0 ;;
