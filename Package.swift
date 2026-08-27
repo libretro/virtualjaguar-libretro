@@ -56,6 +56,9 @@ let coreSources: [String] = [
     "src/core/universalhdr.c",
     "src/core/vjag_memory.c",
     "src/core/vjtrace.c",
+    "src/debug/gdbsock.c",
+    "src/debug/gdbstub.c",
+    "src/debug/gdbtarget.c",
     "src/jerry/axistune.c",
     "src/jerry/dac.c",
     "src/jerry/dsp.c",
@@ -165,6 +168,7 @@ let package = Package(
                 .headerSearchPath("src/cd"),
                 .headerSearchPath("src/bios"),
                 .headerSearchPath("src/m68000"),
+                .headerSearchPath("src/debug"),
                 .headerSearchPath("libretro-common/include"),
                 // src/cd/cdintf.c includes <libchdr/chd.h> unconditionally.
                 .headerSearchPath("deps/libchdr/include"),

@@ -22,7 +22,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 CC="${CC:-gcc}"
 CFLAGS="-fsyntax-only -std=gnu89 -Werror=declaration-after-statement"
-INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Ilibretro-common/include -Ideps/libchdr/include"
+INCLUDES="-I. -Isrc -Isrc/core -Isrc/tom -Isrc/jerry -Isrc/cd -Isrc/bios -Isrc/m68000 -Isrc/debug -Ilibretro-common/include -Ideps/libchdr/include"
 DEFINES='-D__LIBRETRO__ -DINLINE=inline'
 
 skip_file() {
