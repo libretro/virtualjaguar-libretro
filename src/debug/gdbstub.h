@@ -68,6 +68,19 @@ int GDBParseHexU32(const char *s, int len, unsigned int *out);
  * only this one header. */
 const struct GDBTargetOps *GDBJaguarOps(void);
 
+/*
+ * Loopback-only TCP transport, implemented in gdbsock.c (Task 5). Binds
+ * 127.0.0.1 only -- never INADDR_ANY -- and accepts a single client.
+ * On platforms without BSD sockets, GDBSockOpen() always fails and the
+ * rest are inert, so the caller degrades to "stub unavailable" rather
+ * than failing content load.
+ */
+int GDBSockOpen(int port);
+void GDBSockClose(void);
+int GDBSockPoll(void);
+int GDBSockRecv(char *buf, int max);
+int GDBSockSend(const char *buf, int len);
+
 #ifdef __cplusplus
 }
 #endif

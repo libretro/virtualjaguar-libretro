@@ -107,7 +107,8 @@ SOURCES_C :=  \
 	$(CORE_DIR)/src/core/universalhdr.c \
 	$(CORE_DIR)/src/jerry/wavetable.c \
 	$(CORE_DIR)/src/debug/gdbstub.c \
-	$(CORE_DIR)/src/debug/gdbtarget.c
+	$(CORE_DIR)/src/debug/gdbtarget.c \
+	$(CORE_DIR)/src/debug/gdbsock.c
 
 # SIMD-accelerated blitter operations: select arch-specific implementation.
 # BLITTER_SIMD may be set explicitly to one of: scalar, sse2, neon.
