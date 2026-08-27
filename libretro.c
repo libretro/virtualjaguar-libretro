@@ -328,8 +328,13 @@ extern void (*eeprom_dirty_cb)(void);
  *                followed by 128 bytes of CD EEPROM (64 x 16-bit words).
  * Memory Track cart (CRC 0xFDF37F47): mtMem is used directly (128K).
  *
- * The save buffer is kept in sync on every EEPROM write via eeprom_dirty_cb,
- * so frontends that cache the pointer always see current data. */
+ * EEPROM banks stay in sync on every write via eeprom_dirty_cb, so
+ * frontends that cache the pointer always see current EEPROM data.
+ * Memory Track is 128 KB; mt_dirty_cb only latches mt_save_buf_dirty so
+ * an AT29C010 programming burst does not memcpy the whole chip per byte.
+ * mt_flush_save_buf copies at most once per frame (and whenever a SRAM
+ * consumer reads the pointer), which is the freshness those frontends
+ * need. */
 #define EEPROM_SAVE_SIZE    128  /* 64 x 16-bit words, big-endian */
 #define CD_EEPROM_SAVE_SIZE 128  /* CD EEPROM: 64 x 16-bit words */
 #define MT_SAVE_SIZE        0x20000  /* 128K Memory Track */
@@ -339,9 +344,12 @@ extern void (*eeprom_dirty_cb)(void);
 #define CD_SAVE_SIZE        (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE)
 static uint8_t eeprom_save_buf[EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE + MT_SAVE_SIZE];
 #define MT_SAVE_OFFSET      (EEPROM_SAVE_SIZE + CD_EEPROM_SAVE_SIZE)
+static int mt_save_buf_dirty;
 static void eeprom_pack_save_buf(void);
 static void eeprom_unpack_save_buf(void);
 static void mt_pack_save_buf(void);
+static void mt_mark_save_dirty(void);
+static void mt_flush_save_buf(void);
 
 static retro_video_refresh_t video_cb;
 static retro_input_poll_t input_poll_cb;
@@ -4149,6 +4157,7 @@ bool retro_serialize(void *data, size_t size)
    uint8_t *buf, *start;
    size_t written;
    uint32_t magic, version, flags, reserved;
+   enum retro_savestate_context ss_ctx;
    extern uint8_t jerry_ram_8[];
    extern bool lowerField;
 
@@ -4275,9 +4284,25 @@ bool retro_serialize(void *data, size_t size)
       }
    }
 
-   /* Zero-fill remaining bytes for deterministic save states */
+   /* Zero-fill remaining bytes for deterministic save states.  Skip
+    * only for same-session run-ahead (SAME_INSTANCE / SAME_BINARY):
+    * those buffers never leave the process, are never compared, and
+    * serialize every frame.  Keep the memset for NORMAL (on-disk) and
+    * ROLLBACK_NETPLAY -- libretro.h 5718-5730: a rollback state "will
+    * almost certainly be loaded by a separate binary, device, and
+    * address space" and peers may CRC-compare the blob for desync
+    * detection.  Query per call: RetroArch's savestate context is not
+    * session-stable (run-ahead and a user save interleave).  A frontend
+    * that does not implement GET_SAVESTATE_CONTEXT leaves ss_ctx at
+    * NORMAL and keeps the zero-fill. */
    if (written < STATE_SIZE)
-      memset(buf, 0, STATE_SIZE - written);
+   {
+      ss_ctx = RETRO_SAVESTATE_CONTEXT_NORMAL;
+      if (!(environ_cb(RETRO_ENVIRONMENT_GET_SAVESTATE_CONTEXT, &ss_ctx)
+            && (ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_INSTANCE
+                || ss_ctx == RETRO_SAVESTATE_CONTEXT_RUNAHEAD_SAME_BINARY)))
+         memset(buf, 0, STATE_SIZE - written);
+   }
 
    return true;
 }
@@ -5301,9 +5326,11 @@ bool retro_load_game(const struct retro_game_info *info)
     * stops test runs against a stale core from going unnoticed. */
    LOG_INF("[Virtual Jaguar] build: %s\n", CORE_VERSION);
 
-   /* Register EEPROM dirty callback so the save buffer stays in sync */
+   /* Register EEPROM dirty callback so the save buffer stays in sync.
+    * Memory Track latches a dirty flag instead -- packing 128 KB per
+    * AT29C010 byte write is the F2 amplification. */
    eeprom_dirty_cb = eeprom_pack_save_buf;
-   mt_dirty_cb     = mt_pack_save_buf;
+   mt_dirty_cb     = mt_mark_save_dirty;
 
    /* Detect CD content (CUE/CDI/CHD/ISO) and stage a CD BIOS (external file
     * if present, embedded otherwise) so ResolveBootConfig can pick the
@@ -5593,6 +5620,7 @@ void retro_unload_game(void)
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
+   mt_save_buf_dirty = 0;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
 
@@ -5637,7 +5665,10 @@ static void eeprom_pack_save_buf(void)
    }
    /* Memory Track NVRAM follows both EEPROM banks (CD content only). */
    if (jaguar_cd_mode)
+   {
       memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
+      mt_save_buf_dirty = 0;
+   }
 }
 
 /* Mirror the Memory Track into the save buffer without repacking the EEPROMs
@@ -5646,6 +5677,18 @@ static void eeprom_pack_save_buf(void)
 static void mt_pack_save_buf(void)
 {
    memcpy(eeprom_save_buf + MT_SAVE_OFFSET, mtMem, MT_SAVE_SIZE);
+   mt_save_buf_dirty = 0;
+}
+
+static void mt_mark_save_dirty(void)
+{
+   mt_save_buf_dirty = 1;
+}
+
+static void mt_flush_save_buf(void)
+{
+   if (mt_save_buf_dirty)
+      mt_pack_save_buf();
 }
 
 /* Unpack the save buffer back into eeprom_ram[] and cdrom_eeprom_ram[].
@@ -5676,7 +5719,11 @@ void *retro_get_memory_data(unsigned type)
       /* Memory Track cart uses 128K NVRAM directly */
       if (jaguarMainROMCRC32 == 0xFDF37F47)
          return mtMem;
-      /* Regular carts: return the pre-packed save buffer */
+      /* Regular carts / CD: return the pre-packed save buffer.
+       * Flush Memory Track first so a consumer that didn't cache the
+       * pointer (or that re-queries after writes this frame) never
+       * reads a stale 128 KB tail. */
+      mt_flush_save_buf();
       return eeprom_save_buf;
    }
    return NULL;
@@ -5992,6 +6039,7 @@ void retro_deinit(void)
 
    eeprom_dirty_cb = NULL;
    mt_dirty_cb     = NULL;
+   mt_save_buf_dirty = 0;
    save_data_needs_unpack = false;
    memset(eeprom_save_buf, 0, sizeof(eeprom_save_buf));
    videoWidth = 0;
@@ -6309,7 +6357,13 @@ void retro_run(void)
     * idempotent on repeated netlink_apply() calls with unchanged
     * parameters, so this rebuild's own SET_CORE_OPTIONS_V2 -- even if it
     * causes the frontend to re-signal a variables update -- cannot wipe
-    * the peer table out from under itself. */
+    * the peer table out from under itself.
+    *
+    * Skip the clock query (and ConsumeChanged) when netlink is off and
+    * nothing is latched: JLinkNowMs() is a second per-frame
+    * clock_gettime on top of JLinkFrameTick.  A sticky dirty latch
+    * still enters so a change is delayed, never lost. */
+   if (JLinkMode() != JLINK_MODE_DISABLED || netlink_peers_dirty)
    {
       uint32_t disc_now = JLinkNowMs();
       if (JLinkDiscConsumeChanged())
@@ -6435,6 +6489,12 @@ void retro_run(void)
     * run unconditionally. */
    CrashDetectFrameTick(tomSkipVideoPresent ? NULL : videoBuffer,
                          (unsigned)game_width, (unsigned)game_height);
+
+   /* Memory Track SRAM: one 128 KB pack per dirty frame, after emulation
+    * so frontends that cache the SAVE_RAM pointer see this frame's writes.
+    * retro_serialize / unserialize / deinit read mtMem via MTStateSave,
+    * not eeprom_save_buf, so they do not need a flush. */
+   mt_flush_save_buf();
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 
