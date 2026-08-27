@@ -55,6 +55,28 @@
  *      explicit user choice; a [titledb] warning is still logged so a bug
  *      report against this title starts from the right hypothesis.
  *
+ * Enhancement profile cases (P9, docs/perf-audit-2026-08.md):
+ *
+ *   9  AvP, virtualjaguar_enhancement_profile=performance -- the DB's
+ *      enhancement defaults are NOT applied: shadowHiresN == 1, a [perf]
+ *      "not applying" line is logged, and no "(option at default)"
+ *      substitution line appears.
+ *  10  AvP, profile=performance PLUS virtualjaguar_internal_resolution=2x
+ *      set EXPLICITLY -- the user's own choice beats the profile:
+ *      shadowHiresN == 2 (the profile governs DB defaults only).
+ *  11  AvP, virtualjaguar_enhancement_profile=quality -- the DB defaults
+ *      apply exactly as before the profile existed: shadowHiresN == 2
+ *      with the substitution line logged.  (Case 1, which passes no
+ *      profile option, doubles as the 'auto'-on-a-capable-host arm: the
+ *      registered default is auto and this host is not 32-bit ARM.)
+ *  12  AvP, default options (profile=auto), with the harness accepting
+ *      the core's RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK
+ *      registration -- the runtime demotion: the DB's 2x applies at load,
+ *      then the test feeds "underrun likely" reports the way a struggling
+ *      frontend would; after the demotion threshold the core must drop to
+ *      shadowHiresN == 1 mid-session, log the [perf] demotion warning
+ *      naming the measured overrun, and keep running.
+ *
  * The [titledb] substitution/miss lines are logged at RETRO_LOG_INFO via
  * LOG_INF(), which the harness's cb_log filters out below RETRO_LOG_WARN
  * unless VJ_HARNESS_LOG_INFO=1 is set (see harness.c) -- this test sets it
@@ -207,9 +229,9 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--case") == 0 && i + 1 < argc)
             case_num = atoi(argv[i + 1]);
     }
-    if (case_num < 1 || case_num > 8) {
+    if (case_num < 1 || case_num > 12) {
         fprintf(stderr,
-                "usage: test_pertitle_db [core] <rom> --case N[1-8] "
+                "usage: test_pertitle_db [core] <rom> --case N[1-12] "
                 "[--option KEY=VALUE ...]\n");
         return 1;
     }
@@ -270,6 +292,13 @@ int main(int argc, char **argv)
         set_negative(negative_true_color, 1);
     }
 
+    /* Case 12 (P9): accept the core's audio-buffer status callback
+     * registration so the test can feed synthetic underrun reports, and
+     * keep the stderr capture open across the feeding loop below -- the
+     * [perf] demotion warning is logged mid-run, not at load. */
+    if (case_num == 12)
+        cfg.accept_audio_buf_cb = 1;
+
     log_capture_begin();
     if (!harness_load_rom(&cfg)) {
         log_capture_end();
@@ -277,13 +306,15 @@ int main(int argc, char **argv)
                 cfg.rom_path);
         return 1;
     }
-    log_capture_end();
+    if (case_num != 12)
+        log_capture_end();
 
     harness_run(&cfg);
 
     hires_n_ptr       = (int *)harness_dlsym(&cfg, "shadowHiresN");
     shadow_active_ptr = (int *)harness_dlsym(&cfg, "shadowFBActive");
     if (!hires_n_ptr || !shadow_active_ptr) {
+        log_capture_end();   /* still open for case 12 */
         fprintf(stderr,
                 "test_pertitle_db: missing shadowHiresN/shadowFBActive "
                 "exports -- rebuild with `make TEST_EXPORTS=1`\n");
@@ -419,6 +450,90 @@ int main(int argc, char **argv)
             warn_logged ? "[titledb] known-bad warning logged"
                         : "no [titledb] known-bad warning found");
         pass = tc_honored && warn_logged;
+        break;
+    }
+    case 9: {
+        /* performance profile: the DB's enhancement defaults must not
+         * apply -- exactly as if the title had no row. */
+        int hires_ok   = (*hires_n_ptr == 1);
+        int perf_log   = log_contains("not applying");
+        int no_sub_log = !log_contains("(option at default)");
+        results[nres++] = mkres(hires_ok, "case9_performance_suppresses_db",
+            hires_ok ? "shadowHiresN == 1 (DB default suppressed)"
+                     : "shadowHiresN != 1 (DB default applied despite "
+                       "performance profile!)");
+        results[nres++] = mkres(perf_log, "case9_perf_log_present",
+            perf_log ? "[perf] suppression line logged"
+                     : "no [perf] suppression line found");
+        results[nres++] = mkres(no_sub_log, "case9_no_substitution_log",
+            no_sub_log ? "no [titledb] substitution line (correctly none)"
+                       : "unexpected [titledb] substitution line under "
+                         "performance profile");
+        pass = hires_ok && perf_log && no_sub_log;
+        break;
+    }
+    case 10: {
+        /* performance profile + EXPLICIT internal_resolution=2x: the
+         * user's own choice is out of the profile's reach. */
+        int hires_ok = (*hires_n_ptr == 2);
+        results[nres++] = mkres(hires_ok, "case10_explicit_beats_profile",
+            hires_ok ? "shadowHiresN == 2 (explicit user choice honored)"
+                     : "shadowHiresN != 2 (profile overrode an explicit "
+                       "user choice!)");
+        pass = hires_ok;
+        break;
+    }
+    case 11: {
+        /* quality profile: pre-profile behaviour, DB defaults apply. */
+        int hires_ok  = (*hires_n_ptr == 2);
+        int logged_ok = log_contains("(option at default)");
+        results[nres++] = mkres(hires_ok, "case11_quality_applies_db",
+            hires_ok ? "shadowHiresN == 2 (DB applied under quality)"
+                     : "shadowHiresN != 2");
+        results[nres++] = mkres(logged_ok, "case11_titledb_log_present",
+            logged_ok ? "[titledb] substitution logged (option at default)"
+                      : "no [titledb] substitution log line found");
+        pass = hires_ok && logged_ok;
+        break;
+    }
+    case 12: {
+        /* Runtime demotion (profile=auto): the DB's 2x applied at load;
+         * now feed "underrun likely" once per frame the way a struggling
+         * frontend would, past the core's consecutive-frame threshold
+         * (180), and the core must drop to 1x mid-session and say why.
+         * The loop keeps stepping past the demotion (the core unregisters
+         * the callback once the watch is spent -- the harness then holds
+         * NULL) to prove the session keeps running at 1x. */
+        int hires_before = *hires_n_ptr;
+        int cb_ok        = (cfg.audio_buf_cb != NULL);
+        int hires_after;
+        int demote_logged;
+        int j;
+
+        for (j = 0; j < 250 && !cfg.stop_requested; j++) {
+            if (cfg.audio_buf_cb)
+                cfg.audio_buf_cb(true, 0, true);
+            harness_step(&cfg);
+        }
+        log_capture_end();
+
+        hires_after   = *hires_n_ptr;
+        demote_logged = log_contains("enhancement profile 'auto'")
+                     && log_contains("measured frame-budget overrun");
+        results[nres++] = mkres(hires_before == 2, "case12_db_applied_at_load",
+            hires_before == 2 ? "shadowHiresN == 2 before the underrun feed"
+                              : "shadowHiresN != 2 at load (nothing to demote)");
+        results[nres++] = mkres(cb_ok, "case12_buffer_cb_registered",
+            cb_ok ? "core registered the audio-buffer status callback"
+                  : "core never registered the audio-buffer status callback");
+        results[nres++] = mkres(hires_after == 1, "case12_runtime_demotion",
+            hires_after == 1 ? "shadowHiresN == 1 after sustained underrun"
+                             : "shadowHiresN != 1 (no runtime demotion)");
+        results[nres++] = mkres(demote_logged, "case12_demotion_logged",
+            demote_logged ? "[perf] demotion warning logged (measured overrun)"
+                          : "no [perf] demotion warning found");
+        pass = (hires_before == 2) && cb_ok && (hires_after == 1)
+            && demote_logged;
         break;
     }
     default:

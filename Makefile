@@ -1945,6 +1945,10 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@rm -f $(EEPROM_GEN_TOOL) $(EEPROM_FIXTURE)
 	@# Per-title enhancement defaults DB E2E (#368): apply / disable /
 	@# user-override contract, driven through the real dlopen'd core.
+	@# Cases 9-12 extend it to the enhancement profile (P9): performance
+	@# suppresses the DB defaults, an explicit user option beats the
+	@# profile, quality applies them, and the 'auto' runtime demotion
+	@# drops them mid-session on sustained synthetic underrun reports.
 	@# Cases 7/8 extend this to the negative/known-bad entry class (#464):
 	@# refuse-the-default / honour-and-warn-the-user, via a
 	@# programmatically-installed row (TitleDBSetNegativeForTest) so the
@@ -1973,6 +1977,14 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 7 --quiet || rc=1; \
 			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 8 --quiet \
 				--option virtualjaguar_true_color=enabled || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 9 --quiet \
+				--option virtualjaguar_enhancement_profile=performance || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 10 --quiet \
+				--option virtualjaguar_enhancement_profile=performance \
+				--option virtualjaguar_internal_resolution=2x || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 11 --quiet \
+				--option virtualjaguar_enhancement_profile=quality || rc=1; \
+			./test/tools/test_pertitle_db ./$(TARGET) "$$avp" --case 12 --quiet || rc=1; \
 			exit $$rc; \
 		else \
 			bash scripts/test-skip.sh record "Per-title defaults (AvP apply/disable/override)" \

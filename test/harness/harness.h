@@ -267,6 +267,19 @@ typedef struct {
      * predates this option -- see cb_environment() in harness.c. */
     int           av_skip_video;
 
+    /* RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK capture (opt-in
+     * like av_skip_video/mic_tone): when accept_audio_buf_cb is non-zero
+     * the environment callback accepts the registration and stores the
+     * core's callback here, so a test can feed synthetic occupancy /
+     * underrun-likely reports the way a real frontend would (once per
+     * frame, before retro_run).  Default 0 refuses the call, matching
+     * every harness tool that predates this option.  The signature is
+     * retro_audio_buffer_status_callback_t from libretro.h, spelled out
+     * because this header does not include it. */
+    int           accept_audio_buf_cb;
+    void        (*audio_buf_cb)(bool active, unsigned occupancy,
+                                bool underrun_likely);
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -316,6 +329,8 @@ typedef struct {
     .last_fb_hash = 0, \
     .mic_tone = 0, \
     .av_skip_video = 0, \
+    .accept_audio_buf_cb = 0, \
+    .audio_buf_cb = NULL, \
     .core_handle = NULL, \
     .current_frame = 0, \
     .audio = {0}, \
