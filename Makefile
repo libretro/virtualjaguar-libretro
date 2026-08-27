@@ -123,6 +123,36 @@ ifeq ($(origin OPT_LEVEL),undefined)
    endif
 endif
 
+# LTO default.  Resolved here (before BUILD_AXES) so the stamp records the
+# effective value, not the empty command-line origin.
+#
+# GNU-ld ELF targets (unix, rpi*, generic arm64/aarch64/armv*) default ON;
+# opt out with LTO=0.  win (PE/COFF) and qnx (unverified gcc floor) stay off.
+# Mach-O (osx/ios/tvos) stays off unless LTO=1 is passed explicitly -- Apple
+# ld64 LTO is a different pipeline than the #569 ELF GOT/PLT win, and host
+# A/B numbers are indicative only.  classic_armv7_a7 is not in this list: it
+# already runs its own -flto=4 -fwhole-program pipeline.
+#
+# The FLAGS append is still gated on GC_STYLE below; this only picks the
+# default so `make` and `make LTO=1` stamp the same on unix/rpi*.
+LTO_DEFAULT_PLATFORMS := unix rpi0 rpi1 rpi2 rpi3 rpi3_64 rpi4 rpi4_64 rpi5 rpi5_64 \
+                         arm64 aarch64
+ifeq ($(origin LTO),undefined)
+   ifneq ($(filter $(platform),$(LTO_DEFAULT_PLATFORMS)),)
+      LTO := 1
+   else ifneq (,$(filter armv%,$(platform)))
+      LTO := 1
+   else
+      LTO := 0
+   endif
+endif
+
+# Opt-in iOS -mcpu pin.  Empty by default: stock ios-arm64 is -mtune only
+# (ISA-safe for the RetroArch iOS 9 / A7 floor).  For an iOS 17+ deploy
+# that can assume A12+: `make platform=ios-arm64 IOS_MCPU=apple-a12`.
+# MUST stay in BUILD_AXES -- it changes object content.
+IOS_MCPU ?=
+
 # system platform
 system_platform = unix
 ifeq ($(shell uname -a),)
@@ -208,7 +238,7 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
-              OPT_LEVEL LTO
+              OPT_LEVEL LTO IOS_MCPU
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
@@ -303,6 +333,17 @@ else ifneq (,$(findstring ios,$(platform)))
 ifeq ($(platform),ios-arm64)
    CC = cc -arch arm64 -isysroot $(IOSSDK)
    CXX = clang++ -arch arm64 -isysroot $(IOSSDK)
+   # ISA-safe schedule model.  RetroArch's ios-arm64 floor is iOS 9 = A7;
+   # -mtune does not change the ISA so A7 devices still run the binary.
+   # Do NOT default -mcpu: apple-a10+ emits CRC32, apple-a11+ emits LSE,
+   # and either SIGILLs on A7/A8/A9.  Opt in for iOS 17+ deploys:
+   #   make platform=ios-arm64 IOS_MCPU=apple-a12
+   CFLAGS += -mtune=apple-a10
+   CXXFLAGS += -mtune=apple-a10
+   ifneq ($(IOS_MCPU),)
+      CFLAGS += -mcpu=$(IOS_MCPU)
+      CXXFLAGS += -mcpu=$(IOS_MCPU)
+   endif
 else
    CC = cc -arch armv7 -isysroot $(IOSSDK)
    CXX = clang++ -arch armv7 -isysroot $(IOSSDK)
@@ -327,6 +368,10 @@ else ifeq ($(platform), tvos-arm64)
         CC = cc -arch arm64 -isysroot $(IOSSDK)
         CXX = clang++ -arch arm64 -isysroot $(IOSSDK)
         MINVERSION = -mappletvos-version-min=11.0
+        # ISA-safe schedule model for Apple TV HD (A8), the tvOS floor.
+        # -mcpu is forbidden here: apple-a10+ emits CRC32 => SIGILL on A8.
+        CFLAGS += -mtune=apple-a8
+        CXXFLAGS += -mtune=apple-a8
         SHARED += $(MINVERSION)
         CFLAGS += $(MINVERSION)
 
@@ -464,7 +509,8 @@ else ifeq ($(platform), libnx)
 	# possibly speed up are integer-only regardless of target architecture,
 	# so the x86_64/arm64 A/B null result (see the FLAGS block below)
 	# generalizes here without needing a Switch-specific measurement.
-	CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -mcpu=cortex-a57+crc+fp+simd
+	# -mcpu implies -mtune, so a separate -mtune=cortex-a57 was redundant.
+	CFLAGS += -march=armv8-a -mtp=soft -mcpu=cortex-a57+crc+fp+simd
 	CXXFLAGS := $(ASFLAGS) $(CFLAGS)
 	STATIC_LINKING = 1
 
@@ -1043,17 +1089,29 @@ ifneq ($(platform),win)
       FLAGS += -fvisibility=hidden
    endif
 
-   # Opt-in LTO (issue #569). Deliberately NOT default-on -- it wants an
-   # A/B on real Pi hardware first (test/tools/rpi_perf.sh exists for
-   # exactly that), same caution as the -O3 rollout above (#515/#516).
-   # `make LTO=1` (add `platform=rpi4_64` etc.) appends -flto to both
-   # the compile and link lines for every GC_STYLE=gnu target except
-   # `win` (see above).
+   # LTO (issue #569).  Default-on for these GNU-ld ELF targets; opt out
+   # with LTO=0.  macOS host A/B is indicative only; Linux/Pi CI + device
+   # `rpi_perf.sh` is the final arbiter.  `win` is excluded by the outer
+   # ifneq; `qnx` is excluded here (unverified gcc floor -- the same
+   # reason it is carved out of -fno-semantic-interposition).
+   # `make LTO=1 platform=rpi4_64` still works (now a no-op vs default).
+   ifneq ($(platform),qnx)
+      ifeq ($(LTO),1)
+         FLAGS   += -flto
+         LDFLAGS += -flto
+      endif
+   endif
+endif
+endif
+
+# Explicit LTO=1 on Mach-O (osx/ios/tvos): same knob, default-off.  Lets
+# a macOS host A/B the flag; Apple ld64 LTO is not the #569 ELF win and
+# is not default-on.
+ifeq ($(GC_STYLE),macho)
    ifeq ($(LTO),1)
       FLAGS   += -flto
       LDFLAGS += -flto
    endif
-endif
 endif
 # ----------------------------------------------------------------
 
