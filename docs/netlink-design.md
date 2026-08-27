@@ -410,9 +410,10 @@ Frontend matrix: RetroArch ≥ 1.16 → netpacket netplay; any other frontend
 
 `UARTFrameUsec()` is the single choke point for the whole link's emulated
 latency — **both** the TX drain and the RX arrival schedule through it — so
-`virtualjaguar_netlink_speed` (default off; originally values 2 / 4,
-replaced by a negotiated `auto` in #552 below) divides exactly that one
-number. Three things about the shape are load-bearing:
+`virtualjaguar_netlink_speed` (originally values 2 / 4, replaced by a
+negotiated `auto` in #552 below, which is also its default -- see that
+section) divides exactly that one number. Three things about the shape
+are load-bearing:
 
 - **Gated on an active transport, evaluated per call.** With
   `JLinkMode() == JLINK_MODE_DISABLED` the function takes a branch that is
@@ -470,7 +471,22 @@ at link-up, out-of-band, and fall back to stock timing if the peer
 rejects, does not understand the request, or does not answer. There is
 exactly one non-stock divisor now (`UART_WIRE_SPEEDUP_MAX`, still 4), so
 "negotiate" only ever has to answer one question — is the peer also in
-auto — not agree on a magnitude. A derive-from-shared-state approach
+auto — not agree on a magnitude.
+
+**Default flipped to `auto` (2026-08-26 addendum).** #498's `disabled`
+default existed because a bare option had no safety net: picking a
+magnitude by hand and getting it wrong (an old peer, a mismatched
+setting) could desync the two sides. #552's negotiation removed that
+risk structurally — every non-confirming case (old core, peer set to
+`disabled`, peer that never answers, or frontend netplay, which can
+never reach the negotiation channel at all — see `JLinkNegEligible()` in
+`src/jerry/jlink.c`) degrades to the untouched stock timing branch in
+`UARTFrameUsec()`, never to a guess. With the failure mode gone, there is
+no remaining reason to ship the enhancement off, so `auto` is now the
+default; the option itself still opts a player back out to authentic
+timing with one click.
+
+A derive-from-shared-state approach
 (ASICLK, frame period) was considered first and rejected: `asiClk` is 0
 after reset and only becomes the game's value once the game writes it, so
 at link-up the two sides can legitimately disagree purely from boot skew
@@ -510,9 +526,18 @@ purely reactive — it never needs the client's address ahead of time, because
 `recvfrom()` hands it over for free — and replies with its own packet as an
 ack the first time it sees one. Neither side raises
 `UARTWireSpeedupEffective` above 1 until it has *received* a decodable
-packet from the other, so the accelerated timing is never applied
-unilaterally — the asymmetric-benefit measurement above cannot recur by
-construction, not just by policy.
+packet from the other, so a side can never accelerate on its own say-so —
+but "I heard from you" does not imply "you heard from me": measured on
+`127.0.0.1` (2026-08-26, exercising the default-flip PR), the client's
+hello crossed the `SO_REUSEPORT` hash to reach the server -- which
+confirmed and raised to 4x -- while the server's ack hairpinned back to
+itself on every one of the client's 8 retries, so the client gave up and
+stayed at 1x the whole session. That is the asymmetric-benefit state from
+the #498 measurement above recurring via a lost ack, not by a player's
+manual choice; it is bounded to that one-machine `SO_REUSEPORT` hazard
+(see the KNOWN LIMITATION note below) and the #498 measurement already
+covers it as safe -- degraded benefit, not desync -- so it does not
+undermine the negotiation's purpose, only its "unilaterally" framing.
 
 Each packet carries a random per-session `senderId`, and a receiver ignores
 any incoming packet carrying its *own* id back — not part of the negotiation

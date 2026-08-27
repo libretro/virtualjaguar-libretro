@@ -420,7 +420,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "virtualjaguar_netlink_speed",
       "Network Link Wire Speed (Enhancement)",
       NULL,
-      "Clocks the emulated serial port faster than real hardware, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next -- at authentic speed (Ultra Vortek's Voice Modem mode settles at 19200 baud, about 5.8 ms of wire time each way per frame) you do not see your own move until the round trip completes. Off by default because a real Voice Modem or JagLink cable is exactly that slow. 'Auto' has the two consoles agree the speed-up between themselves at link-up: nothing to match by hand, and if the peer runs an older core, is not in Auto, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client): frontend netplay has no channel for the two cores to negotiate over and always runs authentic timing. If a game starts dropping link data, turn this off.",
+      "Clocks the emulated serial port faster than real hardware, so a link game's lockstep exchange finishes inside one video frame instead of spilling into the next -- at authentic speed (Ultra Vortek's Voice Modem mode settles at 19200 baud, about 5.8 ms of wire time each way per frame) you do not see your own move until the round trip completes. A real Voice Modem or JagLink cable is exactly that slow, which is why this stays an opt-out enhancement rather than a fix. 'Auto' (the default) has the two consoles agree the speed-up between themselves at link-up: nothing to match by hand, and if the peer runs an older core, is not in Auto, or never answers, this side quietly stays at authentic timing instead of running ahead alone. Only takes effect over a direct Network Link (TCP host/client): frontend netplay has no channel for the two cores to negotiate over and always runs authentic timing. If a game starts dropping link data, turn this off.",
       NULL,
       "network",
       {
@@ -428,7 +428,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "auto",     "Auto (negotiated with peer)" },
          { NULL, NULL },
       },
-      "disabled"
+      "auto"
    },
    {
       "virtualjaguar_voice_chat",

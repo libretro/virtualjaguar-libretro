@@ -227,8 +227,9 @@ int main(int argc, char **argv)
     putenv((char *)"VJ_NETLINK_HOST=127.0.0.1");
     /* See the file header comment: --speed drives the jlink.c test-only
        VJ_FORCE_WIRE_SPEEDUP escape hatch, never the real
-       virtualjaguar_netlink_speed option (which is left at its "disabled"
-       default below -- #552 negotiation is not exercised by this tool). */
+       virtualjaguar_netlink_speed option (which is pinned to "disabled"
+       below regardless of the option's own default -- #552 negotiation
+       is not exercised by this tool). */
     if (strcmp(speed_opt, "disabled") != 0 && atoi(speed_opt) > 1)
     {
         static char speed_env[64];
