@@ -16,6 +16,18 @@ Assumes something else has already launched a core with
 virtualjaguar_gdb_stub=enabled on the given port (see
 test/tools/gdb_determinism_probe.c for a way to do that headlessly, or
 attach to a real running RetroArch/session).
+
+Deliberately does NOT assume that target is halted: attaching a GDB
+client does not stop emulation by itself (see
+GDBSockHasClientAttachEvent() in src/debug/gdbtarget.c -- it only flags
+a UI banner), so a target launched without virtualjaguar_gdb_wait, or a
+real game already past its boot halt, keeps running the whole time this
+script is connected. This script has to hold for both of those and for
+a genuinely halted target (virtualjaguar_gdb_wait, or an already-hit
+breakpoint), so it never asserts that two register reads taken moments
+apart are identical -- only that each is a well-formed reply. An
+earlier version of this script asserted exact equality and failed
+nondeterministically depending on how far the 68000 got between reads.
 """
 import socket, sys
 
@@ -89,8 +101,13 @@ def main(port: int) -> int:
 
     # From here on, no ack byte should precede any reply.
     assert send_and_check(s, "?", expect_ack=False) == "S05"
+    # NOT compared against `regs` for equality -- see the module docstring
+    # for why "nothing executing between two reads" isn't a safe premise
+    # here. What the protocol does guarantee, halted or not, is a reply
+    # this shape after the no-ack transition.
     regs2 = send_and_check(s, "g", expect_ack=False)
-    assert regs2 == regs, "registers changed between reads with nothing executing"
+    assert len(regs2) == 144, f"g (no-ack) returned {len(regs2)} chars, want 144"
+    int(regs2, 16)                     # must be pure hex
 
     # Z0/z0 (software breakpoint) round-trip -- protocol-level only here;
     # test/tools/gdb_determinism_probe.c and the C unit tests
