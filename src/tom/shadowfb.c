@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "shadowfb.h"
+#include "shadowfb_simd_neon.h"
 #include "blit_memo.h"   /* blit-memo shadow-store logging (issue #411) */
 #include "log.h"
 
@@ -339,7 +340,14 @@ void ShadowHiresStoreCry(uint32_t addr, uint16_t value16, uint16_t frac16)
    /* Stage 1: box replication -- every subpixel carries the stock
     * value (+ the true-color fraction when the write site had one).
     * Stage 2 replaces this loop with real sub-pixel content. */
-   for (k = 0; k < nn; k++)
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   /* nn==4 at N=2, so the whole block is one 16-byte store; the scalar
+    * tail below only runs for a hypothetical non-multiple-of-4 N*N. */
+   k = shadowfb_neon_sub_fill(sub, value16, frac16, nn);
+#else
+   k = 0;
+#endif
+   for (; k < nn; k++)
    {
       sub[k].value16 = value16;
       sub[k].frac16  = frac16;
@@ -569,23 +577,43 @@ int ShadowHiresLineFromRAM(int idx, uint32_t srcAddr, uint16_t value16)
     * line plane keeps its allocation-time zeros (= "no replacement",
     * which is also what the renderer reads while inactive). */
    repl = (shadowHiresReplActive && shadowHiresLineRepl) ? 1 : 0;
-   for (sy = 0; sy < n; sy++)
+#if defined(BLITTER_SIMD_HAVE_NEON)
+   /* n==2 is Stage 1.  The runtime-n double loop below re-tests blk /
+    * rdst per subpixel and never unrolls; the kernels scatter the 2x2
+    * block into the two line rows in two 8-byte stores each. */
+   if (n == 2)
    {
-      uint32_t off = ((uint32_t)sy * SHADOWFB_LINE_PIXELS + (uint32_t)idx)
-                   * (uint32_t)n;
-      dst  = shadowHiresLineSub + off;
-      rdst = repl ? shadowHiresLineRepl + off : NULL;
-      for (sx = 0; sx < n; sx++)
+      uint32_t off0 = (uint32_t)idx * 2u;
+      uint32_t off1 = ((uint32_t)SHADOWFB_LINE_PIXELS + (uint32_t)idx) * 2u;
+      shadowfb_neon_line_sub_n2(shadowHiresLineSub + off0,
+                                shadowHiresLineSub + off1,
+                                blk, value16);
+      if (repl)
+         shadowfb_neon_line_repl_n2(shadowHiresLineRepl + off0,
+                                    shadowHiresLineRepl + off1,
+                                    rblk);
+   }
+   else
+#endif
+   {
+      for (sy = 0; sy < n; sy++)
       {
-         if (blk)
-            dst[sx] = blk[sy * n + sx];
-         else
+         uint32_t off = ((uint32_t)sy * SHADOWFB_LINE_PIXELS + (uint32_t)idx)
+                      * (uint32_t)n;
+         dst  = shadowHiresLineSub + off;
+         rdst = repl ? shadowHiresLineRepl + off : NULL;
+         for (sx = 0; sx < n; sx++)
          {
-            dst[sx].value16 = value16;
-            dst[sx].frac16  = 0;
+            if (blk)
+               dst[sx] = blk[sy * n + sx];
+            else
+            {
+               dst[sx].value16 = value16;
+               dst[sx].frac16  = 0;
+            }
+            if (rdst)
+               rdst[sx] = rblk ? rblk[sy * n + sx] : 0;
          }
-         if (rdst)
-            rdst[sx] = rblk ? rblk[sy * n + sx] : 0;
       }
    }
    shadowHiresLineTag[idx] = (uint32_t)value16 | SHADOWFB_TAG_VALID;
