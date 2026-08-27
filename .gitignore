@@ -56,6 +56,8 @@ tools/jagcd/*.exe
 test/tools/blit_memo_verify
 test/tools/dsp_idle_ab
 test/tools/dsp_idle_probe_falsify
+test/tools/gpu_idle_ab
+test/tools/gpu_idle_probe_falsify
 test/tools/i2s_lag_probe
 test/tools/test_memory_map
 test/tools/test_op_gpu_object

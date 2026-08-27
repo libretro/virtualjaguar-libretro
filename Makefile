@@ -1306,6 +1306,7 @@ clean:
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
 		test/tools/dsp_idle_probe_falsify test/tools/dsp_idle_ab \
+		test/tools/gpu_idle_probe_falsify test/tools/gpu_idle_ab \
 		test/tools/joymatrix_identity test/tools/teamtap_ports \
 		test/tools/teamtap_rom_probe test/tools/mouse_decode_test \
 		test/tools/rotary_decode_test test/tools/analog_decode_test \
@@ -1370,7 +1371,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_framebuffer_integrity test/test_state_compat \
 		test/test_frontend_pacing test/test_jgd \
 		test/tools/test_runahead_determinism test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace \
-		test/tools/dsp_idle_probe_falsify \
+		test/tools/dsp_idle_probe_falsify test/tools/gpu_idle_probe_falsify \
 		test/test_butch_cd test/test_bios_config test/test_boot_config \
 		test/test_cart_format test/test_cart_needs_bios test/test_cart_bios_loader \
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
@@ -1686,6 +1687,13 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# genuinely idle loop, so a silently-disabled feature cannot pass.
 	@# Hand-assembles both shapes into DSP RAM; needs no ROM but yarc.
 	./test/tools/dsp_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
+	@# GPU port of the same admission rule (issue #569).  The GPU's
+	@# executed-path identity is opcost == idleBodyCount (its inlined
+	@# delay slots are NOT counted, unlike the DSP's +1), so this pins
+	@# both directions: a genuine loop must still fire (a +1 off-by-one
+	@# would silently disable the feature) and the compound-period
+	@# store-hiding exploit must still be rejected.
+	./test/tools/gpu_idle_probe_falsify ./$(TARGET) test/roms/yarc.j64 --quiet
 	@# Texture dump mode (issue #369): identity-contract freeze vs the
 	@# committed golden list, determinism, fast/accurate engine
 	@# independence, machine inertness (fb hashes + savestate digests
@@ -2558,6 +2566,22 @@ test/tools/dsp_idle_ab: test/tools/dsp_idle_ab.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/dsp_idle_ab.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# GPU analogs of the two tools above (issue #569, GPU port).
+test/tools/gpu_idle_probe_falsify: test/tools/gpu_idle_probe_falsify.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/gpu_idle_probe_falsify.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
+
+# Not built by `test`: an A/B measurement harness, not an assertion.
+test/tools/gpu_idle_ab: test/tools/gpu_idle_ab.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/gpu_idle_ab.c \
 		test/harness/harness.c \
 		$(if $(filter Linux,$(shell uname -s)),-ldl -lrt) -lm
 
