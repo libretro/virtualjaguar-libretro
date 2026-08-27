@@ -69,6 +69,18 @@ note() { printf '  %s-%s %s\n' "$D" "$R" "$*"; }
 warn() { printf '  %s!%s %s\n' "$YLW" "$R" "$*" >&2; }
 die()  { printf '\n%sERROR%s %s\n' "$RED" "$R" "$*" >&2; exit 1; }
 
+# Run a file-mutating command, elevating only when we actually need to.
+#
+# `command` on the non-sudo path bypasses any alias or shell function named
+# rm/cp/mv -- the interactive `-i` variants are a common default, and a prompt
+# with nothing attached to answer it blocks forever rather than failing.
+# The sudo path needs no such guard (sudo execs the binary, never a shell
+# alias) and could not take one anyway, since `command` is a shell builtin.
+# $SUDO is set just before the install step; empty means "we can write here".
+as_root() {
+  if [ -n "${SUDO:-}" ]; then sudo "$@"; else command "$@"; fi
+}
+
 # --------------------------------------------------------------------------
 # interactivity
 #
@@ -480,7 +492,7 @@ step "Downloading"
 note "$URL"
 
 TMP=$(mktemp -d 2>/dev/null || mktemp -d -t vjinstall)
-trap 'rm -rf "$TMP"' EXIT INT TERM
+trap 'command rm -rf "$TMP"' EXIT INT TERM
 
 curl -fsSL --retry 3 -o "$TMP/core" "$URL" || die "download failed.
 
@@ -522,12 +534,12 @@ step "Installing"
 BACKUP=""
 if [ -f "$CORE_PATH" ]; then
   BACKUP="$CORE_PATH.bak-$(date +%Y%m%d-%H%M%S)"
-  $SUDO cp -p "$CORE_PATH" "$BACKUP" || die "could not back up the existing core."
+  as_root cp -p "$CORE_PATH" "$BACKUP" || die "could not back up the existing core."
   ok "backed up -> $(basename "$BACKUP")"
 fi
-$SUDO mkdir -p "$CORE_DIR"
-$SUDO cp "$TMP/core" "$CORE_PATH" || die "could not write $CORE_PATH"
-$SUDO chmod 0644 "$CORE_PATH" 2>/dev/null || true
+as_root mkdir -p "$CORE_DIR"
+as_root cp "$TMP/core" "$CORE_PATH" || die "could not write $CORE_PATH"
+as_root chmod 0644 "$CORE_PATH" 2>/dev/null || true
 ok "installed -> $CORE_PATH"
 
 if [ -n "$RA_BIN" ] && [ -x "$RA_BIN" ]; then
@@ -556,13 +568,13 @@ remove_auto_update() {
   _did=0
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user disable --now vj-core-update.timer >/dev/null 2>&1 && _did=1 || true
-    rm -f "$SYSTEMD_DIR/vj-core-update.timer" "$SYSTEMD_DIR/vj-core-update.service" 2>/dev/null || true
+    command rm -f "$SYSTEMD_DIR/vj-core-update.timer" "$SYSTEMD_DIR/vj-core-update.service" 2>/dev/null || true
     systemctl --user daemon-reload >/dev/null 2>&1 || true
   fi
   if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q vj-core-update; then
     crontab -l 2>/dev/null | grep -v vj-core-update | crontab - && _did=1
   fi
-  rm -f "$UPDATER" 2>/dev/null || true
+  command rm -f "$UPDATER" 2>/dev/null || true
   [ "$_did" -eq 1 ] && ok "auto-update removed" || note "no auto-update was installed"
 }
 
@@ -592,7 +604,7 @@ if [ -n "$AUTO_UPDATE" ] && [ "$AUTO_UPDATE" != "off" ]; then
 set -eu
 curl -fsSL "$RAW" -o "\$0.tmp.\$\$"
 sh "\$0.tmp.\$\$" --yes --channel "$CHANNEL" --dest "$CORE_DIR"
-rm -f "\$0.tmp.\$\$"
+command rm -f "\$0.tmp.\$\$"
 UPD
   chmod +x "$UPDATER"
   ok "updater -> $UPDATER"
