@@ -77,20 +77,45 @@ OPT_O3_PLATFORMS := unix osx win ios-arm64 ios9 tvos-arm64 \
 # NOTE (issue #517): -Ofast's headline implication is -ffast-math, which
 # used to be applied unconditionally to every non-MSVC build further down
 # and so added no new semantics here.  #517's audit measured that global
-# -ffast-math at ~0% (integer-only hot loops; the only floating point in
-# the tree is a savestated I2S resampler and event-scheduling code, neither
-# on a hot path) and removed it everywhere else as a latent determinism
-# hazard.  classic_armv7_a7 was left alone -- its -Ofast is longstanding,
-# and this is an ARM cross-compile target this repo cannot benchmark on x86
-# or arm64 hardware -- so it is now the ONLY platform that still ships
-# -ffast-math.  If that ever needs to change: -Ofast -fno-fast-math is
-# last-wins (same mechanism as the -O2/-O3 override above) and cancels just
-# the fast-math half while keeping -Ofast's other -O3-family optimizations.
-# Measure before touching; don't assume the null result here transfers.
+# -ffast-math at ~0% (integer-only hot loops) and removed it everywhere
+# else as a latent determinism hazard.  classic_armv7_a7 was left alone at
+# the time, which left it as the only platform in the tree still shipping
+# -ffast-math.
+#
+# It is now cancelled here too (issue #633), via the -Ofast -fno-fast-math
+# last-wins form the previous revision of this comment already described.
+# -Ofast's other -O3-family optimizations are kept; only the fast-math half
+# goes away.  Three reasons, none of them a measured slowdown:
+#
+#   * #517's own premise was wrong about the blast radius.  It described the
+#     tree's floating point as "a savestated I2S resampler and
+#     event-scheduling code".  There is float arithmetic in sixteen source
+#     files, and the two largest are src/jerry/dac.c (the resampler) and
+#     src/core/event.c -- the event scheduler, i.e. machine timing itself.
+#   * Determinism is load-bearing here: run-ahead (#400), netplay and
+#     savestate compatibility all depend on it, and this is a platform
+#     people run netplay on.  dac.c's i2sPhase read cursor is savestated, so
+#     reassociated rounding there is a savestate-divergence hazard, not just
+#     an audio one.
+#   * A user-reported "parasitic noise during gameplay" on buildbot builds
+#     (#633) has no repro on any platform that dropped the flag in #517.
+#     i2sPhase is a double phase accumulator stepped per sample; -ffast-math
+#     reassociation and FMA contraction change how it rounds on every step.
+#     Unproven -- this repo has no ARMv7 hardware to listen on -- but it is
+#     the only structural difference between the platforms that report it
+#     and the ones that do not.
+#
+# The gain being given up was measured at ~0% and the hot loops are integer,
+# so there is nothing here for fast-math to buy.  A per-file
+# `src/jerry/dac.o: CFLAGS += -fno-fast-math` was considered and rejected as
+# too narrow: it leaves the scheduler exposed, and -ffast-math is not purely
+# per-TU anyway (at link time it can pull in crtfastmath.o, which sets
+# FTZ/DAZ process-wide).  Revisit per-file scoping only if fast-math is ever
+# measured to pay for itself somewhere specific.
 OPT_OFAST_PLATFORMS := classic_armv7_a7
 ifeq ($(origin OPT_LEVEL),undefined)
    ifneq ($(filter $(platform),$(OPT_OFAST_PLATFORMS)),)
-      OPT_LEVEL := -Ofast
+      OPT_LEVEL := -Ofast -fno-fast-math
    else ifneq ($(filter $(platform),$(OPT_O3_PLATFORMS)),)
       OPT_LEVEL := -O3
    else
