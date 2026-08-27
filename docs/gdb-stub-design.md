@@ -339,6 +339,16 @@ Five layers, in increasing cost:
    instruction before the CPU fetched it, within a single frame — confirmed
    by reading the address back and finding the ROM's own data there instead.
 
+   `test/tools/gdb_reconnect_probe.py` covers what a single-connection probe
+   structurally cannot: ack mode is per-CONNECTION, not per-content-load. It
+   attaches twice to one long-lived core — the first client negotiating
+   `QStartNoAckMode` exactly as a real gdb/lldb does, then dropping — and
+   asserts the second client's very first `qSupported` reply is acked again.
+   Before `GDBTargetResetState()` cleared `noAckMode`, it wasn't: the flag
+   stayed latched from the dead client and the second client's handshake
+   blocked on an ack that never came (observed with lldb, then this repo's own
+   `gdb_attach_probe.py`, against one running core).
+
 ## Out of scope
 
 - **Tracepoints** (`QTDP` and the rest of GDB's tracepoint machinery).

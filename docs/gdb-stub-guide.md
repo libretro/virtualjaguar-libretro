@@ -189,7 +189,8 @@ none of them is a debugger. **You bring your own `m68k-elf-gdb`.** A stock GNU b
 targeting `m68k-elf` (the kind distributed for classic Mac/Amiga/Atari ST bare-metal development)
 works against a plain `m68k` architecture with no custom target description needed for thread 1.
 This repository's own test coverage for the wire protocol uses a small scripted Python RSP client
-(`test/tools/gdb_attach_probe.py`, `test/tools/gdb_breakpoint_probe.py`) rather than a real `gdb`
+(`test/tools/gdb_attach_probe.py`, `test/tools/gdb_breakpoint_probe.py`,
+`test/tools/gdb_reconnect_probe.py`) rather than a real `gdb`
 binary, for exactly this reason — there wasn't one to test against. If something in this guide
 doesn't match what your particular `gdb` build does, the scripted client is the ground truth this
 implementation was actually verified against; please file an issue with what you saw.
