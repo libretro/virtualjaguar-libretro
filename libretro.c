@@ -294,6 +294,33 @@ static void gdb_stub_show_banner(const char *text)
 static bool libretro_supports_bitmasks = false;
 static bool save_data_needs_unpack = false;
 
+/* Keyboard-presence latch (#569/P8).  update_input()'s default (non-remap)
+ * path polls 24 keyboard fallback keys per frame; on keyboard-less devices
+ * (every phone/TV box) all 24 input_state_cb round trips return 0 forever.
+ * The frontend's own keyboard event callback is the cheapest presence
+ * signal we have: register it, and only start the per-frame polls after
+ * the first key event ever arrives (any key, either edge -- evidence a
+ * physical keyboard exists trumps decoding which key it was).  Latch-only,
+ * never cleared mid-session, so once a keyboard is seen behavior is
+ * bit-identical to the unconditional polling this replaces.  A frontend
+ * that declines SET_KEYBOARD_CALLBACK gets the old unconditional polls --
+ * the gate must fail open or a declining frontend would lose keyboard
+ * input entirely.  The numpad_to_kb path stays gated on its own option
+ * (explicitly configuring it is already a "keyboard present" statement),
+ * and the voice-chat PTT poll is gated on VoiceChatEnabled(). */
+static bool kb_callback_registered = false;
+static bool kb_event_seen = false;
+
+static void keyboard_event_cb(bool down, unsigned keycode,
+                              uint32_t character, uint16_t key_modifiers)
+{
+   (void)down;
+   (void)keycode;
+   (void)character;
+   (void)key_modifiers;
+   kb_event_seen = true;
+}
+
 /* Auto-frameskip (#684) -- the standard libretro pattern (gpsp/snes9x):
  * when the frontend's audio buffer is draining, skip VIDEO PRESENTATION
  * for a frame so a slow host catches up before the buffer underruns.
@@ -3393,6 +3420,10 @@ static void update_input(void)
    unsigned i;
    int16_t ret[2];
    unsigned player;
+   /* Keyboard fallback polls run only once a keyboard has proven itself
+    * (kb_event_seen) -- or unconditionally, exactly as before, when the
+    * frontend declined the keyboard callback and no proof is possible. */
+   bool kb_poll = !kb_callback_registered || kb_event_seen;
    if (!input_poll_cb)
       return;
 
@@ -3559,29 +3590,32 @@ static void update_input(void)
          if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
             joypad0Buttons[BUTTON_4] = 0xff;
       }
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0))
+      /* Keyboard fallbacks below are latch-gated (kb_poll): 24 frontend
+       * round trips per frame otherwise, all returning 0 on any device
+       * without a keyboard (#569/P8). */
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_0))
          joypad0Buttons[BUTTON_0] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_1))
          joypad0Buttons[BUTTON_1] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_2))
          joypad0Buttons[BUTTON_2] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_3))
          joypad0Buttons[BUTTON_3] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_4))
          joypad0Buttons[BUTTON_4] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_5)? 1 : 0))
          joypad0Buttons[BUTTON_5] = 0xff;
-      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
+      if (ret[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_6)? 1 : 0))
          joypad0Buttons[BUTTON_6] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_7)? 1 : 0))
          joypad0Buttons[BUTTON_7] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_8)? 1 : 0))
          joypad0Buttons[BUTTON_8] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_9)? 1 : 0))
          joypad0Buttons[BUTTON_9] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_MINUS)? 1 : 0))
          joypad0Buttons[BUTTON_s] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_EQUALS)? 1 : 0))
          joypad0Buttons[BUTTON_d] = 0xff;
 
       if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_UP))
@@ -3631,29 +3665,29 @@ static void update_input(void)
          if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R2))
             joypad1Buttons[BUTTON_4] = 0xff;
       }
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_p))
          joypad1Buttons[BUTTON_0] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_q))
          joypad1Buttons[BUTTON_1] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_w))
          joypad1Buttons[BUTTON_2] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_e))
          joypad1Buttons[BUTTON_3] = 0xff;
-      if (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r))
+      if (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_r))
          joypad1Buttons[BUTTON_4] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_L3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_t)? 1 : 0))
          joypad1Buttons[BUTTON_5] = 0xff;
-      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
+      if (ret[1] & (1 << RETRO_DEVICE_ID_JOYPAD_R3) || (kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_y)? 1 : 0))
          joypad1Buttons[BUTTON_6] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_u)? 1 : 0))
          joypad1Buttons[BUTTON_7] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_i)? 1 : 0))
          joypad1Buttons[BUTTON_8] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_o)? 1 : 0))
          joypad1Buttons[BUTTON_9] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_LEFTBRACKET)? 1 : 0))
          joypad1Buttons[BUTTON_s] = 0xff;
-      if ((input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
+      if ((kb_poll && input_state_cb(0, RETRO_DEVICE_KEYBOARD, 0, RETROK_RIGHTBRACKET)? 1 : 0))
          joypad1Buttons[BUTTON_d] = 0xff;
    }
 
@@ -5930,6 +5964,16 @@ void retro_init(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
       libretro_supports_bitmasks = true;
 
+   /* Keyboard-presence latch (see keyboard_event_cb above).  Registered
+    * here, once, rather than per-load: keyboard presence is a host
+    * property, not a content property. */
+   {
+      struct retro_keyboard_callback kb_cb;
+      kb_cb.callback = keyboard_event_cb;
+      kb_callback_registered =
+         environ_cb(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, &kb_cb);
+   }
+
    /* Controller types the frontend may assign per port (#428/#429/#436).
     * Port 1 offers pad or rotary: the ST/Amiga mouse adapter is a
     * vendor-documented PORT 2 device, every title known to read one reads
@@ -6015,6 +6059,8 @@ void retro_init(void)
 void retro_deinit(void)
 {
    libretro_supports_bitmasks = false;
+   kb_callback_registered = false;
+   kb_event_seen = false;
 
    /* Dump totals to the frontend log before going inert.  RetroArch shows
     * the same numbers in its UI, but a log line is what can actually be
