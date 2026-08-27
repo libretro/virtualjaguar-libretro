@@ -63,6 +63,15 @@ Build: `cc -O2 -Wall -std=c99 $(INCFLAGS) -o test_foo test_foo.c test/harness/ha
   "flips != 0". Exit 77 = private ROM absent (skip, never silent pass). Timing wedges relocate
   rather than disappear — a single-scale run proves nothing (#406 wedged at scales 4,8 before
   Verilator constants, at 3 after). Env: `VJ_SCALES VJ_WINDOW VJ_MIN_FLIPS VJ_WARMUP_W`.
+- `test/tools/corpus_ab_sweep.sh` — A/B two cores across a ROM corpus, comparing the **full**
+  framebuffer hash stream: `corpus_ab_sweep.sh <base-core> <new-core> [rom-dir]`
+  (`FRAMES`, `TMO`, `VJ_ROMS`). Use it before merging anything that touches rendering. Two guards,
+  both earned: **every run is under a timeout** (Chroma-Luma Color Pick hangs `retro_run` forever,
+  #659 — the first sweep of this kind wedged on it for 2h23m emitting nothing, which is how #641's
+  regression reached develop), and it compares the hash stream rather than the transition **count**
+  (Super Burnout reads 143 transitions on both sides of #632 while rendering different pixels, so a
+  count comparison calls a real change "no change"). Exit 1 on any SKIP: an unchecked ROM must not
+  look like a clean sweep.
 - `test/sram_test.sh` — SRAM round-trip.
 - `test/tools/cd_boot_matrix.sh` — per-title CD boot-stage matrix (HLE + BIOS) vs
   `docs/cd-boot-matrix.md`. Env: `CD_MATRIX_FRAMES CD_MATRIX_TIMEOUT CD_MATRIX_MAX_RUNS
