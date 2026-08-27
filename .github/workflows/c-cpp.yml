@@ -592,7 +592,7 @@ jobs:
       shell: cmd
       run: |
         cl.exe /c /W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_DEPRECATE ^
-          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Ilibretro-common\include ^
+          /I. /Isrc /Isrc\core /Isrc\tom /Isrc\jerry /Isrc\cd /Isrc\bios /Isrc\m68000 /Isrc\debug /Ilibretro-common\include ^
           /Ideps\libchdr\include /Ideps\libchdr\deps\lzma-25.01\include /Ideps\libchdr\deps\miniz-3.1.1 /Ideps\libchdr\deps\zstd-1.5.7 ^
           /D__LIBRETRO__ /DINLINE="_inline" /DBLITTER_SIMD_SCALAR ^
           /D_7ZIP_ST /DMINIZ_DEFLATE_APIS /DWANT_RAW_DATA_SECTOR=1 /DWANT_SUBCODE=1 /DVERIFY_BLOCK_CRC=1 ^
@@ -607,6 +607,7 @@ jobs:
           src\bios\jagbios_m.c ^
           src\bios\jagcdbios.c src\bios\jagdevcdbios.c ^
           src\m68000\m68kinterface.c ^
+          src\debug\gdbstub.c src\debug\gdbtarget.c src\debug\gdbsock.c ^
           src\tom\blitter_simd_scalar.c ^
           deps\libchdr\unity.c
 
