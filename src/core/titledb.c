@@ -132,6 +132,36 @@
  * above.  See docs/enhancement-hooks.md for the settings-vs-patches
  * discriminator and this section's evidence bar restated for authors.
  * ------------------------------------------------------------------
+ *
+ * virtualjaguar_risc_idle_skip qualification policy (issue #707,
+ * docs/perf-audit/idle-skip-corpus-2026-08.md):
+ *
+ *  - A row earns { "virtualjaguar_risc_idle_skip", "enabled" } only when
+ *    BOTH held in the 2026-08 corpus A/B sweep (test/tools/dsp_idle_ab +
+ *    test/tools/gpu_idle_ab, 1800 measured frames + 300 warmup, savestate
+ *    hash every 100 frames, off-vs-on CSV hash streams cmp byte-identical
+ *    for BOTH harnesses):
+ *      (a) A/B byte-identical (framebuffer + audio + savestate hashes);
+ *      (b) >10% interpreted-opcode reduction on either RISC processor.
+ *  - Rows are keyed ONLY by CRCs whose exact image was swept.  This is
+ *    deliberately stricter than the census policy above (which transfers
+ *    one measurement to every plain retail CRC of the title): the idle
+ *    skip's A/B claim is about the concrete instruction stream, so an
+ *    unswept revision earns nothing until it is swept.  Sole exception:
+ *    the Doom EX alias rows inherit retail Doom's pair per the #409
+ *    alias policy (settings inherit safely across a romhack), backed by
+ *    a direct sweep of one EX build (CRC 0xEE7B84EB, -76.5% DSP,
+ *    byte-identical) -- the same engine claim the aliases already rest on.
+ *  - FF_BAD_DUMP / alpha / beta / proto images are excluded from rows
+ *    even when they swept clean, same exclusion the census policy uses.
+ *  - Titles that swept byte-identical but measured no win (fires=0: the
+ *    engine's wait loops don't fit the #569 admission rules -- Cybermorph,
+ *    Battle Sphere, NBA Jam TE, Syndicate, Theme Park, Ultra Vortek,
+ *    Skyhammer corpus dump, ...) get NO pair: the option would burn probe
+ *    work for nothing.  Full per-title numbers in the sweep doc.
+ *  - The global default stays "disabled" (the libretro.c option comment's
+ *    reasoning stands); these rows opt in exactly the titles measured.
+ * ------------------------------------------------------------------
  */
 static const TitleDBEntry titledb_table[] = {
    /* Alien vs Predator (retail) — 2x internal resolution.
@@ -141,11 +171,13 @@ static const TitleDBEntry titledb_table[] = {
     * (menu through moving gameplay), 0.0000% pixels changed with the
     * option toggled -- the shaded-blit-count heuristic that qualified it
     * (113/f) does not predict a visible difference here.
+    * idle_skip per #707 sweep: byte-identical, DSP -73.8%, GPU -45.2%.
     * CRCs: Alien vs Predator (World) from src/core/filedb.c line 106. */
    {
       0xDC187F82, "Alien vs Predator",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          /* Deliberately NOT tagged with virtualjaguar_blit_memo -- see
           * docs/blit-memo.md.  AvP is the memo's best-evidenced title
           * (710,433 verify checks, 0 divergences, bit-identical A/B
@@ -194,12 +226,14 @@ static const TitleDBEntry titledb_table[] = {
     * (terrain). Note: the §4 OP-scaler table measured the same corpus
     * copy as "Aircars (beta)"; policy applies the result to every
     * retail revision, so it is applied here to the plain "(World)" row.
+    * idle_skip per #707 sweep: byte-identical, DSP -88.3%.
     * CRC: Air Cars (World) from src/core/filedb.c line 50.
     * (Excluded: 0xCBFD822A "Air Cars (World) (alt)" is FF_BAD_DUMP.) */
    {
       0x40E1A1D0, "Air Cars",
       {
-         { "virtualjaguar_true_color", "enabled" },
+         { "virtualjaguar_true_color",     "enabled" },
+         { "virtualjaguar_risc_idle_skip", "enabled" },
          { NULL, NULL }
       }
    },
@@ -210,11 +244,13 @@ static const TitleDBEntry titledb_table[] = {
     * 0.0000% pixels changed with the option toggled -- the shaded-blit
     * heuristic clears by a wide margin and still predicts nothing
     * visible here.
+    * idle_skip per #707 sweep: byte-identical, DSP -79.5%.
     * CRC: Doom (World) from src/core/filedb.c line 62. */
    {
       0x5E2CDBC0, "Doom",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -245,11 +281,18 @@ static const TitleDBEntry titledb_table[] = {
     * title that reads nothing from port 2, in exchange for no function.
     * Do not add one without re-running that check against the build in
     * hand -- a future JagDoomEX release may add mouse support, and it
-    * will hash differently from every CRC listed here anyway. */
+    * will hash differently from every CRC listed here anyway.
+    *
+    * idle_skip on every alias row per #707: inherited from retail Doom
+    * (byte-identical, DSP -79.5%) under the settings-inherit-safely
+    * alias policy above, corroborated by a direct sweep of a Doom EX
+    * build (CRC 0xEE7B84EB, not itself an alias row: byte-identical,
+    * DSP -76.5%). */
    {
       0x754096DB, "Doom EX (JagDoomEX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -257,6 +300,7 @@ static const TitleDBEntry titledb_table[] = {
       0x4643E9DB, "Doom EX (JagDoomEX 2)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -264,6 +308,7 @@ static const TitleDBEntry titledb_table[] = {
       0x35743B9C, "Doom EX (JagDoomEX 3)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -271,6 +316,7 @@ static const TitleDBEntry titledb_table[] = {
       0xAD6B68BA, "Doom EX (JagDoomEX 4)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -278,6 +324,7 @@ static const TitleDBEntry titledb_table[] = {
       0xC4F4CACF, "Doom EX (JagDoomEX 5)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -285,6 +332,7 @@ static const TitleDBEntry titledb_table[] = {
       0x1F4EE4A5, "Doom EX (JagDoomEX 6)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -292,6 +340,7 @@ static const TitleDBEntry titledb_table[] = {
       0x013A5359, "Doom EX (spectral)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -299,6 +348,7 @@ static const TitleDBEntry titledb_table[] = {
       0xB92D1CA3, "Doom EX (transparent)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -306,6 +356,7 @@ static const TitleDBEntry titledb_table[] = {
       0xEA12E234, "Doom EX (JagDoom2EX)",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -313,11 +364,13 @@ static const TitleDBEntry titledb_table[] = {
    /* Hover Strike (retail) — 2x: census row "Hover Strike (cart)" 6000f,
     * shaded 1.1/f (<10), QUALIFY16 336.7/f (>=5), scene: gameplay
     * (mission approach, ALERT).
+    * idle_skip per #707 sweep: byte-identical, DSP -71.8%.
     * CRC: Hover Strike (World) from src/core/filedb.c line 53. */
    {
       0x4899628F, "Hover Strike",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -325,12 +378,14 @@ static const TitleDBEntry titledb_table[] = {
    /* I-War (retail) — true color + 2x: census row "I-War" 2400f,
     * shaded 770.8/f (>=10), QUALIFY16 183.9/f (>=5), scene: gameplay
     * (DAMAGE CRITICAL).
+    * idle_skip per #707 sweep: byte-identical, DSP -86.7%.
     * CRC: I-War (World) from src/core/filedb.c line 82. */
    {
       0x97EB4651, "I-War",
       {
          { "virtualjaguar_internal_resolution", "2x" },
          { "virtualjaguar_true_color",          "enabled" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -339,11 +394,13 @@ static const TitleDBEntry titledb_table[] = {
     * shaded 383.7/f (>=10), QUALIFY16 0/f (<5), scene: "3D gauntlet walk
     * (pre-fight)" — real engine rendering of a playable segment, not a
     * menu/attract loop, so it qualifies under the policy's scene rule.
+    * idle_skip per #707 sweep: byte-identical, DSP -77.7%.
     * CRC: Kasumi Ninja (World) from src/core/filedb.c line 32. */
    {
       0x0957A072, "Kasumi Ninja",
       {
-         { "virtualjaguar_true_color", "enabled" },
+         { "virtualjaguar_true_color",     "enabled" },
+         { "virtualjaguar_risc_idle_skip", "enabled" },
          { NULL, NULL }
       }
    },
@@ -354,11 +411,14 @@ static const TitleDBEntry titledb_table[] = {
     * true_color dropped per #551: pixel-diffed, 0.0000% pixels changed
     * with the option toggled -- the shaded-blit heuristic clears by a
     * wide margin and still predicts nothing visible here.
+    * idle_skip per #707 sweep: byte-identical, DSP -63.1%, GPU -80.2%
+    * (the docs/perf-audit/mc3d-stall-attribution.md semaphore poll).
     * CRC: Missile Command 3D (World) from src/core/filedb.c line 105. */
    {
       0xDA9C4162, "Missile Command 3D",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { "virtualjaguar_risc_idle_skip",      "enabled" },
          { NULL, NULL }
       }
    },
@@ -381,11 +441,13 @@ static const TitleDBEntry titledb_table[] = {
    /* Tempest 2000 (retail) — true color: census row "Tempest 2000" 2400f,
     * shaded 720.8/f (>=10), QUALIFY16 3.17/f (<5), scene: gameplay
     * (web).
+    * idle_skip per #707 sweep: byte-identical, DSP -87.2%.
     * CRC: Tempest 2000 (World) from src/core/filedb.c line 68. */
    {
       0x6B2B95AD, "Tempest 2000",
       {
-         { "virtualjaguar_true_color", "enabled" },
+         { "virtualjaguar_true_color",     "enabled" },
+         { "virtualjaguar_risc_idle_skip", "enabled" },
          { NULL, NULL }
       }
    },
@@ -399,6 +461,312 @@ static const TitleDBEntry titledb_table[] = {
       0x83A3FB5D, "Towers II",
       {
          { "virtualjaguar_internal_resolution", "2x" },
+         { NULL, NULL }
+      }
+   },
+
+   /* ------------------------------------------------------------------
+    * RISC idle-loop fast-forward rows (issue #707).
+    *
+    * Every row below carries exactly { virtualjaguar_risc_idle_skip,
+    * "enabled" } and nothing else, earned under the qualification policy
+    * in the header comment: the exact image (CRC listed) swept
+    * byte-identical off-vs-on by BOTH test/tools/dsp_idle_ab and
+    * test/tools/gpu_idle_ab (1800 measured frames + 300 warmup, savestate
+    * hash every 100 frames) AND measured >10% interpreted-opcode
+    * reduction on at least one RISC processor.  Percentages below are
+    * interpreted-opcodes-per-frame off->on from the harness TRAILERs;
+    * the full sweep table (including titles that passed but measured no
+    * win, and the excluded bad dumps / variants) is
+    * docs/perf-audit/idle-skip-corpus-2026-08.md.  All CRCs are the
+    * plain retail rows in src/core/filedb.c.
+    * ------------------------------------------------------------------ */
+
+   /* Atari Karts — DSP -72.2%, GPU -23.2%. */
+   {
+      0xE28756DE, "Atari Karts",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Attack of the Mutant Penguins — GPU -90.6% (DSP loops don't
+    * qualify: 0 fires). */
+   {
+      0xCD5BF827, "Attack of the Mutant Penguins",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Brutal Sports Football — DSP -77.8%.  (0x0FDCEB66 FF_BAD_DUMP row
+    * excluded per policy.) */
+   {
+      0xBCB1A4BF, "Brutal Sports Football",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Bubsy in Fractured Furry Tales — DSP -86.6%. */
+   {
+      0x2E17D5DA, "Bubsy in Fractured Furry Tales",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Cannon Fodder — DSP -81.3%. */
+   {
+      0xBDA405C6, "Cannon Fodder",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Checkered Flag — DSP -74.8%. */
+   {
+      0xFA7775AE, "Checkered Flag",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Club Drive — DSP -95.5%, the largest DSP win in the sweep. */
+   {
+      0xEEE8D61D, "Club Drive",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Defender 2000 — DSP -87.1%. */
+   {
+      0x27594C6A, "Defender 2000",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Double Dragon V - The Shadow Falls — DSP -77.0%. */
+   {
+      0x348E6449, "Double Dragon V",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Dragon - The Bruce Lee Story — DSP -78.3%. */
+   {
+      0x8FEA5AB0, "Dragon - The Bruce Lee Story",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Evolution - Dino Dudes — DSP -86.7%. */
+   {
+      0x0EC5369D, "Evolution - Dino Dudes",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Fever Pitch Soccer — GPU -89.1% (DSP: 0 fires). */
+   {
+      0x3615AF6A, "Fever Pitch Soccer",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Fight for Life — DSP -69.5%.  (0xC6C7BA62 FF_BAD_DUMP row excluded
+    * per policy, though it swept identically.) */
+   {
+      0xB14C4753, "Fight for Life",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Flashback - The Quest for Identity — DSP -71.0%. */
+   {
+      0xDE55DCC7, "Flashback",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Flip Out! — DSP -82.7%. */
+   {
+      0x892BC67C, "Flip Out!",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Iron Soldier (v1.04) — DSP -66.2%, the #569 design title.  The
+    * corpus "[a1]" variant dump (CRC 0xF7F3462B, not a filedb row) also
+    * swept clean at -67.2% but earns no row per policy. */
+   {
+      0x08F15576, "Iron Soldier",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Iron Soldier 2 — GPU -92.9% (DSP: 0 fires). */
+   {
+      0xD6C19E34, "Iron Soldier 2",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Pinball Fantasies — DSP -84.7%. */
+   {
+      0x5CFF14AB, "Pinball Fantasies",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Pitfall - The Mayan Adventure — DSP -86.6%, GPU -91.9%. */
+   {
+      0x817A2273, "Pitfall - The Mayan Adventure",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Power Drive Rally — DSP -72.7%, GPU -92.5%. */
+   {
+      0x1660F070, "Power Drive Rally",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Raiden — DSP -86.9%.  The swept image is filedb's "Raiden (World)
+    * (alt)" row (FF_ROM|FF_REQ_BIOS; retail, not a bad dump).  The
+    * FF_VERIFIED dump 0x31812799 was not in the corpus, so per policy it
+    * earns nothing until swept. */
+   {
+      0x0509C85E, "Raiden",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Rayman — DSP -71.0%. */
+   {
+      0xA9F8A00E, "Rayman",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Ruiner Pinball — DSP -78.6%. */
+   {
+      0x5B6BB205, "Ruiner Pinball",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Sensible Soccer - International Edition — DSP -64.2%. */
+   {
+      0x5A101212, "Sensible Soccer - International Edition",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Super Burnout — GPU -33.1% (DSP: 0 fires). */
+   {
+      0x6F8B2547, "Super Burnout",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* SuperCross 3D — DSP -46.1%.  (0x4A08A2BD FF_BAD_DUMP row excluded
+    * per policy, though it swept identically.) */
+   {
+      0xEC22F572, "SuperCross 3D",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Trevor McFur in the Crescent Galaxy — DSP -70.8%.  Only the swept
+    * CRC; the "(alt)" dump 0x95143668 was not in the corpus. */
+   {
+      0x1E451446, "Trevor McFur in the Crescent Galaxy",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Troy Aikman NFL Football — DSP -78.1%. */
+   {
+      0x38A130ED, "Troy Aikman NFL Football",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Wolfenstein 3D — DSP -83.8%. */
+   {
+      0xE91BD644, "Wolfenstein 3D",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Zool 2 — DSP -87.0%. */
+   {
+      0x8975F48B, "Zool 2",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
+         { NULL, NULL }
+      }
+   },
+
+   /* Zoop! — DSP -72.9%, GPU -93.9%. */
+   {
+      0xC5562581, "Zoop!",
+      {
+         { "virtualjaguar_risc_idle_skip", "enabled" },
          { NULL, NULL }
       }
    }
