@@ -255,6 +255,7 @@
 
 #include "tom.h"
 #include "tom_scan_simd_neon.h"
+#include "tom_scan_simd_sse2.h"
 
 #include <string.h>								// For memset()
 #include "blitter.h"
@@ -1198,6 +1199,8 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
    uint32_t px;
 #if defined(BLITTER_SIMD_HAVE_NEON)
    unsigned neon_done;
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   unsigned sse2_done;
 #endif
 
    if (fn == tom_render_16bpp_cry_scanline)
@@ -1223,6 +1226,15 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
          tomHiresScratch[i] = backbuffer[i * n];
    }
    else
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   /* Same n==2 gate as the NEON branch above. */
+   if (n == 2u)
+   {
+      sse2_done = tom_scan_sse2_hires_gather_n2(backbuffer, tomHiresScratch, w);
+      for (i = sse2_done; i < w; i++)
+         tomHiresScratch[i] = backbuffer[i * n];
+   }
+   else
 #endif
    {
       for (i = 0; i < w; i++)
@@ -1238,6 +1250,15 @@ static void tom_render_scanline_hires(uint32_t * backbuffer)
          neon_done = tom_scan_neon_hires_expand_n2(tomHiresScratch, dst, w);
          dst += neon_done * 2u;
          i = neon_done;
+      }
+      else
+         i = 0;
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+      if (n == 2u)
+      {
+         sse2_done = tom_scan_sse2_hires_expand_n2(tomHiresScratch, dst, w);
+         dst += sse2_done * 2u;
+         i = sse2_done;
       }
       else
          i = 0;
@@ -1294,6 +1315,15 @@ void tom_render_24bpp_scanline(uint32_t * VJ_RESTRICT backbuffer)
       backbuffer += n;
       width = (uint16_t)(width - n);
    }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_sse2_24bpp(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 4;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
 #endif
    while (width >= pwidth_scale)
    {
@@ -1327,6 +1357,15 @@ void tom_render_16bpp_direct_scanline(uint32_t * VJ_RESTRICT backbuffer)
    {
       unsigned n;
       n = tom_scan_neon_16bpp_direct(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_sse2_16bpp_direct(current_line_buffer, backbuffer, width);
       current_line_buffer += n * 2;
       backbuffer += n;
       width = (uint16_t)(width - n);
@@ -1417,6 +1456,15 @@ void tom_render_16bpp_rgb_scanline(uint32_t * VJ_RESTRICT backbuffer)
    {
       unsigned n;
       n = tom_scan_neon_16bpp_rgb(current_line_buffer, backbuffer, width);
+      current_line_buffer += n * 2;
+      backbuffer += n;
+      width = (uint16_t)(width - n);
+   }
+#elif defined(BLITTER_SIMD_HAVE_SSE2)
+   if (pwidth_scale == 1)
+   {
+      unsigned n;
+      n = tom_scan_sse2_16bpp_rgb(current_line_buffer, backbuffer, width);
       current_line_buffer += n * 2;
       backbuffer += n;
       width = (uint16_t)(width - n);
