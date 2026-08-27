@@ -15,6 +15,29 @@
 
 #include "crc32.h"
 
+#include <string.h>
+
+#if defined(__ARM_FEATURE_CRC32) && defined(__aarch64__)
+#  include <stdint.h>
+#  include <arm_acle.h>
+#  define VJ_CRC32_HW_COMPILE 1
+#elif defined(__aarch64__) && defined(__linux__)
+#  include <stdint.h>
+#  include <arm_acle.h>
+#  include <sys/auxv.h>
+#  ifndef HWCAP_CRC32
+#  define HWCAP_CRC32 (1UL << 7)
+#  endif
+#  define VJ_CRC32_HW_RUNTIME 1
+#endif
+
+#if defined(VJ_CRC32_HW_RUNTIME)
+#  define VJ_CRC32_HW_ATTR __attribute__((target("+crc")))
+#else
+#  define VJ_CRC32_HW_ATTR
+#endif
+
+#if !defined(VJ_CRC32_HW_COMPILE)
 static unsigned long crctable[256] =
 {
 	0x00000000L, 0x77073096L, 0xEE0E612CL, 0x990951BAL, 0x076DC419L, 0x706AF48FL, 0xE963A535L, 0x9E6495A3L,
@@ -52,13 +75,72 @@ static unsigned long crctable[256] =
 };
 
 
-int crc32_calcCheckSum(unsigned char * data, unsigned int length)
+static unsigned long crc32_table(unsigned char *data, unsigned int length)
 {
    unsigned i;
-	unsigned long crc = 0xFFFFFFFF;
+   unsigned long crc = 0xFFFFFFFF;
 
-	for(i = 0; i < length; i++)
-		crc = crctable[(crc ^ *data++) & 0xFF] ^ (crc >> 8);
+   for (i = 0; i < length; i++)
+      crc = crctable[(crc ^ *data++) & 0xFF] ^ (crc >> 8);
 
 	return crc ^ 0xFFFFFFFF;
+}
+#endif /* !VJ_CRC32_HW_COMPILE */
+
+#if defined(VJ_CRC32_HW_COMPILE) || defined(VJ_CRC32_HW_RUNTIME)
+/* ARMv8 CRC32 extension: CRC-32/ISO-HDLC (reflected poly 0xEDB88320),
+ * same init/final 0xFFFFFFFF as the table path. Byte/word/dword
+ * intrinsics process memory-order bytes on little-endian. */
+VJ_CRC32_HW_ATTR
+static unsigned long crc32_hw(unsigned char *data, unsigned int length)
+{
+   uint32_t crc;
+   unsigned char *p;
+   unsigned int n;
+   uint64_t w64;
+   uint32_t w32;
+
+   crc = 0xFFFFFFFFu;
+   p = data;
+   n = length;
+
+   while (n >= 8)
+   {
+      memcpy(&w64, p, 8);
+      crc = __crc32d(crc, w64);
+      p += 8;
+      n -= 8;
+   }
+   while (n >= 4)
+   {
+      memcpy(&w32, p, 4);
+      crc = __crc32w(crc, w32);
+      p += 4;
+      n -= 4;
+   }
+   while (n > 0)
+   {
+      crc = __crc32b(crc, *p);
+      p++;
+      n--;
+   }
+   return (unsigned long)(crc ^ 0xFFFFFFFFu);
+}
+#endif
+
+int crc32_calcCheckSum(unsigned char * data, unsigned int length)
+{
+#if defined(VJ_CRC32_HW_COMPILE)
+   return (int)crc32_hw(data, length);
+#elif defined(VJ_CRC32_HW_RUNTIME)
+   static int have_hw = -1;
+
+   if (have_hw < 0)
+      have_hw = ((getauxval(AT_HWCAP) & HWCAP_CRC32) != 0) ? 1 : 0;
+   if (have_hw)
+      return (int)crc32_hw(data, length);
+   return (int)crc32_table(data, length);
+#else
+   return (int)crc32_table(data, length);
+#endif
 }
