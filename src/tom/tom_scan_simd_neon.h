@@ -151,6 +151,51 @@ static INLINE unsigned tom_scan_neon_16bpp_rgb(
    return done;
 }
 
+/* Strided gather of every 2nd uint32: dst[i] = src[i * 2].
+ * Matches tom_render_scanline_hires's seed of tomHiresScratch from the
+ * existing Nx row.  Returns source pixels written (multiple of 4). */
+static INLINE unsigned tom_scan_neon_hires_gather_n2(
+   const uint32_t * VJ_RESTRICT src,
+   uint32_t * VJ_RESTRICT dst,
+   unsigned n)
+{
+   unsigned i;
+   unsigned done;
+   uint32x4x2_t t;
+
+   done = n & ~3u;
+   for (i = 0; i < done; i += 4)
+   {
+      t = vld2q_u32(src + (i * 2));
+      vst1q_u32(dst + i, t.val[0]);
+   }
+   return done;
+}
+
+/* 2x box-replicate: dst[2*i] = dst[2*i+1] = src[i].
+ * ARMv7 vzipq (struct form), not A64 vzip1/vzip2.  Returns source
+ * pixels expanded (multiple of 4). */
+static INLINE unsigned tom_scan_neon_hires_expand_n2(
+   const uint32_t * VJ_RESTRICT src,
+   uint32_t * VJ_RESTRICT dst,
+   unsigned n)
+{
+   unsigned i;
+   unsigned done;
+   uint32x4_t a;
+   uint32x4x2_t z;
+
+   done = n & ~3u;
+   for (i = 0; i < done; i += 4)
+   {
+      a = vld1q_u32(src + i);
+      z = vzipq_u32(a, a);
+      vst1q_u32(dst + (i * 2), z.val[0]);
+      vst1q_u32(dst + (i * 2) + 4, z.val[1]);
+   }
+   return done;
+}
+
 #endif /* BLITTER_SIMD_HAVE_NEON */
 
 #endif /* TOM_SCAN_SIMD_NEON_H */
