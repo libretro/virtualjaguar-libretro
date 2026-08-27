@@ -28,7 +28,15 @@ static INLINE void vj_log_stderr(const char *fmt, ...)
    else vj_log_stderr(__VA_ARGS__); \
 } while (0)
 
+/* LOG_DBG compiles out of release builds (Makefile adds -DNDEBUG unless
+ * DEBUG=1).  VJ_DEBUG_LOG opts it back in.  INF/WRN/ERR stay live.
+ * Call-site arguments are format strings and register reads -- no
+ * required side effects -- so eliding evaluation is safe. */
+#if defined(NDEBUG) && !defined(VJ_DEBUG_LOG)
+#define LOG_DBG(...) do { } while (0)
+#else
 #define LOG_DBG(...) VJ_LOG(RETRO_LOG_DEBUG, __VA_ARGS__)
+#endif
 #define LOG_INF(...) VJ_LOG(RETRO_LOG_INFO,  __VA_ARGS__)
 #define LOG_WRN(...) VJ_LOG(RETRO_LOG_WARN,  __VA_ARGS__)
 #define LOG_ERR(...) VJ_LOG(RETRO_LOG_ERROR, __VA_ARGS__)
