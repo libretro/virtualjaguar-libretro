@@ -5854,6 +5854,22 @@ void retro_run(void)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
       check_variables();
 
+   /* RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE (presentation-skip half only:
+    * the audio bit is intentionally ignored -- DSP/DAC output is untouched).
+    * Queried every frame because the frontend may flip it frame-to-frame
+    * (e.g. hidden run-ahead re-executes, fast-forward). Default keeps the
+    * video bit set, so a frontend that doesn't implement the call --
+    * environ_cb() returns false and leaves av_enable_flags untouched --
+    * renders exactly as before. tomSkipVideoPresent gates ONLY the final
+    * host XRGB8888 store in TOMExecHalfline (tom.c); OP/GPU/DSP/blitter
+    * execution above it in JaguarExecuteNew() always runs unabridged, so
+    * this cannot desync emulation or run-ahead determinism (#400). */
+   {
+      enum retro_av_enable_flags av_enable_flags = RETRO_AV_ENABLE_VIDEO;
+      environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av_enable_flags);
+      tomSkipVideoPresent = (av_enable_flags & RETRO_AV_ENABLE_VIDEO) ? 0 : 1;
+   }
+
    /* Apply pending geometry change BEFORE rendering this frame.  TOM's
     * scanline renderer reads tomWidth (pixels per row) and screenPitch
     * (line stride) live; if tomWidth grew but screenPitch is stale, later
@@ -6077,7 +6093,14 @@ void retro_run(void)
     * The reverse mismatch also exists -- a narrow window (e.g. VDB=38,
     * VDE=100 -> 34 rendered rows, presented height 31) writes past the
     * presented height.  That is harmless here (the allocation is 1024x512
-    * and the extra rows are simply not shown) and is left alone. */
+    * and the extra rows are simply not shown) and is left alone.
+    *
+    * Presentation-skip: this whole fixup only touches videoBuffer (the
+    * host output), so it is skipped along with the rest of presentation
+    * when the frontend has flagged this frame's video as discarded --
+    * TOMGetWrittenRowExtent()'s own bookkeeping (tomRowsWrittenCur/Prev/
+    * Last in tom.c) is unconditional and unaffected either way. */
+   if (!tomSkipVideoPresent)
    {
       uint32_t written = TOMGetWrittenRowExtent();
       /* Hi-res: TOM reports rows in STOCK units.  The decision below is
@@ -6133,8 +6156,18 @@ void retro_run(void)
     * and video stall. Fires LOG_WRN/LOG_ERR via vj_log_cb so the
     * signature shows up in the RetroArch log without extra wiring.
     * Off-mode short-circuits in CrashDetectFrameTick, so the cost
-    * when disabled is one indirect function call per frame. */
-   CrashDetectFrameTick(videoBuffer, (unsigned)game_width, (unsigned)game_height);
+    * when disabled is one indirect function call per frame.
+    *
+    * Pass fb=NULL while presentation is skipped: videoBuffer is frozen at
+    * whatever the last rendered frame left there, and a long presentation-
+    * skip run (run-ahead's hidden frames, fast-forward) would otherwise
+    * read as a false video_stall.  CrashDetectFrameTick treats a NULL fb
+    * as "no framebuffer to hash this frame" and skips only that one check;
+    * GPU/DSP PC-escape and wedge detection -- the checks that actually
+    * matter here, since nothing about emulation itself changed -- still
+    * run unconditionally. */
+   CrashDetectFrameTick(tomSkipVideoPresent ? NULL : videoBuffer,
+                         (unsigned)game_width, (unsigned)game_height);
 
    video_cb(videoBuffer, game_width, game_height, game_width << 2);
 

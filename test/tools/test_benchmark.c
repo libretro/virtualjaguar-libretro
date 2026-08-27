@@ -43,6 +43,11 @@ static unsigned long long *(*pperf_counters_find)(const char *);
 /* Options state */
 static int bios_option_set = 0;
 static const char *blitter_value = "enabled"; /* default: fast blitter */
+/* --av-skip-video (perf measurement only): answers
+ * RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE with the video bit clear, so an
+ * A/B run can isolate the cost of the presentation stage this tool skips.
+ * Default 0 leaves the call unanswered, same as before this option existed. */
+static int av_skip_video = 0;
 
 /* High-resolution timer helpers */
 #ifdef __APPLE__
@@ -153,6 +158,14 @@ static bool environment_cb(unsigned cmd, void *data)
       case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
          *(const char **)data = "/tmp";
          return true;
+      case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
+         if (av_skip_video)
+         {
+            if (data)
+               *(enum retro_av_enable_flags *)data = RETRO_AV_ENABLE_AUDIO;
+            return true;
+         }
+         return false;
       default:
          return false;
    }
@@ -196,7 +209,10 @@ static void print_usage(const char *progname)
       "  --load-srm file      Load EEPROM save data from file\n"
       "  --load-state file    Load a save state into the core after retro_load_game.\n"
       "                       Accepts raw retro_serialize() payloads or RetroArch\n"
-      "                       RASTATE container files (the MEM chunk is extracted).\n",
+      "                       RASTATE container files (the MEM chunk is extracted).\n"
+      "  --av-skip-video      Answer GET_AUDIO_VIDEO_ENABLE with the video bit\n"
+      "                       clear, so this run measures with the core's\n"
+      "                       presentation-skip path active.\n",
       progname);
 }
 
@@ -247,6 +263,8 @@ int main(int argc, char **argv)
          srm_load_path = argv[++i];
       else if (strcmp(argv[i], "--load-state") == 0 && i + 1 < argc)
          state_load_path = argv[++i];
+      else if (strcmp(argv[i], "--av-skip-video") == 0)
+         av_skip_video = 1;
       else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
       {
          print_usage(argv[0]);

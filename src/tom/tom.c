@@ -437,6 +437,10 @@ uint16_t tom_jerry_int_pending, tom_timer_int_pending, tom_object_int_pending,
 uint32_t * screenBuffer;
 uint32_t screenPitch;
 
+/* RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE presentation-skip -- see the
+ * declaration in tom.h for the safety argument.  Default 0 (render). */
+int tomSkipVideoPresent;
+
 typedef void (render_xxx_scanline_fn)(uint32_t *);
 
 // Private function prototypes
@@ -1635,27 +1639,39 @@ void TOMExecHalfline(uint16_t halfline, bool render)
       if (writtenRow + 1 > tomRowsWrittenCur)
          tomRowsWrittenCur = writtenRow + 1;
 
-      if (inActiveDisplayArea)
+      /* Presentation-skip (RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE): both
+       * branches below do nothing but store host XRGB8888 pixels into
+       * screenBuffer -- the CRY/RGB16 -> RGB32 conversion (stock, true-color
+       * or hi-res box-replication/supersampled) and the border-colour fill.
+       * screenBuffer is not addressable Jaguar memory, so skipping these
+       * stores is invisible to emulation; tomSkipVideoPresent stays 0
+       * (render as normal) unless the frontend just said this frame's
+       * video will be discarded. See the tom.h declaration for the full
+       * argument. */
+      if (!tomSkipVideoPresent)
       {
-         if (shadowHiresActive)
-            tom_render_scanline_hires(TOMCurrentLine);
-         else
-            scanline_render[TOMGetVideoMode()](TOMCurrentLine);
-      }
-      else
-      {
-         // If outside of VDB & VDE, then display the border color
-         // (replicated across the N sub-rows / N-wide pixels at hi-res).
-         uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
-         uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
-         uint32_t hr;
-
-         for (hr = 0; hr < hiresRowScale; hr++)
+         if (inActiveDisplayArea)
          {
-            uint32_t * currentLineBuffer = TOMCurrentLine + hr * screenPitch;
+            if (shadowHiresActive)
+               tom_render_scanline_hires(TOMCurrentLine);
+            else
+               scanline_render[TOMGetVideoMode()](TOMCurrentLine);
+         }
+         else
+         {
+            // If outside of VDB & VDE, then display the border color
+            // (replicated across the N sub-rows / N-wide pixels at hi-res).
+            uint8_t      g = tomRam8[BORD1], r = tomRam8[BORD1 + 1], b = tomRam8[BORD2 + 1];
+            uint32_t pixel = 0xFF000000 | (r << 16) | (g << 8) | (b << 0);
+            uint32_t hr;
 
-            for(i=0; i<tomWidth * hiresRowScale; i++)
-               *currentLineBuffer++ = pixel;
+            for (hr = 0; hr < hiresRowScale; hr++)
+            {
+               uint32_t * currentLineBuffer = TOMCurrentLine + hr * screenPitch;
+
+               for(i=0; i<tomWidth * hiresRowScale; i++)
+                  *currentLineBuffer++ = pixel;
+            }
          }
       }
    }

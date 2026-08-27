@@ -451,6 +451,17 @@ static bool cb_environment(unsigned cmd, void *data)
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
         *(const char **)data = "/tmp";
         return true;
+    case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
+        /* Only answer when a tool explicitly opted in (--av-skip-video);
+         * otherwise fall through to `default: return false`, which is
+         * exactly what every harness tool predating this option already
+         * gets -- the core then assumes no step may be skipped. */
+        if (active_cfg && active_cfg->av_skip_video) {
+            if (data)
+                *(enum retro_av_enable_flags *)data = RETRO_AV_ENABLE_AUDIO;
+            return true;
+        }
+        return false;
     case RETRO_ENVIRONMENT_GET_VARIABLE: {
         struct retro_variable *var = (struct retro_variable *)data;
         unsigned i;
@@ -499,6 +510,8 @@ bool harness_init_from_args(harness_config *cfg, int argc, char **argv)
             cfg->quiet = 1;
         } else if (strcmp(argv[i], "--mic-tone") == 0) {
             cfg->mic_tone = 1;
+        } else if (strcmp(argv[i], "--av-skip-video") == 0) {
+            cfg->av_skip_video = 1;
         } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             cfg->frames = (unsigned)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--snapshot-interval") == 0 && i + 1 < argc) {
