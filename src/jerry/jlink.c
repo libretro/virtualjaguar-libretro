@@ -581,9 +581,16 @@ static void JLinkDiscRawDispatch(const uint8_t *buf, size_t len,
    agreeing the session is still eligible and still the SAME connection
    that earned it (jlinkNegWasConnected forces a fresh handshake, not a
    trusted carry-over, across any disconnected->connected transition). */
-static void JLinkNegTick(uint32_t nowMs)
+static void JLinkNegTick(void)
 {
    int connected = JLinkConnected();
+   /* Deliberately uninitialised: assigned right before the retry-throttle
+    * check below, the first point that needs a timestamp.  That point is
+    * only reached during an ACTIVE client-side negotiation (eligible,
+    * connected, not yet confirmed/given-up), so the common every-frame
+    * pass through this function -- netlink disabled entirely included --
+    * costs no clock_gettime (#569/P8). */
+   uint32_t nowMs;
 
    /* Test-only mechanism escape hatch, same spirit as jlink.c's own
       VJ_NETLINK_HOST/VJ_NETLINK_PORT-style overrides: real negotiation
@@ -651,6 +658,7 @@ static void JLinkNegTick(uint32_t nowMs)
    if (jlinkMode != JLINK_MODE_TCP_CLIENT)
       return;
 
+   nowMs = JLinkNowMs();
    if (jlinkNegAttempts > 0
        && (uint32_t)(nowMs - jlinkNegLastSendMs) < JLINK_NEG_RETRY_MS)
       return;
@@ -689,13 +697,20 @@ static void JLinkNegTick(uint32_t nowMs)
 void JLinkFrameTick(void)
 {
    long long budget;
-   uint32_t nowMs = JLinkNowMs();
+   /* The clock query lives inside the discovery gate (and inside
+      JLinkNegTick's own active-negotiation tail) rather than up front:
+      with netlink off this function still runs every video frame, and a
+      per-frame clock_gettime for a timestamp nobody reads was measurable
+      noise on slow hosts (#569/P8).  Discovery and negotiation now take
+      independent JLinkNowMs() samples a few microseconds apart in ticks
+      where both run; both consumers work on 1 s / 10 s cadences, so the
+      skew is immaterial. */
    if (JLinkDiscActive())
-      jlinkDiscChanged |= JLinkDiscPoll(nowMs);
+      jlinkDiscChanged |= JLinkDiscPoll(JLinkNowMs());
    /* #552 wire-speedup negotiation.  Runs unconditionally, ahead of the
       jlinkWaitEnabled early-return below -- negotiation must not depend
       on the unrelated reply-wait option. */
-   JLinkNegTick(nowMs);
+   JLinkNegTick();
    if (jlinkDevice == JLINK_DEVICE_VOICEMODEM)
       VMFrameTick();
    if (!jlinkWaitEnabled)
