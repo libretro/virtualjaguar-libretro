@@ -230,6 +230,46 @@ MACHO_EXPORTS := exports.list
 endif
 MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 
+# Benchmark-only: compile OUT the GDB stub's per-instruction hook checks.
+#
+# The stub ships enabled-by-default-off, and that decision rests on the
+# armed-counter check costing nothing when no breakpoint is set (issue #652,
+# docs/gdb-stub-design.md).  That is a measurable claim, so it needs a
+# measurable control arm:
+#
+#   test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_HOOKS=0' \
+#                        'VJ_GDB_STUB_DISABLE_HOOKS=1' 12
+#
+# NEVER ship a build with this set -- it silently removes breakpoint
+# detection from all three processors.  It exists so the A/B is
+# reproducible; the first measurement was taken with an equivalent local
+# edit that was reverted afterwards, which left the number unverifiable.
+#
+# Passing CFLAGS=... on the command line instead does not work here: a
+# command-line assignment blocks every later `+=` in this Makefile, silently
+# dropping the -I/-D flags the build needs.
+ifeq ($(VJ_GDB_STUB_DISABLE_HOOKS),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_HOOKS
+endif
+
+# Finer control arm: removes ONLY the idle-skip interaction
+# (`if (gdbArmed*) idleSkipActive = 0;`), leaving the per-instruction PC
+# checks in place, so the two halves of the hook cost can be told apart.
+ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE \
+              VJ_GDB_STUB_DISABLE_68K_HOOK VJ_GDB_STUB_DISABLE_DSP_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_IDLE_GATE
+endif
+
+# Per-processor control arms, so the hook cost can be attributed to one
+# processor at a time (issue #652).  Used to establish that the 68K hook
+# and the idle-skip gating both cost nothing and the residual is the DSP.
+ifeq ($(VJ_GDB_STUB_DISABLE_68K_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_68K_HOOK
+endif
+ifeq ($(VJ_GDB_STUB_DISABLE_DSP_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_DSP_HOOK
+endif
+
 # Records the build configuration the objects in the tree were last
 # compiled under; see the mode-switch hook next to the link rule below.
 #
@@ -248,7 +288,8 @@ MACHO_EXPORTS_FLAGS := -Wl,-exported_symbols_list,$(MACHO_EXPORTS)
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
-              OPT_LEVEL LTO IOS_MCPU
+              OPT_LEVEL LTO IOS_MCPU VJ_GDB_STUB_DISABLE_HOOKS \
+              VJ_GDB_STUB_DISABLE_IDLE_GATE
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the

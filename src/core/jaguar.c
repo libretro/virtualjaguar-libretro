@@ -385,7 +385,7 @@ void M68KInstructionHook(void)
    pcQPtr++;
    pcQPtr &= 0x3FF;
 
-#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_68K_HOOK)
    /* GDB stub (issue #652): one load of a hot global, one never-taken
     * branch when no 68K breakpoint/step is armed -- see
     * docs/gdb-stub-design.md "Breakpoint detection" and its cited

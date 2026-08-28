@@ -1838,6 +1838,7 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 void DSPExec(int32_t cycles)
 {
 	int idleSkipActive;
+	int gdbArmedSlice;
 
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
@@ -1850,6 +1851,14 @@ void DSPExec(int32_t cycles)
 	VJP_ENTER(VJP_DSP);
 
 	dsp_releaseTimeSlice_flag = 0;
+
+	/* Same shape as GPUExec's cached locals (issue #532): a hot global
+	 * read per emulated instruction with an opaque opcode call in
+	 * between.  Measured (issue #652): this removes part of the DSP's
+	 * share of the GDB hook cost; ~2%% remains and is NOT explained --
+	 * see docs/gdb-stub-design.md.  Only GDBHalt() can re-arm inside a
+	 * slice. */
+	gdbArmedSlice = gdbArmedDSP;
 	dsp_in_exec++;
 
 	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
@@ -1900,7 +1909,7 @@ void DSPExec(int32_t cycles)
 	if (vjtrace_armed || vjtrace_nwatch)
 		idleSkipActive = 0;
 #endif
-#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_IDLE_GATE)
 	/* GDB stub (issue #652): DSPIdleLoopProbe() extrapolates the PC
 	 * forward over many idle-loop iterations without visiting each one,
 	 * exactly the class of per-instruction side effect the #569 idle-skip
@@ -1974,7 +1983,7 @@ void DSPExec(int32_t cycles)
 
 		pcThis = dsp_pc;
 
-#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_DSP_HOOK)
 		/* GDB stub (issue #652): one load of a hot global, one
 		 * never-taken branch when no DSP breakpoint/step is armed -- see
 		 * docs/gdb-stub-design.md "Breakpoint detection". GDBHalt()
@@ -1982,8 +1991,11 @@ void DSPExec(int32_t cycles)
 		 * continues, steps, or disconnects. VJ_GDB_STUB_DISABLE_HOOKS
 		 * exists only for the Phase 2 A/B perf measurement -- see the
 		 * comment in src/core/jaguar.c's M68KInstructionHook(). */
-		if (gdbArmedDSP && GDBCheckPC(GDB_TGT_DSP, pcThis))
+		if (gdbArmedSlice && GDBCheckPC(GDB_TGT_DSP, pcThis))
+		{
 			GDBHalt(GDB_TGT_DSP, GDB_STOP_BREAKPOINT, pcThis);
+			gdbArmedSlice = gdbArmedDSP;
+		}
 #endif
 
 		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
