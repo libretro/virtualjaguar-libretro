@@ -349,37 +349,42 @@ Five layers, in increasing cost:
       budget (#569 measured 99.7% of budget in idle loops for some
       titles), so a branch there plausibly dominates the 4.5%.
 
-   **Localised (2026-08-27): it is (1), the per-instruction checks.**
-   Removing *only* the idle-skip interaction, leaving the PC checks in
-   place, measures **-0.2%, z=+0.69, p=0.4897 -- no effect**
-   (`test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_IDLE_GATE=0'
-   'VJ_GDB_STUB_DISABLE_IDLE_GATE=1' 12`). The idle-skip gating is free;
-   the whole ~4.5% is the per-instruction `gdbArmed*` test in the three
-   hot loops.
+   **Fully attributed (2026-08-27).** Each component was measured on its
+   own control arm (all `test/tools/opt_ab.sh ... 12`, 24 samples/arm,
+   host load 5-7):
 
-   **So the armed-flag hypothesis is falsified as stated.** "One cached
-   load and a never-taken branch" is not free at this call rate -- most
-   plausibly because the branch sits inside the GPU/DSP interpreter's
-   hottest loops, where it costs more than the vjtrace precedent
-   suggested (that precedent measured a *ring write* against a *branch*,
-   and concluded the write was the cost; it did not establish that the
-   branch was free in absolute terms).
+   | Component | Cost | Significance |
+   |---|---|---|
+   | 68K hook (`M68KInstructionHook`) | ~0% | p=0.8366 |
+   | Idle-skip gating (`idleSkipActive = 0`) | ~0% | p=0.4897 |
+   | GPU per-instruction check | 1.8% | fixed, see below |
+   | DSP per-instruction check | ~2.3-2.7% | p=0.0000 |
 
-   The options, in preference order:
+   **Fix applied: cache the armed flag in a slice-entry local**, exactly as
+   #532 does for `pipeTiming`/`riscScale` in the same function. The globals
+   were being reloaded GOT-indirect once per emulated instruction because
+   the opcode call is opaque -- the branch was never the problem, the
+   reload was. That took **4.5% -> 2.7%**, and the GPU's share to zero.
 
-   1. **Dual dispatch loops.** Test `gdbArmed*` ONCE at loop entry and
-      run either the existing untouched loop or a debug variant. The
-      common path then has genuinely zero added instructions, which is
-      what the design promised. Costs code size and some duplication in
-      `GPUExec()`/`DSPExec()`.
-   2. **Reverse ship-by-default** and gate the stub behind a build flag
-      like `vjtrace` does. Honest, but it forfeits the reason the shipped
-      decision was made: homebrew developers debugging against the stock
-      core with no special build.
-   3. Accept 4.5% on every user to benefit the few who attach a debugger.
-      Not recommended.
+   **~2.0% remains, in the DSP loop, and is NOT explained.** Loop
+   specialisation was tried (body extracted to a header, included into a
+   plain loop and an armed loop, so the non-debug path contains no GDB
+   code at all): it recovered only a further 0.7% on the DSP and **zero**
+   on the GPU. Parked on branch `perf/gdb-dsp-loop-specialisation`
+   (digest-verified, C89-clean) rather than merged -- 0.7% did not justify
+   an extracted-body header in the emulator's hottest function.
 
-   This decision is the maintainer's, per the rule above.
+   **Next step is real-hardware profiling, not more host measurement.**
+   Every number here comes from an arm64 Mac that never dropped below load
+   5. The residual should be re-attributed on a real target (tvOS/A-series,
+   RPi) before any further surgery: the per-processor control arms
+   `VJ_GDB_STUB_DISABLE_{HOOKS,IDLE_GATE,68K_HOOK,DSP_HOOK}` exist for
+   exactly that and are listed in `BUILD_AXES`, so the attribution can be
+   repeated there in four runs without re-deriving any of this.
+
+   Shipped-by-default stands for now at a measured ~2% cost, deliberately,
+   pending those numbers.
+
 
 
    **This is not merely a stand-in for gdb being unavailable.** Phase 1's
