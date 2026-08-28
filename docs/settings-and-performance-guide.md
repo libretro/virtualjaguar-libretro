@@ -222,8 +222,9 @@ In order. Stop as soon as it is fast enough.
    step one, not step three.
 2. **Set Internal Resolution to 1x and True Color off** — the manual version of
    step 1, if you want to keep per-title defaults for other games.
-3. **Turn on DSP Idle-Loop Fast-Forward** (`risc_idle_skip`). See §4.3 — this is
-   the biggest lever and it is **off by default**, so nobody gets it by accident.
+3. **Check DSP Idle-Loop Fast-Forward is on** (`risc_idle_skip`). See §4.3 —
+   this is the biggest lever, and it is **on by default** since the corpus
+   sweep. If you turned it off during the opt-in period, turn it back on.
 4. **Switch Blitter to Fast.** Measured 1.21× faster typical (Iron Soldier), up
    to 1.58× on the title that gains most (Skyhammer). It breaks some games —
    wireframe artifacts and missing geometry are the usual symptom — so switch
@@ -246,17 +247,18 @@ unaffected. The saving reported with the feature in the v3.5.0 release notes is
 figure comes from the shipped A/B, not from the profiling documents cited in
 §4.1 — those establish the 50–67% and 90–99.7% numbers, not this one.)
 
-**It ships off by default.** It was verified byte-identical on framebuffer,
-audio and periodic save-state digest across a nine-title corpus including two CD
-games — but nine titles is not a ~200-title library, and a silent audio or video
-divergence nobody can attribute is a worse failure than an opt-in toggle. So it
-waits one release cycle. **If you are chasing performance, you have to turn this
-on yourself.** If a title looks or sounds wrong with it on, turn it off and
-please report it.
+**It now ships on by default.** It shipped off in v3.5.0 against a nine-title
+verification, which was not a ~200-title library — and a silent audio or video
+divergence nobody can attribute is worse than an opt-in toggle. That gap has
+since been closed: the corpus sweep behind #708 ran **148 cart images plus 6 CD
+spot-checks**, off versus on, and every single one was byte-identical across
+framebuffer, audio and save-state hash streams. If a title still looks or sounds
+wrong with it on, turn it off and please report it — that is a finding worth
+having.
 
-**It is DSP-only, despite the option key.** The key is `risc_idle_skip`, but only
-the DSP has the fast-forward path. The GPU spins in idle loops too and this
-option does nothing about that.
+**It covers both RISC processors.** It began DSP-only, which is why the option
+key says `risc_idle_skip` and older text here called it DSP-only; the GPU path
+landed afterwards and the option now drives both.
 
 #### The compounding trap
 
@@ -532,7 +534,7 @@ timing models, idle-skip, CD read speed — takes effect immediately.
 | **Game runs too fast** (menus fly past, input feels doubled) | The emulated GPU finishes renders 2–4× faster than silicon, so loops paced on render or blit completion outrun hardware. This is a known accuracy gap, not your configuration. | Turn on `gpu_pipeline_timing` and/or `blitter_timing`. Both cost performance and are still being calibrated. Also confirm you have not left a clock scale above 1x. |
 | **Game runs slow** | See §4.2. | Per-title defaults off → 1x / true color off → idle-skip on → fast blitter. |
 | **Fast-forward does nothing** | Frontend setting, or no headroom left. | Check RetroArch's Fast-Forward Ratio and audio sync. If the title already runs near 16.7 ms/frame, there is nothing to gain. Also check the window is focused — a backgrounded window gets OS-throttled. |
-| **Audio crackles or drops out** | Usually frontend audio buffering, or the device cannot render every frame in time. | Raise your frontend's audio latency first. On hardware that is genuinely too slow, set `frameskip` = auto (§4.5) — it drops presentation, not emulation, when the buffer drains. If it started after you enabled `risc_idle_skip`, turn it back off and please report it — that is exactly the feedback the opt-in period exists for. |
+| **Audio crackles or drops out** | Usually frontend audio buffering, or the device cannot render every frame in time. | Raise your frontend's audio latency first. On hardware that is genuinely too slow, set `frameskip` = auto (§4.5) — it drops presentation, not emulation, when the buffer drains. If it started after `risc_idle_skip` became a default, turn it off and please report it — a divergence the 148-image corpus sweep did not catch is exactly the finding worth having. |
 | **Audio pitch changed after overclocking** | Should not happen — timers and audio pacing stay at stock speed under both clock scales. | Report it. |
 | **Black screen on a CD game** | Boot path, or a bad rip. | Switch `cd_boot_mode` to Real BIOS and restart. If that fails too, try `cd_bios_type` = Developer. Check the log for `[CD-BOOTSTUB]` — "zero-filled" or "magic mismatch" means the image itself is an incomplete rip, and no setting will fix it. |
 | **CD game hangs after loading got faster** | `cd_read_speed` above 2x. | Set it back to 2x (accurate). |
@@ -571,7 +573,7 @@ timing models, idle-skip, CD read speed — takes effect immediately.
 | `crash_detect` | **on** | leave it on |
 | `m68k_clock_scale` | 1x | a 68K-bound game stutters (avoid 3x — see #460) |
 | `risc_clock_scale` | 1x | a GPU-bound game stutters — **and never with idle-skip** |
-| `risc_idle_skip` | **off** | you want the single biggest speed-up available |
+| `risc_idle_skip` | **on** | you are chasing a divergence and want to rule it out |
 | `frameskip` | off | audio crackles on hardware too slow to render every frame |
 | `frameskip_max` | 3 | frameskip is on and you want a different smoothness/audio trade |
 | `dram_timing` / `gpu_pipeline_timing` / `blitter_timing` | off | accuracy investigation only |
