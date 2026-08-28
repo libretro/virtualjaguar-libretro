@@ -361,6 +361,17 @@ static bool jaguar_cd_mode = false;
 /* Memory Track presence option (CD only); default on. */
 static bool opt_memory_track = true;
 static char cd_image_path[4096] = {0};
+
+/* Disk control interface (#651).  DISK_MAX_IMAGES is deliberately
+ * generous: no multi-disc Jaguar CD title exists, so in practice the list
+ * only ever holds the one disc a frontend handed us after launch. */
+#define DISK_MAX_IMAGES 8
+
+static char     disk_image_path[DISK_MAX_IMAGES][4096];
+static unsigned disk_num_images;
+static unsigned disk_index;
+static unsigned disk_initial_index;
+static bool     disk_ejected;
 bool cd_bios_loaded_externally = false;
 uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
@@ -4614,6 +4625,27 @@ bool retro_serialize(void *data, size_t size)
     * loadable. */
    buf += UARTWireSpeedupStateSave(buf);
 
+   /* v14: mounted-disc identity + image index (#651).  Disk control lets a
+    * frontend swap the disc mid-session, so a state and the mounted disc
+    * can now disagree -- which they never could before, when the disc was
+    * fixed at load.  All three identity words come from accessors that
+    * already exist (cdintf.h); zero when no disc is mounted.
+    *
+    * STRICTLY LAST, after the wire-speedup chunk: same reasoning as Team
+    * Tap's comment above -- appending keeps every v12/v13 blob loadable,
+    * interleaving would silently desync all of them. */
+   {
+      uint32_t disc_sessions = jaguar_cd_mode ? CDIntfGetNumSessions() : 0;
+      uint32_t disc_tracks   = jaguar_cd_mode ? CDIntfGetNumTracks() : 0;
+      uint32_t disc_sectors  = jaguar_cd_mode ? CDIntfGetDiscTotalSectors() : 0;
+      uint32_t disc_index    = disk_index;
+
+      STATE_SAVE_VAR(buf, disc_sessions);
+      STATE_SAVE_VAR(buf, disc_tracks);
+      STATE_SAVE_VAR(buf, disc_sectors);
+      STATE_SAVE_VAR(buf, disc_index);
+   }
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4811,6 +4843,40 @@ bool retro_unserialize(const void *data, size_t size)
       buf += UARTWireSpeedupStateLoad(buf);
    else
       UARTSetWireSpeedupEffective(1);
+
+   /* v14: mounted-disc identity (#651) -- see the matching save comment.
+    * Refuse a state taken on a different disc rather than resuming a
+    * machine whose CD state points at content that is not mounted. States
+    * written before v14 carry no identity and load unchanged, exactly as
+    * they did when the disc could not change mid-session. */
+   if (version >= STATE_VERSION_DISK_CONTROL)
+   {
+      uint32_t disc_sessions, disc_tracks, disc_sectors, disc_index;
+
+      STATE_LOAD_VAR(buf, disc_sessions);
+      STATE_LOAD_VAR(buf, disc_tracks);
+      STATE_LOAD_VAR(buf, disc_sectors);
+      STATE_LOAD_VAR(buf, disc_index);
+
+      if (jaguar_cd_mode
+          && (disc_sessions != CDIntfGetNumSessions()
+              || disc_tracks != CDIntfGetNumTracks()
+              || disc_sectors != CDIntfGetDiscTotalSectors()))
+      {
+         LOG_ERR("[CD] refusing savestate: taken on a different disc "
+                 "(state: %u sessions / %u tracks / %u sectors; mounted: "
+                 "%u / %u / %u)\n",
+                 (unsigned)disc_sessions, (unsigned)disc_tracks,
+                 (unsigned)disc_sectors,
+                 (unsigned)CDIntfGetNumSessions(),
+                 (unsigned)CDIntfGetNumTracks(),
+                 (unsigned)CDIntfGetDiscTotalSectors());
+         return false;
+      }
+
+      if (disc_index < disk_num_images)
+         disk_index = disc_index;
+   }
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -5349,6 +5415,356 @@ static void video_buffer_blank(void)
       videoBuffer[i] = 0xFF000000;
 }
 
+typedef enum
+{
+   DISC_BOOT_OK = 0,
+   DISC_BOOT_OPEN_FAILED,       /* CDIntfOpenImage refused the image */
+   DISC_BOOT_NO_BIOS_FOR_AUDIO  /* audio disc, real CD BIOS unavailable */
+} disc_boot_status;
+
+/* Defined below, next to retro_load_game: the disk-control insert path
+ * and the load path share it (#651). */
+static disc_boot_status open_disc_and_resolve_boot(const char *path);
+
+/* ---------------------------------------------------------------------
+ * Disk control callbacks (#651)
+ *
+ * The emulated CD unit has no tray: src/cd/ models no disc-present line
+ * and no "medium not present" error, so eject is a frontend-level FLAG
+ * and the mounted image stays readable until an insert replaces it.
+ * Documented limitation -- nothing but the frontend can reach the window
+ * between an eject and the next insert.
+ * ------------------------------------------------------------------ */
+
+static bool disk_get_eject_state(void)
+{
+   return disk_ejected;
+}
+
+static unsigned disk_get_image_index(void)
+{
+   return disk_index;
+}
+
+static unsigned disk_get_num_images(void)
+{
+   return disk_num_images;
+}
+
+/* Closing the tray is the only disk-control entry point that touches the
+ * emulated machine.  It re-runs boot resolution against the newly selected
+ * disc and dispatches the resolved strategy, because the boot strategy is
+ * DERIVED FROM THE DISC (session count decides HLE vs real BIOS) and
+ * retro_reset() re-resolves nothing.
+ *
+ * This is a restart, not a continuous swap: real hardware would have the
+ * running CD BIOS notice a new disc, which depends on disc-presence
+ * polling we have not verified.  Documented in the user-facing CD notes.
+ *
+ * A failed insert must leave no partial-mount state, so bootConfig and
+ * jaguar_cd_mode are snapshotted and restored, and the previously mounted
+ * image is reopened on a best-effort basis -- CDIntfOpenImage() closes the
+ * current image before parsing the new one, so by the time an open fails
+ * the old disc is already gone from the drive. */
+static bool disk_set_eject_state(bool ejected)
+{
+   struct BootConfig saved_boot;
+   char              saved_path[sizeof(cd_image_path)];
+   bool              saved_cd_mode;
+   disc_boot_status  st;
+
+   if (ejected)
+   {
+      /* Eject is a FLAG: src/cd/ models no tray and no disc-present line,
+       * so the mounted image stays readable until an insert replaces it. */
+      disk_ejected = true;
+      return true;
+   }
+
+   if (!disk_ejected)
+      return true;                    /* already closed -- nothing to do */
+
+   if (disk_num_images == 0 || disk_image_path[disk_index][0] == '\0')
+   {
+      LOG_WRN("[CD] disk control: nothing to insert (image list is "
+              "empty)\n");
+      return false;
+   }
+
+   saved_boot    = bootConfig;
+   saved_cd_mode = jaguar_cd_mode;
+   memcpy(saved_path, cd_image_path, sizeof(saved_path));
+
+   st = open_disc_and_resolve_boot(disk_image_path[disk_index]);
+
+   /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
+    * and sets jaguarRunAddress from $800404 before resetting, so a plain
+    * reset would restart the PREVIOUS program.  NULL is safe here -- both
+    * CD strategies ignore info (hle_strategy_boot does `(void)info;`);
+    * only cart_boot reads it, and cart is never resolved on this path.
+    *
+    * A damaged rip reaches HERE, not the branch above: the image parses
+    * and resolves fine, and it is the boot itself that fails (several CDI
+    * V2 rips in circulation are missing their boot header entirely).  So
+    * both failures share one restore -- an early version restored only on
+    * the resolve failure and left a half-configured machine behind on the
+    * far more likely one. */
+   if (st != DISC_BOOT_OK
+       || !bootConfig.strategy
+       || !bootConfig.strategy->boot(NULL))
+   {
+      if (st == DISC_BOOT_OPEN_FAILED)
+         LOG_ERR("[CD] disk control: insert failed -- image could not be "
+                 "opened\n");
+      else if (st == DISC_BOOT_NO_BIOS_FOR_AUDIO)
+         LOG_ERR("[CD] disk control: insert failed -- audio disc needs the "
+                 "real CD BIOS and it is unavailable\n");
+      else
+         LOG_ERR("[CD] disk control: insert failed -- the boot strategy "
+                 "refused this disc (a damaged rip will do this)\n");
+
+      bootConfig     = saved_boot;
+      jaguar_cd_mode = saved_cd_mode;
+      memcpy(cd_image_path, saved_path, sizeof(cd_image_path));
+      if (cd_image_path[0] != '\0' && !CDIntfOpenImage(cd_image_path))
+         LOG_ERR("[CD] disk control: could not reopen the previous disc "
+                 "either -- the drive is now empty\n");
+
+      LOG_WRN("[CD] disk control: tray stays open, previous disc "
+              "restored\n");
+      return false;                   /* disk_ejected stays true */
+   }
+
+   LOG_INF("[CD] disk control: inserted '%s', booting via '%s'\n",
+           cd_image_path,
+           bootConfig.strategy->name ? bootConfig.strategy->name : "?");
+   disk_ejected = false;
+   return true;
+}
+
+/* Routed through the eject/insert pair so there is exactly one way to
+ * mount a disc, not two that can drift apart. */
+static bool disk_set_image_index(unsigned index)
+{
+   if (index >= disk_num_images)
+      return false;
+
+   if (!disk_ejected)
+   {
+      disk_index = index;
+      return disk_set_eject_state(true) && disk_set_eject_state(false);
+   }
+
+   disk_index = index;
+   return true;
+}
+
+static bool disk_replace_image_index(unsigned index,
+                                     const struct retro_game_info *info)
+{
+   unsigned i;
+
+   if (index >= disk_num_images)
+      return false;
+
+   if (!info || !info->path)
+   {
+      /* Removing an entry: shuffle the tail down so the list stays dense
+       * (the frontend addresses images by position). */
+      for (i = index; i + 1 < disk_num_images; i++)
+         memcpy(disk_image_path[i], disk_image_path[i + 1],
+                sizeof(disk_image_path[i]));
+      disk_num_images--;
+      if (disk_num_images > 0 && disk_index >= disk_num_images)
+         disk_index = disk_num_images - 1;
+      else if (disk_num_images == 0)
+         disk_index = 0;
+      return true;
+   }
+
+   strncpy(disk_image_path[index], info->path,
+           sizeof(disk_image_path[index]) - 1);
+   disk_image_path[index][sizeof(disk_image_path[index]) - 1] = '\0';
+   return true;
+}
+
+static bool disk_add_image_index(void)
+{
+   if (disk_num_images >= DISK_MAX_IMAGES)
+   {
+      LOG_WRN("[CD] disk control: image list full (%u), refusing add\n",
+              (unsigned)DISK_MAX_IMAGES);
+      return false;
+   }
+   disk_image_path[disk_num_images][0] = '\0';
+   disk_num_images++;
+   return true;
+}
+
+static bool disk_set_initial_image(unsigned index, const char *path)
+{
+   /* Recorded and applied when the list is first populated.  Effectively
+    * inert today -- it exists because the frontend only restores a
+    * last-used disk index when set_initial_image AND get_image_path are
+    * both implemented. */
+   (void)path;
+   disk_initial_index = index;
+   return true;
+}
+
+static bool disk_get_image_path(unsigned index, char *path, size_t len)
+{
+   if (index >= disk_num_images || !path || len == 0)
+      return false;
+   strncpy(path, disk_image_path[index], len - 1);
+   path[len - 1] = '\0';
+   return true;
+}
+
+static bool disk_get_image_label(unsigned index, char *label, size_t len)
+{
+   const char *base;
+
+   if (index >= disk_num_images || !label || len == 0)
+      return false;
+   base = strrchr(disk_image_path[index], '/');
+   base = base ? base + 1 : disk_image_path[index];
+   strncpy(label, base, len - 1);
+   label[len - 1] = '\0';
+   return true;
+}
+
+/* Registered from retro_load_game UNCONDITIONALLY, including the
+ * info == NULL no-content path -- that is the case the whole feature
+ * exists for (#646 gave the core no-content boot; without disk control a
+ * frontend has no way to hand it a disc afterwards).
+ *
+ * The callback structs are static because the frontend keeps the pointer
+ * it is given long after this call returns. */
+static void register_disk_control(void)
+{
+   static struct retro_disk_control_ext_callback ext;
+   static struct retro_disk_control_callback     legacy;
+   unsigned version = 0;
+
+   ext.set_eject_state     = disk_set_eject_state;
+   ext.get_eject_state     = disk_get_eject_state;
+   ext.get_image_index     = disk_get_image_index;
+   ext.set_image_index     = disk_set_image_index;
+   ext.get_num_images      = disk_get_num_images;
+   ext.replace_image_index = disk_replace_image_index;
+   ext.add_image_index     = disk_add_image_index;
+   ext.set_initial_image   = disk_set_initial_image;
+   ext.get_image_path      = disk_get_image_path;
+   ext.get_image_label     = disk_get_image_label;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION,
+                  &version)
+       && version >= 1
+       && environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, &ext))
+   {
+      LOG_INF("[CD] disk control: ext interface v%u registered\n", version);
+      return;
+   }
+
+   legacy.set_eject_state     = disk_set_eject_state;
+   legacy.get_eject_state     = disk_get_eject_state;
+   legacy.get_image_index     = disk_get_image_index;
+   legacy.set_image_index     = disk_set_image_index;
+   legacy.get_num_images      = disk_get_num_images;
+   legacy.replace_image_index = disk_replace_image_index;
+   legacy.add_image_index     = disk_add_image_index;
+
+   if (environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, &legacy))
+      LOG_INF("[CD] disk control: legacy interface registered "
+              "(no ext support)\n");
+   else
+      LOG_WRN("[CD] disk control: frontend accepted neither interface -- "
+              "inserting a disc after launch will not be possible\n");
+}
+
+/* Open a disc image and derive the boot configuration FROM THAT DISC.
+ *
+ * Shared by retro_load_game() and the disk-control insert path (#651).
+ * Both must pick the boot strategy from the mounted disc, and
+ * retro_reset() is a bare JaguarReset() -- it re-resolves nothing, so an
+ * insert that only reset would run against the PREVIOUS disc's boot
+ * config, silently, and look like it had worked.
+ *
+ * Allocates nothing and frees nothing.  The two callers have opposite
+ * cleanup policies -- load tears the whole session down and returns
+ * false, insert must leave the running machine untouched and merely
+ * report the failure to the frontend -- so cleanup stays with them. */
+static disc_boot_status open_disc_and_resolve_boot(const char *path)
+{
+   uint32_t effective_cd_boot_mode;
+
+   jaguar_cd_mode         = true;
+   /* Hardware has the Memory Track cart plugged in alongside the CD unit
+    * (user-selectable; some titles behave differently with one present). */
+   jaguarMemTrackInserted = opt_memory_track;
+   strncpy(cd_image_path, path, sizeof(cd_image_path) - 1);
+   cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+   effective_cd_boot_mode = vjs.cdBootMode;
+
+   LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
+   if (!CDIntfOpenImage(cd_image_path))
+   {
+      LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
+      return DISC_BOOT_OPEN_FAILED;
+   }
+   LOG_INF("[CD] Disc image opened OK\n");
+
+   /* Audio-only (Red Book) disc: exactly one session, versus the two
+    * sessions (game data in session 2) every Jaguar CD data disc has.
+    * All Jaguar CD tracks are typed AUDIO in CUE sheets regardless of
+    * actual content, so session count -- not track type -- is the correct
+    * discriminator; see the comment on CDIntfIsSession2Sector() in
+    * src/cd/cdintf.c.  HLE synthesizes its boot stub from session-2 game
+    * data, which an audio-only disc has none of by construction, so HLE
+    * can never produce a boot for this content.  The retail CD BIOS's own
+    * player front-end handles audio discs natively (Virtual Light
+    * Machine, issues #291/#300/#325).  Force the real-BIOS path for THIS
+    * disc only -- the global 'CD Boot Mode' option (and its HLE-only 'CD
+    * Read Speed' knob) stay untouched for every other disc, including the
+    * known-damaged CDI rips, which still fail the same clear way they
+    * always have: their CDI container header declares numSessions=2
+    * regardless of the corruption in their session-2 boot data, so this
+    * check never sees them. */
+   if (CDIntfGetNumSessions() == 1)
+   {
+      LOG_INF("[CD] Audio-only disc detected (1 session) -- forcing "
+              "real CD BIOS boot path regardless of CD Boot Mode "
+              "setting\n");
+      effective_cd_boot_mode = CDBOOT_BIOS;
+   }
+
+   if (effective_cd_boot_mode != CDBOOT_HLE)
+      stage_cd_bios();
+
+   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                     effective_cd_boot_mode, vjs.useJaguarBIOS);
+   vjs.useJaguarBIOS = bootConfig.showBootROM;
+
+   /* Defensive check for the audio-only override above: stage_cd_bios()
+    * always has an embedded CD BIOS to fall back to, so this should be
+    * unreachable in practice -- but if some future change to BIOS staging
+    * ever leaves it unsatisfied, fail loudly here rather than silently
+    * falling through to an HLE boot that is guaranteed to fail anyway (no
+    * session-2 game data to synthesize a stub from). */
+   if (CDIntfGetNumSessions() == 1
+       && bootConfig.strategy != &cd_boot_strategy_bios)
+   {
+      LOG_ERR("[CD] Audio-only disc requires the real CD BIOS boot path "
+              "and it could not be staged -- refusing this disc rather "
+              "than attempting an HLE boot that cannot succeed\n");
+      CDIntfCloseImage();
+      return DISC_BOOT_NO_BIOS_FOR_AUDIO;
+   }
+
+   return DISC_BOOT_OK;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -5359,7 +5775,6 @@ bool retro_load_game(const struct retro_game_info *info)
     * override never touches the persisted option value: the next CD
     * loaded in this frontend session still gets whatever the user
     * actually configured. */
-   uint32_t effective_cd_boot_mode;
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -5725,36 +6140,28 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
    mt_dirty_cb     = mt_mark_save_dirty;
 
-   /* Detect CD content (CUE/CDI/CHD/ISO) and stage a CD BIOS (external file
-    * if present, embedded otherwise) so ResolveBootConfig can pick the
-    * right boot strategy. */
+   /* Disk control (#651): register before the content branch, so it is
+    * registered on the no-content path too -- that is the case the
+    * feature exists for. */
+   register_disk_control();
+
+   /* Detect CD content (CUE/CDI/CHD/ISO) and pick a boot strategy from the
+    * disc itself.  The CD branch lives in open_disc_and_resolve_boot() so
+    * the disk-control insert path (#651) can re-run exactly the same
+    * sequence; the cart and no-content branches keep their own
+    * ResolveBootConfig() calls, which is why this is a restructure and not
+    * a lift of a contiguous block. */
    jaguar_cd_mode            = false;
    jaguarMemTrackInserted    = false;
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
-   effective_cd_boot_mode    = vjs.cdBootMode;
 
    if (is_cd_content)
    {
-      jaguar_cd_mode = true;
-      /* Hardware has the Memory Track cart plugged in alongside the CD
-       * unit (user-selectable; some titles behave differently with one
-       * present). */
-      jaguarMemTrackInserted = opt_memory_track;
-      strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
-      cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+      disc_boot_status st = open_disc_and_resolve_boot(info->path);
 
-      /* Open the disc image now, ahead of ResolveBootConfig() below --
-       * moved earlier than it used to run (right before JaguarInit(),
-       * further down) so the session layout is known before a boot
-       * strategy is picked (issue #657).  This is the SAME
-       * CDIntfOpenImage() call, not a duplicate: CDROMInit ->
-       * CDIntfInit -> CDIntfIsImageLoaded still finds an already-open
-       * disc when JaguarInit() runs below. */
-      LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
-      if (!CDIntfOpenImage(cd_image_path))
+      if (st != DISC_BOOT_OK)
       {
-         LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
          free(videoBuffer);
          videoBuffer = NULL;
          free(sampleBuffer);
@@ -5762,60 +6169,13 @@ bool retro_load_game(const struct retro_game_info *info)
          TitleDBSetContent(NULL, 0);
          return false;
       }
-      LOG_INF("[CD] Disc image opened OK\n");
-
-      /* Audio-only (Red Book) disc: exactly one session, versus the two
-       * sessions (game data in session 2) every Jaguar CD data disc
-       * has.  All Jaguar CD tracks are typed AUDIO in CUE sheets
-       * regardless of actual content, so session count -- not track
-       * type -- is the correct discriminator; see the comment on
-       * CDIntfIsSession2Sector() in src/cd/cdintf.c.  HLE synthesizes
-       * its boot stub from session-2 game data, which an audio-only
-       * disc has none of by construction, so HLE can never produce a
-       * boot for this content.  The retail CD BIOS's own player
-       * front-end handles audio discs natively (Virtual Light Machine,
-       * issues #291/#300/#325).  Force the real-BIOS path for THIS
-       * disc only -- the global 'CD Boot Mode' option (and its
-       * HLE-only 'CD Read Speed' knob) stay untouched for every other
-       * disc, including the known-damaged CDI rips, which still fail
-       * the same clear way they always have -- their CDI container
-       * header declares numSessions=2 regardless of the corruption in
-       * their session-2 boot data, so this check never sees them.
-       *
-       * Deliberately just numSessions == 1, with no additional "does
-       * session 1 contain an ATRI boot header anyway" check: that
-       * situation can only arise from a hand-edited/malformed CUE
-       * missing its 'REM SESSION 02' line (every one of the 35 CUEs in
-       * the private corpus carries it), and HLE already refuses such a
-       * disc unconditionally -- CDIntfExtractBootStub() itself requires
-       * numSessions >= 2 and does not even look for ATRI below that.
-       * Routing it to the real BIOS instead of a hard "unsupported
-       * content" is a strict improvement (real hardware would treat a
-       * disc with no session-2 data as audio-capable too), not a new
-       * failure mode. */
-      if (CDIntfGetNumSessions() == 1)
-      {
-         LOG_INF("[CD] Audio-only disc detected (1 session) -- forcing "
-                 "real CD BIOS boot path regardless of CD Boot Mode "
-                 "setting\n");
-         effective_cd_boot_mode = CDBOOT_BIOS;
-      }
-
-      if (effective_cd_boot_mode != CDBOOT_HLE)
-         stage_cd_bios();
    }
-   else
-      apply_cart_bios_autodetect(info);
-
-   /* Resolve boot configuration — single source of truth for which
-    * strategy (cart / HLE / real BIOS / no-content) we will dispatch to
-    * below.  ResolveBootConfig() only knows about cart/CD content, so a
-    * no-content boot (info == NULL, issue #646) is resolved directly:
-    * there is no 68K program anywhere for HLE to jump into, so the real
-    * boot ROM is the only sane strategy -- exactly what real hardware
-    * shows with an empty cart slot. */
-   if (!info)
+   else if (!info)
    {
+      /* No-content boot (issue #646): ResolveBootConfig() only knows about
+       * cart/CD content, and there is no 68K program anywhere for HLE to
+       * jump into, so the real boot ROM is the only sane strategy --
+       * exactly what real hardware shows with an empty cart slot. */
       vjs.useJaguarBIOS          = true;
       bootConfig.isCDGame        = false;
       bootConfig.showBootROM     = true;
@@ -5824,30 +6184,11 @@ bool retro_load_game(const struct retro_game_info *info)
    }
    else
    {
-      ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
-                        effective_cd_boot_mode, vjs.useJaguarBIOS);
+      apply_cart_bios_autodetect(info);
+      ResolveBootConfig(&bootConfig, jaguar_cd_mode,
+                        cd_bios_loaded_externally, vjs.cdBootMode,
+                        vjs.useJaguarBIOS);
       vjs.useJaguarBIOS = bootConfig.showBootROM;
-   }
-
-   /* Defensive check for the audio-only override above: stage_cd_bios()
-    * always has an embedded CD BIOS to fall back to, so this should be
-    * unreachable in practice -- but if some future change to BIOS
-    * staging ever leaves it unsatisfied, fail loudly here rather than
-    * silently falling through to an HLE boot that is guaranteed to fail
-    * anyway (no session-2 game data to synthesize a stub from). */
-   if (jaguar_cd_mode && CDIntfGetNumSessions() == 1 &&
-       bootConfig.strategy != &cd_boot_strategy_bios)
-   {
-      LOG_ERR("[CD] Audio-only disc requires the real CD BIOS boot path "
-              "and it could not be staged -- refusing to load rather "
-              "than attempt an HLE boot that cannot succeed\n");
-      CDIntfCloseImage();
-      free(videoBuffer);
-      videoBuffer = NULL;
-      free(sampleBuffer);
-      sampleBuffer = NULL;
-      TitleDBSetContent(NULL, 0);
-      return false;
    }
 
    /* check_variables() ran above, before bootConfig existed, so the blit
@@ -5998,6 +6339,11 @@ void retro_unload_game(void)
    jaguar_cd_mode    = false;
    jaguarMemTrackInserted = false;
    cd_image_path[0]  = '\0';
+   memset(disk_image_path, 0, sizeof(disk_image_path));
+   disk_num_images    = 0;
+   disk_index         = 0;
+   disk_initial_index = 0;
+   disk_ejected       = false;
    /* Content type is unknown again — restore the full option list. */
    content_loaded    = false;
    no_game_active    = false;
@@ -6359,6 +6705,15 @@ void retro_deinit(void)
    ShadowFBShutdown();
    ShadowHiresShutdown();
    BlitMemoShutdown();
+
+   /* Disk control statics (#651): same reasoning as the shutdowns above --
+    * iOS cannot dlclose the core, so a stale image list would survive into
+    * the next load and offer the frontend a disc that is no longer there. */
+   memset(disk_image_path, 0, sizeof(disk_image_path));
+   disk_num_images    = 0;
+   disk_index         = 0;
+   disk_initial_index = 0;
+   disk_ejected       = false;
    /* Texture dump (#369): close the manifest, log the session summary,
     * free the dedupe set and reset every static. */
    TexDumpShutdown();

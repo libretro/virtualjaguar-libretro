@@ -462,6 +462,34 @@ static bool cb_environment(unsigned cmd, void *data)
             ? ((const struct retro_audio_buffer_status_callback *)data)->callback
             : NULL;
         return true;
+    case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION:
+        /* Opt-in like the buffer-status hook above (#651).  Answering 0 --
+         * or refusing -- would push the core onto the legacy interface,
+         * which has no get_image_path/get_image_label, so a test could not
+         * read back what it inserted. */
+        if (!active_cfg || !active_cfg->accept_disk_control_cb)
+            return false;
+        if (data)
+            *(unsigned *)data = 1;
+        return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
+        if (!active_cfg || !active_cfg->accept_disk_control_cb)
+            return false;
+        if (data) {
+            const struct retro_disk_control_ext_callback *dc =
+                (const struct retro_disk_control_ext_callback *)data;
+            active_cfg->disk_set_eject_state     = dc->set_eject_state;
+            active_cfg->disk_get_eject_state     = dc->get_eject_state;
+            active_cfg->disk_get_image_index     = dc->get_image_index;
+            active_cfg->disk_set_image_index     = dc->set_image_index;
+            active_cfg->disk_get_num_images      = dc->get_num_images;
+            active_cfg->disk_replace_image_index = dc->replace_image_index;
+            active_cfg->disk_add_image_index     = dc->add_image_index;
+            active_cfg->disk_get_image_path      = dc->get_image_path;
+            active_cfg->disk_get_image_label     = dc->get_image_label;
+            active_cfg->disk_cb_registered       = 1;
+        }
+        return true;
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
         /* Only answer when a tool explicitly opted in (--av-skip-video);
          * otherwise fall through to `default: return false`, which is
@@ -726,6 +754,37 @@ bool harness_load_rom(harness_config *cfg)
 
     /* rom_data ownership: libretro spec says core copies what it needs,
      * but VJ keeps a pointer. We leak intentionally for test lifetime. */
+
+    if (cfg->load_state_path && !harness_load_state(cfg, cfg->load_state_path))
+        return false;
+
+    harness_reset_audio(cfg);
+    return true;
+}
+
+/* No-content boot (#646): retro_load_game(NULL).  Mirrors harness_load_rom's
+ * init ordering exactly -- set_environment before retro_init, then the a/v
+ * and input callbacks, then the load -- because the core registers its
+ * environment-driven interfaces (including disk control, #651) during that
+ * sequence, and a load with them unregistered would look like the feature
+ * was missing. */
+bool harness_load_no_content(harness_config *cfg)
+{
+    active_cfg = cfg;
+
+    lr_set_environment(cb_environment);
+    lr_init();
+    lr_set_video_refresh(cb_video);
+    lr_set_audio_sample(cb_audio_sample);
+    lr_set_audio_sample_batch(cb_audio_batch);
+    lr_set_input_poll(cb_input_poll);
+    lr_set_input_state(cb_input_state);
+
+    if (!lr_load_game(NULL)) {
+        fprintf(stderr, "harness: retro_load_game(NULL) failed "
+                        "(core may not support no-content boot)\n");
+        return false;
+    }
 
     if (cfg->load_state_path && !harness_load_state(cfg, cfg->load_state_path))
         return false;

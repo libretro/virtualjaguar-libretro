@@ -80,7 +80,7 @@ extern "C" {
  *     nothing here and the loader falls back to stock (1), which is
  *     exactly what a pre-#552 core was — see UARTWireSpeedupStateLoad(). */
 #define STATE_MAGIC     0x564A5353  /* "VJSS" */
-#define STATE_VERSION   13
+#define STATE_VERSION   14
 /* Oldest layout retro_unserialize still accepts.  States between
  * STATE_MIN_VERSION and STATE_VERSION load by reading each chunk in the
  * layout the header version names (see DACStateLoad, CDROMStateLoad);
@@ -171,6 +171,18 @@ extern "C" {
  * what a pre-v13 core was.  The adapter's own presence is NOT serialized
  * (it is user configuration; see joystick.h). */
 #define STATE_VERSION_TEAMTAP 13
+
+/* v14: disk control (#651).  The mounted disc's identity -- session count,
+ * track count, total sectors, all three already exported by cdintf.h --
+ * plus the current image index.  Loading a state taken on disc A while
+ * disc B is mounted would resume a machine whose CD state points at
+ * content that is not there; refusing it loudly beats the silent
+ * wrong-disc class.  Hashing the image is not an option: a Jaguar CD disc
+ * runs to hundreds of megabytes and states are written constantly.
+ *
+ * 13 shipped in v3.5.1, so this needs its own bump; 14 is now the single
+ * shared bump for this release, per the one-bump-per-release policy. */
+#define STATE_VERSION_DISK_CONTROL 14
 
 /* Header flags */
 #define STATE_FLAG_MEMTRACK  0x01
