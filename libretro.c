@@ -5349,6 +5349,95 @@ static void video_buffer_blank(void)
       videoBuffer[i] = 0xFF000000;
 }
 
+typedef enum
+{
+   DISC_BOOT_OK = 0,
+   DISC_BOOT_OPEN_FAILED,       /* CDIntfOpenImage refused the image */
+   DISC_BOOT_NO_BIOS_FOR_AUDIO  /* audio disc, real CD BIOS unavailable */
+} disc_boot_status;
+
+/* Open a disc image and derive the boot configuration FROM THAT DISC.
+ *
+ * Shared by retro_load_game() and the disk-control insert path (#651).
+ * Both must pick the boot strategy from the mounted disc, and
+ * retro_reset() is a bare JaguarReset() -- it re-resolves nothing, so an
+ * insert that only reset would run against the PREVIOUS disc's boot
+ * config, silently, and look like it had worked.
+ *
+ * Allocates nothing and frees nothing.  The two callers have opposite
+ * cleanup policies -- load tears the whole session down and returns
+ * false, insert must leave the running machine untouched and merely
+ * report the failure to the frontend -- so cleanup stays with them. */
+static disc_boot_status open_disc_and_resolve_boot(const char *path)
+{
+   uint32_t effective_cd_boot_mode;
+
+   jaguar_cd_mode         = true;
+   /* Hardware has the Memory Track cart plugged in alongside the CD unit
+    * (user-selectable; some titles behave differently with one present). */
+   jaguarMemTrackInserted = opt_memory_track;
+   strncpy(cd_image_path, path, sizeof(cd_image_path) - 1);
+   cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+   effective_cd_boot_mode = vjs.cdBootMode;
+
+   LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
+   if (!CDIntfOpenImage(cd_image_path))
+   {
+      LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
+      return DISC_BOOT_OPEN_FAILED;
+   }
+   LOG_INF("[CD] Disc image opened OK\n");
+
+   /* Audio-only (Red Book) disc: exactly one session, versus the two
+    * sessions (game data in session 2) every Jaguar CD data disc has.
+    * All Jaguar CD tracks are typed AUDIO in CUE sheets regardless of
+    * actual content, so session count -- not track type -- is the correct
+    * discriminator; see the comment on CDIntfIsSession2Sector() in
+    * src/cd/cdintf.c.  HLE synthesizes its boot stub from session-2 game
+    * data, which an audio-only disc has none of by construction, so HLE
+    * can never produce a boot for this content.  The retail CD BIOS's own
+    * player front-end handles audio discs natively (Virtual Light
+    * Machine, issues #291/#300/#325).  Force the real-BIOS path for THIS
+    * disc only -- the global 'CD Boot Mode' option (and its HLE-only 'CD
+    * Read Speed' knob) stay untouched for every other disc, including the
+    * known-damaged CDI rips, which still fail the same clear way they
+    * always have: their CDI container header declares numSessions=2
+    * regardless of the corruption in their session-2 boot data, so this
+    * check never sees them. */
+   if (CDIntfGetNumSessions() == 1)
+   {
+      LOG_INF("[CD] Audio-only disc detected (1 session) -- forcing "
+              "real CD BIOS boot path regardless of CD Boot Mode "
+              "setting\n");
+      effective_cd_boot_mode = CDBOOT_BIOS;
+   }
+
+   if (effective_cd_boot_mode != CDBOOT_HLE)
+      stage_cd_bios();
+
+   ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
+                     effective_cd_boot_mode, vjs.useJaguarBIOS);
+   vjs.useJaguarBIOS = bootConfig.showBootROM;
+
+   /* Defensive check for the audio-only override above: stage_cd_bios()
+    * always has an embedded CD BIOS to fall back to, so this should be
+    * unreachable in practice -- but if some future change to BIOS staging
+    * ever leaves it unsatisfied, fail loudly here rather than silently
+    * falling through to an HLE boot that is guaranteed to fail anyway (no
+    * session-2 game data to synthesize a stub from). */
+   if (CDIntfGetNumSessions() == 1
+       && bootConfig.strategy != &cd_boot_strategy_bios)
+   {
+      LOG_ERR("[CD] Audio-only disc requires the real CD BIOS boot path "
+              "and it could not be staged -- refusing this disc rather "
+              "than attempting an HLE boot that cannot succeed\n");
+      CDIntfCloseImage();
+      return DISC_BOOT_NO_BIOS_FOR_AUDIO;
+   }
+
+   return DISC_BOOT_OK;
+}
+
 bool retro_load_game(const struct retro_game_info *info)
 {
    enum retro_pixel_format fmt = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -5359,7 +5448,6 @@ bool retro_load_game(const struct retro_game_info *info)
     * override never touches the persisted option value: the next CD
     * loaded in this frontend session still gets whatever the user
     * actually configured. */
-   uint32_t effective_cd_boot_mode;
 
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
@@ -5725,36 +5813,23 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
    mt_dirty_cb     = mt_mark_save_dirty;
 
-   /* Detect CD content (CUE/CDI/CHD/ISO) and stage a CD BIOS (external file
-    * if present, embedded otherwise) so ResolveBootConfig can pick the
-    * right boot strategy. */
+   /* Detect CD content (CUE/CDI/CHD/ISO) and pick a boot strategy from the
+    * disc itself.  The CD branch lives in open_disc_and_resolve_boot() so
+    * the disk-control insert path (#651) can re-run exactly the same
+    * sequence; the cart and no-content branches keep their own
+    * ResolveBootConfig() calls, which is why this is a restructure and not
+    * a lift of a contiguous block. */
    jaguar_cd_mode            = false;
    jaguarMemTrackInserted    = false;
    cd_image_path[0]          = '\0';
    cd_bios_loaded_externally = false;
-   effective_cd_boot_mode    = vjs.cdBootMode;
 
    if (is_cd_content)
    {
-      jaguar_cd_mode = true;
-      /* Hardware has the Memory Track cart plugged in alongside the CD
-       * unit (user-selectable; some titles behave differently with one
-       * present). */
-      jaguarMemTrackInserted = opt_memory_track;
-      strncpy(cd_image_path, info->path, sizeof(cd_image_path) - 1);
-      cd_image_path[sizeof(cd_image_path) - 1] = '\0';
+      disc_boot_status st = open_disc_and_resolve_boot(info->path);
 
-      /* Open the disc image now, ahead of ResolveBootConfig() below --
-       * moved earlier than it used to run (right before JaguarInit(),
-       * further down) so the session layout is known before a boot
-       * strategy is picked (issue #657).  This is the SAME
-       * CDIntfOpenImage() call, not a duplicate: CDROMInit ->
-       * CDIntfInit -> CDIntfIsImageLoaded still finds an already-open
-       * disc when JaguarInit() runs below. */
-      LOG_INF("[CD] Opening disc image: %s\n", cd_image_path);
-      if (!CDIntfOpenImage(cd_image_path))
+      if (st != DISC_BOOT_OK)
       {
-         LOG_ERR("[CD] CDIntfOpenImage failed for: %s\n", cd_image_path);
          free(videoBuffer);
          videoBuffer = NULL;
          free(sampleBuffer);
@@ -5762,60 +5837,13 @@ bool retro_load_game(const struct retro_game_info *info)
          TitleDBSetContent(NULL, 0);
          return false;
       }
-      LOG_INF("[CD] Disc image opened OK\n");
-
-      /* Audio-only (Red Book) disc: exactly one session, versus the two
-       * sessions (game data in session 2) every Jaguar CD data disc
-       * has.  All Jaguar CD tracks are typed AUDIO in CUE sheets
-       * regardless of actual content, so session count -- not track
-       * type -- is the correct discriminator; see the comment on
-       * CDIntfIsSession2Sector() in src/cd/cdintf.c.  HLE synthesizes
-       * its boot stub from session-2 game data, which an audio-only
-       * disc has none of by construction, so HLE can never produce a
-       * boot for this content.  The retail CD BIOS's own player
-       * front-end handles audio discs natively (Virtual Light Machine,
-       * issues #291/#300/#325).  Force the real-BIOS path for THIS
-       * disc only -- the global 'CD Boot Mode' option (and its
-       * HLE-only 'CD Read Speed' knob) stay untouched for every other
-       * disc, including the known-damaged CDI rips, which still fail
-       * the same clear way they always have -- their CDI container
-       * header declares numSessions=2 regardless of the corruption in
-       * their session-2 boot data, so this check never sees them.
-       *
-       * Deliberately just numSessions == 1, with no additional "does
-       * session 1 contain an ATRI boot header anyway" check: that
-       * situation can only arise from a hand-edited/malformed CUE
-       * missing its 'REM SESSION 02' line (every one of the 35 CUEs in
-       * the private corpus carries it), and HLE already refuses such a
-       * disc unconditionally -- CDIntfExtractBootStub() itself requires
-       * numSessions >= 2 and does not even look for ATRI below that.
-       * Routing it to the real BIOS instead of a hard "unsupported
-       * content" is a strict improvement (real hardware would treat a
-       * disc with no session-2 data as audio-capable too), not a new
-       * failure mode. */
-      if (CDIntfGetNumSessions() == 1)
-      {
-         LOG_INF("[CD] Audio-only disc detected (1 session) -- forcing "
-                 "real CD BIOS boot path regardless of CD Boot Mode "
-                 "setting\n");
-         effective_cd_boot_mode = CDBOOT_BIOS;
-      }
-
-      if (effective_cd_boot_mode != CDBOOT_HLE)
-         stage_cd_bios();
    }
-   else
-      apply_cart_bios_autodetect(info);
-
-   /* Resolve boot configuration — single source of truth for which
-    * strategy (cart / HLE / real BIOS / no-content) we will dispatch to
-    * below.  ResolveBootConfig() only knows about cart/CD content, so a
-    * no-content boot (info == NULL, issue #646) is resolved directly:
-    * there is no 68K program anywhere for HLE to jump into, so the real
-    * boot ROM is the only sane strategy -- exactly what real hardware
-    * shows with an empty cart slot. */
-   if (!info)
+   else if (!info)
    {
+      /* No-content boot (issue #646): ResolveBootConfig() only knows about
+       * cart/CD content, and there is no 68K program anywhere for HLE to
+       * jump into, so the real boot ROM is the only sane strategy --
+       * exactly what real hardware shows with an empty cart slot. */
       vjs.useJaguarBIOS          = true;
       bootConfig.isCDGame        = false;
       bootConfig.showBootROM     = true;
@@ -5824,30 +5852,11 @@ bool retro_load_game(const struct retro_game_info *info)
    }
    else
    {
-      ResolveBootConfig(&bootConfig, jaguar_cd_mode, cd_bios_loaded_externally,
-                        effective_cd_boot_mode, vjs.useJaguarBIOS);
+      apply_cart_bios_autodetect(info);
+      ResolveBootConfig(&bootConfig, jaguar_cd_mode,
+                        cd_bios_loaded_externally, vjs.cdBootMode,
+                        vjs.useJaguarBIOS);
       vjs.useJaguarBIOS = bootConfig.showBootROM;
-   }
-
-   /* Defensive check for the audio-only override above: stage_cd_bios()
-    * always has an embedded CD BIOS to fall back to, so this should be
-    * unreachable in practice -- but if some future change to BIOS
-    * staging ever leaves it unsatisfied, fail loudly here rather than
-    * silently falling through to an HLE boot that is guaranteed to fail
-    * anyway (no session-2 game data to synthesize a stub from). */
-   if (jaguar_cd_mode && CDIntfGetNumSessions() == 1 &&
-       bootConfig.strategy != &cd_boot_strategy_bios)
-   {
-      LOG_ERR("[CD] Audio-only disc requires the real CD BIOS boot path "
-              "and it could not be staged -- refusing to load rather "
-              "than attempt an HLE boot that cannot succeed\n");
-      CDIntfCloseImage();
-      free(videoBuffer);
-      videoBuffer = NULL;
-      free(sampleBuffer);
-      sampleBuffer = NULL;
-      TitleDBSetContent(NULL, 0);
-      return false;
    }
 
    /* check_variables() ran above, before bootConfig existed, so the blit
