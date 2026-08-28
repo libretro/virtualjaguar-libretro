@@ -306,25 +306,53 @@ Five layers, in increasing cost:
    within noise, the shipped-by-default decision must be revisited rather than
    the number explained away.**
 
-   **Measured** (2026-08-27, idle host, load average 9-10 throughout, via
-   `test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_HOOKS=0' 'VJ_GDB_STUB_DISABLE_HOOKS=1' 12`,
-   12 quartets / 24 samples per arm): median delta +1.9% (hooks-disabled
-   nominally faster), Mann-Whitney p=0.50 — **not significant**, i.e. within
-   noise. The armed-flag hypothesis holds; shipped-by-default stands.
-   `opt_ab.sh` cannot take `CFLAGS=...` directly as one of its arms here — a
-   command-line `CFLAGS` assignment blocks every later `+=` in this Makefile
-   too (not only plain re-assignment), which silently drops the `-I`/`-D`
-   flags the build needs and fails it outright. The measurement instead used
-   a dedicated `VJ_GDB_STUB_DISABLE_HOOKS=1` make variable gating a `CFLAGS +=
-   -DVJ_GDB_STUB_DISABLE_HOOKS` line, added to the Makefile only for the
-   benchmark run and reverted immediately after.
-5. **End-to-end against real GDB.** Drive `m68k-elf-gdb` (from the toolchain in
-   #581, if it ships gdb — otherwise a scripted RSP client) against a test ROM:
-   attach, set a breakpoint at a known symbol, continue, assert the stop reply
-   and PC, read a register, write memory, continue to exit. **Answered during
-   Phase 1 implementation: it does not ship gdb** (see Open Question 1) — this
-   layer runs as scripted RSP clients under `test/tools/`, for as long as that
-   remains true.
+   **Measured, twice, and the first result was wrong (2026-08-27).**
+
+   A re-run found the hooks cost **~4.5%**, not nothing:
+
+   | Run | median delta | best-run delta | Mann-Whitney |
+   |---|---|---|---|
+   | 1 | +4.1% | +4.5% | z=-5.20, p=0.0000 |
+   | 2 | +4.7% | +4.5% | z=-4.97, p=0.0000 |
+
+   Both via `test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_HOOKS=0'
+   'VJ_GDB_STUB_DISABLE_HOOKS=1' 12` (12 quartets, 24 samples per arm),
+   host load average 5-7 -- *not* idle, but interleaving is the defense
+   against exactly that, and the best-run figures (least contaminated)
+   agree exactly across both runs.
+
+   **The earlier measurement recorded here claimed +1.9% at p=0.50,
+   "within noise".** It also described the host as idle while reporting a
+   load average of 9-10, which cannot both be true. The likely mechanism
+   for the null result: `VJ_GDB_STUB_DISABLE_HOOKS` was a local Makefile
+   edit that was never added to `BUILD_AXES` and was reverted after the
+   run, so it is plausible both arms were the same binary. `opt_ab.sh`
+   prints a per-arm binary hash precisely so this can be checked; the
+   re-runs above show two distinct hashes (`c861b6628cdf` vs
+   `236f3467e128`), identical across both runs.
+
+   The switch is now a permanent, documented make variable **listed in
+   `BUILD_AXES`**, so the comparison is reproducible and cannot silently
+   benchmark one binary against itself.
+
+   **Consequence: the armed-flag hypothesis does not hold as stated, and
+   per this document's own rule that revisits shipping the stub enabled by
+   default.** Before reversing that decision, the cost should be localised
+   -- `VJ_GDB_STUB_DISABLE_HOOKS` gates two different things, and they have
+   very different fixes:
+
+   1. the per-instruction `gdbArmed*` PC check in
+      `M68KInstructionHook()`/`GPUExec()`/`DSPExec()` -- the thing the
+      hypothesis was actually about; and
+   2. `if (gdbArmed{GPU,DSP}) idleSkipActive = 0;` on the **idle-skip**
+      path. Idle-loop fast-forward is where this core spends most of its
+      budget (#569 measured 99.7% of budget in idle loops for some
+      titles), so a branch there plausibly dominates the 4.5%.
+
+   If the cost is (2), it is likely cheap to fix by folding `gdbArmed*`
+   into the idle-skip precondition computed once per entry rather than
+   testing it per iteration -- and ship-by-default survives.
+
 
    **This is not merely a stand-in for gdb being unavailable.** Phase 1's
    `GDBHandlePacket` never sent the low-level `+`/`-` acknowledgement byte a
