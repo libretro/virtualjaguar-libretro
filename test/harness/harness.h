@@ -184,6 +184,10 @@ typedef bool (*harness_frame_cb)(void *userdata, unsigned frame);
 typedef void (*harness_video_cb)(void *userdata, const void *data,
                                  unsigned width, unsigned height, size_t pitch);
 
+/* Forward declaration only: this header deliberately does not include
+ * libretro.h (see accept_disk_control_cb below). */
+struct retro_game_info;
+
 typedef struct {
     /* Configuration (set before init) */
     const char   *core_path;
@@ -280,6 +284,33 @@ typedef struct {
     void        (*audio_buf_cb)(bool active, unsigned occupancy,
                                 bool underrun_likely);
 
+    /* RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE capture (#651),
+     * opt-in exactly like accept_audio_buf_cb: when accept_disk_control_cb
+     * is non-zero the environment callback answers
+     * GET_DISK_CONTROL_INTERFACE_VERSION with 1 and copies the core's
+     * entry points out of the ext struct, so a test can drive
+     * eject/insert the way a frontend would.  Default 0 refuses both
+     * calls, matching every harness tool that predates this option.
+     *
+     * The entry points are spelled out one by one, and retro_game_info is
+     * only forward-declared above, for the same reason audio_buf_cb is
+     * spelled out: this header deliberately does not include libretro.h.
+     * A test that needs to BUILD a retro_game_info includes libretro.h
+     * itself. */
+    int           accept_disk_control_cb;
+    int           disk_cb_registered;
+    bool        (*disk_set_eject_state)(bool ejected);
+    bool        (*disk_get_eject_state)(void);
+    unsigned    (*disk_get_image_index)(void);
+    bool        (*disk_set_image_index)(unsigned index);
+    unsigned    (*disk_get_num_images)(void);
+    bool        (*disk_replace_image_index)(unsigned index,
+                                            const struct retro_game_info *info);
+    bool        (*disk_add_image_index)(void);
+    bool        (*disk_get_image_path)(unsigned index, char *path, size_t len);
+    bool        (*disk_get_image_label)(unsigned index, char *label,
+                                        size_t len);
+
     /* Runtime state (set by harness) */
     void  *core_handle;
     unsigned current_frame;
@@ -351,6 +382,12 @@ bool harness_load_core(harness_config *cfg);
 /* Load a ROM into the core.  Requires core loaded + rom_path set.
  * If cfg->load_state_path is set, the state is restored afterwards. */
 bool harness_load_rom(harness_config *cfg);
+
+/* No-content boot (#646): retro_load_game(NULL).  Separate entry point
+ * because harness_load_rom() requires cfg->rom_path and refuses NULL,
+ * and the disk-control insert path (#651) is only reachable from a
+ * core that launched with no content. */
+bool harness_load_no_content(harness_config *cfg);
 
 /* Write the core's current state to `path` (raw core blob). */
 bool harness_save_state(harness_config *cfg, const char *path);
