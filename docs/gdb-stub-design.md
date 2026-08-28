@@ -356,9 +356,36 @@ Five layers, in increasing cost:
    | Component | Cost | Significance |
    |---|---|---|
    | 68K hook (`M68KInstructionHook`) | ~0% | p=0.8366 |
-   | Idle-skip gating (`idleSkipActive = 0`) | ~0% | p=0.4897 |
+   | Idle-skip gating (`idleSkipActive = 0`) | ~0% | p=0.2238 (re-measured, see below) |
    | GPU per-instruction check | 1.8% | fixed, see below |
    | DSP per-instruction check | ~2.3-2.7% | p=0.0000 |
+
+   **Correction (2026-08-28): the idle-gating row above was originally
+   vacuous, and has been re-measured.** `VJ_GDB_STUB_DISABLE_IDLE_GATE`
+   was inert as shipped -- its `ifeq` carried a backslash-continuation
+   *inside* the `$(...)`, so make read one variable reference named
+   `VJ_GDB_STUB_DISABLE_IDLE_GATE VJ_GDB_STUB_DISABLE_68K_HOOK
+   VJ_GDB_STUB_DISABLE_DSP_HOOK`, which does not exist. It expanded empty,
+   `-DVJ_GDB_STUB_DISABLE_IDLE_GATE` was never defined for any value of any
+   of those three variables, and **both A/B arms compiled to a byte-identical
+   binary** (`de95224107feb3c2` on both, against `81e65904a50a39e3` /
+   `6a6a365e09e8dfbb` / `9f3f63421f1a0275` for the three arms that did work).
+   The original p=0.4897 was therefore one binary measured against itself --
+   the same failure mode this section was written to correct in #709, one
+   level down.
+
+   After fixing the conditional the two arms differ (`8e2a80ecedc0` vs
+   `f28825134333`) and the re-run agrees with the original conclusion on
+   real evidence: 12 quartets, 24 samples/arm, median delta **-1.4%**,
+   z=+1.22, **p=0.2238** -- under the noise floor, no effect. So idle-skip
+   gating really is free, and it is **not** a candidate for the residual
+   below. Host load 6-8 (not idle; the A/B/B/A interleave is what makes the
+   number usable, not a quiet box).
+
+   The three per-processor arms were unaffected -- `opt_ab.sh` runs
+   `make clean` between arms, so the two axes missing from `BUILD_AXES`
+   (`..._68K_HOOK`, `..._DSP_HOOK`, both added there by the same fix) could
+   not have mixed objects into those runs.
 
    **Fix applied: cache the armed flag in a slice-entry local**, exactly as
    #532 does for `pipeTiming`/`riscScale` in the same function. The globals
@@ -379,8 +406,12 @@ Five layers, in increasing cost:
    5. The residual should be re-attributed on a real target (tvOS/A-series,
    RPi) before any further surgery: the per-processor control arms
    `VJ_GDB_STUB_DISABLE_{HOOKS,IDLE_GATE,68K_HOOK,DSP_HOOK}` exist for
-   exactly that and are listed in `BUILD_AXES`, so the attribution can be
-   repeated there in four runs without re-deriving any of this.
+   exactly that and are all listed in `BUILD_AXES`, so the attribution can
+   be repeated there in four runs without re-deriving any of this.  **Check
+   the two per-arm binary hashes `opt_ab.sh` prints before believing any
+   null result** -- that is what the inert-gate correction above turned on,
+   and it is the second time on this feature that identical arms produced a
+   confident-looking p-value.
 
    Shipped-by-default stands for now at a measured ~2% cost, deliberately,
    pending those numbers.

@@ -255,8 +255,17 @@ endif
 # Finer control arm: removes ONLY the idle-skip interaction
 # (`if (gdbArmed*) idleSkipActive = 0;`), leaving the per-instruction PC
 # checks in place, so the two halves of the hook cost can be told apart.
-ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE \
-              VJ_GDB_STUB_DISABLE_68K_HOOK VJ_GDB_STUB_DISABLE_DSP_HOOK),1)
+#
+# The backslash-continuation must NOT sit inside the $(...): make would read
+# the whole thing as ONE variable reference named "VJ_GDB_STUB_DISABLE_IDLE_GATE
+# VJ_GDB_STUB_DISABLE_68K_HOOK VJ_GDB_STUB_DISABLE_DSP_HOOK", which does not
+# exist, expands empty, and leaves the macro undefined for every value of
+# every one of those three variables -- an inert control arm that produces a
+# byte-identical binary in both of its A/B arms and therefore a guaranteed
+# null result.  (That is exactly how it shipped, and how the "idle-skip
+# gating costs ~0%" row got recorded; the two names below belong in
+# BUILD_AXES, which is where they have now been put.)
+ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE),1)
 CFLAGS += -DVJ_GDB_STUB_DISABLE_IDLE_GATE
 endif
 
@@ -289,7 +298,8 @@ endif
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
               OPT_LEVEL LTO IOS_MCPU VJ_GDB_STUB_DISABLE_HOOKS \
-              VJ_GDB_STUB_DISABLE_IDLE_GATE
+              VJ_GDB_STUB_DISABLE_IDLE_GATE VJ_GDB_STUB_DISABLE_68K_HOOK \
+              VJ_GDB_STUB_DISABLE_DSP_HOOK
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the
