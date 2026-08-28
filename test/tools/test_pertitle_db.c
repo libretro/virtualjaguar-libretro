@@ -13,11 +13,12 @@
  *
  *   1  AvP (CRC 0xDC187F82), default options -- the DB applies:
  *      shadowHiresN == 2, and the core logs a [titledb] SUBSTITUTION line
- *      (keyed on the "(option at default)" marker, not the bare [titledb]
- *      tag -- the per-title-DB-miss line added for CRC-unlisted content
- *      also carries the [titledb] prefix, so the marker is what actually
- *      proves the substitution happened, not just that both options
- *      independently defaulted to the DB's values).
+ *      naming virtualjaguar_internal_resolution AND carrying the
+ *      "(option at default)" marker, on the SAME line.  Neither half alone
+ *      proves anything any more: the per-title-DB-miss line added for
+ *      CRC-unlisted content also carries the [titledb] prefix, and since
+ *      #708 AvP's row substitutes virtualjaguar_risc_idle_skip too, whose
+ *      line carries the marker.  See log_contains_both().
  *   2  AvP, virtualjaguar_pertitle_defaults=disabled -- stock: shadowHiresN
  *      == 1 (disabling the gate must restore stock behaviour exactly).
  *   3  AvP, defaults disabled AND virtualjaguar_internal_resolution=2x set
@@ -58,15 +59,19 @@
  * Enhancement profile cases (P9, docs/perf-audit-2026-08.md):
  *
  *   9  AvP, virtualjaguar_enhancement_profile=performance -- the DB's
- *      enhancement defaults are NOT applied: shadowHiresN == 1, a [perf]
- *      "not applying" line is logged, and no "(option at default)"
- *      substitution line appears.
+ *      ENHANCEMENT defaults are NOT applied: shadowHiresN == 1, a [perf]
+ *      "not applying" line is logged, and no substitution line appears for
+ *      a profile-GOVERNED key (internal_resolution, true_color).  The
+ *      profile governs those two and only those two -- its option text
+ *      scopes it to "expensive visual enhancements" -- so AvP's #708
+ *      virtualjaguar_risc_idle_skip pair, a speed-up, still substitutes
+ *      here and logs its own marker line (issue #712).
  *  10  AvP, profile=performance PLUS virtualjaguar_internal_resolution=2x
  *      set EXPLICITLY -- the user's own choice beats the profile:
  *      shadowHiresN == 2 (the profile governs DB defaults only).
  *  11  AvP, virtualjaguar_enhancement_profile=quality -- the DB defaults
  *      apply exactly as before the profile existed: shadowHiresN == 2
- *      with the substitution line logged.  (Case 1, which passes no
+ *      with the internal_resolution substitution line logged.  (Case 1, which passes no
  *      profile option, doubles as the 'auto'-on-a-capable-host arm: the
  *      registered default is auto and this host is not 32-bit ARM.)
  *  12  AvP, default options (profile=auto), with the harness accepting
@@ -187,6 +192,36 @@ static int log_contains(const char *needle)
         return 0;
     while (fgets(line, sizeof(line), f)) {
         if (strstr(line, needle)) {
+            found = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+/* Line-scoped conjunction: BOTH needles on the SAME line.
+ *
+ * Composing two log_contains() calls would be satisfied by two DIFFERENT
+ * lines, which is not the question any caller here asks -- "was THIS key
+ * substituted?" is a property of one log line.  Since #708 gave several
+ * titles (AvP included) a virtualjaguar_risc_idle_skip pair, the bare
+ * "(option at default)" marker no longer identifies WHICH key was
+ * substituted, only that some key was: the same erosion #590 found for the
+ * bare [titledb] tag, one level down. */
+static int log_contains_both(const char *a, const char *b)
+{
+    FILE *f;
+    char line[1024];
+    int found = 0;
+
+    if (!log_path_valid)
+        return 0;
+    f = fopen(log_path, "r");
+    if (!f)
+        return 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, a) && strstr(line, b)) {
             found = 1;
             break;
         }
@@ -327,19 +362,22 @@ int main(int argc, char **argv)
     switch (case_num) {
     case 1: {
         int hires_ok  = (*hires_n_ptr == 2);
-        /* Key on the substitution marker, not the bare [titledb] tag --
-         * the per-title-DB-miss line (added for CRC-unlisted content) also
-         * carries the [titledb] prefix, so the bare tag no longer
-         * distinguishes "a substitution happened" from "a miss was
-         * logged". */
-        int logged_ok = log_contains("(option at default)");
+        /* Key on the substitution marker AND the key name, not the bare
+         * [titledb] tag: the per-title-DB-miss line (added for CRC-unlisted
+         * content) also carries the [titledb] prefix, and since #708 AvP's
+         * row also substitutes virtualjaguar_risc_idle_skip -- whose line
+         * carries the marker too.  A marker-only check would therefore pass
+         * even if internal_resolution substitution broke outright. */
+        int logged_ok = log_contains_both("virtualjaguar_internal_resolution",
+                                          "(option at default)");
         results[nres++] = mkres(hires_ok, "case1_hires_db_applied",
             hires_ok ? "shadowHiresN == 2 (DB applied at default)"
                      : "shadowHiresN != 2");
         results[nres++] = mkres(logged_ok, "case1_titledb_log_present",
-            logged_ok ? "[titledb] substitution logged "
+            logged_ok ? "[titledb] internal_resolution substitution logged "
                         "(option at default)"
-                      : "no [titledb] substitution log line found");
+                      : "no [titledb] internal_resolution substitution log "
+                        "line found");
         pass = hires_ok && logged_ok;
         break;
     }
@@ -457,7 +495,22 @@ int main(int argc, char **argv)
          * apply -- exactly as if the title had no row. */
         int hires_ok   = (*hires_n_ptr == 1);
         int perf_log   = log_contains("not applying");
-        int no_sub_log = !log_contains("(option at default)");
+        /* Only the keys the profile GOVERNS must be absent (#712).  The
+         * profile's documented scope is "expensive visual enhancements
+         * (Internal Resolution 2x, True Color)" -- see the
+         * virtualjaguar_enhancement_profile option text and
+         * enhancement_profile_governs() in libretro.c.  AvP's row also
+         * carries virtualjaguar_risc_idle_skip since #708, which is a
+         * SPEED-UP: suppressing it under the performance profile would be
+         * backwards, so its substitution line legitimately still appears
+         * here.  Asserting "no substitution line at all" encoded a fact
+         * about the shipped table rather than the contract under test, and
+         * went red the moment that table gained a non-governed key. */
+        int no_sub_log =
+            !log_contains_both("virtualjaguar_internal_resolution",
+                               "(option at default)")
+         && !log_contains_both("virtualjaguar_true_color",
+                               "(option at default)");
         results[nres++] = mkres(hires_ok, "case9_performance_suppresses_db",
             hires_ok ? "shadowHiresN == 1 (DB default suppressed)"
                      : "shadowHiresN != 1 (DB default applied despite "
@@ -466,9 +519,10 @@ int main(int argc, char **argv)
             perf_log ? "[perf] suppression line logged"
                      : "no [perf] suppression line found");
         results[nres++] = mkres(no_sub_log, "case9_no_substitution_log",
-            no_sub_log ? "no [titledb] substitution line (correctly none)"
-                       : "unexpected [titledb] substitution line under "
-                         "performance profile");
+            no_sub_log ? "no [titledb] substitution line for a "
+                         "profile-governed key (correctly none)"
+                       : "unexpected [titledb] substitution line for a "
+                         "profile-governed key under performance profile");
         pass = hires_ok && perf_log && no_sub_log;
         break;
     }
@@ -486,13 +540,18 @@ int main(int argc, char **argv)
     case 11: {
         /* quality profile: pre-profile behaviour, DB defaults apply. */
         int hires_ok  = (*hires_n_ptr == 2);
-        int logged_ok = log_contains("(option at default)");
+        /* Same reasoning as case 1: name the key, or AvP's #708
+         * risc_idle_skip line satisfies the marker on its own. */
+        int logged_ok = log_contains_both("virtualjaguar_internal_resolution",
+                                          "(option at default)");
         results[nres++] = mkres(hires_ok, "case11_quality_applies_db",
             hires_ok ? "shadowHiresN == 2 (DB applied under quality)"
                      : "shadowHiresN != 2");
         results[nres++] = mkres(logged_ok, "case11_titledb_log_present",
-            logged_ok ? "[titledb] substitution logged (option at default)"
-                      : "no [titledb] substitution log line found");
+            logged_ok ? "[titledb] internal_resolution substitution logged "
+                        "(option at default)"
+                      : "no [titledb] internal_resolution substitution log "
+                        "line found");
         pass = hires_ok && logged_ok;
         break;
     }
