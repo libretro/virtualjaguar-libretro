@@ -442,6 +442,33 @@ player front-end includes the Virtual Light Machine visualizer -- regardless
 of this setting. Every other disc, including the known-damaged CDI rips,
 is unaffected and still uses whichever mode you picked.
 
+**Swapping discs while the core is running.** The core implements the libretro
+disk-control interface, so a frontend can start it with no content at all and
+hand it a disc afterwards — which is what makes "launch the core, put in a
+music CD, get the Virtual Light Machine" reachable.
+
+Two things to know about how that behaves:
+
+- **Inserting a disc restarts the console.** The boot strategy is derived from
+  the disc itself (the session layout is what decides HLE versus real BIOS, as
+  above), so the core has to re-read the new disc and boot it. Real hardware
+  does not need to do this; a swap here is a restart, not a continuous
+  session. Reaching the VLM works, but it boots into the CD BIOS to get there.
+- **Eject is a frontend-level flag, not an emulated tray.** The Jaguar CD unit
+  has no modelled disc-present line, so the previously mounted disc stays
+  readable until an insert replaces it. Nothing a game can do reaches the
+  window between an eject and the next insert.
+
+If a disc fails to insert — a damaged rip is the common cause — the tray stays
+open, the previous disc is restored, and the running machine is left alone. The
+log line names the reason.
+
+**Savestates are tied to the disc they were taken on.** Since a disc can now be
+swapped mid-session, a state records which disc was mounted (session count,
+track count, total sectors) and is refused if you load it against a different
+one, with both identities in the log. States written by earlier core versions
+carry no such record and load exactly as they always did.
+
 **When to switch to Real BIOS.** HLE is more compatible overall, but it is a
 reimplementation, and a title occasionally trips over something HLE gets wrong
 that the real BIOS handles. The documented case is **World Tour Racing**: it
