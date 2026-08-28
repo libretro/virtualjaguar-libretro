@@ -2147,10 +2147,10 @@ test/test_cart_bios_loader: test/test_cart_bios_loader.c $(TARGET) \
 # links with the same two-file style as test_titledb plus a handful of
 # stubbed core globals defined in the test itself.
 test/test_titlehook: test/tools/test_titlehook.c src/core/titlehook.c \
-		src/core/titledb.c src/core/crc32.c
+		src/core/titledb.c src/core/crc32.c src/core/hookfile.c
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
 		-o $@ test/tools/test_titlehook.c src/core/titlehook.c \
-		src/core/titledb.c src/core/crc32.c
+		src/core/titledb.c src/core/crc32.c src/core/hookfile.c
 
 # GDB Remote Serial Protocol engine (issue #652, Phase 1).  Pure protocol
 # unit tests: no emulator, no sockets. src/debug/gdbstub.c never calls

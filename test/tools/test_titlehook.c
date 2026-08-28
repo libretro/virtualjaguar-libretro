@@ -30,6 +30,7 @@
 
 #include "../../src/core/titledb.h"
 #include "../../src/core/titlehook.h"
+#include "../../src/core/hookfile.h"
 #include "../../src/core/jaggd.h"
 
 /* ------------------------------------------------------------------
@@ -134,6 +135,7 @@ int main(void)
 {
    TitleDBHook hooks[4];
    int n;
+   int i;
 
    printf("test_titlehook: enhancement-hook applier (issue #370)\n");
 
@@ -364,6 +366,95 @@ int main(void)
          "test hook override clears back to normal table lookup");
    TitleHookSetEnabled(0);
    TitleDBSetCRC(0);
+
+   /* ---- user hook file (#637) ------------------------------------- */
+   {
+      HookFileSet set;
+      const char *path = "/tmp/vj_hookfile_test.txt";
+      FILE *f;
+
+      /* Absent file is the normal case and must be silent + empty. */
+      CHECK(HookFileLoad("/tmp/definitely-not-here-637.txt", 0xAABBCCDDu,
+                         &set) == 0,
+            "hookfile: absent file yields zero hooks");
+
+      /* Well-formed: two hooks under the matching CRC, one under another
+       * title that must NOT be picked up. */
+      f = fopen(path, "w");
+      CHECK(f != NULL, "hookfile: fixture writable");
+      fprintf(f, "# comment line\n");
+      fprintf(f, "crc=AABBCCDD\n");
+      fprintf(f, "hook=first  0x100 %02X%02X%02X%02X AABBCCDD\n",
+              pristine[0x100], pristine[0x101], pristine[0x102],
+              pristine[0x103]);
+      fprintf(f, "hook=second 0x200 %02X 5A   # trailing comment\n",
+              pristine[0x200]);
+      fprintf(f, "crc=99999999\n");
+      fprintf(f, "hook=other 0x300 %02X 11\n", pristine[0x300]);
+      fclose(f);
+
+      CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 2,
+            "hookfile: parses exactly the matching CRC's hooks");
+      CHECK(set.hooks[0].len == 4 && set.hooks[1].len == 1,
+            "hookfile: per-hook lengths derived from the hex strings");
+      CHECK(strcmp(set.hooks[0].name, "first") == 0,
+            "hookfile: hook name carried through");
+      CHECK(set.hooks[2].kind == TITLEDB_HOOK_NONE,
+            "hookfile: array is kind==0 terminated");
+
+      /* The parsed set drives the real applier against a real buffer. */
+      rom_reset();
+      n = TitleHookApplyToBuffer(rom, ROM_BYTES, set.hooks, set.count,
+                                 "UserFile", 0);
+      CHECK(n == 2, "hookfile: parsed hooks apply through the real applier");
+      CHECK(rom[0x100] == 0xAA && rom[0x200] == 0x5A,
+            "hookfile: patch bytes landed");
+
+      /* A CRC with no section yields nothing. */
+      CHECK(HookFileLoad(path, 0x12345678u, &set) == 0,
+            "hookfile: unmatched CRC yields zero hooks");
+
+      /* Malformed line discards the WHOLE file, not just that line --
+       * otherwise the applier's all-or-nothing rule would be enforced
+       * over a set we only partly understood. */
+      f = fopen(path, "w");
+      fprintf(f, "crc=AABBCCDD\n");
+      fprintf(f, "hook=good 0x100 %02X AA\n", pristine[0x100]);
+      fprintf(f, "hook=bad 0x200 ZZ 5A\n");
+      fclose(f);
+      CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
+            "hookfile: one malformed line discards every hook in the file");
+
+      /* expect/patch length disagreement is malformed. */
+      f = fopen(path, "w");
+      fprintf(f, "crc=AABBCCDD\nhook=mismatch 0x100 AABB CC\n");
+      fclose(f);
+      CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
+            "hookfile: expect/patch length mismatch refused");
+
+      /* Over-long hex cannot overrun the arena. */
+      f = fopen(path, "w");
+      fprintf(f, "crc=AABBCCDD\nhook=toolong 0x100 ");
+      for (i = 0; i < TITLEDB_HOOK_MAX_BYTES + 4; i++) fprintf(f, "AA");
+      fprintf(f, " ");
+      for (i = 0; i < TITLEDB_HOOK_MAX_BYTES + 4; i++) fprintf(f, "BB");
+      fprintf(f, "\n");
+      fclose(f);
+      CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
+            "hookfile: over-long hex refused, arena not overrun");
+
+      /* More hooks than TITLEDB_MAX_HOOKS refuses the file. */
+      f = fopen(path, "w");
+      fprintf(f, "crc=AABBCCDD\n");
+      for (i = 0; i < TITLEDB_MAX_HOOKS + 1; i++)
+         fprintf(f, "hook=h%d 0x%X %02X AA\n", i, 0x100 + i,
+                 pristine[0x100 + i]);
+      fclose(f);
+      CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
+            "hookfile: more than TITLEDB_MAX_HOOKS refuses the file");
+
+      remove(path);
+   }
 
    printf("%s (%d failures)\n", fails ? "FAILED" : "OK", fails);
    return fails ? 1 : 0;

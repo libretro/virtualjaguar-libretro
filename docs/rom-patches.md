@@ -1,5 +1,7 @@
 # ROM patches (soft patching)
 
+> See [**Patching a game**](patching-a-game.md) for a router across cheats, soft patches, hooks, and per-title defaults.
+
 Fan patches and romhacks exist for several Jaguar titles.  With this core you
 do **not** patch the ROM file: RetroArch applies patches at load time ("soft
 patching"), leaving the original file untouched.  This works today and needs
