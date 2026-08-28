@@ -361,6 +361,17 @@ static bool jaguar_cd_mode = false;
 /* Memory Track presence option (CD only); default on. */
 static bool opt_memory_track = true;
 static char cd_image_path[4096] = {0};
+
+/* Disk control interface (#651).  DISK_MAX_IMAGES is deliberately
+ * generous: no multi-disc Jaguar CD title exists, so in practice the list
+ * only ever holds the one disc a frontend handed us after launch. */
+#define DISK_MAX_IMAGES 8
+
+static char     disk_image_path[DISK_MAX_IMAGES][4096];
+static unsigned disk_num_images;
+static unsigned disk_index;
+static unsigned disk_initial_index;
+static bool     disk_ejected;
 bool cd_bios_loaded_externally = false;
 uint8_t external_cd_bios[0x40000];  /* 256 KB */
 
@@ -5349,6 +5360,171 @@ static void video_buffer_blank(void)
       videoBuffer[i] = 0xFF000000;
 }
 
+/* ---------------------------------------------------------------------
+ * Disk control callbacks (#651)
+ *
+ * The emulated CD unit has no tray: src/cd/ models no disc-present line
+ * and no "medium not present" error, so eject is a frontend-level FLAG
+ * and the mounted image stays readable until an insert replaces it.
+ * Documented limitation -- nothing but the frontend can reach the window
+ * between an eject and the next insert.
+ * ------------------------------------------------------------------ */
+
+static bool disk_get_eject_state(void)
+{
+   return disk_ejected;
+}
+
+static unsigned disk_get_image_index(void)
+{
+   return disk_index;
+}
+
+static unsigned disk_get_num_images(void)
+{
+   return disk_num_images;
+}
+
+static bool disk_set_eject_state(bool ejected)
+{
+   /* Inert for now: the resolve-and-boot insert lands separately so it
+    * can be reviewed on its own. */
+   disk_ejected = ejected;
+   return true;
+}
+
+static bool disk_set_image_index(unsigned index)
+{
+   if (index >= disk_num_images)
+      return false;
+   disk_index = index;
+   return true;
+}
+
+static bool disk_replace_image_index(unsigned index,
+                                     const struct retro_game_info *info)
+{
+   unsigned i;
+
+   if (index >= disk_num_images)
+      return false;
+
+   if (!info || !info->path)
+   {
+      /* Removing an entry: shuffle the tail down so the list stays dense
+       * (the frontend addresses images by position). */
+      for (i = index; i + 1 < disk_num_images; i++)
+         memcpy(disk_image_path[i], disk_image_path[i + 1],
+                sizeof(disk_image_path[i]));
+      disk_num_images--;
+      if (disk_num_images > 0 && disk_index >= disk_num_images)
+         disk_index = disk_num_images - 1;
+      else if (disk_num_images == 0)
+         disk_index = 0;
+      return true;
+   }
+
+   strncpy(disk_image_path[index], info->path,
+           sizeof(disk_image_path[index]) - 1);
+   disk_image_path[index][sizeof(disk_image_path[index]) - 1] = '\0';
+   return true;
+}
+
+static bool disk_add_image_index(void)
+{
+   if (disk_num_images >= DISK_MAX_IMAGES)
+   {
+      LOG_WRN("[CD] disk control: image list full (%u), refusing add\n",
+              (unsigned)DISK_MAX_IMAGES);
+      return false;
+   }
+   disk_image_path[disk_num_images][0] = '\0';
+   disk_num_images++;
+   return true;
+}
+
+static bool disk_set_initial_image(unsigned index, const char *path)
+{
+   /* Recorded and applied when the list is first populated.  Effectively
+    * inert today -- it exists because the frontend only restores a
+    * last-used disk index when set_initial_image AND get_image_path are
+    * both implemented. */
+   (void)path;
+   disk_initial_index = index;
+   return true;
+}
+
+static bool disk_get_image_path(unsigned index, char *path, size_t len)
+{
+   if (index >= disk_num_images || !path || len == 0)
+      return false;
+   strncpy(path, disk_image_path[index], len - 1);
+   path[len - 1] = '\0';
+   return true;
+}
+
+static bool disk_get_image_label(unsigned index, char *label, size_t len)
+{
+   const char *base;
+
+   if (index >= disk_num_images || !label || len == 0)
+      return false;
+   base = strrchr(disk_image_path[index], '/');
+   base = base ? base + 1 : disk_image_path[index];
+   strncpy(label, base, len - 1);
+   label[len - 1] = '\0';
+   return true;
+}
+
+/* Registered from retro_load_game UNCONDITIONALLY, including the
+ * info == NULL no-content path -- that is the case the whole feature
+ * exists for (#646 gave the core no-content boot; without disk control a
+ * frontend has no way to hand it a disc afterwards).
+ *
+ * The callback structs are static because the frontend keeps the pointer
+ * it is given long after this call returns. */
+static void register_disk_control(void)
+{
+   static struct retro_disk_control_ext_callback ext;
+   static struct retro_disk_control_callback     legacy;
+   unsigned version = 0;
+
+   ext.set_eject_state     = disk_set_eject_state;
+   ext.get_eject_state     = disk_get_eject_state;
+   ext.get_image_index     = disk_get_image_index;
+   ext.set_image_index     = disk_set_image_index;
+   ext.get_num_images      = disk_get_num_images;
+   ext.replace_image_index = disk_replace_image_index;
+   ext.add_image_index     = disk_add_image_index;
+   ext.set_initial_image   = disk_set_initial_image;
+   ext.get_image_path      = disk_get_image_path;
+   ext.get_image_label     = disk_get_image_label;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION,
+                  &version)
+       && version >= 1
+       && environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, &ext))
+   {
+      LOG_INF("[CD] disk control: ext interface v%u registered\n", version);
+      return;
+   }
+
+   legacy.set_eject_state     = disk_set_eject_state;
+   legacy.get_eject_state     = disk_get_eject_state;
+   legacy.get_image_index     = disk_get_image_index;
+   legacy.set_image_index     = disk_set_image_index;
+   legacy.get_num_images      = disk_get_num_images;
+   legacy.replace_image_index = disk_replace_image_index;
+   legacy.add_image_index     = disk_add_image_index;
+
+   if (environ_cb(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE, &legacy))
+      LOG_INF("[CD] disk control: legacy interface registered "
+              "(no ext support)\n");
+   else
+      LOG_WRN("[CD] disk control: frontend accepted neither interface -- "
+              "inserting a disc after launch will not be possible\n");
+}
+
 typedef enum
 {
    DISC_BOOT_OK = 0,
@@ -5813,6 +5989,11 @@ bool retro_load_game(const struct retro_game_info *info)
    eeprom_dirty_cb = eeprom_pack_save_buf;
    mt_dirty_cb     = mt_mark_save_dirty;
 
+   /* Disk control (#651): register before the content branch, so it is
+    * registered on the no-content path too -- that is the case the
+    * feature exists for. */
+   register_disk_control();
+
    /* Detect CD content (CUE/CDI/CHD/ISO) and pick a boot strategy from the
     * disc itself.  The CD branch lives in open_disc_and_resolve_boot() so
     * the disk-control insert path (#651) can re-run exactly the same
@@ -6007,6 +6188,11 @@ void retro_unload_game(void)
    jaguar_cd_mode    = false;
    jaguarMemTrackInserted = false;
    cd_image_path[0]  = '\0';
+   memset(disk_image_path, 0, sizeof(disk_image_path));
+   disk_num_images    = 0;
+   disk_index         = 0;
+   disk_initial_index = 0;
+   disk_ejected       = false;
    /* Content type is unknown again — restore the full option list. */
    content_loaded    = false;
    no_game_active    = false;
@@ -6368,6 +6554,15 @@ void retro_deinit(void)
    ShadowFBShutdown();
    ShadowHiresShutdown();
    BlitMemoShutdown();
+
+   /* Disk control statics (#651): same reasoning as the shutdowns above --
+    * iOS cannot dlclose the core, so a stale image list would survive into
+    * the next load and offer the frontend a disc that is no longer there. */
+   memset(disk_image_path, 0, sizeof(disk_image_path));
+   disk_num_images    = 0;
+   disk_index         = 0;
+   disk_initial_index = 0;
+   disk_ejected       = false;
    /* Texture dump (#369): close the manifest, log the session summary,
     * free the dedupe set and reset every static. */
    TexDumpShutdown();
