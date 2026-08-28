@@ -2139,6 +2139,7 @@ void GPUExec(int32_t cycles)
    int      pipeTiming;
    uint32_t riscScale;
    int      idleSkipActive;
+   int      gdbArmedSlice;
 
    if (!GPU_RUNNING)
       return;
@@ -2201,6 +2202,15 @@ void GPUExec(int32_t cycles)
    idleMemoCount  = 0;
    idleMemoNext   = 0;
 
+   /* Same reason as pipeTiming/riscScale above (issue #532): a hot
+    * global read once per emulated instruction, with executeOpcode()
+    * opaque in between, so without a local the compiler reloads it
+    * GOT-indirect every opcode.  Measured: this alone takes the GPU's
+    * share of the GDB hook cost to zero (issue #652).  Only GDBHalt()
+    * can change the arming inside a slice -- the GDB service loop runs
+    * between retro_run() calls -- so the refresh below it suffices. */
+   gdbArmedSlice = gdbArmedGPU;
+
    while (cycles > 0 && GPU_RUNNING)
    {
       uint16_t opcode;
@@ -2218,8 +2228,11 @@ void GPUExec(int32_t cycles)
        * steps, or disconnects. VJ_GDB_STUB_DISABLE_HOOKS exists only for
        * the Phase 2 A/B perf measurement -- see the comment in
        * src/core/jaguar.c's M68KInstructionHook(). */
-      if (gdbArmedGPU && GDBCheckPC(GDB_TGT_GPU, gpu_pc))
+      if (gdbArmedSlice && GDBCheckPC(GDB_TGT_GPU, gpu_pc))
+      {
          GDBHalt(GDB_TGT_GPU, GDB_STOP_BREAKPOINT, gpu_pc);
+         gdbArmedSlice = gdbArmedGPU;
+      }
 #endif
 
       pcThis = gpu_pc;

@@ -1838,6 +1838,7 @@ static int32_t DSPIdleLoopProbe(int32_t cycles, uint32_t head, uint32_t jrAddr)
 void DSPExec(int32_t cycles)
 {
 	int idleSkipActive;
+	int gdbArmedSlice;
 
 #ifdef DSP_SINGLE_STEPPING
 	if (dsp_control & 0x18)
@@ -1850,6 +1851,14 @@ void DSPExec(int32_t cycles)
 	VJP_ENTER(VJP_DSP);
 
 	dsp_releaseTimeSlice_flag = 0;
+
+	/* Hot global read once per emulated instruction, with an opaque
+	 * opcode call downstream, so without a local the compiler reloads it
+	 * GOT-indirect every opcode -- the same shape issue #532 fixed for
+	 * GPUExec's pipeTiming/riscScale. Measured at ~4.5% (issue #652).
+	 * Only GDBHalt() can change the arming inside a slice, so the
+	 * refresh below it is the only one needed. */
+	gdbArmedSlice = gdbArmedDSP;
 	dsp_in_exec++;
 
 	/* Idle-loop fast-forward gates (issue #569).  Every one of these adds
@@ -1919,103 +1928,48 @@ void DSPExec(int32_t cycles)
 	idleMemoCount  = 0;
 	idleMemoNext   = 0;
 
+#ifdef VJ_GDB_STUB_DISABLE_HOOKS
 	while (cycles > 0 && DSP_RUNNING)
 	{
-      uint16_t opcode;
-      uint32_t index;
-      uint32_t pcThis;
-#ifdef VJ_TRACE
-      VJT_PCHIST_DSP(dsp_pc);
-#endif
-
-		/* If IMASK was cleared, see if any other interrupts are pending --
-		 * but not until the D_FLAGS store that cleared it has retired, so
-		 * the instruction still in the pipeline behind it (typically the
-		 * epilogue's `jump` back to the interrupted code) runs first. */
-		if (IMASKCleared && dspFlagsRetireDelay == 0)
-		{
-			DSPHandleIRQsNP();
-			IMASKCleared = false;
-		}
-
-		/* PC escape bail-out.  When the DSP PC has wandered into a
-		 * region that doesn't contain executable code -- register
-		 * space at $F00000-$F1FFFF outside DSP local SRAM, or the
-		 * unmapped territory above $E40000 -- every "fetched opcode"
-		 * is bus-default 0xFFFF garbage that decodes to a near-zero-
-		 * cost opcode.  The inner loop then burns the entire
-		 * timeslice without making progress, hanging the frontend.
-		 *
-		 * Wolf3D headless triage caught this in v2.3.0: the runtime
-		 * watchdog logged `dsp_pc_escape pc=$00FFF004E8` (PC top-byte
-		 * corrupted) and the harness wedged for 12+ minutes per
-		 * frame.  An earlier dsp-diag snapshot showed PC=$0006EE in
-		 * RAM at frame 48 -- that's the upstream bug (separate from
-		 * this bail-out: $0006EE is *valid* RAM and decodes to real
-		 * opcodes; it's where the DSP eventually drifts INTO bad
-		 * territory that triggers the wedge).  Drain cycles here and
-		 * let the runtime watchdog (src/core/crash_detect.c) log the
-		 * actual escape PC.  DSP_RUNNING is left alone so games that
-		 * legitimately stop the DSP via DSPGO=0 are unaffected.
-		 *
-		 * Valid execution regions match JaguarReadX address decoding
-		 * (src/core/jaguar.c): anything <= $E3FFFF (main RAM mirrored
-		 * 4x for the bottom 8MB, cart ROM, boot ROM) plus DSP local
-		 * SRAM.  Earlier versions of this check used `<= 0x1FFFFF`
-		 * and would have false-flagged DSP code running from a RAM
-		 * mirror at $200000-$7FFFFF or from cart ROM at $800000+.
-		 * Caught by Copilot review on PR #182. */
-		if (!((dsp_pc <= 0x00E3FFFF) ||
-		      (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)))
-		{
-			cycles = 0;
-			break;
-		}
-
-		pcThis = dsp_pc;
-
-#ifndef VJ_GDB_STUB_DISABLE_HOOKS
-		/* GDB stub (issue #652): one load of a hot global, one
-		 * never-taken branch when no DSP breakpoint/step is armed -- see
-		 * docs/gdb-stub-design.md "Breakpoint detection". GDBHalt()
-		 * blocks in place (does not unwind this loop) until the client
-		 * continues, steps, or disconnects. VJ_GDB_STUB_DISABLE_HOOKS
-		 * exists only for the Phase 2 A/B perf measurement -- see the
-		 * comment in src/core/jaguar.c's M68KInstructionHook(). */
-		if (gdbArmedDSP && GDBCheckPC(GDB_TGT_DSP, pcThis))
-			GDBHalt(GDB_TGT_DSP, GDB_STOP_BREAKPOINT, pcThis);
-#endif
-
-		if (dsp_pc >= DSP_WORK_RAM_BASE && dsp_pc < DSP_WORK_RAM_BASE + 0x2000)
-		{
-			uint32_t off = dsp_pc - DSP_WORK_RAM_BASE;
-			opcode = ((uint16_t)dsp_ram_8[off] << 8) | (uint16_t)dsp_ram_8[off + 1];
-		}
-		else
-			opcode = DSPReadWord(dsp_pc, DSP);
-		index = opcode >> 10;
-		dsp_opcode_first_parameter = (opcode >> 5) & 0x1F;
-		dsp_opcode_second_parameter = opcode & 0x1F;
-		dsp_pc += 2;
-		dsp_exec_opcode_count++;
-		dsp_executeOpcode(index);
-		cycles -= dsp_opcode_cycles[index];
-
-		/* Idle-loop fast-forward (issue #569).  A taken `jr` that landed
-		 * on or behind its own address, at most 8 words back, is the only
-		 * candidate; the unsigned difference rejects a not-taken jr
-		 * (pc = pcThis + 2) and every forward branch in one compare. */
-		if (idleSkipActive && index == 53
-		    && (uint32_t)(pcThis - dsp_pc) <= 14)
-			cycles = DSPIdleLoopProbe(cycles, dsp_pc, pcThis);
-
-		/* Age out a D_FLAGS store once the instruction that was already
-		 * behind it in the pipeline has run (see DSPWriteLong, D_FLAGS
-		 * case).  Retiring re-opens interrupt recognition and stops
-		 * dsp_opcode_jump reaching for the pre-store bank. */
-		if (dspFlagsRetireDelay)
-			dspFlagsRetireDelay--;
+		uint16_t opcode;
+		uint32_t index;
+		uint32_t pcThis;
+#include "dsp_exec_body.h"
 	}
+#else
+	if (!gdbArmedSlice)
+	{
+		while (cycles > 0 && DSP_RUNNING)
+		{
+		uint16_t opcode;
+		uint32_t index;
+		uint32_t pcThis;
+#include "dsp_exec_body.h"
+		}
+		/* No re-arm check here, deliberately: it would be a global load per
+		 * emulated instruction, the exact cost this specialisation removes.
+		 * Nothing can arm mid-slice in this loop -- the GDB service loop runs
+		 * between retro_run() calls, and GDBHalt() cannot fire from a loop
+		 * that carries no check. */
+	}
+
+	if (gdbArmedSlice)
+	{
+		while (cycles > 0 && DSP_RUNNING)
+		{
+		uint16_t opcode;
+		uint32_t index;
+		uint32_t pcThis;
+
+			if (GDBCheckPC(GDB_TGT_DSP, dsp_pc))
+			{
+				GDBHalt(GDB_TGT_DSP, GDB_STOP_BREAKPOINT, dsp_pc);
+				gdbArmedSlice = gdbArmedDSP;
+			}
+#include "dsp_exec_body.h"
+		}
+	}
+#endif
 
 	dsp_in_exec--;
 

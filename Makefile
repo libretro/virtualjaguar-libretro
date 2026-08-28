@@ -255,8 +255,21 @@ endif
 # Finer control arm: removes ONLY the idle-skip interaction
 # (`if (gdbArmed*) idleSkipActive = 0;`), leaving the per-instruction PC
 # checks in place, so the two halves of the hook cost can be told apart.
-ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE),1)
+ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE \
+              VJ_GDB_STUB_DISABLE_68K_HOOK \
+              VJ_GDB_STUB_DISABLE_DSP_HOOK),1)
 CFLAGS += -DVJ_GDB_STUB_DISABLE_IDLE_GATE
+endif
+
+# Finer control arm: removes ONLY the 68K per-instruction check inside
+# M68KInstructionHook(), leaving the slice-cached GPU/DSP checks in place.
+ifeq ($(VJ_GDB_STUB_DISABLE_68K_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_68K_HOOK
+endif
+
+# Finer control arm: removes ONLY the DSP per-instruction check.
+ifeq ($(VJ_GDB_STUB_DISABLE_DSP_HOOK),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_DSP_HOOK
 endif
 
 # Records the build configuration the objects in the tree were last
