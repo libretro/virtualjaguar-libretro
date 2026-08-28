@@ -382,6 +382,10 @@ int main(void)
        * title that must NOT be picked up. */
       f = fopen(path, "w");
       CHECK(f != NULL, "hookfile: fixture writable");
+      if (!f) {
+         printf("%s (%d failures)\n", "FAILED", ++fails);
+         return 1;                 /* cannot test anything without it */
+      }
       fprintf(f, "# comment line\n");
       fprintf(f, "crc=AABBCCDD\n");
       fprintf(f, "hook=first  0x100 %02X%02X%02X%02X AABBCCDD\n",
@@ -418,38 +422,50 @@ int main(void)
        * otherwise the applier's all-or-nothing rule would be enforced
        * over a set we only partly understood. */
       f = fopen(path, "w");
-      fprintf(f, "crc=AABBCCDD\n");
-      fprintf(f, "hook=good 0x100 %02X AA\n", pristine[0x100]);
-      fprintf(f, "hook=bad 0x200 ZZ 5A\n");
-      fclose(f);
+      CHECK(f != NULL, "hookfile: malformed fixture writable");
+      if (f) {
+         fprintf(f, "crc=AABBCCDD\n");
+         fprintf(f, "hook=good 0x100 %02X AA\n", pristine[0x100]);
+         fprintf(f, "hook=bad 0x200 ZZ 5A\n");
+         fclose(f);
+      }
       CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
             "hookfile: one malformed line discards every hook in the file");
 
       /* expect/patch length disagreement is malformed. */
       f = fopen(path, "w");
-      fprintf(f, "crc=AABBCCDD\nhook=mismatch 0x100 AABB CC\n");
-      fclose(f);
+      CHECK(f != NULL, "hookfile: mismatch fixture writable");
+      if (f) {
+         fprintf(f, "crc=AABBCCDD\nhook=mismatch 0x100 AABB CC\n");
+         fclose(f);
+      }
       CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
             "hookfile: expect/patch length mismatch refused");
 
       /* Over-long hex cannot overrun the arena. */
       f = fopen(path, "w");
-      fprintf(f, "crc=AABBCCDD\nhook=toolong 0x100 ");
-      for (i = 0; i < TITLEDB_HOOK_MAX_BYTES + 4; i++) fprintf(f, "AA");
-      fprintf(f, " ");
-      for (i = 0; i < TITLEDB_HOOK_MAX_BYTES + 4; i++) fprintf(f, "BB");
-      fprintf(f, "\n");
-      fclose(f);
+      CHECK(f != NULL, "hookfile: over-long fixture writable");
+      if (f) {
+         fprintf(f, "crc=AABBCCDD\nhook=toolong 0x100 ");
+         for (i = 0; i < TITLEDB_HOOK_MAX_BYTES + 4; i++) fprintf(f, "AA");
+         fprintf(f, " ");
+         for (i = 0; i < TITLEDB_HOOK_MAX_BYTES + 4; i++) fprintf(f, "BB");
+         fprintf(f, "\n");
+         fclose(f);
+      }
       CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
             "hookfile: over-long hex refused, arena not overrun");
 
       /* More hooks than TITLEDB_MAX_HOOKS refuses the file. */
       f = fopen(path, "w");
-      fprintf(f, "crc=AABBCCDD\n");
-      for (i = 0; i < TITLEDB_MAX_HOOKS + 1; i++)
-         fprintf(f, "hook=h%d 0x%X %02X AA\n", i, 0x100 + i,
-                 pristine[0x100 + i]);
-      fclose(f);
+      CHECK(f != NULL, "hookfile: overflow fixture writable");
+      if (f) {
+         fprintf(f, "crc=AABBCCDD\n");
+         for (i = 0; i < TITLEDB_MAX_HOOKS + 1; i++)
+            fprintf(f, "hook=h%d 0x%X %02X AA\n", i, 0x100 + i,
+                    pristine[0x100 + i]);
+         fclose(f);
+      }
       CHECK(HookFileLoad(path, 0xAABBCCDDu, &set) == 0,
             "hookfile: more than TITLEDB_MAX_HOOKS refuses the file");
 
