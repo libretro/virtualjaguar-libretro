@@ -390,6 +390,20 @@ Five layers, in increasing cost:
    distributed for classic Mac/Amiga/Atari ST development, works against a
    plain `m68k` architecture with no custom target description) rather than
    implying this repo provides one.
+
+   **Further verified 2026-08-27:** no bottled `m68k-elf-gdb` exists on
+   Homebrew either (`brew search`: `aarch64-elf-gdb`, `arm-none-eabi-gdb`,
+   `i386-elf-gdb`, `riscv64-elf-gdb`, `x86_64-elf-gdb` are all real bottles;
+   `m68k-elf-gdb` is not among them) — a developer has to build GDB from
+   source with `--target=m68k-elf` themselves; upstream GDB does support the
+   architecture, there is just no pre-built binary to point users at.
+   Homebrew *does* bottle a genuinely separate, actively-maintained C
+   toolchain for this target — `m68k-elf-gcc` (16.2.0) and
+   `m68k-elf-binutils` (2.47) — but that is GCC+GNU `ld`, unrelated to this
+   repo's `rmac`/`rln` assembler pipeline (#581); using it would mean
+   writing C and building a new path from its ELF+DWARF output to something
+   loadable on the emulated Jaguar, not something this repo's build wires up
+   today.
 2. **What DWARF, if any, does `rln` emit?** **Answered 2026-08-26, Phase 1
    implementation: none.** Verified by building the toolchain and actually
    linking a test object: `rln -e` output identifies as `mc68k COFF object
@@ -410,6 +424,23 @@ Five layers, in increasing cost:
    debugging" claim in this document has been corrected accordingly; do not
    reintroduce it without new evidence that some other tool in the chain
    (not `rln`) emits real DWARF.
+
+   **Further verified 2026-08-27, by reading `rmac`/`rln` source directly**
+   (mwenge/rmac@50e66ea, rln@a617009, both pinned in `PIN`) rather than only
+   testing one linked output: exhaustive grep for `dwarf` and `.debug_`
+   (case-insensitive) across both tools' entire source trees returns zero
+   matches, under any flag. `rln`'s object-file magic-number detection only
+   recognises BSD a.out (`0107`), DRI/Alcyon (`601A`), and `ar` archives —
+   there is no ELF magic (`0x7F454C46`) check anywhere in it. `rmac` *can*
+   emit an ELF object with a real `.symtab`/`.strtab` (`object.c`'s
+   `ELFSectionNames` / `AddELFSymEntry`), but that path is orphaned: `rln`
+   structurally cannot read it, so it is never exercised by the actual
+   working `rmac`→`rln` pipeline. And `-g`'s real mechanism, per `rln.c`'s
+   `OSTAdd()`, is a filter that keeps or drops symbols whose type carries a
+   `0xF0000000` "debug" tag in `rln`'s own proprietary Atari-era symbol
+   table — which is what explains the byte-identical link above: whatever
+   symbol category that tag marks was never present to filter in the tested
+   case, so the flag had nothing to do either way.
 3. **Register numbering for the RISC target descriptions.** **Answered
    2026-08-27, Phase 3 implementation: R0-R31 = index 0-31, PC = 32,
    FLAGS = 33 (34 registers total), identical for the GPU and DSP
