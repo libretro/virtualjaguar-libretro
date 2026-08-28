@@ -5360,6 +5360,17 @@ static void video_buffer_blank(void)
       videoBuffer[i] = 0xFF000000;
 }
 
+typedef enum
+{
+   DISC_BOOT_OK = 0,
+   DISC_BOOT_OPEN_FAILED,       /* CDIntfOpenImage refused the image */
+   DISC_BOOT_NO_BIOS_FOR_AUDIO  /* audio disc, real CD BIOS unavailable */
+} disc_boot_status;
+
+/* Defined below, next to retro_load_game: the disk-control insert path
+ * and the load path share it (#651). */
+static disc_boot_status open_disc_and_resolve_boot(const char *path);
+
 /* ---------------------------------------------------------------------
  * Disk control callbacks (#651)
  *
@@ -5385,18 +5396,100 @@ static unsigned disk_get_num_images(void)
    return disk_num_images;
 }
 
+/* Closing the tray is the only disk-control entry point that touches the
+ * emulated machine.  It re-runs boot resolution against the newly selected
+ * disc and dispatches the resolved strategy, because the boot strategy is
+ * DERIVED FROM THE DISC (session count decides HLE vs real BIOS) and
+ * retro_reset() re-resolves nothing.
+ *
+ * This is a restart, not a continuous swap: real hardware would have the
+ * running CD BIOS notice a new disc, which depends on disc-presence
+ * polling we have not verified.  Documented in the user-facing CD notes.
+ *
+ * A failed insert must leave no partial-mount state, so bootConfig and
+ * jaguar_cd_mode are snapshotted and restored, and the previously mounted
+ * image is reopened on a best-effort basis -- CDIntfOpenImage() closes the
+ * current image before parsing the new one, so by the time an open fails
+ * the old disc is already gone from the drive. */
 static bool disk_set_eject_state(bool ejected)
 {
-   /* Inert for now: the resolve-and-boot insert lands separately so it
-    * can be reviewed on its own. */
-   disk_ejected = ejected;
+   struct BootConfig saved_boot;
+   char              saved_path[sizeof(cd_image_path)];
+   bool              saved_cd_mode;
+   disc_boot_status  st;
+
+   if (ejected)
+   {
+      /* Eject is a FLAG: src/cd/ models no tray and no disc-present line,
+       * so the mounted image stays readable until an insert replaces it. */
+      disk_ejected = true;
+      return true;
+   }
+
+   if (!disk_ejected)
+      return true;                    /* already closed -- nothing to do */
+
+   if (disk_num_images == 0 || disk_image_path[disk_index][0] == '\0')
+   {
+      LOG_WRN("[CD] disk control: nothing to insert (image list is "
+              "empty)\n");
+      return false;
+   }
+
+   saved_boot    = bootConfig;
+   saved_cd_mode = jaguar_cd_mode;
+   memcpy(saved_path, cd_image_path, sizeof(saved_path));
+
+   st = open_disc_and_resolve_boot(disk_image_path[disk_index]);
+   if (st != DISC_BOOT_OK)
+   {
+      LOG_ERR("[CD] disk control: insert failed (%s) -- tray stays open\n",
+              st == DISC_BOOT_OPEN_FAILED
+                 ? "image could not be opened"
+                 : "audio disc needs the real CD BIOS and it is "
+                   "unavailable");
+
+      bootConfig     = saved_boot;
+      jaguar_cd_mode = saved_cd_mode;
+      memcpy(cd_image_path, saved_path, sizeof(cd_image_path));
+      if (cd_image_path[0] != '\0' && !CDIntfOpenImage(cd_image_path))
+         LOG_ERR("[CD] disk control: could not reopen the previous disc "
+                 "either -- the drive is now empty\n");
+
+      return false;                   /* disk_ejected stays true */
+   }
+
+   /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
+    * and sets jaguarRunAddress from $800404 before resetting, so a plain
+    * reset would restart the PREVIOUS program.  NULL is safe here -- both
+    * CD strategies ignore info (hle_strategy_boot does `(void)info;`);
+    * only cart_boot reads it, and cart is never resolved on this path. */
+   if (!bootConfig.strategy || !bootConfig.strategy->boot(NULL))
+   {
+      LOG_ERR("[CD] disk control: boot strategy refused the new disc\n");
+      return false;
+   }
+
+   LOG_INF("[CD] disk control: inserted '%s', booting via '%s'\n",
+           cd_image_path,
+           bootConfig.strategy->name ? bootConfig.strategy->name : "?");
+   disk_ejected = false;
    return true;
 }
 
+/* Routed through the eject/insert pair so there is exactly one way to
+ * mount a disc, not two that can drift apart. */
 static bool disk_set_image_index(unsigned index)
 {
    if (index >= disk_num_images)
       return false;
+
+   if (!disk_ejected)
+   {
+      disk_index = index;
+      return disk_set_eject_state(true) && disk_set_eject_state(false);
+   }
+
    disk_index = index;
    return true;
 }
@@ -5524,13 +5617,6 @@ static void register_disk_control(void)
       LOG_WRN("[CD] disk control: frontend accepted neither interface -- "
               "inserting a disc after launch will not be possible\n");
 }
-
-typedef enum
-{
-   DISC_BOOT_OK = 0,
-   DISC_BOOT_OPEN_FAILED,       /* CDIntfOpenImage refused the image */
-   DISC_BOOT_NO_BIOS_FOR_AUDIO  /* audio disc, real CD BIOS unavailable */
-} disc_boot_status;
 
 /* Open a disc image and derive the boot configuration FROM THAT DISC.
  *

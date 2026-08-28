@@ -1353,6 +1353,7 @@ clean:
 		tools/jagcd/jagcd-chd-check \
 		test/tools/test_memory_map test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/tools/test_dsp_audio_diag \
 		test/tools/test_frame_timing test/tools/test_runahead_determinism test/tools/test_pertitle_db \
+		test/tools/test_disk_control \
 		test/test_biosdb test/test_cart_bios_loader \
 		test/test_titledb test/test_titlehook test/tools/test_hook_gate \
 		test/tools/test_wedge_spin test/tools/test_texdump test/tools/test_texreplace test/test_voicechat test/test_voice_netpacket test/tools/test_voicechat_inertness test/tools/voicechat_pair test/tools/i2s_lag_probe \
@@ -1428,7 +1429,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		test/test_cd_boot test/test_cd_hle_boot test/test_cd_bios_boot test/test_cd_toc_contract test/test_cd_fifo_stream test/test_cd_ssi_stream test/test_cd_second_transfer test/test_cd_hle_idempotent test/test_cd_lost_wakeup test/test_cd_pregap test/test_cd_chd test/test_chd_unit test/test_cd_synth_read test/test_cd_synth_butch test/test_cd_synth_cdda test/test_cd_synth_subq \
 		test/test_audio_dac test/test_blitter \
 		test/tools/test_memory_map test/tools/test_op_gpu_object test/tools/test_option_visibility test/test_memtrack test/test_nvmbios test/test_uart_core test/test_netlink_host \
-		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db \
+		test/tools/netlink_pair test/tools/netlink_latency test/tools/netlink_delay_proxy test/tools/netlink_discover_probe test/tools/netlink_rebuild_witness test/tools/netlink_mismatch_witness test/tools/perf_iface_witness test/tools/voicemodem_pair test/tools/voicechat_pair test/tools/test_voicechat_inertness test/tools/netlink_game test/tools/test_pertitle_db test/tools/test_disk_control \
 		test/tools/test_hook_gate \
 		test/tools/i2s_lag_probe test/tools/joymatrix_identity \
 		test/tools/teamtap_ports \
@@ -2048,6 +2049,30 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 	@# Non-DB ROM control: no CRC match -> no substitution, [titledb] miss log fires.
 	@# yarc.j64 is committed in-tree so this case never skips.
 	./test/tools/test_pertitle_db ./$(TARGET) test/roms/yarc.j64 --case 5 --quiet
+
+	@# Disk control interface (#651): boot with NO content, then hand the
+	@# core a disc through the frontend-facing callbacks.  Case 1 asserts
+	@# the RESOLVED STRATEGY moved off "none", not that the insert returned
+	@# true -- a reset against the previous disc's boot config looks
+	@# identical from outside.  Case 3 asserts a failed insert is inert.
+	@#
+	@# Case 2 (audio-only disc must land on the real CD BIOS) is NOT run:
+	@# no one-session image exists in the corpus -- every CUE carries two
+	@# REM SESSION markers and CDI headers declare numSessions=2 -- so it
+	@# would pass against a data disc for the wrong reason.  Ledgered as a
+	@# skip rather than written to look like coverage.
+	@bash scripts/test-skip.sh record "Disk control audio-disc insert (#651)" \
+		"no one-session (Red Book) disc in the private corpus"
+	@disc=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | head -1); \
+	if [ -n "$$disc" ]; then \
+		rc=0; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 1 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 3 --quiet || rc=1; \
+		exit $$rc; \
+	else \
+		bash scripts/test-skip.sh record "Disk control interface (#651)" \
+			"no CD image in test/roms/private"; \
+	fi
 	@# Enhancement hooks (issue #370).  All four gates run on in-repo public
 	@# content, so none of them can skip -- and hook_identity_ab.sh now
 	@# ENFORCES that rather than asserting it: it counts the ROMs it actually
@@ -2347,6 +2372,13 @@ test/tools/test_memory_map: test/tools/test_memory_map.c
 # apply / disable / user-override contract, driven through the real core
 # via the shared harness.  Needs shadowHiresN + shadowFBActive from the
 # wide test symbol set (exports-test.list / link-test.T).
+test/tools/test_disk_control: test/tools/test_disk_control.c \
+		test/harness/harness.c test/harness/harness.h
+	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
+		-o $@ test/tools/test_disk_control.c \
+		test/harness/harness.c \
+		$(if $(filter Linux,$(shell uname -s)),-ldl) -lm
+
 test/tools/test_pertitle_db: test/tools/test_pertitle_db.c \
 		test/harness/harness.c test/harness/harness.h
 	$(CC) -O2 -Wall -std=c99 $(INCFLAGS) \
