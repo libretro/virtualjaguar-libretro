@@ -4625,6 +4625,27 @@ bool retro_serialize(void *data, size_t size)
     * loadable. */
    buf += UARTWireSpeedupStateSave(buf);
 
+   /* v14: mounted-disc identity + image index (#651).  Disk control lets a
+    * frontend swap the disc mid-session, so a state and the mounted disc
+    * can now disagree -- which they never could before, when the disc was
+    * fixed at load.  All three identity words come from accessors that
+    * already exist (cdintf.h); zero when no disc is mounted.
+    *
+    * STRICTLY LAST, after the wire-speedup chunk: same reasoning as Team
+    * Tap's comment above -- appending keeps every v12/v13 blob loadable,
+    * interleaving would silently desync all of them. */
+   {
+      uint32_t disc_sessions = jaguar_cd_mode ? CDIntfGetNumSessions() : 0;
+      uint32_t disc_tracks   = jaguar_cd_mode ? CDIntfGetNumTracks() : 0;
+      uint32_t disc_sectors  = jaguar_cd_mode ? CDIntfGetDiscTotalSectors() : 0;
+      uint32_t disc_index    = disk_index;
+
+      STATE_SAVE_VAR(buf, disc_sessions);
+      STATE_SAVE_VAR(buf, disc_tracks);
+      STATE_SAVE_VAR(buf, disc_sectors);
+      STATE_SAVE_VAR(buf, disc_index);
+   }
+
    written = (size_t)(buf - start);
    if (written > STATE_SIZE)
       return false;
@@ -4822,6 +4843,40 @@ bool retro_unserialize(const void *data, size_t size)
       buf += UARTWireSpeedupStateLoad(buf);
    else
       UARTSetWireSpeedupEffective(1);
+
+   /* v14: mounted-disc identity (#651) -- see the matching save comment.
+    * Refuse a state taken on a different disc rather than resuming a
+    * machine whose CD state points at content that is not mounted. States
+    * written before v14 carry no identity and load unchanged, exactly as
+    * they did when the disc could not change mid-session. */
+   if (version >= STATE_VERSION_DISK_CONTROL)
+   {
+      uint32_t disc_sessions, disc_tracks, disc_sectors, disc_index;
+
+      STATE_LOAD_VAR(buf, disc_sessions);
+      STATE_LOAD_VAR(buf, disc_tracks);
+      STATE_LOAD_VAR(buf, disc_sectors);
+      STATE_LOAD_VAR(buf, disc_index);
+
+      if (jaguar_cd_mode
+          && (disc_sessions != CDIntfGetNumSessions()
+              || disc_tracks != CDIntfGetNumTracks()
+              || disc_sectors != CDIntfGetDiscTotalSectors()))
+      {
+         LOG_ERR("[CD] refusing savestate: taken on a different disc "
+                 "(state: %u sessions / %u tracks / %u sectors; mounted: "
+                 "%u / %u / %u)\n",
+                 (unsigned)disc_sessions, (unsigned)disc_tracks,
+                 (unsigned)disc_sectors,
+                 (unsigned)CDIntfGetNumSessions(),
+                 (unsigned)CDIntfGetNumTracks(),
+                 (unsigned)CDIntfGetDiscTotalSectors());
+         return false;
+      }
+
+      if (disc_index < disk_num_images)
+         disk_index = disc_index;
+   }
 
    /* tomRam8 was restored raw above; recompute the DRAM/refresh timing
     * that bus_arbiter derives from MEMCON1/MEMCON2 so it matches the
@@ -5441,13 +5496,32 @@ static bool disk_set_eject_state(bool ejected)
    memcpy(saved_path, cd_image_path, sizeof(saved_path));
 
    st = open_disc_and_resolve_boot(disk_image_path[disk_index]);
-   if (st != DISC_BOOT_OK)
+
+   /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
+    * and sets jaguarRunAddress from $800404 before resetting, so a plain
+    * reset would restart the PREVIOUS program.  NULL is safe here -- both
+    * CD strategies ignore info (hle_strategy_boot does `(void)info;`);
+    * only cart_boot reads it, and cart is never resolved on this path.
+    *
+    * A damaged rip reaches HERE, not the branch above: the image parses
+    * and resolves fine, and it is the boot itself that fails (several CDI
+    * V2 rips in circulation are missing their boot header entirely).  So
+    * both failures share one restore -- an early version restored only on
+    * the resolve failure and left a half-configured machine behind on the
+    * far more likely one. */
+   if (st != DISC_BOOT_OK
+       || !bootConfig.strategy
+       || !bootConfig.strategy->boot(NULL))
    {
-      LOG_ERR("[CD] disk control: insert failed (%s) -- tray stays open\n",
-              st == DISC_BOOT_OPEN_FAILED
-                 ? "image could not be opened"
-                 : "audio disc needs the real CD BIOS and it is "
-                   "unavailable");
+      if (st == DISC_BOOT_OPEN_FAILED)
+         LOG_ERR("[CD] disk control: insert failed -- image could not be "
+                 "opened\n");
+      else if (st == DISC_BOOT_NO_BIOS_FOR_AUDIO)
+         LOG_ERR("[CD] disk control: insert failed -- audio disc needs the "
+                 "real CD BIOS and it is unavailable\n");
+      else
+         LOG_ERR("[CD] disk control: insert failed -- the boot strategy "
+                 "refused this disc (a damaged rip will do this)\n");
 
       bootConfig     = saved_boot;
       jaguar_cd_mode = saved_cd_mode;
@@ -5456,18 +5530,9 @@ static bool disk_set_eject_state(bool ejected)
          LOG_ERR("[CD] disk control: could not reopen the previous disc "
                  "either -- the drive is now empty\n");
 
+      LOG_WRN("[CD] disk control: tray stays open, previous disc "
+              "restored\n");
       return false;                   /* disk_ejected stays true */
-   }
-
-   /* NOT a bare JaguarReset(): bios_boot() copies the CD BIOS to $800000
-    * and sets jaguarRunAddress from $800404 before resetting, so a plain
-    * reset would restart the PREVIOUS program.  NULL is safe here -- both
-    * CD strategies ignore info (hle_strategy_boot does `(void)info;`);
-    * only cart_boot reads it, and cart is never resolved on this path. */
-   if (!bootConfig.strategy || !bootConfig.strategy->boot(NULL))
-   {
-      LOG_ERR("[CD] disk control: boot strategy refused the new disc\n");
-      return false;
    }
 
    LOG_INF("[CD] disk control: inserted '%s', booting via '%s'\n",

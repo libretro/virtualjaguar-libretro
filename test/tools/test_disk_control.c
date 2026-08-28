@@ -107,6 +107,7 @@ int main(int argc, char **argv)
     harness_result results[6];
     unsigned nres = 0;
     const char *disc_path = NULL;
+    const char *disc_path_b = NULL;
     int case_num = 0;
     int i;
     int pass = 0;
@@ -117,10 +118,12 @@ int main(int argc, char **argv)
             case_num = atoi(argv[i + 1]);
         else if (strcmp(argv[i], "--disc") == 0 && i + 1 < argc)
             disc_path = argv[i + 1];
+        else if (strcmp(argv[i], "--disc-b") == 0 && i + 1 < argc)
+            disc_path_b = argv[i + 1];
     }
-    if (case_num != 1 && case_num != 3) {
+    if (case_num != 1 && case_num != 3 && case_num != 4) {
         fprintf(stderr, "usage: test_disk_control <core> --disc <image> "
-                        "--case N[1|3] [--quiet]\n"
+                        "--case N[1|3|4] [--quiet]\n"
                         "  (case 2 needs a one-session audio disc; none "
                         "exists in the corpus)\n");
         return 1;
@@ -188,6 +191,59 @@ int main(int argc, char **argv)
                    : "strategy did NOT move off \"none\" -- the insert "
                      "reset the machine without re-resolving");
         pass = registered && was_none && inserted && now_cd;
+        break;
+    }
+    case 4: {
+        /* Serialize on disc A, mount disc B, assert the load is REFUSED --
+         * and then assert the state still loads on its OWN disc.  That
+         * second half is the control: a serializer that refused EVERY
+         * state would satisfy the mismatch assertion on its own. */
+        int saved, cross_refused, own_ok;
+        const char *state_path = "/tmp/vj_disk_control_case4.state";
+
+        if (!disc_path_b) {
+            fprintf(stderr, "test_disk_control: case 4 needs --disc-b\n");
+            return 77;   /* ledgered skip, not a pass */
+        }
+
+        gi.path = disc_path;
+        if (!(cfg.disk_add_image_index()
+              && cfg.disk_replace_image_index(0, &gi)
+              && cfg.disk_set_eject_state(true)
+              && cfg.disk_set_eject_state(false))) {
+            fprintf(stderr, "test_disk_control: could not mount disc A "
+                            "(damaged rip?) -- skipping\n");
+            return 77;   /* corpus property, not a code failure */
+        }
+        saved = harness_save_state(&cfg, state_path);
+
+        gi.path = disc_path_b;
+        cfg.disk_set_eject_state(true);
+        cfg.disk_replace_image_index(0, &gi);
+        if (!cfg.disk_set_eject_state(false)) {
+            fprintf(stderr, "test_disk_control: could not mount disc B "
+                            "(damaged rip?) -- skipping\n");
+            return 77;   /* several CDI V2 rips cannot boot at all */
+        }
+        cross_refused = !harness_load_state(&cfg, state_path);
+
+        gi.path = disc_path;
+        cfg.disk_set_eject_state(true);
+        cfg.disk_replace_image_index(0, &gi);
+        cfg.disk_set_eject_state(false);
+        own_ok = harness_load_state(&cfg, state_path);
+
+        results[nres++] = mkres(saved, "case4_state_saved",
+            saved ? "state written while disc A was mounted"
+                  : "could not write a state");
+        results[nres++] = mkres(cross_refused, "case4_mismatch_refused",
+            cross_refused ? "state from disc A refused against disc B"
+                          : "A WRONG-DISC STATE WAS ACCEPTED");
+        results[nres++] = mkres(own_ok, "case4_own_disc_roundtrips",
+            own_ok ? "state still loads on the disc it was taken from"
+                   : "state refused on its OWN disc -- the check is too "
+                     "strict, not just strict");
+        pass = saved && cross_refused && own_ok;
         break;
     }
     case 3: {
