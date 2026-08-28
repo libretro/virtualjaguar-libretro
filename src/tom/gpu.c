@@ -2189,7 +2189,7 @@ void GPUExec(int32_t cycles)
    if (vjtrace_armed || vjtrace_nwatch)
       idleSkipActive = 0;
 #endif
-#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_IDLE_GATE)
    /* GDB stub (issue #652): a GPU breakpoint or pending step inside the
     * loop would be stepped clean over -- same reasoning as DSPExec. */
    if (gdbArmedGPU)

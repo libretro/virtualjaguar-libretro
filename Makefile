@@ -252,6 +252,13 @@ ifeq ($(VJ_GDB_STUB_DISABLE_HOOKS),1)
 CFLAGS += -DVJ_GDB_STUB_DISABLE_HOOKS
 endif
 
+# Finer control arm: removes ONLY the idle-skip interaction
+# (`if (gdbArmed*) idleSkipActive = 0;`), leaving the per-instruction PC
+# checks in place, so the two halves of the hook cost can be told apart.
+ifeq ($(VJ_GDB_STUB_DISABLE_IDLE_GATE),1)
+CFLAGS += -DVJ_GDB_STUB_DISABLE_IDLE_GATE
+endif
+
 # Records the build configuration the objects in the tree were last
 # compiled under; see the mode-switch hook next to the link rule below.
 #
@@ -270,7 +277,8 @@ endif
 # CFLAGS contains -DINLINE="inline".
 BUILD_AXES := TEST_EXPORTS BENCH_PROFILE DEBUG BLITTER_TRACE COVERAGE \
               RELEASE_DEBUG_INFO DEBUG_PRESENTATION STATIC_LINKING platform \
-              OPT_LEVEL LTO IOS_MCPU VJ_GDB_STUB_DISABLE_HOOKS
+              OPT_LEVEL LTO IOS_MCPU VJ_GDB_STUB_DISABLE_HOOKS \
+              VJ_GDB_STUB_DISABLE_IDLE_GATE
 BUILD_CONFIG := $(strip $(foreach v,$(BUILD_AXES),$(v)=$($(v))))
 BUILD_CONFIG_STAMP := .build-config
 # Superseded .link-mode, which tracked TEST_EXPORTS alone; removed by the

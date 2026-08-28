@@ -349,9 +349,37 @@ Five layers, in increasing cost:
       budget (#569 measured 99.7% of budget in idle loops for some
       titles), so a branch there plausibly dominates the 4.5%.
 
-   If the cost is (2), it is likely cheap to fix by folding `gdbArmed*`
-   into the idle-skip precondition computed once per entry rather than
-   testing it per iteration -- and ship-by-default survives.
+   **Localised (2026-08-27): it is (1), the per-instruction checks.**
+   Removing *only* the idle-skip interaction, leaving the PC checks in
+   place, measures **-0.2%, z=+0.69, p=0.4897 -- no effect**
+   (`test/tools/opt_ab.sh 'VJ_GDB_STUB_DISABLE_IDLE_GATE=0'
+   'VJ_GDB_STUB_DISABLE_IDLE_GATE=1' 12`). The idle-skip gating is free;
+   the whole ~4.5% is the per-instruction `gdbArmed*` test in the three
+   hot loops.
+
+   **So the armed-flag hypothesis is falsified as stated.** "One cached
+   load and a never-taken branch" is not free at this call rate -- most
+   plausibly because the branch sits inside the GPU/DSP interpreter's
+   hottest loops, where it costs more than the vjtrace precedent
+   suggested (that precedent measured a *ring write* against a *branch*,
+   and concluded the write was the cost; it did not establish that the
+   branch was free in absolute terms).
+
+   The options, in preference order:
+
+   1. **Dual dispatch loops.** Test `gdbArmed*` ONCE at loop entry and
+      run either the existing untouched loop or a debug variant. The
+      common path then has genuinely zero added instructions, which is
+      what the design promised. Costs code size and some duplication in
+      `GPUExec()`/`DSPExec()`.
+   2. **Reverse ship-by-default** and gate the stub behind a build flag
+      like `vjtrace` does. Honest, but it forfeits the reason the shipped
+      decision was made: homebrew developers debugging against the stock
+      core with no special build.
+   3. Accept 4.5% on every user to benefit the few who attach a debugger.
+      Not recommended.
+
+   This decision is the maintainer's, per the rule above.
 
 
    **This is not merely a stand-in for gdb being unavailable.** Phase 1's

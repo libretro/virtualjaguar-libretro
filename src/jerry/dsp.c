@@ -1900,7 +1900,7 @@ void DSPExec(int32_t cycles)
 	if (vjtrace_armed || vjtrace_nwatch)
 		idleSkipActive = 0;
 #endif
-#ifndef VJ_GDB_STUB_DISABLE_HOOKS
+#if !defined(VJ_GDB_STUB_DISABLE_HOOKS) && !defined(VJ_GDB_STUB_DISABLE_IDLE_GATE)
 	/* GDB stub (issue #652): DSPIdleLoopProbe() extrapolates the PC
 	 * forward over many idle-loop iterations without visiting each one,
 	 * exactly the class of per-instruction side effect the #569 idle-skip
