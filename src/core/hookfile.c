@@ -115,6 +115,7 @@ static int parse_hook_line(char *val, HookFileSet *out, int slot)
    uint8_t *expectDst, *patchDst;
    unsigned long offset;
    char *endp;
+   size_t nlen;
    int elen, plen;
 
    if (split_fields(val, fields, 4) != 4)
@@ -124,7 +125,8 @@ static int parse_hook_line(char *val, HookFileSet *out, int slot)
    exps = fields[2];
    pats = fields[3];
 
-   if (strlen(name) >= HOOKFILE_MAX_NAME)
+   nlen = strlen(name);
+   if (nlen >= HOOKFILE_MAX_NAME)
       return 0;
 
    offset = strtoul(offs, &endp, 0);  /* 0x... or decimal */
@@ -144,7 +146,11 @@ static int parse_hook_line(char *val, HookFileSet *out, int slot)
    if (elen <= 0 || plen <= 0 || elen != plen)
       return 0;
 
-   strcpy(out->names[slot], name);
+   /* Bounded copy: nlen is already known < HOOKFILE_MAX_NAME above, so
+    * this cannot overrun.  memcpy rather than strcpy because strcpy is
+    * unbounded at the call site regardless of what the caller checked,
+    * and clang-analyzer-security.insecureAPI.strcpy is right to say so. */
+   memcpy(out->names[slot], name, nlen + 1);
 
    out->hooks[slot].kind   = TITLEDB_HOOK_ROM_PATCH;
    out->hooks[slot].len    = (uint8_t)elen;
