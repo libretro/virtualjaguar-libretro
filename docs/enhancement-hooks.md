@@ -1,5 +1,7 @@
 # Per-title enhancement hooks
 
+> See [**Patching a game**](patching-a-game.md) for a router across cheats, soft patches, hooks, and per-title defaults.
+
 Issue [#370](https://github.com/libretro/virtualjaguar-libretro/issues/370),
 track 4b of epic [#338](https://github.com/libretro/virtualjaguar-libretro/issues/338).
 

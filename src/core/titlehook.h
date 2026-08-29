@@ -70,6 +70,12 @@ int TitleHookApplyToBuffer(uint8_t *rom, uint32_t romSize,
  * number of hooks applied (0 on any refusal, including gate-off and
  * table-miss, which are the common cases and are not errors).
  */
+/* Path to the user hook file (<system_dir>/vj_hooks.txt, issue #637), or
+ * NULL/empty to disable it.  Set from retro_load_game once the system
+ * directory is known.  Kept as a setter rather than read here so this
+ * translation unit stays free of environ_cb and remains unit-testable. */
+void TitleHookSetUserFilePath(const char *path);
+
 int TitleHookApplyROM(void);
 
 #ifdef __cplusplus

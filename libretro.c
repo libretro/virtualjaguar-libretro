@@ -5963,6 +5963,25 @@ bool retro_load_game(const struct retro_game_info *info)
       else
          TitleHookSetEnabled(0);
       hook_restart_notice_logged = 0;
+
+      /* User-supplied hooks (#637): <system_dir>/vj_hooks.txt, the same
+       * shape and location as vj_netlink.txt.  Path only -- the file is
+       * read inside TitleHookApplyROM(), AFTER this gate, so a file can
+       * never switch on its own gate (the reason the gate above is read
+       * raw).  No system directory means no user hooks, which is the
+       * normal headless case. */
+      {
+         const char *sysdir = NULL;
+         if (environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysdir)
+             && sysdir && *sysdir)
+         {
+            char hookpath[1024];
+            snprintf(hookpath, sizeof(hookpath), "%s/vj_hooks.txt", sysdir);
+            TitleHookSetUserFilePath(hookpath);
+         }
+         else
+            TitleHookSetUserFilePath(NULL);
+      }
    }
 
    /* GDB remote debug stub (issue #652): same raw-read reasoning as the

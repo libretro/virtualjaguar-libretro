@@ -53,6 +53,7 @@ let coreSources: [String] = [
     "src/core/settings.c",
     "src/core/titledb.c",
     "src/core/titlehook.c",
+    "src/core/hookfile.c",
     "src/core/universalhdr.c",
     "src/core/vjag_memory.c",
     "src/core/vjtrace.c",
