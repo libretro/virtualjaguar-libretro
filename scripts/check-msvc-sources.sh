@@ -117,12 +117,40 @@ comm -23 "$TMP/mk_core" "$TMP/excl" > "$TMP/mk_want"
 # ONLY the first cl.exe step.  The second compiles blitter.c +
 # blitter_simd_sse2.c alone to prove the SSE2 shape, and is narrow on purpose
 # -- flagging it would make this check cry wolf about a deliberate design.
-sed -n '/Compile all sources with cl.exe/,/Compile blitter with cl.exe/p' "$WF" \
-  > "$TMP/step"
+STEP_START='Compile all sources with cl.exe'
+STEP_END='Compile blitter with cl.exe'
+
+# BOTH markers must exist, checked symmetrically.  A `sed` range whose END
+# pattern never matches runs silently to EOF -- so a rename of the end marker
+# alone would fold the SECOND cl.exe step into the parse and quietly break the
+# "only the first step" invariant this check depends on, with no error.  That
+# is benign today only by luck (blitter_simd_sse2.c is in Makefile.common and
+# already excluded, so it trips neither the missing nor the stale branch), and
+# luck is not an invariant.  Thanks to the Kimi review on PR #721 for catching
+# that the guard below was asymmetric while its message said "names", plural.
+for marker in "$STEP_START" "$STEP_END"; do
+  grep -q "$marker" "$WF" || {
+    echo "check-msvc-sources: step marker not found in $WF:" >&2
+    echo "    $marker" >&2
+    echo "  The step names this parser keys on were changed -- fix the parser," >&2
+    echo "  do not delete the check." >&2
+    exit 1
+  }
+done
+
+sed -n "/$STEP_START/,/$STEP_END/p" "$WF" > "$TMP/step"
+
+# Belt and braces: the range must have TERMINATED on the end marker, not run
+# off the end of the file.
 [ -s "$TMP/step" ] || {
   echo "check-msvc-sources: could not isolate the first cl.exe step in $WF." >&2
-  echo "  The step names this parser keys on were changed -- fix the parser," >&2
-  echo "  do not delete the check." >&2
+  exit 1
+}
+tail -n 1 "$TMP/step" | grep -q "$STEP_END" || {
+  echo "check-msvc-sources: the first-step range did not terminate on" >&2
+  echo "    $STEP_END" >&2
+  echo "  so it ran to end-of-file and folded in the second cl.exe step." >&2
+  echo "  Fix the parser, do not delete the check." >&2
   exit 1
 }
 
