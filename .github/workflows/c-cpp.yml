@@ -484,6 +484,13 @@ jobs:
     - name: Package.swift sources match Makefile.common
       run: sh scripts/check-package-sources.sh
 
+    # Same posture for the msvc-check job's inline source list, which rots the
+    # same way and worse: it is Windows-only, so drift shows up as a missing
+    # header on two jobs while ~35 others stay green (issue #679, and PR #662
+    # is the case in point).
+    - name: MSVC job sources match Makefile.common
+      run: sh scripts/check-msvc-sources.sh
+
   spm-build:
     name: SwiftPM build (macOS arm64)
     runs-on: macos-latest

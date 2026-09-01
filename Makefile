@@ -2836,6 +2836,11 @@ tools/jagcd/jagcd-chd-check: tools/jagcd/jagcd-chd-check.c $(SOURCES_LIBCHDR)
 
 lint:
 	@scripts/c89-lint.sh
+	@# Hand-maintained source lists that repeat Makefile.common and rot
+	@# invisibly.  Run locally so drift fails BEFORE a push, not after a
+	@# Windows-only CI job fails on a missing header (issue #679).
+	@sh scripts/check-package-sources.sh
+	@sh scripts/check-msvc-sources.sh
 
 # `make coverage` -- builds with gcov instrumentation, runs the full
 # test suite, and produces a Cobertura XML report at coverage.xml plus
