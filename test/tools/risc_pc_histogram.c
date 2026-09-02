@@ -141,6 +141,34 @@ static unsigned long long *(*pperf_counters_find)(const char *);
 static int bios_option_set = 0;
 static const char *blitter_value = "enabled"; /* default: fast blitter */
 
+/* --option KEY=VALUE overrides (issue #635).
+ *
+ * This tool answers GET_VARIABLE from its own table rather than the
+ * harness's, and that table hardcodes virtualjaguar_bios="enabled".  That
+ * is deliberate for benchmark comparability -- every historical number
+ * from this tool was taken in real-BIOS mode -- but it was SILENT, and
+ * silently measuring a different configuration than you think is how a
+ * wrong conclusion gets published.  It did exactly that during the #635
+ * investigation: DSP opcode counts taken here (real BIOS) were correlated
+ * against a freeze measured elsewhere in HLE mode, and read as one
+ * timeline.
+ *
+ * So: the defaults are unchanged, --option can override any of them
+ * including the BIOS, and the effective set is PRINTED before the run so
+ * the configuration is never implicit again. */
+#define MAX_OVERRIDES 16
+static struct { const char *key, *val; } overrides[MAX_OVERRIDES];
+static int n_overrides = 0;
+
+static const char *override_lookup(const char *key)
+{
+   int i;
+   for (i = 0; i < n_overrides; i++)
+      if (strcmp(overrides[i].key, key) == 0)
+         return overrides[i].val;
+   return NULL;
+}
+
 /* High-resolution timer helpers */
 #ifdef __APPLE__
 static mach_timebase_info_data_t timebase_info;
@@ -204,6 +232,17 @@ static bool environment_cb(unsigned cmd, void *data)
       case RETRO_ENVIRONMENT_GET_VARIABLE:
       {
          struct retro_variable *var = (struct retro_variable *)data;
+         const char *ov = override_lookup(var->key);
+         if (ov)
+         {
+            /* An override answers ANY key, including ones this table does
+             * not otherwise know -- that is the point: the core would
+             * otherwise silently fall back to its registered default. */
+            var->value = ov;
+            if (strcmp(var->key, "virtualjaguar_bios") == 0)
+               bios_option_set = 1;
+            return true;
+         }
          if (strcmp(var->key, "virtualjaguar_bios") == 0)
          {
             var->value = "enabled";
@@ -287,6 +326,9 @@ static void print_usage(const char *progname)
       "\n"
       "Options:\n"
       "  num_frames           Number of frames to benchmark (default: 300)\n"
+      "  --option KEY=VALUE   Override a core option (repeatable).\n"
+      "                       NOTE: without this, virtualjaguar_bios is\n"
+      "                       forced to 'enabled' (real BIOS).\n"
       "  --blitter fast       Use fast blitter (default)\n"
       "  --blitter accurate   Use accurate (Midsummer2) blitter\n"
       "  --warmup N           Run N warmup frames before timing\n"
@@ -338,6 +380,26 @@ int main(int argc, char **argv)
             return 1;
          }
       }
+      else if (strcmp(argv[i], "--option") == 0 && i + 1 < argc)
+      {
+         char *kv = argv[++i];
+         char *eq = strchr(kv, '=');
+         if (!eq)
+         {
+            fprintf(stderr, "--option needs KEY=VALUE (got '%s')\n", kv);
+            return 1;
+         }
+         if (n_overrides >= MAX_OVERRIDES)
+         {
+            fprintf(stderr, "too many --option overrides (max %d)\n",
+                    MAX_OVERRIDES);
+            return 1;
+         }
+         *eq = '\0';                 /* split in place; argv outlives us */
+         overrides[n_overrides].key = kv;
+         overrides[n_overrides].val = eq + 1;
+         n_overrides++;
+      }
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
          warmup_frames = atoi(argv[++i]);
       else if (strcmp(argv[i], "--load-srm") == 0 && i + 1 < argc)
@@ -362,6 +424,27 @@ int main(int argc, char **argv)
    {
       fprintf(stderr, "ERROR: --warmup must be >= 0 (got %d)\n", warmup_frames);
       return 1;
+   }
+
+   /* Print the effective configuration BEFORE the run.  This tool answers
+    * GET_VARIABLE from its own table and forces real-BIOS mode unless
+    * overridden; leaving that implicit produced a wrong conclusion during
+    * #635 (numbers taken here in BIOS mode, compared against a freeze
+    * measured in HLE mode).  Never implicit again. */
+   {
+      int oi;
+      const char *bios_eff = override_lookup("virtualjaguar_bios");
+      printf("config: virtualjaguar_bios=%s%s  blitter=%s\n",
+             bios_eff ? bios_eff : "enabled",
+             bios_eff ? " (overridden)" : " (TOOL DEFAULT -- real BIOS)",
+             strcmp(blitter_value, "enabled") == 0 ? "fast" : "accurate");
+      for (oi = 0; oi < n_overrides; oi++)
+         if (strcmp(overrides[oi].key, "virtualjaguar_bios") != 0)
+            printf("config: %s=%s (overridden)\n",
+                   overrides[oi].key, overrides[oi].val);
+      if (n_overrides == 0)
+         printf("config: no --option overrides; every other core option "
+                "uses its REGISTERED default\n");
    }
 
 #ifdef __APPLE__
