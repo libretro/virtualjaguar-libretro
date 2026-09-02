@@ -11,11 +11,20 @@
 #include <string.h>
 
 /* C89-safe restrict.  Unlocks autovec on scanline src/dst independently of
- * the NEON kernels; empty on compilers without a restrict spelling. */
+ * the NEON kernels; empty on compilers without a restrict spelling.
+ *
+ * #ifndef-guarded to match tom_scan_simd_{sse2,neon}.h and
+ * shadowfb_simd_neon.h, which define it the same way: a TU that includes a
+ * SIMD header before this one (src/tom/tom.c does) would otherwise define
+ * it twice.  That is legal today only because the two spellings are
+ * token-identical, which C permits -- the guard removes the dependency on
+ * them staying that way. */
+#ifndef VJ_RESTRICT
 #if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
 #  define VJ_RESTRICT __restrict
 #else
 #  define VJ_RESTRICT
+#endif
 #endif
 
 #ifdef __cplusplus
