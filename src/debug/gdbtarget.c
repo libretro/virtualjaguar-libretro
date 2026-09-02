@@ -34,6 +34,8 @@
 #include <unistd.h>
 #endif
 
+#include <compat/msvc.h>  /* snprintf shim for MSVC < 2015 (buildbot msvc05/10) */
+
 #include "gdbstub.h"
 #include "gdbdisasm.h"
 #include "m68kinterface.h"
