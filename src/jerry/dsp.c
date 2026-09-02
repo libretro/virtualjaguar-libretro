@@ -810,9 +810,45 @@ void DSPWriteLong(uint32_t offset, uint32_t data, uint32_t who/*=UNKNOWN*/)
                // Check for CPU -> DSP interrupt
                if (data & DSPINT0)
                {
-                  m68k_end_timeslice();
-                  DSPReleaseTimeslice();
-                  DSPSetIRQLine(DSPIRQ_CPU, ASSERT_LINE);
+                  /* Only deliver a CPU->DSP interrupt when the DSP is
+                   * actually RUNNING (issue #635, White Men Can't Jump).
+                   *
+                   * The game stops its DSP by raising DSPINT0 -- its INT0
+                   * handler is a shutdown routine ($F1B76A: disable
+                   * INT_ENA0/1, clear the latches, write $20 to D_CTRL so
+                   * DSPGO clears).  Its reload sequence is: stop, copy a
+                   * fresh 2.5KB program over DSP RAM, set D_PC, set DSPGO.
+                   *
+                   * At the stop, DSPGO is ALREADY clear (the traced write
+                   * is OR.L #4 over a prior value of $820, bit 0 = 0), so
+                   * there is no running program to consume the interrupt.
+                   * Delivered unconditionally, the latch survives into the
+                   * NEWLY started program, which enables INT_ENA0/1 during
+                   * its own init and immediately services it -- running the
+                   * shutdown handler and stopping itself after ~1,319
+                   * opcodes.  The 68K then posts command $0D to the mailbox
+                   * at $F1B2C0, nothing ever consumes it, and the next
+                   * caller spins forever at $01C306 waiting for it to clear.
+                   * The GPU stops being fed and the picture freezes.
+                   *
+                   * The game cannot rely on the latch being cleared later:
+                   * its start routine writes D_FLAGS <- 0, and JTRM Rev 8 is
+                   * explicit that "writing a zero leaves them unchanged".
+                   *
+                   * JTRM Rev 8 does NOT state whether a CPU interrupt raised
+                   * while the DSP is stopped latches -- the interrupt
+                   * section describes the latches without reference to
+                   * DSPGO.  This gate is therefore argued from behaviour,
+                   * not from a manual line: the title demonstrably works on
+                   * hardware, and it cannot if a stop-interrupt is still
+                   * pending when its replacement program starts.  Worth
+                   * confirming against hardware if anyone can. */
+                  if (DSP_RUNNING)
+                  {
+                     m68k_end_timeslice();
+                     DSPReleaseTimeslice();
+                     DSPSetIRQLine(DSPIRQ_CPU, ASSERT_LINE);
+                  }
                   data &= ~DSPINT0;
                }
                // Protect writes to VERSION and the interrupt latches...
