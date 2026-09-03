@@ -237,8 +237,10 @@ int GDBSockHasClientAttachEvent(void);
  * opt-in, per session, and never the value an unset/garbled option
  * resolves to.
  *
- * GDB_BIND_LAN additionally rejects any peer outside RFC1918 /
- * link-local / loopback at accept() time.  That does not make a hostile
+ * GDB_BIND_LAN additionally rejects, at accept() time, any peer outside
+ * RFC1918 (10/8, 172.16/12, 192.168/16), CGNAT (100.64/10), link-local
+ * (169.254/16) and loopback -- gdb_peer_allowed() in gdbsock.c is the
+ * authority on that list.  That does not make a hostile
  * LAN safe; it exists to stop the SILENT accidental case -- a public
  * address via carrier NAT or a misconfigured hotspot -- which is the
  * failure a user cannot notice. A refused peer is logged. */
