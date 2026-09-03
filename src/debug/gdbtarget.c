@@ -374,9 +374,25 @@ static int GDBInsertWatch(unsigned int addr, int type)
    gdbWatchKindMask  |= mask;
    gdbWatchArmed     = 1;
    bpmAddress1       = addr;
+#ifndef ALPINE_FUNCTIONS
+   /* The six GDBMemWatchHit() call sites in src/core/jaguar.c all sit
+    * inside #ifdef ALPINE_FUNCTIONS, and no build file in this repo
+    * defines it -- so on every shipped target a watchpoint can never
+    * fire.  Returning success here would make GDB report the watchpoint
+    * as set and then silently never stop, which is the worst failure a
+    * debugger can have: the user concludes the address is never touched.
+    *
+    * Refuse instead, so GDB says "not supported" and the user knows.
+    * Found by the Kimi review on PR #724.  Making watchpoints actually
+    * work means moving those call sites out of the ALPINE gate, which
+    * puts six branches in the hottest memory path -- a change that needs
+    * its own perf measurement, not a release-eve edit. */
+   return -1;
+#else
    bpmActive         = true;
 
    return 0;
+#endif
 }
 
 static int GDBRemoveWatch(unsigned int addr, int type)
