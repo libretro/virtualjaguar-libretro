@@ -2068,6 +2068,7 @@ test: test/test_dram_timing test/test_cheat test/test_event_queue test/test_jlin
 		rc=0; \
 		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 1 --quiet || rc=1; \
 		./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --case 3 --quiet || rc=1; \
+		./test/tools/test_disk_control ./$(TARGET) --case 5 --quiet || rc=1; \
 		discb=$$(find -L test/roms/private -iname '*.cdi' -o -iname '*.cue' 2>/dev/null | sed -n 2p); \
 		if [ -n "$$discb" ]; then \
 			if ./test/tools/test_disk_control ./$(TARGET) --disc "$$disc" --disc-b "$$discb" --case 4 --quiet; then :; \

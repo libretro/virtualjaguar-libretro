@@ -91,6 +91,50 @@ static int strategy_is_cd(void)
     return strcmp(n, "hle") == 0 || strcmp(n, "bios") == 0;
 }
 
+/* Frame-progression tracking for case 5 (issue #726).
+ *
+ * Cases 1/3/4 assert which boot STRATEGY resolved.  That is necessary and
+ * not sufficient: a machine that resolves the right strategy and then
+ * freezes on the boot ROM's red logo passes every one of them, which is
+ * exactly how the v3.6.0 no-content regression shipped.  So this tracks
+ * whether the picture actually CHANGES, which is the thing a user sees. */
+static uint32_t vid_hash;         /* FNV-1a over the frame just delivered */
+static uint32_t vid_prev_hash;
+static unsigned vid_frames;       /* frames the core actually delivered   */
+static unsigned vid_changes;      /* frames whose pixels differed         */
+static unsigned vid_nonblack;     /* frames with any non-black pixel      */
+
+static void vid_cb(void *ud, const void *data, unsigned w, unsigned h,
+                   size_t pitch)
+{
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t hsh = 2166136261u;
+    unsigned y, x;
+    int nonblack = 0;
+
+    (void)ud;
+    if (!p)                       /* duped frame: no new pixels */
+        return;
+    vid_frames++;
+    for (y = 0; y < h; y++)
+    {
+        const uint32_t *row = (const uint32_t *)(p + (size_t)y * pitch);
+        for (x = 0; x < w; x++)
+        {
+            uint32_t px = row[x];
+            hsh = (hsh ^ (px & 0x00FFFFFFu)) * 16777619u;
+            if (px & 0x00FFFFFFu)
+                nonblack = 1;
+        }
+    }
+    if (nonblack)
+        vid_nonblack++;
+    if (vid_frames > 1 && hsh != vid_prev_hash)
+        vid_changes++;
+    vid_prev_hash = hsh;
+    vid_hash      = hsh;
+}
+
 static harness_result mkres(int ok, const char *name, const char *detail)
 {
     harness_result r;
@@ -121,20 +165,28 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--disc-b") == 0 && i + 1 < argc)
             disc_path_b = argv[i + 1];
     }
-    if (case_num != 1 && case_num != 3 && case_num != 4) {
+    if (case_num != 1 && case_num != 3 && case_num != 4
+        && case_num != 5) {
         fprintf(stderr, "usage: test_disk_control <core> --disc <image> "
-                        "--case N[1|3|4] [--quiet]\n"
+                        "--case N[1|3|4|5] [--quiet]\n"
                         "  (case 2 needs a one-session audio disc; none "
                         "exists in the corpus)\n");
         return 1;
     }
-    if (!disc_path) {
+    if (!disc_path && case_num != 5) {
         fprintf(stderr, "test_disk_control: no --disc given\n");
         return 1;
     }
 
     cfg.frames = 10;
     cfg.quiet  = 1;
+    if (case_num == 5)
+    {
+        /* Long enough for the boot ROM to get past its first screen if it
+         * is going to; short enough to stay a unit test. */
+        cfg.frames         = 600;
+        cfg.video_callback = vid_cb;
+    }
 
     /* Must be set before the load: the core registers disk control during
      * retro_load_game, and the harness refuses the env call unless this
@@ -244,6 +296,43 @@ int main(int argc, char **argv)
                    : "state refused on its OWN disc -- the check is too "
                      "strict, not just strict");
         pass = saved && cross_refused && own_ok;
+        break;
+    }
+    case 5: {
+        /* No-content boot must RENDER, not just resolve (issue #726).
+         *
+         * Two assertions, and the second is the one that matters:
+         *   - the boot ROM puts something on screen at all, and
+         *   - the picture keeps CHANGING.
+         *
+         * A frozen red Jaguar logo satisfies "non-black" forever, so
+         * non-black alone would be another vacuous check. Motion is what
+         * separates "booting" from "wedged on the logo".
+         *
+         * Deliberately no assertion about WHICH screen: this test should
+         * survive a future change to what a bare console shows. */
+        int rendered, moving;
+
+        harness_run(&cfg);
+
+        rendered = (vid_frames > 0 && vid_nonblack > 0);
+        /* >=2 distinct images over the window. Generous on purpose: the
+         * bar is "not frozen", not "animates smoothly". */
+        moving   = (vid_changes >= 2);
+
+        results[nres++] = mkres(rendered, "case5_no_content_renders",
+            rendered ? "bare-console boot put a non-black image on screen"
+                     : "bare-console boot rendered nothing (or all black)");
+        results[nres++] = mkres(moving, "case5_no_content_progresses",
+            moving ? "the picture changes -- the machine is running"
+                   : "the picture NEVER CHANGES -- wedged on the boot screen "
+                     "(this is issue #726: strategy resolves, machine does "
+                     "not run)");
+
+        fprintf(stderr, "  [case5] frames=%u nonblack=%u changes=%u\n",
+                vid_frames, vid_nonblack, vid_changes);
+
+        pass = rendered && moving;
         break;
     }
     case 3: {
